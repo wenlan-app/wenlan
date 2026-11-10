@@ -1554,11 +1554,13 @@ pub fn spawn_scheduler(
                 .unwrap_or_else(Instant::now)
         };
 
-        let import_priority_until = load_import_priority_until(&shared).await;
-        if import_priority_until > 0 && write_signal.restore_import_priority(import_priority_until)
+        let (import_priority_until, import_priority_cap) =
+            load_import_priority_until(&shared).await;
+        if import_priority_until > 0
+            && write_signal.restore_import_priority(import_priority_until, import_priority_cap)
         {
             tracing::info!(
-                "[scheduler] restored import priority deadline_epoch={import_priority_until}"
+                "[scheduler] restored import priority deadline_epoch={import_priority_until} cap_epoch={import_priority_cap}"
             );
         }
 
@@ -2087,6 +2089,30 @@ pub fn spawn_scheduler(
                                                     pages_created: outcome.pages_created,
                                                 },
                                             );
+                                            // Keep writing while material is
+                                            // left: a turn that moved the queue
+                                            // on and reports more extends the
+                                            // lane, up to its hard cap.
+                                            if phase == ImportSynthesisPhase::Emergence
+                                                && outcome.progressed
+                                                && outcome.more
+                                            {
+                                                match write_signal
+                                                    .extend_import_priority(
+                                                        &db,
+                                                        processing_generation,
+                                                    )
+                                                    .await
+                                                {
+                                                    Ok(Some(deadline_epoch)) => tracing::info!(
+                                                        "[scheduler] import priority extended deadline_epoch={deadline_epoch} reason=more_material"
+                                                    ),
+                                                    Ok(None) => {}
+                                                    Err(error) => tracing::warn!(
+                                                        "[scheduler] failed to persist import priority extension: {error}"
+                                                    ),
+                                                }
+                                            }
                                             note_paid_pages(
                                                 &db,
                                                 synthesis_pin,
@@ -2982,23 +3008,34 @@ async fn load_last_daily(shared: &SharedState) -> i64 {
     }
 }
 
-/// Load the short-lived import priority deadline.  The marker is intentionally
-/// a wall-clock value so a daemon restart can resume only the remaining part of
-/// the same ten-minute window; expired or malformed values are ignored.
-async fn load_import_priority_until(shared: &SharedState) -> i64 {
+/// Load the short-lived import priority deadline and its hard cap. Both are
+/// wall-clock values so a daemon restart can resume only the remaining part of
+/// the same window (extensions included) and extend it no further than the
+/// same cap; expired or malformed values are ignored (a missing cap means no
+/// extension).
+async fn load_import_priority_until(shared: &SharedState) -> (i64, i64) {
     let db = {
         let s = shared.read().await;
         s.db.clone()
     };
     let Some(db) = db else {
-        return 0;
+        return (0, 0);
     };
-    db.get_app_metadata(IMPORT_PRIORITY_METADATA_KEY)
-        .await
-        .ok()
-        .flatten()
-        .and_then(|value| value.parse::<i64>().ok())
-        .unwrap_or(0)
+    let load = |key: &'static str| {
+        let db = db.clone();
+        async move {
+            db.get_app_metadata(key)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|value| value.parse::<i64>().ok())
+                .unwrap_or(0)
+        }
+    };
+    (
+        load(IMPORT_PRIORITY_METADATA_KEY).await,
+        load(IMPORT_PRIORITY_CAP_METADATA_KEY).await,
+    )
 }
 
 async fn finish_import_priority(

@@ -17,6 +17,22 @@ use super::{
 
 pub(super) const IMPORT_PRIORITY_METADATA_KEY: &str = "import_priority_until_v1";
 pub(super) const IMPORT_PRIORITY_WINDOW: Duration = Duration::from_secs(10 * 60);
+/// Wall-clock epoch after which a lane may no longer be extended, written
+/// beside [`IMPORT_PRIORITY_METADATA_KEY`] so a restart keeps the same cap.
+pub(super) const IMPORT_PRIORITY_CAP_METADATA_KEY: &str = "import_priority_cap_v1";
+/// Hard cap on one import lane, counted from the import. Every Emergence
+/// turn that made progress and reports more material moves the deadline to
+/// at least one [`IMPORT_PRIORITY_WINDOW`] ahead, so the lane keeps writing
+/// until every waiting item has been tried; this cap ends it regardless.
+///
+/// Why 90 minutes: measured on a Mac with a 67-note folder and on-device
+/// models, one page takes 1-2+ minutes, so a folder of that size has a few
+/// dozen topics and needs roughly 30-80 minutes of turns. Ninety covers it
+/// with room for prep and inference rounds, while still bounding how long a
+/// single import keeps ignoring input idle (UX-QUIET-1). Whatever is left
+/// after the cap waits for the ordinary idle-gated rounds. Our own choice
+/// from that measurement, not a benchmark.
+pub(super) const IMPORT_PRIORITY_HARD_CAP: Duration = Duration::from_secs(90 * 60);
 pub(super) const IMPORT_PRIORITY_MAX_AMBIENT_SLICES: u8 = 64;
 pub(super) const IMPORT_PRIORITY_TICK: Duration = Duration::from_secs(2);
 
@@ -31,6 +47,7 @@ const IMPORT_PRIORITY_JOBS: [AmbientJob; 5] = [
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct ImportPriorityRequest {
     pub(super) deadline_epoch: i64,
+    pub(super) cap_epoch: i64,
     pub(super) generation: u64,
 }
 
@@ -108,12 +125,17 @@ impl ImportPrioritySnapshot {
 }
 
 /// State is bounded by both a wall-clock deadline and an ambient-slice count.
-/// The scheduler may be restarted at any point; only the wall-clock deadline
-/// is persisted, so a restart never revives an old import forever.
+/// The deadline moves forward while Emergence keeps writing, never past the
+/// hard cap. The scheduler may be restarted at any point; only the wall-clock
+/// deadline and cap are persisted, so a restart never revives an old import
+/// forever.
 #[derive(Debug, Default)]
 pub(super) struct ImportPriority {
     deadline: Option<Instant>,
     deadline_epoch: i64,
+    /// The latest the deadline may be moved to ([`IMPORT_PRIORITY_HARD_CAP`]).
+    cap: Option<Instant>,
+    cap_epoch: i64,
     generation: u64,
     ambient_slices: u8,
     next_job: usize,
@@ -138,26 +160,37 @@ pub(super) struct ImportPriority {
 }
 
 impl ImportPriority {
-    fn deadline_epoch_now() -> i64 {
+    fn epoch_now() -> i64 {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|duration| duration.as_secs() as i64)
             .unwrap_or(0)
-            .saturating_add(IMPORT_PRIORITY_WINDOW.as_secs() as i64)
     }
 
-    fn activate(&mut self, deadline_epoch: i64, now: Instant, now_epoch: i64) {
+    fn activate(&mut self, deadline_epoch: i64, cap_epoch: i64, now: Instant, now_epoch: i64) {
         let remaining = deadline_epoch.saturating_sub(now_epoch);
         if remaining <= 0 {
             self.deadline = None;
             self.deadline_epoch = 0;
+            self.cap = None;
+            self.cap_epoch = 0;
             return;
         }
         // Be defensive about hand-edited/corrupt metadata. A persisted import
-        // can never extend a fresh scheduler window beyond ten minutes.
+        // can never extend a fresh scheduler window beyond ten minutes: an
+        // extension only ever moves the deadline one window ahead, so a
+        // valid persisted deadline is never further out than that.
         let bounded_remaining = remaining.min(IMPORT_PRIORITY_WINDOW.as_secs() as i64);
         self.deadline = Some(now + Duration::from_secs(bounded_remaining as u64));
         self.deadline_epoch = now_epoch.saturating_add(bounded_remaining);
+        // The cap is never before the deadline (a missing or older cap, such
+        // as one left by an earlier daemon, means no extension) and never
+        // more than the hard cap away, however far out the metadata says.
+        let cap_remaining = cap_epoch
+            .saturating_sub(now_epoch)
+            .clamp(bounded_remaining, IMPORT_PRIORITY_HARD_CAP.as_secs() as i64);
+        self.cap = Some(now + Duration::from_secs(cap_remaining as u64));
+        self.cap_epoch = now_epoch.saturating_add(cap_remaining);
         self.ambient_slices = 0;
         self.next_job = 0;
         self.round_attempts = 0;
@@ -176,16 +209,34 @@ impl ImportPriority {
 
     pub(super) fn prepare_request(&mut self, now: Instant) -> ImportPriorityRequest {
         self.generation = self.generation.wrapping_add(1);
-        let now_epoch = chrono::Utc::now().timestamp();
-        let deadline_epoch = Self::deadline_epoch_now();
-        self.activate(deadline_epoch, now, now_epoch);
+        let now_epoch = Self::epoch_now();
+        let deadline_epoch = now_epoch.saturating_add(IMPORT_PRIORITY_WINDOW.as_secs() as i64);
+        let cap_epoch = now_epoch.saturating_add(IMPORT_PRIORITY_HARD_CAP.as_secs() as i64);
+        self.activate(deadline_epoch, cap_epoch, now, now_epoch);
         ImportPriorityRequest {
             deadline_epoch,
+            cap_epoch,
             generation: self.generation,
         }
     }
 
-    pub(super) fn restore(&mut self, deadline_epoch: i64, now: Instant, now_epoch: i64) -> bool {
+    /// Resume a lane after a daemon restart from its persisted deadline and
+    /// cap. Choice: the persisted deadline is the last one the lane reached,
+    /// extensions included (each is written as it happens), so a restart
+    /// inside the lane resumes the remaining part of it and later turns may
+    /// extend it again up to the persisted cap. A deadline that already
+    /// passed is not revived even when the cap has not: the person's request
+    /// is then no longer "just asked for" (the daemon was down or asleep for
+    /// a whole window), and the idle-gated rounds take what is left. Corrupt
+    /// values are clamped in `activate`: at most one window now, and never
+    /// more than the hard cap from the restart.
+    pub(super) fn restore(
+        &mut self,
+        deadline_epoch: i64,
+        cap_epoch: i64,
+        now: Instant,
+        now_epoch: i64,
+    ) -> bool {
         if self.deadline.is_some() {
             return true;
         }
@@ -193,8 +244,37 @@ impl ImportPriority {
             return false;
         }
         self.generation = self.generation.wrapping_add(1);
-        self.activate(deadline_epoch, now, now_epoch);
+        self.activate(deadline_epoch, cap_epoch, now, now_epoch);
         self.deadline.is_some()
+    }
+
+    /// An Emergence turn made progress and reports more material: move the
+    /// deadline to at least one window from now, never past the cap. Returns
+    /// the new deadline epoch when it moved. Writing that has ended (no more
+    /// material, the paid daily cap) or a stale generation never extends.
+    pub(super) fn extend_for_more_material(
+        &mut self,
+        generation: u64,
+        now: Instant,
+        now_epoch: i64,
+    ) -> Option<i64> {
+        if self.generation != generation || self.synthesis_finished {
+            return None;
+        }
+        // A turn admitted before the deadline may end after it (a local
+        // model takes minutes per page); it still extends, since the lane is
+        // only cleared once this turn is recorded.
+        let (deadline, cap) = (self.deadline?, self.cap?);
+        let wanted = IMPORT_PRIORITY_WINDOW.min(cap.saturating_duration_since(now));
+        let extended = now + wanted;
+        if wanted.is_zero() || extended <= deadline {
+            return None;
+        }
+        self.deadline = Some(extended);
+        self.deadline_epoch = now_epoch
+            .saturating_add(wanted.as_secs() as i64)
+            .min(self.cap_epoch);
+        Some(self.deadline_epoch)
     }
 
     pub(super) fn snapshot(&self) -> Option<ImportPrioritySnapshot> {
@@ -380,6 +460,8 @@ impl ImportPriority {
         }
         self.deadline = None;
         self.deadline_epoch = 0;
+        self.cap = None;
+        self.cap_epoch = 0;
         self.synthesis_phase = None;
         self.started_logged = false;
         self.synthesis_finished = false;
@@ -442,6 +524,14 @@ impl WriteSignal {
     ) -> Result<(), wenlan_core::WenlanError> {
         let _persist_guard = self.import_persist_lock.lock().await;
         let request = self.prepare_import_request();
+        // The cap goes first: a crash between the two writes leaves the old
+        // (finished or expired) deadline beside the new cap, which revives
+        // nothing, rather than a new deadline beside an old cap.
+        db.set_app_metadata(
+            IMPORT_PRIORITY_CAP_METADATA_KEY,
+            &request.cap_epoch.to_string(),
+        )
+        .await?;
         db.set_app_metadata(
             IMPORT_PRIORITY_METADATA_KEY,
             &request.deadline_epoch.to_string(),
@@ -455,12 +545,13 @@ impl WriteSignal {
         Ok(())
     }
 
-    pub(super) fn restore_import_priority(&self, deadline_epoch: i64) -> bool {
+    pub(super) fn restore_import_priority(&self, deadline_epoch: i64, cap_epoch: i64) -> bool {
         self.import_priority
             .lock()
             .expect("import priority mutex poisoned")
             .restore(
                 deadline_epoch,
+                cap_epoch,
                 Instant::now(),
                 chrono::Utc::now().timestamp(),
             )
@@ -509,6 +600,33 @@ impl WriteSignal {
             .lock()
             .expect("import priority mutex poisoned")
             .note_synthesis_phase(generation, phase, outcome)
+    }
+
+    /// Extend the lane after an Emergence turn that made progress and
+    /// reports more material, and persist the new deadline (and the live
+    /// import batches' markers, which the import status reads) under the same
+    /// lock as request and completion, so a finished or newer lane is never
+    /// overwritten. Returns the new deadline epoch when it moved. A failed
+    /// write keeps the in-memory extension; a restart then resumes from the
+    /// older persisted deadline.
+    pub(super) async fn extend_import_priority(
+        &self,
+        db: &wenlan_core::db::MemoryDB,
+        generation: u64,
+    ) -> Result<Option<i64>, wenlan_core::WenlanError> {
+        let _persist_guard = self.import_persist_lock.lock().await;
+        let extended = self
+            .import_priority
+            .lock()
+            .expect("import priority mutex poisoned")
+            .extend_for_more_material(generation, Instant::now(), chrono::Utc::now().timestamp());
+        if let Some(deadline_epoch) = extended {
+            db.set_app_metadata(IMPORT_PRIORITY_METADATA_KEY, &deadline_epoch.to_string())
+                .await?;
+            db.extend_live_import_batch_priorities(deadline_epoch)
+                .await?;
+        }
+        Ok(extended)
     }
 
     pub(super) fn import_priority_finish_synthesis(&self, generation: u64) -> bool {
@@ -1032,10 +1150,280 @@ mod tests {
         let mut priority = ImportPriority::default();
         let now = Instant::now();
         let epoch = chrono::Utc::now().timestamp();
-        assert!(!priority.restore(epoch - 1, now, epoch));
-        assert!(priority.restore(epoch + 3600, now, epoch));
+        assert!(!priority.restore(epoch - 1, epoch + 600, now, epoch));
+        assert!(priority.restore(epoch + 3600, epoch + 3600, now, epoch));
         let snapshot = priority.snapshot().unwrap();
         assert!(snapshot.deadline <= now + IMPORT_PRIORITY_WINDOW);
+    }
+
+    fn wrote_one_page_with_more() -> ImportSynthesisOutcome {
+        ImportSynthesisOutcome {
+            progressed: true,
+            more: true,
+            pages_created: 1,
+        }
+    }
+
+    /// Start a fresh lane at `now` and bring it to Emergence.
+    fn lane_in_emergence(priority: &mut ImportPriority, now: Instant) -> u64 {
+        let generation = priority.prepare_request(now).generation;
+        priority.note_document_slice(
+            generation,
+            DocumentPrepOutcome::Idle,
+            ImportPriority::epoch_now(),
+        );
+        empty_round(priority, generation);
+        priority.note_synthesis_phase(
+            generation,
+            ImportSynthesisPhase::Detect,
+            ImportSynthesisOutcome::default(),
+        );
+        assert_eq!(
+            priority.snapshot().unwrap().synthesis_phase,
+            Some(ImportSynthesisPhase::Emergence)
+        );
+        generation
+    }
+
+    /// One Emergence turn that ends at `at`, recorded the way the scheduler
+    /// does: note the phase, then extend when it progressed with more left.
+    fn emergence_turn_at(
+        priority: &mut ImportPriority,
+        generation: u64,
+        outcome: ImportSynthesisOutcome,
+        start: (Instant, i64),
+        at: Duration,
+    ) -> Option<i64> {
+        priority.note_synthesis_phase(generation, ImportSynthesisPhase::Emergence, outcome);
+        if outcome.progressed && outcome.more {
+            priority.extend_for_more_material(
+                generation,
+                start.0 + at,
+                start.1 + at.as_secs() as i64,
+            )
+        } else {
+            None
+        }
+    }
+
+    #[test]
+    fn the_lane_keeps_writing_past_the_window_while_turns_report_more() {
+        let now = Instant::now();
+        let epoch = ImportPriority::epoch_now();
+        let mut priority = ImportPriority::default();
+        let generation = lane_in_emergence(&mut priority, now);
+        // A local model: one page every two minutes, for an hour.
+        let page = Duration::from_secs(2 * 60);
+        let mut at = Duration::ZERO;
+        while at < Duration::from_secs(60 * 60) {
+            at += page;
+            assert!(
+                !priority.should_finish(now + at),
+                "still inside the lane at {at:?}"
+            );
+            let extended = emergence_turn_at(
+                &mut priority,
+                generation,
+                wrote_one_page_with_more(),
+                (now, epoch),
+                at,
+            );
+            assert!(extended.is_some(), "a writing turn extends at {at:?}");
+        }
+        let snapshot = priority.snapshot().unwrap();
+        assert_eq!(snapshot.deadline, now + at + IMPORT_PRIORITY_WINDOW);
+        assert_eq!(
+            snapshot.deadline_epoch,
+            epoch + (at + IMPORT_PRIORITY_WINDOW).as_secs() as i64
+        );
+        assert!(!priority.should_finish(now + at + Duration::from_secs(9 * 60)));
+        assert!(priority.should_finish(now + at + IMPORT_PRIORITY_WINDOW));
+        assert_eq!(priority.pages_written, 30);
+    }
+
+    #[test]
+    fn a_turn_that_ends_after_the_deadline_still_extends() {
+        let now = Instant::now();
+        let epoch = ImportPriority::epoch_now();
+        let mut priority = ImportPriority::default();
+        let generation = lane_in_emergence(&mut priority, now);
+        // Admitted at 9:30, the page lands at 11:30.
+        let at = Duration::from_secs(11 * 60 + 30);
+        assert!(emergence_turn_at(
+            &mut priority,
+            generation,
+            wrote_one_page_with_more(),
+            (now, epoch),
+            at,
+        )
+        .is_some());
+        assert!(!priority.should_finish(now + at));
+    }
+
+    #[test]
+    fn the_lane_stops_at_the_hard_cap_however_much_material_is_left() {
+        let now = Instant::now();
+        let epoch = ImportPriority::epoch_now();
+        let mut priority = ImportPriority::default();
+        let generation = lane_in_emergence(&mut priority, now);
+        let cap = now + IMPORT_PRIORITY_HARD_CAP;
+        let page = Duration::from_secs(60);
+        let mut at = Duration::ZERO;
+        while !priority.should_finish(now + at) {
+            at += page;
+            emergence_turn_at(
+                &mut priority,
+                generation,
+                wrote_one_page_with_more(),
+                (now, epoch),
+                at,
+            );
+            let snapshot = priority.snapshot().unwrap();
+            assert!(snapshot.deadline <= cap);
+            assert!(snapshot.deadline_epoch <= epoch + IMPORT_PRIORITY_HARD_CAP.as_secs() as i64);
+            assert!(at <= IMPORT_PRIORITY_HARD_CAP, "the cap ends the lane");
+        }
+        assert_eq!(at, IMPORT_PRIORITY_HARD_CAP);
+        assert_eq!(priority.snapshot().unwrap().deadline, cap);
+        // A turn ending past the cap cannot move it.
+        assert_eq!(
+            emergence_turn_at(
+                &mut priority,
+                generation,
+                wrote_one_page_with_more(),
+                (now, epoch),
+                IMPORT_PRIORITY_HARD_CAP + page,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn the_lane_stops_when_no_material_is_left_or_the_paid_cap_is_reached() {
+        let now = Instant::now();
+        let epoch = ImportPriority::epoch_now();
+        let mut priority = ImportPriority::default();
+        let generation = lane_in_emergence(&mut priority, now);
+        let at = Duration::from_secs(5 * 60);
+        assert!(emergence_turn_at(
+            &mut priority,
+            generation,
+            wrote_one_page_with_more(),
+            (now, epoch),
+            at,
+        )
+        .is_some());
+        // The last item: more=false ends writing; nothing extends it again.
+        assert_eq!(
+            emergence_turn_at(
+                &mut priority,
+                generation,
+                wrote_one_page(),
+                (now, epoch),
+                at + Duration::from_secs(60),
+            ),
+            None
+        );
+        assert!(priority.should_finish(now + at + Duration::from_secs(60)));
+        assert_eq!(
+            priority.extend_for_more_material(
+                generation,
+                now + at + Duration::from_secs(120),
+                epoch + 120
+            ),
+            None
+        );
+
+        // The paid writer's daily cap ends writing the same way.
+        let mut priority = ImportPriority::default();
+        let generation = lane_in_emergence(&mut priority, now);
+        assert!(priority.finish_synthesis(generation));
+        assert_eq!(
+            priority.extend_for_more_material(generation, now + at, epoch + 300),
+            None
+        );
+        assert!(priority.should_finish(now));
+
+        // A stale generation never extends a newer lane.
+        let mut priority = ImportPriority::default();
+        let old = lane_in_emergence(&mut priority, now);
+        let fresh = lane_in_emergence(&mut priority, now);
+        assert_ne!(old, fresh);
+        assert_eq!(
+            priority.extend_for_more_material(old, now + at, epoch + 300),
+            None
+        );
+    }
+
+    #[test]
+    fn a_restart_resumes_the_extended_lane_without_passing_its_cap() {
+        let now = Instant::now();
+        let epoch = ImportPriority::epoch_now();
+        let window = IMPORT_PRIORITY_WINDOW.as_secs() as i64;
+        let hard_cap = IMPORT_PRIORITY_HARD_CAP.as_secs() as i64;
+
+        // Forty minutes into an import: the persisted deadline is the last
+        // extension, and the cap is fifty minutes away. The restart resumes
+        // it and later turns extend it up to that same cap, not past it.
+        let mut priority = ImportPriority::default();
+        assert!(priority.restore(epoch + window, epoch + 50 * 60, now, epoch));
+        let snapshot = priority.snapshot().unwrap();
+        assert_eq!(snapshot.deadline, now + IMPORT_PRIORITY_WINDOW);
+        assert_eq!(snapshot.deadline_epoch, epoch + window);
+        let generation = snapshot.generation;
+        let mut at = Duration::ZERO;
+        while at < Duration::from_secs(60 * 60) {
+            at += Duration::from_secs(60);
+            priority.extend_for_more_material(generation, now + at, epoch + at.as_secs() as i64);
+        }
+        let snapshot = priority.snapshot().unwrap();
+        assert_eq!(snapshot.deadline, now + Duration::from_secs(50 * 60));
+        assert_eq!(snapshot.deadline_epoch, epoch + 50 * 60);
+
+        // Corrupt metadata: a deadline hours out is held to one window, and a
+        // cap years out to the hard cap from the restart.
+        let mut priority = ImportPriority::default();
+        assert!(priority.restore(epoch + 3 * 3600, i64::MAX, now, epoch));
+        let generation = priority.snapshot().unwrap().generation;
+        assert_eq!(
+            priority.snapshot().unwrap().deadline,
+            now + IMPORT_PRIORITY_WINDOW
+        );
+        let mut at = Duration::ZERO;
+        while at < Duration::from_secs(3 * 3600) {
+            at += Duration::from_secs(60);
+            priority.extend_for_more_material(generation, now + at, epoch + at.as_secs() as i64);
+        }
+        let snapshot = priority.snapshot().unwrap();
+        assert_eq!(snapshot.deadline, now + IMPORT_PRIORITY_HARD_CAP);
+        assert_eq!(snapshot.deadline_epoch, epoch + hard_cap);
+
+        // A deadline written without a cap (an earlier daemon) or beside a
+        // cap that is already behind it resumes as before and never extends.
+        for cap in [0, epoch - 1, epoch + 60] {
+            let mut priority = ImportPriority::default();
+            assert!(priority.restore(epoch + 5 * 60, cap, now, epoch));
+            let generation = priority.snapshot().unwrap().generation;
+            assert_eq!(
+                priority.extend_for_more_material(
+                    generation,
+                    now + Duration::from_secs(60),
+                    epoch + 60
+                ),
+                None,
+                "cap={cap}"
+            );
+            assert_eq!(
+                priority.snapshot().unwrap().deadline,
+                now + Duration::from_secs(5 * 60)
+            );
+        }
+
+        // A lane whose deadline passed while the daemon was down is not
+        // revived, even before its cap.
+        let mut priority = ImportPriority::default();
+        assert!(!priority.restore(epoch - 1, epoch + hard_cap, now, epoch));
+        assert!(priority.snapshot().is_none());
     }
 
     #[tokio::test]
