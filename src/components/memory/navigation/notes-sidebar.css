@@ -446,3 +446,6 @@
 .notes-wiki-section .wiki-workspace-new-folder { flex-basis: 28px; width: 28px; height: 28px; color: var(--mem-text-tertiary); }
 .notes-wiki-section .wiki-workspace-mode-row > .wiki-workspace-new-page { margin-left: 0; }
 .notes-wiki-section .wiki-sidebar-directory > .notes-list-panel { padding-inline: 4px 0; margin-top: 2px; }
+/* One icon column: top-level pages line up with top-level folders,
+   whose caret sits in the gutter to the left of the icon. */
+.notes-wiki-section .notes-inventory-root-pages > li > .notes-inventory-page { padding-left: calc(9px + 18px); }
