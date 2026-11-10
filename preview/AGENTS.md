@@ -14,11 +14,11 @@ citation states.
 | Change preview UI | `main.tsx` | fixture selectors and theme toggle live here |
 | Mock Tauri invoke | `mocks/core.ts` | fixture mode switch plus live daemon fallback |
 | Live app preview | `mocks/live-invoke.ts` | proxies daemon calls through `/daemon` |
-| Vite aliases | `../vite.preview.config.ts` | plugin API shims and port `1421` |
+| Vite aliases | `../tooling/vite.preview.config.ts` | plugin API shims and port `1421` |
 
 ## CONVENTIONS
 
-- Run with `pnpm exec vite --config vite.preview.config.ts`.
+- Run with `pnpm exec vite --config tooling/vite.preview.config.ts`.
 - Use `/preview/` for deterministic fixture states; use `/` only when a live
   daemon on `:7878` is part of the check.
 - Keep fixture command responses shaped like the real Tauri wrappers consume.
@@ -36,5 +36,5 @@ citation states.
 ## COMMANDS
 
 ```bash
-pnpm exec vite --config vite.preview.config.ts
+pnpm exec vite --config tooling/vite.preview.config.ts
 ```

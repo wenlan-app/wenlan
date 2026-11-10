@@ -19,7 +19,7 @@
 //   crates/wenlan-server/src/routes.rs HealthResponse {status,
 //   db_initialized, version}, StatusResponse, ConfigResponse, and
 //   KnowledgePathResponse {path}): WENLAN_PREVIEW_DATA_DIR can only be
-//   enforced at server startup (vite.first-use-live.config.ts refuses to
+//   enforced at server startup (tooling/vite.first-use-live.config.ts refuses to
 //   serve without it) plus whoever launches the daemon pointing it there.
 //   The knowledge path is re-verified per mutation twice: in the vite
 //   middleware before the import is proxied, and in the browser before it
@@ -33,7 +33,7 @@ export const FIRST_USE_LIVE_PORT = 1433;
 
 declare const __WENLAN_PREVIEW_KNOWLEDGE_PATH__: string | undefined;
 
-// --- startup gate (also imported by vite.first-use-live.config.ts) ---
+// --- startup gate (also imported by tooling/vite.first-use-live.config.ts) ---
 
 export function isLoopbackHostname(hostname: string): boolean {
   const bare = hostname.trim().toLowerCase().replace(/^\[|\]$/g, "");
@@ -230,7 +230,7 @@ function readExpectedKnowledgePath(opts?: FirstUseLiveInvokeOpts): string {
     ? __WENLAN_PREVIEW_KNOWLEDGE_PATH__
     : undefined;
   if (typeof injected === "string" && injected) return injected;
-  fail("scratch knowledge path is not configured; serve through vite.first-use-live.config.ts.");
+  fail("scratch knowledge path is not configured; serve through tooling/vite.first-use-live.config.ts.");
 }
 
 /**

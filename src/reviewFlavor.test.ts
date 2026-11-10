@@ -73,7 +73,7 @@ describe("fixture-only native Review flavor", () => {
   });
 
   it("builds through fixture-only Vite aliases with no daemon proxy", () => {
-    const vite = read("vite.review.config.ts");
+    const vite = read("tooling/vite.review.config.ts");
 
     expect(vite).toContain('__WENLAN_REVIEW__: JSON.stringify(true)');
     expect(vite).toContain('"@tauri-apps/api/core"');
@@ -91,8 +91,8 @@ describe("fixture-only native Review flavor", () => {
     const launcher = read("scripts/open-review-app.mjs");
     const verifier = read("scripts/verify-review-bundle.mjs");
 
-    expect(scripts["build:review:web"]).toContain("vite.review.config.ts");
-    expect(scripts["dev:review:web"]).toContain("vite.review.config.ts");
+    expect(scripts["build:review:web"]).toContain("tooling/vite.review.config.ts");
+    expect(scripts["dev:review:web"]).toContain("tooling/vite.review.config.ts");
     expect(scripts["review:build"]).toContain("--features review-fixtures");
     expect(scripts["review:build"]).toContain("app/tauri.review.conf.json");
     expect(scripts["review:build"]).toContain("--bundles app");

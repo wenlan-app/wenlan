@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Bounded model-routing proof for the negative cases in the submission fixture.
 import assert from 'node:assert/strict';
-import submission from '../../../chatgpt-app-submission.json' with { type: 'json' };
+import submission from '../../chatgpt-app-submission.json' with { type: 'json' };
 
 const MAX_NEGATIVE_CASES = 3;
 export const NEGATIVE_TURN_TIMEOUT_MS = 45_000;

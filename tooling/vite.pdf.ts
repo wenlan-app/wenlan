@@ -7,7 +7,7 @@ import { viteStaticCopy } from "vite-plugin-static-copy";
 export function pdfAssets() {
   return viteStaticCopy({
     targets: ["cmaps", "standard_fonts", "wasm"].map((name) => ({
-      src: normalizePath(fileURLToPath(new URL(`./node_modules/pdfjs-dist/${name}`, import.meta.url))),
+      src: normalizePath(fileURLToPath(new URL(`../node_modules/pdfjs-dist/${name}`, import.meta.url))),
       dest: "pdfjs",
     })),
   });

@@ -1,6 +1,6 @@
 <svg width="1280" height="600" viewBox="0 0 1280 600" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
   <title id="title">Wenlan social preview</title>
-  <desc id="desc">Wenlan: your source-backed knowledge base, built to compound. Wenlan builds the right pages and keeps them current as sources change, asking only when judgment is needed.</desc>
+  <desc id="desc">Wenlan: the knowledge base you don’t have to maintain. Write when you want; your AI keeps it organized.</desc>
 
   <rect width="1280" height="600" fill="#101024"/>
   <rect x="64" y="52" width="1152" height="496" rx="32" fill="#101024" stroke="#2F3769"/>
@@ -11,21 +11,24 @@
     <circle cx="197" cy="97" r="26" fill="url(#orb)"/>
   </g>
 
-  <g transform="translate(462 204)">
+  <g transform="translate(462 176)">
     <text x="0" y="18" fill="#93E3F2" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="34" font-weight="700" letter-spacing="4">
       WENLAN
     </text>
-    <text x="0" y="74" fill="#F7F8FF" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="40" font-weight="760">
-      Your source-backed knowledge base,
+    <text x="0" y="76" fill="#F7F8FF" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="44" font-weight="760">
+      The knowledge base
     </text>
-    <text x="0" y="118" fill="#F7F8FF" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="40" font-weight="760">
-      built to compound.
+    <text x="0" y="126" fill="#F7F8FF" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="44" font-weight="760">
+      you don’t have to maintain.
     </text>
-    <text x="0" y="166" fill="#AEB6DC" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="20" font-weight="500">
-      Wenlan builds the right pages and keeps them current as sources change,
+    <text x="0" y="178" fill="#DCE2F5" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="24" font-weight="500">
+      Write when you want; your AI keeps it organized.
     </text>
-    <text x="0" y="194" fill="#AEB6DC" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="20" font-weight="500">
-      asking only when judgment is needed.
+    <text x="0" y="236" fill="#AEB6DC" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="19" font-weight="500">
+      Open-source Obsidian alternative. Connects to your AI tools
+    </text>
+    <text x="0" y="263" fill="#AEB6DC" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="19" font-weight="500">
+      in one click, with no plugins to maintain. Share it with your team.
     </text>
   </g>
 
