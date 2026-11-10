@@ -295,9 +295,86 @@ pub struct SteepNewCommitResponse {
     pub next_step: String,
 }
 
+/// Why Automatic set a group of waiting items aside instead of writing a
+/// page from it. An unknown value from a newer daemon reads as `other`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SteepSetAsideReason {
+    /// The page the writer wrote did not match its sources (the citation
+    /// check refused it).
+    SourcesDidNotMatch,
+    /// Too little to write a page from: one short item, or a group under
+    /// the two-source / one-long-source floor.
+    TooShort,
+    /// Anything else: a model error or timeout, an item that changed or was
+    /// taken while the page was written.
+    #[serde(other)]
+    Other,
+}
+
+/// One item of a set-aside group, still waiting as it was when set aside.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SteepSetAsideItem {
+    /// The same id `GET /api/steep/new` lists and a claim's `item_ids` take.
+    pub item_id: String,
+    pub title: String,
+    /// `capture`, `note`, `chat` or `file`.
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub space: Option<String>,
+}
+
+/// A group of waiting items Automatic tried to write a page from and set
+/// aside. It is not tried again until one of its items changes or the group
+/// is given back.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SteepSetAsideGroup {
+    /// The topic the writer named, or the item's title for a single item.
+    pub name: String,
+    pub reason: SteepSetAsideReason,
+    /// Only the items still waiting uncited and unchanged.
+    pub items: Vec<SteepSetAsideItem>,
+    /// Unix seconds.
+    pub set_aside_at: i64,
+}
+
+/// `GET /api/steep/new/set-aside`: newest first.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct SteepSetAsideListResponse {
+    pub groups: Vec<SteepSetAsideGroup>,
+}
+
+/// `POST /api/steep/new/set-aside/release`: give these items back, so
+/// Automatic may try them again.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SteepSetAsideReleaseRequest {
+    pub item_ids: Vec<String>,
+}
+
+/// What `POST /api/steep/new/set-aside/release` did.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct SteepSetAsideReleaseResponse {
+    /// How many of the named items were set aside and are given back.
+    pub released: u32,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn set_aside_reasons_are_snake_case_and_unknown_reads_as_other() {
+        assert_eq!(
+            serde_json::to_value(SteepSetAsideReason::SourcesDidNotMatch).unwrap(),
+            "sources_did_not_match"
+        );
+        assert_eq!(
+            serde_json::to_value(SteepSetAsideReason::TooShort).unwrap(),
+            "too_short"
+        );
+        let later: SteepSetAsideReason = serde_json::from_str("\"something_new\"").unwrap();
+        assert_eq!(later, SteepSetAsideReason::Other);
+    }
 
     #[test]
     fn commit_request_parses_a_release() {

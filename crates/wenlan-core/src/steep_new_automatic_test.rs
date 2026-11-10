@@ -9,12 +9,13 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 
-use super::{write_one_new_page, NewPageOutcome};
+use super::{release_set_aside, set_aside_groups, write_one_new_page, NewPageOutcome};
 use crate::db::code_basis_test::test_db;
 use crate::db::MemoryDB;
 use crate::llm_provider::{LlmBackend, LlmError, LlmProvider, LlmRequest};
 use crate::prompts::PromptRegistry;
 use crate::read_scope::ReadScope;
+use wenlan_types::SteepSetAsideReason;
 
 /// Answers the grouping call with `group` and the writing call with `body`,
 /// and counts the calls.
@@ -177,6 +178,165 @@ async fn a_reply_naming_no_group_sets_the_newest_short_item_aside() {
     assert_eq!(again.outcome, NewPageOutcome::Failed);
     assert!(!again.more);
     assert!(turn(&db, &model).await.is_none());
+}
+
+fn item_ids(group: &wenlan_types::SteepSetAsideGroup) -> Vec<&str> {
+    group.items.iter().map(|i| i.item_id.as_str()).collect()
+}
+
+#[tokio::test]
+async fn a_refused_note_is_listed_by_its_topic_and_a_release_lets_automatic_try_again() {
+    let (db, _dir) = test_db().await;
+    let now = chrono::Utc::now().timestamp();
+    row(&db, "sa_1", BREAD_1, "claude-code", now).await;
+    row(&db, "sa_2", BREAD_2, "claude-code", now).await;
+    let model = Scripted::new(
+        "TOPIC: Sourdough\nITEMS: sa_1, sa_2",
+        "Bread is a food people like.",
+    );
+    assert_eq!(
+        turn(&db, &model).await.unwrap().outcome,
+        NewPageOutcome::Failed
+    );
+
+    let groups = set_aside_groups(&db, &ReadScope::Global).await.unwrap();
+    assert_eq!(groups.len(), 1);
+    assert_eq!(groups[0].name, "Sourdough");
+    assert_eq!(groups[0].reason, SteepSetAsideReason::SourcesDidNotMatch);
+    assert_eq!(item_ids(&groups[0]), vec!["sa_1", "sa_2"]);
+    assert_eq!(groups[0].items[0].title, "sa_1");
+    assert!(groups[0].set_aside_at > 0);
+    // The rows live in Space "test": another Space sees no group and cannot
+    // give it back.
+    let other = ReadScope::Space("elsewhere".into());
+    assert!(set_aside_groups(&db, &other).await.unwrap().is_empty());
+    let ids = vec!["sa_1".to_string(), "sa_2".to_string()];
+    assert_eq!(release_set_aside(&db, &other, &ids).await.unwrap(), 0);
+    assert!(turn(&db, &model).await.is_none(), "still set aside");
+
+    let test_space = ReadScope::Space("test".into());
+    assert_eq!(set_aside_groups(&db, &test_space).await.unwrap().len(), 1);
+    assert_eq!(release_set_aside(&db, &test_space, &ids).await.unwrap(), 2);
+    assert!(set_aside_groups(&db, &ReadScope::Global)
+        .await
+        .unwrap()
+        .is_empty());
+    assert_eq!(release_set_aside(&db, &test_space, &ids).await.unwrap(), 0);
+    // Given back, Automatic tries the group again (and sets it aside again).
+    let again = turn(&db, &model).await.expect("the group waits again");
+    assert_eq!(again.outcome, NewPageOutcome::Failed);
+    assert_eq!(model.calls(), 4);
+    assert_eq!(
+        set_aside_groups(&db, &ReadScope::Global)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn short_items_are_listed_as_too_short_under_the_item_title_or_the_named_topic() {
+    let (db, _dir) = test_db().await;
+    let now = chrono::Utc::now().timestamp();
+    row(&db, "ts_new", "A short line.", "claude-code", now).await;
+    row(
+        &db,
+        "ts_old",
+        "Another short line.",
+        "claude-code",
+        now - 60,
+    )
+    .await;
+    // No usable group: the newest short item goes alone, under its title.
+    let unsure = Scripted::new("I am not sure.", BODY);
+    turn(&db, &unsure).await.expect("material waits");
+    // A named one-item group under the floor: the claim refuses it.
+    let named = Scripted::new("TOPIC: Lines\nITEMS: ts_old", BODY);
+    turn(&db, &named).await.expect("one item waits");
+    assert_eq!(named.calls(), 1, "a refused claim costs no writing call");
+
+    let groups = set_aside_groups(&db, &ReadScope::Global).await.unwrap();
+    let names: Vec<&str> = groups.iter().map(|g| g.name.as_str()).collect();
+    assert_eq!(names.len(), 2);
+    assert!(names.contains(&"ts_new") && names.contains(&"Lines"));
+    assert!(groups
+        .iter()
+        .all(|g| g.reason == SteepSetAsideReason::TooShort));
+}
+
+#[tokio::test]
+async fn an_item_that_changes_leaves_the_set_aside_list_and_is_tried_again() {
+    let (db, _dir) = test_db().await;
+    let now = chrono::Utc::now().timestamp();
+    row(&db, "ch_1", BREAD_1, "claude-code", now - 120).await;
+    row(&db, "ch_2", BREAD_2, "claude-code", now - 120).await;
+    let model = Scripted::new("TOPIC: Bread\nITEMS: ch_1, ch_2", "Bread is good.");
+    turn(&db, &model).await.expect("material waits");
+    assert_eq!(
+        item_ids(&set_aside_groups(&db, &ReadScope::Global).await.unwrap()[0]),
+        vec!["ch_1", "ch_2"]
+    );
+    // A second chunk of ch_1, later: the item changed.
+    row(
+        &db,
+        "ch_1::1",
+        "The crumb sets as it cools.",
+        "claude-code",
+        now,
+    )
+    .await;
+    let groups = set_aside_groups(&db, &ReadScope::Global).await.unwrap();
+    assert_eq!(
+        item_ids(&groups[0]),
+        vec!["ch_2"],
+        "only the unchanged item"
+    );
+    let again = turn(&db, &model).await.expect("the changed item waits");
+    assert_eq!(again.outcome, NewPageOutcome::Failed);
+}
+
+#[tokio::test]
+async fn the_first_set_aside_record_is_read_and_migrated_without_names() {
+    let (db, _dir) = test_db().await;
+    let now = chrono::Utc::now().timestamp();
+    row(&db, "lg_1", BREAD_1, "claude-code", now).await;
+    row(&db, "lg_2", BREAD_2, "claude-code", now).await;
+    row(&db, "lg_3", "A third item.", "claude-code", now - 60).await;
+    let legacy = serde_json::json!([
+        format!("lg_1@{now}"),
+        format!("lg_2@{now}"),
+        "lg_3@not-a-time",
+        "no-at-sign",
+        format!("gone@{now}")
+    ]);
+    db.set_app_metadata(super::LEGACY_FAILED_ITEMS_KEY, &legacy.to_string())
+        .await
+        .unwrap();
+    let groups = set_aside_groups(&db, &ReadScope::Global).await.unwrap();
+    let mut names: Vec<&str> = groups.iter().map(|g| g.name.as_str()).collect();
+    names.sort_unstable();
+    assert_eq!(names, vec!["lg_1", "lg_2"], "named by their items");
+    assert!(groups
+        .iter()
+        .all(|g| g.reason == SteepSetAsideReason::Other));
+
+    // A turn skips them and takes the one item the old record did not hold.
+    let model = Scripted::new("TOPIC: Third\nITEMS: lg_3", BODY);
+    turn(&db, &model).await.expect("lg_3 waits");
+    let groups = set_aside_groups(&db, &ReadScope::Global).await.unwrap();
+    assert_eq!(groups.len(), 3, "the migrated groups are kept on write");
+    assert_eq!(groups[0].name, "Third", "newest first");
+    assert!(turn(&db, &model).await.is_none());
+
+    // An unreadable record is not fatal.
+    db.set_app_metadata(super::SET_ASIDE_KEY, "{not json")
+        .await
+        .unwrap();
+    assert!(set_aside_groups(&db, &ReadScope::Global)
+        .await
+        .unwrap()
+        .is_empty());
 }
 
 #[test]

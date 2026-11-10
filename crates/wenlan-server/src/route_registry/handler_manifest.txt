@@ -55,6 +55,7 @@ main|get|/api/pages|wenlan_server::page_routes::handle_list_pages
 main|get|/api/pages/basis-pending|wenlan_server::page_basis_routes::handle_basis_pending
 main|get|/api/steep/worklist|wenlan_server::steep_routes::handle_steep_worklist
 main|get|/api/steep/new|wenlan_server::steep_new_routes::handle_steep_new_list
+main|get|/api/steep/new/set-aside|wenlan_server::steep_new_routes::handle_steep_new_set_aside
 main|get|/api/pages/orphan-links|wenlan_server::page_routes::handle_list_orphan_links
 main|get|/api/pages/recent|wenlan_server::routes::handle_recent_pages
 main|get|/api/pages/recent-changes|wenlan_server::routes::handle_recent_page_changes
@@ -191,6 +192,7 @@ main|post|/api/steep/new/organize|wenlan_server::steep_new_routes::handle_steep_
 main|post|/api/steep/new/links|wenlan_server::steep_new_routes::handle_steep_new_links
 main|post|/api/steep/new/tasks|wenlan_server::steep_new_routes::handle_steep_new_tasks
 main|post|/api/steep/new/commit|wenlan_server::steep_new_routes::handle_steep_new_commit
+main|post|/api/steep/new/set-aside/release|wenlan_server::steep_new_routes::handle_steep_new_set_aside_release
 main|post|/api/pages/{id}/code-basis/confirm|wenlan_server::code_basis_routes::handle_confirm_code_basis
 main|post|/api/pages/{id}/export|wenlan_server::page_routes::handle_export_page
 main|post|/api/palace/layout/revert|wenlan_server::palace_routes::handle_revert_palace_layout

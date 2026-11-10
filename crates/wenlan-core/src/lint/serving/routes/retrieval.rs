@@ -18,4 +18,5 @@ pub(super) const ROUTES: &[SensitiveReadRoute] = &[
     row!(Get,"/api/steep/new","memory_list",QueryThenHeader,UnauthenticatedLocal,MemorySpace,NoGate,Rejected,Forbidden),
     row!(Post,"/api/steep/new/claim","memory_list",HeaderOnly,UnauthenticatedLocal,MemorySpace,NoGate,Rejected,Forbidden),
     row!(Post,"/api/steep/new/tasks","memory_list",HeaderOnly,UnauthenticatedLocal,MemorySpace,NoGate,Rejected,Forbidden),
+    row!(Get,"/api/steep/new/set-aside","memory_list",QueryThenHeader,UnauthenticatedLocal,MemorySpace,NoGate,Rejected,Forbidden),
 ];

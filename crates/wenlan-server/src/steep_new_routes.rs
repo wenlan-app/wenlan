@@ -20,6 +20,7 @@ use wenlan_types::{
     SteepNewClaimRequest, SteepNewClaimResponse, SteepNewCommitRequest, SteepNewCommitResponse,
     SteepNewLinksRequest, SteepNewLinksResponse, SteepNewListResponse, SteepNewTasksRequest,
     SteepNewTasksResponse, SteepOrganizeCommitRequest, SteepOrganizeCommitResponse,
+    SteepSetAsideListResponse, SteepSetAsideReleaseRequest, SteepSetAsideReleaseResponse,
 };
 
 use crate::error::ServerError;
@@ -35,6 +36,11 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
         .route("/api/steep/new/links", post(handle_steep_new_links))
         .route("/api/steep/new/tasks", post(handle_steep_new_tasks))
         .route("/api/steep/new/commit", post(handle_steep_new_commit))
+        .route("/api/steep/new/set-aside", get(handle_steep_new_set_aside))
+        .route(
+            "/api/steep/new/set-aside/release",
+            post(handle_steep_new_set_aside_release),
+        )
 }
 
 /// What the claim tells the caller to do with the sources.
@@ -111,6 +117,60 @@ pub async fn handle_steep_new_list(
         held: u32::try_from(list.held).unwrap_or(u32::MAX),
         page_titles: list.page_titles,
         next_step: NEXT_LIST.to_string(),
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SteepSetAsideQuery {
+    #[serde(default)]
+    space: Option<String>,
+}
+
+/// GET /api/steep/new/set-aside?space=
+///
+/// The groups Automatic tried to write a page from and set aside, newest
+/// first, each with its name, the reason and its items still waiting as they
+/// were. Space-scoped like the list. Needs no model.
+pub async fn handle_steep_new_set_aside(
+    State(state): State<Arc<RwLock<ServerState>>>,
+    crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
+    Query(query): Query<SteepSetAsideQuery>,
+) -> Result<Json<SteepSetAsideListResponse>, ServerError> {
+    let db = state
+        .read()
+        .await
+        .db
+        .clone()
+        .ok_or(ServerError::DbNotInitialized)?;
+    let scope = crate::read_scope::effective_read_scope(
+        &db,
+        query.space.as_deref(),
+        header_space.as_deref(),
+    )
+    .await?;
+    let groups = wenlan_core::steep_new::set_aside_groups(&db, &scope).await?;
+    Ok(Json(SteepSetAsideListResponse { groups }))
+}
+
+/// POST /api/steep/new/set-aside/release
+///
+/// Give set-aside items back so Automatic may try them again. Only items in
+/// the caller's Space are given back; returns how many were.
+pub async fn handle_steep_new_set_aside_release(
+    State(state): State<Arc<RwLock<ServerState>>>,
+    crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
+    Json(req): Json<SteepSetAsideReleaseRequest>,
+) -> Result<Json<SteepSetAsideReleaseResponse>, ServerError> {
+    let db = state
+        .read()
+        .await
+        .db
+        .clone()
+        .ok_or(ServerError::DbNotInitialized)?;
+    let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
+    let released = wenlan_core::steep_new::release_set_aside(&db, &scope, &req.item_ids).await?;
+    Ok(Json(SteepSetAsideReleaseResponse {
+        released: u32::try_from(released).unwrap_or(u32::MAX),
     }))
 }
 

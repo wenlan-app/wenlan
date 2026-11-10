@@ -705,6 +705,8 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/steep/new/organize` | main | no | not_applicable | `none` | — | receipt only: organize counts and the titles of notes the claim's note may link, filtered to the claim's Space; no page prose |
 | `POST` | `/api/steep/new/links` | main | no | not_applicable | `none` | — | titles only: the notes the claim's note may link and the one note on its subject, filtered to the claim's Space; no page prose |
 | `POST` | `/api/steep/new/tasks` | main | no | not_applicable | `none` | — | SteepOrganizeTask.prompt: the same uncited, reviewed memory rows as /api/steep/new/claim, for a claim made in the caller's scope; no page prose |
+| `GET` | `/api/steep/new/set-aside` | main | no | not_applicable | `none` | — | SteepSetAsideItem.title: the same uncited, reviewed memory rows as /api/steep/new, filtered to the caller's scope; group name: the topic Automatic's writer named; no page prose |
+| `POST` | `/api/steep/new/set-aside/release` | main | no | not_applicable | `none` | — | receipt only: how many set-aside items in the caller's scope were given back |
 | `POST` | `/api/steep/new/commit` | main | no | not_applicable | `none` | — | receipt only: outcome, new note id and title, citation counts; the token was issued by a Space-scoped claim |
 | `POST` | `/api/pages/{id}/code-basis/confirm` | main | no | not_applicable | `none` | — | receipt only: CodeBasisRef carries file path, lines and state, no note prose |
 | `DELETE` | `/api/pages/{id}/code-basis` | main | no | not_applicable | `none` | — | receipt only: removed flag, no prose |

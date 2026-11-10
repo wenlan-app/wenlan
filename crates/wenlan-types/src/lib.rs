@@ -126,7 +126,8 @@ pub use steep_new::{
     SteepNewCommitRequest, SteepNewCommitResponse, SteepNewItem, SteepNewLinksRequest,
     SteepNewLinksResponse, SteepNewListResponse, SteepNewTasksRequest, SteepNewTasksResponse,
     SteepOrganizeCommitRequest, SteepOrganizeCommitResponse, SteepOrganizeStage, SteepOrganizeTask,
-    SteepOrganizeWork,
+    SteepOrganizeWork, SteepSetAsideGroup, SteepSetAsideItem, SteepSetAsideListResponse,
+    SteepSetAsideReason, SteepSetAsideReleaseRequest, SteepSetAsideReleaseResponse,
 };
 pub use things::{
     NightLinkMade, NightLinksBackfill, NightLinksBackfillUndo, NightTidied, NightTidyKind,

@@ -479,6 +479,9 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     // A new-note commit returns a receipt only (outcome, note id and title,
     // citation counts); the list and the claim are in the sensitive catalog.
     "/api/steep/new/commit",
+    // Giving set-aside items back to Automatic returns a count only; the
+    // set-aside list (item titles) is in the sensitive catalog.
+    "/api/steep/new/set-aside/release",
     // Organizing a claim's sources returns counts and the titles of pages
     // the claim's own note may link, filtered to the Space the claim was
     // made in; the claim that hands out the text is in the sensitive catalog.
