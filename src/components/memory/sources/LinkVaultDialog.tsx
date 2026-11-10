@@ -90,7 +90,6 @@ export default function LinkVaultDialog({ onClose, initialPath }: {
         <div className="link-vault-lines">
           <p>{t("sourceAccess.linkLine1")}</p>
           <p>{t("sourceAccess.linkLine2")}</p>
-          <p>{t("sourceAccess.linkLine3")}</p>
         </div>
         {failure && <div role="alert" className="source-dialog-error">{failure}</div>}
         <div className="link-vault-actions">

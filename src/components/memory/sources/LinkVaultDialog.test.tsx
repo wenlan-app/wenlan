@@ -26,9 +26,9 @@ beforeEach(() => {
 });
 
 describe("LinkVaultDialog", () => {
-  it("links the picked vault into the Wiki and says nothing of Wenlan's goes into it", async () => {
+  it("links the picked vault into the Wiki and says the AI won't change it", async () => {
     const { onClose } = renderDialog();
-    expect(screen.getByText(/The AI doesn't change it, and Wenlan keeps none of its own files there/)).toBeInTheDocument();
+    expect(screen.getByText("The AI won't change your vault.")).toBeInTheDocument();
     const link = screen.getByRole("button", { name: "Link" });
     expect(link).toBeDisabled();
     fireEvent.click(await screen.findByRole("button", { name: "second-brain" }));
