@@ -46,14 +46,18 @@ pub fn spawn_stub(routes: Vec<(&'static str, String)>) -> (String, Receiver<(Str
                 "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",
                 payload.len()
             );
-            reader
-                .get_mut()
-                .write_all(response.as_bytes())
-                .expect("write response");
+            // Record the request before answering it. The command under test
+            // exits as soon as it has read the response, and its test then reads
+            // this channel without waiting; recorded after the write, a request
+            // the command already got its answer for could still be missing.
             let _ = sent.send((
                 route.to_string(),
                 String::from_utf8_lossy(&body).into_owned(),
             ));
+            reader
+                .get_mut()
+                .write_all(response.as_bytes())
+                .expect("write response");
         }
     });
     (base, received)

@@ -87,19 +87,32 @@ struct OnDevicePool {
     loading: bool,
 }
 
+/// `WENLAN_DATA_DIR` is one value for the whole process, and every test here
+/// points it at its own config root. `cargo test` (the coverage job) runs the
+/// tests of this file on threads of one process, so without this lock one test
+/// reads the config the other just saved: the source it added is "not found".
+fn data_dir_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
 struct DataDirGuard {
     previous: Option<std::ffi::OsString>,
     _root: tempfile::TempDir,
+    // Released only after `Drop` has put the variable back.
+    _serial: tokio::sync::MutexGuard<'static, ()>,
 }
 
 impl DataDirGuard {
-    fn new() -> Self {
+    async fn new() -> Self {
+        let serial = data_dir_lock().lock().await;
         let root = tempfile::tempdir().unwrap();
         let previous = std::env::var_os("WENLAN_DATA_DIR");
         std::env::set_var("WENLAN_DATA_DIR", root.path());
         Self {
             previous,
             _root: root,
+            _serial: serial,
         }
     }
 }
@@ -195,7 +208,7 @@ fn update_config_request(
 /// sync carries the batch position the directory sync leaves out.
 #[tokio::test]
 async fn okf_source_routes_register_sync_and_report_the_batch_position() {
-    let _config_root = DataDirGuard::new();
+    let _config_root = DataDirGuard::new().await;
     let pages = tempfile::tempdir().unwrap();
     wenlan_core::config::save_config(&wenlan_core::config::Config {
         knowledge_path: Some(pages.path().to_path_buf()),
@@ -256,7 +269,7 @@ async fn okf_source_routes_register_sync_and_report_the_batch_position() {
 
 #[tokio::test]
 async fn moved_source_and_config_routes_preserve_typed_http_contracts() {
-    let _config_root = DataDirGuard::new();
+    let _config_root = DataDirGuard::new().await;
     wenlan_core::config::save_config(&wenlan_core::config::Config::default()).unwrap();
     let (router, _db_tmp, _db) = common::test_app_no_gate().await;
 

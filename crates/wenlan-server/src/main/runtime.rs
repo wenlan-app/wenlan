@@ -10,6 +10,22 @@ const EMBEDDING_MODEL_RETRY_FIRST: std::time::Duration = std::time::Duration::fr
 /// Longest wait between retries.
 const EMBEDDING_MODEL_RETRY_MAX: std::time::Duration = std::time::Duration::from_secs(15 * 60);
 
+/// Publish the bound port for whoever is polling `WENLAN_PORT_FILE`.
+///
+/// The file appears complete or not at all: the port is written beside it and
+/// renamed into place. A plain `fs::write` creates the file empty and fills it
+/// in a second step, so a poller that reads between the two sees an empty file
+/// and takes it for a broken port (`graceful_shutdown` did, on a busy runner).
+fn publish_port_file(port_file: &std::path::Path, port: u16) -> std::io::Result<()> {
+    let mut staged = port_file.as_os_str().to_owned();
+    staged.push(format!(".{}.tmp", std::process::id()));
+    let staged = std::path::PathBuf::from(staged);
+    std::fs::write(&staged, port.to_string())?;
+    std::fs::rename(&staged, port_file).inspect_err(|_| {
+        let _ = std::fs::remove_file(&staged);
+    })
+}
+
 /// Load the embedding model after database open, retrying failures with backoff. The
 /// daemon serves meanwhile: pages are written without a vector and searches
 /// use their keyword channel. Once loaded, pages get their vectors here and
@@ -610,7 +626,7 @@ pub(super) async fn serve_and_drain(
     // Alternate signal: write the port to a file if WENLAN_PORT_FILE is set.
     // Eval harness uses this when stdout is captured by tracing-appender.
     if let Ok(port_file) = std::env::var("WENLAN_PORT_FILE") {
-        if let Err(e) = std::fs::write(&port_file, local_addr.port().to_string()) {
+        if let Err(e) = publish_port_file(std::path::Path::new(&port_file), local_addr.port()) {
             tracing::error!("failed to write WENLAN_PORT_FILE={}: {}", port_file, e);
             return Err(anyhow::anyhow!("WENLAN_PORT_FILE write failed: {}", e));
         }
@@ -680,5 +696,26 @@ pub(super) async fn serve_and_drain(
             );
             exit_daemon(0);
         }
+    }
+}
+
+#[cfg(test)]
+mod port_file_tests {
+    use super::publish_port_file;
+
+    #[test]
+    fn the_port_file_is_renamed_into_place_and_replaces_an_older_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let port_file = dir.path().join("daemon.port");
+        std::fs::write(&port_file, "1").unwrap();
+
+        publish_port_file(&port_file, 48_213).unwrap();
+
+        assert_eq!(std::fs::read_to_string(&port_file).unwrap(), "48213");
+        let left: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(left, ["daemon.port"], "the staged file must not remain");
     }
 }

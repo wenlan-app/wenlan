@@ -153,20 +153,23 @@ fn pages_list_reads_the_folder_of_the_daemon_wenlan_host_selects() {
 fn pages_errors_when_the_selected_daemon_is_unreachable() {
     // A page exists in the local config's folder; it must not be listed instead.
     let (_root, data) = pages_root(&[("project-atlas.md", ATLAS_MD)]);
-    // Bind then drop a listener so the port is free and nothing answers.
-    let free_port = std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
+    // A socket that is bound but never listens: a connect to it is refused, and
+    // because it stays bound until the test ends the OS cannot hand the port to
+    // a stub another test starts meanwhile. Binding a listener and dropping it
+    // frees the port, and a parallel test's stub then answers this command.
+    let held = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None).unwrap();
+    held.bind(&std::net::SocketAddr::from(([127, 0, 0, 1], 0)).into())
+        .unwrap();
+    let refused_port = held.local_addr().unwrap().as_socket().unwrap().port();
     cli()
         .env("WENLAN_DATA_DIR", &data)
-        .env("WENLAN_HOST", format!("http://127.0.0.1:{free_port}"))
+        .env("WENLAN_HOST", format!("http://127.0.0.1:{refused_port}"))
         .args(["pages"])
         .assert()
         .failure()
         .stdout("")
         .stderr(predicates::str::contains("/api/knowledge/path"));
+    drop(held);
 }
 
 #[test]
