@@ -23,8 +23,8 @@ describe("activeNavigationForView", () => {
     expect(activeNavigationForView({ kind: "distill-review" })).toBe("pages");
     expect(activeNavigationForView({ kind: "space", spaceId: "space-1", spaceName: "Launch" })).toBe("spaces");
   });
-  it("keeps topic detail in the same navigation context as topic browsing", () => {
-    expect(activeNavigationForView({ kind: "entities" })).toBe("entities");
+  it("lights the graph on the topic list, which opens from it", () => {
+    expect(activeNavigationForView({ kind: "entities" })).toBe("graph");
     expect(activeNavigationForView({ kind: "entity", entityId: "entity-1" })).toBe("entities");
   });
 });

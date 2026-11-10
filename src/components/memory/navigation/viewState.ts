@@ -56,7 +56,9 @@ export function activeNavigationForView(view: View): GlobalNavigation | null {
     case "page-draft":
     case "pages":
       return "pages";
+    // The topic list opens from the graph, so the graph stays lit there.
     case "entities":
+      return "graph";
     case "entity":
       return "entities";
     case "space":

@@ -117,7 +117,12 @@ test("old daemon keeps every page available and disables unsupported folder oper
   if (!(await sidebar.isVisible())) await page.locator(".wiki-workspace-folders-toggle").click();
   await expect(sidebar.getByText("Folder browsing is unavailable. All pages are still accessible.")).toBeVisible();
   // Right-click the notice, not a corner of the list: a note row now has its own menu.
-  await sidebar.getByText("Folder browsing is unavailable. All pages are still accessible.").click({button:"right"});
+  // The list scrolls in the sidebar, and a scroll closes the menu: bring the
+  // notice into view and let that scroll land before the right-click.
+  const notice = sidebar.getByText("Folder browsing is unavailable. All pages are still accessible.");
+  await notice.scrollIntoViewIfNeeded();
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await notice.click({button:"right"});
   await expect(page.getByRole("menuitem",{name:/^New folder/})).toBeDisabled();
   await page.keyboard.press("Escape");
   await expect(sidebar.getByRole("button",{name:"Work",exact:true})).toHaveCount(0);

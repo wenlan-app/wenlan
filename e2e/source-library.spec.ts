@@ -269,16 +269,17 @@ test("navigation destinations keep one primary workspace and restore page contex
 });
 
 
-test("the graph and topics sit on the left of a narrow dark workspace, with no More or Sources (UX-FIND-4)", async ({ page }) => {
+test("the graph sits on the left of a narrow dark workspace, with no More, Topics or Sources (UX-FIND-4)", async ({ page }) => {
   const state = await setup(page, false, true);
   await page.setViewportSize({ width: 375, height: 812 });
   await page.locator("[data-sidebar-toggle]").click();
   const nav = page.getByRole("navigation", { name: "主要導覽", exact: true });
   await expect(nav.getByRole("button", { name: "空間", exact: true })).toBeVisible();
-  for (const name of ["圖譜", "主題"]) await expect(nav.getByRole("button", { name, exact: true })).toBeVisible();
-  for (const name of ["來源", "更多"]) await expect(nav.getByRole("button", { name, exact: true })).toHaveCount(0);
+  await expect(nav.getByRole("button", { name: "圖譜", exact: true })).toBeVisible();
+  for (const name of ["主題", "來源", "更多"]) await expect(nav.getByRole("button", { name, exact: true })).toHaveCount(0);
   await capture(page, "navigation-dark-narrow.png");
-  await nav.getByRole("button", { name: "主題", exact: true }).click();
+  await nav.getByRole("button", { name: "圖譜", exact: true }).click();
+  await page.getByRole("button", { name: "所有主題", exact: true }).click();
   await expect(page.getByRole("heading", { name: "主題", exact: true })).toHaveClass(/sr-only/);
   const topicsToolbar = page.locator(".entities-toolbar");
   await expect(topicsToolbar).toBeVisible();
