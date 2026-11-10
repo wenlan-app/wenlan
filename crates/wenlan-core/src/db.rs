@@ -71,10 +71,12 @@ pub mod page_map;
 pub mod page_map_independent;
 mod page_rename;
 mod page_restore;
+mod page_space_move;
 mod removal;
 pub use removal::{ForgetOutcome, PageRemovalAudit};
 pub(crate) mod rebuild_writes;
 pub use page_restore::{restore_refusal_message, RestorePageError};
+pub use page_space_move::{set_page_space_refusal_message, SetPageSpaceError};
 mod page_summary_backfill;
 mod presence_review;
 mod quick_capture_repair;
@@ -239,6 +241,8 @@ mod page_link_rename_test;
 mod page_rename_test;
 #[cfg(test)]
 mod page_restore_test;
+#[cfg(test)]
+mod page_space_move_test;
 #[cfg(test)]
 mod presence_review_test;
 #[cfg(test)]
@@ -44475,6 +44479,34 @@ impl MemoryDB {
         Ok(())
     }
 
+    /// Move every still-live import batch marker (deadline in the future) out
+    /// to `deadline_epoch` when the shared import lane is extended, so a
+    /// batch's status keeps showing its page turn while the lane still runs.
+    /// Expired markers and later deadlines are left alone.
+    pub async fn extend_live_import_batch_priorities(
+        &self,
+        deadline_epoch: i64,
+    ) -> Result<(), WenlanError> {
+        let now = chrono::Utc::now().timestamp();
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "UPDATE app_metadata SET value = ?3
+             WHERE key >= ?1 AND key < ?2
+               AND CAST(value AS INTEGER) > ?4
+               AND CAST(value AS INTEGER) < ?5",
+            libsql::params![
+                Self::IMPORT_BATCH_PRIORITY_METADATA_PREFIX,
+                Self::IMPORT_BATCH_PRIORITY_METADATA_END,
+                deadline_epoch.to_string(),
+                now,
+                deadline_epoch
+            ],
+        )
+        .await
+        .map_err(|e| WenlanError::VectorDb(format!("extend import batch priority: {e}")))?;
+        Ok(())
+    }
+
     /// Return memories with at least one `failed` enrichment step that hasn't
     /// exceeded `max_attempts`, ordered oldest-first. Returns (source_id, step_name, content).
     pub async fn get_failed_enrichment_memories(
@@ -55457,13 +55489,15 @@ impl MemoryDB {
         // source revision first, and the agent's version is the page it read,
         // so a human rename (which bumps only `version`) between the gate and
         // this UPDATE cannot let the stale agent body land. The link rewrite
-        // after a rename fences on both for the same reason. Every other
+        // after a rename fences on both for the same reason, and so does a
+        // person-asked agent write (always version-checked). Every other
         // caller stays single-fence.
         if expected_version.is_some()
             && expected_source_revision.is_some()
             && page_growth_guard.is_none()
             && link_reason != "citation_backfill"
             && link_reason != "agent_refresh"
+            && link_reason != crate::post_write::PERSON_ASKED
             && link_reason != "link_rename"
             && consume_revision_id.is_none()
         {

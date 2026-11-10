@@ -188,6 +188,8 @@ pub async fn build_page_history(
             delta_summary: entry.delta_summary.clone(),
             text: entry.text.clone(),
             source: None,
+            person_asked: entry.person_asked.clone(),
+            restored_from: entry.restored_from,
             first_version: None,
         })
         .collect();
@@ -220,6 +222,8 @@ pub async fn build_page_history(
                 text: include_text.then(|| birth.content.clone()),
                 source: None,
                 changed_sentences: changed_sentences_at(&own, 1),
+                person_asked: None,
+                restored_from: None,
                 first_version: None,
             });
         }
@@ -278,6 +282,8 @@ pub async fn build_page_history(
                     text: include_text.then(|| row.content.clone()),
                 }),
                 changed_sentences: None,
+                person_asked: None,
+                restored_from: None,
                 first_version: None,
             });
         }

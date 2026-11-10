@@ -1725,6 +1725,12 @@ def _run_test_command(command: list[str]) -> None:
         bufsize=1,
     )
     assert process.stdout is not None
+    # The test runner's output is UTF-8 (nextest draws its separators with
+    # box-drawing characters); a Windows console defaults to cp1252, so echo
+    # it as UTF-8 rather than crash on the first such line.
+    reconfigure = getattr(sys.stdout, "reconfigure", None)
+    if reconfigure is not None:
+        reconfigure(encoding="utf-8", errors="replace")
     flaky: list[str] = []
     for line in process.stdout:
         sys.stdout.write(line)

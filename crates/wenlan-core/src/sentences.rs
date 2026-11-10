@@ -275,6 +275,28 @@ pub async fn locked_write_only_changes_sentences(
     Ok(norms(landing) == norms(&page.content))
 }
 
+/// Would a machine write of `new_content` change or drop a sentence that is
+/// the person's (or another member's, or, on a human-owned or locked page,
+/// of unknown origin)? Those are the sentences only the person may have
+/// changed (UX-WHO-2): putting back an earlier version that touches them
+/// needs the person's explicit request. The lock's protection of the AI's
+/// own sentences is not counted here; the lock still stages a card.
+pub async fn write_touches_person_sentences(
+    db: &MemoryDB,
+    page: &Page,
+    new_content: &str,
+) -> Result<bool, WenlanError> {
+    let rows = page_authorship(db, page).await?;
+    let guard = guarded(page);
+    let owned: HashSet<usize> = rows
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| authorship::row_is_protected(row, guard))
+        .map(|(idx, _)| idx)
+        .collect();
+    Ok(authorship::plan_sentence_gate(&page.content, new_content, &owned).is_some())
+}
+
 /// The facts-changed reason of a sentence: the strongest of its citation
 /// problems. A missing citation is not one; nothing about the facts changed.
 fn facts_changed(weak: &[WeakReason]) -> Option<WeakReason> {
@@ -1509,3 +1531,7 @@ pub use fix::{ask_ai_to_fix, fix_provider, FlagFixOutcome};
 #[cfg(test)]
 #[path = "sentences_test.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "sentences_person_asked_test.rs"]
+mod person_asked_tests;

@@ -126,6 +126,13 @@ pub async fn unknown_selectors_are_rejected() {
             Method::Post,
         ),
         (
+            HttpMethod::POST,
+            format!("/api/pages/{page}/restore-version"),
+            Some(json!({"version":1,"expected_version":2})),
+            "/api/pages/{id}/restore-version",
+            Method::Post,
+        ),
+        (
             HttpMethod::GET,
             format!("/api/pages/{page}/sources"),
             None,

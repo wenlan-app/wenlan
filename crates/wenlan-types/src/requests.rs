@@ -1032,6 +1032,27 @@ pub struct RefreshPageRequest {
     /// the change was minor. It never suppresses the pending notice.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub minor: Option<bool>,
+    /// UX-WHO-2: the person's own words, quoted exactly, when they explicitly
+    /// asked for this change in the conversation. Needs `expected_version`;
+    /// at most 500 characters and not blank. The write then may change the
+    /// person's sentences, and history shows it as asked by the person.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub person_asked: Option<String>,
+}
+
+/// Body for `POST /api/pages/{id}/restore-version`: put an earlier version's
+/// text and sources back as a new version.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RestorePageVersionRequest {
+    /// The earlier version to put back.
+    pub version: i64,
+    /// The page's current version, as the caller read it.
+    pub expected_version: i64,
+    /// The person's own words, needed when the restore would change or
+    /// remove their sentences (see [`RefreshPageRequest::person_asked`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub person_asked: Option<String>,
 }
 
 /// Body for `POST /api/memory/{id}/update-page` (the human save). The edit
@@ -1090,6 +1111,18 @@ pub struct RestorePageRequest {
     pub expected_version: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+}
+
+/// Move one ordinary page into another Space, or into no Space. The page's
+/// sources and body are not rewritten.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetPageSpaceRequest {
+    /// The registered Space to move the page into. `None` or an empty string
+    /// moves it into no Space.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub space: Option<String>,
+    pub expected_version: i64,
 }
 
 // ===== Concept Export =====

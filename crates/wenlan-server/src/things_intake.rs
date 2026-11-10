@@ -1122,7 +1122,7 @@ pub async fn look_with_until(
             })
             .await;
         let id = found_session_id(&conv).unwrap_or_default();
-        let Some(label) = answer
+        let Some(mut label) = answer
             .ok()
             .and_then(|text| intake::parse_label(&text, &spaces))
         else {
@@ -1130,6 +1130,18 @@ pub async fn look_with_until(
             continue;
         };
         backoff.label.remove(&id);
+        // A conversation whose AI kept a diagram of the work is work, so the
+        // diagram lands under a thing even when the model judged it a test
+        // or a one-off (UX-ART-4). A title is still needed to name it.
+        if !label.work
+            && !label.title.is_empty()
+            && db
+                .originals_for_conversation(&conv.tool, &conv.external_id)
+                .await
+                .is_ok_and(|kept| !kept.is_empty())
+        {
+            label.work = true;
+        }
         let repo = conv.cwd.as_deref().and_then(intake::repo_root_of);
         db.record_conversation_label(&conv, &label, repo.as_deref())
             .await

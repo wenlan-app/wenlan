@@ -127,6 +127,9 @@ export function HistoryChangeDialog({ pageId, item, onClose, shares }: HistoryCh
       >
         <h2 id={titleId} className="basis-diff__title">{historyItemLabel(t, item, shares)}</h2>
         <p className="basis-diff__versions">{when}</p>
+        {item.person_asked && (
+          <p className="basis-diff__versions">{t("pageHistory.yourWords", { quote: item.person_asked })}</p>
+        )}
         {body}
         <div className="basis-diff__actions">
           <Button variant="secondary" onClick={onClose}>{t("pageHistory.close")}</Button>

@@ -17,6 +17,9 @@ export function historyItemLabel(
   if (item.kind === "source_update") {
     return t("pageHistory.sourceUpdate", { title: item.source?.title || t("pageHistory.untitledSource") });
   }
+  if (item.restored_from != null) {
+    return t("pageHistory.restored", { version: item.restored_from });
+  }
   return sharedWriter(item.edited_by, shares, t) ?? revisionWriterLabel(t, item.edited_by ?? "", item.agent);
 }
 
@@ -41,6 +44,8 @@ export function historyRows(
       edited_by: entry.edited_by,
       agent: entry.agent ?? null,
       delta_summary: entry.delta_summary ?? null,
+      person_asked: entry.person_asked ?? null,
+      restored_from: entry.restored_from ?? null,
     }));
 }
 

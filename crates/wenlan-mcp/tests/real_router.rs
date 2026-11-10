@@ -362,6 +362,7 @@ async fn plain_mcp_host_gets_guarded_page_flow_from_daemon_replies() {
     let duplicate = text_of(
         &server
             .write_page_impl(WritePageParams {
+                person_asked: None,
                 citation_targets: vec![],
                 organize_run_id: None,
                 page_id: None,

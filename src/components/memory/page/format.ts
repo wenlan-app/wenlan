@@ -36,6 +36,12 @@ export function revisionWriterLabel(
       ? t("revisionLabel.writer.agentRefreshNamed", { agent: name })
       : t("revisionLabel.writer.agentRefresh");
   }
+  if (editedBy === "person_asked") {
+    const name = agentDisplayName(agent?.trim());
+    return name
+      ? t("revisionLabel.writer.personAskedNamed", { agent: name })
+      : t("revisionLabel.writer.personAsked");
+  }
   if (Object.prototype.hasOwnProperty.call(WRITER_LABEL_KEYS, editedBy)) {
     return t(WRITER_LABEL_KEYS[editedBy as keyof typeof WRITER_LABEL_KEYS]);
   }

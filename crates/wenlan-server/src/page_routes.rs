@@ -58,7 +58,12 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
         .route("/api/pages/{id}/archive", post(handle_archive_page))
         .route("/api/pages/{id}/restore", post(handle_restore_page))
         .route("/api/pages/{id}/rename", post(handle_rename_page))
+        .route("/api/pages/{id}/space", post(handle_set_page_space))
         .route("/api/pages/{id}/revisions", get(handle_get_page_revisions))
+        .route(
+            "/api/pages/{id}/restore-version",
+            post(handle_restore_page_version),
+        )
         .route("/api/pages/{id}/review", post(handle_review_page))
         .route(
             "/api/pages/{id}/review-required",
@@ -533,9 +538,9 @@ pub async fn handle_set_page_review_required(
     }))
 }
 
-/// Serializes page archive and restore. Each holds it from its database
-/// transition through its projection, so neither moves or writes a file
-/// against a state the other has already changed. Both are rare, deliberate
+/// Serializes page archive, restore and Space move. Each holds it from its
+/// database transition through its projection, so none moves or writes a file
+/// against a state another has already changed. All are rare, deliberate
 /// actions, so one lock for all pages costs nothing.
 static PAGE_LIFECYCLE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
@@ -777,6 +782,107 @@ fn restore_error(error: wenlan_core::db::RestorePageError) -> ServerError {
             }),
         },
         wenlan_core::db::RestorePageError::Failed(error) => ServerError::from(error),
+    }
+}
+
+/// POST /api/pages/{id}/space
+///
+/// Move one active ordinary note into another registered Space, or into no
+/// Space (`space` omitted or empty). Only a caller not locked to a Space may
+/// do this. The database row moves first, in one transaction with its history
+/// entry and basis refresh; the projected Markdown file is then rewritten from
+/// that durable row so its `space:` line follows, and a projection failure is
+/// reported as `projection_status: pending` rather than undoing the move.
+/// `unreadable_source_positions` names, by position only, the page's sources
+/// its new Space cannot read. Refusals carry a typed `code`
+/// ([`wenlan_types::responses::SetPageSpaceErrorCode`]).
+pub async fn handle_set_page_space(
+    State(state): State<Arc<RwLock<ServerState>>>,
+    crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
+    view: crate::truth_guard::TruthView,
+    Path(id): Path<String>,
+    Json(req): Json<wenlan_types::requests::SetPageSpaceRequest>,
+) -> Result<Json<wenlan_types::responses::SetPageSpaceResponse>, ServerError> {
+    let (db, page_root) = {
+        let state = state.read().await;
+        (
+            state.db.clone().ok_or(ServerError::DbNotInitialized)?,
+            state
+                .lint_config
+                .page_root()
+                .map(std::path::Path::to_path_buf),
+        )
+    };
+    // Held through the projection below; see `PAGE_LIFECYCLE`.
+    let _lifecycle = PAGE_LIFECYCLE.lock().await;
+    let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
+    // The move names one page, so it passes the same named-page truth filter
+    // as `GET /api/pages/{id}`: a page this caller may not see is not there.
+    if wenlan_core::truth_adapter::filter_page_refs(&db, &view.grant, vec![id.clone()], |id| {
+        id.as_str()
+    })
+    .await?
+    .is_empty()
+    {
+        return Err(ServerError::NotFound("page not found".into()));
+    }
+    let mut response = db
+        .set_page_space(&id, req.space.as_deref(), req.expected_version, &scope)
+        .await
+        .map_err(set_page_space_error)?;
+    if let Some(root) = page_root {
+        // Use the current durable row rather than request text.
+        let projection = wenlan_core::export::knowledge::KnowledgeProjectionWrite::new(root, &db);
+        match db.get_page_scoped(&id, &scope).await {
+            Ok(Some(page)) if page.status == "active" && page.version == response.version => {
+                match projection.write_page_gated(&db, &page).await {
+                    Ok(Some(_)) => response.projection_status = PageProjectionStatus::Synced,
+                    Ok(None) => response.projection_status = PageProjectionStatus::Hidden,
+                    Err(error) => {
+                        response.projection_status = PageProjectionStatus::Pending;
+                        response.projection_error = Some(error.to_string());
+                    }
+                }
+            }
+            _ => {
+                response.projection_status = PageProjectionStatus::Pending;
+                response.projection_error =
+                    Some("moved page changed before projection; reload its current version".into());
+            }
+        }
+    }
+    Ok(Json(response))
+}
+
+fn set_page_space_error(error: wenlan_core::db::SetPageSpaceError) -> ServerError {
+    use wenlan_types::responses::SetPageSpaceErrorCode as Code;
+    match error {
+        wenlan_core::db::SetPageSpaceError::Refused {
+            code,
+            current_version,
+        } => ServerError::Structured {
+            status: match code {
+                Code::PageSpaceVersionConflict | Code::PageSpaceTitleTaken => {
+                    axum::http::StatusCode::CONFLICT
+                }
+                Code::PageSpaceNotMovable | Code::PageSpaceUnknown => {
+                    axum::http::StatusCode::UNPROCESSABLE_ENTITY
+                }
+                Code::PageSpaceNeedsGlobalScope => axum::http::StatusCode::FORBIDDEN,
+            },
+            // `error` leads with the code so a client that keeps only the
+            // part before `:` (the MCP server) still switches on it.
+            body: serde_json::json!({
+                "code": code,
+                "error": format!(
+                    "{}: {}",
+                    code.as_str(),
+                    wenlan_core::db::set_page_space_refusal_message(code)
+                ),
+                "current_version": current_version,
+            }),
+        },
+        wenlan_core::db::SetPageSpaceError::Failed(error) => ServerError::from(error),
     }
 }
 
@@ -1986,6 +2092,8 @@ pub async fn handle_update_page(
                 card_marks: Vec::new(),
                 code_basis: Vec::new(),
                 space_guard: None,
+                person_asked: None,
+                restored_from: None,
             },
         },
     )
@@ -2089,6 +2197,7 @@ pub async fn handle_refresh_page(
         header_space.as_deref(),
         proposer.as_deref(),
         Json(req),
+        None,
     )
     .await;
     if let (Some(session), Some(db), Ok((wenlan_core::post_write::WriteOutcome::Wrote, _))) =
@@ -2217,6 +2326,7 @@ async fn handle_refresh_page_inner(
     header_space: Option<&str>,
     proposer: Option<&str>,
     Json(req): Json<wenlan_types::requests::RefreshPageRequest>,
+    restored_from: Option<i64>,
 ) -> Result<
     (
         wenlan_core::post_write::WriteOutcome,
@@ -2224,6 +2334,14 @@ async fn handle_refresh_page_inner(
     ),
     ServerError,
 > {
+    // UX-WHO-2: the person's words ride only a version-checked write.
+    let person_asked = match req.person_asked.as_deref() {
+        Some(quote) => Some(
+            wenlan_core::post_write::validate_person_asked(quote, req.expected_version)
+                .map_err(ServerError::ValidationError)?,
+        ),
+        None => None,
+    };
     // Validate the body before touching the filesystem. Empty content would
     // produce an empty md. An empty source list is checked against the page
     // below: it is accepted only for a page that has no sources to drop.
@@ -2389,7 +2507,10 @@ async fn handle_refresh_page_inner(
     });
     // A locked page whose write only changes sentences it already has goes
     // to the core gate, which turns each change into a sentence proposal.
+    // A write the person asked for waits as one card instead: the Lock
+    // holds, and the card is theirs to accept as a whole.
     let lock_proposes = citation_snapshots.is_empty()
+        && person_asked.is_none()
         && research_write.is_none()
         && existing.review_required
         && wenlan_core::sentences::locked_write_only_changes_sentences(
@@ -2472,6 +2593,8 @@ async fn handle_refresh_page_inner(
                 card_marks: Vec::new(),
                 code_basis: prepared_code_basis.clone(),
                 space_guard: space_guard.clone(),
+                person_asked: person_asked.clone(),
+                restored_from,
             },
             page_id: &id,
             req: wenlan_types::requests::UpdatePageRequest {
@@ -2611,6 +2734,180 @@ async fn handle_refresh_page_inner(
             edits_not_applied: result.edits_not_applied,
         },
     ))
+}
+
+/// POST /api/pages/{id}/restore-version
+///
+/// Put an earlier version's text and sources back as a new version. It is an
+/// AI tool's write and takes the same path as a refresh (version check,
+/// damage guard, an original's read-only body, citation checks, the Space
+/// guard, the lock), and its history entry says "restored version N". A
+/// restore that would change or remove the person's sentences needs
+/// `person_asked`, the person's own words (UX-WHO-2); without it the restore
+/// is refused rather than half applied. Refusals carry a typed `code`
+/// ([`wenlan_types::responses::RestorePageVersionErrorCode`]).
+pub async fn handle_restore_page_version(
+    State(state): State<Arc<RwLock<ServerState>>>,
+    Path(id): Path<String>,
+    crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
+    view: crate::truth_guard::TruthView,
+    headers: HeaderMap,
+    Json(req): Json<wenlan_types::requests::RestorePageVersionRequest>,
+) -> Result<Json<wenlan_types::responses::RestorePageVersionResponse>, ServerError> {
+    use wenlan_types::responses::RestorePageVersionErrorCode as Code;
+    let proposer = headers
+        .get("x-agent-name")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    let db = state
+        .read()
+        .await
+        .db
+        .clone()
+        .ok_or(ServerError::DbNotInitialized)?;
+    let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
+    // The restore reads one page's history, so it passes the same named-page
+    // truth filter as `GET /api/pages/{id}/revisions`, and a page outside the
+    // caller's Space is not there at all.
+    if wenlan_core::truth_adapter::filter_page_refs(&db, &view.grant, vec![id.clone()], |id| {
+        id.as_str()
+    })
+    .await?
+    .is_empty()
+    {
+        return Err(ServerError::NotFound("page not found".into()));
+    }
+    let page = db
+        .get_page(&id)
+        .await?
+        .filter(|page| scope.matches(page.space.as_deref()))
+        .ok_or_else(|| ServerError::NotFound("page not found".into()))?;
+    if page.status == "archived" {
+        return Err(restore_version_error(
+            Code::RestorePageArchived,
+            page.version,
+        ));
+    }
+    if req.expected_version != page.version {
+        return Err(restore_version_error(
+            Code::RestoreVersionConflict,
+            page.version,
+        ));
+    }
+    if req.version == page.version {
+        return Err(restore_version_error(
+            Code::RestoreVersionCurrent,
+            page.version,
+        ));
+    }
+    let person_asked = match req.person_asked.as_deref() {
+        Some(quote) => Some(
+            wenlan_core::post_write::validate_person_asked(quote, Some(req.expected_version))
+                .map_err(|_| restore_version_error(Code::PersonAskedInvalid, page.version))?,
+        ),
+        None => None,
+    };
+    // Only this page's own history rows are read, so another page's version
+    // number is simply not found.
+    let earlier = db
+        .list_page_history(&id, page.version.max(1))
+        .await?
+        .into_iter()
+        .find(|row| row.version == req.version)
+        .ok_or_else(|| restore_version_error(Code::RestoreVersionUnknown, page.version))?;
+    if person_asked.is_none()
+        && wenlan_core::sentences::write_touches_person_sentences(&db, &page, &earlier.content)
+            .await?
+    {
+        return Err(restore_version_error(
+            Code::RestoreNeedsPersonAsked,
+            page.version,
+        ));
+    }
+    let session = crate::session_routes::extract_session_ref(&headers);
+    let write_started_at = chrono::Utc::now().timestamp();
+    crate::agent_presence::note_page_writer(&db, proposer.as_deref()).await?;
+    let refresh = wenlan_types::requests::RefreshPageRequest {
+        organize_space: None,
+        organize_run_id: None,
+        citation_targets: Vec::new(),
+        content: earlier.content,
+        source_memory_ids: earlier.source_memory_ids,
+        summary: None,
+        expected_version: Some(req.expected_version),
+        basis: Vec::new(),
+        code_basis: Vec::new(),
+        minor: None,
+        person_asked,
+    };
+    let (outcome, write) = handle_refresh_page_inner(
+        State(state),
+        Path(id.clone()),
+        header_space.as_deref(),
+        proposer.as_deref(),
+        Json(refresh),
+        Some(req.version),
+    )
+    .await?;
+    if let (Some(session), wenlan_core::post_write::WriteOutcome::Wrote) = (&session, outcome) {
+        // Best effort, as for a refresh: the page is already written.
+        if let Err(error) = db
+            .stamp_page_history_session(&id, write_started_at, session, page.space.as_deref())
+            .await
+        {
+            tracing::warn!("[session] failed to stamp page {id} with {session}: {error}");
+        }
+    }
+    Ok(Json(wenlan_types::responses::RestorePageVersionResponse {
+        restored_from: req.version,
+        write,
+    }))
+}
+
+fn restore_version_error(
+    code: wenlan_types::responses::RestorePageVersionErrorCode,
+    current_version: i64,
+) -> ServerError {
+    use wenlan_types::responses::RestorePageVersionErrorCode as Code;
+    let (status, text) = match code {
+        Code::RestoreVersionConflict => (
+            axum::http::StatusCode::CONFLICT,
+            "the page moved past expected_version; read it again first",
+        ),
+        Code::RestoreVersionUnknown => (
+            axum::http::StatusCode::NOT_FOUND,
+            "this page has no such version in its history",
+        ),
+        Code::RestoreVersionCurrent => (
+            axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+            "that version is already the page's current one",
+        ),
+        Code::RestorePageArchived => (
+            axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+            "the page is archived; restore the page first",
+        ),
+        Code::RestoreNeedsPersonAsked => (
+            axum::http::StatusCode::CONFLICT,
+            "putting that version back would change the person's own sentences; \
+             only do it when the person explicitly asked, with person_asked set to their words",
+        ),
+        Code::PersonAskedInvalid => (
+            axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+            "person_asked must quote the person's own words: not blank, at most 500 characters",
+        ),
+    };
+    ServerError::Structured {
+        status,
+        // `error` leads with the code so a client that keeps only the part
+        // before `:` (the MCP server) still switches on it.
+        body: serde_json::json!({
+            "code": code,
+            "error": format!("{}: {text}", code.as_str()),
+            "current_version": current_version,
+        }),
+    }
 }
 
 /// The longest piece of a sentence a warning quotes.

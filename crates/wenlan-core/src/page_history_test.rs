@@ -235,6 +235,8 @@ fn save(version: i64, at: i64, by: &str) -> PageHistoryItem {
         text: None,
         source: None,
         changed_sentences: None,
+        person_asked: None,
+        restored_from: None,
         first_version: None,
     }
 }
