@@ -1356,12 +1356,19 @@ pub(crate) fn source_read_refusal<T>(
     resolved: &[Option<T>],
     scope: &crate::read_scope::ReadScope,
 ) -> Option<String> {
-    let positions: Vec<String> = resolved
+    let positions: Vec<usize> = resolved
         .iter()
         .enumerate()
         .filter(|(_, source)| source.is_none())
-        .map(|(index, _)| (index + 1).to_string())
+        .map(|(index, _)| index + 1)
         .collect();
+    refusal_for_positions(&positions, scope)
+}
+
+fn refusal_for_positions(
+    positions: &[usize],
+    scope: &crate::read_scope::ReadScope,
+) -> Option<String> {
     if positions.is_empty() {
         return None;
     }
@@ -1370,11 +1377,107 @@ pub(crate) fn source_read_refusal<T>(
         crate::read_scope::ReadScope::Space(_) => "space",
         crate::read_scope::ReadScope::Global => "global",
     };
+    let positions: Vec<String> = positions.iter().map(ToString::to_string).collect();
     Some(format!(
         "source_read_refused: positions={} target={target}; source unavailable, ambiguous, \
          or incomplete in the target Space; reread exact sources and check scope",
         positions.join(",")
     ))
+}
+
+/// The page as it stands, for a write the person explicitly asked for
+/// (UX-WHO-2). Such a write may keep sources the page's Space can no longer
+/// read, as long as it leaves every sentence citing them exactly as it was:
+/// those sentences keep their recorded citations, and only what the write
+/// changed is checked against its sources.
+pub struct PageAsItStands<'a> {
+    pub body: &'a str,
+    pub citations: &'a [PageCitation],
+    pub source_ids: &'a [String],
+}
+
+/// Which cited paragraphs of a write are carried over unchanged from the
+/// page as it stands.
+struct CarriedCitations {
+    /// New occurrence number -> the record the page already had for it.
+    kept: std::collections::HashMap<u32, PageCitation>,
+    /// The paragraphs with markers that are not carried, joined; the only
+    /// text the support check gates on.
+    changed: String,
+    /// Marker numbers cited anywhere in `changed`.
+    changed_markers: std::collections::BTreeSet<u32>,
+}
+
+/// A cited paragraph is carried when it is byte-identical to exactly one
+/// paragraph of the current page (and appears once in the write), and each
+/// of its markers names the same source the current record names. Anything
+/// else is treated as changed and checked like any other write.
+fn carry_unchanged_citations(
+    clean: &str,
+    current: &PageAsItStands<'_>,
+    source_ids: &[String],
+) -> CarriedCitations {
+    use std::collections::{BTreeSet, HashMap};
+    let old_body = normalize_markers(current.body);
+    let map_ok = RE_MARKER.find_iter(&old_body).count() == current.citations.len();
+    let mut old_paragraphs: HashMap<&str, Vec<usize>> = HashMap::new();
+    let mut offset = 0usize;
+    for paragraph in RE_PARAGRAPH_BREAK.split(&old_body) {
+        old_paragraphs.entry(paragraph).or_default().push(offset);
+        offset += RE_MARKER.find_iter(paragraph).count();
+    }
+    let mut new_counts: HashMap<&str, usize> = HashMap::new();
+    for paragraph in RE_PARAGRAPH_BREAK.split(clean) {
+        *new_counts.entry(paragraph).or_default() += 1;
+    }
+    let mut kept = HashMap::new();
+    let mut changed = Vec::new();
+    let mut changed_markers = BTreeSet::new();
+    let mut occurrence = 0u32;
+    for paragraph in RE_PARAGRAPH_BREAK.split(clean) {
+        let markers: Vec<u32> = RE_MARKER
+            .captures_iter(paragraph)
+            .map(|cap| cap[1].parse().unwrap_or(0))
+            .collect();
+        if markers.is_empty() {
+            continue;
+        }
+        let start = old_paragraphs
+            .get(paragraph)
+            .filter(|starts| map_ok && starts.len() == 1 && new_counts[paragraph] == 1)
+            .map(|starts| starts[0]);
+        let records: Option<Vec<PageCitation>> = start.and_then(|start| {
+            markers
+                .iter()
+                .enumerate()
+                .map(|(local, &marker)| {
+                    let wanted = u32::try_from(start + local + 1).ok()?;
+                    let old = current.citations.iter().find(|c| c.occurrence == wanted)?;
+                    let locator = source_ids.get((marker as usize).checked_sub(1)?)?;
+                    (old.marker == marker && &old.locator == locator).then(|| old.clone())
+                })
+                .collect()
+        });
+        match records {
+            Some(records) => {
+                for mut record in records {
+                    occurrence += 1;
+                    record.occurrence = occurrence;
+                    kept.insert(occurrence, record);
+                }
+            }
+            None => {
+                occurrence += u32::try_from(markers.len()).unwrap_or(u32::MAX);
+                changed_markers.extend(markers);
+                changed.push(paragraph);
+            }
+        }
+    }
+    CarriedCitations {
+        kept,
+        changed: changed.join("\n\n"),
+        changed_markers,
+    }
 }
 
 /// Check the `[n]` markers in a page an AI tool is writing, where `[n]` is
@@ -1391,6 +1494,22 @@ pub async fn check_write_citations(
     source_ids: &[String],
     scope: &crate::read_scope::ReadScope,
 ) -> Result<Result<WriteCitations, String>, WenlanError> {
+    check_write_citations_keeping(db, content, source_ids, scope, None).await
+}
+
+/// [`check_write_citations`] for a write the person explicitly asked for.
+/// When some named sources cannot be read where the page lives, the write is
+/// still accepted if each of those sources was already on the page and no
+/// sentence the write changed cites one: the unchanged cited paragraphs keep
+/// their recorded citations, and only the changed ones are checked. A changed
+/// sentence citing an unreadable source is refused exactly as before.
+pub async fn check_write_citations_keeping(
+    db: &MemoryDB,
+    content: &str,
+    source_ids: &[String],
+    scope: &crate::read_scope::ReadScope,
+    current: Option<PageAsItStands<'_>>,
+) -> Result<Result<WriteCitations, String>, WenlanError> {
     // Without sources a bracketed number is just text the writer typed.
     if source_ids.is_empty() {
         return Ok(Ok(WriteCitations::Uncited {
@@ -1398,8 +1517,28 @@ pub async fn check_write_citations(
         }));
     }
     let resolved = db.citation_sources(source_ids, scope).await?;
+    let mut carried = None;
     if let Some(refusal) = source_read_refusal(&resolved, scope) {
-        return Err(WenlanError::Validation(refusal));
+        let Some(current) = current else {
+            return Err(WenlanError::Validation(refusal));
+        };
+        let clean = strip_out_of_range(&normalize_markers(content), source_ids.len(), &mut 0);
+        let carry = carry_unchanged_citations(&clean, &current, source_ids);
+        let blocking: Vec<usize> = resolved
+            .iter()
+            .enumerate()
+            .filter(|(_, source)| source.is_none())
+            .map(|(index, _)| index + 1)
+            .filter(|&position| {
+                !current.source_ids.contains(&source_ids[position - 1])
+                    || u32::try_from(position)
+                        .is_ok_and(|marker| carry.changed_markers.contains(&marker))
+            })
+            .collect();
+        if let Some(refusal) = refusal_for_positions(&blocking, scope) {
+            return Err(WenlanError::Validation(refusal));
+        }
+        carried = Some(carry);
     }
     if !RE_MARKERS.is_match(&normalize_markers(content)) {
         return Ok(Ok(WriteCitations::Uncited {
@@ -1430,7 +1569,10 @@ pub async fn check_write_citations(
             text: source.as_ref().map(|s| s.text.clone()).unwrap_or_default(),
         })
         .collect();
-    let mut checked = check_numbered_citations(content, &numbered)?;
+    let mut checked = match &carried {
+        None => check_numbered_citations(content, &numbered)?,
+        Some(carry) => check_carried_citations(content, &numbered, carry)?,
+    };
     if let Ok(WriteCitations::Checked {
         citations_json,
         snapshots,
@@ -1440,6 +1582,13 @@ pub async fn check_write_citations(
     {
         let mut citations: Vec<PageCitation> = serde_json::from_str(citations_json)?;
         for citation in &mut citations {
+            // A carried record keeps the version it was checked against.
+            if carried
+                .as_ref()
+                .is_some_and(|carry| carry.kept.contains_key(&citation.occurrence))
+            {
+                continue;
+            }
             if let Some(source) = resolved
                 .get(citation.marker.saturating_sub(1) as usize)
                 .and_then(Option::as_ref)
@@ -1470,6 +1619,42 @@ pub async fn check_write_citations(
         }
     }
     Ok(checked)
+}
+
+/// The gate for a person-asked write that keeps unchanged cited paragraphs:
+/// only the changed paragraphs are checked and gated; the unchanged ones get
+/// back the records the page already had.
+fn check_carried_citations(
+    content: &str,
+    numbered: &[NumberedSource],
+    carry: &CarriedCitations,
+) -> Result<Result<WriteCitations, String>, WenlanError> {
+    let (body, mut cites, _) = process_citation_output(content, numbered);
+    if RE_MARKER.is_match(&carry.changed) {
+        let (_, _, stats) = process_citation_output(&carry.changed, numbered);
+        if stats.verified == 0 || stats.unverified > stats.verified {
+            return Ok(Err(stats.summary()));
+        }
+    }
+    for citation in &mut cites {
+        if let Some(kept) = carry.kept.get(&citation.occurrence) {
+            *citation = kept.clone();
+        }
+    }
+    let count = |status: &str| cites.iter().filter(|c| c.status == status).count();
+    let summary = format!(
+        "{} verified, {} unverified, {} unevaluated; {} unchanged citations kept as they were",
+        count("verified"),
+        count("unverified"),
+        count("unevaluated"),
+        carry.kept.len()
+    );
+    Ok(Ok(WriteCitations::Checked {
+        body,
+        citations_json: serde_json::to_string(&cites)?,
+        summary,
+        snapshots: Vec::new(),
+    }))
 }
 
 /// The gate itself, on sources already numbered: refused when no cited

@@ -881,3 +881,106 @@ async fn manual_reference_retention_page_write_preserves_three_targets_unevaluat
         }
     }
 }
+
+/// UX-WHO-2: a write the person asked for is not refused because the page
+/// also cites a source its Space can no longer read, as long as the write
+/// leaves the sentence citing it as it was. That sentence keeps its recorded
+/// citation; a changed sentence citing the unreadable source is still refused,
+/// and so is every other write.
+#[tokio::test]
+async fn a_person_asked_write_keeps_unchanged_sentences_citing_an_unreadable_source() {
+    use crate::citations::{check_write_citations_keeping, PageAsItStands};
+    let (db, _dir) = fixture().await;
+    let scope = ReadScope::Space("Research".into());
+    let (paper_json, _) = checked(&db).await;
+    let paper: Vec<wenlan_types::pages::PageCitation> = serde_json::from_str(&paper_json).unwrap();
+    // A second source the page cites, since moved to another Space.
+    db.conn
+        .lock()
+        .await
+        .execute(
+            "INSERT INTO memories (id,source,source_id,title,content,chunk_index,last_modified,space,version,chunk_type)
+             VALUES ('moved-0','memory','moved','Moved','Interview notes say people forget their tags',0,10,'Other',1,'text')",
+            (),
+        )
+        .await
+        .unwrap();
+    let mut moved = paper[0].clone();
+    moved.occurrence = 2;
+    moved.marker = 2;
+    moved.locator = "moved".into();
+    moved.cited_version = Some(1);
+    moved.cited_digest = Some("digest-at-v1".into());
+    let current_citations = vec![paper[0].clone(), moved.clone()];
+    let source_ids: Vec<String> = vec!["zotero::paper".into(), "moved".into()];
+    let body = format!(
+        "Status: draft.\n\n{CLAIM} [1].\n\nInterview notes say people forget their tags [2]."
+    );
+    let current = || PageAsItStands {
+        body: &body,
+        citations: &current_citations,
+        source_ids: &source_ids,
+    };
+    let asked = body.replace("Status: draft.", "Status: replaced by the new page.");
+
+    // Without the person's request the write is refused, as before.
+    let refused = check_write_citations_keeping(&db, &asked, &source_ids, &scope, None)
+        .await
+        .err()
+        .expect("refused");
+    assert!(refused.to_string().contains("positions=2 "), "{refused}");
+
+    // With it, the one-line change lands, and both cited sentences, which
+    // it left as they were, keep their records exactly.
+    let Ok(WriteCitations::Checked {
+        body: landed,
+        citations_json,
+        summary,
+        snapshots,
+    }) = check_write_citations_keeping(&db, &asked, &source_ids, &scope, Some(current()))
+        .await
+        .unwrap()
+    else {
+        panic!("expected checked citations");
+    };
+    assert_eq!(landed, asked);
+    let citations: Vec<wenlan_types::pages::PageCitation> =
+        serde_json::from_str(&citations_json).unwrap();
+    assert_eq!(citations.len(), 2);
+    assert_eq!(citations[0].locator, "zotero::paper");
+    assert_eq!(citations[0].status, "verified");
+    assert_eq!(
+        serde_json::to_value(&citations[1]).unwrap(),
+        serde_json::to_value(&moved).unwrap()
+    );
+    assert!(summary.contains("2 unchanged citations kept"), "{summary}");
+    assert_eq!(snapshots.len(), 1, "only the readable source is fenced");
+
+    // Changing the sentence that cites the moved source is still refused.
+    let reworded = asked.replace("forget their tags", "never use tags");
+    let refused =
+        check_write_citations_keeping(&db, &reworded, &source_ids, &scope, Some(current()))
+            .await
+            .err()
+            .expect("refused");
+    assert!(refused.to_string().contains("positions=2 "), "{refused}");
+
+    // So is a new unreadable source the page did not already have.
+    let mut extra = source_ids.clone();
+    extra.push("moved-elsewhere".into());
+    let refused = check_write_citations_keeping(&db, &asked, &extra, &scope, Some(current()))
+        .await
+        .err()
+        .expect("refused");
+    assert!(refused.to_string().contains("positions=3 "), "{refused}");
+
+    // A changed sentence citing a readable source is still checked: one that
+    // its source does not support is refused.
+    let unsupported = asked.replace(CLAIM, "Bananas grow fastest on the moon");
+    assert!(
+        check_write_citations_keeping(&db, &unsupported, &source_ids, &scope, Some(current()))
+            .await
+            .unwrap()
+            .is_err()
+    );
+}
