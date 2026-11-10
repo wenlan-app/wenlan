@@ -26,6 +26,7 @@ import {
   type Space,
 } from "../../lib/tauri";
 import { reloadWindow } from "../../lib/reloadWindow";
+import { useExperiment } from "../../lib/experiments";
 import { setPendingPairingCode } from "../../lib/pairingLink";
 import { confirmAction } from "../../lib/confirmAction";
 import { MAIN_HEADER_HEIGHT, topBarLeftInset } from "../../lib/windowChrome";
@@ -997,13 +998,15 @@ export default function Main({
     enabled: debouncedQuery.trim().length > 0,
   });
 
-  // What you're working on: the home list, matched here by title.
+  // What you're working on: the home list, matched here by title. An
+  // experiment: while it is off, search shows no things either.
+  const [thingsOn] = useExperiment("things");
   const { data: allThings = [] } = useQuery({
     queryKey: THINGS_QUERY_KEY,
     queryFn: listThings,
-    enabled: debouncedQuery.trim().length > 0,
+    enabled: thingsOn && debouncedQuery.trim().length > 0,
   });
-  const thingResults = matchingThings(allThings, debouncedQuery);
+  const thingResults = thingsOn ? matchingThings(allThings, debouncedQuery) : [];
   // Archived pages are out of the folder tree (as in Obsidian), so search is
   // where you find one: matched by title, opened read only with Restore.
   const { data: archivedPages = [] } = useQuery({
@@ -1689,6 +1692,7 @@ export default function Main({
                   setWikiInventoryMode("folders");
                   navigatePages();
                 }}
+                onBrowseSpaces={() => navigateTo({ kind: "spaces" })}
                 onBrowseFolder={(inventoryScope) => navigateTo({ kind: "pages", inventoryScope })}
                 onCreatePage={(space, folderPath) => navigateTo({ kind: "page-draft", space, folderPath })}
                 onSelectDraft={openWikiDraft}

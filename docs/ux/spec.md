@@ -82,9 +82,15 @@ and wait for evidence that people need them.
 
 ## Home
 
-- **UX-HOME-1** `shipped` The first screen is "what you're working on". Each
-  thing gets one line saying where it stands; opening it goes to that thing.
+- **UX-HOME-1** `shipped` Home leads with your Spaces, then the pages edited
+  last. Beside the Spaces heading one quiet line names what last night
+  steeped, and its moon replays the night. "What you're working on" is an
+  experiment, off until you turn it on in Settings; on, it leads home instead
+  of the Spaces, and search finds things only while it is on. Either way
+  Wenlan keeps sorting conversations into things and steeping them each night
+  in the background.
   原文：打開 app 的第一屏是「正在做的事」，每件一句做到哪，點進去就是那件事。
+  「这个功能比较鸡肋…先把它给改成是 experiment，然后首页的话就是专注的先放空间跟 wikis 就好了…然后留下那个今晚的那个沉淀的东西」（2026-11-10 07:41 PT）；選擇卡「只藏画面，后台照跑」（2026-11-10 08:08 PT）
 - **UX-HOME-2** `shipped` Home shows no counts: no number of sources, pages,
   archived pages or conversations.
   原文：首頁沒有任何計數：來源數、頁數、封存數、幾段對話都不放。

@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { setExperiment } from "../../../lib/experiments";
 import {
   distillReview,
   listAgents,
@@ -8,6 +9,10 @@ import {
   listRefinements,
   listRegisteredSources,
   listWorkingOn,
+  listSpaces,
+  listThings,
+  type Space,
+  type ThingSummary,
   type DistillReviewResponse,
   type Page,
 } from "../../../lib/tauri";
@@ -27,6 +32,9 @@ vi.mock("../../../lib/tauri", async (importOriginal) => ({
   listRegisteredSources: vi.fn().mockResolvedValue([]),
   getTruthStatus: vi.fn().mockResolvedValue(null),
   listWorkingOn: vi.fn().mockResolvedValue([]),
+  listSpaces: vi.fn().mockResolvedValue([]),
+  listThings: vi.fn().mockResolvedValue([]),
+  setUiLanguage: vi.fn().mockResolvedValue(undefined),
 }));
 
 function page(overrides: Partial<Page> = {}): Page {
@@ -194,8 +202,40 @@ describe("PagesOverview reading workspace", () => {
     expect(onBrowseAll).toHaveBeenCalled();
   });
 
+  describe("with what you're working on off", () => {
+    const now = Math.floor(Date.now() / 1000);
+    const space = (id: string, name: string, extra: Partial<Space> = {}): Space => ({
+      id, name, description: null, suggested: false, starred: false, sort_order: 0,
+      memory_count: 0, entity_count: 0, created_at: now, updated_at: now, ...extra,
+    });
+
+    it("UX-HOME-1 leads with your Spaces, starred first, and names last night's steeping without cards for things", async () => {
+      vi.mocked(listSpaces).mockResolvedValueOnce([
+        space("s1", "wenlan-site", { sort_order: 0, description: "Launch site" }),
+        space("s2", "wenlan", { sort_order: 1, starred: true }),
+        space("s3", "maybe", { suggested: true }),
+      ]);
+      vi.mocked(listThings).mockResolvedValueOnce([
+        { id: "t1", title: "Home redesign", title_by: "ai", status_line: null, spaces: [], last_activity_at: now, quiet: false, dreamed_at: now - 60 } as ThingSummary,
+      ]);
+      const { container, onSelectSpace } = renderOverview();
+      const section = await screen.findByTestId("home-spaces");
+      expect(container.querySelector(".wiki-overview .home-columns")?.firstElementChild).toBe(section);
+      expect(screen.getByRole("heading", { level: 2, name: "Spaces" })).toBeInTheDocument();
+      const cards = [...section.querySelectorAll(".home-space-card")];
+      expect(cards.map((card) => card.querySelector(".wiki-working-on-title")?.textContent)).toEqual(["wenlan", "wenlan-site"]);
+      expect(await screen.findByTestId("home-steeped")).toHaveTextContent("Home redesign");
+      expect(screen.queryByTestId("wiki-working-on")).toBeNull();
+      fireEvent.click(cards[1]);
+      expect(onSelectSpace).toHaveBeenCalledWith("wenlan-site");
+    });
+  });
+
   describe("what you're working on", () => {
     const now = Math.floor(Date.now() / 1000);
+    // An experiment (UX-HOME-1): these cards show only while it is on.
+    beforeEach(() => setExperiment("things", true));
+    afterEach(() => setExperiment("things", false));
 
     it("UX-HOME-1 leads the home with one card per active Brief item, opening its Space", async () => {
       vi.mocked(listWorkingOn).mockResolvedValueOnce([

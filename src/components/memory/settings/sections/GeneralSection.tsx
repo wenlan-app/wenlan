@@ -32,6 +32,7 @@ import {
   SettingRow,
 } from "../primitives";
 import { SettingsGroup } from "../SettingsView";
+import { useExperiment } from "../../../../lib/experiments";
 import ProfileAvatar from "../../ProfileAvatar";
 import { replayPageTour, usePageTourState } from "../../../onboarding/PageTour";
 import { resetTabIntros } from "../../../onboarding/TabIntro";
@@ -367,6 +368,7 @@ export default function GeneralSection() {
       </SettingsGroup>
       <LocalDataSettingsBlock />
       <ExportSettingsBlock />
+      <ExperimentsSettingsBlock />
     </>
   );
 }
@@ -396,6 +398,23 @@ function PageTipsRow() {
         </Button>
       }
     />
+  );
+}
+
+/** Screens still being tried, off until turned on; the background runs either way. */
+function ExperimentsSettingsBlock() {
+  const { t } = useTranslation();
+  const [things, setThings] = useExperiment("things");
+  return (
+    <SettingsGroup heading={t("settings.general.experimentsSection")} className="mem-fade-up" style={{ animationDelay: "0ms" }}>
+      <SettingRow
+        title={t("settings.general.experimentThingsTitle")}
+        titleBadge={t("settings.general.experimentBadge")}
+        description={t("settings.general.experimentThingsDescription")}
+        enabled={things}
+        onToggle={() => setThings(!things)}
+      />
+    </SettingsGroup>
   );
 }
 
