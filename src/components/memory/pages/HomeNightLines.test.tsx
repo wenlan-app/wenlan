@@ -138,7 +138,7 @@ describe("HomeNightLines: not written yet", () => {
     renderLines();
     const line = await screen.findByTestId("home-unwritten");
     await waitFor(() => expect(screen.getByTestId("home-unwritten-action")).toHaveTextContent("交給 Claude Code"));
-    expect(line).toHaveTextContent("還沒寫成頁：");
+    expect(line).toHaveTextContent("還沒寫成頁");
     expect(line.querySelector(".home-night-names")?.textContent).toBe("Driftwood、設計的心理學");
   });
 

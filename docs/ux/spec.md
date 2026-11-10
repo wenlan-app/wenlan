@@ -129,7 +129,7 @@ and wait for evidence that people need them.
   exactly those items; with no AI tool connected it is "Try again", which
   lets Automatic try them again. The line is gone when nothing is set aside.
   While "What you're working on" is on, it sits above that section.
-  原文：首頁「還沒寫成頁：…」一行與「交給 {工具}」／「再試一次」按鈕的設計稿，Qi-Xuan 同意（2026-11-10）；原話待補。
+  原文：首頁「還沒寫成頁：…」一行與「交給 {工具}」／「再試一次」按鈕的設計稿，Qi-Xuan 同意（2026-11-10），原話：「yes」（2026-11-10 19:55Z，回覆草圖）。
 
 ## Sorting conversations into things
 
