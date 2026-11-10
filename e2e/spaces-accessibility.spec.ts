@@ -279,7 +279,7 @@ test("switches exactly at the management and dossier breakpoints", async ({ page
   await page.setViewportSize({ width: 899, height: 900 });
   await openSidebar(page);
   const primaryNavigation = page.getByRole("navigation", { name: "Primary navigation" });
-  for (const name of ["Home", "Wiki", "Spaces", "Graph", "Topics"]) {
+  for (const name of ["Home", "Wiki", "Spaces", "Graph"]) {
     await expect(primaryNavigation.getByRole("button", { name, exact: true })).toBeVisible();
   }
   await expect(primaryNavigation.locator('[aria-current="page"]')).toHaveCount(1);
@@ -475,6 +475,9 @@ test("reaches management, dossier, graph, ledger, observation, and linked-memory
   await expect(page.getByRole("heading", { level: 1, name: "Topics" })).toBeVisible();
   await tabTo(page, back);
   await page.keyboard.press("Enter");
+  await expect(page.getByTestId("atlas-view")).toBeVisible();
+  await tabTo(page, back);
+  await page.keyboard.press("Enter");
   await expect(page.getByRole("heading", { level: 1, name: "Wenlan" })).toBeVisible();
 });
 
@@ -555,6 +558,8 @@ test("preserves the Entity signature and CJK dossiers at 200 percent zoom", asyn
   const historyBack = page.getByRole("group", { name: "歷史導覽", exact: true }).getByRole("button", { name: "返回", exact: true });
   await historyBack.click();
   await expect(page.getByRole("heading", { level: 1, name: "主題", exact: true })).toBeVisible();
+  await historyBack.click();
+  await expect(page.getByTestId("atlas-view")).toBeVisible();
   await historyBack.click();
   await expect(spaceHeading).toBeVisible();
 
