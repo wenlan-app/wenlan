@@ -1,16 +1,16 @@
-<!-- README_SYNC: source=README.md sha256=30b6ff5b752a6fd1a08377d57c043c4aef9d98f4e96e976d2ac6abc0d7af3e4b -->
+<!-- README_SYNC: source=README.md sha256=6f6a63a03c27819a5b40369a89d794d4bb3317233a7c299c6859f951b04ccc39 -->
 
 <p align="center">
   <picture>
     <source media="(max-width: 600px)" srcset="./docs/assets/readme-banner-zh-Hant-mobile.png">
-    <img src="./docs/assets/readme-banner-zh-Hant.png" alt="Wenlan：持續更新的知識庫。免費、開源、本地優先。" width="100%">
+    <img src="./docs/assets/readme-banner-zh-Hant.png" alt="文瀾：不用你維護的知識庫。免費、開源、本地優先。" width="100%">
   </picture>
 </p>
 
 <p align="center">
-  <strong>筆記、程式碼、AI 對話整理成知識庫，對照過來源。</strong><br>
-  你和 AI 工具共用同一份資料，來源變了會跟著更新。<br>
-  你的筆記留在你的電腦上，只會送到你選的 AI 工具。
+  <strong>想寫就自己寫，其他交給 AI 整理。</strong><br>
+  開源的 Obsidian 替代品。一鍵連上你的 AI 工具，不用自己裝插件、維護插件。<br>
+  還能跟團隊共用。你的筆記留在你的電腦上，只會送到你選的 AI 工具。
 </p>
 
 <p align="center">
@@ -41,13 +41,14 @@
 
 ## 為什麼用文瀾
 
-我做文瀾，是因為筆記、文件和 AI 對話散落各處又一直在變，要讓筆記庫不荒廢得不停維護。我想要一個 AI 原生、不用費心照顧的知識庫。
+我做文瀾，是因為筆記、文件和 AI 對話散落各處，要讓筆記系統不荒廢得不停維護。文瀾是給每天用 AI 工具、又不想維護筆記系統的人。
 
-- **你的 AI 幫你寫、幫你維護：** 你平常用的 AI 工具把你的文件、舊筆記和 AI 對話寫成新的筆記，不用另外裝模型。
+- **想寫就自己寫：** 隨時打開一頁就能寫。你寫的筆記設成「先問我」，沒有你同意，不會改動你原有的筆記。
+- **其他交給 AI 整理：** 你平常用的 AI 工具把你的筆記、文件和 AI 對話寫成筆記、連起來，來源變了就跟著更新。文瀾不自帶 AI。
+- **一鍵連上：** 在設定裡按「全部連接」，就連好你電腦上的 AI 工具。不用自己找插件、裝插件、維護插件。
 - **撐不住的會告訴你：** 引用大多對不上來源的筆記不會存下，每個引用都能點回原文。
-- **變了會標出來：** 來源、筆記或程式碼一變，只有依靠它的筆記會被標出來。
-- **你寫的還是你的：** 沒有你同意，不會改動你原有的筆記；你寫的筆記設成「先問我」。
-- **帶進現有資料，換工具也不怕：** 筆記、文件、連結和對話都能帶進來（[完整清單](#what-can-i-bring-in)），存成本地 Markdown，你選的 AI 工具都能用。
+- **跟團隊共用：** 把一個 Space 放進 Google Drive 或 iCloud 雲碟的資料夾共用，同事在自己的電腦上加入就能用。
+- **帶進現有資料：** 筆記、文件、連結、對話和 Obsidian vault 都能帶進來（[完整清單](#what-can-i-bring-in)），存成本地 Markdown 檔。
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
@@ -75,17 +76,19 @@
 
 ### 3. 連接你的 AI 工具
 
-| AI 工具 | 連接方式 | 設定入口 |
+在 App 的設定裡，「新增工具」會找出你電腦上的 AI 工具，按「全部連接」一次設好，不用另外裝東西或更新。接著開一個新的 AI 對話，問它：
+
+> /recall 我之前對這件事的筆記和決定，再幫我：……
+
+想自己手動設定，或看看會連上什麼：
+
+| AI 工具 | 會設定什麼 | 說明 |
 |---|---|---|
 | Claude Code／Claude Desktop | 插件／MCP | [Claude 指南](docs/setup-with-ai.md#claude-code) |
 | ChatGPT Desktop（Codex）、Codex CLI | 插件 | [Codex 指南](docs/setup-with-ai.md#codex) |
 | Cursor、GitHub Copilot、VS Code、Gemini CLI、Antigravity、Windsurf、Kiro、OpenCode、Kimi Code | MCP 和技能 | [MCP 指南](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 | Muse Code 和其他 MCP 工具 | MCP | [MCP 指南](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 | Grok Bot | 本機 CLI，或 MCP | [Grok Bot 指南](docs/setup-with-ai.md#grok-bot) |
-
-在 App 的設定裡，「新增工具」會找出你電腦上的 AI 工具，按「全部連接」一次設好。接著開一個新的 AI 對話，問它：
-
-> /recall 我之前對這件事的筆記和決定，再幫我：……
 
 Codex 中用 `$recall`；只用 MCP 的工具，直接請它先查文瀾。Grok Bot 在你的電腦上執行 `wenlan recall`，或在那裡開一段短暫的 `wenlan-mcp` 會話（[Grok Bot 指南](docs/setup-with-ai.md#grok-bot)）。
 

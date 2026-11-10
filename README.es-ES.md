@@ -1,16 +1,16 @@
-<!-- README_SYNC: source=README.md sha256=30b6ff5b752a6fd1a08377d57c043c4aef9d98f4e96e976d2ac6abc0d7af3e4b -->
+<!-- README_SYNC: source=README.md sha256=6f6a63a03c27819a5b40369a89d794d4bb3317233a7c299c6859f951b04ccc39 -->
 
 <p align="center">
   <picture>
     <source media="(max-width: 600px)" srcset="./docs/assets/readme-banner-es-ES-mobile.png">
-    <img src="./docs/assets/readme-banner-es-ES.png" alt="Wenlan: Tu wiki viva. Gratis, de código abierto y local-first." width="100%">
+    <img src="./docs/assets/readme-banner-es-ES.png" alt="Wenlan: la base de conocimiento que no tienes que mantener. Gratis, de código abierto y local-first." width="100%">
   </picture>
 </p>
 
 <p align="center">
-  <strong>Notas, código y chats de IA en una wiki, contrastada con sus fuentes.</strong><br>
-  Una sola fuente de verdad para ti y tus herramientas de IA, al día cuando cambian tus fuentes.<br>
-  Tus notas se quedan en tu equipo y solo van a las herramientas de IA que elijas.
+  <strong>Escribe cuando quieras; tu IA la mantiene organizada.</strong><br>
+  Alternativa de código abierto a Obsidian. Se conecta a tus herramientas de IA con un clic, sin plugins que instalar ni mantener.<br>
+  Compártela con tu equipo. Tus notas se quedan en tu equipo y solo van a las herramientas de IA que elijas.
 </p>
 
 <p align="center">
@@ -41,11 +41,14 @@
 
 ## Por qué Wenlan
 
-- **Tu IA la escribe y la mantiene al día:** la herramienta de IA que ya usas convierte tus notas, archivos y chats de IA en páginas, sin otro modelo.
+Empecé Wenlan porque mis notas, documentos y chats de IA estaban dispersos, y evitar que un sistema de notas se echara a perder exigía un mantenimiento constante. Wenlan es para quienes usan herramientas de IA a diario y no quieren mantener un sistema de notas.
+
+- **Escribe cuando quieras:** abre una página y escribe, en cualquier momento. Las páginas que escribiste quedan en **Ask me first**, y Wenlan nunca edita tus notas existentes sin tu permiso.
+- **Tu IA la mantiene organizada:** la herramienta de IA que ya usas convierte tus notas, archivos y chats de IA en páginas, las enlaza y las pone al día cuando cambia una fuente. Wenlan no trae una IA propia.
+- **Conexión con un clic:** **Connect all** en los ajustes configura las herramientas de IA de tu ordenador. Sin plugins que buscar, instalar ni mantener.
 - **Te dice lo que no puede respaldar:** se rechaza una página cuando la mayoría de sus citas no coinciden con la fuente, y cada cita abre el original.
-- **Marca lo que cambió:** cuando cambia una fuente, una página o una línea de código, solo se marcan las páginas que dependen de ella.
-- **Lo que escribes sigue siendo tuyo:** Wenlan nunca edita tus notas existentes sin tu permiso, y las páginas que escribiste quedan en **Ask me first**.
-- **Trae lo que ya tienes y consérvalo al cambiar de herramienta:** notas, documentos, enlaces y chats entran ([lista completa](#what-can-i-bring-in)) como Markdown local que sirve en las herramientas de IA que elijas.
+- **Compártela con tu equipo:** comparte un Space a través de una carpeta de Google Drive o iCloud Drive, y tus compañeros lo añaden en sus propios ordenadores.
+- **Trae lo que ya tienes:** notas, documentos, enlaces, chats y bóvedas de Obsidian entran ([lista completa](#what-can-i-bring-in)) como archivos Markdown locales.
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
@@ -73,17 +76,19 @@ Crea una página o trae una bóveda de Obsidian, un grafo de Logseq, una carpeta
 
 ### 3. Conecta tu herramienta de IA
 
-| Herramienta de IA | Conexión | Configuración |
+En los ajustes de la aplicación, **Add a tool** encuentra las herramientas de IA de tu ordenador y **Connect all** las configura con un solo clic. No hay nada más que instalar ni mantener al día. Después, inicia una nueva sesión de IA y pide:
+
+> /recall mis páginas y decisiones anteriores sobre esto y luego ayúdame con: …
+
+Para configurar una herramienta a mano, o ver qué se conecta:
+
+| Herramienta de IA | Qué se configura | Guía |
 |---|---|---|
 | Claude Code / Claude Desktop | Plugin / MCP | [Guía de Claude](docs/setup-with-ai.md#claude-code) |
 | ChatGPT Desktop (Codex), Codex CLI | Plugin | [Guía de Codex](docs/setup-with-ai.md#codex) |
 | Cursor, GitHub Copilot, VS Code, Gemini CLI, Antigravity, Windsurf, Kiro, OpenCode, Kimi Code | MCP y skills | [Guía de MCP](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 | Muse Code y otros clientes MCP | MCP | [Guía de MCP](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 | Grok Bot | CLI en tu ordenador, o MCP | [Guía de Grok Bot](docs/setup-with-ai.md#grok-bot) |
-
-En los ajustes de la aplicación, **Add a tool** encuentra las herramientas de IA de tu ordenador y **Connect all** las configura con un solo clic. Después, inicia una nueva sesión de IA y pide:
-
-> /recall mis páginas y decisiones anteriores sobre esto y luego ayúdame con: …
 
 En Codex, usa `$recall`; con una herramienta solo MCP, pídele que consulte Wenlan primero. Grok Bot ejecuta `wenlan recall` en tu ordenador, o una sesión corta de `wenlan-mcp` allí ([guía de Grok Bot](docs/setup-with-ai.md#grok-bot)).
 

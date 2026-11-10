@@ -1,14 +1,14 @@
 <p align="center">
   <picture>
     <source media="(max-width: 600px)" srcset="./docs/assets/readme-banner-mobile.png">
-    <img src="./docs/assets/readme-banner.png" alt="Wenlan: Your living wiki. Free, open source, local-first." width="100%">
+    <img src="./docs/assets/readme-banner.png" alt="Wenlan: the knowledge base you don't have to maintain. Free, open source, local-first." width="100%">
   </picture>
 </p>
 
 <p align="center">
-  <strong>Notes, code, AI chats into a wiki, checked against sources.</strong><br>
-  One source of truth for you and your AI tools, kept up to date as your sources change.<br>
-  Your notes stay on your machine and go only to the AI tools you pick.
+  <strong>Write when you want; your AI keeps it organized.</strong><br>
+  Open-source Obsidian alternative. Connects to your AI tools in one click, with no plugins to install or maintain.<br>
+  Share it with your team. Your notes stay on your computer and go only to the AI tools you pick.
 </p>
 
 <p align="center">
@@ -39,13 +39,14 @@
 
 ## Why Wenlan
 
-I started Wenlan because my notes, documents, and AI chats were scattered and always changing, and keeping a vault from rotting took constant upkeep. I wanted an AI-native knowledge base that stays useful without the hassle.
+I started Wenlan because my notes, documents, and AI chats were scattered, and keeping a note system from rotting took constant upkeep. Wenlan is for people who use AI tools every day and don't want to maintain a note system.
 
-- **Your AI writes it and keeps it current:** The AI tool you already use turns your notes, files, and AI chats into pages, with no extra model.
+- **Write when you want:** Open a page and write, any time. Pages you wrote are set to **Ask me first**, and Wenlan never edits your existing notes without your OK.
+- **Your AI keeps it organized:** The AI tool you already use turns your notes, files, and AI chats into pages, links them, and brings them up to date when a source changes. Wenlan doesn't bring an AI of its own.
+- **One click to connect:** **Connect all** in Settings sets up the AI tools on your computer. No plugins to find, install, or maintain.
 - **It tells you what it can't back up:** A page is refused when most of its citations don't match the source, and each citation opens the original.
-- **It flags what changed:** When a source, page, or code line changes, only the pages that rely on it are flagged.
-- **What you write stays yours:** Wenlan never edits your existing notes without your OK, and pages you wrote are set to **Ask me first**.
-- **Bring what you have, keep it when you switch tools:** Notes, documents, links, and chats come in ([full list](#what-can-i-bring-in)) as local Markdown that works in the AI tools you pick.
+- **Share it with your team:** Share a Space through a Google Drive or iCloud Drive folder, and teammates add it on their own computers.
+- **Bring what you have:** Notes, documents, links, chats, and Obsidian vaults come in ([full list](#what-can-i-bring-in)) as local Markdown files.
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
@@ -73,17 +74,19 @@ Create a page, or bring in an Obsidian vault, a Logseq graph, a folder, or earli
 
 ### 3. Connect your AI tool
 
-| AI tool | Connection | Setup |
+In the App's Settings, **Add a tool** finds the AI tools on your computer and **Connect all** sets them up in one press. There is nothing else to install or keep updated. Then start a new AI session and ask:
+
+> /recall my earlier pages and decisions on this, then help me: …
+
+To set up a tool by hand, or to see what gets connected:
+
+| AI tool | What gets set up | Guide |
 |---|---|---|
 | Claude Code / Claude Desktop | Plugin / MCP | [Claude guide](docs/setup-with-ai.md#claude-code) |
 | ChatGPT Desktop (Codex), Codex CLI | Plugin | [Codex guide](docs/setup-with-ai.md#codex) |
 | Cursor, GitHub Copilot, VS Code, Gemini CLI, Antigravity, Windsurf, Kiro, OpenCode, Kimi Code | MCP and skills | [MCP guide](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 | Muse Code and other MCP clients | MCP | [MCP guide](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 | Grok Bot | CLI on your computer, or MCP | [Grok Bot guide](docs/setup-with-ai.md#grok-bot) |
-
-In the App's Settings, **Add a tool** finds the AI tools on your computer and **Connect all** sets them up in one press. Then start a new AI session and ask:
-
-> /recall my earlier pages and decisions on this, then help me: …
 
 Use `$recall` in Codex; with an MCP-only tool, just ask it to check Wenlan first. Grok Bot runs `wenlan recall` on your computer, or a short `wenlan-mcp` session there ([Grok Bot guide](docs/setup-with-ai.md#grok-bot)).
 

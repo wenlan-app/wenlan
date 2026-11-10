@@ -34,22 +34,22 @@ const BANNER = {
 
 const BANNER_COPY = {
   en: {
-    title: ["Your living wiki"],
+    title: ["The knowledge base", "you don’t have to maintain"],
     tagline: "Free · Open source · Local-first",
     font: BANNER.latin,
   },
   "zh-Hant": {
-    title: ["持續更新的知識庫"],
+    title: ["不用你維護的知識庫"],
     tagline: "免費・開源・本地優先",
     font: '"PingFang TC", "Noto Sans TC", -apple-system, BlinkMacSystemFont, sans-serif',
   },
   "zh-Hans": {
-    title: ["持续更新的知识库"],
+    title: ["不用你维护的知识库"],
     tagline: "免费・开源・本地优先",
     font: '"PingFang SC", "Noto Sans SC", -apple-system, BlinkMacSystemFont, sans-serif',
   },
   "es-ES": {
-    title: ["Tu wiki viva"],
+    title: ["La base de conocimiento", "que no tienes que mantener"],
     tagline: "Gratis · Código abierto · Local-first",
     font: BANNER.latin,
   },
@@ -99,7 +99,21 @@ function makeSimpleBanner(viewport, locale) {
   // With a tagline the three lines stay centred on the logo, and the tagline sits above the
   // ring's lower edge: the dark tile blends into the background, so the ring is what reads.
   // The Wenlan name and the title stay close in size, which reads as one heading.
-  const content = mobile
+  // A two-line title (English, Spanish) moves everything up so the tagline still fits.
+  const twoLines = copy.title.length > 1 && tagline;
+  const content = twoLines
+    ? mobile
+      ? `${logoMarkup({ x: 324, y: 14, size: 72, prefix })}
+  ${brand(360, 120, 28, "middle")}
+  ${text(360, 158, copy.title[0], 28, BANNER.white, 500, "middle")}
+  ${text(360, 192, copy.title[1], 28, BANNER.white, 500, "middle")}
+  ${text(360, 230, tagline, 18, BANNER.secondary, 400, "middle")}`
+      : `${logoMarkup({ x: 81.28, y: 84.28, size: 181.44, prefix })}
+  ${brand(300, 123, 40, "start")}
+  ${text(300, 170, copy.title[0], 36, BANNER.white, 500, "start")}
+  ${text(300, 212, copy.title[1], 36, BANNER.white, 500, "start")}
+  ${text(300, 254, tagline, 20, BANNER.secondary, 400, "start")}`
+    : mobile
     ? tagline
       ? `${logoMarkup({ x: 320, y: chineseName ? 32 : 34, size: 80, prefix })}
   ${brand(360, chineseName ? 146 : 148, chineseName ? 29.12 : 30.24, "middle")}
