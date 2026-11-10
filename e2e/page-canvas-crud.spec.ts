@@ -80,6 +80,45 @@ test.describe("canvas CRUD", () => {
     await expect(page.getByRole("textbox", { name: "Section name" })).toHaveValue("Query path");
   });
 
+  test("the boxes stay on screen when the map takes a saved change back in", async ({ page }) => {
+    await installTauriMock(page, { locale: "en", rawActions: [] });
+    await openCanvas(page);
+
+    // React Flow hides a box (visibility: hidden) while it has no measured
+    // size, and a hidden box takes no pointer input: a double-click aimed at it
+    // lands on the canvas behind and draws a new box instead. Folding the saved
+    // map into local state used to drop every measured size, so each save made
+    // every box blink out for a frame.
+    await page.evaluate(() => {
+      const hidden: string[] = [];
+      (window as unknown as { __hiddenBoxes: string[] }).__hiddenBoxes = hidden;
+      new MutationObserver((records) => {
+        for (const record of records) {
+          const node = record.target as HTMLElement;
+          if (node.classList.contains("react-flow__node") && node.style.visibility === "hidden") {
+            hidden.push(node.textContent ?? "");
+          }
+        }
+      }).observe(document.querySelector(".react-flow__nodes")!, {
+        attributes: true,
+        attributeFilter: ["style"],
+        subtree: true,
+      });
+    });
+
+    await box(page, "Query path").click();
+    await page.keyboard.press("F2");
+    const field = page.getByRole("textbox", { name: "Section name" });
+    await field.fill("Query engine");
+    await field.press("Enter");
+    await expect(box(page, "Query engine")).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Section name" })).toHaveCount(0);
+
+    expect(
+      await page.evaluate(() => (window as unknown as { __hiddenBoxes: string[] }).__hiddenBoxes),
+    ).toEqual([]);
+  });
+
   test("Tab adds a box inside the selected one, Enter adds one beside it", async ({ page }) => {
     const controller = await installTauriMock(page, { locale: "en", rawActions: [] });
     await openCanvas(page);

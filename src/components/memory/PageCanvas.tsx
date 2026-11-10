@@ -946,6 +946,13 @@ function PageCanvasInner({
   // Fold the server's copy into local state, keeping what the user has done
   // since: an unflushed drag outranks the stored position, and selection must
   // survive a refetch or the map deselects itself every time it saves.
+  //
+  // The measured size survives too. React Flow hides a box that has none until
+  // it has measured it again, and a hidden box takes no pointer input, so
+  // without it every save made every box blink out for a frame and a click or
+  // double-click arriving in that frame went to the canvas behind the box. A
+  // box whose size really changed is measured again by React Flow's own
+  // observer.
   useEffect(() => {
     setNodes((prev) => {
       const prevById = new Map(prev.map((n) => [n.id, n]));
@@ -956,6 +963,7 @@ function PageCanvasInner({
           ...n,
           position: dirtyRef.current.has(n.id) ? old.position : n.position,
           selected: old.selected,
+          measured: old.measured,
         };
       });
     });
