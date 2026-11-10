@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 import { collectBrowserErrors, installTauriMock } from "./tauriMock";
 import { createSpacesNavigationFixture } from "./fixtures/spacesNavigation";
 import { openWikiNote } from "./helpers/wikiWorkspace";
-import { openMemoryFromPage } from "./helpers/primaryNavigation";
+import { openMemoryFromPage, openPrimaryDestination } from "./helpers/primaryNavigation";
 import { resources } from "../src/i18n/resources";
 
 // A design token changed once must reach every detail page. This catches pages
@@ -44,7 +44,8 @@ test("Memory, Topic and Wiki consume the same reading and Info template", async 
       await openMemoryFromPage(page, "Fixture architecture", /Fixture architecture$/,
         { wiki: t.sidebar.pages, more: t.sidebar.more, info: t.pageInspector.info });
     } else if (kind === "topic") {
-      await nav.getByRole("button", { name: t.sidebar.entities, exact: true }).click();
+      // Topics open from the graph (UX-FIND-4).
+      await openPrimaryDestination(page, t.sidebar.entities, t.sidebar.more);
       await page.locator(".entities-view").getByRole("button", { name: topic.name, exact: true }).click();
     } else {
       await nav.getByRole("button", { name: t.sidebar.pages, exact: true }).click();

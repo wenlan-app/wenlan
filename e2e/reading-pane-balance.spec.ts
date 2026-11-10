@@ -137,7 +137,8 @@ for (const cfg of [
     await expect(page.locator(".memory-document-editor .cm-content")).toBeVisible();
     for (const kind of ["memory", "topic"] as const) {
       if (kind === "topic") {
-        await page.getByRole("navigation", { name: "Primary navigation", exact: true }).getByRole("button", { name: t.sidebar.entities, exact: true }).click();
+        // Topics open from the graph (UX-FIND-4).
+        await openPrimaryDestination(page, t.sidebar.entities);
         await page.getByRole("button", { name: "Ada Lovelace", exact: true }).click();
         await expect(page.locator(".entity-detail-dossier")).toBeVisible();
       }

@@ -16,7 +16,7 @@ export async function openPrimaryDestination(page: Page, name: string, moreLabel
     await page.getByRole("button", { name: topicRoute.allTopics, exact: true }).click();
     return;
   }
-  await expect(page.getByRole("main")).toBeVisible();
+  await expect(page.getByRole("main").first()).toBeVisible();
   const navigation = page.getByRole("navigation", {
     name: /^(Primary navigation|主要導覽|主要导航|主导航)$/,
   });
