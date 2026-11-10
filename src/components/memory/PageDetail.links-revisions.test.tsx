@@ -152,7 +152,7 @@ describe("PageDetail page links", () => {
     const { user } = renderWithQuery(<PageDetail {...defaultProps} />, client);
 
     expect(await screen.findByText("Link Test Page")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Edit page" }));
+    await user.click(screen.getByTestId("page-document-reading"));
     const editor = await screen.findByRole("textbox", { name: "Page editor" });
     await waitFor(() => expect(editor).toHaveFocus());
     act(() =>

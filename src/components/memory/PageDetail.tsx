@@ -16,7 +16,7 @@ import { WorkspaceDocumentToolsHostContext, WorkspaceNoteGroupContext } from "./
 import type { NoteInspectorTab } from "./page/NoteInspectorTabs";
 import { usePageInspectorSession } from "./page/usePageInspectorSession";
 import { preserveReadingPosition } from "./page/readingReflowAnchor";
-import { ArrowLeft, ArrowsIn, ArrowsOut, FilePdf, Info, PencilSimple, TreeStructure } from "@phosphor-icons/react";
+import { ArrowLeft, ArrowsIn, ArrowsOut, FilePdf, Info, TreeStructure } from "@phosphor-icons/react";
 import {
   getPage,
   getPageLinks,
@@ -116,7 +116,7 @@ import { SHARE_PREVIEW_APPS, sharePreview as readSharePreview, sharePreviewTitle
 import { getSourceAppFromUrl, sourceAppName, sourceHandleFromUrl, sourceLinkKind, type SourceApp } from "./sources/sourcePresentation";
 import { linkCompletionText, pageTitleKey, trimLikeDaemon } from "./editor/pageTitleKey";
 import { loadAllLinkCandidates, linkNotesFor } from "./page/linkCandidates";
-import { leadingMarkdownH1MatchesTitle, withoutLeadingTitleH1 } from "./editor/pageEditorPresentation";
+import { leadingMarkdownH1, leadingMarkdownH1MatchesTitle, withoutLeadingTitleH1 } from "./editor/pageEditorPresentation";
 import { MovePageDialog } from "./pages/MovePageDialog";
 import { PageProjectionNotice } from "./pages/PageProjectionNotice";
 import { finishRenameLinks } from "./pages/renameLinksNotice";
@@ -389,6 +389,10 @@ export default function PageDetail({
   const [editDirty, setEditDirty] = useState(false);
   const [editInitialDocument, setEditInitialDocument] = useState("");
   const [editHasMatchingTitle, setEditHasMatchingTitle] = useState(false);
+  // The editor's opening `# heading` is the page's name: editing it renames
+  // the page once the writer leaves that line (UX: one title, no rename pencil).
+  const titleLineRef = useRef(false);
+  const titleLineRenameRef = useRef(false);
   const [editGate, setEditGate] = useState<PageEditGate>({ kind: "closed" });
   const [editBaseline, setEditBaseline] = useState<PageEditBaseline | null>(null);
   const [sourceProfile, setSourceProfile] =
@@ -881,6 +885,7 @@ export default function PageDetail({
     setEditGate({ kind: "closed" });
     setEditBaseline(null);
     setEditHasMatchingTitle(false);
+    titleLineRef.current = false;
     setSourceProfile(null);
     setEditValidation(null);
     setEditorFallbackSessionId(null);
@@ -1352,6 +1357,7 @@ export default function PageDetail({
     setEditGate({ kind: "closed" });
     setEditBaseline(null);
     setEditHasMatchingTitle(false);
+    titleLineRef.current = false;
     setSourceProfile(null);
     setEditValidation(null);
     setEditorFallbackSessionId(null);
@@ -1410,12 +1416,11 @@ export default function PageDetail({
     editDocumentRef.current = prepared.editorDocument;
     editPageTitleRef.current = sourcePage.title;
     updateEditDirty(false);
-    setEditHasMatchingTitle(
-      leadingMarkdownH1MatchesTitle(
-        prepared.editorDocument,
-        sourcePage.title,
-      ),
+    titleLineRef.current = leadingMarkdownH1MatchesTitle(
+      prepared.editorDocument,
+      sourcePage.title,
     );
+    setEditHasMatchingTitle(titleLineRef.current);
     setEditBaseline({
       pageId: sourcePage.id,
       content: sourcePage.content,
@@ -1564,7 +1569,12 @@ export default function PageDetail({
   const handleDocumentChange = (content: string) => {
     if (content !== editDocumentRef.current) setReviewNotice(null);
     editDocumentRef.current = content;
-    setEditHasMatchingTitle(leadingMarkdownH1MatchesTitle(content, editPageTitleRef.current));
+    // Once the opening heading is the title line, it stays the title while
+    // it is being retyped; removing the heading hands the name back to the
+    // title above the text.
+    if (!titleLineRef.current && leadingMarkdownH1MatchesTitle(content, editPageTitleRef.current)) titleLineRef.current = true;
+    if (titleLineRef.current && !leadingMarkdownH1(content)) titleLineRef.current = false;
+    setEditHasMatchingTitle(titleLineRef.current);
     if (sourceProfile) autosave.setSource(serializeMarkdownSource(content, sourceProfile));
   };
 
@@ -2459,6 +2469,36 @@ export default function PageDetail({
     }
   };
 
+  // Leaving the title line saves the text, then renames the page to it. An
+  // emptied heading keeps the current name rather than inventing one.
+  const renameFromTitleLine = async () => {
+    if (!titleLineRef.current || !canRenamePage || titleLineRenameRef.current || renameMutation.isPending ||
+      editorStatus.compositionActive || storedActionRef.current) return;
+    const typed = leadingMarkdownH1(editDocumentRef.current)?.text ?? "";
+    if (!typed || typed === editPageTitleRef.current.trim()) return;
+    const originPageId = page.id;
+    titleLineRenameRef.current = true;
+    try {
+      if (!await flushEditor()) return;
+      const latest = await refetchPage();
+      if (activePageIdRef.current !== originPageId || !latest.data || latest.data.id !== originPageId ||
+        latest.data.status !== "active") return;
+      const title = leadingMarkdownH1(editDocumentRef.current)?.text ?? "";
+      if (!title || title === latest.data.title.trim()) return;
+      await renameMutation.mutateAsync({ id: originPageId, title, previousTitle: latest.data.title, expectedVersion: latest.data.version });
+      if (activePageIdRef.current === originPageId) editPageTitleRef.current = title;
+    } catch {
+      // The mutation's own error handler reports a refused rename.
+    } finally {
+      titleLineRenameRef.current = false;
+    }
+  };
+  const handleEditorSelection = (selection: MarkdownEditorSelection) => {
+    onSelectionChange?.(selection);
+    const heading = titleLineRef.current ? leadingMarkdownH1(editDocumentRef.current) : null;
+    if (heading && selection.head > heading.lineEnd) void renameFromTitleLine();
+  };
+
   const cancelRename = () => {
     if (renameMutation.isPending || renameComposingRef.current) return;
     renameAttemptRef.current += 1;
@@ -2633,21 +2673,9 @@ export default function PageDetail({
   );
 
   // A page opens ready to edit. When it is only shown (opened from Review,
-  // or after the editor closed), this pencil, or a click in the text, edits it.
+  // or after the editor closed), a click in the text, or Enter on it, edits it.
   const readModeEditable = page.status === "active" && !editing && !showCanvas && !exampleWiki;
   const readModeEditDisabled = storedActionPending || renaming || renameMutation.isPending;
-  const readModeEdit = readModeEditable ? (
-    <button
-      aria-label={t("pageDetail.editPage")}
-      className="mem-icon-action page-detail-edit-action"
-      disabled={readModeEditDisabled}
-      onClick={() => void beginEditing()}
-      title={t("pageDetail.editPage")}
-      type="button"
-    >
-      <PencilSimple aria-hidden="true" size={16} />
-    </button>
-  ) : null;
   const editFromReading = (event: React.MouseEvent) => {
     if (!readModeEditable || readModeEditDisabled) return;
     const target = event.target as HTMLElement;
@@ -2656,25 +2684,9 @@ export default function PageDetail({
     if (globalThis.getSelection?.()?.toString()) return;
     void beginEditing();
   };
-  // While the editor shows the title as its first line, the outer title (the
-  // rename control) is hidden, so this pencil renames the page instead.
-  const titleRenameAction = hideOuterTitleWhileEditing && canRenamePage ? (
-    <button
-      aria-label={t("pageDetail.renamePage")}
-      className="mem-icon-action page-detail-title-action"
-      disabled={titleRenameDisabled || renaming}
-      onClick={() => void renameFromTitle()}
-      title={t("pageDetail.renamePage")}
-      type="button"
-    >
-      <PencilSimple aria-hidden="true" size={16} />
-    </button>
-  ) : null;
   const documentTools = (
     <div className="page-document-tools">
-      {!documentToolsHost && readModeEdit}
       {!documentToolsHost && inspectorToggle}
-      {!documentToolsHost && titleRenameAction}
       <WorkspaceBackButton
           aria-label={t("main.back")}
           className="mem-icon-action"
@@ -2690,7 +2702,7 @@ export default function PageDetail({
 
   return (
     <div className={`page-detail document-context-host${inspectorOpen ? " document-context-open" : ""}${showCanvas ? " page-document-map-open" : ""}${canvasWorkspaceExpanded && inspectorOpen ? " page-detail--workspace-expanded" : ""}`} onKeyDown={handlePageDetailKeyDown} ref={setPageDetailRootRef}>
-      {documentToolsHost && createPortal(<>{titleRenameAction}{readModeEdit}{actionsMenu}{inspectorToggle}</>, documentToolsHost)}
+      {documentToolsHost && createPortal(<>{actionsMenu}{inspectorToggle}</>, documentToolsHost)}
       {restoreOpen && <RestorePageDialog page={page} onClose={() => setRestoreOpen(false)} onRestored={onRestored} />}
       <DetailReadingFrame className="page-detail-document">
         {page.status === "archived" && <div className="wiki-archive-notice" role="status">
@@ -3143,7 +3155,10 @@ export default function PageDetail({
                 )}
               </p>}
               {editorSessionId && (
-                <div className={hideOuterTitleWhileEditing ? "page-document-editor page-document-editor--title" : "page-document-editor"}>
+                <div className={hideOuterTitleWhileEditing ? "page-document-editor page-document-editor--title" : "page-document-editor"}
+                  onBlur={(event) => {
+                    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) void renameFromTitleLine();
+                  }}>
                 {hideOuterTitleWhileEditing && <><h1 className="sr-only">{page.title}</h1>{documentTools}</>}
                 <MarkdownEditor
                   ref={editorRef}
@@ -3154,7 +3169,7 @@ export default function PageDetail({
                   sentenceAuthorship={editorSentenceAuthorship}
                   initialDocument={editInitialDocument}
                   initialSelection={initialSelection}
-                  onSelectionChange={onSelectionChange}
+                  onSelectionChange={handleEditorSelection}
                   sessionId={editorSessionId}
                   disabled={storedActionPending || exampleWiki || page.status !== "active" || autosave.snapshot().readOnly}
                   seamless
@@ -3225,7 +3240,13 @@ export default function PageDetail({
         ) : (
           <div>
             <ReferenceNavigationProvider onOpenPage={onPageClick} onOpenMemory={openSourceMemory}>
-            <div className={`page-detail-prose${readModeEditable ? " page-detail-prose--editable" : ""}`} data-testid="page-document-reading" onClickCapture={handleContentClick} onClick={editFromReading}>
+            <div className={`page-detail-prose${readModeEditable ? " page-detail-prose--editable" : ""}`} data-testid="page-document-reading" onClickCapture={handleContentClick} onClick={editFromReading}
+              tabIndex={readModeEditable ? 0 : undefined}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" || event.target !== event.currentTarget || !readModeEditable || readModeEditDisabled) return;
+                event.preventDefault();
+                void beginEditing();
+              }}>
             <EmbedPageContext.Provider value={page.id}>
               {page.creation_kind === "original" ? (
                 <OriginalPageView

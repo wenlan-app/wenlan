@@ -914,7 +914,7 @@ describe("PageDetail", () => {
     );
 
     await screen.findByRole("heading", { level: 1, name: "libSQL Architecture" });
-    await user.click(screen.getByRole("button", { name: "Edit page" }));
+    await user.click(screen.getByTestId("page-document-reading"));
     const editor = await screen.findByRole("textbox", { name: "Page editor" });
     await waitFor(() => expect(editor).toHaveFocus());
     act(() => replaceDocument(editorViewFromTextbox(editor), "Revised Page body"));
@@ -966,7 +966,7 @@ describe("PageDetail", () => {
       level: 1,
       name: "libSQL Architecture",
     });
-    await user.click(screen.getByRole("button", { name: "Edit page" }));
+    await user.click(screen.getByTestId("page-document-reading"));
 
     rerender(
       <QueryClientProvider client={queryClient}>
@@ -996,7 +996,7 @@ describe("PageDetail", () => {
       screen.queryByRole("textbox", { name: "Page editor" }),
     ).toBeNull();
     await user.click(screen.getByRole("button", { name: "Page actions" }));
-    expect(screen.getByRole("button", { name: "Edit page" })).toBeVisible();
+    expect(screen.getByTestId("page-document-reading")).toBeVisible();
     expect(
       screen.getByRole("heading", {
         level: 1,
@@ -1019,14 +1019,14 @@ describe("PageDetail", () => {
       level: 1,
       name: "libSQL Architecture",
     });
-    await user.click(screen.getByRole("button", { name: "Edit page" }));
+    await user.click(screen.getByTestId("page-document-reading"));
     expect(await screen.findByText("Checking editor compatibility…")).toBeVisible();
 
     fireEvent.keyDown(document.body, { key: "Escape" });
 
     expect(defaultProps.onBack).not.toHaveBeenCalled();
     await user.click(await screen.findByRole("button", { name: "Page actions" }));
-    expect(screen.getByRole("button", { name: "Edit page" })).toBeVisible();
+    expect(screen.getByTestId("page-document-reading")).toBeVisible();
     expect(
       screen.queryByText("Checking editor compatibility…"),
     ).toBeNull();
@@ -1050,7 +1050,7 @@ describe("PageDetail", () => {
     const { user } = renderWithQuery(<PageDetail {...defaultProps} />);
 
     await screen.findByRole("heading", { level: 1, name: "libSQL Architecture" });
-    await user.click(screen.getByRole("button", { name: "Edit page" }));
+    await user.click(screen.getByTestId("page-document-reading"));
     const editor = await screen.findByRole("textbox", { name: "Page editor" });
     await waitFor(() => expect(editor).toHaveFocus());
     act(() => replaceDocument(editorViewFromTextbox(editor), "One serialized Page body"));
@@ -1154,7 +1154,7 @@ describe("PageDetail", () => {
     const { user } = renderWithQuery(<PageDetail {...defaultProps} />);
 
     await screen.findByText("libSQL Architecture");
-    await user.click(screen.getByRole("button", { name: "Edit page" }));
+    await user.click(screen.getByTestId("page-document-reading"));
     const editor = await screen.findByRole("textbox", { name: "Page editor" });
     await waitFor(() => expect(editor).toHaveFocus());
     act(() => replaceDocument(editorViewFromTextbox(editor), "Revised Page body"));
