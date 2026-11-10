@@ -1942,6 +1942,7 @@ export default function Main({
                         : handleEntityClick(target.id)
                 }
                 onBack={navigateBack}
+                onOpenTopics={() => navigateTo({ kind: "entities" })}
               />
             </div>
           ) : (

@@ -584,7 +584,7 @@ const en = {
     groups: { central: "Central pages", right: "Right pages", moveToRight: "Move to right group", moveToCentral: "Move to central group", openBeside: "Open beside", moveBack: "Move back", openInRight: "This page is open on the right.", openInCentral: "This page is open in the central group.", showNote: "Show page", dismiss: "Dismiss" },
     tabs: { label: "Open pages", close: "Close {{title}}", home: "Home" },
     folders: {
-      title: "Folders", root: "Folders", rootDestination: "Top level", emptyDirectory: "Create a folder to organize your pages.", locationPending: "Your page is saved, but its file could not be saved in the chosen folder.", retryLocation: "Retry saving the file", retryLocationError: "The file still could not be saved. Check that the folder is available, then retry.", newFolder: "New folder", newFolderIn: "New folder in {{name}}", openNote: "Open", deleteNote: "Delete page", folderName: "Folder name", createIn: "Create in {{name}}", create: "Create", cancel: "Cancel", createError: "The folder couldn't be created. Try again.", unavailable: "Folder browsing is unavailable. All pages are still accessible.", searchAll: "Search all pages", view: "Page view", cards: "Cards", list: "List", empty: "This folder has no pages yet.", move: "Move to folder", destination: "Destination folder", moveError: "The page couldn't be moved. Try again.", moving: "Moving…", moveConfirm: "Move", close: "Close", currentFolder: "Current folder: {{name}}", noteCount_one: "{{count}} page", noteCount_other: "{{count}} pages",
+      title: "Folders", root: "Folders", rootDestination: "Top level", emptyDirectory: "Create a folder to organize your pages.", locationPending: "Your page is saved, but its file could not be saved in the chosen folder.", retryLocation: "Retry saving the file", retryLocationError: "The file still could not be saved. Check that the folder is available, then retry.", newFolder: "New folder", newMenu: "New page or folder", newFolderIn: "New folder in {{name}}", openNote: "Open", deleteNote: "Delete page", folderName: "Folder name", createIn: "Create in {{name}}", create: "Create", cancel: "Cancel", createError: "The folder couldn't be created. Try again.", unavailable: "Folder browsing is unavailable. All pages are still accessible.", searchAll: "Search all pages", view: "Page view", cards: "Cards", list: "List", empty: "This folder has no pages yet.", move: "Move to folder", destination: "Destination folder", moveError: "The page couldn't be moved. Try again.", moving: "Moving…", moveConfirm: "Move", close: "Close", currentFolder: "Current folder: {{name}}", noteCount_one: "{{count}} page", noteCount_other: "{{count}} pages",
     },
     inventory: {
       all: "All pages",
@@ -2112,6 +2112,7 @@ const en = {
     entityType: {project: "Project", technology: "Technology", organization: "Organization", person: "Person", concept: "Concept", place: "Place", event: "Event"},
 
     display: "Display",
+    allTopics: "All topics",
     cameraControls: "Graph navigation",
     thingStops: "Zoom to",
     thingStop: { this: "This", nearby: "Nearby", all: "All" },
@@ -3865,7 +3866,7 @@ const zhHans = {
     groups: { central: "中央笔记", right: "右侧笔记", moveToRight: "移至右侧分组", moveToCentral: "移至中央分组", openBeside: "并排打开", moveBack: "移回中央", openInRight: "这篇笔记已在右侧打开。", openInCentral: "这篇笔记已在中央打开。", showNote: "查看笔记", dismiss: "关闭提示" },
     tabs: { label: "已打开的笔记", close: "关闭 {{title}}", home: "首页" },
     folders: {
-      title: "文件夹", root: "文件夹", rootDestination: "最外层", emptyDirectory: "创建文件夹，让笔记更好查找。", locationPending: "笔记已保存，但未能将文件保存到所选文件夹。", retryLocation: "重试保存文件", retryLocationError: "仍无法保存文件。请确认文件夹可用后重试。", newFolder: "新建文件夹", newFolderIn: "在 {{name}} 中新建文件夹", openNote: "打开", deleteNote: "删除笔记", folderName: "文件夹名称", createIn: "创建于 {{name}}", create: "创建", cancel: "取消", createError: "未能创建文件夹，请重试。", unavailable: "暂时无法浏览文件夹。仍可访问所有笔记。", searchAll: "搜索所有笔记", view: "笔记视图", cards: "卡片", list: "列表", empty: "这个文件夹还没有笔记。", move: "移至文件夹", destination: "目标文件夹", moveError: "未能移动笔记，请重试。", moving: "正在移动…", moveConfirm: "移动", close: "关闭", currentFolder: "当前文件夹：{{name}}", noteCount_one: "{{count}} 篇笔记", noteCount_other: "{{count}} 篇笔记",
+      title: "文件夹", root: "文件夹", rootDestination: "最外层", emptyDirectory: "创建文件夹，让笔记更好查找。", locationPending: "笔记已保存，但未能将文件保存到所选文件夹。", retryLocation: "重试保存文件", retryLocationError: "仍无法保存文件。请确认文件夹可用后重试。", newFolder: "新建文件夹", newMenu: "新建笔记或文件夹", newFolderIn: "在 {{name}} 中新建文件夹", openNote: "打开", deleteNote: "删除笔记", folderName: "文件夹名称", createIn: "创建于 {{name}}", create: "创建", cancel: "取消", createError: "未能创建文件夹，请重试。", unavailable: "暂时无法浏览文件夹。仍可访问所有笔记。", searchAll: "搜索所有笔记", view: "笔记视图", cards: "卡片", list: "列表", empty: "这个文件夹还没有笔记。", move: "移至文件夹", destination: "目标文件夹", moveError: "未能移动笔记，请重试。", moving: "正在移动…", moveConfirm: "移动", close: "关闭", currentFolder: "当前文件夹：{{name}}", noteCount_one: "{{count}} 篇笔记", noteCount_other: "{{count}} 篇笔记",
     },
     inventory: {
       all: "所有笔记",
@@ -5374,6 +5375,7 @@ const zhHans = {
     entityType: {project: "项目", technology: "技术", organization: "组织", person: "人物", concept: "概念", place: "地点", event: "事件"},
 
     display: "显示",
+    allTopics: "所有主题",
     cameraControls: "图谱导航",
     thingStops: "缩放到",
     thingStop: { this: "这件事", nearby: "附近", all: "全部" },
@@ -7102,7 +7104,7 @@ const zhHant = {
     groups: { central: "中央筆記", right: "右側筆記", moveToRight: "移至右側分組", moveToCentral: "移至中央分組", openBeside: "並排開啟", moveBack: "移回中央", openInRight: "這篇筆記已在右側開啟。", openInCentral: "這篇筆記已在中央開啟。", showNote: "查看筆記", dismiss: "關閉提示" },
     tabs: { label: "已開啟的筆記", close: "關閉 {{title}}", home: "首頁" },
     folders: {
-      title: "資料夾", root: "資料夾", rootDestination: "最外層", emptyDirectory: "建立資料夾，讓筆記更好找。", locationPending: "筆記已儲存，但無法將檔案儲存到所選資料夾。", retryLocation: "重試儲存檔案", retryLocationError: "仍無法儲存檔案。請確認資料夾可用後重試。", newFolder: "新增資料夾", newFolderIn: "在 {{name}} 中新增資料夾", openNote: "開啟", deleteNote: "刪除筆記", folderName: "資料夾名稱", createIn: "建立於 {{name}}", create: "建立", cancel: "取消", createError: "無法建立資料夾，請重試。", unavailable: "暫時無法瀏覽資料夾。仍可存取所有筆記。", searchAll: "搜尋所有筆記", view: "筆記檢視", cards: "卡片", list: "清單", empty: "這個資料夾還沒有筆記。", move: "移至資料夾", destination: "目標資料夾", moveError: "無法移動筆記，請重試。", moving: "移動中…", moveConfirm: "移動", close: "關閉", currentFolder: "目前資料夾：{{name}}", noteCount_one: "{{count}} 篇筆記", noteCount_other: "{{count}} 篇筆記",
+      title: "資料夾", root: "資料夾", rootDestination: "最外層", emptyDirectory: "建立資料夾，讓筆記更好找。", locationPending: "筆記已儲存，但無法將檔案儲存到所選資料夾。", retryLocation: "重試儲存檔案", retryLocationError: "仍無法儲存檔案。請確認資料夾可用後重試。", newFolder: "新增資料夾", newMenu: "新增筆記或資料夾", newFolderIn: "在 {{name}} 中新增資料夾", openNote: "開啟", deleteNote: "刪除筆記", folderName: "資料夾名稱", createIn: "建立於 {{name}}", create: "建立", cancel: "取消", createError: "無法建立資料夾，請重試。", unavailable: "暫時無法瀏覽資料夾。仍可存取所有筆記。", searchAll: "搜尋所有筆記", view: "筆記檢視", cards: "卡片", list: "清單", empty: "這個資料夾還沒有筆記。", move: "移至資料夾", destination: "目標資料夾", moveError: "無法移動筆記，請重試。", moving: "移動中…", moveConfirm: "移動", close: "關閉", currentFolder: "目前資料夾：{{name}}", noteCount_one: "{{count}} 篇筆記", noteCount_other: "{{count}} 篇筆記",
     },
     inventory: {
       all: "所有筆記",
@@ -8611,6 +8613,7 @@ const zhHant = {
     entityType: {project: "專案", technology: "技術", organization: "組織", person: "人物", concept: "概念", place: "地點", event: "事件"},
 
     display: "顯示",
+    allTopics: "所有主題",
     cameraControls: "圖譜導覽",
     thingStops: "縮放到",
     thingStop: { this: "這件事", nearby: "附近", all: "全部" },

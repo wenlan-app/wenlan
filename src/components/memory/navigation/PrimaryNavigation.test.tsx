@@ -39,9 +39,10 @@ function railLabels() {
 describe("PrimaryNavigation", () => {
   it("UX-FIND-4: puts every destination on the left, with no More menu, Memories or Sources", () => {
     renderNavigation("pages");
-    expect(railLabels()).toEqual(["Home", "Wiki", "Spaces", "Graph", "Topics"]);
+    expect(railLabels()).toEqual(["Home", "Wiki", "Spaces", "Graph"]);
     expect(screen.queryByRole("button", { name: "More" })).not.toBeInTheDocument();
-    for (const name of ["Memories", "Sources"]) expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
+    // Topics open from the graph (Qi-Xuan 2026-11-09 19:37 PT).
+    for (const name of ["Topics", "Memories", "Sources"]) expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
   });
 
   it("navigates from each destination", async () => {
@@ -51,12 +52,10 @@ describe("PrimaryNavigation", () => {
     await user.click(screen.getByRole("button", { name: "Wiki" }));
     await user.click(screen.getByRole("button", { name: "Spaces" }));
     await user.click(screen.getByRole("button", { name: "Graph" }));
-    await user.click(screen.getByRole("button", { name: "Topics" }));
     expect(callbacks.home).toHaveBeenCalledOnce();
     expect(callbacks.pages).toHaveBeenCalledOnce();
     expect(callbacks.spaces).toHaveBeenCalledWith(false);
     expect(callbacks.graph).toHaveBeenCalledOnce();
-    expect(callbacks.entities).toHaveBeenCalledOnce();
   });
 
   it("marks exactly one current destination", () => {

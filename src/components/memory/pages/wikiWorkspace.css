@@ -122,8 +122,11 @@ button.wiki-workspace-mode:focus-visible { outline: 2px solid var(--mem-text-sec
   cursor: pointer;
 }
 
-/* New page and New folder sit together at the end of the row. */
-.wiki-workspace-new-page + .wiki-workspace-new-folder { margin-left: 0; }
+/* The one New button sits at the end of the row; its menu drops below it. */
+.wiki-workspace-new-menu { position: relative; display: flex; margin-left: auto; }
+.wiki-workspace-new-menu > .wiki-workspace-new { margin-left: 0; }
+.wiki-workspace-new-popover { position: absolute; top: calc(100% + 4px); right: 0; left: auto; }
+.wiki-workspace-new-popover > [role="menuitem"] { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
 
 .wiki-workspace-new-folder:hover:not(:disabled) { background: var(--mem-hover); color: var(--mem-text); }
 .wiki-workspace-new-folder:focus-visible { outline: 2px solid var(--mem-accent-page); outline-offset: 1px; }

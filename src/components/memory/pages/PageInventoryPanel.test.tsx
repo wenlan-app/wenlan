@@ -1,6 +1,6 @@
 import { setExampleWikiActive } from "../../../lib/exampleWiki/mode";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { i18n } from "../../../i18n";
@@ -32,23 +32,25 @@ describe("folder tree",()=>{
   expect(screen.queryByRole("button",{name:"Open Shadow"})).not.toBeInTheDocument();
   expect(onNoteCountChange).toHaveBeenLastCalledWith(60);
  });
- it("offers a single header folder button after an empty folder list loads", async () => {
+ it("offers New folder in the header New menu after an empty folder list loads", async () => {
   vi.mocked(knowledgeFoldersList).mockResolvedValue({ folders: [], truncated: false });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(<QueryClientProvider client={client}><WikiWorkspace inventoryMode="folders" onBrowse={vi.fn()} onCreatePage={vi.fn()} onOpenDraft={vi.fn()} onOpenPage={vi.fn()}><textarea /></WikiWorkspace></QueryClientProvider>);
   expect(await screen.findByText("Create a folder to organize your pages.")).toBeInTheDocument();
-  const action = screen.getByRole("button", { name: "New folder" });
-  await waitFor(() => expect(action).toBeEnabled());
-  expect(action).toHaveTextContent("");
+  fireEvent.click(screen.getByRole("button", { name: "New page or folder" }));
+  await waitFor(() => expect(screen.getByRole("menuitem", { name: "New folder" })).toHaveAttribute("aria-disabled", "false"));
+  expect(screen.queryByRole("button", { name: "New folder" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "New folder in Folders" })).not.toBeInTheDocument();
  });
  it("the header creates at the root after stale selection and returns focus on cancellation", async () => {
   vi.mocked(knowledgeFoldersList).mockResolvedValue({ folders: [], truncated: false });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(<QueryClientProvider client={client}><WikiWorkspace inventoryMode="folders" inventoryScope="folder:Work" onBrowse={vi.fn()} onCreatePage={vi.fn()} onOpenDraft={vi.fn()} onOpenPage={vi.fn()}><textarea /></WikiWorkspace></QueryClientProvider>);
-  const action = screen.getByRole("button", { name: "New folder" });
-  await waitFor(() => expect(action).toBeEnabled());
+  const action = screen.getByRole("button", { name: "New page or folder" });
   const user = userEvent.setup(); await user.click(action);
+  const item = screen.getByRole("menuitem", { name: "New folder" });
+  await waitFor(() => expect(item).toHaveAttribute("aria-disabled", "false"));
+  await user.click(item);
   expect(await screen.findByRole("textbox", { name: "Folder name" })).toHaveFocus();
   expect(screen.getByText("Create in Folders")).toBeInTheDocument();
   await user.keyboard("{Escape}");

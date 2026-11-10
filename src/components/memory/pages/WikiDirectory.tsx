@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { CaretLeft, FolderPlus, NotePencil } from "@phosphor-icons/react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { CaretLeft, FolderPlus, NotePencil, Plus } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 import { useExampleWikiActive } from "../../../lib/exampleWiki/mode";
 import type { Page } from "../../../lib/tauri";
@@ -138,30 +138,16 @@ export function WikiDirectory({
             <span className="sr-only">{t("pages.folders.noteCount", { count: noteCount })}</span>
           </span>
         )}
-        {/* New page sits at the top of the list, as in Obsidian's file
-            explorer; in Folders it lands in the folder in view. */}
-        {inventoryMode !== "archived" && !exampleWiki && (
-          <button
-            type="button"
-            className="wiki-workspace-new-folder wiki-workspace-new-page"
-            aria-label={t("pages.overview.newPage")}
-            title={t("pages.overview.newPage")}
-            onClick={() => closeForNavigation(onCreatePage)(inventoryMode === "folders" ? creationFolderPath ?? currentFolderPath ?? undefined : undefined)}
-          >
-            <NotePencil aria-hidden="true" size={16} />
-          </button>
-        )}
+        {/* One New button at the top of the list, as in Notion's sidebar: a page
+            lands in the folder in view; a folder opens its name form. */}
         {inventoryMode === "folders" && (
-          <button
-            type="button"
-            className="wiki-workspace-new-folder"
-            aria-label={t("pages.folders.newFolder")}
-            title={t("pages.folders.newFolder")}
-            disabled={!canCreateFolder}
-            onClick={event => { event.currentTarget.focus(); requestCreateFolder(); }}
-          >
-            <FolderPlus aria-hidden="true" size={16} />
-          </button>
+          <NewMenu
+            exampleWiki={exampleWiki}
+            canCreateFolder={canCreateFolder}
+            onNewPage={() => closeForNavigation(onCreatePage)(creationFolderPath ?? currentFolderPath ?? undefined)}
+            // The New button has focus again, so the folder form returns it there.
+            onNewFolder={() => { requestCreateFolder(); }}
+          />
         )}
       </div>
       {inventoryMode === "archived" ? (
@@ -187,5 +173,78 @@ export function WikiDirectory({
       {children}
     </aside>
     </WikiFolderCreationContext.Provider>
+  );
+}
+
+/** The directory's one New button: a small menu with New page and New folder. */
+function NewMenu({ exampleWiki, canCreateFolder, onNewPage, onNewFolder }: {
+  readonly exampleWiki: boolean;
+  readonly canCreateFolder: boolean;
+  readonly onNewPage: () => void;
+  readonly onNewFolder: () => void;
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const menuId = useId();
+  useEffect(() => {
+    if (!open) return;
+    rootRef.current?.querySelector<HTMLElement>("[role='menuitem']:not([aria-disabled='true'])")?.focus();
+    const onPointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [open]);
+  const close = (refocus: boolean) => {
+    setOpen(false);
+    if (refocus) buttonRef.current?.focus();
+  };
+  const folderDisabled = !canCreateFolder;
+  return (
+    <div className="wiki-workspace-new-menu" ref={rootRef}>
+      <button
+        ref={buttonRef}
+        type="button"
+        className="wiki-workspace-new-folder wiki-workspace-new"
+        aria-label={t("pages.folders.newMenu")}
+        title={t("pages.folders.newMenu")}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-controls={open ? menuId : undefined}
+        onClick={() => setOpen(value => !value)}
+      >
+        <Plus aria-hidden="true" size={16} />
+      </button>
+      {open && (
+        <div
+          id={menuId}
+          className="mem-popover-surface notes-folder-context-menu wiki-workspace-new-popover"
+          role="menu"
+          aria-label={t("pages.folders.newMenu")}
+          onKeyDown={event => {
+            if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(true); }
+            else if (event.key === "Tab") close(false);
+            else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+              const items = Array.from(event.currentTarget.querySelectorAll<HTMLElement>("[role='menuitem']"));
+              const index = items.indexOf(document.activeElement as HTMLElement);
+              if (items.length > 1) { event.preventDefault(); items[(index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus(); }
+            }
+          }}
+        >
+          {!exampleWiki && (
+            <button type="button" role="menuitem" onClick={() => { close(false); onNewPage(); }}>
+              <NotePencil aria-hidden="true" size={16} />
+              <span>{t("pages.overview.newPage")}</span>
+            </button>
+          )}
+          <button type="button" role="menuitem" aria-disabled={folderDisabled} onClick={() => { if (folderDisabled) return; close(true); onNewFolder(); }}>
+            <FolderPlus aria-hidden="true" size={16} />
+            <span>{t("pages.folders.newFolder")}</span>
+          </button>
+        </div>
+      )}
+    </div>
   );
 }

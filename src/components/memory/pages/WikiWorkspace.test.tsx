@@ -76,14 +76,28 @@ describe("WikiWorkspace", () => {
     expect(screen.getByTestId("wiki-directory")).toBeInTheDocument();
   });
 
-  it("offers New page at the top of the list, as Obsidian's file explorer does, but not among archived pages", () => {
+  it("offers one New button at the top of the list with New page and New folder, but not among archived pages", () => {
     const onCreatePage = vi.fn();
     const props = { onBrowse: vi.fn(), onCreatePage, onOpenDraft: vi.fn(), onOpenPage: vi.fn() };
     const { rerender } = render(<WikiWorkspace {...props}><textarea /></WikiWorkspace>);
-    fireEvent.click(screen.getByRole("button", { name: "New page" }));
-    expect(onCreatePage).toHaveBeenLastCalledWith(undefined);
-    rerender(<WikiWorkspace {...props} inventoryMode="archived"><textarea /></WikiWorkspace>);
     expect(screen.queryByRole("button", { name: "New page" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "New folder" })).not.toBeInTheDocument();
+    const create = screen.getByRole("button", { name: "New page or folder" });
+    expect(create).toHaveAttribute("aria-haspopup", "menu");
+    fireEvent.click(create);
+    const menu = screen.getByRole("menu", { name: "New page or folder" });
+    expect(Array.from(menu.querySelectorAll("[role='menuitem']")).map(item => item.textContent)).toEqual(["New page", "New folder"]);
+    // No folder form is registered here, so New folder is offered but unavailable.
+    expect(screen.getByRole("menuitem", { name: "New folder" })).toHaveAttribute("aria-disabled", "true");
+    fireEvent.keyDown(menu, { key: "Escape" });
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(create).toHaveFocus();
+    fireEvent.click(create);
+    fireEvent.click(screen.getByRole("menuitem", { name: "New page" }));
+    expect(onCreatePage).toHaveBeenLastCalledWith(undefined);
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    rerender(<WikiWorkspace {...props} inventoryMode="archived"><textarea /></WikiWorkspace>);
+    expect(screen.queryByRole("button", { name: "New page or folder" })).not.toBeInTheDocument();
   });
 
   it("shows the page count as a number beside the Folders title", () => {
