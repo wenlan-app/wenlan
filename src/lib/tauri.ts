@@ -1322,17 +1322,23 @@ export interface SaidLine {
   after?: ConversationLine | null;
 }
 
-/** The lines of its conversation a memory came from; empty when none says the same thing. */
+/**
+ * The lines of its conversation a memory came from; empty when none says the
+ * same thing. `kept` lines are the copy the AI tool sent when it saved the
+ * memory, because the conversation itself can't be read (a web chat): they
+ * open nothing further, and `session_id` may be missing.
+ */
 export interface MemorySaid {
-  session_id: string;
+  session_id?: string | null;
   tool: string;
+  kept?: boolean;
   title?: string | null;
   thing_id?: string | null;
   thing_title?: string | null;
   lines: SaidLine[];
 }
 
-/** Rejects when the memory was not saved in a conversation Wenlan can read (UX-WHO-6). */
+/** Rejects when the memory has neither a conversation Wenlan can read nor kept lines (UX-WHO-6). */
 export async function getMemorySaid(sourceId: string): Promise<MemorySaid> {
   return invoke("get_memory_said", { sourceId });
 }

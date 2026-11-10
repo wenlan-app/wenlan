@@ -12,6 +12,7 @@ use crate::read_scope::ReadScope;
 use crate::WenlanError;
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
+use wenlan_types::conversations::ConversationLine;
 use wenlan_types::{
     AgentSession, PageSessionEntry, PageSessionVia, PageSessionsResponse, SessionCitedByEntry,
     SessionDetailResponse, SessionHandoffEntry, SessionMemoryEntry, SessionPageEntry,
@@ -22,13 +23,20 @@ use wenlan_types::{
 /// [`MemoryDB::memory_said_anchor`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SaidAnchor {
-    pub session_id: String,
+    /// The conversation it was saved in. A memory saved from a web chat
+    /// has none, only the lines its AI tool kept.
+    pub session_id: Option<String>,
+    /// The AI tool that saved it, as `source_agent`.
+    pub source_agent: Option<String>,
     /// Unix seconds.
     pub saved_at: i64,
     pub text: String,
     /// The line the person typed that it came from, when a night kept it
     /// with the point (UX-WHO-6).
     pub line: Option<String>,
+    /// The lines the AI tool sent with the memory when it saved it
+    /// (`StoreMemoryRequest::said`), empty when it sent none.
+    pub kept: Vec<ConversationLine>,
 }
 
 /// Most memories and notes `GET /api/sessions/{id}` returns for one session.
@@ -770,10 +778,68 @@ impl MemoryDB {
             .map(|row| session_from_row(&row)))
     }
 
+    /// Keep the conversation lines an AI tool sent with memory `source_id`
+    /// (`StoreMemoryRequest::said`), already trimmed by
+    /// [`crate::said_lines::kept_said`]. Every chunk row of the memory holds
+    /// the same copy. Nothing is written for an empty list.
+    pub async fn keep_memory_said(
+        &self,
+        source_id: &str,
+        lines: &[ConversationLine],
+    ) -> Result<(), WenlanError> {
+        if lines.is_empty() {
+            return Ok(());
+        }
+        let json = serde_json::to_string(lines)
+            .map_err(|e| WenlanError::VectorDb(format!("keep said: {e}")))?;
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "UPDATE memories SET said_excerpt = ?1 WHERE source = 'memory' AND source_id = ?2",
+            libsql::params![json, source_id],
+        )
+        .await
+        .map_err(|e| WenlanError::VectorDb(format!("keep said: {e}")))?;
+        Ok(())
+    }
+
+    /// Migration 163: `memories.said_excerpt`, the conversation lines an AI
+    /// tool sent with a memory it saved, as JSON (UX-WHO-6). Added only when
+    /// missing, so a crash before the version bump replays cleanly.
+    pub(super) async fn migrate_163_kept_said(
+        &self,
+        prior_version: i64,
+    ) -> Result<(), WenlanError> {
+        self.backup_before_migration(163, prior_version).await?;
+        let conn = self.conn.lock().await;
+        let has_column = {
+            let mut rows = conn
+                .query(
+                    "SELECT 1 FROM pragma_table_info('memories') WHERE name = 'said_excerpt'",
+                    (),
+                )
+                .await
+                .map_err(|e| WenlanError::VectorDb(format!("m163 columns: {e}")))?;
+            rows.next()
+                .await
+                .map_err(|e| WenlanError::VectorDb(format!("m163 column row: {e}")))?
+                .is_some()
+        };
+        if !has_column {
+            conn.execute("ALTER TABLE memories ADD COLUMN said_excerpt TEXT", ())
+                .await
+                .map_err(|e| WenlanError::VectorDb(format!("m163 add column: {e}")))?;
+        }
+        conn.execute("PRAGMA user_version = 163", ())
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("m163 bump: {e}")))?;
+        log::info!("[migration] Migration 163 applied: conversation lines kept with a memory");
+        Ok(())
+    }
+
     /// What finding a memory's conversation lines needs (UX-WHO-6): the
-    /// conversation it was saved in, when it was first saved, and its words.
-    /// `None` when the memory is unknown, out of `scope`, or was not saved in
-    /// a conversation.
+    /// conversation it was saved in, when it was first saved, its words, and
+    /// the lines its AI tool kept with it. `None` when the memory is unknown,
+    /// out of `scope`, or has neither a conversation nor kept lines.
     pub async fn memory_said_anchor(
         &self,
         source_id: &str,
@@ -793,9 +859,9 @@ impl MemoryDB {
                 &format!(
                     "SELECT MAX(session_id), MIN(COALESCE(created_at, last_modified)),
                             GROUP_CONCAT(COALESCE(authored_content, content), char(10)), COUNT(*),
-                            MAX(said_line)
+                            MAX(said_line), MAX(said_excerpt), MAX(source_agent)
                        FROM (SELECT session_id, created_at, last_modified, authored_content, content,
-                                    said_line
+                                    said_line, said_excerpt, source_agent
                                FROM memories
                               WHERE {}
                               ORDER BY COALESCE(chunk_index, 0))",
@@ -815,11 +881,22 @@ impl MemoryDB {
         if row.get::<i64>(3).unwrap_or(0) == 0 {
             return Ok(None);
         }
-        let Some(session_id) = row.get::<Option<String>>(0).unwrap_or(None) else {
+        let session_id = row.get::<Option<String>>(0).unwrap_or(None);
+        let kept: Vec<ConversationLine> = row
+            .get::<Option<String>>(5)
+            .unwrap_or(None)
+            .and_then(|json| serde_json::from_str(&json).ok())
+            .unwrap_or_default();
+        if session_id.is_none() && kept.is_empty() {
             return Ok(None);
-        };
+        }
         Ok(Some(SaidAnchor {
             session_id,
+            source_agent: row
+                .get::<Option<String>>(6)
+                .unwrap_or(None)
+                .filter(|a| !a.trim().is_empty()),
+            kept,
             saved_at: row.get::<i64>(1).unwrap_or(0),
             text: row
                 .get::<Option<String>>(2)

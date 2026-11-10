@@ -6,6 +6,8 @@
 .said-lines-list { display:grid;gap:4px;margin:0;padding:0;list-style:none; }
 .said-line { display:grid;gap:2px;width:100%;padding:6px 8px;border:0;border-radius:var(--mem-r-8);background:var(--mem-hover);color:var(--mem-text);text-align:left;cursor:pointer; }
 .said-line:hover { background:var(--mem-active, var(--mem-hover)); }
+.said-line[data-kept="true"] { cursor:default; }
+.said-line[data-kept="true"]:hover { background:var(--mem-hover); }
 .said-line:focus-visible,
 .said-lines-all:focus-visible { outline:2px solid var(--mem-accent-page);outline-offset:2px; }
 .said-line-meta { display:flex;gap:6px;color:var(--mem-text-tertiary);font:10px/1.4 var(--mem-font-mono);white-space:nowrap; }

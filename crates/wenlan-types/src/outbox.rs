@@ -132,6 +132,7 @@ mod tests {
                 entity_id: None,
                 structured_fields: None,
                 retrieval_cue: None,
+                said: None,
             }),
         };
         let json = serde_json::to_string(&envelope).unwrap();

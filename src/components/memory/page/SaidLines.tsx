@@ -40,18 +40,25 @@ export function SaidLines({ sourceIds }: SaidLinesProps) {
     })),
   });
   if (results.some((r) => r.isPending)) return null;
-  const found = results.flatMap((r) => (r.data ? [r.data] : []));
+  const found = results.flatMap((r, i) => (r.data ? [{ ...r.data, sourceId: ids[i] }] : []));
   if (found.length === 0) return null;
+  // Kept lines are only the copy the AI tool sent; there is no conversation
+  // behind them to open.
+  const opens = (said: (typeof found)[number]) => !said.kept && !!said.session_id;
+  const keyOf = (said: (typeof found)[number], index: number) =>
+    opens(said) ? `${said.session_id}:${index}` : `${said.sourceId}:kept:${index}`;
   const seen = new Set<string>();
   const lines = found
     .flatMap((said) => said.lines.map((line) => ({ said, line })))
     .filter(({ said, line }) => {
-      const key = `${said.session_id}:${line.index}`;
+      const key = keyOf(said, line.index);
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
     })
     .slice(0, SHOWN);
+  const openable = found.find(opens);
+  const firstOpenable = lines.find(({ said }) => opens(said));
   const speaker = (line: ConversationLine, tool: string) =>
     line.speaker === "you" ? t("main.search.you") : agentDisplayName(tool) ?? tool;
 
@@ -64,32 +71,53 @@ export function SaidLines({ sourceIds }: SaidLinesProps) {
         <>
         <p className="said-lines-title">{t("thisSentence.said.title")}</p>
         <ul className="said-lines-list">
-          {lines.map(({ said, line }) => (
-            <li key={`${said.session_id}:${line.index}`}>
-              <button
-                type="button"
-                className="said-line"
-                data-speaker={line.line.speaker}
-                onClick={() => setOpen({ sessionId: said.session_id, index: line.index })}
-              >
+          {lines.map(({ said, line }) => {
+            const body = (
+              <>
                 <span className="said-line-meta">
                   <span>{speaker(line.line, said.tool)}</span>
                   {line.line.at ? <span>{relativeTime(line.line.at, t, i18n.language)}</span> : null}
                 </span>
                 <span className="said-line-text">{readable(line.line.text)}</span>
-              </button>
-            </li>
-          ))}
+              </>
+            );
+            const sessionId = said.session_id;
+            return (
+              <li key={keyOf(said, line.index)}>
+                {opens(said) && sessionId ? (
+                  <button
+                    type="button"
+                    className="said-line"
+                    data-speaker={line.line.speaker}
+                    onClick={() => setOpen({ sessionId, index: line.index })}
+                  >
+                    {body}
+                  </button>
+                ) : (
+                  <div className="said-line" data-speaker={line.line.speaker} data-kept="true">
+                    {body}
+                  </div>
+                )}
+              </li>
+            );
+          })}
         </ul>
         </>
       )}
-      <button
-        type="button"
-        className="said-lines-all"
-        onClick={() => setOpen({ sessionId: (lines[0]?.said ?? found[0]).session_id, index: lines[0]?.line.index ?? null })}
-      >
-        {t("thisSentence.said.showAll")}
-      </button>
+      {openable?.session_id ? (
+        <button
+          type="button"
+          className="said-lines-all"
+          onClick={() =>
+            setOpen({
+              sessionId: (firstOpenable?.said ?? openable).session_id ?? openable.session_id!,
+              index: firstOpenable?.line.index ?? null,
+            })
+          }
+        >
+          {t("thisSentence.said.showAll")}
+        </button>
+      ) : null}
       {open && <ConversationDialog sessionId={open.sessionId} focusIndex={open.index} onClose={() => setOpen(null)} />}
     </div>
   );

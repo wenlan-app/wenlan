@@ -217,8 +217,10 @@ and wait for evidence that people need them.
   conversation it came from: who said each one and when, at most three, each
   opening the whole conversation at that line. When no line says the same
   thing, it says so instead of guessing. Finding the lines is not checking
-  them, so they never look verified.
-  原文：「可以。3.」（2026-11-06 15:47 PT，回覆：文澜寫出一句「我們決定一次發 0.21」，你點一下，就能看到原對話裡哪幾句這樣說過）
+  them, so they never look verified. A chat Wenlan can't read itself
+  (ChatGPT or Claude on the web) shows the lines the AI tool sent when it
+  saved, at most three; they open nothing further.
+  原文：「可以。3.」（2026-11-06 15:47 PT，回覆：文澜寫出一句「我們決定一次發 0.21」，你點一下，就能看到原對話裡哪幾句這樣說過）；「都可以」（2026-11-09 12:46 PT，回覆：AI 在聊天中途存筆記時，也把那段對話原文存下來，點那句話就看得到）
 - **UX-WHO-7** `shipped` An AI tool's delete never destroys: a page is
   archived with its history and a memory is forgotten; both can be restored,
   and only the person can delete for good. Every removal is listed in Activity

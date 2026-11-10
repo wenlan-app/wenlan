@@ -17,6 +17,7 @@ use axum::Json;
 use serde::Deserialize;
 
 use wenlan_core::db::conversations::SearchableConversation;
+use wenlan_core::db::sessions::SaidAnchor;
 use wenlan_core::said_lines::{quoted_line, said_lines};
 use wenlan_core::transcript_lines::{
     conversation_lines, excerpt, head, line_matches, search_terms, tail,
@@ -250,9 +251,13 @@ pub async fn handle_conversation_lines(
 ///
 /// The lines of the conversation a memory was saved in that say the same
 /// thing, each with the line before and after it (UX-WHO-6). Indexes match
-/// `/api/sessions/{id}/lines`, so "show all" opens at the same line. 404 when
-/// the memory is unknown or out of the caller's Space, was not saved in a
-/// conversation, or that conversation can't be read.
+/// `/api/sessions/{id}/lines`, so "show all" opens at the same line.
+///
+/// When the conversation can't be read (a chat in ChatGPT or Claude on the
+/// web, or a transcript that is gone) or no line in it says the same thing,
+/// the lines the AI tool sent with the memory are returned instead, marked
+/// `kept`. 404 when the memory is unknown or out of the caller's Space, or
+/// there is neither a readable conversation nor kept lines.
 pub async fn handle_memory_said(
     State(state): State<SharedState>,
     SpaceHeader(header_space): SpaceHeader,
@@ -270,47 +275,109 @@ pub async fn handle_memory_said(
         .memory_said_anchor(&source_id, &scope)
         .await?
         .ok_or_else(not_found)?;
-    let SearchableConversation { session, thing } = db
-        .searchable_conversation(&anchor.session_id, &scope)
-        .await?
-        .ok_or_else(not_found)?;
-    let session_id = session.id.clone();
-    let tool = session.tool.clone();
-    let (title, lines) = tokio::task::spawn_blocking(move || {
-        let path = std::path::PathBuf::from(session.transcript_path.clone().unwrap_or_default());
-        let lines = conversation_lines(&session.tool, &path).map(|lines| {
-            // A night's point names the line it came from; the words it
-            // shares with the conversation are only a fallback (UX-WHO-6).
+    let conversation = match anchor.session_id.as_deref() {
+        Some(id) => db.searchable_conversation(id, &scope).await?,
+        None => None,
+    };
+    let (thing_id, thing_title) = conversation
+        .as_ref()
+        .and_then(|c| c.thing.as_ref())
+        .map(|t| (Some(t.id.clone()), t.title.clone()))
+        .unwrap_or((None, None));
+    let (tool, title, read) = match conversation {
+        Some(SearchableConversation { session, .. }) => {
+            let tool = session.tool.clone();
+            let session_id = session.id.clone();
+            let anchor = anchor.clone();
+            let (title, lines) = tokio::task::spawn_blocking(move || {
+                let path =
+                    std::path::PathBuf::from(session.transcript_path.clone().unwrap_or_default());
+                let lines = conversation_lines(&session.tool, &path)
+                    .map(|lines| transcript_said(&anchor, &lines));
+                (conversation_title(&session), lines)
+            })
+            .await
+            .map_err(|e| ServerError::Internal(format!("memory said: {e}")))?;
+            (tool, title, lines.map(|lines| (session_id, lines)))
+        }
+        None => (
             anchor
-                .line
-                .as_deref()
-                .and_then(|quoted| quoted_line(quoted, &lines))
-                .map(|index| vec![index])
-                .unwrap_or_else(|| said_lines(&anchor.text, anchor.saved_at, &lines))
-                .into_iter()
-                .map(|index| {
-                    let mut line = lines[index].clone();
-                    line.text = head(&line.text, SAID_CHARS);
-                    let (before, after) = around(&lines, index);
-                    SaidLine {
-                        index,
-                        line,
-                        before,
-                        after,
-                    }
-                })
-                .collect::<Vec<_>>()
-        });
-        (conversation_title(&session), lines)
-    })
-    .await
-    .map_err(|e| ServerError::Internal(format!("memory said: {e}")))?;
-    Ok(Json(MemorySaidResponse {
-        session_id,
-        tool,
-        title,
-        thing_id: thing.as_ref().map(|t| t.id.clone()),
-        thing_title: thing.and_then(|t| t.title),
-        lines: lines.ok_or_else(not_found)?,
-    }))
+                .source_agent
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string()),
+            None,
+            None,
+        ),
+    };
+    let response =
+        |session_id: Option<String>, kept: bool, lines: Vec<SaidLine>| MemorySaidResponse {
+            session_id,
+            tool: tool.clone(),
+            kept,
+            title: title.clone(),
+            thing_id: thing_id.clone(),
+            thing_title: thing_title.clone(),
+            lines,
+        };
+    match read {
+        // The conversation itself says it: its own lines win over a copy.
+        Some((session_id, lines)) if !lines.is_empty() || anchor.kept.is_empty() => {
+            Ok(Json(response(Some(session_id), false, lines)))
+        }
+        _ if !anchor.kept.is_empty() => Ok(Json(response(
+            anchor.session_id.clone(),
+            true,
+            kept_said_lines(&anchor.kept),
+        ))),
+        _ => Err(not_found()),
+    }
+}
+
+/// The transcript lines `anchor` came from: the line a night's point named,
+/// or else the lines that share its words.
+fn transcript_said(anchor: &SaidAnchor, lines: &[ConversationLine]) -> Vec<SaidLine> {
+    // A night's point names the line it came from; the words it shares with
+    // the conversation are only a fallback (UX-WHO-6).
+    anchor
+        .line
+        .as_deref()
+        .and_then(|quoted| quoted_line(quoted, lines))
+        .map(|index| vec![index])
+        .unwrap_or_else(|| said_lines(&anchor.text, anchor.saved_at, lines))
+        .into_iter()
+        .map(|index| {
+            let mut line = lines[index].clone();
+            line.text = head(&line.text, SAID_CHARS);
+            let (before, after) = around(lines, index);
+            SaidLine {
+                index,
+                line,
+                before,
+                after,
+            }
+        })
+        .collect()
+}
+
+/// The lines an AI tool kept with a memory, nearest the save last, shown
+/// the same way as transcript lines but with no conversation around them.
+/// At most [`wenlan_core::said_lines::MAX_SAID_LINES`] are shown.
+fn kept_said_lines(kept: &[ConversationLine]) -> Vec<SaidLine> {
+    let skip = kept
+        .len()
+        .saturating_sub(wenlan_core::said_lines::MAX_SAID_LINES);
+    kept.iter()
+        .enumerate()
+        .skip(skip)
+        .map(|(index, line)| {
+            let mut line = line.clone();
+            line.text = head(&line.text, SAID_CHARS);
+            SaidLine {
+                index,
+                line,
+                before: None,
+                after: None,
+            }
+        })
+        .collect()
 }

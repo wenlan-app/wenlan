@@ -2101,6 +2101,7 @@ pub async fn store_memory(
         entity_id: None,
         structured_fields: req.structured_fields,
         retrieval_cue: req.retrieval_cue,
+        said: None,
     };
     let resp: responses::StoreMemoryResponse =
         client.post_json("/api/memory/store", &daemon_req).await?;
