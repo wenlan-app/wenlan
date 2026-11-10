@@ -55,9 +55,8 @@ const OUTSIDE_THE_REVIEW_SURFACE: readonly string[] = [
   // Linking needs a real Obsidian vault on disk; the fixture must not pretend
   // a vault's notes were copied into the Wiki.
   "link_obsidian_vault",
-  // Linked vaults live in the daemon's config; the fixture has none to list
-  // and no person's answer about AI changes to keep.
-  "list_linked_vaults",
+  // The person's answer about AI changes to a linked vault lives in the
+  // daemon's config; the fixture links no vault, so there is nothing to answer.
   "set_linked_vault_ai_edits",
   "list_zotero_collections",
   "add_zotero_source",
