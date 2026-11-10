@@ -41,6 +41,28 @@ export function splitOriginal(content: string): OriginalParts {
   return { frame: null, body: rest.slice(0, closeAt + 1 + fence.length).trim(), notes };
 }
 
+/**
+ * The words a person reads on an original's page: the original when it is
+ * Markdown, then the notes. Never its first line (it names an internal file)
+ * nor the HTML, SVG or code it keeps, which are not prose. Empty when there
+ * is nothing else.
+ */
+export function originalProse(content: string): string {
+  const { frame, body, notes } = splitOriginal(content);
+  const prose = frame || /^`{3,}/.test(body) ? "" : body;
+  return [prose, notes].filter(Boolean).join("\n\n");
+}
+
+/**
+ * The page text a summary or excerpt is drawn from, so every card, list and
+ * preview shows an original's real words rather than where it came from.
+ * Other pages are returned as they are.
+ */
+export function readablePageContent(page: { readonly creation_kind?: string | null; readonly content?: string | null }): string {
+  const content = page.content ?? "";
+  return page.creation_kind === "original" ? originalProse(content) : content;
+}
+
 /** Reports the document's height to the page showing it, so the frame fits. */
 const FIT_SCRIPT = `<script>(function(){function h(){var b=document.body;if(!b)return;var s=getComputedStyle(b);var v=b.scrollHeight+parseFloat(s.marginTop||0)+parseFloat(s.marginBottom||0);parent.postMessage({wenlanOriginalHeight:v},"*");}addEventListener("load",h);if(window.ResizeObserver&&document.body){new ResizeObserver(h).observe(document.body);}setTimeout(h,0);setTimeout(h,500);})();</script>`;
 

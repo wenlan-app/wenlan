@@ -7,6 +7,7 @@ import { others, pageShare, spaceShare } from "../sharing/sharing";
 import { PageIcon } from "../assets/PageIcon";
 import { askablePages } from "../../onboarding/useGettingStartedState";
 import { addedWhen } from "./WorkingOn";
+import { readablePageContent } from "../page/original/originalContent";
 
 /** How many of the newest pages the Wiki home lists. */
 export const NEW_PAGES_LISTED = 5;
@@ -25,10 +26,11 @@ export function newestPages(pages: readonly Page[], limit = NEW_PAGES_LISTED): P
 /**
  * The page's opening words for its card on Home: its first paragraph (a
  * page's short form), without Markdown marks or a heading that repeats the
- * title. Empty when the page has no prose yet.
+ * title. An original's note of where it came from and the HTML it keeps are
+ * not its words. Empty when the page has no prose yet.
  */
-export function pagePreview(page: Pick<Page, "title" | "content" | "summary">): string {
-  const body = (page.content ?? "").replace(/^---\n[\s\S]*?\n---\n?/, "");
+export function pagePreview(page: Pick<Page, "title" | "content" | "summary" | "creation_kind">): string {
+  const body = readablePageContent(page).replace(/^---\n[\s\S]*?\n---\n?/, "");
   for (const block of body.split(/\n\s*\n/)) {
     const text = block
       .split("\n")
