@@ -29,6 +29,10 @@ async function dragConnectorToEmptySpace(page: Page): Promise<void> {
   for (const step of [1, 2, 3, 4]) {
     await page.mouse.move(startX + step * 40, startY + step * 30);
   }
+  // Release only once React Flow has actually started the connection. The
+  // moves above can all land before it processes the first one, and a release
+  // that arrives first ends a drag that never began, so no box appears.
+  await expect(page.locator(".react-flow__connectionline")).toHaveCount(1);
   await page.mouse.up();
 }
 

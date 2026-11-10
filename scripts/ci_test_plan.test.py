@@ -172,6 +172,51 @@ def plan_for(
     )
 
 
+class FlakyReportTests(unittest.TestCase):
+    def run_fake(self, script: str) -> tuple[subprocess.CompletedProcess[str], str]:
+        with tempfile.TemporaryDirectory() as directory:
+            summary = Path(directory) / "summary.md"
+            runner = (
+                "import sys\n"
+                f"sys.path.insert(0, {str(Path(__file__).resolve().parent)!r})\n"
+                "from ci_test_plan import _run_test_command\n"
+                f"_run_test_command([sys.executable, '-c', {script!r}])\n"
+            )
+            result = subprocess.run(
+                [sys.executable, "-c", runner],
+                capture_output=True,
+                text=True,
+                env={**os.environ, "GITHUB_STEP_SUMMARY": str(summary)},
+            )
+            written = summary.read_text(encoding="utf-8") if summary.exists() else ""
+        return result, written
+
+    def test_flaky_line_becomes_a_warning_and_summary_entry(self):
+        result, summary = self.run_fake(
+            "print('    TRY 2 PASS [   0.010s] wenlan-core lint::tests::slow')\n"
+            "print('\\x1b[33;1m     FLAKY\\x1b[0m 2/2 [   0.010s] wenlan-core lint::tests::slow')\n"
+            "print('     FLAKY 2/2 [   0.010s] wenlan-core lint::tests::slow')"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("TRY 2 PASS", result.stdout)
+        warnings = [line for line in result.stdout.splitlines() if line.startswith("::warning")]
+        self.assertEqual(
+            warnings,
+            ["::warning title=Flaky test (passed on retry)::wenlan-core lint::tests::slow"],
+        )
+        self.assertIn("- `wenlan-core lint::tests::slow`", summary)
+
+    def test_failure_still_fails_and_clean_run_reports_nothing(self):
+        failed, summary = self.run_fake("print('     FAIL [ 1.0s] crate t'); raise SystemExit(100)")
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertNotIn("::warning", failed.stdout)
+        self.assertEqual(summary, "")
+        clean, summary = self.run_fake("print('     PASS [ 1.0s] crate t')")
+        self.assertEqual(clean.returncode, 0)
+        self.assertNotIn("::warning", clean.stdout)
+        self.assertEqual(summary, "")
+
+
 class FiltersetExecutionTests(unittest.TestCase):
     def run_filterset_with_listing(
         self,
@@ -407,7 +452,10 @@ class ArchiveReuseTests(unittest.TestCase):
                 "--workspace-remap", "/repo", "-E", "test(real_case)",
                 "--no-tests=pass", "--partition", "slice:2/3",
             ]
-            with mock.patch("ci_test_plan.subprocess.run", side_effect=nextest):
+            with mock.patch("ci_test_plan.subprocess.run", side_effect=nextest), mock.patch(
+                "ci_test_plan._run_test_command",
+                side_effect=lambda run_command: nextest(run_command, check=True),
+            ):
                 try:
                     _run_macos_archive(command, label="fixture archive")
                 finally:
@@ -488,7 +536,8 @@ class AppFrontendJobTests(unittest.TestCase):
             "pnpm exec tsc -b", "pnpm exec tsc -p tsconfig.tools.json",
             "pnpm test:i18n", "pnpm test",
             "pnpm build && pnpm vitest run src/__tests__/firstPaint.test.ts",
-            "pnpm exec playwright install --with-deps chromium", "pnpm test:e2e:review",
+            "bash scripts/ci-retry.sh 3 300 pnpm exec playwright install --with-deps chromium",
+            "pnpm test:e2e:review",
         )
         for command in commands:
             self.assertEqual(len(re.findall(r"(?m)^        run: " + re.escape(command) + r"$", body)), 1)

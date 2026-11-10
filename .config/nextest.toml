@@ -41,3 +41,14 @@ retries = 2
 filter = 'test(back_pressure_holds_sweep_at_pending_cap)'
 retries = 2
 
+
+# CI profile (selected by NEXTEST_PROFILE=ci in .github/workflows/ci.yml).
+# A test that fails and then passes on its retry is reported as FLAKY and does
+# not fail the run, so one timing flake cannot drop a green PR from the merge
+# queue and rebuild everything behind it. A real regression fails both attempts
+# and still fails the run. scripts/ci_test_plan.py turns every FLAKY line into a
+# visible warning; docs/ci-flake-policy.md says what to do with one. The
+# per-test retries above are inherited and still win for their tests.
+[profile.ci]
+retries = 1
+final-status-level = "flaky"

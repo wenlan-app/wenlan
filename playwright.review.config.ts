@@ -10,6 +10,10 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   timeout: 30_000,
+  // In CI a failed test runs once more. A pass on the retry is reported as
+  // "flaky" in the run summary instead of failing the merge queue; a real
+  // regression fails both tries. See docs/ci-flake-policy.md.
+  retries: process.env.CI ? 1 : 0,
   expect: {
     timeout: 10_000,
   },

@@ -1700,7 +1700,59 @@ def _run_macos_archive(command: list[str], *, label: str) -> None:
         ]
         executable_command = _executable_command(reuse_command)
         print("+", " ".join(executable_command), flush=True)
-        subprocess.run(executable_command, check=True)
+        _run_test_command(executable_command)
+
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+_FLAKY = re.compile(r"^\s*FLAKY\s+\d+/\d+\s+\[[^\]]*\]\s+(?P<test>\S.*?)\s*$")
+
+
+def _run_test_command(command: list[str]) -> None:
+    """Run one nextest command, echoing its output, and surface flaky tests.
+
+    The CI nextest profile retries a failed test once. A test that only passes
+    on the retry does not fail the run, so it is reported here instead: a
+    GitHub warning annotation plus a job-summary line, so a flake is seen and
+    fixed rather than silently absorbed (docs/ci-flake-policy.md).
+    """
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
+    )
+    assert process.stdout is not None
+    flaky: list[str] = []
+    for line in process.stdout:
+        sys.stdout.write(line)
+        match = _FLAKY.match(_ANSI.sub("", line))
+        if match and match.group("test") not in flaky:
+            flaky.append(match.group("test"))
+    sys.stdout.flush()
+    returncode = process.wait()
+    _report_flaky(flaky)
+    if returncode != 0:
+        raise subprocess.CalledProcessError(returncode, command)
+
+
+def _report_flaky(flaky: list[str]) -> None:
+    if not flaky:
+        return
+    for test in flaky:
+        print(
+            f"::warning title=Flaky test (passed on retry)::{test}",
+            flush=True,
+        )
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with open(summary, "a", encoding="utf-8") as handle:
+            handle.write("### Flaky tests (passed on retry)\n\n")
+            for test in flaky:
+                handle.write(f"- `{test}`\n")
+            handle.write("\nSee docs/ci-flake-policy.md.\n")
 
 
 def _require_filterset_match(command: list[str]) -> None:
@@ -1910,7 +1962,7 @@ def _main(argv: list[str]) -> int:
             _require_filterset_match(command)
         executable_command = _executable_command(command)
         print("+", " ".join(executable_command), flush=True)
-        subprocess.run(executable_command, check=True)
+        _run_test_command(executable_command)
     return 0
 
 

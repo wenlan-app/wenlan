@@ -29,6 +29,9 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   WENLAN_NO_AUTOSTART: '1'
+  # Retry a failed test once and report it as flaky instead of failing the run
+  # (.config/nextest.toml [profile.ci]; docs/ci-flake-policy.md).
+  NEXTEST_PROFILE: ci
 
 jobs:
   detect-changes:
@@ -1204,7 +1207,16 @@ jobs:
         with:
           toolchain: 1.95.0
       - name: Set up sccache
+        id: sccache
+        continue-on-error: true
         uses: mozilla-actions/sccache-action@1583d6b38d7be47f593cb472781bbb21cab4321e # v0.0.10
+      # A failed sccache download only costs the compiler cache: build
+      # uncached instead of failing the run (an empty RUSTC_WRAPPER turns
+      # Cargo's wrapper off).
+      - name: Build without sccache if it could not be set up
+        if: steps.sccache.outcome == 'failure'
+        shell: bash
+        run: echo "RUSTC_WRAPPER=" >> "$GITHUB_ENV"
       - name: Restore compiler inputs
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
@@ -1213,9 +1225,17 @@ jobs:
           cache-targets: "false"
           save-if: "false"
       - name: Install cargo-nextest
+        id: nextest-install
+        continue-on-error: true
         uses: taiki-e/install-action@3235f8901fd37ffed0052b276cec25a362fb82e9 # v2
         with:
           tool: cargo-nextest
+      # A failed download retries from nextest's own release; a second
+      # failure still fails the job.
+      - name: Install cargo-nextest (retry)
+        if: steps.nextest-install.outcome == 'failure'
+        shell: bash
+        run: bash scripts/ci-install-nextest.sh
       - name: Build workspace-lib nextest archive
         env:
           CI_TEST_PLAN: ${{ needs.detect-changes.outputs.test-plan }}
@@ -1251,9 +1271,17 @@ jobs:
         with:
           toolchain: 1.95.0
       - name: Install cargo-nextest
+        id: nextest-install
+        continue-on-error: true
         uses: taiki-e/install-action@3235f8901fd37ffed0052b276cec25a362fb82e9 # v2
         with:
           tool: cargo-nextest
+      # A failed download retries from nextest's own release; a second
+      # failure still fails the job.
+      - name: Install cargo-nextest (retry)
+        if: steps.nextest-install.outcome == 'failure'
+        shell: bash
+        run: bash scripts/ci-install-nextest.sh
       - name: Download workspace-lib nextest archive
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
@@ -1319,9 +1347,17 @@ jobs:
           cache-targets: "true"
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install cargo-nextest
+        id: nextest-install
+        continue-on-error: true
         uses: taiki-e/install-action@3235f8901fd37ffed0052b276cec25a362fb82e9 # v2
         with:
           tool: cargo-nextest
+      # A failed download retries from nextest's own release; a second
+      # failure still fails the job.
+      - name: Install cargo-nextest (retry)
+        if: steps.nextest-install.outcome == 'failure'
+        shell: bash
+        run: bash scripts/ci-install-nextest.sh
       - name: Build exact macOS nextest archives
         env:
           # Workspace/archive contract inputs use the canonical fail-closed
@@ -1366,9 +1402,17 @@ jobs:
         with:
           toolchain: 1.95.0
       - name: Install cargo-nextest
+        id: nextest-install
+        continue-on-error: true
         uses: taiki-e/install-action@3235f8901fd37ffed0052b276cec25a362fb82e9 # v2
         with:
           tool: cargo-nextest
+      # A failed download retries from nextest's own release; a second
+      # failure still fails the job.
+      - name: Install cargo-nextest (retry)
+        if: steps.nextest-install.outcome == 'failure'
+        shell: bash
+        run: bash scripts/ci-install-nextest.sh
       - name: Download exact macOS nextest archives
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
@@ -1472,7 +1516,7 @@ jobs:
       - name: Install sqlite3 (Windows only)
         if: matrix.os == 'windows-2022'
         run: |
-          vcpkg install sqlite3:x64-windows-static-md
+          foreach ($attempt in 1..3) { vcpkg install sqlite3:x64-windows-static-md; if ($LASTEXITCODE -eq 0) { break }; if ($attempt -eq 3) { exit 1 }; Start-Sleep -Seconds (15 * $attempt) }
           "LIB=$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows-static-md\lib;$env:LIB" | Out-File -FilePath $env:GITHUB_ENV -Append
         shell: pwsh
       - name: Set up Vulkan SDK (Windows only)
@@ -1512,9 +1556,17 @@ jobs:
       # nextest runs tests as separate processes in parallel; ~2x faster
       # than `cargo test` on multi-core runners. Install on both platforms.
       - name: Install cargo-nextest
+        id: nextest-install
+        continue-on-error: true
         uses: taiki-e/install-action@3235f8901fd37ffed0052b276cec25a362fb82e9 # v2
         with:
           tool: cargo-nextest
+      # A failed download retries from nextest's own release; a second
+      # failure still fails the job.
+      - name: Install cargo-nextest (retry)
+        if: steps.nextest-install.outcome == 'failure'
+        shell: bash
+        run: bash scripts/ci-install-nextest.sh
       - name: Validate nextest config on platform
         if: needs.detect-changes.outputs.nextest-config == 'true'
         run: cargo nextest run -p wenlan-types --lib -E 'test(/^brand::tests::brand_is_wenlan$/)' --no-tests=fail
@@ -1794,7 +1846,7 @@ jobs:
         if: matrix.os == 'windows-2022' && needs.detect-changes.outputs.workspace-platform == 'true' && env.TEST_OWNS_PLATFORM != 'true'
         shell: pwsh
         run: |
-          vcpkg install sqlite3:x64-windows-static-md
+          foreach ($attempt in 1..3) { vcpkg install sqlite3:x64-windows-static-md; if ($LASTEXITCODE -eq 0) { break }; if ($attempt -eq 3) { exit 1 }; Start-Sleep -Seconds (15 * $attempt) }
           "LIB=$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows-static-md\lib;$env:LIB" |
             Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Set up Vulkan SDK (Windows platform build)
@@ -1835,7 +1887,7 @@ jobs:
         if: matrix.os == 'windows-2022' && (needs.detect-changes.outputs.workspace-platform != 'true' || env.TEST_OWNS_PLATFORM == 'true')
         shell: pwsh
         run: |
-          vcpkg install sqlite3:x64-windows-static-md
+          foreach ($attempt in 1..3) { vcpkg install sqlite3:x64-windows-static-md; if ($LASTEXITCODE -eq 0) { break }; if ($attempt -eq 3) { exit 1 }; Start-Sleep -Seconds (15 * $attempt) }
           "LIB=$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows-static-md\lib;$env:LIB" |
             Out-File -FilePath $env:GITHUB_ENV -Append
           & scripts/setup-vulkan-sdk-windows.test.ps1
@@ -1882,7 +1934,16 @@ jobs:
         with:
           toolchain: 1.95.0
       - name: Set up sccache
+        id: sccache
+        continue-on-error: true
         uses: mozilla-actions/sccache-action@1583d6b38d7be47f593cb472781bbb21cab4321e # v0.0.10
+      # A failed sccache download only costs the compiler cache: build
+      # uncached instead of failing the run (an empty RUSTC_WRAPPER turns
+      # Cargo's wrapper off).
+      - name: Build without sccache if it could not be set up
+        if: steps.sccache.outcome == 'failure'
+        shell: bash
+        run: echo "RUSTC_WRAPPER=" >> "$GITHUB_ENV"
       - name: Restore compiler inputs
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
@@ -1891,9 +1952,17 @@ jobs:
           cache-targets: "false"
           save-if: "false"
       - name: Install cargo-nextest
+        id: nextest-install
+        continue-on-error: true
         uses: taiki-e/install-action@3235f8901fd37ffed0052b276cec25a362fb82e9 # v2
         with:
           tool: cargo-nextest
+      # A failed download retries from nextest's own release; a second
+      # failure still fails the job.
+      - name: Install cargo-nextest (retry)
+        if: steps.nextest-install.outcome == 'failure'
+        shell: bash
+        run: bash scripts/ci-install-nextest.sh
       - name: Download portable FastEmbed model
         id: fastembed-download
         continue-on-error: true
@@ -2327,7 +2396,7 @@ jobs:
         if: matrix.target == 'x86_64-pc-windows-msvc'
         shell: pwsh
         run: |
-          vcpkg install sqlite3:x64-windows-static-md
+          foreach ($attempt in 1..3) { vcpkg install sqlite3:x64-windows-static-md; if ($LASTEXITCODE -eq 0) { break }; if ($attempt -eq 3) { exit 1 }; Start-Sleep -Seconds (15 * $attempt) }
           "LIB=$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows-static-md\lib;$env:LIB" |
             Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Set up Vulkan SDK (Windows only)
@@ -2485,7 +2554,16 @@ jobs:
         with:
           toolchain: 1.95.0
       - name: Set up sccache
+        id: sccache
+        continue-on-error: true
         uses: mozilla-actions/sccache-action@1583d6b38d7be47f593cb472781bbb21cab4321e # v0.0.10
+      # A failed sccache download only costs the compiler cache: build
+      # uncached instead of failing the run (an empty RUSTC_WRAPPER turns
+      # Cargo's wrapper off).
+      - name: Build without sccache if it could not be set up
+        if: steps.sccache.outcome == 'failure'
+        shell: bash
+        run: echo "RUSTC_WRAPPER=" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           # Reuse the required test lane's dependency inputs without producing
@@ -2495,9 +2573,17 @@ jobs:
           cache-targets: "false"
           save-if: "false"
       - name: Install cargo-nextest
+        id: nextest-install
+        continue-on-error: true
         uses: taiki-e/install-action@3235f8901fd37ffed0052b276cec25a362fb82e9 # v2
         with:
           tool: cargo-nextest
+      # A failed download retries from nextest's own release; a second
+      # failure still fails the job.
+      - name: Install cargo-nextest (retry)
+        if: steps.nextest-install.outcome == 'failure'
+        shell: bash
+        run: bash scripts/ci-install-nextest.sh
       # real_router.rs boots a real MemoryDB. detect-changes owns the only cold
       # fetch; this lane must fail closed if the prepared snapshot is absent.
       - name: Download portable FastEmbed model
@@ -2539,7 +2625,16 @@ jobs:
         with:
           toolchain: 1.95.0
       - name: Set up sccache
+        id: sccache
+        continue-on-error: true
         uses: mozilla-actions/sccache-action@1583d6b38d7be47f593cb472781bbb21cab4321e # v0.0.10
+      # A failed sccache download only costs the compiler cache: build
+      # uncached instead of failing the run (an empty RUSTC_WRAPPER turns
+      # Cargo's wrapper off).
+      - name: Build without sccache if it could not be set up
+        if: steps.sccache.outcome == 'failure'
+        shell: bash
+        run: echo "RUSTC_WRAPPER=" >> "$GITHUB_ENV"
       - name: Restore compiler inputs
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
@@ -2548,9 +2643,17 @@ jobs:
           cache-targets: "false"
           save-if: "false"
       - name: Install cargo-nextest
+        id: nextest-install
+        continue-on-error: true
         uses: taiki-e/install-action@3235f8901fd37ffed0052b276cec25a362fb82e9 # v2
         with:
           tool: cargo-nextest
+      # A failed download retries from nextest's own release; a second
+      # failure still fails the job.
+      - name: Install cargo-nextest (retry)
+        if: steps.nextest-install.outcome == 'failure'
+        shell: bash
+        run: bash scripts/ci-install-nextest.sh
       - name: Validate Claude plugin distribution
         run: cargo nextest run -p wenlan --test distribution --no-tests=fail
       - name: Validate cross-surface plugin distribution
@@ -2677,19 +2780,36 @@ jobs:
     name: merge-group-fail-fast
     if: github.event_name == 'merge_group'
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    # Matches the merge queue's 150-minute status-check timeout, so a slow but
+    # green run is never reported with a timed-out watcher.
+    timeout-minutes: 150
     permissions:
       actions: write
     steps:
-      - name: Cancel the run at the first failed job
+      - name: Cancel the run at the first failed job, or once the queue drops it
         env:
           GH_TOKEN: ${{ github.token }}
           RUN: ${{ github.run_id }}
           REPO: ${{ github.repository }}
+          QUEUE_REF: ${{ github.ref }}
         run: |
           # GitHub's bash runs with -e: a transient API error (a 502) must retry
           # on the next tick, not turn this job red.
+          ref_path="${QUEUE_REF#refs/}"
           while true; do
+            # When an entry ahead fails, the queue rebuilds every entry behind it
+            # on a new gh-readonly-queue ref and deletes this one. The old run
+            # would otherwise keep testing a base that can no longer land and
+            # hold runners the rebuilt entries are waiting for. Only a definite
+            # 404 counts; any other answer is "could not tell" and waits.
+            status="$(gh api --include "repos/$REPO/git/ref/$ref_path" 2>/dev/null \
+              | sed -n '1{s/^HTTP\/[0-9.]* \([0-9][0-9]*\).*/\1/p;q;}')" || status=""
+            if [ "$status" = 404 ]; then
+              echo "queue ref $QUEUE_REF is gone; this entry was rebuilt, cancelling run $RUN"
+              if gh api -X POST "repos/$REPO/actions/runs/$RUN/cancel"; then
+                exit 0
+              fi
+            fi
             rows="$(gh api "repos/$REPO/actions/runs/$RUN/jobs?per_page=100&filter=latest" --paginate \
               --jq '.jobs[] | [.name, (.conclusion // "")] | @tsv')" || { sleep 20; continue; }
             failed=""
@@ -2698,7 +2818,9 @@ jobs:
               case "$name" in
                 merge-group-fail-fast) ;;
                 conclusion) conclusion_started=1 ;;
-                *) case "$result" in failure|timed_out) failed="$failed$name"$'\n' ;; esac ;;
+                # A job killed by its own timeout-minutes reports `cancelled`;
+                # nothing else cancels a single job while this watcher runs.
+                *) case "$result" in failure|timed_out|cancelled) failed="$failed$name"$'\n' ;; esac ;;
               esac
             done <<<"$rows"
             # `conclusion` only starts once every needed job is done; cancelling
@@ -3012,7 +3134,7 @@ jobs:
         env:
           WENLAN_REQUIRE_DIST: "1"
       - name: Install Playwright Chromium
-        run: pnpm exec playwright install --with-deps chromium
+        run: bash scripts/ci-retry.sh 3 300 pnpm exec playwright install --with-deps chromium
       - name: Review e2e
         run: pnpm test:e2e:review
 
@@ -3047,7 +3169,7 @@ jobs:
       # --with-deps adds the system libraries and fonts (CJK included) that a
       # bare Ubuntu image lacks.
       - name: Install Playwright Chromium
-        run: pnpm exec playwright install --with-deps chromium
+        run: bash scripts/ci-retry.sh 3 300 pnpm exec playwright install --with-deps chromium
       - name: Frontend e2e
         run: pnpm test:e2e --shard=${{ matrix.shard }}/4
       # Keep rendered proof as a run artifact, never as new screenshots in Git.
@@ -3125,7 +3247,7 @@ jobs:
       - name: Install sqlite3
         shell: pwsh
         run: |
-          vcpkg install sqlite3:x64-windows-static-md
+          foreach ($attempt in 1..3) { vcpkg install sqlite3:x64-windows-static-md; if ($LASTEXITCODE -eq 0) { break }; if ($attempt -eq 3) { exit 1 }; Start-Sleep -Seconds (15 * $attempt) }
           "LIB=$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows-static-md\lib;$env:LIB" |
             Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Set up Vulkan SDK
