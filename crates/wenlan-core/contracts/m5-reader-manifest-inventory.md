@@ -1346,6 +1346,7 @@ carrying the authority of agreement.
 | `core/steep_new.rs::link_targets` | `private` | no | no | — | `core/db/steep_new.rs::notes_sharing_entities`, `core/db/steep_new.rs::recent_notes` |
 | `core/steep_new.rs::list_new` | `pub` | no | **yes** | `server/steep_new_routes.rs::handle_steep_new_list` | `core/db/steep_new.rs::recent_notes` |
 | `core/steep_new.rs::strict_entity_titled` | `private` | no | no | — | `core/db/steep_new.rs::entity_page_titles` |
+| `core/steep_new_automatic.rs::recent_titles` | `private` | no | no | — | `core/db/steep_new.rs::recent_notes` |
 | `core/store/export/pages.rs::export_pages` | `pub` | no | no | — | `core/db/export_reads.rs::export_page_rows` |
 | `core/store/restore.rs::restore_missing_database` | `pub` | yes | no | — | `core/db.rs::backfill_page_embeddings`, `core/db/rebuild_writes.rs::rebuild_page_links` |
 | `core/synthesis/distill.rs::build_existing_titles_hint` | `pub(crate)` | no | no | — | `core/db.rs::list_active_page_titles_scoped`, `core/db.rs::list_relevant_active_page_titles` |
@@ -1529,7 +1530,7 @@ carrying the authority of agreement.
 | `core/refinery/mod.rs::enqueue_changed_pages` | `pub(crate)` | no | no | — | `core/db.rs::list_pages` |
 | `core/refinery/mod.rs::maybe_refresh_overview_page` | `private` | no | no | — | `core/synthesis/overview.rs::refresh_overview_page` |
 | `core/refinery/mod.rs::re_distill_stale_pages` | `pub(crate)` | no | no | — | `core/db.rs::list_stale_pages` |
-| `core/refinery/mod.rs::run_periodic_steep_phase_with_api` | `pub` | no | **yes** | `server/scheduler.rs::fire_steep_phase` | `core/refinery/mod.rs::run_redistill_page_slice` |
+| `core/refinery/mod.rs::run_periodic_steep_phase_with_api` | `pub` | no | **yes** | `server/scheduler.rs::fire_steep_phase` | `core/db.rs::resolve_orphan_page_links`, `core/refinery/mod.rs::run_redistill_page_slice` |
 | `core/refinery/mod.rs::run_periodic_steep_with_api_scope` | `private` | no | no | — | `core/db.rs::resolve_orphan_page_links` |
 | `core/repair.rs::apply_rename_page_title` | `private` | no | no | — | `core/post_write.rs::rename_page_title_cas` |
 | `core/repair.rs::apply_repair_with_pages` | `pub` | no | **yes** | `server/repair_routes.rs::handle_apply` | `core/repair.rs::apply_repair_with_pages_inner` |
@@ -1562,6 +1563,8 @@ carrying the authority of agreement.
 | `core/steep_new.rs::organize_new` | `pub` | no | **yes** | `server/steep_new_routes.rs::handle_steep_new_organize` | `core/steep_new.rs::existing_page`, `core/steep_new.rs::link_targets` |
 | `core/steep_new.rs::unused_link_targets` | `pub` | no | **yes** | `server/page_routes.rs::handle_create_page_inner`, `server/page_routes.rs::handle_refresh_page_inner`, `server/steep_routes.rs::handle_steep_commit` | `core/steep_new.rs::link_targets`, `core/synthesis/wikilinks.rs::resolve_against_pages` |
 | `core/steep_new.rs::vault_linked_notes` | `private` | no | no | — | `core/db/steep_new.rs::notes_citing_sources_with`, `core/db/steep_new.rs::notes_citing_text_with` |
+| `core/steep_new_automatic.rs::land` | `private` | yes | no | — | `core/steep_new.rs::commit_new` |
+| `core/steep_new_automatic.rs::write_one_new_page` | `pub` | no | no | — | `core/steep_new_automatic.rs::recent_titles` |
 | `core/steep_organize.rs::apply` | `pub` | yes | no | — | `core/db.rs::apply_entity_extraction` |
 | `core/store/export/run.rs::export_into` | `private` | no | no | — | `core/store/export/pages.rs::export_pages` |
 | `core/synthesis/detect.rs::detect_page_candidates` | `pub` | no | no | — | `core/db.rs::find_distillation_clusters_scoped`, `core/db.rs::find_matching_page_scoped` |
