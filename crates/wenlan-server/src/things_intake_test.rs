@@ -192,6 +192,67 @@ async fn ux_thing_1_conversations_become_things_without_anyone_telling_wenlan() 
     assert_eq!(group.prompts.lock().unwrap().len(), 1);
 }
 
+/// A conversation whose AI kept a diagram is work, even when the labelling
+/// model calls it a test, so the diagram lands under a thing (UX-ART-4).
+#[tokio::test]
+async fn ux_art_4_a_conversation_that_kept_a_diagram_is_work() {
+    use wenlan_core::chat_import::originals::{
+        keep_session_original, SessionOriginal, SessionOriginalFormat,
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let db = MemoryDB::new(dir.path(), Arc::new(NoopEmitter))
+        .await
+        .unwrap();
+    let session = wenlan_types::sessions::SessionRef::new("claude-code", "kept").unwrap();
+    keep_session_original(
+        &db,
+        dir.path(),
+        None,
+        SessionOriginal {
+            session: Some(&session),
+            title: "Release flow",
+            content: "<svg xmlns=\"http://www.w3.org/2000/svg\"><text>keep</text></svg>",
+            format: SessionOriginalFormat::Svg,
+            space: wenlan_types::WriteSpaceTarget::Uncategorized,
+            workspace: None,
+            source_memory_ids: Vec::new(),
+            replaces: None,
+        },
+    )
+    .await
+    .unwrap();
+    let found = vec![
+        conv(
+            "kept",
+            &["Test keeping a diagram", "now the new version"],
+            20,
+        ),
+        conv("plain", &["Test the tool", "thanks"], 10),
+    ];
+    // The model calls both a test of the tool.
+    let label = Scripted::new(&[
+        r#"{"work": false, "title": "Release flow diagram", "space": "", "about": "a diagram of the release", "status": "Kept two versions"}"#,
+        r#"{"work": false, "title": "Tool test", "space": "", "about": "a test", "status": "Done"}"#,
+    ]);
+    let group = Scripted::new(&[
+        r#"{"new": [{"title": "Release flow", "conversations": ["C0"], "now": "Two versions of the diagram kept"}]}"#,
+    ]);
+    let models = IntakeModels {
+        label: label.clone(),
+        group: group.clone(),
+    };
+    let mut backoff = Backoff::default();
+    let report = look_with(&db, found, &models, "English", &mut backoff)
+        .await
+        .unwrap();
+    assert_eq!((report.labelled, report.work, report.grouped), (2, 1, 1));
+    let grouped = group.prompts.lock().unwrap().join("\n");
+    assert!(grouped.contains("Release flow diagram"));
+    assert!(!grouped.contains("Tool test"));
+    let things = db.list_things(&ReadScope::Global, None).await.unwrap();
+    assert_eq!(things.len(), 1);
+}
+
 #[tokio::test]
 async fn ux_thing_1_a_model_that_keeps_failing_is_not_asked_every_look() {
     let dir = tempfile::tempdir().unwrap();
