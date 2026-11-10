@@ -604,6 +604,7 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `GET` | `/api/linked-vaults` | main | no | not_applicable | `none` | — | linked vault folders only |
 | `POST` | `/api/linked-vaults` | main | no | not_applicable | `none` | — | links a vault; returns vault folders and a count only |
 | `DELETE` | `/api/linked-vaults` | main | no | not_applicable | `none` | — | unlinks a vault; returns vault folders only |
+| `POST` | `/api/linked-vaults/ai-edits` | main | no | not_applicable | `none` | — | locks or unlocks a vault's pages; returns vault folders only |
 | `GET` | `/api/lint` | main + repair | yes | automatic | `none` | `handle_lint` | LintAgentRecord.excerpt, LintAgentRecord.source_excerpt, LintCheck |
 | `POST` | `/api/lint` | main + repair | yes | automatic | `none` | `handle_lint_submission` | LintAgentRecord.excerpt, LintAgentRecord.source_excerpt, LintCheck |
 | `POST` | `/api/llm/test` | main | no | not_applicable | `none` | — | no prose fields |

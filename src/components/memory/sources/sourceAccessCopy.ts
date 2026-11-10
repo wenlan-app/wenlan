@@ -153,6 +153,10 @@ export const enSourceAccess = {
   "linkIsSource": "This vault is already connected as a source.",
   "linkTaken": "This vault is already linked.",
   "linkOverlaps": "This vault holds Wenlan's pages folder, or sits inside it.",
+  "askTitle": "Let the AI edit the notes in {{name}} directly?",
+  "askBody": "Every change is kept in the page's history and can be undone.",
+  "askNo": "No",
+  "askYes": "Yes",
   "folderPickFailed": "Could not read the selected folder."
 };
 
@@ -310,6 +314,10 @@ export const hantSourceAccess = {
   "linkIsSource": "這個庫已經當成來源接上了。",
   "linkTaken": "這個庫已經接上了。",
   "linkOverlaps": "這個庫裡有文瀾的頁面資料夾，或它就在頁面資料夾裡。",
+  "askTitle": "要讓 AI 直接改 {{name}} 裡的筆記嗎？",
+  "askBody": "改過的地方都記在頁面歷史裡，可以還原。",
+  "askNo": "先不要",
+  "askYes": "好",
   "folderPickFailed": "無法讀取所選資料夾。"
 };
 
@@ -467,5 +475,9 @@ export const hansSourceAccess = {
   "linkIsSource": "这个库已经作为来源接上了。",
   "linkTaken": "这个库已经接上了。",
   "linkOverlaps": "这个库里有文澜的页面文件夹，或它就在页面文件夹里。",
+  "askTitle": "要让 AI 直接改 {{name}} 里的笔记吗？",
+  "askBody": "改过的地方都记在页面历史里，可以还原。",
+  "askNo": "先不要",
+  "askYes": "好",
   "folderPickFailed": "无法读取所选文件夹。"
 };

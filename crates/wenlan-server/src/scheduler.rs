@@ -1556,6 +1556,23 @@ pub fn spawn_scheduler(
                 {
                     Ok(results) => {
                         for (link, result) in results {
+                            // Until the person lets the AI change the vault,
+                            // its notes' pages are locked: an AI change waits
+                            // for them instead of landing.
+                            if let Ok(stats) = &result {
+                                if !link.ai_may_edit() {
+                                    for page in &stats.new_pages {
+                                        if let Err(e) =
+                                            db.set_page_review_required(page, true).await
+                                        {
+                                            tracing::warn!(
+                                                "[scheduler] linked vault {}: lock {page}: {e}",
+                                                link.folder
+                                            );
+                                        }
+                                    }
+                                }
+                            }
                             match result {
                                 Ok(stats) if stats != Default::default() => tracing::info!(
                                     "[scheduler] linked vault {}: {stats:?}",

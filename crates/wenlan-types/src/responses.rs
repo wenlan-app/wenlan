@@ -1349,6 +1349,13 @@ pub struct LinkedVaultEntry {
     pub path: String,
     /// The Wiki folder its notes are in.
     pub folder: String,
+    /// Whether the AI may change its notes directly; absent until the
+    /// person answers, which counts as no.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_edits: Option<bool>,
+    /// When it was linked, in seconds since the epoch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub linked_at: Option<i64>,
 }
 
 /// `GET`/`POST`/`DELETE /api/linked-vaults` response: every linked vault,

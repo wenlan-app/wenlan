@@ -302,11 +302,12 @@ fn manifest_counts_match_the_spec() {
     // back one tidy of a night; the thing's summary only).
     // Then 328 after GET/POST `/api/things/old-pass` and POST `/undo` (the
     // one-time pass over old memories; a time and counts only).
-    // Then 331 after GET/POST/DELETE `/api/linked-vaults` (Obsidian vaults
-    // linked into the Wiki; folder paths and a count only).
+    // Then 332 after GET/POST/DELETE `/api/linked-vaults` and POST
+    // `/api/linked-vaults/ai-edits` (Obsidian vaults linked into the Wiki;
+    // folder paths and a count only).
     assert_eq!(
         HTTP_READERS.len(),
-        331,
+        332,
         "registered (method, path, handler) triples"
     );
     assert_eq!(MCP_READERS.len(), 53, "#[tool( declarations");
@@ -317,7 +318,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        343,
+        344,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -325,7 +326,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        326,
+        327,
         "main builder entries"
     );
     assert_eq!(
@@ -508,7 +509,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::None)
             .count(),
-        323 // Existing 273 plus 22 research workflow routes, 7 custom-theme routes, a memory's conversation lines, the nights undo, the memory restore, the two trust scan routes, keeping a session original, the 8 sharing routes, one tidy's undo, the three old-pass routes and the three linked-vault routes, all with no page markers.
+        324 // Existing 273 plus 22 research workflow routes, 7 custom-theme routes, a memory's conversation lines, the nights undo, the memory restore, the two trust scan routes, keeping a session original, the 8 sharing routes, one tidy's undo, the three old-pass routes and the four linked-vault routes, all with no page markers.
     );
 }
 

@@ -25,6 +25,10 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
                 .post(handle_link_vault)
                 .delete(handle_unlink_vault),
         )
+        .route(
+            "/api/linked-vaults/ai-edits",
+            post(handle_linked_vault_ai_edits),
+        )
         .route("/api/attachments", post(handle_attach_file))
         .route("/api/attachments/resolve", get(handle_resolve_embed))
 }
@@ -197,6 +201,8 @@ fn linked_vaults_response(
             .map(|link| LinkedVaultEntry {
                 path: link.path.to_string_lossy().into_owned(),
                 folder: link.folder.clone(),
+                ai_edits: link.ai_edits,
+                linked_at: link.linked_at,
             })
             .collect(),
         notes_added,
@@ -239,6 +245,8 @@ pub async fn handle_link_vault(
             let link = wenlan_core::linked_vault::LinkedVault {
                 path: vault.clone(),
                 folder,
+                ai_edits: None,
+                linked_at: Some(chrono::Utc::now().timestamp()),
             };
             cfg.linked_vaults.push(link.clone());
             Ok(link)
@@ -281,6 +289,54 @@ pub async fn handle_unlink_vault(
     })
     .await
     .map_err(|e| ServerError::Internal(e.to_string()))??;
+    Ok(Json(response))
+}
+
+/// POST /api/linked-vaults/ai-edits
+///
+/// The person's answer to "may the AI change this vault's notes directly?".
+/// Yes unlocks every note's page, so an AI tool's change lands (recorded in
+/// the page's history, undoable); no keeps them locked, so a change waits
+/// for the person. Asked once: either answer is kept. Only the person's own
+/// request from the app may answer; an AI tool cannot let itself in.
+pub async fn handle_linked_vault_ai_edits(
+    axum::extract::State(state): axum::extract::State<SharedState>,
+    headers: axum::http::HeaderMap,
+    Json(req): Json<wenlan_types::requests::LinkedVaultAiEditsRequest>,
+) -> Result<Json<LinkedVaultsResponse>, ServerError> {
+    if !crate::memory_routes::caller_is_person(&headers) {
+        return Err(ServerError::ValidationError(
+            "linked_vault_needs_the_person".into(),
+        ));
+    }
+    let db = state
+        .read()
+        .await
+        .db
+        .clone()
+        .ok_or(ServerError::DbNotInitialized)?;
+    let vault = std::path::PathBuf::from(req.path.trim());
+    let allow = req.allow;
+    let (response, pages) = tokio::task::spawn_blocking(move || {
+        wenlan_core::config::update_config(|cfg| {
+            let link = cfg
+                .linked_vaults
+                .iter_mut()
+                .find(|link| link.path == vault)
+                .ok_or_else(|| {
+                    wenlan_core::error::WenlanError::NotFound("linked_vault_not_found".into())
+                })?;
+            link.ai_edits = Some(allow);
+            let pages =
+                wenlan_core::linked_vault::page_ids(link, &wenlan_core::linked_vault::state_dir())?;
+            Ok((linked_vaults_response(cfg, None), pages))
+        })
+    })
+    .await
+    .map_err(|e| ServerError::Internal(e.to_string()))??;
+    for page in pages {
+        db.set_page_review_required(&page, !allow).await?;
+    }
     Ok(Json(response))
 }
 

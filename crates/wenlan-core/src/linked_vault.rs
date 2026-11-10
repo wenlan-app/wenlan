@@ -69,6 +69,23 @@ pub struct LinkedVault {
     pub path: PathBuf,
     /// The folder of the pages folder its notes are kept in, one name.
     pub folder: String,
+    /// The person's answer to "may the AI change these notes directly?":
+    /// `None` until they answer, and no answer counts as no. Until it is
+    /// `Some(true)`, every note's page is locked, so an AI change waits for
+    /// the person instead of landing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_edits: Option<bool>,
+    /// When it was linked, in seconds since the epoch: the app asks about AI
+    /// changes from the next day on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub linked_at: Option<i64>,
+}
+
+impl LinkedVault {
+    /// Whether the person said the AI may change these notes directly.
+    pub fn ai_may_edit(&self) -> bool {
+        self.ai_edits == Some(true)
+    }
 }
 
 /// What one pass copied.
@@ -84,6 +101,9 @@ pub struct BridgeStats {
     /// Set when so many notes were gone at once that nothing was deleted.
     pub held_gone: Option<usize>,
     pub errors: usize,
+    /// Pages this pass learned belong to a note, for the caller to lock
+    /// while the person has not let the AI change the vault.
+    pub new_pages: Vec<String>,
 }
 
 /// What the last copy left on both sides of one note.
@@ -326,6 +346,7 @@ pub(crate) fn bridge_pass_at(
         );
     }
 
+    let ids_before: BTreeSet<String> = state.notes.values().filter_map(|n| n.id.clone()).collect();
     let all: BTreeSet<String> = vault_seen
         .keys()
         .chain(wiki_seen.keys())
@@ -352,6 +373,12 @@ pub(crate) fn bridge_pass_at(
         }
     }
     write_state(&state_path, &state)?;
+    stats.new_pages = state
+        .notes
+        .values()
+        .filter_map(|n| n.id.clone())
+        .filter(|id| !ids_before.contains(id))
+        .collect();
     Ok(stats)
 }
 
@@ -939,6 +966,12 @@ fn write_state(path: &Path, state: &BridgeState) -> Result<(), WenlanError> {
     std::fs::write(&tmp, bytes)?;
     std::fs::rename(&tmp, path)?;
     Ok(())
+}
+
+/// The pages of a linked vault's notes, as the last pass recorded them.
+pub fn page_ids(link: &LinkedVault, state_dir: &Path) -> Result<Vec<String>, WenlanError> {
+    let state = read_state(&state_file(state_dir, &link.path))?;
+    Ok(state.notes.into_values().filter_map(|n| n.id).collect())
 }
 
 /// Where the copy state of linked vaults is kept: beside `config.json`.

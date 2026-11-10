@@ -441,6 +441,9 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     // Links, lists or unlinks an Obsidian vault; returns vault folders and a
     // count only. The notes become pages through the page watcher.
     "/api/linked-vaults",
+    // The person's yes or no to AI changes in a linked vault; locks or
+    // unlocks its notes' pages and returns vault folders only.
+    "/api/linked-vaults/ai-edits",
     // Writes one note the person accepted; returns only its path.
     "/api/notes/proposals/{id}/accept",
     // Copies one named media file into the pages folder; returns its path only.

@@ -4095,8 +4095,17 @@ export async function setKnowledgePath(path: string): Promise<KnowledgePathInfo>
   return invoke("set_knowledge_path", { path });
 }
 
+export interface LinkedVault {
+  path: string;
+  folder: string;
+  /** May the AI change its notes directly? Absent until the person answers, which counts as no. */
+  ai_edits?: boolean;
+  /** When it was linked, in seconds since the epoch. */
+  linked_at?: number;
+}
+
 export interface LinkedVaults {
-  vaults: { path: string; folder: string }[];
+  vaults: LinkedVault[];
   /** After a link: how many notes its first copy brought into the Wiki. */
   notes_added?: number;
 }
@@ -4104,6 +4113,16 @@ export interface LinkedVaults {
 /** Link an Obsidian vault into the Wiki as a folder of pages you edit directly. */
 export async function linkObsidianVault(path: string): Promise<LinkedVaults> {
   return invoke("link_obsidian_vault", { path });
+}
+
+/** The Obsidian vaults linked into the Wiki. */
+export async function listLinkedVaults(): Promise<LinkedVaults> {
+  return invoke("list_linked_vaults");
+}
+
+/** Answer "may the AI change this vault's notes directly?" (asked once). */
+export async function setLinkedVaultAiEdits(path: string, allow: boolean): Promise<LinkedVaults> {
+  return invoke("set_linked_vault_ai_edits", { path, allow });
 }
 
 /** Restart the daemon so it moves the pages folder. Rejects with a typed restart error. */

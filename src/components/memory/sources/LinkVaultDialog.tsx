@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { detectObsidianVaults, linkObsidianVault } from "../../../lib/tauri";
 import SourceDialog from "./SourceDialog";
+import { LINKED_VAULTS_QUERY_KEY } from "./LinkedVaultAsk";
 import { KNOWLEDGE_FOLDERS_QUERY_KEY } from "../pages/useKnowledgeFolders";
 
 /** The daemon's refusal codes this dialog says in words. */
@@ -49,6 +50,7 @@ export default function LinkVaultDialog({ onClose, initialPath }: {
     onSuccess: (_, path) => {
       void qc.invalidateQueries({ queryKey: KNOWLEDGE_FOLDERS_QUERY_KEY });
       void qc.invalidateQueries({ queryKey: ["pages"] });
+      void qc.invalidateQueries({ queryKey: LINKED_VAULTS_QUERY_KEY });
       toast(t("sourceAccess.linkDone", { name: folderName(path) }), { description: t("sourceAccess.linkDoneBody") });
       onClose();
     },

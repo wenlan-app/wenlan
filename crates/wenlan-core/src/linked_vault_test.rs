@@ -20,6 +20,8 @@ fn setup() -> Setup {
     let link = LinkedVault {
         path: vault.clone(),
         folder: "second-brain".into(),
+        ai_edits: None,
+        linked_at: None,
     };
     Setup {
         _dir: dir,
@@ -124,8 +126,15 @@ fn linking_a_vault_changes_nothing_in_it() {
     // The page watcher stamps the copies; a later pass still leaves the vault alone.
     s.stamp("讀書筆記/深度工作.md", "page_1");
     s.stamp("收件匣.md", "page_2");
-    let stats = s.pass();
-    assert_eq!(stats, BridgeStats::default());
+    let mut stats = s.pass();
+    stats.new_pages.sort();
+    assert_eq!(
+        stats,
+        BridgeStats {
+            new_pages: vec!["page_1".into(), "page_2".into()],
+            ..BridgeStats::default()
+        }
+    );
     assert_eq!(
         s.vault_snapshot(),
         before,
@@ -364,4 +373,45 @@ fn the_folder_name_is_the_vaults_own_and_never_a_taken_one() {
     std::fs::create_dir_all(s.pages.join("second-brain")).unwrap();
     std::fs::write(s.pages.join("second-brain/x.md"), "x").unwrap();
     assert_eq!(folder_name_for(&s.vault, &s.pages, &[]), "second-brain 2");
+}
+
+#[test]
+fn a_note_page_is_reported_once_so_it_can_be_locked() {
+    let s = setup();
+    s.put_vault("收件匣.md", "# 收件匣\n");
+    assert!(
+        s.pass().new_pages.is_empty(),
+        "no page yet before the watcher stamps the copy"
+    );
+    s.stamp("收件匣.md", "page_inbox");
+    assert_eq!(s.pass().new_pages, vec!["page_inbox".to_string()]);
+    assert!(
+        s.pass().new_pages.is_empty(),
+        "a page already reported is not reported again"
+    );
+    assert_eq!(
+        page_ids(&s.link, &s.state).unwrap(),
+        vec!["page_inbox".to_string()]
+    );
+}
+
+#[test]
+fn no_answer_about_ai_changes_counts_as_no() {
+    let mut s = setup();
+    assert!(!s.link.ai_may_edit());
+    s.link.ai_edits = Some(false);
+    assert!(!s.link.ai_may_edit());
+    s.link.ai_edits = Some(true);
+    assert!(s.link.ai_may_edit());
+    let json = serde_json::to_string(&LinkedVault {
+        path: "/v".into(),
+        folder: "v".into(),
+        ai_edits: None,
+        linked_at: None,
+    })
+    .unwrap();
+    assert_eq!(
+        json, r#"{"path":"/v","folder":"v"}"#,
+        "an old config keeps reading the same"
+    );
 }
