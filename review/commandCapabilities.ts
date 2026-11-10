@@ -27,6 +27,9 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     "list_spaces",
     // What this Wenlan shares with people; the fixture shares nothing.
     "list_shares",
+    // Home asks once about AI changes to a newly linked Obsidian vault; the
+    // fixture links none, so no question shows.
+    "list_linked_vaults",
     // Home's "what you're working on": active Brief items across Spaces.
     "list_working_on",
     "list_memories_cmd",

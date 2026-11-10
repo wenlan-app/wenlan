@@ -6403,6 +6403,47 @@ pub async fn set_knowledge_path(
         .await
 }
 
+/// Link an Obsidian vault into the Wiki: each note becomes a page the
+/// person edits directly, and nothing is added to the vault.
+#[tauri::command]
+pub async fn link_obsidian_vault(
+    state: tauri::State<'_, State>,
+    path: String,
+) -> Result<responses::LinkedVaultsResponse, String> {
+    let client = state.read().await.client.clone();
+    client
+        .post_json(
+            "/api/linked-vaults",
+            &wenlan_types::requests::LinkVaultRequest { path },
+        )
+        .await
+}
+
+/// The Obsidian vaults linked into the Wiki.
+#[tauri::command]
+pub async fn list_linked_vaults(
+    state: tauri::State<'_, State>,
+) -> Result<responses::LinkedVaultsResponse, String> {
+    let client = state.read().await.client.clone();
+    client.get_json("/api/linked-vaults").await
+}
+
+/// The person's answer to "may the AI change this vault's notes directly?".
+#[tauri::command]
+pub async fn set_linked_vault_ai_edits(
+    state: tauri::State<'_, State>,
+    path: String,
+    allow: bool,
+) -> Result<responses::LinkedVaultsResponse, String> {
+    let client = state.read().await.client.clone();
+    client
+        .post_json_as_person(
+            "/api/linked-vaults/ai-edits",
+            &wenlan_types::requests::LinkedVaultAiEditsRequest { path, allow },
+        )
+        .await
+}
+
 // ── The person's own vault notes ──────────────────────────────────────
 
 #[tauri::command]

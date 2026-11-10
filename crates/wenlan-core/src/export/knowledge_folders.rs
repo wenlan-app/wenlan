@@ -1095,6 +1095,7 @@ pub fn reclaim_returned_page(path: &Path, relative: &str, page: &Page) -> Result
         );
         state.archived_from.remove(&page.id);
         state.archived_versions.remove(&page.id);
+        state.archived_person_frontmatter.remove(&page.id);
         state.missing_since.remove(&page.id);
         save_state(&capabilities.wenlan, &state)
     })
