@@ -549,6 +549,7 @@ jobs:
               - 'crates/**/*.mm'
               - 'crates/wenlan-server/src/cmd_backfill.rs'
               - 'crates/wenlan-server/src/host_activity.rs'
+              - 'crates/wenlan-server/src/cloud_files.rs'
               - 'crates/wenlan-server/src/bind_addr_tests.rs'
               - 'crates/wenlan-server/src/main.rs'
               - 'crates/wenlan-server/src/main/startup.rs'

@@ -491,6 +491,7 @@ pub async fn dream_with(
                 entity_id: None,
                 structured_fields: None,
                 retrieval_cue: None,
+                said: None,
             };
             let id = match writer.write(request).await {
                 Ok(id) => id,
@@ -681,6 +682,7 @@ pub async fn tidy_thing(
             entity_id: None,
             structured_fields: None,
             retrieval_cue: None,
+            said: None,
         };
         let id = match writer.write(request).await {
             Ok(id) => id,
@@ -1031,6 +1033,7 @@ pub async fn run_old_memory_pass(
                 entity_id: None,
                 structured_fields: None,
                 retrieval_cue: None,
+                said: None,
             };
             let id = match writer.write(request).await {
                 Ok(id) => id,

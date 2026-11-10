@@ -108,7 +108,7 @@ async function assertRedesignedSurface(page: Page, name: string): Promise<boolea
     }
     const contrast = await renderedContrast(page, [
       { selector: ".entity-detail-dossier .page-detail-title", label: "Topic title", foregroundProperty: "color", minimum: 4.5 },
-      { selector: ".entity-detail-dossier .page-detail-actions-menu-trigger", label: "Topic actions", foregroundProperty: "color", minimum: 4.5 },
+      { selector: ".workspace-document-tools-host .page-detail-actions-menu-trigger", label: "Topic actions", foregroundProperty: "color", minimum: 4.5 },
       { selector: ".page-info-drawer .memory-detail-metadata-value", label: "Topic panel metadata", foregroundProperty: "color", minimum: 4.5 },
       { selector: ".entity-detail-dossier .entity-obs-content", label: "Topic observation", foregroundProperty: "color", minimum: 4.5 },
     ]);

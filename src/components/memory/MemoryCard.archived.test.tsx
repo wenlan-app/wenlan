@@ -70,6 +70,23 @@ describe("archive-superseded memories stay visible but muted", () => {
     expect(container.firstElementChild).toHaveStyle({ opacity: "0.55" });
   });
 
+  it("UX-ADD-4 labels an imported chat turn as a chat transcript over its stored type, with nothing to confirm", () => {
+    // The flag keeps the row's stored type; the label must not show it.
+    const { rerender } = render(
+      <MemoryCard
+        memory={makeMemory({ memory_type: "decision", conversation_text: true })}
+        {...defaultProps}
+      />,
+    );
+    expect(screen.getByText("Conversation")).toBeInTheDocument();
+    expect(screen.queryByText("decision")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("confirm-dot")).not.toBeInTheDocument();
+
+    rerender(<MemoryCard memory={makeMemory({ memory_type: "decision" })} {...defaultProps} />);
+    expect(screen.getByText("decision")).toBeInTheDocument();
+    expect(screen.getByTestId("confirm-dot")).toBeInTheDocument();
+  });
+
   it("leaves an unarchived grid card alone", () => {
     const { container } = render(
       <MemoryCard memory={makeMemory({ is_archived: false })} {...defaultProps} />,

@@ -42,7 +42,10 @@ export default function MemoryListRow({
   const menuFocus = useRef<"first" | "last">("first");
   const [pendingRevision, setPendingRevision] = useState<PendingRevision | null>(null);
 
-  const facetType = memory.memory_type ?? "fact";
+  // An imported chat turn is the conversation's original text; the flag wins
+  // over its stored type, which is a machine guess about that text (UX-ADD-4).
+  const isConversationText = memory.conversation_text === true;
+  const facetType = isConversationText ? "fact" : (memory.memory_type ?? "fact");
   const tier = STABILITY_TIERS[facetType] ?? "ephemeral";
   const isConfirmed = memory.stability === "confirmed" || (!memory.stability && memory.confirmed);
   const rowTitle = memory.title || memory.content || t("memoryList.untitledMemory");
@@ -144,8 +147,11 @@ export default function MemoryListRow({
           </button>
           {/* Archive-superseded: kept visible but muted, so say why. Opacity
               alone is overloaded here, so the row needs words too. */}
-          {(memory.domain || memory.pinned || memory.is_archived) && (
+          {(isConversationText || memory.domain || memory.pinned || memory.is_archived) && (
             <div className="memory-list-row-context">
+              {isConversationText && (
+                <span data-testid="memory-list-row-conversation-text">{t("memoryList.conversationText")}</span>
+              )}
               {memory.domain && <span>{memory.domain}</span>}
               {memory.pinned && <span>{t("memoryList.pinned")}</span>}
               {memory.is_archived && (
@@ -206,9 +212,12 @@ export default function MemoryListRow({
         </button>
         {menuOpen && (
           <div ref={menuRef} className="mem-popover-surface memory-list-row-menu" role="menu" aria-label={t("memoryList.actions")} onKeyDown={handleMenuKeyDown}>
-            <button type="button" role="menuitem" aria-label={isConfirmed ? t("memoryList.unconfirmMemory") : t("memoryList.confirmMemory")} onClick={() => { onConfirm(memory.source_id, !isConfirmed); closeMenu(); }}>
-              {isConfirmed ? t("memoryList.unconfirmMemory") : t("memoryList.confirmMemory")}
-            </button>
+            {/* UX-ADD-4: an imported chat turn is not the person's to confirm. */}
+            {!isConversationText && (
+              <button type="button" role="menuitem" aria-label={isConfirmed ? t("memoryList.unconfirmMemory") : t("memoryList.confirmMemory")} onClick={() => { onConfirm(memory.source_id, !isConfirmed); closeMenu(); }}>
+                {isConfirmed ? t("memoryList.unconfirmMemory") : t("memoryList.confirmMemory")}
+              </button>
+            )}
             {(onPin || onUnpin) && (
               <button type="button" role="menuitem" aria-label={memory.pinned ? t("memoryList.unpinMemory") : t("memoryList.pinMemory")} onClick={() => {
                 if (memory.pinned) onUnpin?.(memory.source_id);

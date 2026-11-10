@@ -59,3 +59,18 @@
 .source-dialog .source-follow-choice label { flex-direction:row; align-items:flex-start; gap:8px; margin:8px 0; color:var(--mem-text-secondary); line-height:1.5; }
 .source-dialog .source-follow-choice input { width:auto; margin:3px 0 0; padding:0; }
 .source-dialog .source-follow-choice strong { color:var(--mem-text); font-weight:500; }
+
+.link-vault { display:flex; flex-direction:column; gap:18px; }
+.link-vault-label { font-size:12px; color:var(--mem-text-secondary); }
+.link-vault-choices { display:flex; flex-wrap:wrap; gap:8px; margin-top:-10px; }
+.link-vault-choice { font:inherit; font-size:13px; padding:7px 12px; border-radius:var(--mem-radius-md); border:1px solid var(--mem-border); background:transparent; color:var(--mem-text); cursor:pointer; white-space:nowrap; }
+.link-vault-choice:hover { background:var(--mem-hover); }
+.link-vault-choice[aria-pressed="true"] { border-color:var(--mem-accent-indigo); background:color-mix(in srgb, var(--mem-accent-indigo) 16%, transparent); }
+.link-vault-other { color:var(--mem-text-secondary); border-style:dashed; }
+.link-vault-lines { display:flex; flex-direction:column; gap:6px; }
+.link-vault-lines p { margin:0; }
+.link-vault-actions { display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap; }
+.link-vault-cancel,.link-vault-submit { font:inherit; font-size:13px; padding:8px 16px; border-radius:var(--mem-radius-md); cursor:pointer; white-space:nowrap; }
+.link-vault-cancel { background:transparent; color:var(--mem-text); border:1px solid var(--mem-border); }
+.link-vault-submit { background:var(--mem-text); color:var(--mem-bg); border:0; font-weight:600; }
+.link-vault-submit:disabled { opacity:.45; cursor:default; }

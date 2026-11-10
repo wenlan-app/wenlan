@@ -349,6 +349,7 @@ fn store_memory_request_entity_id_freeze() {
         entity_id: Some("entity_1".into()),
         structured_fields: None,
         retrieval_cue: None,
+        said: None,
     };
     let some_json = json!({
         "content": "note",
@@ -381,6 +382,7 @@ fn store_memory_request_entity_id_freeze() {
         entity_id: None,
         structured_fields: None,
         retrieval_cue: None,
+        said: None,
     };
     let none_json = json!({
         "content": "note",
@@ -658,6 +660,7 @@ fn sample_memory_item(entity_id: Option<String>) -> MemoryItem {
         pending_revision: false,
         merged_from: None,
         session_id: None,
+        conversation_text: false,
     }
 }
 

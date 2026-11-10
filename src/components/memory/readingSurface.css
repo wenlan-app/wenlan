@@ -40,8 +40,9 @@
 }
 .reading-document-breadcrumbs > nav { margin: 0; }
 
-/* Memory's title is part of its editable Markdown, so its tools overlay the
-   first line. The origin and spacing still come from the shared frame. */
+/* Outside the workspace a memory has no shared toolbar, so its tools overlay
+   the first line, which reserves room for them. Inside the workspace they
+   move to the toolbar like a page's, and the first line keeps full width. */
 .reading-document-frame.memory-document-frame > .memory-detail-header {
   position: absolute;
   top: var(--reading-frame-padding-block);
@@ -49,7 +50,7 @@
   width: auto;
   z-index: 2;
 }
-.memory-document-frame .memory-document-editor .cm-content > .cm-line:first-child {
+.memory-document-frame:not(.memory-document-frame--tools-hosted) .memory-document-editor .cm-content > .cm-line:first-child {
   padding-inline-end: var(--reading-tools-clearance);
 }
 

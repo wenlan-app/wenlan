@@ -279,7 +279,7 @@ test("switches exactly at the management and dossier breakpoints", async ({ page
   await page.setViewportSize({ width: 899, height: 900 });
   await openSidebar(page);
   const primaryNavigation = page.getByRole("navigation", { name: "Primary navigation" });
-  for (const name of ["Home", "Wiki", "Spaces", "Graph", "Topics"]) {
+  for (const name of ["Home", "Wiki", "Spaces", "Graph"]) {
     await expect(primaryNavigation.getByRole("button", { name, exact: true })).toBeVisible();
   }
   await expect(primaryNavigation.locator('[aria-current="page"]')).toHaveCount(1);
@@ -326,7 +326,7 @@ test("meets computed browser contrast on redesigned surfaces in both themes", as
     await openTopicContext(page);
     results.push(...await renderedContrast(page, [
       { label: `${theme} topic title`, selector: ".entity-detail-dossier .page-detail-title", foregroundProperty: "color", minimum: 4.5 },
-      { label: `${theme} topic actions`, selector: ".entity-detail-dossier .page-detail-actions-menu-trigger", foregroundProperty: "color", minimum: 4.5 },
+      { label: `${theme} topic actions`, selector: ".workspace-document-tools-host .page-detail-actions-menu-trigger", foregroundProperty: "color", minimum: 4.5 },
       { label: `${theme} topic panel metadata`, selector: ".page-info-drawer .memory-detail-metadata-value", foregroundProperty: "color", minimum: 4.5 },
       { label: `${theme} graph node text`, selector: ".entity-graph-node-name", foregroundProperty: "color", minimum: 4.5 },
       { label: `${theme} relationship text`, selector: ".entity-relation-name", foregroundProperty: "color", minimum: 4.5 },
@@ -435,9 +435,9 @@ test("reaches management, dossier, graph, ledger, observation, and linked-memory
   await page.keyboard.press("Escape");
   const infoToggle = page.getByRole("button", { name: "Info", exact: true });
   const topicContext = page.getByRole("complementary", { name: "Info", exact: true });
-  for (let i = 0; i < 12 && !await infoToggle.evaluate(node => node === document.activeElement); i++) {
-    await page.keyboard.press("Shift+Tab");
-  }
+  // Like a page, the toolbar holds the topic's menu first, then Info.
+  await expect(topicActions).toBeFocused();
+  await page.keyboard.press("Tab");
   await expect(infoToggle).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(topicContext).toHaveCount(0);
@@ -473,6 +473,9 @@ test("reaches management, dossier, graph, ledger, observation, and linked-memory
   await tabTo(page, back);
   await page.keyboard.press("Enter");
   await expect(page.getByRole("heading", { level: 1, name: "Topics" })).toBeVisible();
+  await tabTo(page, back);
+  await page.keyboard.press("Enter");
+  await expect(page.getByTestId("atlas-view")).toBeVisible();
   await tabTo(page, back);
   await page.keyboard.press("Enter");
   await expect(page.getByRole("heading", { level: 1, name: "Wenlan" })).toBeVisible();
@@ -555,6 +558,8 @@ test("preserves the Entity signature and CJK dossiers at 200 percent zoom", asyn
   const historyBack = page.getByRole("group", { name: "歷史導覽", exact: true }).getByRole("button", { name: "返回", exact: true });
   await historyBack.click();
   await expect(page.getByRole("heading", { level: 1, name: "主題", exact: true })).toBeVisible();
+  await historyBack.click();
+  await expect(page.getByTestId("atlas-view")).toBeVisible();
   await historyBack.click();
   await expect(spaceHeading).toBeVisible();
 

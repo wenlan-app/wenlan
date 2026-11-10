@@ -16,6 +16,7 @@ import {
 import { detectVault } from "../../../lib/vaultDetection";
 import AddWebSourceDialog from "./AddWebSourceDialog";
 import ZoteroSourceDialog from "./ZoteroSourceDialog";
+import LinkVaultDialog from "./LinkVaultDialog";
 import { ImportFlow } from "../../ChatImport/ImportFlow";
 import SourceDialog from "./SourceDialog";
 import { SourceTypeIcon } from "./SourceTypeIcon";
@@ -40,6 +41,11 @@ export default function AddSourceMenu({ onClose, start = "menu", onQuickChats, t
   const qc = useQueryClient();
   const [showWeb, setShowWeb] = useState(false);
   const [showZotero, setShowZotero] = useState(false);
+  // An Obsidian vault is linked into the Wiki, not read as a source (UX-ADD-3).
+  // A folder picked from the folder entry that is an Obsidian vault goes the
+  // same way, with that vault already chosen.
+  const [showLinkVault, setShowLinkVault] = useState(false);
+  const [linkPath, setLinkPath] = useState<string | undefined>(undefined);
   const [showChats, setShowChats] = useState(start === "chats");
   // Quick or full: asked first wherever the quick way exists.
   const [fullChats, setFullChats] = useState(onQuickChats === undefined);
@@ -95,7 +101,15 @@ export default function AddSourceMenu({ onClose, start = "menu", onQuickChats, t
       const sourceType: SourceTypeStr = kind === "logseq" ? "logseq" : detection.sourceType;
       return { kind, sourceType, path };
     },
-    onSuccess: (folder) => { if (folder) setPicked(folder); },
+    onSuccess: (folder) => {
+      if (!folder) return;
+      if (folder.sourceType === "obsidian") {
+        setLinkPath(folder.path);
+        setShowLinkVault(true);
+        return;
+      }
+      setPicked(folder);
+    },
     onError: fail,
   });
 
@@ -146,6 +160,7 @@ export default function AddSourceMenu({ onClose, start = "menu", onQuickChats, t
   </SourceDialog>;
   if (showWeb) return <AddWebSourceDialog onClose={onClose} />;
   if (showZotero) return <ZoteroSourceDialog onClose={onClose} />;
+  if (showLinkVault) return <LinkVaultDialog onClose={onClose} initialPath={linkPath} />;
   // Past AI chats use the same import as Settings, so a new user can bring
   // earlier decisions in from the home without hunting for it.
   // The two ways are offered side by side: one is done in a minute and
@@ -198,7 +213,7 @@ export default function AddSourceMenu({ onClose, start = "menu", onQuickChats, t
     <button type="button" className="source-add-option" disabled={busy} onClick={() => setShowChats(true)}>
       <ChatsCircle aria-hidden="true" size={20} weight="regular" data-resource-icon="chats" /><span className="source-add-option-copy"><strong>{t("sourceAccess.chatHistory")}</strong><span>{t("sourceAccess.chatHistoryHint")}</span></span>
     </button>
-    <button type="button" className="source-add-option" disabled={busy} onClick={() => connect.mutate("obsidian")}>
+    <button type="button" className="source-add-option" disabled={busy} onClick={() => setShowLinkVault(true)}>
       <SourceTypeIcon kind="obsidian" /><span className="source-add-option-copy"><strong>{t("sourceAccess.obsidian")}</strong><span>{t("sourceAccess.obsidianHint")}</span></span>
     </button>
     <button type="button" className="source-add-option" disabled={busy} onClick={() => connect.mutate("folder")}>

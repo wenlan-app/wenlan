@@ -81,5 +81,5 @@ export function listAllArchivedPagesExplicitBrowse(): Promise<Page[]> {
   return listAllPagesWithStatus("archived", listPagesExplicitBrowse);
 }
 
-/** One cache entry for every view of the archived set (panel, home entry, Recently used). */
+/** One cache entry for every view of the archived set (panel, home entry, search). */
 export const ARCHIVED_PAGES_QUERY_KEY = ["pages", "archived"] as const;

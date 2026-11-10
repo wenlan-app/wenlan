@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { useTranslation } from "react-i18next";
 import type { SearchResult } from "../../lib/tauri";
 import { FACET_COLORS } from "../../lib/tauri";
 import { highlightTerms, hasKeywordMatch, relevanceLabel } from "../../lib/highlight";
@@ -19,8 +20,12 @@ export default function MemorySearchResult({
   query,
   onClick,
 }: MemorySearchResultProps) {
+  const { t } = useTranslation();
   const isKeyword = hasKeywordMatch(result.content, query);
-  const facetType = result.memory_type ?? null;
+  // An imported chat turn is the conversation's original text: its stored
+  // type is not the person's, so it is labelled as a chat (UX-ADD-4).
+  const isConversationText = result.semantic_unit === "chat_turn";
+  const facetType = isConversationText ? null : result.memory_type ?? null;
   const facetColor = facetType
     ? FACET_COLORS[facetType] ?? "bg-zinc-500/10 text-zinc-400 border-zinc-500/20"
     : null;
@@ -79,6 +84,14 @@ export default function MemorySearchResult({
         </span>
 
         {/* Facet badge */}
+        {isConversationText && (
+          <span
+            data-testid="search-result-conversation-text"
+            className="px-1.5 py-0.5 rounded text-[10px] font-medium border bg-zinc-500/10 text-zinc-400 border-zinc-500/20"
+          >
+            {t("memoryList.conversationText")}
+          </span>
+        )}
         {facetType && facetColor && (
           <span
             className={`px-1.5 py-0.5 rounded text-[10px] font-medium border ${facetColor}`}

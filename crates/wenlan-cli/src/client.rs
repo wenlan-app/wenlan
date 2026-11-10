@@ -465,6 +465,7 @@ impl WenlanClient {
             entity_id: None,
             structured_fields: None,
             retrieval_cue: None,
+            said: None,
         }
     }
 

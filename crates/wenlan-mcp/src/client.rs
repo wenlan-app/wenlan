@@ -574,6 +574,11 @@ fn parse_api_error_reason(bytes: &[u8]) -> Option<String> {
             | "restore_page_archived"
             | "restore_needs_person_asked"
             | "person_asked_invalid"
+            | "page_space_version_conflict"
+            | "page_space_title_taken"
+            | "page_space_not_movable"
+            | "page_space_unknown"
+            | "page_space_needs_global_scope"
     );
     if !safe {
         return None;

@@ -9,6 +9,7 @@ import { GettingStarted } from "../../onboarding/GettingStarted";
 import { EverydayUse } from "../../onboarding/EverydayUse";
 import { useGettingStartedState } from "../../onboarding/useGettingStartedState";
 import AddSourceMenu from "../sources/AddSourceMenu";
+import { LinkedVaultAsk } from "../sources/LinkedVaultAsk";
 import { onStartIntent, peekStartIntent, takeStartIntent } from "../../onboarding/startIntent";
 import { useExampleWikiActive } from "../../../lib/exampleWiki/mode";
 import type { SourceContainerLocation } from "../sources/SourceContainer";
@@ -148,6 +149,8 @@ export function PagesOverview({
     >
       {/* A changed source shows on the pages that cite it, never on Home (UX-HOME-4). */}
       {onOpenNoteSuggestion && <NoteSuggestionsSummary onOpen={onOpenNoteSuggestion} />}
+      {/* Asks once, the day after a vault is linked, whether the AI may change its notes. */}
+      {example ? null : <LinkedVaultAsk />}
       {/* The open checklist carries the same offer as a step; one place at a time. */}
       {onboarding ? null : (
         <WritePagesLine

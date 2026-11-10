@@ -74,6 +74,7 @@ fn capture(session: Option<&str>) -> CaptureParams {
         structured_fields: None,
         retrieval_cue: None,
         session: session.map(str::to_string),
+        said: None,
     }
 }
 
@@ -363,6 +364,37 @@ async fn a_steep_rewrite_carries_the_session() {
         .unwrap();
     assert_eq!(
         session_header(commit).as_deref(),
+        Some("claude-code:abc-123")
+    );
+}
+
+#[tokio::test]
+async fn an_archive_through_delete_page_carries_the_session() {
+    let _guard = ENV_LOCK.lock().await;
+    clear_env();
+    std::env::set_var("WENLAN_SESSION", "claude-code:abc-123");
+    let mock = MockServer::start().await;
+    mount_daemon(&mock).await;
+    Mock::given(method("DELETE"))
+        .and(path("/api/pages/page_s1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "status": "archived", "restorable": true, "version": 3
+        })))
+        .mount(&mock)
+        .await;
+    let server = server(&mock, TransportMode::Stdio);
+
+    let result = server.delete_page_impl("page_s1").await.unwrap();
+    clear_env();
+    assert!(is_ok(&result), "{result:?}");
+
+    let requests = sent(&mock).await;
+    let delete = requests
+        .iter()
+        .find(|r| r.method.as_str() == "DELETE")
+        .expect("the archive reached the daemon");
+    assert_eq!(
+        session_header(delete).as_deref(),
         Some("claude-code:abc-123")
     );
 }

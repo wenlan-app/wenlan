@@ -1025,6 +1025,29 @@ fn automatic_phase_allowed(phase: wenlan_core::refinery::Phase) -> bool {
     matches!(phase, wenlan_core::refinery::Phase::ReDistill)
 }
 
+/// The steep phases automatic runs leave out, in canonical order. They run
+/// only when steep is asked for, so the scheduler names them once at start:
+/// otherwise a phase such as recaps or reweave looks like it is broken.
+fn held_out_automatic_phases() -> Vec<wenlan_core::refinery::Phase> {
+    wenlan_core::refinery::Phase::ALL
+        .iter()
+        .copied()
+        .filter(|phase| !automatic_phase_allowed(*phase))
+        .collect()
+}
+
+fn held_out_automatic_phases_line() -> String {
+    let held = held_out_automatic_phases()
+        .iter()
+        .map(|phase| phase.as_str())
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "[scheduler] automatic steep holds out phases={held} \
+         reason=no durable cursor and per-turn work bound yet; they run only when steep is asked for"
+    )
+}
+
 fn automatic_kind_has_work(kind: wenlan_core::refinery::TriggerKind) -> bool {
     wenlan_core::refinery::Phase::ALL
         .iter()
@@ -1368,6 +1391,7 @@ pub fn spawn_scheduler(
             tracing::info!("[scheduler] shutdown before initial delay completed");
             return;
         }
+        tracing::info!("{}", held_out_automatic_phases_line());
 
         let mut last_backstop = Instant::now();
         let mut idle_fired = false;
@@ -1517,6 +1541,53 @@ pub fn spawn_scheduler(
             }
             let filesystem_resource_status =
                 filesystem_resource_probe.sample(Instant::now(), resource_policy);
+            // --- 0a. Linked Obsidian vaults: copy note changes both ways ---
+            //
+            // Each linked vault has a folder in the pages folder holding a
+            // copy of every note; the page watcher below makes those copies
+            // pages. Runs first, so an Obsidian edit reaches its page in the
+            // same poll. Plain file reads and writes, no model.
+            if !runtime_config.linked_vaults.is_empty() {
+                let config = runtime_config.clone();
+                match tokio::task::spawn_blocking(move || {
+                    wenlan_core::linked_vault::bridge_all(&config)
+                })
+                .await
+                {
+                    Ok(results) => {
+                        for (link, result) in results {
+                            // Until the person lets the AI change the vault,
+                            // its notes' pages are locked: an AI change waits
+                            // for them instead of landing.
+                            if let Ok(stats) = &result {
+                                if !link.ai_may_edit() {
+                                    for page in &stats.new_pages {
+                                        if let Err(e) =
+                                            db.set_page_review_required(page, true).await
+                                        {
+                                            tracing::warn!(
+                                                "[scheduler] linked vault {}: lock {page}: {e}",
+                                                link.folder
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                            match result {
+                                Ok(stats) if stats != Default::default() => tracing::info!(
+                                    "[scheduler] linked vault {}: {stats:?}",
+                                    link.folder
+                                ),
+                                Ok(_) => {}
+                                Err(e) => {
+                                    tracing::warn!("[scheduler] linked vault {}: {e}", link.folder)
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => tracing::warn!("[scheduler] linked vaults: {e}"),
+                }
+            }
             // --- 0. Filesystem page watcher: md → DB ---
             //
             // md is canonical. When the user edits a page in Obsidian / VS

@@ -143,7 +143,7 @@
 .atlas-search-results li[aria-selected="true"] { background: var(--mem-hover); }
 .atlas-search-result-dot { width: 8px; height: 8px; flex: none; border-radius: 50%; opacity: .85; }
 .atlas-search-no-matches { color: var(--mem-text-secondary); }
-.atlas-display-anchor { position: absolute; z-index: 13; top: 24px; right: var(--atlas-control-inset); bottom: 12px; pointer-events: none; }
+.atlas-display-anchor { position: absolute; z-index: 13; top: 24px; right: var(--atlas-control-inset); bottom: 12px; display: flex; align-items: flex-start; gap: 8px; pointer-events: none; }
 .atlas-display-trigger.collection-control { pointer-events: auto; }
 .atlas-display-trigger:hover, .atlas-display-trigger[aria-expanded="true"] { color: var(--mem-text); background: var(--mem-hover); }
 .atlas-display-panel { position: absolute; top: 46px; right: 0; display: flex; flex-direction: column; gap: 12px; width: min(360px, calc(100vw - 48px)); max-height: calc(100% - 58px); min-height: 0; padding: 12px; overflow: visible; border: 1px solid var(--mem-popover-border); border-radius: var(--mem-popover-radius); background: var(--mem-popover); color: var(--mem-text); box-shadow: var(--mem-popover-shadow); font: 400 13px/1.4 var(--mem-font-body); pointer-events: auto; }

@@ -190,24 +190,60 @@ pub enum EmbeddingModelStatus {
 /// operators can see whether folder-ingest enrichment is progressing, idle, or
 /// paused on an LLM failure (waiting for a backoff retry). Mirrors the
 /// [`RerankerStatus`] tagged-enum shape.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+///
+/// A document that used up its retries is a failed item, reported in
+/// `failed` on whichever state the rest of the queue is in; it does not
+/// make the queue `paused`. `failed` is absent when nothing failed, so the
+/// wire is unchanged for a queue without failures.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum QueueStatus {
     /// No documents are queued for enrichment (nothing pending, in-progress, or paused).
-    #[default]
-    Idle,
-    /// Documents are queued or being enriched. `pending` counts rows not yet done.
-    Active { pending: u64 },
-    /// At least one document is paused after an LLM failure. `reason` is that
-    /// pause's failure reason, `next_retry_at` the earliest Unix-secs retry time
-    /// (the scheduler auto-resumes once it elapses — no daemon restart needed),
-    /// and `pending` counts rows not yet done.
+    Idle {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        failed: Option<QueueFailed>,
+    },
+    /// Documents are queued or being enriched. `pending` counts rows still to
+    /// be worked.
+    Active {
+        pending: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        failed: Option<QueueFailed>,
+    },
+    /// At least one document is paused after an LLM failure and will be
+    /// retried. `reason` is that pause's failure reason, `next_retry_at` the
+    /// earliest Unix-secs retry time (the scheduler auto-resumes once it
+    /// elapses — no daemon restart needed), and `pending` counts rows still to
+    /// be worked.
     Paused {
         reason: String,
         pending: u64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         next_retry_at: Option<i64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        failed: Option<QueueFailed>,
     },
+}
+
+impl QueueStatus {
+    /// Nothing queued and nothing failed.
+    pub const IDLE: Self = Self::Idle { failed: None };
+}
+
+impl Default for QueueStatus {
+    fn default() -> Self {
+        Self::IDLE
+    }
+}
+
+/// Documents the queue gave up on after the retry cap. They will not be
+/// retried on their own.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QueueFailed {
+    pub count: u64,
+    /// The error of the most recent one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 /// Observable runtime selected for the local llama.cpp model.
@@ -691,6 +727,57 @@ impl RestorePageErrorCode {
             Self::PageNotArchived => "page_not_archived",
             Self::PageTitleFixed => "page_title_fixed",
             Self::PageNotRestorable => "page_not_restorable",
+        }
+    }
+}
+
+/// Result of `POST /api/pages/{id}/space`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SetPageSpaceResponse {
+    pub page_id: String,
+    /// The page's Space now; `None` when it is in no Space.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub space: Option<String>,
+    /// The page's version now. Unchanged when the page was already there.
+    pub version: i64,
+    /// 1-based positions into the page's `source_memory_ids` of the sources
+    /// its new Space cannot read. Positions only: a source in another Space
+    /// reads exactly like one that is gone.
+    #[serde(default)]
+    pub unreadable_source_positions: Vec<u32>,
+    pub projection_status: PageProjectionStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub projection_error: Option<String>,
+}
+
+/// Why `POST /api/pages/{id}/space` refused, sent as `code` in the error body
+/// next to `error` (`"<code>: <English text>"`) and `current_version`.
+/// Clients switch on the code, never on the text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SetPageSpaceErrorCode {
+    /// The page moved past `expected_version` (409). Reload it first.
+    PageSpaceVersionConflict,
+    /// An active page in the target Space already has this title (409).
+    PageSpaceTitleTaken,
+    /// Only active ordinary notes (not drafts, source, overview or entity
+    /// pages) move between Spaces (422).
+    PageSpaceNotMovable,
+    /// The target is not a registered Space (422).
+    PageSpaceUnknown,
+    /// The caller is locked to one Space; moving a page between Spaces needs
+    /// an unlocked caller (403).
+    PageSpaceNeedsGlobalScope,
+}
+
+impl SetPageSpaceErrorCode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::PageSpaceVersionConflict => "page_space_version_conflict",
+            Self::PageSpaceTitleTaken => "page_space_title_taken",
+            Self::PageSpaceNotMovable => "page_space_not_movable",
+            Self::PageSpaceUnknown => "page_space_unknown",
+            Self::PageSpaceNeedsGlobalScope => "page_space_needs_global_scope",
         }
     }
 }
@@ -1350,6 +1437,31 @@ pub struct KnowledgePathResponse {
     pub move_error: Option<String>,
 }
 
+/// One Obsidian vault linked into the Wiki.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct LinkedVaultEntry {
+    /// The vault's folder on this computer.
+    pub path: String,
+    /// The Wiki folder its notes are in.
+    pub folder: String,
+    /// Whether the AI may change its notes directly; absent until the
+    /// person answers, which counts as no.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_edits: Option<bool>,
+    /// When it was linked, in seconds since the epoch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub linked_at: Option<i64>,
+}
+
+/// `GET`/`POST`/`DELETE /api/linked-vaults` response: every linked vault,
+/// and after a link, how many notes its first pass brought in.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct LinkedVaultsResponse {
+    pub vaults: Vec<LinkedVaultEntry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes_added: Option<u64>,
+}
+
 /// `GET /api/attachments/resolve?name=` response: the file an `![[name]]`
 /// embed shows, found in the pages folder the way Obsidian finds it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1536,6 +1648,11 @@ pub struct PageHistoryItem {
     /// For an edit that put an earlier version back: that version.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub restored_from: Option<i64>,
+    /// For the person's saves listed as one change (UX-HIST-3): the first
+    /// version of the run. `version` is its last; every version in between is
+    /// still stored. None for an entry that is a single version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_version: Option<i64>,
 }
 
 // ===== Sources =====
@@ -2525,7 +2642,7 @@ mod queue_status_tests {
         let json =
             r#"{"is_running":true,"files_indexed":0,"files_total":0,"sources_connected":[]}"#;
         let parsed: StatusResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(parsed.queue, QueueStatus::Idle);
+        assert_eq!(parsed.queue, QueueStatus::IDLE);
         assert_eq!(
             parsed.on_device_inference,
             OnDeviceInferenceStatus::default()
@@ -2565,6 +2682,7 @@ mod queue_status_tests {
             reason: "analysis LLM failed".into(),
             pending: 2,
             next_retry_at: Some(1_712_678_400),
+            failed: None,
         };
         let json = serde_json::to_string(&s).unwrap();
         assert!(json.contains("\"state\":\"paused\""), "got: {json}");
@@ -2578,7 +2696,10 @@ mod queue_status_tests {
 
     #[test]
     fn queue_status_active_round_trips() {
-        let s = QueueStatus::Active { pending: 3 };
+        let s = QueueStatus::Active {
+            pending: 3,
+            failed: None,
+        };
         let json = serde_json::to_string(&s).unwrap();
         assert!(json.contains("\"state\":\"active\""), "got: {json}");
         assert!(json.contains("\"pending\":3"), "got: {json}");
@@ -2587,8 +2708,32 @@ mod queue_status_tests {
 
     #[test]
     fn queue_status_idle_serializes_state_only() {
-        let json = serde_json::to_string(&QueueStatus::Idle).unwrap();
+        let json = serde_json::to_string(&QueueStatus::IDLE).unwrap();
         assert_eq!(json, r#"{"state":"idle"}"#);
+    }
+
+    #[test]
+    fn queue_status_carries_failed_documents_beside_its_state() {
+        let s = QueueStatus::Idle {
+            failed: Some(QueueFailed {
+                count: 1,
+                reason: Some("source page write failed".into()),
+            }),
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        assert_eq!(
+            json,
+            r#"{"state":"idle","failed":{"count":1,"reason":"source page write failed"}}"#
+        );
+        assert_eq!(serde_json::from_str::<QueueStatus>(&json).unwrap(), s);
+        // A daemon from before `failed` existed still reads.
+        assert_eq!(
+            serde_json::from_str::<QueueStatus>(r#"{"state":"active","pending":2}"#).unwrap(),
+            QueueStatus::Active {
+                pending: 2,
+                failed: None
+            }
+        );
     }
 }
 
@@ -2616,8 +2761,8 @@ mod reranker_status_tests {
             files_indexed: 0,
             files_total: 0,
             sources_connected: vec![],
-            queue: QueueStatus::Idle,
-            compile_queue: QueueStatus::Idle,
+            queue: QueueStatus::IDLE,
+            compile_queue: QueueStatus::IDLE,
             reranker: RerankerStatus::Active {
                 model_id: "BGERerankerBase".into(),
             },

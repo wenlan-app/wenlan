@@ -111,11 +111,12 @@ test("reading area never duplicates the tree before opening or after closing the
  await expect(reading.locator(".page-detail")).toBeVisible();
  await expect(page.getByRole("tab",{name:"Fixture architecture",exact:true})).toHaveAttribute("aria-selected","true");
  await page.getByRole("button",{name:"Close Fixture architecture",exact:true}).click();
- // Closing the last page goes Home: recent pages, and no directory beside them.
+ // Closing the last page goes Home: recent pages, and no directory beside them
+ // (the sidebar still lists every page).
  await expect(reading.getByRole("heading",{name:"Open a page",exact:true})).toBeVisible();
  await expect(reading.getByRole("table")).toHaveCount(0);
  await expect(reading.locator(".asset-card, .wiki-folder-lenses")).toHaveCount(0);
- await expect(tree).toBeHidden();
+ await expect(page.locator(".wiki-workspace .wiki-workspace-directory")).toBeHidden();
  await expect(reading.getByText("Fixture architecture",{exact:true})).toHaveCount(1);await expect(reading.getByTestId("wiki-new-pages").getByText("Fixture architecture",{exact:true})).toBeVisible();
  await expect(page.locator(".note-tab-create")).toBeVisible();
  await expect(page.locator(".note-tab-create")).toBeFocused();

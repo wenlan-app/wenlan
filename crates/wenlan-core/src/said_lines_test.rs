@@ -122,3 +122,26 @@ fn ux_who_6_a_nights_point_finds_the_line_it_named() {
     assert_eq!(quoted_line("never said", &lines), None);
     assert_eq!(quoted_line("  ", &lines), None);
 }
+
+/// A web chat has no transcript Wenlan can read, so the AI tool sends the
+/// lines with the memory; Wenlan keeps a few, trimmed, stamped with the save.
+#[test]
+fn ux_who_6_kept_lines_are_trimmed_capped_and_stamped_with_the_save() {
+    use wenlan_types::conversations::{MAX_KEPT_SAID_CHARS, MAX_KEPT_SAID_LINES};
+    let long = "x".repeat(MAX_KEPT_SAID_CHARS + 10);
+    let sent = vec![
+        line(You, "first, too far back", 1),
+        line(Ai, "  a reply  ", 2),
+        line(You, " \n ", 3),
+        line(You, "the decision", 4),
+        line(Ai, &long, 5),
+    ];
+    let kept = kept_said(&sent, 500);
+    assert_eq!(kept.len(), MAX_KEPT_SAID_LINES);
+    assert_eq!(kept[0].text, "a reply");
+    assert_eq!(kept[1].text, "the decision");
+    assert_eq!(kept[1].speaker, You);
+    assert_eq!(kept[2].text.chars().count(), MAX_KEPT_SAID_CHARS);
+    assert!(kept.iter().all(|l| l.at == Some(500)));
+    assert!(kept_said(&[line(You, "   ", 1)], 500).is_empty());
+}

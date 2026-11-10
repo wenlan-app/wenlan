@@ -407,6 +407,11 @@ pub async fn update_memory(
     source_id: &str,
     update: MemoryUpdate<'_>,
 ) -> Result<(), WenlanError> {
+    if update.confirm || update.memory_type.is_some() {
+        // An imported chat turn is conversation text: neither confirmed as
+        // the person's nor given a type of theirs (UX-ADD-4).
+        db.refuse_if_chat_turn(source_id).await?;
+    }
     let _space_write_guard = if update.space.is_some() {
         Some(db.lock_space_writes().await)
     } else {

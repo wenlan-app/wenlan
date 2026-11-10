@@ -2774,14 +2774,12 @@ mod tests {
         );
         let status = db.document_enrichment_queue_status().await.unwrap();
         assert_eq!(status.exhausted, 1);
-        // The exhausted poison row is not "waiting for another retry" (no
-        // retryable paused row exists), but it must still surface as a
-        // paused reason rather than reading as ordinary `Active` pending
-        // work forever.
-        let reason = status
-            .paused_reason
-            .expect("an exhausted document surfaces as paused, not silently active");
-        assert!(reason.contains("exhausted"), "reason: {reason}");
+        // The exhausted poison row is one failed document: counted as
+        // failed with its error, not as pending work and not as a pause of
+        // the queue, whose fresh document is still being worked.
+        assert_eq!(status.pending, 1, "only the fresh document is pending");
+        assert!(status.paused_reason.is_none(), "{status:?}");
+        assert!(status.exhausted_reason.is_some(), "{status:?}");
     }
 
     // ── queue observability: status summary reflects pending + paused ─────────
@@ -2830,7 +2828,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn queue_status_surfaces_all_exhausted_queue_as_paused() {
+    async fn queue_status_counts_an_exhausted_document_as_failed_not_paused() {
         let (db, _dir) = test_db().await;
         db.enqueue_document("folder", "/poison.md", Some("poison-hash"))
             .await
@@ -2847,18 +2845,14 @@ mod tests {
         }
 
         let status = db.document_enrichment_queue_status().await.unwrap();
+        // One document that gave up is one failed item with its error. It
+        // is not pending work (it will never be claimed again) and it does
+        // not pause the queue (`crates/wenlan-server/src/routes.rs` reports
+        // `Paused` only for a retryable pause).
         assert_eq!(status.exhausted, 1);
-        // The wire mapping (`crates/wenlan-server/src/routes.rs`) reports
-        // `Paused` whenever `paused_reason.is_some()`; a queue holding only
-        // exhausted rows must clear that bar instead of reading as `Active`
-        // forever.
-        let reason = status
-            .paused_reason
-            .expect("all-exhausted queue reports a paused reason");
-        assert!(
-            reason.contains("exhausted"),
-            "reason mentions exhaustion: {reason}"
-        );
+        assert_eq!(status.exhausted_reason.as_deref(), Some("poison document"));
+        assert_eq!(status.pending, 0, "{status:?}");
+        assert!(status.paused_reason.is_none(), "{status:?}");
         assert!(
             status.next_retry_at.is_none(),
             "an all-exhausted queue has no next retry to report"
@@ -2866,7 +2860,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn queue_status_paused_reason_mentions_both_exhausted_and_retryable() {
+    async fn queue_status_keeps_a_retryable_pause_apart_from_a_failed_document() {
         let (db, _dir) = test_db().await;
         db.enqueue_document("folder", "/poison.md", Some("poison-hash"))
             .await
@@ -2895,16 +2889,12 @@ mod tests {
 
         let status = db.document_enrichment_queue_status().await.unwrap();
         assert_eq!(status.exhausted, 1);
-        let reason = status
-            .paused_reason
-            .expect("mixed queue reports a paused reason");
-        assert!(
-            reason.contains("analysis LLM failed"),
-            "reason mentions the retryable pause: {reason}"
-        );
-        assert!(
-            reason.contains("exhausted"),
-            "reason also mentions the exhausted document: {reason}"
+        assert_eq!(status.exhausted_reason.as_deref(), Some("poison document"));
+        assert_eq!(status.pending, 1, "only the retrying document is pending");
+        assert_eq!(
+            status.paused_reason.as_deref(),
+            Some("analysis LLM failed"),
+            "the pause is the retryable row's own"
         );
         assert_eq!(
             status.next_retry_at,

@@ -149,6 +149,7 @@ fn route_catalog_freezes_exact_global_and_scoped_keys() {
         (Method::Post, "/api/pages/{id}/rename"),
         (Method::Post, "/api/pages/{id}/restore"),
         (Method::Post, "/api/pages/{id}/restore-version"),
+        (Method::Post, "/api/pages/{id}/space"),
         (Method::Get, "/api/pages/{id}/sources"),
         (Method::Get, "/api/pages/{id}/links"),
         (Method::Get, "/api/pages/{id}/revisions"),

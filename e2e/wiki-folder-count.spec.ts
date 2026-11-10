@@ -26,7 +26,7 @@ function fixtureWithManyNotes() {
 }
 
 for (const mode of ["labels", "icons"] as const) {
-  test(`the Folders list shows its page count and reaches the last page at 1280 ${mode}`, async ({ page }, info) => {
+  test(`the Folders list shows its page count beside the rail and reaches the last page at 1280 ${mode}`, async ({ page }, info) => {
     const errors = collectBrowserErrors(page);
     const fixture = fixtureWithManyNotes();
     const listed = fixture.pages.filter((item) => (item.status === "active" || item.status === "draft") && item.creation_kind !== "entity").length;
@@ -36,16 +36,21 @@ for (const mode of ["labels", "icons"] as const) {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto("/");
     const directory = await showWikiFolders(page);
-    // The count sits on the title row, right after "Folders", as a bare number.
-    const count = directory.locator(".wiki-workspace-mode-row .wiki-workspace-note-count");
-    await expect(count).toHaveAttribute("title", `${listed} pages`);
-    await expect(count.locator("[aria-hidden=true]")).toHaveText(`${listed}`);
-    const title = await directory.locator(".wiki-workspace-mode select").boundingBox();
-    const countBox = await count.boundingBox();
-    expect(title).not.toBeNull(); expect(countBox).not.toBeNull();
-    expect(countBox!.x).toBeGreaterThanOrEqual(title!.x + title!.width - 1);
-    expect(countBox!.x - (title!.x + title!.width)).toBeLessThanOrEqual(8);
-    expect(Math.abs((countBox!.y + countBox!.height / 2) - (title!.y + title!.height / 2))).toBeLessThanOrEqual(2);
+    // Beside the icon rail the tree has its own title row; the count sits right
+    // after "Folders", as a bare number. The sidebar keeps only what you act on.
+    if (mode === "icons") {
+      const count = directory.locator(".wiki-workspace-mode-row .wiki-workspace-note-count");
+      await expect(count).toHaveAttribute("title", `${listed} pages`);
+      await expect(count.locator("[aria-hidden=true]")).toHaveText(`${listed}`);
+      const title = await directory.locator(".wiki-workspace-title").boundingBox();
+      const countBox = await count.boundingBox();
+      expect(title).not.toBeNull(); expect(countBox).not.toBeNull();
+      expect(countBox!.x).toBeGreaterThanOrEqual(title!.x + title!.width - 1);
+      expect(countBox!.x - (title!.x + title!.width)).toBeLessThanOrEqual(8);
+      expect(Math.abs((countBox!.y + countBox!.height / 2) - (title!.y + title!.height / 2))).toBeLessThanOrEqual(2);
+    } else {
+      await expect(directory.locator(".wiki-workspace-note-count")).toHaveCount(0);
+    }
     await expect(directory.getByRole("button", { name: "Open Root page 01", exact: true })).toBeVisible();
     await expect(directory.getByRole("button", { name: "Open Entity shadow", exact: true })).toHaveCount(0);
     await page.mouse.move(0, 0);

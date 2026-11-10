@@ -4765,3 +4765,22 @@ fn ux_quiet_1_battery_counts_as_low_below_20_and_okay_again_at_25() {
     assert!(battery_is_low(Some(22), true));
     assert!(!battery_is_low(Some(25), true));
 }
+
+#[test]
+fn the_start_line_names_the_phases_automatic_steep_leaves_out() {
+    let held = held_out_automatic_phases();
+    for phase in [
+        wenlan_core::refinery::Phase::Recaps,
+        wenlan_core::refinery::Phase::Reweave,
+    ] {
+        assert!(held.contains(&phase), "{phase} is held out: {held:?}");
+    }
+    assert!(!held.contains(&wenlan_core::refinery::Phase::ReDistill));
+    let line = held_out_automatic_phases_line();
+    assert!(
+        line.contains("recaps") && line.contains("reweave"),
+        "{line}"
+    );
+    assert!(!line.contains("re-distill"), "{line}");
+    assert!(line.contains("reason="), "{line}");
+}

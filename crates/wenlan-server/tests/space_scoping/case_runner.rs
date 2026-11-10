@@ -410,10 +410,11 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
     // Refinery queue is scoped for research payloads while preserving legacy
     // generic proposals; this moves one existing key from Global to scoped.
     // The conversation lines a memory was said in adds one more scoped reader.
-    // The nightly trust scan report adds one Global reader.
+    // The nightly trust scan report adds one Global reader. Moving a page
+    // into a Space adds one PageWorkspace-scoped single-id route.
     // Restoring an earlier page version adds one PageWorkspace-scoped
     // single-id route.
-    assert_eq!(rows.len(), 134);
+    assert_eq!(rows.len(), 135);
     assert_eq!(
         rows.iter()
             .filter(|row| row.scope_binding == ScopeBinding::Global)
@@ -424,7 +425,7 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
         rows.iter()
             .filter(|row| row.scope_binding != ScopeBinding::Global)
             .count(),
-        107
+        108
     );
     assert_eq!(
         rows.iter()

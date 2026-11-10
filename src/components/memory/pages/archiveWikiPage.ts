@@ -24,7 +24,7 @@ export async function refreshPageStatus(queryClient: QueryClient, id: string): P
 }
 
 /**
- * Archive a page from a list row (folder tree or Recently used). The page
+ * Archive a page from a list row (the folder tree). The page
  * keeps its id, body and history; it leaves the lists and can be restored
  * from Archived pages. The caller owns the confirmation.
  */

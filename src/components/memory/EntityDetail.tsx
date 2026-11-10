@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { InfoToggle } from "./page/InfoToggle";
 import { WorkspaceBackButton } from "./navigation/WorkspaceNavigation";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { WorkspaceDocumentToolsHostContext } from "./navigation/WorkspacePaneHost";
 import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import {
@@ -59,6 +61,7 @@ function EntityDetailContent({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [graphOpen, setGraphOpen] = useState(false);
   const { open: infoOpen, setOpen: setInfoOpen, toggle: toggleInfo } = useDetailInfoOpen(entityId);
+  const documentToolsHost = useContext(WorkspaceDocumentToolsHostContext);
   const infoToggleRef = useRef<HTMLButtonElement>(null);
   const observationsFlushRef = useRef<(() => Promise<boolean>) | null>(null);
   const actionGuardRef = useRef(false);
@@ -178,24 +181,28 @@ function EntityDetailContent({
 
   const { entity, observations, relations } = detail;
   const archived = entity.status === "archived";
+  const topicMenu = <EntityTopicMenu
+    archived={archived}
+    actionsPending={actionsPending}
+    onArchive={() => { void afterObservationsSaved(() => lifecycleMutation.mutate(!archived)); }}
+    onDelete={() => { void afterObservationsSaved(() => setConfirmDelete(true)); }}
+  />;
   return (
     <div
       className={`page-detail entity-detail-dossier document-context-host${infoOpen ? " document-context-open" : ""}`}
       aria-label={t("entityDetail.dossierLabel")}
     >
+      {/* Inside the workspace a topic's tools sit in the shared toolbar like a
+          page's: its menu, then Info. */}
+      {documentToolsHost && createPortal(<>{topicMenu}<InfoToggle ref={infoToggleRef} open={infoOpen} onClick={toggleInfo} /></>, documentToolsHost)}
       <DetailReadingFrame variant="compact" className="page-detail-document">
         <header className="page-document-title-row">
           <h1 className="page-detail-title">{entity.name}</h1>
-          <div className="page-document-tools">
+          {!documentToolsHost && <div className="page-document-tools">
             <BackButton onBack={onBack} label={t("entityDetail.back")} />
             <InfoToggle ref={infoToggleRef} open={infoOpen} onClick={toggleInfo} />
-            <EntityTopicMenu
-              archived={archived}
-              actionsPending={actionsPending}
-              onArchive={() => { void afterObservationsSaved(() => lifecycleMutation.mutate(!archived)); }}
-              onDelete={() => { void afterObservationsSaved(() => setConfirmDelete(true)); }}
-            />
-          </div>
+            {topicMenu}
+          </div>}
         </header>
         {archived ? <p className="entity-archived-notice" role="status">{t("entityDetail.archived")}</p> : null}
         {deleteMutation.isError || lifecycleMutation.isError ? (

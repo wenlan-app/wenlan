@@ -157,9 +157,9 @@ const WEB_WRITE_LIFTED_TOOL_NAMES: &[&str] = &["forget", "rename_page", "delete_
 /// then by the length of `check_reply`'s, then by the length of
 /// `thing_map`'s, then by the four folder and link tool descriptions, then by
 /// `list_entities` and `read_entity`, then the exact-source read description, then by `theme`'s,
-/// then by `keep_original`'s, then by `restore_page_version`'s (347).
+/// then by `keep_original`'s, then by `set_page_space`'s, then by `restore_page_version`'s (347).
 #[cfg(test)]
-const DESCRIPTION_BUDGET_CHARS: usize = 20_713;
+const DESCRIPTION_BUDGET_CHARS: usize = 20_941;
 const QUERY_ONLY_REFUSAL_MESSAGE: &str =
     "This tool is not available in the query-only profile. Allowed tools: brief, recall, get_page_sources.";
 const WEB_WRITE_REFUSAL_MESSAGE: &str =
@@ -512,6 +512,40 @@ pub struct CaptureParams {
     )]
     #[serde(default)]
     pub session: Option<String>,
+    #[schemars(
+        description = "The lines of this conversation the memory comes from, copied word for word, not summarized: usually the user's own message, plus your reply if the point is in it. At most 3, nearest last. Wenlan shows them when someone opens the sentence later; pass them always, since Wenlan cannot read a web chat itself."
+    )]
+    #[serde(default)]
+    pub said: Option<Vec<SaidLineParam>>,
+}
+
+/// One line of the conversation a captured memory comes from.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SaidLineParam {
+    #[schemars(description = "Who said it: 'you' for the user, 'ai' for you.")]
+    pub speaker: SaidSpeakerParam,
+    #[schemars(description = "What was said, word for word.")]
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SaidSpeakerParam {
+    You,
+    Ai,
+}
+
+impl From<SaidLineParam> for wenlan_types::conversations::ConversationLine {
+    fn from(line: SaidLineParam) -> Self {
+        Self {
+            speaker: match line.speaker {
+                SaidSpeakerParam::You => wenlan_types::conversations::ConversationSpeaker::You,
+                SaidSpeakerParam::Ai => wenlan_types::conversations::ConversationSpeaker::Ai,
+            },
+            text: line.text,
+            at: None,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -1645,6 +1679,21 @@ pub struct MovePageParams {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SetPageSpaceParams {
+    #[schemars(description = "Opaque page id from list_pages or read_page.")]
+    pub page_id: String,
+    #[schemars(
+        description = "Name of the Space to move the page into. Omit it, or pass an empty string, to put the page in no Space."
+    )]
+    #[serde(default)]
+    pub space: Option<String>,
+    #[schemars(
+        description = "The page's current version from read_page; the move is refused if the page changed since."
+    )]
+    pub expected_version: i64,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct GetPageLinksParams {
     #[schemars(description = "Opaque page id from list_pages, recall, or read_page.")]
     pub page_id: String,
@@ -2555,8 +2604,9 @@ fn source_read_refused_result(reason: &str, source_ids: &[String]) -> CallToolRe
     if target == "unfiled" {
         text.push_str(
             "This page is in no Space, so it can cite only notes that are in no Space. If \
-             its sources are in one Space, move the page there with move_page and retry; if \
-             they span several Spaces, leave out the ones from other Spaces. ",
+             those sources all share one Space, move the page there with set_page_space and \
+             retry; otherwise leave out the ones it cannot read and retry, or tell the person \
+             which ones were left out. ",
         );
     } else {
         text.push_str(
@@ -3079,6 +3129,9 @@ impl WenlanMcpServer {
             entity_id: params.entity_id,
             structured_fields: params.structured_fields.map(serde_json::Value::Object),
             retrieval_cue: params.retrieval_cue,
+            said: params
+                .said
+                .map(|lines| lines.into_iter().map(Into::into).collect()),
         };
 
         let resp: StoreMemoryResponse =
@@ -5128,8 +5181,11 @@ impl WenlanMcpServer {
 
         // DELETE /api/pages/{id} archives the page; it never deletes one for
         // an AI tool. The daemon refuses a page holding the person's work.
+        // Through the session client, so the archive's history row names the
+        // AI session that asked for it.
         let path = format!("/api/pages/{}", page_id);
-        let resp: PageRemovalResponse = try_call!(self.client.delete(&path), "delete_page");
+        let client = self.session_client(None).await;
+        let resp: PageRemovalResponse = try_call!(client.delete(&path), "delete_page");
         let text = match (resp.status, resp.restorable) {
             (PageRemovalStatus::Archived, true) => format!(
                 "Page {page_id} archived. Its history is kept, and the person can restore it \
@@ -5586,6 +5642,116 @@ impl WenlanMcpServer {
         let value = serde_json::to_value(response)
             .map_err(|error| McpError::internal_error(error.to_string(), None))?;
         Ok(CallToolResult::structured(value))
+    }
+
+    /// Move one page into a Space, or out of every Space. The daemon answers
+    /// with positions into the page's own source list for the sources the
+    /// page cannot read where it now lives; the ids named back come from the
+    /// page as this caller reads it, never from another Space.
+    pub async fn set_page_space_impl(
+        &self,
+        params: SetPageSpaceParams,
+    ) -> Result<CallToolResult, McpError> {
+        if self.transport == TransportMode::Http {
+            return Ok(CallToolResult::error(vec![ContentBlock::text(
+                "This tool is not available over remote connections. Use local stdio MCP on the machine running Wenlan.",
+            )]));
+        }
+        if !is_opaque_page_id(&params.page_id) {
+            return Ok(CallToolResult::error(vec![ContentBlock::text(
+                "Invalid page id. Use the page's opaque identifier, not a URL or file path.",
+            )]));
+        }
+        if params.expected_version < 1 {
+            return Ok(CallToolResult::error(vec![ContentBlock::text(
+                "expected_version must be the page's current version from read_page.",
+            )]));
+        }
+        let space = params
+            .space
+            .map(|space| space.trim().to_string())
+            .filter(|space| !space.is_empty());
+        let request = wenlan_types::requests::SetPageSpaceRequest {
+            space,
+            expected_version: params.expected_version,
+        };
+        let path = format!("/api/pages/{}/space", params.page_id);
+        let moved: wenlan_types::responses::SetPageSpaceResponse = match self
+            .client
+            .post(&path, &request)
+            .await
+        {
+            Ok(moved) => moved,
+            Err(WenlanError::Api { status, reason }) if status != 404 => {
+                use wenlan_types::responses::SetPageSpaceErrorCode as Code;
+                let message = match reason.as_deref() {
+                        Some(code) if code == Code::PageSpaceVersionConflict.as_str() => {
+                            "Space move refused, nothing changed: the page changed since it was read. Read it again with read_page and retry with its current version."
+                        }
+                        Some(code) if code == Code::PageSpaceTitleTaken.as_str() => {
+                            "Space move refused, nothing changed: that Space already has a page with this title. Rename one of them first, or pick another Space."
+                        }
+                        Some(code) if code == Code::PageSpaceNotMovable.as_str() => {
+                            "Space move refused, nothing changed: only an active written page (not an entity, overview, source or draft page) can move between Spaces."
+                        }
+                        Some(code) if code == Code::PageSpaceUnknown.as_str() => {
+                            "Space move refused, nothing changed: there is no Space by that name. Use a Space name the person already has, or omit space for no Space."
+                        }
+                        Some(code) if code == Code::PageSpaceNeedsGlobalScope.as_str() => {
+                            "Space move refused, nothing changed: this connection is limited to one Space, and moving a page between Spaces needs the whole library. Ask the person to do it in the app or from an unlocked session."
+                        }
+                        _ => {
+                            return Ok(tool_error(
+                                WenlanError::Api { status, reason },
+                                "set_page_space",
+                            ))
+                        }
+                    };
+                return Ok(CallToolResult::error(vec![ContentBlock::text(message)]));
+            }
+            Err(error) => return Ok(tool_error(error, "set_page_space")),
+        };
+        let place = match moved.space.as_deref() {
+            Some(space) => format!("Space \"{space}\""),
+            None => "no Space".to_string(),
+        };
+        let mut text = format!(
+            "Moved page {} to {place} (version {}). Its text and sources did not change.",
+            moved.page_id, moved.version
+        );
+        if !moved.unreadable_source_positions.is_empty() {
+            // Name the ids from the page's own list when the page is still at
+            // the version just written; otherwise give positions only.
+            let ids = self
+                .client
+                .get::<wenlan_types::responses::PageReadResponse>(&format!(
+                    "/api/pages/{}",
+                    moved.page_id
+                ))
+                .await
+                .ok()
+                .filter(|read| read.page.page.version == moved.version)
+                .map(|read| read.page.page.source_memory_ids)
+                .unwrap_or_default();
+            let named: Vec<String> = moved
+                .unreadable_source_positions
+                .iter()
+                .map(|&n| match ids.get((n as usize).wrapping_sub(1)) {
+                    Some(id) => format!("[{n}] {id}"),
+                    None => format!("[{n}]"),
+                })
+                .collect();
+            text.push_str(&format!(
+                " These sources cannot be read where the page now lives: {}. Leave them out of source_memory_ids on the next write_page.",
+                named.join(", ")
+            ));
+        }
+        if moved.projection_status != wenlan_types::responses::PageProjectionStatus::Synced {
+            text.push_str(
+                " The page's Markdown file has not caught up yet; the move itself is saved.",
+            );
+        }
+        Ok(CallToolResult::success(vec![ContentBlock::text(text)]))
     }
 
     pub async fn get_page_links_impl(&self, page_id: &str) -> Result<CallToolResult, McpError> {
@@ -6792,6 +6958,23 @@ impl WenlanMcpServer {
     }
 
     #[tool(
+        description = "Move one page into a Space, or into no Space (omit space), so it can cite that Space's notes. Pass expected_version from read_page. Text and sources stay; the reply names sources to drop on the next write_page. Local stdio only.",
+        annotations(
+            title = "Move page to a Space",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn set_page_space(
+        &self,
+        Parameters(params): Parameters<SetPageSpaceParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.set_page_space_impl(params).await
+    }
+
+    #[tool(
         description = "Get the pages linked from this page and the pages linking to it. Page links are read only; folder organization does not change Spaces, entities, or page content.",
         annotations(
             title = "Get page links",
@@ -7190,6 +7373,7 @@ const LOCAL_ONLY_TOOL_NAMES: &[&str] = &[
     "propose_note_change",
     "create_folder",
     "move_page",
+    "set_page_space",
     "theme",
 ];
 
@@ -8949,6 +9133,7 @@ mod tests {
             structured_fields: None,
             retrieval_cue: None,
             session: None,
+            said: None,
         };
 
         let refused = server
@@ -9058,8 +9243,17 @@ mod tests {
 
         let _ = server.forget_impl("mem_1").await.unwrap();
         let _ = server.delete_page_impl("page_1").await.unwrap();
+        // delete_page registers the AI session, when the environment names
+        // one, so the archive's history row names it. That is not a Space
+        // pre-check, and whether it happens depends on the environment the
+        // test runs in, so it is left out of the comparison.
+        let calls: Vec<(String, String)> = received(&mock)
+            .await
+            .into_iter()
+            .filter(|call| call.0 != "POST" || call.1 != "/api/sessions")
+            .collect();
         assert_eq!(
-            received(&mock).await,
+            calls,
             [
                 ("DELETE".to_string(), "/api/memory/delete/mem_1".to_string()),
                 ("DELETE".to_string(), "/api/pages/page_1".to_string()),
@@ -10107,6 +10301,7 @@ mod tests {
             entity_id: None,
             structured_fields: None,
             retrieval_cue: None,
+            said: None,
         };
         let json = serde_json::to_value(&req).unwrap();
         let obj = json.as_object().unwrap();
@@ -10313,6 +10508,7 @@ mod tests {
             entity_id: None,
             structured_fields: None,
             retrieval_cue: None,
+            said: None,
         };
         let json = serde_json::to_value(&req).unwrap();
         assert_eq!(json["entity"], "PostgreSQL");
@@ -10337,6 +10533,7 @@ mod tests {
             entity_id: None,
             structured_fields: None,
             retrieval_cue: None,
+            said: None,
         };
         let json = serde_json::to_value(&req).unwrap();
         assert_eq!(json["content"], "hello");
@@ -11589,11 +11786,115 @@ mod tests {
         assert!(text.contains("[2] mem_b, [3] mem_c"), "{text}");
         assert!(!text.contains("mem_a"), "{text}");
         assert!(
-            text.contains("move_page") && text.contains("in no Space"),
+            text.contains("in no Space")
+                && text.contains("share one Space")
+                && text.contains("set_page_space")
+                && text.contains("leave out the ones it cannot read"),
             "{text}"
         );
         assert!(text.contains("nothing was written"), "{text}");
         assert!(!text.contains("PRIVATE_SENTINEL"), "{text}");
+    }
+
+    /// set_page_space posts the typed request, names the page's own sources it
+    /// can no longer read by their `[n]` position, and says to leave them out
+    /// on the next write_page. A refusal code becomes a fixed sentence.
+    #[tokio::test]
+    async fn set_page_space_names_unreadable_sources_and_explains_refusals() {
+        use wiremock::matchers::{body_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let _pin = pin_space(None).await;
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/pages/page_x/space"))
+            .and(body_json(
+                serde_json::json!({"space":"work","expected_version":3}),
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "page_id": "page_x",
+                "space": "work",
+                "version": 4,
+                "unreadable_source_positions": [2],
+                "projection_status": "synced"
+            })))
+            .expect(1)
+            .mount(&mock)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/pages/page_x"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"page": page_wire_json("page_x", 4, false)})),
+            )
+            .expect(1)
+            .mount(&mock)
+            .await;
+        let server = stdio_server(mock.uri());
+        let result = server
+            .set_page_space_impl(SetPageSpaceParams {
+                page_id: "page_x".into(),
+                space: Some(" work ".into()),
+                expected_version: 3,
+            })
+            .await
+            .unwrap();
+        assert_ne!(result.is_error, Some(true));
+        let text = text_of(&result);
+        assert!(text.contains("Space \"work\" (version 4)"), "{text}");
+        assert!(text.contains("[2] mem_b"), "{text}");
+        assert!(!text.contains("mem_a"), "{text}");
+        assert!(text.contains("next write_page"), "{text}");
+
+        let refused = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/pages/page_x/space"))
+            .respond_with(ResponseTemplate::new(409).set_body_json(serde_json::json!({
+                "code": "page_space_version_conflict",
+                "error": "page_space_version_conflict: PRIVATE_SENTINEL",
+                "current_version": 5
+            })))
+            .mount(&refused)
+            .await;
+        let result = stdio_server(refused.uri())
+            .set_page_space_impl(SetPageSpaceParams {
+                page_id: "page_x".into(),
+                space: None,
+                expected_version: 3,
+            })
+            .await
+            .unwrap();
+        assert_eq!(result.is_error, Some(true));
+        let text = text_of(&result);
+        assert!(
+            text.contains("changed since it was read") && text.contains("read_page"),
+            "{text}"
+        );
+        assert!(!text.contains("PRIVATE_SENTINEL"), "{text}");
+
+        let http = WenlanMcpServer::new(
+            WenlanClient::new(refused.uri()),
+            TransportMode::Http,
+            "agent".into(),
+            None,
+        );
+        let result = http
+            .set_page_space_impl(SetPageSpaceParams {
+                page_id: "page_x".into(),
+                space: Some("work".into()),
+                expected_version: 3,
+            })
+            .await
+            .unwrap();
+        assert_eq!(result.is_error, Some(true));
+        let result = server
+            .set_page_space_impl(SetPageSpaceParams {
+                page_id: "../etc/passwd".into(),
+                space: Some("work".into()),
+                expected_version: 3,
+            })
+            .await
+            .unwrap();
+        assert_eq!(result.is_error, Some(true));
     }
 
     /// A 409 while the page is still at the version the agent read came from a
@@ -13054,6 +13355,7 @@ mod tests {
             structured_fields: None,
             retrieval_cue: None,
             session: None,
+            said: None,
         };
 
         let mock = MockServer::start().await;
@@ -13390,6 +13692,7 @@ mod tests {
             structured_fields: None,
             retrieval_cue: None,
             session: None,
+            said: None,
         };
 
         // Replicate capture_impl's request construction
@@ -13408,6 +13711,7 @@ mod tests {
             entity_id: None,
             structured_fields: params.structured_fields.map(serde_json::Value::Object),
             retrieval_cue: params.retrieval_cue,
+            said: None,
         };
 
         let json = serde_json::to_value(&req).unwrap();
@@ -13556,6 +13860,7 @@ mod tests {
                 structured_fields: None,
                 retrieval_cue: None,
                 session: None,
+                said: None,
             };
             assert_eq!(params.memory_type.as_deref(), Some(*t));
         }
@@ -13578,6 +13883,7 @@ mod tests {
             structured_fields: None,
             retrieval_cue: None,
             session: None,
+            said: None,
         };
         assert_eq!(params.memory_type.as_deref(), Some("goal"));
     }
@@ -13618,6 +13924,7 @@ mod tests {
             entity_id: None,
             structured_fields: Some(serde_json::json!({"key":"val"})),
             retrieval_cue: Some("What is the key?".into()),
+            said: None,
         };
         let json = serde_json::to_value(&req).unwrap();
         assert_eq!(json["structured_fields"], serde_json::json!({"key":"val"}));
@@ -13697,6 +14004,37 @@ mod tests {
                 "keep_original description lost {words:?}"
             );
         }
+    }
+
+    /// UX-WHO-6: the conversation lines an AI tool passes to capture reach
+    /// the daemon as conversation lines, so a web chat's sentence can show them.
+    #[test]
+    fn capture_said_lines_become_conversation_lines() {
+        let params: CaptureParams = serde_json::from_value(serde_json::json!({
+            "content": "Decided to ship 0.21 in one go.",
+            "said": [
+                { "speaker": "you", "text": "ship 0.21 in one go" },
+                { "speaker": "ai", "text": "Noted." },
+            ],
+        }))
+        .unwrap();
+        let lines: Vec<wenlan_types::conversations::ConversationLine> =
+            params.said.unwrap().into_iter().map(Into::into).collect();
+        assert_eq!(
+            lines[0].speaker,
+            wenlan_types::conversations::ConversationSpeaker::You
+        );
+        assert_eq!(lines[0].text, "ship 0.21 in one go");
+        assert_eq!(
+            lines[1].speaker,
+            wenlan_types::conversations::ConversationSpeaker::Ai
+        );
+        assert!(lines.iter().all(|l| l.at.is_none()));
+        assert!(serde_json::from_value::<CaptureParams>(serde_json::json!({
+            "content": "x",
+            "said": [{ "speaker": "someone", "text": "y" }],
+        }))
+        .is_err());
     }
 
     #[test]
@@ -14843,6 +15181,7 @@ mod tests {
             ("restore_page_version", (false, true, false)),
             ("reject_refinement", (false, true, false)),
             ("save_source", (false, true, false)),
+            ("set_page_space", (false, false, false)),
             ("steep", (false, false, false)),
             ("thing_map", (false, false, false)),
             ("update_brief", (false, false, false)),
@@ -15259,6 +15598,7 @@ mod tests {
             "restore_page_version",
             "reject_refinement",
             "save_source",
+            "set_page_space",
             "steep",
             "thing_map",
             "theme",

@@ -62,3 +62,18 @@ async fn one_time_cleanups_run_once_without_a_steep() {
     let again = run_one_time_cleanups(&db).await;
     assert_eq!(again, OneTimeCleanupReport::default());
 }
+
+/// Topic types written before the type gate are folded by the same one-time
+/// pass, since no automatic steep runs the phases that would see them.
+#[tokio::test]
+async fn one_time_cleanups_fold_old_plural_topic_types() {
+    let (db, _dir) = test_db().await;
+    db.test_seed_entity_shadow_page(crate::db::TestEntity::new("ent-p", "Data", "concepts"))
+        .await
+        .unwrap();
+
+    let first = run_one_time_cleanups(&db).await;
+    assert!(first.errors.is_empty(), "{:?}", first.errors);
+    assert_eq!(first.entity_types_folded, 1);
+    assert_eq!(run_one_time_cleanups(&db).await.entity_types_folded, 0);
+}

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { expect, test, type Page } from "@playwright/test";
 import { collectBrowserErrors, installTauriMock } from "./tauriMock";
+import { openPrimaryDestination } from "./helpers/primaryNavigation";
 import { createSpacesNavigationFixture } from "./fixtures/spacesNavigation";
 import { resources } from "../src/i18n/resources";
 import { openTopicContext, openTopicMenu } from "./helpers/topicTools";
@@ -28,7 +29,7 @@ for (const copy of cases) test(`${copy.locale} topics browse before managing`, a
   const controller = await installTauriMock(page, { fixture: createSpacesNavigationFixture(), locale: copy.locale, rawActions: [], localStorage: { "wenlan-theme": copy.theme } });
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/");
-  await page.getByRole("button", { name: copy.title, exact: true }).click();
+  await openPrimaryDestination(page, copy.title, copy.more);
   const overview = page.locator(".entities-view");
   await expect(overview.getByRole("button", { name: copy.openAda, exact: true })).toBeVisible();
   await expect(overview.getByText("Charles Babbage", { exact: true })).toBeVisible();
@@ -53,7 +54,7 @@ for (const copy of cases) test(`${copy.locale} topics browse before managing`, a
   await overview.getByRole("button", { name: copy.openAda, exact: true }).click();
   await expect(page.getByRole("heading", { name: "Ada Lovelace", exact: true })).toBeVisible();
   await expect(page.locator(".notes-workspace-sidebar")).toHaveCSS("width", "240px");
-  await expect(page.getByRole("navigation").getByRole("button", { name: copy.title, exact: true })).toHaveAttribute("aria-current", "page");
+  await expect(page.getByRole("navigation").locator('[aria-current="page"]')).toHaveCount(0);
   expect(controller.calls().filter(call => /^(confirm_entity|archive_entities|restore_entities)_cmd$/.test(call.command))).toEqual([]);
   const info = await openTopicContext(page, copy.locale);
   await expect(info.getByRole("button", { name: tr.infoActions.keepTopic, exact: true })).toHaveAttribute("data-active", "false");

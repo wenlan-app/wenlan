@@ -843,6 +843,8 @@ struct Pass<'a> {
     space_pages: HashMap<String, String>,
     /// Member id to name, from `space.json`.
     names: HashMap<String, String>,
+    /// Version files in the folder this pass could not read yet.
+    unread: u32,
 }
 
 /// One pass of `scope` with the folder in `settings`.
@@ -933,6 +935,7 @@ async fn pass(
             .into_iter()
             .map(|member| (member.id, member.name))
             .collect(),
+        unread: read.skipped,
     };
     let mut held = read_held(db, &key).await?;
 
@@ -1019,6 +1022,20 @@ impl Pass<'_> {
                 Some(version),
                 held.version != Some(page.version) && version.state() != state,
             ),
+            // The version it was last in step with cannot be read this pass
+            // (a cloud file not downloaded yet, or one still arriving), but
+            // the page did not change here since: it is not an edit made
+            // here, whatever the folder holds.
+            (Some(held), None) if held.version == Some(page.version) => {
+                (newest_with(versions, &state), false)
+            }
+            // Changed here, over a version that cannot be read this pass:
+            // writing it now would be written over whatever the others did
+            // since. Wait until the folder is whole.
+            (Some(_), None) if self.unread > 0 => {
+                counts.skipped += 1;
+                return Ok(None);
+            }
             _ => match newest_with(versions, &state) {
                 Some(version) => (Some(version), false),
                 None => (None, true),

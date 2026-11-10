@@ -121,7 +121,9 @@ test("a new user's home keeps one column and fits 1280x800 while getting started
   await expect(checklist).toBeVisible();
   await expect(page.locator(".wiki-reading-start")).toHaveAttribute("data-onboarding", "true");
   await expect(page.locator(".wiki-workspace")).toHaveAttribute("data-directory-hidden", "true");
-  await expect(page.locator(".wiki-workspace-directory")).toBeHidden();
+  // Every page is listed in the one left column, never as a second column.
+  await expect(page.locator(".wiki-workspace .wiki-workspace-directory")).toHaveCount(0);
+  await expect(page.locator(".notes-workspace-sidebar .wiki-sidebar-directory")).toBeVisible();
   const overflow = await page.evaluate(() => {
     const scroller = document.querySelector(".note-group-content") ?? document.documentElement;
     return {
@@ -136,12 +138,13 @@ test("a new user's home keeps one column and fits 1280x800 while getting started
   await expect(checklist.getByRole("listitem")).toHaveCount(1);
   await expect(checklist.getByRole("button", { name: "Ask in Claude Code" })).toBeVisible();
 
-  // Hiding the card leaves Home without a directory; every page is in the Wiki.
+  // Hiding the card keeps Home one column; the pages stay in the sidebar.
   await checklist.getByRole("button", { name: "Hide getting started" }).click();
   await expect(page.locator(".wiki-reading-start")).not.toHaveAttribute("data-onboarding");
-  await expect(page.locator(".wiki-workspace-directory")).toBeHidden();
+  await expect(page.locator(".wiki-workspace")).toHaveAttribute("data-directory-hidden", "true");
   await page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Wiki", exact: true }).click();
-  await expect(page.locator(".wiki-workspace-directory")).toBeVisible();
+  await expect(page.locator(".wiki-workspace")).toHaveAttribute("data-directory-hidden", "true");
+  await expect(page.locator(".wiki-sidebar-directory")).toBeVisible();
 });
 
 test("empty pages can start writing without AI setup", async ({ page }) => {

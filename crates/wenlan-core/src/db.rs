@@ -21,6 +21,7 @@ static ONLINE_BACKUP_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::con
 
 mod brief;
 mod chat_check;
+pub mod chat_turns;
 pub use brief::LegacyBriefItem;
 mod claim_derivation;
 pub use claim_derivation::{
@@ -37,6 +38,7 @@ mod derived_artifact_sweep;
 mod edges_rebuild;
 pub mod entity_alias_sources;
 mod entity_page_adapter;
+mod entity_type_fold;
 mod eval_lifecycle_integrity;
 mod eval_paired_guard;
 mod eval_pipeline_reads;
@@ -57,6 +59,7 @@ mod maintenance_queue;
 mod maintenance_retro_scan;
 mod memory_point_reads;
 mod metadata_json;
+mod migration_backups;
 mod migrations_v004_v009;
 mod okf_concepts;
 mod onboarding_milestones;
@@ -68,10 +71,12 @@ pub mod page_map;
 pub mod page_map_independent;
 mod page_rename;
 mod page_restore;
+mod page_space_move;
 mod removal;
 pub use removal::{ForgetOutcome, PageRemovalAudit};
 pub(crate) mod rebuild_writes;
 pub use page_restore::{restore_refusal_message, RestorePageError};
+pub use page_space_move::{set_page_space_refusal_message, SetPageSpaceError};
 mod page_summary_backfill;
 mod presence_review;
 mod quick_capture_repair;
@@ -236,6 +241,8 @@ mod page_link_rename_test;
 mod page_rename_test;
 #[cfg(test)]
 mod page_restore_test;
+#[cfg(test)]
+mod page_space_move_test;
 #[cfg(test)]
 mod presence_review_test;
 #[cfg(test)]
@@ -1341,6 +1348,11 @@ impl MemoryDB {
         old_type: &str,
         canonical: &str,
     ) -> Result<usize, WenlanError> {
+        // The rows a fold covers: every topic page of type `?1`, with the
+        // entity id it is mapped to.
+        const FOLD_ENTITY_TYPE_ROWS: &str = "FROM entity_page_map epm \
+             JOIN pages p ON p.id = epm.page_id \
+             WHERE p.kind = 'entity' AND p.entity_type = ?1";
         // Snapshot the affected ids, rewrite them, and ledger the pre-image inside
         // ONE transaction so the UPDATE and the ledger write are atomic (mirrors
         // fold_relation_type's begin/commit/rollback). The ledger INSERT is inlined
@@ -1359,12 +1371,13 @@ impl MemoryDB {
             // old `entities`-only one -- nothing is missed -- and it is now
             // the ONLY source that sees a post-flip (shadow-only) entity,
             // which has no `entities` row at all.
+            //
+            // The selection, the ledgered pre-image, the returned count and the
+            // UPDATE all use FOLD_ENTITY_TYPE_ROWS, so they name the same rows:
+            // archived topics included, since the UPDATE always rewrote them.
             let mut rows = conn
                 .query(
-                    "SELECT epm.entity_id FROM entity_page_map epm \
-                     JOIN pages p ON p.id = epm.page_id \
-                     WHERE p.kind = 'entity' AND p.status = 'active' \
-                       AND p.entity_type = ?1",
+                    &format!("SELECT epm.entity_id {FOLD_ENTITY_TYPE_ROWS}"),
                     libsql::params![old_type],
                 )
                 .await
@@ -1401,9 +1414,11 @@ impl MemoryDB {
             // skipped.
             let now_iso = chrono::Utc::now().to_rfc3339();
             conn.execute(
-                "UPDATE pages SET entity_type = ?1, last_modified = ?2 \
-                 WHERE kind = 'entity' AND entity_type = ?3",
-                libsql::params![canonical.to_string(), now_iso, old_type.to_string()],
+                &format!(
+                    "UPDATE pages SET entity_type = ?2, last_modified = ?3 \
+                     WHERE id IN (SELECT p.id {FOLD_ENTITY_TYPE_ROWS})"
+                ),
+                libsql::params![old_type.to_string(), canonical.to_string(), now_iso],
             )
             .await
             .map_err(|e| WenlanError::VectorDb(format!("fold_entity_type shadow: {e}")))?;
@@ -1606,7 +1621,7 @@ pub const EMBEDDING_DIM: usize = 768;
 /// `entities` table, skip every `version < N` branch, and quietly operate
 /// against a schema it cannot see. Refusing to open is recoverable; writing is
 /// not.
-pub const SCHEMA_VERSION: u32 = 162;
+pub const SCHEMA_VERSION: u32 = 163;
 
 /// The text a `source = 'memory'` row is embedded from: `[space] ` when the
 /// row has a space, its retrieval cue on its own line when it has one, then
@@ -4358,16 +4373,20 @@ pub struct DocEnrichmentQueueEntry {
 }
 
 /// Aggregate state of the document-enrichment queue, for `/api/status`
-/// observability. `pending` counts rows not yet `done` (pending + in_progress +
-/// paused); `paused_reason` / `next_retry_at` describe the soonest-to-retry
-/// paused row; `exhausted` counts paused rows that reached the retry cap and are
-/// no longer eligible for a claim.
+/// observability. `pending` counts rows still to be worked (pending +
+/// in_progress + paused rows that will be retried); `paused_reason` /
+/// `next_retry_at` describe the soonest-to-retry paused row; `exhausted`
+/// counts paused rows that reached the retry cap and are no longer eligible
+/// for a claim. An exhausted row is one failed document, not queue work and
+/// not a pause of the queue: it is counted only in `exhausted`, and
+/// `exhausted_reason` is the error of the most recent one.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct DocEnrichmentQueueStatus {
     pub pending: u64,
     pub paused_reason: Option<String>,
     pub next_retry_at: Option<i64>,
     pub exhausted: u64,
+    pub exhausted_reason: Option<String>,
 }
 
 /// Durable store-time choices needed by restart-safe fixed-stage enrichment.
@@ -5156,6 +5175,10 @@ pub struct MemoryDB {
     /// Set by `run_migrations_up_to` for the chain it is running and read by
     /// `backup_before_migration`.
     skip_migration_backups: std::sync::atomic::AtomicBool,
+    /// How many pre-migration snapshots the running chain took or kept.
+    /// `run_migrations_up_to` resets it and prunes older snapshots when a
+    /// chain that took one finishes.
+    migration_backups_this_chain: std::sync::atomic::AtomicUsize,
     /// Which notes a steep run (automatic or on demand) holds right now. In
     /// memory on purpose: both kinds of run live in this daemon process, so a
     /// restart ends every hold together with the work behind it.
@@ -5317,6 +5340,7 @@ impl MemoryDB {
             ),
             opened_fresh_file: std::sync::atomic::AtomicBool::new(false),
             skip_migration_backups: std::sync::atomic::AtomicBool::new(false),
+            migration_backups_this_chain: std::sync::atomic::AtomicUsize::new(0),
             steep_leases: crate::steep::SteepLeases::default(),
         })
     }
@@ -5543,6 +5567,7 @@ impl MemoryDB {
             ),
             opened_fresh_file: std::sync::atomic::AtomicBool::new(created_in_this_open),
             skip_migration_backups: std::sync::atomic::AtomicBool::new(false),
+            migration_backups_this_chain: std::sync::atomic::AtomicUsize::new(0),
             steep_leases: crate::steep::SteepLeases::default(),
         };
 
@@ -5662,6 +5687,7 @@ impl MemoryDB {
             ),
             opened_fresh_file: std::sync::atomic::AtomicBool::new(created_in_this_open),
             skip_migration_backups: std::sync::atomic::AtomicBool::new(false),
+            migration_backups_this_chain: std::sync::atomic::AtomicUsize::new(0),
             steep_leases: crate::steep::SteepLeases::default(),
         };
 
@@ -5804,6 +5830,8 @@ impl MemoryDB {
             created_in_this_open && version == 0,
             std::sync::atomic::Ordering::Relaxed,
         );
+        self.migration_backups_this_chain
+            .store(0, std::sync::atomic::Ordering::Relaxed);
 
         // The downgrade barrier — see `refuse_if_newer_schema`. The constructors
         // now run it at open time, before any DDL; this call is defense in depth
@@ -10924,6 +10952,15 @@ impl MemoryDB {
             if version < 162 {
                 self.migrate_162_original_versions(version).await?;
             }
+
+            // Migration 163: the conversation lines an AI tool sends with a
+            // memory it saves. See db/sessions.rs.
+            if ceiling < 163 {
+                return Ok(());
+            }
+            if version < 163 {
+                self.migrate_163_kept_said(version).await?;
+            }
         }
 
         // Private M4 builds could already have stamped user_version=95 before
@@ -11078,6 +11115,7 @@ impl MemoryDB {
             }
         }
 
+        self.prune_migration_backups_after_chain().await;
         Ok(())
     }
 
@@ -11716,6 +11754,7 @@ impl MemoryDB {
                  the original restore point (skipping re-snapshot)",
                 dest.display()
             );
+            self.note_chain_backup(migration).await?;
             return Ok(());
         }
         let receipt = self.online_backup(&dest).await?;
@@ -11737,7 +11776,80 @@ impl MemoryDB {
             receipt.dest,
             receipt.backup_pages
         );
+        self.note_chain_backup(migration).await?;
         Ok(())
+    }
+
+    /// Count a snapshot this migration chain took or kept, and remember the
+    /// version the upgrade started from (the one before its first snapshot)
+    /// unless an earlier attempt at the same upgrade already did. A retried
+    /// upgrade so keeps the snapshot from before the whole upgrade, even
+    /// though this run of the chain did not take it.
+    async fn note_chain_backup(&self, migration: i64) -> Result<(), WenlanError> {
+        self.migration_backups_this_chain
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let key = migration_backups::MIGRATION_CHAIN_FROM_VERSION_KEY;
+        if self.get_app_metadata(key).await?.is_none() {
+            self.set_app_metadata(key, &(migration - 1).to_string())
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// After a migration chain finishes, remove old pre-migration snapshots.
+    /// Every snapshot the upgrade took is kept, counting the ones an earlier,
+    /// failed attempt at the same upgrade took (they are numbered above the
+    /// version it started from, see [`Self::note_chain_backup`]), so the
+    /// state before the whole upgrade is never the one removed. Of older
+    /// snapshots, the newest are kept until
+    /// [`migration_backups::MIGRATION_BACKUPS_KEPT`] remain. The upgrade's
+    /// start version is then cleared. Best effort: a failure is logged and
+    /// never fails the open.
+    async fn prune_migration_backups_after_chain(&self) {
+        let taken = self
+            .migration_backups_this_chain
+            .swap(0, std::sync::atomic::Ordering::Relaxed);
+        let key = migration_backups::MIGRATION_CHAIN_FROM_VERSION_KEY;
+        let from_version = match self.get_app_metadata(key).await {
+            Ok(value) => value.and_then(|value| value.trim().parse::<i64>().ok()),
+            Err(error) => {
+                log::warn!("[migration] backup pruning skipped: {error}");
+                return;
+            }
+        };
+        if taken == 0 && from_version.is_none() {
+            return;
+        }
+        let source_path = {
+            let conn = self.conn.lock().await;
+            match Self::main_db_path(&conn).await {
+                Ok(path) => path,
+                Err(error) => {
+                    log::warn!("[migration] backup pruning skipped: {error}");
+                    return;
+                }
+            }
+        };
+        let Some(dir) = source_path.parent() else {
+            return;
+        };
+        if let Err(error) = migration_backups::prune_migration_backups(
+            dir,
+            migration_backups::MIGRATION_BACKUPS_KEPT,
+            from_version,
+        ) {
+            log::warn!("[migration] backup pruning failed: {error}");
+        }
+        let conn = self.conn.lock().await;
+        if let Err(error) = conn
+            .execute(
+                "DELETE FROM app_metadata WHERE key = ?1",
+                libsql::params![key],
+            )
+            .await
+        {
+            log::warn!("[migration] could not clear {key}: {error}");
+        }
     }
 
     // Migration 82 (M2 PR-2 "reader cutover", stages c+d). Adds the cutover
@@ -29026,6 +29138,11 @@ impl MemoryDB {
                     filter_values.push(libsql::Value::Text(t.to_string()));
                 }
             }
+            if !types.is_empty() {
+                // A search for a type finds the person's memories of that
+                // type, never a chat turn carrying it (UX-ADD-4).
+                filter_conditions.push(chat_turns::not_chat_turn("c"));
+            }
         }
         push_read_scope_filter_folded(scope, "c.space", &mut filter_conditions, &mut filter_values);
         if let Some(sa) = source_agent {
@@ -34402,12 +34519,14 @@ impl MemoryDB {
                     MAX(url) as url, COUNT(*) as chunk_count,
                     MAX(last_modified) as last_modified, MAX(summary) as summary,
                     MAX(memory_type), MAX(space), MAX(source_agent),
-                    MAX(CAST(confidence AS REAL)), MAX(confirmed), MAX(pinned)
+                    MAX(CAST(confidence AS REAL)), MAX(confirmed), MAX(pinned),
+                    MAX(CASE WHEN semantic_unit = '{chat_turn}' THEN 1 ELSE 0 END)
              FROM memories
              WHERE {}
              GROUP BY source, source_id
              ORDER BY MAX(last_modified) DESC",
-            conditions.join(" AND ")
+            conditions.join(" AND "),
+            chat_turn = chat_turns::CHAT_TURN_UNIT,
         );
         let conn = self.conn.lock().await;
         let mut rows = conn
@@ -34446,6 +34565,7 @@ impl MemoryDB {
                 // This reader is a raw file inventory with no superseder test at
                 // all, so it has no archive state to report.
                 is_archived: false,
+                conversation_text: row.get::<i64>(13).unwrap_or(0) != 0,
             });
         }
         drop(rows);
@@ -36505,7 +36625,10 @@ impl MemoryDB {
                 MAX(version) as version,
                 MAX(changelog) as changelog,
                 {is_archived} AS is_archived,
-                MAX(session_id) as session_id"
+                MAX(session_id) as session_id,
+                MAX(CASE WHEN semantic_unit = '{chat_turn}' THEN 1 ELSE 0 END)
+                    AS conversation_text",
+            chat_turn = chat_turns::CHAT_TURN_UNIT,
         )
     }
 
@@ -36546,6 +36669,7 @@ impl MemoryDB {
             pending_revision: false,
             merged_from: None,
             session_id: row.get::<Option<String>>(26).unwrap_or(None),
+            conversation_text: row.get::<i64>(27).unwrap_or(0) != 0,
         }
     }
 
@@ -36594,6 +36718,8 @@ impl MemoryDB {
         if let Some(mt) = memory_type {
             params.push(mt.into());
             sql.push_str(&format!(" AND memory_type = ?{}", params.len()));
+            // A chat turn's stored type is not the person's (UX-ADD-4).
+            sql.push_str(&format!(" AND {}", chat_turns::not_chat_turn("")));
         }
         if let Some(c) = confirmed {
             params.push(if c { 1i64.into() } else { 0i64.into() });
@@ -37038,6 +37164,8 @@ impl MemoryDB {
             conditions.push(format!("memory_type = ?{}", idx));
             params.push(mt.to_string().into());
             idx += 1;
+            // A chat turn's stored type is not the person's (UX-ADD-4).
+            conditions.push(chat_turns::not_chat_turn(""));
         }
         match scope {
             ReadScope::Global => {}
@@ -37073,6 +37201,8 @@ impl MemoryDB {
                 // "same set" claim that used to sit here.
                 conditions.push("(confirmed = 0 OR confirmed IS NULL)".to_string());
                 conditions.push(not_self_archived("memories"));
+                // Imported chat turns are not captures to review (UX-ADD-4).
+                conditions.push(chat_turns::not_chat_turn(""));
                 conditions.push("(is_recap IS NULL OR is_recap != 1)".to_string());
             }
         }
@@ -37103,13 +37233,17 @@ impl MemoryDB {
                     MAX(CAST(confidence AS REAL)), MAX(confirmed), MAX(pinned),
                     MAX(created_at) as created_at,
                     COALESCE(MAX(authored_content), MAX(content)) as content,
-                    {is_archived} AS is_archived
+                    {is_archived} AS is_archived,
+                    MAX(CASE WHEN semantic_unit = '{chat_turn}' THEN 1 ELSE 0 END)
+                        AS conversation_text
              FROM memories
              {}
              GROUP BY source_id
              ORDER BY MAX(last_modified) DESC
              LIMIT ?{}",
-            where_clause, limit_param
+            where_clause,
+            limit_param,
+            chat_turn = chat_turns::CHAT_TURN_UNIT,
         );
 
         let mut rows = conn
@@ -37149,6 +37283,7 @@ impl MemoryDB {
                     .unwrap_or(None)
                     .unwrap_or_default(),
                 is_archived: row.get::<i64>(15).unwrap_or(0) != 0,
+                conversation_text: row.get::<i64>(16).unwrap_or(0) != 0,
             });
         }
 
@@ -46599,6 +46734,11 @@ impl MemoryDB {
             )));
         }
         let conn = self.conn.lock().await;
+        if stability == "confirmed" {
+            // An imported chat turn is conversation text, not a memory the
+            // person stated: there is nothing of theirs to confirm (UX-ADD-4).
+            chat_turns::refuse_chat_turn_on_connection(&conn, source_id).await?;
+        }
         let confirmed_int: i64 = if stability == "confirmed" { 1 } else { 0 };
         let rows_affected = if stability == "confirmed" {
             conn.execute(
@@ -46654,6 +46794,8 @@ impl MemoryDB {
         // that argues for it and updates the inventory doc in the same commit.
         let hidden_by_superseder =
             superseder_not_exists(scope, "c", "superseder.source = 'memory'");
+        // An imported chat turn is not a memory waiting for review (UX-ADD-4).
+        let not_chat_turn = chat_turns::not_chat_turn("c");
         let sql = format!(
             "SELECT c.source_id, c.title, c.content, c.summary, c.memory_type, c.space,
                     c.source_agent, c.confidence, c.confirmed, c.stability,
@@ -46671,6 +46813,7 @@ impl MemoryDB {
              WHERE c.source = 'memory'
                AND c.stability = 'new'
                AND COALESCE(c.is_recap, 0) = 0
+               AND {not_chat_turn}
                AND {hidden_by_superseder}
                {}
              ORDER BY
@@ -46737,6 +46880,9 @@ impl MemoryDB {
                 pending_revision: false,
                 merged_from: None,
                 session_id: None,
+                // The nurture predicate leaves imported chat turns out
+                // (UX-ADD-4), so no row here is conversation text.
+                conversation_text: false,
             });
         }
         Ok(results)
@@ -48782,15 +48928,19 @@ impl MemoryDB {
         space: Option<&str>,
         limit: usize,
     ) -> Result<Vec<(String, Option<String>, String)>, WenlanError> {
+        // An imported chat turn's stored type is not the person's, so it is
+        // never a same-type memory (UX-ADD-4).
+        let not_chat_turn = chat_turns::not_chat_turn("");
         let conn = self.conn.lock().await;
         let (sql, params): (String, Vec<libsql::Value>) = if let Some(d) = space {
             (
-                "SELECT source_id, structured_fields, content FROM memories
+                format!(
+                    "SELECT source_id, structured_fields, content FROM memories
                  WHERE source = 'memory' AND memory_type = ?1 AND space = ?2
                  AND source_id != ?3 AND is_recap = 0
-                 AND chunk_index = 0
+                 AND chunk_index = 0 AND {not_chat_turn}
                  ORDER BY last_modified DESC LIMIT ?4"
-                    .to_string(),
+                ),
                 vec![
                     libsql::Value::Text(memory_type.to_string()),
                     libsql::Value::Text(d.to_string()),
@@ -48800,13 +48950,14 @@ impl MemoryDB {
             )
         } else {
             (
-                "SELECT source_id, structured_fields, content FROM memories
+                format!(
+                    "SELECT source_id, structured_fields, content FROM memories
                  WHERE source = 'memory' AND memory_type = ?1
                  AND (space IS NULL OR space = '00000000-0000-4000-8000-000000000001')
                  AND source_id != ?2 AND is_recap = 0
-                 AND chunk_index = 0
+                 AND chunk_index = 0 AND {not_chat_turn}
                  ORDER BY last_modified DESC LIMIT ?3"
-                    .to_string(),
+                ),
                 vec![
                     libsql::Value::Text(memory_type.to_string()),
                     libsql::Value::Text(exclude_source_id.to_string()),
@@ -50428,17 +50579,21 @@ impl MemoryDB {
         since_epoch: i64,
         limit: usize,
     ) -> Result<Vec<(String, String, Option<String>, i64)>, WenlanError> {
+        // A chat turn typed `decision` is conversation text, not a decision
+        // the person made (UX-ADD-4).
+        let not_chat_turn = chat_turns::not_chat_turn("");
         let conn = self.conn.lock().await;
         let mut rows = conn.query(
-            "SELECT source_id, content, space, COALESCE(created_at, last_modified) FROM memories
+            &format!("SELECT source_id, content, space, COALESCE(created_at, last_modified) FROM memories
              WHERE source = 'memory'
                AND memory_type = 'decision'
                AND is_recap = 0
                AND source_id NOT LIKE 'merged_%'
                AND chunk_index = 0
+               AND {not_chat_turn}
                AND COALESCE(created_at, last_modified) > ?1
              ORDER BY COALESCE(created_at, last_modified) DESC
-             LIMIT ?2",
+             LIMIT ?2"),
             libsql::params![since_epoch, limit as i64],
         ).await.map_err(|e| WenlanError::VectorDb(format!("get_recent_decisions: {}", e)))?;
 
@@ -51002,6 +51157,9 @@ impl MemoryDB {
         } else {
             "?2 IS NULL"
         };
+        // An imported chat turn is conversation text, never typed as the
+        // person's fact, preference, identity or decision (UX-ADD-4).
+        let not_chat_turn = chat_turns::not_chat_turn("m");
         let conn = self.conn.lock().await;
         let mut rows = conn
             .query(
@@ -51022,6 +51180,7 @@ impl MemoryDB {
                    ON es.source_id=m.source_id AND es.step_name='classify'
                  WHERE m.source='memory' AND m.chunk_index=0
                    AND {only}
+                   AND {not_chat_turn}
                    AND COALESCE(m.pending_revision, 0)=0
                    AND NOT EXISTS (
                        SELECT 1 FROM memories superseder
@@ -52548,12 +52707,16 @@ impl MemoryDB {
             ),
         };
         let live = not_self_archived("memories");
+        // An imported chat turn is the conversation's original, not a memory
+        // waiting for the person to confirm as theirs (UX-ADD-4).
+        let not_chat_turn = chat_turns::not_chat_turn("");
         let sql = format!(
             "SELECT source_id, title, summary, content, \
                         created_at, last_modified \
                  FROM memories \
                  WHERE source = 'memory' AND chunk_index = 0 \
                    AND {live} \
+                   AND {not_chat_turn} \
                    AND (confirmed = 0 OR confirmed IS NULL) \
                    AND (is_recap IS NULL OR is_recap != 1) \
                    {scope_sql} \
@@ -62585,23 +62748,22 @@ impl MemoryDB {
     }
 
     /// Summarize the document-enrichment queue for `/api/status`. `pending` is
-    /// the count of not-`done` rows; the paused fields describe the
-    /// soonest-to-retry paused row (a NULL `next_retry_at` — immediately
-    /// eligible — sorts first), excluding exhausted rows. `exhausted` counts
-    /// paused rows at or above the retry cap. `paused_reason` also surfaces
-    /// exhaustion: a caller mapping `paused_reason.is_some()` to a stalled
-    /// queue (e.g. the wire `QueueStatus::Paused`) must see an all-exhausted
-    /// queue as stalled too, not silently `Active` forever. `next_retry_at`
-    /// stays `None` when every paused row is exhausted, since there is no
-    /// next retry to report.
+    /// the count of not-`done` rows that will still be worked; the paused
+    /// fields describe the soonest-to-retry paused row (a NULL
+    /// `next_retry_at` — immediately eligible — sorts first). Rows at or
+    /// above the retry cap are failed documents: they are counted in
+    /// `exhausted` (with the latest one's error in `exhausted_reason`) and
+    /// nowhere else, so one document that gave up neither reads as pending
+    /// work forever nor makes the whole queue read as paused.
     pub async fn document_enrichment_queue_status(
         &self,
     ) -> Result<DocEnrichmentQueueStatus, WenlanError> {
         let conn = self.conn.lock().await;
         let mut pending_rows = conn
             .query(
-                "SELECT COUNT(*) FROM document_enrichment_queue WHERE status != 'done'",
-                (),
+                "SELECT COUNT(*) FROM document_enrichment_queue
+                 WHERE status != 'done' AND NOT (status = 'paused' AND attempt_count >= ?1)",
+                libsql::params![Self::DOC_ENRICHMENT_MAX_ATTEMPTS],
             )
             .await
             .map_err(|e| WenlanError::VectorDb(format!("queue_status pending: {e}")))?;
@@ -62641,7 +62803,7 @@ impl MemoryDB {
             )
             .await
             .map_err(|e| WenlanError::VectorDb(format!("queue_status paused: {e}")))?;
-        let (retryable_paused_reason, next_retry_at) = match paused_rows
+        let (paused_reason, next_retry_at) = match paused_rows
             .next()
             .await
             .map_err(|e| WenlanError::VectorDb(format!("queue_status paused row: {e}")))?
@@ -62652,19 +62814,29 @@ impl MemoryDB {
             ),
             None => (None, None),
         };
+        drop(paused_rows);
 
-        // Fold exhaustion into `paused_reason` so a caller that treats
-        // `paused_reason.is_some()` as "queue is stalled" (the wire mapping
-        // in wenlan-server) still sees a stall when the queue holds only
-        // permanently-exhausted documents, instead of reporting them as
-        // ordinary `pending` work forever.
-        let paused_reason = match (retryable_paused_reason, exhausted) {
-            (reason, 0) => reason,
-            (Some(reason), n) => Some(format!("{reason}; {n} documents exhausted retries")),
-            (None, n) => Some(format!(
-                "{n} documents exhausted enrichment retries (max {} attempts) and will not be retried",
-                Self::DOC_ENRICHMENT_MAX_ATTEMPTS
-            )),
+        let exhausted_reason = if exhausted == 0 {
+            None
+        } else {
+            let mut rows = conn
+                .query(
+                    "SELECT error_detail FROM document_enrichment_queue
+                     WHERE status = 'paused' AND attempt_count >= ?1
+                     ORDER BY updated_at DESC, rowid DESC
+                     LIMIT 1",
+                    libsql::params![Self::DOC_ENRICHMENT_MAX_ATTEMPTS],
+                )
+                .await
+                .map_err(|e| {
+                    WenlanError::VectorDb(format!("queue_status exhausted reason: {e}"))
+                })?;
+            rows.next()
+                .await
+                .map_err(|e| {
+                    WenlanError::VectorDb(format!("queue_status exhausted reason row: {e}"))
+                })?
+                .and_then(|row| row.get::<Option<String>>(0).ok().flatten())
         };
 
         Ok(DocEnrichmentQueueStatus {
@@ -62672,6 +62844,7 @@ impl MemoryDB {
             paused_reason,
             next_retry_at,
             exhausted,
+            exhausted_reason,
         })
     }
 
@@ -62878,14 +63051,20 @@ impl MemoryDB {
                 span.2 = span.2.max(created_ts);
             }
 
+            // A turn is the conversation's original text, not a conclusion
+            // the person holds (UX-ADD-4): flag it so no lane types it and no
+            // surface labels it as the person's memory.
+            let semantic_unit =
+                chat_turns::is_imported_chat_turn(source_id, session_id.is_some(), content)
+                    .then_some(chat_turns::CHAT_TURN_UNIT);
             if let Err(e) = conn.execute(
                 // `origin_class` pinned for the same reason as the single-row
                 // `store_raw_import_memory` above: a chat export is `generated`.
                 // `url` is where the conversation opens in the vendor's app
                 // ("open in the original AI tool"); the vendor and its
                 // conversation id are in `source_id` and the session row.
-                "INSERT INTO memories (id, content, source, source_id, title, chunk_index, last_modified, chunk_type, word_count, created_at, origin_class, embedding, session_id, url)
-                 VALUES (?1, ?2, 'memory', ?3, ?4, ?5, ?6, 'text', ?7, ?8, ?9, vector32(?10), ?11, ?12)",
+                "INSERT INTO memories (id, content, source, source_id, title, chunk_index, last_modified, chunk_type, word_count, created_at, origin_class, embedding, session_id, url, semantic_unit)
+                 VALUES (?1, ?2, 'memory', ?3, ?4, ?5, ?6, 'text', ?7, ?8, ?9, vector32(?10), ?11, ?12, ?13)",
                 libsql::params![
                     memory_id,
                     content.clone(),
@@ -62900,6 +63079,7 @@ impl MemoryDB {
                     session_id,
                     crate::chat_import::Vendor::from_source_id(source_id)
                         .map(|(vendor, id)| vendor.conversation_url(id)),
+                    semantic_unit,
                 ],
             ).await {
                 let _ = conn.execute("ROLLBACK", ()).await;

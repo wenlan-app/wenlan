@@ -170,6 +170,7 @@ async fn mcp_capture_and_recall_respects_space() {
             structured_fields: None,
             retrieval_cue: None,
             session: None,
+            said: None,
         })
         .await
         .expect("capture_impl alpha failed");
@@ -188,6 +189,7 @@ async fn mcp_capture_and_recall_respects_space() {
             structured_fields: None,
             retrieval_cue: None,
             session: None,
+            said: None,
         })
         .await
         .expect("capture_impl beta failed");

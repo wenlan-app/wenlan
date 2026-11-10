@@ -91,8 +91,15 @@ capture(content="<args, written as a full sentence with WHY>",
         memory_type="<picked from the 6 types>",
         entity="<primary entity name, if any>",
         entity_type="<person, project, tool, ...>",
+        said=[{"speaker": "you", "text": "<the user's words it came from>"}],
         space=<resolved if non-empty>)
 ```
+
+Pass `said` on every capture: the one to three lines of this conversation the
+memory comes from, copied word for word (usually the user's own message, plus
+your reply when the point is in it). When someone later opens a sentence built
+on this memory, Wenlan shows these lines; in a web chat they are the only
+original it has.
 
 Set `memory_type` and `entity` yourself on every capture, whether Steep runs
 automatically or on demand. You already know both from the conversation, so

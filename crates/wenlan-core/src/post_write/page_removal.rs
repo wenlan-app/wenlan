@@ -121,6 +121,10 @@ pub async fn archive_page_as(
         PageRemover::Person => None,
         PageRemover::Ai(_) => {
             if page_holds_persons_work(db, &page).await? {
+                log::warn!(
+                    "[page_removal] refused archive of page {id} by {}: page holds the person's work",
+                    remover.audit_name()
+                );
                 return Err(PageRemovalError::Refused(
                     PageRemovalErrorCode::PageIsThePersons,
                 ));
@@ -136,9 +140,19 @@ pub async fn archive_page_as(
         .archive_page_recorded(id, expected_version, Some(audit))
         .await?;
     if version.is_none() && expected_version.is_some() {
+        log::warn!(
+            "[page_removal] archive of page {id} by {} not applied: page changed while it was being archived",
+            remover.audit_name()
+        );
         return Err(PageRemovalError::Failed(WenlanError::Validation(format!(
             "page_changed: page {id} changed while it was being archived; read it again"
         ))));
+    }
+    if let Some(version) = version {
+        log::info!(
+            "[page_removal] archived page {id} by {} (v{version})",
+            remover.audit_name()
+        );
     }
     Ok(version)
 }
@@ -152,6 +166,10 @@ pub async fn delete_page_permanently(
     scope: &ReadScope,
 ) -> Result<(), PageRemovalError> {
     if remover != PageRemover::Person {
+        log::warn!(
+            "[page_removal] refused permanent delete of page {id} by {}: only the person may",
+            remover.audit_name()
+        );
         return Err(PageRemovalError::Refused(
             PageRemovalErrorCode::PermanentDeleteNeedsPerson,
         ));
@@ -164,5 +182,87 @@ pub async fn delete_page_permanently(
         title: &page.title,
     };
     db.delete_page_recorded(id, Some(audit)).await?;
+    log::info!(
+        "[page_removal] deleted page {id} permanently by {}",
+        remover.audit_name()
+    );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::tests::test_db;
+    use crate::test_log::LogCapture;
+
+    async fn page(db: &MemoryDB, id: &str, kind: &str) {
+        db.insert_page_with_kind(
+            id,
+            "Removal",
+            None,
+            "Kestrels hover before they stoop.",
+            None,
+            None,
+            &[],
+            "2026-01-01T00:00:00Z",
+            kind,
+            "confirmed",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn archives_and_deletes_are_logged_with_who_asked() {
+        let (db, _dir) = test_db().await;
+        page(&db, "rm1", "distilled").await;
+        page(&db, "rm2", "distilled").await;
+        let logs = LogCapture::start();
+        let version = archive_page_as(&db, "rm1", PageRemover::Ai("codex"), &ReadScope::Global)
+            .await
+            .unwrap()
+            .expect("archived");
+        delete_page_permanently(&db, "rm2", PageRemover::Person, &ReadScope::Global)
+            .await
+            .unwrap();
+        let archived = logs.matching(
+            "INFO",
+            &["archived page rm1", "by codex", &format!("v{version}")],
+        );
+        assert_eq!(archived.len(), 1, "{:?}", logs.lines());
+        let deleted = logs.matching("INFO", &["deleted page rm2", "by person"]);
+        assert_eq!(deleted.len(), 1, "{:?}", logs.lines());
+    }
+
+    #[tokio::test]
+    async fn refused_removals_are_logged_as_warnings() {
+        let (db, _dir) = test_db().await;
+        page(&db, "rm3", "authored").await;
+        let logs = LogCapture::start();
+        let archive =
+            archive_page_as(&db, "rm3", PageRemover::Ai("codex"), &ReadScope::Global).await;
+        assert!(matches!(archive, Err(PageRemovalError::Refused(_))));
+        let delete =
+            delete_page_permanently(&db, "rm3", PageRemover::Ai("codex"), &ReadScope::Global).await;
+        assert!(matches!(delete, Err(PageRemovalError::Refused(_))));
+        assert_eq!(
+            logs.matching("WARN", &["refused archive of page rm3", "by codex"])
+                .len(),
+            1,
+            "{:?}",
+            logs.lines()
+        );
+        assert_eq!(
+            logs.matching(
+                "WARN",
+                &["refused permanent delete of page rm3", "by codex"]
+            )
+            .len(),
+            1,
+            "{:?}",
+            logs.lines()
+        );
+    }
 }
