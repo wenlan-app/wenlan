@@ -73,9 +73,10 @@ test('keyboard mirrors direction and closing restores last width while viewport 
   await start(page); await handle(page).focus(); await page.keyboard.press('End'); await expectWidth(page, 600);
   await page.keyboard.press('ArrowRight'); await expectWidth(page, 580); await page.keyboard.press('ArrowLeft'); await expectWidth(page, 600);
   const saved = await stored(page); await page.setViewportSize({ width: 1208, height: 900 });
-  // The labelled rail folds to icons here, so the cap leaves the note 360px beside the list.
-  await expect(page.locator('.memory-shell')).toHaveAttribute('data-sidebar-layout', 'icons');
-  await expect.poll(async () => (await pane(page).boundingBox())!.width).toBeLessThanOrEqual(1208 - 64 - 248 - 360);
+  // The page list lives in the labelled sidebar (UX-FIND-4), so the rail keeps
+  // its labels here and the cap leaves the note 360px beside it.
+  await expect(page.locator('.memory-shell')).toHaveAttribute('data-sidebar-layout', 'labels');
+  await expect.poll(async () => (await pane(page).boundingBox())!.width).toBeLessThanOrEqual(1208 - 240 - 360);
   expect(await stored(page)).toBe(saved);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.setViewportSize({ width: 1600, height: 900 }); await expectWidth(page, 600);
