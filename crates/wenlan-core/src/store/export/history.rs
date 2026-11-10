@@ -695,7 +695,9 @@ fn actor_of(table: &str, row: &Map<String, Value>, first_kinds: &HashMap<String,
                 .unwrap_or("");
             let kind = match authorship::version_author(edited_by.unwrap_or(""), birth) {
                 VersionAuthor::Person => ActorKind::Person,
-                VersionAuthor::Ai => ActorKind::Ai,
+                // The AI tool wrote it; the person's words ride the
+                // changelog entry for that version.
+                VersionAuthor::Ai | VersionAuthor::PersonAsked => ActorKind::Ai,
                 VersionAuthor::Original => ActorKind::Original,
                 VersionAuthor::System => ActorKind::System,
                 VersionAuthor::Unknown => ActorKind::Unknown,

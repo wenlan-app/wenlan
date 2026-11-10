@@ -372,6 +372,11 @@ pub enum VersionAuthor {
     Original,
     /// A mechanical rewrite: the sentences it touched keep their author.
     System,
+    /// An AI tool's write the person explicitly asked for in the
+    /// conversation (`person_asked`, UX-WHO-2). The AI wrote it, but the
+    /// sentences it added or changed are the person's, like ones they
+    /// approved: no later machine write changes them without asking.
+    PersonAsked,
 }
 
 /// Classify a `page_history.edited_by` value. A page's first version says
@@ -408,6 +413,7 @@ pub fn version_author(edited_by: &str, creation_kind: &str) -> VersionAuthor {
         "original" | "chat_import" => VersionAuthor::Original,
         "distill" | "re_distill" | "agent_refresh" | "page_growth" | "refinery_merge"
         | "citation_backfill" | "page_merge" => VersionAuthor::Ai,
+        crate::post_write::PERSON_ASKED => VersionAuthor::PersonAsked,
         "link_rename" | "title_rename" | "space_move" | "archive" => VersionAuthor::System,
         // `migration_87` (the seed of every page that predates history),
         // `migration_84`, and any writer this code does not know.
@@ -743,6 +749,16 @@ fn attribute(
             None => fresh(SentenceAuthor::Person, AuthorshipConfidence::Certain),
         },
         VersionAuthor::Ai => fresh(SentenceAuthor::Ai, AuthorshipConfidence::Certain),
+        // The AI wrote what the person asked for: the sentence is the
+        // person's, approved by asking, and what it says came from the AI.
+        VersionAuthor::PersonAsked => Attribution {
+            author: SentenceAuthor::Person,
+            origin: SentenceAuthor::Ai,
+            since: version,
+            confidence: AuthorshipConfidence::Certain,
+            accepted: true,
+            shared,
+        },
         VersionAuthor::Original => fresh(SentenceAuthor::Original, AuthorshipConfidence::Certain),
         VersionAuthor::Unknown => fresh(SentenceAuthor::Unknown, AuthorshipConfidence::Uncertain),
     }

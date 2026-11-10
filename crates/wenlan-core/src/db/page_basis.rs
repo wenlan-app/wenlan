@@ -915,6 +915,13 @@ pub struct BasisWrite {
     /// of it after the caller's check reads as not found: nothing is written,
     /// marked, or staged as a revision card. `None` writes wherever it is.
     pub space_guard: Option<crate::read_scope::ReadScope>,
+    /// UX-WHO-2: the person's own words, quoted verbatim, when they
+    /// explicitly asked the AI tool for this change. Rides only a
+    /// version-checked `person_asked` write; the sentence gate then lets it
+    /// change the person's sentences, and history carries the quote.
+    pub person_asked: Option<String>,
+    /// The earlier version this write puts back ("restored version N").
+    pub restored_from: Option<i64>,
 }
 
 /// One basis note as an "update from sources" run read it, recorded on the

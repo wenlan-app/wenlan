@@ -55461,13 +55461,15 @@ impl MemoryDB {
         // source revision first, and the agent's version is the page it read,
         // so a human rename (which bumps only `version`) between the gate and
         // this UPDATE cannot let the stale agent body land. The link rewrite
-        // after a rename fences on both for the same reason. Every other
+        // after a rename fences on both for the same reason, and so does a
+        // person-asked agent write (always version-checked). Every other
         // caller stays single-fence.
         if expected_version.is_some()
             && expected_source_revision.is_some()
             && page_growth_guard.is_none()
             && link_reason != "citation_backfill"
             && link_reason != "agent_refresh"
+            && link_reason != crate::post_write::PERSON_ASKED
             && link_reason != "link_rename"
             && consume_revision_id.is_none()
         {

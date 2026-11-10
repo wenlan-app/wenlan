@@ -200,8 +200,11 @@ and wait for evidence that people need them.
   that could not land on your sentences says which ones. Each page has one Lock switch, off by
   default; there is no "may edit directly" mode. The AI proposes a change to
   your sentence only when the facts changed: a source no longer supports it or
-  it has gone out of date. It never proposes a rewording.
-  原文：AI 改不了你的句子，只能提議；提議能一句一句收。（2026-10-31 16:11 選擇卡：AI 自己寫、沒人動過的句子直接更新，可還原；你寫的、改過的、收下的才問你；每頁一個「鎖定」。）選擇卡「只在事实变了时」（2026-10-31 21:44）：AI 只在來源和你的句子對不上、或已經過時時才對你的句子提建議；只是換個說法不提。「尽量不 review 就尽量不 review」。「都同意，請根據這去解決根本問題」（2026-11-08，回覆信任檢查清單：AI 重建你改過的頁時不蓋掉你的修改，改成一張等你收的卡；只有你能收；沒寫進去的修改要說出來）。
+  it has gone out of date. It never proposes a rewording. When you explicitly
+  ask an AI tool to change or remove your sentence, the change lands directly:
+  history lists it as asked by you, with your words, and restoring an earlier
+  version undoes it. The Lock still holds: a locked page still waits as a card.
+  原文：AI 改不了你的句子，只能提議；提議能一句一句收。（2026-10-31 16:11 選擇卡：AI 自己寫、沒人動過的句子直接更新，可還原；你寫的、改過的、收下的才問你；每頁一個「鎖定」。）選擇卡「只在事实变了时」（2026-10-31 21:44）：AI 只在來源和你的句子對不上、或已經過時時才對你的句子提建議；只是換個說法不提。「尽量不 review 就尽量不 review」。「都同意，請根據這去解決根本問題」（2026-11-08，回覆信任檢查清單：AI 重建你改過的頁時不蓋掉你的修改，改成一張等你收的卡；只有你能收；沒寫進去的修改要說出來）。「寧願這樣，畢竟都已經特別問我且授權了」（2026-11-09，回覆：你授權時 AI 直接改、可還原，還是變成卡片讓你按一下）。
 - **UX-WHO-3** `shipped` Every sentence has "not right": fix it yourself or ask
   the AI; the AI's fix is still a proposal.
   原文：每一句都能按「不對」：你自己改，或讓 AI 改，AI 改的仍然是提議。
@@ -446,7 +449,9 @@ and wait for evidence that people need them.
 
 - **UX-HIST-1** `shipped` One history per page, with three kinds of change in
   one list: what you changed, what the AI changed, and a source it cites that
-  changed. Renames, moves and locking are not listed.
+  changed. Renames, moves and locking are not listed. Putting an earlier
+  version back is listed as "restored version N", and a change you asked an
+  AI tool for shows your words.
   原文：一頁一本歷史，三種變動在同一個列表。選擇卡「你改的、AI 改的、来源变了」（2026-10-31 17:34）
 - **UX-HIST-2** `shipped` Every entry opens to show what changed.
   原文：每筆都能打開看改了什麼。
