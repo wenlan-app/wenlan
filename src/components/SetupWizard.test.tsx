@@ -279,10 +279,10 @@ describe("SetupWizard", () => {
   it("starts with who writes the pages and the ways in, without other setup questions or downloads", () => {
     renderWizard();
     expect(screen.getByText("Welcome to Wenlan")).toBeInTheDocument();
-    expect(screen.getByRole("radiogroup")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Change" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Start empty/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Look around an example wiki/ })).toBeInTheDocument();
-    expect(screen.getAllByRole("button").filter((button) => button.getAttribute("role") !== "radio")).toHaveLength(4);
+    expect(screen.getByRole("button", { name: /look around an example wiki/ })).toBeInTheDocument();
+    expect(screen.getAllByRole("button")).toHaveLength(5);
     expect(screen.queryByTestId("wizard-action-bar")).not.toBeInTheDocument();
     expect(getWireState).not.toHaveBeenCalled();
     expect(downloadOnDeviceModel).not.toHaveBeenCalled();

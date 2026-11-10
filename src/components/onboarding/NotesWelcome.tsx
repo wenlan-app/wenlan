@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useId, useRef, useState } from "react";
-import { ChatsCircle, Eye, PencilSimpleLine } from "@phosphor-icons/react";
+import { ChatsCircle, PencilSimpleLine } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { setExampleWikiActive } from "../../lib/exampleWiki/mode";
@@ -17,15 +17,15 @@ import { setStartIntent } from "./startIntent";
 import "../memory/sources/source-access.css";
 import "./notesWelcome.css";
 
-/** The four ways in, as option rows: each row does its thing directly. */
+/** Three ways in, as option rows: each row does its thing directly. The
+ *  example wiki is the small link under them. */
 const STARTS = [
   { id: "folder", icon: <SourceTypeIcon kind="folder" /> },
   { id: "chats", icon: <ChatsCircle aria-hidden="true" size={20} weight="regular" data-resource-icon="chats" /> },
   { id: "empty", icon: <PencilSimpleLine aria-hidden="true" size={20} weight="regular" data-resource-icon="empty" /> },
-  { id: "example", icon: <Eye aria-hidden="true" size={20} weight="regular" data-resource-icon="example" /> },
 ] as const;
 
-type Start = (typeof STARTS)[number]["id"];
+type Start = (typeof STARTS)[number]["id"] | "example";
 
 interface NotesWelcomeProps {
   onComplete: () => void | Promise<void>;
@@ -54,6 +54,9 @@ export function NotesWelcome({ onComplete, onContinueWithoutDaemon }: NotesWelco
   // the person picks the local model and then presses to download it.
   const [picked, setPicked] = useState<WriterChoice | null>(null);
   const writer: WriterChoice = picked ?? (tool ? "tool" : "none");
+  // Most people keep the default, so it is one line; "Change" opens the
+  // three choices in its place.
+  const [changing, setChanging] = useState(false);
 
   // Applies the choice. A tool that fails to connect never traps the person
   // here: home's first step still offers to connect it.
@@ -111,31 +114,46 @@ export function NotesWelcome({ onComplete, onContinueWithoutDaemon }: NotesWelco
           <h1 id={titleId} className="notes-welcome__title">
             {t("setup.welcomeTitle")}
           </h1>
-          <h2 id={writerId} className="notes-welcome__question">{t("setup.notesFirst.writer.question")}</h2>
-          <div className="notes-welcome__writers" role="radiogroup" aria-labelledby={writerId}>
-            {(["tool", "local", "none"] as const).map((choice) => choice === "tool" && !tool ? null : (
+          {!changing ? (
+            <p className="notes-welcome__writer-line" data-testid="notes-welcome-writer-line">
+              <span>{t(`setup.notesFirst.writer.line.${writer}`, { tool: toolName })}</span>
               <button
-                key={choice}
                 type="button"
-                role="radio"
-                aria-checked={writer === choice}
-                className="source-add-option notes-welcome__writer"
-                data-testid={`notes-welcome-writer-${choice}`}
+                className="source-add-more-link"
+                data-testid="notes-welcome-writer-change"
                 disabled={pending}
-                onClick={() => setPicked(choice)}
+                onClick={() => setChanging(true)}
               >
-                <span className="notes-welcome__radio" aria-hidden="true" />
-                <span className="source-add-option-copy">
-                  <strong>{choice === "tool"
-                    ? t("setup.notesFirst.writer.tool.title", { tool: toolName })
-                    : t(`setup.notesFirst.writer.${choice}.title`)}</strong>
-                  <span>{choice === "tool"
-                    ? t(tool?.client_type === "claude_code" ? "setup.notesFirst.writer.tool.hintNextSession" : "setup.notesFirst.writer.tool.hint", { tool: toolName })
-                    : t(`setup.notesFirst.writer.${choice}.hint`)}</span>
-                </span>
+                {t("setup.notesFirst.writer.change")}
               </button>
-            ))}
-          </div>
+            </p>
+          ) : (<>
+            <h2 id={writerId} className="notes-welcome__question">{t("setup.notesFirst.writer.question")}</h2>
+            <div className="notes-welcome__writers" role="radiogroup" aria-labelledby={writerId}>
+              {(["tool", "local", "none"] as const).map((choice) => choice === "tool" && !tool ? null : (
+                <button
+                  key={choice}
+                  type="button"
+                  role="radio"
+                  aria-checked={writer === choice}
+                  className="source-add-option notes-welcome__writer"
+                  data-testid={`notes-welcome-writer-${choice}`}
+                  disabled={pending}
+                  onClick={() => setPicked(choice)}
+                >
+                  <span className="notes-welcome__radio" aria-hidden="true" />
+                  <span className="source-add-option-copy">
+                    <strong>{choice === "tool"
+                      ? t("setup.notesFirst.writer.tool.title", { tool: toolName })
+                      : t(`setup.notesFirst.writer.${choice}.title`)}</strong>
+                    <span>{choice === "tool"
+                      ? t(tool?.client_type === "claude_code" ? "setup.notesFirst.writer.tool.hintNextSession" : "setup.notesFirst.writer.tool.hint", { tool: toolName })
+                      : t(`setup.notesFirst.writer.${choice}.hint`)}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </>)}
           <h2 className="notes-welcome__question">{t("setup.notesFirst.welcome.lead")}</h2>
           {failed && (
             <p className="notes-welcome__error" role="alert">
@@ -166,6 +184,17 @@ export function NotesWelcome({ onComplete, onContinueWithoutDaemon }: NotesWelco
               </button>
             ))}
           </div>
+          <p className="source-add-more notes-welcome__example">
+            <button
+              type="button"
+              className="source-add-more-link"
+              data-testid="notes-welcome-example"
+              disabled={pending}
+              onClick={() => void start("example")}
+            >
+              {t("setup.notesFirst.welcome.exampleLink")}
+            </button>
+          </p>
           <p className="notes-welcome__foot">{t("setup.notesFirst.welcome.foot")}</p>
         </div>
       </main>

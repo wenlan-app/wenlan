@@ -315,6 +315,12 @@ const en = {
       start: "Get started",
       writer: {
         question: "Who writes your pages? Pick once and leave it.",
+        line: {
+          tool: "{{tool}} (found on this computer) turns what you add into pages.",
+          local: "A local model turns what you add into pages. It downloads once you pick one.",
+          none: "What you add is kept and gets organized once you connect an AI tool.",
+        },
+        change: "Change",
         tool: {
           title: "{{tool}} (found on this computer)",
           hintNextSession: "Next time you use {{tool}}, it turns what you add into pages.",
@@ -325,6 +331,7 @@ const en = {
       },
       welcome: {
         lead: "Your wiki lives on your computer. Where do you want to start?",
+        exampleLink: "Or look around an example wiki first",
         foot: "You can add more material any time.",
         folder: { title: "Use a folder or Obsidian vault", hint: "Notes, docs or code. Kept in sync, never moved." },
         chats: { title: "Bring in past AI chats", hint: "From ChatGPT or Claude. Bring in new ones any time." },
@@ -3647,6 +3654,12 @@ const zhHans = {
       start: "开始使用",
       writer: {
         question: "谁来帮你整理成笔记？选一次，之后不用再管。",
+        line: {
+          tool: "由 {{tool}} 帮你整理成笔记（在这台电脑上找到了）。",
+          local: "由本地模型帮你整理成笔记，选好模型才下载。",
+          none: "先存着，接上 AI 工具后就会整理。",
+        },
+        change: "换一个",
         tool: {
           title: "{{tool}}（在这台电脑上找到了）",
           hintNextSession: "放进来就好，下次你用 {{tool}} 时，它会顺手整理成笔记。",
@@ -3657,6 +3670,7 @@ const zhHans = {
       },
       welcome: {
         lead: "你的 wiki 存在你自己的电脑上。想从哪里开始？",
+        exampleLink: "或先逛逛范例 wiki",
         foot: "之后随时可以再加资料。",
         folder: { title: "用文件夹或 Obsidian 库", hint: "笔记、文件或代码，留在原处，有改动自动跟上。" },
         chats: { title: "带入以前的 AI 聊天", hint: "从 ChatGPT 或 Claude，之后有新的再带进来。" },
@@ -6918,6 +6932,12 @@ const zhHant = {
       start: "開始使用",
       writer: {
         question: "誰來幫你整理成筆記？選一次，之後不用再管。",
+        line: {
+          tool: "由 {{tool}} 幫你整理成筆記（在這台電腦上找到了）。",
+          local: "由本地模型幫你整理成筆記，選好模型才下載。",
+          none: "先存著，接上 AI 工具後就會整理。",
+        },
+        change: "換一個",
         tool: {
           title: "{{tool}}（在這台電腦上找到了）",
           hintNextSession: "放進來就好，下次你用 {{tool}} 時，它會順手整理成筆記。",
@@ -6928,6 +6948,7 @@ const zhHant = {
       },
       welcome: {
         lead: "你的 wiki 存在你自己的電腦上。想從哪裡開始？",
+        exampleLink: "或先逛逛範例 wiki",
         foot: "之後隨時可以再加資料。",
         folder: { title: "用資料夾或 Obsidian 庫", hint: "筆記、文件或程式碼，留在原處，有改動自動跟上。" },
         chats: { title: "帶入以前的 AI 聊天", hint: "從 ChatGPT 或 Claude，之後有新的再帶進來。" },

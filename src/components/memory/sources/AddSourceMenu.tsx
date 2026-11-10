@@ -32,7 +32,8 @@ export default function AddSourceMenu({ onClose, start = "menu", onQuickChats, t
    *  folder picker at once (an Obsidian vault is recognised from the folder). */
   start?: "menu" | "chats" | "folder";
   /** Where past AI chats can also come in the quick way (copy a prompt into
-   *  the AI, paste its answer back), the chats panel offers both ways. */
+   *  the AI, paste its answer back), the chats panel offers it first and the
+   *  full export as a link under it. */
   onQuickChats?: () => void;
   /** The menu's title, when the button that opened it named it otherwise. */
   title?: string;
@@ -47,6 +48,7 @@ export default function AddSourceMenu({ onClose, start = "menu", onQuickChats, t
   const [showLinkVault, setShowLinkVault] = useState(false);
   const [linkPath, setLinkPath] = useState<string | undefined>(undefined);
   const [showChats, setShowChats] = useState(start === "chats");
+  const [showFullChats, setShowFullChats] = useState(false);
   // A failure to add a source is shown here in the dialog, next to the choice
   // that failed, rather than as a toast that disappears.
   const [failure, setFailure] = useState<string | null>(null);
@@ -149,45 +151,50 @@ export default function AddSourceMenu({ onClose, start = "menu", onQuickChats, t
   if (showWeb) return <AddWebSourceDialog onClose={onClose} />;
   if (showZotero) return <ZoteroSourceDialog onClose={onClose} />;
   if (showLinkVault) return <LinkVaultDialog onClose={onClose} initialPath={linkPath} />;
-  // Past AI chats use the same import as Settings, so a new user can bring
-  // earlier decisions in from the home without hunting for it. The full
-  // history is the one way in; where the quick paste exists it is a link
-  // under it, not a question asked first.
+  // Past AI chats: where the quick paste exists it comes first, because the
+  // full export arrives by email, sometimes a day later. The full history is
+  // the link under it; without the quick way it is shown at once.
   if (showChats) return <SourceDialog title={t("sourceAccess.chatHistory")} onClose={onClose}>
-    {/* The export arrives by email, sometimes much later, so the dialog says
-        so up front instead of leaving the user waiting at the drop zone. */}
-    <ol className="source-chat-steps">
-      <li>
-        <span className="source-chat-step-number" aria-hidden="true">1</span>
-        <div className="source-chat-step-copy">
-          <strong>{t("sourceAccess.chatStepExport")}</strong>
-          <dl className="source-chat-export-steps">
-            <div><dt>{t("settings.sources.chatgptName")}</dt><dd>{t("settings.sources.chatgptExportSteps")}</dd></div>
-            <div><dt>{t("settings.sources.claudeName")}</dt><dd>{t("settings.sources.claudeExportSteps")}</dd></div>
-          </dl>
-        </div>
-      </li>
-      <li>
-        <span className="source-chat-step-number" aria-hidden="true">2</span>
-        <div className="source-chat-step-copy">
-          <strong>{t("sourceAccess.chatStepWait")}</strong>
-          <span>{t("sourceAccess.chatStepWaitBody")}</span>
-        </div>
-      </li>
-      <li>
-        <span className="source-chat-step-number" aria-hidden="true">3</span>
-        <div className="source-chat-step-copy">
-          <strong>{t("sourceAccess.chatStepDrop")}</strong>
-          <span>{t("sourceAccess.chatStepDropBody")}</span>
-        </div>
-      </li>
-    </ol>
-    <ImportFlow onLeave={onClose} />
-    {onQuickChats && <p className="source-add-more">
-      <button type="button" className="source-add-more-link" data-testid="source-chats-quick" onClick={() => { onClose(); onQuickChats(); }}>
-        {t("sourceAccess.chatQuickLink")}
+    {onQuickChats && !showFullChats ? <>
+      <button type="button" className="source-add-option" data-testid="source-chats-quick" onClick={() => { onClose(); onQuickChats(); }}>
+        <ChatsCircle aria-hidden="true" size={20} weight="regular" data-resource-icon="chats" /><span className="source-add-option-copy"><strong>{t("sourceAccess.chatQuickTitle")}</strong><span>{t("sourceAccess.chatQuickHint")}</span></span>
       </button>
-    </p>}
+      <p className="source-add-more">
+        <button type="button" className="source-add-more-link" data-testid="source-chats-full" onClick={() => setShowFullChats(true)}>
+          {t("sourceAccess.chatFullLink")}
+        </button>
+      </p>
+    </> : <>
+      {/* The export arrives by email, sometimes much later, so the dialog
+          says so up front instead of leaving the user waiting at the drop zone. */}
+      <ol className="source-chat-steps">
+        <li>
+          <span className="source-chat-step-number" aria-hidden="true">1</span>
+          <div className="source-chat-step-copy">
+            <strong>{t("sourceAccess.chatStepExport")}</strong>
+            <dl className="source-chat-export-steps">
+              <div><dt>{t("settings.sources.chatgptName")}</dt><dd>{t("settings.sources.chatgptExportSteps")}</dd></div>
+              <div><dt>{t("settings.sources.claudeName")}</dt><dd>{t("settings.sources.claudeExportSteps")}</dd></div>
+            </dl>
+          </div>
+        </li>
+        <li>
+          <span className="source-chat-step-number" aria-hidden="true">2</span>
+          <div className="source-chat-step-copy">
+            <strong>{t("sourceAccess.chatStepWait")}</strong>
+            <span>{t("sourceAccess.chatStepWaitBody")}</span>
+          </div>
+        </li>
+        <li>
+          <span className="source-chat-step-number" aria-hidden="true">3</span>
+          <div className="source-chat-step-copy">
+            <strong>{t("sourceAccess.chatStepDrop")}</strong>
+            <span>{t("sourceAccess.chatStepDropBody")}</span>
+          </div>
+        </li>
+      </ol>
+      <ImportFlow onLeave={onClose} />
+    </>}
   </SourceDialog>;
   return <SourceDialog title={title ?? t("sourceAccess.addTitle")} lead={t("sourceAccess.addLead")} onClose={onClose}>
     {!ready && <div role="status"><p>{t("sourceAccess.upgrade")}</p><button className="page-editor-action" type="button" onClick={() => openFile("https://wenlan.app")}>{t("sourceAccess.update")}</button></div>}

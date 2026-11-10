@@ -56,14 +56,15 @@ describe("NotesWelcome", () => {
     tauri.detectMcpClients.mockResolvedValue([]);
   });
 
-  it("asks once who writes the pages, then offers four ways in as rows, and nothing else to fill in", () => {
+  it("says in one line who writes the pages, then offers three ways in and the example as a link, and nothing else to fill in", () => {
     renderQ(<NotesWelcome onComplete={vi.fn()} />);
 
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(i18n.t("setup.welcomeTitle"));
-    expect(screen.getByRole("radiogroup", { name: i18n.t("setup.notesFirst.writer.question") })).toBeInTheDocument();
+    expect(screen.queryByRole("radiogroup")).toBeNull();
+    expect(screen.getByTestId("notes-welcome-writer-line")).toBeInTheDocument();
     expect(screen.getByText(i18n.t("setup.notesFirst.welcome.lead"))).toBeInTheDocument();
-    expect(screen.getAllByRole("button").filter((button) => button.getAttribute("role") !== "radio").map((button) => button.dataset.testid)).toEqual([
-      "notes-welcome-folder", "notes-welcome-chats", "notes-welcome-empty", "notes-welcome-example",
+    expect(screen.getAllByRole("button").map((button) => button.dataset.testid)).toEqual([
+      "notes-welcome-writer-change", "notes-welcome-folder", "notes-welcome-chats", "notes-welcome-empty", "notes-welcome-example",
     ]);
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
@@ -74,6 +75,9 @@ describe("NotesWelcome", () => {
   it("with no AI tool found, defaults to keeping material without downloading anything", async () => {
     renderQ(<NotesWelcome onComplete={vi.fn()} />);
     await waitFor(() => expect(tauri.detectMcpClients).toHaveBeenCalled());
+    expect(screen.getByTestId("notes-welcome-writer-line")).toHaveTextContent("What you add is kept and gets organized once you connect an AI tool.");
+    fireEvent.click(screen.getByTestId("notes-welcome-writer-change"));
+    expect(screen.getByRole("radiogroup", { name: i18n.t("setup.notesFirst.writer.question") })).toBeInTheDocument();
     expect(screen.queryByTestId("notes-welcome-writer-tool")).toBeNull();
     expect(screen.getByTestId("notes-welcome-writer-none")).toHaveAttribute("aria-checked", "true");
     expect(screen.getByTestId("notes-welcome-writer-local")).toHaveAttribute("aria-checked", "false");
@@ -83,7 +87,9 @@ describe("NotesWelcome", () => {
     tauri.detectMcpClients.mockResolvedValue([client("codex_cli"), client("claude_code")]);
     const onComplete = vi.fn();
     renderQ(<NotesWelcome onComplete={onComplete} />);
-    const tool = await screen.findByTestId("notes-welcome-writer-tool");
+    expect(await screen.findByText("Claude Code (found on this computer) turns what you add into pages.")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("notes-welcome-writer-change"));
+    const tool = screen.getByTestId("notes-welcome-writer-tool");
     expect(tool).toHaveAttribute("aria-checked", "true");
     expect(tool).toHaveTextContent("Claude Code (found on this computer)");
     expect(tool).toHaveTextContent("Next time you use Claude Code, it turns what you add into pages.");
@@ -97,7 +103,7 @@ describe("NotesWelcome", () => {
     tauri.detectMcpClients.mockResolvedValue([client("claude_code", true)]);
     const onComplete = vi.fn();
     renderQ(<NotesWelcome onComplete={onComplete} />);
-    await screen.findByTestId("notes-welcome-writer-tool");
+    await screen.findByText("Claude Code (found on this computer) turns what you add into pages.");
     fireEvent.click(startButton());
     await waitFor(() => expect(onComplete).toHaveBeenCalled());
     expect(tauri.installClientPlugin).not.toHaveBeenCalled();
@@ -108,7 +114,7 @@ describe("NotesWelcome", () => {
     tauri.installClientPlugin.mockRejectedValue(new Error("read-only"));
     const onComplete = vi.fn();
     renderQ(<NotesWelcome onComplete={onComplete} />);
-    await screen.findByTestId("notes-welcome-writer-tool");
+    await screen.findByText("Claude Code (found on this computer) turns what you add into pages.");
     fireEvent.click(startButton());
     await waitFor(() => expect(onComplete).toHaveBeenCalled());
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
@@ -118,7 +124,8 @@ describe("NotesWelcome", () => {
     tauri.detectMcpClients.mockResolvedValue([client("claude_code")]);
     const onComplete = vi.fn();
     renderQ(<NotesWelcome onComplete={onComplete} />);
-    await screen.findByTestId("notes-welcome-writer-tool");
+    await screen.findByText("Claude Code (found on this computer) turns what you add into pages.");
+    fireEvent.click(screen.getByTestId("notes-welcome-writer-change"));
     fireEvent.click(screen.getByTestId("notes-welcome-writer-local"));
     expect(screen.getByTestId("notes-welcome-writer-local")).toHaveAttribute("aria-checked", "true");
     fireEvent.click(startButton());

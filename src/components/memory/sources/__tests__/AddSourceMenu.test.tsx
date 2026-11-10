@@ -77,13 +77,14 @@ describe("AddSourceMenu", () => {
     expect(screen.getByTestId("chat-import-drop-zone")).toBeInTheDocument();
   });
 
-  it("opens past AI chats at the full import without asking quick or full first; the quick way is a link under it", async () => {
-    const onClose = vi.fn();
-    const onQuickChats = vi.fn();
-    render(wrap(<AddSourceMenu start="chats" onQuickChats={onQuickChats} onClose={onClose} />));
+  it("puts the quick paste first, with the full export (which can take a day) as a link under it", async () => {
+    render(wrap(<AddSourceMenu start="chats" onQuickChats={vi.fn()} onClose={() => {}} />));
     expect(await screen.findByRole("dialog", { name: "Past AI chats" })).toBeInTheDocument();
+    expect(screen.getByTestId("source-chats-quick")).toHaveTextContent("Paste what your AI remembers about you");
+    expect(screen.queryByTestId("chat-import-drop-zone")).toBeNull();
+    fireEvent.click(screen.getByTestId("source-chats-full"));
     expect(screen.getByTestId("chat-import-drop-zone")).toBeInTheDocument();
-    expect(screen.getByTestId("source-chats-quick")).toHaveTextContent("Quick way: paste what your AI remembers about you");
+    expect(screen.queryByTestId("source-chats-quick")).toBeNull();
   });
 
   it("hands the quick way to the paste-back import and closes", async () => {

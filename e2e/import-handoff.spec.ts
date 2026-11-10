@@ -170,7 +170,7 @@ test("an import hands background work to Activity after returning to the workspa
   await page.getByRole("button", { name: "Sources", exact: true }).click();
   await page.getByRole("button", { name: /^Add (your first )?source/ }).first().click();
   await page.getByRole("button", { name: /^Past AI chats/ }).click();
-  await page.getByRole("button", { name: "Quick way: paste what your AI remembers about you" }).click();
+  await page.getByTestId("source-chats-quick").click();
 
   await page
     .getByPlaceholder(/paste your memories/i)
