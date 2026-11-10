@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, configure, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { getSourceAnnotation, listPages, updateSourceAnnotation, type SourceAnnotation } from "../../../lib/tauri";
@@ -8,6 +8,14 @@ import SourceAnnotations from "./SourceAnnotations";
 import { editorViewFromTextbox, installCodeMirrorDomPolyfills, replaceDocument } from "../editor/editorTestUtils";
 
 beforeAll(() => installCodeMirrorDomPolyfills());
+
+// Every test here mounts a real CodeMirror editor in jsdom, and several mount
+// it twice (a conflict or a remount gives the editor a fresh session). On a
+// busy runner the mount alone outlasts Testing Library's 1 s default, and the
+// longest tests ran 4.6 s of the 5 s test limit in CI on a good day. These are
+// deadlines, not delays: a query returns the moment its element is there.
+configure({ asyncUtilTimeout: 4_000 });
+vi.setConfig({ testTimeout: 15_000 });
 
 const editorLabel = "Source description";
 const editorByRole = () => screen.getByRole("textbox", { name: editorLabel });
