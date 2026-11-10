@@ -694,14 +694,23 @@ impl AmbientBudgetProvider {
         }
     }
 
+    #[cfg(test)]
     fn with_shared_calls(
         inner: Arc<dyn wenlan_core::llm_provider::LlmProvider>,
         calls: Arc<std::sync::atomic::AtomicUsize>,
     ) -> Self {
+        Self::with_shared_calls_limit(inner, calls, 1)
+    }
+
+    fn with_shared_calls_limit(
+        inner: Arc<dyn wenlan_core::llm_provider::LlmProvider>,
+        calls: Arc<std::sync::atomic::AtomicUsize>,
+        max_calls: usize,
+    ) -> Self {
         Self {
             inner,
             calls,
-            max_calls: 1,
+            max_calls,
         }
     }
 
@@ -778,13 +787,106 @@ impl wenlan_core::llm_provider::LlmProvider for AmbientBudgetProvider {
 fn with_shared_automatic_budget(
     provider: Option<&Arc<dyn wenlan_core::llm_provider::LlmProvider>>,
     calls: Arc<std::sync::atomic::AtomicUsize>,
+    max_calls: usize,
 ) -> Option<Arc<dyn wenlan_core::llm_provider::LlmProvider>> {
     provider.map(|provider| {
-        Arc::new(AmbientBudgetProvider::with_shared_calls(
+        Arc::new(AmbientBudgetProvider::with_shared_calls_limit(
             provider.clone(),
             calls,
+            max_calls,
         )) as Arc<dyn wenlan_core::llm_provider::LlmProvider>
     })
+}
+
+/// The page writer background work may use: the `synthesis_source` pin, in
+/// Automatic only. On demand has none, so nothing here writes pages, arms a
+/// window for a late writer, or calls the person's AI tool.
+fn automatic_synthesis_pin(
+    background_ai_enabled: bool,
+    pin: Option<&str>,
+) -> Option<wenlan_core::refinery::SynthesisSource> {
+    background_ai_enabled
+        .then(|| wenlan_core::refinery::SynthesisSource::parse(pin))
+        .flatten()
+}
+
+/// Model calls one automatic phase turn may make. An Emergence turn writes
+/// one new page through steep's new-page path: one call groups the waiting
+/// items, one writes the page. Every other phase keeps the single call.
+fn automatic_phase_call_budget(phase: wenlan_core::refinery::Phase) -> usize {
+    match phase {
+        wenlan_core::refinery::Phase::Emergence => 2,
+        _ => 1,
+    }
+}
+
+/// Whether the page writer bills per call: the Anthropic and external API
+/// routes. The on-device model costs nothing.
+fn page_writer_is_paid(pin: Option<wenlan_core::refinery::SynthesisSource>) -> bool {
+    matches!(
+        pin,
+        Some(
+            wenlan_core::refinery::SynthesisSource::Anthropic
+                | wenlan_core::refinery::SynthesisSource::External
+        )
+    )
+}
+
+/// Whether a writer on `pin` that wrote `pages_today` new pages today must
+/// stop: only a paid writer, at `PAID_NEW_PAGES_PER_DAY` (8, the existing
+/// first-import batch; our own choice, not a benchmark).
+fn paid_daily_cap_applies(
+    pin: Option<wenlan_core::refinery::SynthesisSource>,
+    pages_today: usize,
+) -> bool {
+    page_writer_is_paid(pin) && pages_today >= wenlan_core::steep_new::PAID_NEW_PAGES_PER_DAY
+}
+
+/// The persisted daily cap on a paid writer's new pages, across every
+/// automatic round and import window. Logged once per local day; the rest
+/// waits for the next day. Fails closed when the count cannot be read.
+async fn paid_daily_cap_reached(
+    db: &wenlan_core::db::MemoryDB,
+    pin: Option<wenlan_core::refinery::SynthesisSource>,
+    logged_day: &mut Option<String>,
+) -> bool {
+    if !page_writer_is_paid(pin) {
+        return false;
+    }
+    let day = wenlan_core::steep_new::local_day();
+    let pages_today = match wenlan_core::steep_new::paid_new_pages_on(db, &day).await {
+        Ok(pages) => pages,
+        Err(error) => {
+            tracing::warn!("[scheduler] paid page count unreadable, holding page writing: {error}");
+            return true;
+        }
+    };
+    if !paid_daily_cap_applies(pin, pages_today) {
+        return false;
+    }
+    if logged_day.as_deref() != Some(day.as_str()) {
+        tracing::info!(
+            "[scheduler] paid page writer reached today's cap pages={pages_today} day={day} route={}; the rest waits for the next day",
+            pin.map_or("none", |pin| pin.as_str()),
+        );
+        *logged_day = Some(day);
+    }
+    true
+}
+
+/// Count new pages a paid writer just wrote toward today's cap.
+async fn note_paid_pages(
+    db: &wenlan_core::db::MemoryDB,
+    pin: Option<wenlan_core::refinery::SynthesisSource>,
+    pages: usize,
+) {
+    if pages == 0 || !page_writer_is_paid(pin) {
+        return;
+    }
+    let day = wenlan_core::steep_new::local_day();
+    if let Err(error) = wenlan_core::steep_new::note_paid_new_pages(db, &day, pages).await {
+        tracing::warn!("[scheduler] failed to count paid pages for {day}: {error}");
+    }
 }
 
 fn derived_receipt_sweep_due(last: Option<Instant>, now: Instant) -> bool {
@@ -966,6 +1068,8 @@ struct AutomaticPhaseOutcome {
     retryable: bool,
     paused: bool,
     panicked: bool,
+    /// New pages Emergence wrote this turn.
+    pages_created: usize,
 }
 
 impl From<&wenlan_core::refinery::SteepPhaseSliceReport> for AutomaticPhaseOutcome {
@@ -977,6 +1081,7 @@ impl From<&wenlan_core::refinery::SteepPhaseSliceReport> for AutomaticPhaseOutco
             retryable: report.retryable,
             paused: report.paused,
             panicked: false,
+            pages_created: report.result.distilled as usize,
         }
     }
 }
@@ -1020,9 +1125,21 @@ struct AutomaticSteepBatch {
 
 /// Automatic work is deliberately narrower than the foreground steep API.
 /// A phase earns this allowlist only after its scheduler entry point has a
-/// durable cursor and a source-proven per-turn work bound.
+/// durable cursor and a source-proven per-turn work bound:
+/// - Detect: no model; at most `detect_max_candidates_per_tick` candidates a
+///   turn, and the memberships it declined are kept in app metadata.
+/// - Emergence: one new page a turn through steep's new-page path
+///   (`steep_new::write_one_new_page`, at most two model calls); a written
+///   page's items are cited and leave the list, and items that did not
+///   become a page are kept in app metadata until they change.
+/// - ReDistill: one page a turn through the stale-page cursor.
 fn automatic_phase_allowed(phase: wenlan_core::refinery::Phase) -> bool {
-    matches!(phase, wenlan_core::refinery::Phase::ReDistill)
+    matches!(
+        phase,
+        wenlan_core::refinery::Phase::Detect
+            | wenlan_core::refinery::Phase::Emergence
+            | wenlan_core::refinery::Phase::ReDistill
+    )
 }
 
 /// The steep phases automatic runs leave out, in canonical order. They run
@@ -1363,6 +1480,41 @@ fn select_due_automatic_trigger(
     (maintenance != MaintenanceAdmission::None).then_some(AutomaticTrigger::Maintenance)
 }
 
+/// Material for pages that arrived without a store-route write. The Idle
+/// trigger fires once per quiet period and is re-armed only by
+/// [`WriteSignal::record`], which the store route alone calls; folder
+/// documents prepared by the ambient lap and material an import lane left
+/// behind never reset it, so after the one Idle batch ran (often while the
+/// import was still being prepared, finding everything already tried) the
+/// waiting material got no Emergence turn until the six-hour backstop.
+///
+/// This re-arms the Idle trigger for such material. The Idle round still
+/// waits for its quiet period and the ordinary resource and input-idle
+/// admission (UX-QUIET-1); only its once-per-quiet-period latch is reset. A
+/// batch already under way finishes first, and one more Idle batch follows.
+#[derive(Debug, Default)]
+struct IdleRearm {
+    pending: bool,
+}
+
+impl IdleRearm {
+    fn note_material_waiting(&mut self) {
+        self.pending = true;
+    }
+
+    fn apply(&mut self, idle_fired: &mut bool, batch_running: bool) {
+        if self.pending && !batch_running {
+            *idle_fired = false;
+            self.pending = false;
+        }
+    }
+}
+
+/// An ambient job that may have turned a document into material for pages.
+fn ambient_job_brings_material(job: AmbientJob, selected: bool) -> bool {
+    job == AmbientJob::Document && selected
+}
+
 #[cfg(test)]
 fn idle_due(idle_fired: bool, idle_since: Instant, now: Instant) -> bool {
     !idle_fired && now.duration_since(idle_since) >= AUTOMATIC_BATCH_IDLE_THRESHOLD
@@ -1395,6 +1547,7 @@ pub fn spawn_scheduler(
 
         let mut last_backstop = Instant::now();
         let mut idle_fired = false;
+        let mut idle_rearm = IdleRearm::default();
         let mut last_poll_activity = Instant::now();
         let ambient_started_at = Instant::now();
         let mut last_write_activity = write_signal
@@ -1408,6 +1561,8 @@ pub fn spawn_scheduler(
         let mut maintenance_pending = false;
         let mut maintenance_stage_ran_since_steep = false;
         let mut steep_batch: Option<AutomaticSteepBatch> = None;
+        // The local day the paid page cap was last logged, so it logs once.
+        let mut paid_cap_logged_day: Option<String> = None;
         let mut maintenance_round: Option<AutomaticMaintenanceRound> = None;
         let mut on_demand_maintenance_round: Option<AutomaticMaintenanceRound> = None;
         // One-time cleanups of data written under older rules; a failed pass
@@ -1416,6 +1571,7 @@ pub fn spawn_scheduler(
         let mut ambient_turn_owed = false;
         let mut last_deferred_resource_reason = None;
         let mut document_prep_claim_log = DocumentPrepClaimLog::default();
+        let mut page_writer_arrival = PageWriterArrival::default();
 
         // Load persisted daily timestamp from DB (survives restarts)
         let last_daily_epoch = load_last_daily(&shared).await;
@@ -1434,11 +1590,13 @@ pub fn spawn_scheduler(
                 .unwrap_or_else(Instant::now)
         };
 
-        let import_priority_until = load_import_priority_until(&shared).await;
-        if import_priority_until > 0 && write_signal.restore_import_priority(import_priority_until)
+        let (import_priority_until, import_priority_cap) =
+            load_import_priority_until(&shared).await;
+        if import_priority_until > 0
+            && write_signal.restore_import_priority(import_priority_until, import_priority_cap)
         {
             tracing::info!(
-                "[scheduler] restored import priority deadline_epoch={import_priority_until}"
+                "[scheduler] restored import priority deadline_epoch={import_priority_until} cap_epoch={import_priority_cap}"
             );
         }
 
@@ -1479,6 +1637,7 @@ pub fn spawn_scheduler(
                 }
             }
             last_poll_activity = Instant::now();
+            idle_rearm.apply(&mut idle_fired, steep_batch.is_some());
 
             // Snapshot shared state — drop the read guard immediately
             let snapshot = {
@@ -1529,13 +1688,10 @@ pub fn spawn_scheduler(
                     )
                 })
                 .flatten();
-            let synthesis_pin = background_ai_enabled
-                .then(|| {
-                    wenlan_core::refinery::SynthesisSource::parse(
-                        runtime_config.synthesis_source.as_deref(),
-                    )
-                })
-                .flatten();
+            let synthesis_pin = automatic_synthesis_pin(
+                background_ai_enabled,
+                runtime_config.synthesis_source.as_deref(),
+            );
             if crate::lifecycle::shutdown_requested(&shutdown) {
                 break;
             }
@@ -1780,7 +1936,49 @@ pub fn spawn_scheduler(
             // same existing ambient slices, but ignores foreground-idle and
             // CPU threshold/cooldown gates while retaining memory, thermal,
             // provider-consent, startup-reservation, and shutdown guards.
+            // A page writer that arrives after the material (a pin set later,
+            // an on-device model that finished loading) arms the same import
+            // window for material no page cites yet, so it gets written
+            // without the person asking again. Only Automatic has a pin here.
+            let page_writer_usable = synthesis_pin.is_some()
+                && wenlan_core::refinery::resolve_synthesis(
+                    synthesis_pin,
+                    synthesis_llm.as_ref(),
+                    api_llm.as_ref(),
+                    external_llm.as_ref(),
+                    llm.as_ref(),
+                )
+                .llm
+                .is_some();
+            if page_writer_arrival.observe(synthesis_pin, page_writer_usable)
+                && !write_signal.import_priority_active()
+            {
+                match wenlan_core::steep_new::new_material_count(
+                    &db,
+                    &wenlan_core::read_scope::ReadScope::Global,
+                )
+                .await
+                {
+                    Ok(waiting) if waiting > 0 => {
+                        match write_signal.persist_and_request_import(&db, None).await {
+                            Ok(()) => tracing::info!(
+                                "[scheduler] page writer ready route={} waiting={waiting}; armed the import window",
+                                synthesis_pin.map_or("none", |pin| pin.as_str()),
+                            ),
+                            Err(error) => tracing::warn!(
+                                "[scheduler] failed to arm the import window for a late page writer: {error}"
+                            ),
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(error) => tracing::warn!(
+                        "[scheduler] could not count material waiting for a page: {error}"
+                    ),
+                }
+            }
+
             let mut import_work_ran = false;
+            let import_lane_was_open = write_signal.import_priority_snapshot().is_some();
             if let Some(import_snapshot) = write_signal.import_priority_snapshot() {
                 let import_generation = import_snapshot.generation;
                 if write_signal.import_priority_mark_started() {
@@ -1862,6 +2060,28 @@ pub fn spawn_scheduler(
                                             DocumentPrepOutcome::Idle
                                                 | DocumentPrepOutcome::ClaimFailed
                                         );
+                                        // A prepared document is material the
+                                        // page writer has not seen yet: keep
+                                        // the lane open for it, up to its
+                                        // hard cap. On demand has no page
+                                        // writer, so its lane is unchanged.
+                                        if prep_extends_import_lane(report.outcome, synthesis_pin) {
+                                            match write_signal
+                                                .extend_import_priority(
+                                                    &db,
+                                                    processing_generation,
+                                                )
+                                                .await
+                                            {
+                                                Ok(Some(deadline_epoch)) => tracing::info!(
+                                                    "[scheduler] import priority extended deadline_epoch={deadline_epoch} reason=document_prepared"
+                                                ),
+                                                Ok(None) => {}
+                                                Err(error) => tracing::warn!(
+                                                    "[scheduler] failed to persist import priority extension: {error}"
+                                                ),
+                                            }
+                                        }
                                         if import_work_ran {
                                             tracing::info!(
                                             "[scheduler] import priority document_prep done outcome={:?} slice={} panicked={} elapsed_ms={}",
@@ -1880,21 +2100,34 @@ pub fn spawn_scheduler(
                                     } else if let Some(phase) = current.synthesis_phase {
                                         let shared_calls =
                                             Arc::new(std::sync::atomic::AtomicUsize::new(0));
+                                        let phase_kind = match phase {
+                                            ImportSynthesisPhase::Detect => {
+                                                wenlan_core::refinery::Phase::Detect
+                                            }
+                                            ImportSynthesisPhase::Emergence => {
+                                                wenlan_core::refinery::Phase::Emergence
+                                            }
+                                        };
+                                        let call_budget = automatic_phase_call_budget(phase_kind);
                                         let budgeted_llm = with_shared_automatic_budget(
                                             llm.as_ref(),
                                             shared_calls.clone(),
+                                            call_budget,
                                         );
                                         let budgeted_api_llm = with_shared_automatic_budget(
                                             api_llm.as_ref(),
                                             shared_calls.clone(),
+                                            call_budget,
                                         );
                                         let budgeted_synthesis_llm = with_shared_automatic_budget(
                                             synthesis_llm.as_ref(),
                                             shared_calls.clone(),
+                                            call_budget,
                                         );
                                         let budgeted_external_llm = with_shared_automatic_budget(
                                             external_llm.as_ref(),
                                             shared_calls,
+                                            call_budget,
                                         );
                                         let synthesis_available =
                                             wenlan_core::refinery::resolve_synthesis(
@@ -1923,22 +2156,22 @@ pub fn spawn_scheduler(
                                                 "[scheduler] import priority deferred reason=pinned_synthesis_provider_loading"
                                             );
                                             }
+                                        } else if phase == ImportSynthesisPhase::Emergence
+                                            && paid_daily_cap_reached(
+                                                &db,
+                                                synthesis_pin,
+                                                &mut paid_cap_logged_day,
+                                            )
+                                            .await
+                                        {
+                                            write_signal.import_priority_finish_synthesis(
+                                                processing_generation,
+                                            );
                                         } else {
                                             tracing::info!(
-                                                "[scheduler] import priority phase={} started",
-                                                match phase {
-                                                    ImportSynthesisPhase::Detect => "detect",
-                                                    ImportSynthesisPhase::Emergence => "emergence",
-                                                }
+                                                "[scheduler] import priority phase={phase_kind} started pass={}",
+                                                current.synthesis_retries.saturating_add(1),
                                             );
-                                            let phase_kind = match phase {
-                                                ImportSynthesisPhase::Detect => {
-                                                    wenlan_core::refinery::Phase::Detect
-                                                }
-                                                ImportSynthesisPhase::Emergence => {
-                                                    wenlan_core::refinery::Phase::Emergence
-                                                }
-                                            };
                                             let outcome = fire_steep_phase_safe(
                                                 &db,
                                                 budgeted_llm.as_ref(),
@@ -1957,17 +2190,65 @@ pub fn spawn_scheduler(
                                             write_signal.import_priority_note_phase(
                                                 processing_generation,
                                                 phase,
+                                                ImportSynthesisOutcome {
+                                                    progressed: outcome.progressed,
+                                                    more: outcome.more,
+                                                    pages_created: outcome.pages_created,
+                                                },
                                             );
+                                            // Keep writing while material is
+                                            // left: a turn that moved the queue
+                                            // on and reports more extends the
+                                            // lane, up to its hard cap.
+                                            if phase == ImportSynthesisPhase::Emergence
+                                                && outcome.progressed
+                                                && outcome.more
+                                            {
+                                                match write_signal
+                                                    .extend_import_priority(
+                                                        &db,
+                                                        processing_generation,
+                                                    )
+                                                    .await
+                                                {
+                                                    Ok(Some(deadline_epoch)) => tracing::info!(
+                                                        "[scheduler] import priority extended deadline_epoch={deadline_epoch} reason=more_material"
+                                                    ),
+                                                    Ok(None) => {}
+                                                    Err(error) => tracing::warn!(
+                                                        "[scheduler] failed to persist import priority extension: {error}"
+                                                    ),
+                                                }
+                                            }
+                                            note_paid_pages(
+                                                &db,
+                                                synthesis_pin,
+                                                outcome.pages_created,
+                                            )
+                                            .await;
                                             import_work_ran = true;
                                             tracing::info!(
-                                            "[scheduler] import priority phase={} done selected={} progressed={} more={} retryable={} panicked={}",
+                                            "[scheduler] import priority phase={} done selected={} progressed={} more={} pages_created={} retryable={} panicked={}",
                                             phase_kind,
                                             outcome.selected,
                                             outcome.progressed,
                                             outcome.more,
+                                            outcome.pages_created,
                                             outcome.retryable,
                                             outcome.panicked,
                                         );
+                                            if let Some(after) =
+                                                write_signal.import_priority_snapshot()
+                                            {
+                                                if after.synthesis_retries
+                                                    > current.synthesis_retries
+                                                {
+                                                    tracing::info!(
+                                                        "[scheduler] import priority wrote no page this pass; preparing and linking again before the next detect retry={}",
+                                                        after.synthesis_retries
+                                                    );
+                                                }
+                                            }
                                         }
                                     } else if current.ambient_slices
                                         < IMPORT_PRIORITY_MAX_AMBIENT_SLICES
@@ -2025,6 +2306,12 @@ pub fn spawn_scheduler(
                 }
             }
 
+            if import_lane_was_open && write_signal.import_priority_snapshot().is_none() {
+                // The lane ended (its work, deadline or hard cap, the paid cap): what it
+                // did not write waits for the idle-gated rounds.
+                idle_rearm.note_material_waiting();
+            }
+
             let selected_automatic = if background_ai_enabled
                 && wenlan_core::config::load_config().background_ai_enabled()
                 && !import_work_ran
@@ -2065,13 +2352,14 @@ pub fn spawn_scheduler(
 
             if let Some(trigger) = selected_automatic {
                 let shared_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-                let budgeted_llm = with_shared_automatic_budget(llm.as_ref(), shared_calls.clone());
+                let budgeted_llm =
+                    with_shared_automatic_budget(llm.as_ref(), shared_calls.clone(), 1);
                 let budgeted_api_llm =
-                    with_shared_automatic_budget(api_llm.as_ref(), shared_calls.clone());
+                    with_shared_automatic_budget(api_llm.as_ref(), shared_calls.clone(), 1);
                 let budgeted_synthesis_llm =
-                    with_shared_automatic_budget(synthesis_llm.as_ref(), shared_calls.clone());
+                    with_shared_automatic_budget(synthesis_llm.as_ref(), shared_calls.clone(), 1);
                 let budgeted_external_llm =
-                    with_shared_automatic_budget(external_llm.as_ref(), shared_calls.clone());
+                    with_shared_automatic_budget(external_llm.as_ref(), shared_calls.clone(), 1);
                 let maintenance_llm = resolve_maintenance_provider(
                     synthesis_pin,
                     budgeted_synthesis_llm.as_ref(),
@@ -2176,21 +2464,52 @@ pub fn spawn_scheduler(
                         if !wenlan_core::config::load_config().background_ai_enabled() {
                             continue;
                         }
-                        let outcome = fire_steep_phase_safe(
-                            &db,
-                            budgeted_llm.as_ref(),
-                            budgeted_api_llm.as_ref(),
-                            budgeted_synthesis_llm.as_ref(),
-                            budgeted_external_llm.as_ref(),
-                            &prompts,
-                            &refinery_cfg,
-                            &confidence_cfg,
-                            &distillation_cfg,
-                            kind,
-                            phase,
-                            label,
-                        )
-                        .await;
+                        let outcome = if phase == wenlan_core::refinery::Phase::Emergence
+                            && paid_daily_cap_reached(&db, synthesis_pin, &mut paid_cap_logged_day)
+                                .await
+                        {
+                            // Not progressed: the batch drops Emergence for
+                            // this round; the rest waits for the next day.
+                            AutomaticPhaseOutcome::default()
+                        } else {
+                            let call_budget = automatic_phase_call_budget(phase);
+                            let phase_llm = with_shared_automatic_budget(
+                                llm.as_ref(),
+                                shared_calls.clone(),
+                                call_budget,
+                            );
+                            let phase_api_llm = with_shared_automatic_budget(
+                                api_llm.as_ref(),
+                                shared_calls.clone(),
+                                call_budget,
+                            );
+                            let phase_synthesis_llm = with_shared_automatic_budget(
+                                synthesis_llm.as_ref(),
+                                shared_calls.clone(),
+                                call_budget,
+                            );
+                            let phase_external_llm = with_shared_automatic_budget(
+                                external_llm.as_ref(),
+                                shared_calls.clone(),
+                                call_budget,
+                            );
+                            fire_steep_phase_safe(
+                                &db,
+                                phase_llm.as_ref(),
+                                phase_api_llm.as_ref(),
+                                phase_synthesis_llm.as_ref(),
+                                phase_external_llm.as_ref(),
+                                &prompts,
+                                &refinery_cfg,
+                                &confidence_cfg,
+                                &distillation_cfg,
+                                kind,
+                                phase,
+                                label,
+                            )
+                            .await
+                        };
+                        note_paid_pages(&db, synthesis_pin, outcome.pages_created).await;
                         let (disposition, cursor) = {
                             let batch = steep_batch
                                 .as_mut()
@@ -2521,6 +2840,9 @@ pub fn spawn_scheduler(
                                 Some(knowledge_path.as_path()),
                             )
                             .await;
+                            if ambient_job_brings_material(report.job, report.selected) {
+                                idle_rearm.note_material_waiting();
+                            }
                             let completion = Instant::now();
                             ambient_schedule.note_job_result(
                                 report.job,
@@ -2802,23 +3124,34 @@ async fn load_last_daily(shared: &SharedState) -> i64 {
     }
 }
 
-/// Load the short-lived import priority deadline.  The marker is intentionally
-/// a wall-clock value so a daemon restart can resume only the remaining part of
-/// the same ten-minute window; expired or malformed values are ignored.
-async fn load_import_priority_until(shared: &SharedState) -> i64 {
+/// Load the short-lived import priority deadline and its hard cap. Both are
+/// wall-clock values so a daemon restart can resume only the remaining part of
+/// the same window (extensions included) and extend it no further than the
+/// same cap; expired or malformed values are ignored (a missing cap means no
+/// extension).
+async fn load_import_priority_until(shared: &SharedState) -> (i64, i64) {
     let db = {
         let s = shared.read().await;
         s.db.clone()
     };
     let Some(db) = db else {
-        return 0;
+        return (0, 0);
     };
-    db.get_app_metadata(IMPORT_PRIORITY_METADATA_KEY)
-        .await
-        .ok()
-        .flatten()
-        .and_then(|value| value.parse::<i64>().ok())
-        .unwrap_or(0)
+    let load = |key: &'static str| {
+        let db = db.clone();
+        async move {
+            db.get_app_metadata(key)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|value| value.parse::<i64>().ok())
+                .unwrap_or(0)
+        }
+    };
+    (
+        load(IMPORT_PRIORITY_METADATA_KEY).await,
+        load(IMPORT_PRIORITY_CAP_METADATA_KEY).await,
+    )
 }
 
 async fn finish_import_priority(

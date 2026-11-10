@@ -197,7 +197,7 @@ fn drop_markers(body: &str) -> String {
 
 /// The reply without a code fence wrapped around all of it. A note that opens
 /// with a diagram block is the note, not a wrapper.
-fn unfence(reply: &str) -> String {
+pub(crate) fn unfence(reply: &str) -> String {
     let trimmed = reply.trim();
     let Some(rest) = trimmed.strip_prefix("```") else {
         return trimmed.to_string();

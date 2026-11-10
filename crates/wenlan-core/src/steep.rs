@@ -1550,6 +1550,7 @@ pub async fn commit(
 
 #[path = "steep_automatic.rs"]
 mod automatic;
+pub(crate) use automatic::unfence;
 pub use automatic::{rewrite_one_code_page, CodeRewriteOutcome};
 
 #[cfg(test)]

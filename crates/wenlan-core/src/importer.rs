@@ -1176,6 +1176,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn extending_the_import_lane_moves_only_live_batch_markers() {
+        let (db, _dir) = crate::db::tests::test_db().await;
+        let now = chrono::Utc::now().timestamp();
+        db.persist_import_batch_priority("live", now + 60)
+            .await
+            .unwrap();
+        db.persist_import_batch_priority("expired", now - 1)
+            .await
+            .unwrap();
+        db.persist_import_batch_priority("later", now + 3_000)
+            .await
+            .unwrap();
+        db.extend_live_import_batch_priorities(now + 600)
+            .await
+            .unwrap();
+        let marker = |batch: &'static str| {
+            let db = &db;
+            async move {
+                db.get_app_metadata(&format!("import_batch_priority_v1:{batch}"))
+                    .await
+                    .unwrap()
+                    .and_then(|value| value.parse::<i64>().ok())
+                    .unwrap()
+            }
+        };
+        assert_eq!(marker("live").await, now + 600);
+        assert_eq!(
+            marker("expired").await,
+            now - 1,
+            "an ended batch stays ended"
+        );
+        assert_eq!(marker("later").await, now + 3_000, "never moved earlier");
+    }
+
+    #[tokio::test]
     async fn legacy_overview_archive_preserves_edits_and_original_content() {
         let (db, _dir) = crate::db::tests::test_db().await;
         let placeholder = crate::synthesis::overview::OVERVIEW_PLACEHOLDER_CONTENT;

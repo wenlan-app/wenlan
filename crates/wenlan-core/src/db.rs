@@ -44479,6 +44479,34 @@ impl MemoryDB {
         Ok(())
     }
 
+    /// Move every still-live import batch marker (deadline in the future) out
+    /// to `deadline_epoch` when the shared import lane is extended, so a
+    /// batch's status keeps showing its page turn while the lane still runs.
+    /// Expired markers and later deadlines are left alone.
+    pub async fn extend_live_import_batch_priorities(
+        &self,
+        deadline_epoch: i64,
+    ) -> Result<(), WenlanError> {
+        let now = chrono::Utc::now().timestamp();
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "UPDATE app_metadata SET value = ?3
+             WHERE key >= ?1 AND key < ?2
+               AND CAST(value AS INTEGER) > ?4
+               AND CAST(value AS INTEGER) < ?5",
+            libsql::params![
+                Self::IMPORT_BATCH_PRIORITY_METADATA_PREFIX,
+                Self::IMPORT_BATCH_PRIORITY_METADATA_END,
+                deadline_epoch.to_string(),
+                now,
+                deadline_epoch
+            ],
+        )
+        .await
+        .map_err(|e| WenlanError::VectorDb(format!("extend import batch priority: {e}")))?;
+        Ok(())
+    }
+
     /// Return memories with at least one `failed` enrichment step that hasn't
     /// exceeded `max_attempts`, ordered oldest-first. Returns (source_id, step_name, content).
     pub async fn get_failed_enrichment_memories(
