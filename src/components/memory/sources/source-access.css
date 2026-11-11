@@ -78,5 +78,5 @@
 .source-add-more { margin:6px 12px 0; }
 .source-add-more-link { padding:0; border:0; background:none; font:inherit; font-size:13px; color:var(--mem-text-secondary); cursor:pointer; text-decoration:underline; text-decoration-color:var(--mem-border); text-underline-offset:3px; }
 .source-add-more-link:hover { color:var(--mem-text); }
-.source-add-more-link:focus-visible { outline:2px solid var(--mem-accent-indigo); outline-offset:2px; border-radius:2px; }
+.source-add-more-link:focus-visible { outline:2px solid var(--mem-accent-indigo); outline-offset:2px; border-radius:var(--mem-r-2); }
 .source-add-more-link:disabled { cursor:default; opacity:.6; }
