@@ -318,7 +318,7 @@ test("meets computed browser contrast on redesigned surfaces in both themes", as
     results.push(...await renderedContrast(page, [
       { label: `${theme} space title`, selector: ".space-dossier-title-input textarea", foregroundProperty: "color", minimum: 4.5 },
       { label: `${theme} space description`, selector: ".space-dossier-description textarea", foregroundProperty: "color", minimum: 4.5 },
-      { label: `${theme} selected page tab`, selector: ".space-project-tabs [aria-selected=\"true\"]", foregroundProperty: "color", minimum: 4.5 },
+      { label: `${theme} selected page lens`, selector: ".space-project-controls [aria-pressed=\"true\"]", foregroundProperty: "color", minimum: 3 },
     ]));
 
     await openSpaceEntity(page, "Ada Lovelace");
@@ -412,16 +412,8 @@ test("reaches management, dossier, graph, ledger, observation, and linked-memory
   await tabTo(page, spaceRow);
   await page.keyboard.press("Enter");
   await expect(page.locator(".space-dossier")).toBeVisible();
-  const sourcesTab = page.getByRole("tab", { name: "Sources" });
-  const notesTab = page.getByRole("tab", { name: "Pages" });
-  await tabTo(page, notesTab);
-  await assertFocusOutline(page);
-  await page.keyboard.press("ArrowRight");
-  await expect(sourcesTab).toBeFocused();
-  await expect(sourcesTab).toHaveAttribute("aria-selected", "true");
-  await page.keyboard.press("ArrowLeft");
-  await expect(notesTab).toBeFocused();
-  await expect(notesTab).toHaveAttribute("aria-selected", "true");
+  // UX-SPACE-1: the Brief and pages are one page, with no tabs to step through.
+  await expect(page.getByRole("tab")).toHaveCount(0);
 
   const entity = await getSpaceEntityButton(page, "Ada Lovelace");
   await tabTo(page, entity);
@@ -694,5 +686,5 @@ test("removes non-essential transitions under reduced motion", async ({ page }) 
   await expect(newSpace).toHaveCSS("transition-duration", "0s");
   await spaceOverviewButton(page).click();
   await expect(page.locator(".space-dossier-archive-trigger")).toHaveCount(0);
-  await expect(page.getByRole("tab", { name: "Pages" })).toHaveCSS("transition-duration", "0s");
+  await expect(page.getByTestId("asset-lens-rows")).toHaveCSS("transition-duration", "0s");
 });

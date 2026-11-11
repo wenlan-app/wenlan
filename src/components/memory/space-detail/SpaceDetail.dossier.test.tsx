@@ -157,7 +157,7 @@ describe("SpaceDetail editorial dossier", () => {
   it("keeps review in overflow and does not read standalone memories or topics", async () => {
     const onReviewAll = vi.fn();
     renderDetail({ onReviewAll });
-    await screen.findByRole("tab", { name: "Pages" });
+    await screen.findByRole("region", { name: "Pages" });
     expect(screen.queryByRole("region", { name: "Key entities" })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Raw memories" })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Needs review" })).not.toBeInTheDocument();

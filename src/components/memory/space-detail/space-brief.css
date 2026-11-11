@@ -1,0 +1,77 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* A Space's Brief on top of its page (UX-SPACE-1): plain text, no box. */
+.space-brief {
+  display: grid;
+  gap: 18px;
+  max-width: 640px;
+  margin: 4px 0 28px;
+}
+
+.space-brief-now {
+  display: grid;
+  gap: 6px;
+}
+
+.space-brief-summary {
+  margin: 0;
+  color: var(--mem-text);
+  font: 400 16px/1.65 var(--mem-font-body);
+  overflow-wrap: anywhere;
+}
+
+.space-brief-meta {
+  margin: 0;
+  color: var(--mem-text-secondary);
+  font: 400 12px/1.4 var(--mem-font-body);
+}
+
+.space-brief-items {
+  display: grid;
+  gap: 8px;
+}
+
+.space-dossier .space-brief-heading,
+.space-brief-heading {
+  margin: 0;
+  color: var(--mem-text-secondary);
+  font: 600 12px/1.4 var(--mem-font-body);
+  letter-spacing: 0.04em;
+}
+
+.space-brief-items ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--mem-text);
+  font: 400 14px/1.5 var(--mem-font-body);
+  overflow-wrap: anywhere;
+}
+
+.space-brief-more {
+  justify-self: start;
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--mem-text-secondary);
+  font: 400 13px/1.4 var(--mem-font-body);
+  cursor: pointer;
+}
+
+.space-brief-more:hover {
+  color: var(--mem-text);
+}
+
+.space-brief-more:focus-visible {
+  outline: 2px solid var(--mem-accent-indigo);
+  outline-offset: 3px;
+  border-radius: var(--mem-r-2);
+}
+
+.space-dossier-page-fresh {
+  margin-left: 10px;
+  color: var(--mem-text-secondary);
+  font: 400 12px/1.4 var(--mem-font-body);
+  white-space: nowrap;
+}

@@ -1734,7 +1734,6 @@ export default function Main({
               onCreatePage={(space) => navigateTo({ kind: "page-draft", space })}
               onReviewAll={() => navigateTo({ kind: "distill-review" })}
               onSelectPage={(id) => navigateTo({ kind: "page", pageId: id })}
-              onOpenSource={(file) => navigateTo({ kind: "source-document", file })}
               onSpaceDeleted={(spaceId) => {
                 handleSpaceDeleted(spaceId);
                 replaceView({ kind: "spaces" });

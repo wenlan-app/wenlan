@@ -11,6 +11,7 @@ import type { SpaceDetailCopy } from "./copy";
 import {
   PAGE_DISPLAY_STEP,
   PAGE_FETCH_LIMIT,
+  aiUpdatedRecently,
   pageCountLabel,
   sortedSpacePages,
 } from "./model";
@@ -47,7 +48,7 @@ export function SpaceDossierContent({ copy, navigation, pages, lens, shares }: S
               <button key={page.id} onClick={() => navigation.onSelectPage(page.id)} type="button">
                 <PageIcon />
                 <span className="space-dossier-page-text">
-                  <span className="space-dossier-page-title">{page.title}</span>{" "}
+                  <span className="space-dossier-page-title">{page.title}{aiUpdatedRecently(page) && <span className="space-dossier-page-fresh">{t("spaceDetail.brief.aiUpdated")}</span>}</span>{" "}
                   {page.summary?.trim() && <span className="space-dossier-page-summary">{page.summary}</span>}
                 </span>
                 <SharedRowMeta page={page} shares={shares} locale={locale} />

@@ -1244,6 +1244,20 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   // --- home / profile / spaces / misc ---
   get_home_stats: () => get("/api/home-stats"),
   get_briefing: () => get("/api/briefing"),
+  get_space_brief: async (a) => {
+    // Mirrors app/src/search.rs get_space_brief: the Brief, said in the
+    // night's plain lines where it has written them.
+    const name = String(a?.name ?? "");
+    const read = await post("/api/brief", { space: name }) as { brief?: { last_session_summary: string; last_handoff_at?: number | null; active: { id: string; text: string; added_at: number }[] } | null };
+    const brief = read?.brief;
+    if (!brief) return null;
+    const plain = await (get(`/api/brief/plain${qs({ space: name })}`) as Promise<{ summary?: string | null; lines?: Record<string, string> }>).catch(() => ({} as { summary?: string | null; lines?: Record<string, string> }));
+    const short = (text: string) => { const flat = text.split(/\s+/).join(" ").trim(); return flat.length > 80 ? `${flat.slice(0, 80)}…` : flat; };
+    const active = [...brief.active].sort((x, y) => y.added_at - x.added_at).map(item => ({ id: item.id, line: plain.lines?.[item.id] ?? short(item.text), raw: item.text }));
+    const summary = plain.summary ?? (brief.last_session_summary.trim() ? brief.last_session_summary.trim() : null);
+    if (!summary && active.length === 0) return null;
+    return { summary, handed_off_at: brief.last_handoff_at ?? null, active };
+  },
   get_profile: () => get("/api/profile"),
   get_profile_narrative: () => get("/api/profile/narrative"),
   list_spaces: () => listPreviewSpaces(),

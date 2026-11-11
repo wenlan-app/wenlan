@@ -1083,6 +1083,21 @@ export async function listWorkingOn(): Promise<WorkingOnItem[]> {
   return invoke("list_working_on");
 }
 
+/** One Space's Brief as its page shows it (docs/ux/spec.md, UX-SPACE-1):
+ *  where the work stands and what is in progress, newest first, each in the
+ *  night's plain line, or the first sentence the AI wrote (`raw`) until the
+ *  night writes one. `handed_off_at` is in seconds. */
+export interface SpaceBriefView {
+  summary: string | null;
+  handed_off_at: number | null;
+  active: { id: string; line: string; raw: boolean }[];
+}
+
+/** Null when the Space has no Brief, or nothing in it to show. */
+export async function getSpaceBrief(name: string): Promise<SpaceBriefView | null> {
+  return invoke("get_space_brief", { name });
+}
+
 /** One thing (一件事): a line of work that conversations are sorted into
  *  (docs/ux/spec.md, UX-THING-1). Times are in seconds. */
 export interface ThingSummary {

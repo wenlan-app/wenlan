@@ -773,6 +773,15 @@ const en = {
     },
   },
   spaceDetail: {
+    brief: {
+      label: "Where this stands",
+      handedOff: "Last handoff {{when}}",
+      inProgress: "In progress",
+      more_one: "{{count}} more",
+      more_other: "{{count}} more",
+      less: "Show less",
+      aiUpdated: "Updated by AI",
+    },
     projectContent: "Project content",
     notesTab: "Pages",
     sourcesTab: "Sources",
@@ -4075,6 +4084,15 @@ const zhHans = {
     },
   },
   spaceDetail: {
+    brief: {
+      label: "现在到哪",
+      handedOff: "上次交接：{{when}}",
+      inProgress: "正在做",
+      more_one: "还有 {{count}} 件",
+      more_other: "还有 {{count}} 件",
+      less: "收起",
+      aiUpdated: "AI 最近更新",
+    },
     projectContent: "项目内容",
     notesTab: "笔记",
     sourcesTab: "来源",
@@ -7332,6 +7350,15 @@ const zhHant = {
     },
   },
   spaceDetail: {
+    brief: {
+      label: "現在到哪",
+      handedOff: "上次交接：{{when}}",
+      inProgress: "正在做",
+      more_one: "還有 {{count}} 件",
+      more_other: "還有 {{count}} 件",
+      less: "收起",
+      aiUpdated: "AI 最近更新",
+    },
     projectContent: "專案內容",
     notesTab: "筆記",
     sourcesTab: "來源",

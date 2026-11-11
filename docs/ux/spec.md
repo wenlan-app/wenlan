@@ -436,6 +436,27 @@ and wait for evidence that people need them.
   shows under it.
   原文：有用的图自己存：画出计划、流程、架构，或你接着用的图，AI 自己存；随手小草图不存。eli5 的 ASCII 图也算。（2026-11-08 22:26）
 
+## A Space's page
+
+- **UX-SPACE-1** `shipped` A Space's page opens with its Brief, in plain
+  words: where the work stands in a sentence or two, when an AI tool last
+  handed off, and what is in progress, newest first, one line each. Three
+  show; the rest fold under "N more". A Space with no Brief is its pages
+  alone. No new buttons or panels.
+  原文：「照你說的建議。我想要把 brief 結合好，不要多餘的介面」（2026-11-10 23:10Z）；草圖選擇卡「照做，連 Brief 清理一起」（2026-11-10 23:15Z）；「space 里面应该要放一些什么去区隔它的就是价值…page 是确实是被 filter 完了，但是在这里面还有什么需要特别强调的呢？」（2026-11-10 23:02Z）
+- **UX-SPACE-2** `shipped` Each night, a Space whose Brief changed gets
+  those lines written for people, in their language, with no pull request
+  numbers, version numbers, hashes or paths; until then an item shows the
+  first sentence the AI wrote. The night closes an item only when a newer
+  note in the Space says, word for word, that it is done, and records the
+  close in the Brief's history. The Brief text the AI tool wrote is kept as
+  it is.
+  原文：同 UX-SPACE-1：選擇卡「照做，連 Brief 清理一起」，問：「照這張草圖做 Space 頁面，並讓每晚整理順便清理 Brief？」（2026-11-10 23:15Z）
+- **UX-SPACE-3** `shipped` Under the Brief are the Space's pages, with no
+  Pages/Sources tabs; a page's sources are read inside the page. A page the
+  AI changed in the last day is quietly marked.
+  原文：「不 sources 放里面我也不知道它能干嘛」（2026-11-10 23:02Z）；同 UX-SPACE-1 草圖。
+
 ## Adding to Wenlan
 
 - **UX-ADD-1** `planned` There is one "Add to Wenlan" in the app; the shortcut,
