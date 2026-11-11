@@ -239,31 +239,37 @@ fn ctx<'a>(
         space_pages,
         cited_text,
         member_name: "Qi-Xuan",
-        kept: Box::leak(Box::default()),
+        keep_all: false,
     }
 }
 
 #[test]
-fn rewrite_keeps_a_citation_of_a_memory_the_library_shares() {
+fn rewrite_keeps_every_citation_in_the_library() {
     let space_pages = HashMap::new();
     let cited_text = HashMap::from([("mem_kept".to_string(), "Said in chat".to_string())]);
-    let kept = std::collections::HashSet::from(["mem_kept".to_string()]);
     let context = RewriteContext {
         space_pages: &space_pages,
         cited_text: &cited_text,
         member_name: "Qi-Xuan",
-        kept: &kept,
+        keep_all: true,
     };
-    let citation = Citation {
-        marker: 1,
-        label: "Said in chat".to_string(),
-        locator: Locator::Wenlan {
-            id: "mem_kept".to_string(),
-            version: 2,
+    let citations = vec![
+        Citation {
+            marker: 1,
+            label: "Said in chat".to_string(),
+            locator: Locator::Wenlan {
+                id: "mem_kept".to_string(),
+                version: 2,
+            },
         },
-    };
-    let (out, _) = rewrite_sources(std::slice::from_ref(&citation), &[], &context);
-    assert_eq!(out, vec![citation]);
+        Citation {
+            marker: 2,
+            label: "Recipe".to_string(),
+            locator: Locator::Other("external_url:https://example.com/fish".to_string()),
+        },
+    ];
+    let (out, _) = rewrite_sources(&citations, &[], &context);
+    assert_eq!(out, citations);
 }
 
 #[test]
@@ -385,7 +391,7 @@ fn rewrite_is_idempotent() {
         space_pages: &space_pages,
         cited_text: &nothing,
         member_name: "Someone else",
-        kept: &Default::default(),
+        keep_all: false,
     };
     assert_eq!(rewrite_sources(&once.0, &once.1, &elsewhere), once);
 }

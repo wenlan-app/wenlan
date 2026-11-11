@@ -35,8 +35,11 @@ pub struct RewriteContext<'a> {
     pub cited_text: &'a HashMap<String, String>,
     /// The name other members know this person by.
     pub member_name: &'a str,
-    /// Memories every computer of the library has: their citations stay.
-    pub kept: &'a std::collections::HashSet<String>,
+    /// The person's own library: every computer is theirs, so every
+    /// citation stays as it is. A source only one computer has (an imported
+    /// chat, a file, a web page) then still links back there, and a page
+    /// edited on another computer comes back with its sources whole.
+    pub keep_all: bool,
 }
 
 /// The id a locator points at: `wenlan:<id>@<v>`, or `wenlan:<id>` for a
@@ -101,10 +104,10 @@ pub fn rewrite_sources(
             if citation.locator == Locator::Other(QUOTE_LOCATOR.to_string()) {
                 return citation.clone();
             }
-            let id = target(&citation.locator);
-            if id.is_some_and(|id| ctx.kept.contains(id)) {
+            if ctx.keep_all {
                 return citation.clone();
             }
+            let id = target(&citation.locator);
             if let Some(title) = id.and_then(|id| ctx.space_pages.get(id)) {
                 return Citation {
                     marker: citation.marker,

@@ -391,21 +391,6 @@ async fn local_memory(db: &MemoryDB, id: &str) -> Result<Option<Local>, WenlanEr
     Ok(group(&rows, &HashSet::new(), &mut HashSet::new())?.remove(id))
 }
 
-/// Whether the library shares memory `id`: it is here, shareable, and not
-/// in a Space with its own share. A page's citation of such a memory can
-/// stay a citation, because every computer of the library has the memory.
-pub(super) async fn shared_by_library(
-    db: &MemoryDB,
-    id: &str,
-    own_spaces: &HashSet<String>,
-) -> Result<bool, WenlanError> {
-    if !is_safe_id(id) {
-        return Ok(false);
-    }
-    let rows = db.export_shareable_memory_rows_of(id).await?;
-    Ok(group(&rows, own_spaces, &mut HashSet::new())?.contains_key(id))
-}
-
 // ===== What this Wenlan remembers =====
 
 /// For one memory, the folder version this Wenlan was last in step with and

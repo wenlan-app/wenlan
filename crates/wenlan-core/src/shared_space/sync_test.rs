@@ -2474,3 +2474,73 @@ async fn a_library_page_keeps_its_sources_on_the_other_computer() {
         .unwrap();
     assert_eq!(again.exported, 0, "{again:?}");
 }
+
+#[tokio::test]
+async fn a_library_page_keeps_a_source_that_stays_on_one_computer() {
+    let chosen = tempfile::tempdir().unwrap();
+    let (a, b) = library_pair(chosen.path()).await;
+    // An imported chat stays on the computer it was imported on.
+    a.save_memory("import_chat_1", "Grandma said fish is fine.", Some(SPACE))
+        .await;
+    let menu = a
+        .write(
+            "Menu",
+            "Fish is fine [1]. See the recipe [2].",
+            SPACE.to_string().into(),
+        )
+        .await;
+    let citations = serde_json::json!([
+        {"occurrence": 1, "marker": 1, "source_kind": "memory", "locator": "import_chat_1",
+         "score": 1.0, "status": "verified", "cited_version": 1},
+        {"occurrence": 2, "marker": 2, "source_kind": "external_url",
+         "locator": "https://example.com/fish", "score": 1.0, "status": "verified"},
+    ]);
+    a.db.set_page_citations_for_test(&menu, &citations.to_string())
+        .await
+        .unwrap();
+
+    a.lib_sync(chosen.path(), None).await.unwrap();
+    b.lib_sync(chosen.path(), Some(&a.library_member_id()))
+        .await
+        .unwrap();
+    assert!(b.memory_text("import_chat_1").await.is_none());
+    // The other computer keeps the web link as it is.
+    let there = b.page(&menu).await.unwrap();
+    assert!(
+        there
+            .citations
+            .iter()
+            .any(|c| c.source_kind == "external_url" && c.locator == "https://example.com/fish"),
+        "{:?}",
+        there.citations
+    );
+    b.edit(&menu, "Fish is fine [1]. See the recipe [2]. Rice too.")
+        .await;
+    b.lib_sync(chosen.path(), Some(&a.library_member_id()))
+        .await
+        .unwrap();
+    a.lib_sync(chosen.path(), None).await.unwrap();
+
+    // Back on the computer that has the chat, the sentence still links to it.
+    let page = a.page(&menu).await.unwrap();
+    assert_eq!(
+        page.content,
+        "Fish is fine [1]. See the recipe [2]. Rice too."
+    );
+    assert!(
+        page.citations
+            .iter()
+            .any(|c| c.locator == "import_chat_1" && !c.historical),
+        "{:?}",
+        page.citations
+    );
+    assert!(
+        page.citations
+            .iter()
+            .any(|c| c.source_kind == "external_url" && c.locator == "https://example.com/fish"),
+        "{:?}",
+        page.citations
+    );
+    let unpaged = a.db.list_unpaged_memory_rows(100).await.unwrap();
+    assert!(!unpaged.iter().any(|row| row.source_id == "import_chat_1"));
+}
