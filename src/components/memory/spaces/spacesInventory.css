@@ -621,3 +621,10 @@
 .asset-cards.is-reordering .space-card-wrap:not(.is-dragging) .asset-card:hover {
   background: inherit;
 }
+
+/* Same column as home and a Space page: 840px wide, its first line at the
+   same height, so the edges stay put when moving between the three. */
+.memory-main-content.memory-main-content--collection > .spaces-overview {
+  max-width: 840px;
+  padding-top: 32px;
+}
