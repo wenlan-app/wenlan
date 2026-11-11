@@ -128,7 +128,7 @@ test("select all from outside the canvas cannot paint over the map", async ({ pa
   }
 });
 
-test("the grow dot sits on the side each box faces", async ({ page }) => {
+test("the grow dot sits on the side the tree grows toward", async ({ page }) => {
   await installTauriMock(page, { locale: "en", rawActions: [] });
   await page.goto("/");
   // A map big enough to put boxes in all four quadrants: the fixture's four
@@ -154,9 +154,7 @@ test("the grow dot sits on the side each box faces", async ({ page }) => {
   await page.keyboard.press("Meta+a");
   await page.locator(".page-canvas").screenshot({ path: "shots/grow-dots.png" });
 
-  // Every box's dot, against the direction that box sits from the page in the
-  // middle. On a radial map those directions differ, so a dot pinned to one
-  // side is pointing back at the parent for half of them.
+  // Every box's dot, with where that box sits from the page, for the message.
   const dots = await page.locator(".react-flow__node").evaluateAll((els) => {
     const root = els.find((el) => el.textContent?.includes("Fixture architecture"));
     const c = (el: Element) => {
@@ -182,17 +180,12 @@ test("the grow dot sits on the side each box faces", async ({ page }) => {
   });
   console.log(JSON.stringify(dots, null, 1));
   expect(dots.length).toBeGreaterThan(1);
+  // The map grows left to right, as an outline does, so a new box always
+  // comes off a box's right side; a dot anywhere else points back at the
+  // parent or into a sibling.
   for (const d of dots) {
-    const want =
-      Math.abs(d.dx) > Math.abs(d.dy)
-        ? d.dx > 0
-          ? "right"
-          : "left"
-        : d.dy > 0
-          ? "bottom"
-          : "top";
     expect(d.side, `${d.label} sits at (${d.dx},${d.dy}) but its dot is on the ${d.side}`).toBe(
-      want,
+      "right",
     );
   }
 });
@@ -478,7 +471,7 @@ test("a drag that starts on a canvas control selects no text", async ({ page }) 
 
   for (const [name, from] of [
     ["help button (bottom right)", page.getByRole("button", { name: "Canvas shortcuts" })],
-    ["suggestion badge (top right)", page.getByRole("button", { name: /suggestion/ })],
+    ["suggestion badge (top right)", page.getByRole("button", { name: "Add related memories" })],
   ] as const) {
     const start = (await from.boundingBox())!;
     await page.mouse.move(start.x + start.width / 2, start.y + start.height / 2);

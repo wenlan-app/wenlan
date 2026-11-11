@@ -2040,6 +2040,7 @@ pub async fn handle_list_orphan_links(
 /// server itself loaded, so the write still cannot clobber an interleaved one.
 pub async fn handle_update_page(
     State(state): State<Arc<RwLock<ServerState>>>,
+    crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
     Path(id): Path<String>,
     Json(wire): Json<wenlan_types::requests::ManualPageEditRequest>,
 ) -> Result<Json<wenlan_types::responses::ManualPageWriteResponse>, ServerError> {
@@ -2058,10 +2059,15 @@ pub async fn handle_update_page(
     // Preserve the route's 404 shape, but do not copy sources from this
     // advisory read. PageWrite derives them again from the exact generation
     // its CAS updates, so a source attached in between cannot be deleted.
-    db.get_page(&id)
+    let before = db
+        .get_page(&id)
         .await
         .map_err(|e| ServerError::Internal(e.to_string()))?
         .ok_or_else(|| ServerError::NotFound(format!("page {id} not found")))?;
+    // The body this edit was made on, when the write is fenced on it: only
+    // then can a heading whose words changed be read as renamed.
+    let edited_from = (req.expected_version == Some(before.version)).then_some(before.content);
+    let edited_to = req.content.clone();
 
     // Use captured server state, never global config (which would point an
     // isolated handler at the user's vault). Core commits DB + receipt first.
@@ -2107,6 +2113,23 @@ pub async fn handle_update_page(
     // no-change path. Branching on `wrote` alone answered that routine save with
     // "somebody else edited this," which is both wrong and unactionable.
     use wenlan_core::post_write::WriteOutcome;
+    if result.outcome == WriteOutcome::Wrote {
+        if let Some(before) = edited_from.as_deref() {
+            // Links to a renamed heading follow it, so `[[Page#heading]]`
+            // still opens that section, here and in Obsidian.
+            let scope =
+                crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
+            wenlan_core::post_write::update_links_to_renamed_headings(
+                &db,
+                &id,
+                before,
+                &edited_to,
+                &scope,
+                page_root.as_deref(),
+            )
+            .await;
+        }
+    }
     match result.outcome {
         WriteOutcome::Wrote | WriteOutcome::Unchanged => {
             use wenlan_types::responses::{ManualPageWriteResponse, PageProjectionStatus};

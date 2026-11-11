@@ -54,6 +54,7 @@ describe("MarkdownEditor queued focus", () => {
             requestCancel: () => false,
             applyExternalEdits: () => false,
             selectText: () => false,
+            revealHeading: () => false,
           }));
           return <div role="textbox" aria-label="Source" />;
         }),

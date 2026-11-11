@@ -69,6 +69,10 @@ const NativeMarkdownEditorSession = forwardRef<MarkdownEditorHandle, MarkdownEdi
         runCommand(): boolean {
           return false;
         },
+        // A plain text box has no headings to scroll to.
+        revealHeading(): boolean {
+          return false;
+        },
         selectText(text): boolean {
           const textarea = textareaRef.current;
           const needle = text.trim();

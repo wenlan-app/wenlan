@@ -180,9 +180,15 @@ and wait for evidence that people need them.
 - **UX-VIEW-3** `shipped` The first screen is only for people; the details for
   AI are one collapsed section.
   原文：第一屏只有給人看的，給 AI 的細節是一個收起來的展開。
-- **UX-VIEW-4** `shipped` The mind map keeps today's rule: the AI proposes,
-  and nothing counts until you accept it.
-  原文：心智圖現在「AI 提議、你收下才算」的做法留著。
+- **UX-VIEW-4** `shipped` The mind map draws the page's own headings, items
+  and the links written in the page, with nothing to accept. Memories and
+  connections the AI guesses are dashed, and count only once you keep them.
+  原文：心智圖直接畫出頁面自己的標題、條目和寫在頁面裡的連結，不用收下。AI 猜的記憶和關聯是虛線，你收下才算。
+- **UX-VIEW-8** `shipped` A box drawn from the page is the page. Renaming
+  it, adding a line beside or under it, or deleting it changes the page itself,
+  including lines the AI wrote; each change can be taken back. If the page
+  changed since the map was drawn, nothing is written and the map says so.
+  原文：「那些如果想要手動做基本的還是允許啊？除非是進階複雜操作」「要能刪除」（2026-11-11）
 - **UX-VIEW-6** `planned` A thing's short text is a recap in a fixed order:
   where it stands and the next step (at most two sentences), what is decided,
   what is still open, then the background. A group with nothing in it is not

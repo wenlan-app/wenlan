@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { PageCitation } from "../../lib/tauri";
 import PageDetail from "./PageDetail";
+import { clearPageSection, pendingPageSection } from "../../lib/pageSection";
 import { i18n } from "../../i18n";
 
 const tauriMocks = vi.hoisted(() => ({
@@ -350,6 +351,9 @@ it("renders summary wikilinks as readable internal references, preserving aliase
   expect(link).not.toHaveAttribute("target", "_blank");
   await user.click(link);
   expect(props.onPageClick).toHaveBeenCalledWith("page-2");
+  // The page it opens is told to show that section.
+  expect(pendingPageSection("page-2")).toBe("Details");
+  clearPageSection("page-2");
 });
 
 describe("PageDetail reading mode by page kind", () => {

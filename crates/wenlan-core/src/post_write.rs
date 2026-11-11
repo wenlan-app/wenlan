@@ -119,6 +119,35 @@ pub async fn restore_page(
     Ok(response)
 }
 
+/// After a person's edit to page `id` changed `before` into `after`: for each
+/// heading the edit renamed, rewrite `[[Page#old heading]]` in the pages that
+/// link to it so the link still lands on that section. Returns how many pages
+/// were updated, staged for review or left. A failure is logged, never turned
+/// into a failed save.
+pub async fn update_links_to_renamed_headings(
+    db: &MemoryDB,
+    id: &str,
+    before: &str,
+    after: &str,
+    scope: &crate::read_scope::ReadScope,
+    knowledge_path: Option<&Path>,
+) -> (u32, u32, u32) {
+    let renames = page_link_rename::renamed_headings(before, after);
+    if renames.is_empty() {
+        return (0, 0, 0);
+    }
+    let counts =
+        page_link_rename::update_links_to_renamed_headings(db, id, &renames, scope, knowledge_path)
+            .await
+            .unwrap_or_else(|error| {
+                log::warn!(
+                    "[heading_rename] {id} saved; updating links to its headings failed: {error}"
+                );
+                page_link_rename::LinkRenameCounts::default()
+            });
+    (counts.updated, counts.pending_review, counts.not_updated)
+}
+
 /// The link step after a committed title change. Its failure is logged and
 /// reported as nothing updated, never turned into a failed rename or restore.
 async fn links_to_retitled_page(

@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { ReferencePreview } from "./ReferencePreview";
 import { useReferenceNavigation } from "./ReferenceNavigationContext";
 import { referenceTargetFromHref } from "./referenceTypes";
+import { requestPageSection } from "../../../lib/pageSection";
 import { ReferenceTypeIcon } from "./ReferenceTypeIcon";
 import "./reference-links.css";
 
@@ -48,8 +49,10 @@ function CanonicalReferenceLink({
     closeTimer.current = window.setTimeout(() => setPreview(null), 120);
   };
   const openTarget = () => {
-    if (referenceTarget.kind === "page") navigation.onOpenPage?.(referenceTarget.id);
-    else navigation.onOpenMemory?.(referenceTarget.id);
+    if (referenceTarget.kind === "page") {
+      requestPageSection(referenceTarget.id, referenceTarget.heading);
+      navigation.onOpenPage?.(referenceTarget.id);
+    } else navigation.onOpenMemory?.(referenceTarget.id);
   };
 
   return (

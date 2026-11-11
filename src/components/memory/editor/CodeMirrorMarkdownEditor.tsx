@@ -52,6 +52,7 @@ import { pageLayersEditing, setPageLayers } from "./pageLayersEditing";
 import { sentenceProposals, setSentenceProposals } from "./sentenceProposals";
 import { aiChangeMarks, setAiChangeMarks } from "./aiChangeMarks";
 import { sentenceAuthorship, setSentenceAuthorship } from "./sentenceAuthorship";
+import { headingKey } from "../../../lib/pageSection";
 
 type ExternalEdits = Parameters<MarkdownEditorHandle["applyExternalEdits"]>[0];
 
@@ -254,6 +255,26 @@ export const CodeMirrorMarkdownEditor = forwardRef<
         });
         view.focus();
         return true;
+      },
+      revealHeading(text): boolean {
+        const view = viewRef.current;
+        if (!view) return false;
+        const want = headingKey(text);
+        if (!want) return false;
+        const doc = view.state.doc;
+        let fenced = false;
+        for (let n = 1; n <= doc.lines; n++) {
+          const line = doc.line(n);
+          if (/^ {0,3}(```|~~~)/.test(line.text)) {
+            fenced = !fenced;
+            continue;
+          }
+          if (fenced || !/^ {0,3}#{1,6}[ \t]/.test(line.text)) continue;
+          if (headingKey(line.text) !== want) continue;
+          view.dispatch({ effects: EditorView.scrollIntoView(line.from, { y: "start", yMargin: 24 }) });
+          return true;
+        }
+        return false;
       },
       requestSave,
       requestCancel,

@@ -44,7 +44,47 @@ function SpineEdge({
   targetY,
   style,
   markerEnd,
+  data,
 }: EdgeProps) {
+  // On the left-to-right tree the line leaves its parent sideways and arrives
+  // at its child sideways, so siblings fan out like an outline's indents.
+  const shape = data as
+    | {
+        tree?: boolean;
+        indent?: { fromX: number; fromY: number; toX: number; toY?: number };
+        /** Where the tree line meets the boxes, when not at their centers. */
+        ends?: { fromX: number; fromY: number; toX: number; toY: number };
+      }
+    | undefined;
+  // On the indented outline a line drops from under the parent's first letter
+  // and turns right into the child, as an outline's guide lines do.
+  if (shape?.indent) {
+    const { fromX, fromY, toX } = shape.indent;
+    const ty = shape.indent.toY ?? targetY;
+    return (
+      <BaseEdge
+        path={`M${fromX},${fromY} V${ty - 6} Q${fromX},${ty} ${fromX + 6},${ty} H${toX}`}
+        style={style}
+        markerEnd={markerEnd}
+      />
+    );
+  }
+  if (shape?.tree) {
+    // A line drawn as text on a stroke is met at the start of that stroke, so
+    // the branch runs on into it instead of striking through the words.
+    const sx = shape.ends?.fromX ?? sourceX;
+    const sy = shape.ends?.fromY ?? sourceY;
+    const tx = shape.ends?.toX ?? targetX;
+    const ty = shape.ends?.toY ?? targetY;
+    const mx = (sx + tx) / 2;
+    return (
+      <BaseEdge
+        path={`M${sx},${sy} C${mx},${sy} ${mx},${ty} ${tx},${ty}`}
+        style={style}
+        markerEnd={markerEnd}
+      />
+    );
+  }
   const dx = targetX - sourceX;
   const dy = targetY - sourceY;
   const span = Math.hypot(dx, dy);

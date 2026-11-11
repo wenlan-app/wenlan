@@ -154,67 +154,220 @@ pub(crate) async fn update_links_to_renamed_page(
             counts.not_updated += 1;
             continue;
         }
-        // The same automatic-reader permit the rename itself needs.
-        if crate::truth_adapter::page_write_permit(db, &page.id)
-            .await?
-            .is_none()
+        write_link_rewrite(
+            db,
+            &page,
+            content,
+            source_revision,
+            knowledge_path,
+            Some(page_id),
+            &mut counts,
+        )
+        .await?;
+    }
+    Ok(counts)
+}
+
+/// The headings of `before` that `after` renamed, as `(old, new)` text.
+///
+/// A rename is read only where it is certain: both bodies have the same
+/// headings in the same order and at the same levels, and at a place where
+/// the words differ, the old words appear nowhere in `after` and the new
+/// words nowhere in `before`. Headings added, removed or swapped are not
+/// renames, so their links are left as written.
+pub(crate) fn renamed_headings(before: &str, after: &str) -> Vec<(String, String)> {
+    let old = atx_headings(before);
+    let new = atx_headings(after);
+    if old.len() != new.len() || old.iter().zip(&new).any(|(a, b)| a.0 != b.0) {
+        return Vec::new();
+    }
+    let key = |text: &str| MemoryDB::page_title_key(text);
+    let mut renames: Vec<(String, String)> = Vec::new();
+    for ((_, was), (_, now)) in old.iter().zip(&new) {
+        if key(was) == key(now) {
+            continue;
+        }
+        if new.iter().any(|(_, text)| key(text) == key(was))
+            || old.iter().any(|(_, text)| key(text) == key(now))
         {
+            continue;
+        }
+        if !renames.iter().any(|(from, _)| key(from) == key(was)) {
+            renames.push((was.clone(), now.clone()));
+        }
+    }
+    renames
+}
+
+/// `(level, text)` of each ATX heading outside fenced code.
+fn atx_headings(body: &str) -> Vec<(usize, String)> {
+    let mut out = Vec::new();
+    let mut fence: Option<&str> = None;
+    for line in body.lines() {
+        let trimmed = line.trim_start();
+        let indent = line.len() - trimmed.len();
+        if indent <= 3 {
+            let marker = ["```", "~~~"].into_iter().find(|m| trimmed.starts_with(m));
+            if let Some(marker) = marker {
+                match fence {
+                    Some(open) if open == marker => fence = None,
+                    None => fence = Some(marker),
+                    _ => {}
+                }
+                continue;
+            }
+        }
+        if fence.is_some() || indent > 3 {
+            continue;
+        }
+        let level = trimmed.chars().take_while(|c| *c == '#').count();
+        if !(1..=6).contains(&level) {
+            continue;
+        }
+        let rest = &trimmed[level..];
+        if !rest.is_empty() && !rest.starts_with([' ', '\t']) {
+            continue;
+        }
+        let text = rest.trim().trim_end_matches('#').trim();
+        if !text.is_empty() {
+            out.push((level, text.to_string()));
+        }
+    }
+    out
+}
+
+/// Rewrite `[[Page#old]]` to `[[Page#new]]` in the pages that link to
+/// `page_id`, for each heading the page's last edit renamed. The same pages,
+/// fences and review rule as a page rename: only pages in the same Space that
+/// `scope` can see are written, and a page locked for review gets a card.
+pub(crate) async fn update_links_to_renamed_headings(
+    db: &MemoryDB,
+    page_id: &str,
+    renames: &[(String, String)],
+    scope: &ReadScope,
+    knowledge_path: Option<&Path>,
+) -> Result<LinkRenameCounts, WenlanError> {
+    let mut counts = LinkRenameCounts::default();
+    if renames.is_empty() {
+        return Ok(counts);
+    }
+    for source in db.rename_link_sources(page_id).await? {
+        if !scope.matches(source.workspace.as_deref()) {
+            continue;
+        }
+        let rewrite = |content: &str| {
+            crate::synthesis::wikilinks::rewrite_wikilink_headings(content, |target, heading| {
+                let target = MemoryDB::page_title_key(target);
+                if !source
+                    .labels
+                    .iter()
+                    .any(|label| MemoryDB::page_title_key(label) == target)
+                {
+                    return None;
+                }
+                let heading = MemoryDB::page_title_key(heading);
+                renames
+                    .iter()
+                    .find(|(old, _)| MemoryDB::page_title_key(old) == heading)
+                    .map(|(_, new)| new.clone())
+            })
+        };
+        let source_revision = db.get_page_source_revision(&source.page_id).await?;
+        let Some(page) = db.get_page(&source.page_id).await? else {
+            continue;
+        };
+        let (content, changed) = rewrite(&page.content);
+        if changed == 0 {
+            continue;
+        }
+        if !source.same_space || !source.rewritable {
             counts.not_updated += 1;
             continue;
         }
-        let citations = carried_citations(&page, &content);
-        let written = page_write(
+        write_link_rewrite(
             db,
-            PageWrite::Update {
-                page_id: &page.id,
-                req: UpdatePageRequest {
-                    content,
-                    source_memory_ids: page.source_memory_ids.clone(),
-                    expected_version: Some(page.version),
-                    caller_id: None,
-                    operation_id: None,
-                },
-                edited_by: LINK_RENAME_WRITER,
-                require_stale: false,
-                expected_source_revision: Some(source_revision),
-                knowledge_path,
-                citations,
-            },
+            &page,
+            content,
+            source_revision,
+            knowledge_path,
+            None,
+            &mut counts,
         )
-        .await;
-        match written {
-            Ok(result) if result.outcome == WriteOutcome::Wrote => counts.updated += 1,
-            Ok(result) if result.outcome == WriteOutcome::Gated => {
-                counts.pending_review += 1;
-                // Untagged, the card is still found by its links (as a card
-                // from 0.20.5 is), just less surely.
-                if let Some(card_id) = result.revision_card_id.as_deref() {
-                    if let Err(error) = db.tag_link_rename_card(card_id, page_id).await {
-                        log::warn!(
-                            "[page_link_rename] link card {card_id} on {} left untagged: {error}",
-                            page.id
-                        );
-                    }
-                }
-            }
-            Ok(result) => {
-                log::info!(
-                    "[page_link_rename] {} kept its links to {page_id}: {:?}",
-                    page.id,
-                    result.outcome
-                );
-                counts.not_updated += 1;
-            }
-            Err(error) => {
-                log::warn!(
-                    "[page_link_rename] {} kept its links to {page_id}: {error}",
-                    page.id
-                );
-                counts.not_updated += 1;
-            }
-        }
+        .await?;
     }
     Ok(counts)
+}
+
+/// Write `content`, a body of `page` that differs only in link targets or
+/// headings, under the version and source-revision fence it was read at,
+/// and count what happened. `tag` names the renamed page on a review card,
+/// so a later rename of it can find and replace the card.
+async fn write_link_rewrite(
+    db: &MemoryDB,
+    page: &crate::pages::Page,
+    content: String,
+    source_revision: i64,
+    knowledge_path: Option<&Path>,
+    tag: Option<&str>,
+    counts: &mut LinkRenameCounts,
+) -> Result<(), WenlanError> {
+    // The same automatic-reader permit the rename itself needs.
+    if crate::truth_adapter::page_write_permit(db, &page.id)
+        .await?
+        .is_none()
+    {
+        counts.not_updated += 1;
+        return Ok(());
+    }
+    let citations = carried_citations(page, &content);
+    let written = page_write(
+        db,
+        PageWrite::Update {
+            page_id: &page.id,
+            req: UpdatePageRequest {
+                content,
+                source_memory_ids: page.source_memory_ids.clone(),
+                expected_version: Some(page.version),
+                caller_id: None,
+                operation_id: None,
+            },
+            edited_by: LINK_RENAME_WRITER,
+            require_stale: false,
+            expected_source_revision: Some(source_revision),
+            knowledge_path,
+            citations,
+        },
+    )
+    .await;
+    match written {
+        Ok(result) if result.outcome == WriteOutcome::Wrote => counts.updated += 1,
+        Ok(result) if result.outcome == WriteOutcome::Gated => {
+            counts.pending_review += 1;
+            // Untagged, the card is still found by its links (as a card
+            // from 0.20.5 is), just less surely.
+            if let (Some(card_id), Some(page_id)) = (result.revision_card_id.as_deref(), tag) {
+                if let Err(error) = db.tag_link_rename_card(card_id, page_id).await {
+                    log::warn!(
+                        "[page_link_rename] link card {card_id} on {} left untagged: {error}",
+                        page.id
+                    );
+                }
+            }
+        }
+        Ok(result) => {
+            log::info!(
+                "[page_link_rename] {} kept its old links: {:?}",
+                page.id,
+                result.outcome
+            );
+            counts.not_updated += 1;
+        }
+        Err(error) => {
+            log::warn!("[page_link_rename] {} kept its old links: {error}", page.id);
+            counts.not_updated += 1;
+        }
+    }
+    Ok(())
 }
 
 /// The page's citation records for a body that differs only in link targets.
@@ -368,7 +521,32 @@ fn untagged_card_is_for(
 
 #[cfg(test)]
 mod tests {
-    use super::{card_link_targets, renamed_label, untagged_card_is_for, CardTitles};
+    use super::{
+        card_link_targets, renamed_headings, renamed_label, untagged_card_is_for, CardTitles,
+    };
+
+    #[test]
+    fn a_heading_whose_words_changed_in_place_is_a_rename() {
+        let before = "# A\n\ntext\n\n## Third chapter\n\n```\n# not a heading\n```\n";
+        let after =
+            "# A\n\ntext more\n\n## Third chapter, key points\n\n```\n# not a heading\n```\n";
+        assert_eq!(
+            renamed_headings(before, after),
+            vec![(
+                "Third chapter".to_string(),
+                "Third chapter, key points".to_string()
+            )]
+        );
+    }
+
+    #[test]
+    fn added_removed_or_swapped_headings_are_not_renames() {
+        assert!(renamed_headings("# A\n# B", "# A\n# B\n# C").is_empty());
+        assert!(renamed_headings("# A\n# B", "# A").is_empty());
+        assert!(renamed_headings("# A\n# B", "# B\n# A").is_empty());
+        assert!(renamed_headings("# A\n# B", "# A\n## C").is_empty());
+        assert!(renamed_headings("# A", "# A").is_empty());
+    }
 
     #[test]
     fn bare_old_title_becomes_new_title() {
