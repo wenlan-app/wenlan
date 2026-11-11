@@ -338,7 +338,16 @@ async fn shared_sync(
         },
     )
     .await?;
+    wake_embedding_for_memories(counts.memories_applied);
     Ok(Json(counts))
+}
+
+/// Memories a library pass made here are stored without a vector: the
+/// background embedding catch-up is asked to take them.
+pub(crate) fn wake_embedding_for_memories(applied: u32) {
+    if applied > 0 {
+        crate::embedding_backfill::request();
+    }
 }
 
 /// A Space synced through a team server: the server says who the key

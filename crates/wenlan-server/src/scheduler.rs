@@ -1842,13 +1842,19 @@ pub fn spawn_scheduler(
                 let person_name = wenlan_core::shared_space::person_name(&db)
                     .await
                     .unwrap_or_default();
-                wenlan_core::shared_space::sync_shared_spaces(
+                let runs = wenlan_core::shared_space::sync_shared_spaces(
                     &db,
                     &wenlan_core::shared_space::settings_path(),
                     Some(knowledge_path.as_path()),
                     person_name.as_deref(),
                 )
                 .await;
+                // Memories taken from another computer wait for a vector.
+                crate::spaces_routes::wake_embedding_for_memories(
+                    runs.iter()
+                        .map(|(_, run)| run.counts.memories_applied)
+                        .sum(),
+                );
             }
             if crate::lifecycle::shutdown_requested(&shutdown) {
                 break;
