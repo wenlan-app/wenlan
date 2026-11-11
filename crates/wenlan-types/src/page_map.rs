@@ -57,6 +57,39 @@ pub struct PageMapEdge {
     pub status: String,
 }
 
+/// What an outline node is: one of the page's headings, or an item written
+/// under one (a list item, a bold lead, a table's first column).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OutlineKind {
+    Heading,
+    Item,
+}
+
+/// One node of a page's own outline, read live from the page body on every
+/// map read (never stored, never a suggestion). `parent_id: None` hangs it
+/// directly under the page.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PageOutlineNode {
+    /// Stable while the page keeps the same shape: the heading path plus the
+    /// item's position under it.
+    pub id: String,
+    pub parent_id: Option<String>,
+    pub kind: OutlineKind,
+    /// Short text for the box.
+    pub label: String,
+    /// The whole line, for hover.
+    pub text: String,
+    /// Heading slug, so a click can jump to that section of the page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor: Option<String>,
+    /// Zero-based line in the page body this node was read from, so an edit
+    /// made on the map can land on that line. Absent where no single line
+    /// stands behind the node.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<usize>,
+}
+
 /// Full map read: `GET /api/pages/{id}/map` and `PUT .../map/layout`, which
 /// also returns the whole (now-updated) map.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,6 +105,14 @@ pub struct PageMapResponse {
     /// of backing notes. Defaults off for older serialized responses.
     #[serde(default)]
     pub independent_ideas: bool,
+    /// The page's own headings and items, read live (GET only). Older
+    /// daemons omit it; clients then show only stored nodes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub outline: Vec<PageOutlineNode>,
+    /// The page version `outline` was read from (GET only). An edit made on
+    /// the map is applied to that version and refused if the page moved on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_version: Option<i64>,
 }
 
 /// `POST /api/pages/{id}/map/nodes`. `ref_kind`/`ref_id` are `Option` on the
@@ -266,6 +307,8 @@ mod tests {
             nodes: vec![],
             edges: vec![],
             independent_ideas: false,
+            outline: vec![],
+            page_version: None,
         };
         let json = serde_json::to_string(&response).unwrap();
         assert!(!json.contains("viewport"));

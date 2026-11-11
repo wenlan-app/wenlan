@@ -101,7 +101,7 @@ export function parseArgs(argv) {
 }
 
 export function defaultTemplatePath() {
-  return resolve(dirname(fileURLToPath(import.meta.url)), '../../chatgpt-app-submission.json');
+  return resolve(dirname(fileURLToPath(import.meta.url)), '../chatgpt-app-submission.json');
 }
 
 function isNonEmptyString(value) {

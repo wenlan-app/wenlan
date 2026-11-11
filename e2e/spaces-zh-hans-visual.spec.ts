@@ -29,8 +29,7 @@ test("captures Simplified Chinese Space and Entity dossiers at physical DPR2", a
     .getByRole("button", { name: "空间", exact: true })
     .click();
   await page.getByRole("button", { name: "Wenlan", exact: true }).click();
-  await expect(page.getByRole("tab", { name: "笔记" })).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByRole("tab", { name: "来源" })).toBeVisible();
+  await expect(page.getByRole("tab")).toHaveCount(0);
   await expect(page.locator(".space-dossier-archive,.space-dossier-entities")).toHaveCount(0);
   await expect(page.locator("aside.memory-sidebar")).toHaveAttribute("aria-hidden", "true");
   const content = page.locator(".space-dossier-content");
@@ -38,9 +37,9 @@ test("captures Simplified Chinese Space and Entity dossiers at physical DPR2", a
   await expect(content).toHaveCSS("flex-direction", "column");
   const pagesBounds = await page.locator(".space-dossier-pages").boundingBox();
   expect(pagesBounds).not.toBeNull();
-  const tabsBounds = await page.locator(".space-project-tabs").boundingBox();
-  expect(tabsBounds).not.toBeNull();
-  expect(pagesBounds!.y).toBeGreaterThanOrEqual(tabsBounds!.y + tabsBounds!.height);
+  const controlsBounds = await page.locator(".space-project-controls").boundingBox();
+  expect(controlsBounds).not.toBeNull();
+  expect(pagesBounds!.y).toBeGreaterThanOrEqual(controlsBounds!.y + controlsBounds!.height);
   const spacePath = path.join(evidenceDir, "space-zh-Hans-dpr2.png");
   await page.screenshot({ path: spacePath, fullPage: false });
 

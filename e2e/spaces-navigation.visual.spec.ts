@@ -125,8 +125,7 @@ async function assertRedesignedSurface(page: Page, name: string): Promise<boolea
     await expect(recent.locator(".space-dossier-page-meta, time")).toHaveCount(0);
     await expect(dossier.locator(".space-dossier-rail")).toHaveCount(0);
     await expect(dossier.locator(".space-dossier-disclosure,.space-dossier-archive,.space-dossier-entities,.space-dossier-review")).toHaveCount(0);
-    await expect(dossier.getByRole("tab", { name: "Pages" })).toHaveAttribute("aria-selected", "true");
-    await expect(dossier.getByRole("tab", { name: "Sources" })).toBeVisible();
+    await expect(dossier.getByRole("tab")).toHaveCount(0);
     await dossier.getByRole("button", { name: "Actions for Wenlan" }).click();
     await expect(dossier.getByRole("menuitem", { name: "Review page changes" })).toBeVisible();
     await page.keyboard.press("Escape");
@@ -151,8 +150,8 @@ async function assertRedesignedSurface(page: Page, name: string): Promise<boolea
       expect(box.scrollWidth).toBeLessThanOrEqual(box.width + 1);
     }
     const recentBox = (await recent.boundingBox())!;
-    const tabsBox = (await dossier.locator(".space-project-tabs").boundingBox())!;
-    expect(recentBox.y, "pages follow the two-tab project navigation at every width").toBeGreaterThanOrEqual(tabsBox.y + tabsBox.height);
+    const controlsBox = (await dossier.locator(".space-project-controls").boundingBox())!;
+    expect(recentBox.y, "pages follow the Cards/List control at every width").toBeGreaterThanOrEqual(controlsBox.y + controlsBox.height);
     const contrast = await renderedContrast(page, [
       { selector: ".space-dossier h1", label: "Space title", foregroundProperty: "color", minimum: 4.5 },
       { selector: ".space-dossier-new-page", label: "Space creation control", foregroundProperty: "color", minimum: 4.5 },

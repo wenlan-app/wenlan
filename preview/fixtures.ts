@@ -254,7 +254,7 @@ flowchart LR
 ## Plain code
 
 \`\`\`sh
-pnpm install && pnpm exec vite --config vite.preview.config.ts --port 1421 --strictPort --host 127.0.0.1
+pnpm install && pnpm exec vite --config tooling/vite.preview.config.ts --port 1421 --strictPort --host 127.0.0.1
 \`\`\`
 
 \`\`\`

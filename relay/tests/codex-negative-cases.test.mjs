@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import submission from '../../chatgpt-app-submission.json' with { type: 'json' };
+import submission from '../chatgpt-app-submission.json' with { type: 'json' };
 import {
   CODEX_NEGATIVE_CASES,
   FORBIDDEN_NEGATIVE_ITEM_TYPES,

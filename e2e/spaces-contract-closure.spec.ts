@@ -110,8 +110,7 @@ test("keeps inline Space edits after failure and keeps standalone memories absen
   await page.reload();
   await openSpace(page, "Keyboard title");
 
-  await expect(page.getByRole("tab", { name: "Pages" })).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByRole("tab", { name: "Sources" })).toBeVisible();
+  await expect(page.getByRole("tab")).toHaveCount(0);
   await expect(page.locator(".space-dossier-archive, .space-dossier-entities, .space-dossier-review")).toHaveCount(0);
 
   const deleteCallsBefore = controller.calls().filter(({ command }) => command === "delete_space").length;

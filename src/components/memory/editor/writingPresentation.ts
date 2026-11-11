@@ -382,8 +382,19 @@ const writingTheme = EditorView.theme({
   ".cm-writing-heading-2": {
     fontSize: "18px",
   },
-  ".cm-writing-heading-3, .cm-writing-heading-4, .cm-writing-heading-5, .cm-writing-heading-6": {
+  ".cm-writing-heading-3": {
     fontSize: "15.5px",
+  },
+  // Deeper headings step down in size and up in weight so they still read as
+  // headings next to the 15px body, and the deepest two recede in colour.
+  ".cm-writing-heading-4": {
+    fontSize: "15px",
+    fontWeight: "600",
+  },
+  ".cm-writing-heading-5, .cm-writing-heading-6": {
+    fontSize: "13.5px",
+    fontWeight: "600",
+    color: "var(--mem-text-secondary)",
   },
   "&[data-editor-presentation-mode=writing] .cm-writing-syntax-heading": {
     color: "var(--mem-text)",

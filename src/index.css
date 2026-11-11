@@ -3447,6 +3447,18 @@ p.entity-error {
   line-height: 1.45;
 }
 
+.page-canvas-notice-undo {
+  margin-left: 8px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--mem-text-primary);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
 .page-canvas-banner {
   margin: 0;
   color: var(--mem-text-tertiary);
@@ -4207,4 +4219,52 @@ html[data-theme-bg="window"] body::after {
   opacity: var(--wenlan-theme-bg-opacity, 0.35);
   content: "";
   pointer-events: none;
+}
+
+/* Find on the page map: a small field beside the zoom buttons, clear of the
+   buttons and notices along the top. */
+.page-canvas-search {
+  position: absolute;
+  bottom: 10px;
+  left: 52px;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border: 1px solid var(--mem-border);
+  border-radius: var(--mem-r-7);
+  background-color: var(--mem-surface);
+}
+
+.page-canvas-search input {
+  width: 160px;
+  border: none;
+  outline: none;
+  background: none;
+  color: var(--mem-text-primary);
+  font-family: var(--mem-font-body);
+  font-size: var(--mem-text-description);
+}
+
+.page-canvas-search-count {
+  color: var(--mem-text-tertiary);
+  font-family: var(--mem-font-body);
+  font-size: var(--mem-text-label);
+  white-space: nowrap;
+}
+
+/* Where a dragged line of the page would land. */
+.react-flow__node.is-drop-before {
+  box-shadow: 0 -2px 0 0 var(--mem-text-primary);
+}
+
+.react-flow__node.is-drop-after {
+  box-shadow: 0 2px 0 0 var(--mem-text-primary);
+}
+
+.react-flow__node.is-drop-under {
+  outline: 2px solid var(--mem-text-primary);
+  outline-offset: 2px;
+  border-radius: var(--mem-r-8);
 }

@@ -1,7 +1,7 @@
 .space-dossier-content {
   display: flex;
   flex-direction: column;
-  gap: 32px;
+  gap: 48px;
 }
 
 .space-dossier h2 {
@@ -40,17 +40,20 @@
 
 .space-dossier-page-list[data-lens="cards"] {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr));
+  gap: 14px;
 }
 
+/* Cards match home's recent pages (UX-SPACE-3): outlined, flat, no icon. */
 .space-dossier-page-list[data-lens="cards"] > button {
-  align-items: start;
-  min-height: 112px;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  row-gap: 6px;
   padding: 16px;
   border: 1px solid var(--mem-border);
   border-radius: var(--mem-r-10);
-  background: var(--mem-surface);
+  background: none;
+  box-shadow: none;
 }
 
 .space-dossier-page-list[data-lens="cards"] > button:hover {
@@ -58,9 +61,21 @@
 }
 
 .space-dossier-page-list[data-lens="cards"] .space-dossier-page-text {
-  display: grid;
-  gap: 6px;
-  min-width: 0;
+  display: contents;
+}
+
+.space-dossier-page-list[data-lens="cards"] .space-dossier-page-title {
+  font: 600 15px/1.4 var(--mem-font-body);
+}
+
+.space-dossier-page-list[data-lens="cards"] .space-dossier-page-summary {
+  color: var(--mem-text-tertiary);
+  font: 13px/1.5 var(--mem-font-body);
+}
+
+.space-dossier-page-list[data-lens="cards"] .shared-row-meta {
+  color: var(--mem-text-tertiary);
+  font-size: 13px;
 }
 
 .space-dossier-page-summary {
@@ -255,60 +270,21 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin: 20px 0 12px;
+  margin: 48px 0 12px;
+}
+
+/* Section titles read like home's: small, quiet, body font. */
+.space-dossier .space-project-heading {
+  margin: 0;
+  color: var(--mem-text-tertiary);
+  font: 400 13px/1.4 var(--mem-font-body);
+  letter-spacing: 0;
 }
 
 .space-project-controls > .asset-lens-toggle {
   flex: 0 0 auto;
 }
 
-.space-project-tabs {
-  display: flex;
-  gap: 24px;
-  min-width: 0;
-  margin: 0;
-}
-.space-project-tabs > button {
-  border: 0;
-  border-bottom: 2px solid transparent;
-  border-radius: 0;
-  padding: 8px 2px;
-  background: transparent;
-  color: var(--mem-text-secondary);
-  font: 14px/1.5 var(--mem-font-body);
-  cursor: pointer;
-}
-.space-project-tabs > button[aria-selected="true"] {
-  color: var(--mem-text);
-  border-bottom-color: var(--mem-text);
-}
-.space-project-sources { margin: 0; padding: 0; list-style: none; }
-
-.space-project-sources[data-lens="cards"] {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
-  gap: 12px;
-}
-
-.space-project-sources li { border: 0; }
-.space-project-sources .source-library-icon { flex-basis: 20px; height: 20px; background: none; border: 0; }
-.space-project-sources .source-library-row { align-items: flex-start; min-height: 64px; padding: 12px 8px; gap: 12px; }
-.space-project-sources .source-library-row-title { font: 500 17px/1.4 var(--mem-font-heading); }
-.space-project-sources .source-library-row-meta { font: 14px/1.5 var(--mem-font-body); }
-
-.space-project-sources[data-lens="cards"] li { min-width: 0; }
-.space-project-sources[data-lens="cards"] .source-library-row {
-  align-items: flex-start;
-  min-height: 112px;
-  height: 100%;
-  padding: 16px;
-  border: 1px solid var(--mem-border);
-  border-radius: var(--mem-r-10);
-  background: var(--mem-surface);
-}
-.space-project-sources[data-lens="cards"] .source-library-row:hover { background: var(--mem-hover); }
-
 @media (max-width: 480px) {
   .space-project-controls { gap: 8px; }
-  .space-project-tabs { gap: 14px; }
 }

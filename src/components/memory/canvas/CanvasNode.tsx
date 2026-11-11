@@ -3,7 +3,7 @@ import { memo, useEffect, useRef } from "react";
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 import { useTranslation } from "react-i18next";
 import {
-  compositeOver,
+  mixOver,
   type GraphPalette,
   type GraphSlot,
 } from "../../../lib/graph/palette";
@@ -18,6 +18,7 @@ const SLOT_BY_REF_KIND: Record<PageMapRefKind, GraphSlot> = {
   entity: "concept",
   section: "tool",
   idea: "concept",
+  outline: "neutral",
 };
 
 export interface CanvasNodeData extends Record<string, unknown> {
@@ -47,6 +48,19 @@ export interface CanvasNodeData extends Record<string, unknown> {
   nameInputLabel?: string;
   onNameChange?: (label: string) => void;
   onOpen: () => void;
+  /** Drawn as a quiet text link rather than a box ("show the rest"). */
+  link?: boolean;
+  /** The whole line behind a shortened label, shown on hover. */
+  hint?: string;
+  /** Set only on a heading that folds: whether its items all show. */
+  unfolded?: boolean;
+  onToggleFold?: () => void;
+  /** The ink of the page heading this line sits under; replaces the kind ink. */
+  branchColor?: string;
+  /** Drawn as text on a thin line of the branch ink instead of a box. */
+  underline?: boolean;
+  /** Outside the branch in focus: kept visible but quiet. */
+  dimmed?: boolean;
   onAccept: () => void;
   onDismiss: () => void;
   onCommit: (label: string) => void | Promise<void>;
@@ -104,7 +118,8 @@ function CanvasNode({
     nameInputLabel,
   } = data;
 
-  const slotColor = palette[SLOT_BY_REF_KIND[refKind]];
+  const slotColor = data.branchColor ?? palette[SLOT_BY_REF_KIND[refKind]];
+  const underline = !!data.underline && !data.link && !editing;
   const suggested = status === "suggested";
   const showControls = suggested && !isRoot && !readOnly && !editing;
 
@@ -114,7 +129,7 @@ function CanvasNode({
   // color, only weight, so the slot ink still means what it means everywhere
   // else in the app.
   const branch = depth <= 1;
-  const fill = compositeOver(
+  const fill = mixOver(
     slotColor,
     palette.surface,
     isRoot ? 0.22 : branch ? 0.1 : 0.035,
@@ -130,16 +145,29 @@ function CanvasNode({
         gap: 6,
         boxSizing: "border-box",
         padding: "0 10px",
-        borderRadius: "var(--mem-r-10)",
-        border: `${isRoot ? 1.5 : 1}px ${suggested ? "dashed" : "solid"} ${
-          branch ? slotColor : compositeOver(slotColor, palette.surface, 0.5)
-        }`,
-        backgroundColor: fill,
-        opacity: dangling ? 0.45 : suggested ? 0.75 : 1,
+        borderRadius: underline ? 0 : "var(--mem-r-10)",
+        border: data.link || underline
+          ? "1px solid transparent"
+          : `${isRoot ? 1.5 : 1}px ${suggested ? "dashed" : "solid"} ${
+              branch ? slotColor : mixOver(slotColor, palette.surface, 0.5)
+            }`,
+        backgroundColor: data.link || underline ? "transparent" : fill,
+        opacity: data.dimmed ? 0.28 : dangling ? 0.45 : suggested ? 0.75 : 1,
+        transition: "opacity 160ms ease",
         // Selection has to be visible or the keyboard shortcuts have no
         // referent — "Delete removes the selected box" is meaningless if
         // nothing on screen says which box that is.
-        boxShadow: selected ? `0 0 0 2px ${slotColor}` : undefined,
+        // Past the first ring a line is text on a thin stroke of its branch
+        // ink, thinner the deeper it sits, so depth reads without more boxes.
+        boxShadow:
+          [
+            underline
+              ? `inset 0 -${depth <= 2 ? 1.5 : 1}px 0 ${mixOver(slotColor, palette.surface, 0.7)}`
+              : null,
+            selected ? `0 0 0 2px ${slotColor}` : null,
+          ]
+            .filter(Boolean)
+            .join(", ") || undefined,
       }}
     >
       <Handle
@@ -162,7 +190,7 @@ function CanvasNode({
         <button
           type="button"
           onClick={data.onOpen}
-          title={dangling ? t("pageCanvas.dangling") : label}
+          title={dangling ? t("pageCanvas.dangling") : (data.hint ?? label)}
           aria-label={
             dangling ? t("pageCanvas.danglingNode", { label }) : label
           }
@@ -184,13 +212,32 @@ function CanvasNode({
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
-            color: dangling ? palette.labelMuted : palette.label,
+            color: dangling || data.link ? palette.labelMuted : palette.label,
+            textDecoration: data.link ? "underline" : undefined,
+            textUnderlineOffset: data.link ? 3 : undefined,
             fontFamily: "var(--mem-font-body)",
             fontSize: 12,
             fontWeight: isRoot ? 600 : branch ? 500 : 400,
           }}
         >
           {label}
+        </button>
+      )}
+      {data.unfolded !== undefined && data.onToggleFold && !editing && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            data.onToggleFold?.();
+          }}
+          aria-expanded={data.unfolded}
+          aria-label={t(data.unfolded ? "pageCanvas.foldItems" : "pageCanvas.unfoldItems", { label })}
+          title={t(data.unfolded ? "pageCanvas.foldItems" : "pageCanvas.unfoldItems", { label })}
+          style={controlStyle(palette.labelMuted)}
+        >
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
+            {data.unfolded ? <polyline points="15 18 9 12 15 6" /> : <polyline points="9 18 15 12 9 6" />}
+          </svg>
         </button>
       )}
       {showControls && (

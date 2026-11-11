@@ -180,9 +180,17 @@ and wait for evidence that people need them.
 - **UX-VIEW-3** `shipped` The first screen is only for people; the details for
   AI are one collapsed section.
   原文：第一屏只有給人看的，給 AI 的細節是一個收起來的展開。
-- **UX-VIEW-4** `shipped` The mind map keeps today's rule: the AI proposes,
-  and nothing counts until you accept it.
-  原文：心智圖現在「AI 提議、你收下才算」的做法留著。
+- **UX-VIEW-4** `shipped` The mind map draws the page's own headings, items
+  and the links written in the page, with nothing to accept. Memories and
+  connections the AI guesses are dashed, and count only once you keep them.
+  原文：心智圖直接畫出頁面自己的標題、條目和寫在頁面裡的連結，不用收下。AI 猜的記憶和關聯是虛線，你收下才算。
+- **UX-VIEW-8** `shipped` A box drawn from the page is the page. Renaming
+  it, adding a line beside or under it, moving it (Option-arrow, or dragging
+  it onto another line) or deleting it changes the page itself, including
+  lines the AI wrote; each change can be taken back. If the page changed since
+  the map was drawn, nothing is written and the map says so.
+  原文：「那些如果想要手動做基本的還是允許啊？除非是進階複雜操作」「要能刪除」（2026-11-11）
+  「就把之前的先合併，之後的繼續做完，因為這些都蠻基本的」（2026-11-11）
 - **UX-VIEW-6** `planned` A thing's short text is a recap in a fixed order:
   where it stands and the next step (at most two sentences), what is decided,
   what is still open, then the background. A group with nothing in it is not
@@ -439,6 +447,30 @@ and wait for evidence that people need them.
   conversation that kept a diagram always goes into a thing, so the diagram
   shows under it.
   原文：有用的图自己存：画出计划、流程、架构，或你接着用的图，AI 自己存；随手小草图不存。eli5 的 ASCII 图也算。（2026-11-08 22:26）
+
+## A Space's page
+
+- **UX-SPACE-1** `shipped` A Space's page opens with its Brief, in plain
+  words: where the work stands in a sentence or two, when an AI tool last
+  handed off, and what is in progress, newest first, one line each. Three
+  show; the rest fold under "N more". The Brief sits in one white panel with a thin border:
+  where it stands on the left, what is in progress on the right. A Space
+  with no Brief is its pages alone. No other new buttons or panels.
+  原文：「照你說的建議。我想要把 brief 結合好，不要多餘的介面」（2026-11-10 23:10Z）；草圖選擇卡「照做，連 Brief 清理一起」（2026-11-10 23:15Z）；「space 里面应该要放一些什么去区隔它的就是价值…page 是确实是被 filter 完了，但是在这里面还有什么需要特别强调的呢？」（2026-11-10 23:02Z）
+- **UX-SPACE-2** `shipped` Each night, a Space whose Brief changed gets
+  those lines written for people, in their language, with no pull request
+  numbers, version numbers, hashes or paths; until then an item shows the
+  first sentence the AI wrote. The night closes an item only when a newer
+  note in the Space says, word for word, that it is done, and records the
+  close in the Brief's history. The Brief text the AI tool wrote is kept as
+  it is.
+  原文：同 UX-SPACE-1：選擇卡「照做，連 Brief 清理一起」，問：「照這張草圖做 Space 頁面，並讓每晚整理順便清理 Brief？」（2026-11-10 23:15Z）
+- **UX-SPACE-3** `shipped` Under the Brief are the Space's pages, with no
+  Pages/Sources tabs; a page's sources are read inside the page. A page the
+  AI changed in the last day is quietly marked.
+  原文：「不 sources 放里面我也不知道它能干嘛」（2026-11-10 23:02Z）；同 UX-SPACE-1 草圖。
+  版面：「感覺版面啥的不夠好看 UI/UX」（2026-11-11 00:24Z）後，選擇卡「1 淡色底一塊」（2026-11-11 00:30Z）：Brief 一塊，筆記用卡片、上方有「筆記」標題；底色選擇卡「C 白底細框」（2026-11-11 01:02Z）。
+  與首頁一致：選 A，「首頁和空間的排版要一致，譬如間距和周遭」（2026-11-11）。首頁對齊空間頁：兩頁用同一條 840px 欄、第一行同高（「我以為是對其 space?」，2026-11-11 02:04Z）；區塊小標題、間距與卡片樣式（細框、無陰影、無圖示）和首頁相同。
 
 ## Adding to Wenlan
 

@@ -119,6 +119,6 @@
   }
 }
 
-.collection-control--primary { background: var(--mem-indigo-bg); border-color: transparent; color: var(--mem-accent-indigo); }
+.collection-control--primary { background: var(--mem-surface); border-color: var(--mem-border); box-shadow: var(--mem-shadow-raised); color: var(--mem-text); }
 .collection-control:hover { background: var(--mem-hover); color: var(--mem-text); }
-.collection-control--primary:hover { background: color-mix(in srgb, var(--mem-accent-indigo) 18%, transparent); }
+.collection-control--primary:hover { background: var(--mem-hover); }

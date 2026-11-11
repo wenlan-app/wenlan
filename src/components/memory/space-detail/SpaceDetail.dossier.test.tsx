@@ -140,7 +140,8 @@ describe("SpaceDetail editorial dossier", () => {
 
     const region = await screen.findByRole("region", { name: "Pages" });
     const rows = within(region).getAllByRole("button");
-    expect(rows[0].querySelector("svg")).toHaveAttribute("width", "20");
+    // Cards (the default lens) carry no page icon, like home's cards (UX-SPACE-3).
+    expect(rows[0].querySelector("svg")).toBeNull();
     expect(rows.map((row) => row.textContent)).toEqual([
       expect.stringContaining("Alpha"), expect.stringContaining("Beta"),
       expect.stringContaining("Charlie"), expect.stringContaining("Delta"),
@@ -157,7 +158,7 @@ describe("SpaceDetail editorial dossier", () => {
   it("keeps review in overflow and does not read standalone memories or topics", async () => {
     const onReviewAll = vi.fn();
     renderDetail({ onReviewAll });
-    await screen.findByRole("tab", { name: "Pages" });
+    await screen.findByRole("region", { name: "Pages" });
     expect(screen.queryByRole("region", { name: "Key entities" })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Raw memories" })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Needs review" })).not.toBeInTheDocument();

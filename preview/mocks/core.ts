@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Browser stand-in for @tauri-apps/api/core (aliased in vite.preview.config.ts).
+// Browser stand-in for @tauri-apps/api/core (aliased in tooling/vite.preview.config.ts).
 // Two backends: fixture data for /preview/ (flag set inline in its index.html),
 // live daemon HTTP for the real app at /.
 import {

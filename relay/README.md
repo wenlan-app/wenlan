@@ -1206,7 +1206,7 @@ only its newly created config and revokes its synthetic relay device; it retains
 the dedicated model login for subsequent authorized testing.
 
 `WENLAN_CODEX_MODEL_CASES=negative` instead starts a fresh ephemeral thread and
-uses the three exact negative prompts in `chatgpt-app-submission.json`. Each
+uses the three exact negative prompts in `relay/chatgpt-app-submission.json`. Each
 turn has a 45-second deadline. The lane requires completed, nonempty answers,
 the expected general-knowledge answer or unsupported-action explanation, and
 no MCP, shell, file-change, dynamic-tool or web-search activity. It retains

@@ -10,6 +10,7 @@ pub mod agent_presence;
 pub mod ai_memory_import;
 pub mod ambient_routes;
 pub mod brief_files;
+pub mod brief_plain_night;
 pub mod brief_routes;
 pub mod briefing_routes;
 pub mod check_routes;

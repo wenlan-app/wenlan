@@ -238,7 +238,7 @@ assert_rejects "claude MCP runner path drift" \
     "$TMPDIR_TEST/root/plugin/.mcp.json"
 
 assert_rejects "claude marketplace description drift" \
-    perl -0pi -e 's/"description": "A living wiki/"description": "A memory layer/' \
+    perl -0pi -e 's/"description": "The knowledge base/"description": "A memory layer/' \
     "$TMPDIR_TEST/root/.claude-plugin/marketplace.json"
 
 assert_rejects "claude marketplace keywords drift" \

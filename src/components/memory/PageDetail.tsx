@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { clearPageSection, headingKey, pendingPageSection, requestPageSection, wikilinkHeading } from "../../lib/pageSection";
 import SourceDocumentPreview from "./sources/SourceDocumentPreview";
 import { SourceDocumentReader } from "./sources/SourceDocumentReader";
 import { SourceLifecycleControl } from "./sources/SourceLifecycleControl";
@@ -217,6 +218,16 @@ function localShortcutModifier(): "Cmd" | "Ctrl" {
 }
 
 const PAGE_LINK_ANCHOR_PREFIX = "#concept:";
+/** Between a link's page id and the heading it opens the page at. */
+const PAGE_LINK_HEADING_MARK = "~section:";
+
+function safeDecode(text: string): string {
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return text;
+  }
+}
 type MenuInitialFocus = "first" | "last";
 
 type PageEditGate =
@@ -352,6 +363,29 @@ export default function PageDetail({
   const inspectorId = useId();
   const documentToolsHost = useContext(WorkspaceDocumentToolsHostContext);
   const noteGroup = useContext(WorkspaceNoteGroupContext);
+  // A heading or item clicked on the mind map shows where it is in the page.
+  const showPageLine = useCallback(({ text, heading }: { text: string; heading: string | null }) => {
+    const root = pageDetailRootRef.current;
+    if (!root) return;
+    const norm = (value: string) => value.replace(/\s+/g, " ").trim().toLowerCase();
+    const outsideMap = (el: Element) => !el.closest(".page-canvas, .note-inspector-panel");
+    const find = (selector: string, want: string, prefix: boolean) => {
+      const target = norm(want);
+      if (!target) return null;
+      return Array.from(root.querySelectorAll(selector)).find((el) => {
+        if (!outsideMap(el)) return false;
+        const have = norm(el.textContent ?? "");
+        return prefix ? have.startsWith(target.slice(0, 40)) : have === target;
+      }) ?? null;
+    };
+    const headings = "h1, h2, h3, h4, h5, h6";
+    const hit = text === heading
+      ? find(headings, text, false)
+      : find("li, td, p", text, true) ?? (heading ? find(headings, heading, false) : null);
+    hit?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, []);
+
+
   const setPageDetailRootRef = useCallback((node: HTMLDivElement | null) => {
     readingPositionCleanupRef.current?.();
     readingPositionCleanupRef.current = node ? preserveReadingPosition(node) : null;
@@ -553,6 +587,34 @@ export default function PageDetail({
     if (page == null) return;
     onPageLoaded?.({ id: page.id, status: page.status, title: page.title });
   }, [onPageLoaded, page?.id, page?.status, page?.title]);
+
+  // Opened from `[[this page#Heading]]`: show that heading once the page is
+  // on screen, in the editor or the reading view, whichever is drawn.
+  useEffect(() => {
+    const heading = pendingPageSection(pageId);
+    if (!heading) return;
+    let tries = 0;
+    let timer: number | undefined;
+    const revealInView = () => {
+      const root = pageDetailRootRef.current;
+      if (!root) return false;
+      const want = headingKey(heading);
+      const hit = Array.from(root.querySelectorAll("h1, h2, h3, h4, h5, h6")).find(
+        (el) => !el.closest(".page-canvas, .note-inspector-panel") && headingKey(el.textContent ?? "") === want,
+      );
+      hit?.scrollIntoView({ block: "start" });
+      return Boolean(hit);
+    };
+    const attempt = () => {
+      if (editorRef.current?.revealHeading(heading) || revealInView() || ++tries >= 30) {
+        clearPageSection(pageId);
+        return;
+      }
+      timer = window.setTimeout(attempt, 100);
+    };
+    attempt();
+    return () => window.clearTimeout(timer);
+  }, [pageId, page?.id]);
 
   const { data: pageLinks } = useQuery({
     queryKey: ["page-links", pageId],
@@ -2279,7 +2341,10 @@ export default function PageDetail({
       && labelKey.endsWith(`/${normalizeLinkLabel(target.title)}`);
     const currentTitle = cid === page.id ? page.title : namesOtherSpace ? link.targetLabel : target?.title;
     // Self references read as the page's name, not a link back to this page.
-    const href = cid && cid !== page.id ? `${PAGE_LINK_ANCHOR_PREFIX}${cid}` : undefined;
+    const heading = wikilinkHeading(inner);
+    const href = cid && cid !== page.id
+      ? `${PAGE_LINK_ANCHOR_PREFIX}${cid}${heading ? `${PAGE_LINK_HEADING_MARK}${encodeURIComponent(heading)}` : ""}`
+      : undefined;
     return { link, currentTitle, href };
   };
   // Convert [[wikilinks]] to markdown links if they resolve to pages, else plain text
@@ -2375,7 +2440,9 @@ export default function PageDetail({
     if (href.startsWith(PAGE_LINK_ANCHOR_PREFIX)) {
       e.preventDefault();
       e.stopPropagation();
-      onPageClick?.(href.replace(PAGE_LINK_ANCHOR_PREFIX, ""));
+      const [targetId, heading] = href.slice(PAGE_LINK_ANCHOR_PREFIX.length).split(PAGE_LINK_HEADING_MARK);
+      requestPageSection(targetId, heading ? safeDecode(heading) : null);
+      onPageClick?.(targetId);
     } else if (href.startsWith("#memory:")) {
       e.preventDefault();
       e.stopPropagation();
@@ -3192,8 +3259,9 @@ export default function PageDetail({
                     } else showReferencePreview(target, anchor, false);
                   }}
                   onReferencePreview={showReferencePreview}
-                  onWikiPageActivate={(targetId) => {
+                  onWikiPageActivate={(targetId, anchor) => {
                     dismissWikiLinkPreview();
+                    requestPageSection(targetId, anchor?.dataset.wikiHeading);
                     onPageClick?.(targetId);
                   }}
                   onWikiLinkPreview={showWikiLinkPreview}
@@ -3321,7 +3389,7 @@ export default function PageDetail({
             <SourceDocumentReader readingSessionKey={readingSessionKey} key={`${pageId}:${pdfPreview.source_id}`} file={pdfPreview} space={page.space ?? undefined} citation={pdfCitation?.pageId === pageId && pdfCitation.sourceId === pdfPreview.source_id ? pdfCitation.citation : undefined} />
           </div>}
           {!pdfPreviewOpen && (showCanvas ? <PageCanvas key={pageId} pageId={pageId} pageTitle={page.title} labelOverrides={labelOverrides}
-            onMemoryClick={onMemoryClick} onPageClick={onPageClick} onEntityClick={onEntityClick} />
+            onMemoryClick={onMemoryClick} onPageClick={onPageClick} onEntityClick={onEntityClick} onSectionClick={showPageLine} pageEditDirty={editDirty} />
             : <DetailInfoContent className="note-inspector-info">
           {pageHasTwoLengths && <SummaryViewSwitch
             on={pageLength === "short"}

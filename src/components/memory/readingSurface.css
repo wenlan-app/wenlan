@@ -98,6 +98,26 @@
   }
 }
 
+/* Deeper headings step down in size and up in weight so they still read as
+   headings next to the 15px body; matches the editor (.cm-writing-heading-4..6). */
+.page-detail-prose .content-renderer h4 {
+  color: var(--mem-text);
+  font-family: var(--mem-font-heading);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+  margin: 0.75em 0 0.25em;
+}
+
+.page-detail-prose .content-renderer :is(h5, h6) {
+  color: var(--mem-text-secondary);
+  font-family: var(--mem-font-heading);
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.4;
+  margin: 0.75em 0 0.25em;
+}
+
 /* The leading Markdown title has the same hierarchy as a Topic or Source title. */
 .reading-document-frame .page-detail-title,
 .page-document-editor--title .cm-content > .cm-writing-heading-1:first-child,

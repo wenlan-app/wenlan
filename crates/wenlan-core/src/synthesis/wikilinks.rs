@@ -128,6 +128,57 @@ pub fn rewrite_wikilink_targets(
     (out, changed)
 }
 
+/// Rewrite the `#heading` of every wikilink in `content` for which
+/// `replacement` returns a new heading, given the link's target and heading
+/// (both trimmed), and return the new body with the number of links changed.
+/// The target, `|label` and surrounding whitespace stay as written. Skips the
+/// same literal text [`rewrite_wikilink_targets`] does: fenced and inline
+/// code, and escaped `[[`.
+pub fn rewrite_wikilink_headings(
+    content: &str,
+    mut replacement: impl FnMut(&str, &str) -> Option<String>,
+) -> (String, usize) {
+    let fenced = obsidian::code_block_ranges(content);
+    let inline = inline_code_ranges(content, &fenced);
+    let bytes = content.as_bytes();
+    let mut out = String::with_capacity(content.len());
+    let mut copied = 0;
+    let mut changed = 0;
+    for link in obsidian::extract_wikilinks_with_spans(content) {
+        let Some(range) = link.heading_range.clone() else {
+            continue;
+        };
+        let open = link.target_range.start.saturating_sub(2);
+        if open > 0 && bytes[open - 1] == b'\\' {
+            continue;
+        }
+        if inline.iter().any(|span| span.contains(&open)) {
+            continue;
+        }
+        let raw = &content[range.clone()];
+        let heading = raw.trim();
+        let target = link.target.trim();
+        if heading.is_empty() || target.is_empty() {
+            continue;
+        }
+        let Some(next) = replacement(target, heading) else {
+            continue;
+        };
+        let next = next.trim();
+        if next == heading || next.is_empty() || next.contains(WIKILINK_TARGET_BREAKERS) {
+            continue;
+        }
+        let lead = raw.len() - raw.trim_start().len();
+        let start = range.start + lead;
+        out.push_str(&content[copied..start]);
+        out.push_str(next);
+        copied = start + heading.len();
+        changed += 1;
+    }
+    out.push_str(&content[copied..]);
+    (out, changed)
+}
+
 /// Byte ranges of inline code spans (`` `code` ``, ``` ``code`` ```) outside
 /// fenced blocks. A span opens on a run of backticks and closes on the next
 /// run of the same length before a blank line; an opener with no closer is a
@@ -316,6 +367,20 @@ pub async fn resolve_against_pages(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rewrite_headings_changes_only_the_heading_of_matching_links() {
+        let body =
+            "See [[Book#Old]], [[Book# Old |x]], [[Other#Old]], `[[Book#Old]]`, \\[[Book#Old]].";
+        let (out, changed) = rewrite_wikilink_headings(body, |target, heading| {
+            (target == "Book" && heading == "Old").then(|| "New".to_string())
+        });
+        assert_eq!(changed, 2);
+        assert_eq!(
+            out,
+            "See [[Book#New]], [[Book# New |x]], [[Other#Old]], `[[Book#Old]]`, \\[[Book#Old]]."
+        );
+    }
 
     #[test]
     fn extract_single_link() {

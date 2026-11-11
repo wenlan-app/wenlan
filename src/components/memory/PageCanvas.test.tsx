@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, cleanup, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { PageMap, PageMapNode } from "../../lib/tauri";
+import type { PageMap, PageMapNode, PageOutlineNode } from "../../lib/tauri";
 import PageCanvas from "./PageCanvas";
 
 // React Flow measures its container, and jsdom reports 0x0 — it would render
@@ -70,6 +70,8 @@ vi.mock("@xyflow/react", async () => {
               data-node-id={n.id}
               data-x={n.position?.x}
               data-y={n.position?.y}
+              data-w={n.data?.width}
+              data-h={n.data?.height}
             >
               <button
                 aria-label={`contextmenu ${n.id}`}
@@ -117,6 +119,14 @@ vi.mock("@xyflow/react", async () => {
                 }}
               />
               <button
+                aria-label={`drop at ${n.id}`}
+                onClick={() => {
+                  // Dropped with the pointer where the test put it.
+                  const at = (globalThis as any).__dropAt ?? { x: 0, y: 0 };
+                  onNodeDragStop?.({ clientX: at.x, clientY: at.y }, n);
+                }}
+              />
+              <button
                 aria-label={`select ${n.id}`}
                 onClick={() =>
                   // Real React Flow emits a change for every node on a single
@@ -140,7 +150,8 @@ vi.mock("@xyflow/react", async () => {
     ),
     ReactFlowProvider: ({ children }: any) => <>{children}</>,
     Background: () => null,
-    Controls: () => null,
+    Controls: ({ children }: any) => <>{children}</>,
+    ControlButton: ({ children, ...props }: any) => <button type="button" {...props}>{children}</button>,
     Handle: () => null,
     Position: { Top: "top", Bottom: "bottom", Left: "left", Right: "right" },
     useReactFlow: () => ({
@@ -149,6 +160,8 @@ vi.mock("@xyflow/react", async () => {
       // under test only cares that the click point comes back as flow coords.
       screenToFlowPosition: (p: { x: number; y: number }) => p,
       fitView: fitViewSpy,
+      setCenter: vi.fn(),
+      getZoom: () => 1,
     }),
     useNodesState: (initial: any) => {
       const [ns, setNs] = React.useState(initial);
@@ -267,7 +280,7 @@ const surface = () => screen.getByRole("region", { name: "Canvas for Page One" }
 // Suggestions start hidden, so a page opens on what the user actually put
 // there. Anything testing one has to reveal them the way a user does.
 async function revealSuggestions(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(await screen.findByRole("button", { name: "1 suggestion" }));
+  await user.click(await screen.findByRole("button", { name: "Add related memories" }));
 }
 
 beforeEach(() => {
@@ -662,6 +675,267 @@ describe("PageCanvas", () => {
     expect(handlers.onPageClick).toHaveBeenCalledTimes(1);
   });
 
+  it("focuses a heading's branch, dims the rest, and lets go on Escape", async () => {
+    const { getPageMap } = await tauri();
+    (getPageMap as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeMap({
+        nodes: [node({ id: "n_root", ref_kind: "page", ref_id: "p1" })],
+        edges: [],
+        outline: [
+          { id: "h:a", parent_id: null, kind: "heading", label: "Alpha", text: "Alpha" },
+          { id: "h:a#1", parent_id: "h:a", kind: "item", label: "Alpha item", text: "Alpha item" },
+          { id: "h:b", parent_id: null, kind: "heading", label: "Beta", text: "Beta" },
+        ],
+      }),
+    );
+    const { user } = renderCanvas();
+    // The box is the nearest ancestor of the label that carries an opacity.
+    const box = (label: string) => {
+      let el: HTMLElement | null = screen.getByText(label);
+      while (el && !el.style.opacity) el = el.parentElement;
+      return el!;
+    };
+    await screen.findByText("Alpha");
+    expect(box("Beta").style.opacity).toBe("1");
+
+    await user.click(screen.getByText("Alpha"));
+    await waitFor(() => expect(box("Beta").style.opacity).toBe("0.28"));
+    // Escape has to reach the map even where a click does not focus a button.
+    expect(document.activeElement).toBe(surface());
+    expect(box("Alpha").style.opacity).toBe("1");
+    expect(box("Alpha item").style.opacity).toBe("1");
+
+    fireEvent.keyDown(surface(), { key: "Escape" });
+    await waitFor(() => expect(box("Beta").style.opacity).toBe("1"));
+
+    // An Escape with nothing focused still lets go, and stays on the page.
+    await user.click(screen.getByText("Alpha"));
+    await waitFor(() => expect(box("Beta").style.opacity).toBe("0.28"));
+    (document.activeElement as HTMLElement | null)?.blur();
+    expect(fireEvent.keyDown(document.body, { key: "Escape" })).toBe(false);
+    await waitFor(() => expect(box("Beta").style.opacity).toBe("1"));
+  });
+
+  it("walks the page's lines with the arrow keys and shuts a branch from its arrow", async () => {
+    const { getPageMap } = await tauri();
+    (getPageMap as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeMap({
+        nodes: [node({ id: "n_root", ref_kind: "page", ref_id: "p1" })],
+        edges: [],
+        outline: [
+          { id: "h:a", parent_id: null, kind: "heading", label: "Alpha", text: "Alpha" },
+          { id: "h:a#1", parent_id: "h:a", kind: "item", label: "Alpha item", text: "Alpha item" },
+          { id: "h:b", parent_id: null, kind: "heading", label: "Beta", text: "Beta" },
+        ],
+      }),
+    );
+    const { user } = renderCanvas();
+    await screen.findByText("Alpha");
+    const ringed = (label: string) => {
+      let el: HTMLElement | null = screen.getByText(label);
+      while (el && !el.style.opacity) el = el.parentElement;
+      return (el?.style.boxShadow ?? "").includes("2px");
+    };
+
+    await user.click(screen.getByLabelText("select outline:h:a"));
+    await waitFor(() => expect(ringed("Alpha")).toBe(true));
+    fireEvent.keyDown(surface(), { key: "ArrowDown" });
+    await waitFor(() => expect(ringed("Beta")).toBe(true));
+    expect(ringed("Alpha")).toBe(false);
+    fireEvent.keyDown(surface(), { key: "ArrowUp" });
+    await waitFor(() => expect(ringed("Alpha")).toBe(true));
+    fireEvent.keyDown(surface(), { key: "ArrowRight" });
+    await waitFor(() => expect(ringed("Alpha item")).toBe(true));
+    fireEvent.keyDown(surface(), { key: "ArrowLeft" });
+    await waitFor(() => expect(ringed("Alpha")).toBe(true));
+    fireEvent.keyDown(surface(), { key: "ArrowLeft" });
+    await waitFor(() => expect(ringed("Page One")).toBe(true));
+
+    await user.click(screen.getByRole("button", { name: "Fold everything under Alpha" }));
+    await waitFor(() => expect(screen.queryByText("Alpha item")).toBeNull());
+    await user.click(screen.getByRole("button", { name: "Show what is under Alpha" }));
+    await screen.findByText("Alpha item");
+  });
+
+  it("UX-VIEW-8 writes renames, new lines and deletes from the map into the page, and takes them back", async () => {
+    const { getPageMap, getPage, updatePage } = await tauri();
+    const body = ["# Alpha", "", "- one", "- two", "", "# Beta", "", "Last."].join("\n");
+    let content = body;
+    let version = 4;
+    (getPageMap as ReturnType<typeof vi.fn>).mockImplementation(async () =>
+      makeMap({
+        nodes: [node({ id: "n_root", ref_kind: "page", ref_id: "p1" })],
+        edges: [],
+        page_version: version,
+        // Read from the page as it stands, the way the daemon does.
+        outline: [
+          { id: "h:a", parent_id: null, kind: "heading", label: "Alpha", text: "Alpha", line: 0 },
+          { id: "h:a#1", parent_id: "h:a", kind: "item", label: "one", text: "one", line: 2 },
+          { id: "h:b", parent_id: null, kind: "heading", label: "Beta", text: "Beta", line: content.split("\n").indexOf("# Beta") },
+        ].filter((line) => line.line >= 0) as PageOutlineNode[],
+      }),
+    );
+    (getPage as ReturnType<typeof vi.fn>).mockImplementation(async () => ({ id: "p1", content, version }));
+    (updatePage as ReturnType<typeof vi.fn>).mockImplementation(async (input: { content: string; expectedVersion: number }) => {
+      expect(input.expectedVersion).toBe(version);
+      content = input.content;
+      version += 1;
+      return { outcome: "saved" };
+    });
+    const { user } = renderCanvas();
+    await screen.findByText("Alpha");
+
+    // F2 renames the line in the page, keeping it a heading.
+    await user.click(screen.getByLabelText("select outline:h:a"));
+    fireEvent.keyDown(surface(), { key: "F2" });
+    const field = await screen.findByDisplayValue("Alpha");
+    await user.clear(field);
+    await user.type(field, "Alpha two{Enter}");
+    await waitFor(() => expect(content.split("\n")[0]).toBe("# Alpha two"));
+    expect(await screen.findByRole("button", { name: "Undo" })).toBeTruthy();
+
+    // Enter on an item writes the next item of the same list.
+    await user.click(screen.getByLabelText("select outline:h:a#1"));
+    fireEvent.keyDown(surface(), { key: "Enter" });
+    const added = await screen.findByPlaceholderText("New line");
+    await user.type(added, "one and a half{Enter}");
+    await waitFor(() => expect(content.split("\n").slice(2, 5)).toEqual(["- one", "- one and a half", "- two"]));
+
+    // Delete takes the whole heading section out of the page.
+    await user.click(screen.getByLabelText("select outline:h:b"));
+    fireEvent.keyDown(surface(), { key: "Delete" });
+    await waitFor(() => expect(content).not.toContain("Beta"));
+    expect(content).not.toContain("Last.");
+
+    // Cmd+Z puts each change back, newest first.
+    fireEvent.keyDown(surface(), { key: "z", metaKey: true });
+    await waitFor(() => expect(content).toContain("# Beta"));
+    fireEvent.keyDown(surface(), { key: "z", metaKey: true });
+    await waitFor(() => expect(content).not.toContain("one and a half"));
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(content).toBe(body));
+  });
+
+  it("UX-VIEW-8 moves lines of the page with Option-arrow and by dragging onto another line", async () => {
+    const { getPageMap, getPage, updatePage } = await tauri();
+    let content = ["# Alpha", "", "- one", "- two", "", "# Beta", "", "- three"].join("\n");
+    let version = 1;
+    // The outline as the daemon reads it from the page: headings, items under them.
+    const outlineOf = (body: string) => {
+      const out: PageOutlineNode[] = [];
+      let heading: string | null = null;
+      body.split("\n").forEach((raw, line) => {
+        const h = /^# (.*)$/.exec(raw);
+        const item = /^- (.*)$/.exec(raw);
+        if (h) {
+          heading = `h:${h[1]}`;
+          out.push({ id: heading, parent_id: null, kind: "heading", label: h[1], text: h[1], line } as PageOutlineNode);
+        } else if (item) {
+          out.push({ id: `i:${item[1]}`, parent_id: heading, kind: "item", label: item[1], text: item[1], line } as PageOutlineNode);
+        }
+      });
+      return out;
+    };
+    (getPageMap as ReturnType<typeof vi.fn>).mockImplementation(async () =>
+      makeMap({
+        nodes: [node({ id: "n_root", ref_kind: "page", ref_id: "p1" })],
+        edges: [],
+        page_version: version,
+        outline: outlineOf(content),
+      }),
+    );
+    (getPage as ReturnType<typeof vi.fn>).mockImplementation(async () => ({ id: "p1", content, version }));
+    (updatePage as ReturnType<typeof vi.fn>).mockImplementation(async (input: { content: string }) => {
+      content = input.content;
+      version += 1;
+      return { outcome: "saved" };
+    });
+    const { user } = renderCanvas();
+    await screen.findByText("one");
+
+    await user.click(screen.getByLabelText("select outline:i:one"));
+    fireEvent.keyDown(surface(), { key: "ArrowDown", altKey: true });
+    await waitFor(() => expect(content.split("\n").slice(2, 4)).toEqual(["- two", "- one"]));
+
+    // Dropped on the middle of a heading: the item goes under it.
+    const beta = screen.getAllByTestId("rf-node").find((el) => el.dataset.nodeId === "outline:h:Beta")!;
+    (globalThis as any).__dropAt = {
+      x: Number(beta.dataset.x) + Number(beta.dataset.w) / 2,
+      y: Number(beta.dataset.y) + Number(beta.dataset.h) / 2,
+    };
+    await user.click(screen.getByLabelText("drop at outline:i:two"));
+    await waitFor(() => expect(content).toBe(["# Alpha", "", "- one", "", "# Beta", "", "- three", "- two"].join("\n")));
+    (globalThis as any).__dropAt = undefined;
+
+    // Dropped on empty canvas: nothing in the page changes.
+    const writes = (updatePage as ReturnType<typeof vi.fn>).mock.calls.length;
+    await user.click(screen.getByLabelText("drop at outline:i:one"));
+    expect((updatePage as ReturnType<typeof vi.fn>).mock.calls.length).toBe(writes);
+  });
+
+  it("shows the map down to a level with Option-digit and finds a line with /", async () => {
+    const { getPageMap } = await tauri();
+    (getPageMap as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeMap({
+        nodes: [node({ id: "n_root", ref_kind: "page", ref_id: "p1" })],
+        edges: [],
+        outline: [
+          { id: "h:a", parent_id: null, kind: "heading", label: "Alpha", text: "Alpha" },
+          { id: "h:a1", parent_id: "h:a", kind: "heading", label: "Alpha one", text: "Alpha one" },
+          { id: "h:a1#1", parent_id: "h:a1", kind: "item", label: "Deep thing", text: "Deep thing" },
+          { id: "h:b", parent_id: null, kind: "heading", label: "Beta", text: "Beta" },
+        ],
+      }),
+    );
+    renderCanvas();
+    await screen.findByText("Deep thing");
+
+    fireEvent.keyDown(surface(), { key: "¡", code: "Digit1", altKey: true });
+    await waitFor(() => expect(screen.queryByText("Alpha one")).toBeNull());
+    expect(screen.getByText("Beta")).toBeTruthy();
+    fireEvent.keyDown(surface(), { key: "™", code: "Digit2", altKey: true });
+    await screen.findByText("Alpha one");
+    expect(screen.queryByText("Deep thing")).toBeNull();
+    fitViewSpy.mockClear();
+    fireEvent.keyDown(surface(), { key: "º", code: "Digit0", altKey: true });
+    await screen.findByText("Deep thing");
+    // The map refits once to the new, larger layout.
+    await waitFor(() => expect(fitViewSpy).toHaveBeenCalledTimes(1));
+    expect(fitViewSpy).toHaveBeenCalledWith(expect.objectContaining({ maxZoom: 1, padding: 0.15 }));
+
+    // Shut again, then find the deep line: its branch opens and it is picked.
+    fireEvent.keyDown(surface(), { key: "¡", code: "Digit1", altKey: true });
+    await waitFor(() => expect(screen.queryByText("Deep thing")).toBeNull());
+    fireEvent.keyDown(surface(), { key: "/" });
+    const field = await screen.findByRole("searchbox", { name: "Find on the map" });
+    fireEvent.change(field, { target: { value: "deep" } });
+    expect(screen.getByText("1")).toBeTruthy();
+    fireEvent.keyDown(field, { key: "Enter" });
+    await screen.findByText("Deep thing");
+    expect(screen.getByText("1 of 1")).toBeTruthy();
+    fireEvent.keyDown(field, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("searchbox")).toBeNull());
+  });
+
+  it("UX-VIEW-8 refuses a map edit when the page changed since the map was read", async () => {
+    const { getPageMap, getPage, updatePage } = await tauri();
+    (getPageMap as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeMap({
+        nodes: [node({ id: "n_root", ref_kind: "page", ref_id: "p1" })],
+        edges: [],
+        page_version: 2,
+        outline: [{ id: "h:a", parent_id: null, kind: "heading", label: "Alpha", text: "Alpha", line: 0 }],
+      }),
+    );
+    (getPage as ReturnType<typeof vi.fn>).mockResolvedValue({ id: "p1", content: "# Alpha", version: 3 });
+    const { user } = renderCanvas();
+    await screen.findByText("Alpha");
+    await user.click(screen.getByLabelText("select outline:h:a"));
+    fireEvent.keyDown(surface(), { key: "Delete" });
+    expect(await screen.findByText(/page changed a moment ago/i)).toBeTruthy();
+    expect(updatePage).not.toHaveBeenCalled();
+  });
+
   it("says out loud when the object behind a node is gone", async () => {
     const { getPageMap } = await tauri();
     (getPageMap as ReturnType<typeof vi.fn>).mockResolvedValue(makeMap({ independent_ideas: true }));
@@ -694,18 +968,19 @@ describe("PageCanvas", () => {
     );
   });
 
-  it("offers a counted way back to the suggestions it is hiding", async () => {
+  it("shows the suggestions it is hiding before asking the AI for more", async () => {
     const { getPageMap } = await tauri();
     (getPageMap as ReturnType<typeof vi.fn>).mockResolvedValue(makeMap({ independent_ideas: true }));
     const { user } = renderCanvas();
 
-    const chip = await screen.findByRole("button", { name: "1 suggestion" });
+    const chip = await screen.findByRole("button", { name: "Add related memories" });
     expect(screen.queryByText("Entity one")).toBeNull();
 
     await user.click(chip);
     expect(await screen.findByText("Entity one")).toBeTruthy();
-    // Nothing left to reveal, so the chip stops taking up room in the cluster.
-    expect(screen.queryByRole("button", { name: "1 suggestion" })).toBeNull();
+    // Shown suggestions trade the button for keep-all and hide.
+    expect(screen.queryByRole("button", { name: "Add related memories" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Keep all" })).toBeTruthy();
   });
 
   it("keeps the cluster clean when the map has nothing suggested", async () => {
@@ -1218,7 +1493,7 @@ describe("PageCanvas direct manipulation", () => {
     expect(screen.queryByRole("button", { name: /new node|improve|generate/i })).toBeNull();
     fireEvent.keyDown(surface(), { key: "F10", shiftKey: true });
     await screen.findByRole("menu", { name: "Canvas actions" });
-    expect(menuItems()).toEqual(["New node", "Generate", "Select all"]);
+    expect(menuItems()).toEqual(["New node", "Add related memories", "Select all"]);
     expect(screen.queryByRole("menuitem", { name: /fit/i })).toBeNull();
     await user.click(screen.getByRole("menuitem", { name: "New node" }));
     expect(await screen.findByRole("textbox", { name: "Name this node" })).toHaveFocus();
@@ -1251,7 +1526,7 @@ describe("PageCanvas direct manipulation", () => {
     const { user } = renderCanvas();
     const region = await screen.findByRole("region", { name: "Canvas for Page One" });
     fireEvent.contextMenu(region, { clientX: 100, clientY: 80 });
-    await user.click(await screen.findByRole("menuitem", { name: "Generate" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Add related memories" }));
     await waitFor(() => expect(improvePageMap).toHaveBeenCalledWith("p1"));
     expect(updatePage).not.toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: /generate|improve/i })).toBeNull();
@@ -1264,7 +1539,7 @@ describe("PageCanvas direct manipulation", () => {
     const { user } = renderCanvas();
     await screen.findByText("Page One");
     await user.click(screen.getByLabelText("pane contextmenu"));
-    await user.click(screen.getByRole("menuitem", { name: "Generate" }));
+    await user.click(screen.getByRole("menuitem", { name: "Add related memories" }));
     await waitFor(() => expect(improvePageMap).toHaveBeenCalledWith("p1"));
   });
 
@@ -1307,7 +1582,7 @@ describe("PageCanvas direct manipulation", () => {
     await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
 
     await user.click(screen.getByLabelText("pane contextmenu"));
-    expect(menuItems()).toEqual(["New node", "Generate", "Select all"]);
+    expect(menuItems()).toEqual(["New node", "Add related memories", "Select all"]);
   });
 
   it("says so in the menu when deleting takes the boxes underneath too", async () => {

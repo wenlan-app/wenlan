@@ -160,7 +160,7 @@ def _bin_test_args(names) -> list[str]:
 # The Tauri desktop app crate plus the root-level frontend dirs it shares a
 # release pipeline with. Native checks run in app-check (macos-15), with
 # portable frontend checks beside them; never select the Rust app here.
-APP_JOB_PREFIXES = ("app", "src", "e2e", "preview", "review", "public")
+APP_JOB_PREFIXES = ("app", "src", "e2e", "preview", "review", "public", "tooling")
 APP_JOB_FILES = {
     "package.json",
     "pnpm-lock.yaml",
@@ -169,11 +169,8 @@ APP_JOB_FILES = {
     "tsconfig.json",
     "tsconfig.tools.json",
     "vite.config.ts",
-    "vite.preview.config.ts",
-    "vite.review.config.ts",
     "vitest.config.ts",
     "playwright.config.ts",
-    "playwright.review.config.ts",
     "scripts/prepare-sidecars.sh",
     "scripts/prepare-tauri-build-sidecars.sh",
     # The app jobs install the package and run postinstall/dev-launcher

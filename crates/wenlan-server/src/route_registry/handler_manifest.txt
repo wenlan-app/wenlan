@@ -8,6 +8,7 @@ main|get|/api/agents/{name}|wenlan_server::profile_agents_routes::handle_get_age
 main|get|/api/ambient/status|wenlan_server::ambient_routes::handle_ambient_status
 main|get|/api/brief/history|wenlan_server::brief_routes::handle_brief_history
 main|get|/api/brief/history/{version}|wenlan_server::brief_routes::handle_brief_version
+main|get|/api/brief/plain|wenlan_server::brief_routes::handle_brief_plain
 main|get|/api/briefing|wenlan_server::briefing_routes::handle_get_briefing
 main|get|/api/capture-stats|wenlan_server::memory_detail_routes::handle_capture_stats
 main|get|/api/chunks/{source_id}|wenlan_server::indexed_files_routes::handle_get_chunks

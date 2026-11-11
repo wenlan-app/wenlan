@@ -66,6 +66,9 @@ pub struct Backoff {
     group: (u32, i64),
     /// Reading for points: failures so far and when to try again.
     dream: (u32, i64),
+    /// When the Brief pass may try again after a failure.
+    plain: i64,
+    plain_fails: u32,
 }
 
 /// The wait after `fails` failures in a row: one look, doubling, at most a
@@ -88,6 +91,10 @@ impl Backoff {
         self.group.0 += 1;
         self.group.1 = now + wait_after(self.group.0 - 1);
     }
+    fn plain_failed(&mut self, now: i64) {
+        self.plain_fails += 1;
+        self.plain = now + wait_after(self.plain_fails - 1);
+    }
     fn dream_failed(&mut self, now: i64) {
         self.dream.0 += 1;
         self.dream.1 = now + wait_after(self.dream.0 - 1);
@@ -106,6 +113,9 @@ pub struct LookReport {
     /// Things read for points, and the points written.
     pub dreamed: usize,
     pub points: usize,
+    /// Spaces whose Brief got plain lines, and Brief items closed.
+    pub briefs: usize,
+    pub briefs_closed: usize,
 }
 
 /// Start the loop.
@@ -134,7 +144,12 @@ async fn run(shared: SharedState, mut shutdown: tokio::sync::watch::Receiver<boo
             continue;
         }
         match look_once(&shared, &mut backoff).await {
-            Ok(Some(report)) if report.labelled > 0 || report.grouped > 0 || report.dreamed > 0 => {
+            Ok(Some(report))
+                if report.labelled > 0
+                    || report.grouped > 0
+                    || report.dreamed > 0
+                    || report.briefs > 0 =>
+            {
                 tracing::info!("[things] read conversations: {report:?}");
             }
             Ok(_) => {}
@@ -233,6 +248,21 @@ pub async fn look_once(
     .await?;
     report.dreamed = dreamed;
     report.points = points;
+    // UX-SPACE-2: at night, the Spaces whose Brief changed get their plain
+    // lines, written by the model that groups (the person's cloud model or
+    // their AI tool), which reads a long handoff well.
+    if NIGHT_HOURS.contains(&local_hour) && now >= backoff.plain && still_quiet() {
+        match crate::brief_plain_night::plain_once(&db, &models.group, language, now).await {
+            Ok((spaces, closed)) => {
+                report.briefs = spaces;
+                report.briefs_closed = closed;
+            }
+            Err(error) => {
+                tracing::warn!("[brief] plain lines failed: {error}");
+                backoff.plain_failed(now);
+            }
+        }
+    }
     // Following AI tools' memory, when the person turned it on: same model,
     // same quiet moment, at most once an hour.
     if let Err(error) = crate::ai_memory_import::follow_in_background(

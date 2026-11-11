@@ -1,7 +1,7 @@
 {
   "name": "wenlan-mcp",
   "version": "0.21.4",
-  "description": "MCP server for Wenlan, a living wiki your AI tools write, keep current, and cite",
+  "description": "MCP server for Wenlan, the knowledge base your AI tools keep organized",
   "keywords": [
     "mcp",
     "ai-memory",

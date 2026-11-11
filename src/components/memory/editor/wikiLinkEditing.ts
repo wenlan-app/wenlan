@@ -15,6 +15,8 @@ export interface ParsedWikiLink {
   tokenTo: number;
   targetLabel: string;
   displayText: string;
+  /** The `#heading` the link opens the page at, when it names one. */
+  heading?: string;
 }
 
 export interface EditorReferenceContext {
@@ -207,6 +209,9 @@ function parseWikiLinks(source: string, targets: ReadonlyMap<string, string>, ba
       tokenTo: baseOffset + from + match[0].length,
       targetLabel,
       displayText,
+      ...(hash >= 0 && !wholeTitle && rawTarget.slice(hash + 1).trim()
+        ? { heading: rawTarget.slice(hash + 1).trim() }
+        : {}),
     });
   }
   return matches;
@@ -408,6 +413,7 @@ export function createWikiLinkEditing(
               : kind,
             ...(target.kind === "page" ? { "data-wiki-page-id": target.id } : {}),
             "data-wiki-target-label": range.targetLabel,
+            ...(range.heading ? { "data-wiki-heading": range.heading } : {}),
         };
         if (range.memoryNumber !== undefined) {
           // The id never shows: the whole token reads as its number until

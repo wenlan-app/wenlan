@@ -48,6 +48,7 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     "list_onboarding_milestones",
     "acknowledge_onboarding_milestone",
     "get_briefing",
+    "get_space_brief",
     "get_pending_contradictions",
     "get_truth_status",
     "active_import_batches_cmd",

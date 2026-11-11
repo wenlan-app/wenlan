@@ -247,6 +247,23 @@ pub struct BriefUpdateReceipt {
     pub warnings: Vec<String>,
 }
 
+/// A Space Brief said for people (UX-SPACE-2): what `GET /api/brief/plain`
+/// answers. The night writes these lines; an empty answer means none were
+/// written yet for this Brief version.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BriefPlainView {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub space: Option<String>,
+    /// The Brief version the lines are for; absent when there are none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub brief_version: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    /// One line per active item, by item id.
+    #[serde(default)]
+    pub lines: std::collections::BTreeMap<String, String>,
+}
+
 /// One successful Brief update, newest-first in `BriefHistoryResponse`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BriefHistoryEntry {

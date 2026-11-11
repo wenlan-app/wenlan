@@ -1,16 +1,16 @@
-<!-- README_SYNC: source=README.md sha256=30b6ff5b752a6fd1a08377d57c043c4aef9d98f4e96e976d2ac6abc0d7af3e4b -->
+<!-- README_SYNC: source=README.md sha256=42b83d79b43420afe05f0d58f85a792ea998b4add6239dde155bb8d23e8848fa -->
 
 <p align="center">
   <picture>
     <source media="(max-width: 600px)" srcset="./docs/assets/readme-banner-zh-Hans-mobile.png">
-    <img src="./docs/assets/readme-banner-zh-Hans.png" alt="Wenlan：持续更新的知识库。免费、开源、本地优先。" width="100%">
+    <img src="./docs/assets/readme-banner-zh-Hans.png" alt="文澜：不用你维护的知识库。免费、开源、本地优先。" width="100%">
   </picture>
 </p>
 
 <p align="center">
-  <strong>笔记、代码、AI 对话整理成知识库，对照过来源。</strong><br>
-  你和 AI 工具共用同一份资料，来源变了会跟着更新。<br>
-  你的笔记留在你的电脑上，只会发给你选的 AI 工具。
+  <strong>开源的 Obsidian 替代品，也能直接接上你现有的仓库。</strong><br>
+  想写就自己写，其他交给 AI 整理、更新，不用设 API key，也不用装插件。<br>
+  个人和团队都能用。笔记只会去你让它去的地方。
 </p>
 
 <p align="center">
@@ -41,13 +41,26 @@
 
 ## 为什么用文澜
 
-我做文澜，是因为笔记、文档和 AI 对话散落各处又一直在变，要让笔记库不荒废得不停维护。我想要一个 AI 原生、不用费心照顾的知识库。
+我做文澜，是因为笔记、文档和 AI 对话散落各处，要让笔记系统不荒废得不停维护。文澜是给每天用 AI 工具、又不想维护笔记系统的人。
 
-- **你的 AI 帮你写、帮你维护：** 你平常用的 AI 工具把你的文档、旧笔记和 AI 对话写成新的笔记，不用另外装模型。
-- **站不住的会告诉你：** 引用大多对不上来源的笔记不会保存，每个引用都能点回原文。
-- **变了会标出来：** 来源、笔记或代码一变，只有依靠它的笔记会被标出来。
-- **你写的还是你的：** 没有你同意，不会改动你原有的笔记；你写的笔记设成“先问我”。
-- **带进现有资料，换工具也不怕：** 笔记、文档、链接和对话都能带进来（[完整清单](#what-can-i-bring-in)），存成本地 Markdown，你选的 AI 工具都能用。
+- **改了什么都看得到：** 它改了什么你都看得到，可以还原，也可以决定哪些不让它改。每个引用都能点回原文，引用大多对不上来源的笔记不会保存。
+- **想写就自己写：** 随时打开一页就能写。你写的笔记设成“先问我”。
+- **其他交给 AI 整理：** 你平常用的 AI 工具把你的笔记、文档和 AI 对话写成笔记、连起来，来源变了就跟着更新。文澜不自带 AI。
+- **一键连上：** 在设置里点“全部连接”，就连好你电脑上的 AI 工具。不用自己找插件、装插件、维护插件。
+- **跟团队共用：** 把一个 Space 放进 Google Drive 或 iCloud 云盘的文件夹共用，同事在自己的电脑上加入就能用。
+- **带进现有资料：** 笔记、文档、链接、对话和 Obsidian 仓库都能带进来（[完整清单](#what-can-i-bring-in)），存成本地 Markdown 文件。
+
+<a id="how-it-compares"></a>
+
+### 跟其他做法比
+
+| | Obsidian 加插件 | 让 AI 工具直接改 Markdown 文件夹 | 文澜 |
+|---|---|---|---|
+| 谁来整理 | 你自己，加上你找来、要维护的插件 | 你的 AI，每次都要你开口 | 你的 AI 工具边做边整理，来源变了会再更新 |
+| 设置 | 找插件、装插件、更新插件 | 自己写指示 | 在设置里点“全部连接”，一键完成 |
+| 检查 AI 写的东西 | 看插件 | 每个改动都要自己看 | 每个引用都能点回原文；引用大多对不上的笔记不会保存 |
+| AI 能改什么 | 看插件 | 文件夹里什么都能改 | 每篇笔记由你决定，也能还原到之前的版本 |
+| 你现有的仓库 | 本来就是你的仓库 | 让 AI 指向它 | 直接接上；笔记留在原处 |
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
@@ -75,7 +88,13 @@
 
 ### 3. 连接你的 AI 工具
 
-| AI 工具 | 连接方式 | 设置入口 |
+在 App 的设置里，“添加工具”会找出你电脑上的 AI 工具，点“全部连接”一次设好，不用另外装东西或更新。接着开一个新的 AI 会话，问它：
+
+> /recall 我之前对这件事的笔记和决定，再帮我：……
+
+想自己手动设置，或看看会连上什么：
+
+| AI 工具 | 会设置什么 | 说明 |
 |---|---|---|
 | Claude Code / Claude Desktop | 插件 / MCP | [Claude 指南](docs/setup-with-ai.md#claude-code) |
 | ChatGPT Desktop（Codex）、Codex CLI | 插件 | [Codex 指南](docs/setup-with-ai.md#codex) |
@@ -83,217 +102,126 @@
 | Muse Code 和其他 MCP 工具 | MCP | [MCP 指南](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 | Grok Bot | 本机 CLI，或 MCP | [Grok Bot 指南](docs/setup-with-ai.md#grok-bot) |
 
-在 App 的设置里，“添加工具”会找出你电脑上的 AI 工具，点“全部连接”一次设好。接着开一个新的 AI 会话，问它：
-
-> /recall 我之前对这件事的笔记和决定，再帮我：……
-
 Codex 中用 `$recall`；只用 MCP 的工具，直接请它先查文澜。Grok Bot 在你的电脑上运行 `wenlan recall`，或在那里开一段短暂的 `wenlan-mcp` 会话（[Grok Bot 指南](docs/setup-with-ai.md#grok-bot)）。
 
 导入完成后，App 会提供“用（你的 AI 工具）写页面”，把资料写成第一批带引用的笔记，不用输入指令。
 
 <a id="what-can-i-bring-in"></a>
+<a id="sources-and-imports"></a>
 
 <br>
 
-## 来源与导入
+## 能带进什么
 
-| 导入内容 | 用途 |
+| 可以带入什么 | 导入后怎么用 |
 | --- | --- |
-| Markdown、文本、文本型 PDF、DOCX 或文件夹 | 搜索和引用导入文本。文件夹可以只导入一次，也可以持续同步文件的变化。 |
-| Obsidian 仓库或 Logseq 图谱 | 搜索和引用现有笔记。选择持续同步，在后台跟上变化；或只导入一次。没有你同意，不会改动你原有的笔记：在 Obsidian 仓库里，设成“先问我”的笔记会收到 AI 的修改建议，由你接受或不要。 |
-| 网页链接 | 在笔记里粘贴链接，就会存成来源。YouTube、X、Threads、Instagram 和小红书的链接会显示成卡片、可播放的视频或原始帖子。也可以粘贴文本与 URL，保存那段摘录。 |
+| Markdown、文本文件、文本型 PDF、DOCX 或文件夹 | 搜索、引用里面的文字。文件夹可以只导入一次，也可以持续同步文件的变化。 |
+| Obsidian 仓库或 Logseq 图谱 | 搜索和引用现有笔记。选择持续同步，在后台跟上变化；或只导入一次。你写的笔记默认是“先问我”：AI 的修改会变成建议，由你接受或不要；每篇笔记都可以改这个设置。 |
+| 网页链接 | 在笔记里粘贴链接，就会保存为来源。YouTube、X、Threads、Instagram 和小红书的链接会显示成卡片、可播放的视频或原始帖子。 |
 | Gmail、Notion、Google Drive、Slack、GitHub | 你的 AI 工具用它自己的连接器读取，把重要的内容存进文澜，并附上原文链接。 |
-| 代码仓库 | `/wenlan wiki` 写出对应到代码行数的笔记。[代码 wiki](#code-repository-wiki)。 |
-| OKF 文件夹 | 把 Open Knowledge Format 文件夹（例如 OpenWiki 或文澜的导出）连接成来源。 |
-| 工作中的 AI 对话 | Claude Code、Codex 和你的其他 AI 工具，会把每次对话里的决定、发现和进度存成记忆，笔记再引用它们。不会导入完整对话记录。 |
-| ChatGPT 或 Claude 导出 ZIP | 检索过去的对话文本（包括最后一条没有得到回复的消息）并作为上下文引用；导入是快照，不会连接实时账户。 |
-| 文本形式的现有记忆 | 将偏好、决定或经验保存为单条记忆。 |
+| 你的 AI 对话 | 你的 AI 工具会把每次对话里的决定、发现和进度存成记忆，不会存完整对话记录。ChatGPT 或 Claude 导出的 ZIP 可以带入之前的对话，保留导入当时的内容。 |
+| 代码仓库 | `/wenlan wiki` 写出对应到代码行的笔记。[代码 wiki](#code-repository-wiki)。 |
 
-扫描版 PDF 需先提取文本；聊天附件不会导入。[导入指南（英文）](docs/import-guide.md)。
+也可以把 Open Knowledge Format（OKF）文件夹连接为来源。扫描版 PDF 需要先提取文字；对话附件不会导入。[导入指南](docs/import-guide.md)。
 
 <a id="what-makes-wenlan-distinct"></a>
 <a id="why-is-wenlan-different"></a>
 <a id="two-lifecycles"></a>
 <a id="two-lifecycles-one-maintained-knowledge-system"></a>
-<a id="两套生命周期一个持续维护的知识系统"></a>
 <a id="local-markdown"></a>
+<a id="atomic-memory"></a>
+<a id="maintained-page"></a>
+<a id="local-markdown-that-works-with-obsidian"></a>
+<a id="keep-knowledge-current-and-preserve-history"></a>
+<a id="steep-keep-knowledge-useful-as-it-changes"></a>
+<a id="what-it-does-on-its-own"></a>
+<a id="what-does-wenlan-build"></a>
+<a id="why-it-compounds"></a>
+<a id="what-is-this"></a>
+<a id="what-you-get"></a>
+<a id="what-can-it-do"></a>
+<a id="knowledge-graph"></a>
+<a id="browse-and-organize-your-knowledge"></a>
+<a id="connect-your-knowledge"></a>
+<a id="organize-scattered-material-into-knowledge"></a>
+<a id="explore-your-personal-knowledge-graph"></a>
+<a id="daily-workflow"></a>
+<a id="in-everyday-use"></a>
+<a id="how-wenlan-works"></a>
+<a id="how-does-it-work"></a>
+<a id="use-your-knowledge-with-ai"></a>
+<a id="put-your-knowledge-to-work-with-ai"></a>
+<a id="if-you-already-use-claude-code-on-your-notes"></a>
+
+<a id="两套生命周期一个持续维护的知识系统"></a>
 <a id="原子记忆"></a>
 <a id="持续维护的页面"></a>
 <a id="与-obsidian-共存的本地-markdown"></a>
-
 <a id="持续更新知识并保留历史"></a>
-
+<a id="这是什么"></a>
+<a id="浏览和整理个人知识"></a>
+<a id="让知识彼此连接"></a>
+<a id="探索你的个人知识图谱"></a>
+<a id="从关键词语义与关联找回正确内容"></a>
+<a id="用-ai-延续已有知识"></a>
+<a id="让-ai-接续已有知识"></a>
 <br>
 
-## Steep（沉淀）：让知识跟上新发现
+## 它怎么帮你整理
+
+你的 AI 工具会读你带进来的资料，写成 Markdown 笔记：把相关的笔记连起来，标出每句话的出处，来源变了就跟着更新。任何一篇笔记你都可以打开自己写。
 
 <p align="center">
   <img src="./docs/assets/wenlan-updates-history-zh-Hans.png" alt="示意流程：文件来源中的发现将记忆由 V1 更新为 V2，再影响自动更新或待审修订的笔记。" width="100%">
 </p>
 <p>示意图依据当前的更新行为绘制；并非 App 截图。</p>
 
-保存资料只是开始。**Steep 会整理资料以便重用，并让受支持的笔记保持更新**，让你和 AI 能接续先前的发现，而不必反复重读原始材料。
+- **每篇笔记都有出处：** 每个引用都能点回原文。笔记用 `[n]` 引用来源时，文澜会拿每个引用的句子对照它的来源；引用大多对不上时，不会保存该笔记。通过检查不代表内容一定正确。
+- **跟着来源更新：** 来源、记忆或引用的代码变了，依据它们的笔记会被标出来等待更新。不需要任何模型，文澜也会建议合并近似重复的笔记，并列出还没有对应笔记的 `[[链接]]`。
+- **AI 能改什么由你决定：** 你写的笔记默认是“先问我”，AI 的修改会先等你点头。每篇笔记都可以设成“直接改”或“先问我”，看得到改了什么，也能还原到之前的版本。
+- **两种方式：** “随叫”是默认，由你的 AI 工具在工作时顺手写，不用另外设置 API key。“自动”则由文澜用你选的模型在后台处理，模型可以在你的电脑上，也可以在云端。[沉淀指南](docs/steep.md)。
+- **在你的 AI 工具里：** `/recall` 找回之前的笔记和决定，`/capture` 存下一个决定或心得，`/handoff` 记下做到哪里，`/brief` 下次接着做。[插件指令](plugin/skills/README.md)。
+- **在 App 里：** 不连 AI 也能加资料、写笔记、改笔记、查回引用、审核修改建议。笔记可以包含 Mermaid 图表，由 App 画出来。
 
-在“设置”中选择两种方式之一：
-
-- **随叫**（新安装默认）：AI 工具会处理你提出的知识整理要求，也能接手新素材与待更新笔记。保存资料后，符合条件的工作会提供给 AI 工具；运行 `/wenlan steep` 可一次补做。
-- **自动：** 文澜用你指定的模型处理符合条件的后台工作。它不会自行推测你想重整既有知识；要调整内容时，请告诉 AI 你的目标。
-
-沉淀会做这些事：
-
-- **整理记忆：** 添加类型、结构化细节、搜索线索和图谱链接，让单条发现更容易在上下文中检索。
-- **让依据带动更新：** 来源、记忆或引用的代码变化时，依赖它们的笔记会标记待刷新；新记忆也可以丰富符合条件的笔记。如果草稿未通过引用检查，刷新会保留已保存笔记。通过检查并不代表事实正确。
-- **保留控制权与历史：** 后台刷新会更新符合条件的 AI 维护笔记；你撰写或编辑的笔记会收到修订提案。明确替代记忆时，旧记忆会隐藏或归档，同时保留其链接。笔记修订可供检查。
-- **按你的目标整理：** 告诉沉淀你想整理哪些记忆、笔记、文件夹、主题或关系；它会根据要求只更新需要的部分。常规整理不需要另外确认计划。
-- **先问我：** 开启“我写过的笔记：先问我”（新安装默认开启）后，AI 对你写过或改过的笔记所做的修改会先等你同意。每篇笔记的“AI 修改”设置会显示“直接改”或“先问我”。AI 写的笔记照常更新。
-
-<a id="what-it-does-on-its-own"></a>
-
-### 它自己会做的事
-
-两种模式都会做，不需要模型：
-
-- **标出过期的笔记：** 来源、记忆或引用的代码变了，相关笔记会被标记。代码 wiki 的笔记会显示代码改了什么。
-- **建议合并近似重复的笔记：** 生成一张合并卡，由你或你的 AI 决定接受或忽略。
-- **整理笔记链接：** 列出还没有对应笔记的 `[[链接]]`，并移除指向你已删除记忆的引用。
-
-重写被标记的笔记需要模型。“自动”模式下，文澜在后台完成；“随叫”模式下，AI 工具会得知哪些笔记在等待更新，并能在工作时顺手更新。
-
-[Steep 指南：触发条件、审核规则与模型设置（英文）](docs/steep.md)。可选择设备端模型、本地服务器或云端提供商；由模型驱动的后台工作为选配。
+已经用 Claude Code 或 Codex 管一个笔记文件夹？继续用就好。文澜接上同一个工具，补上文件夹自己做不到的事：检查引用、来源变了会标记，而且每篇笔记 AI 能不能改由你决定。
 
 <a id="code-repository-wiki"></a>
+<a id="a-wiki-for-your-code-repository"></a>
 
 <br>
 
 ## 为代码仓库建 wiki
 
-在代码仓库中运行 `/wenlan wiki`（Codex 中为 `$wenlan wiki`）。AI 工具会依据仓库本身规划 wiki：先写一篇列出所有笔记的总览，再为新人需要了解的每个部分或流程各写一篇。小工具只需几篇，大型 monorepo 会多得多。再次运行时只补写缺少的笔记。
+在代码仓库中运行 `/wenlan wiki`（Codex 中为 `$wenlan wiki`）。你的 AI 工具会写一篇总览，再为新人需要了解的每个部分或流程各写一篇。再次运行时只补写缺少的笔记。
 
-- **与代码绑定：** 每篇笔记都会记录它所依据的代码行。代码改动时，笔记会显示改了什么，并提供一个审核按钮；沉淀会把笔记更新到最新。
-- **以 pull request 放进仓库：** Space 上的 GitHub 按钮会把 Space 连接到对应的仓库，并把依据这些代码的笔记以 pull request 放进仓库的 `wiki/` 文件夹。可以从按钮运行，也可以开启每日更新：在你的电脑上用你自己的 AI 工具运行，或在 GitHub Actions 上运行（AI 工具的密钥存为仓库 secret），电脑关着也可以。同一个 pull request 还会修正仓库自身文档中与代码不再相符的句子，供你审核。
+- **与代码绑定：** 每篇笔记都会记录它依据的代码行；代码变了，笔记会显示改了什么。
+- **以 pull request 放进仓库：** Space 上的 GitHub 按钮会把笔记以 pull request 放进仓库的 `wiki/` 文件夹，可以点按钮运行，也可以每天自动跑。每日更新可以在你的电脑上用你自己的 AI 工具跑，或在 GitHub Actions 上跑（AI 工具的密钥存为仓库 secret）。同一个 pull request 还会修正仓库文档中与代码不再相符的句子。
 - **保留你的修改：** 有人在仓库中修改过的 wiki 笔记会保留那次修改。引用你的记忆或对话的笔记不会放进仓库。
-
-<a id="what-does-wenlan-build"></a>
-<a id="why-it-compounds"></a>
-<a id="这是什么"></a>
-<a id="what-is-this"></a>
-<a id="what-you-get"></a>
-<a id="what-can-it-do"></a>
-<a id="knowledge-graph"></a>
-
-<a id="浏览和整理个人知识"></a>
-
-<a id="让知识彼此连接"></a>
-
-<br>
-
-## 把散落的资料整理成知识
-
-<a id="探索你的个人知识图谱"></a>
-
-<p align="center">
-  <img src="./docs/assets/wenlan-personal-graph-zh-Hans.png" alt="Wenlan 实机知识图谱，搭配个人兴趣、研究与开发的区域示意" width="100%">
-</p>
-<p>保留实机节点与连线；文字经翻译，区域名称与范围为示意。</p>
-
-**来源**保留文档与对话；**记忆**记录值得重用的决定、经验与理由。将两者整理成可编辑的**带引用 Markdown 笔记**，用 `[[wikilinks]]` 连接笔记，并沿引用回到原始资料。笔记可以包含 Mermaid 图表，由 App 绘制；AI 工具写入笔记时，文澜会检查图表的常见错误，并指出要修改的那一行。
-
-- **原子记忆：** 遵循 [Zettelkasten 的原子性原则](https://zettelkasten.de/posts/create-zettel-from-reading-notes/)，让每条发现都能独立检索和重用，无需加载整段对话或笔记。
-- **共享主题：** 配置整理模型后，LLM 实体提取与实体消歧会将文档和对话中对同一人物、项目或概念的提及关联起来，并保留其记忆与来源。
-- **知识群集：** 将相连主题分组，发现资料中的相关知识。默认使用 Label Propagation；Leiden 可作为选配算法。[图谱详情](docs/technical-foundations.md#graph-data-and-entity-resolution)。
-
-<a id="daily-workflow"></a>
-
-<br>
-
-## 日常使用
-
-工作中留下新发现与进度，下次直接接着用。
-
-<p align="center">
-  <img src="./docs/assets/wenlan-daily-workflow-zh-Hans.png" alt="来源与已有记忆积累在 Wenlan；在 App 或 AI 中使用，再存回新记忆与工作进度，供下次继续。" width="100%">
-</p>
-
-简化流程示意；插件指令与笔记整理均按需使用，没有固定顺序。
-
-- **在 App 中使用。** 添加资料、撰写或编辑笔记、查看引用来源与审核修订，无需连接 AI。点菜单栏（或系统托盘）图标会打开一个小面板，列出需要你处理的事、最近的笔记和快速记下。
-- **运用知识、编写新笔记。** 请 AI 找回相关来源与记忆，用于当前任务（`/recall`）；也能编写带引用的新笔记，或依据现有版本更新笔记，再存回 Wenlan。笔记用 `[n]` 引用来源时，文澜会拿每个引用的句子对照它的来源；引用大多对不上时，不会保存该笔记。
-- **留下你的新发现。** 保存决定或心得，以及其理由和来源；可在 App 操作，或请 AI 代存（`/capture`）。
-- **告一段落，下次继续。** 保存发现与会话记录，更新受影响的笔记，并将进度和下一步写进项目摘要 Brief（`/handoff`）。下次读取这些上下文继续工作（`/brief`）。
-
-**按目标整理既有知识：** 请沉淀（`/wenlan steep`）按你的要求整理记忆、笔记、文件夹、主题与关系；只处理需要更新的部分。[沉淀指南](docs/steep.zh-Hant.md)与[插件指令](plugin/skills/README.md)。
-
-<a id="how-wenlan-works"></a>
-<a id="how-does-it-work"></a>
 
 <a id="what-wenlan-is-not"></a>
 <a id="retrieval"></a>
-<a id="从关键词语义与关联找回正确内容"></a>
 <a id="retrieval-across-words-meaning-and-connections"></a>
-
-<a id="用-ai-延续已有知识"></a>
-
-<a id="让-ai-接续已有知识"></a>
-
-<br>
-
-## 让知识活用起来
-
-资料放进文澜后，AI 就能接着用：找回带有依据的既有决定、保存新成果，并随着证据变化继续使用。
-
-<a id="if-you-already-use-claude-code-on-your-notes"></a>
-
-### 如果你已经用 Claude Code 或 Codex 管笔记
-
-继续用就好。文澜接上同一个 AI 工具，补上一个 Markdown 文件夹自己做不到的检查：引用大多和来源对不上的笔记不会保存，来源变了会标记，AI 改你写的笔记先等你审核，而且没有你同意，不会改动你原有的笔记。
-
-**适用场景：**
-
-- **开发：** 将先前的技术决定、经验与验收标准带入实现和调试。
-- **产品与网站：** 运用客户研究、定位与设计原则撰写规格或构建网页。
-- **研究与学习：** 将阅读资料与保存的发现整理成带引用的报告或可复用的学习资料。
-
-**检索与连接：** 插件会引导检索和保存；MCP 连接则提供工具供 AI 调用。
-
-- **[本地混合检索（Hybrid Retrieval）](docs/technical-foundations.md#retrieval-pipeline)**：用 SQLite FTS5 找出相同词句、BGE 向量找出相近语义（libSQL 的 DiskANN 向量索引），再以加权 RRF 合并排名；基础搜索无需 API key。
-- **图谱辅助排序：** 共享实体链接可提升相关记忆的排名，即使措辞不同也能关联。可选的 cross-encoder 重排会比较每条候选内容与问题，以调整顺序。
-- **按 Space 限定检索：** 选择 Space，将返回的知识限制在相关项目或个人资料集合内。
-
-在“设置”中开启“网页访问”开关，即可让 Claude、ChatGPT 或 Muse 等受支持的网页 AI 客户端，在你的电脑保持联网时搜索整个资料库或指定空间。允许应用时可以选“只能搜索”或“搜索和写入”；可以写入的应用还能新增、修改和删除内容，AI 应用可以在每次改动前先问你。此功能仍处于实验阶段；查询与结果会经过中继服务，详见[隐私边界](docs/PRIVACY.md#pre-release-standalone-wenlan-relay-connector)。
-
 <a id="architecture"></a>
 
 <br>
 
-## 系统架构
+## 给技术读者
 
-**共用本地知识库。** App、CLI 与 AI 工具通过 Wenlan 本地服务读写。笔记以 Markdown 保存；记忆、关系与搜索索引由本地 libSQL 管理。
-
-**技术：** 本地服务、CLI 和 MCP server 用 Rust 写成；桌面 app 用 Tauri，界面是 React 和 TypeScript。
+**共用本地知识库。** App、CLI 与连上的 AI 工具通过文澜的本地服务读写。笔记以 Markdown 文件保存；记忆、关系与搜索索引存在本地 libSQL。本地服务、CLI 和 MCP server 用 Rust 写成；桌面 app 用 Tauri，界面是 React 和 TypeScript。
 
 <p align="center">
   <img src="./docs/assets/wenlan-architecture-zh-Hans.png" alt="架构示意：App 与 AI 工具共用本地知识库，后台整理模型为可选项。" width="100%">
 </p>
 
-架构示意。[检索、引用与模型](docs/technical-foundations.md)。
+- **检索：** 用 SQLite FTS5 找出相同词句、BGE 向量找出相近语义（libSQL 的 DiskANN 向量索引），再以加权 RRF 合并排名；基础搜索不需要 API key。共同实体会提高相关记忆的排名，另可启用 cross-encoder reranking 精排。选定 Space 就只返回该项目的内容。
+- **图谱：** 配置整理模型后，实体抽取与实体消歧会把不同来源里提到的同一人物、项目或概念连起来；用 Label Propagation（默认）或 Leiden 把相关主题分组。
+- **记忆：** 发现存成一条一条独立的小记忆，不必载入整段对话或整篇笔记就能找回。
 
-<a id="models-and-privacy"></a>
-
-<br>
-
-## 数据与隐私
-
-**导出知识库：** 将符合条件的笔记导出为 Open Knowledge Format（OKF）知识库。
-
-云端 AI 客户端可能会把找回的知识传给其服务商，云端模型也会收到它处理所需的内容。本地存储不代表这些交互都留在本机。使用统计默认关闭。
-
-[文件位置、备份与卸载](docs/setup-and-data.zh-Hans.md#backup-and-removal) · [联网与隐私详情](docs/PRIVACY.md#when-wenlan-reaches-the-network)。
+[检索、引用与模型](docs/technical-foundations.md)。
 
 <a id="evaluation"></a>
 
-<br>
-
-## 评估
+### 评估
 
 这些 LongMemEval（LME）测量结果评估的是已存知识的检索，不是 AI 回答质量。Recall@5 表示相关资料出现在前五条结果中的比例。
 
@@ -309,6 +237,19 @@ Codex 中用 `$recall`；只用 MCP 的工具，直接请它先查文澜。Grok 
 在 0.20.2 导入一万篇笔记的 Obsidian 仓库（虚构的笔记，M2 Pro Mac 16 GB，debug build，由 Claude Code 写笔记）：15 秒后可以搜索，约 2 分钟写出第一篇笔记，约 4 分钟写出 8 篇带引用的笔记。
 
 [评估方法与基准详情](docs/eval/README.md)。
+
+<a id="models-and-privacy"></a>
+<a id="data-and-privacy"></a>
+
+<br>
+
+## 数据与隐私
+
+笔记是你电脑上的 Markdown 文件，符合条件的笔记可以导出为 Open Knowledge Format（OKF）知识库。云端 AI 工具可能会把找回的内容传给它的服务商，云端模型也会收到它处理的内容，所以本地存储不代表这些交互都留在本机。使用统计默认关闭。
+
+**网页访问（实验中）：** 在“设置”中开启“网页访问”，就能让 Claude、ChatGPT 或 Muse 等网页 AI 客户端，在你的电脑保持在线时搜索整个资料库或指定空间。允许应用时可以选“只能搜索”或“搜索和写入”；可以写入的应用还能新增、修改和删除内容，AI 应用可以在每次改动前先问你。查询与结果会经过中继服务，详见[隐私边界](docs/PRIVACY.md#pre-release-standalone-wenlan-relay-connector)。
+
+[文件位置、备份与移除](docs/setup-and-data.zh-Hans.md#backup-and-removal) · [联网与隐私详情](docs/PRIVACY.md#when-wenlan-reaches-the-network)。
 
 <a id="learn-more"></a>
 <a id="whats-new"></a>

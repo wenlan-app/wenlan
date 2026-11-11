@@ -174,6 +174,8 @@ pub struct WikilinkWithSpan {
     pub target: String,
     pub target_range: Range<usize>,
     pub heading: Option<String>,
+    /// Where `heading` sits in `content`, after the `#`.
+    pub heading_range: Option<Range<usize>>,
     pub display: Option<String>,
     pub is_embed: bool,
 }
@@ -198,6 +200,7 @@ pub fn extract_wikilinks_with_spans(content: &str) -> Vec<WikilinkWithSpan> {
                 target: target.as_str().to_string(),
                 target_range: target.start()..target.end(),
                 heading: cap.get(3).map(|m| m.as_str().to_string()),
+                heading_range: cap.get(3).map(|m| m.start()..m.end()),
                 display: cap.get(4).map(|m| m.as_str().to_string()),
             }
         })
