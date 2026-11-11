@@ -162,3 +162,11 @@ describe("mixOver", () => {
     expect(mixOver("#5078c8", "", 0.035)).toBe("color-mix(in srgb, #5078c8 3.5%, transparent)");
   });
 });
+
+describe("compositeOver with minified colors", () => {
+  it("blends over the #fff a production build hands over", async () => {
+    const { compositeOver } = await import("./palette");
+    expect(compositeOver("#2d78bd", "#fff", 0.1)).toBe(compositeOver("#2d78bd", "#ffffff", 0.1));
+    expect(compositeOver("#2d78bd", "#fff", 0.1)).not.toBe("#2d78bd");
+  });
+});
