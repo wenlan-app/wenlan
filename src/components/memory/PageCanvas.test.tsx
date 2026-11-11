@@ -4,7 +4,7 @@ import { render, screen, waitFor, cleanup, fireEvent } from "@testing-library/re
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { PageMap, PageMapNode, PageOutlineNode } from "../../lib/tauri";
-import PageCanvas from "./PageCanvas";
+import PageCanvas, { strokeCenterY } from "./PageCanvas";
 import { clearTrail, hopBack, takePendingJump } from "../../lib/pageMap/doorTrail";
 
 // React Flow measures its container, and jsdom reports 0x0 — it would render
@@ -1948,5 +1948,16 @@ describe("PageCanvas doors", () => {
     await user.click(screen.getByLabelText("contextmenu n_root"));
     await user.click(await screen.findByRole("menuitem", { name: "Show on the big map" }));
     expect(onShowBigMap).toHaveBeenCalled();
+  });
+});
+
+describe("strokeCenterY", () => {
+  // CanvasNode draws a line's underline as `inset 0 -Tpx 0` inside a 1px
+  // transparent border, so its center is 1 + T/2 above the box's bottom edge.
+  // The narrow map's guide lines must land there, not on the bottom edge.
+  it("is the center of the underline, inside the border", () => {
+    const box = { y: 100, height: 30 };
+    expect(strokeCenterY({ ...box, depth: 2 })).toBe(100 + 15 - 1 - 0.75);
+    expect(strokeCenterY({ ...box, depth: 3 })).toBe(100 + 15 - 1 - 0.5);
   });
 });

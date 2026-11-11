@@ -271,6 +271,26 @@ function onStroke(v: { node: { id: string }; depth: number }): boolean {
   return isPageLine(v.node.id) && v.depth >= 2 && moreFor(v.node.id) === null;
 }
 
+/** Thickness of the underline CanvasNode draws under a page line at this depth. */
+function underlineThickness(depth: number): number {
+  return depth <= 2 ? 1.5 : 1;
+}
+
+/**
+ * Y of an underlined line's stroke center. CanvasNode draws the stroke as an
+ * inset shadow inside a 1px transparent border, so it sits `1 + thickness / 2`
+ * above the box's bottom edge, not on it. Guide lines meet it here so the curve
+ * and the underline read as one stroke.
+ */
+export function strokeCenterY(v: { depth: number; y: number; height: number }): number {
+  return v.y + v.height / 2 - 1 - underlineThickness(v.depth) / 2;
+}
+
+/** Where an edge lands on an underline, it is drawn as thick as that underline. */
+function withLineStroke(look: Partial<Edge>, width: number | null): Partial<Edge> {
+  return width === null ? look : { ...look, style: { ...look.style, strokeWidth: width } };
+}
+
 type Placed = { node: { id: string }; depth: number; x: number; y: number; width: number; height: number };
 
 /**
@@ -2625,11 +2645,13 @@ function PageCanvasInner({
           ? {
               indent: {
                 fromX: from.x - from.width / 2 + 12,
-                fromY: from.y + from.height / 2,
+                // A parent that is itself a line starts its children's spine
+                // from its own stroke, not from the box edge beneath it.
+                fromY: onStroke(from) ? strokeCenterY(from) : from.y + from.height / 2,
                 toX: v.x - v.width / 2,
                 // Text on a stroke is met at the start of its stroke, not at
                 // the middle of the words, or the guide line stops short of it.
-                toY: v.y + (onStroke(v) ? v.height / 2 : 0),
+                toY: onStroke(v) ? strokeCenterY(v) : v.y,
               },
             }
           : layoutMode === "tree" && from
@@ -2638,7 +2660,10 @@ function PageCanvasInner({
         // The lines are the structure, so they thin out as the structure does:
         // spokes off the page carry weight, the twigs past them recede. Drawn in
         // one flat ink they were the faintest thing on a map they hold together.
-        ...branchLook(spineLook(v.depth), inkOf(v.node.id), v.depth, isDimmed(v.node.id, false), palette.surface),
+        ...withLineStroke(
+          branchLook(spineLook(v.depth), inkOf(v.node.id), v.depth, isDimmed(v.node.id, false), palette.surface),
+          layoutMode === "indent" && onStroke(v) ? underlineThickness(v.depth) : null,
+        ),
       });
     }
     for (const e of map?.edges ?? []) {
