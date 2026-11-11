@@ -276,6 +276,21 @@ async fn a_page_reaches_the_other_member_and_three_edits_catch_up_in_one_sync() 
     let got = b.sync(&folder).await;
     assert_eq!(got.applied, 1, "{got:?}");
     assert_eq!(b.content(&id).await, "Table 1: Ana, Cleo, Dev.");
+    // The two edits in between are in B's history too, as on A.
+    let texts: Vec<String> = b
+        .history(&id)
+        .await
+        .into_iter()
+        .map(|row| row.content)
+        .collect();
+    assert_eq!(
+        texts[..3],
+        [
+            "Table 1: Ana, Cleo, Dev.",
+            "Table 1: Ana, Cleo.",
+            "Table 1: Ana."
+        ]
+    );
     assert_eq!(a.sync(&folder).await, zero());
     assert_eq!(b.sync(&folder).await, zero());
 

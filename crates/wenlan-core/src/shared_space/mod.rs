@@ -1695,6 +1695,20 @@ impl Pass<'_> {
             .leaves
             .iter()
             .any(|leaf| leaf.sha != head.winner.sha && self.version_state(leaf) == state);
+        // Versions written while this Wenlan was away, between the one it
+        // was in step with and the head: each goes into this page's history
+        // too, so every computer lists the same edits.
+        let mut page = page.clone();
+        if !lost {
+            for between in versions_between(versions, base, head.winner) {
+                let applied = self.apply_version(&page, between).await?;
+                if !applied.complete {
+                    break;
+                }
+                page = self.reload(&page.id).await?;
+            }
+        }
+        let page = &page;
         let applied = self.apply_version(page, head.winner).await?;
         if applied.wrote && applied.complete {
             counts.applied += 1;
@@ -2389,6 +2403,44 @@ const HISTORY_SCAN: i64 = 200;
 /// made over an older version than the head is then a second leaf, an edit
 /// made at the same time, not a silent overwrite. The other leaves this page
 /// held here are replaced by the new version.
+/// Most versions taken in between on one pass, oldest kept out first.
+const BETWEEN_MAX: usize = 20;
+
+/// The versions after `base` and before `head` on head's line, oldest
+/// first, leaving out archives. Empty when `base` is not on that line or a
+/// version on the way cannot be read this pass.
+fn versions_between<'a>(
+    versions: &'a [PageVersion],
+    base: Option<&PageVersion>,
+    head: &PageVersion,
+) -> Vec<&'a PageVersion> {
+    let Some(base) = base else {
+        return Vec::new();
+    };
+    let mut line = Vec::new();
+    let mut at = head.meta.parent.as_deref();
+    while let Some(sha) = at {
+        if sha == base.sha {
+            line.reverse();
+            let skip = line.len().saturating_sub(BETWEEN_MAX);
+            return line
+                .into_iter()
+                .skip(skip)
+                .filter(|version: &&PageVersion| !version.meta.archived)
+                .collect();
+        }
+        let Some(version) = versions.iter().find(|version| version.sha == sha) else {
+            return Vec::new();
+        };
+        if line.len() > versions.len() {
+            return Vec::new();
+        }
+        line.push(version);
+        at = version.meta.parent.as_deref();
+    }
+    Vec::new()
+}
+
 fn base_of<'a>(
     history: &[String],
     versions: &'a [PageVersion],
