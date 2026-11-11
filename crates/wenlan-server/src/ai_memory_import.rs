@@ -262,10 +262,13 @@ pub async fn follow(
             };
             let mut request = point_request(&f.memory, target);
             request.supersedes = Some(old.clone());
-            let id = writer.write(request).await?;
+            let Some(decided) = store(db, writer, request).await? else {
+                counts.not_knowledge += 1;
+                settle(db, &f, Decided::Refused, &mut counts).await?;
+                continue;
+            };
             counts.updated += 1;
-            let hash = gates::text_hash(&f.memory.text);
-            note(db, &f, Decided::Point { id, hash }).await?;
+            note(db, &f, decided).await?;
             if let Some((row, _)) = &f.replaces {
                 db.drop_ai_memory_decided(&row.key).await.map_err(err)?;
             }
@@ -356,6 +359,34 @@ async fn finish(
     Ok(record.clone())
 }
 
+/// Write a point and take its fingerprint. `None` when Wenlan's own checks
+/// refuse it (too short to be a memory, for one): that memory is left out,
+/// and the pass goes on. Any other failure stops the pass, which the next
+/// one picks up where it stopped.
+async fn store(
+    db: &MemoryDB,
+    writer: &dyn PointWriter,
+    request: StoreMemoryRequest,
+) -> Result<Option<Decided>, String> {
+    let id = match writer.write(request).await {
+        Ok(id) => id,
+        Err(error) if error.contains(REFUSED) => {
+            tracing::info!("[ai-memory] a memory was refused: {error}");
+            return Ok(None);
+        }
+        Err(error) => return Err(error),
+    };
+    let hash = db
+        .ai_memory_point_fingerprint(&id)
+        .await
+        .map_err(|e| e.to_string())?
+        .unwrap_or_default();
+    Ok(Some(Decided::Point { id, hash }))
+}
+
+/// What the store says when its quality checks refuse a memory.
+const REFUSED: &str = "Quality gate rejected";
+
 /// Note what became of a memory.
 async fn note(db: &MemoryDB, f: &Fresh, decided: Decided) -> Result<(), String> {
     db.set_ai_memory_decided(&f.key, &f.memory.path.to_string_lossy(), &decided)
@@ -406,14 +437,16 @@ async fn decide_and_write(
         for (i, verdict) in gates::parse_match(&answer, &items).into_iter().enumerate() {
             let k = &batch[i];
             let decided = match verdict {
-                Verdict::New => {
-                    let id = writer.write(new_point(k)).await?;
-                    counts.added += 1;
-                    Decided::Point {
-                        id,
-                        hash: gates::text_hash(&k.fresh.memory.text),
+                Verdict::New => match store(db, writer, new_point(k)).await? {
+                    Some(decided) => {
+                        counts.added += 1;
+                        decided
                     }
-                }
+                    None => {
+                        counts.not_knowledge += 1;
+                        Decided::Refused
+                    }
+                },
                 // Wenlan already holds it: nothing is added or changed.
                 Verdict::Same { .. } => {
                     counts.already += 1;
@@ -608,9 +641,10 @@ pub async fn handle_status(
 
 /// POST /api/import/ai-memory
 ///
-/// The person turns following on (or, when it is on, asks for a pass now),
-/// and a pass runs at once. Without a model set up, only removals are made
-/// and new memories wait for one.
+/// The person turns following on (or, when it is on, asks for a pass now).
+/// The pass runs in the background, since a first one over many memories
+/// takes a while; the answer is following as it stands. Without a model set
+/// up, only removals are made and new memories wait for one.
 pub async fn handle_run(
     axum::extract::State(state): axum::extract::State<crate::state::SharedState>,
     headers: axum::http::HeaderMap,
@@ -620,23 +654,28 @@ pub async fn handle_run(
 > {
     require_person(&headers)?;
     let db = open_db(&state).await?;
-    let models = crate::things_intake::models(&state).await;
-    let seen = scan_now()
-        .await
-        .map_err(crate::error::ServerError::ValidationError)?;
     start(&db)
         .await
         .map_err(crate::error::ServerError::ValidationError)?;
-    let writer = crate::things_intake::DaemonWriter(state.clone());
-    let pass = follow(
-        &db,
-        models.as_ref().map(|m| m.group.as_ref()),
-        &writer,
-        seen,
-    )
-    .await
-    .map_err(crate::error::ServerError::ValidationError)?;
-    Ok(axum::Json(summary(&pass)))
+    let record = db.ai_memory_import().await?.ok_or_else(|| {
+        crate::error::ServerError::ValidationError("following did not start".into())
+    })?;
+    let models = crate::things_intake::models(&state).await;
+    tokio::spawn(async move {
+        let seen = match scan_now().await {
+            Ok(seen) => seen,
+            Err(error) => {
+                tracing::warn!("[ai-memory] reading the memory folders: {error}");
+                return;
+            }
+        };
+        let writer = crate::things_intake::DaemonWriter(state.clone());
+        let model = models.as_ref().map(|m| m.group.as_ref());
+        if let Err(error) = follow(&db, model, &writer, seen).await {
+            tracing::warn!("[ai-memory] pass: {error}");
+        }
+    });
+    Ok(axum::Json(summary(&record)))
 }
 
 /// POST /api/import/ai-memory/undo

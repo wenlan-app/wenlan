@@ -39,9 +39,9 @@ const MAX_FILE_BYTES: u64 = 512 * 1024;
 /// Memory files read from one folder, at most.
 const MAX_FILES_PER_DIR: usize = 500;
 /// Project folders under Claude Code's `projects`, at most.
-const MAX_PROJECTS: usize = 500;
+const MAX_PROJECTS: usize = 5_000;
 /// Memories read in one import, at most.
-pub const MAX_MEMORIES: usize = 3_000;
+pub const MAX_MEMORIES: usize = 20_000;
 /// Text kept from one memory.
 pub const MAX_MEMORY_CHARS: usize = 1_500;
 /// Shorter than this is a heading or a stray word, not something known.
@@ -383,13 +383,15 @@ their work, product, field, decisions or their own life (a fact, a decision and 
 lesson learned)?\n\
 \"tool\": is it about how the AI tool or assistant should work: steps it takes, commands, \
 shell or editor quirks, where files are, how to run or restart something, problems with tools, \
-or how the person wants the assistant to reply?\n\
+how the person wants the assistant to reply, or a rule for how the assistant should behave \
+(\"never say X\", \"always check Y first\")?\n\
 \"expires\": does it only hold for a while: where a pull request, review, release or task \
 stands, a version number, what is \"current\" or \"now\", a date that will pass?\n\
 \"others\": does it hold other people's personal details (their contact details, health, \
 money, family or private life)?\n\
-\"personal\": is it about the person's own private life rather than their work (health, \
-money, family, home, plans of their own)?\n\
+\"personal\": is it about the person themselves rather than their work: their own private \
+life (health, money, family, home, plans of their own) or who they are (their name, accounts, \
+handles)?\n\
 When you are not sure, answer \"useful\": false.\n\
 Answer with JSON only: {{\"answers\": [{{\"m\": \"M0\", \"useful\": true|false, \
 \"tool\": true|false, \"expires\": true|false, \"others\": true|false, \

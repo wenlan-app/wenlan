@@ -579,3 +579,84 @@ fn scanning_leaves_the_tools_files_as_they_were() {
         before
     );
 }
+
+/// Stores each point the way a long one is stored, in parts: only the first
+/// part's words are read back. Refuses one too short to be a memory, as the
+/// store's quality checks do.
+struct Parts<'a>(Keep<'a>);
+
+impl PointWriter for Parts<'_> {
+    fn write(&self, mut request: StoreMemoryRequest) -> crate::things_intake::Written<'_> {
+        Box::pin(async move {
+            if request.content.contains("tiny") {
+                return Err("Quality gate rejected: Only 4 meaningful words".into());
+            }
+            request.content = request.content.chars().take(30).collect();
+            self.0.write(request).await
+        })
+    }
+}
+
+/// One memory the store refuses is left out and the pass goes on; a point
+/// stored in parts is still Wenlan's own, so turning following off takes it
+/// back.
+#[tokio::test]
+async fn a_refused_memory_does_not_stop_the_pass_and_a_long_point_is_taken_back() {
+    let _one = ONE_AT_A_TIME.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let db = MemoryDB::new(dir.path(), Arc::new(NoopEmitter))
+        .await
+        .unwrap();
+    on(&db).await;
+    let model = Judge::new(false);
+    let parts = Parts(keep(&db));
+    let pass = follow(
+        &db,
+        Some(model.as_ref()),
+        &parts,
+        seen(vec![
+            memory_in("a.md", "Lore tiny note that the store refuses."),
+            memory_in(
+                "b.md",
+                "Lore must check the license before borrowing outside code, every time.",
+            ),
+        ]),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        (pass.counts.added, pass.counts.not_knowledge),
+        (1, 1),
+        "{:?}",
+        pass.counts
+    );
+    let id = point_of(
+        &db,
+        "Lore must check the license before borrowing outside code, every time.",
+    )
+    .await
+    .unwrap();
+    // Asked once: the refused one is not asked about again.
+    let asked = model.prompts.lock().unwrap().len();
+    follow(
+        &db,
+        Some(model.as_ref()),
+        &parts,
+        seen(vec![
+            memory_in("a.md", "Lore tiny note that the store refuses."),
+            memory_in(
+                "b.md",
+                "Lore must check the license before borrowing outside code, every time.",
+            ),
+        ]),
+    )
+    .await
+    .unwrap();
+    assert_eq!(model.prompts.lock().unwrap().len(), asked);
+
+    db.undo_ai_memory_import().await.unwrap();
+    assert!(
+        db.get_memory_detail(&id).await.unwrap().is_none(),
+        "a point in parts is taken back"
+    );
+}

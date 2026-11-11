@@ -52,6 +52,9 @@ pub enum Decided {
     Already,
     /// Disagreed with what Wenlan holds, or could not be told apart.
     Conflict,
+    /// Kept, but Wenlan's own checks refused to store it (too short to be
+    /// a memory, for one).
+    Refused,
 }
 
 /// One ledger row.
@@ -178,8 +181,33 @@ impl MemoryDB {
         Ok(forgotten)
     }
 
+    /// The fingerprint of a point as it is stored now, read back right after
+    /// it is written: what [`Self::ai_memory_point`] later compares with. A
+    /// long point is stored in parts, so this is not the memory's own text.
+    pub async fn ai_memory_point_fingerprint(
+        &self,
+        id: &str,
+    ) -> Result<Option<String>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT COALESCE(authored_content, content) FROM memories
+                  WHERE source = 'memory' AND source_id = ?1 AND chunk_index = 0",
+                libsql::params![id],
+            )
+            .await
+            .map_err(db_err("ai memory fingerprint"))?;
+        Ok(rows
+            .next()
+            .await
+            .map_err(db_err("ai memory fingerprint row"))?
+            .map(|row| {
+                crate::ai_memory_import::text_hash(&row.get::<String>(0).unwrap_or_default())
+            }))
+    }
+
     /// Whether a point the import wrote is still there, and still as written
-    /// (its words match `hash`).
+    /// (its stored words match the fingerprint taken when it was written).
     pub async fn ai_memory_point(&self, id: &str, hash: &str) -> Result<PointState, WenlanError> {
         let conn = self.conn.lock().await;
         let mut rows = conn
