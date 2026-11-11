@@ -162,3 +162,14 @@ export function nodeFillFor(
   const alpha = confirmed === true ? 0.95 : lightSurface ? 0.8 : 0.7;
   return compositeOver(colorForEntityType(entityType, palette), palette.surface, alpha);
 }
+
+/**
+ * The same blend as `compositeOver`, for DOM boxes: CSS mixes any color the
+ * theme hands over (a custom theme may not use six-digit hex), where
+ * `compositeOver` has to give up and return the full-strength ink.
+ */
+export function mixOver(fg: string, bg: string, alpha: number): string {
+  if (HEX6.test(fg) && HEX6.test(bg)) return compositeOver(fg, bg, alpha);
+  if (!fg) return fg;
+  return `color-mix(in srgb, ${fg} ${Math.round(alpha * 1000) / 10}%, ${bg || "transparent"})`;
+}

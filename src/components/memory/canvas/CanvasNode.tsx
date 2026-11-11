@@ -3,7 +3,7 @@ import { memo, useEffect, useRef } from "react";
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 import { useTranslation } from "react-i18next";
 import {
-  compositeOver,
+  mixOver,
   type GraphPalette,
   type GraphSlot,
 } from "../../../lib/graph/palette";
@@ -123,7 +123,7 @@ function CanvasNode({
   // color, only weight, so the slot ink still means what it means everywhere
   // else in the app.
   const branch = depth <= 1;
-  const fill = compositeOver(
+  const fill = mixOver(
     slotColor,
     palette.surface,
     isRoot ? 0.22 : branch ? 0.1 : 0.035,
@@ -143,7 +143,7 @@ function CanvasNode({
         border: data.link
           ? "1px solid transparent"
           : `${isRoot ? 1.5 : 1}px ${suggested ? "dashed" : "solid"} ${
-              branch ? slotColor : compositeOver(slotColor, palette.surface, 0.5)
+              branch ? slotColor : mixOver(slotColor, palette.surface, 0.5)
             }`,
         backgroundColor: data.link ? "transparent" : fill,
         opacity: dangling ? 0.45 : suggested ? 0.75 : 1,

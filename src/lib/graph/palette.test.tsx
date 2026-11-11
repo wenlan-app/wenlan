@@ -149,3 +149,16 @@ describe("nodeFillFor", () => {
     expect(nodeFillFor("place", null, palette)).toBe("#474747");
   });
 });
+
+describe("mixOver", () => {
+  it("blends hex like compositeOver", async () => {
+    const { mixOver, compositeOver } = await import("./palette");
+    expect(mixOver("#000000", "#ffffff", 0.1)).toBe(compositeOver("#000000", "#ffffff", 0.1));
+  });
+
+  it("still tints when the theme hands over a color that is not six-digit hex", async () => {
+    const { mixOver } = await import("./palette");
+    expect(mixOver("rgb(80, 120, 200)", "#ffffff", 0.1)).toBe("color-mix(in srgb, rgb(80, 120, 200) 10%, #ffffff)");
+    expect(mixOver("#5078c8", "", 0.035)).toBe("color-mix(in srgb, #5078c8 3.5%, transparent)");
+  });
+});
