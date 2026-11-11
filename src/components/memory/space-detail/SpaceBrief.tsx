@@ -29,7 +29,7 @@ export function SpaceBrief({ spaceName }: { readonly spaceName: string }) {
   const shown = open ? brief.active : brief.active.slice(0, BRIEF_ITEMS_SHOWN);
   const hidden = brief.active.length - BRIEF_ITEMS_SHOWN;
   return (
-    <section className="space-brief" aria-label={t("spaceDetail.brief.label")} data-testid="space-brief">
+    <section className="space-brief" aria-label={t("spaceDetail.brief.label")} data-testid="space-brief" data-split={Boolean(brief.summary) && brief.active.length > 0}>
       {brief.summary ? (
         <div className="space-brief-now">
           <p className="space-brief-summary">{brief.summary}</p>
@@ -47,6 +47,7 @@ export function SpaceBrief({ spaceName }: { readonly spaceName: string }) {
           {hidden > 0 ? (
             <button type="button" className="space-brief-more" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
               {open ? t("spaceDetail.brief.less") : t("spaceDetail.brief.more", { count: hidden })}
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
             </button>
           ) : null}
         </div>

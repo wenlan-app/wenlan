@@ -1,21 +1,35 @@
 /* SPDX-License-Identifier: AGPL-3.0-only */
-/* A Space's Brief on top of its page (UX-SPACE-1): plain text, no box. */
+/* A Space's Brief on top of its page (UX-SPACE-1): one soft panel, where
+   the work stands on the left and what is in progress on the right. */
 .space-brief {
   display: grid;
-  gap: 18px;
-  max-width: 640px;
-  margin: 4px 0 28px;
+  gap: 24px 40px;
+  margin: 28px 0 8px;
+  padding: 26px 30px 24px;
+  border-radius: var(--mem-r-12);
+  background: var(--mem-hover);
+}
+
+.space-brief[data-split="true"] {
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+}
+
+@media (max-width: 720px) {
+  .space-brief[data-split="true"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .space-brief-now {
   display: grid;
-  gap: 6px;
+  align-content: start;
+  gap: 12px;
 }
 
 .space-brief-summary {
   margin: 0;
   color: var(--mem-text);
-  font: 400 16px/1.65 var(--mem-font-body);
+  font: 500 18px/1.65 var(--mem-font-body);
   overflow-wrap: anywhere;
 }
 
@@ -27,20 +41,20 @@
 
 .space-brief-items {
   display: grid;
-  gap: 8px;
+  align-content: start;
+  gap: 10px;
 }
 
 .space-dossier .space-brief-heading,
 .space-brief-heading {
   margin: 0;
   color: var(--mem-text-secondary);
-  font: 600 12px/1.4 var(--mem-font-body);
-  letter-spacing: 0.04em;
+  font: 500 12px/1.4 var(--mem-font-body);
 }
 
 .space-brief-items ul {
   display: grid;
-  gap: 6px;
+  gap: 9px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -49,29 +63,81 @@
   overflow-wrap: anywhere;
 }
 
+.space-brief-items li {
+  display: flex;
+  gap: 10px;
+}
+
+.space-brief-items li::before {
+  content: "";
+  flex: none;
+  width: 9px;
+  height: 9px;
+  margin-top: 6px;
+  border: 1.6px solid var(--mem-accent-warm);
+  border-radius: 50%;
+}
+
 .space-brief-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   justify-self: start;
+  height: 28px;
+  margin: 2px 0 0 9px;
+  padding: 0 11px;
   border: 0;
-  background: none;
-  padding: 0;
-  color: var(--mem-text-secondary);
-  font: 400 13px/1.4 var(--mem-font-body);
+  border-radius: var(--mem-radius-full);
+  background: var(--mem-indigo-bg);
+  color: var(--mem-accent-indigo);
+  font: 500 13px/1 var(--mem-font-body);
   cursor: pointer;
 }
 
+.space-brief-more svg {
+  width: 14px;
+  height: 14px;
+  transition: transform 120ms ease;
+}
+
+.space-brief-more[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+
 .space-brief-more:hover {
-  color: var(--mem-text);
+  background: color-mix(in srgb, var(--mem-accent-indigo) 16%, transparent);
 }
 
 .space-brief-more:focus-visible {
   outline: 2px solid var(--mem-accent-indigo);
-  outline-offset: 3px;
-  border-radius: var(--mem-r-2);
+  outline-offset: 2px;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .space-brief-more svg {
+    transition: none;
+  }
+}
+
+/* "Updated by AI" on a page the AI changed in the last day. */
 .space-dossier-page-fresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   margin-left: 10px;
-  color: var(--mem-text-secondary);
+  color: var(--mem-accent-indigo);
   font: 400 12px/1.4 var(--mem-font-body);
   white-space: nowrap;
+}
+
+.space-dossier-page-fresh::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.space-dossier-page-list[data-lens="cards"] .space-dossier-page-fresh {
+  margin: 2px 0 0;
 }

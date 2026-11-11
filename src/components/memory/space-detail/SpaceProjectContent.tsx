@@ -26,10 +26,11 @@ type Props = {
 export function SpaceProjectContent({ copy, spaceId, pages, pagesPending, pagesError, onRetryPages, onSelectPage, shares }: Props) {
   const { t } = useTranslation();
   const [lenses, setLenses] = useState<Readonly<Record<string, AssetLens>>>({});
-  const lens = lenses[spaceId] ?? "rows";
+  const lens = lenses[spaceId] ?? "cards";
   const setLens = (next: AssetLens) => setLenses((current) => ({ ...current, [spaceId]: next }));
   return <>
     <div className="space-project-controls collection-toolbar">
+      <h2 className="space-project-heading">{copy.metrics.pages}</h2>
       <AssetLensToggle value={lens} onChange={setLens} />
     </div>
     <div>
