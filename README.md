@@ -39,7 +39,9 @@
 
 ## Why Wenlan
 
-I started Wenlan because my notes, documents, and AI chats were scattered, and keeping a note system from rotting took constant upkeep. Wenlan is for people who use AI tools every day and don't want to maintain a note system.
+I started Wenlan because my notes, documents, and AI chats were scattered, and keeping a note system from rotting took constant upkeep. Since then we keep hearing the same about Obsidian: too much setup, with plugins to find, install, and keep updated. Wenlan is for people who use AI tools every day and don't want to maintain a note system.
+
+**Personal:** download the desktop app and use it on your own. **Teams (coming soon):** a self-hosted Wenlan server everyone connects to, with view-only or edit access for each person.
 
 - **You decide what AI changes.** See every change, undo it, and choose which pages wait for your OK.
 - **Pages cite their sources.** A citation opens the original; a page whose citations mostly don't match isn't saved.
@@ -52,13 +54,13 @@ I started Wenlan because my notes, documents, and AI chats were scattered, and k
 
 ### How it compares
 
-| | Obsidian with plugins | An AI tool on a Markdown folder | Wenlan |
-|---|---|---|---|
-| Who keeps it organized | You, with plugins you find and update | Your AI, each time you ask | Your AI tools as they work, and again when a source changes |
-| Setup | Find, install, and update plugins | Write your own instructions | **Connect all** in Settings, one click |
-| Checking the AI's work | Depends on the plugin | Read every diff yourself | Each citation opens the original; a page whose citations mostly don't match is refused |
-| What the AI may change | Depends on the plugin | Anything in the folder | You choose per page, and can restore an earlier version |
-| Your existing vault | It is your vault | Point the AI at it | Link it in; notes stay where they are |
+| | Obsidian with plugins | Notion | LLM wiki apps | Wenlan |
+|---|---|---|---|---|
+| Who keeps it organized | You, with plugins you find and update | You; Notion Agent when asked, or a Custom Agent on its own | An AI you set up for it: a model API key, or a scheduled routine | Your AI tools as they work, and again when a source changes |
+| Setup | Find, install, and update plugins | Sign in; full AI on the Business plan | Add a model key, or connect your AI and schedule it | **Connect all** in Settings, one click, no API key |
+| Checking the AI's work | Depends on the plugin | Answers cite sources; no check that a page matches them | Pages link to their sources | Each citation opens the original; a page whose citations mostly don't match is refused |
+| What the AI may change | Depends on the plugin | Custom Agents: the pages you give them | The wiki folder it writes | You choose per page, and can restore an earlier version |
+| Where your notes live | Markdown files on your computer | Notion's cloud; export to Markdown | Files on your computer | Markdown files on your computer; works with your existing vault |
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>

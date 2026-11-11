@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=8c7c4790bc05a2580b11bedc1327dc0c40e505a48706c1852fcb70c038fac875 -->
+<!-- README_SYNC: source=README.md sha256=87eb3dd59c992f695f013602d78e169e1f40d1748a818e868175935230be1f34 -->
 
 <p align="center">
   <picture>
@@ -41,7 +41,9 @@
 
 ## Por qué Wenlan
 
-Empecé Wenlan porque mis notas, documentos y chats de IA estaban dispersos, y evitar que un sistema de notas se echara a perder exigía un mantenimiento constante. Wenlan es para quienes usan herramientas de IA a diario y no quieren mantener un sistema de notas.
+Empecé Wenlan porque mis notas, documentos y chats de IA estaban dispersos, y evitar que un sistema de notas se echara a perder exigía un mantenimiento constante. Desde entonces no dejamos de oír lo mismo sobre Obsidian: demasiada configuración, con plugins que buscar, instalar y mantener al día. Wenlan es para quienes usan herramientas de IA a diario y no quieren mantener un sistema de notas.
+
+**Personal:** descarga la app de escritorio y úsala por tu cuenta. **Equipos (próximamente):** un servidor de Wenlan autoalojado al que todos se conectan, con acceso de solo lectura o de edición para cada persona.
 
 - **Tú decides qué cambia la IA.** Ves cada cambio, lo deshaces y eliges qué páginas esperan tu visto bueno.
 - **Las páginas citan sus fuentes.** Una cita abre el original; una página cuyas citas casi no coinciden no se guarda.
@@ -54,13 +56,13 @@ Empecé Wenlan porque mis notas, documentos y chats de IA estaban dispersos, y e
 
 ### Cómo se compara
 
-| | Obsidian con plugins | Una herramienta de IA sobre una carpeta de Markdown | Wenlan |
-|---|---|---|---|
-| Quién la mantiene ordenada | Tú, con plugins que buscas y actualizas | Tu IA, cada vez que se lo pides | Tus herramientas de IA mientras trabajan, y otra vez cuando cambia una fuente |
-| Configuración | Buscar, instalar y actualizar plugins | Escribir tus propias instrucciones | **Connect all** en los ajustes, un clic |
-| Revisar lo que hace la IA | Depende del plugin | Leer cada cambio tú mismo | Cada cita abre el original; se rechaza una página si la mayoría de sus citas no coinciden |
-| Qué puede cambiar la IA | Depende del plugin | Cualquier cosa de la carpeta | Tú eliges en cada página, y puedes restaurar una versión anterior |
-| Tu bóveda actual | Es tu bóveda | Apuntar la IA hacia ella | Se enlaza tal cual; las notas se quedan donde están |
+| | Obsidian con plugins | Notion | Apps de LLM wiki | Wenlan |
+|---|---|---|---|---|
+| Quién la mantiene ordenada | Tú, con plugins que buscas y actualizas | Tú; Notion Agent cuando se lo pides, o un Custom Agent por su cuenta | Una IA que configuras para ello: una clave de API de un modelo o una rutina programada | Tus herramientas de IA mientras trabajan, y otra vez cuando cambia una fuente |
+| Configuración | Buscar, instalar y actualizar plugins | Iniciar sesión; la IA completa, en el plan Business | Añadir una clave de modelo, o conectar tu IA y programarla | **Connect all** en los ajustes, un clic, sin clave de API |
+| Revisar lo que hace la IA | Depende del plugin | Las respuestas citan fuentes; no se comprueba que la página coincida | Las páginas enlazan a sus fuentes | Cada cita abre el original; se rechaza una página si la mayoría de sus citas no coinciden |
+| Qué puede cambiar la IA | Depende del plugin | Custom Agents: las páginas que les das | La carpeta de la wiki que escribe | Tú eliges en cada página, y puedes restaurar una versión anterior |
+| Dónde viven tus notas | Archivos Markdown en tu ordenador | En la nube de Notion; exportable a Markdown | Archivos en tu ordenador | Archivos Markdown en tu ordenador; funciona con tu bóveda actual |
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
