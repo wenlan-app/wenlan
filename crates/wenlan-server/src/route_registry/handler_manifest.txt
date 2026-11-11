@@ -348,6 +348,7 @@ main|delete|/api/pages/{id}/shared|wenlan_server::spaces_routes::handle_page_sha
 main|get|/api/shared|wenlan_server::spaces_routes::handle_shared_list
 main|post|/api/shared/folder|wenlan_server::spaces_routes::handle_shared_folder
 main|post|/api/library/shared/sync|wenlan_server::spaces_routes::handle_library_shared_sync
+main|post|/api/library/shared/main|wenlan_server::spaces_routes::handle_library_shared_main
 main|get|/api/library/shared|wenlan_server::spaces_routes::handle_library_shared_status
 main|delete|/api/library/shared|wenlan_server::spaces_routes::handle_library_shared_leave
 main|get|/api/team|wenlan_server::team_routes::handle_team_status

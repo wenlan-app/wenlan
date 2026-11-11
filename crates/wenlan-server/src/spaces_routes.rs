@@ -197,6 +197,7 @@ pub(crate) fn register_extended(router: TrackedRouter<SharedState>) -> TrackedRo
             get(handle_page_shared_status).delete(handle_page_shared_leave),
         )
         .route("/api/library/shared/sync", post(handle_library_shared_sync))
+        .route("/api/library/shared/main", post(handle_library_shared_main))
         .route(
             "/api/library/shared",
             get(handle_library_shared_status).delete(handle_library_shared_leave),
@@ -521,6 +522,25 @@ pub async fn handle_library_shared_sync(
 pub async fn handle_library_shared_status(
 ) -> Result<Json<wenlan_types::shared_space::SharedSyncStatus>, ServerError> {
     shared_status(&wenlan_core::shared_space::Scope::Library)
+}
+
+/// POST /api/library/shared/main — makes one of the library's computers the
+/// main one: it writes the phone read copy, takes the inbox and runs
+/// background AI page writing. Returns the library's status.
+pub async fn handle_library_shared_main(
+    Json(req): Json<wenlan_types::shared_space::SetMainDeviceRequest>,
+) -> Result<Json<wenlan_types::shared_space::SharedSyncStatus>, ServerError> {
+    use wenlan_core::shared_space::{library, Scope};
+    let settings = wenlan_core::shared_space::settings_path();
+    let share = wenlan_core::shared_space::share_settings_at(&settings, &Scope::Library)?
+        .ok_or_else(|| ServerError::NotFound("the library is not shared from here".into()))?;
+    let device = req.device_id.trim().to_string();
+    tokio::task::spawn_blocking(move || {
+        library::set_main_device(std::path::Path::new(&share.folder), &device)
+    })
+    .await
+    .map_err(|e| ServerError::Internal(e.to_string()))??;
+    shared_status(&Scope::Library)
 }
 
 /// DELETE /api/library/shared — stops sharing the library from here; the

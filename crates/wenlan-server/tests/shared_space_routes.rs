@@ -306,6 +306,33 @@ async fn shared_sync_writes_the_space_pages_and_returns_counts() {
     assert_eq!(status, StatusCode::OK);
     let library: SharedSyncStatus = serde_json::from_slice(&body).unwrap();
     assert_eq!(library.kind, SharedKind::Library);
+    // This computer is listed, and the first one is the main computer.
+    assert_eq!(library.devices.len(), 1);
+    let this = library.this_device.clone().expect("this computer's id");
+    assert_eq!(library.devices[0].id, this);
+    assert_eq!(library.main_device.as_deref(), Some(this.as_str()));
+    assert!(library.reading_copy_error.is_none());
+    // Only a computer of the library can be made main.
+    let (status, _) = call(
+        &router,
+        Method::POST,
+        "/api/library/shared/main",
+        Some(serde_json::json!({ "device_id": "nobody" })),
+    )
+    .await;
+    assert!(status.is_client_error(), "{status}");
+    let (status, body) = call(
+        &router,
+        Method::POST,
+        "/api/library/shared/main",
+        Some(serde_json::json!({ "device_id": this })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let library: SharedSyncStatus = serde_json::from_slice(&body).unwrap();
+    assert_eq!(library.main_device.as_deref(), Some(this.as_str()));
+    // A Space's status has none of these fields.
+    assert!(list_has_no_library_fields_in_space_shares(&router).await);
     let (_, body) = call(
         &router,
         Method::POST,
@@ -323,6 +350,23 @@ async fn shared_sync_writes_the_space_pages_and_returns_counts() {
     assert_eq!(status, StatusCode::OK);
     let (status, _) = call(&router, Method::DELETE, "/api/library/shared", None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
-    assert!(library_folder.path().join("space.json").exists());
+    assert!(library_folder
+        .path()
+        .join("同步資料（請勿打開）")
+        .join("space.json")
+        .exists());
     assert!(db.get_page(&venue).await.unwrap().is_some());
+}
+
+/// Every share of a Space or a page in `GET /api/shared` leaves out the
+/// library-only fields.
+async fn list_has_no_library_fields_in_space_shares(router: &common::AppRouter) -> bool {
+    let (_, body) = call(router, Method::GET, "/api/shared", None).await;
+    let list: SharedListResponse = serde_json::from_slice(&body).unwrap();
+    list.shares
+        .iter()
+        .filter(|share| share.kind != SharedKind::Library)
+        .all(|share| {
+            share.devices.is_empty() && share.main_device.is_none() && share.this_device.is_none()
+        })
 }

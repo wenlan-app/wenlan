@@ -845,6 +845,7 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `GET` | `/api/pages/{id}/shared` | main | no | not_applicable | `none` | — | status only: one page's shared folder, member names and last sync pass; no page text |
 | `DELETE` | `/api/pages/{id}/shared` | main | no | not_applicable | `none` | — | receipt only: stops sharing one page from here; {ok: true} |
 | `POST` | `/api/library/shared/sync` | main | no | not_applicable | `none` | — | receipt only: counts of page versions of the whole library written to and taken from its shared folder; page files go to the folder, not the response |
+| `POST` | `/api/library/shared/main` | main | no | not_applicable | `none` | — | status only: makes one of the library's computers the main one; returns the library's folder, computer names and last sync pass; no page text |
 | `GET` | `/api/library/shared` | main | no | not_applicable | `none` | — | status only: the library's shared folder, member names and last sync pass; no page text |
 | `DELETE` | `/api/library/shared` | main | no | not_applicable | `none` | — | receipt only: stops sharing the library from here; {ok: true} |
 | `GET` | `/api/shared` | main | no | not_applicable | `none` | — | status only: every shared Space name or page id with its folder, member names and last sync pass; no page text |
@@ -1568,6 +1569,7 @@ carrying the authority of agreement.
 | `core/sentences.rs::load_page` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/sentences.rs::recheck_sentence` | `pub` | no | **yes** | `server/sentence_routes.rs::handle_recheck_sentence` | `core/db/sentence_history.rs::set_page_citations_at_page_version` |
 | `core/sentences.rs::source_states` | `private` | no | no | — | `core/db/citation_sources.rs::citation_page_source` |
+| `core/shared_space/library.rs::write_copy` | `private` | no | no | — | `core/reading_copy.rs::pages_for_copy` |
 | `core/shared_space/mod.rs::apply_create` | `private` | no | no | — | `core/shared_space/mod.rs::free_title` |
 | `core/shared_space/mod.rs::apply_version` | `private` | no | no | — | `core/shared_space/mod.rs::free_title` |
 | `core/shared_space/mod.rs::reload` | `private` | no | no | — | `core/db.rs::get_page` |
@@ -1761,6 +1763,7 @@ carrying the authority of agreement.
 | `core/sentences.rs::reject_sentence_proposal` | `pub` | no | **yes** | `server/sentence_routes.rs::handle_reject_sentence_proposal` | `core/sentences.rs::load_page` |
 | `core/sentences.rs::revert_ai_write` | `pub` | no | **yes** | `server/sentence_routes.rs::handle_revert_sentences` | `core/sentences.rs::load_page` |
 | `core/sentences.rs::unit_citations` | `private` | no | no | — | `core/sentences.rs::source_states` |
+| `core/shared_space/library.rs::main_jobs` | `pub(super)` | no | no | — | `core/shared_space/library.rs::write_copy` |
 | `core/shared_space/mod.rs::archive_here` | `private` | no | no | — | `core/export/knowledge.rs::archive_page_if_still_archived`, `core/shared_space/mod.rs::reload` |
 | `core/shared_space/mod.rs::move_to_space` | `private` | no | no | — | `core/shared_space/mod.rs::reload` |
 | `core/shared_space/mod.rs::sync_page` | `private` | no | no | — | `core/shared_space/mod.rs::apply_version`, `core/shared_space/mod.rs::reload` |
