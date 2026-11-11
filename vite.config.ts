@@ -1,4 +1,4 @@
-import { pdfAssets } from "./vite.pdf";
+import { pdfAssets } from "./tooling/vite.pdf";
 import { resolve } from "node:path";
 import { defineConfig, normalizePath } from "vite";
 import react from "@vitejs/plugin-react";

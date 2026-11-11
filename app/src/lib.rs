@@ -1709,6 +1709,7 @@ pub fn run() {
             search::delete_snapshot,
             search::list_spaces,
             search::list_working_on,
+            search::get_space_brief,
             search::get_space,
             search::create_space,
             search::update_space,

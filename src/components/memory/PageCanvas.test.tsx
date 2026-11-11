@@ -70,6 +70,8 @@ vi.mock("@xyflow/react", async () => {
               data-node-id={n.id}
               data-x={n.position?.x}
               data-y={n.position?.y}
+              data-w={n.data?.width}
+              data-h={n.data?.height}
             >
               <button
                 aria-label={`contextmenu ${n.id}`}
@@ -117,6 +119,14 @@ vi.mock("@xyflow/react", async () => {
                 }}
               />
               <button
+                aria-label={`drop at ${n.id}`}
+                onClick={() => {
+                  // Dropped with the pointer where the test put it.
+                  const at = (globalThis as any).__dropAt ?? { x: 0, y: 0 };
+                  onNodeDragStop?.({ clientX: at.x, clientY: at.y }, n);
+                }}
+              />
+              <button
                 aria-label={`select ${n.id}`}
                 onClick={() =>
                   // Real React Flow emits a change for every node on a single
@@ -140,7 +150,8 @@ vi.mock("@xyflow/react", async () => {
     ),
     ReactFlowProvider: ({ children }: any) => <>{children}</>,
     Background: () => null,
-    Controls: () => null,
+    Controls: ({ children }: any) => <>{children}</>,
+    ControlButton: ({ children, ...props }: any) => <button type="button" {...props}>{children}</button>,
     Handle: () => null,
     Position: { Top: "top", Bottom: "bottom", Left: "left", Right: "right" },
     useReactFlow: () => ({
@@ -149,6 +160,8 @@ vi.mock("@xyflow/react", async () => {
       // under test only cares that the click point comes back as flow coords.
       screenToFlowPosition: (p: { x: number; y: number }) => p,
       fitView: fitViewSpy,
+      setCenter: vi.fn(),
+      getZoom: () => 1,
     }),
     useNodesState: (initial: any) => {
       const [ns, setNs] = React.useState(initial);
@@ -801,6 +814,107 @@ describe("PageCanvas", () => {
     await waitFor(() => expect(content).not.toContain("one and a half"));
     await user.click(screen.getByRole("button", { name: "Undo" }));
     await waitFor(() => expect(content).toBe(body));
+  });
+
+  it("UX-VIEW-8 moves lines of the page with Option-arrow and by dragging onto another line", async () => {
+    const { getPageMap, getPage, updatePage } = await tauri();
+    let content = ["# Alpha", "", "- one", "- two", "", "# Beta", "", "- three"].join("\n");
+    let version = 1;
+    // The outline as the daemon reads it from the page: headings, items under them.
+    const outlineOf = (body: string) => {
+      const out: PageOutlineNode[] = [];
+      let heading: string | null = null;
+      body.split("\n").forEach((raw, line) => {
+        const h = /^# (.*)$/.exec(raw);
+        const item = /^- (.*)$/.exec(raw);
+        if (h) {
+          heading = `h:${h[1]}`;
+          out.push({ id: heading, parent_id: null, kind: "heading", label: h[1], text: h[1], line } as PageOutlineNode);
+        } else if (item) {
+          out.push({ id: `i:${item[1]}`, parent_id: heading, kind: "item", label: item[1], text: item[1], line } as PageOutlineNode);
+        }
+      });
+      return out;
+    };
+    (getPageMap as ReturnType<typeof vi.fn>).mockImplementation(async () =>
+      makeMap({
+        nodes: [node({ id: "n_root", ref_kind: "page", ref_id: "p1" })],
+        edges: [],
+        page_version: version,
+        outline: outlineOf(content),
+      }),
+    );
+    (getPage as ReturnType<typeof vi.fn>).mockImplementation(async () => ({ id: "p1", content, version }));
+    (updatePage as ReturnType<typeof vi.fn>).mockImplementation(async (input: { content: string }) => {
+      content = input.content;
+      version += 1;
+      return { outcome: "saved" };
+    });
+    const { user } = renderCanvas();
+    await screen.findByText("one");
+
+    await user.click(screen.getByLabelText("select outline:i:one"));
+    fireEvent.keyDown(surface(), { key: "ArrowDown", altKey: true });
+    await waitFor(() => expect(content.split("\n").slice(2, 4)).toEqual(["- two", "- one"]));
+
+    // Dropped on the middle of a heading: the item goes under it.
+    const beta = screen.getAllByTestId("rf-node").find((el) => el.dataset.nodeId === "outline:h:Beta")!;
+    (globalThis as any).__dropAt = {
+      x: Number(beta.dataset.x) + Number(beta.dataset.w) / 2,
+      y: Number(beta.dataset.y) + Number(beta.dataset.h) / 2,
+    };
+    await user.click(screen.getByLabelText("drop at outline:i:two"));
+    await waitFor(() => expect(content).toBe(["# Alpha", "", "- one", "", "# Beta", "", "- three", "- two"].join("\n")));
+    (globalThis as any).__dropAt = undefined;
+
+    // Dropped on empty canvas: nothing in the page changes.
+    const writes = (updatePage as ReturnType<typeof vi.fn>).mock.calls.length;
+    await user.click(screen.getByLabelText("drop at outline:i:one"));
+    expect((updatePage as ReturnType<typeof vi.fn>).mock.calls.length).toBe(writes);
+  });
+
+  it("shows the map down to a level with Option-digit and finds a line with /", async () => {
+    const { getPageMap } = await tauri();
+    (getPageMap as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeMap({
+        nodes: [node({ id: "n_root", ref_kind: "page", ref_id: "p1" })],
+        edges: [],
+        outline: [
+          { id: "h:a", parent_id: null, kind: "heading", label: "Alpha", text: "Alpha" },
+          { id: "h:a1", parent_id: "h:a", kind: "heading", label: "Alpha one", text: "Alpha one" },
+          { id: "h:a1#1", parent_id: "h:a1", kind: "item", label: "Deep thing", text: "Deep thing" },
+          { id: "h:b", parent_id: null, kind: "heading", label: "Beta", text: "Beta" },
+        ],
+      }),
+    );
+    renderCanvas();
+    await screen.findByText("Deep thing");
+
+    fireEvent.keyDown(surface(), { key: "¡", code: "Digit1", altKey: true });
+    await waitFor(() => expect(screen.queryByText("Alpha one")).toBeNull());
+    expect(screen.getByText("Beta")).toBeTruthy();
+    fireEvent.keyDown(surface(), { key: "™", code: "Digit2", altKey: true });
+    await screen.findByText("Alpha one");
+    expect(screen.queryByText("Deep thing")).toBeNull();
+    fitViewSpy.mockClear();
+    fireEvent.keyDown(surface(), { key: "º", code: "Digit0", altKey: true });
+    await screen.findByText("Deep thing");
+    // The map refits once to the new, larger layout.
+    await waitFor(() => expect(fitViewSpy).toHaveBeenCalledTimes(1));
+    expect(fitViewSpy).toHaveBeenCalledWith(expect.objectContaining({ maxZoom: 1, padding: 0.15 }));
+
+    // Shut again, then find the deep line: its branch opens and it is picked.
+    fireEvent.keyDown(surface(), { key: "¡", code: "Digit1", altKey: true });
+    await waitFor(() => expect(screen.queryByText("Deep thing")).toBeNull());
+    fireEvent.keyDown(surface(), { key: "/" });
+    const field = await screen.findByRole("searchbox", { name: "Find on the map" });
+    fireEvent.change(field, { target: { value: "deep" } });
+    expect(screen.getByText("1")).toBeTruthy();
+    fireEvent.keyDown(field, { key: "Enter" });
+    await screen.findByText("Deep thing");
+    expect(screen.getByText("1 of 1")).toBeTruthy();
+    fireEvent.keyDown(field, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("searchbox")).toBeNull());
   });
 
   it("UX-VIEW-8 refuses a map edit when the page changed since the map was read", async () => {

@@ -751,7 +751,7 @@ class PlatformPlanTests(unittest.TestCase):
         self.assertTrue("relay:   ${{ steps.filter.outputs.relay }}" in workflow,
                         "relay path-filter output is missing")
         relay_filter = workflow.split("            relay:\n", 1)[1].split("            macos:\n", 1)[0]
-        for path in ("relay/**", "app/icons/128x128.png", "chatgpt-app-submission.json",
+        for path in ("relay/**", "app/icons/128x128.png",
                      ".github/workflows/ci.yml", "scripts/ci_test_plan.test.py"):
             self.assertIn(f"- '{path}'", relay_filter)
         job = workflow.split("\n  relay-check:\n", 1)[1].split("\n  # Desktop app", 1)[0]

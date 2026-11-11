@@ -1,6 +1,6 @@
 # First-use app verification
 
-Run `pnpm exec vite --config vite.first-use-app.config.ts` and open
+Run `pnpm exec vite --config tooling/vite.first-use-app.config.ts` and open
 `http://127.0.0.1:1432/preview/first-use-app.html`.
 
 This harness renders the production `Main`, Home, onboarding, import, settings,
@@ -31,7 +31,7 @@ Screenshots belong outside the repository.
 
 ## Live first-use preview (isolated scratch daemon)
 
-`vite.first-use-live.config.ts` serves the same `preview/first-use-app.html`
+`tooling/vite.first-use-live.config.ts` serves the same `preview/first-use-app.html`
 and production `Main` on `http://127.0.0.1:1433`, with Tauri IPC mapped by
 `preview/mocks/first-use-live-core.ts` to a scratch daemon. The fixture-only
 `:1432` harness above is untouched. Start (root owns daemon launch):
@@ -40,7 +40,7 @@ and production `Main` on `http://127.0.0.1:1433`, with Tauri IPC mapped by
 WENLAN_PREVIEW_DAEMON=http://127.0.0.1:17878 \
 WENLAN_PREVIEW_DATA_DIR=/tmp/wenlan-preview-scratch/data \
 WENLAN_PREVIEW_KNOWLEDGE_PATH=/tmp/wenlan-preview-scratch/pages \
-pnpm exec vite --config vite.first-use-live.config.ts
+pnpm exec vite --config tooling/vite.first-use-live.config.ts
 ```
 
 Fail-closed gates, no silent fixture fallback:

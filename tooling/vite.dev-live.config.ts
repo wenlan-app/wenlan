@@ -3,7 +3,7 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig, mergeConfig } from "vite";
 import preview from "./vite.preview.config";
-import { allowsDevLiveRequest } from "./preview/devLivePolicy";
+import { allowsDevLiveRequest } from "../preview/devLivePolicy";
 
 export default mergeConfig(preview, defineConfig({
   plugins: [{
@@ -24,7 +24,7 @@ export default mergeConfig(preview, defineConfig({
     },
   }],
   resolve: { alias: {
-    "@tauri-apps/api/core": fileURLToPath(new URL("./preview/mocks/dev-live-core.ts", import.meta.url)),
+    "@tauri-apps/api/core": fileURLToPath(new URL("../preview/mocks/dev-live-core.ts", import.meta.url)),
   } },
   server: { host: "127.0.0.1", port: 1424, strictPort: true },
 }));

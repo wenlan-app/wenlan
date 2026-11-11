@@ -6,7 +6,7 @@ import tailwindcss from "@tailwindcss/vite";
 import { defineConfig } from "vite";
 
 const local = (path: string) => fileURLToPath(new URL(path, import.meta.url));
-const stubs = local("./review/tauri-stubs.ts");
+const stubs = local("../review/tauri-stubs.ts");
 
 export default defineConfig({
   plugins: [react(), tailwindcss(), pdfAssets()],
@@ -16,7 +16,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      "@tauri-apps/api/core": local("./review/tauri-core.ts"),
+      "@tauri-apps/api/core": local("../review/tauri-core.ts"),
       "@tauri-apps/api/event": stubs,
       "@tauri-apps/api/app": stubs,
       "@tauri-apps/api/dpi": stubs,
@@ -25,7 +25,7 @@ export default defineConfig({
       "@tauri-apps/plugin-dialog": stubs,
       "@tauri-apps/plugin-fs": stubs,
       "@tauri-apps/plugin-notification": stubs,
-      "@tauri-apps/plugin-shell": local("./review/shell.ts"),
+      "@tauri-apps/plugin-shell": local("../review/shell.ts"),
       "tauri-plugin-clipboard-x-api": stubs,
     },
   },

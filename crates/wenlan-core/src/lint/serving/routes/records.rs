@@ -46,6 +46,7 @@ pub(super) const ROUTES: &[SensitiveReadRoute] = &[
     row!(Post,"/api/check/context","decision_context",BodyThenHeader,UnauthenticatedLocal,MemorySpace,NoGate,Rejected,Forbidden),
     row!(Get,"/api/brief/history","brief_history",QueryThenHeader,UnauthenticatedLocal,MemorySpace,NoGate,Rejected,Forbidden),
     row!(Get,"/api/brief/history/{version}","brief_version",QueryThenHeader,UnauthenticatedLocal,MemorySpace,SingleId404,Rejected,Forbidden),
+    row!(Get,"/api/brief/plain","brief_plain",QueryThenHeader,UnauthenticatedLocal,MemorySpace,NoGate,Rejected,Forbidden),
     row!(Get,"/api/sessions/{id}","session_detail",HeaderOnly,UnauthenticatedLocal,MemorySpace,SingleId404,Rejected,Forbidden),
     row!(Get,"/api/things","thing_list",HeaderOnly,UnauthenticatedLocal,MemorySpace,NoGate,Rejected,Forbidden),
     row!(Get,"/api/things/points","thing_night_points",HeaderOnly,UnauthenticatedLocal,MemorySpace,NoGate,Rejected,Forbidden),

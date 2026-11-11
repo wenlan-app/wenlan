@@ -11,6 +11,7 @@ pub use wenlan_types;
 pub mod agent_cli_llm;
 pub mod attachments;
 pub mod authorship;
+pub mod brief_plain;
 pub mod briefing;
 pub mod cache;
 pub mod chat_check;

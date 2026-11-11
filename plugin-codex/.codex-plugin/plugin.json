@@ -1,7 +1,7 @@
 {
   "name": "wenlan",
   "version": "0.21.4+codex",
-  "description": "A living wiki your AI tools write, keep current, and cite. Pages link to their sources and update when those change.",
+  "description": "The knowledge base you don't have to maintain. Your AI tools keep it organized, and each page links to its sources. Open-source Obsidian alternative that works with your existing vault.",
   "author": {
     "name": "Qi-Xuan Lu",
     "url": "https://github.com/7xuanlu"

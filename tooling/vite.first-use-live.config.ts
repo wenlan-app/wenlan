@@ -11,7 +11,7 @@ import {
   assertFirstUseLiveDaemon,
   assertFirstUseLiveScratchEnv,
   verifyUpstreamScratchBinding,
-} from "./preview/mocks/first-use-live-core";
+} from "../preview/mocks/first-use-live-core";
 
 const local = (path: string) => fileURLToPath(new URL(path, import.meta.url));
 
@@ -63,8 +63,8 @@ export default mergeConfig(review, defineConfig({
     },
   }],
   resolve: { alias: {
-    "@tauri-apps/api/core": local("./preview/mocks/first-use-live-core.ts"),
-    "tauri-plugin-clipboard-x-api": local("./preview/mocks/first-use-clipboard.ts"),
+    "@tauri-apps/api/core": local("../preview/mocks/first-use-live-core.ts"),
+    "tauri-plugin-clipboard-x-api": local("../preview/mocks/first-use-clipboard.ts"),
   } },
   server: {
     host: "127.0.0.1",
@@ -78,5 +78,5 @@ export default mergeConfig(review, defineConfig({
       },
     },
   },
-  build: { outDir: "dist/first-use-live", rollupOptions: { input: local("./preview/first-use-app.html") } },
+  build: { outDir: "dist/first-use-live", rollupOptions: { input: local("../preview/first-use-app.html") } },
 }));

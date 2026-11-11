@@ -12,7 +12,7 @@
 .source-library-actions { flex-shrink: 0; }
 .source-library button, .source-library input { font: inherit; }
 .source-library button { cursor: pointer; }
-.source-library .source-library-add { background: var(--mem-indigo-bg); border: 1px solid transparent; border-radius: var(--mem-r-8); color: var(--mem-accent-indigo); font-size: 14px; min-height: 36px; padding: 0 12px; display: inline-flex; align-items: center; gap: 6px; }
+.source-library .source-library-add { background: var(--mem-surface); border: 1px solid var(--mem-border); border-radius: var(--mem-r-8); box-shadow: var(--mem-shadow-raised); color: var(--mem-text); font-size: 14px; min-height: 36px; padding: 0 12px; display: inline-flex; align-items: center; gap: 6px; }
 .source-library-manage { background: transparent; border-color: transparent; color: var(--mem-text-secondary); font-size: 14px; }
 .source-library-manage:hover { color: var(--mem-text); }
 .source-library-toolbar { padding-bottom: 0; }

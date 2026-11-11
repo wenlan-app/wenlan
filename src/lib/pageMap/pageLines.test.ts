@@ -103,7 +103,7 @@ describe("withPageLines on deep pages", () => {
 
   it("draws three levels and keeps the rest folded under the third", () => {
     const ids = withPageLines(map, { ...base, open: new Set() }).map((n) => n.id);
-    expect(ids).toEqual([PAGE_LINE_ROOT, "outline:h:1", "outline:h:1/2", "outline:h:1/2/3", "outline:more:h:1/2/3"]);
+    expect(ids).toEqual([PAGE_LINE_ROOT, "outline:h:1", "outline:h:1/2", "outline:h:1/2/3"]);
     expect(foldableHeadings(map).has("h:1/2/3")).toBe(true);
   });
 
@@ -111,7 +111,7 @@ describe("withPageLines on deep pages", () => {
     const one = withPageLines(map, { ...base, open: new Set(["h:1/2/3"]) }).map((n) => n.id);
     expect(one).toContain("outline:h:1/2/3/4");
     expect(one).not.toContain("outline:h:1/2/3/4#1");
-    expect(one).toContain("outline:more:h:1/2/3/4");
+    expect(one).not.toContain("outline:more:h:1/2/3/4");
     const both = withPageLines(map, { ...base, open: new Set(["h:1/2/3", "h:1/2/3/4"]) }).map((n) => n.id);
     expect(both).toContain("outline:h:1/2/3/4#1");
     expect(both.some((id) => id.startsWith("outline:more:"))).toBe(false);
@@ -176,5 +176,34 @@ describe("shutting a branch", () => {
     expect(shut).toEqual([PAGE_LINE_ROOT, "outline:h:a", "outline:h:c"]);
     const inner = withPageLines(map, { ...base, open: new Set(), closed: new Set(["h:a/b"]) }).map((n) => n.id);
     expect(inner).toEqual([PAGE_LINE_ROOT, "outline:h:a", "outline:h:a/b", "outline:h:c"]);
+  });
+});
+
+describe("withPageLines closed headings", () => {
+  // # A > ## A1 > ### A1a > #### A1a-i > ##### deepest, plus a long ## A2.
+  const outline = [
+    line("h:a", null, "heading"),
+    line("h:a1", "h:a", "heading"),
+    line("h:a1a", "h:a1", "heading"),
+    line("h:a1a-i", "h:a1a", "heading"),
+    line("h:a1a-i#1", "h:a1a-i", "item"),
+    line("h:a2", "h:a", "heading"),
+    ...[1, 2, 3, 4, 5].map((n) => line(`h:a2#${n}`, "h:a2", "item")),
+  ];
+  const open = (ids: string[] = []) => ({ ...base, open: new Set(ids) });
+  const moreIds = (nodes: PageMapNode[]) => nodes.filter((n) => moreFor(n.id)).map((n) => moreFor(n.id));
+
+  it("puts no show-the-rest box under a heading that starts shut for depth", () => {
+    const nodes = withPageLines(mapWith([], outline), open());
+    expect(nodes.some((n) => n.id.endsWith("h:a1a"))).toBe(true);
+    expect(nodes.some((n) => n.id.endsWith("h:a1a-i"))).toBe(false);
+    expect(moreIds(nodes)).not.toContain("h:a1a");
+    // The long open heading still gets its box.
+    expect(moreIds(nodes)).toEqual(["h:a2"]);
+  });
+
+  it("puts no box under a heading the person closed", () => {
+    const nodes = withPageLines(mapWith([], outline), { ...open(), closed: new Set(["h:a2"]) });
+    expect(moreIds(nodes)).toEqual([]);
   });
 });

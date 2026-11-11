@@ -1,7 +1,7 @@
 import { pdfAssets } from "./vite.pdf";
 // SPDX-License-Identifier: AGPL-3.0-only
 // Browser rendering of the app with Tauri APIs shimmed.
-// Run: pnpm exec vite --config vite.preview.config.ts
+// Run: pnpm exec vite --config tooling/vite.preview.config.ts
 //   http://localhost:1421/          — live app (invoke → daemon on :7878)
 //   http://localhost:1421/preview/  — fixture harness (citation states)
 import { defineConfig } from "vite";
@@ -10,7 +10,7 @@ import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
 
 const mock = (p: string) => fileURLToPath(new URL(p, import.meta.url));
-const stubs = mock("./preview/mocks/tauri-stubs.ts");
+const stubs = mock("../preview/mocks/tauri-stubs.ts");
 
 // Verification must never run against the shared prod daemon on :7878 (dev and
 // prod share the platform data dir). Point this at an isolated instance with
@@ -40,8 +40,8 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      "@tauri-apps/api/core": mock("./preview/mocks/core.ts"),
-      "@tauri-apps/plugin-shell": mock("./preview/mocks/shell.ts"),
+      "@tauri-apps/api/core": mock("../preview/mocks/core.ts"),
+      "@tauri-apps/plugin-shell": mock("../preview/mocks/shell.ts"),
       "@tauri-apps/api/event": stubs,
       "@tauri-apps/api/app": stubs,
       "@tauri-apps/api/window": stubs,

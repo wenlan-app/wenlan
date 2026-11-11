@@ -183,7 +183,7 @@ to private libraries still needs authenticated user-to-library routing,
 authorization, consent, revocation, privacy disclosures, and end-to-end tests.
 Do not publish a personal daemon or its bearer token as a universal service.
 
-The repository's [`chatgpt-app-submission.json`](../../chatgpt-app-submission.json)
+The repository's [`relay/chatgpt-app-submission.json`](../../relay/chatgpt-app-submission.json)
 is a preparation draft for this profile, not the Standard tool inventory. It
 contains listing suggestions, three annotation justifications, and five positive
 and three negative test cases. The cases explicitly identify pending synthetic

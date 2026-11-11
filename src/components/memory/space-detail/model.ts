@@ -26,6 +26,20 @@ export function sortedSpacePages(pages: readonly Page[]): Page[] {
   return [...pages].sort(comparePageRecency);
 }
 
+/** How long a page the AI changed stays marked on its Space (UX-SPACE-3). */
+export const AI_UPDATED_WINDOW_MS = 86_400_000;
+
+/** The AI changed this page in the last day: its newest version is not the
+ *  person's own edit, nor another member's (that row names them instead). */
+export function aiUpdatedRecently(page: Page, now = Date.now()): boolean {
+  const at = Date.parse(page.last_modified);
+  if (!Number.isFinite(at) || now - at > AI_UPDATED_WINDOW_MS) return false;
+  if (page.last_edited_by?.startsWith("shared_person:")) return false;
+  if (page.last_edited_by === "manual_edit" || page.last_edited_by === "fs_edit") return false;
+  const human = page.human_edited_at;
+  return human == null || human * 1000 < at - 60_000;
+}
+
 export function pagesNeedingReview(pages: readonly Page[]): Page[] {
   return [...pages]
     .filter((page) => Boolean(page.stale_reason?.trim()))

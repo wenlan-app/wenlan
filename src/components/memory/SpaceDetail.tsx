@@ -9,8 +9,8 @@ import {
   listPages,
   updateSpace,
   type Space,
-  type IndexedFileInfo,
 } from "../../lib/tauri";
+import { SpaceBrief } from "./space-detail/SpaceBrief";
 import { SpaceProjectContent } from "./space-detail/SpaceProjectContent";
 import { SpaceDossierHeader } from "./space-detail/SpaceDossierHeader";
 import { RepoWikiButton } from "./space-detail/RepoWikiButton";
@@ -35,7 +35,6 @@ export type SpaceDetailProps = {
   readonly onReviewAll?: () => void;
   readonly onCreatePage?: (space: string) => void;
   readonly onSelectPage: (pageId: string) => void;
-  readonly onOpenSource?: (file: IndexedFileInfo) => void;
   readonly onRegisterFlush?: (flush: (() => Promise<boolean>) | null) => void;
   /** Opens Settings, where the name people see is changed. */
   readonly onOpenSettings?: (section?: SettingsSection) => void;
@@ -56,7 +55,6 @@ export default function SpaceDetail({
   onReviewAll,
   onCreatePage,
   onSelectPage,
-  onOpenSource,
   onRegisterFlush,
   onOpenSettings,
   spaceName,
@@ -76,12 +74,9 @@ export default function SpaceDetail({
   });
   const reportedSpaceIdRef = useRef<string | null>(null);
   const identityFlushRef = useRef<(() => Promise<boolean>) | null>(null);
-  const previewFlushRef = useRef<(() => Promise<boolean>) | null>(null);
   const registerIdentityFlush = useCallback((flush: (() => Promise<boolean>) | null) => { identityFlushRef.current = flush; }, []);
-  const registerPreviewFlush = useCallback((flush: (() => Promise<boolean>) | null) => { previewFlushRef.current = flush; }, []);
   const flushSpace = useCallback(async () => {
     if (identityFlushRef.current && !await identityFlushRef.current()) return false;
-    if (previewFlushRef.current && !await previewFlushRef.current()) return false;
     return true;
   }, []);
 
@@ -163,13 +158,7 @@ export default function SpaceDetail({
         onRegisterFlush={registerIdentityFlush}
         actions={{
           onBack,
-          onDelete: async () => {
-            const flushPreview = previewFlushRef.current;
-            try {
-              if (flushPreview && !await flushPreview()) return;
-            } catch {
-              return;
-            }
+          onDelete: () => {
             deleteMutation.mutate();
           },
           onKeep: () => confirmMutation.mutate(),
@@ -177,9 +166,6 @@ export default function SpaceDetail({
           onShare: () => setSharing(true),
           onCreatePage: () => onCreatePage?.(space.name),
           onSaveIdentity: async ({ name, description }) => {
-            if (name !== space.name && previewFlushRef.current && !await previewFlushRef.current()) {
-              throw new Error("The source description could not be saved.");
-            }
             await renameMutation.mutateAsync({ newName: name, description });
           },
         }}
@@ -188,18 +174,16 @@ export default function SpaceDetail({
         space={space}
       />
 
+      <SpaceBrief spaceName={space.name} />
       <SpaceProjectContent
         key={`${space.id}:${space.name}`}
         copy={copy}
         spaceId={space.id}
-        spaceName={space.name}
         pages={pages}
         pagesPending={pagesQuery.isPending}
         pagesError={pagesQuery.isError}
         onRetryPages={() => void pagesQuery.refetch()}
         onSelectPage={onSelectPage}
-        onOpenSource={onOpenSource}
-        onRegisterPreviewFlush={registerPreviewFlush}
         shares={shares.data}
       />
       {sharing && (
