@@ -32,6 +32,7 @@ import {
   SettingRow,
 } from "../primitives";
 import { SettingsGroup } from "../SettingsView";
+import LibrarySyncSettings from "./LibrarySyncSettings";
 import ProfileAvatar from "../../ProfileAvatar";
 import { replayPageTour, usePageTourState } from "../../../onboarding/PageTour";
 import { resetTabIntros } from "../../../onboarding/TabIntro";
@@ -268,6 +269,7 @@ export default function GeneralSection() {
   return (
     <>
       <ProfileSettingsBlock />
+      <LibrarySyncSettings />
       <SettingsGroup heading={t("settings.general.appSection")} className="mem-fade-up" style={{ animationDelay: "0ms" }}>
           <SettingRow
             title={t("settings.language.label")}

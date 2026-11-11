@@ -3846,6 +3846,49 @@ pub async fn stop_sharing_page(
         .await
 }
 
+/// Syncs the whole library with `folder`, between this person's own
+/// computers. `member_id` joins a library the folder already holds as that
+/// member (this person's other computer); left out, the folder is made.
+#[tauri::command]
+pub async fn share_library(
+    state: tauri::State<'_, State>,
+    folder: String,
+    member_id: Option<String>,
+) -> Result<shared_space::SharedSyncCounts, String> {
+    let client = daemon_client(&state).await;
+    let request = shared_space::SharedSyncRequest {
+        folder,
+        member_name: None,
+        host: None,
+        member_id,
+    };
+    client.post_json("/api/library/shared/sync", &request).await
+}
+
+/// Stops syncing the library from here; pages and the folder stay.
+#[tauri::command]
+pub async fn stop_sharing_library(
+    state: tauri::State<'_, State>,
+) -> Result<responses::SuccessResponse, String> {
+    let client = daemon_client(&state).await;
+    client.delete_path("/api/library/shared").await
+}
+
+/// Makes one of the library's computers the main one.
+#[tauri::command]
+pub async fn set_library_main_device(
+    state: tauri::State<'_, State>,
+    device_id: String,
+) -> Result<shared_space::SharedSyncStatus, String> {
+    let client = daemon_client(&state).await;
+    client
+        .post_json(
+            "/api/library/shared/main",
+            &shared_space::SetMainDeviceRequest { device_id },
+        )
+        .await
+}
+
 /// What a folder shares, before joining it.
 #[tauri::command]
 pub async fn look_in_shared_folder(
