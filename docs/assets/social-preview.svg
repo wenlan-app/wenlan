@@ -11,7 +11,7 @@
     <circle cx="197" cy="97" r="26" fill="url(#orb)"/>
   </g>
 
-  <g transform="translate(462 176)">
+  <g transform="translate(462 204)">
     <text x="0" y="18" fill="#93E3F2" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="34" font-weight="700" letter-spacing="4">
       WENLAN
     </text>
@@ -23,12 +23,6 @@
     </text>
     <text x="0" y="178" fill="#DCE2F5" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="24" font-weight="500">
       Write when you want; your AI keeps it organized.
-    </text>
-    <text x="0" y="236" fill="#AEB6DC" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="19" font-weight="500">
-      Open-source Obsidian alternative. Connects to your AI tools
-    </text>
-    <text x="0" y="263" fill="#AEB6DC" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="19" font-weight="500">
-      in one click, with no plugins to maintain. Share it with your team.
     </text>
   </g>
 
