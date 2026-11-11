@@ -53,13 +53,14 @@ import {
   OUTLINE_NODE_HEIGHT,
 } from "../../lib/pageMap/tree";
 import {
+  branchHeadings,
   branchSlots,
-  foldableHeadings,
   isPageLine,
   lineIdOf,
   moreFor,
   outlineLine,
   PAGE_LINE_PREFIX,
+  shutByDepth,
   withinLine,
   withPageLines,
 } from "../../lib/pageMap/pageLines";
@@ -372,6 +373,10 @@ function PageCanvasInner({
       return next;
     });
   }, [openKey]);
+  // Headings the person shut with their arrow, remembered the same way.
+  const closedKey = `wenlan.pageMap.closed.${pageId}`;
+  const [closedHeadings, setClosedHeadings] = useState<Set<string>>(() => readOpenHeadings(closedKey));
+  useEffect(() => setClosedHeadings(readOpenHeadings(closedKey)), [closedKey]);
   const [helpOpen, setHelpOpen] = useState(false);
   const [ideaDraft, setIdeaDraft] = useState("");
   const [ideaEntryOpen, setIdeaEntryOpen] = useState(false);
@@ -449,12 +454,46 @@ function PageCanvasInner({
   //
   // The page's own headings and items join them read-only: the map opens on
   // what the page already says (UX-VIEW-4).
+  const deepShut = useMemo(() => shutByDepth(map), [map]);
+  // A heading is open when nothing it hangs on is shut: a deep one starts
+  // shut until opened, every other one starts open until shut.
+  const branchOpen = useCallback(
+    (id: string) => !closedHeadings.has(id) && (!deepShut.has(id) || openHeadings.has(id)),
+    [closedHeadings, deepShut, openHeadings],
+  );
+  const toggleBranch = useCallback(
+    (id: string) => {
+      const opening = !branchOpen(id);
+      setClosedHeadings((current) => {
+        const next = new Set(current);
+        if (opening) next.delete(id);
+        else next.add(id);
+        try {
+          localStorage.setItem(closedKey, JSON.stringify([...next]));
+        } catch {
+          // Blocked storage: the branch still opens and shuts this session.
+        }
+        return next;
+      });
+      if (deepShut.has(id) && opening !== openHeadings.has(id)) toggleHeading(id);
+    },
+    [branchOpen, closedKey, deepShut, openHeadings, toggleHeading],
+  );
   const showRestLabel = t("pageCanvas.showRest");
   const visibleNodes = useMemo(
-    () => withPageLines(map, { pageId, pageTitle, open: openHeadings, showSuggestions, showRestLabel }),
-    [map, pageId, pageTitle, openHeadings, showSuggestions, showRestLabel],
+    () =>
+      withPageLines(map, {
+        pageId,
+        pageTitle,
+        open: openHeadings,
+        closed: closedHeadings,
+        showSuggestions,
+        showRestLabel,
+      }),
+    [map, pageId, pageTitle, openHeadings, closedHeadings, showSuggestions, showRestLabel],
   );
-  const foldable = useMemo(() => foldableHeadings(map), [map]);
+  // Every heading with lines under it carries an arrow to shut its branch.
+  const foldable = useMemo(() => branchHeadings(map), [map]);
   const hasPageLines = useMemo(() => visibleNodes.some((n) => isPageLine(n.id)), [visibleNodes]);
   // The side panel is a column: the page's lines read top to bottom there,
   // indented by level. With room to spare they grow left to right.
@@ -1126,8 +1165,8 @@ function PageCanvasInner({
           readOnly: readOnly || pageLine,
           hint: line && line.text !== v.label ? line.text : undefined,
           link: moreFor(v.node.id) !== null,
-          unfolded: foldId ? openHeadings.has(foldId) : undefined,
-          onToggleFold: foldId ? () => toggleHeading(foldId) : undefined,
+          unfolded: foldId ? branchOpen(foldId) : undefined,
+          onToggleFold: foldId ? () => toggleBranch(foldId) : undefined,
           branchColor: inkOf(v.node.id),
           underline: pageLine && v.depth >= 2,
           dimmed: isDimmed(v.node.id, v.node.parent_id === null),
@@ -1160,7 +1199,7 @@ function PageCanvasInner({
           data,
         };
       }),
-    [views, readOnly, palette, openNode, mutateStatus, mutateRename, mutateRenameAsync, t, map, foldable, openHeadings, toggleHeading, layoutMode, inkOf, isDimmed],
+    [views, readOnly, palette, openNode, mutateStatus, mutateRename, mutateRenameAsync, t, map, foldable, branchOpen, toggleBranch, layoutMode, inkOf, isDimmed],
   );
 
   // Fold the server's copy into local state, keeping what the user has done
@@ -1390,6 +1429,39 @@ function PageCanvasInner({
   const clearSelection = useCallback(() => {
     setNodes((ns) => ns.map((n) => (n.selected ? { ...n, selected: false } : n)));
   }, [setNodes]);
+
+  // Arrow keys walk a page's lines the way an outline reads: up and down
+  // between neighbours, left to the heading above, right into what is under
+  // it. A box of the person's own still moves with them instead.
+  const stepSelection = useCallback(
+    (key: string): boolean => {
+      const picked = nodesRef.current.filter((n) => n.selected);
+      if (picked.length !== 1) return false;
+      const at = views.find((v) => v.node.id === picked[0].id);
+      if (!at || !(isPageLine(at.node.id) || (at.node.parent_id === null && hasPageLines))) return false;
+      const byY = (a: { y: number }, b: { y: number }) => a.y - b.y;
+      let to: string | null | undefined = null;
+      if (key === "ArrowLeft") to = at.node.parent_id;
+      else if (key === "ArrowRight") {
+        const kids = views.filter((v) => v.node.parent_id === at.node.id).sort(byY);
+        const line = lineIdOf(at.node.id);
+        if (!kids.length && line && foldable.has(line) && !branchOpen(line)) {
+          toggleBranch(line);
+          return true;
+        }
+        to = kids[0]?.node.id;
+      } else {
+        const row = views.filter((v) => v.node.parent_id === at.node.parent_id).sort(byY);
+        const i = row.findIndex((v) => v.node.id === at.node.id);
+        to = row[i + (key === "ArrowDown" ? 1 : -1)]?.node.id;
+      }
+      if (to && views.some((v) => v.node.id === to)) {
+        setNodes((ns) => ns.map((n) => (n.selected !== (n.id === to) ? { ...n, selected: n.id === to } : n)));
+      }
+      return true;
+    },
+    [views, foldable, branchOpen, toggleBranch, setNodes, hasPageLines],
+  );
 
   const nudge = useCallback(
     (dx: number, dy: number) => {
@@ -1808,19 +1880,19 @@ function PageCanvasInner({
           break;
         case "ArrowUp":
           e.preventDefault();
-          nudge(0, -step);
+          if (!stepSelection(e.key)) nudge(0, -step);
           break;
         case "ArrowDown":
           e.preventDefault();
-          nudge(0, step);
+          if (!stepSelection(e.key)) nudge(0, step);
           break;
         case "ArrowLeft":
           e.preventDefault();
-          nudge(-step, 0);
+          if (!stepSelection(e.key)) nudge(-step, 0);
           break;
         case "ArrowRight":
           e.preventDefault();
-          nudge(step, 0);
+          if (!stepSelection(e.key)) nudge(step, 0);
           break;
         default:
           break;
@@ -1838,6 +1910,7 @@ function PageCanvasInner({
       startDraft,
       deleteSelection,
       nudge,
+      stepSelection,
       selectAll,
       clearSelection,
       fitView,

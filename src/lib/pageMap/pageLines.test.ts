@@ -160,3 +160,21 @@ describe("branch inks and focus", () => {
     expect(lineIdOf(PAGE_LINE_ROOT)).toBeNull();
   });
 });
+
+describe("shutting a branch", () => {
+  it("hides everything under a shut heading, more boxes included, and opens again", async () => {
+    const { branchHeadings } = await import("./pageLines");
+    const outline = [
+      line("h:a", null, "heading"),
+      line("h:a/b", "h:a", "heading"),
+      ...[1, 2, 3, 4].map((n) => line(`h:a/b#${n}`, "h:a/b", "item")),
+      line("h:c", null, "heading"),
+    ];
+    const map = mapWith([], outline);
+    expect([...branchHeadings(map)].sort()).toEqual(["h:a", "h:a/b"]);
+    const shut = withPageLines(map, { ...base, open: new Set(), closed: new Set(["h:a"]) }).map((n) => n.id);
+    expect(shut).toEqual([PAGE_LINE_ROOT, "outline:h:a", "outline:h:c"]);
+    const inner = withPageLines(map, { ...base, open: new Set(), closed: new Set(["h:a/b"]) }).map((n) => n.id);
+    expect(inner).toEqual([PAGE_LINE_ROOT, "outline:h:a", "outline:h:a/b", "outline:h:c"]);
+  });
+});

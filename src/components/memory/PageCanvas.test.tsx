@@ -703,6 +703,47 @@ describe("PageCanvas", () => {
     await waitFor(() => expect(box("Beta").style.opacity).toBe("1"));
   });
 
+  it("walks the page's lines with the arrow keys and shuts a branch from its arrow", async () => {
+    const { getPageMap } = await tauri();
+    (getPageMap as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeMap({
+        nodes: [node({ id: "n_root", ref_kind: "page", ref_id: "p1" })],
+        edges: [],
+        outline: [
+          { id: "h:a", parent_id: null, kind: "heading", label: "Alpha", text: "Alpha" },
+          { id: "h:a#1", parent_id: "h:a", kind: "item", label: "Alpha item", text: "Alpha item" },
+          { id: "h:b", parent_id: null, kind: "heading", label: "Beta", text: "Beta" },
+        ],
+      }),
+    );
+    const { user } = renderCanvas();
+    await screen.findByText("Alpha");
+    const ringed = (label: string) => {
+      let el: HTMLElement | null = screen.getByText(label);
+      while (el && !el.style.opacity) el = el.parentElement;
+      return (el?.style.boxShadow ?? "").includes("2px");
+    };
+
+    await user.click(screen.getByLabelText("select outline:h:a"));
+    await waitFor(() => expect(ringed("Alpha")).toBe(true));
+    fireEvent.keyDown(surface(), { key: "ArrowDown" });
+    await waitFor(() => expect(ringed("Beta")).toBe(true));
+    expect(ringed("Alpha")).toBe(false);
+    fireEvent.keyDown(surface(), { key: "ArrowUp" });
+    await waitFor(() => expect(ringed("Alpha")).toBe(true));
+    fireEvent.keyDown(surface(), { key: "ArrowRight" });
+    await waitFor(() => expect(ringed("Alpha item")).toBe(true));
+    fireEvent.keyDown(surface(), { key: "ArrowLeft" });
+    await waitFor(() => expect(ringed("Alpha")).toBe(true));
+    fireEvent.keyDown(surface(), { key: "ArrowLeft" });
+    await waitFor(() => expect(ringed("Page One")).toBe(true));
+
+    await user.click(screen.getByRole("button", { name: "Fold everything under Alpha" }));
+    await waitFor(() => expect(screen.queryByText("Alpha item")).toBeNull());
+    await user.click(screen.getByRole("button", { name: "Show what is under Alpha" }));
+    await screen.findByText("Alpha item");
+  });
+
   it("says out loud when the object behind a node is gone", async () => {
     const { getPageMap } = await tauri();
     (getPageMap as ReturnType<typeof vi.fn>).mockResolvedValue(makeMap({ independent_ideas: true }));

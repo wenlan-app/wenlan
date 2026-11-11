@@ -96,6 +96,8 @@ export interface PageLinesOptions {
   pageTitle: string;
   /** Headings the person unfolded. */
   open: ReadonlySet<string>;
+  /** Headings the person shut: nothing under them is drawn. */
+  closed?: ReadonlySet<string>;
   showSuggestions: boolean;
   showRestLabel: string;
 }
@@ -138,10 +140,14 @@ export function withPageLines(map: PageMap | undefined, options: PageLinesOption
   // Too many levels: a deep heading stays shut until opened, and so does
   // everything under it.
   const deep = deepHeadings(outline);
+  const closed = options.closed ?? new Set<string>();
   const hidden = new Set<string>();
   for (const line of outline) {
     const parent = line.parent_id;
-    if (parent !== null && (hidden.has(parent) || (deep.has(parent) && !options.open.has(parent)))) {
+    if (
+      parent !== null &&
+      (hidden.has(parent) || closed.has(parent) || (deep.has(parent) && !options.open.has(parent)))
+    ) {
       hidden.add(line.id);
     }
   }
@@ -163,7 +169,7 @@ export function withPageLines(map: PageMap | undefined, options: PageLinesOption
     );
   });
   for (const id of deep) {
-    if (options.open.has(id) || hidden.has(id)) continue;
+    if (options.open.has(id) || hidden.has(id) || closed.has(id)) continue;
     out.push(
       box(
         `${MORE_PREFIX}${id}`,
@@ -177,7 +183,7 @@ export function withPageLines(map: PageMap | undefined, options: PageLinesOption
   }
   for (const [parent, items] of itemsOf) {
     if (parent === null || options.open.has(parent) || items.length <= FOLD_OVER) continue;
-    if (deep.has(parent) || hidden.has(parent)) continue;
+    if (deep.has(parent) || hidden.has(parent) || closed.has(parent)) continue;
     const lastShown = outline.indexOf(items[FOLDED_SHOWS - 1]);
     out.push(
       box(
@@ -203,6 +209,17 @@ export function foldableHeadings(map: PageMap | undefined): Set<string> {
   }
   const long = [...counts].filter(([, n]) => n > FOLD_OVER).map(([id]) => id);
   return new Set([...long, ...deepHeadings(map?.outline ?? [])]);
+}
+
+/** Headings with anything under them: each can be shut and opened again. */
+export function branchHeadings(map: PageMap | undefined): Set<string> {
+  const parents = new Set((map?.outline ?? []).map((l) => l.parent_id));
+  return new Set((map?.outline ?? []).filter((l) => l.kind === "heading" && parents.has(l.id)).map((l) => l.id));
+}
+
+/** Headings too deep to open drawn: they start shut until opened. */
+export function shutByDepth(map: PageMap | undefined): Set<string> {
+  return deepHeadings(map?.outline ?? []);
 }
 
 /** Inks a top-level heading's whole branch can wear, in turn. */
