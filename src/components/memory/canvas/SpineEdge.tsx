@@ -51,7 +51,7 @@ function SpineEdge({
   const shape = data as
     | {
         tree?: boolean;
-        indent?: { fromX: number; fromY: number; toX: number };
+        indent?: { fromX: number; fromY: number; toX: number; toY?: number };
         /** Where the tree line meets the boxes, when not at their centers. */
         ends?: { fromX: number; fromY: number; toX: number; toY: number };
       }
@@ -60,9 +60,10 @@ function SpineEdge({
   // and turns right into the child, as an outline's guide lines do.
   if (shape?.indent) {
     const { fromX, fromY, toX } = shape.indent;
+    const ty = shape.indent.toY ?? targetY;
     return (
       <BaseEdge
-        path={`M${fromX},${fromY} V${targetY - 6} Q${fromX},${targetY} ${fromX + 6},${targetY} H${toX}`}
+        path={`M${fromX},${fromY} V${ty - 6} Q${fromX},${ty} ${fromX + 6},${ty} H${toX}`}
         style={style}
         markerEnd={markerEnd}
       />

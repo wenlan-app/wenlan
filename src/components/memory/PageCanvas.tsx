@@ -2200,6 +2200,9 @@ function PageCanvasInner({
                 fromX: from.x - from.width / 2 + 12,
                 fromY: from.y + from.height / 2,
                 toX: v.x - v.width / 2,
+                // Text on a stroke is met at the start of its stroke, not at
+                // the middle of the words, or the guide line stops short of it.
+                toY: v.y + (onStroke(v) ? v.height / 2 : 0),
               },
             }
           : layoutMode === "tree" && from
