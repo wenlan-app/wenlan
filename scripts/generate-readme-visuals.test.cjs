@@ -37,7 +37,7 @@ test("borderless banners preserve four-locale copy in desktop and mobile layouts
       assert.match(banner.svg, />Wenlan<\/tspan>/u);
       assert.doesNotMatch(banner.svg, /data-fit-region|input-1|input-2|topic-page|\[1\]|\[2\]/u);
       assert.doesNotMatch(banner.svg, /stroke="#2F3769"/u);
-      assert.equal((banner.svg.match(/<rect /gu) ?? []).length, 2, "only background and logo tile");
+      assert.equal((banner.svg.match(/<rect /gu) ?? []).length, 1, "only the background; no tile behind the logo");
 
     }
   }

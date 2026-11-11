@@ -78,8 +78,9 @@ function logoDefs(prefix) {
 
 function logoMarkup({ x, y, size, prefix }) {
   const scale = size / 512;
+  // No app-icon tile behind the ring: on the banner's own background it read as a
+  // faint square box.
   return `<g transform="translate(${x} ${y}) scale(${scale})">
-    <rect width="512" height="512" rx="112" fill="#1A1A2E"/>
     <circle cx="256" cy="256" r="160" fill="none" stroke="url(#${prefix}-ring)" stroke-width="76"/>
     <circle cx="322" cy="160" r="42" fill="url(#${prefix}-orb)"/>
   </g>`;

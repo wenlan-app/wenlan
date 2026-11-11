@@ -3,7 +3,6 @@
   <desc id="desc">Wenlan: 不用你維護的知識庫</desc>
   <rect width="720" height="256" fill="#151D2B"/>
   <g transform="translate(320 32) scale(0.15625)">
-    <rect width="512" height="512" rx="112" fill="#1A1A2E"/>
     <circle cx="256" cy="256" r="160" fill="none" stroke="url(#banner-zh-Hant-mobile-ring)" stroke-width="76"/>
     <circle cx="322" cy="160" r="42" fill="url(#banner-zh-Hant-mobile-orb)"/>
   </g>
