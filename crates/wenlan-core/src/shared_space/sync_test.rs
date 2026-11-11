@@ -2389,13 +2389,43 @@ fn an_automatic_pass_waits_for_typing_to_stop() {
         edited_by: by.into(),
         created_at: at,
     };
-    // The editor saved 30 s ago: still typing.
-    assert!(still_typing(Some(&row("manual_edit", 970)), 1_000, 120));
+    let base = Some(900); // last in step 100 s ago
+                          // The editor saved 30 s ago: still typing.
+    assert!(still_typing(
+        Some(&row("manual_edit", 970)),
+        base,
+        1_000,
+        120
+    ));
     // Two minutes since the last save: written now.
-    assert!(!still_typing(Some(&row("manual_edit", 880)), 1_000, 120));
+    assert!(!still_typing(
+        Some(&row("manual_edit", 880)),
+        base,
+        1_000,
+        120
+    ));
+    // Typing on, but the last version is ten minutes old: written now.
+    assert!(!still_typing(
+        Some(&row("manual_edit", 990)),
+        Some(400),
+        1_000,
+        120
+    ));
+    // A new page (no version yet) is written at once.
+    assert!(!still_typing(
+        Some(&row("manual_edit", 990)),
+        None,
+        1_000,
+        120
+    ));
     // An AI edit, or a sync the person asked for, is written at once.
-    assert!(!still_typing(Some(&row("agent_refresh", 990)), 1_000, 120));
-    assert!(!still_typing(Some(&row("fs_edit", 990)), 1_000, 0));
-    assert!(still_typing(Some(&row("fs_edit", 990)), 1_000, 120));
-    assert!(!still_typing(None, 1_000, 120));
+    assert!(!still_typing(
+        Some(&row("agent_refresh", 990)),
+        base,
+        1_000,
+        120
+    ));
+    assert!(!still_typing(Some(&row("fs_edit", 990)), base, 1_000, 0));
+    assert!(still_typing(Some(&row("fs_edit", 990)), base, 1_000, 120));
+    assert!(!still_typing(None, base, 1_000, 120));
 }

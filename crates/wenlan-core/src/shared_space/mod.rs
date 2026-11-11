@@ -1329,10 +1329,23 @@ struct Pass<'a> {
 /// rather than one every pass. A sync the person asks for writes at once.
 const EDIT_SETTLE_SECS: i64 = if cfg!(test) { 0 } else { 120 };
 
-/// Whether the person is still typing on this page: its newest save is by
-/// the editor or a file edit, less than `settle` seconds ago.
-fn still_typing(last: Option<&crate::db::PageHistoryEntry>, now: i64, settle: i64) -> bool {
+/// While the person keeps typing, a version is still written this often,
+/// counted from the version the page was last in step with (Notion: "every
+/// 10 minutes as you actively edit it", plus one after the last edit).
+const EDIT_EVERY_SECS: i64 = 10 * 60;
+
+/// Whether to wait with this page's edit: the person is still typing (its
+/// newest save is by the editor or a file edit, less than `settle` seconds
+/// ago) and the version it was last in step with, written at `base_at`, is
+/// less than [`EDIT_EVERY_SECS`] old.
+fn still_typing(
+    last: Option<&crate::db::PageHistoryEntry>,
+    base_at: Option<i64>,
+    now: i64,
+    settle: i64,
+) -> bool {
     settle > 0
+        && base_at.is_some_and(|at| now - at < EDIT_EVERY_SECS)
         && last.is_some_and(|row| {
             crate::page_history::folds(Some(row.edited_by.as_str()))
                 && now - row.created_at < settle
@@ -1701,11 +1714,11 @@ impl Pass<'_> {
         let changed = changed && !self.settings.read_only;
         if changed && self.edit_settle > 0 {
             let last = self.db.list_page_history(&page.id, 1).await?;
-            if still_typing(
-                last.first(),
-                chrono::Utc::now().timestamp(),
-                self.edit_settle,
-            ) {
+            let base_at = base
+                .and_then(|base| version::ts_key(&base.meta.ts))
+                .map(|at| at.timestamp());
+            let now = chrono::Utc::now().timestamp();
+            if still_typing(last.first(), base_at, now, self.edit_settle) {
                 // Written once the typing stops; the head waits too, so it
                 // is never taken over the edit.
                 return Ok(None);
