@@ -8228,8 +8228,10 @@ mod working_on_tests {
         );
         b.last_session_summary = "Trust fixes merged (#1236).".into();
         b.last_handoff_at = Some(99);
-        let mut plain = BriefPlainView::default();
-        plain.summary = Some("可信度修正都合併了。".into());
+        let mut plain = BriefPlainView {
+            summary: Some("可信度修正都合併了。".into()),
+            ..Default::default()
+        };
         plain.lines.insert("b".into(), "合併共用空間".into());
         let view = space_brief_view(b.clone(), plain).unwrap();
         assert_eq!(view.summary.as_deref(), Some("可信度修正都合併了。"));
