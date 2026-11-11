@@ -201,7 +201,9 @@ export function PagesOverview({
             own steeped line, so while it is on only the "not written yet"
             line shows here, above it (UX-HOME-7). */}
         {example ? null : <HomeNightLines onReplayNight={onReplayNight} steeped={!thingsOn} />}
-        {example ? null : thingsOn
+        {/* While the getting-started card is open it is the screen: nothing
+            is being worked on yet, so no Spaces lead above it. */}
+        {example || onboarding ? null : thingsOn
           ? <WorkingOn onSelectSpace={onSelectSpace} onOpenThing={onOpenThing} onReplayNight={onReplayNight} />
           : <HomeSpaces pages={pages} onSelectSpace={onSelectSpace} onBrowseSpaces={onBrowseSpaces} />}
         {newPages}

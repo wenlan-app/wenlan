@@ -371,6 +371,16 @@ describe("PagesOverview reading workspace", () => {
       expect(screen.getByRole("button", { name: "Show getting started" })).toBeInTheDocument();
     });
 
+    it("shows no Spaces above the getting-started card while it is open", async () => {
+      vi.mocked(listSpaces).mockResolvedValue([{ id: "s1", name: "Reading", description: null, suggested: false, starred: false, sort_order: 0, memory_count: 0, entity_count: 0, created_at: 1, updated_at: 1 }]);
+      renderOverview({ checklist: true });
+      await screen.findByTestId("getting-started");
+      expect(screen.queryByTestId("home-spaces")).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Hide getting started" }));
+      expect(await screen.findByTestId("home-spaces")).toBeInTheDocument();
+      vi.mocked(listSpaces).mockResolvedValue([]);
+    });
+
     it("leaves the panel alone when the checklist is not wired", async () => {
       const { container } = renderOverview();
       await waitFor(() => expect(listAgents).toHaveBeenCalled());
