@@ -8,6 +8,7 @@ import {
   teamAddMember,
   teamNewMemberKey,
   teamRemoveMember,
+  teamSetEveryone,
   teamUpdateMember,
   type TeamAccess,
   type TeamMember,
@@ -17,13 +18,13 @@ import { confirmAction } from "../../../lib/confirmAction";
 import { TEAM_KEY, activeMembers, prefillTeamUrl, rememberTeamUrl, sameName, useTeamStatus } from "./team";
 import "./sharing.css";
 
-function errorText(error: unknown): string {
+export function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
 /** The code to hand over: the join code, or the bare key when the server has
  *  no address to put in it. */
-function codeOf(key: TeamMemberKey): string {
+export function codeOf(key: TeamMemberKey): string {
   return key.join_code ?? key.key;
 }
 
@@ -31,10 +32,11 @@ function accessOf(member: TeamMember, space: string): TeamAccess {
   return member.spaces.find((entry) => entry.space === space)?.access ?? "write";
 }
 
-function MemberMenu({ member, onNewCode, onRemoveFromSpace, onRemoveFromTeam }: {
+export function MemberMenu({ member, onNewCode, onRemoveFromSpace, onRemoveFromTeam }: {
   readonly member: TeamMember;
   readonly onNewCode: () => void;
-  readonly onRemoveFromSpace: () => void;
+  /** Absent outside one Space's box. */
+  readonly onRemoveFromSpace?: () => void;
   readonly onRemoveFromTeam: () => void;
 }) {
   const { t } = useTranslation();
@@ -63,7 +65,7 @@ function MemberMenu({ member, onNewCode, onRemoveFromSpace, onRemoveFromTeam }: 
       {open && (
         <ul className="team-menu-list" role="menu">
           <li role="none"><button type="button" role="menuitem" onClick={pick(onNewCode)}>{t("team.menuNewCode")}</button></li>
-          <li role="none"><button type="button" role="menuitem" onClick={pick(onRemoveFromSpace)}>{t("team.menuRemoveFromSpace")}</button></li>
+          {onRemoveFromSpace && <li role="none"><button type="button" role="menuitem" onClick={pick(onRemoveFromSpace)}>{t("team.menuRemoveFromSpace")}</button></li>}
           <li role="none"><button type="button" role="menuitem" data-danger="true" onClick={pick(onRemoveFromTeam)}>{t("team.menuRemoveFromTeam")}</button></li>
         </ul>
       )}
@@ -71,7 +73,7 @@ function MemberMenu({ member, onNewCode, onRemoveFromSpace, onRemoveFromTeam }: 
   );
 }
 
-function AccessSelect({ label, value, disabled, onChange }: {
+export function AccessSelect({ label, value, disabled, onChange }: {
   readonly label: string;
   readonly value: TeamAccess;
   readonly disabled?: boolean;
@@ -86,8 +88,33 @@ function AccessSelect({ label, value, disabled, onChange }: {
   );
 }
 
+export type EveryoneAccess = TeamAccess | "nobody";
+
+/** Whether everyone on the team has `space`, and how. */
+export function everyoneOf(everyone: readonly { space: string; access: TeamAccess }[] | undefined, space: string): EveryoneAccess {
+  return everyone?.find((entry) => entry.space === space)?.access ?? "nobody";
+}
+
+/** Who can use a hosted Space without being added one by one: everyone on
+ *  the team (editing or reading), or only the people added. */
+export function EveryoneSelect({ label, value, disabled, onChange }: {
+  readonly label: string;
+  readonly value: EveryoneAccess;
+  readonly disabled?: boolean;
+  readonly onChange: (access: EveryoneAccess) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <select className="share-input team-access team-everyone" aria-label={label} value={value} disabled={disabled} onChange={(event) => onChange(event.target.value as EveryoneAccess)}>
+      <option value="write">{t("team.page.everyoneWrite")}</option>
+      <option value="read">{t("team.page.everyoneRead")}</option>
+      <option value="nobody">{t("team.page.onlyAdded")}</option>
+    </select>
+  );
+}
+
 /** A join code shown once, in the box it was made in. */
-function IssuedCode({ name, code, onDone }: { readonly name: string; readonly code: string; readonly onDone: () => void }) {
+export function IssuedCode({ name, code, onDone }: { readonly name: string; readonly code: string; readonly onDone: () => void }) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
   const copy = async () => {
@@ -140,6 +167,9 @@ export function TeamMembers({ space, onError }: { readonly space: string; readon
     }
   };
 
+  const changeEveryone = (next: EveryoneAccess) => run(async () => {
+    await teamSetEveryone(space, next);
+  });
   const changeAccess = (member: TeamMember, next: TeamAccess) => run(async () => {
     await teamUpdateMember(member.id, {
       spaces: member.spaces.map((entry) => (entry.space === space ? { ...entry, access: next } : entry)),
@@ -191,6 +221,12 @@ export function TeamMembers({ space, onError }: { readonly space: string; readon
   return (
     <>
       <ul className="share-member-list team-member-list">
+        <li>
+          <span className="team-member-name">{t("team.page.everyoneRow")}</span>
+          <span className="team-member-controls">
+            <EveryoneSelect label={t("team.page.whoCanUse", { space })} value={everyoneOf(status.data?.everyone, space)} onChange={(next) => void changeEveryone(next)} />
+          </span>
+        </li>
         {members.map((member) => (
           <li key={member.id}>
             <span className="team-member-name">{member.name}</span>

@@ -1,0 +1,182 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* The team page: the same 840px column as home and a Space page, flat rows
+   under small gray titles, no cards and no icons. */
+.team-page {
+  width: min(840px, 100%);
+  margin: 0 auto;
+  padding: 4px 0 48px;
+  color: var(--mem-text);
+  font-family: var(--mem-font-body);
+}
+
+.team-page-team + .team-page-team {
+  margin-top: 56px;
+}
+
+.team-page-title {
+  margin: 0;
+  font-family: var(--mem-font-heading);
+  font-size: var(--reading-title-size, clamp(24px, 2.2vw, 30px));
+  font-weight: 500;
+  line-height: 1.22;
+  letter-spacing: -0.02em;
+}
+
+.team-page-block {
+  display: grid;
+  gap: 8px;
+  margin-top: 28px;
+}
+
+.team-page-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 32px;
+}
+
+.team-page-action {
+  padding: 4px 12px;
+  font-size: 13px;
+}
+
+.team-page-rows {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.team-page-rows li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 36px;
+  font-size: 14px;
+}
+
+.team-page-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.team-page-open {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--mem-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.team-page-open:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.team-page-open:focus-visible {
+  outline: 2px solid var(--mem-focus-ring);
+  outline-offset: 2px;
+}
+
+.team-page-meta {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--mem-text-tertiary);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.team-page-rows .team-everyone {
+  flex: none;
+}
+
+.team-page-quiet,
+.team-page-empty {
+  margin: 0;
+  color: var(--mem-text-tertiary);
+  font-size: 13px;
+}
+
+.team-page-share {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.team-page-share select,
+.team-page-share button {
+  padding: 5px 10px;
+  font-size: 13px;
+}
+
+.team-page-share select {
+  min-width: 0;
+  max-width: 320px;
+}
+
+.team-page-error {
+  margin: 12px 0 0;
+  color: var(--mem-danger);
+  font-size: 13px;
+}
+
+.team-page-waiting {
+  color: var(--mem-accent-page);
+}
+
+.team-page-leave {
+  margin-top: 28px;
+}
+
+.team-invite {
+  display: grid;
+  gap: 12px;
+  padding: 12px 0 8px;
+}
+
+.team-invite input[type="text"],
+.team-invite > .share-input {
+  max-width: 320px;
+}
+
+.team-invite-spaces {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.team-invite-spaces legend {
+  margin-bottom: 4px;
+  padding: 0;
+}
+
+.team-invite-space {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 34px;
+  font-size: 14px;
+}
+
+.team-invite-space label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 160px;
+}
+
+.team-invite-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}

@@ -83,6 +83,9 @@ vi.mock("../../hooks/useSearch", () => ({
 
 vi.mock("../../lib/tauri", () => ({
   shouldShowWizard: vi.fn().mockResolvedValue(true),
+  // "Team" in the navigation: this computer is part of no team.
+  listShares: vi.fn().mockResolvedValue([]),
+  teamStatus: vi.fn().mockRejectedValue(new Error("not a team server")),
   listMemoriesRich: vi.fn().mockResolvedValue([]),
   getMemoryStats: vi.fn().mockResolvedValue({ total: 0, new_today: 0, confirmed: 0, domains: [] }),
   searchEntities: vi.fn().mockResolvedValue([]),

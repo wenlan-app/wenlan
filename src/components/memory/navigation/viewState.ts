@@ -31,9 +31,10 @@ export type View =
   | { readonly kind: "space"; readonly spaceId: string | null; readonly spaceName: string }
   | { readonly kind: "spaces"; readonly create?: boolean }
   | { readonly kind: "stream" }
+  | { readonly kind: "team" }
   | { readonly kind: "thing"; readonly thingId: string };
 
-export type GlobalNavigation = "home" | "memories" | "pages" | "entities" | "spaces" | "graph" | "sources";
+export type GlobalNavigation = "home" | "memories" | "pages" | "entities" | "spaces" | "team" | "graph" | "sources";
 
 function assertNever(value: never): never {
   throw new TypeError(`Unsupported view: ${String(value)}`);
@@ -64,6 +65,8 @@ export function activeNavigationForView(view: View): GlobalNavigation | null {
     case "space":
     case "spaces":
       return "spaces";
+    case "team":
+      return "team";
     case "graph":
       return "graph";
     case "import":

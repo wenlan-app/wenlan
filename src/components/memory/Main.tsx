@@ -59,6 +59,7 @@ import SettingsSidebar from "./settings/SettingsSidebar";
 import SpaceDetail from "./SpaceDetail";
 import { ThingDetail } from "./things/ThingDetail";
 import { SpacesOverview } from "./spaces";
+import { TeamPage, useInTeam } from "./team/TeamPage";
 import { PagesOverview, WikiStart } from "./pages/PagesOverview";
 import { openPageMapOnVisit } from "./page/usePageInspectorSession";
 import { WikiWorkspace } from "./pages/WikiWorkspace";
@@ -868,6 +869,8 @@ export default function Main({
   const navigateSpaces = (create: boolean) => navigateTo(create
     ? { kind: "spaces", create: true } : { kind: "spaces" });
   const navigatePages = () => navigateTo({ kind: "pages" });
+  const navigateTeam = () => navigateTo({ kind: "team" });
+  const inTeam = useInTeam();
   const navigateHome = () => navigateTo({ kind: "home" });
   // Every import finish inside this window hands new material on through
   // these. Stable, so the cards under it do not re-render with the shell.
@@ -1614,6 +1617,7 @@ export default function Main({
             onNavigateEntities={() => navigateTo({ kind: "entities" })}
             onNavigateGraph={() => navigateTo({ kind: "graph" })}
             onNavigateSpaces={navigateSpaces}
+            onNavigateTeam={inTeam || view.kind === "team" ? navigateTeam : undefined}
             onNavigateSettings={() => navigateTo({ kind: "settings", section: "general" })}
             onOpenSearch={openSearch}
             onOpenAbout={() => setAboutOpen(true)}
@@ -1627,7 +1631,7 @@ export default function Main({
         )}
 
         {/* Main content */}
-        <main ref={mainContentRef} className={`flex-1 ${view.kind === "graph" || view.kind === "sources" || view.kind === "connect-agent" ? "min-w-0 overflow-hidden p-0" : isWikiWorkspaceView ? "memory-main-content memory-main-content--wiki overflow-hidden" : `memory-main-content overflow-y-auto${view.kind === "memory" || view.kind === "source-document" || view.kind === "entity" || view.kind === "thing" ? " memory-main-content--page" : ["spaces", "entities", "stream"].includes(view.kind) ? " memory-main-content--collection" : ""}`}`}>
+        <main ref={mainContentRef} className={`flex-1 ${view.kind === "graph" || view.kind === "sources" || view.kind === "connect-agent" ? "min-w-0 overflow-hidden p-0" : isWikiWorkspaceView ? "memory-main-content memory-main-content--wiki overflow-hidden" : `memory-main-content overflow-y-auto${view.kind === "memory" || view.kind === "source-document" || view.kind === "entity" || view.kind === "thing" ? " memory-main-content--page" : ["spaces", "entities", "stream", "team"].includes(view.kind) ? " memory-main-content--collection" : ""}`}`}>
           <TabIntro tab={INTRO_TABS[view.kind] ?? null} newUser={gettingStarted.newLibrary} areaRef={mainContentRef} />
           {view.kind === "import" ? (
             <ImportView
@@ -1736,6 +1740,11 @@ export default function Main({
                 : { kind: "page", pageId: target })}
               onSpaceDeleted={handleSpaceDeleted}
               onSpaceRenamed={handleSpaceRenamed}
+            />
+          ) : view.kind === "team" ? (
+            <TeamPage
+              onOpenSpace={(spaceName) => navigateTo({ kind: "space", spaceId: null, spaceName })}
+              onOpenPage={(pageId) => navigateTo({ kind: "page", pageId })}
             />
           ) : view.kind === "space" ? (
             <SpaceDetail

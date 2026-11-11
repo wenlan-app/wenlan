@@ -89,7 +89,7 @@ beforeEach(async () => {
 afterEach(() => vi.clearAllMocks());
 
 describe("JoinSharedDialog code mode", () => {
-  it("lists the server's Spaces and joins the chosen one", async () => {
+  it("lists the server's Spaces and joins them all with one press", async () => {
     vi.mocked(teamJoin).mockResolvedValue({
       url: "https://team.example.com",
       me: { member_id: "me", name: "Dee", spaces: [{ space: "Product", access: "write" }, { space: "Research", access: "read" }] },
@@ -103,20 +103,22 @@ describe("JoinSharedDialog code mode", () => {
     await screen.findByText("Can join:");
     expect(teamJoin).toHaveBeenCalledWith(code);
     expect(screen.getByText("Research · Read only")).toBeInTheDocument();
-    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Join Research" }));
+    await userEvent.click(screen.getByRole("button", { name: "Join all 2 Spaces" }));
     await waitFor(() => expect(joinTeamSpace).toHaveBeenCalledWith("Research", code, "Research"));
-    expect(onJoined).toHaveBeenCalledWith("space", "Research");
+    expect(joinTeamSpace).toHaveBeenCalledWith("Product", code, "Product");
+    expect(onJoined).toHaveBeenCalledWith("space", "Product");
   });
 
-  it("asks for another local name when one is taken", async () => {
+  it("puts a team Space beside a personal one of the same name, never into it", async () => {
     vi.mocked(listSpaces).mockResolvedValue([{ id: "1", name: "Product" } as never]);
-    vi.mocked(teamJoin).mockResolvedValue({ url: "u", me: { member_id: "me", name: "Dee", spaces: [{ space: "Product", access: "write" }] } });
+    vi.mocked(teamJoin).mockResolvedValue({ url: "https://team.example.com", me: { member_id: "me", name: "Dee", spaces: [{ space: "Product", access: "write" }] } });
+    vi.mocked(joinTeamSpace).mockResolvedValue({ exported: 0, applied: 0, conflicts: 0, skipped: 0 });
     wrap(<JoinSharedDialog onClose={() => undefined} />);
     await userEvent.click(screen.getByLabelText("Join code"));
-    await userEvent.paste("u#wlt_x");
-    expect(await screen.findByText("You already have a Space with this name. Name this one:")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Join Product" })).toBeDisabled();
+    await userEvent.paste("https://team.example.com#wlt_x");
+    expect(await screen.findByText("Product (team.example.com)")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Join 1 Space" }));
+    await waitFor(() => expect(joinTeamSpace).toHaveBeenCalledWith("Product (team.example.com)", "https://team.example.com#wlt_x", "Product"));
   });
 });
 

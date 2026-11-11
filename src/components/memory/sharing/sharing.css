@@ -77,3 +77,4 @@
 .share-rows li { display:flex;flex-direction:column;gap:8px; }
 .share-row-line { display:flex;gap:12px;align-items:center;justify-content:space-between; }
 .share-row-name { min-width:0;overflow-wrap:anywhere; }
+.team-join-actions { display:flex;gap:8px; }

@@ -2,8 +2,8 @@
 // "Who changed what" on a shared Space: the newest page changes, each naming
 // the person or AI that made it, how many sentences it touched and when.
 // Opening one shows the change and can put the page back as it was before.
-import { useEffect, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useState, type ReactNode } from "react";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import {
@@ -37,37 +37,51 @@ export function changeWho(editedBy: string | null | undefined, shares: readonly 
 }
 
 interface Props {
-  readonly space: string;
+  /** One Space, or every Space of a team (newest first across them). */
+  readonly space: string | readonly string[];
   readonly shares?: readonly SharedStatus[];
+  /** Rows that wait on someone, shown above the changes. */
+  readonly waiting?: ReactNode;
 }
 
-export function SpaceRecentChanges({ space, shares }: Props) {
+type SpaceChange = PageChange & { readonly space: string };
+
+export function SpaceRecentChanges({ space, shares, waiting }: Props) {
   const { t, i18n } = useTranslation();
   const locale = i18n.resolvedLanguage ?? i18n.language;
-  const [open, setOpen] = useState<PageChange | null>(null);
-  const changes = useQuery({
-    queryKey: ["recent-changes", space],
-    queryFn: () => listRecentChanges(SHOWN, space),
-    staleTime: 15_000,
-    refetchInterval: 30_000,
+  const [open, setOpen] = useState<SpaceChange | null>(null);
+  const spaces = typeof space === "string" ? [space] : space;
+  const several = typeof space !== "string";
+  const results = useQueries({
+    queries: spaces.map((name) => ({
+      queryKey: ["recent-changes", name],
+      queryFn: () => listRecentChanges(SHOWN, name),
+      staleTime: 15_000,
+      refetchInterval: 30_000,
+    })),
   });
-  const rows = changes.data ?? [];
-  if (rows.length === 0) return null;
+  const rows: SpaceChange[] = results
+    .flatMap((result, index) => (result.data ?? []).map((change) => ({ ...change, space: spaces[index] })))
+    .sort((a, b) => b.changed_at_ms - a.changed_at_ms)
+    .slice(0, SHOWN);
+  if (rows.length === 0 && !waiting) return null;
 
   return (
     <section className="space-recent-changes" aria-label={t("team.changes.title")}>
       <h2 className="space-brief-heading">{t("team.changes.title")}</h2>
       <ul>
+        {waiting}
         {rows.map((change) => {
           const who = changeWho(change.edited_by, shares, t);
           const created = change.change_kind === "created" || change.changed_sentences == null;
           const what = t(created ? "team.changes.added" : "team.changes.changed", { who, title: change.title });
           const meta = [
+            ...(several ? [change.space] : []),
             created ? t("team.changes.newPage") : t("team.changes.sentences", { count: change.changed_sentences ?? 0 }),
             relativeMs(change.changed_at_ms, locale),
           ].join(" · ");
           return (
-            <li key={change.page_id}>
+            <li key={`${change.space}:${change.page_id}`}>
               <button type="button" onClick={() => setOpen(change)}>
                 <span className="space-recent-changes-what">{what}</span>
                 <span className="space-recent-changes-meta">{meta}</span>
@@ -76,7 +90,7 @@ export function SpaceRecentChanges({ space, shares }: Props) {
           );
         })}
       </ul>
-      {open && <ChangeDialog change={open} space={space} shares={shares} onClose={() => setOpen(null)} />}
+      {open && <ChangeDialog change={open} space={open.space} shares={shares} onClose={() => setOpen(null)} />}
     </section>
   );
 }

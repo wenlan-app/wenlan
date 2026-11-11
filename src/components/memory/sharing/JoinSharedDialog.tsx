@@ -19,6 +19,7 @@ import {
 } from "../../../lib/tauri";
 import { FolderIcon } from "./ShareDialog";
 import { SHARES_KEY, shortFolder, useShares } from "./sharing";
+import { hostName } from "./team";
 import "./sharing.css";
 
 type JoinSharedDialogProps = {
@@ -41,7 +42,6 @@ export function JoinSharedDialog({ onClose, onJoined }: JoinSharedDialogProps) {
   const [code, setCode] = useState("");
   const [checked, setChecked] = useState<{ code: string; response: TeamJoinResponse } | null>(null);
   const [checking, setChecking] = useState(false);
-  const [names, setNames] = useState<Record<string, string>>({});
   const [folder, setFolder] = useState<string | null>(null);
   const [found, setFound] = useState<SharedFolder | null | undefined>(undefined);
   const [localName, setLocalName] = useState("");
@@ -75,7 +75,6 @@ export function JoinSharedDialog({ onClose, onJoined }: JoinSharedDialogProps) {
     setChecking(true);
     setError(null);
     setChecked(null);
-    setNames({});
     try {
       const response = await teamJoin(trimmed);
       setChecked({ code: trimmed, response });
@@ -90,8 +89,6 @@ export function JoinSharedDialog({ onClose, onJoined }: JoinSharedDialogProps) {
   const nameTaken = found?.kind === "space" && spaceNames.has((found?.name ?? "").trim().toLocaleLowerCase());
   const chosenName = nameTaken ? localName.trim() : found?.name ?? "";
   const stillTaken = nameTaken && spaceNames.has(chosenName.toLocaleLowerCase());
-  // The name a server Space gets here: its own, unless the person renamed it.
-  const localNameOf = (serverSpace: string) => (names[serverSpace] ?? serverSpace).trim();
   const takenHere = (serverSpace: string) => spaceNames.has(serverSpace.trim().toLocaleLowerCase());
   const refreshAfterJoin = () => Promise.all([
     queryClient.invalidateQueries({ queryKey: SHARES_KEY }),
@@ -99,17 +96,27 @@ export function JoinSharedDialog({ onClose, onJoined }: JoinSharedDialogProps) {
     queryClient.invalidateQueries({ queryKey: ["pages"] }),
     queryClient.invalidateQueries({ queryKey: ["recent-pages"] }),
   ]);
-  const joinServerSpace = async (serverSpace: string) => {
-    const local = localNameOf(serverSpace);
-    if (!checked || pending || !local || (takenHere(serverSpace) && spaceNames.has(local.toLocaleLowerCase()))) return;
+  // A Space here with the same name may hold this person's own pages: the
+  // team's copy goes beside it as "<name> (<server>)", never into it.
+  const teamLocalName = (serverSpace: string) => (takenHere(serverSpace) && checked
+    ? `${serverSpace} (${hostName(checked.response.url)})`
+    : serverSpace);
+  const joinAll = async () => {
+    if (!checked || pending) return;
     setPending(true);
     setError(null);
+    const joined: string[] = [];
     try {
-      await joinTeamSpace(local, checked.code, serverSpace);
+      for (const entry of checked.response.me.spaces) {
+        const local = teamLocalName(entry.space);
+        await joinTeamSpace(local, checked.code, entry.space);
+        joined.push(local);
+      }
       await refreshAfterJoin();
       onClose();
-      onJoined?.("space", local);
+      if (joined[0]) onJoined?.("space", joined[0]);
     } catch (caught) {
+      if (joined.length > 0) await refreshAfterJoin();
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
       setPending(false);
@@ -210,26 +217,19 @@ export function JoinSharedDialog({ onClose, onJoined }: JoinSharedDialogProps) {
             {checked && checked.response.me.spaces.length > 0 && (
               <div className="share-field">
                 <span className="share-label">{t("team.joinAvailable")}</span>
-                <ul className="share-rows">
-                  {checked.response.me.spaces.map((entry) => {
-                    const local = localNameOf(entry.space);
-                    const blocked = takenHere(entry.space) && spaceNames.has(local.toLocaleLowerCase());
-                    return (
-                      <li key={entry.space}>
-                        <div className="share-row-line">
-                          <span className="share-row-name">{entry.access === "read" ? t("team.joinAccessFor", { space: entry.space, access: t("team.readOnly") }) : entry.space}</span>
-                          <button type="button" className="share-secondary" aria-label={t("team.joinSpace", { space: entry.space })} disabled={pending || !local || blocked} onClick={() => void joinServerSpace(entry.space)}>{t(pending ? "sharing.joining" : "sharing.join")}</button>
-                        </div>
-                        {takenHere(entry.space) && (
-                          <label className="share-field">
-                            <span className="share-label">{t("sharing.joinNameTaken")}</span>
-                            <input className="share-input" value={names[entry.space] ?? entry.space} onChange={(event) => setNames({ ...names, [entry.space]: event.target.value })} disabled={pending} />
-                          </label>
-                        )}
-                      </li>
-                    );
-                  })}
+                <ul className="share-rows team-join-list">
+                  {checked.response.me.spaces.map((entry) => (
+                    <li key={entry.space}>
+                      <span className="share-row-name">{entry.access === "read" ? t("team.joinAccessFor", { space: teamLocalName(entry.space), access: t("team.readOnly") }) : teamLocalName(entry.space)}</span>
+                    </li>
+                  ))}
                 </ul>
+                <div className="team-join-actions">
+                  <button type="button" className="share-primary" disabled={pending} onClick={() => void joinAll()}>
+                    {pending ? t("sharing.joining") : t("team.page.joinAll", { count: checked.response.me.spaces.length })}
+                  </button>
+                </div>
+                <p className="share-hint">{t("team.page.joinAllHint")}</p>
               </div>
             )}
             <p className="share-hint">
