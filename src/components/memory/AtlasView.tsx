@@ -359,6 +359,9 @@ interface AtlasViewProps {
   focusPageId?: string;
   /** Open at this thing's 這件事 stop (from its page's 「在大图上看」). */
   focusThingId?: string;
+  /** Opens on this Space alone with its regions drawn (the Space page's
+   *  "Show on the big map"). Both stay changeable in Display. */
+  focusSpace?: string;
   /** Home's "Replay" (UX-GRAPH-6): the press it answers. The map plays last
    *  night once for it, 300 ms after its first paint. */
   replay?: number;
@@ -413,7 +416,7 @@ const measureLabel = (text: string): number => {
 };
 const GHOST_FALLBACK_RADIUS = 5;
 
-export default function AtlasView({ onNodeClick, onOpenMindMap, focusEntityId, focusPageId, focusThingId, replay: replayPress, onBack, onOpenTopics }: AtlasViewProps) {
+export default function AtlasView({ onNodeClick, onOpenMindMap, focusEntityId, focusPageId, focusThingId, focusSpace, replay: replayPress, onBack, onOpenTopics }: AtlasViewProps) {
   const { t } = useTranslation();
   const effectiveFocusId = focusPageId ? pageNodeId(focusPageId) : focusEntityId;
   const palette = useGraphPalette();
@@ -546,7 +549,7 @@ export default function AtlasView({ onNodeClick, onOpenMindMap, focusEntityId, f
   const [excludedTypes, setExcludedTypes] = useState<Set<string>>(() => new Set());
   const excludedTypesRef = useRef<ReadonlySet<string>>(excludedTypes);
   excludedTypesRef.current = excludedTypes;
-  const [spaceFilter, setSpaceFilter] = useState<string | null>(null);
+  const [spaceFilter, setSpaceFilter] = useState<string | null>(focusSpace ?? null);
 
   // Which node kinds are drawn. Wiki pages and entities on, memories off by
   // default: memories outnumber everything else and bury the map. Persisted
@@ -795,8 +798,8 @@ export default function AtlasView({ onNodeClick, onOpenMindMap, focusEntityId, f
   // The count line keeps reporting regions either way.
   // Ref mirror so the sigma mount effect (which recreates the overlay per
   // model) can apply the current choice without re-running on toggle.
-  const [showRegions, setShowRegions] = useState(false);
-  const showRegionsRef = useRef(false);
+  const [showRegions, setShowRegions] = useState(!!focusSpace);
+  const showRegionsRef = useRef(!!focusSpace);
   // "Working on": every active thing with its steeped points, not only the
   // picked one. Off by default so the map opens clean; the choice is kept.
   const [showWorking, setShowWorking] = useState<boolean>(() => {
@@ -2859,6 +2862,8 @@ export default function AtlasView({ onNodeClick, onOpenMindMap, focusEntityId, f
   // Entities are the exception and always report, zero included — the round-1
   // line did, and "0 entities" is the honest answer to an empty entity layer.
   const countLine = [
+    // A map scoped to one Space says which, so it does not read as everything.
+    ...(spaceFilter ? [spaceFilter] : []),
     ...(layers.page && pageCount > 0 ? [t("atlas.countPages", { count: pageCount })] : []),
     ...(layers.entity ? [t("atlas.countEntities", { count: entityCount })] : []),
     ...(layers.memory && memoryCount > 0

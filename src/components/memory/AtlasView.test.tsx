@@ -2049,9 +2049,59 @@ describe("AtlasView", () => {
     expect(latestGraph().hasNode("e4")).toBe(true);
 
     fireEvent.click(screen.getByRole("option", { name: "wenlan-dev" }));
-    expect(await screen.findByText("5 topics · 1 region")).toBeInTheDocument();
+    expect(await screen.findByText("wenlan-dev · 5 topics · 1 region")).toBeInTheDocument();
     expect(latestGraph().hasNode("e4")).toBe(false);
 
+    fireEvent.click(select);
+    fireEvent.click(screen.getByRole("option", { name: "All spaces" }));
+    await waitFor(() => expect(latestGraph().hasNode("e4")).toBe(true));
+  });
+
+  it("opens on one Space with its regions drawn when the Space page hands off", async () => {
+    // Same fixture as the selector test: five connected topics in wenlan-dev
+    // and one isolate in personal, which the handoff has to leave off.
+    const names: Record<string, string> = { e2: "Bob", e3: "Carol", e5: "Ravi", e6: "Hugo" };
+    const entities = [
+      makeEntity({ id: "e1", name: "Alice", domain: "wenlan-dev" }),
+      makeEntity({ id: "e2", name: "Bob", domain: "wenlan-dev" }),
+      makeEntity({ id: "e3", name: "Carol", domain: "wenlan-dev" }),
+      makeEntity({ id: "e4", name: "Isolate", domain: "personal" }),
+      makeEntity({ id: "e5", name: "Ravi", domain: "wenlan-dev" }),
+      makeEntity({ id: "e6", name: "Hugo", domain: "wenlan-dev" }),
+    ];
+    mockListEntities.mockResolvedValue(entities);
+    mockGetEntityDetail.mockImplementation(async (id: string) => ({
+      entity: entities.find((e) => e.id === id)!,
+      observations: [],
+      relations:
+        id === "e1"
+          ? Object.entries(names).map(([target, name], i) => ({
+              id: `rel-${i + 1}`,
+              relation_type: "knows",
+              direction: "outgoing" as const,
+              entity_id: target,
+              entity_name: name,
+              entity_type: "person",
+              source_agent: null,
+              created_at: Math.floor(Date.now() / 1000),
+            }))
+          : [],
+    }));
+
+    renderWithQuery(<AtlasView focusSpace="wenlan-dev" />);
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
+    await waitFor(() => expect(latestGraph().hasNode("e1")).toBe(true));
+    expect(latestGraph().hasNode("e4")).toBe(false);
+    expect(screen.getByText("wenlan-dev · 5 topics · 1 region")).toBeInTheDocument();
+
+    expect(displayControl("Regions")).toHaveAttribute("aria-pressed", "true");
+    const overlay = document.querySelector('[data-testid="atlas-region-names"]') as HTMLCanvasElement;
+    expect(overlay.style.display).not.toBe("none");
+    expect((document.querySelector('[data-testid="atlas-community-areas"]') as HTMLCanvasElement).style.display).not.toBe("none");
+
+    // Both stay the person's to change: All spaces brings the isolate back.
+    openDisplayControls();
+    const select = screen.getByRole("combobox", { name: "Space" });
     fireEvent.click(select);
     fireEvent.click(screen.getByRole("option", { name: "All spaces" }));
     await waitFor(() => expect(latestGraph().hasNode("e4")).toBe(true));

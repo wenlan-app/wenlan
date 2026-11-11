@@ -36,6 +36,23 @@ test("UX-SPACE-1 a Space opens on its Brief above its pages, with no tabs", asyn
   expect(errors.pageErrors).toEqual([]); expect(errors.consoleErrors).toEqual([]);
 });
 
+test("a Space's Show on the big map opens the map on that Space alone, with its regions drawn", async ({ page }, info) => {
+  const errors = collectBrowserErrors(page);
+  await installTauriMock(page, { locale: "en", rawActions: [], fixture: withBrief(), localStorage: { "wenlan-spaces-view-mode": "rows" } });
+  await page.goto("/");
+  await openPrimaryDestination(page, "Spaces");
+  await page.getByTestId("space-row-project-wenlan").getByRole("button", { name: "Wenlan", exact: true }).click();
+  await page.getByRole("button", { name: "Actions for Wenlan" }).click();
+  await page.getByRole("menuitem", { name: "Show on the big map", exact: true }).click();
+  await expect(page.getByTestId("atlas-view")).toBeVisible();
+  await expect(page.locator(".atlas-count-line")).toHaveText(/^Wenlan · /);
+  await page.getByRole("button", { name: "Display", exact: true }).click();
+  await expect(page.getByRole("combobox", { name: "Space" })).toContainText("Wenlan");
+  await expect(page.getByRole("button", { name: "Regions", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await page.screenshot({ path: info.outputPath("space-big-map.png") });
+  expect(errors.pageErrors).toEqual([]); expect(errors.consoleErrors).toEqual([]);
+});
+
 test("UX-SPACE-1 a Space without a Brief is its pages alone, and new pages inherit the Space", async ({ page }) => {
   const errors = collectBrowserErrors(page);
   const controller = await installTauriMock(page, { locale: "en", rawActions: [], fixture: withBrief(), localStorage: { "wenlan-spaces-view-mode": "rows" } });
