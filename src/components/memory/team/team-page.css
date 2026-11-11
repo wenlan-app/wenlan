@@ -188,3 +188,97 @@
   min-width: 0;
   max-width: 320px;
 }
+
+/* The people on the team: a few initials and a count at the right of the
+   title row; the list itself is in the people box. */
+.team-page-people-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.team-page-people {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: var(--mem-r-5);
+  background: transparent;
+  color: var(--mem-text-secondary);
+  font: inherit;
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.team-page-people:hover {
+  background: var(--mem-surface);
+  color: var(--mem-text);
+}
+
+.team-page-people:focus-visible {
+  outline: 2px solid var(--mem-focus-ring);
+  outline-offset: 2px;
+}
+
+.team-page-faces {
+  display: flex;
+}
+
+.team-page-faces .team-page-face + .team-page-face {
+  margin-left: -6px;
+}
+
+.team-page-face {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--mem-bg);
+  border-radius: 50%;
+  background: var(--mem-surface);
+  color: var(--mem-text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.team-people-box {
+  width: min(520px, calc(100vw - 32px));
+}
+
+.team-people-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.team-people-head h2 {
+  margin: 0;
+}
+
+.team-people-search {
+  width: 100%;
+  margin-bottom: 8px;
+}
+
+.team-people-list {
+  max-height: min(420px, 55vh);
+  overflow-y: auto;
+}
+
+.team-people-name {
+  flex: 1;
+}
+
+.team-people-foot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
+}

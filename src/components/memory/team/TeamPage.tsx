@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The team's own page, opened from the team's row in the left navigation.
 // One layout for everyone on the team, in this order: what waits for you,
-// the team's Spaces and who can use each, its people, and what changed
-// lately. The owner (the person at the server's computer) also invites
+// the team's Spaces and who can use each, and what changed lately. Its
+// people sit behind a count beside the team's name, so the page keeps its
+// length however many there are. The owner (the person at the server's computer) also invites
 // people, adds Spaces and opens each one's access box; a member reads the
 // same page and can leave the team.
 import { useEffect, useRef, useState, type FormEvent } from "react";
@@ -158,6 +159,7 @@ function Team({ group, status, shares, onOpenSpace, onOpenPage }: {
               : [{ label: t("team.page.leaveTeam", { team: name }), onPick: () => void leave(), danger: true }]}
           />
         )}
+        <TeamPeopleButton group={group} status={status} owner={owner} teamName={name} run={run} />
       </div>
       {owner && (!named || renaming) && (
         <NameTeam initial={group.team?.name ?? ""} onDone={() => setRenaming(false)} canCancel={named} />
@@ -171,7 +173,6 @@ function Team({ group, status, shares, onOpenSpace, onOpenPage }: {
       )}
 
       <TeamSpaces group={group} status={status} shares={shares} spaces={spaces} owner={owner} teamName={name} run={run} onOpenSpace={onOpenSpace} />
-      <TeamPeople group={group} status={status} owner={owner} run={run} />
       {error && <p className="share-error team-page-error" role="alert">{error}</p>}
       <SpaceRecentChanges space={spaces} shares={shares} />
     </section>
@@ -349,19 +350,95 @@ function TeamSpaces({ group, status, shares, spaces, owner, teamName, run, onOpe
   );
 }
 
-function TeamPeople({ group, status, owner, run }: {
+/** Everyone on the team, the owner first: what the page's "N people"
+ *  button counts and the people box lists. */
+type Person = { readonly id: string; readonly name: string; readonly label: string; readonly member?: TeamMember };
+
+function usePeople(group: TeamGroup, status: TeamStatus | undefined, owner: boolean): { people: Person[]; members: TeamMember[] } {
+  const { t } = useTranslation();
+  const me = group.shares[0];
+  if (owner) {
+    const members = activeMembers(status?.members ?? []);
+    // The owner's own name: what the team sees for edits made on the server.
+    const ownerName = me?.member_name;
+    const people: Person[] = [
+      ...(ownerName ? [{ id: "owner", name: ownerName, label: t("team.page.youOwner", { name: ownerName }) }] : []),
+      ...members.map((member) => ({ id: member.id, name: member.name, label: member.name, member })),
+    ];
+    return { people, members };
+  }
+  // A member's computer knows people from the Spaces' member lists.
+  const joined = new Map<string, string>();
+  for (const share of group.shares) for (const member of share.members) joined.set(member.id, member.name);
+  const people = [...joined].map(([id, name]) => ({ id, name, label: id === me?.member_id ? t("team.page.you", { name }) : name }));
+  return { people, members: [] };
+}
+
+/** The people on the team, kept off the page so it stays the same length
+ *  however many there are: a few initials and a count beside the team's
+ *  name, which open the people box. The owner also invites from here. */
+function TeamPeopleButton({ group, status, owner, teamName, run }: {
   readonly group: TeamGroup;
   readonly status: TeamStatus | undefined;
   readonly owner: boolean;
+  readonly teamName: string;
   readonly run: Run;
 }) {
   const { t } = useTranslation();
-  const [inviting, setInviting] = useState(false);
+  const { people, members } = usePeople(group, status, owner);
+  const [open, setOpen] = useState<"list" | "invite" | null>(null);
+  return (
+    <div className="team-page-people-bar">
+      <button type="button" className="team-page-people" aria-label={t("team.page.peopleTitle", { team: teamName })} onClick={() => setOpen("list")}>
+        <span className="team-page-faces" aria-hidden="true">
+          {people.slice(0, 4).map((person) => <span key={person.id} className="team-page-face">{initialOf(person.name)}</span>)}
+        </span>
+        <span>{t("team.page.peopleCount", { count: people.length })}</span>
+      </button>
+      {owner && <button type="button" className="share-secondary team-page-action" onClick={() => setOpen("invite")}>{t("team.page.invite")}</button>}
+      {open && (
+        <PeopleBox
+          teamName={teamName}
+          people={people}
+          members={members}
+          owner={owner}
+          inviteFirst={open === "invite"}
+          url={prefillTeamUrl(status?.listening)}
+          run={run}
+          onClose={() => setOpen(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function initialOf(name: string): string {
+  return [...name.trim()][0]?.toUpperCase() ?? "?";
+}
+
+/** Above this many people the box offers a search field. */
+const SEARCH_FROM = 8;
+
+function PeopleBox({ teamName, people, members, owner, inviteFirst, url, run, onClose }: {
+  readonly teamName: string;
+  readonly people: readonly Person[];
+  readonly members: readonly TeamMember[];
+  readonly owner: boolean;
+  readonly inviteFirst: boolean;
+  readonly url: string;
+  readonly run: Run;
+  readonly onClose: () => void;
+}) {
+  const { t } = useTranslation();
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const [inviting, setInviting] = useState(inviteFirst);
   const [issued, setIssued] = useState<{ name: string; code: string } | null>(null);
-  const url = prefillTeamUrl(status?.listening);
-  const me = group.shares[0];
-  // The owner's own name: what the team sees for edits made on the server.
-  const ownerName = me?.member_name;
+  const [query, setQuery] = useState("");
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (dialog && !dialog.open) dialog.showModal();
+    return () => dialog?.close();
+  }, []);
   const newLink = (member: TeamMember) => run(async () => {
     const key = await teamNewMemberKey(member.id, url.trim() || undefined);
     setIssued({ name: member.name, code: codeOf(key) });
@@ -370,18 +447,20 @@ function TeamPeople({ group, status, owner, run }: {
     const ok = await confirmAction(t("team.removeConfirm", { name: member.name }), { confirm: t("team.menuRemoveFromTeam"), cancel: t("sharing.cancel") });
     if (ok) await run(async () => { await teamRemoveMember(member.id); });
   };
-
-  // A member's computer knows people from the Spaces' member lists.
-  const joined = new Map<string, string>();
-  if (!owner) for (const share of group.shares) for (const member of share.members) joined.set(member.id, member.name);
-  const members = owner ? activeMembers(status?.members ?? []) : [];
+  const needle = query.trim().toLocaleLowerCase();
+  const shown = needle ? people.filter((person) => person.name.toLocaleLowerCase().includes(needle)) : people;
 
   return (
-    <div className="team-page-block">
-      <SectionHeading
-        title={t("team.page.people")}
-        action={owner && !inviting && <button type="button" className="share-secondary team-page-action" onClick={() => { setInviting(true); setIssued(null); }}>{t("team.page.invite")}</button>}
-      />
+    <dialog
+      ref={dialogRef}
+      className="share-dialog team-people-box"
+      aria-labelledby="team-people-title"
+      onCancel={(event) => { event.preventDefault(); onClose(); }}
+    >
+      <div className="team-people-head">
+        <h2 id="team-people-title">{t("team.page.peopleTitle", { team: teamName })}</h2>
+        {owner && !inviting && <button type="button" className="share-secondary team-page-action" onClick={() => { setInviting(true); setIssued(null); }}>{t("team.page.invite")}</button>}
+      </div>
       {inviting && (
         <InviteForm
           members={members}
@@ -392,26 +471,27 @@ function TeamPeople({ group, status, owner, run }: {
         />
       )}
       {issued && <IssuedCode name={issued.name} code={issued.code} onDone={() => setIssued(null)} />}
-      <ul className="team-page-rows">
-        {owner ? (
-          <>
-            {ownerName && <li><span className="team-page-name">{t("team.page.youOwner", { name: ownerName })}</span></li>}
-            {members.map((member) => (
-              <li key={member.id}>
-                <span className="team-page-name">{member.name}</span>
-                <span className="team-page-meta" />
-                <MemberMenu member={member} onNewCode={() => void newLink(member)} onRemoveFromTeam={() => void remove(member)} />
-              </li>
-            ))}
-          </>
-        ) : (
-          [...joined].map(([id, name]) => (
-            <li key={id}><span className="team-page-name">{id === me?.member_id ? t("team.page.you", { name }) : name}</span></li>
-          ))
-        )}
+      {people.length > SEARCH_FROM && (
+        <input className="share-input team-people-search" type="search" aria-label={t("team.page.peopleSearch")} placeholder={t("team.page.peopleSearch")} value={query} onChange={(event) => setQuery(event.target.value)} />
+      )}
+      <ul className="team-page-rows team-people-list">
+        {shown.map((person) => (
+          <li key={person.id}>
+            <span className="team-page-face" aria-hidden="true">{initialOf(person.name)}</span>
+            <span className="team-page-name team-people-name">{person.label}</span>
+            {owner && person.member && (() => {
+              const member = person.member;
+              return <MemberMenu member={member} onNewCode={() => void newLink(member)} onRemoveFromTeam={() => void remove(member)} />;
+            })()}
+          </li>
+        ))}
       </ul>
+      {needle && shown.length === 0 && <p className="team-page-quiet">{t("team.page.peopleNone")}</p>}
       {owner && members.length === 0 && !inviting && !issued && <p className="team-page-quiet">{t("team.page.noMembers")}</p>}
-    </div>
+      <div className="team-people-foot">
+        <button type="button" className="share-primary" onClick={onClose}>{t("sharing.done")}</button>
+      </div>
+    </dialog>
   );
 }
 
