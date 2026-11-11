@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=6265efb69e302b0e1c53a294b22d6d31a48efee40dd8cb464acb194a8dd58644 -->
+<!-- README_SYNC: source=README.md sha256=8c7c4790bc05a2580b11bedc1327dc0c40e505a48706c1852fcb70c038fac875 -->
 
 <p align="center">
   <picture>
@@ -41,7 +41,7 @@
 
 ## Por qué Wenlan
 
-Empecé Wenlan porque mis notas, documentos y chats de IA estaban dispersos, y mantenerlos en orden exigía un esfuerzo constante.
+Empecé Wenlan porque mis notas, documentos y chats de IA estaban dispersos, y evitar que un sistema de notas se echara a perder exigía un mantenimiento constante. Wenlan es para quienes usan herramientas de IA a diario y no quieren mantener un sistema de notas.
 
 - **Tú decides qué cambia la IA.** Ves cada cambio, lo deshaces y eliges qué páginas esperan tu visto bueno.
 - **Las páginas citan sus fuentes.** Una cita abre el original; una página cuyas citas casi no coinciden no se guarda.

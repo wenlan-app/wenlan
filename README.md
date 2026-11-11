@@ -39,7 +39,7 @@
 
 ## Why Wenlan
 
-I started Wenlan because my notes, documents, and AI chats were scattered, and keeping them in order took constant upkeep.
+I started Wenlan because my notes, documents, and AI chats were scattered, and keeping a note system from rotting took constant upkeep. Wenlan is for people who use AI tools every day and don't want to maintain a note system.
 
 - **You decide what AI changes.** See every change, undo it, and choose which pages wait for your OK.
 - **Pages cite their sources.** A citation opens the original; a page whose citations mostly don't match isn't saved.
