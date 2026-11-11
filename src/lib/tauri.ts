@@ -995,7 +995,7 @@ export async function listSpaces(): Promise<Space[]> {
 
 // ── Sharing a Space or one page with people ───────────────────────────
 
-export type SharedKind = "space" | "page";
+export type SharedKind = "space" | "page" | "library";
 
 /** A member of a shared Space or page. `id` only tells members apart. */
 export interface SharedMember {
@@ -1008,6 +1008,7 @@ export interface SharedSyncCounts {
   applied: number;
   conflicts: number;
   skipped: number;
+  held_back?: number;
 }
 
 export interface SharedSyncRun {
@@ -1016,6 +1017,14 @@ export interface SharedSyncRun {
   /** Why nothing was read or written: the folder is missing. */
   paused?: string | null;
   error?: string | null;
+  /** Library only: why pages the folder archives were left alone. */
+  held_back?: string | null;
+}
+
+/** One computer of a synced library. */
+export interface SharedDevice {
+  id: string;
+  name: string;
 }
 
 /** How this Wenlan shares a Space (`target` = its name) or a page (`target`
@@ -1035,6 +1044,11 @@ export interface SharedStatus {
   member_name: string;
   members: SharedMember[];
   last?: SharedSyncRun | null;
+  /** Library only: the library's computers, the main one and this one. */
+  devices?: SharedDevice[];
+  main_device?: string | null;
+  this_device?: string | null;
+  reading_copy_error?: string | null;
 }
 
 /** What a folder shares, before joining it. */
@@ -1136,6 +1150,20 @@ export async function stopSharingSpace(space: string): Promise<void> {
 
 export async function stopSharingPage(id: string): Promise<void> {
   await invoke("stop_sharing_page", { id });
+}
+
+/** Syncs the whole library with `folder`; `memberId` joins the library the
+ *  folder already holds as this person's other computer. */
+export async function shareLibrary(folder: string, memberId?: string | null): Promise<SharedSyncCounts> {
+  return invoke("share_library", { folder, memberId: memberId ?? null });
+}
+
+export async function stopSharingLibrary(): Promise<void> {
+  await invoke("stop_sharing_library");
+}
+
+export async function setLibraryMainDevice(deviceId: string): Promise<SharedStatus> {
+  return invoke("set_library_main_device", { deviceId });
 }
 
 export async function lookInSharedFolder(folder: string): Promise<SharedFolder | null> {

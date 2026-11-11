@@ -845,6 +845,10 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/pages/{id}/shared/sync` | main | no | not_applicable | `none` | — | receipt only: counts of page versions of one page written to and taken from its shared folder; page files go to the folder, not the response |
 | `GET` | `/api/pages/{id}/shared` | main | no | not_applicable | `none` | — | status only: one page's shared folder, member names and last sync pass; no page text |
 | `DELETE` | `/api/pages/{id}/shared` | main | no | not_applicable | `none` | — | receipt only: stops sharing one page from here; {ok: true} |
+| `POST` | `/api/library/shared/sync` | main | no | not_applicable | `none` | — | receipt only: counts of page versions of the whole library written to and taken from its shared folder; page files go to the folder, not the response |
+| `POST` | `/api/library/shared/main` | main | no | not_applicable | `none` | — | status only: makes one of the library's computers the main one; returns the library's folder, computer names and last sync pass; no page text |
+| `GET` | `/api/library/shared` | main | no | not_applicable | `none` | — | status only: the library's shared folder, member names and last sync pass; no page text |
+| `DELETE` | `/api/library/shared` | main | no | not_applicable | `none` | — | receipt only: stops sharing the library from here; {ok: true} |
 | `GET` | `/api/shared` | main | no | not_applicable | `none` | — | status only: every shared Space name or page id with its folder, member names and last sync pass; no page text |
 | `POST` | `/api/shared/folder` | main | no | not_applicable | `none` | — | status only: what a folder's space.json says it shares (a Space name or a page title and id) and member names; no page text |
 | `POST` | `/api/spaces/{name}/star` | main | yes | automatic | `none` | `handle_toggle_space_starred` | opaque response type — fail-closed |
@@ -1352,6 +1356,7 @@ carrying the authority of agreement.
 | `core/post_ingest.rs::run_post_ingest_enrichment` | `pub` | no | no | — | `core/db.rs::get_entity_detail` |
 | `core/post_write.rs::rename_page` | `pub` | yes | no | — | `core/db/page_rename.rs::commit_page_title_rename` |
 | `core/post_write.rs::rename_page_title_cas` | `pub(crate)` | no | no | — | `core/db/repair_page_rename.rs::rename_page_title_cas_inner` |
+| `core/reading_copy.rs::pages_for_copy` | `pub` | no | no | — | `core/db.rs::list_pages_by_space` |
 | `core/refinery/mod.rs::run_redistill_page_slice` | `pub` | no | no | — | `core/db.rs::get_stale_page_after` |
 | `core/repair.rs::apply_repair_with_pages_inner` | `private` | no | no | — | `core/db/repair_deterministic.rs::apply_deterministic_repair_cas` |
 | `core/repair.rs::prepare_memory_reclassification_with_pages` | `pub` | no | **yes** | `server/repair_routes.rs::handle_prepare` | `core/repair.rs::prepare_rename_page_title` |
@@ -1566,12 +1571,13 @@ carrying the authority of agreement.
 | `core/sentences.rs::load_page` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/sentences.rs::recheck_sentence` | `pub` | no | **yes** | `server/sentence_routes.rs::handle_recheck_sentence` | `core/db/sentence_history.rs::set_page_citations_at_page_version` |
 | `core/sentences.rs::source_states` | `private` | no | no | — | `core/db/citation_sources.rs::citation_page_source` |
+| `core/shared_space/library.rs::write_copy` | `private` | no | no | — | `core/reading_copy.rs::pages_for_copy` |
 | `core/shared_space/mod.rs::apply_create` | `private` | no | no | — | `core/shared_space/mod.rs::free_title` |
 | `core/shared_space/mod.rs::apply_version` | `private` | no | no | — | `core/shared_space/mod.rs::free_title` |
 | `core/shared_space/mod.rs::reload` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/shared_space/mod.rs::run_pass` | `private` | no | no | — | `core/shared_space/mod.rs::pass` |
 | `core/shared_space/mod.rs::stop_page_shares_in` | `private` | no | no | — | `core/db.rs::get_page` |
-| `core/shared_space/mod.rs::sync_missing` | `private` | no | no | — | `core/db.rs::get_page` |
+| `core/shared_space/mod.rs::sync_missing` | `private` | yes | no | — | `core/db.rs::get_page` |
 | `core/shared_space/mod.rs::sync_space` | `pub` | no | **yes** | `server/spaces_routes.rs::host_sync`, `server/spaces_routes.rs::shared_sync`, `server/team_routes.rs::handle_host_space` | `core/db.rs::get_page` |
 | `core/sources/page_watcher.rs::archive_deleted_pages` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/sources/page_watcher.rs::bring_back_archived_page` | `private` | no | no | — | `core/db.rs::get_page` |
@@ -1760,6 +1766,9 @@ carrying the authority of agreement.
 | `core/sentences.rs::reject_sentence_proposal` | `pub` | no | **yes** | `server/sentence_routes.rs::handle_reject_sentence_proposal` | `core/sentences.rs::load_page` |
 | `core/sentences.rs::revert_ai_write` | `pub` | no | **yes** | `server/sentence_routes.rs::handle_revert_sentences` | `core/sentences.rs::load_page` |
 | `core/sentences.rs::unit_citations` | `private` | no | no | — | `core/sentences.rs::source_states` |
+| `core/shared_space/library.rs::main_jobs` | `pub(super)` | no | no | — | `core/shared_space/library.rs::write_copy` |
+| `core/shared_space/mod.rs::archive_here` | `private` | no | no | — | `core/export/knowledge.rs::archive_page_if_still_archived`, `core/shared_space/mod.rs::reload` |
+| `core/shared_space/mod.rs::move_to_space` | `private` | no | no | — | `core/shared_space/mod.rs::reload` |
 | `core/shared_space/mod.rs::sync_page` | `private` | no | no | — | `core/shared_space/mod.rs::apply_version`, `core/shared_space/mod.rs::reload` |
 | `core/shared_space/mod.rs::sync_shared_spaces` | `pub` | no | **yes** | `server/scheduler.rs::spawn_scheduler` | `core/shared_space/mod.rs::run_pass` |
 | `core/sources/page_watcher.rs::adopt_note` | `private` | no | no | — | `core/sources/page_watcher.rs::create_adopted_page` |

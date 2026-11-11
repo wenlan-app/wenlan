@@ -9,6 +9,7 @@ import SourcesSection from "./settings/sections/SourcesSection";
 import AgentsSection from "./settings/sections/AgentsSection";
 import IntelligenceSection from "./settings/sections/IntelligenceSection";
 import DiagnosticsSection from "./settings/sections/DiagnosticsSection";
+import SyncSection from "./settings/sections/SyncSection";
 import TeamSection from "./settings/sections/TeamSection";
 import ExperimentsSection from "./settings/sections/ExperimentsSection";
 import { SettingsView } from "./settings/SettingsView";
@@ -52,6 +53,7 @@ export default function SettingsPage({
       {section === "appearance" && <AppearanceSection />}
       {section === "sources" && <SourcesSection onImport={onImport} onOpenLibrary={onOpenLibrary} />}
       {section === "agents" && <AgentsSection onSetupAgent={onSetupAgent} currentSpace={currentSpace} />}
+      {section === "sync" && <SyncSection />}
       {section === "intelligence" && <IntelligenceSection delay={0} />}
       {section === "team" && <TeamSection />}
       {section === "experiments" && <ExperimentsSection />}

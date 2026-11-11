@@ -464,7 +464,7 @@ fn text_key(other: &mut serde_yaml::Mapping, key: &str) -> Option<String> {
 
 /// Stated fields back as the JSON they were stored as; YAML that was text
 /// stays that text.
-fn fields_text(value: &serde_yaml::Value) -> String {
+pub(crate) fn fields_text(value: &serde_yaml::Value) -> String {
     if let serde_yaml::Value::String(text) = value {
         return text.clone();
     }
@@ -482,7 +482,7 @@ fn time_of(text: Option<String>, id: &str, what: &str, problems: &mut Vec<String
     at
 }
 
-fn seconds_of(text: &str) -> Option<i64> {
+pub(crate) fn seconds_of(text: &str) -> Option<i64> {
     chrono::DateTime::parse_from_rfc3339(text)
         .map(|at| at.timestamp())
         .ok()

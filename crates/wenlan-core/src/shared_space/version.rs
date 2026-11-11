@@ -26,6 +26,9 @@
 //! ---
 //! ```
 //!
+//! A version of the whole library (`Scope::Library`) also carries the page's
+//! Space in a `space` key beside `shared`, left out for an Unfiled page.
+//!
 //! A version's content is its title (the page's own `title` key), its body
 //! and whether it archives the page ([`State`]): a rename is a new version
 //! even when the body is the same, and so is an archive (a tombstone that
@@ -47,9 +50,14 @@ use crate::store::format::page::{self, PageFile};
 /// The frontmatter key that holds a version's sharing facts.
 const SHARED_KEY: &str = "shared";
 
+/// The frontmatter key of a library version's Space (see `Scope::Library`).
+pub const SPACE_KEY: &str = "space";
+
 /// `members/<member_id>/pages/<page_id>/<sha256>.md`.
 pub const MEMBERS_DIR: &str = "members";
 pub const PAGES_DIR: &str = "pages";
+/// `members/<member_id>/memories/<memory_id>/<sha256>.wlv` (the library only).
+pub const MEMORIES_DIR: &str = "memories";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthorKind {
@@ -99,6 +107,9 @@ pub struct State {
     pub title: String,
     pub body_digest: String,
     pub archived: bool,
+    /// The page's Space, for the library only: [`PageVersion::state`] and a
+    /// Space or page share leave it `None`.
+    pub space: Option<String>,
 }
 
 /// A version read from the folder.
@@ -117,6 +128,16 @@ impl PageVersion {
             title: self.page.title.clone(),
             body_digest: self.meta.body_digest.clone(),
             archived: self.meta.archived,
+            space: None,
+        }
+    }
+
+    /// The Space a library version names (its frontmatter `space`; none for
+    /// a page that was Unfiled).
+    pub fn space(&self) -> Option<&str> {
+        match self.page.other.get(SPACE_KEY) {
+            Some(serde_yaml::Value::String(space)) => Some(space.as_str()),
+            _ => None,
         }
     }
 }
@@ -222,7 +243,7 @@ pub fn render(page: &PageFile, meta: &VersionMeta) -> String {
     page::render(&page)
 }
 
-fn invalid(why: impl Into<String>) -> WenlanError {
+pub(super) fn invalid(why: impl Into<String>) -> WenlanError {
     WenlanError::Validation(why.into())
 }
 
@@ -296,12 +317,37 @@ pub fn parse(name: &str, bytes: &[u8]) -> Result<PageVersion, WenlanError> {
 /// other version was written over), and the one every member picks among
 /// them.
 #[derive(Debug)]
-pub struct Head<'a> {
-    pub winner: &'a PageVersion,
-    pub leaves: Vec<&'a PageVersion>,
+pub struct Head<'a, T = PageVersion> {
+    pub winner: &'a T,
+    pub leaves: Vec<&'a T>,
 }
 
-fn ts_key(ts: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+/// What [`head_of`] needs of a version: a page version, or a memory
+/// version (`memories`), which share the parent graph and the pick.
+pub trait Versioned {
+    fn sha(&self) -> &str;
+    fn parents(&self) -> Vec<&str>;
+    fn ts(&self) -> &str;
+}
+
+impl Versioned for PageVersion {
+    fn sha(&self) -> &str {
+        &self.sha
+    }
+    fn parents(&self) -> Vec<&str> {
+        self.meta
+            .parent
+            .iter()
+            .chain(self.meta.merged.iter())
+            .map(String::as_str)
+            .collect()
+    }
+    fn ts(&self) -> &str {
+        &self.meta.ts
+    }
+}
+
+pub(super) fn ts_key(ts: &str) -> Option<chrono::DateTime<chrono::Utc>> {
     chrono::DateTime::parse_from_rfc3339(ts)
         .ok()
         .map(|at| at.with_timezone(&chrono::Utc))
@@ -311,28 +357,26 @@ fn ts_key(ts: &str) -> Option<chrono::DateTime<chrono::Utc>> {
 /// more leaves are edits made at the same time: the later `ts` wins, and the
 /// larger sha when they tie, so every member picks the same one.
 pub fn head(versions: &[PageVersion]) -> Option<Head<'_>> {
+    head_of(versions)
+}
+
+/// [`head`] for any kind of version.
+pub fn head_of<T: Versioned>(versions: &[T]) -> Option<Head<'_, T>> {
     let replaced: HashSet<&str> = versions
         .iter()
-        .flat_map(|version| {
-            version
-                .meta
-                .parent
-                .iter()
-                .chain(version.meta.merged.iter())
-                .map(String::as_str)
-        })
+        .flat_map(|version| version.parents())
         .collect();
-    let mut leaves: Vec<&PageVersion> = versions
+    let mut leaves: Vec<&T> = versions
         .iter()
-        .filter(|version| !replaced.contains(version.sha.as_str()))
+        .filter(|version| !replaced.contains(version.sha()))
         .collect();
     if leaves.is_empty() {
         // Only a forged cycle has no leaf; still pick one the same way.
         leaves = versions.iter().collect();
     }
     leaves.sort_by(|a, b| {
-        (ts_key(&a.meta.ts), &a.sha)
-            .cmp(&(ts_key(&b.meta.ts), &b.sha))
+        (ts_key(a.ts()), a.sha())
+            .cmp(&(ts_key(b.ts()), b.sha()))
             .reverse()
     });
     Some(Head {
@@ -360,7 +404,7 @@ fn drive_copy_of(name: &str) -> Option<&str> {
     (!number.is_empty() && number.bytes().all(|b| b.is_ascii_digit())).then_some(base)
 }
 
-fn sub_dirs(dir: &Path) -> Vec<(String, PathBuf)> {
+pub(super) fn sub_dirs(dir: &Path) -> Vec<(String, PathBuf)> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
@@ -435,18 +479,25 @@ pub fn write_version(
     page_id: &str,
     text: &str,
 ) -> Result<(String, bool), WenlanError> {
+    write_version_under(folder, PAGES_DIR, member, page_id, text)
+}
+
+/// [`write_version`] for the versions of `kind` (`pages`, `memories`).
+pub(super) fn write_version_under(
+    folder: &Path,
+    kind: &str,
+    member: &str,
+    id: &str,
+    text: &str,
+) -> Result<(String, bool), WenlanError> {
     use std::io::Write;
-    if !is_safe_id(member) || !is_safe_id(page_id) {
+    if !is_safe_id(member) || !is_safe_id(id) {
         return Err(invalid(format!(
-            "{member}/{page_id} is not a folder name a version can go in"
+            "{member}/{id} is not a folder name a version can go in"
         )));
     }
     let sha = sha256_hex(text.as_bytes());
-    let dir = folder
-        .join(MEMBERS_DIR)
-        .join(member)
-        .join(PAGES_DIR)
-        .join(page_id);
+    let dir = folder.join(MEMBERS_DIR).join(member).join(kind).join(id);
     std::fs::create_dir_all(&dir)?;
     let path = dir.join(version_file_name(&sha));
     if version_file_exists(&path) {

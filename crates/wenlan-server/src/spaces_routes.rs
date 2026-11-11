@@ -196,6 +196,12 @@ pub(crate) fn register_extended(router: TrackedRouter<SharedState>) -> TrackedRo
             "/api/pages/{id}/shared",
             get(handle_page_shared_status).delete(handle_page_shared_leave),
         )
+        .route("/api/library/shared/sync", post(handle_library_shared_sync))
+        .route("/api/library/shared/main", post(handle_library_shared_main))
+        .route(
+            "/api/library/shared",
+            get(handle_library_shared_status).delete(handle_library_shared_leave),
+        )
         .route("/api/shared", get(handle_shared_list))
         .route("/api/shared/folder", post(handle_shared_folder))
         .route(
@@ -332,7 +338,16 @@ async fn shared_sync(
         },
     )
     .await?;
+    wake_embedding_for_memories(counts.memories_applied);
     Ok(Json(counts))
+}
+
+/// Memories a library pass made here are stored without a vector: the
+/// background embedding catch-up is asked to take them.
+pub(crate) fn wake_embedding_for_memories(applied: u32) {
+    if applied > 0 {
+        crate::embedding_backfill::request();
+    }
 }
 
 /// A Space synced through a team server: the server says who the key
@@ -498,6 +513,50 @@ pub async fn handle_page_shared_leave(
     Path(id): Path<String>,
 ) -> Result<Json<wenlan_types::responses::SuccessResponse>, ServerError> {
     shared_leave(&wenlan_core::shared_space::Scope::Page(id))
+}
+
+/// POST /api/library/shared/sync — one sync pass of the whole library with
+/// its folder, between this person's own computers. The first call makes
+/// the folder's `space.json` (or joins it as the member id in the request,
+/// found in that file). Pages of a Space or a page that has its own share
+/// stay in that share. Returns counts only.
+pub async fn handle_library_shared_sync(
+    State(state): State<Arc<RwLock<ServerState>>>,
+    Json(req): Json<wenlan_types::shared_space::SharedSyncRequest>,
+) -> Result<Json<wenlan_types::shared_space::SharedSyncCounts>, ServerError> {
+    shared_sync(&state, wenlan_core::shared_space::Scope::Library, req).await
+}
+
+/// GET /api/library/shared — how this Wenlan shares the library.
+pub async fn handle_library_shared_status(
+) -> Result<Json<wenlan_types::shared_space::SharedSyncStatus>, ServerError> {
+    shared_status(&wenlan_core::shared_space::Scope::Library)
+}
+
+/// POST /api/library/shared/main — makes one of the library's computers the
+/// main one: it writes the phone read copy, takes the inbox and runs
+/// background AI page writing. Returns the library's status.
+pub async fn handle_library_shared_main(
+    Json(req): Json<wenlan_types::shared_space::SetMainDeviceRequest>,
+) -> Result<Json<wenlan_types::shared_space::SharedSyncStatus>, ServerError> {
+    use wenlan_core::shared_space::{library, Scope};
+    let settings = wenlan_core::shared_space::settings_path();
+    let share = wenlan_core::shared_space::share_settings_at(&settings, &Scope::Library)?
+        .ok_or_else(|| ServerError::NotFound("the library is not shared from here".into()))?;
+    let device = req.device_id.trim().to_string();
+    tokio::task::spawn_blocking(move || {
+        library::set_main_device(std::path::Path::new(&share.folder), &device)
+    })
+    .await
+    .map_err(|e| ServerError::Internal(e.to_string()))??;
+    shared_status(&Scope::Library)
+}
+
+/// DELETE /api/library/shared — stops sharing the library from here; the
+/// pages and the folder stay as they are.
+pub async fn handle_library_shared_leave(
+) -> Result<Json<wenlan_types::responses::SuccessResponse>, ServerError> {
+    shared_leave(&wenlan_core::shared_space::Scope::Library)
 }
 
 /// GET /api/shared — every Space and page this Wenlan shares, with their

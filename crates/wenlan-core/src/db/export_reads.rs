@@ -247,10 +247,54 @@ impl MemoryDB {
 
     /// Every `memories` row, ordered by memory then chunk.
     pub(crate) async fn export_memory_rows(&self) -> Result<Vec<ExportMemoryRow>, WenlanError> {
+        self.export_memory_rows_where("").await
+    }
+
+    /// The rows of memories a person's own computers share: what a memory
+    /// file holds (not documents, saved pages, imported chats or derived
+    /// rows), and not a revision still waiting for the person's yes.
+    pub(crate) async fn export_shareable_memory_rows(
+        &self,
+    ) -> Result<Vec<ExportMemoryRow>, WenlanError> {
+        self.export_memory_rows_where(
+            "WHERE m.source IN ('memory', 'manual', 'clipboard') \
+               AND COALESCE(m.origin_class, '') <> 'document_ingest' \
+               AND COALESCE(m.pending_revision, 0) = 0 \
+               AND substr(m.source_id, 1, 7) <> 'import_' ",
+        )
+        .await
+    }
+
+    /// [`Self::export_shareable_memory_rows`] of one memory; `source_id` must
+    /// be a safe folder name (letters, digits, `-` and `_`).
+    pub(crate) async fn export_shareable_memory_rows_of(
+        &self,
+        source_id: &str,
+    ) -> Result<Vec<ExportMemoryRow>, WenlanError> {
+        if !source_id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        {
+            return Ok(Vec::new());
+        }
+        self.export_memory_rows_where(&format!(
+            "WHERE m.source IN ('memory', 'manual', 'clipboard') \
+               AND COALESCE(m.origin_class, '') <> 'document_ingest' \
+               AND COALESCE(m.pending_revision, 0) = 0 \
+               AND m.source_id = '{source_id}' "
+        ))
+        .await
+    }
+
+    async fn export_memory_rows_where(
+        &self,
+        filter: &str,
+    ) -> Result<Vec<ExportMemoryRow>, WenlanError> {
         let conn = self.conn.lock().await;
         let mut rows = conn
             .query(
-                "SELECT m.source, m.source_id, m.chunk_index, m.content, m.title, m.url, \
+                &format!(
+                    "SELECT m.source, m.source_id, m.chunk_index, m.content, m.title, m.url, \
                         m.memory_type, m.space, m.source_agent, COALESCE(m.confirmed, 0), \
                         COALESCE(m.pinned, 0), m.supersedes, m.supersede_mode, \
                         COALESCE(m.pending_revision, 0), m.structured_fields, m.source_text, \
@@ -261,7 +305,9 @@ impl MemoryDB {
                         COALESCE(o.structured_fields_explicit, 1), m.last_modified, \
                         m.retrieval_cue, COALESCE(o.space_rejected, 0), m.id, m.summary \
                  FROM memories m LEFT JOIN enrichment_origin o ON o.source_id = m.source_id \
-                 ORDER BY m.source_id, m.source, m.chunk_index, m.id",
+                 {filter}\
+                 ORDER BY m.source_id, m.source, m.chunk_index, m.id"
+                ),
                 (),
             )
             .await

@@ -64,10 +64,29 @@
 //! an AI here can only propose a change to them. The person here can still
 //! edit them, and that line is then theirs.
 //!
+//! A third scope, [`Scope::Library`], shares the whole library between one
+//! person's own computers: one folder holding every page of every Space here
+//! (Unfiled and archived too), except the pages of a Space that has its own
+//! share here and pages that have their own share here: those stay in their
+//! own folder, so other people's sentences are never filed under this
+//! person's id. Each version then carries the page's Space name in its
+//! frontmatter (`space`; none for Unfiled), and the Space is part of what is
+//! compared: moving a page to another Space is a change that reaches the
+//! other computer, and a Space that is not there yet is made. The folder's
+//! `space.json` says `"library": true`. The second computer joins with the
+//! member id found there (one person, one id).
+//!
+//! Only the library also carries the person's memories (`memories`): one
+//! `members/<member>/memories/<memory_id>/<sha256>.wlv` per version, picked
+//! and applied by the same rules after the pages. A Space or a page share
+//! never does, and the team server's reader walks `pages/` only.
+//!
 //! This Wenlan's member id, name and folder for each shared Space and page
 //! are kept in `shared-spaces.json` under the data root, outside the
 //! database, so a rebuilt database stays the same member.
 
+pub mod library;
+mod memories;
 pub mod remote;
 pub mod rewrite;
 pub mod version;
@@ -104,6 +123,11 @@ pub const SHARED_AI: &str = "shared_ai";
 pub const OWN_DEVICE_PERSON: &str = "own_device";
 pub const OWN_DEVICE_AI: &str = "own_device_ai";
 
+/// The key the library's pass and what it last held are kept under.
+pub const LIBRARY_KEY: &str = "library:";
+/// `space.json`'s name for a library folder, for showing only.
+pub const LIBRARY_NAME: &str = "Wenlan library";
+
 /// What a folder shares.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Scope {
@@ -111,6 +135,9 @@ pub enum Scope {
     Space(String),
     /// One page, by id, in whichever Space it is here.
     Page(String),
+    /// Every page of every Space here, between one person's own computers
+    /// (not the pages of a Space or a page shared on its own).
+    Library,
 }
 
 impl Scope {
@@ -120,6 +147,7 @@ impl Scope {
         match self {
             Scope::Space(name) => name.clone(),
             Scope::Page(id) => format!("page:{id}"),
+            Scope::Library => LIBRARY_KEY.to_string(),
         }
     }
 }
@@ -188,6 +216,10 @@ pub struct ShareSettings {
     /// made here through the team listener is filed under that member.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub hosted: bool,
+    /// This computer's id in the library's `space.json` `devices`: made once
+    /// when it first shares the library, never for a Space or a page.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub device_id: String,
 }
 
 /// A team server a Space syncs through.
@@ -208,16 +240,50 @@ struct SettingsStore {
     /// Pages shared alone, by page id.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pages: BTreeMap<String, ShareSettings>,
+    /// The whole library, shared between this person's own computers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    library: Option<ShareSettings>,
 }
 
 impl SettingsStore {
-    fn entries(&mut self, scope: &Scope) -> (&mut BTreeMap<String, ShareSettings>, String) {
+    fn get(&self, scope: &Scope) -> Option<&ShareSettings> {
         match scope {
-            Scope::Space(name) => (&mut self.spaces, name.clone()),
-            Scope::Page(id) => (&mut self.pages, id.clone()),
+            Scope::Space(name) => self.spaces.get(name),
+            Scope::Page(id) => self.pages.get(id),
+            Scope::Library => self.library.as_ref(),
         }
     }
 
+    fn get_mut(&mut self, scope: &Scope) -> Option<&mut ShareSettings> {
+        match scope {
+            Scope::Space(name) => self.spaces.get_mut(name),
+            Scope::Page(id) => self.pages.get_mut(id),
+            Scope::Library => self.library.as_mut(),
+        }
+    }
+
+    fn insert(&mut self, scope: &Scope, settings: ShareSettings) {
+        match scope {
+            Scope::Space(name) => {
+                self.spaces.insert(name.clone(), settings);
+            }
+            Scope::Page(id) => {
+                self.pages.insert(id.clone(), settings);
+            }
+            Scope::Library => self.library = Some(settings),
+        }
+    }
+
+    fn remove(&mut self, scope: &Scope) -> Option<ShareSettings> {
+        match scope {
+            Scope::Space(name) => self.spaces.remove(name),
+            Scope::Page(id) => self.pages.remove(id),
+            Scope::Library => self.library.take(),
+        }
+    }
+
+    /// Spaces first, then pages, the library last: the passes of what has
+    /// its own folder run before the one that leaves them out.
     fn all(self) -> Vec<(Scope, ShareSettings)> {
         self.spaces
             .into_iter()
@@ -227,6 +293,7 @@ impl SettingsStore {
                     .into_iter()
                     .map(|(id, settings)| (Scope::Page(id), settings)),
             )
+            .chain(self.library.map(|settings| (Scope::Library, settings)))
             .collect()
     }
 }
@@ -256,9 +323,7 @@ fn read_settings(path: &Path) -> Result<SettingsStore, WenlanError> {
 
 /// This Wenlan's settings for `scope`, if it shares it.
 pub fn share_settings_at(path: &Path, scope: &Scope) -> Result<Option<ShareSettings>, WenlanError> {
-    let mut store = read_settings(path)?;
-    let (entries, key) = store.entries(scope);
-    Ok(entries.remove(&key))
+    Ok(read_settings(path)?.remove(scope))
 }
 
 /// Everything this Wenlan shares, Spaces first.
@@ -301,8 +366,7 @@ fn change_settings<T>(
 /// they are. Returns whether it was shared.
 pub fn leave_at(path: &Path, scope: &Scope) -> Result<bool, WenlanError> {
     change_settings(path, |store| {
-        let (entries, key) = store.entries(scope);
-        let removed = entries.remove(&key).is_some();
+        let removed = store.remove(scope).is_some();
         (removed, removed)
     })
 }
@@ -336,8 +400,7 @@ pub fn join_as(
     }
     let folder = folder.to_string_lossy().into_owned();
     change_settings(path, |store| {
-        let (entries, key) = store.entries(scope);
-        let settings = match entries.get(&key) {
+        let settings = match store.get(scope) {
             Some(existing) => {
                 if member_id.is_some_and(|id| id != existing.member_id) {
                     return (
@@ -363,11 +426,16 @@ pub fn join_as(
                 host: None,
                 read_only: false,
                 hosted: false,
+                device_id: String::new(),
             },
         };
-        let changed = entries.get(&key) != Some(&settings);
+        let mut settings = settings;
+        if matches!(scope, Scope::Library) && settings.device_id.is_empty() {
+            settings.device_id = uuid::Uuid::new_v4().simple().to_string();
+        }
+        let changed = store.get(scope) != Some(&settings);
         if changed {
-            entries.insert(key, settings.clone());
+            store.insert(scope, settings.clone());
         }
         (changed, Ok(settings))
     })?
@@ -382,8 +450,7 @@ pub fn update_share(
     change: impl FnOnce(&mut ShareSettings),
 ) -> Result<Option<ShareSettings>, WenlanError> {
     change_settings(path, |store| {
-        let (entries, key) = store.entries(scope);
-        let Some(settings) = entries.get_mut(&key) else {
+        let Some(settings) = store.get_mut(scope) else {
             return (false, None);
         };
         let before = settings.clone();
@@ -410,18 +477,49 @@ pub struct SpaceFile {
     /// The shared page's id when the folder shares one page.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub page: Option<String>,
+    /// The folder shares the whole library ([`Scope::Library`]); `space` is
+    /// then a name for showing only.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub library: bool,
     pub members: Vec<SpaceMember>,
+    /// The computers of a library folder, each added once by the computer
+    /// itself (never rewritten, so a sync tool sees no conflicting copies).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub devices: Vec<SpaceDevice>,
+    /// The id of the computer that writes the phone read copy, takes the
+    /// inbox and runs background AI page writing. The first computer to
+    /// share the library; changed by the person.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub main_device: String,
+}
+
+/// A computer of a shared library.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpaceDevice {
+    pub id: String,
+    pub name: String,
 }
 
 impl SpaceFile {
     /// What the folder shares, with `space` naming the Space here.
     fn scope_check(&self, scope: &Scope) -> Result<(), String> {
         match (scope, self.page.as_deref()) {
+            (Scope::Library, None) if self.library => return Ok(()),
+            (Scope::Library, _) => {
+                return Err("it shares a Space or a page, not the library".into())
+            }
+            _ if self.library => {
+                return Err("it shares the whole library, not a Space or a page".into())
+            }
+            _ => {}
+        }
+        match (scope, self.page.as_deref()) {
             (Scope::Space(_), None) => Ok(()),
             (Scope::Page(id), Some(page)) if page == id => Ok(()),
             (Scope::Space(_), Some(_)) => Err("it shares one page, not a Space".into()),
             (Scope::Page(_), None) => Err("it shares a whole Space, not this page".into()),
             (Scope::Page(_), Some(_)) => Err("it shares another page".into()),
+            (Scope::Library, _) => unreachable!("a library scope is decided above"),
         }
     }
 }
@@ -466,10 +564,13 @@ pub fn ensure_space_file(
             format: FORMAT,
             space: name.to_string(),
             page: match scope {
-                Scope::Space(_) => None,
+                Scope::Space(_) | Scope::Library => None,
                 Scope::Page(id) => Some(id.clone()),
             },
+            library: matches!(scope, Scope::Library),
             members: Vec::new(),
+            devices: Vec::new(),
+            main_device: String::new(),
         },
     };
     file.scope_check(scope).map_err(|reason| {
@@ -610,11 +711,23 @@ fn finish(run: &SpaceRun, space: &str, outcome: Outcome) -> SharedSyncRun {
             {
                 log::info!("[shared_space] {space}: syncing again");
             }
+            let held_back = (counts.held_back > 0).then(|| {
+                let reason = format!(
+                    "{} pages that the other computer archived were left as they are: \
+                     that is most of the library. Check the other computer, then sync again",
+                    counts.held_back
+                );
+                if before.as_ref().and_then(|run| run.held_back.as_ref()) != Some(&reason) {
+                    log::warn!("[shared_space] {space}: {reason}");
+                }
+                reason
+            });
             SharedSyncRun {
                 at,
                 counts,
                 paused: None,
                 error: None,
+                held_back,
             }
         }
         Outcome::Paused(reason) => {
@@ -626,6 +739,7 @@ fn finish(run: &SpaceRun, space: &str, outcome: Outcome) -> SharedSyncRun {
                 counts: SharedSyncCounts::default(),
                 paused: Some(reason),
                 error: None,
+                held_back: None,
             }
         }
         Outcome::Failed(error) => {
@@ -637,6 +751,7 @@ fn finish(run: &SpaceRun, space: &str, outcome: Outcome) -> SharedSyncRun {
                 counts: SharedSyncCounts::default(),
                 paused: None,
                 error: Some(error),
+                held_back: None,
             }
         }
     };
@@ -663,9 +778,24 @@ fn status_of(settings_path: &Path, scope: &Scope, settings: ShareSettings) -> Sh
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .clone();
-    let members = read_space_file(Path::new(&settings.folder))
+    let space_file = read_space_file(&folder_for(scope, &settings.folder))
         .ok()
-        .flatten()
+        .flatten();
+    let library = matches!(scope, Scope::Library);
+    let (devices, main_device) = match (&space_file, library) {
+        (Some(file), true) => (
+            file.devices
+                .iter()
+                .map(|device| wenlan_types::shared_space::SharedDevice {
+                    id: device.id.clone(),
+                    name: device.name.clone(),
+                })
+                .collect(),
+            Some(file.main_device.clone()).filter(|id| !id.is_empty()),
+        ),
+        _ => (Vec::new(), None),
+    };
+    let members = space_file
         .map(|file| file.members)
         .filter(|members| !members.is_empty())
         .unwrap_or_else(|| {
@@ -678,9 +808,11 @@ fn status_of(settings_path: &Path, scope: &Scope, settings: ShareSettings) -> Sh
         kind: match scope {
             Scope::Space(_) => wenlan_types::shared_space::SharedKind::Space,
             Scope::Page(_) => wenlan_types::shared_space::SharedKind::Page,
+            Scope::Library => wenlan_types::shared_space::SharedKind::Library,
         },
         target: match scope {
             Scope::Space(name) | Scope::Page(name) => name.clone(),
+            Scope::Library => "library".to_string(),
         },
         folder: settings.folder,
         host: settings.host.map(|host| host.url),
@@ -696,6 +828,15 @@ fn status_of(settings_path: &Path, scope: &Scope, settings: ShareSettings) -> Sh
             })
             .collect(),
         last,
+        devices,
+        main_device,
+        this_device: (library && !settings.device_id.is_empty())
+            .then(|| settings.device_id.clone()),
+        reading_copy_error: if library {
+            library::reading_copy_error(settings_path)
+        } else {
+            None
+        },
     }
 }
 
@@ -711,11 +852,19 @@ pub fn share_statuses_at(settings_path: &Path) -> Result<Vec<SharedSyncStatus>, 
 pub fn peek_folder(
     folder: &Path,
 ) -> Result<Option<wenlan_types::shared_space::SharedFolder>, WenlanError> {
-    let Some(file) = read_space_file(folder)? else {
-        return Ok(None);
+    // A library keeps its engine files in a subfolder of the folder the
+    // person chose.
+    let file = match read_space_file(folder)? {
+        Some(file) => file,
+        None => match read_space_file(&library::engine_folder(folder)) {
+            Ok(Some(file)) if file.library => file,
+            _ => return Ok(None),
+        },
     };
     Ok(Some(wenlan_types::shared_space::SharedFolder {
-        kind: if file.page.is_some() {
+        kind: if file.library {
+            wenlan_types::shared_space::SharedKind::Library
+        } else if file.page.is_some() {
             wenlan_types::shared_space::SharedKind::Page
         } else {
             wenlan_types::shared_space::SharedKind::Space
@@ -775,6 +924,7 @@ pub async fn sync_space(
             }
             Scope::Space(space.to_string())
         }
+        Scope::Library => Scope::Library,
         Scope::Page(id) => {
             if !version::is_safe_id(id) {
                 return Err(WenlanError::Validation(format!(
@@ -831,7 +981,7 @@ pub async fn sync_space(
             // Joining as a member already in the folder: one of this
             // person's other computers.
             let already = share_settings_at(target.settings_path, &scope)?.is_some();
-            let folder = target.folder.to_path_buf();
+            let folder = folder_for(&scope, &target.folder.to_string_lossy());
             let listed = tokio::task::spawn_blocking(move || read_space_file(&folder))
                 .await
                 .map_err(|error| WenlanError::Generic(format!("shared folder task: {error}")))??
@@ -904,7 +1054,7 @@ async fn run_pass(
     knowledge_path: Option<&Path>,
     automatic: bool,
 ) -> Result<Result<SharedSyncCounts, String>, WenlanError> {
-    let folder = PathBuf::from(&settings.folder);
+    let folder = folder_for(scope, &settings.folder);
     let listed = match settings.host.clone() {
         None => None,
         Some(host) => match remote::pull(&host, &folder).await {
@@ -932,7 +1082,10 @@ async fn run_pass(
             list_team_members(settings_path, &folder, space).await;
         }
     }
-    let counts = pass(db, scope, &settings, knowledge_path).await?;
+    let counts = pass(db, scope, &settings, settings_path, knowledge_path).await?;
+    if matches!(scope, Scope::Library) {
+        library::main_jobs(db, settings_path, &settings, &counts).await;
+    }
     if let Some((host, listed)) = listed {
         if let Err(reason) = remote::push(&host, &folder, &settings.member_id, &listed).await {
             return Ok(Err(reason));
@@ -1026,7 +1179,7 @@ pub async fn sync_shared_spaces(
             let renamed = join_at(settings_path, &scope, Path::new(&settings.folder), name)
                 .and_then(|renamed| {
                     rename_space_member(
-                        Path::new(&renamed.folder),
+                        &folder_for(&scope, &renamed.folder),
                         &SpaceMember {
                             id: renamed.member_id.clone(),
                             name: renamed.member_name.clone(),
@@ -1062,7 +1215,7 @@ async fn ready(db: &MemoryDB, scope: &Scope, settings: &ShareSettings) -> Result
             Err(error) => return Err(error.to_string()),
         }
     }
-    let folder = PathBuf::from(&settings.folder);
+    let folder = folder_for(scope, &settings.folder);
     tokio::task::spawn_blocking(move || folder_ready(&folder))
         .await
         .map_err(|error| format!("shared folder task: {error}"))?
@@ -1096,22 +1249,45 @@ fn folder_ready(folder: &Path) -> Result<(), String> {
     }
 }
 
-/// The page here, as its versions are compared.
-fn local_state(page: &Page) -> version::State {
-    version::State {
-        title: page.title.clone(),
-        body_digest: version::body_digest(&page.content),
-        archived: page.status == "archived",
+/// A Space name that names a Space: the library's `space` of a page with
+/// none (Unfiled) is left out.
+fn named_space(space: Option<&str>) -> Option<&str> {
+    space.map(str::trim).filter(|space| {
+        !space.is_empty() && *space != UNFILED_SPACE_ID && *space != "uncategorized"
+    })
+}
+
+/// What the library leaves to the folders that have their own share here:
+/// the Spaces and the pages shared on their own.
+fn own_shares(settings_path: &Path) -> Result<(HashSet<String>, HashSet<String>), WenlanError> {
+    let mut spaces = HashSet::new();
+    let mut pages = HashSet::new();
+    for (scope, _) in shares_at(settings_path)? {
+        match scope {
+            Scope::Space(name) => {
+                spaces.insert(name);
+            }
+            Scope::Page(id) => {
+                pages.insert(id);
+            }
+            Scope::Library => {}
+        }
+    }
+    Ok((spaces, pages))
+}
+
+/// The folder a pass of `scope` reads and writes: for the library, the
+/// engine subfolder of the folder the person chose (`settings.folder`).
+pub(crate) fn folder_for(scope: &Scope, folder: &str) -> PathBuf {
+    match scope {
+        Scope::Library => library::engine_folder(Path::new(folder)),
+        _ => PathBuf::from(folder),
     }
 }
 
-/// The newest version with this content.
-fn newest_with<'a>(versions: &'a [PageVersion], state: &version::State) -> Option<&'a PageVersion> {
-    versions
-        .iter()
-        .filter(|version| &version.state() == state)
-        .max_by(|a, b| (&a.meta.ts, &a.sha).cmp(&(&b.meta.ts, &b.sha)))
-}
+/// A library pass that would archive more than this many pages here, and
+/// more than half of the library's, archives none of them.
+const MASS_ARCHIVE_MIN: usize = 20;
 
 /// What one pass reads once and every page uses.
 struct Pass<'a> {
@@ -1130,6 +1306,10 @@ struct Pass<'a> {
     names: HashMap<String, String>,
     /// Version files in the folder this pass could not read yet.
     unread: u32,
+    /// The scope is the library: the Space is part of what is compared.
+    library: bool,
+    /// The library leaves out these Spaces, which have their own share here.
+    own_spaces: HashSet<String>,
 }
 
 /// One pass of `scope` with the folder in `settings`.
@@ -1137,15 +1317,23 @@ async fn pass(
     db: &MemoryDB,
     scope: &Scope,
     settings: &ShareSettings,
+    settings_path: &Path,
     knowledge_path: Option<&Path>,
 ) -> Result<SharedSyncCounts, WenlanError> {
-    let folder = PathBuf::from(&settings.folder);
+    let folder = folder_for(scope, &settings.folder);
     let me = SpaceMember {
         id: settings.member_id.clone(),
         name: settings.member_name.clone(),
     };
 
     let mut local: HashMap<String, Page> = HashMap::new();
+    let (own_spaces, own_pages) = if matches!(scope, Scope::Library) {
+        own_shares(settings_path)?
+    } else {
+        Default::default()
+    };
+    // Library pages that stay in their own folder.
+    let mut left_out: HashSet<String> = own_pages.clone();
     let space = match scope {
         Scope::Space(space) => {
             for status in ["active", "archived"] {
@@ -1171,6 +1359,24 @@ async fn pass(
             }
             _ => UNFILED_SPACE_ID.to_string(),
         },
+        Scope::Library => {
+            for status in ["active", "archived"] {
+                for page in db.list_pages_by_space(status, None, 1_000_000, 0).await? {
+                    if own_pages.contains(&page.id)
+                        || page
+                            .space
+                            .as_deref()
+                            .is_some_and(|space| own_spaces.contains(space))
+                    {
+                        left_out.insert(page.id.clone());
+                    } else {
+                        local.insert(page.id.clone(), page);
+                    }
+                }
+            }
+            // The Space of each page is its own; this is not used.
+            UNFILED_SPACE_ID.to_string()
+        }
     };
     let name = match scope {
         Scope::Space(space) => space.clone(),
@@ -1178,6 +1384,7 @@ async fn pass(
             .get(id)
             .map(|page| page.title.clone())
             .unwrap_or_else(|| id.clone()),
+        Scope::Library => LIBRARY_NAME.to_string(),
     };
 
     let space_file = {
@@ -1186,6 +1393,18 @@ async fn pass(
         tokio::task::spawn_blocking(move || ensure_space_file(&folder, &scope, &name, &me))
             .await
             .map_err(|error| WenlanError::Generic(format!("shared folder task: {error}")))??
+    };
+    let space_file = if matches!(scope, Scope::Library) {
+        let folder = folder.clone();
+        let device = SpaceDevice {
+            id: settings.device_id.clone(),
+            name: library::computer_name(),
+        };
+        tokio::task::spawn_blocking(move || library::add_device(&folder, &device))
+            .await
+            .map_err(|error| WenlanError::Generic(format!("shared folder task: {error}")))??
+    } else {
+        space_file
     };
     let mut read = {
         let folder = folder.clone();
@@ -1197,6 +1416,11 @@ async fn pass(
         // A page folder holds that page only; anything else in it is not
         // taken.
         read.pages.retain(|page, _| page == id);
+    }
+    if matches!(scope, Scope::Library) {
+        // These keep their own folder: another person's sentences on them
+        // must not be filed under this person's id here.
+        read.pages.retain(|page, _| !left_out.contains(page));
     }
     let mut counts = SharedSyncCounts {
         skipped: read.skipped,
@@ -1221,6 +1445,8 @@ async fn pass(
             .map(|member| (member.id, member.name))
             .collect(),
         unread: read.skipped,
+        library: matches!(scope, Scope::Library),
+        own_spaces,
     };
     let mut held = read_held(db, &key).await?;
 
@@ -1231,7 +1457,41 @@ async fn pass(
         .collect();
     let empty = Vec::new();
     let mut unsaved = false;
+    // Applying the folder must not archive most of the library at once (a
+    // damaged database or an emptied folder on the other computer): then
+    // none of those pages is archived this pass.
+    let mut hold: HashSet<&str> = HashSet::new();
+    if ctx.library {
+        let archiving: Vec<&str> = local
+            .values()
+            .filter(|page| page.status != "archived")
+            .filter(|page| {
+                let versions = read.pages.get(page.id.as_str()).unwrap_or(&empty);
+                let Some(head) = version::head(versions) else {
+                    return false;
+                };
+                let before = held.get(&page.id);
+                head.winner.meta.archived
+                    && before.is_none_or(|held| {
+                        held.sha != head.winner.sha && held.version == Some(page.version)
+                    })
+            })
+            .map(|page| page.id.as_str())
+            .collect();
+        if archiving.len() > MASS_ARCHIVE_MIN && archiving.len() * 2 > local.len() {
+            log::warn!(
+                "[shared_space] {key}: the folder would archive {} of {} pages here; none is archived this pass",
+                archiving.len(),
+                local.len()
+            );
+            hold.extend(archiving);
+        }
+    }
     for id in ids {
+        if hold.contains(id) {
+            counts.held_back += 1;
+            continue;
+        }
         let versions = read.pages.get(id).unwrap_or(&empty);
         let before = held.get(id).cloned();
         let exported = counts.exported;
@@ -1260,6 +1520,10 @@ async fn pass(
     if unsaved {
         save_held(db, &key, &held).await?;
     }
+    if ctx.library {
+        // The library's memories go the same way, after its pages.
+        memories::sync(db, settings, &ctx.folder, &ctx.own_spaces, &mut counts).await?;
+    }
     Ok(counts)
 }
 
@@ -1285,6 +1549,69 @@ struct Applied {
 }
 
 impl Pass<'_> {
+    /// The page here, as its versions are compared. The library compares
+    /// the page's Space too; a Space or page share does not.
+    fn local_state(&self, page: &Page) -> version::State {
+        version::State {
+            title: page.title.clone(),
+            body_digest: version::body_digest(&page.content),
+            archived: page.status == "archived",
+            space: if self.library {
+                named_space(page.space.as_deref()).map(str::to_string)
+            } else {
+                None
+            },
+        }
+    }
+
+    /// A version, as it is compared with [`Self::local_state`].
+    fn version_state(&self, version: &PageVersion) -> version::State {
+        version::State {
+            space: if self.library {
+                named_space(version.space()).map(str::to_string)
+            } else {
+                None
+            },
+            ..version.state()
+        }
+    }
+
+    /// The newest version with this content.
+    fn newest_with<'a>(
+        &self,
+        versions: &'a [PageVersion],
+        state: &version::State,
+    ) -> Option<&'a PageVersion> {
+        versions
+            .iter()
+            .filter(|version| &self.version_state(version) == state)
+            .max_by(|a, b| (&a.meta.ts, &a.sha).cmp(&(&b.meta.ts, &b.sha)))
+    }
+
+    /// The Space a version's page is kept in here: the library's own Space
+    /// for it (`None` is Unfiled), else this pass's Space.
+    fn target_space(&self, version: &PageVersion) -> String {
+        if self.library {
+            named_space(version.space())
+                .unwrap_or(UNFILED_SPACE_ID)
+                .to_string()
+        } else {
+            self.space.clone()
+        }
+    }
+
+    /// Whether the library leaves this version's Space to its own share.
+    fn leaves_to_own_share(&self, version: &PageVersion) -> bool {
+        self.library
+            && named_space(version.space()).is_some_and(|space| self.own_spaces.contains(space))
+    }
+
+    /// Makes the Space `name` here when there is none (a page of another
+    /// computer's Space). `false` when it could not be made this pass.
+    async fn ensure_space(&self, name: &str) -> Result<bool, WenlanError> {
+        ensure_space(self.db, name).await
+    }
+
     /// A page of the Space that is here. Returns what to remember of it.
     async fn sync_page(
         &self,
@@ -1293,26 +1620,28 @@ impl Pass<'_> {
         held: Option<&Held>,
         counts: &mut SharedSyncCounts,
     ) -> Result<Option<Held>, WenlanError> {
-        if page.status == "archived" && versions.is_empty() {
-            // Archived before it was ever shared: it stays here only.
+        if page.status == "archived" && versions.is_empty() && !self.library {
+            // Archived before it was ever shared: it stays here only. (The
+            // library takes every page of the library with it, archived
+            // ones too.)
             return Ok(None);
         }
         let head = version::head(versions);
-        let state = local_state(page);
+        let state = self.local_state(page);
         let recorded = held.and_then(|held| versions.iter().find(|v| v.sha == held.sha));
         // The version this page was last in step with, and whether it was
         // changed here since.
         let (base, changed) = match (held, recorded) {
             (Some(held), Some(version)) => (
                 Some(version),
-                held.version != Some(page.version) && version.state() != state,
+                held.version != Some(page.version) && self.version_state(version) != state,
             ),
             // The version it was last in step with cannot be read this pass
             // (a cloud file not downloaded yet, or one still arriving), but
             // the page did not change here since: it is not an edit made
             // here, whatever the folder holds.
             (Some(held), None) if held.version == Some(page.version) => {
-                (newest_with(versions, &state), false)
+                (self.newest_with(versions, &state), false)
             }
             // Changed here, over a version that cannot be read this pass:
             // writing it now would be written over whatever the others did
@@ -1321,7 +1650,7 @@ impl Pass<'_> {
                 counts.skipped += 1;
                 return Ok(None);
             }
-            _ => match newest_with(versions, &state) {
+            _ => match self.newest_with(versions, &state) {
                 Some(version) => (Some(version), false),
                 None => (None, true),
             },
@@ -1330,7 +1659,10 @@ impl Pass<'_> {
             sha: sha.to_string(),
             version: Some(page.version),
         };
-        if let Some(head) = head.as_ref().filter(|head| head.winner.state() == state) {
+        if let Some(head) = head
+            .as_ref()
+            .filter(|head| self.version_state(head.winner) == state)
+        {
             // Already the head (an edit made here and elsewhere alike, or a
             // version taken earlier).
             return Ok(Some(at(&head.winner.sha)));
@@ -1362,7 +1694,7 @@ impl Pass<'_> {
         let lost = head
             .leaves
             .iter()
-            .any(|leaf| leaf.sha != head.winner.sha && leaf.state() == state);
+            .any(|leaf| leaf.sha != head.winner.sha && self.version_state(leaf) == state);
         let applied = self.apply_version(page, head.winner).await?;
         if applied.wrote && applied.complete {
             counts.applied += 1;
@@ -1406,6 +1738,11 @@ impl Pass<'_> {
             return Ok(None);
         }
         let winner = head.winner;
+        // A page of a Space that has its own share here is taken through
+        // that share, not the library.
+        if self.leaves_to_own_share(winner) {
+            return Ok(None);
+        }
         let deleted = |sha: &str| Held {
             sha: sha.to_string(),
             version: None,
@@ -1436,11 +1773,22 @@ impl Pass<'_> {
                 Ok(Some(deleted(&winner.sha)))
             }
             // Never here, or restored elsewhere since it was deleted here.
-            // An archived page that was never here stays in the folder only.
-            _ if winner.meta.archived => Ok(None),
+            // An archived page that was never here stays in the folder only
+            // (the library makes it here, archived).
+            _ if winner.meta.archived && !self.library => Ok(None),
             _ => match self.apply_create(winner).await? {
-                Some(at) => {
+                Some(mut at) => {
                     counts.applied += 1;
+                    if winner.meta.archived {
+                        let made = self.reload(id).await?;
+                        if let Some(archived) = self.archive_here(id, made.version).await? {
+                            // A title taken here (`at` 0) is still shared
+                            // as an edit made here next pass.
+                            if at != 0 {
+                                at = archived.version;
+                            }
+                        }
+                    }
                     Ok(Some(Held {
                         sha: winner.sha.clone(),
                         version: Some(at),
@@ -1463,12 +1811,21 @@ impl Pass<'_> {
         wanted: &str,
         writer: &PageVersion,
     ) -> Result<String, WenlanError> {
+        // The library keeps titles apart within the Space the page goes to.
+        let space = self.target_space(writer);
         let taken: HashSet<String> = self
             .db
-            .list_pages_by_space("active", Some(&self.space), 1_000_000, 0)
+            .list_pages_by_space("active", Some(&space), 1_000_000, 0)
             .await?
             .into_iter()
-            .filter(|page| page.id != id && page.space.as_deref() == Some(self.space.as_str()))
+            .filter(|page| {
+                page.id != id
+                    && if self.library {
+                        page.space.as_deref() == named_space(Some(&space))
+                    } else {
+                        page.space.as_deref() == Some(self.space.as_str())
+                    }
+            })
             .map(|page| MemoryDB::page_title_key(&page.title))
             .collect();
         if !taken.contains(&MemoryDB::page_title_key(wanted)) {
@@ -1557,6 +1914,19 @@ impl Pass<'_> {
             wrote = true;
             current = self.reload(id).await?;
         }
+        if self.library
+            && current.status == "active"
+            && !self.leaves_to_own_share(head)
+            && named_space(current.space.as_deref()) != named_space(head.space())
+        {
+            match self.move_to_space(&current, head).await? {
+                Some(moved) => {
+                    wrote = true;
+                    current = moved;
+                }
+                None => return Ok(stopped(wrote, &current)),
+            }
+        }
         if current.status == "active" && current.title != title {
             let renamed = self
                 .db
@@ -1604,11 +1974,76 @@ impl Pass<'_> {
         })
     }
 
+    /// Archives the page `id` at `version` and its file, as the app does.
+    /// `None` when the page moved since.
+    async fn archive_here(&self, id: &str, version: i64) -> Result<Option<Page>, WenlanError> {
+        let Some(archived_at) = self.db.archive_page_at_version(id, version).await? else {
+            log::warn!("[shared_space] {id} not archived this pass: it moved");
+            return Ok(None);
+        };
+        if let Some(root) = self.knowledge_path {
+            let projection =
+                crate::export::knowledge::KnowledgeProjectionWrite::new(root.into(), self.db);
+            if let Err(error) = projection
+                .archive_page_if_still_archived(self.db, id, archived_at)
+                .await
+            {
+                log::warn!("[shared_space] archived {id} but its file stays: {error}");
+            }
+        }
+        Ok(Some(self.reload(id).await?))
+    }
+
+    /// Moves `page` into the Space `head` names (made here when there is
+    /// none), through the same write the app uses. `None` when it is not
+    /// moved this pass.
+    async fn move_to_space(
+        &self,
+        page: &Page,
+        head: &PageVersion,
+    ) -> Result<Option<Page>, WenlanError> {
+        let target = named_space(head.space());
+        if let Some(name) = target {
+            if !self.ensure_space(name).await? {
+                return Ok(None);
+            }
+        }
+        match self
+            .db
+            .set_page_space(&page.id, target, page.version, &ReadScope::Global)
+            .await
+        {
+            Ok(_) => {}
+            Err(crate::db::SetPageSpaceError::Refused { code, .. }) => {
+                log::warn!("[shared_space] {} not moved this pass: {code:?}", page.id);
+                return Ok(None);
+            }
+            Err(crate::db::SetPageSpaceError::Failed(error)) => {
+                skipped_write(&page.id, error)?;
+                return Ok(None);
+            }
+        }
+        let moved = self.reload(&page.id).await?;
+        if let Some(root) = self.knowledge_path {
+            let projection =
+                crate::export::knowledge::KnowledgeProjectionWrite::new(root.into(), self.db);
+            if let Err(error) = projection.write_page_gated(self.db, &moved).await {
+                log::warn!("[shared_space] moved {} but not its file: {error}", page.id);
+            }
+        }
+        Ok(Some(moved))
+    }
+
     /// Makes the head here as a new page. Returns the version to remember.
     async fn apply_create(&self, head: &PageVersion) -> Result<Option<i64>, WenlanError> {
         let Some(id) = head.page.id.as_deref() else {
             return Ok(None);
         };
+        if let Some(space) = named_space(head.space()).filter(|_| self.library) {
+            if !self.ensure_space(space).await? {
+                return Ok(None);
+            }
+        }
         let title = self.free_title(id, &head.page.title, head).await?;
         let agent = writer_edited_by(&head.meta.author, &self.settings.member_id);
         let distillation = crate::tuning::DistillationConfig::default();
@@ -1624,6 +2059,14 @@ impl Pass<'_> {
                     // A page shared alone is made with no Space; the person
                     // moves it where they like.
                     Scope::Page(_) => wenlan_types::space_context::WriteSpaceTarget::Uncategorized,
+                    // The library keeps each page in the Space it is in on
+                    // the other computer.
+                    Scope::Library => match named_space(head.space()) {
+                        Some(space) => {
+                            wenlan_types::space_context::WriteSpaceTarget::Named(space.to_string())
+                        }
+                        None => wenlan_types::space_context::WriteSpaceTarget::Uncategorized,
+                    },
                 },
                 source_memory_ids: Vec::new(),
                 creation_kind: Some("authored".to_string()),
@@ -1725,6 +2168,16 @@ impl Pass<'_> {
         let mut file = PageFile::new(&page.title, &page.content);
         file.id = Some(page.id.clone());
         file.kind = PageKind::Page;
+        if self.library {
+            // The Space, so a move or a new Space follows to the other
+            // computer. Unfiled has none.
+            if let Some(space) = named_space(page.space.as_deref()) {
+                file.other.insert(
+                    serde_yaml::Value::String(version::SPACE_KEY.to_string()),
+                    serde_yaml::Value::String(space.to_string()),
+                );
+            }
+        }
         file.created = Some(page.created_at.clone());
         file.modified = Some(page.last_modified.clone());
         file.citations = citations;
@@ -1962,6 +2415,27 @@ fn base_of<'a>(
         })
         .unwrap_or_default();
     (parent, merged)
+}
+
+/// Makes the Space `name` here when there is none (a page or memory of
+/// another computer's Space). `false` when it could not be made this pass.
+async fn ensure_space(db: &MemoryDB, name: &str) -> Result<bool, WenlanError> {
+    if db.get_space(name).await?.is_some() {
+        return Ok(true);
+    }
+    match db.create_space(name, None, false).await {
+        Ok(_) => {
+            log::info!("[shared_space] made the Space {name:?} for the library");
+            Ok(true)
+        }
+        // Made meanwhile, or a name no Space can have.
+        Err(error) => {
+            if db.get_space(name).await?.is_some() {
+                return Ok(true);
+            }
+            skipped_write(name, error).map(|_| false)
+        }
+    }
 }
 
 /// A write refused for this page only (it moved since it was read, or the

@@ -50,12 +50,14 @@ pub struct SharedHost {
     pub space: Option<String>,
 }
 
-/// Whether a folder shares a whole Space or one page.
+/// Whether a folder shares a whole Space, one page, or the whole library.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SharedKind {
     Space,
     Page,
+    /// Every page of every Space, between one person's own computers.
+    Library,
 }
 
 /// A member of a shared Space or page, as its folder lists them.
@@ -112,6 +114,27 @@ pub struct SharedSyncCounts {
     /// Files that could not be read yet (still syncing, only in the cloud,
     /// damaged) and pages that could not be written this time.
     pub skipped: u32,
+    /// Pages the folder archives that were left as they are this pass (the
+    /// library only): archiving them would have emptied most of it. Shown
+    /// as [`SharedSyncRun::held_back`].
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub held_back: u32,
+    /// Memory versions this Wenlan wrote into the folder (the library only:
+    /// a Space or a page never shares memories).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub memories_exported: u32,
+    /// Memories made, changed or forgotten here from another computer's
+    /// version (the library only).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub memories_applied: u32,
+    /// Memories the folder forgets that were left as they are this pass:
+    /// forgetting them would have emptied most of the library's memories.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub memories_held_back: u32,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 /// `GET /api/spaces/{space}/shared`: how this Wenlan shares the Space and
@@ -143,6 +166,35 @@ pub struct SharedSyncStatus {
     pub members: Vec<SharedMember>,
     /// The last pass since the daemon started; `None` before the first.
     pub last: Option<SharedSyncRun>,
+    /// The library's computers, as its folder lists them (library only).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub devices: Vec<SharedDevice>,
+    /// The id of the computer that writes the phone read copy, takes the
+    /// inbox and runs background AI page writing (library only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub main_device: Option<String>,
+    /// This computer's id in `devices` (library only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub this_device: Option<String>,
+    /// Why the last reading copy could not be written (library, main
+    /// computer only). The sync itself is not affected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reading_copy_error: Option<String>,
+}
+
+/// One computer of a shared library.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SharedDevice {
+    pub id: String,
+    /// The computer's name.
+    pub name: String,
+}
+
+/// Body of `POST /api/library/shared/main`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SetMainDeviceRequest {
+    /// A computer in the library's `devices`.
+    pub device_id: String,
 }
 
 /// One sync pass of a shared Space or page.
@@ -160,4 +212,8 @@ pub struct SharedSyncRun {
     /// Why it stopped part way, when something else failed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Why pages the folder archives were left alone this pass (library
+    /// only): archiving them would have emptied most of the library.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub held_back: Option<String>,
 }

@@ -15,7 +15,6 @@ import {
   teamJoin,
   type SharedFolder,
   type TeamJoinResponse,
-  type SharedKind,
 } from "../../../lib/tauri";
 import { FolderIcon } from "./ShareDialog";
 import { SHARES_KEY, shortFolder, useShares } from "./sharing";
@@ -24,7 +23,7 @@ import "./sharing.css";
 type JoinSharedDialogProps = {
   readonly onClose: () => void;
   /** Called once it is added: the Space's name here, or the page's id. */
-  readonly onJoined?: (kind: SharedKind, target: string) => void;
+  readonly onJoined?: (kind: "space" | "page", target: string) => void;
 };
 
 function namesOf(folder: SharedFolder): string {
@@ -44,6 +43,7 @@ export function JoinSharedDialog({ onClose, onJoined }: JoinSharedDialogProps) {
   const [names, setNames] = useState<Record<string, string>>({});
   const [folder, setFolder] = useState<string | null>(null);
   const [found, setFound] = useState<SharedFolder | null | undefined>(undefined);
+  const [isLibrary, setIsLibrary] = useState(false);
   const [localName, setLocalName] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -59,9 +59,12 @@ export function JoinSharedDialog({ onClose, onJoined }: JoinSharedDialogProps) {
     setFolder(chosen);
     setError(null);
     setFound(undefined);
+    setIsLibrary(false);
     try {
       const shared = await lookInSharedFolder(chosen);
-      setFound(shared);
+      // A library is joined from Settings, not here.
+      setIsLibrary(shared?.kind === "library");
+      setFound(shared?.kind === "library" ? null : shared);
       if (shared) setLocalName(shared.name);
     } catch (caught) {
       setFound(null);
@@ -138,7 +141,7 @@ export function JoinSharedDialog({ onClose, onJoined }: JoinSharedDialogProps) {
         queryClient.invalidateQueries({ queryKey: ["recent-pages"] }),
       ]);
       onClose();
-      onJoined?.(found.kind, found.kind === "space" ? chosenName : found.page_id ?? "");
+      onJoined?.(found.kind === "space" ? "space" : "page", found.kind === "space" ? chosenName : found.page_id ?? "");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -172,7 +175,7 @@ export function JoinSharedDialog({ onClose, onJoined }: JoinSharedDialogProps) {
           <p className="share-hint">{t("sharing.joinFolderHint")}</p>
           {folder === null && <p className="share-hint">{t("sharing.joinFindHint")}</p>}
         </div>
-        {folder !== null && found === null && !error && <p className="share-warning">{t("sharing.joinNotShared")}</p>}
+        {folder !== null && found === null && !error && <p className="share-warning">{t(isLibrary ? "sharing.joinIsLibrary" : "sharing.joinNotShared")}</p>}
         {found && (
           <div className="share-found">
             <strong>{found.name}</strong>
