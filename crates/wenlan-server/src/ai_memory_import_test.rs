@@ -55,7 +55,7 @@ impl LlmProvider for Judge {
                         let others = text.contains("Dana");
                         let personal = text.contains("dentist") || others;
                         format!(
-                            r#"{{"m": "{m}", "useful": {}, "tool": {habit}, "expires": false, "others": {others}, "personal": {personal}}}"#,
+                            r#"{{"m": "{m}", "useful": {}, "tool": {habit}, "expires": false, "others": {others}, "id": false, "alone": true, "personal": {personal}}}"#,
                             !habit
                         )
                     })
@@ -591,6 +591,9 @@ impl PointWriter for Parts<'_> {
             if request.content.contains("tiny") {
                 return Err("Quality gate rejected: Only 4 meaningful words".into());
             }
+            if request.content.contains("twin") {
+                return Err("Duplicate: a memory with this content already exists".into());
+            }
             request.content = request.content.chars().take(30).collect();
             self.0.write(request).await
         })
@@ -658,5 +661,57 @@ async fn a_refused_memory_does_not_stop_the_pass_and_a_long_point_is_taken_back(
     assert!(
         db.get_memory_detail(&id).await.unwrap().is_none(),
         "a point in parts is taken back"
+    );
+}
+
+/// A memory the store already holds is Wenlan's own already: it is counted
+/// so, recorded, and the pass goes on to the rest.
+#[tokio::test]
+async fn a_duplicate_memory_is_already_held_and_does_not_stop_the_pass() {
+    let _one = ONE_AT_A_TIME.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let db = MemoryDB::new(dir.path(), Arc::new(NoopEmitter))
+        .await
+        .unwrap();
+    on(&db).await;
+    let model = Judge::new(false);
+    let parts = Parts(keep(&db));
+    let twin = "Lore twin note that the store already holds elsewhere.";
+    let pass = follow(
+        &db,
+        Some(model.as_ref()),
+        &parts,
+        seen(vec![
+            memory_in("a.md", twin),
+            memory_in(
+                "b.md",
+                "Lore must check the license before borrowing outside code, every time.",
+            ),
+        ]),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        (
+            pass.counts.added,
+            pass.counts.already,
+            pass.counts.not_knowledge
+        ),
+        (1, 1, 0),
+        "{:?}",
+        pass.counts
+    );
+    assert!(point_of(
+        &db,
+        "Lore must check the license before borrowing outside code, every time.",
+    )
+    .await
+    .is_some());
+    let key = wenlan_core::ai_memory_import::memory_key(&memory(twin));
+    let rows = db.ai_memory_ledger().await.unwrap();
+    assert!(
+        rows.iter()
+            .any(|r| r.key == key && r.decided == Decided::Already),
+        "the duplicate's row is Already"
     );
 }

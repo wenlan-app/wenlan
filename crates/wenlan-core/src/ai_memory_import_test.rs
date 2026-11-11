@@ -109,22 +109,22 @@ fn sensitive_memories_are_caught() {
 }
 
 #[test]
-fn keep_needs_useful_and_three_noes_and_files_the_persons_own_life_apart() {
+fn keep_needs_useful_and_standing_alone_and_four_noes_and_files_the_persons_own_life_apart() {
     let raw = r#"Here you go:
 ```json
 {"answers": [
- {"m": "M0", "useful": true, "tool": false, "expires": false, "others": false, "personal": false},
- {"m": "M1", "useful": true, "tool": true, "expires": false, "others": false, "personal": false},
- {"m": "M2", "useful": true, "tool": false, "expires": true, "others": false, "personal": false},
- {"m": "M3", "useful": true, "tool": false, "expires": false, "personal": false},
- {"m": "M4", "useful": true, "tool": false, "expires": false, "others": false, "personal": true},
- {"m": "M5", "useful": true, "tool": false, "expires": false, "others": true, "personal": true},
+ {"m": "M0", "useful": true, "tool": false, "expires": false, "others": false, "id": false, "alone": true, "personal": false},
+ {"m": "M1", "useful": true, "tool": true, "expires": false, "others": false, "id": false, "alone": true, "personal": false},
+ {"m": "M2", "useful": true, "tool": false, "expires": true, "others": false, "id": false, "alone": true, "personal": false},
+ {"m": "M3", "useful": true, "tool": false, "expires": false, "id": false, "alone": true, "personal": false},
+ {"m": "M4", "useful": true, "tool": false, "expires": false, "others": false, "id": false, "alone": true, "personal": true},
+ {"m": "M5", "useful": true, "tool": false, "expires": false, "others": true, "id": false, "alone": true, "personal": true},
  {"m": "M6", "useful": true, "tool": false, "expires": false, "others": false},
- {"m": "M9", "useful": true, "tool": false, "expires": false, "others": false, "personal": false}
+ {"m": "M9", "useful": true, "tool": false, "expires": false, "others": false, "id": false, "alone": true, "personal": false}
 ]}
 ```"#;
     assert_eq!(
-        parse_keep(raw, 7),
+        parse_keep(raw, 9),
         vec![
             Keep::Work,
             Keep::Drop,
@@ -136,6 +136,10 @@ fn keep_needs_useful_and_three_noes_and_files_the_persons_own_life_apart() {
             Keep::Drop,
             // Unsure where it belongs.
             Keep::Drop,
+            // An identifier with no lesson.
+            Keep::Drop,
+            // A fragment that does not stand alone.
+            Keep::Drop,
         ]
     );
 }
@@ -143,8 +147,8 @@ fn keep_needs_useful_and_three_noes_and_files_the_persons_own_life_apart() {
 #[test]
 fn keep_trusts_neither_of_two_answers_for_one_memory() {
     let raw = r#"{"answers": [
- {"m": "M0", "useful": true, "tool": false, "expires": false, "others": false, "personal": false},
- {"m": "M0", "useful": true, "tool": false, "expires": false, "others": false, "personal": false}]}"#;
+ {"m": "M0", "useful": true, "tool": false, "expires": false, "others": false, "id": false, "alone": true, "personal": false},
+ {"m": "M0", "useful": true, "tool": false, "expires": false, "others": false, "id": false, "alone": true, "personal": false}]}"#;
     assert_eq!(parse_keep(raw, 1), vec![Keep::Drop]);
     assert_eq!(parse_keep("not json", 2), vec![Keep::Drop, Keep::Drop]);
 }

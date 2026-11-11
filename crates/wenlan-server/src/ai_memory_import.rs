@@ -262,10 +262,18 @@ pub async fn follow(
             };
             let mut request = point_request(&f.memory, target);
             request.supersedes = Some(old.clone());
-            let Some(decided) = store(db, writer, request).await? else {
-                counts.not_knowledge += 1;
-                settle(db, &f, Decided::Refused, &mut counts).await?;
-                continue;
+            let decided = match store(db, writer, request).await? {
+                Decided::Refused => {
+                    counts.not_knowledge += 1;
+                    settle(db, &f, Decided::Refused, &mut counts).await?;
+                    continue;
+                }
+                Decided::Already => {
+                    counts.already += 1;
+                    settle(db, &f, Decided::Already, &mut counts).await?;
+                    continue;
+                }
+                decided => decided,
             };
             counts.updated += 1;
             note(db, &f, decided).await?;
@@ -359,20 +367,25 @@ async fn finish(
     Ok(record.clone())
 }
 
-/// Write a point and take its fingerprint. `None` when Wenlan's own checks
-/// refuse it (too short to be a memory, for one): that memory is left out,
-/// and the pass goes on. Any other failure stops the pass, which the next
-/// one picks up where it stopped.
+/// Write a point and take its fingerprint. When Wenlan's own checks refuse
+/// it (too short to be a memory, for one) the answer is `Decided::Refused`;
+/// when Wenlan already holds the same text it is `Decided::Already`. Either
+/// way that memory is left out and the pass goes on. Any other failure stops
+/// the pass, which the next one picks up where it stopped.
 async fn store(
     db: &MemoryDB,
     writer: &dyn PointWriter,
     request: StoreMemoryRequest,
-) -> Result<Option<Decided>, String> {
+) -> Result<Decided, String> {
     let id = match writer.write(request).await {
         Ok(id) => id,
         Err(error) if error.contains(REFUSED) => {
             tracing::info!("[ai-memory] a memory was refused: {error}");
-            return Ok(None);
+            return Ok(Decided::Refused);
+        }
+        Err(error) if error.contains(DUPLICATE) => {
+            tracing::info!("[ai-memory] a memory is already held: {error}");
+            return Ok(Decided::Already);
         }
         Err(error) => return Err(error),
     };
@@ -381,11 +394,14 @@ async fn store(
         .await
         .map_err(|e| e.to_string())?
         .unwrap_or_default();
-    Ok(Some(Decided::Point { id, hash }))
+    Ok(Decided::Point { id, hash })
 }
 
 /// What the store says when its quality checks refuse a memory.
 const REFUSED: &str = "Quality gate rejected";
+
+/// What the store says when it already holds the same text.
+const DUPLICATE: &str = "Duplicate: a memory with this content already exists";
 
 /// Note what became of a memory.
 async fn note(db: &MemoryDB, f: &Fresh, decided: Decided) -> Result<(), String> {
@@ -438,13 +454,17 @@ async fn decide_and_write(
             let k = &batch[i];
             let decided = match verdict {
                 Verdict::New => match store(db, writer, new_point(k)).await? {
-                    Some(decided) => {
-                        counts.added += 1;
-                        decided
-                    }
-                    None => {
+                    Decided::Refused => {
                         counts.not_knowledge += 1;
                         Decided::Refused
+                    }
+                    Decided::Already => {
+                        counts.already += 1;
+                        Decided::Already
+                    }
+                    decided => {
+                        counts.added += 1;
+                        decided
                     }
                 },
                 // Wenlan already holds it: nothing is added or changed.

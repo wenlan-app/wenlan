@@ -362,7 +362,7 @@ pub fn looks_sensitive(text: &str) -> bool {
     crate::privacy::redact_pii(text) != text || TOKENS.is_match(text)
 }
 
-/// The prompt that asks the four keep questions about each memory. The
+/// The prompt that asks the six keep questions about each memory. The
 /// questions and what counts follow the conversation intake's exclusion list
 /// (what an assistant did, how it should work, where files are, problems
 /// with tools, where a pull request stands): those are not kept there either.
@@ -383,19 +383,23 @@ their work, product, field, decisions or their own life (a fact, a decision and 
 lesson learned)?\n\
 \"tool\": is it about how the AI tool or assistant should work: steps it takes, commands, \
 shell or editor quirks, where files are, how to run or restart something, problems with tools, \
-how the person wants the assistant to reply, or a rule for how the assistant should behave \
+how the person wants the assistant to reply, how the assistant should report, summarize or \
+format its work, or a rule for how the assistant should behave \
 (\"never say X\", \"always check Y first\")?\n\
 \"expires\": does it only hold for a while: where a pull request, review, release or task \
 stands, a version number, what is \"current\" or \"now\", a date that will pass?\n\
 \"others\": does it hold other people's personal details (their contact details, health, \
 money, family or private life)?\n\
+\"id\": is it mainly an identifier or account detail: a name, username, handle, email, \
+account, property or project id, key, URL or file path, with no lesson or decision attached?\n\
+\"alone\": would a reader understand it on its own, months later, without the conversation or \
+project it came from (a full statement, not a bare fragment or label)?\n\
 \"personal\": is it about the person themselves rather than their work: their own private \
-life (health, money, family, home, plans of their own) or who they are (their name, accounts, \
-handles)?\n\
+life (health, money, family, home, plans of their own)?\n\
 When you are not sure, answer \"useful\": false.\n\
 Answer with JSON only: {{\"answers\": [{{\"m\": \"M0\", \"useful\": true|false, \
 \"tool\": true|false, \"expires\": true|false, \"others\": true|false, \
-\"personal\": true|false}}]}}"
+\"id\": true|false, \"alone\": true|false, \"personal\": true|false}}]}}"
     )
 }
 
@@ -411,6 +415,8 @@ struct KeepAnswer {
     tool: Option<bool>,
     expires: Option<bool>,
     others: Option<bool>,
+    id: Option<bool>,
+    alone: Option<bool>,
     personal: Option<bool>,
 }
 
@@ -427,8 +433,8 @@ pub enum Keep {
 }
 
 /// What to do with each of `count` memories, from the model's answer: keep
-/// only those it answered for, with "useful" yes and "tool", "expires" and
-/// "others" no; "personal" decides where a kept one is filed. A memory
+/// only those it answered for, with "useful" and "alone" yes and "tool",
+/// "expires", "others" and "id" no; "personal" decides where a kept one is filed. A memory
 /// missing from the answer, answered twice, or an answer that does not parse
 /// keeps nothing.
 pub fn parse_keep(raw: &str, count: usize) -> Vec<Keep> {
@@ -449,7 +455,9 @@ pub fn parse_keep(raw: &str, count: usize) -> Vec<Keep> {
         let knowledge = a.useful == Some(true)
             && a.tool == Some(false)
             && a.expires == Some(false)
-            && a.others == Some(false);
+            && a.others == Some(false)
+            && a.id == Some(false)
+            && a.alone == Some(true);
         keep[i] = match (knowledge, a.personal) {
             (true, Some(true)) => Keep::Personal,
             (true, Some(false)) => Keep::Work,
