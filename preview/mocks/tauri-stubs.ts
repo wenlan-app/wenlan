@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // No-op browser stands-ins for the remaining Tauri modules the app imports.
-// One file, one export per aliased module entry (see vite.preview.config.ts).
+// One file, one export per aliased module entry (see tooling/vite.preview.config.ts).
 
 // @tauri-apps/api/event
 type EventPayload<T = unknown> = {

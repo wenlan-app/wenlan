@@ -26,7 +26,7 @@ part of packaging behavior, not generic local helpers.
 - Sidecars always come from a backend checkout, found by
   `resolve-backend-dir.sh` (the current checkout by default, or
   `WENLAN_BACKEND_DIR`; a sibling checkout is only a legacy fallback). See
-  `HISTORY.md` for the retired pinned-download mode.
+  `docs/history.md` for the retired pinned-download mode.
 - `prepare-tauri-build-sidecars.sh` is the Tauri hook; keep it aligned with
   `app/tauri.conf.json` `beforeBuildCommand`.
 - Stage only the three Wenlan executables declared by Tauri `externalBin`.

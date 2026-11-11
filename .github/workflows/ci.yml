@@ -265,11 +265,9 @@ jobs:
               - 'tsconfig.json'
               - 'tsconfig.tools.json'
               - 'vite.config.ts'
-              - 'vite.preview.config.ts'
-              - 'vite.review.config.ts'
+              - 'tooling/**'
               - 'vitest.config.ts'
               - 'playwright.config.ts'
-              - 'playwright.review.config.ts'
               - 'scripts/prepare-sidecars.sh'
               - 'scripts/prepare-tauri-build-sidecars.sh'
               # The macOS app installer and its harness need a macOS runner;
@@ -453,7 +451,6 @@ jobs:
             relay:
               - 'relay/**'
               - 'app/icons/128x128.png'
-              - 'chatgpt-app-submission.json'
               - '.github/workflows/ci.yml'
               - 'scripts/ci_test_plan.test.py'
             macos:
