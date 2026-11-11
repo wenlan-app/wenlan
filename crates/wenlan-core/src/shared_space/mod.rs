@@ -68,6 +68,7 @@
 //! are kept in `shared-spaces.json` under the data root, outside the
 //! database, so a rebuilt database stays the same member.
 
+mod follow;
 pub mod remote;
 mod review;
 pub mod rewrite;
@@ -209,6 +210,15 @@ struct SettingsStore {
     /// Pages shared alone, by page id.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pages: BTreeMap<String, ShareSettings>,
+    /// Team Spaces this person stopped syncing here ([`left_key`]): they
+    /// are not followed again until joined by hand.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    left: BTreeSet<String>,
+}
+
+/// One team Space on one server, as [`SettingsStore::left`] names it.
+fn left_key(url: &str, space: &str) -> String {
+    format!("{url}\n{space}")
 }
 
 impl SettingsStore {
@@ -303,9 +313,18 @@ fn change_settings<T>(
 pub fn leave_at(path: &Path, scope: &Scope) -> Result<bool, WenlanError> {
     change_settings(path, |store| {
         let (entries, key) = store.entries(scope);
-        let removed = entries.remove(&key).is_some();
-        (removed, removed)
+        let removed = entries.remove(&key);
+        if let Some(host) = removed.as_ref().and_then(|settings| settings.host.as_ref()) {
+            store.left.insert(left_key(&host.url, &host.space));
+        }
+        (removed.is_some(), removed.is_some())
     })
+}
+
+/// Forgets that this person left `space` on the server at `url`: they
+/// joined it again.
+fn rejoined(path: &Path, url: &str, space: &str) -> Result<(), WenlanError> {
+    change_settings(path, |store| (store.left.remove(&left_key(url, space)), ()))
 }
 
 /// Records that this Wenlan shares `scope` through `folder` as
@@ -857,6 +876,7 @@ pub async fn sync_space(
             target.member_id,
         )?;
         if let Some(host) = target.host.clone() {
+            rejoined(target.settings_path, &host.url, &host.space)?;
             settings = update_share(target.settings_path, &scope, |settings| {
                 settings.host = Some(host);
             })?
@@ -1000,6 +1020,7 @@ pub async fn sync_shared_spaces(
     knowledge_path: Option<&Path>,
     person_name: Option<&str>,
 ) -> Vec<(String, SharedSyncRun)> {
+    follow::follow_teams(db, settings_path).await;
     let shares = match shares_at(settings_path) {
         Ok(shares) => shares,
         Err(error) => {
