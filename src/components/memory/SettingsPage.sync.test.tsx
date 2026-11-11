@@ -35,11 +35,10 @@ describe("Settings > Sync tab", () => {
     await i18n.changeLanguage("en");
   });
 
-  it("shows the title, the intro and the sync row", async () => {
+  it("shows the title and the sync row", async () => {
     renderPage();
     expect(within(screen.getByRole("banner")).getByRole("heading", { name: "Sync" })).toBeInTheDocument();
-    expect(screen.getByText("Use the same Wenlan on your other computers and in your phone's AI.")).toBeInTheDocument();
-    expect(await screen.findByText("Sync to my other computers")).toBeInTheDocument();
+    expect(await screen.findByText("Sync to other computers and phone")).toBeInTheDocument();
   });
 
   it("sits right after Connections in the sidebar", () => {

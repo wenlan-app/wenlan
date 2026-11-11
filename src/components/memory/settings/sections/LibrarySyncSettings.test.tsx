@@ -63,7 +63,7 @@ describe("library sync row", () => {
     vi.mocked(lookInSharedFolder).mockResolvedValue(null);
     renderRow();
     expect(await screen.findByText("Uses Google Drive or iCloud")).toBeInTheDocument();
-    await userEvent.click(await screen.findByRole("button", { name: "Sync to my other computers" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Sync to other computers and phone" }));
     expect(screen.getByText("Won't sync")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Choose…" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Start syncing" })).toBeEnabled());
@@ -71,13 +71,23 @@ describe("library sync row", () => {
     await waitFor(() => expect(shareLibrary).toHaveBeenCalledWith(FOLDER, null));
   });
 
+  it("says phone AI needs Google Drive when the folder is in iCloud", async () => {
+    vi.mocked(open).mockResolvedValue("/Users/me/Library/Mobile Documents/com~apple~CloudDocs/Wenlan");
+    vi.mocked(lookInSharedFolder).mockResolvedValue(null);
+    renderRow();
+    await userEvent.click(await screen.findByRole("button", { name: "Sync to other computers and phone" }));
+    expect(screen.getByText("Reads pages with computers off")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Choose…" }));
+    expect(await screen.findByText("Needs Google Drive")).toBeInTheDocument();
+  });
+
   it("merges into a library the folder already holds, as that member", async () => {
     vi.mocked(open).mockResolvedValue(FOLDER);
     vi.mocked(lookInSharedFolder).mockResolvedValue({ kind: "library", name: "library", members: [{ id: "m-1", name: "Me" }] });
     renderRow();
-    await userEvent.click(await screen.findByRole("button", { name: "Sync to my other computers" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Sync to other computers and phone" }));
     await userEvent.click(screen.getByRole("button", { name: "Choose…" }));
-    expect(await screen.findByText("This is your other computer's Wenlan")).toBeInTheDocument();
+    expect(await screen.findByText("Your other computer's Wenlan")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Merge" }));
     await waitFor(() => expect(shareLibrary).toHaveBeenCalledWith(FOLDER, "m-1"));
   });
@@ -86,7 +96,7 @@ describe("library sync row", () => {
     vi.mocked(open).mockResolvedValue(FOLDER);
     vi.mocked(lookInSharedFolder).mockResolvedValue({ kind: "space", name: "Wedding", members: [] });
     renderRow();
-    await userEvent.click(await screen.findByRole("button", { name: "Sync to my other computers" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Sync to other computers and phone" }));
     await userEvent.click(screen.getByRole("button", { name: "Choose…" }));
     expect(await screen.findByRole("alert")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Start syncing" })).toBeDisabled();
@@ -97,7 +107,7 @@ describe("library sync row", () => {
     renderRow();
     expect(await screen.findByText("Google Drive · synced 2 min. ago")).toBeInTheDocument();
     expect(screen.getByText("MacBook (this one), Windows PC")).toBeInTheDocument();
-    expect(screen.getByText("Does AI organizing and the pages for your phone")).toBeInTheDocument();
+    expect(screen.getByText("Runs AI organizing and phone pages")).toBeInTheDocument();
     expect(screen.getByText("Google Drive › Wenlan")).toBeInTheDocument();
     const changes = screen.getAllByRole("button", { name: "Change" });
     await userEvent.click(changes[0]);
@@ -108,8 +118,8 @@ describe("library sync row", () => {
   it("asks before it stops syncing", async () => {
     vi.mocked(listShares).mockResolvedValue([on]);
     renderRow();
-    await userEvent.click(await screen.findByRole("button", { name: "Sync to my other computers" }));
-    expect(screen.getByText("Stop syncing? Your pages stay on both computers.")).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole("button", { name: "Sync to other computers and phone" }));
+    expect(screen.getByText("Stop syncing? Your pages stay.")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Stop syncing" }));
     await waitFor(() => expect(stopSharingLibrary).toHaveBeenCalledOnce());
   });
@@ -117,6 +127,6 @@ describe("library sync row", () => {
   it("shows a held-back run as a warning", async () => {
     vi.mocked(listShares).mockResolvedValue([{ ...on, last: { ...on.last!, held_back: "x" } }]);
     renderRow();
-    expect(await screen.findByText("Another computer archived many pages. This one kept them.")).toBeInTheDocument();
+    expect(await screen.findByText("Another computer archived many pages. Kept here.")).toBeInTheDocument();
   });
 });

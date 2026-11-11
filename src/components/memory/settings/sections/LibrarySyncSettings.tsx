@@ -177,10 +177,6 @@ function Facts({ share, t, pickingMain, onPickMain, onChooseMain, onChangeFolder
           </span>
         </dd>
       </div>
-      <div>
-        <dt>{t("librarySync.wontSync")}</dt>
-        <dd>{t("librarySync.wontSyncValue")}</dd>
-      </div>
     </dl>
   );
 }
@@ -233,6 +229,8 @@ export function LibrarySyncDialog({ onClose }: { readonly onClose: () => void })
     }
   };
   const outsideCloud = folder !== null && cloudName(folder, t) === null;
+  // Phone AI tools reach the folder through a Google Drive connector only.
+  const phoneNeedsDrive = folder !== null && !outsideCloud && cloudName(folder, t) !== "Google Drive";
   return (
     <dialog
       ref={dialogRef}
@@ -263,7 +261,7 @@ export function LibrarySyncDialog({ onClose }: { readonly onClose: () => void })
             </div>
             <dl className="library-sync-what">
               <dt>{t("librarySync.willSync")}</dt><dd>{t("librarySync.willSyncValue")}</dd>
-              <dt>{t("librarySync.phoneAi")}</dt><dd>{t("librarySync.phoneAiValue")}</dd>
+              <dt>{t("librarySync.phoneAi")}</dt><dd>{t(phoneNeedsDrive ? "librarySync.phoneAiNeedsDrive" : "librarySync.phoneAiValue")}</dd>
               <dt>{t("librarySync.wontSync")}</dt><dd>{t("librarySync.wontSyncValue")}</dd>
             </dl>
           </>
