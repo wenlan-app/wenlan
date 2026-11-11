@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=a0a1c38bd89e838972dab8c5a8aa4c9c706305bb366a6a7acdc78bbadcacb17b -->
+<!-- README_SYNC: source=README.md sha256=051bfadf89f2b0d74303041c88fa37489450f3111331ddae65139f3e2cfc5ca1 -->
 
 <p align="center">
   <picture>
@@ -43,7 +43,7 @@
 
 Empecé Wenlan porque mis notas, documentos y chats de IA estaban dispersos, y evitar que un sistema de notas se echara a perder exigía un mantenimiento constante. Wenlan es para quienes usan herramientas de IA a diario y no quieren mantener un sistema de notas.
 
-- **Ves la fuente y decides qué cambia:** cada cita abre el original, y se rechaza una página cuando la mayoría de sus citas no coinciden con la fuente. En cada página eliges si los cambios de la IA entran directamente o esperan tu permiso.
+- **Ves y deshaces lo que cambió:** ves todo lo que cambió tu IA, puedes restaurar una versión anterior y decides qué páginas no puede cambiar. Cada cita abre el original, y se rechaza una página cuando la mayoría de sus citas no coinciden con la fuente.
 - **Escribe cuando quieras:** abre una página y escribe, en cualquier momento. Las páginas que escribiste quedan en **Ask me first**.
 - **Tu IA la mantiene organizada:** la herramienta de IA que ya usas convierte tus notas, archivos y chats de IA en páginas, las enlaza y las pone al día cuando cambia una fuente. Wenlan no trae una IA propia.
 - **Conexión con un clic:** **Connect all** en los ajustes configura las herramientas de IA de tu ordenador. Sin plugins que buscar, instalar ni mantener.
