@@ -167,11 +167,8 @@ fn page(id: &str, text: &str) -> Candidate {
 }
 
 #[test]
-fn match_takes_same_only_with_a_shown_candidate_and_its_real_sentence() {
-    let a = [page(
-        "storage",
-        "Pages live in files. The database is the source of truth.",
-    )];
+fn match_takes_same_only_with_a_candidate_shown_next_to_that_memory() {
+    let a = [page("storage", "The database is the source of truth.")];
     let b = [page("release", "Releases go through the queue.")];
     let c: [Candidate; 0] = [];
     let items = [
@@ -193,19 +190,16 @@ fn match_takes_same_only_with_a_shown_candidate_and_its_real_sentence() {
         },
     ];
     let raw = r#"{"answers": [
- {"m": "M0", "verdict": "same", "with": "M0K0", "sentence": "The database is the source of truth."},
- {"m": "M1", "verdict": "same", "with": "M1K0", "sentence": "Releases are made by hand."},
- {"m": "M2", "verdict": "new", "with": null, "sentence": null},
- {"m": "M3", "verdict": "same", "with": "M1K0", "sentence": "Releases go through the queue."}
+ {"m": "M0", "verdict": "same", "with": "M0K0"},
+ {"m": "M1", "verdict": "same", "with": "M1K3"},
+ {"m": "M2", "verdict": "new", "with": null},
+ {"m": "M3", "verdict": "same", "with": "M1K0"}
 ]}"#;
     assert_eq!(
         parse_match(raw, &items),
         vec![
-            Verdict::Same {
-                with: 0,
-                sentence: "The database is the source of truth.".into()
-            },
-            // Not a sentence of that page.
+            Verdict::Same { with: 0 },
+            // No such candidate.
             Verdict::Conflict,
             Verdict::New,
             // Named another memory's candidate.

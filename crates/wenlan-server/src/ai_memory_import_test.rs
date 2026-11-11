@@ -76,9 +76,9 @@ impl LlmProvider for Judge {
                         })
                     });
                     answers.push(match same.flatten() {
-                        Some(with) => format!(
-                            r#"{{"m": "{m}", "verdict": "same", "with": "{with}", "sentence": "Releases go out only through the merge queue."}}"#
-                        ),
+                        Some(with) => {
+                            format!(r#"{{"m": "{m}", "verdict": "same", "with": "{with}"}}"#)
+                        }
                         None if text.contains("Lore") || text.contains("dentist") => {
                             format!(r#"{{"m": "{m}", "verdict": "new"}}"#)
                         }
@@ -86,24 +86,6 @@ impl LlmProvider for Judge {
                     });
                 }
                 Ok(format!(r#"{{"answers": [{}]}}"#, answers.join(",")))
-            }
-            "ai_memory_source_check" => {
-                let json = prompt.split_once('\n').map(|(_, j)| j).unwrap_or("");
-                let value: serde_json::Value = serde_json::from_str(json).unwrap();
-                let scores: Vec<String> = value["items"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .map(|item| {
-                        let supported = item["evidence"].as_str().unwrap().contains("merge queue");
-                        format!(
-                            r#"{{"item_id": "{}", "score": {}}}"#,
-                            item["item_id"].as_str().unwrap(),
-                            if supported { 0.9 } else { 0.1 }
-                        )
-                    })
-                    .collect();
-                Ok(format!(r#"{{"scores": [{}]}}"#, scores.join(",")))
             }
             _ => Err(LlmError::NotAvailable),
         }
@@ -253,10 +235,10 @@ async fn a_failed_model_call_keeps_nothing_on_a_guess() {
     assert_eq!(pass.counts.undecided, 2, "{:?}", pass.counts);
 }
 
-/// A memory an existing page already says becomes one more source of that
-/// page once the source check agrees, and Undo takes the source off again.
+/// A memory an existing page already says adds nothing and changes
+/// nothing: the page keeps its sources as they were.
 #[tokio::test]
-async fn a_memory_a_page_already_says_becomes_one_more_source_of_it() {
+async fn a_memory_a_page_already_says_adds_nothing() {
     let _one = ONE_AT_A_TIME.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let db = MemoryDB::new(dir.path(), Arc::new(NoopEmitter))
@@ -291,6 +273,7 @@ async fn a_memory_a_page_already_says_becomes_one_more_source_of_it() {
     .await
     .unwrap()
     .id;
+    let before = db.get_page(&page).await.unwrap().unwrap().source_memory_ids;
     let model = Judge::new(false);
     let keep = Keep(&db, Default::default());
     let pass = run(
@@ -303,15 +286,12 @@ async fn a_memory_a_page_already_says_becomes_one_more_source_of_it() {
     )
     .await
     .unwrap();
-    assert_eq!(pass.counts.attached, 1, "{:?}", pass.counts);
-    assert_eq!(pass.attached, vec![(page.clone(), pass.written[0].clone())]);
-    let sources = db.get_page(&page).await.unwrap().unwrap().source_memory_ids;
-    assert!(sources.contains(&pass.written[0]), "{sources:?}");
-
-    db.undo_ai_memory_import().await.unwrap().unwrap();
-    let sources = db.get_page(&page).await.unwrap().unwrap().source_memory_ids;
-    assert!(!sources.contains(&pass.written[0]), "{sources:?}");
-    assert!(sources.contains(&"mem_first".to_string()), "{sources:?}");
+    assert_eq!(pass.counts.already, 1, "{:?}", pass.counts);
+    assert!(pass.written.is_empty());
+    assert_eq!(
+        db.get_page(&page).await.unwrap().unwrap().source_memory_ids,
+        before
+    );
 }
 
 /// The person's own life is kept and filed unsorted, never in the project's

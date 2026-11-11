@@ -158,22 +158,11 @@ pub async fn run(
     }
 
     let mut written = Vec::new();
-    let mut attached = Vec::new();
-    let outcome = decide_and_write(
-        db,
-        model,
-        writer,
-        &kept,
-        &mut counts,
-        &mut written,
-        &mut attached,
-    )
-    .await;
+    let outcome = decide_and_write(model, writer, &kept, &mut counts, &mut written).await;
     let pass = AiMemoryImport {
         at: chrono::Utc::now().timestamp(),
         counts,
         written: written.clone(),
-        attached,
         by_tool,
     };
     let recorded = match outcome {
@@ -194,13 +183,11 @@ pub async fn run(
 }
 
 async fn decide_and_write(
-    db: &MemoryDB,
     model: &dyn LlmProvider,
     writer: &dyn PointWriter,
     kept: &[Kept],
     counts: &mut ImportCounts,
     written: &mut Vec<String>,
-    attached: &mut Vec<(String, String)>,
 ) -> Result<(), String> {
     for batch in kept.chunks(gates::MATCH_BATCH) {
         let items: Vec<MatchItem<'_>> = batch
@@ -214,70 +201,23 @@ async fn decide_and_write(
             counts.undecided += batch.len();
             continue;
         };
-        let verdicts = gates::parse_match(&answer, &items);
-
-        // The source check, run again before a memory becomes one more
-        // source of a page: does the memory support the page's sentence?
-        let mut to_check = Vec::new();
-        for (i, verdict) in verdicts.iter().enumerate() {
+        for (i, verdict) in gates::parse_match(&answer, &items).into_iter().enumerate() {
             match verdict {
                 Verdict::New => {
                     let id = writer.write(new_point(&batch[i])).await?;
                     written.push(id);
                     counts.added += 1;
                 }
+                // Wenlan already holds it: nothing is added or changed.
+                Verdict::Same { .. } => counts.already += 1,
                 Verdict::Conflict => counts.conflicts += 1,
-                Verdict::Same { with, sentence } => {
-                    let candidate = &batch[i].candidates[*with];
-                    if candidate.kind == CandidateKind::Point {
-                        counts.already += 1;
-                    } else {
-                        to_check.push((i, candidate.id.clone(), sentence.clone()));
-                    }
-                }
-            }
-        }
-        if to_check.is_empty() {
-            continue;
-        }
-        let supported = source_check(model, batch, &to_check).await;
-        for ((i, page_id, _), ok) in to_check.into_iter().zip(supported) {
-            if !ok {
-                counts.conflicts += 1;
-                continue;
-            }
-            let id = writer.write(new_point(&batch[i])).await?;
-            written.push(id.clone());
-            let result = wenlan_core::post_write::page_write(
-                db,
-                wenlan_core::post_write::PageWrite::Attach {
-                    page_id: &page_id,
-                    source_memory_ids: std::slice::from_ref(&id),
-                    link_reason: "ai_memory_import",
-                    agent: "wenlan",
-                },
-            )
-            .await;
-            match result {
-                Ok(_) => {
-                    attached.push((page_id, id));
-                    counts.attached += 1;
-                }
-                Err(error) => {
-                    // The memory stays as a new point; the page keeps its
-                    // sources as they were.
-                    tracing::warn!("[ai-memory] a source was not attached: {error}");
-                    counts.added += 1;
-                }
             }
         }
     }
     Ok(())
 }
 
-/// The existing pages (not the person's own or locked ones, which only they
-/// change) and points nearest to `text`, in its Space or everywhere when it
-/// has none.
+/// The existing pages and points nearest to `text` in `scope`.
 async fn candidates(
     db: &MemoryDB,
     text: &str,
@@ -300,13 +240,7 @@ async fn candidates(
         .map_err(|e| e.to_string())?;
     for page in pages {
         out.push(Candidate {
-            kind: if page.user_edited || page.review_required {
-                // The person's page already saying it is enough; it takes
-                // no source from an AI tool's memory.
-                CandidateKind::Point
-            } else {
-                CandidateKind::Page
-            },
+            kind: CandidateKind::Page,
             id: page.id,
             title: page.title,
             text: page.content,
@@ -326,52 +260,6 @@ async fn candidates(
     }
     out.truncate(gates::MATCH_CANDIDATES);
     Ok(out)
-}
-
-/// Whether each memory supports the page sentence the model matched it to,
-/// by the same entailment check pages use. A failed call supports nothing.
-async fn source_check(
-    model: &dyn LlmProvider,
-    batch: &[Kept],
-    checks: &[(usize, String, String)],
-) -> Vec<bool> {
-    use wenlan_core::claim_judge as judge;
-    let ids: Vec<String> = (0..checks.len()).map(|i| format!("item-{i}")).collect();
-    let items: Vec<_> = checks
-        .iter()
-        .zip(&ids)
-        .map(|((i, _, sentence), id)| judge::M5ClaimEntailmentItem {
-            item_id: id,
-            claim: sentence,
-            evidence: &batch[*i].memory.text,
-        })
-        .collect();
-    let Some(prompt) = judge::build_m5_claim_entailment_batch_user_prompt(&items) else {
-        return vec![false; checks.len()];
-    };
-    let answer = model
-        .generate(LlmRequest {
-            system_prompt: Some(judge::M5_CLAIM_ENTAILMENT_SYSTEM_PROMPT.to_string()),
-            user_prompt: prompt,
-            max_tokens: 1_000,
-            temperature: 0.0,
-            label: Some("ai_memory_source_check".into()),
-            timeout_secs: Some(judge::M5_CLAIM_JUDGE_TIMEOUT_SECS),
-        })
-        .await;
-    let Some(scores) = answer
-        .ok()
-        .and_then(|raw| judge::parse_m5_claim_entailment_batch_scores(&raw, &ids))
-    else {
-        return vec![false; checks.len()];
-    };
-    ids.iter()
-        .map(|id| {
-            scores
-                .iter()
-                .any(|s| &s.item_id == id && s.score >= judge::M5_JUDGE_QUALIFICATION_THRESHOLD)
-        })
-        .collect()
 }
 
 /// A memory written as a point, marked as coming from its tool's memory,

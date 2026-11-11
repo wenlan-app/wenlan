@@ -20,13 +20,9 @@ fn db_err(context: &str) -> impl Fn(libsql::Error) -> WenlanError + '_ {
 pub struct AiMemoryImport {
     pub at: i64,
     pub counts: ImportCounts,
-    /// Memories the import wrote (new points, and the memories attached to a
-    /// page as one more source), by `source_id`. Undo forgets these and
-    /// nothing else.
+    /// The new points the import wrote, by `source_id`. Undo forgets these
+    /// and nothing else.
     pub written: Vec<String>,
-    /// `(page_id, source_id)` of each source attached to an existing page.
-    #[serde(default)]
-    pub attached: Vec<(String, String)>,
     /// How many came from each tool, as in `agent_sessions.tool`.
     #[serde(default)]
     pub by_tool: Vec<(String, usize)>,
@@ -64,8 +60,8 @@ impl MemoryDB {
         Ok(())
     }
 
-    /// Take the whole import back: every memory it wrote is forgotten, which
-    /// also takes each attached source off its page. A memory the person
+    /// Take the whole import back: every point it wrote is forgotten. A
+    /// memory the person
     /// has since edited is theirs now and stays. Returns what was taken back,
     /// or `None` when no import stands.
     pub async fn undo_ai_memory_import(&self) -> Result<Option<AiMemoryImport>, WenlanError> {
