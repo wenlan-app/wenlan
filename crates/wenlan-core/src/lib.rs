@@ -81,6 +81,7 @@ pub mod prompts;
 pub mod provenance;
 pub mod quality_gate;
 pub mod read_scope;
+pub mod reading_copy;
 pub mod reconcile;
 pub mod refinery;
 pub mod repair;
