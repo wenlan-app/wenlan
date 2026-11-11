@@ -40,3 +40,20 @@ export function withoutLeadingTitleH1(source: string, title: string): string {
     "",
   );
 }
+
+/**
+ * The leading `# heading` of a body: its text (normalized, may be empty) and
+ * the offset where that line ends. Null when the body does not open with an H1.
+ */
+export function leadingMarkdownH1(source: string): { text: string; lineEnd: number } | null {
+  const bom = source.startsWith("﻿") ? 1 : 0;
+  const match =
+    /^(?:[ \t]*(?:\r\n|\n|\r))*[ \t]{0,3}#[ \t]+([^\r\n]*?)(?=\r\n|\n|\r|$)/u.exec(
+      source.slice(bom),
+    );
+  if (!match) return null;
+  return {
+    text: normalizeTitle(match[1].replace(/[ \t]+#+[ \t]*$/u, "")),
+    lineEnd: bom + match.index + match[0].length,
+  };
+}

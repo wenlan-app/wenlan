@@ -15,6 +15,8 @@ export interface ParsedWikiLink {
   tokenTo: number;
   targetLabel: string;
   displayText: string;
+  /** The `#heading` the link opens the page at, when it names one. */
+  heading?: string;
 }
 
 export interface EditorReferenceContext {
@@ -24,6 +26,8 @@ export interface EditorReferenceContext {
   labels?: { page: string; memory: string; source: string; authored: string; unverified: string; unevaluated?: string; missing?: string };
   /** The open page's own title: `[[it]]` reads as plain text, not a link. */
   selfTitle?: string;
+  /** Linked pages' current titles by page id: a plain `[[old name]]` reads as the new one. */
+  pageTitles?: ReadonlyMap<string, string>;
 }
 interface ResolvedReferenceRange extends ParsedWikiLink {
   target: ReferenceTarget;
@@ -137,18 +141,19 @@ export function parseMemoryIdReferences(source: string, firstNumber = 1): Memory
 }
 
 class MemoryNumberWidget extends WidgetType {
-  constructor(readonly label: string, readonly className: string, readonly attributes: Record<string, string>) {
+  constructor(readonly label: string, readonly className: string, readonly attributes: Record<string, string>,
+    readonly numbered = true) {
     super();
   }
 
   eq(other: MemoryNumberWidget): boolean {
-    return other.label === this.label && other.className === this.className
+    return other.label === this.label && other.className === this.className && other.numbered === this.numbered
       && JSON.stringify(other.attributes) === JSON.stringify(this.attributes);
   }
 
   toDOM(): HTMLElement {
     const anchor = document.createElement("a");
-    anchor.className = `${this.className} cm-memory-number`;
+    anchor.className = this.numbered ? `${this.className} cm-memory-number` : this.className;
     for (const [name, value] of Object.entries(this.attributes)) anchor.setAttribute(name, value);
     anchor.textContent = this.label;
     return anchor;
@@ -204,6 +209,9 @@ function parseWikiLinks(source: string, targets: ReadonlyMap<string, string>, ba
       tokenTo: baseOffset + from + match[0].length,
       targetLabel,
       displayText,
+      ...(hash >= 0 && !wholeTitle && rawTarget.slice(hash + 1).trim()
+        ? { heading: rawTarget.slice(hash + 1).trim() }
+        : {}),
     });
   }
   return matches;
@@ -405,12 +413,27 @@ export function createWikiLinkEditing(
               : kind,
             ...(target.kind === "page" ? { "data-wiki-page-id": target.id } : {}),
             "data-wiki-target-label": range.targetLabel,
+            ...(range.heading ? { "data-wiki-heading": range.heading } : {}),
         };
         if (range.memoryNumber !== undefined) {
           // The id never shows: the whole token reads as its number until
           // the caret enters it to edit the source.
           if (compositionActive || editingToken) continue;
           const replaced = Decoration.replace({ widget: new MemoryNumberWidget(range.displayText, linkClass, linkAttributes) }).range(range.tokenFrom, range.tokenTo);
+          decorations.push(replaced);
+          atomic.push(replaced);
+          continue;
+        }
+        // A page renamed since this link was written reads as its new name;
+        // the stored `[[old name]]` stays as written until the caret enters it.
+        const currentTitle = target.kind === "page" && range.wiki
+          && source.slice(range.tokenFrom + 2, range.tokenTo - 2) === range.targetLabel
+          ? currentContext.pageTitles?.get(target.id) : undefined;
+        // `[[Space/Title]]` keeps naming the other Space, as written.
+        if (currentTitle && currentTitle !== range.displayText && !compositionActive && !editingToken
+          && !normalized(range.targetLabel).endsWith(`/${normalized(currentTitle)}`)) {
+          const replaced = Decoration.replace({ widget: new MemoryNumberWidget(currentTitle, linkClass,
+            { ...linkAttributes, "aria-label": currentTitle }, false) }).range(range.tokenFrom, range.tokenTo);
           decorations.push(replaced);
           atomic.push(replaced);
           continue;

@@ -31,6 +31,17 @@ function make(source: string, initialTargets: ReadonlyMap<string, string> = targ
 }
 
 describe("wiki link editing", () => {
+  it("keeps the heading a link opens its page at", () => {
+    const targets = new Map([["book", "p-book"]]);
+    const [withHeading, plain, aliased] = parseResolvedWikiLinks(
+      "[[Book#Third chapter]] [[Book]] [[Book# Part two |there]]",
+      targets,
+    );
+    expect(withHeading).toMatchObject({ targetLabel: "Book", displayText: "Book", heading: "Third chapter" });
+    expect(plain.heading).toBeUndefined();
+    expect(aliased).toMatchObject({ displayText: "there", heading: "Part two" });
+  });
+
   it("waits for a complete Markdown tree before exposing wiki links", () => {
     const codeLinks = Array.from({ length: 400 }, () => "[[Target]]").join("\n");
     const source = ["[[Target]]", "", "```md", codeLinks, "```"].join("\n");
@@ -101,7 +112,7 @@ describe("wiki link editing", () => {
 
   it("parses target, alias and heading while requiring an exact resolved map entry", () => {
     expect(parseResolvedWikiLinks("[[ Target #walk | Read this ]] [[Target]] [[Missing]]", targets)).toEqual([
-      { from: 18, to: 27, tokenFrom: 0, tokenTo: 30, targetLabel: "Target", displayText: "Read this" },
+      { from: 18, to: 27, tokenFrom: 0, tokenTo: 30, targetLabel: "Target", displayText: "Read this", heading: "walk" },
       { from: 33, to: 39, tokenFrom: 31, tokenTo: 41, targetLabel: "Target", displayText: "Target" },
     ]);
   });
@@ -159,6 +170,15 @@ describe("wiki link editing", () => {
     expect(missing.textContent).toBe("the retro");
     expect(missing.getAttribute("title")).toBe("No page yet");
     expect(view.contentDOM.querySelectorAll("a")).toHaveLength(0);
+    expect(view.state.doc.toString()).toBe(source);
+  });
+
+  it("reads a plain link to a renamed page as its new name, leaving aliases and the stored text alone", () => {
+    const source = "Read [[Target]] or [[Target|my shorthand]].";
+    const { view } = make(source, targets, { pageTitles: new Map([["page-target", "Renamed target"]]) });
+    const anchors = [...view.contentDOM.querySelectorAll<HTMLAnchorElement>("a[data-wiki-page-id]")];
+    expect(anchors.map((anchor) => anchor.textContent)).toEqual(["Renamed target", "my shorthand"]);
+    expect(anchors[0].getAttribute("aria-label")).toBe("Renamed target");
     expect(view.state.doc.toString()).toBe(source);
   });
 

@@ -21,12 +21,9 @@ function fixtureWithArchivedTwin() {
   };
 }
 
-async function openReadOnly(page: Page, title: string): Promise<void> {
+async function openForWriting(page: Page, title: string): Promise<void> {
   await openWikiNote(page, title);
-  const editor = page.getByRole("textbox", { name: "Page editor", exact: true });
-  await expect(editor).toBeVisible();
-  await editor.press("Escape");
-  await expect(editor).toHaveCount(0);
+  await expect(page.getByRole("textbox", { name: "Page editor", exact: true })).toBeVisible();
 }
 
 async function confirm(page: Page, action: string): Promise<void> {
@@ -46,7 +43,7 @@ test("archive keeps the tab read only; Archived pages restores, through a title 
   await page.goto("/");
 
   // Archive from the page's own menu: the tab stays, read only, with Restore.
-  await openReadOnly(page, "History semantics");
+  await openForWriting(page, "History semantics");
   await page.getByRole("button", { name: "Page actions" }).click();
   await page.getByRole("menuitem", { name: "Archive page" }).click();
   await expect(page.getByRole("alertdialog")).toContainText("Archive this page? You can restore it from Archived pages.");
@@ -110,7 +107,7 @@ test("Archive from the folder tree, without deleting anything", async ({ page })
   const errors = collectBrowserErrors(page);
   await installTauriMock(page, { locale: "en", rawActions: [] });
   await page.goto("/");
-  await openReadOnly(page, "Fixture architecture");
+  await openForWriting(page, "Fixture architecture");
 
   const directory = page.locator(".wiki-workspace-directory");
   // Folder tree: right-click a page that is not on screen.

@@ -47,8 +47,8 @@ test("manages Spaces, cleans MRU, and preserves data after a rejected mutation",
   await openMenu(page, "space-journey-space", "Journey Space");
   await page.getByRole("menuitem", { name: "Star" }).click();
   await expect(journeyRow.getByRole("button", { name: "Journey Space", exact: true })).toBeVisible();
-  await openMenu(page, "space-journey-space", "Journey Space");
-  await page.getByRole("menuitem", { name: "Move up" }).click();
+  await journeyRow.hover();
+  await journeyRow.getByRole("button", { name: "Drag to reorder Journey Space", exact: true }).press("ArrowUp");
   const movedJourney = journeyRow.getByRole("button", { name: "Journey Space", exact: true });
   const researchRow = confirmedSpaceRow(page, "space-research");
   const shiftedResearch = researchRow.getByRole("button", { name: "Research", exact: true });
@@ -97,12 +97,12 @@ test("manages Spaces, cleans MRU, and preserves data after a rejected mutation",
   await expect.poll(async () => page.evaluate(() => localStorage.getItem("wenlan:recent-spaces:v1"))).toContain("Research Lab");
   await openMenu(page, "space-research", "Research Lab");
   await page.getByRole("menuitem", { name: "Delete" }).click();
-  await researchRow.getByRole("button", { name: "Confirm delete" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Delete", exact: true }).click();
   await expect.poll(async () => page.evaluate(() => localStorage.getItem("wenlan:recent-spaces:v1"))).not.toContain("Research Lab");
 
   await openMenu(page, "space-journey-space", "Renamed Journey");
   await page.getByRole("menuitem", { name: "Delete" }).click();
-  await journeyRow.getByRole("button", { name: "Confirm delete" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Delete", exact: true }).click();
 
   // Then every state transition is singular, recoverable, and browser-clean.
   const calls = controller.calls();

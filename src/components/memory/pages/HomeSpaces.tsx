@@ -66,7 +66,10 @@ export function HomeSpaces({
         ) : null}
       </header>
       <button type="button" className="home-space-card home-space-lead" onClick={() => onSelectSpace(lead.name)}>
-        <span className="home-space-title">{lead.name}</span>
+        <span className="home-space-lead-line">
+          <span className="home-space-title">{lead.name}</span>
+          <span className="home-space-lead-tag">{t("pages.overview.spacesLastUsed")}</span>
+        </span>
         {lead.description ? <span className="home-space-text">{lead.description}</span> : null}
       </button>
       {rest.length > 0 ? (

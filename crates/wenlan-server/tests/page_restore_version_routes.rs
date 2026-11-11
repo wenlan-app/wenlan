@@ -401,3 +401,113 @@ async fn restore_version_of_a_page_outside_the_callers_space_reads_as_missing() 
         page.version
     );
 }
+
+/// UX-WHO-2 over HTTP: a one-line change the person asked for lands even
+/// though the page also cites a source its Space can no longer read, because
+/// the sentence citing it is left as it was. Changing that sentence is still
+/// refused, and so is the same write without the person's words.
+#[tokio::test]
+async fn a_person_asked_change_lands_when_an_untouched_sentence_cites_an_unreadable_source() {
+    let _guard = data_dir_lock().lock().await;
+    let _vault = ScratchVault::new();
+    let (router, _tmp, db) = common::test_app_no_gate().await;
+    db.create_space("work", None, false).await.unwrap();
+    db.create_space("home", None, false).await.unwrap();
+    let facts = [
+        (
+            "mem-cite-a",
+            "Tokio runs async tasks on a work-stealing runtime scheduler.",
+        ),
+        (
+            "mem-cite-b",
+            "Interview notes say people forget the tags they invent.",
+        ),
+    ];
+    let put = |id: &'static str, text: &'static str, space: &'static str| {
+        let db = db.clone();
+        async move {
+            db.upsert_documents(vec![wenlan_core::sources::RawDocument {
+                source: "memory".into(),
+                source_id: id.into(),
+                title: format!("title-{id}"),
+                content: text.into(),
+                source_agent: Some("test".into()),
+                space: Some(space.into()),
+                last_modified: chrono::Utc::now().timestamp(),
+                ..Default::default()
+            }])
+            .await
+            .unwrap();
+        }
+    };
+    for (id, text) in facts {
+        put(id, text, "work").await;
+    }
+    let sources: Vec<&str> = facts.iter().map(|(id, _)| *id).collect();
+    let draft = format!("{}\n\n{}", facts[0].1, facts[1].1);
+    let id = common::create_page_fixture(&db, "Notes", &draft, Some("work"), &sources, "distilled")
+        .await;
+    let cited = "Status: draft.\n\n\
+        Tokio runs async tasks on a work-stealing runtime scheduler [1].\n\n\
+        Interview notes say people forget the tags they invent [2].";
+    let page = db.get_page(&id).await.unwrap().unwrap();
+    let (status, body) = call(
+        &router,
+        Method::PUT,
+        &format!("/api/pages/{id}"),
+        Some(json!({
+            "content": cited,
+            "source_memory_ids": sources,
+            "expected_version": page.version,
+        })),
+        Caller::Agent,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let before = db.get_page(&id).await.unwrap().unwrap();
+    assert_eq!(before.citations.len(), 2, "{:?}", before.citations);
+
+    // The second source moves to another Space: the page's Space cannot read it.
+    put(facts[1].0, facts[1].1, "home").await;
+    let moved = db.get_page(&id).await.unwrap().unwrap();
+
+    let asked = cited.replace("Status: draft.", "Status: replaced by the new page.");
+    let uri = format!("/api/pages/{id}");
+    let write = |content: String, person_asked: Option<&'static str>| {
+        let mut request = json!({
+            "content": content,
+            "source_memory_ids": sources,
+            "expected_version": before.version,
+        });
+        if let Some(quote) = person_asked {
+            request["person_asked"] = json!(quote);
+        }
+        call(&router, Method::PUT, &uri, Some(request), Caller::Agent)
+    };
+    let (status, body) = write(asked.clone(), None).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert!(body.to_string().contains("source_read_refused"), "{body}");
+
+    let reworded = asked.replace("forget the tags", "never use the tags");
+    let (status, body) = write(reworded, Some(QUOTE)).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert!(body.to_string().contains("positions=2 "), "{body}");
+    assert_eq!(
+        db.get_page(&id).await.unwrap().unwrap().version,
+        before.version
+    );
+
+    let (status, body) = write(asked.clone(), Some(QUOTE)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let landed = db.get_page(&id).await.unwrap().unwrap();
+    assert_eq!(landed.content, asked);
+    assert_eq!(landed.source_memory_ids.len(), 2);
+    assert_eq!(landed.citations.len(), 2);
+    assert_eq!(landed.citations[1].locator, before.citations[1].locator);
+    assert_eq!(landed.citations[1].status, moved.citations[1].status);
+    assert_eq!(
+        landed.citations[1].cited_digest,
+        before.citations[1].cited_digest
+    );
+    assert_eq!(last_entry(&db, &id).await.edited_by, "person_asked");
+}

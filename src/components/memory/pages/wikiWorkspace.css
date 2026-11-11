@@ -177,6 +177,8 @@ button.wiki-workspace-mode:focus-visible { outline: 2px solid var(--mem-text-sec
 }
 
 html[data-theme="light"] .workspace-wiki-tabs { background: var(--mem-bg); }
+/* The tools at the end of the bar sit on the same ground as the tabs. */
+html[data-theme="light"] .wiki-shared-tools-rail { background: var(--mem-bg); }
 
 .workspace-wiki-tabs .note-tabs { pointer-events: auto; }
 

@@ -6,14 +6,10 @@ type SpaceActionsMenuProps = {
   readonly space: Space;
   readonly labels: SpacesOverviewLabels;
   readonly pending: boolean;
-  readonly canMoveUp: boolean;
-  readonly canMoveDown: boolean;
   readonly onStar: (space: Space) => void;
   /** Starts the inline rename editor. */
   readonly onRename: (space: Space) => void;
-  readonly onMoveUp: (space: Space) => void;
-  readonly onMoveDown: (space: Space) => void;
-  /** Starts the delete confirmation. */
+  /** Asks whether to delete the Space. */
   readonly onDelete: (space: Space) => void;
 };
 
@@ -84,12 +80,6 @@ export function SpaceActionsMenu(props: SpaceActionsMenuProps) {
             {props.space.starred ? props.labels.unstar : props.labels.star}
           </button>
           <button type="button" role="menuitem" onClick={() => { props.onRename(props.space); setMenuOpen(false); }}>{props.labels.rename}</button>
-          <button type="button" role="menuitem" disabled={!props.canMoveUp} onClick={() => { props.onMoveUp(props.space); setMenuOpen(false); }}>
-            {props.labels.moveUp}
-          </button>
-          <button type="button" role="menuitem" disabled={!props.canMoveDown} onClick={() => { props.onMoveDown(props.space); setMenuOpen(false); }}>
-            {props.labels.moveDown}
-          </button>
           <button type="button" role="menuitem" className="spaces-danger" onClick={() => { props.onDelete(props.space); setMenuOpen(false); }}>
             {props.labels.delete}
           </button>

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { clearPageSection, headingKey, pendingPageSection, requestPageSection, wikilinkHeading } from "../../lib/pageSection";
 import SourceDocumentPreview from "./sources/SourceDocumentPreview";
 import { SourceDocumentReader } from "./sources/SourceDocumentReader";
 import { SourceLifecycleControl } from "./sources/SourceLifecycleControl";
@@ -16,7 +17,7 @@ import { WorkspaceDocumentToolsHostContext, WorkspaceNoteGroupContext } from "./
 import type { NoteInspectorTab } from "./page/NoteInspectorTabs";
 import { usePageInspectorSession } from "./page/usePageInspectorSession";
 import { preserveReadingPosition } from "./page/readingReflowAnchor";
-import { ArrowLeft, ArrowsIn, ArrowsOut, FilePdf, Info, PencilSimple, TreeStructure } from "@phosphor-icons/react";
+import { ArrowLeft, ArrowsIn, ArrowsOut, FilePdf, Info, TreeStructure } from "@phosphor-icons/react";
 import {
   getPage,
   getPageLinks,
@@ -116,7 +117,7 @@ import { SHARE_PREVIEW_APPS, sharePreview as readSharePreview, sharePreviewTitle
 import { getSourceAppFromUrl, sourceAppName, sourceHandleFromUrl, sourceLinkKind, type SourceApp } from "./sources/sourcePresentation";
 import { linkCompletionText, pageTitleKey, trimLikeDaemon } from "./editor/pageTitleKey";
 import { loadAllLinkCandidates, linkNotesFor } from "./page/linkCandidates";
-import { leadingMarkdownH1MatchesTitle, withoutLeadingTitleH1 } from "./editor/pageEditorPresentation";
+import { leadingMarkdownH1, leadingMarkdownH1MatchesTitle, withoutLeadingTitleH1 } from "./editor/pageEditorPresentation";
 import { MovePageDialog } from "./pages/MovePageDialog";
 import { PageProjectionNotice } from "./pages/PageProjectionNotice";
 import { finishRenameLinks } from "./pages/renameLinksNotice";
@@ -217,6 +218,16 @@ function localShortcutModifier(): "Cmd" | "Ctrl" {
 }
 
 const PAGE_LINK_ANCHOR_PREFIX = "#concept:";
+/** Between a link's page id and the heading it opens the page at. */
+const PAGE_LINK_HEADING_MARK = "~section:";
+
+function safeDecode(text: string): string {
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return text;
+  }
+}
 type MenuInitialFocus = "first" | "last";
 
 type PageEditGate =
@@ -352,6 +363,29 @@ export default function PageDetail({
   const inspectorId = useId();
   const documentToolsHost = useContext(WorkspaceDocumentToolsHostContext);
   const noteGroup = useContext(WorkspaceNoteGroupContext);
+  // A heading or item clicked on the mind map shows where it is in the page.
+  const showPageLine = useCallback(({ text, heading }: { text: string; heading: string | null }) => {
+    const root = pageDetailRootRef.current;
+    if (!root) return;
+    const norm = (value: string) => value.replace(/\s+/g, " ").trim().toLowerCase();
+    const outsideMap = (el: Element) => !el.closest(".page-canvas, .note-inspector-panel");
+    const find = (selector: string, want: string, prefix: boolean) => {
+      const target = norm(want);
+      if (!target) return null;
+      return Array.from(root.querySelectorAll(selector)).find((el) => {
+        if (!outsideMap(el)) return false;
+        const have = norm(el.textContent ?? "");
+        return prefix ? have.startsWith(target.slice(0, 40)) : have === target;
+      }) ?? null;
+    };
+    const headings = "h1, h2, h3, h4, h5, h6";
+    const hit = text === heading
+      ? find(headings, text, false)
+      : find("li, td, p", text, true) ?? (heading ? find(headings, heading, false) : null);
+    hit?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, []);
+
+
   const setPageDetailRootRef = useCallback((node: HTMLDivElement | null) => {
     readingPositionCleanupRef.current?.();
     readingPositionCleanupRef.current = node ? preserveReadingPosition(node) : null;
@@ -389,6 +423,10 @@ export default function PageDetail({
   const [editDirty, setEditDirty] = useState(false);
   const [editInitialDocument, setEditInitialDocument] = useState("");
   const [editHasMatchingTitle, setEditHasMatchingTitle] = useState(false);
+  // The editor's opening `# heading` is the page's name: editing it renames
+  // the page once the writer leaves that line (UX: one title, no rename pencil).
+  const titleLineRef = useRef(false);
+  const titleLineRenameRef = useRef(false);
   const [editGate, setEditGate] = useState<PageEditGate>({ kind: "closed" });
   const [editBaseline, setEditBaseline] = useState<PageEditBaseline | null>(null);
   const [sourceProfile, setSourceProfile] =
@@ -549,6 +587,34 @@ export default function PageDetail({
     if (page == null) return;
     onPageLoaded?.({ id: page.id, status: page.status, title: page.title });
   }, [onPageLoaded, page?.id, page?.status, page?.title]);
+
+  // Opened from `[[this page#Heading]]`: show that heading once the page is
+  // on screen, in the editor or the reading view, whichever is drawn.
+  useEffect(() => {
+    const heading = pendingPageSection(pageId);
+    if (!heading) return;
+    let tries = 0;
+    let timer: number | undefined;
+    const revealInView = () => {
+      const root = pageDetailRootRef.current;
+      if (!root) return false;
+      const want = headingKey(heading);
+      const hit = Array.from(root.querySelectorAll("h1, h2, h3, h4, h5, h6")).find(
+        (el) => !el.closest(".page-canvas, .note-inspector-panel") && headingKey(el.textContent ?? "") === want,
+      );
+      hit?.scrollIntoView({ block: "start" });
+      return Boolean(hit);
+    };
+    const attempt = () => {
+      if (editorRef.current?.revealHeading(heading) || revealInView() || ++tries >= 30) {
+        clearPageSection(pageId);
+        return;
+      }
+      timer = window.setTimeout(attempt, 100);
+    };
+    attempt();
+    return () => window.clearTimeout(timer);
+  }, [pageId, page?.id]);
 
   const { data: pageLinks } = useQuery({
     queryKey: ["page-links", pageId],
@@ -724,7 +790,8 @@ export default function PageDetail({
     labels: { page: t("references.page"), memory: t("citation.kind.memory"), source: t("references.source"),
       authored: t("citation.kind.authored"), unverified: t("citation.unverified"), unevaluated: t("thisSentence.evidence.unevaluated"), missing: t("references.missingPage") },
     selfTitle: page?.title,
-  }), [page?.citations, page?.title, pageSources, pageSourcesLoading, t]);
+    pageTitles: new Map([...outboundTargetByLabel.values()].flatMap((target) => target.title ? [[target.id, target.title] as const] : [])),
+  }), [outboundTargetByLabel, page?.citations, page?.title, pageSources, pageSourcesLoading, t]);
   useEffect(() => {
     // A save can clear or replace the evidence map. Never keep a stale citation open.
     setWikiLinkPreview((current) => current?.target.kind === "citation" ? null : current);
@@ -881,6 +948,7 @@ export default function PageDetail({
     setEditGate({ kind: "closed" });
     setEditBaseline(null);
     setEditHasMatchingTitle(false);
+    titleLineRef.current = false;
     setSourceProfile(null);
     setEditValidation(null);
     setEditorFallbackSessionId(null);
@@ -1352,6 +1420,7 @@ export default function PageDetail({
     setEditGate({ kind: "closed" });
     setEditBaseline(null);
     setEditHasMatchingTitle(false);
+    titleLineRef.current = false;
     setSourceProfile(null);
     setEditValidation(null);
     setEditorFallbackSessionId(null);
@@ -1410,12 +1479,11 @@ export default function PageDetail({
     editDocumentRef.current = prepared.editorDocument;
     editPageTitleRef.current = sourcePage.title;
     updateEditDirty(false);
-    setEditHasMatchingTitle(
-      leadingMarkdownH1MatchesTitle(
-        prepared.editorDocument,
-        sourcePage.title,
-      ),
+    titleLineRef.current = leadingMarkdownH1MatchesTitle(
+      prepared.editorDocument,
+      sourcePage.title,
     );
+    setEditHasMatchingTitle(titleLineRef.current);
     setEditBaseline({
       pageId: sourcePage.id,
       content: sourcePage.content,
@@ -1564,7 +1632,12 @@ export default function PageDetail({
   const handleDocumentChange = (content: string) => {
     if (content !== editDocumentRef.current) setReviewNotice(null);
     editDocumentRef.current = content;
-    setEditHasMatchingTitle(leadingMarkdownH1MatchesTitle(content, editPageTitleRef.current));
+    // Once the opening heading is the title line, it stays the title while
+    // it is being retyped; removing the heading hands the name back to the
+    // title above the text.
+    if (!titleLineRef.current && leadingMarkdownH1MatchesTitle(content, editPageTitleRef.current)) titleLineRef.current = true;
+    if (titleLineRef.current && !leadingMarkdownH1(content)) titleLineRef.current = false;
+    setEditHasMatchingTitle(titleLineRef.current);
     if (sourceProfile) autosave.setSource(serializeMarkdownSource(content, sourceProfile));
   };
 
@@ -1612,11 +1685,11 @@ export default function PageDetail({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autosave, editing, editGate.kind, canonicalPage, editorStatus.compositionActive]);
 
-  const requestCloseEditor = async () => {
+  // Escape saves what is typed and leaves the page open for writing: a page
+  // has one state, so there is no reading mode to fall back to.
+  const saveOnEscape = async () => {
     if (storedActionRef.current) return;
-    const originPageId = pageId;
-    if (!await flushEditor() || activePageIdRef.current !== originPageId) return;
-    closeEditor();
+    await flushEditor();
   };
 
   const requestToggleCanvas = async () => {
@@ -1728,7 +1801,7 @@ export default function PageDetail({
       }
       event.preventDefault();
       event.stopImmediatePropagation();
-      requestCloseEditor();
+      void saveOnEscape();
     };
     window.addEventListener("keydown", captureUnfocusedEditorEscape, true);
     return () =>
@@ -1737,7 +1810,7 @@ export default function PageDetail({
         captureUnfocusedEditorEscape,
         true,
       );
-  }, [editing, infoOpen, actionMenuOpen, requestCloseEditor, noteGroup]);
+  }, [editing, infoOpen, actionMenuOpen, saveOnEscape, noteGroup]);
 
   const requestBack = async () => {
     // Main owns navigation ordering when the flush handle is registered. Queue
@@ -2025,7 +2098,7 @@ export default function PageDetail({
     }
     e.preventDefault();
     e.stopPropagation();
-    requestCloseEditor();
+    void saveOnEscape();
   };
 
   useEffect(() => {
@@ -2268,7 +2341,10 @@ export default function PageDetail({
       && labelKey.endsWith(`/${normalizeLinkLabel(target.title)}`);
     const currentTitle = cid === page.id ? page.title : namesOtherSpace ? link.targetLabel : target?.title;
     // Self references read as the page's name, not a link back to this page.
-    const href = cid && cid !== page.id ? `${PAGE_LINK_ANCHOR_PREFIX}${cid}` : undefined;
+    const heading = wikilinkHeading(inner);
+    const href = cid && cid !== page.id
+      ? `${PAGE_LINK_ANCHOR_PREFIX}${cid}${heading ? `${PAGE_LINK_HEADING_MARK}${encodeURIComponent(heading)}` : ""}`
+      : undefined;
     return { link, currentTitle, href };
   };
   // Convert [[wikilinks]] to markdown links if they resolve to pages, else plain text
@@ -2364,7 +2440,9 @@ export default function PageDetail({
     if (href.startsWith(PAGE_LINK_ANCHOR_PREFIX)) {
       e.preventDefault();
       e.stopPropagation();
-      onPageClick?.(href.replace(PAGE_LINK_ANCHOR_PREFIX, ""));
+      const [targetId, heading] = href.slice(PAGE_LINK_ANCHOR_PREFIX.length).split(PAGE_LINK_HEADING_MARK);
+      requestPageSection(targetId, heading ? safeDecode(heading) : null);
+      onPageClick?.(targetId);
     } else if (href.startsWith("#memory:")) {
       e.preventDefault();
       e.stopPropagation();
@@ -2457,6 +2535,36 @@ export default function PageDetail({
         setTitleRenamePending(false);
       }
     }
+  };
+
+  // Leaving the title line saves the text, then renames the page to it. An
+  // emptied heading keeps the current name rather than inventing one.
+  const renameFromTitleLine = async () => {
+    if (!titleLineRef.current || !canRenamePage || titleLineRenameRef.current || renameMutation.isPending ||
+      editorStatus.compositionActive || storedActionRef.current) return;
+    const typed = leadingMarkdownH1(editDocumentRef.current)?.text ?? "";
+    if (!typed || typed === editPageTitleRef.current.trim()) return;
+    const originPageId = page.id;
+    titleLineRenameRef.current = true;
+    try {
+      if (!await flushEditor()) return;
+      const latest = await refetchPage();
+      if (activePageIdRef.current !== originPageId || !latest.data || latest.data.id !== originPageId ||
+        latest.data.status !== "active") return;
+      const title = leadingMarkdownH1(editDocumentRef.current)?.text ?? "";
+      if (!title || title === latest.data.title.trim()) return;
+      await renameMutation.mutateAsync({ id: originPageId, title, previousTitle: latest.data.title, expectedVersion: latest.data.version });
+      if (activePageIdRef.current === originPageId) editPageTitleRef.current = title;
+    } catch {
+      // The mutation's own error handler reports a refused rename.
+    } finally {
+      titleLineRenameRef.current = false;
+    }
+  };
+  const handleEditorSelection = (selection: MarkdownEditorSelection) => {
+    onSelectionChange?.(selection);
+    const heading = titleLineRef.current ? leadingMarkdownH1(editDocumentRef.current) : null;
+    if (heading && selection.head > heading.lineEnd) void renameFromTitleLine();
   };
 
   const cancelRename = () => {
@@ -2633,21 +2741,9 @@ export default function PageDetail({
   );
 
   // A page opens ready to edit. When it is only shown (opened from Review,
-  // or after the editor closed), this pencil, or a click in the text, edits it.
+  // or after the editor closed), a click in the text, or Enter on it, edits it.
   const readModeEditable = page.status === "active" && !editing && !showCanvas && !exampleWiki;
   const readModeEditDisabled = storedActionPending || renaming || renameMutation.isPending;
-  const readModeEdit = readModeEditable ? (
-    <button
-      aria-label={t("pageDetail.editPage")}
-      className="mem-icon-action page-detail-edit-action"
-      disabled={readModeEditDisabled}
-      onClick={() => void beginEditing()}
-      title={t("pageDetail.editPage")}
-      type="button"
-    >
-      <PencilSimple aria-hidden="true" size={16} />
-    </button>
-  ) : null;
   const editFromReading = (event: React.MouseEvent) => {
     if (!readModeEditable || readModeEditDisabled) return;
     const target = event.target as HTMLElement;
@@ -2656,25 +2752,9 @@ export default function PageDetail({
     if (globalThis.getSelection?.()?.toString()) return;
     void beginEditing();
   };
-  // While the editor shows the title as its first line, the outer title (the
-  // rename control) is hidden, so this pencil renames the page instead.
-  const titleRenameAction = hideOuterTitleWhileEditing && canRenamePage ? (
-    <button
-      aria-label={t("pageDetail.renamePage")}
-      className="mem-icon-action page-detail-title-action"
-      disabled={titleRenameDisabled || renaming}
-      onClick={() => void renameFromTitle()}
-      title={t("pageDetail.renamePage")}
-      type="button"
-    >
-      <PencilSimple aria-hidden="true" size={16} />
-    </button>
-  ) : null;
   const documentTools = (
     <div className="page-document-tools">
-      {!documentToolsHost && readModeEdit}
       {!documentToolsHost && inspectorToggle}
-      {!documentToolsHost && titleRenameAction}
       <WorkspaceBackButton
           aria-label={t("main.back")}
           className="mem-icon-action"
@@ -2690,7 +2770,7 @@ export default function PageDetail({
 
   return (
     <div className={`page-detail document-context-host${inspectorOpen ? " document-context-open" : ""}${showCanvas ? " page-document-map-open" : ""}${canvasWorkspaceExpanded && inspectorOpen ? " page-detail--workspace-expanded" : ""}`} onKeyDown={handlePageDetailKeyDown} ref={setPageDetailRootRef}>
-      {documentToolsHost && createPortal(<>{titleRenameAction}{readModeEdit}{actionsMenu}{inspectorToggle}</>, documentToolsHost)}
+      {documentToolsHost && createPortal(<>{actionsMenu}{inspectorToggle}</>, documentToolsHost)}
       {restoreOpen && <RestorePageDialog page={page} onClose={() => setRestoreOpen(false)} onRestored={onRestored} />}
       <DetailReadingFrame className="page-detail-document">
         {page.status === "archived" && <div className="wiki-archive-notice" role="status">
@@ -3143,7 +3223,10 @@ export default function PageDetail({
                 )}
               </p>}
               {editorSessionId && (
-                <div className={hideOuterTitleWhileEditing ? "page-document-editor page-document-editor--title" : "page-document-editor"}>
+                <div className={hideOuterTitleWhileEditing ? "page-document-editor page-document-editor--title" : "page-document-editor"}
+                  onBlur={(event) => {
+                    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) void renameFromTitleLine();
+                  }}>
                 {hideOuterTitleWhileEditing && <><h1 className="sr-only">{page.title}</h1>{documentTools}</>}
                 <MarkdownEditor
                   ref={editorRef}
@@ -3154,7 +3237,7 @@ export default function PageDetail({
                   sentenceAuthorship={editorSentenceAuthorship}
                   initialDocument={editInitialDocument}
                   initialSelection={initialSelection}
-                  onSelectionChange={onSelectionChange}
+                  onSelectionChange={handleEditorSelection}
                   sessionId={editorSessionId}
                   disabled={storedActionPending || exampleWiki || page.status !== "active" || autosave.snapshot().readOnly}
                   seamless
@@ -3176,15 +3259,16 @@ export default function PageDetail({
                     } else showReferencePreview(target, anchor, false);
                   }}
                   onReferencePreview={showReferencePreview}
-                  onWikiPageActivate={(targetId) => {
+                  onWikiPageActivate={(targetId, anchor) => {
                     dismissWikiLinkPreview();
+                    requestPageSection(targetId, anchor?.dataset.wikiHeading);
                     onPageClick?.(targetId);
                   }}
                   onWikiLinkPreview={showWikiLinkPreview}
                   onWikiLinkPreviewLeave={leaveWikiLinkPreview}
                   onDocumentChange={handleDocumentChange}
                   onSave={saveDocument}
-                  onCancel={requestCloseEditor}
+                  onCancel={() => void saveOnEscape()}
                   onStatusChange={(status) => {
                     if (status.ready) onEditorReady?.();
                     handleEditorStatus(
@@ -3225,7 +3309,13 @@ export default function PageDetail({
         ) : (
           <div>
             <ReferenceNavigationProvider onOpenPage={onPageClick} onOpenMemory={openSourceMemory}>
-            <div className={`page-detail-prose${readModeEditable ? " page-detail-prose--editable" : ""}`} data-testid="page-document-reading" onClickCapture={handleContentClick} onClick={editFromReading}>
+            <div className={`page-detail-prose${readModeEditable ? " page-detail-prose--editable" : ""}`} data-testid="page-document-reading" onClickCapture={handleContentClick} onClick={editFromReading}
+              tabIndex={readModeEditable ? 0 : undefined}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" || event.target !== event.currentTarget || !readModeEditable || readModeEditDisabled) return;
+                event.preventDefault();
+                void beginEditing();
+              }}>
             <EmbedPageContext.Provider value={page.id}>
               {page.creation_kind === "original" ? (
                 <OriginalPageView
@@ -3299,7 +3389,7 @@ export default function PageDetail({
             <SourceDocumentReader readingSessionKey={readingSessionKey} key={`${pageId}:${pdfPreview.source_id}`} file={pdfPreview} space={page.space ?? undefined} citation={pdfCitation?.pageId === pageId && pdfCitation.sourceId === pdfPreview.source_id ? pdfCitation.citation : undefined} />
           </div>}
           {!pdfPreviewOpen && (showCanvas ? <PageCanvas key={pageId} pageId={pageId} pageTitle={page.title} labelOverrides={labelOverrides}
-            onMemoryClick={onMemoryClick} onPageClick={onPageClick} onEntityClick={onEntityClick} />
+            onMemoryClick={onMemoryClick} onPageClick={onPageClick} onEntityClick={onEntityClick} onSectionClick={showPageLine} pageEditDirty={editDirty} />
             : <DetailInfoContent className="note-inspector-info">
           {pageHasTwoLengths && <SummaryViewSwitch
             on={pageLength === "short"}

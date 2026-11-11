@@ -4,7 +4,7 @@
 use super::tests::test_db;
 use crate::{
     export::knowledge::KnowledgeProjectionWrite,
-    post_write::{rename_page, restore_page},
+    post_write::{rename_page, restore_page, update_links_to_renamed_headings},
     read_scope::ReadScope,
 };
 use std::{path::Path, sync::Arc};
@@ -1167,4 +1167,71 @@ async fn an_untagged_link_card_is_kept_when_its_page_moved_since() {
         bodies,
         vec!["Locked [[Mid]].".to_string(), "Locked [[New]].".to_string()]
     );
+}
+
+#[tokio::test]
+async fn renaming_a_heading_retargets_section_links_to_it() {
+    let fixture = fixture(&[
+        (
+            "page-a",
+            "Book",
+            "work",
+            "# Book\n\n## Third chapter\n\ntext",
+            0,
+            0,
+            "distilled",
+        ),
+        (
+            "page-b",
+            "Linker",
+            "work",
+            "Read [[Book#Third chapter]], [[Book# third chapter |there]] and [[Book#Other]]. `[[Book#Third chapter]]`",
+            0,
+            0,
+            "distilled",
+        ),
+        (
+            "page-c",
+            "Elsewhere",
+            "home",
+            "From home: [[Book#Third chapter]].",
+            0,
+            0,
+            "distilled",
+        ),
+    ])
+    .await;
+    let db = &fixture.db;
+    let counts = update_links_to_renamed_headings(
+        db,
+        "page-a",
+        "# Book\n\n## Third chapter\n\ntext",
+        "# Book\n\n## Third chapter, key points\n\ntext",
+        &ReadScope::Global,
+        Some(fixture.page_root.path()),
+    )
+    .await;
+    assert_eq!(counts.0, 1, "{counts:?}");
+    let linker = db.get_page("page-b").await.unwrap().unwrap();
+    assert_eq!(
+        linker.content,
+        "Read [[Book#Third chapter, key points]], [[Book# Third chapter, key points |there]] and [[Book#Other]]. `[[Book#Third chapter]]`"
+    );
+    assert!(projected_markdown(fixture.page_root.path(), "page-b")
+        .contains("[[Book#Third chapter, key points]]"));
+    // Another Space's page is not this page's to write.
+    let elsewhere = db.get_page("page-c").await.unwrap().unwrap();
+    assert_eq!(elsewhere.content, "From home: [[Book#Third chapter]].");
+
+    // An edit that only adds a heading renames nothing.
+    let none = update_links_to_renamed_headings(
+        db,
+        "page-a",
+        "# Book\n\n## Third chapter, key points",
+        "# Book\n\n## Third chapter, key points\n\n## Fourth",
+        &ReadScope::Global,
+        Some(fixture.page_root.path()),
+    )
+    .await;
+    assert_eq!(none, (0, 0, 0));
 }

@@ -533,20 +533,9 @@
   z-index: 1;
 }
 
-.asset-card--open-area-card .spaces-menu-anchor,
-.asset-card--open-area-card .spaces-delete-confirmation {
+.asset-card--open-area-card .spaces-menu-anchor {
   position: relative;
   z-index: 1;
-}
-
-.asset-card--open-area-card .spaces-delete-confirmation {
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.asset-card--open-area-card .spaces-delete-confirmation button {
-  flex-shrink: 0;
-  white-space: nowrap;
 }
 
 .space-card-mark {
@@ -594,3 +583,48 @@
 }
 
 @media (pointer: coarse), (max-width: 639px) { .spaces-suggestions > summary { min-height: 44px; } }
+
+/* Grid drag to reorder: the wrapper is the grid item, the card fills it. */
+.space-card-wrap {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  touch-action: pan-y;
+  transition: transform 200ms cubic-bezier(.2, .75, .25, 1);
+}
+
+.space-card-wrap:has(.space-card-edit) {
+  grid-column: 1 / -1;
+}
+
+.space-card-wrap.is-dragging {
+  z-index: 3;
+  cursor: grabbing;
+  transition: none;
+  user-select: none;
+}
+
+.space-card-wrap.is-settling {
+  z-index: 3;
+  transition-duration: 140ms;
+}
+
+.space-card-wrap:is(.is-dragging, .is-settling) .asset-card {
+  background: var(--mem-surface);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 12%);
+}
+
+.asset-cards.is-reordering {
+  user-select: none;
+}
+
+.asset-cards.is-reordering .space-card-wrap:not(.is-dragging) .asset-card:hover {
+  background: inherit;
+}
+
+/* Same column as home and a Space page: 840px wide, its first line at the
+   same height, so the edges stay put when moving between the three. */
+.memory-main-content.memory-main-content--collection > .spaces-overview {
+  max-width: 840px;
+  padding-top: 32px;
+}

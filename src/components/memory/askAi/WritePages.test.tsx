@@ -222,10 +222,10 @@ describe("WritePagesLine", () => {
     vi.mocked(openToolWithPrompt).mockResolvedValue(undefined);
     wrap(<Line pages={[]} />);
     const line = await screen.findByTestId("write-pages-line");
-    expect(line).toHaveTextContent("New material: 12 notes, 6 chats, and 4 files. No page yet.");
+    expect(line).toHaveTextContent("12 notes, 6 chats, and 4 files saved. Claude Code turns them into pages the next time you use it.");
     // One action: the copy fallback is not offered next to it.
     expect(screen.queryByRole("button", { name: "Copy command" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Have Claude Code write pages" }));
+    fireEvent.click(screen.getByRole("button", { name: "Organize now" }));
     await waitFor(() => expect(openToolWithPrompt).toHaveBeenCalledWith("claude-code", "/wenlan write my pages"));
     await waitFor(() => expect(screen.getByTestId("write-pages-line")).toHaveAttribute("data-state", "working"));
     // Typed in, not yet sent: it does not claim the tool is writing.
@@ -251,7 +251,7 @@ describe("WritePagesLine", () => {
     vi.mocked(listNewMaterial).mockResolvedValue(material(5));
     localStorage.setItem("askAi:writePages:tool", JSON.stringify("cursor"));
     wrap(<Line pages={[]} />);
-    expect(await screen.findByRole("button", { name: "Have Claude Code write pages" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Organize now" })).toBeInTheDocument();
   });
 
   it("says where to paste before copying for a tool it cannot open", async () => {
@@ -270,7 +270,7 @@ describe("WritePagesLine", () => {
     vi.mocked(listNewMaterial).mockResolvedValue(material(10, { kinds: { note: 2, chat: 4, file: 4 } }));
     wrap(<Line pages={[page("a", "2026-10-22T10:01:00Z")]} />);
     const line = await screen.findByTestId("write-pages-line");
-    expect(line).toHaveTextContent("2 notes, 4 chats, and 4 files aren't in any page yet.");
+    expect(line).toHaveTextContent("2 notes, 4 chats, and 4 files saved. Claude Code turns them into pages the next time you use it.");
   });
 
   it("groups the digits of a big count", async () => {
@@ -278,7 +278,7 @@ describe("WritePagesLine", () => {
     vi.mocked(listNewMaterial).mockResolvedValue(material(9962));
     wrap(<Line pages={[page("a", "2026-10-22T10:01:00Z")]} />);
     const line = await screen.findByTestId("write-pages-line");
-    expect(line).toHaveTextContent("9,962 notes aren't in any page yet.");
+    expect(line).toHaveTextContent("9,962 notes saved. Claude Code turns them into pages the next time you use it.");
   });
 
   it("copies the command when the tool cannot be opened", async () => {
@@ -368,7 +368,7 @@ describe("WritePagesLine", () => {
     expect(screen.getByTestId("write-pages-line")).toHaveTextContent("The last run stopped before writing pages.");
     expect(localStorage.getItem("askAi:writePages:run")).toBeNull();
     // A new run starts clean.
-    fireEvent.click(screen.getByRole("button", { name: "Have Claude Code write pages" }));
+    fireEvent.click(screen.getByRole("button", { name: "Organize now" }));
     await waitFor(() => expect(screen.getByTestId("write-pages-line")).toHaveAttribute("data-state", "working"));
     expect(screen.getByTestId("write-pages-line")).not.toHaveTextContent("The last run stopped");
   });

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { returnToPageReading } from "./helpers/pageReading";
+import { saveOpenPage } from "./helpers/pageReading";
 import { expect, test } from "@playwright/test";
 import { installTauriMock } from "./tauriMock";
 import { box, openCanvas, seedLargeMap } from "./helpers/pageCanvas";
@@ -37,7 +37,7 @@ for (const theme of THEMES) {
       await shot("1-resting");
       await page.screenshot({ path: `shots/${theme}-1-resting-page.png` });
 
-      await page.getByRole("button", { name: /suggestion/ }).click();
+      await page.getByRole("button", { name: "Add related memories" }).click();
       await box(page, "Vector search").hover();
       await page.waitForTimeout(200);
       await shot("2-suggestions");
@@ -69,7 +69,7 @@ for (const theme of THEMES) {
       ).toBeVisible();
       await shot("5-deleted");
 
-      await page.locator(".react-flow__pane").dblclick({ position: { x: 120, y: 90 } });
+      await page.locator(".react-flow__pane").dblclick({ position: { x: 40, y: 350 } });
       await page.waitForTimeout(300);
       await shot("6-naming");
     });
@@ -107,7 +107,7 @@ for (const theme of THEMES) {
       const spanX = Math.max(...boxes.map((b) => b.right)) - Math.min(...boxes.map((b) => b.left));
       const spanY = Math.max(...boxes.map((b) => b.bottom)) - Math.min(...boxes.map((b) => b.top));
       expect(spanY).toBeGreaterThan(spanX);
-      await page.getByRole("button", { name: /suggestion/ }).click();
+      await page.getByRole("button", { name: "Add related memories" }).click();
       await page.waitForTimeout(400);
       await page.locator(".page-canvas").screenshot({ path: `shots/${theme}-9-large-suggested.png` });
     });
@@ -164,7 +164,7 @@ for (const theme of THEMES) {
         .getByRole("button", { name: "Wiki", exact: true })
         .click();
       await openWikiNote(page, "Fixture architecture");
-      await returnToPageReading(page);
+      await saveOpenPage(page);
       await openPageTool(page, "Mind map");
       await expect(page.getByText("Loading canvas")).toBeVisible();
       await page.screenshot({ path: `shots/${theme}-7-loading.png` });
@@ -183,7 +183,7 @@ for (const theme of THEMES) {
         .getByRole("button", { name: "Wiki", exact: true })
         .click();
       await openWikiNote(page, "Fixture architecture");
-      await returnToPageReading(page);
+      await saveOpenPage(page);
       await openPageTool(page, "Mind map");
       await expect(page.getByText("Could not load the canvas")).toBeVisible();
       await page.screenshot({ path: `shots/${theme}-8-error.png` });

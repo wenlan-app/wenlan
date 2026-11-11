@@ -180,9 +180,15 @@ and wait for evidence that people need them.
 - **UX-VIEW-3** `shipped` The first screen is only for people; the details for
   AI are one collapsed section.
   原文：第一屏只有給人看的，給 AI 的細節是一個收起來的展開。
-- **UX-VIEW-4** `shipped` The mind map keeps today's rule: the AI proposes,
-  and nothing counts until you accept it.
-  原文：心智圖現在「AI 提議、你收下才算」的做法留著。
+- **UX-VIEW-4** `shipped` The mind map draws the page's own headings, items
+  and the links written in the page, with nothing to accept. Memories and
+  connections the AI guesses are dashed, and count only once you keep them.
+  原文：心智圖直接畫出頁面自己的標題、條目和寫在頁面裡的連結，不用收下。AI 猜的記憶和關聯是虛線，你收下才算。
+- **UX-VIEW-8** `shipped` A box drawn from the page is the page. Renaming
+  it, adding a line beside or under it, or deleting it changes the page itself,
+  including lines the AI wrote; each change can be taken back. If the page
+  changed since the map was drawn, nothing is written and the map says so.
+  原文：「那些如果想要手動做基本的還是允許啊？除非是進階複雜操作」「要能刪除」（2026-11-11）
 - **UX-VIEW-6** `planned` A thing's short text is a recap in a fixed order:
   where it stands and the next step (at most two sentences), what is decided,
   what is still open, then the background. A group with nothing in it is not
@@ -220,7 +226,11 @@ and wait for evidence that people need them.
   ask an AI tool to change or remove your sentence, the change lands directly:
   history lists it as asked by you, with your words, and restoring an earlier
   version undoes it. The Lock still holds: a locked page still waits as a card.
-  原文：AI 改不了你的句子，只能提議；提議能一句一句收。（2026-10-31 16:11 選擇卡：AI 自己寫、沒人動過的句子直接更新，可還原；你寫的、改過的、收下的才問你；每頁一個「鎖定」。）選擇卡「只在事实变了时」（2026-10-31 21:44）：AI 只在來源和你的句子對不上、或已經過時時才對你的句子提建議；只是換個說法不提。「尽量不 review 就尽量不 review」。「都同意，請根據這去解決根本問題」（2026-11-08，回覆信任檢查清單：AI 重建你改過的頁時不蓋掉你的修改，改成一張等你收的卡；只有你能收；沒寫進去的修改要說出來）。「寧願這樣，畢竟都已經特別問我且授權了」（2026-11-09，回覆：你授權時 AI 直接改、可還原，還是變成卡片讓你按一下）。
+  Such a change is not refused because the page also cites sources its Space
+  can no longer read: sentences the change leaves as they were keep their
+  citations as they were, and only what it changed is checked against its
+  sources. A changed sentence citing an unreadable source is still refused.
+  原文：AI 改不了你的句子，只能提議；提議能一句一句收。（2026-10-31 16:11 選擇卡：AI 自己寫、沒人動過的句子直接更新，可還原；你寫的、改過的、收下的才問你；每頁一個「鎖定」。）選擇卡「只在事实变了时」（2026-10-31 21:44）：AI 只在來源和你的句子對不上、或已經過時時才對你的句子提建議；只是換個說法不提。「尽量不 review 就尽量不 review」。「都同意，請根據這去解決根本問題」（2026-11-08，回覆信任檢查清單：AI 重建你改過的頁時不蓋掉你的修改，改成一張等你收的卡；只有你能收；沒寫進去的修改要說出來）。「寧願這樣，畢竟都已經特別問我且授權了」（2026-11-09，回覆：你授權時 AI 直接改、可還原，還是變成卡片讓你按一下）。「把 wenlan 本身修復掉」（2026-11-10，回覆：你要求改一句話，卻因為那頁有 16 筆來源讀不到而整頁不讓改）。
 - **UX-WHO-3** `shipped` Every sentence has "not right": fix it yourself or ask
   the AI; the AI's fix is still a proposal.
   原文：每一句都能按「不對」：你自己改，或讓 AI 改，AI 改的仍然是提議。
@@ -243,8 +253,10 @@ and wait for evidence that people need them.
 - **UX-WHO-7** `shipped` An AI tool's delete never destroys: a page is
   archived with its history and a memory is forgotten; both can be restored,
   and only the person can delete for good. Every removal is listed in Activity
-  with who did it.
-  原文：「都同意，請根據這去解決根本問題」（2026-11-08，回覆信任檢查清單第 12、13 條：「刪除改成封存，你寫的頁 AI 不能刪，留下紀錄」「沒名字的請求當成 AI；刪除先進可還原的垃圾桶」）
+  with who did it. A diagram or file an AI tool kept by itself in a session is
+  the AI's own work, so an AI may archive it unless you edited it; what you
+  imported stays yours.
+  原文：「都同意，請根據這去解決根本問題」（2026-11-08，回覆信任檢查清單第 12、13 條：「刪除改成封存，你寫的頁 AI 不能刪，留下紀錄」「沒名字的請求當成 AI；刪除先進可還原的垃圾桶」）；「修掉」（2026-11-10，回覆：AI 自己存的圖，AI 可以收起來（之後還能救回來）；你匯入的東西照舊只有你能動）
 - **UX-WHO-8** `shipped` An AI write never leaves a page broken: cut off,
   half a link, broken characters, or a background pass losing the Chinese
   text. Such a write is refused and the page stays as it was; damage already

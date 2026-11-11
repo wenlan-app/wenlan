@@ -114,6 +114,18 @@ export function colorForEntityType(entityType: string, palette: GraphPalette): s
 }
 
 const HEX6 = /^#[0-9a-f]{6}$/i;
+const HEX3 = /^#[0-9a-f]{3}$/i;
+
+/**
+ * Six-digit hex, or null. The production CSS minifier shortens six-digit
+ * white to its three-digit form, and custom properties come back as written, so a built app hands
+ * over three-digit colors that a dev server never does.
+ */
+function longHex(color: string): string | null {
+  if (HEX6.test(color)) return color;
+  if (HEX3.test(color)) return `#${[1, 2, 3].map((i) => color[i] + color[i]).join("")}`;
+  return null;
+}
 
 /**
  * The opaque color a fill of `fg` at `alpha` over `bg` would produce. Sigma's
@@ -123,10 +135,12 @@ const HEX6 = /^#[0-9a-f]{6}$/i;
  * Non-hex inputs (jsdom's empty computed styles) pass `fg` through untouched.
  */
 export function compositeOver(fg: string, bg: string, alpha: number): string {
-  if (!HEX6.test(fg) || !HEX6.test(bg)) return fg;
+  const fgHex = longHex(fg);
+  const bgHex = longHex(bg);
+  if (!fgHex || !bgHex) return fg;
   const channels = (hex: string) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
-  const f = channels(fg);
-  const b = channels(bg);
+  const f = channels(fgHex);
+  const b = channels(bgHex);
   const mixed = f.map((v, i) =>
     Math.round(v * alpha + b[i] * (1 - alpha))
       .toString(16)
@@ -161,4 +175,15 @@ export function nodeFillFor(
   const lightSurface = rgb[0]! * 0.2126 + rgb[1]! * 0.7152 + rgb[2]! * 0.0722 > 160;
   const alpha = confirmed === true ? 0.95 : lightSurface ? 0.8 : 0.7;
   return compositeOver(colorForEntityType(entityType, palette), palette.surface, alpha);
+}
+
+/**
+ * The same blend as `compositeOver`, for DOM boxes: CSS mixes any color the
+ * theme hands over (a custom theme may not use six-digit hex), where
+ * `compositeOver` has to give up and return the full-strength ink.
+ */
+export function mixOver(fg: string, bg: string, alpha: number): string {
+  if (longHex(fg) && longHex(bg)) return compositeOver(fg, bg, alpha);
+  if (!fg) return fg;
+  return `color-mix(in srgb, ${fg} ${Math.round(alpha * 1000) / 10}%, ${bg || "transparent"})`;
 }

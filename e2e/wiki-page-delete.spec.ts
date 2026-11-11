@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { returnToPageReading } from "./helpers/pageReading";
+import { saveOpenPage } from "./helpers/pageReading";
 import { expect, test, type Page } from "@playwright/test";
 import { collectBrowserErrors, installTauriMock } from "./tauriMock";
 import { createReviewDecisionFixture } from "./fixtures/reviewDecisions";
@@ -12,7 +12,7 @@ async function openFixturePage(page: Page): Promise<void> {
   await expect(page.getByRole("heading", { level: 1, name: "Open a page" })).toBeVisible();
   await openWikiNote(page, "Fixture architecture");
   await expect(page.getByRole("heading", { level: 1, name: "Fixture architecture" })).toBeVisible();
-  await returnToPageReading(page);
+  await saveOpenPage(page);
 }
 
 async function requestDelete(page: Page): Promise<void> {
@@ -73,8 +73,9 @@ test("deleting a Page from the right group removes only that tab", async ({ page
 
   const editor = secondary.getByRole("textbox", { name: "Page editor", exact: true });
   await expect(editor).toBeVisible();
+  // Escape saves; the page stays open for writing.
   await editor.press("Escape");
-  await expect(editor).toHaveCount(0);
+  await expect(editor).toBeEditable();
   await page.getByRole("button", { name: "Page actions" }).click();
   await page.getByRole("menuitem", { name: "Delete page" }).click();
   await page.getByRole("alertdialog").getByRole("button", { name: "Delete page", exact: true }).click();

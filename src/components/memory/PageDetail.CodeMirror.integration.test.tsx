@@ -23,6 +23,7 @@ const tauriMocks = vi.hoisted(() => ({
   getEntityDetail: vi.fn(),
   redistillPage: vi.fn(),
   updatePage: vi.fn(),
+  renamePage: vi.fn(),
   getDaemonVersion: vi.fn(),
   getSystemInfo: vi.fn(),
   recordPageEditorDiagnostic: vi.fn(),
@@ -137,7 +138,7 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
       );
 
       expect(await screen.findByText(PAGE.title)).toBeInTheDocument();
-      await user.click(screen.getByRole("button", { name: "Edit page" }));
+      await user.click(screen.getByTestId("page-document-reading"));
 
       const description = document.getElementById(
         "page-markdown-editor-description",
@@ -170,7 +171,7 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
     );
 
     expect(await screen.findByText(PAGE.title)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Edit page" }));
+    await user.click(screen.getByTestId("page-document-reading"));
 
     expect(
       document.getElementById("page-markdown-editor-description"),
@@ -200,7 +201,7 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
     );
 
     expect(await screen.findByText(PAGE.title)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Edit page" }));
+    await user.click(screen.getByTestId("page-document-reading"));
     const textbox = await screen.findByRole("textbox", { name: "Page editor" });
     const view = editorViewFromTextbox(textbox);
     expect(
@@ -247,7 +248,7 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
     );
 
     expect(await screen.findByText(PAGE.title)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Edit page" }));
+    await user.click(screen.getByTestId("page-document-reading"));
     const textbox = await screen.findByRole("textbox", { name: "Page editor" });
     const view = editorViewFromTextbox(textbox);
     act(() => selectRange(view, 0, view.state.doc.length));
@@ -288,7 +289,7 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
     );
 
     expect(await screen.findByText(PAGE.title)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Edit page" }));
+    await user.click(screen.getByTestId("page-document-reading"));
     const textbox = await screen.findByRole("textbox", {
       name: "Page editor",
     });
@@ -348,7 +349,7 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
     );
 
     expect(await screen.findByText(PAGE.title)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Edit page" }));
+    await user.click(screen.getByTestId("page-document-reading"));
     const textbox = await screen.findByRole("textbox", {
       name: "Page editor",
     });
@@ -372,6 +373,63 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
 
     await user.click(screen.getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(tauriMocks.updatePage).toHaveBeenCalledTimes(2));
+  });
+
+  it("renames the page from its title line once the writer leaves that line", async () => {
+    const editablePage = { ...PAGE, content: `# ${PAGE.title}\n\nBody copy.\n` };
+    tauriMocks.getPage.mockResolvedValue(editablePage);
+    tauriMocks.updatePage.mockImplementation(async (input) => {
+      tauriMocks.getPage.mockResolvedValue({ ...editablePage, content: input.content, version: input.expectedVersion + 1 });
+      return { outcome: "saved", page: { ...editablePage, content: input.content, version: input.expectedVersion + 1 } };
+    });
+    tauriMocks.renamePage.mockImplementation(async (id: string, title: string, expectedVersion: number) =>
+      ({ id, title, version: expectedVersion + 1, links_updated: 0, links_pending_review: 0, links_not_updated: 0 }));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const user = userEvent.setup();
+    const { container } = render(
+      <QueryClientProvider client={client}>
+        <PageDetail pageId={PAGE.id} onBack={vi.fn()} onMemoryClick={vi.fn()} onPageClick={vi.fn()} />
+      </QueryClientProvider>,
+    );
+    await screen.findByRole("heading", { name: PAGE.title });
+    await user.click(screen.getByTestId("page-document-reading"));
+    const textbox = await screen.findByRole("textbox", { name: "Page editor" });
+    const view = editorViewFromTextbox(textbox);
+    expect(screen.queryByRole("button", { name: "Rename page" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Edit page" })).toBeNull();
+
+    // Retyping the title line keeps it the only title; nothing is renamed yet.
+    act(() => {
+      view.dispatch({ changes: { from: 2, to: 2 + PAGE.title.length, insert: "Renamed here" }, selection: { anchor: 14 } });
+    });
+    expect(container.querySelector(".page-detail-title")).toBeNull();
+    expect(tauriMocks.renamePage).not.toHaveBeenCalled();
+
+    // Moving into the body saves the text, then renames to the heading.
+    act(() => { view.dispatch({ selection: { anchor: view.state.doc.length } }); });
+    await waitFor(() => expect(tauriMocks.renamePage).toHaveBeenCalledWith(PAGE.id, "Renamed here", expect.any(Number)));
+    expect(tauriMocks.updatePage).toHaveBeenCalledWith(expect.objectContaining({ content: expect.stringContaining("# Renamed here") }));
+  });
+
+  it("keeps the page name when its title line is emptied", async () => {
+    const editablePage = { ...PAGE, content: `# ${PAGE.title}\n\nBody copy.\n` };
+    tauriMocks.getPage.mockResolvedValue(editablePage);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const user = userEvent.setup();
+    render(
+      <QueryClientProvider client={client}>
+        <PageDetail pageId={PAGE.id} onBack={vi.fn()} onMemoryClick={vi.fn()} onPageClick={vi.fn()} />
+      </QueryClientProvider>,
+    );
+    await screen.findByRole("heading", { name: PAGE.title });
+    await user.click(screen.getByTestId("page-document-reading"));
+    const view = editorViewFromTextbox(await screen.findByRole("textbox", { name: "Page editor" }));
+    act(() => {
+      view.dispatch({ changes: { from: 2, to: 2 + PAGE.title.length, insert: "" } });
+      view.dispatch({ selection: { anchor: view.state.doc.length } });
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(tauriMocks.renamePage).not.toHaveBeenCalled();
   });
 
   it("uses the editable H1 as the single title without a persistent formatting toolbar", async () => {
@@ -401,7 +459,7 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
       screen.getByRole("button", { name: "Page actions" }),
     ).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Edit page" }));
+    await user.click(screen.getByTestId("page-document-reading"));
     const textbox = await screen.findByRole("textbox", {
       name: "Page editor",
     });
@@ -437,10 +495,11 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
       screen.getByRole("heading", { level: 1, name: PAGE.title }),
     ).toHaveClass("sr-only");
 
+    // Escape saves; the page stays open for writing under its one title.
     act(() => pressKey(textbox, "Escape"));
-    await waitFor(() => {
-      expect(screen.getByRole("heading", { name: PAGE.title })).toHaveClass("page-detail-title");
-    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.getByRole("textbox", { name: "Page editor" })).toBeInTheDocument();
+    expect(container.querySelector(".page-detail-title")).toBeNull();
     expect(screen.queryByRole("button", { name: "Copy as context" })).toBeNull();
   });
 
@@ -466,7 +525,7 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
     );
 
     await screen.findByRole("heading", { level: 1, name: PAGE.title });
-    await user.click(screen.getByRole("button", { name: "Edit page" }));
+    await user.click(screen.getByTestId("page-document-reading"));
     const textbox = await screen.findByRole("textbox", { name: "Page editor" });
     const localDraft = `# ${PAGE.title}\n\nUnsaved local draft.\n`;
     act(() => replaceDocument(editorViewFromTextbox(textbox), localDraft));
@@ -514,7 +573,7 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
 
     await screen.findByRole("button", { name: "Page actions" });
     expect(container.querySelector(".page-detail-title")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Edit page" }));
+    await user.click(screen.getByTestId("page-document-reading"));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Line-ending normalization required",

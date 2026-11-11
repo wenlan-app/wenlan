@@ -23,7 +23,9 @@ function relativeTime(ts: number | null): string {
   return `Last synced ${Math.floor(diff / 86400)}d ago`;
 }
 
-export default function SourcesSection() {
+/** `onQuickChats`: where the quick paste of what an AI remembers is offered
+ *  under past AI chats, as on home. */
+export default function SourcesSection({ onQuickChats }: { onQuickChats?: () => void } = {}) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -282,7 +284,7 @@ export default function SourcesSection() {
 
       {/* One way in for every kind of source, Zotero included: the same
           menu the Sources library opens. */}
-      {dialogOpen && <AddSourceMenu onClose={() => setDialogOpen(false)} />}
+      {dialogOpen && <AddSourceMenu onQuickChats={onQuickChats} onClose={() => setDialogOpen(false)} />}
 
       {/* Remove Confirmation Dialog */}
       {confirmRemove?.source_type === "zotero" && <ZoteroDisconnectDialog id={confirmRemove.id} onClose={() => setConfirmRemove(null)} />}

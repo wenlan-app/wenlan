@@ -807,13 +807,13 @@ html[data-theme="light"] .memory-shell {
   align-items: center;
   display: flex;
   flex: 0 0 auto;
-  gap: 2px;
+  gap: 4px;
 }
 .workspace-history-button {
   align-items: center;
   background: transparent;
   border: 0;
-  border-radius: var(--mem-r-6);
+  border-radius: var(--mem-r-8);
   color: var(--mem-text-secondary);
   cursor: pointer;
   display: inline-flex;
@@ -848,12 +848,24 @@ html[data-theme="light"] .memory-shell {
 
 /* The note inspector is a flush workspace column, not a floating card. */
 .workspace-pane-host:has(.page-info-drawer--inspector) { padding: 0; }
-.workspace-document-tools-host { display: flex; align-items: center; }
+.workspace-document-tools-host { display: flex; align-items: center; gap: 4px; }
 .workspace-document-tools-host:empty { display: none; }
 
 /* Both panel controls share the surrounding header tools' glyph and ink. */
 .mem-icon-action.workspace-panel-toggle { color: var(--mem-text-secondary); }
 .mem-icon-action.workspace-panel-toggle svg { width: 18px; height: 18px; }
+
+/* Every icon button in the top bar is one size, one corner, one ink: a 32px
+   square (narrow groups shrink the square, never the mix), an 18px glyph,
+   8px corners and the secondary text colour until hovered. Tab close buttons
+   belong to their tab and stay smaller. */
+:is(.memory-workspace-header, .note-group-header, .wiki-shared-tools-rail) .mem-icon-action {
+  --mem-icon-glyph-size: 18px;
+  border-radius: var(--mem-r-8);
+  color: var(--mem-text-secondary);
+}
+:is(.memory-workspace-header, .note-group-header, .wiki-shared-tools-rail) .mem-icon-action:hover:enabled { color: var(--mem-text); }
+:is(.note-group-header, .wiki-shared-tools-rail) :is(.page-document-tools, .note-group-document-tools) { gap: 4px; }
 
 /* One search box for everything (UX-FIND-1): groups stack with space, no rules. */
 .search-results-groups { display: flex; flex-direction: column; gap: 14px; }

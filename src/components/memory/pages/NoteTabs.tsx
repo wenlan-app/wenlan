@@ -106,7 +106,7 @@ export function NoteTabs({ tabs, activeKey, onSelect, onClose, onCreate, content
   return <div className="note-tabs" data-note-tab-group={groupId} data-tauri-drag-region>
     {onHome && <button type="button" className="note-tab-home" aria-label={t("pages.tabs.home")} title={t("pages.tabs.home")}
       data-active={homeActive} aria-current={homeActive ? "page" : undefined} onClick={onHome}>
-      <House size={14} aria-hidden="true" />
+      <House size={18} aria-hidden="true" />
     </button>}
     {tabs.length > 0 && <div className="note-tabs-list" role="tablist" aria-label={tabListLabel ?? t("pages.tabs.label")} ref={list} data-tauri-drag-region>
       {tabs.map((tab, index) => {
@@ -160,7 +160,7 @@ export function NoteTabs({ tabs, activeKey, onSelect, onClose, onCreate, content
       }}>{moveLabel}</button>
     </div>, document.body)}
     {onCreate && <button type="button" className="note-tab-create" aria-label={t("pages.overview.newPage")} title={t("pages.overview.newPage")} onClick={onCreate} ref={createButton}>
-      <Plus size={14} aria-hidden="true" />
+      <Plus size={18} aria-hidden="true" />
     </button>}
   </div>;
 }

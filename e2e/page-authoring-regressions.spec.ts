@@ -41,7 +41,7 @@ test("draft inspector toggles without leaving the draft or losing autosaved cont
   expect(errors.consoleErrors).toEqual([]);
 });
 
-test("page title directly opens the existing guarded rename form", async ({ page }) => {
+test("typing over the title line renames the page once the writer leaves it", async ({ page }) => {
   const errors = collectBrowserErrors(page);
   const runtime = await installTauriMock(page, { locale: "en", rawActions: [] });
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -54,14 +54,18 @@ test("page title directly opens the existing guarded rename form", async ({ page
   await editor.click();
   await editor.press("ControlOrMeta+End");
   await page.keyboard.insertText("\nBody survives direct title rename.");
+  // No pencil: the title line itself is the name.
+  await expect(page.getByRole("button", { name: "Rename page", exact: true })).toHaveCount(0);
 
-  await page.getByRole("button", { name: "Rename page", exact: true }).click();
-  const title = page.getByRole("textbox", { name: "Page title", exact: true });
-  await expect(title).toBeFocused();
-  await title.fill("Directly renamed fixture");
-  await page.getByRole("button", { name: "Save title", exact: true }).click();
+  await editor.press("ControlOrMeta+Home");
+  await editor.press("End");
+  await editor.press("Shift+Home");
+  await page.keyboard.insertText("# Directly renamed fixture");
+  expect(runtime.calls().some((call) => call.command === "rename_page")).toBe(false);
+  await editor.press("ArrowDown");
 
-  await expect(page.getByRole("heading", { level: 1, name: "Directly renamed fixture" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Directly renamed fixture" })).toBeAttached();
+  await expect(page.getByRole("tab", { name: "Directly renamed fixture", exact: true })).toBeVisible();
   await expect.poll(() => runtime.calls().some((call) => call.command === "rename_page"))
     .toBe(true);
   const saved = await page.evaluate(async () =>

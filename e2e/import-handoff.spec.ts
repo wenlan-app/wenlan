@@ -163,11 +163,14 @@ test("an import hands background work to Activity after returning to the workspa
   await expect(statusLine).toHaveAccessibleName("Activity");
   await expect(statusLine).not.toHaveAttribute("data-state");
 
-  // Account menu → Settings → Sources → Import memories.
+  // Account menu → Settings → Sources → Add source → Past AI chats → the
+  // quick paste of what an AI remembers.
   await page.getByRole("button", { name: /account menu/i }).click();
   await page.getByRole("menuitem", { name: "Settings" }).click();
   await page.getByRole("button", { name: "Sources", exact: true }).click();
-  await page.getByRole("button", { name: "Paste or import", exact: true }).click();
+  await page.getByRole("button", { name: /^Add (your first )?source/ }).first().click();
+  await page.getByRole("button", { name: /^Past AI chats/ }).click();
+  await page.getByTestId("source-chats-quick").click();
 
   await page
     .getByPlaceholder(/paste your memories/i)
@@ -220,7 +223,7 @@ test("an import hands background work to Activity after returning to the workspa
   await historyBack.click();
   const settingsHeading = page.getByRole("heading", { level: 1, name: "Sources", exact: true });
   await expect(settingsHeading).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Import Memories", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Connected sources", exact: true })).toBeVisible();
   await historyBack.click();
   await expect(page.getByRole("heading", { level: 1, name: "General", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "App", exact: true })).toBeVisible();

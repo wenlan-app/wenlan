@@ -183,7 +183,7 @@ test.describe("canvas CRUD", () => {
 
     const menu = page.getByRole("menu", { name: "Canvas actions" });
     await expect(menu.getByRole("menuitem", { name: "New node", exact: true })).toBeVisible();
-    await expect(menu.getByRole("menuitem", { name: "Generate", exact: true })).toBeVisible();
+    await expect(menu.getByRole("menuitem", { name: "Add related memories", exact: true })).toBeVisible();
     await expect(menu.getByRole("menuitem", { name: "Select all", exact: true })).toBeVisible();
     await expect(menu.getByRole("menuitem", { name: "Fit to view" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Fit all (Shift 1)", exact: true })).toBeVisible();
@@ -289,12 +289,11 @@ test.describe("canvas Escape", () => {
     await expect(editor).toBeFocused();
     await expect(page.getByRole("heading", { level: 1, name: "Open a page" })).toHaveCount(0);
 
-    // Writing retains its own Escape/flush layer before page navigation.
+    // Escape while writing only saves: the note stays open for writing and
+    // Escape never navigates away from it.
     await editor.press("Escape");
-    await expect(editor).toHaveCount(0);
-    await expect(page.getByTestId("page-document-reading")).toBeVisible();
-    await page.keyboard.press("Escape");
-    await expect(page.getByRole("heading", { level: 1, name: "Open a page" })).toBeVisible();
+    await expect(editor).toBeEditable();
+    await expect(page.getByRole("heading", { level: 1, name: "Open a page" })).toHaveCount(0);
   });
 });
 
@@ -305,14 +304,14 @@ test.describe("canvas suggestions", () => {
 
     // A suggestion is not yet part of the map, so it is not on screen.
     await expect(box(page, "Vector search")).toHaveCount(0);
-    await page.getByRole("button", { name: "1 suggestion" }).click();
+    await page.getByRole("button", { name: "Add related memories" }).click();
     await expect(box(page, "Vector search")).toBeVisible();
   });
 
   test("accepts a suggestion into the map", async ({ page }) => {
     const controller = await installTauriMock(page, { locale: "en", rawActions: [] });
     await openCanvas(page);
-    await page.getByRole("button", { name: "1 suggestion" }).click();
+    await page.getByRole("button", { name: "Add related memories" }).click();
 
     await box(page, "Vector search").getByRole("button", { name: "Accept" }).click();
 
@@ -326,7 +325,7 @@ test.describe("canvas suggestions", () => {
   test("dismisses a suggestion off the map", async ({ page }) => {
     const controller = await installTauriMock(page, { locale: "en", rawActions: [] });
     await openCanvas(page);
-    await page.getByRole("button", { name: "1 suggestion" }).click();
+    await page.getByRole("button", { name: "Add related memories" }).click();
 
     await box(page, "Vector search").getByRole("button", { name: "Dismiss" }).click();
 

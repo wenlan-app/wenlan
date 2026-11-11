@@ -2958,6 +2958,7 @@ jobs:
           bash plugin/hooks/test-session-context.sh
           bash plugin/hooks/test-stop-check.sh
           bash plugin/hooks/test-prompt-context.sh
+          bash plugin/hooks/test-session-pages.sh
       - name: Run the shared plugin script tests
         run: |
           bash plugin/scripts/test/test-resolve-space.sh

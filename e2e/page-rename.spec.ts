@@ -11,13 +11,19 @@ const recentChanges = [{
   changed_at_ms: Date.parse("2026-07-10T12:00:00Z"),
 }];
 
+// These pages open without a leading `# title` line, so the title above the
+// text is the rename control. A page that opens with one is renamed by typing
+// over that line (page-authoring-regressions.spec.ts).
+function plainFixture() {
+  const fixture = createSpacesNavigationFixture();
+  return { ...fixture, pages: fixture.pages.map((note) => ({ ...note, content: note.content.replace(/^# [^\n]*\n+/u, "") })) };
+}
+
 async function openFixturePage(page: Page, title = "Fixture architecture"): Promise<void> {
   if (page.url() === "about:blank") await page.goto("/");
   await openWikiNote(page, title);
   const editor = page.getByRole("textbox", { name: "Page editor", exact: true });
   await expect(editor).toBeVisible();
-  await editor.press("Escape");
-  await expect(editor).toHaveCount(0);
   await expect(page.getByRole("heading", { level: 1, name: title })).toBeVisible();
 }
 
@@ -28,7 +34,7 @@ async function chooseRename(page: Page): Promise<void> {
 
 test("existing linked mentions show the new target title while stored text and aliases stay intact", async ({ page }, testInfo) => {
   const errors = collectBrowserErrors(page);
-  const fixture = createSpacesNavigationFixture();
+  const fixture = plainFixture();
   const content = "Read [[History semantics]] or [[History semantics|my shorthand]].";
   await installTauriMock(page, {
     locale: "en", rawActions: [],
@@ -64,6 +70,7 @@ test("renames an active page while preserving its identity and body after revisi
   const controller = await installTauriMock(page, {
     locale: "en",
     rawActions: [],
+    fixture: plainFixture(),
     delays: { rename_page: 600 },
     pageScenario: { recentChanges },
   });
@@ -78,7 +85,8 @@ test("renames an active page while preserving its identity and body after revisi
   await page.getByRole("textbox", { name: "Page title" }).press("Enter");
   await expect(page.getByRole("button", { name: "Renaming…" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Cancel rename" })).toBeDisabled();
-  await expect(page.getByRole("button", { name: "Edit page" })).toBeDisabled();
+  // There is no edit pencil; the reading surface ignores clicks while the rename runs.
+  await expect(page.getByRole("button", { name: "Edit page" })).toHaveCount(0);
   await page.getByRole("button", { name: "Page actions" }).click();
 
   await expect(page.getByRole("heading", { level: 1, name: "Renamed architecture" })).toBeVisible();
@@ -104,7 +112,7 @@ test("renames an active page while preserving its identity and body after revisi
 });
 
 test("cancels a page rename without changing the title", async ({ page }) => {
-  await installTauriMock(page, { locale: "en", rawActions: [], pageScenario: { recentChanges } });
+  await installTauriMock(page, { locale: "en", rawActions: [], fixture: plainFixture(), pageScenario: { recentChanges } });
   await openFixturePage(page);
   await chooseRename(page);
   await page.getByRole("textbox", { name: "Page title" }).fill("Discard this title");
@@ -114,7 +122,7 @@ test("cancels a page rename without changing the title", async ({ page }) => {
 });
 
 test("keeps a failed page rename retryable with its title and page intact", async ({ page }) => {
-  const controller = await installTauriMock(page, { locale: "en", rawActions: [], pageScenario: { recentChanges } });
+  const controller = await installTauriMock(page, { locale: "en", rawActions: [], fixture: plainFixture(), pageScenario: { recentChanges } });
   controller.failNext("rename_page", "daemon offline");
   await openFixturePage(page);
   await chooseRename(page);
