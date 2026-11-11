@@ -158,11 +158,8 @@ fn change_team<T>(
     let mut tmp = tempfile::NamedTempFile::new_in(parent)?;
     tmp.write_all(serde_json::to_string_pretty(&file)?.as_bytes())?;
     tmp.flush()?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(0o600))?;
-    }
+    // A temp file is made readable by its owner only (0600 on Unix), and
+    // keeps that when it replaces team.json.
     tmp.persist(path)
         .map_err(|error| WenlanError::Io(error.error))?;
     Ok(out)
