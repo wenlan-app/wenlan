@@ -1,41 +1,30 @@
-<svg width="1280" height="600" viewBox="0 0 1280 600" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
-  <title id="title">Wenlan social preview</title>
-  <desc id="desc">Wenlan: the knowledge base you don’t have to maintain. Write when you want; your AI keeps it organized.</desc>
-
-  <rect width="1280" height="600" fill="#101024"/>
-  <rect x="64" y="52" width="1152" height="496" rx="32" fill="#101024" stroke="#2F3769"/>
-
-  <g transform="translate(130 168) scale(0.92)">
-    <rect width="312" height="312" rx="72" fill="#1A1A2E"/>
-    <circle cx="156" cy="156" r="98" stroke="url(#ring)" stroke-width="48"/>
-    <circle cx="197" cy="97" r="26" fill="url(#orb)"/>
+<svg width="1280" height="640" viewBox="0 0 1280 640" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <rect width="1280" height="640" fill="#151D2B"/>
+  <g transform="translate(-208 138) scale(1.4)">
+  <title id="title">Wenlan README banner</title>
+  <desc id="desc">Wenlan: The knowledge base you don’t have to maintain</desc>
+  
+  <g transform="translate(172 -45)"><g transform="translate(81.28 84.28) scale(0.354375)">
+    <rect width="512" height="512" rx="112" fill="#1A1A2E"/>
+    <circle cx="256" cy="256" r="160" fill="none" stroke="url(#banner-en-desktop-ring)" stroke-width="76"/>
+    <circle cx="322" cy="160" r="42" fill="url(#banner-en-desktop-orb)"/>
   </g>
-
-  <g transform="translate(462 204)">
-    <text x="0" y="18" fill="#93E3F2" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="34" font-weight="700" letter-spacing="4">
-      WENLAN
-    </text>
-    <text x="0" y="76" fill="#F7F8FF" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="44" font-weight="760">
-      The knowledge base
-    </text>
-    <text x="0" y="126" fill="#F7F8FF" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="44" font-weight="760">
-      you don’t have to maintain.
-    </text>
-    <text x="0" y="178" fill="#DCE2F5" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="24" font-weight="500">
-      Write when you want; your AI keeps it organized.
-    </text>
-  </g>
-
+  <text x="300" y="123" fill="#93E3F2" font-size="40" font-weight="500" text-anchor="start"><tspan font-family="-apple-system, BlinkMacSystemFont, &quot;SF Pro Display&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif">Wenlan</tspan></text>
+  <text x="300" y="170" fill="#F7F8FF" font-family="-apple-system, BlinkMacSystemFont, &quot;SF Pro Display&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif" font-size="36" font-weight="500" text-anchor="start">The knowledge base</text>
+  <text x="300" y="212" fill="#F7F8FF" font-family="-apple-system, BlinkMacSystemFont, &quot;SF Pro Display&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif" font-size="36" font-weight="500" text-anchor="start">you don’t have to maintain</text>
+  <text x="300" y="254" fill="#BAC4D2" font-family="-apple-system, BlinkMacSystemFont, &quot;SF Pro Display&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif" font-size="20" font-weight="400" text-anchor="start">Free · Open source · Local-first</text></g>
   <defs>
-    <linearGradient id="ring" x1="58" y1="156" x2="254" y2="156" gradientUnits="userSpaceOnUse">
+    <linearGradient id="banner-en-desktop-ring" x1="96" y1="256" x2="416" y2="256" gradientUnits="userSpaceOnUse">
       <stop stop-color="#6C63FF"/>
-      <stop offset="0.48" stop-color="#5BA3E6"/>
+      <stop offset="0.5" stop-color="#5BA3E6"/>
       <stop offset="1" stop-color="#4AC8E8"/>
     </linearGradient>
-    <radialGradient id="orb" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(189 87) rotate(52) scale(47)">
+    <radialGradient id="banner-en-desktop-orb" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(310 144) rotate(52.125) scale(76.0263)">
       <stop stop-color="#FFFFFF"/>
       <stop offset="0.45" stop-color="#A5C4F7"/>
       <stop offset="1" stop-color="#4AC8E8"/>
     </radialGradient>
   </defs>
+
+  </g>
 </svg>

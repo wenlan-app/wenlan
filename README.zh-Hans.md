@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=051bfadf89f2b0d74303041c88fa37489450f3111331ddae65139f3e2cfc5ca1 -->
+<!-- README_SYNC: source=README.md sha256=12f35b5d27ceb75c13fecafd618c3a333f896edc1baab0daf6fae08d8849c4d9 -->
 
 <p align="center">
   <picture>
@@ -103,7 +103,7 @@ Codex 中用 `$recall`；只用 MCP 的工具，直接请它先查文澜。Grok 
 | 导入内容 | 用途 |
 | --- | --- |
 | Markdown、文本、文本型 PDF、DOCX 或文件夹 | 搜索和引用导入文本。文件夹可以只导入一次，也可以持续同步文件的变化。 |
-| Obsidian 仓库或 Logseq 图谱 | 搜索和引用现有笔记。选择持续同步，在后台跟上变化；或只导入一次。没有你同意，不会改动你原有的笔记：在 Obsidian 仓库里，设成“先问我”的笔记会收到 AI 的修改建议，由你接受或不要。 |
+| Obsidian 仓库或 Logseq 图谱 | 搜索和引用现有笔记。选择持续同步，在后台跟上变化；或只导入一次。你写的笔记默认是“先问我”：AI 的修改会变成建议，由你接受或不要；每篇笔记都可以改这个设置。 |
 | 网页链接 | 在笔记里粘贴链接，就会存成来源。YouTube、X、Threads、Instagram 和小红书的链接会显示成卡片、可播放的视频或原始帖子。也可以粘贴文本与 URL，保存那段摘录。 |
 | Gmail、Notion、Google Drive、Slack、GitHub | 你的 AI 工具用它自己的连接器读取，把重要的内容存进文澜，并附上原文链接。 |
 | 代码仓库 | `/wenlan wiki` 写出对应到代码行数的笔记。[代码 wiki](#code-repository-wiki)。 |
@@ -248,7 +248,7 @@ Codex 中用 `$recall`；只用 MCP 的工具，直接请它先查文澜。Grok 
 
 ### 如果你已经用 Claude Code 或 Codex 管笔记
 
-继续用就好。文澜接上同一个 AI 工具，补上一个 Markdown 文件夹自己做不到的检查：引用大多和来源对不上的笔记不会保存，来源变了会标记，AI 改你写的笔记先等你审核，而且没有你同意，不会改动你原有的笔记。
+继续用就好。文澜接上同一个 AI 工具，补上一个 Markdown 文件夹自己做不到的检查：引用大多和来源对不上的笔记不会保存，来源变了会标记，而且哪些笔记 AI 可以直接改、哪些要先等你点头，由你决定。
 
 **适用场景：**
 

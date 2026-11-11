@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=051bfadf89f2b0d74303041c88fa37489450f3111331ddae65139f3e2cfc5ca1 -->
+<!-- README_SYNC: source=README.md sha256=12f35b5d27ceb75c13fecafd618c3a333f896edc1baab0daf6fae08d8849c4d9 -->
 
 <p align="center">
   <picture>
@@ -103,7 +103,7 @@ Cuando termina una importación, la aplicación ofrece **Write pages with** tu h
 | Qué puedes importar | Para qué sirve |
 | --- | --- |
 | Markdown, texto, PDF con texto, DOCX o una carpeta | Busca y cita el texto importado. Importa una carpeta una vez o mantenla sincronizada cuando cambien sus archivos. |
-| Una bóveda de Obsidian o un grafo de Logseq | Busca y cita notas existentes. Mantenla sincronizada para seguir los cambios en segundo plano, o impórtala una vez. Wenlan nunca edita tus notas existentes sin tu permiso: en una bóveda de Obsidian, las notas en **Ask me first** reciben sugerencias de la IA que aceptas o rechazas. |
+| Una bóveda de Obsidian o un grafo de Logseq | Busca y cita notas existentes. Mantenla sincronizada para seguir los cambios en segundo plano, o impórtala una vez. Las notas que escribiste empiezan en **Ask me first**: los cambios de la IA llegan como sugerencias que aceptas o rechazas, y puedes cambiarlo en cada página. |
 | Enlaces web | Pega un enlace en una página y se guarda como fuente. Los enlaces de YouTube, X, Threads, Instagram y RedNote se muestran como tarjeta, vídeo reproducible o la publicación original. También puedes pegar un texto con su URL para guardar ese extracto. |
 | Gmail, Notion, Google Drive, Slack, GitHub | Tu herramienta de IA los lee con sus propios conectores y guarda en Wenlan lo importante con un enlace al original. |
 | Un repositorio de código | `/wenlan wiki` escribe páginas vinculadas a las líneas de código en las que se basan. [Wiki de código](#code-repository-wiki). |
@@ -246,7 +246,7 @@ Un agente puede leer archivos y escribir texto. Wenlan añade una **base de cono
 
 ### Si ya usas Claude Code o Codex con tus notas
 
-Sigue haciéndolo. Wenlan se conecta a la misma herramienta de IA y añade las comprobaciones que una carpeta de Markdown no hace por sí sola: rechaza una página cuando la mayoría de sus citas no coinciden con la fuente, marca las páginas cuando cambian sus fuentes, deja para tu revisión las ediciones de IA en páginas que escribiste y nunca edita tus notas existentes sin tu permiso.
+Sigue haciéndolo. Wenlan se conecta a la misma herramienta de IA y añade las comprobaciones que una carpeta de Markdown no hace por sí sola: rechaza una página cuando la mayoría de sus citas no coinciden con la fuente, marca las páginas cuando cambian sus fuentes, y tú decides qué páginas puede cambiar la IA por su cuenta y cuáles esperan tu visto bueno.
 
 **Úsala para:**
 

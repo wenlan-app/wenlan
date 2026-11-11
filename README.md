@@ -101,7 +101,7 @@ When an import finishes, the app offers **Write pages with** your AI tool to tur
 | Bring in | How you can use it |
 | --- | --- |
 | Markdown, text, text-based PDFs, DOCX, or a folder | Search and cite the imported text. Import a folder once, or keep it in sync as its files change. |
-| An Obsidian vault or a Logseq graph | Search and cite existing notes. Keep it in sync to follow changes in the background, or import it once. Wenlan never edits your existing notes without your OK: in an Obsidian vault, notes you set to **Ask me first** get AI suggestions you accept or decline. |
+| An Obsidian vault or a Logseq graph | Search and cite existing notes. Keep it in sync to follow changes in the background, or import it once. Notes you wrote start on **Ask me first**: AI changes to them come as suggestions you accept or decline, and you can change that per page. |
 | Web links | Paste a link into a page and it is saved as a source. YouTube, X, Threads, Instagram, and RedNote links show as a card, a playable video, or the original post. Or paste text with its URL to save that excerpt. |
 | Gmail, Notion, Google Drive, Slack, GitHub | Your AI tool reads them with its own connectors and saves what matters to Wenlan with a link to the original. |
 | A code repository | `/wenlan wiki` writes pages tied to the code lines they rely on. [Code wiki](#code-repository-wiki). |
@@ -241,7 +241,7 @@ Once your material is in Wenlan, your AI tools can build on it: retrieve earlier
 
 ### If you already use Claude Code or Codex on your notes
 
-Keep doing that. Wenlan connects to the same AI tool and adds the checks a folder of Markdown can't do by itself: a page refused when most of its citations don't match the source, flags when sources change, review for AI edits to pages you wrote, and it never edits your existing notes without your OK.
+Keep doing that. Wenlan connects to the same AI tool and adds the checks a folder of Markdown can't do by itself: a page refused when most of its citations don't match the source, flags when sources change, and you decide which pages AI may change on its own and which wait for your OK.
 
 **Use it for:**
 

@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=051bfadf89f2b0d74303041c88fa37489450f3111331ddae65139f3e2cfc5ca1 -->
+<!-- README_SYNC: source=README.md sha256=12f35b5d27ceb75c13fecafd618c3a333f896edc1baab0daf6fae08d8849c4d9 -->
 
 <p align="center">
   <picture>
@@ -103,7 +103,7 @@ Codex 中用 `$recall`；只用 MCP 的工具，直接請它先查文瀾。Grok 
 | 可以帶入什麼 | 匯入後怎麼用 |
 | --- | --- |
 | Markdown、文字檔、文字型 PDF、DOCX 或資料夾 | 搜尋、引用匯入的文字。資料夾可以只匯入一次，也可以持續同步檔案的變更。 |
-| Obsidian 儲存庫或 Logseq 圖譜 | 搜尋、引用既有筆記。選擇持續同步，在背景跟上變更；或只匯入一次。沒有你同意，不會改動你原有的筆記：在 Obsidian vault 裡，設成「先問我」的筆記會收到 AI 的修改建議，由你接受或不要。 |
+| Obsidian 儲存庫或 Logseq 圖譜 | 搜尋、引用既有筆記。選擇持續同步，在背景跟上變更；或只匯入一次。你寫的筆記預設是「先問我」：AI 的修改會變成建議，由你接受或不要；每篇筆記都可以改這個設定。 |
 | 網頁連結 | 在筆記裡貼上連結，就會存成來源。YouTube、X、Threads、Instagram 和小紅書的連結會顯示成卡片、可播放的影片或原始貼文。也可以貼上文字及網址，保存那段摘錄。 |
 | Gmail、Notion、Google Drive、Slack、GitHub | 你的 AI 工具用它自己的連接器讀取，把重要的內容存進文瀾，並附上原文連結。 |
 | 程式碼儲存庫 | `/wenlan wiki` 寫出對應到程式碼行數的筆記。[程式碼 wiki](#code-repository-wiki)。 |
@@ -248,7 +248,7 @@ Codex 中用 `$recall`；只用 MCP 的工具，直接請它先查文瀾。Grok 
 
 ### 如果你已經用 Claude Code 或 Codex 管筆記
 
-繼續用就好。文瀾接上同一個 AI 工具，補上一個 Markdown 資料夾自己做不到的檢查：引用大多和來源對不上的筆記不會存下，來源變了會標記，AI 改你寫的筆記先等你審核，而且沒有你同意，不會改動你原有的筆記。
+繼續用就好。文瀾接上同一個 AI 工具，補上一個 Markdown 資料夾自己做不到的檢查：引用大多和來源對不上的筆記不會存下，來源變了會標記，而且哪些筆記 AI 可以直接改、哪些要先等你點頭，由你決定。
 
 **可以用在：**
 

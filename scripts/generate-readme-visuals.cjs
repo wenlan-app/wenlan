@@ -157,6 +157,27 @@ function makeBanner(viewport, locale = "en") {
   return makeSimpleBanner(viewport, locale);
 }
 
+// GitHub's social preview is the English desktop banner, scaled up and centred on the
+// 1280x640 card GitHub asks for, so the repo link and the README show the same picture.
+const SOCIAL_PREVIEW = { width: 1280, height: 640, scale: 1.4, x: -208, y: 138 };
+
+function makeSocialPreview() {
+  const banner = makeSimpleBanner("desktop", "en");
+  const { width, height, scale, x, y } = SOCIAL_PREVIEW;
+  const inner = banner.svg
+    .replace(/^<svg[^>]*>\n/u, "")
+    .replace(/<\/svg>\n$/u, "")
+    .replace(`<rect width="${banner.width}" height="${banner.height}" fill="${BANNER.dark}"/>`, "");
+  const svg = `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <rect width="${width}" height="${height}" fill="${BANNER.dark}"/>
+  <g transform="translate(${x} ${y}) scale(${scale})">
+${inner}
+  </g>
+</svg>
+`;
+  return { ...banner, group: "social", name: "social-preview", width, height, svg };
+}
+
 function fontData(filename) {
   const file = path.join(FONT_DIR, filename);
   if (!fs.existsSync(file)) {
@@ -180,7 +201,7 @@ function embeddedFonts() {
 
 function selectedAssets(only) {
   const banner = Object.keys(BANNER_COPY).flatMap((locale) =>
-    [makeBanner("desktop", locale), makeBanner("mobile", locale)]);
+    [makeBanner("desktop", locale), makeBanner("mobile", locale)]).concat(makeSocialPreview());
   const overview = ["en", "zh-Hans", "zh-Hant"].flatMap((locale) => [
     makeOverview(locale, "desktop"),
     makeOverview(locale, "mobile"),
