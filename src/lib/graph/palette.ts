@@ -117,8 +117,8 @@ const HEX6 = /^#[0-9a-f]{6}$/i;
 const HEX3 = /^#[0-9a-f]{3}$/i;
 
 /**
- * Six-digit hex, or null. The production CSS minifier shortens `#FFFFFF` to
- * `#fff`, and custom properties come back as written, so a built app hands
+ * Six-digit hex, or null. The production CSS minifier shortens six-digit
+ * white to its three-digit form, and custom properties come back as written, so a built app hands
  * over three-digit colors that a dev server never does.
  */
 function longHex(color: string): string | null {
