@@ -218,3 +218,37 @@
 .home-columns--spaces .wiki-new-pages-title { display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden; }
 .home-columns--spaces .wiki-new-pages-preview { display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
 .home-columns--spaces .wiki-new-pages-by, .home-columns--spaces .wiki-new-pages-meta { padding-top:6px; }
+/* Home with Spaces, flattened (2026-11-11): three type styles only. 13px
+   gray for section labels, descriptions, dates and the night lines; 15px
+   semibold for Space and page names; the page-title serif at 22px for the
+   Space used last, set apart by typeface and its own row, not by size. The
+   page cards are the one surface; links are the one colour. */
+.home-columns--spaces { gap:48px; }
+.home-columns--spaces .home-night { margin-bottom:-20px; }
+.home-columns--spaces .home-night-action { font-weight:400; }
+.home-columns--spaces .wiki-new-pages-header h2,
+.home-columns--spaces .home-spaces-header h2 { color:var(--mem-text-tertiary);font:400 13px/1.4 var(--mem-font-body);letter-spacing:0; }
+.home-columns--spaces .wiki-new-pages-header,
+.home-columns--spaces .home-spaces-header { margin:0 0 12px; }
+.home-columns--spaces .wiki-new-pages-all { font-size:13px; }
+.home-space-lead-line { display:flex;align-items:baseline;gap:10px;min-width:0; }
+.home-space-lead-tag { flex:none;color:var(--mem-text-tertiary);font:400 13px/1.4 var(--mem-font-body); }
+.home-columns--spaces .home-space-lead { gap:4px;margin:-6px -12px 14px; }
+.home-columns--spaces .home-space-lead .home-space-title { font:500 22px/1.3 var(--mem-font-heading);letter-spacing:-.005em; }
+.home-columns--spaces .home-space-lead .home-space-text { font-size:13px;color:var(--mem-text-tertiary); }
+.home-columns--spaces .home-spaces ul { gap:20px 40px; }
+.home-columns--spaces .home-space-title { font:600 15px/1.4 var(--mem-font-body); }
+.home-columns--spaces .home-space-text { font-size:13px;line-height:1.5; }
+@container home-spaces (max-width: 720px) {
+  .home-columns--spaces .home-space-lead .home-space-title { font-size:22px; }
+  .home-columns--spaces .home-space-lead .home-space-text { font-size:13px; }
+}
+.home-columns--spaces .wiki-new-pages-row { border-color:var(--mem-border);border-radius:var(--mem-r-10);padding:16px; }
+.home-columns--spaces .wiki-new-pages-icon { display:none; }
+.home-columns--spaces .wiki-new-pages-title { font-size:15px; }
+/* The summary is read whole: two lines before it is cut. */
+.home-columns--spaces .wiki-new-pages-preview { display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;white-space:normal;font-size:13px;opacity:1;color:var(--mem-text-tertiary); }
+.home-columns--spaces .wiki-new-pages-by, .home-columns--spaces .wiki-new-pages-meta { font-size:13px; }
+/* Same column as a Space page: 840px wide, its first line 20px lower than
+   the shared home default, so the two pages line up when switching. */
+.home-columns--spaces { max-width:min(100%,840px);margin-top:28px; }
