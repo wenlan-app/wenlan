@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=9d94f476f2559824c35911f65d90eebdad737a46d4ecfdb021f32cc06f9f656d -->
+<!-- README_SYNC: source=README.md sha256=17ae94a42164fb9ca924c045764327c8c2e6f6bd649841ef796c78a6e3212065 -->
 
 <p align="center">
   <picture>
@@ -9,8 +9,7 @@
 
 <p align="center">
   <strong>Alternativa de código abierto a Obsidian que funciona con tu bóveda actual.</strong><br>
-  Escribe cuando quieras; tus herramientas de IA la mantienen organizada y al día, sin claves de API ni plugins que configurar.<br>
-  Para ti y tu equipo. Tus notas solo van adonde tú las envías.
+  Tus herramientas de IA la mantienen organizada y al día, sin claves de API ni plugins. Para ti y tu equipo.
 </p>
 
 <p align="center">
@@ -248,7 +247,7 @@ Al importar una bóveda de Obsidian de 10.000 notas en 0.20.2 (notas inventadas,
 
 ## Datos y privacidad
 
-Las páginas son archivos Markdown en tu ordenador. Exporta las páginas que cumplan los requisitos como una wiki Open Knowledge Format (OKF). Una herramienta de IA en la nube puede enviar lo que recupera a su proveedor, y un modelo en la nube recibe el material que procesa, así que el almacenamiento local no mantiene locales esas interacciones. Las estadísticas de uso están desactivadas por defecto.
+Las páginas son archivos Markdown en tu ordenador y solo van adonde tú las envías. Exporta las páginas que cumplan los requisitos como una wiki Open Knowledge Format (OKF). Una herramienta de IA en la nube puede enviar lo que recupera a su proveedor, y un modelo en la nube recibe el material que procesa, así que el almacenamiento local no mantiene locales esas interacciones. Las estadísticas de uso están desactivadas por defecto.
 
 **Web access (experimental):** Activa **Web access** en Settings para que clientes web de IA como Claude, ChatGPT o Muse puedan buscar en tu biblioteca o en un Espacio elegido mientras tu ordenador está conectado. Al permitir una app, elige solo búsqueda o búsqueda y escritura; una app con escritura también puede añadir, editar y borrar, y las apps de IA pueden preguntarte antes de cada cambio. Las consultas y los resultados pasan por un relay. Consulta los [límites de privacidad](docs/PRIVACY.md#pre-release-standalone-wenlan-relay-connector).
 

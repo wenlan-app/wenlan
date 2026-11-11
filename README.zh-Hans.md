@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=9d94f476f2559824c35911f65d90eebdad737a46d4ecfdb021f32cc06f9f656d -->
+<!-- README_SYNC: source=README.md sha256=17ae94a42164fb9ca924c045764327c8c2e6f6bd649841ef796c78a6e3212065 -->
 
 <p align="center">
   <picture>
@@ -9,8 +9,7 @@
 
 <p align="center">
   <strong>开源的 Obsidian 替代品，也能直接接上你现有的仓库。</strong><br>
-  想写就自己写，其他交给 AI 整理、更新，不用设 API key，也不用装插件。<br>
-  个人和团队都能用。笔记只会去你让它去的地方。
+  你的 AI 工具帮你整理、更新，不用 API key、不用插件。个人和团队都能用。
 </p>
 
 <p align="center">
@@ -249,7 +248,7 @@ Codex 中用 `$recall`；只用 MCP 的工具，直接请它先查文澜。Grok 
 
 ## 数据与隐私
 
-笔记是你电脑上的 Markdown 文件，符合条件的笔记可以导出为 Open Knowledge Format（OKF）知识库。云端 AI 工具可能会把找回的内容传给它的服务商，云端模型也会收到它处理的内容，所以本地存储不代表这些交互都留在本机。使用统计默认关闭。
+笔记是你电脑上的 Markdown 文件，只会去你让它去的地方。符合条件的笔记可以导出为 Open Knowledge Format（OKF）知识库。云端 AI 工具可能会把找回的内容传给它的服务商，云端模型也会收到它处理的内容，所以本地存储不代表这些交互都留在本机。使用统计默认关闭。
 
 **网页访问（实验中）：** 在“设置”中开启“网页访问”，就能让 Claude、ChatGPT 或 Muse 等网页 AI 客户端，在你的电脑保持在线时搜索整个资料库或指定空间。允许应用时可以选“只能搜索”或“搜索和写入”；可以写入的应用还能新增、修改和删除内容，AI 应用可以在每次改动前先问你。查询与结果会经过中继服务，详见[隐私边界](docs/PRIVACY.md#pre-release-standalone-wenlan-relay-connector)。
 

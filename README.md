@@ -7,8 +7,7 @@
 
 <p align="center">
   <strong>Open-source Obsidian alternative that works with your existing vault.</strong><br>
-  Write when you want; your AI tools keep it organized and up to date, with no API keys or plugins to set up.<br>
-  For you and your team. Your notes go only where you send them.
+  Your AI tools keep it organized and up to date, with no API keys or plugins. For you and your team.
 </p>
 
 <p align="center">
@@ -235,7 +234,7 @@ Importing a 10,000-note Obsidian vault in 0.20.2 (invented notes, M2 Pro Mac wit
 
 ## Data and privacy
 
-Pages are Markdown files on your computer. Export eligible pages as an Open Knowledge Format (OKF) wiki. A cloud AI tool may send what it retrieves to its provider, and a cloud model receives the material it processes, so local storage does not keep those interactions local. Usage statistics are off by default.
+Pages are Markdown files on your computer, and they go only where you send them. Export eligible pages as an Open Knowledge Format (OKF) wiki. A cloud AI tool may send what it retrieves to its provider, and a cloud model receives the material it processes, so local storage does not keep those interactions local. Usage statistics are off by default.
 
 **Web access (experimental):** Turn on **Web access** in Settings to let web AI clients such as Claude, ChatGPT, or Muse search your library or a chosen Space while your computer is online. When you allow an app, choose search only or search and write; a write app can also add, edit and delete, and AI apps can ask you before each change. Queries and results pass through a relay. See the [privacy limits](docs/PRIVACY.md#pre-release-standalone-wenlan-relay-connector).
 
