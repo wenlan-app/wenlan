@@ -226,6 +226,11 @@ export function pickedWritePagesTool(): string | null {
   return readJson<string>(TOOL_KEY);
 }
 
+/** Remember the tool picked for writing pages (the welcome screen's choice). */
+export function pickWritePagesTool(family: string): void {
+  writeJson(TOOL_KEY, family);
+}
+
 /** Every connected AI tool, one per family, most recently used first. */
 export function connectedTools(agents: readonly AgentConnection[]): { family: string; name: string }[] {
   const seen = new Set<string>();
@@ -488,7 +493,21 @@ export function useWritePages(pages: readonly Page[]): WritePagesState {
 
 /** What is waiting, worded for where the user is: before any page exists all
  *  of it, after that only what is left. */
+/** Tools whose Wenlan plugin writes waiting material into pages at the start
+ *  of the person's next conversation, in that conversation (the SessionStart
+ *  hook). Wenlan never runs the tool itself. */
+const WRITES_NEXT_SESSION = new Set(["claude-code"]);
+
+/** Whether the picked tool writes waiting material on its own next time it
+ *  is used, so the button is only for not waiting. */
+export function writesNextSession(state: Pick<WritePagesState, "tool">): boolean {
+  return state.tool !== null && WRITES_NEXT_SESSION.has(state.tool.family);
+}
+
 export function waitingLine(state: WritePagesState, pages: readonly Page[], t: TFunction): string {
+  if (writesNextSession(state)) {
+    return t("askAi.writePages.leadNextSession", { list: state.waiting, tool: state.tool?.name });
+  }
   const hasPages = pages.some((page) => page.creation_kind === "distilled");
   return t(hasPages ? "askAi.writePages.leadMore" : "askAi.writePages.lead", { list: state.waiting });
 }
@@ -665,7 +684,9 @@ export function WritePagesLine({ state, pages, onConnectTool, onUseLocalModel }:
                 {state.copied
                   ? t("askAi.copied")
                   : state.opensTool
-                    ? t("askAi.writePages.askIn", { tool: state.tool.name })
+                    ? writesNextSession(state)
+                      ? t("askAi.writePages.askNow")
+                      : t("askAi.writePages.askIn", { tool: state.tool.name })
                     : t("askAi.writePages.copyCommand")}
               </button>
             ) : (

@@ -4,6 +4,7 @@
 // behaves as before. Fixture values only: no daemon, no clipboard writes.
 //
 //   deeplink   On demand, Codex connected (opens with the prompt typed in)
+//   claude     On demand, Claude Code connected (writes pages next session)
 //   kimi       On demand, Kimi Code connected (no prompt link: copy command)
 //   multi      On demand, three tools connected (Codex most recent): tool picker
 //   writing    Codex is writing: 3 of 8 pages landed, more held
@@ -122,6 +123,7 @@ export function organizeInvoke(command: string, args: Record<string, unknown> | 
     case "list_agents": {
       if (scenario === "none") return { value: [] };
       if (scenario === "kimi") return { value: [agent("kimi-code", "Kimi Code")] };
+      if (scenario === "claude") return { value: [agent("claude-code", "Claude Code")] };
       if (scenario === "multi") return { value: [agent("codex", "Codex"), { ...agent("kimi-code", "Kimi Code"), last_seen_at: Math.floor(now / 1000) - 600 }, { ...agent("cursor", "Cursor"), last_seen_at: Math.floor(now / 1000) - 1200 }] };
       return { value: [agent("codex", "Codex")] };
     }

@@ -1419,21 +1419,20 @@ export default function Main({
     ? searchActionLabel
     : `${searchActionLabel} (${t("main.searchShortcut", { modifier: keyboardShortcutModifier })})`;
   const globalActions = (
-          <div className="workspace-header-actions relative z-[1] flex items-center gap-1.5 shrink-0">
+          <div className="workspace-header-actions relative z-[1] flex items-center gap-1 shrink-0">
             {(view.kind === "connect-agent" || sidebarLayout === "zero" || (responsiveSidebar.presentation === "overlay" && !responsiveSidebar.open)) && (
               <button
                 aria-expanded={isSettingsView ? undefined : mobileSearchOpen}
                 aria-label={searchActionLabel}
-                className="workspace-header-search-fallback rounded-md p-1.5 transition-colors duration-150 hover:bg-[var(--mem-hover-strong)]"
+                className="mem-icon-action workspace-panel-toggle workspace-header-search-fallback"
                 disabled={pageSavePending}
                 onClick={(event) => isSettingsView ? navigateSettingsHome() : openSearch(event.currentTarget)}
                 ref={searchHeaderButtonRef}
-                style={{ color: "var(--mem-text-secondary)" }}
                 title={searchActionTitle}
                 type="button"
               >
                 {isSettingsView ? <ArrowLeft size={18} aria-hidden="true" /> : (
-                <svg aria-hidden="true" fill="none" height="16" stroke="currentColor" viewBox="0 0 24 24" width="16">
+                <svg aria-hidden="true" fill="none" height="18" stroke="currentColor" viewBox="0 0 24 24" width="18">
                   <path d="m21 21-4.35-4.35m2.35-5.65a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" />
                 </svg>
                 )}

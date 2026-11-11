@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { returnToPageReading } from "./helpers/pageReading";
+import { saveOpenPage } from "./helpers/pageReading";
 import { expect, test } from "@playwright/test";
 import { installTauriMock } from "./tauriMock";
 import { box, openCanvas, seedLargeMap } from "./helpers/pageCanvas";
@@ -164,7 +164,7 @@ for (const theme of THEMES) {
         .getByRole("button", { name: "Wiki", exact: true })
         .click();
       await openWikiNote(page, "Fixture architecture");
-      await returnToPageReading(page);
+      await saveOpenPage(page);
       await openPageTool(page, "Mind map");
       await expect(page.getByText("Loading canvas")).toBeVisible();
       await page.screenshot({ path: `shots/${theme}-7-loading.png` });
@@ -183,7 +183,7 @@ for (const theme of THEMES) {
         .getByRole("button", { name: "Wiki", exact: true })
         .click();
       await openWikiNote(page, "Fixture architecture");
-      await returnToPageReading(page);
+      await saveOpenPage(page);
       await openPageTool(page, "Mind map");
       await expect(page.getByText("Could not load the canvas")).toBeVisible();
       await page.screenshot({ path: `shots/${theme}-8-error.png` });

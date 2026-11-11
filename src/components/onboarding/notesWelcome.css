@@ -47,17 +47,73 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  margin: 24px -12px 0;
-}
-
-.notes-welcome__foot {
-  margin: 16px 0 0;
-  color: var(--mem-text-tertiary);
-  font-size: 13px;
+  margin: 8px -12px 0;
 }
 
 @media (max-height: 600px) {
   .notes-welcome__main {
     padding-block: 24px;
   }
+}
+
+/* Who turns material into pages: asked once, above where to start. The
+   same option rows, with a radio mark for the one picked. */
+.notes-welcome__question {
+  margin: 24px 0 0;
+  color: var(--mem-text);
+  font: 500 15px/1.5 var(--mem-font-body);
+}
+
+.notes-welcome__writers {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 8px -12px 0;
+}
+
+.notes-welcome__writer {
+  align-items: flex-start;
+}
+
+/* A choice, not a way out: no "go" chevron. */
+.notes-welcome__writer::after {
+  content: none;
+}
+
+.notes-welcome__writer[aria-checked="true"] {
+  background: var(--mem-hover);
+}
+
+.notes-welcome__radio {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-top: 3px;
+  border: 1.5px solid var(--mem-text-tertiary);
+  border-radius: 50%;
+}
+
+.notes-welcome__writer[aria-checked="true"] .notes-welcome__radio {
+  border-color: var(--mem-accent-indigo);
+  background: radial-gradient(var(--mem-accent-indigo) 0 4px, transparent 4.5px);
+}
+
+.notes-welcome__writer:focus-visible {
+  outline: 2px solid var(--mem-accent-indigo);
+  outline-offset: -2px;
+}
+
+/* The page writer as one line, with "Change" beside it. */
+.notes-welcome__writer-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  margin: 24px 0 0;
+  color: var(--mem-text-tertiary);
+  font: 400 13px/1.5 var(--mem-font-body);
+}
+
+.notes-welcome__example {
+  margin: 12px 0 0;
 }

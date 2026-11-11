@@ -1,3 +1,4 @@
+import { takeLocalWriter } from "../../onboarding/writerChoice";
 import { useEffect, useState } from "react";
 import { PageIcon } from "../assets/PageIcon";
 import { useTranslation } from "react-i18next";
@@ -88,6 +89,12 @@ export function PagesOverview({
     else if (intent) setAdding(intent);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- on arrival and when an intent is set
   }, [intentSet]);
+  // "Download a local model" on the welcome screen opens the steep settings
+  // once, where the model is chosen and its download pressed.
+  useEffect(() => {
+    if (takeLocalWriter()) onOpenIntelligence?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once, on arrival
+  }, []);
   const closeAdding = () => {
     takeStartIntent();
     setAdding(false);

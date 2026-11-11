@@ -8,6 +8,7 @@ import {
   doneLine,
   HeldNotice,
   waitingLine,
+  writesNextSession,
   workingHeadline,
   WrittenPages,
   type WritePagesState,
@@ -67,7 +68,9 @@ export function WritePagesStep({
     onSelectPage ? <WrittenPages rows={newestPages(pages)} fresh={fresh} writing={writing} onSelectPage={onSelectPage} /> : null;
   const startLabel = state?.tool
     ? state.opensTool
-      ? t("askAi.writePages.askIn", { tool: state.tool.name })
+      ? writesNextSession(state)
+        ? t("askAi.writePages.askNow")
+        : t("askAi.writePages.askIn", { tool: state.tool.name })
       : t("askAi.writePages.copyCommand")
     : null;
   // Material still waiting under pages already written: one line saying so,

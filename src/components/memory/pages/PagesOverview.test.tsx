@@ -204,7 +204,7 @@ describe("PagesOverview reading workspace", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /v2 launch plan/ }));
     expect(onSelectPage).toHaveBeenCalledWith("new");
-    fireEvent.click(screen.getByRole("button", { name: "See all pages" }));
+    fireEvent.click(screen.getByRole("button", { name: "All pages" }));
     expect(onBrowseAll).toHaveBeenCalled();
   });
 
