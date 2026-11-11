@@ -117,7 +117,7 @@ pub const OWN_DEVICE_PERSON: &str = "own_device";
 pub const OWN_DEVICE_AI: &str = "own_device_ai";
 
 /// The key the library's pass and what it last held are kept under.
-pub const LIBRARY_KEY: &str = "library";
+pub const LIBRARY_KEY: &str = "library:";
 /// `space.json`'s name for a library folder, for showing only.
 pub const LIBRARY_NAME: &str = "Wenlan library";
 
@@ -749,7 +749,7 @@ fn status_of(settings_path: &Path, scope: &Scope, settings: ShareSettings) -> Sh
         },
         target: match scope {
             Scope::Space(name) | Scope::Page(name) => name.clone(),
-            Scope::Library => LIBRARY_KEY.to_string(),
+            Scope::Library => "library".to_string(),
         },
         folder: settings.folder,
         host: settings.host.map(|host| host.url),

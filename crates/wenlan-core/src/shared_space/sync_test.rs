@@ -1572,7 +1572,7 @@ async fn pages_with_their_own_share_keep_their_own_folder() {
         [
             SPACE.to_string(),
             format!("page:{alone}"),
-            "library".to_string()
+            "library:".to_string()
         ]
     );
     let shares = shares_at(&a.settings()).unwrap();
