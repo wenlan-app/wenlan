@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=26a45caeecaec366b2b05e4b6c7a454619cbc4af00ecc46130690a5a91d7e0e3 -->
+<!-- README_SYNC: source=README.md sha256=42b83d79b43420afe05f0d58f85a792ea998b4add6239dde155bb8d23e8848fa -->
 
 <p align="center">
   <picture>
@@ -8,9 +8,9 @@
 </p>
 
 <p align="center">
-  <strong>Escribe cuando quieras; tu IA la mantiene organizada.</strong><br>
-  Alternativa de código abierto a Obsidian que funciona con tu bóveda actual. Se conecta a tus herramientas de IA con un clic, sin plugins que instalar ni mantener.<br>
-  Compártela con tu equipo. Tus notas son archivos en tu ordenador y solo van adonde tú las envías.
+  <strong>Alternativa de código abierto a Obsidian que funciona con tu bóveda actual.</strong><br>
+  Escribe cuando quieras; tus herramientas de IA la mantienen organizada y al día, sin claves de API ni plugins que configurar.<br>
+  Para ti y tu equipo. Tus notas solo van adonde tú las envías.
 </p>
 
 <p align="center">

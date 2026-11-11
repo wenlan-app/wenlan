@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=26a45caeecaec366b2b05e4b6c7a454619cbc4af00ecc46130690a5a91d7e0e3 -->
+<!-- README_SYNC: source=README.md sha256=42b83d79b43420afe05f0d58f85a792ea998b4add6239dde155bb8d23e8848fa -->
 
 <p align="center">
   <picture>
@@ -8,9 +8,9 @@
 </p>
 
 <p align="center">
-  <strong>想写就自己写，其他交给 AI 整理。</strong><br>
-  开源的 Obsidian 替代品，也能直接接上你现有的仓库。一键连上你的 AI 工具，不用自己装插件、维护插件。<br>
-  还能跟团队共用。笔记是你电脑上的文件，只会去你让它去的地方。
+  <strong>开源的 Obsidian 替代品，也能直接接上你现有的仓库。</strong><br>
+  想写就自己写，其他交给 AI 整理、更新，不用设 API key，也不用装插件。<br>
+  个人和团队都能用。笔记只会去你让它去的地方。
 </p>
 
 <p align="center">
