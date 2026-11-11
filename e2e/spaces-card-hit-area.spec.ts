@@ -70,13 +70,13 @@ for (const width of [1280, 375]) {
     await menu.click();
     await page.getByRole('menuitem', { name: 'Delete', exact: true }).click();
     await page.screenshot({ path: info.outputPath('confirmation.png') });
-    await card.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Cancel', exact: true }).click();
     await expect(card).toBeVisible();
     expect(controller.calls().filter(c => c.command === 'delete_space')).toHaveLength(0);
     await card.hover();
     await menu.click();
     await page.getByRole('menuitem', { name: 'Delete', exact: true }).click();
-    await card.getByRole('button', { name: 'Confirm delete', exact: true }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Delete', exact: true }).click();
     await expect(card).toHaveCount(0);
     await expect(page.getByTestId('spaces-cards')).toBeVisible();
     expect(controller.calls().filter(c => c.command === 'delete_space')).toHaveLength(1);
@@ -85,3 +85,27 @@ for (const width of [1280, 375]) {
     expect(errors.consoleErrors).toEqual([]);
   });
 }
+
+test('Space cards reorder by drag without opening the Space', async ({ page }) => {
+  const errors = collectBrowserErrors(page);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const controller = await installTauriMock(page, { locale: 'en', rawActions: [], localStorage: { 'wenlan-spaces-view-mode': 'cards' } });
+  await page.goto('/');
+  await openPrimaryDestination(page, 'Spaces');
+  const source = page.getByTestId('space-card-space-personal');
+  const target = page.getByTestId('space-card-space-archive');
+  const from = (await source.boundingBox())!;
+  const to = (await target.boundingBox())!;
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(from.x + from.width / 2 + 20, from.y + from.height / 2, { steps: 4 });
+  await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 8 });
+  await page.mouse.up();
+  await expect.poll(() => controller.calls().filter(c => c.command === 'reorder_space').length).toBe(1);
+  await expect(page.getByTestId('spaces-cards')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Personal', level: 1, exact: true })).toHaveCount(0);
+  const names = await page.getByTestId('spaces-cards').locator('.asset-card-title').allTextContents();
+  expect(names.indexOf('Archive')).toBeLessThan(names.indexOf('Personal'));
+  expect(errors.pageErrors).toEqual([]);
+  expect(errors.consoleErrors).toEqual([]);
+});

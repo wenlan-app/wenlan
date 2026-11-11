@@ -23,10 +23,8 @@ export type SpacesOverviewLabels = {
   readonly star: string;
   readonly unstar: string;
   readonly rename: string;
-  readonly moveUp: string;
-  readonly moveDown: string;
   readonly delete: string;
-  readonly confirmDelete: string;
+  readonly deleteQuestion: (name: string) => string;
   readonly actionsFor: (name: string) => string;
   readonly dragSpace: (name: string) => string;
   readonly loading: string;

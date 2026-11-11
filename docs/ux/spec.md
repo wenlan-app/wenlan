@@ -244,8 +244,10 @@ and wait for evidence that people need them.
 - **UX-WHO-7** `shipped` An AI tool's delete never destroys: a page is
   archived with its history and a memory is forgotten; both can be restored,
   and only the person can delete for good. Every removal is listed in Activity
-  with who did it.
-  原文：「都同意，請根據這去解決根本問題」（2026-11-08，回覆信任檢查清單第 12、13 條：「刪除改成封存，你寫的頁 AI 不能刪，留下紀錄」「沒名字的請求當成 AI；刪除先進可還原的垃圾桶」）
+  with who did it. A diagram or file an AI tool kept by itself in a session is
+  the AI's own work, so an AI may archive it unless you edited it; what you
+  imported stays yours.
+  原文：「都同意，請根據這去解決根本問題」（2026-11-08，回覆信任檢查清單第 12、13 條：「刪除改成封存，你寫的頁 AI 不能刪，留下紀錄」「沒名字的請求當成 AI；刪除先進可還原的垃圾桶」）；「修掉」（2026-11-10，回覆：AI 自己存的圖，AI 可以收起來（之後還能救回來）；你匯入的東西照舊只有你能動）
 - **UX-WHO-8** `shipped` An AI write never leaves a page broken: cut off,
   half a link, broken characters, or a background pass losing the Chinese
   text. Such a write is refused and the page stays as it was; damage already
