@@ -42,8 +42,10 @@ const MAX_FILES_PER_DIR: usize = 500;
 const MAX_PROJECTS: usize = 5_000;
 /// Memories read in one import, at most.
 pub const MAX_MEMORIES: usize = 20_000;
-/// Text kept from one memory.
-pub const MAX_MEMORY_CHARS: usize = 1_500;
+/// Safety cap on the text kept from one memory.
+pub const MAX_MEMORY_CHARS: usize = 20_000;
+/// Text of one memory put into a model prompt.
+pub const PROMPT_MEMORY_CHARS: usize = 1_500;
 /// Shorter than this is a heading or a stray word, not something known.
 const MIN_MEMORY_CHARS: usize = 20;
 /// Memories asked about in one keep call.
@@ -82,7 +84,7 @@ pub struct FoundMemory {
     /// Codex, whose memory is not per project.
     pub project_dir: Option<PathBuf>,
     pub path: PathBuf,
-    /// The memory's text, as the tool wrote it, cut to [`MAX_MEMORY_CHARS`].
+    /// The memory's text, as the tool wrote it, up to [`MAX_MEMORY_CHARS`].
     pub text: String,
 }
 
@@ -218,8 +220,8 @@ pub fn split_items(raw: &str, files_here: &HashSet<String>) -> Vec<String> {
     let mut items = Vec::new();
     let mut current = String::new();
     let flush = |current: &mut String, items: &mut Vec<String>| {
-        let text = current.trim().to_string();
-        if !text.is_empty() && !only_points_at_a_file(&text, files_here) {
+        let text = strip_task_markers(current.trim());
+        if !text.is_empty() && !only_metadata(&text) && !only_points_at_a_file(&text, files_here) {
             items.push(text);
         }
         current.clear();
@@ -249,6 +251,22 @@ pub fn split_items(raw: &str, files_here: &HashSet<String>) -> Vec<String> {
     }
     flush(&mut current, &mut items);
     items
+}
+
+/// Codex thread metadata (`task: ...`, `cwd: ...`) is not a fact: drop an
+/// item made only of snake_case `key: value` lines.
+fn only_metadata(text: &str) -> bool {
+    static KEY: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"^[a-z][a-z0-9_]*:\s").expect("the pattern is valid"));
+    text.lines().all(|l| KEY.is_match(l.trim()))
+}
+
+/// Codex ends items with markers like `[Task 1]`; they are not part of the fact.
+fn strip_task_markers(text: &str) -> String {
+    static MARKER: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(r"(\s*\[Task \d+\])+\s*$").expect("the pattern is valid")
+    });
+    MARKER.replace(text, "").trim().to_string()
 }
 
 fn is_rule(line: &str) -> bool {
@@ -370,7 +388,12 @@ pub fn keep_prompt(memories: &[&str]) -> String {
     let list = memories
         .iter()
         .enumerate()
-        .map(|(i, text)| format!("M{i}: {}", text.replace('\n', " ")))
+        .map(|(i, text)| {
+            format!(
+                "M{i}: {}",
+                cut(text, PROMPT_MEMORY_CHARS).replace('\n', " ")
+            )
+        })
         .collect::<Vec<_>>()
         .join("\n");
     format!(
@@ -495,7 +518,10 @@ pub struct MatchItem<'a> {
 pub fn match_prompt(items: &[MatchItem<'_>]) -> String {
     let mut text = String::new();
     for (i, item) in items.iter().enumerate() {
-        text.push_str(&format!("M{i}: {}\n", item.memory.replace('\n', " ")));
+        text.push_str(&format!(
+            "M{i}: {}\n",
+            cut(item.memory, PROMPT_MEMORY_CHARS).replace('\n', " ")
+        ));
         if item.candidates.is_empty() {
             text.push_str("  (nothing near it)\n");
         }

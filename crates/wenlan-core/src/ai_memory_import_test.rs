@@ -293,3 +293,65 @@ fn only_a_tool_whose_memory_folder_is_here_counts_as_present() {
         vec![MemoryTool::ClaudeCode, MemoryTool::Codex]
     );
 }
+
+#[test]
+fn scan_keeps_a_long_claude_code_memory_whole_and_the_prompt_cuts_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let memory = tmp.path().join(".claude/projects/p/memory");
+    let body = "The release queue lands pull requests one at a time. ".repeat(60);
+    write(
+        &memory.join("long.md"),
+        &format!("---\nname: long\n---\n\n{body}\n"),
+    );
+
+    let found = scan(&roots(tmp.path()));
+    assert_eq!(found.len(), 1);
+    let text = &found[0].text;
+    assert!(text.chars().count() > 3_000);
+    assert!(!text.contains('…'));
+    assert_eq!(text.as_str(), body.trim());
+
+    let prompt = keep_prompt(&[text.as_str()]);
+    let line = prompt.lines().find(|l| l.starts_with("M0: ")).unwrap();
+    assert!(line.chars().count() <= PROMPT_MEMORY_CHARS + 10);
+    assert!(line.ends_with('…'));
+}
+
+#[test]
+fn split_items_leaves_out_codex_thread_metadata() {
+    let raw = "## Thread `019fbb8c-1111`\n\
+updated_at: 2026-09-26T18:53:01+00:00\n\
+cwd: /Users/x/Repos/wenlan\n\
+rollout_path: /Users/x/.codex/archived_sessions/rollout-1.jsonl\n\
+rollout_summary_file: 2026-08-01T04-19-37-bxOf-some_slug.md\n\n\
+---\n\
+description: User approved a long sentence.\n\
+task: wenlan-positioning-and-cover-copy\n\
+task_group: /Users/x/Repos/wenlan product positioning\n\
+task_outcome: success\n\
+cwd: /Users/x/Repos/wenlan\n\
+keywords: Wenlan, positioning\n\
+---\n\n\
+### Task 1: Confirm direction\n\n\
+task: Reassess positioning\n task_group: Wenlan positioning and onboarding\n task_outcome: success\n\n\
+- The cover copy should lead with local-first memory.\n";
+    assert_eq!(
+        split_items(raw, &HashSet::new()),
+        vec!["The cover copy should lead with local-first memory."]
+    );
+}
+
+#[test]
+fn split_items_strips_trailing_task_markers() {
+    let raw = "- Renaming a repository can break npm provenance [Task 1]\n\
+- The queue lands one pull request at a time. [Task 1] [Task 2]\n\
+- Keep [Task 3] markers that are not at the end intact.\n";
+    assert_eq!(
+        split_items(raw, &HashSet::new()),
+        vec![
+            "Renaming a repository can break npm provenance",
+            "The queue lands one pull request at a time.",
+            "Keep [Task 3] markers that are not at the end intact.",
+        ]
+    );
+}
