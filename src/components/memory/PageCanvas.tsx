@@ -1061,13 +1061,14 @@ function PageCanvasInner({
           id: v.node.id,
           type: "pageMapNode",
           // The page's lines are laid out by the page's own order.
-          draggable: !readOnly && !pageLine,
+          // The narrow list is not a canvas to arrange; the wide tree is.
+          draggable: !readOnly && !pageLine && layoutMode !== "indent",
           connectable: !readOnly && !moreFor(v.node.id),
           position: { x: v.x - v.width / 2, y: v.y - v.height / 2 },
           data,
         };
       }),
-    [views, readOnly, palette, openNode, mutateStatus, mutateRename, mutateRenameAsync, t, map, foldable, openHeadings, toggleHeading],
+    [views, readOnly, palette, openNode, mutateStatus, mutateRename, mutateRenameAsync, t, map, foldable, openHeadings, toggleHeading, layoutMode],
   );
 
   // Fold the server's copy into local state, keeping what the user has done

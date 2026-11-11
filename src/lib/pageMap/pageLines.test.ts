@@ -117,3 +117,18 @@ describe("withPageLines on deep pages", () => {
     expect(both.some((id) => id.startsWith("outline:more:"))).toBe(false);
   });
 });
+
+describe("layoutIndented", () => {
+  it("keeps a box dragged on the wide canvas in its row, with no hole above the page's lines", async () => {
+    const { layoutIndented } = await import("./tree");
+    const nodes = [
+      stored("root", null, { ref_kind: "page" }),
+      stored("kept", "root", { placed: true, x: 900, y: -400 }),
+      stored("next", "root"),
+    ];
+    const views = layoutIndented(nodes, new Map());
+    const byId = new Map(views.map((v) => [v.node.id, v]));
+    expect(byId.get("kept")!.y).toBeLessThan(byId.get("next")!.y);
+    expect(byId.get("kept")!.x).toBeLessThan(200);
+  });
+});

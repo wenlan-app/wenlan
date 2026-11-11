@@ -336,12 +336,13 @@ export function layoutIndented(
     if (!node) return;
     const height = heightOf(node);
     const width = widthOf(node, label(node), n.width);
-    const pinned = node.placed && Number.isFinite(node.x) && Number.isFinite(node.y);
+    // A list has no free placement: a box dragged on the wide canvas still
+    // takes its row here, or it would leave a hole and sit off to the side.
     views.push({
       node,
       label: label(node),
-      x: pinned ? (node.x as number) : depth * INDENT_STEP + width / 2,
-      y: pinned ? (node.y as number) : top + height / 2,
+      x: depth * INDENT_STEP + width / 2,
+      y: top + height / 2,
       width,
       height,
       depth,
