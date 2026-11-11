@@ -40,7 +40,9 @@
 
 I started Wenlan because my notes, documents, and AI chats were scattered, and keeping a note system from rotting took constant upkeep. Since then we keep hearing the same about Obsidian: too much setup, with plugins to find, install, and keep updated. Wenlan is for people who use AI tools every day and don't want to maintain a note system.
 
-**Personal:** download the desktop app and use it on your own. **Teams (coming soon):** a self-hosted Wenlan server everyone connects to, with view-only or edit access for each person.
+**Personal:** download the desktop app and use it on your own.
+
+**Teams (coming soon):** a self-hosted Wenlan server everyone connects to, with view-only or edit access for each person.
 
 - **You decide what AI changes.** See every change, undo it, and choose which pages wait for your OK.
 - **Pages cite their sources.** A citation opens the original; a page whose citations mostly don't match isn't saved.
@@ -53,13 +55,13 @@ I started Wenlan because my notes, documents, and AI chats were scattered, and k
 
 ### How it compares
 
-| | Obsidian with plugins | Notion | LLM wiki apps | Wenlan |
+| | Obsidian + plugins | Notion | LLM wiki apps | Wenlan |
 |---|---|---|---|---|
-| Who keeps it organized | You, with plugins you find and update | You; Notion Agent when asked, or a Custom Agent on its own | An AI you set up for it: a model API key, or a scheduled routine | Your AI tools as they work, and again when a source changes |
-| Setup | Find, install, and update plugins | Sign in; full AI on the Business plan | Add a model key, or connect your AI and schedule it | **Connect all** in Settings, one click, no API key |
-| Checking the AI's work | Depends on the plugin | Answers cite sources; no check that a page matches them | Pages link to their sources | Each citation opens the original; a page whose citations mostly don't match is refused |
-| What the AI may change | Depends on the plugin | Custom Agents: the pages you give them | The wiki folder it writes | You choose per page, and can restore an earlier version |
-| Where your notes live | Markdown files on your computer | Notion's cloud; export to Markdown | Files on your computer | Markdown files on your computer; works with your existing vault |
+| Who organizes | You, with plugins | You, or Notion's agents | An AI you set up | Your AI tools; updates when a source changes |
+| Setup | Find and update plugins | Full AI on the Business plan | Model key or scheduled routine | One click, no API key |
+| Checks the AI's work | Depends on the plugin | Cites sources; no match check | Links to sources | Refuses pages whose citations don't match |
+| What AI may change | Depends on the plugin | Pages you give an agent | Its wiki folder | You choose per page; restore anytime |
+| Where notes live | Your computer | Notion's cloud | Your computer | Your computer; works with your vault |
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
@@ -103,7 +105,7 @@ To set up a tool by hand, or to see what gets connected:
 | Muse Code and other MCP clients | MCP | [MCP guide](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 | Grok Bot | CLI on your computer, or MCP | [Grok Bot guide](docs/setup-with-ai.md#grok-bot) |
 
-Use `$recall` in Codex; with an MCP-only tool, just ask it to check Wenlan first. Grok Bot runs `wenlan recall` on your computer, or a short `wenlan-mcp` session there ([Grok Bot guide](docs/setup-with-ai.md#grok-bot)).
+With an MCP-only tool, just ask it to check Wenlan first. Grok Bot setup: [Grok Bot guide](docs/setup-with-ai.md#grok-bot).
 
 When an import finishes, the app offers **Write pages with** your AI tool to turn it into your first cited pages. No command needed.
 
@@ -234,7 +236,10 @@ Importing a 10,000-note Obsidian vault in 0.20.2 (invented notes, M2 Pro Mac wit
 
 ## Data and privacy
 
-Pages are Markdown files on your computer, and they go only where you send them. Export eligible pages as an Open Knowledge Format (OKF) wiki. A cloud AI tool may send what it retrieves to its provider, and a cloud model receives the material it processes, so local storage does not keep those interactions local. Usage statistics are off by default.
+- Pages are Markdown files on your computer, and they go only where you send them.
+- Export eligible pages as an Open Knowledge Format (OKF) wiki.
+- A cloud AI tool may send what it retrieves to its provider, and a cloud model receives the material it processes, so local storage does not keep those interactions local.
+- Usage statistics are off by default.
 
 **Web access (experimental):** Turn on **Web access** in Settings to let web AI clients such as Claude, ChatGPT, or Muse search your library or a chosen Space while your computer is online. When you allow an app, choose search only or search and write; a write app can also add, edit and delete, and AI apps can ask you before each change. Queries and results pass through a relay. See the [privacy limits](docs/PRIVACY.md#pre-release-standalone-wenlan-relay-connector).
 

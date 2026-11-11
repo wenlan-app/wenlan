@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=17ae94a42164fb9ca924c045764327c8c2e6f6bd649841ef796c78a6e3212065 -->
+<!-- README_SYNC: source=README.md sha256=1f84cf7d911c8f5f6ce376df5280da2455381a8f203fa4ea2aefd70a47048de0 -->
 
 <p align="center">
   <picture>
@@ -42,7 +42,9 @@
 
 Empecé Wenlan porque mis notas, documentos y chats de IA estaban dispersos, y evitar que un sistema de notas se echara a perder exigía un mantenimiento constante. Desde entonces no dejamos de oír lo mismo sobre Obsidian: demasiada configuración, con plugins que buscar, instalar y mantener al día. Wenlan es para quienes usan herramientas de IA a diario y no quieren mantener un sistema de notas.
 
-**Personal:** descarga la app de escritorio y úsala por tu cuenta. **Equipos (próximamente):** un servidor de Wenlan autoalojado al que todos se conectan, con acceso de solo lectura o de edición para cada persona.
+**Personal:** descarga la app de escritorio y úsala por tu cuenta.
+
+**Equipos (próximamente):** un servidor de Wenlan autoalojado al que todos se conectan, con acceso de solo lectura o de edición para cada persona.
 
 - **Tú decides qué cambia la IA.** Ves cada cambio, lo deshaces y eliges qué páginas esperan tu visto bueno.
 - **Las páginas citan sus fuentes.** Una cita abre el original; una página cuyas citas casi no coinciden no se guarda.
@@ -55,13 +57,13 @@ Empecé Wenlan porque mis notas, documentos y chats de IA estaban dispersos, y e
 
 ### Cómo se compara
 
-| | Obsidian con plugins | Notion | Apps de LLM wiki | Wenlan |
+| | Obsidian + plugins | Notion | Apps de LLM wiki | Wenlan |
 |---|---|---|---|---|
-| Quién la mantiene ordenada | Tú, con plugins que buscas y actualizas | Tú; Notion Agent cuando se lo pides, o un Custom Agent por su cuenta | Una IA que configuras para ello: una clave de API de un modelo o una rutina programada | Tus herramientas de IA mientras trabajan, y otra vez cuando cambia una fuente |
-| Configuración | Buscar, instalar y actualizar plugins | Iniciar sesión; la IA completa, en el plan Business | Añadir una clave de modelo, o conectar tu IA y programarla | **Connect all** en los ajustes, un clic, sin clave de API |
-| Revisar lo que hace la IA | Depende del plugin | Las respuestas citan fuentes; no se comprueba que la página coincida | Las páginas enlazan a sus fuentes | Cada cita abre el original; se rechaza una página si la mayoría de sus citas no coinciden |
-| Qué puede cambiar la IA | Depende del plugin | Custom Agents: las páginas que les das | La carpeta de la wiki que escribe | Tú eliges en cada página, y puedes restaurar una versión anterior |
-| Dónde viven tus notas | Archivos Markdown en tu ordenador | En la nube de Notion; exportable a Markdown | Archivos en tu ordenador | Archivos Markdown en tu ordenador; funciona con tu bóveda actual |
+| Quién organiza | Tú, con plugins | Tú, o los agentes de Notion | Una IA que configuras | Tus herramientas de IA; actualiza cuando cambia una fuente |
+| Configuración | Buscar y actualizar plugins | IA completa en el plan Business | Clave de modelo o rutina programada | Un clic, sin clave de API |
+| Revisa a la IA | Depende del plugin | Cita fuentes; no comprueba | Enlaza a fuentes | Rechaza páginas cuyas citas no coinciden |
+| Qué puede cambiar la IA | Depende del plugin | Páginas que das a un agente | Su carpeta de wiki | Tú eliges por página; restaura cuando quieras |
+| Dónde viven tus notas | Tu ordenador | La nube de Notion | Tu ordenador | Tu ordenador; funciona con tu bóveda |
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
@@ -105,7 +107,7 @@ Para configurar una herramienta a mano, o ver qué se conecta:
 | Muse Code y otros clientes MCP | MCP | [Guía de MCP](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 | Grok Bot | CLI en tu ordenador, o MCP | [Guía de Grok Bot](docs/setup-with-ai.md#grok-bot) |
 
-En Codex, usa `$recall`; con una herramienta solo MCP, pídele que consulte Wenlan primero. Grok Bot ejecuta `wenlan recall` en tu ordenador, o una sesión corta de `wenlan-mcp` allí ([guía de Grok Bot](docs/setup-with-ai.md#grok-bot)).
+Con una herramienta solo MCP, pídele que consulte Wenlan primero. Para Grok Bot, mira la [guía de Grok Bot](docs/setup-with-ai.md#grok-bot).
 
 Cuando termina una importación, la aplicación ofrece **Write pages with** tu herramienta de IA para convertirla en tus primeras páginas con citas. No hace falta ningún comando.
 
@@ -247,7 +249,10 @@ Al importar una bóveda de Obsidian de 10.000 notas en 0.20.2 (notas inventadas,
 
 ## Datos y privacidad
 
-Las páginas son archivos Markdown en tu ordenador y solo van adonde tú las envías. Exporta las páginas que cumplan los requisitos como una wiki Open Knowledge Format (OKF). Una herramienta de IA en la nube puede enviar lo que recupera a su proveedor, y un modelo en la nube recibe el material que procesa, así que el almacenamiento local no mantiene locales esas interacciones. Las estadísticas de uso están desactivadas por defecto.
+- Las páginas son archivos Markdown en tu ordenador y solo van adonde tú las envías.
+- Exporta las páginas que cumplan los requisitos como una wiki Open Knowledge Format (OKF).
+- Una herramienta de IA en la nube puede enviar lo que recupera a su proveedor, y un modelo en la nube recibe el material que procesa, así que el almacenamiento local no mantiene locales esas interacciones.
+- Las estadísticas de uso están desactivadas por defecto.
 
 **Web access (experimental):** Activa **Web access** en Settings para que clientes web de IA como Claude, ChatGPT o Muse puedan buscar en tu biblioteca o en un Espacio elegido mientras tu ordenador está conectado. Al permitir una app, elige solo búsqueda o búsqueda y escritura; una app con escritura también puede añadir, editar y borrar, y las apps de IA pueden preguntarte antes de cada cambio. Las consultas y los resultados pasan por un relay. Consulta los [límites de privacidad](docs/PRIVACY.md#pre-release-standalone-wenlan-relay-connector).
 

@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=17ae94a42164fb9ca924c045764327c8c2e6f6bd649841ef796c78a6e3212065 -->
+<!-- README_SYNC: source=README.md sha256=1f84cf7d911c8f5f6ce376df5280da2455381a8f203fa4ea2aefd70a47048de0 -->
 
 <p align="center">
   <picture>
@@ -42,7 +42,9 @@
 
 我做文瀾，是因為筆記、文件和 AI 對話散落各處，要讓筆記系統不荒廢得不停維護。後來我們也不斷聽到有人說 Obsidian 太麻煩：要找插件、裝插件，還要一直更新設定。文瀾是給每天用 AI 工具、又不想維護筆記系統的人。
 
-**個人版**：下載桌面 App，自己就能用。**團隊版（即將推出）**：團隊自己架一台文瀾伺服器，大家都連上去，每個人可以設成只能看或可以改。
+**個人版**：下載桌面 App，自己就能用。
+
+**團隊版（即將推出）**：團隊自己架一台文瀾伺服器，大家都連上去，每個人可以設成只能看或可以改。
 
 - **AI 能改什麼由你決定。** 改了什麼都看得到、能還原，也能指定哪些筆記要先問你。
 - **筆記都附出處。** 點引用就回到原文；引用大多對不上的筆記不會存下。
@@ -57,11 +59,11 @@
 
 | | Obsidian 加插件 | Notion | LLM wiki 應用 | 文瀾 |
 |---|---|---|---|---|
-| 誰來整理 | 你自己，加上你找來、要維護的插件 | 你自己；或叫 Notion Agent 做，或讓 Custom Agent 自己跑 | 你另外設定的 AI：填模型 API key，或排程讓 AI 定時跑 | 你的 AI 工具邊做邊整理，來源變了會再更新 |
-| 設定 | 找插件、裝插件、更新插件 | 登入；完整 AI 功能要 Business 方案 | 填模型 key，或接上你的 AI 再排程 | 在設定裡按「全部連接」，一鍵完成，不用 API key |
-| 檢查 AI 寫的東西 | 看插件 | 回答會附出處；不檢查頁面跟出處合不合 | 頁面會連到來源 | 每個引用都能點回原文；引用大多對不上的筆記不會存下 |
-| AI 能改什麼 | 看插件 | Custom Agent：你開放給它的頁面 | 它自己寫的 wiki 資料夾 | 每篇筆記由你決定，也能還原到之前的版本 |
-| 筆記存在哪 | 你電腦上的 Markdown 檔 | Notion 的雲端；可匯出成 Markdown | 你電腦上的檔案 | 你電腦上的 Markdown 檔；能直接接你現有的 vault |
+| 誰來整理 | 你自己加插件 | 你自己，或 Notion 的 Agent | 你另外設定的 AI | 你的 AI 工具；來源變了會更新 |
+| 設定 | 找插件、更新插件 | 完整 AI 要 Business 方案 | 填模型 key 或排程 | 一鍵連接，不用 API key |
+| 檢查 AI 寫的東西 | 看插件 | 附出處，不檢查合不合 | 連到來源 | 引用對不上的筆記不會存下 |
+| AI 能改什麼 | 看插件 | 你開放給 Agent 的頁面 | 它的 wiki 資料夾 | 每篇由你決定，隨時可還原 |
+| 筆記存在哪 | 你的電腦 | Notion 雲端 | 你的電腦 | 你的電腦；能接現有 vault |
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
@@ -105,7 +107,7 @@
 | Muse Code 和其他 MCP 工具 | MCP | [MCP 指南](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 | Grok Bot | 本機 CLI，或 MCP | [Grok Bot 指南](docs/setup-with-ai.md#grok-bot) |
 
-Codex 中用 `$recall`；只用 MCP 的工具，直接請它先查文瀾。Grok Bot 在你的電腦上執行 `wenlan recall`，或在那裡開一段短暫的 `wenlan-mcp` 會話（[Grok Bot 指南](docs/setup-with-ai.md#grok-bot)）。
+只用 MCP 的工具，直接請它先查文瀾。Grok Bot 的設定見 [Grok Bot 指南](docs/setup-with-ai.md#grok-bot)。
 
 匯入完成後，App 會提供「用（你的 AI 工具）寫頁面」，把資料寫成第一批帶引用的筆記，不用輸入指令。
 
@@ -248,7 +250,10 @@ Codex 中用 `$recall`；只用 MCP 的工具，直接請它先查文瀾。Grok 
 
 ## 資料與隱私
 
-筆記是你電腦上的 Markdown 檔，只會去你讓它去的地方。符合條件的筆記可以匯出為 Open Knowledge Format（OKF）知識庫。雲端 AI 工具可能會把找回的內容傳給它的服務商，雲端模型也會收到它處理的內容，所以本地儲存不代表這些互動都留在本機。使用統計預設關閉。
+- 筆記是你電腦上的 Markdown 檔，只會去你讓它去的地方。
+- 符合條件的筆記可以匯出為 Open Knowledge Format（OKF）知識庫。
+- 雲端 AI 工具可能會把找回的內容傳給它的服務商，雲端模型也會收到它處理的內容，所以本地儲存不代表這些互動都留在本機。
+- 使用統計預設關閉。
 
 **網頁存取（實驗中）：** 在「設定」中開啟「網頁存取」，就能讓 Claude、ChatGPT 或 Muse 等網頁 AI 用戶端，在你的電腦保持連線時搜尋整個資料庫或指定空間。允許應用程式時可以選「只能搜尋」或「搜尋和寫入」；可以寫入的應用程式還能新增、修改和刪除內容，AI 應用程式可以在每次改動前先問你。查詢與結果會經過中繼服務，詳見[隱私界限](docs/PRIVACY.md#pre-release-standalone-wenlan-relay-connector)。
 

@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=17ae94a42164fb9ca924c045764327c8c2e6f6bd649841ef796c78a6e3212065 -->
+<!-- README_SYNC: source=README.md sha256=1f84cf7d911c8f5f6ce376df5280da2455381a8f203fa4ea2aefd70a47048de0 -->
 
 <p align="center">
   <picture>
@@ -42,7 +42,9 @@
 
 我做文澜，是因为笔记、文档和 AI 对话散落各处，要让笔记系统不荒废得不停维护。后来我们也不断听到有人说 Obsidian 太麻烦：要找插件、装插件，还要一直更新设置。文澜是给每天用 AI 工具、又不想维护笔记系统的人。
 
-**个人版**：下载桌面 App，自己就能用。**团队版（即将推出）**：团队自己架一台文澜服务器，大家都连上去，每个人可以设成只能看或可以改。
+**个人版**：下载桌面 App，自己就能用。
+
+**团队版（即将推出）**：团队自己架一台文澜服务器，大家都连上去，每个人可以设成只能看或可以改。
 
 - **AI 能改什么由你决定。** 改了什么都看得到、能还原，也能指定哪些笔记要先问你。
 - **笔记都附出处。** 点引用就回到原文；引用大多对不上的笔记不会保存。
@@ -57,11 +59,11 @@
 
 | | Obsidian 加插件 | Notion | LLM wiki 应用 | 文澜 |
 |---|---|---|---|---|
-| 谁来整理 | 你自己，加上你找来、要维护的插件 | 你自己；或叫 Notion Agent 做，或让 Custom Agent 自己跑 | 你另外设置的 AI：填模型 API key，或排程让 AI 定时跑 | 你的 AI 工具边做边整理，来源变了会再更新 |
-| 设置 | 找插件、装插件、更新插件 | 登录；完整 AI 功能要 Business 方案 | 填模型 key，或接上你的 AI 再排程 | 在设置里点“全部连接”，一键完成，不用 API key |
-| 检查 AI 写的东西 | 看插件 | 回答会附出处；不检查页面跟出处合不合 | 页面会链接到来源 | 每个引用都能点回原文；引用大多对不上的笔记不会保存 |
-| AI 能改什么 | 看插件 | Custom Agent：你开放给它的页面 | 它自己写的 wiki 文件夹 | 每篇笔记由你决定，也能还原到之前的版本 |
-| 笔记存在哪 | 你电脑上的 Markdown 文件 | Notion 的云端；可导出成 Markdown | 你电脑上的文件 | 你电脑上的 Markdown 文件；能直接接你现有的仓库 |
+| 谁来整理 | 你自己加插件 | 你自己，或 Notion 的 Agent | 你另外设置的 AI | 你的 AI 工具；来源变了会更新 |
+| 设置 | 找插件、更新插件 | 完整 AI 要 Business 方案 | 填模型 key 或排程 | 一键连接，不用 API key |
+| 检查 AI 写的东西 | 看插件 | 附出处，不检查合不合 | 链接到来源 | 引用对不上的笔记不会保存 |
+| AI 能改什么 | 看插件 | 你开放给 Agent 的页面 | 它的 wiki 文件夹 | 每篇由你决定，随时可还原 |
+| 笔记存在哪 | 你的电脑 | Notion 云端 | 你的电脑 | 你的电脑；能接现有仓库 |
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
@@ -105,7 +107,7 @@
 | Muse Code 和其他 MCP 工具 | MCP | [MCP 指南](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 | Grok Bot | 本机 CLI，或 MCP | [Grok Bot 指南](docs/setup-with-ai.md#grok-bot) |
 
-Codex 中用 `$recall`；只用 MCP 的工具，直接请它先查文澜。Grok Bot 在你的电脑上运行 `wenlan recall`，或在那里开一段短暂的 `wenlan-mcp` 会话（[Grok Bot 指南](docs/setup-with-ai.md#grok-bot)）。
+只用 MCP 的工具，直接请它先查文澜。Grok Bot 的设置见 [Grok Bot 指南](docs/setup-with-ai.md#grok-bot)。
 
 导入完成后，App 会提供“用（你的 AI 工具）写页面”，把资料写成第一批带引用的笔记，不用输入指令。
 
@@ -248,7 +250,10 @@ Codex 中用 `$recall`；只用 MCP 的工具，直接请它先查文澜。Grok 
 
 ## 数据与隐私
 
-笔记是你电脑上的 Markdown 文件，只会去你让它去的地方。符合条件的笔记可以导出为 Open Knowledge Format（OKF）知识库。云端 AI 工具可能会把找回的内容传给它的服务商，云端模型也会收到它处理的内容，所以本地存储不代表这些交互都留在本机。使用统计默认关闭。
+- 笔记是你电脑上的 Markdown 文件，只会去你让它去的地方。
+- 符合条件的笔记可以导出为 Open Knowledge Format（OKF）知识库。
+- 云端 AI 工具可能会把找回的内容传给它的服务商，云端模型也会收到它处理的内容，所以本地存储不代表这些交互都留在本机。
+- 使用统计默认关闭。
 
 **网页访问（实验中）：** 在“设置”中开启“网页访问”，就能让 Claude、ChatGPT 或 Muse 等网页 AI 客户端，在你的电脑保持在线时搜索整个资料库或指定空间。允许应用时可以选“只能搜索”或“搜索和写入”；可以写入的应用还能新增、修改和删除内容，AI 应用可以在每次改动前先问你。查询与结果会经过中继服务，详见[隐私边界](docs/PRIVACY.md#pre-release-standalone-wenlan-relay-connector)。
 
