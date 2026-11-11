@@ -1884,6 +1884,35 @@ describe("PageCanvas doors", () => {
     expect(hopBack("p4")).toBeNull();
   });
 
+  it("UX-VIEW-9 gives every line grown from another page the same tint, grey links included", async () => {
+    const { user } = await setup();
+    await user.click(await screen.findByRole("button", { name: "Open “Pomodoro” here" }));
+    await user.click(await screen.findByRole("button", { name: "Show what is under Why it works" }));
+    await screen.findByText("Short bursts");
+    const boxOf = (name: string | RegExp) => (screen.getByRole("button", { name }).parentElement as HTMLElement);
+    const item = boxOf("Short bursts");
+    const link = boxOf("Focus →");
+    expect(item.style.backgroundColor).toBe("var(--mem-linked-band)");
+    expect(link.style.backgroundColor).toBe(item.style.backgroundColor);
+    expect(link.style.border).toBe(item.style.border);
+    // The link keeps its muted, underlined words.
+    expect(screen.getByRole("button", { name: "Focus →" }).style.textDecoration).toBe("underline");
+    // A link on the centre's own lines stays bare.
+    expect(boxOf("Pomodoro ↗").style.backgroundColor).toBe("transparent");
+  });
+
+  it("UX-VIEW-9 puts the way back inside the map, not in a row above it that pushes the related-memories action down", async () => {
+    const onOpenPageMap = vi.fn();
+    const first = await setup({ onOpenPageMap });
+    await first.user.click(await screen.findByRole("button", { name: "Open “Pomodoro” here" }));
+    await first.user.click(await screen.findByRole("button", { name: "Focus →" }));
+    first.unmount();
+    await setup({ onOpenPageMap }, "p4", "Focus");
+    const back = await screen.findByRole("button", { name: "← Page One" });
+    expect(canvasRegion().contains(back)).toBe(true);
+    expect(back.closest(".page-canvas-bar")?.parentElement).toBe(canvasRegion());
+  });
+
   it("UX-VIEW-9 selects the root, and does not expand, on a link back to the centre", async () => {
     const { getPageMap } = await tauri();
     const { user } = await setup();

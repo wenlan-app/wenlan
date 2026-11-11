@@ -157,14 +157,14 @@ function CanvasNode({
         boxSizing: "border-box",
         padding: "0 10px",
         borderRadius: underline ? 0 : "var(--mem-r-10)",
-        border: data.link || underline
+        border: (data.link && !data.band) || underline
           ? "1px solid transparent"
           : data.door || data.band
             ? `1px ${data.band ? "dashed" : "solid"} var(--mem-linked-band-edge)`
             : `${isRoot ? 1.5 : 1}px ${suggested ? "dashed" : "solid"} ${
                 branch ? slotColor : mixOver(slotColor, palette.surface, 0.5)
               }`,
-        backgroundColor: data.link || underline ? "transparent" : fill,
+        backgroundColor: (data.link && !data.band) || underline ? "transparent" : fill,
         opacity: data.dimmed ? DIMMED_OPACITY : dangling ? 0.45 : suggested ? 0.75 : 1,
         transition: "opacity 160ms ease",
         // Selection has to be visible or the keyboard shortcuts have no

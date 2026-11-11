@@ -1722,7 +1722,10 @@ function PageCanvasInner({
             : line && line.text !== v.label ? line.text : undefined,
           link: moreFor(v.node.id) !== null || !!greyLink,
           door: door?.kind === "door",
-          band: !!door && door.kind.startsWith("foreign") && !greyLink,
+          // Every line grown from another page wears the same tint, its grey
+          // links too (they keep their muted, underlined words); only the
+          // "more" control, which is not a line, stays bare.
+          band: !!door && door.kind.startsWith("foreign") && door.kind !== "foreignMore",
           unfolded: door?.kind === "door"
             ? openDoors.has(v.node.id)
             : foreignToggle
@@ -2196,7 +2199,7 @@ function PageCanvasInner({
       // surface, so a double-click on any of them would otherwise draw a box
       // behind the control the user was aiming at.
       const inert =
-        ".react-flow__node, .page-canvas-actions, .page-canvas-help, .page-canvas-badge, .page-canvas-empty-entry";
+        ".react-flow__node, .page-canvas-actions, .page-canvas-bar, .page-canvas-help, .page-canvas-badge, .page-canvas-empty-entry";
       if ((event.target as HTMLElement).closest(inert)) return;
       addBoxAt(event.clientX, event.clientY);
     },
@@ -2911,7 +2914,6 @@ function PageCanvasInner({
   if (views.length === 0) {
     return (
       <><div className="page-canvas">
-      {backBar}
       <div
         ref={surfaceRef}
         className="page-canvas-surface is-message"
@@ -2934,6 +2936,7 @@ function PageCanvasInner({
             <p className="page-canvas-message-body">{t(readOnly ? "pageCanvas.emptyBody" : "pageCanvas.ideasEmptyBody")}</p>
           </div>
           {ideaEntry}
+          {backBar}
           <div className="page-canvas-actions">{relatedActions}</div>
           {menu && menuItems.length > 0 && (
             <ContextMenu
@@ -2953,7 +2956,6 @@ function PageCanvasInner({
 
   return (
     <div className="page-canvas">
-      {backBar}
       {readOnly && (
         <p role="status" className="page-canvas-banner">
           {t("pageCanvas.readOnlyNotice")}
@@ -3079,6 +3081,7 @@ function PageCanvasInner({
             }}
           />
         )}
+        {backBar}
         <div className="page-canvas-actions">
           {relatedActions}
           {noticeView}

@@ -3471,8 +3471,16 @@ p.entity-error {
   line-height: 1.5;
 }
 
-/* The map's own bar: the way back after stepping into a linked page. */
+/* The map's own bar: the way back after stepping into a linked page. It floats
+   at the pane's top-left with the same 10px inset as the actions at the top
+   right, so both sit on one row instead of the bar pushing the pane down. The
+   room it leaves the actions is their widest label. */
 .page-canvas-bar {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 5;
+  max-width: calc(100% - 210px);
   display: flex;
   align-items: center;
   gap: 8px;
