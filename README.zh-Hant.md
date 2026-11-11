@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=6f6a63a03c27819a5b40369a89d794d4bb3317233a7c299c6859f951b04ccc39 -->
+<!-- README_SYNC: source=README.md sha256=5b161c44526985a37f7fcae6459eab09853f08445a9ef2f5f25f9525f2dbce7c -->
 
 <p align="center">
   <picture>
@@ -9,7 +9,7 @@
 
 <p align="center">
   <strong>想寫就自己寫，其他交給 AI 整理。</strong><br>
-  開源的 Obsidian 替代品。一鍵連上你的 AI 工具，不用自己裝插件、維護插件。<br>
+  開源的 Obsidian 替代品，也能直接接上你現有的 vault。一鍵連上你的 AI 工具，不用自己裝插件、維護插件。<br>
   還能跟團隊共用。你的筆記留在你的電腦上，只會送到你選的 AI 工具。
 </p>
 

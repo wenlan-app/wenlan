@@ -7,7 +7,7 @@
 
 <p align="center">
   <strong>Write when you want; your AI keeps it organized.</strong><br>
-  Open-source Obsidian alternative. Connects to your AI tools in one click, with no plugins to install or maintain.<br>
+  Open-source Obsidian alternative that works with your existing vault. Connects to your AI tools in one click, with no plugins to install or maintain.<br>
   Share it with your team. Your notes stay on your computer and go only to the AI tools you pick.
 </p>
 
