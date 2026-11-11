@@ -41,10 +41,10 @@
 
 I started Wenlan because my notes, documents, and AI chats were scattered, and keeping a note system from rotting took constant upkeep. Wenlan is for people who use AI tools every day and don't want to maintain a note system.
 
-- **Write when you want:** Open a page and write, any time. Pages you wrote are set to **Ask me first**, and Wenlan never edits your existing notes without your OK.
+- **See where each sentence came from:** Each citation in a page your AI wrote opens the original, a page is refused when most of its citations don't match the source, and what you wrote is never changed without your OK.
+- **Write when you want:** Open a page and write, any time. Pages you wrote are set to **Ask me first**.
 - **Your AI keeps it organized:** The AI tool you already use turns your notes, files, and AI chats into pages, links them, and brings them up to date when a source changes. Wenlan doesn't bring an AI of its own.
 - **One click to connect:** **Connect all** in Settings sets up the AI tools on your computer. No plugins to find, install, or maintain.
-- **It tells you what it can't back up:** A page is refused when most of its citations don't match the source, and each citation opens the original.
 - **Share it with your team:** Share a Space through a Google Drive or iCloud Drive folder, and teammates add it on their own computers.
 - **Bring what you have:** Notes, documents, links, chats, and Obsidian vaults come in ([full list](#what-can-i-bring-in)) as local Markdown files.
 

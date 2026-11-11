@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=5b161c44526985a37f7fcae6459eab09853f08445a9ef2f5f25f9525f2dbce7c -->
+<!-- README_SYNC: source=README.md sha256=e5d5bb9fe32ee1f3ad314a0b2709017e35e01f54a772ec68653cc1b604b26b8b -->
 
 <p align="center">
   <picture>
@@ -43,10 +43,10 @@
 
 Empecé Wenlan porque mis notas, documentos y chats de IA estaban dispersos, y evitar que un sistema de notas se echara a perder exigía un mantenimiento constante. Wenlan es para quienes usan herramientas de IA a diario y no quieren mantener un sistema de notas.
 
-- **Escribe cuando quieras:** abre una página y escribe, en cualquier momento. Las páginas que escribiste quedan en **Ask me first**, y Wenlan nunca edita tus notas existentes sin tu permiso.
+- **Ves de dónde sale cada frase:** cada cita de una página escrita por tu IA abre el original, se rechaza una página cuando la mayoría de sus citas no coinciden con la fuente, y lo que escribiste nunca cambia sin tu permiso.
+- **Escribe cuando quieras:** abre una página y escribe, en cualquier momento. Las páginas que escribiste quedan en **Ask me first**.
 - **Tu IA la mantiene organizada:** la herramienta de IA que ya usas convierte tus notas, archivos y chats de IA en páginas, las enlaza y las pone al día cuando cambia una fuente. Wenlan no trae una IA propia.
 - **Conexión con un clic:** **Connect all** en los ajustes configura las herramientas de IA de tu ordenador. Sin plugins que buscar, instalar ni mantener.
-- **Te dice lo que no puede respaldar:** se rechaza una página cuando la mayoría de sus citas no coinciden con la fuente, y cada cita abre el original.
 - **Compártela con tu equipo:** comparte un Space a través de una carpeta de Google Drive o iCloud Drive, y tus compañeros lo añaden en sus propios ordenadores.
 - **Trae lo que ya tienes:** notas, documentos, enlaces, chats y bóvedas de Obsidian entran ([lista completa](#what-can-i-bring-in)) como archivos Markdown locales.
 
