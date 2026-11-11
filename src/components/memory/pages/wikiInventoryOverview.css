@@ -249,3 +249,6 @@
 /* The summary is read whole: two lines before it is cut. */
 .home-columns--spaces .wiki-new-pages-preview { display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;white-space:normal;font-size:13px;opacity:1;color:var(--mem-text-tertiary); }
 .home-columns--spaces .wiki-new-pages-by, .home-columns--spaces .wiki-new-pages-meta { font-size:13px; }
+/* Same column as a Space page: 840px wide, its first line 20px lower than
+   the shared home default, so the two pages line up when switching. */
+.home-columns--spaces { max-width:min(100%,840px);margin-top:28px; }
