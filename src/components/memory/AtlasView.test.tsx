@@ -133,8 +133,12 @@ vi.mock("sigma", () => {
     }
     // Fixed display coords — enough for the search-fly tests to pin that the
     // camera target comes from getNodeDisplayData, not raw graph coords.
+    // Like real sigma, a setSetting re-indexes the nodes at once but only
+    // renders (and so normalizes) on the next frame: until a refresh, display
+    // data holds the raw layout coordinates, far outside the camera's range.
+    stale = false;
     getNodeDisplayData(_node: string) {
-      return { x: 0.42, y: 0.24 };
+      return this.stale ? { x: -62.9, y: 50.6 } : { x: 0.42, y: 0.24 };
     }
     getViewportZoomedState = vi.fn((pos: { x: number; y: number }, ratio: number) => ({
       x: pos.x,
@@ -145,9 +149,10 @@ vi.mock("sigma", () => {
     // the end of the frame. The overlay repaint hangs off that event, so a
     // no-op here would silently pass any "it repainted" assertion.
     refresh() {
+      this.stale = false;
       this.handlers.get("afterRender")?.({});
     }
-    setSetting(_key: string, _value: unknown) {}
+    setSetting(_key: string, _value: unknown) { this.stale = true; }
   }
   return { default: SigmaMock };
 });
@@ -430,6 +435,21 @@ describe("AtlasView", () => {
     const action = await screen.findByRole("button", { name: new RegExp(i18n.t("atlas.openMindMap")) });
     fireEvent.click(action);
     expect(onOpenMindMap).toHaveBeenCalledWith("center");
+  });
+
+  it("UX-VIEW-9 aims the camera at the page's framed position, not the raw layout one a setting change leaves until the next render", async () => {
+    mockGetKnowledgeGraph.mockResolvedValue({
+      entities: [], relations: [], memories: [], memory_links: [],
+      pages: [makePage({ id: "center", title: "Center page" }), makePage({ id: "direct" })],
+      page_links: [{ from: { kind: "page", id: "center" }, to: { kind: "page", id: "direct" }, link_type: "wikilink" }],
+    });
+    renderWithQuery(<AtlasView focusPageId="center" />);
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
+    const aim = vi.mocked(capturedSigmaInstances[0].camera.setState).mock.calls.at(-1)![0] as { x: number; y: number };
+    expect(aim.x).toBeGreaterThanOrEqual(0);
+    expect(aim.x).toBeLessThanOrEqual(1);
+    expect(aim.y).toBeGreaterThanOrEqual(0);
+    expect(aim.y).toBeLessThanOrEqual(1);
   });
 
   it("keeps a temporary page layer onscreen without writing an invalid all-off preference", async () => {

@@ -2439,6 +2439,12 @@ export default function AtlasView({ onNodeClick, onOpenMindMap, focusEntityId, f
           setSelectedThing(null);
         }
       }
+      // Every setSetting above only schedules a refresh, but it already
+      // re-indexes the nodes at once, so until sigma next renders their display
+      // data holds the raw layout coordinates, not the framed ones the camera
+      // speaks. Render now, or the camera is sent to a raw coordinate far off
+      // the map and nothing is drawn.
+      renderer.refresh();
       const display = renderer.getNodeDisplayData(effectiveFocusId);
       // Page handoffs use the same camera zoom as a filter result. Other
       // nodes and connections stay in the graph, including distant groups.
