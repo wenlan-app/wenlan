@@ -24,7 +24,7 @@
   padding: 6px 8px;
   margin: 0 -8px;
   border: 0;
-  border-radius: var(--mem-r-6, 6px);
+  border-radius: var(--mem-r-6);
   background: transparent;
   color: var(--mem-text);
   font: 400 14px/1.5 var(--mem-font-body);
