@@ -119,6 +119,18 @@ pub struct SharedSyncCounts {
     /// as [`SharedSyncRun::held_back`].
     #[serde(default, skip_serializing_if = "is_zero")]
     pub held_back: u32,
+    /// Memory versions this Wenlan wrote into the folder (the library only:
+    /// a Space or a page never shares memories).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub memories_exported: u32,
+    /// Memories made, changed or forgotten here from another computer's
+    /// version (the library only).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub memories_applied: u32,
+    /// Memories the folder forgets that were left as they are this pass:
+    /// forgetting them would have emptied most of the library's memories.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub memories_held_back: u32,
 }
 
 fn is_zero(n: &u32) -> bool {
