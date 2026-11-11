@@ -74,3 +74,7 @@
 .link-vault-cancel { background:transparent; color:var(--mem-text); border:1px solid var(--mem-border); }
 .link-vault-submit { background:var(--mem-text); color:var(--mem-bg); border:0; font-weight:600; }
 .link-vault-submit:disabled { opacity:.45; cursor:default; }
+.source-ai-memory { display:flex; flex-direction:column; align-items:flex-start; gap:8px; padding:4px 12px 16px; }
+.source-ai-memory h3 { margin:0; font-size:12px; font-weight:500; color:var(--mem-text-tertiary); }
+.source-ai-memory p { margin:0; }
+.source-ai-memory-row { display:flex; align-items:center; gap:12px; font-size:13px; color:var(--mem-text-secondary); }

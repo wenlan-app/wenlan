@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useRef, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { ArrowsClockwise, Books, ChatsCircle, ClipboardText, DownloadSimple, FileZip } from "@phosphor-icons/react";
+import { ArrowsClockwise, Books, ChatsCircle, DownloadSimple, FileZip, Lightbulb } from "@phosphor-icons/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
@@ -19,6 +19,7 @@ import ZoteroSourceDialog from "./ZoteroSourceDialog";
 import LinkVaultDialog from "./LinkVaultDialog";
 import { ImportFlow } from "../../ChatImport/ImportFlow";
 import SourceDialog from "./SourceDialog";
+import AiMemoryDialog from "./AiMemoryDialog";
 import { SourceTypeIcon } from "./SourceTypeIcon";
 import { rememberAddedFolder } from "./FolderImportOrganize";
 import { useTranslation } from "react-i18next";
@@ -47,8 +48,10 @@ export default function AddSourceMenu({ onClose, start = "menu", onQuickChats, t
   const [showLinkVault, setShowLinkVault] = useState(false);
   const [linkPath, setLinkPath] = useState<string | undefined>(undefined);
   const [showChats, setShowChats] = useState(start === "chats");
-  // Quick or full: asked first wherever the quick way exists.
-  const [fullChats, setFullChats] = useState(onQuickChats === undefined);
+  const [showAiMemory, setShowAiMemory] = useState(false);
+  // What AI remembers, or the full history: always asked first, so what AI
+  // tools remember on this computer can be followed from every way in.
+  const [fullChats, setFullChats] = useState(false);
   // A picked folder waits here while the user chooses sync or import-once.
   const [picked, setPicked] = useState<PickedFolder | null>(null);
   // A failure to add a source is shown here in the dialog, next to the choice
@@ -161,14 +164,17 @@ export default function AddSourceMenu({ onClose, start = "menu", onQuickChats, t
   if (showWeb) return <AddWebSourceDialog onClose={onClose} />;
   if (showZotero) return <ZoteroSourceDialog onClose={onClose} />;
   if (showLinkVault) return <LinkVaultDialog onClose={onClose} initialPath={linkPath} />;
+  if (showAiMemory) return <AiMemoryDialog onClose={onClose} onPaste={onQuickChats} />;
   // Past AI chats use the same import as Settings, so a new user can bring
   // earlier decisions in from the home without hunting for it.
   // The two ways are offered side by side: one is done in a minute and
   // brings what the AI remembers; the other brings every chat but waits for
   // an email.
-  if (showChats && !fullChats && onQuickChats) return <SourceDialog title={t("sourceAccess.chatHistory")} lead={t("sourceAccess.chatHistoryLead")} onClose={onClose}>
-    <button type="button" className="source-add-option" data-testid="source-chats-quick" onClick={() => { onClose(); onQuickChats(); }}>
-      <ClipboardText aria-hidden="true" size={20} weight="regular" data-resource-icon="quick" /><span className="source-add-option-copy"><strong>{t("sourceAccess.chatQuick")}</strong><span>{t("sourceAccess.chatQuickHint")}</span></span>
+  if (showChats && !fullChats) return <SourceDialog title={t("sourceAccess.chatHistory")} lead={t("sourceAccess.chatHistoryLead")} onClose={onClose}>
+    {/* What AI tools remember, in one row: tools on this computer are
+        followed, cloud ones pasted in once. */}
+    <button type="button" className="source-add-option" data-testid="source-chats-quick" onClick={() => setShowAiMemory(true)}>
+      <Lightbulb aria-hidden="true" size={20} weight="regular" data-resource-icon="ai-memory" /><span className="source-add-option-copy"><strong>{t("sourceAccess.aiMemory")}</strong><span>{t("sourceAccess.aiMemoryHint")}</span></span>
     </button>
     <button type="button" className="source-add-option" data-testid="source-chats-full" onClick={() => setFullChats(true)}>
       <FileZip aria-hidden="true" size={20} weight="regular" data-resource-icon="zip" /><span className="source-add-option-copy"><strong>{t("sourceAccess.chatFull")}</strong><span>{t("sourceAccess.chatFullHint")}</span></span>

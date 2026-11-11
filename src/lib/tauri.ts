@@ -1385,6 +1385,52 @@ export async function undoOldMemoryPass(): Promise<OldMemoryPass | null> {
   return invoke("undo_old_memory_pass");
 }
 
+/** Where one pass over AI tools' memory put each memory it read. */
+export interface AiMemoryCounts {
+  read: number;
+  sensitive: number;
+  not_knowledge: number;
+  already: number;
+  added: number;
+  conflicts: number;
+  undecided: number;
+  updated: number;
+  removed: number;
+  waiting: number;
+}
+
+/** Following AI tools' memory, while it is on. */
+export interface AiMemoryFollow {
+  /** When the person turned it on, unix seconds. */
+  at: number;
+  last_at: number;
+  counts: AiMemoryCounts;
+  by_tool: { tool: string; memories: number }[];
+}
+
+export interface AiMemoryStatus {
+  /** Memories each AI tool keeps on this computer. */
+  found: { tool: string; memories: number }[];
+  /** A model to read them with is set up. */
+  ready: boolean;
+  import: AiMemoryFollow | null;
+}
+
+/** What AI tools remember on this computer, and following, if it is on. */
+export async function getAiMemoryImport(): Promise<AiMemoryStatus> {
+  return invoke("get_ai_memory_import");
+}
+
+/** Turn following AI tools' memory on; a pass runs now. */
+export async function startAiMemoryImport(): Promise<AiMemoryFollow> {
+  return invoke("start_ai_memory_import");
+}
+
+/** Turn following off: what it brought in and nobody edited is taken back. */
+export async function stopAiMemoryImport(): Promise<{ undone: AiMemoryFollow | null }> {
+  return invoke("stop_ai_memory_import");
+}
+
 /** Take back the whole night on the big map (UX-GRAPH-5): every thing whose
  *  newest night ran at or after `since` (Unix seconds, local midnight). */
 export async function undoNights(since: number): Promise<{ things: number; points: number }> {
