@@ -82,22 +82,47 @@ export function useTeams(): TeamGroup[] {
 }
 
 interface TeamPageProps {
+  /** The team shown: the window's side, picked at the top left. */
+  readonly teamKey: string;
   readonly onOpenSpace: (space: string) => void;
   readonly onOpenPage: (pageId: string) => void;
 }
 
-export function TeamPage({ onOpenSpace, onOpenPage }: TeamPageProps) {
+/** A team's home: what waits for you, its Spaces, what changed lately. */
+export function TeamPage({ teamKey, onOpenSpace, onOpenPage }: TeamPageProps) {
   const { t } = useTranslation();
   const shares = useShares();
   const status = useTeamStatus();
-  const groups = teamGroups(shares.data, status.data);
+  const group = teamGroups(shares.data, status.data).find((candidate) => candidate.key === teamKey);
   return (
     <div className="team-page">
-      {groups.length === 0 && (shares.isPending ? null : <p className="team-page-empty">{t("team.page.none")}</p>)}
-      {groups.map((group) => (
-        <Team key={group.key} group={group} status={group.hosted ? status.data : undefined} shares={shares.data} onOpenSpace={onOpenSpace} onOpenPage={onOpenPage} />
-      ))}
+      {group
+        ? <Team group={group} status={group.hosted ? status.data : undefined} shares={shares.data} onOpenSpace={onOpenSpace} onOpenPage={onOpenPage} />
+        : shares.isPending ? null : <p className="team-page-empty">{t("team.page.none")}</p>}
     </div>
+  );
+}
+
+/** The team's people, opened from the switch at the top left. */
+export function TeamPeopleDialog({ group, onClose }: { readonly group: TeamGroup; readonly onClose: () => void }) {
+  const { t } = useTranslation();
+  const status = useTeamStatus();
+  const [error, setError] = useState<string | null>(null);
+  const run = useRun(setError);
+  const teamStatus = group.hosted ? status.data : undefined;
+  const { people, members } = usePeople(group, teamStatus, group.hosted);
+  return (
+    <PeopleBox
+      teamName={teamLabel(t, group.team)}
+      people={people}
+      members={members}
+      owner={group.hosted}
+      inviteFirst={false}
+      url={prefillTeamUrl(teamStatus?.listening)}
+      run={run}
+      error={error}
+      onClose={onClose}
+    />
   );
 }
 
@@ -159,7 +184,7 @@ function Team({ group, status, shares, onOpenSpace, onOpenPage }: {
               : [{ label: t("team.page.leaveTeam", { team: name }), onPick: () => void leave(), danger: true }]}
           />
         )}
-        <TeamPeopleButton group={group} status={status} owner={owner} teamName={name} run={run} />
+        <TeamPeopleButton group={group} status={status} owner={owner} teamName={name} />
       </div>
       {owner && (!named || renaming) && (
         <NameTeam initial={group.team?.name ?? ""} onDone={() => setRenaming(false)} canCancel={named} />
@@ -377,16 +402,17 @@ function usePeople(group: TeamGroup, status: TeamStatus | undefined, owner: bool
 /** The people on the team, kept off the page so it stays the same length
  *  however many there are: a few initials and a count beside the team's
  *  name, which open the people box. The owner also invites from here. */
-function TeamPeopleButton({ group, status, owner, teamName, run }: {
+function TeamPeopleButton({ group, status, owner, teamName }: {
   readonly group: TeamGroup;
   readonly status: TeamStatus | undefined;
   readonly owner: boolean;
   readonly teamName: string;
-  readonly run: Run;
 }) {
   const { t } = useTranslation();
   const { people, members } = usePeople(group, status, owner);
   const [open, setOpen] = useState<"list" | "invite" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const boxRun = useRun(setError);
   return (
     <div className="team-page-people-bar">
       <button type="button" className="team-page-people" aria-label={t("team.page.peopleTitle", { team: teamName })} onClick={() => setOpen("list")}>
@@ -404,8 +430,9 @@ function TeamPeopleButton({ group, status, owner, teamName, run }: {
           owner={owner}
           inviteFirst={open === "invite"}
           url={prefillTeamUrl(status?.listening)}
-          run={run}
-          onClose={() => setOpen(null)}
+          run={boxRun}
+          error={error}
+          onClose={() => { setOpen(null); setError(null); }}
         />
       )}
     </div>
@@ -419,7 +446,7 @@ function initialOf(name: string): string {
 /** Above this many people the box offers a search field. */
 const SEARCH_FROM = 8;
 
-function PeopleBox({ teamName, people, members, owner, inviteFirst, url, run, onClose }: {
+function PeopleBox({ teamName, people, members, owner, inviteFirst, url, run, error, onClose }: {
   readonly teamName: string;
   readonly people: readonly Person[];
   readonly members: readonly TeamMember[];
@@ -427,6 +454,7 @@ function PeopleBox({ teamName, people, members, owner, inviteFirst, url, run, on
   readonly inviteFirst: boolean;
   readonly url: string;
   readonly run: Run;
+  readonly error?: string | null;
   readonly onClose: () => void;
 }) {
   const { t } = useTranslation();
@@ -488,6 +516,7 @@ function PeopleBox({ teamName, people, members, owner, inviteFirst, url, run, on
       </ul>
       {needle && shown.length === 0 && <p className="team-page-quiet">{t("team.page.peopleNone")}</p>}
       {owner && members.length === 0 && !inviting && !issued && <p className="team-page-quiet">{t("team.page.noMembers")}</p>}
+      {error && <p className="share-error" role="alert">{error}</p>}
       <div className="team-people-foot">
         <button type="button" className="share-primary" onClick={onClose}>{t("sharing.done")}</button>
       </div>

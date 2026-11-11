@@ -6,3 +6,6 @@
 .team-address { padding:14px 20px 16px; }
 .team-address input { width:100%;box-sizing:border-box; }
 .team-hint { margin:0;color:var(--mem-text-secondary);font-size:var(--mem-text-sm); }
+.team-off p { margin:0; }
+.team-off-actions { display:flex;flex-wrap:wrap;gap:16px;margin:10px 0 0 !important;font-size:var(--mem-text-md); }
+.team-off-actions button { border:0;background:transparent;padding:0;font:inherit;color:var(--mem-text);text-decoration:underline;text-underline-offset:3px;cursor:pointer; }

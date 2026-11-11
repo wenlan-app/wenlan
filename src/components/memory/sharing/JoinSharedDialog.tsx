@@ -27,19 +27,23 @@ type JoinSharedDialogProps = {
   /** Called once it is added: the Space's name here, or the page's id; for
    *  a team joined from an invite link, "team" and the team's id. */
   readonly onJoined?: (kind: SharedKind | "team", target: string) => void;
+  /** Only one way in: a folder someone shared (from Spaces), or a team's
+   *  invite link (from the switch or Settings › Team). Teams stay out of
+   *  sight of someone who never joined one. */
+  readonly only?: "folder" | "code";
 };
 
 function namesOf(folder: SharedFolder): string {
   return folder.members.map((member) => member.name).join(", ");
 }
 
-export function JoinSharedDialog({ onClose, onJoined }: JoinSharedDialogProps) {
+export function JoinSharedDialog({ onClose, onJoined, only }: JoinSharedDialogProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const shares = useShares();
   const spaces = useQuery({ queryKey: ["spaces"], queryFn: listSpaces });
   const dialogRef = useRef<HTMLDialogElement>(null);
-  const [mode, setMode] = useState<"folder" | "code">("code");
+  const [mode, setMode] = useState<"folder" | "code">(only ?? "code");
   const [code, setCode] = useState("");
   const [checked, setChecked] = useState<{ code: string; response: TeamJoinResponse } | null>(null);
   const [checking, setChecking] = useState(false);
@@ -164,7 +168,7 @@ export function JoinSharedDialog({ onClose, onJoined }: JoinSharedDialogProps) {
     >
       <form onSubmit={join}>
         <h2 id="join-dialog-title">{mode === "code" && checked ? t("team.join.title", { team: joiningTeam }) : t("sharing.joinTitle")}</h2>
-        {mode === "folder" && (
+        {mode === "folder" && !only && (
           <button type="button" className="share-link share-back" onClick={() => { setMode("code"); setError(null); }}>{t("team.joinUseCode")}</button>
         )}
         {mode === "folder" && (
@@ -215,10 +219,12 @@ export function JoinSharedDialog({ onClose, onJoined }: JoinSharedDialogProps) {
               />
               {checking && <p className="share-hint">{t("team.joinChecking")}</p>}
             </div>
-            <p className="share-hint">
-              {t("team.joinFolderAsk")}{" "}
-              <button type="button" className="share-link" onClick={() => { setMode("folder"); setError(null); }}>{t("sharing.chooseFolder")}</button>
-            </p>
+            {!only && (
+              <p className="share-hint">
+                {t("team.joinFolderAsk")}{" "}
+                <button type="button" className="share-link" onClick={() => { setMode("folder"); setError(null); }}>{t("sharing.chooseFolder")}</button>
+              </p>
+            )}
           </>
         )}
         {mode === "code" && checked && (

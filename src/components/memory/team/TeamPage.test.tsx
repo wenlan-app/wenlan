@@ -96,23 +96,29 @@ describe("TeamPage on the computer that hosts the team", () => {
     vi.mocked(teamStatus).mockResolvedValue(hostedStatus);
   });
 
-  it("shows the team's Spaces first, who can use each, then its people", async () => {
-    wrap(<TeamPage onOpenSpace={() => undefined} onOpenPage={() => undefined} />);
+  it("shows the team's Spaces and who can use each; its people sit behind a count", async () => {
+    wrap(<TeamPage teamKey="hosted" onOpenSpace={() => undefined} onOpenPage={() => undefined} />);
     const product = (await screen.findByRole("button", { name: "Product" })).closest("li")!;
     expect(within(product).getByText("Everyone · can edit")).toBeInTheDocument();
     expect(within(screen.getByRole("button", { name: "Roadmap" }).closest("li")!).getByText("Amy")).toBeInTheDocument();
-    expect(screen.getByText("Dee (you) · Owner")).toBeInTheDocument();
-    expect(screen.getByText("Bo", { selector: ".team-page-name" })).toBeInTheDocument();
+    // However many people, the page keeps its length: no row per person.
     const headings = screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent);
-    expect(headings.slice(0, 2)).toEqual(["Spaces", "People"]);
-    // No counts after people, no dropdowns on the page.
+    expect(headings[0]).toBe("Spaces");
+    expect(headings).not.toContain("People");
+    expect(screen.queryByText("Bo")).not.toBeInTheDocument();
+    const count = screen.getByRole("button", { name: "People in Team" });
+    expect(count).toHaveTextContent("3 people");
+    await userEvent.click(count);
+    const box = await screen.findByRole("dialog");
+    expect(within(box).getByText("Dee (you) · Owner")).toBeInTheDocument();
+    expect(within(box).getByText("Bo")).toBeInTheDocument();
     expect(screen.queryByText(/\d Spaces?$/)).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
   });
 
   it("asks the owner to name the team once; everyone sees the name", async () => {
     vi.mocked(teamRename).mockResolvedValue({ id: "t1", name: "Acme" });
-    wrap(<TeamPage onOpenSpace={() => undefined} onOpenPage={() => undefined} />);
+    wrap(<TeamPage teamKey="hosted" onOpenSpace={() => undefined} onOpenPage={() => undefined} />);
     expect(await screen.findByRole("heading", { name: "Team", level: 1 })).toBeInTheDocument();
     await userEvent.type(screen.getByLabelText("Name your team. Everyone on it sees this name."), "Acme");
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -120,7 +126,7 @@ describe("TeamPage on the computer that hosts the team", () => {
   });
 
   it("opens one Space's access box from its row", async () => {
-    wrap(<TeamPage onOpenSpace={() => undefined} onOpenPage={() => undefined} />);
+    wrap(<TeamPage teamKey="hosted" onOpenSpace={() => undefined} onOpenPage={() => undefined} />);
     await userEvent.click(await screen.findByRole("button", { name: "Who can use Roadmap" }));
     expect(await screen.findByRole("heading", { name: "Roadmap · Team" })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "Only some people" })).toBeChecked();
@@ -131,7 +137,7 @@ describe("TeamPage on the computer that hosts the team", () => {
     vi.mocked(teamAddMember).mockResolvedValue({ member: person("c", "Cy", []), key: "wlt_k", join_code: "https://team.example.com/join#wlt_k" });
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
-    wrap(<TeamPage onOpenSpace={() => undefined} onOpenPage={() => undefined} />);
+    wrap(<TeamPage teamKey="hosted" onOpenSpace={() => undefined} onOpenPage={() => undefined} />);
     await userEvent.click(await screen.findByRole("button", { name: "Invite someone" }));
     await userEvent.type(screen.getByLabelText("Name"), "Cy");
     await userEvent.click(screen.getByRole("button", { name: "Create invite link" }));
@@ -151,10 +157,13 @@ describe("TeamPage on a member's computer", () => {
 
   it("shows the same page by the team's name, with no way to invite", async () => {
     vi.mocked(listShares).mockResolvedValue(joined);
-    wrap(<TeamPage onOpenSpace={() => undefined} onOpenPage={() => undefined} />);
+    wrap(<TeamPage teamKey="team:t1" onOpenSpace={() => undefined} onOpenPage={() => undefined} />);
     expect(await screen.findByRole("heading", { name: "Acme" })).toBeInTheDocument();
-    expect(screen.getByText("Dee (you)")).toBeInTheDocument();
-    expect(screen.getByText("Amy")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "People in Acme" }));
+    const box = await screen.findByRole("dialog");
+    expect(within(box).getByText("Dee (you)")).toBeInTheDocument();
+    expect(within(box).getByText("Amy")).toBeInTheDocument();
+    expect(within(box).queryByRole("button", { name: "Invite someone" })).not.toBeInTheDocument();
     expect(within(screen.getByRole("button", { name: "Sales" }).closest("li")!).getByText("Read only")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Invite someone" })).not.toBeInTheDocument();
   });
@@ -163,7 +172,7 @@ describe("TeamPage on a member's computer", () => {
     vi.mocked(listShares).mockResolvedValue(joined);
     vi.mocked(confirmAction).mockResolvedValue(true);
     vi.mocked(stopSharingSpace).mockResolvedValue();
-    wrap(<TeamPage onOpenSpace={() => undefined} onOpenPage={() => undefined} />);
+    wrap(<TeamPage teamKey="team:t1" onOpenSpace={() => undefined} onOpenPage={() => undefined} />);
     await userEvent.click(await screen.findByRole("button", { name: "More for Acme" }));
     await userEvent.click(screen.getByRole("menuitem", { name: "Leave Acme" }));
     await waitFor(() => expect(stopSharingSpace).toHaveBeenCalledTimes(2));

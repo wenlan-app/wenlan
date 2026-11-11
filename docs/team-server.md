@@ -93,7 +93,7 @@ private network (this computer, a LAN address, `.local`, Tailscale).
 
 ## Join
 
-- **Desktop app**: in Spaces, choose Add shared and paste the invite link:
+- **Desktop app**: in Settings › Team, choose "Join with an invite link" and paste it:
   one "Join Acme" joins every Space opened to you, and Spaces opened to you
   later follow by themselves. From a terminal,
   `wenlan team join <invite link>` lists the Spaces you can

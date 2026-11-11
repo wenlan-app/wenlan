@@ -1,0 +1,123 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* The Private / team switch at the top of the sidebar. */
+.scope-switcher {
+  position: relative;
+  flex: 0 0 auto;
+  padding: 10px 5px 0;
+}
+
+.scope-switcher--compact {
+  display: flex;
+  justify-content: center;
+}
+
+.scope-switcher-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--mem-r-5);
+  background: transparent;
+  color: var(--mem-text);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+
+.scope-switcher--compact .scope-switcher-button {
+  width: auto;
+  padding: 6px;
+}
+
+.scope-switcher-button:hover,
+.scope-switcher-button[aria-expanded="true"] {
+  background: var(--mem-surface);
+}
+
+.scope-switcher-button:focus-visible,
+.scope-switcher-menu button:focus-visible {
+  outline: 2px solid var(--mem-focus-ring);
+  outline-offset: 2px;
+}
+
+.scope-mark {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--mem-r-5);
+  background: var(--mem-surface);
+  color: var(--mem-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.scope-switcher-button .scope-mark {
+  background: var(--mem-accent-indigo);
+  color: var(--mem-text-on-accent);
+}
+
+.scope-switcher-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scope-switcher-caret,
+.scope-switcher-check {
+  flex: none;
+  color: var(--mem-text-tertiary);
+}
+
+.scope-switcher-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 5px;
+  z-index: 50;
+  display: grid;
+  gap: 2px;
+  min-width: 220px;
+  margin: 0;
+  padding: 6px;
+  border: 1px solid var(--mem-border);
+  border-radius: var(--mem-r-10);
+  background: var(--mem-bg);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  list-style: none;
+}
+
+.scope-switcher-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 32px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: var(--mem-r-5);
+  background: transparent;
+  color: var(--mem-text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.scope-switcher-menu button:hover {
+  background: var(--mem-surface);
+}
+
+.scope-switcher-gap {
+  margin-top: 6px;
+}

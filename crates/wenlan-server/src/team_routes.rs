@@ -400,7 +400,7 @@ async fn team_join_page(State(state): State<TeamState>) -> impl IntoResponse {
 <style>body{{font:16px/1.6 system-ui,sans-serif;max-width:32rem;margin:15vh auto;padding:0 16px;color:#1c1d22}}\
 @media(prefers-color-scheme:dark){{body{{background:#16171b;color:#ececf1}}a{{color:#a29dff}}}}</style>\
 <h1>Join {name} on Wenlan</h1>\
-<p>Copy this page's address. In Wenlan, open Spaces, choose Add shared, and paste it.</p>\
+<p>Copy this page's address. In Wenlan, open Settings, then Team, choose Join with an invite link, and paste it.</p>\
 <p>Don't have Wenlan yet? <a href=\"https://wenlan.app\">Download it</a>, then come back to this link.</p>"
     );
     (

@@ -11,6 +11,8 @@ import { SettingsGroup } from "../SettingsView";
 import { TEAM_DOCS_URL, prefillTeamUrl, rememberTeamUrl, useTeamStatus } from "../../sharing/team";
 import { teamLabel, useShares } from "../../sharing/sharing";
 import { teamGroups } from "../../team/TeamPage";
+import { JoinSharedDialog } from "../../sharing/JoinSharedDialog";
+import { useScope } from "../../team/scope";
 import "./teamSection.css";
 
 export default function TeamSection() {
@@ -18,17 +20,40 @@ export default function TeamSection() {
   const status = useTeamStatus();
   const shares = useShares();
   const [address, setAddress] = useState<string | null>(null);
+  const [joining, setJoining] = useState(false);
+  const scope = useScope();
 
   if (status.isPending || shares.isPending) return <p className="team-off" role="status">{t("team.loading")}</p>;
   const listening = status.data?.listening ?? null;
   const joined = teamGroups(shares.data, undefined).filter((group) => !group.hosted);
   const hosting = Boolean(listening) || (status.data?.spaces.length ?? 0) > 0;
+  const join = (
+    <>
+      <button type="button" className="team-join-button" onClick={() => setJoining(true)}>{t("team.settings.joinWithLink")}</button>
+      {joining && (
+        <JoinSharedDialog
+          only="code"
+          onClose={() => setJoining(false)}
+          onJoined={(kind, target) => {
+            setJoining(false);
+            // The new team is shown at once: the switch appears at the top left.
+            if (kind === "team") scope.setScope(`team:${target}`);
+          }}
+        />
+      )}
+    </>
+  );
+  // The only way into teams for someone on none: nothing else in the app
+  // mentions them.
   if (!hosting && joined.length === 0) {
     return (
-      <p className="team-off">
-        {t("team.settings.none")}{" "}
-        <button type="button" onClick={() => { void Promise.resolve(openExternal(TEAM_DOCS_URL)).catch(() => undefined); }}>{t("team.settings.howToStart")}</button>
-      </p>
+      <div className="team-off">
+        <p>{t("team.settings.none")}</p>
+        <p className="team-off-actions">
+          {join}
+          <button type="button" onClick={() => { void Promise.resolve(openExternal(TEAM_DOCS_URL)).catch(() => undefined); }}>{t("team.settings.howToStart")}</button>
+        </p>
+      </div>
     );
   }
 
@@ -44,6 +69,7 @@ export default function TeamSection() {
           />
         </SettingsGroup>
       ))}
+      {!hosting && <p className="team-off-actions">{join}</p>}
       {hosting && (
         <SettingsGroup heading={teamLabel(t, status.data?.team)} className="mem-fade-up">
           <SettingRow

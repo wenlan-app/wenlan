@@ -59,8 +59,9 @@ import SettingsSidebar from "./settings/SettingsSidebar";
 import SpaceDetail from "./SpaceDetail";
 import { ThingDetail } from "./things/ThingDetail";
 import { SpacesOverview } from "./spaces";
-import { TeamPage, useTeams } from "./team/TeamPage";
-import { teamLabel } from "./sharing/sharing";
+import { TeamPage } from "./team/TeamPage";
+import { ScopeProvider, useScopeState } from "./team/scope";
+import { ScopeSwitcher } from "./team/ScopeSwitcher";
 import { PagesOverview, WikiStart } from "./pages/PagesOverview";
 import { openPageMapOnVisit } from "./page/usePageInspectorSession";
 import { WikiWorkspace } from "./pages/WikiWorkspace";
@@ -870,10 +871,11 @@ export default function Main({
   const navigateSpaces = (create: boolean) => navigateTo(create
     ? { kind: "spaces", create: true } : { kind: "spaces" });
   const navigatePages = () => navigateTo({ kind: "pages" });
-  const navigateTeam = () => navigateTo({ kind: "team" });
-  const teams = useTeams();
-  const inTeam = teams.length > 0;
-  const navigateHome = () => navigateTo({ kind: "home" });
+  // Private or one team, picked at the top left; none of it shows for
+  // someone on no team.
+  const scope = useScopeState();
+  const teamSide = scope.team;
+  const navigateHome = () => navigateTo(teamSide ? { kind: "team" } : { kind: "home" });
   // Every import finish inside this window hands new material on through
   // these. Stable, so the cards under it do not re-render with the shell.
   const navigateToRef = useRef(navigateTo);
@@ -1052,7 +1054,13 @@ export default function Main({
     }
     setSidebarPreferences((current) => ({ ...current, visible: !current.visible }));
   };
-  const activeNavigation = activeNavigationForView(view);
+  // Home follows the side shown: a team's side opens the team's home.
+  useEffect(() => {
+    if (view.kind === "home" && teamSide) replaceView({ kind: "team" });
+    else if (view.kind === "team" && !teamSide) replaceView({ kind: "home" });
+  }, [view.kind, teamSide]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A team's home is the team side's Home.
+  const activeNavigation = view.kind === "team" ? "home" : activeNavigationForView(view);
   const wikiInventoryScope = view.kind === "pages" || view.kind === "page" || view.kind === "page-draft"
     ? view.inventoryScope ?? "all"
     : "all";
@@ -1507,6 +1515,7 @@ export default function Main({
   );
 
   return (
+    <ScopeProvider value={scope}>
     <ReferenceNavigationProvider
       onOpenPage={(pageId) => navigateTo({ kind: "page", pageId })}
       onOpenMemory={(sourceId) => navigateTo({ kind: "memory", sourceId })}
@@ -1616,11 +1625,18 @@ export default function Main({
             onConnectTool={() => navigateTo({ kind: "connect-agent" })}
             onNavigateHome={navigateHome}
             onNavigatePages={navigateNotes}
-            onNavigateEntities={() => navigateTo({ kind: "entities" })}
-            onNavigateGraph={() => navigateTo({ kind: "graph" })}
+            // The graph and topics read the whole library, so a team's side
+            // leaves them out.
+            onNavigateEntities={teamSide ? undefined : () => navigateTo({ kind: "entities" })}
+            onNavigateGraph={teamSide ? undefined : () => navigateTo({ kind: "graph" })}
             onNavigateSpaces={navigateSpaces}
-            onNavigateTeam={inTeam || view.kind === "team" ? navigateTeam : undefined}
-            teamName={teams.length === 1 ? teamLabel(t, teams[0]?.team) : undefined}
+            switcher={(compact) => (
+              <ScopeSwitcher
+                compact={compact}
+                onSwitched={() => navigateTo({ kind: "home" })}
+                onJoined={(teamKey) => { scope.setScope(teamKey); navigateTo({ kind: "team" }); }}
+              />
+            )}
             onNavigateSettings={() => navigateTo({ kind: "settings", section: "general" })}
             onOpenSearch={openSearch}
             onOpenAbout={() => setAboutOpen(true)}
@@ -1739,15 +1755,16 @@ export default function Main({
               onCreateIntentHandled={() => replaceView({ kind: "spaces" })}
               onSelectSpace={(spaceName) => navigateTo({ kind: "space", spaceId: null, spaceName })}
               onSharedJoined={(kind, target) => navigateTo(kind === "team"
-                ? { kind: "team" }
+                ? { kind: "home" }
                 : kind === "space"
                 ? { kind: "space", spaceId: null, spaceName: target }
                 : { kind: "page", pageId: target })}
               onSpaceDeleted={handleSpaceDeleted}
               onSpaceRenamed={handleSpaceRenamed}
             />
-          ) : view.kind === "team" ? (
+          ) : view.kind === "team" && teamSide ? (
             <TeamPage
+              teamKey={teamSide.key}
               onOpenSpace={(spaceName) => navigateTo({ kind: "space", spaceId: null, spaceName })}
               onOpenPage={(pageId) => navigateTo({ kind: "page", pageId })}
             />
@@ -2081,5 +2098,6 @@ export default function Main({
     </WorkspaceReadingHostContext.Provider>
     </WorkspaceNavigationProvider>
     </ReferenceNavigationProvider>
+    </ScopeProvider>
   );
 }
