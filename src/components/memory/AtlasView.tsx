@@ -18,6 +18,7 @@ import {
   Funnel,
   Plus,
   SlidersHorizontal,
+  X,
 } from "@phosphor-icons/react";
 import {
   ATLAS_CONTROL_INSETS,
@@ -2896,7 +2897,7 @@ export default function AtlasView({ onNodeClick, onOpenMindMap, focusEntityId, f
     <div className="atlas-canvas-shell">
       <div ref={containerRef} data-testid="atlas-view" className="atlas-canvas" />
 
-      <div className="atlas-top-controls">
+      <div className={`atlas-top-controls${spaceFilter ? " has-space" : ""}`}>
         {onBack && (
           <WorkspaceBackButton
             type="button"
@@ -2968,6 +2969,22 @@ export default function AtlasView({ onNodeClick, onOpenMindMap, focusEntityId, f
             </ul>
           )}
         </div>
+        {/* A map scoped to one Space names it beside the filter, so the
+            filter reads as "within this Space"; the cross goes back to all. */}
+        {spaceFilter && (
+          <div className="atlas-space-chip" data-testid="atlas-space-chip">
+            <span className="atlas-space-chip-name" title={spaceFilter}>{spaceFilter}</span>
+            <button
+              type="button"
+              className="atlas-space-chip-clear"
+              aria-label={t("atlas.spaceShowAll")}
+              title={t("atlas.spaceShowAll")}
+              onClick={() => setSpaceFilter(null)}
+            >
+              <X size={12} weight="bold" aria-hidden="true" />
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="atlas-display-anchor">

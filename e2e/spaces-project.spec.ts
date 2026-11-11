@@ -46,10 +46,16 @@ test("a Space's Show on the big map opens the map on that Space alone, with its 
   await page.getByRole("menuitem", { name: "Show on the big map", exact: true }).click();
   await expect(page.getByTestId("atlas-view")).toBeVisible();
   await expect(page.locator(".atlas-count-line")).toHaveText(/^Wenlan · /);
+  // The Space is named beside the filter, not only in the corner count line.
+  await expect(page.getByTestId("atlas-space-chip")).toHaveText("Wenlan");
+  await page.screenshot({ path: info.outputPath("space-big-map.png") });
   await page.getByRole("button", { name: "Display", exact: true }).click();
   await expect(page.getByRole("combobox", { name: "Space" })).toContainText("Wenlan");
   await expect(page.getByRole("button", { name: "Regions", exact: true })).toHaveAttribute("aria-pressed", "true");
-  await page.screenshot({ path: info.outputPath("space-big-map.png") });
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Show all spaces", exact: true }).click();
+  await expect(page.getByTestId("atlas-space-chip")).toHaveCount(0);
+  await expect(page.locator(".atlas-count-line")).not.toHaveText(/^Wenlan · /);
   expect(errors.pageErrors).toEqual([]); expect(errors.consoleErrors).toEqual([]);
 });
 

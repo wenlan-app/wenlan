@@ -137,6 +137,12 @@
 .atlas-back-button:focus-visible, .atlas-display-trigger:focus-visible { outline: 2px solid var(--mem-text-secondary); outline-offset: 2px; }
 .atlas-search-control { position: relative; flex: 1; min-width: 0; pointer-events: auto; }
 .atlas-search-field.collection-search { width: 100%; }
+.atlas-top-controls.has-space { width: min(420px, calc(100% - 2 * var(--atlas-control-inset) - 140px)); }
+.atlas-space-chip { display: inline-flex; flex: 0 1 auto; align-items: center; gap: 2px; min-width: 0; max-width: 45%; min-height: 36px; padding: 0 4px 0 10px; border: 1px solid var(--mem-border); border-radius: var(--mem-r-8); background: var(--mem-surface); color: var(--mem-text); font: 500 13px/1.4 var(--mem-font-body); pointer-events: auto; }
+.atlas-space-chip-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.atlas-space-chip-clear { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: var(--mem-r-6); background: transparent; color: var(--mem-text-secondary); cursor: pointer; }
+.atlas-space-chip-clear:hover { background: var(--mem-hover); color: var(--mem-text); }
+.atlas-space-chip-clear:focus-visible { outline: 2px solid var(--mem-text-secondary); outline-offset: 1px; }
 .atlas-search-results { position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; right: 0; max-height: min(280px, calc(100vh - 72px)); margin: 0; padding: 4px; overflow-y: auto; list-style: none; border: 1px solid var(--mem-popover-border); border-radius: var(--mem-popover-radius); background: var(--mem-popover); color: var(--mem-text); box-shadow: var(--mem-popover-shadow); font: 400 13px/1.4 var(--mem-font-body); }
 .atlas-search-results li { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 6px 9px; border-radius: var(--mem-radius-sm); overflow-wrap: anywhere; }
 .atlas-search-results li[role="option"] { cursor: pointer; }
@@ -173,6 +179,7 @@
 @media (max-width: 700px) {
   .atlas-canvas-shell { --atlas-control-inset: 24px; }
   .atlas-top-controls { width: min(240px, calc(100% - 2 * var(--atlas-control-inset) - 56px)); }
+  .atlas-top-controls.has-space { width: min(420px, calc(100% - 2 * var(--atlas-control-inset) - 56px)); }
 }
 
 /* UX-CHAT-5: a picked thing's zoom stops, a group of the camera controls'

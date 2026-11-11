@@ -2105,6 +2105,29 @@ describe("AtlasView", () => {
     fireEvent.click(select);
     fireEvent.click(screen.getByRole("option", { name: "All spaces" }));
     await waitFor(() => expect(latestGraph().hasNode("e4")).toBe(true));
+    expect(screen.queryByTestId("atlas-space-chip")).not.toBeInTheDocument();
+  });
+
+  it("names the scoped Space beside the filter, and its cross shows every Space", async () => {
+    const entities = [
+      makeEntity({ id: "e1", name: "Alice", domain: "wenlan-dev" }),
+      makeEntity({ id: "e4", name: "Isolate", domain: "personal" }),
+    ];
+    mockListEntities.mockResolvedValue(entities);
+
+    renderWithQuery(<AtlasView focusSpace="wenlan-dev" />);
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
+    await waitFor(() => expect(latestGraph().hasNode("e1")).toBe(true));
+    expect(latestGraph().hasNode("e4")).toBe(false);
+
+    const chip = screen.getByTestId("atlas-space-chip");
+    expect(chip).toHaveTextContent("wenlan-dev");
+    // It sits in the filter's row, so it counts as map chrome.
+    expect(chip.parentElement).toHaveClass("atlas-top-controls");
+
+    fireEvent.click(screen.getByRole("button", { name: "Show all spaces" }));
+    await waitFor(() => expect(latestGraph().hasNode("e4")).toBe(true));
+    expect(screen.queryByTestId("atlas-space-chip")).not.toBeInTheDocument();
   });
 
   it("hides the Space selector when no entity carries a space", async () => {
