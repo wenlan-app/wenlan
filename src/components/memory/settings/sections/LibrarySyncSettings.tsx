@@ -80,7 +80,7 @@ export default function LibrarySyncSettings() {
   const problem = error ?? last?.error ?? null;
   const warning = last?.held_back ? t("librarySync.heldBack") : null;
   return (
-    <SettingsGroup heading={t("librarySync.group")} className="mem-fade-up" style={{ animationDelay: "0ms" }}>
+    <SettingsGroup className="mem-fade-up" style={{ animationDelay: "0ms" }}>
       <SettingRow
         title={t("librarySync.title")}
         description={share ? syncLine(share, t, locale) : t("librarySync.hint")}

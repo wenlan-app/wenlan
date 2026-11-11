@@ -19,6 +19,7 @@ export type SettingsSection =
   | "diagnostics"
   | "general"
   | "appearance"
+  | "sync"
   | "experiments";
 
 type SettingsGroupLabelKey =
@@ -27,6 +28,7 @@ type SettingsGroupLabelKey =
   | "settings.groups.intelligence.label"
   | "settings.groups.diagnostics.label"
   | "settings.groups.agents.label"
+  | "settings.groups.sync.label"
   | "settings.groups.sources.label"
   | "settings.groups.experiments.label";
 
@@ -36,6 +38,7 @@ type SettingsGroupHintKey =
   | "settings.groups.intelligence.hint"
   | "settings.groups.diagnostics.hint"
   | "settings.groups.agents.hint"
+  | "settings.groups.sync.hint"
   | "settings.groups.sources.hint"
   | "settings.groups.experiments.hint";
 
@@ -112,6 +115,17 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
     icon: (
       <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
         <path d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+      </svg>
+    ),
+  },
+  {
+    id: "sync",
+    labelKey: "settings.groups.sync.label",
+    hintKey: "settings.groups.sync.hint",
+    icon: (
+      <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="4" y="5" width="16" height="11" rx="1.5" />
+        <path d="M2 19h20" />
       </svg>
     ),
   },

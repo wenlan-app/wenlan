@@ -23,7 +23,6 @@ vi.mock("../../../../lib/tauri", async () => {
   daemonErrorMessage: actual.daemonErrorMessage,
   isOkfExportDaemonTooOld: actual.isOkfExportDaemonTooOld,
   exportPagesAsOkf: vi.fn(),
-  listShares: vi.fn(() => Promise.resolve([])),
   getKnowledgePath: vi.fn(),
   openFile: vi.fn(),
   getProfile: vi.fn(() =>
