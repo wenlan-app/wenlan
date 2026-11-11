@@ -127,7 +127,7 @@ fn member_key(
     let join_code = match url.map(str::trim).filter(|url| !url.is_empty()) {
         Some(url) => {
             let url = remote::check_url(url).map_err(ServerError::ValidationError)?;
-            Some(format!("{url}#{key}"))
+            Some(wenlan_types::team::invite_link(&url, &key))
         }
         None => None,
     };
@@ -284,7 +284,7 @@ pub(crate) fn join_parts(code: &str, key: Option<&str>) -> Result<(String, Strin
         Some(key) => (code.trim().to_string(), key.to_string()),
         None => wenlan_types::team::split_join_code(code).ok_or_else(|| {
             ServerError::ValidationError(
-                "this is not a join code: it looks like https://…#wlt_…".into(),
+                "this is not an invite link: it looks like https://…/join#wlt_…".into(),
             )
         })?,
     };
@@ -370,6 +370,7 @@ fn team_router(state: TeamState) -> axum::Router {
         ));
     axum::Router::new()
         .route("/health", get(team_health))
+        .route(wenlan_types::team::JOIN_PATH, get(team_join_page))
         .merge(checked)
         .layer(DefaultBodyLimit::max(remote::MAX_VERSION_BYTES))
         .with_state(state)
@@ -377,6 +378,38 @@ fn team_router(state: TeamState) -> axum::Router {
 
 async fn team_health() -> impl IntoResponse {
     Json(serde_json::json!({ "status": "ok", "server": "wenlan-team" }))
+}
+
+/// GET /join — where an invite link opens in a browser. The key after `#`
+/// never reaches the server; the page only says what to do with the link.
+/// It shows the team's name and nothing else of the team.
+async fn team_join_page(State(state): State<TeamState>) -> impl IntoResponse {
+    let name = team::read_team(&state.team_path)
+        .ok()
+        .and_then(|file| file.name)
+        .unwrap_or_else(|| "a team".to_string());
+    let name = name
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;");
+    let page = format!(
+        "<!doctype html><html lang=\"en\"><meta charset=\"utf-8\">\
+<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
+<title>Join {name} on Wenlan</title>\
+<style>body{{font:16px/1.6 system-ui,sans-serif;max-width:32rem;margin:15vh auto;padding:0 16px;color:#1c1d22}}\
+@media(prefers-color-scheme:dark){{body{{background:#16171b;color:#ececf1}}a{{color:#a29dff}}}}</style>\
+<h1>Join {name} on Wenlan</h1>\
+<p>Copy this page's address. In Wenlan, open Spaces, choose Add shared, and paste it.</p>\
+<p>Don't have Wenlan yet? <a href=\"https://wenlan.app\">Download it</a>, then come back to this link.</p>"
+    );
+    (
+        [
+            (axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8"),
+            (axum::http::header::CACHE_CONTROL, "no-store"),
+        ],
+        page,
+    )
 }
 
 /// Origins of web AI apps whose connectors may call `/mcp` from a browser.

@@ -170,3 +170,21 @@
 .team-page-waiting-block {
   margin-top: 24px;
 }
+
+.team-page-name-team {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.team-page-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.team-page-name-row .share-input {
+  flex: 1;
+  min-width: 0;
+  max-width: 320px;
+}

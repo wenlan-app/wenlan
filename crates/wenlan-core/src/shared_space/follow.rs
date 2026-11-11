@@ -7,7 +7,7 @@
 //!
 //! A followed Space is never merged into a Space of the same name that is
 //! already here (it may hold this person's own pages): it is made under
-//! `<name> (<server>)` instead.
+//! `<name> (<team>)` instead (the server's host until the team is named).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -67,7 +67,8 @@ pub(super) async fn follow_host(
     let mut added = Vec::new();
     for entry in &me.spaces {
         let remote_space = entry.space.as_str();
-        let Some(local) = local_space(db, settings_path, url, remote_space).await? else {
+        let team = me.team.as_ref().and_then(|team| team.name.as_deref());
+        let Some(local) = local_space(db, settings_path, url, remote_space, team).await? else {
             continue;
         };
         let host = HostLink {
@@ -120,6 +121,7 @@ async fn local_space(
     settings_path: &Path,
     url: &str,
     remote_space: &str,
+    team: Option<&str>,
 ) -> Result<Option<String>, WenlanError> {
     let store = super::read_settings(settings_path)?;
     if followed(&store.spaces, url, remote_space)
@@ -127,10 +129,13 @@ async fn local_space(
     {
         return Ok(None);
     }
-    let server = reqwest::Url::parse(url)
-        .ok()
-        .and_then(|parsed| parsed.host_str().map(str::to_string))
-        .unwrap_or_else(|| url.to_string());
+    let server = match team.map(str::trim).filter(|name| !name.is_empty()) {
+        Some(name) => name.to_string(),
+        None => reqwest::Url::parse(url)
+            .ok()
+            .and_then(|parsed| parsed.host_str().map(str::to_string))
+            .unwrap_or_else(|| url.to_string()),
+    };
     let suffixed = format!("{remote_space} ({server})");
     // The plain name only when no Space here has it; the suffixed one also
     // when it is here but shared with nothing (made by an earlier follow).

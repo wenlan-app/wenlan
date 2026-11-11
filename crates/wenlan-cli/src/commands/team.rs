@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! `wenlan team status/add/update/remove/new-key/host/join` — run a team
-//! server (members, hosted Spaces) or join one with a join code.
+//! server (members, hosted Spaces) or join one with a invite link.
 
 use anyhow::{bail, Result};
 use clap::Subcommand;
@@ -22,7 +22,7 @@ pub enum TeamCmd {
         /// The team's name, such as the company's.
         name: String,
     },
-    /// Add a member and print their join code (or key) once.
+    /// Add a member and print their invite link (or key) once.
     Add {
         /// The member's name.
         name: String,
@@ -31,7 +31,7 @@ pub enum TeamCmd {
         #[arg(long = "access", value_name = "SPACE[:read]", value_parser = parse_space_access)]
         spaces: Vec<TeamSpaceAccess>,
         /// The address the member's computer reaches this server at, put in
-        /// the join code. Left out, only the key is printed.
+        /// the invite link. Left out, only the key is printed.
         #[arg(long)]
         url: Option<String>,
     },
@@ -57,7 +57,7 @@ pub enum TeamCmd {
         /// The member's id (see `wenlan team status`).
         member_id: String,
         /// The address the member's computer reaches this server at, put in
-        /// the join code.
+        /// the invite link.
         #[arg(long)]
         url: Option<String>,
     },
@@ -67,10 +67,10 @@ pub enum TeamCmd {
         #[arg(value_name = "SPACE")]
         space_name: String,
     },
-    /// Join a team server with a join code: list the Spaces you can use, or
+    /// Join a team server with a invite link: list the Spaces you can use, or
     /// sync one of them with --server-space.
     Join {
-        /// The join code you were sent (`https://…#wlt_…`).
+        /// The invite link you were sent (`https://…/join#wlt_…`).
         code: String,
         /// Sync this Space of the server (not `--space`, which picks a Space on this computer). Left out, the Spaces you can use
         /// are listed.
@@ -245,7 +245,7 @@ async fn status(client: &WenlanClient, format: ResolvedFormat, quiet: bool) -> R
     })
 }
 
-/// Prints the key or join code. It is shown only this once.
+/// Prints the key or invite link. It is shown only this once.
 fn print_key(
     format: ResolvedFormat,
     quiet: bool,
@@ -263,7 +263,7 @@ fn print_key(
         ResolvedFormat::Table => {
             println!("{} {} ({}).", verb, issued.member.name, issued.member.id);
             match &issued.join_code {
-                Some(code) => println!("Join code: {code}"),
+                Some(code) => println!("Invite link: {code}"),
                 None => println!("Key: {}", issued.key),
             }
             println!("This is shown only once. Send it to them privately.");

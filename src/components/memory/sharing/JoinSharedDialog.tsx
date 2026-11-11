@@ -18,14 +18,15 @@ import {
   type SharedKind,
 } from "../../../lib/tauri";
 import { FolderIcon } from "./ShareDialog";
-import { SHARES_KEY, shortFolder, useShares } from "./sharing";
+import { SHARES_KEY, shortFolder, teamLabel, useShares } from "./sharing";
 import { hostName } from "./team";
 import "./sharing.css";
 
 type JoinSharedDialogProps = {
   readonly onClose: () => void;
-  /** Called once it is added: the Space's name here, or the page's id. */
-  readonly onJoined?: (kind: SharedKind, target: string) => void;
+  /** Called once it is added: the Space's name here, or the page's id; for
+   *  a team joined from an invite link, "team" and the team's id. */
+  readonly onJoined?: (kind: SharedKind | "team", target: string) => void;
 };
 
 function namesOf(folder: SharedFolder): string {
@@ -97,10 +98,11 @@ export function JoinSharedDialog({ onClose, onJoined }: JoinSharedDialogProps) {
     queryClient.invalidateQueries({ queryKey: ["recent-pages"] }),
   ]);
   // A Space here with the same name may hold this person's own pages: the
-  // team's copy goes beside it as "<name> (<server>)", never into it.
+  // team's copy goes beside it as "<name> (<team>)", never into it.
   const teamLocalName = (serverSpace: string) => (takenHere(serverSpace) && checked
-    ? `${serverSpace} (${hostName(checked.response.url)})`
+    ? `${serverSpace} (${checked.response.me.team?.name?.trim() || hostName(checked.response.url)})`
     : serverSpace);
+  const joiningTeam = teamLabel(t, checked?.response.me.team);
   const joinAll = async () => {
     if (!checked || pending) return;
     setPending(true);
@@ -114,7 +116,7 @@ export function JoinSharedDialog({ onClose, onJoined }: JoinSharedDialogProps) {
       }
       await refreshAfterJoin();
       onClose();
-      if (joined[0]) onJoined?.("space", joined[0]);
+      onJoined?.("team", checked.response.me.team?.id ?? checked.response.url);
     } catch (caught) {
       if (joined.length > 0) await refreshAfterJoin();
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -161,7 +163,7 @@ export function JoinSharedDialog({ onClose, onJoined }: JoinSharedDialogProps) {
       onCancel={(event) => { event.preventDefault(); if (!pending) onClose(); }}
     >
       <form onSubmit={join}>
-        <h2 id="join-dialog-title">{t("sharing.joinTitle")}</h2>
+        <h2 id="join-dialog-title">{mode === "code" && checked ? t("team.join.title", { team: joiningTeam }) : t("sharing.joinTitle")}</h2>
         {mode === "folder" && (
           <button type="button" className="share-link share-back" onClick={() => { setMode("code"); setError(null); }}>{t("team.joinUseCode")}</button>
         )}
@@ -196,51 +198,54 @@ export function JoinSharedDialog({ onClose, onJoined }: JoinSharedDialogProps) {
         {already && <p className="share-warning">{t("sharing.joinAlready")}</p>}
           </>
         )}
-        {mode === "code" && (
+        {mode === "code" && !checked && (
           <>
             <div className="share-field">
-              <label className="share-label" htmlFor="join-team-code">{t("team.joinCodeLabel")}</label>
+              <label className="share-label" htmlFor="join-team-code">{t("team.join.linkLabel")}</label>
               <input
                 id="join-team-code"
                 className="share-input"
                 value={code}
-                placeholder={t("team.codePlaceholder")}
+                placeholder={t("team.join.linkPlaceholder")}
                 spellCheck={false}
-                disabled={pending}
+                disabled={pending || checking}
                 onChange={(event) => setCode(event.target.value)}
                 onPaste={(event) => { const pasted = event.clipboardData.getData("text"); setCode(pasted); void checkCode(pasted); event.preventDefault(); }}
                 onBlur={(event) => void checkCode(event.target.value)}
               />
               {checking && <p className="share-hint">{t("team.joinChecking")}</p>}
             </div>
-            {checked && checked.response.me.spaces.length === 0 && <p className="share-warning">{t("team.joinNoSpaces")}</p>}
-            {checked && checked.response.me.spaces.length > 0 && (
-              <div className="share-field">
-                <span className="share-label">{t("team.joinAvailable")}</span>
-                <ul className="share-rows team-join-list">
-                  {checked.response.me.spaces.map((entry) => (
-                    <li key={entry.space}>
-                      <span className="share-row-name">{entry.access === "read" ? t("team.joinAccessFor", { space: teamLocalName(entry.space), access: t("team.readOnly") }) : teamLocalName(entry.space)}</span>
-                    </li>
-                  ))}
-                </ul>
-                <div className="team-join-actions">
-                  <button type="button" className="share-primary" disabled={pending} onClick={() => void joinAll()}>
-                    {pending ? t("sharing.joining") : t("team.page.joinAll", { count: checked.response.me.spaces.length })}
-                  </button>
-                </div>
-                <p className="share-hint">{t("team.page.joinAllHint")}</p>
-              </div>
-            )}
             <p className="share-hint">
               {t("team.joinFolderAsk")}{" "}
               <button type="button" className="share-link" onClick={() => { setMode("folder"); setError(null); }}>{t("sharing.chooseFolder")}</button>
             </p>
           </>
         )}
+        {mode === "code" && checked && (
+          <div className="share-field team-join-confirm">
+            <p className="team-join-as">{checked.response.me.spaces.length > 0
+              ? t("team.join.asGets", { name: checked.response.me.name })
+              : t("team.join.asNothing", { name: checked.response.me.name })}</p>
+            {checked.response.me.spaces.length > 0 && (
+              <ul className="share-rows team-join-list">
+                {checked.response.me.spaces.map((entry) => (
+                  <li key={entry.space}>
+                    <span className="share-row-name">{entry.access === "read" ? t("team.joinAccessFor", { space: teamLocalName(entry.space), access: t("team.readOnly") }) : teamLocalName(entry.space)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="share-hint">{t("team.join.privacy")}</p>
+          </div>
+        )}
         {error && <p className="share-warning" role="alert">{t("sharing.joinFailed", { message: error })}</p>}
         <div className="share-actions">
           <button type="button" className="share-secondary" onClick={onClose} disabled={pending}>{t("sharing.cancel")}</button>
+          {mode === "code" && checked && (
+            <button type="button" className="share-primary" disabled={pending} onClick={() => void joinAll()}>
+              {pending ? t("sharing.joining") : t("team.join.action", { team: joiningTeam })}
+            </button>
+          )}
           {mode === "folder" && (
             <button type="submit" className="share-primary" disabled={!found || Boolean(already) || pending || (found.kind === "space" && (!chosenName || stillTaken))}>
               {t(pending ? "sharing.joining" : "sharing.join")}

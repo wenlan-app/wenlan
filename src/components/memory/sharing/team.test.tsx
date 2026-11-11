@@ -91,48 +91,51 @@ beforeEach(async () => {
 afterEach(() => vi.clearAllMocks());
 
 describe("JoinSharedDialog code mode", () => {
-  it("lists the server's Spaces and joins them all with one press", async () => {
+  it("reads an invite link, then joins the whole team with one confirm", async () => {
     vi.mocked(teamJoin).mockResolvedValue({
       url: "https://team.example.com",
-      me: { member_id: "me", name: "Dee", spaces: [{ space: "Product", access: "write" }, { space: "Research", access: "read" }] },
+      me: { member_id: "me", name: "Dee", team: { id: "t1", name: "Acme" }, spaces: [{ space: "Product", access: "write" }, { space: "Research", access: "read" }] },
     });
     vi.mocked(joinTeamSpace).mockResolvedValue({ exported: 0, applied: 3, conflicts: 0, skipped: 0 });
     const onJoined = vi.fn();
     wrap(<JoinSharedDialog onClose={() => undefined} onJoined={onJoined} />);
-    const code = "https://team.example.com#wlt_abc";
-    await userEvent.click(screen.getByLabelText("Join code"));
-    await userEvent.paste(code);
-    await screen.findByText("Can join:");
-    expect(teamJoin).toHaveBeenCalledWith(code);
+    const link = "https://team.example.com/join#wlt_abc";
+    await userEvent.click(screen.getByLabelText("Invite link"));
+    await userEvent.paste(link);
+    expect(await screen.findByRole("heading", { name: "Join Acme" })).toBeInTheDocument();
+    expect(teamJoin).toHaveBeenCalledWith(link);
+    expect(screen.getByText("You're joining as Dee. You'll get:")).toBeInTheDocument();
     expect(screen.getByText("Research · Read only")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Join all 2 Spaces" }));
-    await waitFor(() => expect(joinTeamSpace).toHaveBeenCalledWith("Research", code, "Research"));
-    expect(joinTeamSpace).toHaveBeenCalledWith("Product", code, "Product");
-    expect(onJoined).toHaveBeenCalledWith("space", "Product");
+    expect(screen.getByText("Your private Spaces stay yours. The team sees only what is in its Spaces.")).toBeInTheDocument();
+    expect(screen.queryByText(/team\.example\.com/)).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Join Acme" }));
+    await waitFor(() => expect(joinTeamSpace).toHaveBeenCalledWith("Research", link, "Research"));
+    expect(joinTeamSpace).toHaveBeenCalledWith("Product", link, "Product");
+    expect(onJoined).toHaveBeenCalledWith("team", "t1");
   });
 
   it("puts a team Space beside a personal one of the same name, never into it", async () => {
     vi.mocked(listSpaces).mockResolvedValue([{ id: "1", name: "Product" } as never]);
-    vi.mocked(teamJoin).mockResolvedValue({ url: "https://team.example.com", me: { member_id: "me", name: "Dee", spaces: [{ space: "Product", access: "write" }] } });
+    vi.mocked(teamJoin).mockResolvedValue({ url: "https://team.example.com", me: { member_id: "me", name: "Dee", team: { id: "t1", name: "Acme" }, spaces: [{ space: "Product", access: "write" }] } });
     vi.mocked(joinTeamSpace).mockResolvedValue({ exported: 0, applied: 0, conflicts: 0, skipped: 0 });
     wrap(<JoinSharedDialog onClose={() => undefined} />);
-    await userEvent.click(screen.getByLabelText("Join code"));
+    await userEvent.click(screen.getByLabelText("Invite link"));
     await userEvent.paste("https://team.example.com#wlt_x");
-    expect(await screen.findByText("Product (team.example.com)")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Join 1 Space" }));
-    await waitFor(() => expect(joinTeamSpace).toHaveBeenCalledWith("Product (team.example.com)", "https://team.example.com#wlt_x", "Product"));
+    expect(await screen.findByText("Product (Acme)")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Join Acme" }));
+    await waitFor(() => expect(joinTeamSpace).toHaveBeenCalledWith("Product (Acme)", "https://team.example.com#wlt_x", "Product"));
   });
 });
 
 describe("JoinSharedDialog folder link", () => {
   it("switches to the folder flow and back", async () => {
     wrap(<JoinSharedDialog onClose={() => undefined} />);
-    expect(screen.getByLabelText("Join code")).toBeInTheDocument();
+    expect(screen.getByLabelText("Invite link")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
     expect(screen.getByText("No folder chosen")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Join code")).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "‹ Use a join code instead" }));
-    expect(screen.getByLabelText("Join code")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Invite link")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "‹ Use an invite link instead" }));
+    expect(screen.getByLabelText("Invite link")).toBeInTheDocument();
   });
 });
 
@@ -199,7 +202,7 @@ describe("ShareDialog share mode", () => {
   it("offers only the cloud folder when this computer is not a team server", async () => {
     wrap(<ShareDialog kind="space" target="Product" title="Product" onClose={() => undefined} />);
     expect(await screen.findByText("Folder")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Team server/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /With Team/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "‹ Back" })).not.toBeInTheDocument();
   });
 
@@ -208,7 +211,7 @@ describe("ShareDialog share mode", () => {
     vi.mocked(teamStatus).mockResolvedValue(hostedStatus);
     vi.mocked(teamHostSpace).mockResolvedValue({ exported: 0, applied: 0, conflicts: 0, skipped: 0 });
     wrap(<ShareDialog kind="space" target="Product" title="Product" onClose={() => undefined} />);
-    await userEvent.click(await screen.findByRole("button", { name: /Team server/ }));
+    await userEvent.click(await screen.findByRole("button", { name: /With Team/ }));
     await waitFor(() => expect(teamHostSpace).toHaveBeenCalledWith("Product"));
     expect(await screen.findByRole("radio", { name: "Only some people" }, { timeout: 3000 })).toBeInTheDocument();
   });
@@ -218,12 +221,12 @@ describe("ShareDialog share mode, cloud folder row", () => {
   it("goes to the folder flow and back to the two rows", async () => {
     vi.mocked(teamStatus).mockResolvedValue(hostedStatus);
     wrap(<ShareDialog kind="space" target="Product" title="Product" onClose={() => undefined} />);
-    expect(await screen.findByRole("button", { name: /Team server/ })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /With Team/ })).toBeInTheDocument();
     expect(screen.queryByText("No folder chosen")).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: /Cloud folder/ }));
+    await userEvent.click(screen.getByRole("button", { name: /With one person/ }));
     expect(screen.getByText("No folder chosen")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "‹ Back" }));
-    expect(screen.getByRole("button", { name: /Cloud folder/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /With one person/ })).toBeInTheDocument();
   });
 });
 

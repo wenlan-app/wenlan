@@ -32,12 +32,13 @@ It serves only:
 | Path | What |
 |---|---|
 | `GET /health` | `{"status":"ok"}`, no key needed |
+| `GET /join` | where an invite link opens in a browser: the team's name and what to do with the link, no key needed |
 | `GET /team/v1/me` | who the key belongs to and their Spaces |
 | `GET /team/v1/spaces/{space}/files`, `…/file?path=` | the Space's page versions |
 | `PUT /team/v1/spaces/{space}/versions/{page}/{sha}.wlv` | the member's own new version |
 | `/mcp`, `/mcp/{space}` | MCP for AI tools, pinned to that Space |
 
-Every request except `/health` needs `Authorization: Bearer <member key>`.
+Every request except `/health` and `/join` needs `Authorization: Bearer <member key>`.
 A member can only see the Spaces given to them, can only send versions
 written as themselves, and cannot send anything to a Space they may only
 read. The daemon's own routes (settings, other Spaces, memories, shutdown)
@@ -74,23 +75,29 @@ private network (this computer, a LAN address, `.local`, Tailscale).
    Only 7879 is for the team. On a desktop install, set `WENLAN_TEAM_ADDR`
    for the background service instead.
 
-2. Host a Space and add people (on the server):
+2. Name the team, host a Space and add people (on the server):
 
    ```bash
+   wenlan team rename "Acme"
    wenlan team host "Product"
    wenlan team add "Amy" --access Product --url https://wenlan.example.com
    wenlan team add "Bo"  --access Product:read --url https://wenlan.example.com
    ```
 
-   Each `add` prints a join code once, such as
-   `https://wenlan.example.com#wlt_…`. Send it to that person privately.
+   Each `add` prints an invite link once, such as
+   `https://wenlan.example.com/join#wlt_…`. Send it to that person
+   privately. The key stays after `#`, so a browser opening the link never
+   sends it to the server. Older links without `/join` still work.
    `wenlan team status` lists members; `wenlan team remove <id>` removes one;
    `wenlan team new-key <id>` replaces a lost key.
 
 ## Join
 
-- **Desktop app**: `wenlan team join <join code>` lists the Spaces you can
-  use; `wenlan team join <join code> --server-space Product` adds one
+- **Desktop app**: in Spaces, choose Add shared and paste the invite link:
+  one "Join Acme" joins every Space opened to you, and Spaces opened to you
+  later follow by themselves. From a terminal,
+  `wenlan team join <invite link>` lists the Spaces you can
+  use; `wenlan team join <invite link> --server-space Product` adds one
   (`--as <name>` gives it another name on your computer).
 - **AI tool only**: add a remote MCP server with URL
   `https://wenlan.example.com/mcp` (or `/mcp/<Space>` when you have more than

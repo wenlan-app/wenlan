@@ -1738,7 +1738,9 @@ export default function Main({
               labels={spacesOverviewLabels}
               onCreateIntentHandled={() => replaceView({ kind: "spaces" })}
               onSelectSpace={(spaceName) => navigateTo({ kind: "space", spaceId: null, spaceName })}
-              onSharedJoined={(kind, target) => navigateTo(kind === "space"
+              onSharedJoined={(kind, target) => navigateTo(kind === "team"
+                ? { kind: "team" }
+                : kind === "space"
                 ? { kind: "space", spaceId: null, spaceName: target }
                 : { kind: "page", pageId: target })}
               onSpaceDeleted={handleSpaceDeleted}

@@ -138,7 +138,7 @@ function ShareBox({ kind, target, title, onClose }: ShareTarget & { readonly onC
             <li>
               <button type="button" className="share-way" disabled={pending !== null} onClick={() => void hostForTeam()}>
                 <span className="share-way-text">
-                  <span className="share-way-title">{t("team.shareChoiceTeam")}</span>
+                  <span className="share-way-title">{t("team.shareChoiceTeam", { team: teamLabel(t, teamStatus.data?.team) })}</span>
                   <span className="share-way-hint">{t(pending === "team" ? "sharing.sharing" : "team.shareTeamHint")}</span>
                 </span>
                 <span aria-hidden="true" className="share-way-chevron">›</span>

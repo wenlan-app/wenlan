@@ -215,18 +215,30 @@ pub fn split_team_agent(agent: &str) -> Option<(&str, &str)> {
     (safe && !tool.is_empty()).then_some((tool, member))
 }
 
-/// Splits a join code (`<url>#<key>`) into the server's url (no trailing
-/// slash, no path) and the key. `None` when it is not one.
+/// The path an invite link opens on the team server: `<url>/join#<key>`.
+pub const JOIN_PATH: &str = "/join";
+
+/// The invite link for a member: `<url>/join#<key>`. The key stays after
+/// `#`, so a browser never sends it to the server.
+pub fn invite_link(url: &str, key: &str) -> String {
+    format!("{}{JOIN_PATH}#{key}", url.trim().trim_end_matches('/'))
+}
+
+/// Splits an invite link (`<url>/join#<key>`, or the older `<url>#<key>`)
+/// into the server's url (no trailing slash, no `/join`) and the key.
+/// `None` when it is not one.
 pub fn split_join_code(code: &str) -> Option<(String, String)> {
     let (url, key) = code.trim().split_once('#')?;
     let key = key.trim();
     if !is_team_key(key) {
         return None;
     }
-    Some((
-        url.trim().trim_end_matches('/').to_string(),
-        key.to_string(),
-    ))
+    let url = url.trim().trim_end_matches('/');
+    let url = url
+        .strip_suffix(JOIN_PATH)
+        .unwrap_or(url)
+        .trim_end_matches('/');
+    Some((url.to_string(), key.to_string()))
 }
 
 /// The shape of a member key: `wlt_` and 64 hex digits.
@@ -255,6 +267,14 @@ mod tests {
         assert_eq!(
             split_join_code(&format!("https://wenlan.example.com/#{key}")),
             Some(("https://wenlan.example.com".into(), key.clone()))
+        );
+        assert_eq!(
+            split_join_code(&invite_link("https://wenlan.example.com/", &key)),
+            Some(("https://wenlan.example.com".into(), key.clone()))
+        );
+        assert_eq!(
+            invite_link("https://wenlan.example.com", &key),
+            format!("https://wenlan.example.com/join#{key}")
         );
         assert_eq!(split_join_code("https://wenlan.example.com"), None);
         assert_eq!(split_join_code("https://x#wlt_short"), None);

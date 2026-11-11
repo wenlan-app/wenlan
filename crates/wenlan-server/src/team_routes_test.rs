@@ -113,10 +113,18 @@ fn version_text(page: &str, member: &str, body: &str) -> String {
 }
 
 #[tokio::test]
-async fn nothing_but_health_answers_without_a_member_key() {
+async fn only_health_and_the_join_page_answer_without_a_member_key() {
     let f = fixture();
     let (status, _) = call(&f.state, Method::GET, "/health", None, vec![]).await;
     assert_eq!(status, StatusCode::OK);
+    // An invite link opened in a browser: the team's name and what to do,
+    // never anything else of the team.
+    team::rename_team(&f.state.team_path, "Acme <b>").unwrap();
+    let (status, body) = call(&f.state, Method::GET, "/join", None, vec![]).await;
+    assert_eq!(status, StatusCode::OK);
+    let page = String::from_utf8(body.to_vec()).unwrap();
+    assert!(page.contains("Join Acme &lt;b&gt; on Wenlan"), "{page}");
+    assert!(!page.contains("Amy") && !page.contains("Design"));
     for uri in [
         "/team/v1/me",
         "/team/v1/spaces/Design/files",
