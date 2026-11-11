@@ -8,7 +8,7 @@ const items = ["Sign the Windows builds", "Record this week's update video", "Le
 
 function withBrief() {
   const fixture = createSpaceProjectFixture();
-  return { ...fixture, spaceBriefs: { Wenlan: { summary: "The trust fixes are all merged.", handed_off_at: Math.floor(Date.now() / 1000) - 3 * 3600, active: items.map((line, i) => ({ id: `item-${i}`, line, raw: line })) } } };
+  return { ...fixture, spaceBriefs: { Wenlan: { summary: "The trust fixes are all merged.", handed_off_at: Math.floor(Date.now() / 1000) - 3 * 3600, active: items.map((line, i) => ({ id: `item-${i}`, line, raw: false })) } } };
 }
 
 test("UX-SPACE-1 a Space opens on its Brief above its pages, with no tabs", async ({ page }) => {
