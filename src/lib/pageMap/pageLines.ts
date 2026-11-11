@@ -168,19 +168,8 @@ export function withPageLines(map: PageMap | undefined, options: PageLinesOption
       ),
     );
   });
-  for (const id of deep) {
-    if (options.open.has(id) || hidden.has(id) || closed.has(id)) continue;
-    out.push(
-      box(
-        `${MORE_PREFIX}${id}`,
-        `${PAGE_LINE_PREFIX}${id}`,
-        base + outline.findIndex((l) => l.id === id) + 0.5,
-        "outline",
-        `${options.pageId}#more`,
-        options.showRestLabel,
-      ),
-    );
-  }
+  // A closed heading (shut by depth or by the person) shows only its toggle:
+  // no "show the rest" box, which would only open it one level too.
   for (const [parent, items] of itemsOf) {
     if (parent === null || options.open.has(parent) || items.length <= FOLD_OVER) continue;
     if (deep.has(parent) || hidden.has(parent) || closed.has(parent)) continue;
@@ -261,4 +250,21 @@ export function withinLine(map: PageMap | undefined, focusId: string, lineId: st
 export function lineIdOf(id: string): string | null {
   if (!isPageLine(id) || id === PAGE_LINE_ROOT) return null;
   return moreFor(id) ?? id.slice(PAGE_LINE_PREFIX.length);
+}
+
+/** Each page line's level under the page: 1 for a line hanging off the page. */
+export function lineDepths(map: PageMap | undefined): Map<string, number> {
+  return depths(map?.outline ?? []);
+}
+
+/** The headings a page line hangs on, nearest first. */
+export function lineAncestors(map: PageMap | undefined, id: string): string[] {
+  const byId = new Map((map?.outline ?? []).map((l) => [l.id, l]));
+  const out: string[] = [];
+  let at = byId.get(id)?.parent_id ?? null;
+  while (at !== null && !out.includes(at)) {
+    out.push(at);
+    at = byId.get(at)?.parent_id ?? null;
+  }
+  return out;
 }
