@@ -42,7 +42,7 @@ I started Wenlan because my notes, documents, and AI chats were scattered, and k
 
 **Personal:** download the desktop app and use it on your own.
 
-**Teams (coming soon):** a self-hosted Wenlan server everyone connects to, with view-only or edit access for each person.
+**Teams (in the next release):** a self-hosted Wenlan server everyone connects to, with view-only or edit access for each person.
 
 - **Keeps itself up to date.** Your AI tools save what you decide in chats as memories and fold them into pages. When a source changes, the pages that rely on it get updated.
 - **No plugins, no setup.** **Connect all** in Settings connects your AI tools in one click. No plugins to find or update, and no API keys.

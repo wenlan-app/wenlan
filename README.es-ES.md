@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=b66a203afda850f7cc27bcd78b1a889129da9d730c5dfe5a7a9d1a68ef713578 -->
+<!-- README_SYNC: source=README.md sha256=ec1bb96d7ce23c02c13d7923b8173ecce27a71dc0db0ba6b6251ced99b5f5796 -->
 
 <p align="center">
   <picture>
@@ -44,7 +44,7 @@ Empecé Wenlan porque mis notas, documentos y chats de IA estaban dispersos, y e
 
 **Personal:** descarga la app de escritorio y úsala por tu cuenta.
 
-**Equipos (próximamente):** un servidor de Wenlan autoalojado al que todos se conectan, con acceso de solo lectura o de edición para cada persona.
+**Equipos (en la próxima versión):** un servidor de Wenlan autoalojado al que todos se conectan, con acceso de solo lectura o de edición para cada persona.
 
 - **Se mantiene al día sola.** Tus herramientas de IA guardan lo que decides en los chats como memorias y lo integran en páginas. Cuando cambia una fuente, las páginas que dependen de ella se actualizan.
 - **Sin plugins ni configuración.** **Connect all** en los ajustes conecta tus herramientas de IA con un clic. Sin plugins que buscar o actualizar, y sin claves de API.
