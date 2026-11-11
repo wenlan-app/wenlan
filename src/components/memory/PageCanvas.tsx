@@ -77,8 +77,8 @@ import {
 import { hopBack, popHop, pushHop, setPendingJump } from "../../lib/pageMap/doorTrail";
 import { mixOver, useGraphPalette } from "../../lib/graph/palette";
 import { applyOutlineEdit, editableText, type MovePlace, type OutlineEdit } from "../../lib/pageMap/outlineEdits";
-import CanvasNode, { type CanvasNodeData } from "./canvas/CanvasNode";
-import SpineEdge from "./canvas/SpineEdge";
+import CanvasNode, { DIMMED_OPACITY, underlineInk, type CanvasNodeData } from "./canvas/CanvasNode";
+import SpineEdge, { SAME_PAGE_MARGIN } from "./canvas/SpineEdge";
 import "./canvas/pageCanvasApply.css";
 
 interface PageCanvasProps {
@@ -286,9 +286,30 @@ export function strokeCenterY(v: { depth: number; y: number; height: number }): 
   return v.y + v.height / 2 - 1 - underlineThickness(v.depth) / 2;
 }
 
-/** Where an edge lands on an underline, it is drawn as thick as that underline. */
-function withLineStroke(look: Partial<Edge>, width: number | null): Partial<Edge> {
-  return width === null ? look : { ...look, style: { ...look.style, strokeWidth: width } };
+/**
+ * Where an edge lands on an underline it is drawn as thick, as opaque and in
+ * the same ink as that underline, so the two read as one line.
+ */
+export function withLineStroke(
+  look: Partial<Edge>,
+  line: { depth: number } | null,
+  ink: string | undefined,
+  surface: string,
+  dimmed: boolean,
+): Partial<Edge> {
+  if (!line) return look;
+  const style = { ...look.style, strokeWidth: underlineThickness(line.depth) };
+  if (ink) style.stroke = underlineInk(ink, surface);
+  style.opacity = dimmed ? DIMMED_OPACITY : undefined;
+  return { ...look, style };
+}
+
+/** The underline is an inset shadow inside the node's 1px border: it starts and ends one px in. */
+const UNDERLINE_INSET = 1;
+
+/** X where a connector meets the start of an underlined line's stroke. */
+export function strokeStartX(v: { x: number; width: number }): number {
+  return v.x - v.width / 2 + UNDERLINE_INSET;
 }
 
 type Placed = { node: { id: string }; depth: number; x: number; y: number; width: number; height: number };
@@ -299,13 +320,13 @@ type Placed = { node: { id: string }; depth: number; x: number; y: number; width
  * the line leaves from the end of the parent's stroke and runs into the start
  * of the child's.
  */
-function treeEnds(from: Placed, to: Placed) {
+export function treeEnds(from: Placed, to: Placed) {
   const fromOnStroke = onStroke(from);
   const toOnStroke = onStroke(to);
   return {
-    fromX: from.x + (fromOnStroke ? from.width / 2 : 0),
+    fromX: fromOnStroke ? from.x + from.width / 2 - UNDERLINE_INSET : from.x,
     fromY: from.y + (fromOnStroke ? from.height / 2 : 0),
-    toX: to.x - (toOnStroke || moreFor(to.node.id) !== null ? to.width / 2 : 0),
+    toX: toOnStroke ? strokeStartX(to) : to.x - (moreFor(to.node.id) !== null ? to.width / 2 : 0),
     toY: to.y + (toOnStroke ? to.height / 2 : 0),
   };
 }
@@ -456,9 +477,11 @@ function PageCanvasInner({
   const [openDoors, setOpenDoors] = useState<Set<string>>(() => readOpenHeadings(doorsKey));
   useEffect(() => setOpenDoors(readOpenHeadings(doorsKey)), [doorsKey]);
   // Headings of an opened page whose items show, and its "show the rest".
-  // Looking inside another page is for now; nothing here is remembered.
-  const [foreignOpen, setForeignOpen] = useState<Set<string>>(new Set());
-  useEffect(() => setForeignOpen(new Set()), [pageId]);
+  // Remembered per centre page next to the open doors, so coming back from a
+  // hop finds the same headings open.
+  const foreignKey = `wenlan.pageMap.foreign.${pageId}`;
+  const [foreignOpen, setForeignOpen] = useState<Set<string>>(() => readOpenHeadings(foreignKey));
+  useEffect(() => setForeignOpen(readOpenHeadings(foreignKey)), [foreignKey]);
   const [helpOpen, setHelpOpen] = useState(false);
   const [ideaDraft, setIdeaDraft] = useState("");
   const [ideaEntryOpen, setIdeaEntryOpen] = useState(false);
@@ -1577,9 +1600,10 @@ function PageCanvasInner({
       const next = new Set(current);
       if (next.has(id)) next.delete(id);
       else next.add(id);
+      rememberHeadings(foreignKey, next);
       return next;
     });
-  }, []);
+  }, [foreignKey]);
   // A link back to the centre: the camera goes to the root. It never expands.
   // The camera is read through a ref so the boxes' handlers keep their identity.
   const cameraRef = useRef({ setCenter, getZoom });
@@ -2648,7 +2672,7 @@ function PageCanvasInner({
                 // A parent that is itself a line starts its children's spine
                 // from its own stroke, not from the box edge beneath it.
                 fromY: onStroke(from) ? strokeCenterY(from) : from.y + from.height / 2,
-                toX: v.x - v.width / 2,
+                toX: onStroke(v) ? strokeStartX(v) : v.x - v.width / 2,
                 // Text on a stroke is met at the start of its stroke, not at
                 // the middle of the words, or the guide line stops short of it.
                 toY: onStroke(v) ? strokeCenterY(v) : v.y,
@@ -2662,7 +2686,10 @@ function PageCanvasInner({
         // one flat ink they were the faintest thing on a map they hold together.
         ...withLineStroke(
           branchLook(spineLook(v.depth), inkOf(v.node.id), v.depth, isDimmed(v.node.id, false), palette.surface),
-          layoutMode === "indent" && onStroke(v) ? underlineThickness(v.depth) : null,
+          layoutMode !== "radial" && onStroke(v) ? v : null,
+          inkOf(v.node.id),
+          palette.surface,
+          isDimmed(v.node.id, false),
         ),
       });
     }
@@ -2694,12 +2721,28 @@ function PageCanvasInner({
     for (const [id, meta] of boxMeta) {
       if (meta.kind !== "dup" || !meta.doorId || !linked.has(meta.doorId)) continue;
       if (!rendered.has(id) || !rendered.has(meta.doorId)) continue;
+      const a = byId.get(meta.doorId);
+      const b = byId.get(id);
+      if (!a || !b) continue;
+      // Out past the right-most box between the two ends, so the arc never
+      // cuts through the tree it sits beside.
+      const [top, bottom] = a.y <= b.y ? [a.y, b.y] : [b.y, a.y];
+      const outerX =
+        Math.max(...views.filter((v) => v.y >= top && v.y <= bottom).map((v) => v.x + v.width / 2)) + SAME_PAGE_MARGIN;
       edges.push({
         id: `same-${id}`,
+        type: "spine",
         source: meta.doorId,
         sourceHandle: "anchor",
         target: id,
         label: t("pageCanvas.samePage"),
+        data: {
+          outer: {
+            from: { x: a.x + a.width / 2, y: a.y },
+            to: { x: b.x + b.width / 2, y: b.y },
+            x: outerX,
+          },
+        },
         style: { stroke: palette.bridge, strokeWidth: 1.4, strokeDasharray: "5 4" },
       });
     }

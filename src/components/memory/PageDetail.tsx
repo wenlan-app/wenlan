@@ -157,6 +157,8 @@ interface PageDetailProps {
   onPageClick?: (pageId: string) => void;
   onEntityClick?: (entityId: string) => void;
   onOpenGraph?: (pageId: string) => void;
+  /** Make this tab show another page, instead of opening it in a new tab. */
+  onReplacePage?: (pageId: string) => void;
   onOpenReview?: (itemId?: string) => void;
   onDismissAttachedPageNotice?: () => void;
   onPageLoaded?: (page: Pick<Page, "id" | "status" | "title">) => void;
@@ -319,6 +321,7 @@ export default function PageDetail({
   onPageClick,
   onEntityClick,
   onOpenGraph,
+  onReplacePage,
   onOpenReview,
   onDismissAttachedPageNotice,
   onPageLoaded,
@@ -3400,7 +3403,7 @@ export default function PageDetail({
           </div>}
           {!pdfPreviewOpen && (showCanvas ? <PageCanvas key={pageId} pageId={pageId} pageTitle={page.title} labelOverrides={labelOverrides}
             onMemoryClick={onMemoryClick} onPageClick={onPageClick} onEntityClick={onEntityClick} onSectionClick={showPageLine} pageEditDirty={editDirty}
-            onOpenPageMap={onPageClick ? (id) => { openPageMapOnVisit(queryClient, id, exampleWiki); onPageClick(id); } : undefined}
+            onOpenPageMap={onPageClick ? (id) => { openPageMapOnVisit(queryClient, id, exampleWiki); (onReplacePage ?? onPageClick)(id); } : undefined}
             onShowBigMap={onOpenGraph ? () => onOpenGraph(pageId) : undefined} />
             : <DetailInfoContent className="note-inspector-info">
           {pageHasTwoLengths && <SummaryViewSwitch

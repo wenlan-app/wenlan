@@ -4,7 +4,8 @@ import { render, screen, waitFor, cleanup, fireEvent } from "@testing-library/re
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { PageMap, PageMapNode, PageOutlineNode } from "../../lib/tauri";
-import PageCanvas, { strokeCenterY } from "./PageCanvas";
+import PageCanvas, { strokeCenterY, strokeStartX, treeEnds, withLineStroke } from "./PageCanvas";
+import { DIMMED_OPACITY, underlineInk } from "./canvas/CanvasNode";
 import { clearTrail, hopBack, takePendingJump } from "../../lib/pageMap/doorTrail";
 
 // React Flow measures its container, and jsdom reports 0x0 — it would render
@@ -41,6 +42,7 @@ vi.mock("@xyflow/react", async () => {
       <div
         data-testid="react-flow"
         data-edge-ids={edges.map((e: any) => e.id).join(",")}
+        data-edge-outer={JSON.stringify(edges.filter((e: any) => e.data?.outer).map((e: any) => e.data.outer))}
         data-nodes-draggable={String(nodesDraggable)}
         // The pointer model is a set of props, so the props are what a test can
         // check. Whether the rubber band actually draws is React Flow's job.
@@ -1791,10 +1793,10 @@ describe("PageCanvas doors", () => {
   });
   const empty = (id: string): PageMap => ({ ...makeMap({ page_id: id, nodes: [], edges: [] }), outline: [] });
 
-  async function setup(extra: Partial<React.ComponentProps<typeof PageCanvas>> = {}, pageId = "p1", title = "Page One") {
+  async function setup(extra: Partial<React.ComponentProps<typeof PageCanvas>> = {}, pageId = "p1", title = "Page One", centreMap?: PageMap) {
     const { getPageMap } = await tauri();
     (getPageMap as ReturnType<typeof vi.fn>).mockImplementation(async (id: string) =>
-      id === "p1" ? centre() : id === "p2" ? pomodoro() : empty(id),
+      id === "p1" ? (centreMap ?? centre()) : id === "p2" ? pomodoro() : empty(id),
     );
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     return {
@@ -1922,6 +1924,59 @@ describe("PageCanvas doors", () => {
     await screen.findByText("Why it works");
   });
 
+  it("UX-VIEW-9 routes the same-page line outside the tree, past every box between its ends", async () => {
+    const { user } = await setup();
+    await screen.findByRole("button", { name: "Pomodoro ↗" });
+    await user.click(screen.getByLabelText("select outline:h:m#1"));
+    const outer = () => JSON.parse(screen.getByTestId("react-flow").getAttribute("data-edge-outer") ?? "[]");
+    await waitFor(() => expect(outer()).toHaveLength(1));
+    const [{ from, to, x }] = outer();
+    const [top, bottom] = [Math.min(from.y, to.y), Math.max(from.y, to.y)];
+    const rights = screen
+      .getAllByTestId("rf-node")
+      .map((el) => ({ right: Number(el.dataset.x) + Number(el.dataset.w), y: Number(el.dataset.y) + Number(el.dataset.h) / 2 }))
+      .filter((b) => b.y >= top && b.y <= bottom)
+      .map((b) => b.right);
+    expect(rights.length).toBeGreaterThan(2);
+    expect(x).toBe(Math.max(...rights) + 24);
+  });
+
+  it("UX-VIEW-9 makes a line with one link inside its text the door, not a second row", async () => {
+    const map = centre();
+    map.outline = [
+      ...map.outline!,
+      { id: "h:o#2", parent_id: "h:o", kind: "item", label: "參考 Focus", text: "參考 Focus", line: 9, links: [link("p4", "Focus")] },
+    ];
+    await setup({}, "p1", "Page One", map);
+    await screen.findByText("參考 Focus");
+    const flow = screen.getByTestId("react-flow");
+    expect(flow.querySelector('[data-node-id="outline:h:o#2"]')).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Open “Focus” here" })).toBeTruthy();
+    expect(flow.querySelector('[data-node-id^="outline:door:h:o#2"]')).toBeNull();
+  });
+
+  it("UX-VIEW-9 remembers which headings of an opened page were open, per centre page", async () => {
+    const first = await setup();
+    await first.user.click(await screen.findByRole("button", { name: "Open “Pomodoro” here" }));
+    await first.user.click(await screen.findByRole("button", { name: "Show what is under Why it works" }));
+    await screen.findByText("Short bursts");
+    first.unmount();
+    await setup();
+    await screen.findByText("Short bursts");
+  });
+
+  it("UX-VIEW-9 keeps rendering when storage is blocked", async () => {
+    const spy = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    try {
+      await setup();
+      await screen.findByText("Method");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("UX-VIEW-9 keeps what a door grew when levels are shown with Option-digit", async () => {
     const { user } = await setup();
     await user.click(await screen.findByRole("button", { name: "Open “Pomodoro” here" }));
@@ -1959,5 +2014,30 @@ describe("strokeCenterY", () => {
     const box = { y: 100, height: 30 };
     expect(strokeCenterY({ ...box, depth: 2 })).toBe(100 + 15 - 1 - 0.75);
     expect(strokeCenterY({ ...box, depth: 3 })).toBe(100 + 15 - 1 - 0.5);
+  });
+});
+
+describe("where a connector meets an underline", () => {
+  const parent = { node: { id: "outline:h" }, depth: 2, x: 100, y: 0, width: 80, height: 30 };
+  const child = { node: { id: "outline:h#1" }, depth: 3, x: 300, y: 50, width: 120, height: 30 };
+
+  it("UX-VIEW-8 ends exactly where the underline starts, one px inside the border", () => {
+    // The box's left edge is x 240; its underline is an inset shadow inside a 1px border.
+    expect(strokeStartX(child)).toBe(241);
+    expect(treeEnds(parent, child).toX).toBe(241);
+    // And it leaves the parent where the parent's underline ends.
+    expect(treeEnds(parent, child).fromX).toBe(100 + 40 - 1);
+  });
+
+  it("UX-VIEW-8 draws the connector in the underline's own ink, as thick and as opaque", () => {
+    const surface = "#202430";
+    const ink = "#8fb3ea";
+    const look = withLineStroke({ style: { stroke: "red", strokeWidth: 1 } }, child, ink, surface, false);
+    expect(look.style?.stroke).toBe(underlineInk(ink, surface));
+    expect(look.style?.strokeWidth).toBe(1);
+    expect(look.style?.opacity).toBeUndefined();
+    expect(withLineStroke({}, { depth: 2 }, ink, surface, true).style).toMatchObject({ strokeWidth: 1.5, opacity: DIMMED_OPACITY });
+    // A box that is not an underlined line keeps its own look.
+    expect(withLineStroke({ style: { stroke: "red" } }, null, ink, surface, false).style?.stroke).toBe("red");
   });
 });

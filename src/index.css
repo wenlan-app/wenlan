@@ -440,8 +440,8 @@ html[data-theme="dark"] {
   --mem-control-border: #70788C;
   --mem-hover: rgba(143, 179, 234, 0.09);
   --mem-hover-strong: rgba(143, 179, 234, 0.15);
-  --mem-linked-band: rgba(111, 143, 214, 0.14);
-  --mem-linked-band-edge: rgba(143, 168, 224, 0.5);
+  --mem-linked-band: rgba(111, 143, 214, 0.32);
+  --mem-linked-band-edge: rgba(143, 168, 224, 0.75);
   --mem-confirm-bg: rgba(189, 137, 103, 0.14);
   --mem-indigo-bg: rgba(169, 174, 242, 0.13);
   --mem-distilled-border: rgba(169, 174, 242, 0.36);
@@ -567,8 +567,8 @@ html[data-theme="light"] {
   --mem-control-border: #858D9C;
   --mem-hover: rgba(101, 116, 139, 0.08);
   --mem-hover-strong: rgba(101, 116, 139, 0.14);
-  --mem-linked-band: rgba(75, 111, 214, 0.1);
-  --mem-linked-band-edge: rgba(75, 111, 214, 0.45);
+  --mem-linked-band: rgba(75, 111, 214, 0.16);
+  --mem-linked-band-edge: rgba(75, 111, 214, 0.6);
   --mem-confirm-bg: rgba(180, 106, 58, 0.09);
   --mem-indigo-bg: rgba(94, 88, 200, 0.08);
   --mem-distilled-border: rgba(94, 88, 200, 0.28);

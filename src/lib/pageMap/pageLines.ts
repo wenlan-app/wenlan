@@ -158,9 +158,12 @@ interface LinkSlot {
   boxId: string;
   link: PageOutlineLink & { page_id: string };
   owner: PageOutlineNode;
-  /** The heading it hangs under; null for a line hanging off the page. */
+  /**
+   * The line whose box the extra door hangs under: the heading for a paragraph
+   * link, the item itself when it holds several links.
+   */
   parentLineId: string | null;
-  /** The item's own box is the door. */
+  /** The item holds this one link, so its own box is the door and keeps its full text. */
   wholeLine: boolean;
   kind: "door" | "dup" | "back";
   doorId?: string;
@@ -170,9 +173,12 @@ function linkSlots(outline: readonly PageOutlineNode[], centreId: string): LinkS
   const out: LinkSlot[] = [];
   const first = new Map<string, string>();
   for (const line of outline) {
+    const resolved = (line.links ?? []).filter((l) => l.page_id).length;
     (line.links ?? []).forEach((link, i) => {
       if (!link.page_id) return;
-      const wholeLine = line.kind === "item" && link.whole_line === true;
+      // One resolved link in an item: the line is the door. Several: the line
+      // stays a line and each link hangs under it.
+      const wholeLine = line.kind === "item" && resolved === 1;
       const boxId = wholeLine ? `${PAGE_LINE_PREFIX}${line.id}` : `${DOOR_EXTRA}${line.id}:${i}`;
       let kind: LinkSlot["kind"] = "door";
       let doorId: string | undefined;
@@ -185,7 +191,7 @@ function linkSlots(outline: readonly PageOutlineNode[], centreId: string): LinkS
         boxId,
         link: link as LinkSlot["link"],
         owner: line,
-        parentLineId: line.kind === "heading" ? line.id : line.parent_id,
+        parentLineId: line.id,
         wholeLine,
         kind,
         doorId,
@@ -283,8 +289,15 @@ export function withPageLinesDetailed(
   const doors = options.doors;
   const slots = doors ? linkSlots(outline, doors.centreId) : [];
   const wholeLineSlots = new Map(slots.filter((slot) => slot.wholeLine).map((slot) => [slot.boxId, slot]));
-  const slotLabel = (slot: LinkSlot) =>
-    slot.kind === "back" ? `↩ ${doors?.backLabel ?? ""}` : slot.kind === "dup" ? `${slot.link.title} ↗` : slot.link.title;
+  // A line that is its own door keeps its full text; a link hanging under a
+  // line shows the page's title.
+  const slotLabel = (slot: LinkSlot) => {
+    const text = slot.wholeLine && slot.link.whole_line !== true ? slot.owner.label : slot.link.title;
+    if (slot.kind === "back") {
+      return slot.wholeLine && text !== slot.link.title ? `${text} ↩` : `↩ ${doors?.backLabel ?? ""}`;
+    }
+    return slot.kind === "dup" ? `${text} ↗` : text;
+  };
   const slotMeta = (slot: LinkSlot): BoxMeta => ({
     kind: slot.kind,
     ownerLineId: slot.owner.id,
@@ -381,7 +394,8 @@ function addDoors(out: PageMapNode[], meta: Map<string, BoxMeta>, c: DoorContext
     const fo = fmap.outline ?? [];
     const prefix = `${DOOR_IN}${slot.boxId.slice(PAGE_LINE_PREFIX.length)}|`;
     const ownerLineId = slot.owner.id;
-    const ghost = (parentBox: string, link: PageOutlineLink, rank: number, tag: string) => {
+    // `text` is the line's own words, kept whole when it holds the link.
+    const ghost = (parentBox: string, link: PageOutlineLink, rank: number, tag: string, text?: string) => {
       if (!link.page_id) return;
       const back = link.page_id === doors.centreId;
       const id = `${prefix}${tag}`;
@@ -393,7 +407,10 @@ function addDoors(out: PageMapNode[], meta: Map<string, BoxMeta>, c: DoorContext
         space: link.space,
         doorId: slot.boxId,
       });
-      out.push(box(id, parentBox, rank, "outline", `${fmap.page_id}#link`, back ? `↩ ${doors.backLabel}` : `${link.title} →`));
+      const label = back
+        ? text ? `${text} ↩` : `↩ ${doors.backLabel}`
+        : `${text ?? link.title} →`;
+      out.push(box(id, parentBox, rank, "outline", `${fmap.page_id}#link`, label));
     };
     const itemsBy = new Map<string, PageOutlineNode[]>();
     for (const line of fo) {
@@ -415,27 +432,30 @@ function addDoors(out: PageMapNode[], meta: Map<string, BoxMeta>, c: DoorContext
         foreign: { pageId: fmap.page_id, line, parent: parentLine, hasItems: items.length > 0 },
       });
       out.push(box(hid, line.parent_id ? `${prefix}${line.parent_id}` : slot.boxId, index, "outline", `${fmap.page_id}#${line.anchor ?? line.id}`, line.label));
-      (line.links ?? []).forEach((link, i) => ghost(hid, link, index + 0.7 + i * 0.001, `${line.id}:g${i}`));
+      // Links written in the heading's own paragraph come after its items.
+      const lastChildAt = Math.max(index, ...fo.map((l, at) => (l.parent_id === line.id ? at : -1)));
+      (line.links ?? []).forEach((link, i) => ghost(hid, link, lastChildAt + 0.7 + i * 0.001, `${line.id}:g${i}`));
       if (!doors.foreignOpen.has(hid)) return;
       const restOpen = doors.foreignOpen.has(`${hid}#all`);
       const shownItems = foreignItemsShown(items, restOpen);
-      let extra = 0;
       for (const item of shownItems) {
         const at = fo.indexOf(item);
-        const whole = (item.links ?? []).find((l) => l.whole_line && l.page_id);
-        if (whole) ghost(hid, whole, at, item.id);
-        else {
-          const iid = `${prefix}${item.id}`;
-          meta.set(iid, {
-            kind: "foreignItem",
-            ownerLineId,
-            title: item.label,
-            doorId: slot.boxId,
-            foreign: { pageId: fmap.page_id, line: item, parent: line, hasItems: false },
-          });
-          out.push(box(iid, hid, at, "outline", `${fmap.page_id}#${item.id}`, item.label));
-          for (const link of item.links ?? []) ghost(hid, link, index + 0.8 + extra++ * 0.001, `${item.id}:g${extra}`);
+        const reached = (item.links ?? []).filter((l) => l.page_id);
+        if (reached.length === 1) {
+          // The line is the link: it keeps its words and reads as a grey link.
+          ghost(hid, reached[0], at, item.id, reached[0].whole_line ? undefined : item.label);
+          continue;
         }
+        const iid = `${prefix}${item.id}`;
+        meta.set(iid, {
+          kind: "foreignItem",
+          ownerLineId,
+          title: item.label,
+          doorId: slot.boxId,
+          foreign: { pageId: fmap.page_id, line: item, parent: line, hasItems: false },
+        });
+        out.push(box(iid, hid, at, "outline", `${fmap.page_id}#${item.id}`, item.label));
+        reached.forEach((link, k) => ghost(iid, link, at + k * 0.001, `${item.id}:g${k}`));
       }
       if (shownItems.length < items.length) {
         const mid = `${prefix}more:${line.id}`;

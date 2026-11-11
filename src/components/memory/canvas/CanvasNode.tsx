@@ -88,6 +88,13 @@ const CENTER_HANDLE = {
 
 // Which side of the box the grow dot sits on, from the direction the box faces.
 // Quadrants clockwise from three o'clock, because screen y grows downward.
+/** The ink of the underline a page line is drawn on, and of the connector that meets it. */
+export function underlineInk(slotColor: string, surface: string): string {
+  return mixOver(slotColor, surface, 0.7);
+}
+/** Opacity of a line that another branch's focus has pushed back. */
+export const DIMMED_OPACITY = 0.28;
+
 const SIDES = [Position.Right, Position.Bottom, Position.Left, Position.Top];
 
 /**
@@ -158,7 +165,7 @@ function CanvasNode({
                 branch ? slotColor : mixOver(slotColor, palette.surface, 0.5)
               }`,
         backgroundColor: data.link || underline ? "transparent" : fill,
-        opacity: data.dimmed ? 0.28 : dangling ? 0.45 : suggested ? 0.75 : 1,
+        opacity: data.dimmed ? DIMMED_OPACITY : dangling ? 0.45 : suggested ? 0.75 : 1,
         transition: "opacity 160ms ease",
         // Selection has to be visible or the keyboard shortcuts have no
         // referent — "Delete removes the selected box" is meaningless if
@@ -168,7 +175,7 @@ function CanvasNode({
         boxShadow:
           [
             underline
-              ? `inset 0 -${depth <= 2 ? 1.5 : 1}px 0 ${mixOver(slotColor, palette.surface, 0.7)}`
+              ? `inset 0 -${depth <= 2 ? 1.5 : 1}px 0 ${underlineInk(slotColor, palette.surface)}`
               : null,
             selected ? `0 0 0 2px ${slotColor}` : null,
           ]

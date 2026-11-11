@@ -37,6 +37,22 @@ const BOW = 0.11;
  */
 const MAX_SAG = 24;
 
+/** Gap between the right-most box a "same page" arc passes and the arc, px. */
+export const SAME_PAGE_MARGIN = 24;
+
+/**
+ * An arc that leaves one box, bows out to `outerX` (right of the whole tree
+ * between its two ends) and comes back to the other. The control x is solved so
+ * the curve's outer apex lands exactly on `outerX`.
+ */
+export function outerArc(a: { x: number; y: number }, b: { x: number; y: number }, outerX: number) {
+  const c = (8 * outerX - (a.x + b.x)) / 6;
+  return {
+    path: `M${a.x},${a.y} C${c},${a.y} ${c},${b.y} ${b.x},${b.y}`,
+    apex: { x: outerX, y: (a.y + b.y) / 2 },
+  };
+}
+
 function SpineEdge({
   sourceX,
   sourceY,
@@ -45,6 +61,7 @@ function SpineEdge({
   style,
   markerEnd,
   data,
+  label,
 }: EdgeProps) {
   // On the left-to-right tree the line leaves its parent sideways and arrives
   // at its child sideways, so siblings fan out like an outline's indents.
@@ -54,8 +71,28 @@ function SpineEdge({
         indent?: { fromX: number; fromY: number; toX: number; toY?: number };
         /** Where the tree line meets the boxes, when not at their centers. */
         ends?: { fromX: number; fromY: number; toX: number; toY: number };
+        /** A "same page" arc outside the tree. */
+        outer?: { from: { x: number; y: number }; to: { x: number; y: number }; x: number };
       }
     | undefined;
+  if (shape?.outer) {
+    const arc = outerArc(shape.outer.from, shape.outer.to, shape.outer.x);
+    const text = typeof label === "string" ? label : "";
+    return (
+      <BaseEdge
+        path={arc.path}
+        style={style}
+        markerEnd={markerEnd}
+        label={label}
+        // The label starts at the apex and runs outward, clear of every box.
+        labelX={arc.apex.x + 8 + text.length * 3.2}
+        labelY={arc.apex.y}
+        labelStyle={{ fill: "var(--mem-text-tertiary)", fontSize: 11 }}
+        labelBgStyle={{ fill: "var(--mem-surface)" }}
+        labelBgPadding={[3, 2]}
+      />
+    );
+  }
   // On the indented outline a line drops from under the parent's first letter
   // and turns right into the child, as an outline's guide lines do.
   if (shape?.indent) {

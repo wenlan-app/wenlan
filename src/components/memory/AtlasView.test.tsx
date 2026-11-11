@@ -410,6 +410,28 @@ describe("AtlasView", () => {
     expect(JSON.parse(window.localStorage.getItem("atlas.layers")!)).toEqual({ page: true, entity: true, memory: false });
   });
 
+  it("UX-VIEW-9 centres on a handed-off page and picks it, so its name and links show and the Mind map action is offered", async () => {
+    const center = makePage({ id: "center", title: "Center page" });
+    const direct = makePage({ id: "direct", title: "Direct page" });
+    mockGetKnowledgeGraph.mockResolvedValue({
+      entities: [],
+      relations: [],
+      memories: [],
+      memory_links: [],
+      pages: [center, direct],
+      page_links: [{ from: { kind: "page", id: "center" }, to: { kind: "page", id: "direct" }, link_type: "wikilink" }],
+    });
+    const onOpenMindMap = vi.fn();
+    renderWithQuery(<AtlasView focusPageId="center" onOpenMindMap={onOpenMindMap} />);
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
+    expect(capturedSigmaInstances[0].camera.setState).toHaveBeenLastCalledWith({ x: 0.42, y: 0.24, ratio: 0.4 });
+
+    // Picked, not merely framed: the inspector is open on it.
+    const action = await screen.findByRole("button", { name: new RegExp(i18n.t("atlas.openMindMap")) });
+    fireEvent.click(action);
+    expect(onOpenMindMap).toHaveBeenCalledWith("center");
+  });
+
   it("keeps a temporary page layer onscreen without writing an invalid all-off preference", async () => {
     const savedLayers = JSON.stringify({ page: false, entity: true, memory: false });
     window.localStorage.setItem("atlas.layers", savedLayers);

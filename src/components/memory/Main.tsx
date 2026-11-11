@@ -748,6 +748,17 @@ export default function Main({
     }, onRefused, !isNoteView(next) && next.kind !== "pages" && next.kind !== "home");
   };
 
+  // The map re-centres in place: the current tab becomes the target page
+  // instead of a new tab opening beside it.
+  const replacePageInTab = (pageId: string) => {
+    const next: View = { kind: "page", pageId };
+    if (movingNoteRef.current || sameDestination(viewRef.current, next)) return;
+    afterNavigationGuards((source) => {
+      if (isNoteView(source) && isNoteView(next)) updateNoteTabs(promoteNoteTab(noteTabsRef.current, source, next));
+      updateHistory([...viewHistoryRef.current, source], []);
+      showView(next);
+    });
+  };
   const closeNoteTab = (tab: NoteTab) => {
     if (movingNoteRef.current) return;
     const active = isNoteView(viewRef.current) && matchesNote(tab, viewRef.current);
@@ -1881,6 +1892,7 @@ export default function Main({
               onOpenGraph={(pageId) => navigateTo({ kind: "graph", focusPageId: pageId })}
               onPageLoaded={handlePageLoaded}
               onPageClick={(id) => navigateTo({ kind: "page", pageId: id })}
+              onReplacePage={replacePageInTab}
               onEntityClick={handleEntityClick}
               onSavePendingChange={reportPageSaving}
               onOpenSettings={() => navigateTo({ kind: "settings", section: "general" })}
@@ -1945,7 +1957,7 @@ export default function Main({
                         : handleEntityClick(target.id)
                 }
                 onOpenMindMap={(pageId) => {
-                  openPageMapOnVisit(queryClient, pageId);
+                  openPageMapOnVisit(queryClient, pageId, exampleWiki);
                   navigateTo({ kind: "page", pageId });
                 }}
                 onBack={navigateBack}

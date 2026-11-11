@@ -59,6 +59,8 @@
 --mem-indigo-bg
 --mem-link
 --mem-link-hover
+--mem-linked-band
+--mem-linked-band-edge
 --mem-page-icon
 --mem-page-icon-hover
 --mem-popover

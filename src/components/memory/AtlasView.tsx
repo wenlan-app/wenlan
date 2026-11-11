@@ -468,6 +468,8 @@ export default function AtlasView({ onNodeClick, onOpenMindMap, focusEntityId, f
   const thingArrivalDoneRef = useRef(false);
   const overviewRef = useRef<AtlasViewpoint | null>(null);
   const openingRatioRef = useRef(1);
+  /** The handed-off page this view has already centred on and picked. */
+  const focusAppliedRef = useRef<string | null>(null);
   const focusNodeRef = useRef<(id: string) => void>(() => {});
   const returnToMapRef = useRef<() => void>(() => {});
   // A picked thing's zoom stop (UX-CHAT-5), and where the last paint put each
@@ -2418,8 +2420,25 @@ export default function AtlasView({ onNodeClick, onOpenMindMap, focusEntityId, f
     camera.on("updated", onCameraUpdated);
     // Entry framing is instantaneous. Entity overlays retain neighborhood
     // emphasis; page handoffs only move the camera in the whole graph.
-    if (!restored && effectiveFocusId && graph.hasNode(effectiveFocusId)) {
+    // A page handoff lands once per page, even on a rebuild that restored a
+    // saved view (a later fetch rebuilds the map; the restored camera then
+    // looked at wherever the first build left it, not at the page). The page
+    // is also picked, so its name shows and its links light, as a click does.
+    const handoff = !!focusPageId && !!effectiveFocusId && focusAppliedRef.current !== effectiveFocusId;
+    if (effectiveFocusId && graph.hasNode(effectiveFocusId) && (!restored || handoff)) {
       if (!focusPageId) hoverStateRef.current = hoverStateFor(graph, effectiveFocusId);
+      else if (handoff) {
+        focusAppliedRef.current = effectiveFocusId;
+        // Where the inspector docks beside the map it can be open at once. On
+        // a narrow window it would cover the whole map and the search, so the
+        // page is only centred and named there.
+        if (window.innerWidth > 980) {
+          if (!selectedRef.current) overviewRef.current = captureAtlasViewpoint(renderer, graph);
+          selectedRef.current = effectiveFocusId;
+          setSelectedId(effectiveFocusId);
+          setSelectedThing(null);
+        }
+      }
       const display = renderer.getNodeDisplayData(effectiveFocusId);
       // Page handoffs use the same camera zoom as a filter result. Other
       // nodes and connections stay in the graph, including distant groups.

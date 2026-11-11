@@ -116,7 +116,7 @@ function AtlasInspectorContents({
         {node.kind === "entity" ? t(`atlas.entityType.${node.entityType}`, { defaultValue: entityTypeLabel(node.entityType) }) : t(`reference.type.${node.kind}`)}
       </p>
       {onOpen && <button type="button" className="atlas-open-detail" onClick={onOpen}>{t("atlas.openDetails")}<ArrowRight size={14} aria-hidden="true" /></button>}
-      {onOpenMindMap && node.kind === "page" && <button type="button" className="atlas-open-detail" onClick={onOpenMindMap}>{t("atlas.openMindMap")}<ArrowRight size={14} aria-hidden="true" /></button>}
+      {onOpenMindMap && node.kind === "page" && <button type="button" className="atlas-open-mind-map" onClick={onOpenMindMap}>{t("atlas.openMindMap")}<ArrowRight size={14} aria-hidden="true" /></button>}
     </div>
     <h3 className="atlas-inspector-connections-heading">{t("atlas.connections")} <span>{neighbors.length}</span></h3>
     {neighbors.length > 12 && <input className="atlas-connection-filter" aria-label={t("atlas.filterConnections")} placeholder={t("atlas.filterConnections")} value={filter} onChange={(event) => changeFilter(event.target.value)} />}
