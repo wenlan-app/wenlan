@@ -46,6 +46,10 @@ pub struct Member {
     pub added_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub removed_at: Option<String>,
+    /// The Spaces everyone on the team has ([`TeamFile::everyone`]), filled
+    /// in when the list is read. Their own entry for a Space wins.
+    #[serde(skip)]
+    pub everyone: BTreeMap<String, TeamAccess>,
 }
 
 impl Member {
@@ -59,7 +63,10 @@ impl Member {
         if !self.is_active() {
             return None;
         }
-        self.spaces.get(space).copied()
+        self.spaces
+            .get(space)
+            .or_else(|| self.everyone.get(space))
+            .copied()
     }
 
     pub fn to_wire(&self) -> TeamMember {
@@ -72,11 +79,17 @@ impl Member {
         }
     }
 
+    /// Who they are and every Space they can use, their own and everyone's.
     pub fn me(&self) -> TeamMe {
+        let mut all = self.everyone.clone();
+        all.extend(self.spaces.clone());
         TeamMe {
             member_id: self.id.clone(),
             name: self.name.clone(),
-            spaces: self.space_list(),
+            spaces: all
+                .into_iter()
+                .map(|(space, access)| TeamSpaceAccess { space, access })
+                .collect(),
         }
     }
 
@@ -97,6 +110,10 @@ pub struct TeamFile {
     pub format: u32,
     #[serde(default)]
     pub members: Vec<Member>,
+    /// Spaces every member has, now and when added later (a team's
+    /// handbook or wiki), by name.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub everyone: BTreeMap<String, TeamAccess>,
 }
 
 fn format_one() -> u32 {
@@ -108,6 +125,7 @@ impl Default for TeamFile {
         Self {
             format: FORMAT,
             members: Vec::new(),
+            everyone: BTreeMap::new(),
         }
     }
 }
@@ -118,7 +136,7 @@ pub fn team_path() -> PathBuf {
 }
 
 pub fn read_team(path: &Path) -> Result<TeamFile, WenlanError> {
-    let file: TeamFile = match std::fs::read(path) {
+    let mut file: TeamFile = match std::fs::read(path) {
         Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| {
             WenlanError::Validation(format!("{} cannot be read: {error}", path.display()))
         })?,
@@ -131,6 +149,9 @@ pub fn read_team(path: &Path) -> Result<TeamFile, WenlanError> {
             path.display(),
             file.format
         )));
+    }
+    for member in &mut file.members {
+        member.everyone = file.everyone.clone();
     }
     Ok(file)
 }
@@ -208,15 +229,17 @@ pub fn add_member(
 ) -> Result<(Member, String), WenlanError> {
     let name = clean_name(name)?;
     let key = new_key();
-    let member = Member {
+    let mut member = Member {
         id: uuid::Uuid::new_v4().simple().to_string(),
         name,
         key_sha256: key_hash(&key),
         spaces: access_map(spaces),
         added_at: now(),
         removed_at: None,
+        everyone: BTreeMap::new(),
     };
     change_team(path, |file| {
+        member.everyone = file.everyone.clone();
         file.members.push(member.clone());
         Ok(())
     })?;
@@ -250,6 +273,26 @@ pub fn update_member(
             member.spaces = access_map(spaces);
         }
         Ok(member.clone())
+    })
+}
+
+/// Gives every member `access` to `space`, now and when added later, or
+/// (`None`) stops doing so. Members' own entries for it are kept.
+pub fn set_everyone(
+    path: &Path,
+    space: &str,
+    access: Option<TeamAccess>,
+) -> Result<(), WenlanError> {
+    let space = space.trim();
+    if space.is_empty() {
+        return Err(WenlanError::Validation("no Space named".into()));
+    }
+    change_team(path, |file| {
+        match access {
+            Some(access) => file.everyone.insert(space.to_string(), access),
+            None => file.everyone.remove(space),
+        };
+        Ok(())
     })
 }
 

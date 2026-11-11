@@ -582,7 +582,7 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   team_update_member: (a) => put(`/api/team/members/${enc(String(a.id))}`, { name: a.name ?? undefined, spaces: a.spaces ?? undefined }),
   team_remove_member: (a) => del(`/api/team/members/${enc(String(a.id))}`),
   team_new_member_key: (a) => post(`/api/team/members/${enc(String(a.id))}/key${a.url ? `?url=${encodeURIComponent(String(a.url))}` : ""}`, {}),
-  team_host_space: (a) => post("/api/team/spaces", { space: String(a.space) }),
+  team_host_space: (a) => post("/api/team/spaces", { space: String(a.space), ...(a.everyone ? { everyone: a.everyone } : {}) }),
   team_join: (a) => post("/api/team/join", { code: String(a.code), key: a.key ?? undefined }),
   join_team_space: (a) => post(`/api/spaces/${enc(String(a.localSpace))}/shared/sync`, { folder: "", member_name: null, member_id: null, host: { code: String(a.code), key: null, space: String(a.serverSpace) } }),
   share_page: (a) => post(`/api/pages/${enc(String(a.id))}/shared/sync`, { folder: String(a.folder) }),

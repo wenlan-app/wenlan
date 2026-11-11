@@ -52,6 +52,9 @@ pub struct TeamStatus {
     pub members: Vec<TeamMember>,
     /// Spaces this server hosts for the team, by name.
     pub spaces: Vec<String>,
+    /// Hosted Spaces every member has, now and when added later.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub everyone: Vec<TeamSpaceAccess>,
     /// Where the team listener listens, when it is on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub listening: Option<String>,
@@ -91,10 +94,26 @@ pub struct TeamUpdateMemberRequest {
     pub spaces: Option<Vec<TeamSpaceAccess>>,
 }
 
-/// Body of `POST /api/team/spaces`: host a Space of this Wenlan.
+/// Who on the team has a hosted Space without being added to it one by one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TeamEveryone {
+    /// Only the members added to it.
+    Nobody,
+    /// Every member, now and later, may read it.
+    Read,
+    /// Every member, now and later, may change it.
+    Write,
+}
+
+/// Body of `POST /api/team/spaces`: host a Space of this Wenlan. With
+/// `everyone`, the Space must be hosted already, and only who has it
+/// changes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TeamHostSpaceRequest {
     pub space: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub everyone: Option<TeamEveryone>,
 }
 
 /// `GET /team/v1/me`: who a key belongs to and what they can use.

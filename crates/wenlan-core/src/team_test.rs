@@ -107,3 +107,50 @@ fn members_of_a_space_are_listed_in_its_space_file() {
     assert_eq!(file.members[1].id, amy.id);
     assert_eq!(list_folder_files(&folder), ["space.json"]);
 }
+
+#[test]
+fn a_space_for_everyone_reaches_every_member_now_and_later() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(TEAM_FILE);
+    let (_, amy_key) = add_member(&path, "Amy", &[access("Design", TeamAccess::Write)]).unwrap();
+    let (_, bo_key) = add_member(&path, "Bo", &[access("Handbook", TeamAccess::Write)]).unwrap();
+    set_everyone(&path, "Handbook", Some(TeamAccess::Read)).unwrap();
+    let (cy, cy_key) = add_member(&path, "Cy", &[]).unwrap();
+    assert_eq!(cy.access("Handbook"), Some(TeamAccess::Read));
+
+    let amy = authenticate(&path, &amy_key).unwrap().unwrap();
+    assert_eq!(amy.access("Handbook"), Some(TeamAccess::Read));
+    assert_eq!(amy.me().spaces.len(), 2);
+    // A member's own entry wins over everyone's.
+    let bo = authenticate(&path, &bo_key).unwrap().unwrap();
+    assert_eq!(bo.access("Handbook"), Some(TeamAccess::Write));
+    // Only their own Spaces are written as theirs.
+    assert!(amy
+        .to_wire()
+        .spaces
+        .iter()
+        .all(|entry| entry.space == "Design"));
+    assert_eq!(
+        authenticate(&path, &cy_key)
+            .unwrap()
+            .unwrap()
+            .access("Handbook"),
+        Some(TeamAccess::Read)
+    );
+
+    set_everyone(&path, "Handbook", None).unwrap();
+    assert_eq!(
+        authenticate(&path, &amy_key)
+            .unwrap()
+            .unwrap()
+            .access("Handbook"),
+        None
+    );
+    assert_eq!(
+        authenticate(&path, &bo_key)
+            .unwrap()
+            .unwrap()
+            .access("Handbook"),
+        Some(TeamAccess::Write)
+    );
+}

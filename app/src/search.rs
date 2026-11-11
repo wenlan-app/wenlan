@@ -3939,10 +3939,14 @@ pub async fn team_new_member_key(
 pub async fn team_host_space(
     state: tauri::State<'_, State>,
     space: String,
+    everyone: Option<team::TeamEveryone>,
 ) -> Result<shared_space::SharedSyncCounts, String> {
     let client = daemon_client(&state).await;
     client
-        .post_json("/api/team/spaces", &team::TeamHostSpaceRequest { space })
+        .post_json(
+            "/api/team/spaces",
+            &team::TeamHostSpaceRequest { space, everyone },
+        )
         .await
 }
 

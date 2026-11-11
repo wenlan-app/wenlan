@@ -1076,6 +1076,8 @@ export interface TeamStatus {
   members: TeamMember[];
   /** Spaces this computer hosts for the team. */
   spaces: string[];
+  /** Hosted Spaces every member has, now and when added later. */
+  everyone?: TeamSpaceAccess[];
   /** Where the team listener listens; null when it is off. */
   listening?: string | null;
 }
@@ -1113,7 +1115,13 @@ export async function teamNewMemberKey(id: string, url?: string): Promise<TeamMe
 }
 
 export async function teamHostSpace(space: string): Promise<SharedSyncCounts> {
-  return invoke("team_host_space", { space });
+  return invoke("team_host_space", { space, everyone: null });
+}
+
+/** Who has a hosted Space without being added one by one: every member
+ *  ("read" or "write"), or only those added ("nobody"). */
+export async function teamSetEveryone(space: string, everyone: TeamAccess | "nobody"): Promise<void> {
+  await invoke("team_host_space", { space, everyone });
 }
 
 export async function teamJoin(code: string, key?: string): Promise<TeamJoinResponse> {

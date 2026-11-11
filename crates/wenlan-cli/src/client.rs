@@ -907,6 +907,7 @@ impl WenlanClient {
         let url = self.team_url(&["api", "team", "spaces"], &[])?;
         let body = serde_json::to_value(&wenlan_types::team::TeamHostSpaceRequest {
             space: space.to_string(),
+            everyone: None,
         })?;
         self.team_call(reqwest::Method::POST, url, Some(body)).await
     }

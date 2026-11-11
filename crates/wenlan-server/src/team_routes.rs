@@ -80,10 +80,18 @@ async fn blocking<T: Send + 'static>(
 /// Wenlan hosts for the team.
 pub async fn handle_team_status() -> Result<Json<TeamStatus>, ServerError> {
     let status = blocking(|| {
-        let members = team::read_team(&team::team_path())?.members;
+        let file = team::read_team(&team::team_path())?;
         let spaces = team::hosted_spaces(&shared_space::settings_path())?;
         Ok(TeamStatus {
-            members: members.iter().map(Member::to_wire).collect(),
+            members: file.members.iter().map(Member::to_wire).collect(),
+            everyone: file
+                .everyone
+                .iter()
+                .map(|(space, access)| wenlan_types::team::TeamSpaceAccess {
+                    space: space.clone(),
+                    access: *access,
+                })
+                .collect(),
             spaces: spaces.into_iter().map(|(name, _)| name).collect(),
             listening: listening(),
         })
@@ -188,6 +196,20 @@ pub async fn handle_host_space(
         .ok_or_else(|| ServerError::NotFound(format!("no Space named {:?}", req.space)))?;
     let settings = shared_space::settings_path();
     let scope = Scope::Space(space.clone());
+    if let Some(everyone) = req.everyone {
+        if !shared_space::share_settings_at(&settings, &scope)?.is_some_and(|share| share.hosted) {
+            return Err(ServerError::ValidationError(format!(
+                "{space} is not hosted for the team"
+            )));
+        }
+        let access = match everyone {
+            wenlan_types::team::TeamEveryone::Nobody => None,
+            wenlan_types::team::TeamEveryone::Read => Some(wenlan_types::team::TeamAccess::Read),
+            wenlan_types::team::TeamEveryone::Write => Some(wenlan_types::team::TeamAccess::Write),
+        };
+        blocking(move || team::set_everyone(&team::team_path(), &space, access)).await?;
+        return Ok(Json(Default::default()));
+    }
     let folder = match shared_space::share_settings_at(&settings, &scope)? {
         Some(existing) if existing.hosted => PathBuf::from(existing.folder),
         Some(_) => {
