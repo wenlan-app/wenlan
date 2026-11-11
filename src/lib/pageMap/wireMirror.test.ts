@@ -45,6 +45,7 @@ describe("page map wire types mirror the daemon", () => {
     ["PageMapNodeMutation", "NodeMutationResponse"],
     ["PageMapLayoutPosition", "PageMapNodeLayout"],
     ["PageOutlineNode", "PageOutlineNode"],
+    ["PageOutlineLink", "OutlineLink"],
   ])("%s carries only fields %s declares", (tsName, rustName) => {
     const declared = rustFields(rustName);
     expect(declared.length).toBeGreaterThan(0);

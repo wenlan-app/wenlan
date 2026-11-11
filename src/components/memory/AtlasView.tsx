@@ -349,6 +349,8 @@ function targetForNode(nodeId: string): AtlasNodeTarget {
 
 interface AtlasViewProps {
   onNodeClick?: (target: AtlasNodeTarget) => void;
+  /** Open a page with its mind map showing. */
+  onOpenMindMap?: (pageId: string) => void;
   // Initial framing: center this entity with its neighborhood emphasized
   // (EntityDetail's overlay "Atlas" mode). Applied instantly on mount — a
   // starting frame, not a transition — so no camera animation.
@@ -411,7 +413,7 @@ const measureLabel = (text: string): number => {
 };
 const GHOST_FALLBACK_RADIUS = 5;
 
-export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, focusThingId, replay: replayPress, onBack, onOpenTopics }: AtlasViewProps) {
+export default function AtlasView({ onNodeClick, onOpenMindMap, focusEntityId, focusPageId, focusThingId, replay: replayPress, onBack, onOpenTopics }: AtlasViewProps) {
   const { t } = useTranslation();
   const effectiveFocusId = focusPageId ? pageNodeId(focusPageId) : focusEntityId;
   const palette = useGraphPalette();
@@ -3117,7 +3119,8 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       {selectedNode && <AtlasInspector key={selectedNode.id} node={selectedNode} neighbors={selectedNeighbors}
         edges={filteredModel.edges.filter((edge) => edge.source === selectedNode.id || edge.target === selectedNode.id)}
         onSelect={focusEntity} onClose={returnToMap}
-        onOpen={onNodeClick ? () => onNodeClick(targetForNode(selectedNode.id)) : undefined} />}
+        onOpen={onNodeClick ? () => onNodeClick(targetForNode(selectedNode.id)) : undefined}
+        onOpenMindMap={onOpenMindMap && pageIdOf(selectedNode.id) !== null ? () => onOpenMindMap(pageIdOf(selectedNode.id)!) : undefined} />}
 
       <div className="atlas-camera-controls" role="group" aria-label={t("atlas.cameraControls")}>
         <AtlasTooltip content={t("atlas.zoomOut")}>

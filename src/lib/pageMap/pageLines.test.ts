@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { PageMap, PageMapNode, PageOutlineNode } from "../tauri";
-import { PAGE_LINE_ROOT, foldableHeadings, moreFor, outlineLine, withPageLines } from "./pageLines";
+import { PAGE_LINE_ROOT, foldableHeadings, moreFor, outlineLine, withPageLines, withPageLinesDetailed } from "./pageLines";
 
 function line(id: string, parent: string | null, kind: "heading" | "item", label = id): PageOutlineNode {
   return { id, parent_id: parent, kind, label, text: label };
@@ -205,5 +205,76 @@ describe("withPageLines closed headings", () => {
   it("puts no box under a heading the person closed", () => {
     const nodes = withPageLines(mapWith([], outline), { ...open(), closed: new Set(["h:a2"]) });
     expect(moreIds(nodes)).toEqual([]);
+  });
+});
+
+describe("withPageLinesDetailed doors", () => {
+  const door = (id: string, page: string): PageOutlineNode => ({
+    ...line(id, "h", "item"),
+    links: [{ target: page, title: page, page_id: page, whole_line: true }],
+  });
+  const centre: PageMap = {
+    page_id: "p1",
+    revision: 0,
+    map_schema: 2,
+    nodes: [],
+    edges: [],
+    outline: [line("h", null, "heading"), door("h#1", "p2"), door("h#2", "p2"), door("h#3", "p1")],
+  };
+  const options = {
+    pageId: "p1",
+    pageTitle: "One",
+    open: new Set<string>(),
+    showSuggestions: false,
+    showRestLabel: "rest",
+  };
+
+  it("leaves links as plain items when doors are not asked for", () => {
+    const { meta } = withPageLinesDetailed(centre, options);
+    expect(meta.size).toBe(0);
+  });
+
+  it("makes the first link to a page its door, a later one a copy, and a link to the center a way back", () => {
+    const { meta } = withPageLinesDetailed(centre, {
+      ...options,
+      doors: { centreId: "p1", open: new Set(), foreign: new Map(), foreignOpen: new Set(), backLabel: "back" },
+    });
+    expect(meta.get("outline:h#1")?.kind).toBe("door");
+    expect(meta.get("outline:h#2")).toMatchObject({ kind: "dup", doorId: "outline:h#1" });
+    expect(meta.get("outline:h#3")?.kind).toBe("back");
+  });
+
+  it("grows an opened door's headings only, and folds a long heading to two items", () => {
+    const other: PageMap = {
+      page_id: "p2",
+      revision: 0,
+      map_schema: 2,
+      nodes: [],
+      edges: [],
+      outline: [
+        line("a", null, "heading"),
+        line("a#1", "a", "item"),
+        line("a#2", "a", "item"),
+        line("a#3", "a", "item"),
+        line("a#4", "a", "item"),
+      ],
+    };
+    const ids = (foreignOpen: string[]) =>
+      withPageLinesDetailed(centre, {
+        ...options,
+        doors: {
+          centreId: "p1",
+          open: new Set(["outline:h#1"]),
+          foreign: new Map([["outline:h#1", other]]),
+          foreignOpen: new Set(foreignOpen),
+          backLabel: "back",
+        },
+      })
+        .nodes.map((n) => n.id)
+        .filter((id) => id.startsWith("outline:in:"));
+    const heading = "outline:in:h#1|a";
+    expect(ids([])).toEqual([heading]);
+    expect(ids([heading])).toEqual([heading, `${heading}#1`, `${heading}#2`, "outline:in:h#1|more:a"]);
+    expect(ids([heading, `${heading}#all`])).toHaveLength(5);
   });
 });

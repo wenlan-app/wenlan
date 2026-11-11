@@ -60,6 +60,7 @@ import SpaceDetail from "./SpaceDetail";
 import { ThingDetail } from "./things/ThingDetail";
 import { SpacesOverview } from "./spaces";
 import { PagesOverview, WikiStart } from "./pages/PagesOverview";
+import { openPageMapOnVisit } from "./page/usePageInspectorSession";
 import { WikiWorkspace } from "./pages/WikiWorkspace";
 import { WIKI_DIRECTORY_ID, WikiDirectory, type WikiInventoryMode } from "./pages/WikiDirectory";
 import { Stack } from "@phosphor-icons/react";
@@ -1943,6 +1944,10 @@ export default function Main({
                         ? navigateTo({ kind: "thing", thingId: target.id })
                         : handleEntityClick(target.id)
                 }
+                onOpenMindMap={(pageId) => {
+                  openPageMapOnVisit(queryClient, pageId);
+                  navigateTo({ kind: "page", pageId });
+                }}
                 onBack={navigateBack}
                 onOpenTopics={() => navigateTo({ kind: "entities" })}
               />

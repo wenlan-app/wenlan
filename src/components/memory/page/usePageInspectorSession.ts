@@ -15,6 +15,26 @@ interface InspectorSession {
 const sessions = new WeakMap<QueryClient, Map<string, InspectorSession>>();
 const empty = (): InspectorSession => ({ infoOpen: false, canvasOpen: false, pdfPreview: null, pdfPreviewOpen: false });
 
+/** The key a page's reading session is kept under (see `PageDetail`). */
+export function readingSessionKeyFor(pageId: string, exampleWiki = false): string {
+  return JSON.stringify([exampleWiki ? "example" : "own", pageId]);
+}
+
+/**
+ * Have a page open with its mind map showing the next time it is read. Used by
+ * every way of going to a page "on its map": the big map's action, a grey link
+ * on a map, and the way back. UI-only, like the rest of the session.
+ */
+export function openPageMapOnVisit(client: QueryClient, pageId: string, exampleWiki = false): void {
+  let cache = sessions.get(client);
+  if (!cache) { cache = new Map(); sessions.set(client, cache); }
+  const key = readingSessionKeyFor(pageId, exampleWiki);
+  const previous = cache.get(key) ?? empty();
+  cache.delete(key);
+  cache.set(key, { ...previous, canvasOpen: true });
+  if (cache.size > 64) cache.delete(cache.keys().next().value!);
+}
+
 export function usePageInspectorSession(key: string) {
   const client = useQueryClient();
   const [, render] = useReducer((version: number) => version + 1, 0);
