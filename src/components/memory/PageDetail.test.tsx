@@ -1006,7 +1006,7 @@ describe("PageDetail", () => {
     expect(updatePage).not.toHaveBeenCalled();
   });
 
-  it("owns body-targeted Escape while editor readiness is still pending", async () => {
+  it("keeps body-targeted Escape inside the page while editor readiness is still pending", async () => {
     const { daemonMeetsFloor, getDaemonVersion } =
       await import("../../lib/tauri");
     const pendingVersion = deferred<string>();
@@ -1022,14 +1022,10 @@ describe("PageDetail", () => {
     await user.click(screen.getByTestId("page-document-reading"));
     expect(await screen.findByText("Checking editor compatibility…")).toBeVisible();
 
+    // Escape never leaves the page and never cancels writing: a page has
+    // one state, so the editor still opens once readiness resolves.
     fireEvent.keyDown(document.body, { key: "Escape" });
-
     expect(defaultProps.onBack).not.toHaveBeenCalled();
-    await user.click(await screen.findByRole("button", { name: "Page actions" }));
-    expect(screen.getByTestId("page-document-reading")).toBeVisible();
-    expect(
-      screen.queryByText("Checking editor compatibility…"),
-    ).toBeNull();
 
     await act(async () => {
       pendingVersion.resolve("0.14.1");
@@ -1037,10 +1033,10 @@ describe("PageDetail", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
-    expect(daemonMeetsFloor).not.toHaveBeenCalled();
+    expect(daemonMeetsFloor).toHaveBeenCalled();
     expect(
-      screen.queryByRole("textbox", { name: "Page editor" }),
-    ).toBeNull();
+      await screen.findByRole("textbox", { name: "Page editor" }),
+    ).toBeInTheDocument();
   });
 
   it("serializes repeated save shortcuts so an older body cannot finish last", async () => {

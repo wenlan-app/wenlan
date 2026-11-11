@@ -289,12 +289,11 @@ test.describe("canvas Escape", () => {
     await expect(editor).toBeFocused();
     await expect(page.getByRole("heading", { level: 1, name: "Open a page" })).toHaveCount(0);
 
-    // Writing retains its own Escape/flush layer before page navigation.
+    // Escape while writing only saves: the note stays open for writing and
+    // Escape never navigates away from it.
     await editor.press("Escape");
-    await expect(editor).toHaveCount(0);
-    await expect(page.getByTestId("page-document-reading")).toBeVisible();
-    await page.keyboard.press("Escape");
-    await expect(page.getByRole("heading", { level: 1, name: "Open a page" })).toBeVisible();
+    await expect(editor).toBeEditable();
+    await expect(page.getByRole("heading", { level: 1, name: "Open a page" })).toHaveCount(0);
   });
 });
 

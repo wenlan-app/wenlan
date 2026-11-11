@@ -495,10 +495,11 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
       screen.getByRole("heading", { level: 1, name: PAGE.title }),
     ).toHaveClass("sr-only");
 
+    // Escape saves; the page stays open for writing under its one title.
     act(() => pressKey(textbox, "Escape"));
-    await waitFor(() => {
-      expect(screen.getByRole("heading", { name: PAGE.title })).toHaveClass("page-detail-title");
-    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.getByRole("textbox", { name: "Page editor" })).toBeInTheDocument();
+    expect(container.querySelector(".page-detail-title")).toBeNull();
     expect(screen.queryByRole("button", { name: "Copy as context" })).toBeNull();
   });
 

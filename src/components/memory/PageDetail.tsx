@@ -728,7 +728,8 @@ export default function PageDetail({
     labels: { page: t("references.page"), memory: t("citation.kind.memory"), source: t("references.source"),
       authored: t("citation.kind.authored"), unverified: t("citation.unverified"), unevaluated: t("thisSentence.evidence.unevaluated"), missing: t("references.missingPage") },
     selfTitle: page?.title,
-  }), [page?.citations, page?.title, pageSources, pageSourcesLoading, t]);
+    pageTitles: new Map([...outboundTargetByLabel.values()].flatMap((target) => target.title ? [[target.id, target.title] as const] : [])),
+  }), [outboundTargetByLabel, page?.citations, page?.title, pageSources, pageSourcesLoading, t]);
   useEffect(() => {
     // A save can clear or replace the evidence map. Never keep a stale citation open.
     setWikiLinkPreview((current) => current?.target.kind === "citation" ? null : current);
@@ -1622,11 +1623,11 @@ export default function PageDetail({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autosave, editing, editGate.kind, canonicalPage, editorStatus.compositionActive]);
 
-  const requestCloseEditor = async () => {
+  // Escape saves what is typed and leaves the page open for writing: a page
+  // has one state, so there is no reading mode to fall back to.
+  const saveOnEscape = async () => {
     if (storedActionRef.current) return;
-    const originPageId = pageId;
-    if (!await flushEditor() || activePageIdRef.current !== originPageId) return;
-    closeEditor();
+    await flushEditor();
   };
 
   const requestToggleCanvas = async () => {
@@ -1738,7 +1739,7 @@ export default function PageDetail({
       }
       event.preventDefault();
       event.stopImmediatePropagation();
-      requestCloseEditor();
+      void saveOnEscape();
     };
     window.addEventListener("keydown", captureUnfocusedEditorEscape, true);
     return () =>
@@ -1747,7 +1748,7 @@ export default function PageDetail({
         captureUnfocusedEditorEscape,
         true,
       );
-  }, [editing, infoOpen, actionMenuOpen, requestCloseEditor, noteGroup]);
+  }, [editing, infoOpen, actionMenuOpen, saveOnEscape, noteGroup]);
 
   const requestBack = async () => {
     // Main owns navigation ordering when the flush handle is registered. Queue
@@ -2035,7 +2036,7 @@ export default function PageDetail({
     }
     e.preventDefault();
     e.stopPropagation();
-    requestCloseEditor();
+    void saveOnEscape();
   };
 
   useEffect(() => {
@@ -3199,7 +3200,7 @@ export default function PageDetail({
                   onWikiLinkPreviewLeave={leaveWikiLinkPreview}
                   onDocumentChange={handleDocumentChange}
                   onSave={saveDocument}
-                  onCancel={requestCloseEditor}
+                  onCancel={() => void saveOnEscape()}
                   onStatusChange={(status) => {
                     if (status.ready) onEditorReady?.();
                     handleEditorStatus(
