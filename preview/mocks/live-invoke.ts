@@ -579,6 +579,14 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   share_space: (a) => post(`/api/spaces/${enc(String(a.space))}/shared/sync`, { folder: String(a.folder) }),
   share_page: (a) => post(`/api/pages/${enc(String(a.id))}/shared/sync`, { folder: String(a.folder) }),
   stop_sharing_space: (a) => del(`/api/spaces/${enc(String(a.space))}/shared`),
+  share_library: (a) =>
+    post("/api/library/shared/sync", {
+      folder: String(a.folder),
+      member_id: a.memberId ?? null,
+    }),
+  stop_sharing_library: () => del("/api/library/shared"),
+  set_library_main_device: (a) =>
+    post("/api/library/shared/main", { device_id: String(a.deviceId) }),
   stop_sharing_page: (a) => del(`/api/pages/${enc(String(a.id))}/shared`),
   look_in_shared_folder: (a) => post("/api/shared/folder", { folder: String(a.folder) }),
   // The browser has no Finder; the folder path is shown in the box instead.
