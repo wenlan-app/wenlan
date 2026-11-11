@@ -53,14 +53,17 @@ import {
   OUTLINE_NODE_HEIGHT,
 } from "../../lib/pageMap/tree";
 import {
+  branchSlots,
   foldableHeadings,
   isPageLine,
+  lineIdOf,
   moreFor,
   outlineLine,
   PAGE_LINE_PREFIX,
+  withinLine,
   withPageLines,
 } from "../../lib/pageMap/pageLines";
-import { useGraphPalette } from "../../lib/graph/palette";
+import { mixOver, useGraphPalette } from "../../lib/graph/palette";
 import CanvasNode, { type CanvasNodeData } from "./canvas/CanvasNode";
 import SpineEdge from "./canvas/SpineEdge";
 import "./canvas/pageCanvasApply.css";
@@ -198,6 +201,52 @@ function spineLook(depth: number): Partial<Edge> {
   };
 }
 
+/**
+ * A spoke inside a page heading's branch takes that branch's ink, softened
+ * toward the surface, and goes quiet with its line when another branch is in
+ * focus. Spokes with no branch (the page's lead lines, stored boxes) keep the
+ * canvas inks.
+ */
+function branchLook(
+  base: Partial<Edge>,
+  ink: string | undefined,
+  depth: number,
+  dimmed: boolean,
+  surface: string,
+): Partial<Edge> {
+  const style = { ...base.style };
+  if (ink) {
+    style.stroke = mixOver(ink, surface, depth <= 1 ? 0.75 : 0.55);
+    style.strokeWidth = depth <= 1 ? 2 : depth === 2 ? 1.4 : 1;
+  }
+  if (dimmed) style.opacity = 0.25;
+  return { ...base, style };
+}
+
+/** Drawn as text on a stroke rather than as a box: page lines past the first ring. */
+function onStroke(v: { node: { id: string }; depth: number }): boolean {
+  return isPageLine(v.node.id) && v.depth >= 2 && moreFor(v.node.id) === null;
+}
+
+type Placed = { node: { id: string }; depth: number; x: number; y: number; width: number; height: number };
+
+/**
+ * Where a left-to-right tree line meets its two boxes. A filled box hides the
+ * part of a center-to-center line inside it; text on a stroke hides nothing, so
+ * the line leaves from the end of the parent's stroke and runs into the start
+ * of the child's.
+ */
+function treeEnds(from: Placed, to: Placed) {
+  const fromOnStroke = onStroke(from);
+  const toOnStroke = onStroke(to);
+  return {
+    fromX: from.x + (fromOnStroke ? from.width / 2 : 0),
+    fromY: from.y + (fromOnStroke ? from.height / 2 : 0),
+    toX: to.x - (toOnStroke || moreFor(to.node.id) !== null ? to.width / 2 : 0),
+    toY: to.y + (toOnStroke ? to.height / 2 : 0),
+  };
+}
+
 /** An open right-click menu, positioned in surface-local pixels. */
 type CanvasMenu =
   | { kind: "pane"; x: number; y: number; clientX: number; clientY: number }
@@ -296,6 +345,10 @@ function PageCanvasInner({
   const openKey = `wenlan.pageMap.open.${pageId}`;
   const [openHeadings, setOpenHeadings] = useState<Set<string>>(() => readOpenHeadings(openKey));
   useEffect(() => setOpenHeadings(readOpenHeadings(openKey)), [openKey]);
+  // A heading the person clicked: its branch stays bright, the rest goes quiet
+  // but stays in view. Escape or a click on empty canvas lets go.
+  const [focusLine, setFocusLine] = useState<string | null>(null);
+  useEffect(() => setFocusLine(null), [pageId]);
   const toggleHeading = useCallback((id: string) => {
     setOpenHeadings((current) => {
       const next = new Set(current);
@@ -990,6 +1043,7 @@ function PageCanvasInner({
       }
       const line = outlineLine(map, id);
       if (!line) return;
+      if (line.kind === "heading") setFocusLine((current) => (current === line.id ? null : line.id));
       const parent = line.kind === "heading"
         ? line
         : map?.outline?.find((l) => l.id === line.parent_id) ?? null;
@@ -1017,6 +1071,25 @@ function PageCanvasInner({
   // Server-derived nodes. Rebuilt only when the map itself changes, never on a
   // drag frame — every callback below closes over stable identities so the
   // `data` object can survive a whole drag untouched.
+  // Each top-level heading gets its own ink, shared by everything under it.
+  const inks = useMemo(() => branchSlots(map), [map]);
+  const inkOf = useCallback(
+    (id: string) => {
+      const lineId = lineIdOf(id);
+      const slot = lineId ? inks.get(lineId) : undefined;
+      return slot ? palette[slot] : undefined;
+    },
+    [inks, palette],
+  );
+  const isDimmed = useCallback(
+    (id: string, isRoot: boolean) => {
+      if (!focusLine || isRoot) return false;
+      const lineId = lineIdOf(id);
+      return !(lineId && withinLine(map, focusLine, lineId));
+    },
+    [focusLine, map],
+  );
+
   const serverNodes = useMemo<Node[]>(
     () =>
       views.map((v) => {
@@ -1039,6 +1112,9 @@ function PageCanvasInner({
           link: moreFor(v.node.id) !== null,
           unfolded: foldId ? openHeadings.has(foldId) : undefined,
           onToggleFold: foldId ? () => toggleHeading(foldId) : undefined,
+          branchColor: inkOf(v.node.id),
+          underline: pageLine && v.depth >= 2,
+          dimmed: isDimmed(v.node.id, v.node.parent_id === null),
           palette,
           width: v.width,
           height: v.height,
@@ -1068,7 +1144,7 @@ function PageCanvasInner({
           data,
         };
       }),
-    [views, readOnly, palette, openNode, mutateStatus, mutateRename, mutateRenameAsync, t, map, foldable, openHeadings, toggleHeading, layoutMode],
+    [views, readOnly, palette, openNode, mutateStatus, mutateRename, mutateRenameAsync, t, map, foldable, openHeadings, toggleHeading, layoutMode, inkOf, isDimmed],
   );
 
   // Fold the server's copy into local state, keeping what the user has done
@@ -1583,6 +1659,9 @@ function PageCanvasInner({
         else if (draft || editingId) {
           setDraft(null);
           setEditingId(null);
+        } else if (focusLine) {
+          setFocusLine(null);
+          clearSelection();
         } else if (nodesRef.current.some((n) => n.selected)) clearSelection();
         else return; // nothing of ours to close: Escape means "leave the page"
         // Claimed only once something was actually closed: the window handler
@@ -1748,6 +1827,7 @@ function PageCanvasInner({
       draft,
       editingId,
       helpOpen,
+      focusLine,
     ],
   );
 
@@ -1791,11 +1871,13 @@ function PageCanvasInner({
                 toX: v.x - v.width / 2,
               },
             }
-          : { tree: layoutMode === "tree" },
+          : layoutMode === "tree" && from
+            ? { tree: true, ends: treeEnds(from, v) }
+            : { tree: false },
         // The lines are the structure, so they thin out as the structure does:
         // spokes off the page carry weight, the twigs past them recede. Drawn in
         // one flat ink they were the faintest thing on a map they hold together.
-        ...spineLook(v.depth),
+        ...branchLook(spineLook(v.depth), inkOf(v.node.id), v.depth, isDimmed(v.node.id, false), palette.surface),
       });
     }
     for (const e of map?.edges ?? []) {
@@ -1829,7 +1911,7 @@ function PageCanvasInner({
       });
     }
     return edges;
-  }, [views, map?.edges, palette, draft, pending, layoutMode]);
+  }, [views, map?.edges, palette, draft, pending, layoutMode, inkOf, isDimmed]);
 
   // Capture keeps the map's layered Escape ahead of parent page handlers.
   // The listener is scoped to surface descendants so neighboring note text,
@@ -2036,6 +2118,7 @@ function PageCanvasInner({
           onPaneClick={() => {
             setMenu(null);
             setNotice(null);
+            setFocusLine(null);
           }}
           onNodeClick={() => setMenu(null)}
           onMoveStart={() => setMenu(null)}

@@ -204,3 +204,44 @@ export function foldableHeadings(map: PageMap | undefined): Set<string> {
   const long = [...counts].filter(([, n]) => n > FOLD_OVER).map(([id]) => id);
   return new Set([...long, ...deepHeadings(map?.outline ?? [])]);
 }
+
+/** Inks a top-level heading's whole branch can wear, in turn. */
+const BRANCH_SLOTS = ["tool", "concept", "person", "org", "page"] as const;
+export type BranchSlot = (typeof BRANCH_SLOTS)[number];
+
+/**
+ * The ink each line wears: every top-level heading takes the next slot in
+ * turn, and everything under it shares that slot, so a long page reads as a
+ * few colored branches instead of one grey block. Lines hanging directly off
+ * the page that are not headings wear none.
+ */
+export function branchSlots(map: PageMap | undefined): Map<string, BranchSlot> {
+  const out = new Map<string, BranchSlot>();
+  let next = 0;
+  for (const line of map?.outline ?? []) {
+    if (line.parent_id === null) {
+      if (line.kind === "heading") out.set(line.id, BRANCH_SLOTS[next++ % BRANCH_SLOTS.length]);
+      continue;
+    }
+    const slot = out.get(line.parent_id);
+    if (slot) out.set(line.id, slot);
+  }
+  return out;
+}
+
+/** Whether `lineId` is `focusId` or sits anywhere under it. */
+export function withinLine(map: PageMap | undefined, focusId: string, lineId: string): boolean {
+  const parentOf = new Map((map?.outline ?? []).map((l) => [l.id, l.parent_id]));
+  let at: string | null | undefined = lineId;
+  while (at) {
+    if (at === focusId) return true;
+    at = parentOf.get(at);
+  }
+  return false;
+}
+
+/** The outline line a page-line box stands for, "show the rest" boxes included. */
+export function lineIdOf(id: string): string | null {
+  if (!isPageLine(id) || id === PAGE_LINE_ROOT) return null;
+  return moreFor(id) ?? id.slice(PAGE_LINE_PREFIX.length);
+}

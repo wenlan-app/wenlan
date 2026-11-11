@@ -662,6 +662,38 @@ describe("PageCanvas", () => {
     expect(handlers.onPageClick).toHaveBeenCalledTimes(1);
   });
 
+  it("focuses a heading's branch, dims the rest, and lets go on Escape", async () => {
+    const { getPageMap } = await tauri();
+    (getPageMap as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeMap({
+        nodes: [node({ id: "n_root", ref_kind: "page", ref_id: "p1" })],
+        edges: [],
+        outline: [
+          { id: "h:a", parent_id: null, kind: "heading", label: "Alpha", text: "Alpha" },
+          { id: "h:a#1", parent_id: "h:a", kind: "item", label: "Alpha item", text: "Alpha item" },
+          { id: "h:b", parent_id: null, kind: "heading", label: "Beta", text: "Beta" },
+        ],
+      }),
+    );
+    const { user } = renderCanvas();
+    // The box is the nearest ancestor of the label that carries an opacity.
+    const box = (label: string) => {
+      let el: HTMLElement | null = screen.getByText(label);
+      while (el && !el.style.opacity) el = el.parentElement;
+      return el!;
+    };
+    await screen.findByText("Alpha");
+    expect(box("Beta").style.opacity).toBe("1");
+
+    await user.click(screen.getByText("Alpha"));
+    await waitFor(() => expect(box("Beta").style.opacity).toBe("0.28"));
+    expect(box("Alpha").style.opacity).toBe("1");
+    expect(box("Alpha item").style.opacity).toBe("1");
+
+    fireEvent.keyDown(surface(), { key: "Escape" });
+    await waitFor(() => expect(box("Beta").style.opacity).toBe("1"));
+  });
+
   it("says out loud when the object behind a node is gone", async () => {
     const { getPageMap } = await tauri();
     (getPageMap as ReturnType<typeof vi.fn>).mockResolvedValue(makeMap({ independent_ideas: true }));

@@ -52,10 +52,15 @@ export interface CanvasNodeData extends Record<string, unknown> {
   link?: boolean;
   /** The whole line behind a shortened label, shown on hover. */
   hint?: string;
-  /** A heading whose items fold: whether they are shown now. */
   /** Set only on a heading that folds: whether its items all show. */
   unfolded?: boolean;
   onToggleFold?: () => void;
+  /** The ink of the page heading this line sits under; replaces the kind ink. */
+  branchColor?: string;
+  /** Drawn as text on a thin line of the branch ink instead of a box. */
+  underline?: boolean;
+  /** Outside the branch in focus: kept visible but quiet. */
+  dimmed?: boolean;
   onAccept: () => void;
   onDismiss: () => void;
   onCommit: (label: string) => void | Promise<void>;
@@ -113,7 +118,8 @@ function CanvasNode({
     nameInputLabel,
   } = data;
 
-  const slotColor = palette[SLOT_BY_REF_KIND[refKind]];
+  const slotColor = data.branchColor ?? palette[SLOT_BY_REF_KIND[refKind]];
+  const underline = !!data.underline && !data.link && !editing;
   const suggested = status === "suggested";
   const showControls = suggested && !isRoot && !readOnly && !editing;
 
@@ -139,18 +145,29 @@ function CanvasNode({
         gap: 6,
         boxSizing: "border-box",
         padding: "0 10px",
-        borderRadius: "var(--mem-r-10)",
-        border: data.link
+        borderRadius: underline ? 0 : "var(--mem-r-10)",
+        border: data.link || underline
           ? "1px solid transparent"
           : `${isRoot ? 1.5 : 1}px ${suggested ? "dashed" : "solid"} ${
               branch ? slotColor : mixOver(slotColor, palette.surface, 0.5)
             }`,
-        backgroundColor: data.link ? "transparent" : fill,
-        opacity: dangling ? 0.45 : suggested ? 0.75 : 1,
+        backgroundColor: data.link || underline ? "transparent" : fill,
+        opacity: data.dimmed ? 0.28 : dangling ? 0.45 : suggested ? 0.75 : 1,
+        transition: "opacity 160ms ease",
         // Selection has to be visible or the keyboard shortcuts have no
         // referent — "Delete removes the selected box" is meaningless if
         // nothing on screen says which box that is.
-        boxShadow: selected ? `0 0 0 2px ${slotColor}` : undefined,
+        // Past the first ring a line is text on a thin stroke of its branch
+        // ink, thinner the deeper it sits, so depth reads without more boxes.
+        boxShadow:
+          [
+            underline
+              ? `inset 0 -${depth <= 2 ? 1.5 : 1}px 0 ${mixOver(slotColor, palette.surface, 0.7)}`
+              : null,
+            selected ? `0 0 0 2px ${slotColor}` : null,
+          ]
+            .filter(Boolean)
+            .join(", ") || undefined,
       }}
     >
       <Handle

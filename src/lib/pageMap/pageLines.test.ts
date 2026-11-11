@@ -132,3 +132,31 @@ describe("layoutIndented", () => {
     expect(byId.get("kept")!.x).toBeLessThan(200);
   });
 });
+
+describe("branch inks and focus", () => {
+  it("gives each top-level heading its own ink and lets its lines share it", async () => {
+    const { branchSlots } = await import("./pageLines");
+    const map = mapWith([], [
+      line("lead", null, "item"),
+      line("h:a", null, "heading"),
+      line("h:a#1", "h:a", "item"),
+      line("h:b", null, "heading"),
+      line("h:b/c", "h:b", "heading"),
+      line("h:b/c#1", "h:b/c", "item"),
+    ]);
+    const slots = branchSlots(map);
+    expect(slots.get("lead")).toBeUndefined();
+    expect(slots.get("h:a#1")).toBe(slots.get("h:a"));
+    expect(slots.get("h:b/c#1")).toBe(slots.get("h:b"));
+    expect(slots.get("h:a")).not.toBe(slots.get("h:b"));
+  });
+
+  it("knows which lines sit under a focused heading", async () => {
+    const { withinLine, lineIdOf } = await import("./pageLines");
+    const map = mapWith([], [line("h:a", null, "heading"), line("h:a/b", "h:a", "heading"), line("h:a/b#1", "h:a/b", "item"), line("h:c", null, "heading")]);
+    expect(withinLine(map, "h:a", "h:a/b#1")).toBe(true);
+    expect(withinLine(map, "h:a", "h:c")).toBe(false);
+    expect(lineIdOf("outline:more:h:a/b")).toBe("h:a/b");
+    expect(lineIdOf(PAGE_LINE_ROOT)).toBeNull();
+  });
+});
