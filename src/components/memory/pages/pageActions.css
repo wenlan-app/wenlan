@@ -1,9 +1,12 @@
+/* Every "New" button: white with a thin border, like the cards and panels
+   around it (Qi-Xuan's pick, 2026-11-11). */
 .page-create-action {
   align-items: center;
-  background: var(--mem-indigo-bg);
-  border: 1px solid transparent;
+  background: var(--mem-surface);
+  border: 1px solid var(--mem-border);
   border-radius: var(--mem-control-radius);
-  color: var(--mem-accent-indigo);
+  box-shadow: var(--mem-shadow-raised);
+  color: var(--mem-text);
   cursor: pointer;
   display: inline-flex;
   font: 500 var(--mem-control-font-size)/1 var(--mem-font-body);
@@ -24,12 +27,12 @@
 }
 
 .page-create-action:hover {
-  background: color-mix(in srgb, var(--mem-accent-indigo) 22%, transparent);
+  background: var(--mem-hover);
   color: var(--mem-text);
 }
 
 .page-create-action:active {
-  background: color-mix(in srgb, var(--mem-accent-indigo) 28%, transparent);
+  background: var(--mem-hover-strong);
 }
 
 .page-create-action:focus-visible {
