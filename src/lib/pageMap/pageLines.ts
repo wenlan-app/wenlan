@@ -168,19 +168,8 @@ export function withPageLines(map: PageMap | undefined, options: PageLinesOption
       ),
     );
   });
-  for (const id of deep) {
-    if (options.open.has(id) || hidden.has(id) || closed.has(id)) continue;
-    out.push(
-      box(
-        `${MORE_PREFIX}${id}`,
-        `${PAGE_LINE_PREFIX}${id}`,
-        base + outline.findIndex((l) => l.id === id) + 0.5,
-        "outline",
-        `${options.pageId}#more`,
-        options.showRestLabel,
-      ),
-    );
-  }
+  // A closed heading (shut by depth or by the person) shows only its toggle:
+  // no "show the rest" box, which would only open it one level too.
   for (const [parent, items] of itemsOf) {
     if (parent === null || options.open.has(parent) || items.length <= FOLD_OVER) continue;
     if (deep.has(parent) || hidden.has(parent) || closed.has(parent)) continue;

@@ -896,8 +896,12 @@ describe("PageCanvas", () => {
     fireEvent.keyDown(surface(), { key: "™", code: "Digit2", altKey: true });
     await screen.findByText("Alpha one");
     expect(screen.queryByText("Deep thing")).toBeNull();
+    fitViewSpy.mockClear();
     fireEvent.keyDown(surface(), { key: "º", code: "Digit0", altKey: true });
     await screen.findByText("Deep thing");
+    // The map refits once to the new, larger layout.
+    await waitFor(() => expect(fitViewSpy).toHaveBeenCalledTimes(1));
+    expect(fitViewSpy).toHaveBeenCalledWith(expect.objectContaining({ maxZoom: 1, padding: 0.15 }));
 
     // Shut again, then find the deep line: its branch opens and it is picked.
     fireEvent.keyDown(surface(), { key: "¡", code: "Digit1", altKey: true });

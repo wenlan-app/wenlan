@@ -525,8 +525,11 @@ function PageCanvasInner({
   );
   // The whole map shut down to one level at once (Option 1–9), or opened
   // all the way (Option 0), the way an outliner's level keys work.
+  // Set by a fold-to-level, consumed once the new layout is in `nodes`.
+  const fitAfterFoldRef = useRef(false);
   const foldToLevel = useCallback(
     (level: number | null) => {
+      fitAfterFoldRef.current = true;
       const depth = lineDepths(map);
       const closed = new Set<string>();
       const open = new Set(openHeadings);
@@ -1575,6 +1578,16 @@ function PageCanvasInner({
       });
     });
   }, [serverNodes, setNodes]);
+
+  // After "show N levels" / "show everything" the map is a different size, so
+  // it refits once, with the same frame as the fit button. One toggled heading
+  // never sets the flag.
+  useEffect(() => {
+    if (!fitAfterFoldRef.current) return;
+    fitAfterFoldRef.current = false;
+    const frame = requestAnimationFrame(() => void fitView(FIT_ALL_VIEW));
+    return () => cancelAnimationFrame(frame);
+  }, [serverNodes, fitView]);
 
   // Declared after the sync above so a line drawn just now is in `nodes` by the
   // time it is selected.
