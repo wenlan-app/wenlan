@@ -233,6 +233,17 @@ pub async fn look_once(
     .await?;
     report.dreamed = dreamed;
     report.points = points;
+    // Following AI tools' memory, when the person turned it on: same model,
+    // same quiet moment, at most once an hour.
+    if let Err(error) = crate::ai_memory_import::follow_in_background(
+        &db,
+        models.group.as_ref(),
+        &DaemonWriter(shared.clone()),
+    )
+    .await
+    {
+        tracing::warn!("[ai-memory] background pass: {error}");
+    }
     Ok(Some(report))
 }
 

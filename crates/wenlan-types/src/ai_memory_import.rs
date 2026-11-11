@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Wire shapes of the one-time import of what Claude Code and Codex remember
-//! on this computer (`/api/import/ai-memory`).
+//! Wire shapes of following what Claude Code and Codex remember on this
+//! computer (`/api/import/ai-memory`).
 
 use serde::{Deserialize, Serialize};
 
-/// How an import ended: where each memory it read went.
+/// What one pass over the tools' memory did: where each memory it read went.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImportCounts {
     /// Memories read.
@@ -19,8 +19,17 @@ pub struct ImportCounts {
     pub added: usize,
     /// Disagreed with what Wenlan holds, or could not be told: left out.
     pub conflicts: usize,
-    /// A model call failed, so these were not decided.
+    /// A model call failed, so these were not decided; tried again later.
     pub undecided: usize,
+    /// Edited in the tool, so their point was brought up to date.
+    #[serde(default)]
+    pub updated: usize,
+    /// Gone from the tool, so their point was removed.
+    #[serde(default)]
+    pub removed: usize,
+    /// New or edited, waiting for a model to read them.
+    #[serde(default)]
+    pub waiting: usize,
 }
 
 /// Memories one tool keeps on this computer.
@@ -31,16 +40,21 @@ pub struct AiMemoryToolCount {
     pub memories: usize,
 }
 
-/// An import that stands, until it is taken back.
+/// Following, while it is on.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AiMemoryImportSummary {
+    /// When the person turned it on.
     pub at: i64,
+    /// When the tools' memory was last read.
+    #[serde(default)]
+    pub last_at: i64,
+    /// What that last pass did.
     pub counts: ImportCounts,
     pub by_tool: Vec<AiMemoryToolCount>,
 }
 
-/// `GET /api/import/ai-memory`: what is on this computer to import, and the
-/// import that stands, if any. Counts only; no memory text.
+/// `GET /api/import/ai-memory`: what is on this computer to follow, and
+/// following, if it is on. Counts only; no memory text.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AiMemoryImportStatus {
     pub found: Vec<AiMemoryToolCount>,
@@ -49,7 +63,8 @@ pub struct AiMemoryImportStatus {
     pub import: Option<AiMemoryImportSummary>,
 }
 
-/// `POST /api/import/ai-memory/undo`: the import taken back, if one stood.
+/// `POST /api/import/ai-memory/undo`: following turned off and what it
+/// brought in taken back, if it was on.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AiMemoryImportUndo {
     pub undone: Option<AiMemoryImportSummary>,
