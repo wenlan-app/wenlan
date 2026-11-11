@@ -2108,7 +2108,7 @@ describe("AtlasView", () => {
     expect(screen.queryByTestId("atlas-space-chip")).not.toBeInTheDocument();
   });
 
-  it("names the scoped Space beside the filter, and its cross shows every Space", async () => {
+  it("names the scoped Space inside the filter, and its cross shows every Space", async () => {
     const entities = [
       makeEntity({ id: "e1", name: "Alice", domain: "wenlan-dev" }),
       makeEntity({ id: "e4", name: "Isolate", domain: "personal" }),
@@ -2122,8 +2122,8 @@ describe("AtlasView", () => {
 
     const chip = screen.getByTestId("atlas-space-chip");
     expect(chip).toHaveTextContent("wenlan-dev");
-    // It sits in the filter's row, so it counts as map chrome.
-    expect(chip.parentElement).toHaveClass("atlas-top-controls");
+    // It sits inside the filter box, so the filter reads as "within this Space".
+    expect(chip.closest(".atlas-search-field")).not.toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Show all spaces" }));
     await waitFor(() => expect(latestGraph().hasNode("e4")).toBe(true));

@@ -2911,6 +2911,22 @@ export default function AtlasView({ onNodeClick, onOpenMindMap, focusEntityId, f
         <div className="atlas-search-control">
           <div className={`collection-search atlas-search-field${searchFocused ? " is-focused" : ""}`}>
             <Funnel size={18} aria-hidden="true" />
+            {/* A map scoped to one Space names it inside the filter, so the
+                filter reads as "within this Space"; the cross goes back to all. */}
+            {spaceFilter && (
+              <div className="atlas-space-chip" data-testid="atlas-space-chip">
+                <span className="atlas-space-chip-name" title={spaceFilter}>{spaceFilter}</span>
+                <button
+                  type="button"
+                  className="atlas-space-chip-clear"
+                  aria-label={t("atlas.spaceShowAll")}
+                  title={t("atlas.spaceShowAll")}
+                  onClick={() => setSpaceFilter(null)}
+                >
+                  <X size={12} weight="bold" aria-hidden="true" />
+                </button>
+              </div>
+            )}
             <input
               className="collection-search-input"
               ref={searchInputRef}
@@ -2969,22 +2985,6 @@ export default function AtlasView({ onNodeClick, onOpenMindMap, focusEntityId, f
             </ul>
           )}
         </div>
-        {/* A map scoped to one Space names it beside the filter, so the
-            filter reads as "within this Space"; the cross goes back to all. */}
-        {spaceFilter && (
-          <div className="atlas-space-chip" data-testid="atlas-space-chip">
-            <span className="atlas-space-chip-name" title={spaceFilter}>{spaceFilter}</span>
-            <button
-              type="button"
-              className="atlas-space-chip-clear"
-              aria-label={t("atlas.spaceShowAll")}
-              title={t("atlas.spaceShowAll")}
-              onClick={() => setSpaceFilter(null)}
-            >
-              <X size={12} weight="bold" aria-hidden="true" />
-            </button>
-          </div>
-        )}
       </div>
 
       <div className="atlas-display-anchor">
