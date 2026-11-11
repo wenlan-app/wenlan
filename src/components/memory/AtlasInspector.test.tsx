@@ -115,4 +115,14 @@ describe("AtlasInspector", () => {
     await user.click(close);
     expect(onClose).toHaveBeenCalledOnce();
   });
+
+  it("UX-VIEW-9 offers a selected page as a mind map, and no other kind of node", async () => {
+    const onOpenMindMap = vi.fn();
+    const { user, unmount } = renderInspector({ node: node("page:p1", "page", "A page"), onOpenMindMap });
+    await user.click(screen.getByRole("button", { name: /Mind map/ }));
+    expect(onOpenMindMap).toHaveBeenCalledTimes(1);
+    unmount();
+    renderInspector({ onOpenMindMap });
+    expect(screen.queryByRole("button", { name: /Mind map/ })).toBeNull();
+  });
 });

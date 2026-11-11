@@ -51,6 +51,7 @@ pub mod space_context;
 pub mod steep;
 pub mod steep_new;
 pub mod system_info;
+pub mod team;
 pub mod theme;
 pub mod things;
 pub mod trust_scan;

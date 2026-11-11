@@ -5,7 +5,7 @@ import { sharedWriter } from "../sharing/sharing";
 import { revisionWriterLabel } from "./format";
 
 // The writers the daemon records for a person (app editor, vault file edit).
-const PERSON_WRITERS = new Set(["manual_edit", "fs_edit", "human"]);
+const PERSON_WRITERS = new Set(["manual_edit", "fs_edit", "human", "own_device"]);
 
 /** Who or what made one change, in the person's words. A change taken
  * from a shared folder names the member who made it. */

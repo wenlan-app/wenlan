@@ -182,6 +182,11 @@ enum Commands {
         #[command(subcommand)]
         cmd: commands::space::SpaceCmd,
     },
+    /// Run or join a team server: add members, host Spaces, join with a code (status, add, update, remove, new-key, host, join).
+    Team {
+        #[command(subcommand)]
+        cmd: commands::team::TeamCmd,
+    },
     /// Inspect or sync notes saved locally while Wenlan was not running.
     Outbox {
         #[command(subcommand)]
@@ -215,7 +220,8 @@ const HELP_GROUPS: &[(&str, &[&str])] = &[
     (
         "Daily",
         &[
-            "brief", "capture", "recall", "pages", "memories", "curate", "lint", "spaces", "wiki",
+            "brief", "capture", "recall", "pages", "memories", "curate", "lint", "spaces", "team",
+            "wiki",
         ],
     ),
     (
@@ -541,6 +547,7 @@ async fn main() -> anyhow::Result<ExitCode> {
         }
         Commands::Agents { cmd } => commands::agents::run(&client, format, cli.quiet, cmd).await?,
         Commands::Spaces { cmd } => commands::space::run(&client, format, cli.quiet, cmd).await?,
+        Commands::Team { cmd } => commands::team::run(&client, format, cli.quiet, cmd).await?,
         Commands::Outbox { command } => {
             commands::outbox::run(&client, format, cli.quiet, command).await?
         }

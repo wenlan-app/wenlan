@@ -14,7 +14,7 @@ import {
   type ReactNode,
   type SetStateAction,
 } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import {
   Background,
@@ -58,6 +58,8 @@ import {
 import {
   branchHeadings,
   branchSlots,
+  doorSlot,
+  doorTargets,
   foldableHeadings,
   isPageLine,
   lineAncestors,
@@ -69,12 +71,14 @@ import {
   PAGE_LINE_ROOT,
   shutByDepth,
   withinLine,
-  withPageLines,
+  withPageLinesDetailed,
+  type BoxMeta,
 } from "../../lib/pageMap/pageLines";
+import { hopBack, popHop, pushHop, setPendingJump } from "../../lib/pageMap/doorTrail";
 import { mixOver, useGraphPalette } from "../../lib/graph/palette";
 import { applyOutlineEdit, editableText, type MovePlace, type OutlineEdit } from "../../lib/pageMap/outlineEdits";
-import CanvasNode, { type CanvasNodeData } from "./canvas/CanvasNode";
-import SpineEdge from "./canvas/SpineEdge";
+import CanvasNode, { DIMMED_OPACITY, underlineInk, type CanvasNodeData } from "./canvas/CanvasNode";
+import SpineEdge, { SAME_PAGE_MARGIN } from "./canvas/SpineEdge";
 import "./canvas/pageCanvasApply.css";
 
 interface PageCanvasProps {
@@ -89,6 +93,10 @@ interface PageCanvasProps {
   onSectionClick?: (line: { text: string; heading: string | null }) => void;
   /** The page has edits in its editor not yet saved: its lines wait until they are. */
   pageEditDirty?: boolean;
+  /** Open a page in this tab with its mind map showing (a grey link, the way back). */
+  onOpenPageMap?: (pageId: string) => void;
+  /** Show this page on the big map. */
+  onShowBigMap?: () => void;
 }
 
 /** Why an edit made on the map did not reach the page. */
@@ -263,6 +271,47 @@ function onStroke(v: { node: { id: string }; depth: number }): boolean {
   return isPageLine(v.node.id) && v.depth >= 2 && moreFor(v.node.id) === null;
 }
 
+/** Thickness of the underline CanvasNode draws under a page line at this depth. */
+function underlineThickness(depth: number): number {
+  return depth <= 2 ? 1.5 : 1;
+}
+
+/**
+ * Y of an underlined line's stroke center. CanvasNode draws the stroke as an
+ * inset shadow inside a 1px transparent border, so it sits `1 + thickness / 2`
+ * above the box's bottom edge, not on it. Guide lines meet it here so the curve
+ * and the underline read as one stroke.
+ */
+export function strokeCenterY(v: { depth: number; y: number; height: number }): number {
+  return v.y + v.height / 2 - 1 - underlineThickness(v.depth) / 2;
+}
+
+/**
+ * Where an edge lands on an underline it is drawn as thick, as opaque and in
+ * the same ink as that underline, so the two read as one line.
+ */
+export function withLineStroke(
+  look: Partial<Edge>,
+  line: { depth: number } | null,
+  ink: string | undefined,
+  surface: string,
+  dimmed: boolean,
+): Partial<Edge> {
+  if (!line) return look;
+  const style = { ...look.style, strokeWidth: underlineThickness(line.depth) };
+  if (ink) style.stroke = underlineInk(ink, surface);
+  style.opacity = dimmed ? DIMMED_OPACITY : undefined;
+  return { ...look, style };
+}
+
+/** The underline is an inset shadow inside the node's 1px border: it starts and ends one px in. */
+const UNDERLINE_INSET = 1;
+
+/** X where a connector meets the start of an underlined line's stroke. */
+export function strokeStartX(v: { x: number; width: number }): number {
+  return v.x - v.width / 2 + UNDERLINE_INSET;
+}
+
 type Placed = { node: { id: string }; depth: number; x: number; y: number; width: number; height: number };
 
 /**
@@ -271,13 +320,13 @@ type Placed = { node: { id: string }; depth: number; x: number; y: number; width
  * the line leaves from the end of the parent's stroke and runs into the start
  * of the child's.
  */
-function treeEnds(from: Placed, to: Placed) {
+export function treeEnds(from: Placed, to: Placed) {
   const fromOnStroke = onStroke(from);
   const toOnStroke = onStroke(to);
   return {
-    fromX: from.x + (fromOnStroke ? from.width / 2 : 0),
+    fromX: fromOnStroke ? from.x + from.width / 2 - UNDERLINE_INSET : from.x,
     fromY: from.y + (fromOnStroke ? from.height / 2 : 0),
-    toX: to.x - (toOnStroke || moreFor(to.node.id) !== null ? to.width / 2 : 0),
+    toX: toOnStroke ? strokeStartX(to) : to.x - (moreFor(to.node.id) !== null ? to.width / 2 : 0),
     toY: to.y + (toOnStroke ? to.height / 2 : 0),
   };
 }
@@ -353,6 +402,8 @@ function PageCanvasInner({
   onEntityClick,
   onSectionClick,
   pageEditDirty = false,
+  onOpenPageMap,
+  onShowBigMap,
 }: PageCanvasProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -421,6 +472,16 @@ function PageCanvasInner({
   const closedKey = `wenlan.pageMap.closed.${pageId}`;
   const [closedHeadings, setClosedHeadings] = useState<Set<string>>(() => readOpenHeadings(closedKey));
   useEffect(() => setClosedHeadings(readOpenHeadings(closedKey)), [closedKey]);
+  // Doors the person opened on this page, remembered the same way.
+  const doorsKey = `wenlan.pageMap.doors.${pageId}`;
+  const [openDoors, setOpenDoors] = useState<Set<string>>(() => readOpenHeadings(doorsKey));
+  useEffect(() => setOpenDoors(readOpenHeadings(doorsKey)), [doorsKey]);
+  // Headings of an opened page whose items show, and its "show the rest".
+  // Remembered per centre page next to the open doors, so coming back from a
+  // hop finds the same headings open.
+  const foreignKey = `wenlan.pageMap.foreign.${pageId}`;
+  const [foreignOpen, setForeignOpen] = useState<Set<string>>(() => readOpenHeadings(foreignKey));
+  useEffect(() => setForeignOpen(readOpenHeadings(foreignKey)), [foreignKey]);
   const [helpOpen, setHelpOpen] = useState(false);
   const [ideaDraft, setIdeaDraft] = useState("");
   const [ideaEntryOpen, setIdeaEntryOpen] = useState(false);
@@ -551,8 +612,8 @@ function PageCanvasInner({
   // the map moves to it once it is laid out.
   const [revealId, setRevealId] = useState<string | null>(null);
   const revealLine = useCallback(
-    (lineId: string) => {
-      const ups = lineAncestors(map, lineId);
+    (lineId: string, openSelf = false) => {
+      const ups = openSelf ? [lineId, ...lineAncestors(map, lineId)] : lineAncestors(map, lineId);
       const parent = ups[0];
       setClosedHeadings((current) => {
         const next = new Set(current);
@@ -590,18 +651,42 @@ function PageCanvasInner({
     [search, searchMatches, revealLine],
   );
   const showRestLabel = t("pageCanvas.showRest");
-  const visibleNodes = useMemo(
+  const backLabel = t("pageCanvas.backToCentre");
+  // The pages behind the doors the person opened. Each is the ordinary map
+  // read of that page, so it is cached with the rest and shared with a visit.
+  const openDoorTargets = useMemo(
+    () => [...doorTargets(map, pageId)].filter(([boxId]) => openDoors.has(boxId)),
+    [map, pageId, openDoors],
+  );
+  const foreignReads = useQueries({
+    queries: openDoorTargets.map(([, target]) => ({
+      queryKey: ["page-map", target],
+      queryFn: () => getPageMap(target),
+      retry: false,
+    })),
+  });
+  const foreignStamp = foreignReads.map((r) => r.dataUpdatedAt).join(",");
+  const foreign = useMemo(() => {
+    const out = new Map<string, PageMap | undefined>();
+    openDoorTargets.forEach(([boxId], i) => out.set(boxId, foreignReads[i]?.data));
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openDoorTargets, foreignStamp]);
+  const detailed = useMemo(
     () =>
-      withPageLines(map, {
+      withPageLinesDetailed(map, {
         pageId,
         pageTitle,
         open: openHeadings,
         closed: closedHeadings,
         showSuggestions,
         showRestLabel,
+        doors: { centreId: pageId, open: openDoors, foreign, foreignOpen, backLabel },
       }),
-    [map, pageId, pageTitle, openHeadings, closedHeadings, showSuggestions, showRestLabel],
+    [map, pageId, pageTitle, openHeadings, closedHeadings, showSuggestions, showRestLabel, openDoors, foreign, foreignOpen, backLabel],
   );
+  const visibleNodes = detailed.nodes;
+  const boxMeta = detailed.meta;
   // Every heading with lines under it carries an arrow to shut its branch.
   const foldable = useMemo(() => branchHeadings(map), [map]);
   const hasPageLines = useMemo(() => visibleNodes.some((n) => isPageLine(n.id)), [visibleNodes]);
@@ -612,14 +697,20 @@ function PageCanvasInner({
   const views = useMemo(() => {
     if (layoutMode === "radial") return layoutMap(visibleNodes, labelOverrides, untitled, "portrait");
     const heightOf = (n: PageMapNode) => (isPageLine(n.id) ? OUTLINE_NODE_HEIGHT : NODE_HEIGHT);
-    const widthOf = (n: PageMapNode, label: string, base: number) =>
-      isPageLine(n.id)
-        ? lineBoxWidth(label, foldable.has(n.id.slice(PAGE_LINE_PREFIX.length)) ? 24 : 0)
-        : base;
+    const widthOf = (n: PageMapNode, label: string, base: number) => {
+      if (!isPageLine(n.id)) return base;
+      const meta = boxMeta.get(n.id);
+      // A door carries a page glyph and a toggle; a heading of another page
+      // carries a toggle only when it has items to show.
+      if (meta?.kind === "door") return lineBoxWidth(label, 46);
+      if (meta?.kind === "foreignHeading") return lineBoxWidth(label, meta.foreign?.hasItems ? 24 : 0);
+      if (meta) return lineBoxWidth(label, 0);
+      return lineBoxWidth(label, foldable.has(n.id.slice(PAGE_LINE_PREFIX.length)) ? 24 : 0);
+    };
     return layoutMode === "indent"
       ? layoutIndented(visibleNodes, labelOverrides, untitled, heightOf, widthOf)
       : layoutTree(visibleNodes, labelOverrides, untitled, heightOf, widthOf);
-  }, [layoutMode, visibleNodes, labelOverrides, untitled, foldable]);
+  }, [layoutMode, visibleNodes, labelOverrides, untitled, foldable, boxMeta]);
   // Nothing stored yet. The page's lines may still be on screen; this only
   // decides how a new box of the person's own gets its first parent.
   const storedRootId = useMemo(
@@ -996,6 +1087,11 @@ function PageCanvasInner({
     async (id: string) => {
       const line = lineEditable(id);
       if (!line || line.line == null || linesPaused()) return;
+      // A door is a link: renaming it here would rewrite the link.
+      if (boxMeta.get(id)) {
+        setNotice(t("pageCanvas.lineNotEditable"));
+        return;
+      }
       const at = line.line;
       try {
         const page = await getPage(pageId);
@@ -1018,7 +1114,7 @@ function PageCanvasInner({
         setNotice(t("pageCanvas.lineEditFailed"));
       }
     },
-    [lineEditable, linesPaused, pageId, map?.page_version, refreshPage, t],
+    [lineEditable, linesPaused, pageId, map?.page_version, refreshPage, t, boxMeta],
   );
 
   // Every canvas add gesture creates an independent idea. It never writes the
@@ -1468,19 +1564,136 @@ function PageCanvasInner({
   const inks = useMemo(() => branchSlots(map), [map]);
   const inkOf = useCallback(
     (id: string) => {
-      const lineId = lineIdOf(id);
+      const lineId = boxMeta.has(id) ? boxMeta.get(id)?.ownerLineId : lineIdOf(id);
       const slot = lineId ? inks.get(lineId) : undefined;
       return slot ? palette[slot] : undefined;
     },
-    [inks, palette],
+    [inks, palette, boxMeta],
   );
   const isDimmed = useCallback(
     (id: string, isRoot: boolean) => {
       if (!focusLine || isRoot) return false;
-      const lineId = lineIdOf(id);
+      const lineId = boxMeta.has(id) ? boxMeta.get(id)?.ownerLineId : lineIdOf(id);
       return !(lineId && withinLine(map, focusLine, lineId));
     },
-    [focusLine, map],
+    [focusLine, map, boxMeta],
+  );
+
+  const selectOnly = useCallback(
+    (id: string) => setNodes((ns) => ns.map((n) => (n.selected !== (n.id === id) ? { ...n, selected: n.id === id } : n))),
+    [setNodes],
+  );
+  const toggleDoor = useCallback(
+    (id: string) => {
+      setOpenDoors((current) => {
+        const next = new Set(current);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        rememberHeadings(doorsKey, next);
+        return next;
+      });
+    },
+    [doorsKey],
+  );
+  const toggleForeign = useCallback((id: string) => {
+    setForeignOpen((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      rememberHeadings(foreignKey, next);
+      return next;
+    });
+  }, [foreignKey]);
+  // A link back to the centre: the camera goes to the root. It never expands.
+  // The camera is read through a ref so the boxes' handlers keep their identity.
+  const cameraRef = useRef({ setCenter, getZoom });
+  cameraRef.current = { setCenter, getZoom };
+  const goCentre = useCallback(() => {
+    const root = views.find((v) => v.node.parent_id === null);
+    if (!root) return;
+    selectOnly(root.node.id);
+    void cameraRef.current.setCenter(root.x, root.y, { zoom: Math.max(cameraRef.current.getZoom(), 0.9), duration: 200 });
+  }, [views, selectOnly]);
+  // The same page again: the camera goes to its door, which opens.
+  const [pendingDoor, setPendingDoor] = useState<string | null>(null);
+  const goToDoor = useCallback(
+    (doorId: string) => {
+      setOpenDoors((current) => {
+        if (current.has(doorId)) return current;
+        const next = new Set(current);
+        next.add(doorId);
+        rememberHeadings(doorsKey, next);
+        return next;
+      });
+      if (views.some((v) => v.node.id === doorId)) {
+        setRevealId(doorId);
+        return;
+      }
+      // The door sits under a shut or folded heading: open what hides it.
+      const slot = doorSlot(map, pageId, doorId);
+      if (!slot) return;
+      revealLine(slot.ownerId, slot.ownerIsHeading);
+      setPendingDoor(doorId);
+    },
+    [views, map, pageId, doorsKey, revealLine],
+  );
+  useEffect(() => {
+    if (pendingDoor && views.some((v) => v.node.id === pendingDoor)) {
+      setPendingDoor(null);
+      setRevealId(pendingDoor);
+    }
+  }, [pendingDoor, views]);
+  // One hop out: the map re-roots on that page, and remembers the way back.
+  const reRoot = useCallback(
+    (target: string) => {
+      pushHop({ id: pageId, title: pageTitle }, target);
+      if (onOpenPageMap) onOpenPageMap(target);
+      else onPageClick?.(target);
+    },
+    [pageId, pageTitle, onOpenPageMap, onPageClick],
+  );
+  const hop = hopBack(pageId);
+  const goBack = useCallback(() => {
+    const from = hopBack(pageId);
+    if (!from) return;
+    popHop(pageId);
+    if (onOpenPageMap) onOpenPageMap(from.id);
+    else onPageClick?.(from.id);
+  }, [pageId, onOpenPageMap, onPageClick]);
+  // A heading or item of an opened page: that page opens at it.
+  const jumpInto = useCallback(
+    (meta: BoxMeta) => {
+      const at = meta.foreign;
+      if (!at) return;
+      setPendingJump({
+        pageId: at.pageId,
+        text: at.line.text,
+        heading: at.line.kind === "heading" ? at.line.text : (at.parent?.text ?? null),
+      });
+      onPageClick?.(at.pageId);
+    },
+    [onPageClick],
+  );
+  const openDoorBox = useCallback(
+    (id: string, meta: BoxMeta): (() => void) | null => {
+      switch (meta.kind) {
+        case "dup":
+          return () => meta.doorId && goToDoor(meta.doorId);
+        case "back":
+        case "foreignBack":
+          return goCentre;
+        case "foreignGhost":
+          return () => meta.pageId && reRoot(meta.pageId);
+        case "foreignMore":
+          return () => toggleForeign(`${id.replace("|more:", "|")}#all`);
+        case "foreignHeading":
+        case "foreignItem":
+          return () => jumpInto(meta);
+        default:
+          return null;
+      }
+    },
+    [goToDoor, goCentre, reRoot, toggleForeign, jumpInto],
   );
 
   const serverNodes = useMemo<Node[]>(
@@ -1489,6 +1702,9 @@ function PageCanvasInner({
         const pageLine = isPageLine(v.node.id);
         const line = pageLine ? outlineLine(map, v.node.id) : null;
         const foldId = line?.kind === "heading" && foldable.has(line.id) ? line.id : null;
+        const door = boxMeta.get(v.node.id);
+        const greyLink = door && ["dup", "back", "foreignGhost", "foreignBack", "foreignMore"].includes(door.kind);
+        const foreignToggle = door?.kind === "foreignHeading" && door.foreign?.hasItems;
         const data: CanvasNodeData = {
           label: v.label,
           refKind: v.node.ref_kind,
@@ -1501,19 +1717,37 @@ function PageCanvasInner({
           // The tree grows rightward, so the grow dot sits on the right.
           outward: 0,
           readOnly: readOnly || pageLine,
-          hint: line && line.text !== v.label ? line.text : undefined,
-          link: moreFor(v.node.id) !== null,
-          unfolded: foldId ? branchOpen(foldId) : undefined,
-          onToggleFold: foldId ? () => toggleBranch(foldId) : undefined,
+          hint: door
+            ? door.space ? t("pageCanvas.inSpace", { space: door.space }) : door.title
+            : line && line.text !== v.label ? line.text : undefined,
+          link: moreFor(v.node.id) !== null || !!greyLink,
+          door: door?.kind === "door",
+          // Every line grown from another page wears the same tint, its grey
+          // links too (they keep their muted, underlined words); only the
+          // "more" control, which is not a line, stays bare.
+          band: !!door && door.kind.startsWith("foreign") && door.kind !== "foreignMore",
+          unfolded: door?.kind === "door"
+            ? openDoors.has(v.node.id)
+            : foreignToggle
+              ? foreignOpen.has(v.node.id)
+              : foldId ? branchOpen(foldId) : undefined,
+          onToggleFold: door?.kind === "door"
+            ? () => toggleDoor(v.node.id)
+            : foreignToggle
+              ? () => toggleForeign(v.node.id)
+              : foldId ? () => toggleBranch(foldId) : undefined,
+          toggleLabel: door?.kind === "door"
+            ? t(openDoors.has(v.node.id) ? "pageCanvas.doorClose" : "pageCanvas.doorOpen", { title: door.title })
+            : undefined,
           branchColor: inkOf(v.node.id),
-          underline: pageLine && v.depth >= 2,
+          underline: pageLine && v.depth >= 2 && !door,
           dimmed: isDimmed(v.node.id, v.node.parent_id === null),
           palette,
           width: v.width,
           height: v.height,
           editing: false,
           nameInputLabel: v.node.ref_kind === "idea" ? t("pageCanvas.nodeNameLabel") : undefined,
-          onOpen: () => openNode(v.node),
+          onOpen: (door && openDoorBox(v.node.id, door)) || (() => openNode(v.node)),
           onAccept: () => mutateStatus({ nodeId: v.node.id, status: "active" }),
           onDismiss: () => mutateStatus({ nodeId: v.node.id, status: "dismissed" }),
           onCommit: (label: string) => {
@@ -1550,7 +1784,7 @@ function PageCanvasInner({
           data,
         };
       }),
-    [views, readOnly, palette, openNode, mutateStatus, mutateRename, mutateRenameAsync, t, map, foldable, branchOpen, toggleBranch, layoutMode, inkOf, isDimmed, editLine, lineEditable],
+    [views, readOnly, palette, openNode, mutateStatus, mutateRename, mutateRenameAsync, t, map, foldable, branchOpen, toggleBranch, layoutMode, inkOf, isDimmed, editLine, lineEditable, boxMeta, openDoors, foreignOpen, toggleDoor, toggleForeign, openDoorBox],
   );
 
   // Fold the server's copy into local state, keeping what the user has done
@@ -1965,7 +2199,7 @@ function PageCanvasInner({
       // surface, so a double-click on any of them would otherwise draw a box
       // behind the control the user was aiming at.
       const inert =
-        ".react-flow__node, .page-canvas-actions, .page-canvas-help, .page-canvas-badge, .page-canvas-empty-entry";
+        ".react-flow__node, .page-canvas-actions, .page-canvas-bar, .page-canvas-help, .page-canvas-badge, .page-canvas-empty-entry";
       if ((event.target as HTMLElement).closest(inert)) return;
       addBoxAt(event.clientX, event.clientY);
     },
@@ -2022,14 +2256,20 @@ function PageCanvasInner({
     }
     const view = views.find((v) => v.node.id === menu.nodeId);
     if (!view) return [];
+    const bigMap: MenuItem[] = view.node.parent_id === null && onShowBigMap
+      ? [{ key: "bigmap", label: t("pageCanvas.menuShowBigMap"), run: () => { onShowBigMap(); return false; } }]
+      : [];
     if (isPageLine(view.node.id)) {
       // A line of the page is changed in the page, so the map offers only the
       // way there.
-      return outlineLine(map, view.node.id)
-        ? [{ key: "open", label: t("pageCanvas.menuShowInPage"), run: () => { openPageLine(view.node.id); return false; } }]
-        : [];
+      return [
+        ...bigMap,
+        ...(outlineLine(map, view.node.id)
+          ? [{ key: "open", label: t("pageCanvas.menuShowInPage"), run: () => { openPageLine(view.node.id); return false; } }]
+          : []),
+      ];
     }
-    const items: MenuItem[] = [];
+    const items: MenuItem[] = [...bigMap];
     // A section is a heading in the page body — there is nothing behind it to
     // open, so the verb is omitted rather than shown doing nothing.
     if (view.node.ref_kind !== "section" && view.node.ref_kind !== "idea") {
@@ -2098,6 +2338,7 @@ function PageCanvasInner({
     deleteSelection,
     hasPageLines,
     foldToLevel,
+    onShowBigMap,
   ]);
 
   useLayoutEffect(() => {
@@ -2412,6 +2653,7 @@ function PageCanvasInner({
     return out;
   }, [nodes, serverNodes, editingId, draftNode, lineRename, t, drop]);
 
+  const selectedKey = nodes.filter((n) => n.selected).map((n) => n.id).join("\n");
   const rfEdges = useMemo<Edge[]>(() => {
     const rendered = new Set(views.map((v) => v.node.id));
     const byId = new Map(views.map((v) => [v.node.id, v]));
@@ -2430,11 +2672,13 @@ function PageCanvasInner({
           ? {
               indent: {
                 fromX: from.x - from.width / 2 + 12,
-                fromY: from.y + from.height / 2,
-                toX: v.x - v.width / 2,
+                // A parent that is itself a line starts its children's spine
+                // from its own stroke, not from the box edge beneath it.
+                fromY: onStroke(from) ? strokeCenterY(from) : from.y + from.height / 2,
+                toX: onStroke(v) ? strokeStartX(v) : v.x - v.width / 2,
                 // Text on a stroke is met at the start of its stroke, not at
                 // the middle of the words, or the guide line stops short of it.
-                toY: v.y + (onStroke(v) ? v.height / 2 : 0),
+                toY: onStroke(v) ? strokeCenterY(v) : v.y,
               },
             }
           : layoutMode === "tree" && from
@@ -2443,7 +2687,13 @@ function PageCanvasInner({
         // The lines are the structure, so they thin out as the structure does:
         // spokes off the page carry weight, the twigs past them recede. Drawn in
         // one flat ink they were the faintest thing on a map they hold together.
-        ...branchLook(spineLook(v.depth), inkOf(v.node.id), v.depth, isDimmed(v.node.id, false), palette.surface),
+        ...withLineStroke(
+          branchLook(spineLook(v.depth), inkOf(v.node.id), v.depth, isDimmed(v.node.id, false), palette.surface),
+          layoutMode !== "radial" && onStroke(v) ? v : null,
+          inkOf(v.node.id),
+          palette.surface,
+          isDimmed(v.node.id, false),
+        ),
       });
     }
     for (const e of map?.edges ?? []) {
@@ -2462,6 +2712,43 @@ function PageCanvasInner({
         },
       });
     }
+    // The same page written twice: no line crosses the branches until the door
+    // or one of its copies is picked, then a dashed arc says they are one page.
+    const picked = new Set(selectedKey ? selectedKey.split("\n") : []);
+    const linked = new Set<string>();
+    for (const id of picked) {
+      const meta = boxMeta.get(id);
+      if (meta?.kind === "door") linked.add(id);
+      else if (meta?.kind === "dup" && meta.doorId) linked.add(meta.doorId);
+    }
+    for (const [id, meta] of boxMeta) {
+      if (meta.kind !== "dup" || !meta.doorId || !linked.has(meta.doorId)) continue;
+      if (!rendered.has(id) || !rendered.has(meta.doorId)) continue;
+      const a = byId.get(meta.doorId);
+      const b = byId.get(id);
+      if (!a || !b) continue;
+      // Out past the right-most box between the two ends, so the arc never
+      // cuts through the tree it sits beside.
+      const [top, bottom] = a.y <= b.y ? [a.y, b.y] : [b.y, a.y];
+      const outerX =
+        Math.max(...views.filter((v) => v.y >= top && v.y <= bottom).map((v) => v.x + v.width / 2)) + SAME_PAGE_MARGIN;
+      edges.push({
+        id: `same-${id}`,
+        type: "spine",
+        source: meta.doorId,
+        sourceHandle: "anchor",
+        target: id,
+        label: t("pageCanvas.samePage"),
+        data: {
+          outer: {
+            from: { x: a.x + a.width / 2, y: a.y },
+            to: { x: b.x + b.width / 2, y: b.y },
+            x: outerX,
+          },
+        },
+        style: { stroke: palette.bridge, strokeWidth: 1.4, strokeDasharray: "5 4" },
+      });
+    }
     // A box dragged out of a connector is a child of the box it came from, and
     // the connection line vanishes the moment the pointer lifts. Without this,
     // the new box hangs unattached until the daemon's copy arrives, which looks
@@ -2477,7 +2764,7 @@ function PageCanvasInner({
       });
     }
     return edges;
-  }, [views, map?.edges, palette, draft, pending, layoutMode, inkOf, isDimmed]);
+  }, [views, map?.edges, palette, draft, pending, layoutMode, inkOf, isDimmed, boxMeta, selectedKey, t]);
 
   // Capture keeps the map's layered Escape ahead of parent page handlers.
   // The listener is scoped to surface descendants so neighboring note text,
@@ -2615,6 +2902,15 @@ function PageCanvasInner({
     </>;
   }
 
+  // After stepping into a linked page, the way back to the page it came from.
+  const backBar = hop ? (
+    <div className="page-canvas-bar">
+      <button type="button" className="page-canvas-back" onClick={goBack}>
+        {t("pageCanvas.backTo", { title: hop.title })}
+      </button>
+    </div>
+  ) : null;
+
   if (views.length === 0) {
     return (
       <><div className="page-canvas">
@@ -2640,6 +2936,7 @@ function PageCanvasInner({
             <p className="page-canvas-message-body">{t(readOnly ? "pageCanvas.emptyBody" : "pageCanvas.ideasEmptyBody")}</p>
           </div>
           {ideaEntry}
+          {backBar}
           <div className="page-canvas-actions">{relatedActions}</div>
           {menu && menuItems.length > 0 && (
             <ContextMenu
@@ -2784,6 +3081,7 @@ function PageCanvasInner({
             }}
           />
         )}
+        {backBar}
         <div className="page-canvas-actions">
           {relatedActions}
           {noticeView}

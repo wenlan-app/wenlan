@@ -17,6 +17,7 @@ import { Funnel } from "@phosphor-icons/react";
 import { AssetLensToggle } from "../assets/AssetLensToggle";
 import { JoinSharedDialog } from "../sharing/JoinSharedDialog";
 import { PeopleIcon } from "../sharing/SharedWithLine";
+import { groupTeamSpaces, useShares } from "../sharing/sharing";
 import { ConfirmedSpaces } from "./ConfirmedSpaces";
 import { SpaceEditor } from "./SpaceEditor";
 import { SuggestedSpaces } from "./SuggestedSpaces";
@@ -84,6 +85,7 @@ export function SpacesOverview(props: SpacesOverviewProps) {
   const [mutationFailed, setMutationFailed] = useState(false);
   const pendingRef = useRef(new Set<string>());
   const query = useQuery({ queryKey: ["spaces"], queryFn: listSpaces });
+  const shares = useShares();
   const pagesQuery = useQuery({
     queryKey: ["spaces-page-counts"],
     queryFn: listAllActivePages,
@@ -157,6 +159,7 @@ export function SpacesOverview(props: SpacesOverviewProps) {
   const allSpaces = query.data ?? lastGood ?? [];
   const suggested = filterSpaces(sortSuggestedSpaces(allSpaces), filter);
   const confirmed = filterSpaces(sortConfirmedSpaces(allSpaces), filter);
+  const { own: ownConfirmed, groups: teamGroups } = groupTeamSpaces(confirmed, shares.data);
   const hasFilter = filter.trim().length > 0;
   const noResults = hasFilter && suggested.length === 0 && confirmed.length === 0;
   const pendingCreate = pendingIds.includes("create");
@@ -225,8 +228,11 @@ export function SpacesOverview(props: SpacesOverviewProps) {
       {mutationFailed ? <p className="spaces-error" role="alert">{props.labels.mutationError}</p> : null}
       {query.isPending && lastGood === null ? null : (
         <>
+          {ownConfirmed.length > 0 || teamGroups.length === 0 ? (
+          <div className={teamGroups.length > 0 ? "spaces-team-group" : undefined}>
+            {teamGroups.length > 0 ? <h2 className="spaces-group-title">{t("team.groupMine")}</h2> : null}
           <ConfirmedSpaces
-            spaces={confirmed}
+            spaces={ownConfirmed}
             allSpaces={allSpaces}
             labels={props.labels}
             filter={filter}
@@ -240,6 +246,28 @@ export function SpacesOverview(props: SpacesOverviewProps) {
             onReorder={(space, target) => submit({ kind: "reorder", space, target })}
             onDelete={(space) => submit({ kind: "delete", space })}
           />
+          </div>
+          ) : null}
+          {teamGroups.map((group) => (
+            <div key={group.host ?? "hosted"} className="spaces-team-group">
+              <h2 className="spaces-group-title">{group.host ? t("team.groupTeam", { host: group.host }) : t("team.groupHosted")}</h2>
+          <ConfirmedSpaces
+            spaces={group.spaces}
+            allSpaces={allSpaces}
+            labels={props.labels}
+            filter={filter}
+            noResults={false}
+            pageCounts={pageCounts}
+            pendingIds={pendingIds}
+            lens={lens}
+            onSelect={props.onSelectSpace}
+            onStar={(space) => submit({ kind: "star", space })}
+            onRename={(space, value) => submit({ kind: "rename", space, value })}
+            onReorder={(space, target) => submit({ kind: "reorder", space, target })}
+            onDelete={(space) => submit({ kind: "delete", space })}
+          />
+            </div>
+          ))}
           {/* A narrow window has no room for it in the header row. */}
           <button type="button" className="spaces-join-row spaces-quiet-action" onClick={() => setJoining(true)}>
             <PeopleIcon className="spaces-join-icon" />

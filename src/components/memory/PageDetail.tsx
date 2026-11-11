@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import type { SettingsSection } from "./settings/SettingsSidebar";
 import { clearPageSection, headingKey, pendingPageSection, requestPageSection, wikilinkHeading } from "../../lib/pageSection";
 import SourceDocumentPreview from "./sources/SourceDocumentPreview";
 import { SourceDocumentReader } from "./sources/SourceDocumentReader";
@@ -15,7 +16,8 @@ import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { WorkspaceDocumentToolsHostContext, WorkspaceNoteGroupContext } from "./navigation/WorkspacePaneHost";
 import type { NoteInspectorTab } from "./page/NoteInspectorTabs";
-import { usePageInspectorSession } from "./page/usePageInspectorSession";
+import { openPageMapOnVisit, usePageInspectorSession } from "./page/usePageInspectorSession";
+import { takePendingJump } from "../../lib/pageMap/doorTrail";
 import { preserveReadingPosition } from "./page/readingReflowAnchor";
 import { ArrowLeft, ArrowsIn, ArrowsOut, FilePdf, Info, TreeStructure } from "@phosphor-icons/react";
 import {
@@ -156,6 +158,8 @@ interface PageDetailProps {
   onPageClick?: (pageId: string) => void;
   onEntityClick?: (entityId: string) => void;
   onOpenGraph?: (pageId: string) => void;
+  /** Make this tab show another page, instead of opening it in a new tab. */
+  onReplacePage?: (pageId: string) => void;
   onOpenReview?: (itemId?: string) => void;
   onDismissAttachedPageNotice?: () => void;
   onPageLoaded?: (page: Pick<Page, "id" | "status" | "title">) => void;
@@ -166,7 +170,7 @@ interface PageDetailProps {
   /** Someone still getting started: the first page Wenlan writes shows its tips. */
   pageTour?: boolean;
   /** Opens Settings › General, where the name others see is changed. */
-  onOpenSettings?: () => void;
+  onOpenSettings?: (section?: SettingsSection) => void;
 }
 
 /** How often an open page checks for edits made outside Wenlan. */
@@ -318,6 +322,7 @@ export default function PageDetail({
   onPageClick,
   onEntityClick,
   onOpenGraph,
+  onReplacePage,
   onOpenReview,
   onDismissAttachedPageNotice,
   onPageLoaded,
@@ -565,6 +570,15 @@ export default function PageDetail({
     editing && editorPageRef.current?.id === pageId ? editorPageRef.current : null
   );
   const { cutoverLive } = useTruthStatus();
+  // A heading clicked inside a linked page on the mind map: this page opens at it.
+  const pageLoadedId = page?.id;
+  useEffect(() => {
+    if (!pageLoadedId) return;
+    const jump = takePendingJump(pageLoadedId);
+    if (!jump) return;
+    const timer = setTimeout(() => showPageLine(jump), 250);
+    return () => clearTimeout(timer);
+  }, [pageLoadedId, showPageLine]);
 
   // Fails closed on purpose, exactly like `useDaemonVersion`: an unreachable
   // daemon leaves this undefined, and undefined must read as "not available"
@@ -3389,7 +3403,9 @@ export default function PageDetail({
             <SourceDocumentReader readingSessionKey={readingSessionKey} key={`${pageId}:${pdfPreview.source_id}`} file={pdfPreview} space={page.space ?? undefined} citation={pdfCitation?.pageId === pageId && pdfCitation.sourceId === pdfPreview.source_id ? pdfCitation.citation : undefined} />
           </div>}
           {!pdfPreviewOpen && (showCanvas ? <PageCanvas key={pageId} pageId={pageId} pageTitle={page.title} labelOverrides={labelOverrides}
-            onMemoryClick={onMemoryClick} onPageClick={onPageClick} onEntityClick={onEntityClick} onSectionClick={showPageLine} pageEditDirty={editDirty} />
+            onMemoryClick={onMemoryClick} onPageClick={onPageClick} onEntityClick={onEntityClick} onSectionClick={showPageLine} pageEditDirty={editDirty}
+            onOpenPageMap={onPageClick ? (id) => { openPageMapOnVisit(queryClient, id, exampleWiki); (onReplacePage ?? onPageClick)(id); } : undefined}
+            onShowBigMap={onOpenGraph ? () => onOpenGraph(pageId) : undefined} />
             : <DetailInfoContent className="note-inspector-info">
           {pageHasTwoLengths && <SummaryViewSwitch
             on={pageLength === "short"}

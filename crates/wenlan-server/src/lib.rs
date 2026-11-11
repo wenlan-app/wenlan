@@ -78,6 +78,7 @@ pub mod spaces_routes;
 pub mod state;
 pub mod steep_new_routes;
 pub mod steep_routes;
+pub mod team_routes;
 pub mod telemetry;
 pub mod telemetry_routes;
 pub mod theme_routes;

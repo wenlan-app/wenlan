@@ -1,0 +1,8 @@
+/* Settings › Team: the off line, the address field and the hint. The rows come
+   from the settings card. */
+.team-error { margin:0 0 12px;color:var(--mem-status-danger-text);font-size:var(--mem-text-sm);overflow-wrap:anywhere; }
+.team-off { margin:0;color:var(--mem-text-secondary);font-size:var(--mem-text-md);line-height:1.6; }
+.team-off button { border:0;background:transparent;padding:0;font:inherit;color:var(--mem-text);text-decoration:underline;text-underline-offset:3px;cursor:pointer; }
+.team-address { padding:14px 20px 16px; }
+.team-address input { width:100%;box-sizing:border-box; }
+.team-hint { margin:0;color:var(--mem-text-secondary);font-size:var(--mem-text-sm); }

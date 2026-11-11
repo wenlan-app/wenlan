@@ -22,6 +22,11 @@ const SPACE_HEADER: &str = "x-wenlan-space";
 pub struct AgentIdentity {
     name: Arc<Mutex<String>>,
     explicit: bool,
+    /// The team member this connection writes for, on a team server: the
+    /// name sent is then `<tool>@team.<member>`
+    /// (`wenlan_types::team::team_agent_name`), so the server files the
+    /// tool's edits under that member.
+    member: Option<String>,
 }
 
 impl AgentIdentity {
@@ -29,14 +34,26 @@ impl AgentIdentity {
         Self {
             name: Arc::new(Mutex::new(name)),
             explicit,
+            member: None,
         }
     }
 
+    /// The same identity, writing for team member `member`.
+    pub fn for_team_member(mut self, member: String) -> Self {
+        self.member = Some(member);
+        self
+    }
+
     pub fn current(&self) -> String {
-        self.name
+        let name = self
+            .name
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
+            .clone();
+        match &self.member {
+            Some(member) => wenlan_types::team::team_agent_name(&name, member),
+            None => name,
+        }
     }
 
     /// Apply a name learned from MCP initialize only when configuration did
@@ -54,6 +71,11 @@ impl AgentIdentity {
         }
         *current = name.to_string();
         true
+    }
+
+    /// The team member this connection writes for, if any.
+    pub fn team_member(&self) -> Option<&str> {
+        self.member.as_deref()
     }
 
     pub fn is_explicit(&self) -> bool {

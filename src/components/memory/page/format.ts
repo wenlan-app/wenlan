@@ -9,6 +9,9 @@ export function prettyAgent(name: string | null | undefined): string {
 
 const WRITER_LABEL_KEYS = {
   manual_edit: "revisionLabel.writer.manualEdit",
+  // The person, or their AI tool, on another of their own computers.
+  own_device: "revisionLabel.writer.ownDevice",
+  own_device_ai: "revisionLabel.writer.ownDeviceAi",
   fs_edit: "revisionLabel.writer.fsEdit",
   distill: "revisionLabel.writer.distill",
   re_distill: "revisionLabel.writer.reDistill",

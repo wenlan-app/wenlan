@@ -349,6 +349,8 @@ function targetForNode(nodeId: string): AtlasNodeTarget {
 
 interface AtlasViewProps {
   onNodeClick?: (target: AtlasNodeTarget) => void;
+  /** Open a page with its mind map showing. */
+  onOpenMindMap?: (pageId: string) => void;
   // Initial framing: center this entity with its neighborhood emphasized
   // (EntityDetail's overlay "Atlas" mode). Applied instantly on mount — a
   // starting frame, not a transition — so no camera animation.
@@ -411,7 +413,7 @@ const measureLabel = (text: string): number => {
 };
 const GHOST_FALLBACK_RADIUS = 5;
 
-export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, focusThingId, replay: replayPress, onBack, onOpenTopics }: AtlasViewProps) {
+export default function AtlasView({ onNodeClick, onOpenMindMap, focusEntityId, focusPageId, focusThingId, replay: replayPress, onBack, onOpenTopics }: AtlasViewProps) {
   const { t } = useTranslation();
   const effectiveFocusId = focusPageId ? pageNodeId(focusPageId) : focusEntityId;
   const palette = useGraphPalette();
@@ -466,6 +468,8 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
   const thingArrivalDoneRef = useRef(false);
   const overviewRef = useRef<AtlasViewpoint | null>(null);
   const openingRatioRef = useRef(1);
+  /** The handed-off page this view has already centred on and picked. */
+  const focusAppliedRef = useRef<string | null>(null);
   const focusNodeRef = useRef<(id: string) => void>(() => {});
   const returnToMapRef = useRef<() => void>(() => {});
   // A picked thing's zoom stop (UX-CHAT-5), and where the last paint put each
@@ -2416,8 +2420,31 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     camera.on("updated", onCameraUpdated);
     // Entry framing is instantaneous. Entity overlays retain neighborhood
     // emphasis; page handoffs only move the camera in the whole graph.
-    if (!restored && effectiveFocusId && graph.hasNode(effectiveFocusId)) {
+    // A page handoff lands once per page, even on a rebuild that restored a
+    // saved view (a later fetch rebuilds the map; the restored camera then
+    // looked at wherever the first build left it, not at the page). The page
+    // is also picked, so its name shows and its links light, as a click does.
+    const handoff = !!focusPageId && !!effectiveFocusId && focusAppliedRef.current !== effectiveFocusId;
+    if (effectiveFocusId && graph.hasNode(effectiveFocusId) && (!restored || handoff)) {
       if (!focusPageId) hoverStateRef.current = hoverStateFor(graph, effectiveFocusId);
+      else if (handoff) {
+        focusAppliedRef.current = effectiveFocusId;
+        // Where the inspector docks beside the map it can be open at once. On
+        // a narrow window it would cover the whole map and the search, so the
+        // page is only centred and named there.
+        if (window.innerWidth > 980) {
+          if (!selectedRef.current) overviewRef.current = captureAtlasViewpoint(renderer, graph);
+          selectedRef.current = effectiveFocusId;
+          setSelectedId(effectiveFocusId);
+          setSelectedThing(null);
+        }
+      }
+      // Every setSetting above only schedules a refresh, but it already
+      // re-indexes the nodes at once, so until sigma next renders their display
+      // data holds the raw layout coordinates, not the framed ones the camera
+      // speaks. Render now, or the camera is sent to a raw coordinate far off
+      // the map and nothing is drawn.
+      renderer.refresh();
       const display = renderer.getNodeDisplayData(effectiveFocusId);
       // Page handoffs use the same camera zoom as a filter result. Other
       // nodes and connections stay in the graph, including distant groups.
@@ -3117,7 +3144,8 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       {selectedNode && <AtlasInspector key={selectedNode.id} node={selectedNode} neighbors={selectedNeighbors}
         edges={filteredModel.edges.filter((edge) => edge.source === selectedNode.id || edge.target === selectedNode.id)}
         onSelect={focusEntity} onClose={returnToMap}
-        onOpen={onNodeClick ? () => onNodeClick(targetForNode(selectedNode.id)) : undefined} />}
+        onOpen={onNodeClick ? () => onNodeClick(targetForNode(selectedNode.id)) : undefined}
+        onOpenMindMap={onOpenMindMap && pageIdOf(selectedNode.id) !== null ? () => onOpenMindMap(pageIdOf(selectedNode.id)!) : undefined} />}
 
       <div className="atlas-camera-controls" role="group" aria-label={t("atlas.cameraControls")}>
         <AtlasTooltip content={t("atlas.zoomOut")}>

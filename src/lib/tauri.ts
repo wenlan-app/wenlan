@@ -1024,6 +1024,13 @@ export interface SharedStatus {
   kind: SharedKind;
   target: string;
   folder: string;
+  /** The team server this Space syncs through (its address), or null for a
+   *  cloud-folder share. */
+  host?: string | null;
+  /** This person may read the Space but not change it on the server. */
+  read_only?: boolean;
+  /** This computer hosts the Space for a team. */
+  hosted?: boolean;
   member_id: string;
   member_name: string;
   members: SharedMember[];
@@ -1045,6 +1052,78 @@ export async function listShares(): Promise<SharedStatus[]> {
 
 export async function shareSpace(space: string, folder: string): Promise<SharedSyncCounts> {
   return invoke("share_space", { space, folder });
+}
+
+// ── Team server ───────────────────────────────────────────────────────
+
+export type TeamAccess = "write" | "read";
+
+export interface TeamSpaceAccess {
+  space: string;
+  access: TeamAccess;
+}
+
+/** A person on the team server. `id` only tells people apart; never show it. */
+export interface TeamMember {
+  id: string;
+  name: string;
+  spaces: TeamSpaceAccess[];
+  added_at: string;
+  removed_at?: string | null;
+}
+
+export interface TeamStatus {
+  members: TeamMember[];
+  /** Spaces this computer hosts for the team. */
+  spaces: string[];
+  /** Where the team listener listens; null when it is off. */
+  listening?: string | null;
+}
+
+/** A member and the key shown this once: show only `join_code`. */
+export interface TeamMemberKey {
+  member: TeamMember;
+  key: string;
+  join_code?: string | null;
+}
+
+export interface TeamJoinResponse {
+  url: string;
+  me: { member_id: string; name: string; spaces: TeamSpaceAccess[] };
+}
+
+export async function teamStatus(): Promise<TeamStatus> {
+  return invoke("team_status");
+}
+
+export async function teamAddMember(name: string, spaces: TeamSpaceAccess[], url?: string): Promise<TeamMemberKey> {
+  return invoke("team_add_member", { name, spaces, url: url ?? null });
+}
+
+export async function teamUpdateMember(id: string, update: { name?: string; spaces?: TeamSpaceAccess[] }): Promise<TeamMember> {
+  return invoke("team_update_member", { id, name: update.name ?? null, spaces: update.spaces ?? null });
+}
+
+export async function teamRemoveMember(id: string): Promise<TeamMember> {
+  return invoke("team_remove_member", { id });
+}
+
+export async function teamNewMemberKey(id: string, url?: string): Promise<TeamMemberKey> {
+  return invoke("team_new_member_key", { id, url: url ?? null });
+}
+
+export async function teamHostSpace(space: string): Promise<SharedSyncCounts> {
+  return invoke("team_host_space", { space });
+}
+
+export async function teamJoin(code: string, key?: string): Promise<TeamJoinResponse> {
+  return invoke("team_join", { code, key: key ?? null });
+}
+
+/** Join one of the team server's Spaces into the local Space `localSpace`
+ *  (made when it is missing). */
+export async function joinTeamSpace(localSpace: string, code: string, serverSpace: string): Promise<SharedSyncCounts> {
+  return invoke("join_team_space", { localSpace, code, serverSpace });
 }
 
 export async function sharePage(id: string, folder: string): Promise<SharedSyncCounts> {
@@ -5295,6 +5374,22 @@ export interface PageOutlineNode {
   anchor?: string;
   /** Zero-based line of the page body behind this node, when one line is. */
   line?: number;
+  /** `[[links]]` written in this node, resolved by the daemon. */
+  links?: PageOutlineLink[];
+}
+
+/** A `[[link]]` of the page body, as the daemon resolved it. */
+export interface PageOutlineLink {
+  /** The link as written (no alias, no heading): the key the daemon resolved. */
+  target: string;
+  /** The title to show. */
+  title: string;
+  /** The page it reaches; absent when it reaches no page the reader can see. */
+  page_id?: string;
+  /** The target's Space name, only when it is not this page's Space. */
+  space?: string;
+  /** The item's whole text is this one link. */
+  whole_line?: boolean;
 }
 
 export interface PageMapNodeMutation {

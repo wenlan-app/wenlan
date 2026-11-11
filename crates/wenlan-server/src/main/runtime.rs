@@ -605,6 +605,7 @@ pub(super) async fn serve_and_drain(
         tracing::info!("Ambient entity enrichment is OFF (WENLAN_ENABLE_ENTITY_SWEEP).");
     }
 
+    let shared_for_team = shared.clone();
     // Build router
     let app = if repair_recovery_pending {
         router::build_repair_router(shared)
@@ -630,6 +631,15 @@ pub(super) async fn serve_and_drain(
             tracing::error!("failed to write WENLAN_PORT_FILE={}: {}", port_file, e);
             return Err(anyhow::anyhow!("WENLAN_PORT_FILE write failed: {}", e));
         }
+    }
+
+    // The team listener, only when WENLAN_TEAM_ADDR is set and never in a
+    // repair-only start: a separate listener with the team routes alone.
+    if !repair_recovery_pending {
+        tokio::spawn(wenlan_server::team_routes::serve_team_listener(
+            shared_for_team,
+            shutdown.clone(),
+        ));
     }
 
     // Serve until HTTP shutdown or an OS termination signal. Axum stops

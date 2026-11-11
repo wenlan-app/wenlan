@@ -8,7 +8,7 @@
 // suggestions and never need accepting. Here they become read-only boxes that
 // join the stored map under its root, ahead of anything the person added.
 
-import type { PageMap, PageMapNode, PageOutlineNode } from "../tauri";
+import type { PageMap, PageMapNode, PageOutlineLink, PageOutlineNode } from "../tauri";
 
 /** Every box drawn from the page body carries this id prefix. */
 export const PAGE_LINE_PREFIX = "outline:";
@@ -91,6 +91,55 @@ function box(
   };
 }
 
+/** Boxes grown from another page sit under this prefix, never in the stored map. */
+export const DOOR_IN = `${PAGE_LINE_PREFIX}in:`;
+const DOOR_EXTRA = `${PAGE_LINE_PREFIX}door:`;
+
+export type BoxKind =
+  /** A link to a page: opens in place. */
+  | "door"
+  /** The same page again: grey, jumps to its door. */
+  | "dup"
+  /** A link to the centre page itself. */
+  | "back"
+  /** A heading of an opened door's page. */
+  | "foreignHeading"
+  | "foreignItem"
+  | "foreignMore"
+  /** A link inside an opened door: grey, one hop only. */
+  | "foreignGhost"
+  | "foreignBack";
+
+/** What a link, door or foreign box stands for. */
+export interface BoxMeta {
+  kind: BoxKind;
+  /** The line of the centre page this box hangs on, for its ink and focus. */
+  ownerLineId: string | null;
+  /** The shown title of the page behind a door, ghost or copy. */
+  title: string;
+  /** The page behind a door, ghost or copy. */
+  pageId?: string;
+  /** The target's Space, when it is another Space than the page's. */
+  space?: string;
+  /** The door a copy points to, or the door a foreign box grew from. */
+  doorId?: string;
+  /** The line of an opened door's page this box shows. */
+  foreign?: { pageId: string; line: PageOutlineNode; parent: PageOutlineNode | null; hasItems: boolean };
+}
+
+export interface DoorOptions {
+  /** The centre page: a link to it is drawn as a way back, never a door. */
+  centreId: string;
+  /** Doors the person opened. */
+  open: ReadonlySet<string>;
+  /** The pages behind opened doors, by door id; absent while loading. */
+  foreign: ReadonlyMap<string, PageMap | undefined>;
+  /** Headings of opened pages whose items show, and their "show the rest". */
+  foreignOpen: ReadonlySet<string>;
+  /** Label of a way back to the centre. */
+  backLabel: string;
+}
+
 export interface PageLinesOptions {
   pageId: string;
   pageTitle: string;
@@ -100,6 +149,80 @@ export interface PageLinesOptions {
   closed?: ReadonlySet<string>;
   showSuggestions: boolean;
   showRestLabel: string;
+  /** Turns resolved `[[links]]` into doors. Without it links stay plain text. */
+  doors?: DoorOptions;
+}
+
+/** A link of the centre page that reaches a page, in reading order. */
+interface LinkSlot {
+  boxId: string;
+  link: PageOutlineLink & { page_id: string };
+  owner: PageOutlineNode;
+  /**
+   * The line whose box the extra door hangs under: the heading for a paragraph
+   * link, the item itself when it holds several links.
+   */
+  parentLineId: string | null;
+  /** The item holds this one link, so its own box is the door and keeps its full text. */
+  wholeLine: boolean;
+  kind: "door" | "dup" | "back";
+  doorId?: string;
+}
+
+function linkSlots(outline: readonly PageOutlineNode[], centreId: string): LinkSlot[] {
+  const out: LinkSlot[] = [];
+  const first = new Map<string, string>();
+  for (const line of outline) {
+    const resolved = (line.links ?? []).filter((l) => l.page_id).length;
+    (line.links ?? []).forEach((link, i) => {
+      if (!link.page_id) return;
+      // One resolved link in an item: the line is the door. Several: the line
+      // stays a line and each link hangs under it.
+      const wholeLine = line.kind === "item" && resolved === 1;
+      const boxId = wholeLine ? `${PAGE_LINE_PREFIX}${line.id}` : `${DOOR_EXTRA}${line.id}:${i}`;
+      let kind: LinkSlot["kind"] = "door";
+      let doorId: string | undefined;
+      if (link.page_id === centreId) kind = "back";
+      else if (first.has(link.page_id)) {
+        kind = "dup";
+        doorId = first.get(link.page_id);
+      } else first.set(link.page_id, boxId);
+      out.push({
+        boxId,
+        link: link as LinkSlot["link"],
+        owner: line,
+        parentLineId: line.id,
+        wholeLine,
+        kind,
+        doorId,
+      });
+    });
+  }
+  return out;
+}
+
+/** Every door of a map in reading order: its box id and the page it leads to. */
+export function doorTargets(map: PageMap | undefined, centreId: string): Map<string, string> {
+  return new Map(
+    linkSlots(map?.outline ?? [], centreId)
+      .filter((slot) => slot.kind === "door")
+      .map((slot) => [slot.boxId, slot.link.page_id]),
+  );
+}
+
+/** The line a door was written in, so a hidden door can be brought into view. */
+export function doorSlot(
+  map: PageMap | undefined,
+  centreId: string,
+  boxId: string,
+): { ownerId: string; ownerIsHeading: boolean } | null {
+  const slot = linkSlots(map?.outline ?? [], centreId).find((s) => s.boxId === boxId);
+  return slot ? { ownerId: slot.owner.id, ownerIsHeading: slot.owner.kind === "heading" } : null;
+}
+
+/** Items of a heading that show before "show the rest". */
+function foreignItemsShown(items: readonly PageOutlineNode[], restOpen: boolean): PageOutlineNode[] {
+  return items.length > FOLD_OVER && !restOpen ? items.slice(0, FOLDED_SHOWS) : items.slice();
 }
 
 /**
@@ -108,6 +231,15 @@ export interface PageLinesOptions {
  * suggestions) plus the page's lines.
  */
 export function withPageLines(map: PageMap | undefined, options: PageLinesOptions): PageMapNode[] {
+  return withPageLinesDetailed(map, options).nodes;
+}
+
+/** `withPageLines`, plus what each door box stands for. */
+export function withPageLinesDetailed(
+  map: PageMap | undefined,
+  options: PageLinesOptions,
+): { nodes: PageMapNode[]; meta: Map<string, BoxMeta> } {
+  const meta = new Map<string, BoxMeta>();
   const outline = map?.outline ?? [];
   const stored = (map?.nodes ?? []).filter(
     (n) =>
@@ -117,7 +249,7 @@ export function withPageLines(map: PageMap | undefined, options: PageLinesOption
       (outline.length === 0 || n.ref_kind !== "section") &&
       (options.showSuggestions || n.status !== "suggested"),
   );
-  if (outline.length === 0) return stored;
+  if (outline.length === 0) return { nodes: stored, meta };
 
   const storedRoot = stored.find((n) => n.parent_id === null);
   const rootId = storedRoot?.id ?? PAGE_LINE_ROOT;
@@ -154,17 +286,41 @@ export function withPageLines(map: PageMap | undefined, options: PageLinesOption
 
   // Page lines come first, in reading order, ahead of the person's own boxes.
   const base = -1_000_000;
+  const doors = options.doors;
+  const slots = doors ? linkSlots(outline, doors.centreId) : [];
+  const wholeLineSlots = new Map(slots.filter((slot) => slot.wholeLine).map((slot) => [slot.boxId, slot]));
+  // A line that is its own door keeps its full text; a link hanging under a
+  // line shows the page's title.
+  const slotLabel = (slot: LinkSlot) => {
+    const text = slot.wholeLine && slot.link.whole_line !== true ? slot.owner.label : slot.link.title;
+    if (slot.kind === "back") {
+      return slot.wholeLine && text !== slot.link.title ? `${text} ↩` : `↩ ${doors?.backLabel ?? ""}`;
+    }
+    return slot.kind === "dup" ? `${text} ↗` : text;
+  };
+  const slotMeta = (slot: LinkSlot): BoxMeta => ({
+    kind: slot.kind,
+    ownerLineId: slot.owner.id,
+    title: slot.link.title,
+    pageId: slot.link.page_id,
+    space: slot.link.space,
+    doorId: slot.doorId,
+  });
   outline.forEach((line, index) => {
     if (hidden.has(line.id)) return;
     if (line.kind === "item" && !shown.has(line.id)) return;
+    const id = `${PAGE_LINE_PREFIX}${line.id}`;
+    // An item that is only a link is the door itself, and keeps its line.
+    const door = wholeLineSlots.get(id);
+    if (door) meta.set(id, slotMeta(door));
     out.push(
       box(
-        `${PAGE_LINE_PREFIX}${line.id}`,
+        id,
         line.parent_id ? `${PAGE_LINE_PREFIX}${line.parent_id}` : rootId,
         base + index,
         line.kind === "heading" ? "section" : "outline",
         `${options.pageId}#${line.anchor ?? line.id}`,
-        line.label,
+        door ? slotLabel(door) : line.label,
       ),
     );
   });
@@ -185,7 +341,130 @@ export function withPageLines(map: PageMap | undefined, options: PageLinesOption
       ),
     );
   }
-  return out;
+  if (doors) addDoors(out, meta, { outline, slots, rootId, base, closed, open: options.open, deep, hidden, doors, slotLabel, slotMeta, showRestLabel: options.showRestLabel });
+  return { nodes: out, meta };
+}
+
+interface DoorContext {
+  outline: readonly PageOutlineNode[];
+  slots: LinkSlot[];
+  rootId: string;
+  base: number;
+  closed: ReadonlySet<string>;
+  open: ReadonlySet<string>;
+  deep: ReadonlySet<string>;
+  hidden: ReadonlySet<string>;
+  doors: DoorOptions;
+  slotLabel: (slot: LinkSlot) => string;
+  slotMeta: (slot: LinkSlot) => BoxMeta;
+  showRestLabel: string;
+}
+
+/** Door boxes for links written inside text, and the pages opened from doors. */
+function addDoors(out: PageMapNode[], meta: Map<string, BoxMeta>, c: DoorContext): void {
+  const { outline, base, doors } = c;
+  const drawn = new Set(out.map((n) => n.id));
+  const lastChild = (parentLineId: string | null): number => {
+    let at = parentLineId === null ? -1 : outline.findIndex((l) => l.id === parentLineId);
+    outline.forEach((l, i) => {
+      if (l.parent_id === parentLineId) at = Math.max(at, i);
+    });
+    return at;
+  };
+  const placed = new Map<string | null, number>();
+  for (const slot of c.slots) {
+    if (slot.wholeLine) continue;
+    const parent = slot.parentLineId;
+    const parentBox = parent === null ? c.rootId : `${PAGE_LINE_PREFIX}${parent}`;
+    if (parent !== null) {
+      const shut = c.closed.has(parent) || (c.deep.has(parent) && !c.open.has(parent));
+      if (c.hidden.has(parent) || shut || !drawn.has(parentBox)) continue;
+    }
+    const n = placed.get(parent) ?? 0;
+    placed.set(parent, n + 1);
+    meta.set(slot.boxId, c.slotMeta(slot));
+    out.push(box(slot.boxId, parentBox, base + lastChild(parent) + 0.7 + n * 0.001, "outline", `${slot.link.page_id}#door`, c.slotLabel(slot)));
+    drawn.add(slot.boxId);
+  }
+
+  for (const slot of c.slots) {
+    if (slot.kind !== "door" || !doors.open.has(slot.boxId) || !drawn.has(slot.boxId)) continue;
+    const fmap = doors.foreign.get(slot.boxId);
+    if (!fmap) continue;
+    const fo = fmap.outline ?? [];
+    const prefix = `${DOOR_IN}${slot.boxId.slice(PAGE_LINE_PREFIX.length)}|`;
+    const ownerLineId = slot.owner.id;
+    // `text` is the line's own words, kept whole when it holds the link.
+    const ghost = (parentBox: string, link: PageOutlineLink, rank: number, tag: string, text?: string) => {
+      if (!link.page_id) return;
+      const back = link.page_id === doors.centreId;
+      const id = `${prefix}${tag}`;
+      meta.set(id, {
+        kind: back ? "foreignBack" : "foreignGhost",
+        ownerLineId,
+        title: link.title,
+        pageId: link.page_id,
+        space: link.space,
+        doorId: slot.boxId,
+      });
+      const label = back
+        ? text ? `${text} ↩` : `↩ ${doors.backLabel}`
+        : `${text ?? link.title} →`;
+      out.push(box(id, parentBox, rank, "outline", `${fmap.page_id}#link`, label));
+    };
+    const itemsBy = new Map<string, PageOutlineNode[]>();
+    for (const line of fo) {
+      if (line.kind !== "item" || !line.parent_id) continue;
+      const bucket = itemsBy.get(line.parent_id);
+      if (bucket) bucket.push(line);
+      else itemsBy.set(line.parent_id, [line]);
+    }
+    fo.forEach((line, index) => {
+      if (line.kind !== "heading") return;
+      const hid = `${prefix}${line.id}`;
+      const parentLine = line.parent_id ? (fo.find((l) => l.id === line.parent_id) ?? null) : null;
+      const items = itemsBy.get(line.id) ?? [];
+      meta.set(hid, {
+        kind: "foreignHeading",
+        ownerLineId,
+        title: line.label,
+        doorId: slot.boxId,
+        foreign: { pageId: fmap.page_id, line, parent: parentLine, hasItems: items.length > 0 },
+      });
+      out.push(box(hid, line.parent_id ? `${prefix}${line.parent_id}` : slot.boxId, index, "outline", `${fmap.page_id}#${line.anchor ?? line.id}`, line.label));
+      // Links written in the heading's own paragraph come after its items.
+      const lastChildAt = Math.max(index, ...fo.map((l, at) => (l.parent_id === line.id ? at : -1)));
+      (line.links ?? []).forEach((link, i) => ghost(hid, link, lastChildAt + 0.7 + i * 0.001, `${line.id}:g${i}`));
+      if (!doors.foreignOpen.has(hid)) return;
+      const restOpen = doors.foreignOpen.has(`${hid}#all`);
+      const shownItems = foreignItemsShown(items, restOpen);
+      for (const item of shownItems) {
+        const at = fo.indexOf(item);
+        const reached = (item.links ?? []).filter((l) => l.page_id);
+        if (reached.length === 1) {
+          // The line is the link: it keeps its words and reads as a grey link.
+          ghost(hid, reached[0], at, item.id, reached[0].whole_line ? undefined : item.label);
+          continue;
+        }
+        const iid = `${prefix}${item.id}`;
+        meta.set(iid, {
+          kind: "foreignItem",
+          ownerLineId,
+          title: item.label,
+          doorId: slot.boxId,
+          foreign: { pageId: fmap.page_id, line: item, parent: line, hasItems: false },
+        });
+        out.push(box(iid, hid, at, "outline", `${fmap.page_id}#${item.id}`, item.label));
+        reached.forEach((link, k) => ghost(iid, link, at + k * 0.001, `${item.id}:g${k}`));
+      }
+      if (shownItems.length < items.length) {
+        const mid = `${prefix}more:${line.id}`;
+        meta.set(mid, { kind: "foreignMore", ownerLineId, title: line.label, doorId: slot.boxId, foreign: { pageId: fmap.page_id, line, parent: parentLine, hasItems: true } });
+        out.push(box(mid, hid, fo.indexOf(shownItems[shownItems.length - 1]) + 0.5, "outline", `${fmap.page_id}#more`, c.showRestLabel));
+      }
+    });
+  }
+  void base;
 }
 
 /** Headings that fold (long, or too deep), so the box can show a toggle. */

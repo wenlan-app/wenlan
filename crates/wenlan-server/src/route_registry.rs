@@ -514,6 +514,12 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     // what a folder shares before joining it (a name and member names).
     // No page text.
     "/api/shared", "/api/shared/folder",
+    // The team server's member list (names, Spaces, never a key except
+    // the one just made, shown once to the person on this computer),
+    // hosting a Space for the team, and reading a join code on a member's
+    // computer. No page text.
+    "/api/team", "/api/team/members", "/api/team/members/{id}",
+    "/api/team/members/{id}/key", "/api/team/spaces", "/api/team/join",
     // Setting up a daily update on GitHub: which settings the repository
     // has, as booleans, and the last run's links. A token goes to GitHub
     // and is never returned.

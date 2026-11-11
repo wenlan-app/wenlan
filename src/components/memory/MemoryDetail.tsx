@@ -28,6 +28,7 @@ import {
   type PendingRevision,
 } from "../../lib/tauri";
 import { confirmAction } from "../../lib/confirmAction";
+import { isTeamShare, others, shareOfSpace, useShares } from "./sharing/sharing";
 import { MemoryDocumentEditor } from "./editor/MemoryDocumentEditor";
 import { InfoToggle } from "./page/InfoToggle";
 import TagEditor from "../TagEditor";
@@ -279,6 +280,19 @@ export default function MemoryDetail({
       onBack();
     },
   });
+
+  const shares = useShares();
+  // Moving into a team Space shows it to the people on that team: ask first.
+  const moveToSpace = async (name: string) => {
+    const share = shareOfSpace(shares.data, name);
+    if (isTeamShare(share)) {
+      const people = share ? others(share).length : 0;
+      const message = people > 0 ? t("team.moveConfirm", { count: people }) : t("team.moveConfirmUnknown");
+      const ok = await confirmAction(message, { confirm: t("team.moveConfirmAction"), cancel: t("sharing.cancel"), tone: "neutral" });
+      if (!ok) return;
+    }
+    changeSpaceMutation.mutate(name);
+  };
 
   const changeSpaceMutation = useMutation({
     mutationFn: (newDomain: string | undefined) =>
@@ -685,7 +699,7 @@ export default function MemoryDetail({
                         {spaces.filter((space) => space.name !== memory.domain).map((space) => (
                           <button
                             key={space.id}
-                            onClick={() => changeSpaceMutation.mutate(space.name)}
+                            onClick={() => void moveToSpace(space.name)}
                             className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--mem-hover)]"
                             style={{ fontFamily: "var(--mem-font-body)", color: "var(--mem-text-secondary)" }}
                           >

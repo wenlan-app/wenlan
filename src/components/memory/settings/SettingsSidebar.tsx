@@ -19,6 +19,7 @@ export type SettingsSection =
   | "diagnostics"
   | "general"
   | "appearance"
+  | "team"
   | "experiments";
 
 type SettingsGroupLabelKey =
@@ -28,6 +29,7 @@ type SettingsGroupLabelKey =
   | "settings.groups.diagnostics.label"
   | "settings.groups.agents.label"
   | "settings.groups.sources.label"
+  | "settings.groups.team.label"
   | "settings.groups.experiments.label";
 
 type SettingsGroupHintKey =
@@ -37,6 +39,7 @@ type SettingsGroupHintKey =
   | "settings.groups.diagnostics.hint"
   | "settings.groups.agents.hint"
   | "settings.groups.sources.hint"
+  | "settings.groups.team.hint"
   | "settings.groups.experiments.hint";
 
 export interface SettingsGroup {
@@ -124,6 +127,18 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         <ellipse cx="12" cy="5" rx="9" ry="3" />
         <path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5" />
         <path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3" />
+      </svg>
+    ),
+  },
+  {
+    id: "team",
+    labelKey: "settings.groups.team.label",
+    hintKey: "settings.groups.team.hint",
+    icon: (
+      <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="9" cy="8" r="3.2" />
+        <path d="M3 20a6 6 0 0112 0" />
+        <path d="M16 5.2a3.2 3.2 0 010 5.6M18 14.4A6 6 0 0121 20" />
       </svg>
     ),
   },

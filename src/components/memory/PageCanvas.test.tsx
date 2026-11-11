@@ -4,7 +4,9 @@ import { render, screen, waitFor, cleanup, fireEvent } from "@testing-library/re
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { PageMap, PageMapNode, PageOutlineNode } from "../../lib/tauri";
-import PageCanvas from "./PageCanvas";
+import PageCanvas, { strokeCenterY, strokeStartX, treeEnds, withLineStroke } from "./PageCanvas";
+import { DIMMED_OPACITY, underlineInk } from "./canvas/CanvasNode";
+import { clearTrail, hopBack, takePendingJump } from "../../lib/pageMap/doorTrail";
 
 // React Flow measures its container, and jsdom reports 0x0 — it would render
 // no nodes at all. The module is faked down to "render each node through the
@@ -40,6 +42,7 @@ vi.mock("@xyflow/react", async () => {
       <div
         data-testid="react-flow"
         data-edge-ids={edges.map((e: any) => e.id).join(",")}
+        data-edge-outer={JSON.stringify(edges.filter((e: any) => e.data?.outer).map((e: any) => e.data.outer))}
         data-nodes-draggable={String(nodesDraggable)}
         // The pointer model is a set of props, so the props are what a test can
         // check. Whether the rubber band actually draws is React Flow's job.
@@ -285,6 +288,12 @@ async function revealSuggestions(user: ReturnType<typeof userEvent.setup>) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  clearTrail();
+  try {
+    localStorage.clear();
+  } catch {
+    // storage is only a convenience
+  }
   if (typeof HTMLDialogElement !== "undefined") {
     if (!HTMLDialogElement.prototype.showModal) {
       HTMLDialogElement.prototype.showModal = function () { this.setAttribute("open", ""); };
@@ -1750,5 +1759,314 @@ describe("PageCanvas direct manipulation", () => {
       );
       expect(after).toBe(before + 8);
     });
+  });
+});
+
+// Links on a page become doors (UX-VIEW-9).
+describe("PageCanvas doors", () => {
+  const link = (page_id: string | undefined, title: string, extra: object = {}) => ({
+    target: title,
+    title,
+    ...(page_id ? { page_id } : {}),
+    ...extra,
+  });
+  const centre = (): PageMap =>
+    makeMap({
+      nodes: [node({ id: "n_root", ref_kind: "page", ref_id: "p1" })],
+      edges: [],
+      outline: [
+        { id: "h:m", parent_id: null, kind: "heading", label: "Method", text: "Method" },
+        { id: "h:m#1", parent_id: "h:m", kind: "item", label: "Pomodoro", text: "Pomodoro", line: 2, links: [link("p2", "Pomodoro", { whole_line: true, space: "Work" })] },
+        { id: "h:m#2", parent_id: "h:m", kind: "item", label: "see Notes and Pomodoro", text: "see Notes and Pomodoro", line: 3, links: [link("p3", "Notes"), link("p2", "Pomodoro")] },
+        { id: "h:m#3", parent_id: "h:m", kind: "item", label: "Missing", text: "Missing", line: 4, links: [link(undefined, "Missing", { whole_line: true })] },
+        { id: "h:o", parent_id: null, kind: "heading", label: "Other", text: "Other" },
+        { id: "h:o#1", parent_id: "h:o", kind: "item", label: "Page One", text: "Page One", line: 7, links: [link("p1", "Page One", { whole_line: true })] },
+      ],
+    });
+  const pomodoro = (): PageMap => ({
+    ...makeMap({ page_id: "p2", nodes: [], edges: [] }),
+    outline: [
+      { id: "h:why", parent_id: null, kind: "heading", label: "Why it works", text: "Why it works", anchor: "why-it-works" },
+      { id: "h:why#1", parent_id: "h:why", kind: "item", label: "Short bursts", text: "Short bursts" },
+      { id: "h:how", parent_id: null, kind: "heading", label: "How to start", text: "How to start", links: [link("p4", "Focus"), link("p1", "Page One")] },
+    ],
+  });
+  const empty = (id: string): PageMap => ({ ...makeMap({ page_id: id, nodes: [], edges: [] }), outline: [] });
+
+  async function setup(extra: Partial<React.ComponentProps<typeof PageCanvas>> = {}, pageId = "p1", title = "Page One", centreMap?: PageMap) {
+    const { getPageMap } = await tauri();
+    (getPageMap as ReturnType<typeof vi.fn>).mockImplementation(async (id: string) =>
+      id === "p1" ? (centreMap ?? centre()) : id === "p2" ? pomodoro() : empty(id),
+    );
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return {
+      user: userEvent.setup(),
+      ...render(
+        <QueryClientProvider client={client}>
+          <PageCanvas pageId={pageId} pageTitle={title} labelOverrides={overrides} {...handlers} {...extra} />
+        </QueryClientProvider>,
+      ),
+    };
+  }
+  const ringed = (label: string) => {
+    let el: HTMLElement | null = screen.getByText(label);
+    while (el && !el.style.opacity) el = el.parentElement;
+    return (el?.style.boxShadow ?? "").includes("2px");
+  };
+  const foreign = "outline:in:h:m#1|";
+  const canvasRegion = () => screen.getByRole("region", { name: /Canvas for/ });
+
+  it("UX-VIEW-9 draws a link to a page as a door and leaves an unresolved link as text", async () => {
+    await setup();
+    await screen.findByRole("button", { name: "Open “Pomodoro” here" });
+    // The whole-line door keeps its line, so move and delete still reach it.
+    expect(screen.getByTestId("react-flow").querySelector('[data-node-id="outline:h:m#1"]')).not.toBeNull();
+    // A link inside other text becomes one more door under its heading.
+    expect(screen.getByRole("button", { name: "Open “Notes” here" })).toBeTruthy();
+    // A link that reaches no page is the item's plain text.
+    expect(screen.getByText("Missing")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Open “Missing” here" })).toBeNull();
+    // Hovering a page in another Space says which.
+    expect(screen.getByTitle("In Space Work")).toBeTruthy();
+  });
+
+  it("UX-VIEW-9 opens a door in place with only the other page's headings, read-only", async () => {
+    const { getPageMap, patchPageMapNode, updatePage } = await tauri();
+    const { user } = await setup();
+    await user.click(await screen.findByRole("button", { name: "Open “Pomodoro” here" }));
+    await screen.findByText("Why it works");
+    expect(getPageMap).toHaveBeenCalledWith("p2");
+    expect(screen.getByText("How to start")).toBeTruthy();
+    // Items wait for one more click on their heading.
+    expect(screen.queryByText("Short bursts")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Show what is under Why it works" }));
+    await screen.findByText("Short bursts");
+
+    // Nothing there can be renamed, moved or deleted from this map.
+    await user.click(screen.getByLabelText(`doubleclick ${foreign}h:why`));
+    expect(document.querySelector(".page-canvas-node-name input")).toBeNull();
+    await user.click(screen.getByLabelText(`select ${foreign}h:why`));
+    fireEvent.keyDown(canvasRegion(), { key: "Delete" });
+    expect(patchPageMapNode).not.toHaveBeenCalled();
+    expect(updatePage).not.toHaveBeenCalled();
+
+    // A heading there opens that page at the heading.
+    await user.click(screen.getByText("Why it works"));
+    expect(handlers.onPageClick).toHaveBeenCalledWith("p2");
+    expect(takePendingJump("p2")).toEqual({ pageId: "p2", text: "Why it works", heading: "Why it works" });
+  });
+
+  it("UX-VIEW-9 refuses to rename a door because that would rewrite the link", async () => {
+    const { getPage, updatePage } = await tauri();
+    (getPage as ReturnType<typeof vi.fn>).mockResolvedValue({ id: "p1", version: 1, content: "## Method\n\n- [[Pomodoro]]\n" });
+    const { user } = await setup();
+    await screen.findByRole("button", { name: "Open “Pomodoro” here" });
+    await user.click(screen.getByLabelText("doubleclick outline:h:m#1"));
+    expect(document.querySelector(".page-canvas-node-name input")).toBeNull();
+    expect(updatePage).not.toHaveBeenCalled();
+  });
+
+  it("UX-VIEW-9 re-roots on a grey link and the bar returns to the page it came from", async () => {
+    const onOpenPageMap = vi.fn();
+    const { user, unmount } = await setup({ onOpenPageMap });
+    await user.click(await screen.findByRole("button", { name: "Open “Pomodoro” here" }));
+    await user.click(await screen.findByRole("button", { name: "Focus →" }));
+    expect(onOpenPageMap).toHaveBeenCalledWith("p4");
+    expect(hopBack("p4")).toEqual({ id: "p1", title: "Page One" });
+    expect(hopBack("p1")).toBeNull();
+
+    // The map of the page it led to offers the way back, with the map open.
+    unmount();
+    await setup({ onOpenPageMap }, "p4", "Focus");
+    const back = await screen.findByRole("button", { name: "← Page One" });
+    await userEvent.setup().click(back);
+    expect(onOpenPageMap).toHaveBeenLastCalledWith("p1");
+    expect(hopBack("p4")).toBeNull();
+  });
+
+  it("UX-VIEW-9 gives every line grown from another page the same tint, grey links included", async () => {
+    const { user } = await setup();
+    await user.click(await screen.findByRole("button", { name: "Open “Pomodoro” here" }));
+    await user.click(await screen.findByRole("button", { name: "Show what is under Why it works" }));
+    await screen.findByText("Short bursts");
+    const boxOf = (name: string | RegExp) => (screen.getByRole("button", { name }).parentElement as HTMLElement);
+    const item = boxOf("Short bursts");
+    const link = boxOf("Focus →");
+    expect(item.style.backgroundColor).toBe("var(--mem-linked-band)");
+    expect(link.style.backgroundColor).toBe(item.style.backgroundColor);
+    expect(link.style.border).toBe(item.style.border);
+    // The link keeps its muted, underlined words.
+    expect(screen.getByRole("button", { name: "Focus →" }).style.textDecoration).toBe("underline");
+    // A link on the centre's own lines stays bare.
+    expect(boxOf("Pomodoro ↗").style.backgroundColor).toBe("transparent");
+  });
+
+  it("UX-VIEW-9 puts the way back inside the map, not in a row above it that pushes the related-memories action down", async () => {
+    const onOpenPageMap = vi.fn();
+    const first = await setup({ onOpenPageMap });
+    await first.user.click(await screen.findByRole("button", { name: "Open “Pomodoro” here" }));
+    await first.user.click(await screen.findByRole("button", { name: "Focus →" }));
+    first.unmount();
+    await setup({ onOpenPageMap }, "p4", "Focus");
+    const back = await screen.findByRole("button", { name: "← Page One" });
+    expect(canvasRegion().contains(back)).toBe(true);
+    expect(back.closest(".page-canvas-bar")?.parentElement).toBe(canvasRegion());
+  });
+
+  it("UX-VIEW-9 selects the root, and does not expand, on a link back to the centre", async () => {
+    const { getPageMap } = await tauri();
+    const { user } = await setup();
+    await screen.findByText("Other");
+    const calls = (getPageMap as ReturnType<typeof vi.fn>).mock.calls.length;
+    await user.click(screen.getByRole("button", { name: "↩ Back to center" }));
+    await waitFor(() => expect(ringed("Page One")).toBe(true));
+    expect((getPageMap as ReturnType<typeof vi.fn>).mock.calls.length).toBe(calls);
+
+    // Inside an opened door the same link reads the same way.
+    await user.click(screen.getByRole("button", { name: "Open “Pomodoro” here" }));
+    await screen.findByText("How to start");
+    await user.click(screen.getByLabelText("select outline:h:o#1"));
+    const inside = screen
+      .getAllByRole("button", { name: "↩ Back to center" })
+      .find((b) => b.closest("[data-node-id]")?.getAttribute("data-node-id")?.startsWith(foreign));
+    expect(inside).toBeTruthy();
+    await user.click(inside!);
+    await waitFor(() => expect(ringed("Page One")).toBe(true));
+  });
+
+  it("UX-VIEW-9 draws the same page twice as a door and a grey copy, joined by a line only while picked", async () => {
+    const { user } = await setup();
+    await screen.findByRole("button", { name: "Open “Pomodoro” here" });
+    const copy = screen.getByRole("button", { name: "Pomodoro ↗" });
+    const edges = () => screen.getByTestId("react-flow").getAttribute("data-edge-ids") ?? "";
+    expect(edges()).not.toContain("same-");
+
+    await user.click(screen.getByLabelText("select outline:h:m#1"));
+    await waitFor(() => expect(edges()).toContain("same-outline:door:h:m#2:1"));
+    await user.click(screen.getByLabelText("select outline:h:o"));
+    await waitFor(() => expect(edges()).not.toContain("same-"));
+    await user.click(screen.getByLabelText("select outline:door:h:m#2:1"));
+    await waitFor(() => expect(edges()).toContain("same-outline:door:h:m#2:1"));
+
+    // Clicking the copy goes to the door and opens it.
+    await user.click(copy);
+    await screen.findByText("Why it works");
+  });
+
+  it("UX-VIEW-9 routes the same-page line outside the tree, past every box between its ends", async () => {
+    const { user } = await setup();
+    await screen.findByRole("button", { name: "Pomodoro ↗" });
+    await user.click(screen.getByLabelText("select outline:h:m#1"));
+    const outer = () => JSON.parse(screen.getByTestId("react-flow").getAttribute("data-edge-outer") ?? "[]");
+    await waitFor(() => expect(outer()).toHaveLength(1));
+    const [{ from, to, x }] = outer();
+    const [top, bottom] = [Math.min(from.y, to.y), Math.max(from.y, to.y)];
+    const rights = screen
+      .getAllByTestId("rf-node")
+      .map((el) => ({ right: Number(el.dataset.x) + Number(el.dataset.w), y: Number(el.dataset.y) + Number(el.dataset.h) / 2 }))
+      .filter((b) => b.y >= top && b.y <= bottom)
+      .map((b) => b.right);
+    expect(rights.length).toBeGreaterThan(2);
+    expect(x).toBe(Math.max(...rights) + 24);
+  });
+
+  it("UX-VIEW-9 makes a line with one link inside its text the door, not a second row", async () => {
+    const map = centre();
+    map.outline = [
+      ...map.outline!,
+      { id: "h:o#2", parent_id: "h:o", kind: "item", label: "參考 Focus", text: "參考 Focus", line: 9, links: [link("p4", "Focus")] },
+    ];
+    await setup({}, "p1", "Page One", map);
+    await screen.findByText("參考 Focus");
+    const flow = screen.getByTestId("react-flow");
+    expect(flow.querySelector('[data-node-id="outline:h:o#2"]')).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Open “Focus” here" })).toBeTruthy();
+    expect(flow.querySelector('[data-node-id^="outline:door:h:o#2"]')).toBeNull();
+  });
+
+  it("UX-VIEW-9 remembers which headings of an opened page were open, per centre page", async () => {
+    const first = await setup();
+    await first.user.click(await screen.findByRole("button", { name: "Open “Pomodoro” here" }));
+    await first.user.click(await screen.findByRole("button", { name: "Show what is under Why it works" }));
+    await screen.findByText("Short bursts");
+    first.unmount();
+    await setup();
+    await screen.findByText("Short bursts");
+  });
+
+  it("UX-VIEW-9 keeps rendering when storage is blocked", async () => {
+    const spy = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    try {
+      await setup();
+      await screen.findByText("Method");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("UX-VIEW-9 keeps what a door grew when levels are shown with Option-digit", async () => {
+    const { user } = await setup();
+    await user.click(await screen.findByRole("button", { name: "Open “Pomodoro” here" }));
+    await screen.findByText("How to start");
+    fireEvent.keyDown(canvasRegion(), { key: "™", code: "Digit2", altKey: true });
+    await waitFor(() => expect(screen.getByText("Method")).toBeTruthy());
+    expect(screen.getByText("Why it works")).toBeTruthy();
+    // Opening everything does not open the other page's headings either.
+    fireEvent.keyDown(canvasRegion(), { key: "º", code: "Digit0", altKey: true });
+    expect(screen.getByText("Why it works")).toBeTruthy();
+    expect(screen.queryByText("Short bursts")).toBeNull();
+    // Showing one level shuts the centre's own heading, and the door with it;
+    // opening all again brings the door back as it was left.
+    fireEvent.keyDown(canvasRegion(), { key: "¡", code: "Digit1", altKey: true });
+    await waitFor(() => expect(screen.queryByText("Why it works")).toBeNull());
+    fireEvent.keyDown(canvasRegion(), { key: "º", code: "Digit0", altKey: true });
+    await screen.findByText("Why it works");
+  });
+
+  it("UX-VIEW-9 offers the big map from the center box", async () => {
+    const onShowBigMap = vi.fn();
+    const { user } = await setup({ onShowBigMap });
+    await screen.findByText("Method");
+    await user.click(screen.getByLabelText("contextmenu n_root"));
+    await user.click(await screen.findByRole("menuitem", { name: "Show on the big map" }));
+    expect(onShowBigMap).toHaveBeenCalled();
+  });
+});
+
+describe("strokeCenterY", () => {
+  // CanvasNode draws a line's underline as `inset 0 -Tpx 0` inside a 1px
+  // transparent border, so its center is 1 + T/2 above the box's bottom edge.
+  // The narrow map's guide lines must land there, not on the bottom edge.
+  it("is the center of the underline, inside the border", () => {
+    const box = { y: 100, height: 30 };
+    expect(strokeCenterY({ ...box, depth: 2 })).toBe(100 + 15 - 1 - 0.75);
+    expect(strokeCenterY({ ...box, depth: 3 })).toBe(100 + 15 - 1 - 0.5);
+  });
+});
+
+describe("where a connector meets an underline", () => {
+  const parent = { node: { id: "outline:h" }, depth: 2, x: 100, y: 0, width: 80, height: 30 };
+  const child = { node: { id: "outline:h#1" }, depth: 3, x: 300, y: 50, width: 120, height: 30 };
+
+  it("UX-VIEW-8 ends exactly where the underline starts, one px inside the border", () => {
+    // The box's left edge is x 240; its underline is an inset shadow inside a 1px border.
+    expect(strokeStartX(child)).toBe(241);
+    expect(treeEnds(parent, child).toX).toBe(241);
+    // And it leaves the parent where the parent's underline ends.
+    expect(treeEnds(parent, child).fromX).toBe(100 + 40 - 1);
+  });
+
+  it("UX-VIEW-8 draws the connector in the underline's own ink, as thick and as opaque", () => {
+    const surface = "#202430";
+    const ink = "#8fb3ea";
+    const look = withLineStroke({ style: { stroke: "red", strokeWidth: 1 } }, child, ink, surface, false);
+    expect(look.style?.stroke).toBe(underlineInk(ink, surface));
+    expect(look.style?.strokeWidth).toBe(1);
+    expect(look.style?.opacity).toBeUndefined();
+    expect(withLineStroke({}, { depth: 2 }, ink, surface, true).style).toMatchObject({ strokeWidth: 1.5, opacity: DIMMED_OPACITY });
+    // A box that is not an underlined line keeps its own look.
+    expect(withLineStroke({ style: { stroke: "red" } }, null, ink, surface, false).style?.stroke).toBe("red");
   });
 });

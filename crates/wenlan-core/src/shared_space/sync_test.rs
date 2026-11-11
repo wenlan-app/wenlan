@@ -56,6 +56,8 @@ impl Member {
                 member_name: self.name,
                 settings_path: &self.settings(),
                 knowledge_path: None,
+                member_id: None,
+                host: None,
             },
         )
         .await
@@ -71,6 +73,29 @@ impl Member {
                 member_name: self.name,
                 settings_path: &self.settings(),
                 knowledge_path: None,
+                member_id: None,
+                host: None,
+            },
+        )
+        .await
+    }
+
+    /// Joins `folder` as `member_id`: this person's own other computer.
+    async fn join_as(
+        &self,
+        folder: &Path,
+        member_id: &str,
+    ) -> Result<SharedSyncCounts, WenlanError> {
+        sync_space(
+            &self.db,
+            SyncTarget {
+                scope: &space(),
+                folder,
+                member_name: self.name,
+                settings_path: &self.settings(),
+                knowledge_path: None,
+                member_id: Some(member_id),
+                host: None,
             },
         )
         .await
@@ -190,7 +215,10 @@ fn folder_files(folder: &Path) -> Vec<(PathBuf, Vec<u8>)> {
 fn version_count(folder: &Path) -> usize {
     folder_files(folder)
         .iter()
-        .filter(|(path, _)| path.extension().is_some_and(|ext| ext == "md"))
+        .filter(|(path, _)| {
+            path.extension()
+                .is_some_and(|ext| ext == version::VERSION_EXT)
+        })
         .count()
 }
 
@@ -1188,4 +1216,90 @@ async fn an_edit_made_over_a_version_not_readable_yet_waits_for_it() {
     assert!(got.skipped > 0, "{got:?}");
     assert_eq!(version_count(&folder), before);
     assert_eq!(a.content(&id).await, "Table 1: Ana, Cleo.");
+}
+
+#[tokio::test]
+async fn two_computers_of_one_person_are_one_member() {
+    let folder = tempfile::tempdir().unwrap();
+    let mac = Member::new("Lucian").await;
+    let windows = Member::new("Lucian").await;
+    let id = mac
+        .write("Plan", "We marry in May.", SPACE.to_string().into())
+        .await;
+    mac.sync(folder.path()).await;
+    let me = mac.member_id();
+
+    // A member id the folder does not list is refused.
+    assert!(windows
+        .join_as(folder.path(), "someone_else")
+        .await
+        .is_err());
+    let counts = windows.join_as(folder.path(), &me).await.unwrap();
+    assert_eq!(counts.applied, 1);
+    assert_eq!(windows.member_id(), me);
+
+    // Taken as the person's own, not as another member's.
+    let rows = windows.db.list_page_history(&id, 1).await.unwrap();
+    assert_eq!(rows[0].edited_by, OWN_DEVICE_PERSON);
+    let file = read_space_file(folder.path()).unwrap().unwrap();
+    assert_eq!(file.members.len(), 1, "one person is one member");
+
+    windows.edit(&id, "We marry in June.").await;
+    windows.sync(folder.path()).await;
+    let counts = mac.sync(folder.path()).await;
+    assert_eq!(counts.applied, 1);
+    assert_eq!(mac.page(&id).await.unwrap().content, "We marry in June.");
+    let rows = mac.db.list_page_history(&id, 1).await.unwrap();
+    assert_eq!(rows[0].edited_by, OWN_DEVICE_PERSON);
+    assert_eq!(
+        crate::authorship::version_author(&rows[0].edited_by, "authored"),
+        crate::authorship::VersionAuthor::Person
+    );
+
+    // Joining again as someone else is refused once joined.
+    assert!(windows.join_as(folder.path(), "another").await.is_err());
+
+    // Different profile names on the two computers do not rename the
+    // member back and forth on every pass; changing one's name does once.
+    let names = || {
+        read_space_file(folder.path())
+            .unwrap()
+            .unwrap()
+            .members
+            .into_iter()
+            .map(|member| member.name)
+            .collect::<Vec<_>>()
+    };
+    windows.auto_all(Some("h1646")).await;
+    assert_eq!(names(), ["h1646"], "the name changed on that computer");
+    mac.auto_all(Some("Lucian")).await;
+    windows.auto_all(Some("h1646")).await;
+    mac.auto_all(Some("Lucian")).await;
+    assert_eq!(names(), ["h1646"], "no pass renames it back");
+    mac.auto_all(Some("Lucian Chen")).await;
+    assert_eq!(names(), ["Lucian Chen"]);
+}
+
+#[tokio::test]
+async fn a_member_who_may_only_read_takes_the_shared_version_over_their_edit() {
+    let folder = tempfile::tempdir().unwrap();
+    let amy = Member::new("Amy").await;
+    let bo = Member::new("Bo").await;
+    let id = amy
+        .write("Plan", "We marry in May.", SPACE.to_string().into())
+        .await;
+    amy.sync(folder.path()).await;
+    bo.sync(folder.path()).await;
+    update_share(&bo.settings(), &space(), |settings| {
+        settings.read_only = true
+    })
+    .unwrap()
+    .unwrap();
+
+    bo.edit(&id, "We marry in July.").await;
+    let counts = bo.sync(folder.path()).await;
+    assert_eq!(counts.exported, 0, "a reader writes no version");
+    assert_eq!(bo.page(&id).await.unwrap().content, "We marry in May.");
+    let read = version::read_folder(folder.path());
+    assert_eq!(read.pages[&id].len(), 1);
 }

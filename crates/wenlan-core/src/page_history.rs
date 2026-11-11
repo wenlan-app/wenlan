@@ -106,6 +106,8 @@ fn changed_between(rows: &[PageHistoryEntry], before: i64, after: Option<i64>) -
 pub fn kind_of_edit(edited_by: &str) -> PageHistoryKind {
     match edited_by {
         "manual_edit" | "fs_edit" | "restore" | "person_create" => PageHistoryKind::PersonEdit,
+        // The person on another of their own computers.
+        crate::shared_space::OWN_DEVICE_PERSON => PageHistoryKind::PersonEdit,
         // Another member of a shared Space, in person.
         _ if matches!(
             crate::shared_space::shared_writer(edited_by),

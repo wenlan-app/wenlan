@@ -55,6 +55,12 @@ export interface CanvasNodeData extends Record<string, unknown> {
   /** Set only on a heading that folds: whether its items all show. */
   unfolded?: boolean;
   onToggleFold?: () => void;
+  /** A link to another page: drawn with a page glyph and a toggle that opens it. */
+  door?: boolean;
+  /** Grown from another page: tinted so it reads as that page's, not this one's. */
+  band?: boolean;
+  /** Replaces the fold toggle's label (a door says "open", not "show items"). */
+  toggleLabel?: string;
   /** The ink of the page heading this line sits under; replaces the kind ink. */
   branchColor?: string;
   /** Drawn as text on a thin line of the branch ink instead of a box. */
@@ -82,6 +88,13 @@ const CENTER_HANDLE = {
 
 // Which side of the box the grow dot sits on, from the direction the box faces.
 // Quadrants clockwise from three o'clock, because screen y grows downward.
+/** The ink of the underline a page line is drawn on, and of the connector that meets it. */
+export function underlineInk(slotColor: string, surface: string): string {
+  return mixOver(slotColor, surface, 0.7);
+}
+/** Opacity of a line that another branch's focus has pushed back. */
+export const DIMMED_OPACITY = 0.28;
+
 const SIDES = [Position.Right, Position.Bottom, Position.Left, Position.Top];
 
 /**
@@ -129,11 +142,9 @@ function CanvasNode({
   // color, only weight, so the slot ink still means what it means everywhere
   // else in the app.
   const branch = depth <= 1;
-  const fill = mixOver(
-    slotColor,
-    palette.surface,
-    isRoot ? 0.22 : branch ? 0.1 : 0.035,
-  );
+  const fill = data.door || data.band
+    ? "var(--mem-linked-band)"
+    : mixOver(slotColor, palette.surface, isRoot ? 0.22 : branch ? 0.1 : 0.035);
 
   return (
     <div
@@ -146,13 +157,15 @@ function CanvasNode({
         boxSizing: "border-box",
         padding: "0 10px",
         borderRadius: underline ? 0 : "var(--mem-r-10)",
-        border: data.link || underline
+        border: (data.link && !data.band) || underline
           ? "1px solid transparent"
-          : `${isRoot ? 1.5 : 1}px ${suggested ? "dashed" : "solid"} ${
-              branch ? slotColor : mixOver(slotColor, palette.surface, 0.5)
-            }`,
-        backgroundColor: data.link || underline ? "transparent" : fill,
-        opacity: data.dimmed ? 0.28 : dangling ? 0.45 : suggested ? 0.75 : 1,
+          : data.door || data.band
+            ? `1px ${data.band ? "dashed" : "solid"} var(--mem-linked-band-edge)`
+            : `${isRoot ? 1.5 : 1}px ${suggested ? "dashed" : "solid"} ${
+                branch ? slotColor : mixOver(slotColor, palette.surface, 0.5)
+              }`,
+        backgroundColor: (data.link && !data.band) || underline ? "transparent" : fill,
+        opacity: data.dimmed ? DIMMED_OPACITY : dangling ? 0.45 : suggested ? 0.75 : 1,
         transition: "opacity 160ms ease",
         // Selection has to be visible or the keyboard shortcuts have no
         // referent — "Delete removes the selected box" is meaningless if
@@ -162,7 +175,7 @@ function CanvasNode({
         boxShadow:
           [
             underline
-              ? `inset 0 -${depth <= 2 ? 1.5 : 1}px 0 ${mixOver(slotColor, palette.surface, 0.7)}`
+              ? `inset 0 -${depth <= 2 ? 1.5 : 1}px 0 ${underlineInk(slotColor, palette.surface)}`
               : null,
             selected ? `0 0 0 2px ${slotColor}` : null,
           ]
@@ -176,6 +189,12 @@ function CanvasNode({
         isConnectable={false}
         style={CENTER_HANDLE}
       />
+      {data.door && !editing && (
+        <svg width="12" height="14" viewBox="0 0 12 14" fill="none" stroke="currentColor" strokeWidth="1.2" aria-hidden="true" style={{ flexShrink: 0, color: palette.labelMuted }}>
+          <path d="M1 1h6l4 4v8H1z" />
+          <path d="M7 1v4h4" />
+        </svg>
+      )}
       {editing ? (
         <NodeNameInput
           value={label}
@@ -217,7 +236,7 @@ function CanvasNode({
             textUnderlineOffset: data.link ? 3 : undefined,
             fontFamily: "var(--mem-font-body)",
             fontSize: 12,
-            fontWeight: isRoot ? 600 : branch ? 500 : 400,
+            fontWeight: isRoot || data.door ? 600 : branch ? 500 : 400,
           }}
         >
           {label}
@@ -231,8 +250,8 @@ function CanvasNode({
             data.onToggleFold?.();
           }}
           aria-expanded={data.unfolded}
-          aria-label={t(data.unfolded ? "pageCanvas.foldItems" : "pageCanvas.unfoldItems", { label })}
-          title={t(data.unfolded ? "pageCanvas.foldItems" : "pageCanvas.unfoldItems", { label })}
+          aria-label={data.toggleLabel ?? t(data.unfolded ? "pageCanvas.foldItems" : "pageCanvas.unfoldItems", { label })}
+          title={data.toggleLabel ?? t(data.unfolded ? "pageCanvas.foldItems" : "pageCanvas.unfoldItems", { label })}
           style={controlStyle(palette.labelMuted)}
         >
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">

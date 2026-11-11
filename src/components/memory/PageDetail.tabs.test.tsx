@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import PageDetail from "./PageDetail";
 import { i18n } from "../../i18n";
+import { getPageMap } from "../../lib/tauri";
 
 vi.mock("./sources/SourceDocumentReader", () => ({
   SourceDocumentReader: ({ file, space }: { file: { source_id: string }; space?: string }) => (
@@ -38,6 +39,7 @@ vi.mock("@xyflow/react", async () => {
     ReactFlowProvider: ({ children }: any) => <>{children}</>,
     Background: () => null,
     Controls: () => null,
+    ControlButton: () => null,
     Handle: () => null,
     Position: { Top: "top", Bottom: "bottom", Left: "left", Right: "right" },
     useReactFlow: () => ({ getViewport: () => ({ x: 0, y: 0, zoom: 1 }) }),
@@ -115,7 +117,7 @@ class ResizeObserverStub {
 }
 vi.stubGlobal("ResizeObserver", ResizeObserverStub);
 
-function renderDetail(pageId = "concept_abc") {
+function renderDetail(pageId = "concept_abc", extra: Partial<React.ComponentProps<typeof PageDetail>> = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return {
     user: userEvent.setup(),
@@ -128,6 +130,7 @@ function renderDetail(pageId = "concept_abc") {
           onMemoryClick={vi.fn()}
           onPageClick={vi.fn()}
           onEntityClick={vi.fn()}
+          {...extra}
         />
       </QueryClientProvider>,
     ),
@@ -265,6 +268,31 @@ describe("PageDetail page inspector", () => {
     await user.click(panel.querySelector<HTMLButtonElement>(".page-info-drawer-close")!);
     expect(screen.queryByRole("region", { name: "Canvas for libSQL Architecture" })).toBeNull();
     expect(screen.getByRole("button", { name: i18n.t("pageCanvas.tabCanvas") })).toHaveFocus();
+  });
+
+  it("UX-VIEW-9 re-roots the map in this tab, not in a new one", async () => {
+    const outline = (id: string, links: object[], label: string) => ({ id, parent_id: null, kind: "heading", label, text: label, links });
+    const link = (page_id: string, title: string) => ({ target: title, title, page_id });
+    const original = vi.mocked(getPageMap).getMockImplementation();
+    vi.mocked(getPageMap).mockImplementation(async (id: string) => ({
+      page_id: id, revision: 1, map_schema: 2, viewport: null, nodes: [], edges: [],
+      outline: id === "concept_abc"
+        ? [{ id: "d", parent_id: null, kind: "item", label: "Pomodoro", text: "Pomodoro", links: [{ ...link("p2", "Pomodoro"), whole_line: true }] }]
+        : id === "p2" ? [outline("h", [link("p3", "Focus")], "How")] : [],
+    }) as never);
+    const onPageClick = vi.fn();
+    const onReplacePage = vi.fn();
+    try {
+      const { user } = renderDetail("concept_abc", { onPageClick, onReplacePage });
+      await screen.findByText("libSQL Architecture");
+      await user.click(screen.getByRole("button", { name: i18n.t("pageCanvas.tabCanvas") }));
+      await user.click(await screen.findByRole("button", { name: "Open “Pomodoro” here" }));
+      await user.click(await screen.findByRole("button", { name: "Focus →" }));
+      expect(onReplacePage).toHaveBeenCalledWith("p3");
+      expect(onPageClick).not.toHaveBeenCalled();
+    } finally {
+      vi.mocked(getPageMap).mockImplementation(original!);
+    }
   });
 
   it("resolves node labels from the page and sources already loaded", async () => {

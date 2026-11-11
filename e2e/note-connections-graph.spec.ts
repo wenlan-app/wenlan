@@ -5,6 +5,7 @@ import { installTauriMock, collectBrowserErrors } from './tauriMock';
 import { openWikiNote } from './helpers/wikiWorkspace';
 import { openPageTool } from './helpers/pageTools';
 import { openPrimaryDestination } from './helpers/primaryNavigation';
+import { openCanvas, box } from './helpers/pageCanvas';
 
 const title = 'Fixture architecture';
 async function boot(page: Page, width = 1280, mode = 'normal') {
@@ -88,5 +89,50 @@ test('failed page save blocks graph navigation and preserves editor/sidebar', as
   await expect(page.getByTestId('atlas-view')).toHaveCount(0);
   await expect(editor).toContainText('protected edit');
   await expect(page.getByRole('button', { name: 'Open in graph', exact: true })).toBeVisible();
+  expect(errors.pageErrors).toEqual([]);
+});
+
+/** Where the handed-off page sits on the drawn map, read off sigma (dev handle). */
+async function drawnMap(page: Page) {
+  return page.evaluate(() => {
+    const sigma = (window as unknown as { __ATLAS_SIGMA: { getGraph(): { nodes(): string[]; getNodeAttributes(id: string): { x: number; y: number } }; graphToViewport(p: { x: number; y: number }): { x: number; y: number }; getDimensions(): { width: number; height: number }; getCamera(): { ratio: number } } }).__ATLAS_SIGMA;
+    const graph = sigma.getGraph(); const { width, height } = sigma.getDimensions();
+    const at = (id: string) => sigma.graphToViewport(graph.getNodeAttributes(id));
+    const onScreen = graph.nodes().filter((id) => { const p = at(id); return p.x >= 0 && p.x <= width && p.y >= 0 && p.y <= height; }).length;
+    return { width, height, onScreen, page: at('page:page-architecture'), ratio: sigma.getCamera().ratio };
+  });
+}
+
+for (const width of [1280, 375]) test(`the big map is drawn and centred on the handed-off page at ${width}`, async ({ page }, info) => {
+  const { errors } = await boot(page, width);
+  await page.getByRole('button', { name: 'Open in graph', exact: true }).click();
+  await expect(page.locator('.atlas-count-line')).toContainText('7 pages');
+  await page.waitForTimeout(500);
+  const map = await drawnMap(page);
+  expect(map.onScreen).toBeGreaterThan(1);
+  expect(Math.abs(map.page.x - map.width / 2)).toBeLessThan(3);
+  expect(Math.abs(map.page.y - map.height / 2)).toBeLessThan(3);
+  await page.screenshot({ path: info.outputPath('handoff.png') });
+  expect(errors.pageErrors).toEqual([]);
+});
+
+test('Show on the big map from the page mind map draws the map on the page and keeps Reset view working', async ({ page }, info) => {
+  const errors = collectBrowserErrors(page);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await installTauriMock(page, { locale: 'en', rawActions: [] });
+  await openCanvas(page);
+  await box(page, 'Fixture architecture').click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Show on the big map', exact: true }).click();
+  await expect(page.getByTestId('atlas-view')).toBeVisible();
+  await expect(page.locator('.atlas-open-detail')).toBeVisible();
+  await page.waitForTimeout(500);
+  const map = await drawnMap(page);
+  expect(map.onScreen).toBeGreaterThan(1);
+  expect(Math.abs(map.page.x - map.width / 2)).toBeLessThan(3);
+  expect(Math.abs(map.page.y - map.height / 2)).toBeLessThan(3);
+  await page.screenshot({ path: info.outputPath('mind-map-handoff.png') });
+  await page.getByRole('button', { name: 'Reset view', exact: true }).click();
+  await page.waitForTimeout(300);
+  expect((await drawnMap(page)).onScreen).toBeGreaterThan(1);
   expect(errors.pageErrors).toEqual([]);
 });

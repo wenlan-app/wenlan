@@ -40,6 +40,15 @@ const OUTSIDE_THE_REVIEW_SURFACE: readonly string[] = [
   // Sharing needs a real cloud folder and a second Wenlan; the fixture lists
   // no shares and must not pretend a folder was shared or joined.
   "share_space",
+  // Team server commands need a real team server; the fixture has none.
+  "team_status",
+  "team_add_member",
+  "team_update_member",
+  "team_remove_member",
+  "team_new_member_key",
+  "team_host_space",
+  "team_join",
+  "join_team_space",
   "share_page",
   "stop_sharing_space",
   "stop_sharing_page",

@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { PageMap, PageMapNode, PageOutlineNode } from "../tauri";
-import { PAGE_LINE_ROOT, foldableHeadings, moreFor, outlineLine, withPageLines } from "./pageLines";
+import { PAGE_LINE_ROOT, foldableHeadings, moreFor, outlineLine, withPageLines, withPageLinesDetailed } from "./pageLines";
 
 function line(id: string, parent: string | null, kind: "heading" | "item", label = id): PageOutlineNode {
   return { id, parent_id: parent, kind, label, text: label };
@@ -205,5 +205,144 @@ describe("withPageLines closed headings", () => {
   it("puts no box under a heading the person closed", () => {
     const nodes = withPageLines(mapWith([], outline), { ...open(), closed: new Set(["h:a2"]) });
     expect(moreIds(nodes)).toEqual([]);
+  });
+});
+
+describe("withPageLinesDetailed doors", () => {
+  const door = (id: string, page: string): PageOutlineNode => ({
+    ...line(id, "h", "item"),
+    links: [{ target: page, title: page, page_id: page, whole_line: true }],
+  });
+  const centre: PageMap = {
+    page_id: "p1",
+    revision: 0,
+    map_schema: 2,
+    nodes: [],
+    edges: [],
+    outline: [line("h", null, "heading"), door("h#1", "p2"), door("h#2", "p2"), door("h#3", "p1")],
+  };
+  const options = {
+    pageId: "p1",
+    pageTitle: "One",
+    open: new Set<string>(),
+    showSuggestions: false,
+    showRestLabel: "rest",
+  };
+
+  it("leaves links as plain items when doors are not asked for", () => {
+    const { meta } = withPageLinesDetailed(centre, options);
+    expect(meta.size).toBe(0);
+  });
+
+  it("makes the first link to a page its door, a later one a copy, and a link to the center a way back", () => {
+    const { meta } = withPageLinesDetailed(centre, {
+      ...options,
+      doors: { centreId: "p1", open: new Set(), foreign: new Map(), foreignOpen: new Set(), backLabel: "back" },
+    });
+    expect(meta.get("outline:h#1")?.kind).toBe("door");
+    expect(meta.get("outline:h#2")).toMatchObject({ kind: "dup", doorId: "outline:h#1" });
+    expect(meta.get("outline:h#3")?.kind).toBe("back");
+  });
+
+  it("grows an opened door's headings only, and folds a long heading to two items", () => {
+    const other: PageMap = {
+      page_id: "p2",
+      revision: 0,
+      map_schema: 2,
+      nodes: [],
+      edges: [],
+      outline: [
+        line("a", null, "heading"),
+        line("a#1", "a", "item"),
+        line("a#2", "a", "item"),
+        line("a#3", "a", "item"),
+        line("a#4", "a", "item"),
+      ],
+    };
+    const ids = (foreignOpen: string[]) =>
+      withPageLinesDetailed(centre, {
+        ...options,
+        doors: {
+          centreId: "p1",
+          open: new Set(["outline:h#1"]),
+          foreign: new Map([["outline:h#1", other]]),
+          foreignOpen: new Set(foreignOpen),
+          backLabel: "back",
+        },
+      })
+        .nodes.map((n) => n.id)
+        .filter((id) => id.startsWith("outline:in:"));
+    const heading = "outline:in:h#1|a";
+    expect(ids([])).toEqual([heading]);
+    expect(ids([heading])).toEqual([heading, `${heading}#1`, `${heading}#2`, "outline:in:h#1|more:a"]);
+    expect(ids([heading, `${heading}#all`])).toHaveLength(5);
+  });
+});
+
+describe("withPageLinesDetailed links inside longer lines", () => {
+  const link = (page_id: string, title: string, whole_line = false) => ({ target: title, title, page_id, whole_line });
+  const item = (id: string, parent: string, label: string, links: ReturnType<typeof link>[]): PageOutlineNode => ({
+    ...line(id, parent, "item", label),
+    links,
+  });
+  const centre = mapWith([], [
+    { ...line("h", null, "heading"), links: [link("p5", "Para")] },
+    item("h#1", "h", "參考 工作流程", [link("p2", "工作流程")]),
+    item("h#2", "h", "see A and B", [link("p3", "A"), link("p4", "B")]),
+  ]);
+  const doors = { centreId: "p1", open: new Set<string>(), foreign: new Map(), foreignOpen: new Set<string>(), backLabel: "back" };
+  const options = { ...base, open: new Set<string>(), doors };
+
+  it("UX-VIEW-9 makes a line with one link the door itself, with its full text and its own id", () => {
+    const { nodes, meta } = withPageLinesDetailed(centre, options);
+    expect(meta.get("outline:h#1")?.kind).toBe("door");
+    expect(nodes.find((n) => n.id === "outline:h#1")?.label).toBe("參考 工作流程");
+    // No second door row for the same link.
+    expect(nodes.some((n) => n.id.startsWith("outline:door:h#1"))).toBe(false);
+  });
+
+  it("UX-VIEW-9 keeps a line with several links a line and hangs each link under it", () => {
+    const { nodes, meta } = withPageLinesDetailed(centre, options);
+    expect(meta.get("outline:h#2")).toBeUndefined();
+    const under = nodes.filter((n) => n.parent_id === "outline:h#2");
+    expect(under.map((n) => n.label)).toEqual(["A", "B"]);
+    expect(under.every((n) => meta.get(n.id)?.kind === "door")).toBe(true);
+  });
+
+  it("UX-VIEW-9 puts a paragraph link under its heading after the items", () => {
+    const { nodes } = withPageLinesDetailed(centre, options);
+    const kids = nodes.filter((n) => n.parent_id === "outline:h").sort((a, b) => a.rank - b.rank);
+    expect(kids.map((n) => n.id)).toEqual(["outline:h#1", "outline:h#2", "outline:door:h:0"]);
+  });
+
+  it("UX-VIEW-9 reads a line that links back to the centre with its own words", () => {
+    const map = mapWith([], [line("h", null, "heading"), item("h#1", "h", "回到 中心", [link("p1", "中心")])]);
+    const { nodes, meta } = withPageLinesDetailed(map, options);
+    expect(meta.get("outline:h#1")?.kind).toBe("back");
+    expect(nodes.find((n) => n.id === "outline:h#1")?.label).toBe("回到 中心 ↩");
+  });
+
+  it("UX-VIEW-9 reads links inside an opened door as grey lines, in reading order", () => {
+    const other: PageMap = {
+      page_id: "p2",
+      revision: 0,
+      map_schema: 2,
+      nodes: [],
+      edges: [],
+      outline: [
+        { ...line("a", null, "heading"), links: [link("p7", "段落")] },
+        line("a#1", "a", "item", "設 25 分鐘"),
+        item("a#2", "a", "練 專注力", [link("p6", "專注力")]),
+        item("a#3", "a", "回到 中心", [link("p1", "中心")]),
+        item("a#4", "a", "專注力", [link("p6", "專注力", true)]),
+      ],
+    };
+    const { nodes } = withPageLinesDetailed(centre, {
+      ...base,
+      open: new Set(),
+      doors: { ...doors, open: new Set(["outline:h#1"]), foreign: new Map([["outline:h#1", other]]), foreignOpen: new Set(["outline:in:h#1|a", "outline:in:h#1|a#all"]) },
+    });
+    const kids = nodes.filter((n) => n.parent_id === "outline:in:h#1|a").sort((a, b) => a.rank - b.rank);
+    expect(kids.map((n) => n.label)).toEqual(["設 25 分鐘", "練 專注力 →", "回到 中心 ↩", "專注力 →", "段落 →"]);
   });
 });
