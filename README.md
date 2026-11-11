@@ -105,8 +105,6 @@ To set up a tool by hand, or to see what gets connected:
 | Muse Code and other MCP clients | MCP | [MCP guide](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 | Grok Bot | CLI on your computer, or MCP | [Grok Bot guide](docs/setup-with-ai.md#grok-bot) |
 
-With an MCP-only tool, just ask it to check Wenlan first. Grok Bot setup: [Grok Bot guide](docs/setup-with-ai.md#grok-bot).
-
 When an import finishes, the app offers **Write pages with** your AI tool to turn it into your first cited pages. No command needed.
 
 <a id="what-can-i-bring-in"></a>

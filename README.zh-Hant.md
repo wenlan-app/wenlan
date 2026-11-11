@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=9288be66ae137b9f8ee5eb7cf912e0527aa2d5ccc0ed886a2de2164840502df9 -->
+<!-- README_SYNC: source=README.md sha256=00a8b2a25c5679a289f8c4e9190c892df96e72616a081a4003eab0898b8f0aa8 -->
 
 <p align="center">
   <picture>
@@ -106,8 +106,6 @@
 | Cursor、GitHub Copilot、VS Code、Gemini CLI、Antigravity、Windsurf、Kiro、OpenCode、Kimi Code | MCP 和技能 | [MCP 指南](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 | Muse Code 和其他 MCP 工具 | MCP | [MCP 指南](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 | Grok Bot | 本機 CLI，或 MCP | [Grok Bot 指南](docs/setup-with-ai.md#grok-bot) |
-
-只用 MCP 的工具，直接請它先查文瀾。Grok Bot 的設定見 [Grok Bot 指南](docs/setup-with-ai.md#grok-bot)。
 
 匯入完成後，App 會提供「用（你的 AI 工具）寫頁面」，把資料寫成第一批帶引用的筆記，不用輸入指令。
 

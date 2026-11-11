@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=9288be66ae137b9f8ee5eb7cf912e0527aa2d5ccc0ed886a2de2164840502df9 -->
+<!-- README_SYNC: source=README.md sha256=00a8b2a25c5679a289f8c4e9190c892df96e72616a081a4003eab0898b8f0aa8 -->
 
 <p align="center">
   <picture>
@@ -106,8 +106,6 @@ Para configurar una herramienta a mano, o ver qué se conecta:
 | Cursor, GitHub Copilot, VS Code, Gemini CLI, Antigravity, Windsurf, Kiro, OpenCode, Kimi Code | MCP y skills | [Guía de MCP](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 | Muse Code y otros clientes MCP | MCP | [Guía de MCP](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 | Grok Bot | CLI en tu ordenador, o MCP | [Guía de Grok Bot](docs/setup-with-ai.md#grok-bot) |
-
-Con una herramienta solo MCP, pídele que consulte Wenlan primero. Para Grok Bot, mira la [guía de Grok Bot](docs/setup-with-ai.md#grok-bot).
 
 Cuando termina una importación, la aplicación ofrece **Write pages with** tu herramienta de IA para convertirla en tus primeras páginas con citas. No hace falta ningún comando.
 
