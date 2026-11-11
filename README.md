@@ -44,12 +44,12 @@ I started Wenlan because my notes, documents, and AI chats were scattered, and k
 
 **Teams (coming soon):** a self-hosted Wenlan server everyone connects to, with view-only or edit access for each person.
 
+- **Keeps itself up to date.** Your AI tools save what you decide in chats as memories and fold them into pages. When a source changes, the pages that rely on it get updated.
+- **No plugins, no setup.** **Connect all** in Settings connects your AI tools in one click. No plugins to find or update, and no API keys.
+- **Bring what you have.** Obsidian vaults, notes, documents, and AI chats. [Full list](#what-can-i-bring-in).
 - **You decide what AI changes.** See every change, undo it, and choose which pages wait for your OK.
 - **Pages cite their sources.** A citation opens the original; a page whose citations mostly don't match isn't saved.
-- **Organized and up to date.** The AI tool you already use links your pages and updates them when a source changes.
-- **One click to connect.** **Connect all** in Settings sets up your AI tools. No plugins to install.
 - **Share a Space.** With a colleague, or across your own computers, through a Google Drive or iCloud Drive folder.
-- **Bring what you have.** Notes, documents, chats, and Obsidian vaults. [Full list](#what-can-i-bring-in).
 
 <a id="how-it-compares"></a>
 

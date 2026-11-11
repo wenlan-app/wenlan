@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=1f84cf7d911c8f5f6ce376df5280da2455381a8f203fa4ea2aefd70a47048de0 -->
+<!-- README_SYNC: source=README.md sha256=9288be66ae137b9f8ee5eb7cf912e0527aa2d5ccc0ed886a2de2164840502df9 -->
 
 <p align="center">
   <picture>
@@ -46,12 +46,12 @@ Empecé Wenlan porque mis notas, documentos y chats de IA estaban dispersos, y e
 
 **Equipos (próximamente):** un servidor de Wenlan autoalojado al que todos se conectan, con acceso de solo lectura o de edición para cada persona.
 
+- **Se mantiene al día sola.** Tus herramientas de IA guardan lo que decides en los chats como memorias y lo integran en páginas. Cuando cambia una fuente, las páginas que dependen de ella se actualizan.
+- **Sin plugins ni configuración.** **Connect all** en los ajustes conecta tus herramientas de IA con un clic. Sin plugins que buscar o actualizar, y sin claves de API.
+- **Trae lo que ya tienes.** Bóvedas de Obsidian, notas, documentos y chats de IA. [Lista completa](#what-can-i-bring-in).
 - **Tú decides qué cambia la IA.** Ves cada cambio, lo deshaces y eliges qué páginas esperan tu visto bueno.
 - **Las páginas citan sus fuentes.** Una cita abre el original; una página cuyas citas casi no coinciden no se guarda.
-- **Ordenada y al día.** La herramienta de IA que ya usas enlaza tus páginas y las actualiza cuando cambia una fuente.
-- **Conexión con un clic.** **Connect all** en los ajustes configura tus herramientas de IA. Sin plugins que instalar.
 - **Comparte un Space.** Con un compañero, o entre tus propios ordenadores, a través de una carpeta de Google Drive o iCloud Drive.
-- **Trae lo que ya tienes.** Notas, documentos, chats y bóvedas de Obsidian. [Lista completa](#what-can-i-bring-in).
 
 <a id="how-it-compares"></a>
 
