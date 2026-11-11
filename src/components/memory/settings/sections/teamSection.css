@@ -1,18 +1,8 @@
-/* Settings › Team: the member list menu and the add/edit dialog fields. No
-   divider lines of its own; the rows come from the settings card. */
+/* Settings › Team: the off line, the address field and the hint. The rows come
+   from the settings card. */
 .team-error { margin:0 0 12px;color:var(--mem-status-danger-text);font-size:var(--mem-text-sm);overflow-wrap:anywhere; }
 .team-off { margin:0;color:var(--mem-text-secondary);font-size:var(--mem-text-md);line-height:1.6; }
 .team-off button { border:0;background:transparent;padding:0;font:inherit;color:var(--mem-text);text-decoration:underline;text-underline-offset:3px;cursor:pointer; }
-.team-menu { position:relative; }
-.team-menu-button { border:0;background:transparent;color:var(--mem-text-secondary);width:28px;height:28px;border-radius:var(--mem-radius-sm);cursor:pointer;font:inherit;font-size:18px;line-height:1; }
-.team-menu-button:hover { background:var(--mem-hover);color:var(--mem-text); }
-.team-menu-list { position:absolute;right:0;top:100%;z-index:20;min-width:180px;margin:4px 0 0;padding:4px;list-style:none;background:var(--mem-surface);border:1px solid var(--mem-border);border-radius:var(--mem-radius-md);box-shadow:0 8px 24px rgba(0,0,0,.18); }
-.team-menu-list button { display:block;width:100%;text-align:left;border:0;background:transparent;color:var(--mem-text);padding:7px 10px;border-radius:var(--mem-radius-sm);font:inherit;font-size:var(--mem-text-base);cursor:pointer;white-space:nowrap; }
-.team-menu-list button:hover { background:var(--mem-hover); }
-.team-menu-list button[data-danger="true"] { color:var(--mem-status-danger-text); }
-.team-space-pick { list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px; }
-.team-space-pick li { display:flex;gap:10px;align-items:center;justify-content:space-between; }
-.team-space-pick label { display:flex;gap:8px;align-items:center;min-width:0;overflow-wrap:anywhere; }
-.team-code { font-family:var(--mem-font-mono);font-size:13px;width:100%;box-sizing:border-box; }
-.team-code-row { display:flex;gap:8px;align-items:center; }
-.team-code-row .team-code { flex:1;min-width:0; }
+.team-address { padding:14px 20px 16px; }
+.team-address input { width:100%;box-sizing:border-box; }
+.team-hint { margin:0;color:var(--mem-text-secondary);font-size:var(--mem-text-sm); }

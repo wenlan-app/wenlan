@@ -7,7 +7,19 @@ import { i18n } from "../../../i18n";
 import { JoinSharedDialog } from "./JoinSharedDialog";
 import { ShareDialog } from "./ShareDialog";
 import { groupTeamSpaces } from "./sharing";
-import { joinTeamSpace, listShares, listSpaces, teamJoin, type SharedStatus } from "../../../lib/tauri";
+import {
+  joinTeamSpace,
+  listShares,
+  listSpaces,
+  teamAddMember,
+  teamHostSpace,
+  teamJoin,
+  teamStatus,
+  teamUpdateMember,
+  type SharedStatus,
+  type TeamMember,
+  type TeamStatus,
+} from "../../../lib/tauri";
 
 vi.mock("../../../lib/tauri", async () => {
   const actual = await vi.importActual<typeof import("../../../lib/tauri")>("../../../lib/tauri");
@@ -16,6 +28,12 @@ vi.mock("../../../lib/tauri", async () => {
     listShares: vi.fn(),
     listSpaces: vi.fn(),
     teamJoin: vi.fn(),
+    teamStatus: vi.fn(),
+    teamAddMember: vi.fn(),
+    teamUpdateMember: vi.fn(),
+    teamNewMemberKey: vi.fn(),
+    teamRemoveMember: vi.fn(),
+    teamHostSpace: vi.fn(),
     joinTeamSpace: vi.fn(),
     createSpace: vi.fn(),
     lookInSharedFolder: vi.fn(),
@@ -34,6 +52,26 @@ const teamShare: SharedStatus = {
   last: { at: "2026-11-11T00:00:00Z", counts: { exported: 0, applied: 0, conflicts: 0, skipped: 0 }, paused: "the team server no longer accepts this member key" },
 };
 
+const person = (id: string, name: string, spaces: TeamMember["spaces"], removed_at?: string): TeamMember =>
+  ({ id, name, spaces, added_at: "2026-11-01T00:00:00Z", removed_at: removed_at ?? null });
+
+const hostedShare: SharedStatus = {
+  kind: "space", target: "Product", folder: "/x", host: null, hosted: true, read_only: false,
+  member_id: "me", member_name: "Dee", members: [{ id: "me", name: "Dee" }],
+  last: { at: "2026-11-11T00:00:00Z", counts: { exported: 0, applied: 0, conflicts: 0, skipped: 0 } },
+};
+
+const hostedStatus: TeamStatus = {
+  listening: "100.70.1.2:7879",
+  spaces: ["Product", "Roadmap"],
+  members: [
+    person("a", "Amy", [{ space: "Product", access: "write" }, { space: "Roadmap", access: "write" }]),
+    person("b", "Bo", [{ space: "Product", access: "read" }]),
+    person("g", "Gone", [{ space: "Product", access: "write" }], "2026-11-05T00:00:00Z"),
+    person("o", "Other", [{ space: "Roadmap", access: "write" }]),
+  ],
+};
+
 function wrap(node: React.ReactNode) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(<QueryClientProvider client={client}>{node}</QueryClientProvider>);
@@ -45,6 +83,8 @@ beforeEach(async () => {
   HTMLDialogElement.prototype.close ??= function close(this: HTMLDialogElement) { this.removeAttribute("open"); };
   vi.mocked(listShares).mockResolvedValue([]);
   vi.mocked(listSpaces).mockResolvedValue([]);
+  vi.mocked(teamStatus).mockResolvedValue({ members: [], spaces: [], listening: null });
+  localStorage.clear();
 });
 afterEach(() => vi.clearAllMocks());
 
@@ -92,12 +132,83 @@ describe("ShareDialog team Space", () => {
     expect(screen.queryByText("Folder")).not.toBeInTheDocument();
   });
 
-  it("links a hosted Space to Settings › Team", async () => {
-    vi.mocked(listShares).mockResolvedValue([{ ...teamShare, host: null, read_only: false, hosted: true, last: null }]);
-    const onOpenSettings = vi.fn();
-    wrap(<ShareDialog kind="space" target="Product" title="Product" onClose={() => undefined} onOpenSettings={onOpenSettings} />);
-    await userEvent.click(await screen.findByRole("button", { name: "Manage people in Settings › Team" }));
-    expect(onOpenSettings).toHaveBeenCalledWith("team");
+  it("lists the people of a hosted Space with their access", async () => {
+    vi.mocked(listShares).mockResolvedValue([hostedShare]);
+    vi.mocked(teamStatus).mockResolvedValue(hostedStatus);
+    wrap(<ShareDialog kind="space" target="Product" title="Product" onClose={() => undefined} />);
+    expect(await screen.findByText("Members of Product")).toBeInTheDocument();
+    expect(await screen.findByText("Amy")).toBeInTheDocument();
+    expect(screen.getByLabelText("Bo's access")).toHaveValue("read");
+    expect(screen.getByLabelText("Amy's access")).toHaveValue("write");
+    expect(screen.queryByText("Gone")).not.toBeInTheDocument();
+    expect(screen.queryByText("Other")).not.toBeInTheDocument();
+  });
+
+  it("changes someone's access, keeping their other Spaces", async () => {
+    vi.mocked(listShares).mockResolvedValue([hostedShare]);
+    vi.mocked(teamStatus).mockResolvedValue(hostedStatus);
+    vi.mocked(teamUpdateMember).mockResolvedValue(person("a", "Amy", []));
+    wrap(<ShareDialog kind="space" target="Product" title="Product" onClose={() => undefined} />);
+    await userEvent.selectOptions(await screen.findByLabelText("Amy's access"), "read");
+    await waitFor(() => expect(teamUpdateMember).toHaveBeenCalledWith("a", {
+      spaces: [{ space: "Product", access: "read" }, { space: "Roadmap", access: "write" }],
+    }));
+  });
+
+  it("adds a new person and shows the join code once", async () => {
+    vi.mocked(listShares).mockResolvedValue([hostedShare]);
+    vi.mocked(teamStatus).mockResolvedValue(hostedStatus);
+    localStorage.setItem("wenlan-team-url", "https://team.example.com");
+    vi.mocked(teamAddMember).mockResolvedValue({ member: person("c", "Cy", []), key: "wlt_k", join_code: "https://team.example.com#wlt_k" });
+    wrap(<ShareDialog kind="space" target="Product" title="Product" onClose={() => undefined} />);
+    await userEvent.type(await screen.findByLabelText("Name"), "Cy");
+    await userEvent.click(screen.getByRole("button", { name: "Add" }));
+    await waitFor(() => expect(teamAddMember).toHaveBeenCalledWith("Cy", [{ space: "Product", access: "write" }], "https://team.example.com"));
+    expect(await screen.findByDisplayValue("https://team.example.com#wlt_k")).toHaveAttribute("readonly");
+    expect(screen.getByText("Join code for Cy (shown only this once; send it privately)")).toBeInTheDocument();
+  });
+
+  it("gives an existing person this Space with no new code", async () => {
+    vi.mocked(listShares).mockResolvedValue([hostedShare]);
+    vi.mocked(teamStatus).mockResolvedValue(hostedStatus);
+    vi.mocked(teamUpdateMember).mockResolvedValue(person("o", "Other", []));
+    wrap(<ShareDialog kind="space" target="Product" title="Product" onClose={() => undefined} />);
+    await userEvent.type(await screen.findByLabelText("Name"), "  other ");
+    await userEvent.selectOptions(screen.getByLabelText("Access"), "read");
+    await userEvent.click(screen.getByRole("button", { name: "Add" }));
+    await waitFor(() => expect(teamUpdateMember).toHaveBeenCalledWith("o", {
+      spaces: [{ space: "Roadmap", access: "write" }, { space: "Product", access: "read" }],
+    }));
+    expect(teamAddMember).not.toHaveBeenCalled();
+    expect(await screen.findByText("Other can now use Product. The join code they already have still works.")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Join code")).not.toBeInTheDocument();
+  });
+
+  it("asks for the server address when none is known", async () => {
+    vi.mocked(listShares).mockResolvedValue([hostedShare]);
+    vi.mocked(teamStatus).mockResolvedValue({ ...hostedStatus, listening: "0.0.0.0:7879" });
+    wrap(<ShareDialog kind="space" target="Product" title="Product" onClose={() => undefined} />);
+    expect(await screen.findByLabelText("Address members use to reach this server")).toBeInTheDocument();
+  });
+});
+
+describe("ShareDialog share mode", () => {
+  it("offers only the cloud folder when this computer is not a team server", async () => {
+    wrap(<ShareDialog kind="space" target="Product" title="Product" onClose={() => undefined} />);
+    expect(await screen.findByText("Folder")).toBeInTheDocument();
+    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+  });
+
+  it("hosts the Space for the team and then shows its members", async () => {
+    vi.mocked(listShares).mockResolvedValueOnce([]).mockResolvedValue([hostedShare]);
+    vi.mocked(teamStatus).mockResolvedValue(hostedStatus);
+    vi.mocked(teamHostSpace).mockResolvedValue({ exported: 0, applied: 0, conflicts: 0, skipped: 0 });
+    wrap(<ShareDialog kind="space" target="Product" title="Product" onClose={() => undefined} />);
+    await userEvent.click(await screen.findByRole("radio", { name: "Use the team server" }));
+    expect(screen.getByText("People on the team server can use this Space. Then add people here.")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Share" }));
+    await waitFor(() => expect(teamHostSpace).toHaveBeenCalledWith("Product"));
+    expect(await screen.findByText("Members of Product", undefined, { timeout: 3000 })).toBeInTheDocument();
   });
 });
 

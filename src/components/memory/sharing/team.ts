@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Small pure helpers for the Team settings section and the join box.
-import type { TeamMember } from "../../../../lib/tauri";
+// Team server helpers shared by the members dialog, the share box, the join
+// box and Settings › Team.
+import { useQuery } from "@tanstack/react-query";
+import { teamStatus, type TeamMember } from "../../../lib/tauri";
 
 export const TEAM_DOCS_URL = "https://github.com/wenlan-app/wenlan/blob/main/docs/team-server.md";
 const TEAM_URL_KEY = "wenlan-team-url";
@@ -41,4 +43,17 @@ export function hostName(url: string): string {
 
 export function activeMembers(members: readonly TeamMember[]): TeamMember[] {
   return members.filter((member) => !member.removed_at);
+}
+
+export const TEAM_KEY = ["team"] as const;
+
+/** The team server's people and hosted Spaces. Only a computer that runs a
+ *  team server answers; elsewhere it reads as "off". */
+export function useTeamStatus() {
+  return useQuery({ queryKey: TEAM_KEY, queryFn: teamStatus, retry: false });
+}
+
+/** Whether `name` is the same person as `member`: trimmed, any letter case. */
+export function sameName(a: string, b: string): boolean {
+  return a.trim().toLocaleLowerCase() === b.trim().toLocaleLowerCase();
 }

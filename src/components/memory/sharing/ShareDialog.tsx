@@ -13,12 +13,14 @@ import {
   shareSpace,
   stopSharingPage,
   stopSharingSpace,
+  teamHostSpace,
   type SharedKind,
   type SharedStatus,
 } from "../../../lib/tauri";
 import { ConfirmDialog } from "../../ConfirmDialog";
 import type { SettingsSection } from "../settings/SettingsSidebar";
-import { hostName } from "../settings/sections/teamHelpers";
+import { TEAM_KEY, hostName, useTeamStatus } from "./team";
+import { TeamMembers } from "./TeamMembers";
 import { relativeMs } from "../page/format";
 import { SHARES_KEY, cloudName, others, pageShare, revealFolderLabel, shortFolder, spaceShare, useShares } from "./sharing";
 import "./sharing.css";
@@ -75,6 +77,11 @@ function ShareBox({ kind, target, title, onClose }: ShareTarget & { readonly onC
   const [taken, setTaken] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [how, setHow] = useState<"folder" | "team">("folder");
+  // Only a computer that runs a team server can host a Space for a team.
+  const teamStatus = useTeamStatus();
+  const canHost = kind === "space" && Boolean(teamStatus.data?.listening);
+  const viaTeam = canHost && how === "team";
   const choose = async () => {
     const chosen = await openDialog({ directory: true, multiple: false });
     if (typeof chosen !== "string") return;
@@ -89,7 +96,24 @@ function ShareBox({ kind, target, title, onClose }: ShareTarget & { readonly onC
   };
   const share = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!folder || taken || pending) return;
+    if (pending) return;
+    if (viaTeam) {
+      setPending(true);
+      setError(null);
+      try {
+        await teamHostSpace(target);
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: SHARES_KEY }),
+          queryClient.invalidateQueries({ queryKey: TEAM_KEY }),
+        ]);
+      } catch (caught) {
+        setError(errorText(caught));
+      } finally {
+        setPending(false);
+      }
+      return;
+    }
+    if (!folder || taken) return;
     setPending(true);
     setError(null);
     try {
@@ -106,6 +130,22 @@ function ShareBox({ kind, target, title, onClose }: ShareTarget & { readonly onC
   return (
     <form onSubmit={share}>
       <h2 id="share-dialog-title">{t("sharing.shareTitle", { name: title })}</h2>
+      {canHost && (
+        <div className="share-mode" role="radiogroup" aria-label={t("sharing.shareTitle", { name: title })}>
+          {(["folder", "team"] as const).map((value) => (
+            <label key={value}>
+              <input type="radio" name="share-how" checked={how === value} disabled={pending} onChange={() => { setHow(value); setError(null); }} />
+              <span>{t(value === "folder" ? "team.shareChoiceFolder" : "team.shareChoiceTeam")}</span>
+            </label>
+          ))}
+        </div>
+      )}
+      {viaTeam ? (
+        <div className="share-field">
+          <p className="share-hint">{t("team.shareTeamLine")}</p>
+          {error && <p className="share-warning" role="alert">{t("sharing.failed", { message: error })}</p>}
+        </div>
+      ) : (
       <div className="share-field">
         <span className="share-label">{t("sharing.folder")}</span>
         <div className="share-folder-row">
@@ -120,9 +160,10 @@ function ShareBox({ kind, target, title, onClose }: ShareTarget & { readonly onC
         {!taken && outsideCloud && <p className="share-warning">{t("sharing.notCloud")}</p>}
         {error && <p className="share-warning" role="alert">{t("sharing.failed", { message: error })}</p>}
       </div>
+      )}
       <div className="share-actions">
         <button type="button" className="share-secondary" onClick={onClose} disabled={pending}>{t("sharing.cancel")}</button>
-        <button type="submit" className="share-primary" disabled={!folder || taken || pending}>{t(pending ? "sharing.sharing" : "sharing.share")}</button>
+        <button type="submit" className="share-primary" disabled={(!viaTeam && (!folder || taken)) || pending}>{t(pending ? "sharing.sharing" : "sharing.share")}</button>
       </div>
     </form>
   );
@@ -181,7 +222,7 @@ function MembersBox({ share, onClose, onOpenSettings }: {
   };
   return (
     <div className="share-members">
-      <h2 id="share-dialog-title">{t("sharing.membersTitle")}</h2>
+      <h2 id="share-dialog-title">{share.hosted && share.kind === "space" ? t("team.hostedMembersTitle", { space: share.target }) : t("sharing.membersTitle")}</h2>
       {team ? (
         <p className="share-hint">{share.host ? t("team.serverLine", { host: hostName(share.host) }) : t("team.thisComputer")}</p>
       ) : (
@@ -197,9 +238,10 @@ function MembersBox({ share, onClose, onOpenSettings }: {
           <span>{share.host && share.read_only ? t("team.youReadOnly", { name: me.name }) : t("sharing.you", { name: me.name })}</span>
           {onOpenSettings && !share.host && <button type="button" className="share-link" onClick={() => { onClose(); onOpenSettings(); }}>{t("sharing.changeInSettings")}</button>}
         </li>
-        {rest.map((member) => <li key={member.id}><span>{member.name}</span></li>)}
-        {rest.length === 0 && <li className="share-muted">{t("sharing.noOthers")}</li>}
+        {!share.hosted && rest.map((member) => <li key={member.id}><span>{member.name}</span></li>)}
+        {!share.hosted && rest.length === 0 && <li className="share-muted">{t("sharing.noOthers")}</li>}
       </ul>
+      {share.hosted && <TeamMembers space={share.target} onError={setError} />}
       <dl className="share-facts">
         {!team && <div>
           <dt>{t("sharing.folder")}</dt>
@@ -213,9 +255,6 @@ function MembersBox({ share, onClose, onOpenSettings }: {
           <dd className={share.last?.paused ? "share-warning-text" : undefined}>{changing ? t("sharing.syncing") : syncLine(share, t, locale)}</dd>
         </div>
       </dl>
-      {share.hosted && onOpenSettings && (
-        <p className="share-hint"><button type="button" className="share-link" onClick={() => { onClose(); onOpenSettings("team"); }}>{t("team.manage")}</button></p>
-      )}
       {error && <p className="share-warning" role="alert">{t("sharing.failed", { message: error })}</p>}
       <div className="share-actions share-actions-split">
         <button type="button" className="share-danger" onClick={() => setConfirmingStop(true)}>{t("sharing.stop")}</button>
