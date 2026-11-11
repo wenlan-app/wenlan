@@ -1405,7 +1405,9 @@ async fn the_library_reaches_the_other_computer_in_the_same_spaces_with_unfiled_
     // The first computer makes the folder and mints the person's id.
     let counts = a.lib_sync(folder.path(), None).await.unwrap();
     assert_eq!(counts.exported, 4, "archived pages go too");
-    let file = read_space_file(folder.path()).unwrap().unwrap();
+    let file = read_space_file(&library::engine_folder(folder.path()))
+        .unwrap()
+        .unwrap();
     assert!(file.library);
     assert_eq!(file.page, None);
     assert_eq!(file.members.len(), 1);
@@ -1434,12 +1436,14 @@ async fn the_library_reaches_the_other_computer_in_the_same_spaces_with_unfiled_
     assert_eq!(old_here.space.as_deref(), Some("Private"));
     assert_eq!(b.content(&trip).await, "Lisbon in June.");
     // One person is one member.
-    let file = read_space_file(folder.path()).unwrap().unwrap();
+    let file = read_space_file(&library::engine_folder(folder.path()))
+        .unwrap()
+        .unwrap();
     assert_eq!(file.members.len(), 1);
 
     lib_settle(&a, &b, folder.path()).await;
     // The Unfiled page carries no Space; the others do.
-    let text = walk(folder.path());
+    let text = walk(&library::engine_folder(folder.path()));
     assert_eq!(text.matches("\nspace: Travel\n").count(), 1);
     assert_eq!(text.matches("\nspace: Wedding\n").count(), 1);
 }
@@ -1467,7 +1471,9 @@ async fn an_edit_on_the_other_computer_arrives_as_the_persons_own_writing() {
         crate::authorship::VersionAuthor::Person
     );
     // Still one member, and nobody's writing is filed under another id.
-    let file = read_space_file(folder.path()).unwrap().unwrap();
+    let file = read_space_file(&library::engine_folder(folder.path()))
+        .unwrap()
+        .unwrap();
     assert_eq!(file.members.len(), 1);
     assert!(a
         .history(&id)
@@ -1547,7 +1553,7 @@ async fn pages_with_their_own_share_keep_their_own_folder() {
 
     let counts = a.lib_sync(library_folder.path(), None).await.unwrap();
     assert_eq!(counts.exported, 1, "only Notes is in the library");
-    let text = walk(library_folder.path());
+    let text = walk(&library::engine_folder(library_folder.path()));
     assert!(text.contains("Some notes."));
     assert!(
         !text.contains("We marry in May."),
@@ -1611,14 +1617,19 @@ async fn pages_with_their_own_share_keep_their_own_folder() {
         a.lib_sync(library_folder.path(), None).await.unwrap(),
         zero()
     );
-    assert_eq!(version_count(library_folder.path()), 1);
+    assert_eq!(
+        version_count(&library::engine_folder(library_folder.path())),
+        1
+    );
 
     // Stopping leaves the pages and the folder as they are.
     assert!(leave_at(&a.settings(), &library()).unwrap());
     assert!(share_status_at(&a.settings(), &library())
         .unwrap()
         .is_none());
-    assert!(library_folder.path().join(SPACE_FILE).exists());
+    assert!(library::engine_folder(library_folder.path())
+        .join(SPACE_FILE)
+        .exists());
     assert!(a.page(&notes).await.is_some());
     let raw = std::fs::read_to_string(a.settings()).unwrap();
     assert!(!raw.contains("\"library\""), "left out when not shared");
@@ -1630,10 +1641,14 @@ async fn a_library_folder_is_not_a_space_folder_and_titles_clash_only_within_a_s
     let a = Member::new("Lucian").await;
     a.lib_sync(folder.path(), None).await.unwrap();
     // Neither kind of folder is used for the other.
-    assert!(a.share(&space(), folder.path()).await.is_err());
+    assert!(a
+        .share(&space(), &library::engine_folder(folder.path()))
+        .await
+        .is_err());
     let space_folder = tempfile::tempdir().unwrap();
     a.share(&space(), space_folder.path()).await.unwrap();
-    assert!(a.lib_sync(space_folder.path(), None).await.is_err());
+    // A library keeps its files in a subfolder of the chosen one, so the
+    // chosen folder may hold a Space's `space.json` beside it.
     let page_folder = tempfile::tempdir().unwrap();
     let id = a
         .write("Alone", "By itself.", WriteSpaceTarget::Uncategorized)
@@ -1641,8 +1656,10 @@ async fn a_library_folder_is_not_a_space_folder_and_titles_clash_only_within_a_s
     a.share(&Scope::Page(id.clone()), page_folder.path())
         .await
         .unwrap();
-    assert!(a.lib_sync(page_folder.path(), None).await.is_err());
-    assert!(a.share(&Scope::Page(id), folder.path()).await.is_err());
+    assert!(a
+        .share(&Scope::Page(id), &library::engine_folder(folder.path()))
+        .await
+        .is_err());
 
     // The same title in another Space is no clash; in the same Space it is.
     let a_plan_wedding = a
@@ -1669,4 +1686,329 @@ async fn a_library_folder_is_not_a_space_folder_and_titles_clash_only_within_a_s
         "Budget (Lucian)"
     );
     assert_eq!(b.page(&b_budget_same).await.unwrap().title, "Budget");
+}
+
+// ===== Layout, computers, the main computer and its jobs =====
+
+fn engine(chosen: &Path) -> PathBuf {
+    library::engine_folder(chosen)
+}
+
+fn copy_marker(chosen: &Path) -> PathBuf {
+    library::read_folder(chosen).join(crate::reading_copy::INSTRUCTIONS_FILE)
+}
+
+fn this_device(member: &Member) -> String {
+    share_settings_at(&member.settings(), &library())
+        .unwrap()
+        .unwrap()
+        .device_id
+}
+
+fn age(path: &Path, seconds: u64) {
+    let file = std::fs::File::options().write(true).open(path).unwrap();
+    file.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(seconds))
+        .unwrap();
+}
+
+#[tokio::test]
+async fn the_engine_lives_in_a_subfolder_of_the_chosen_folder_and_peek_finds_it() {
+    let chosen = tempfile::tempdir().unwrap();
+    let a = Member::new("Lucian").await;
+    a.lib_sync(chosen.path(), None).await.unwrap();
+    assert!(!chosen.path().join(SPACE_FILE).exists());
+    assert!(engine(chosen.path()).join(SPACE_FILE).exists());
+    assert_eq!(
+        library::ENGINE_DIR,
+        "同步資料（請勿打開）",
+        "the folder name is a constant of the format"
+    );
+    // Settings keep the folder the person chose.
+    let settings = share_settings_at(&a.settings(), &library())
+        .unwrap()
+        .unwrap();
+    assert_eq!(Path::new(&settings.folder), chosen.path());
+    let peek = peek_folder(chosen.path()).unwrap().unwrap();
+    assert_eq!(peek.kind, wenlan_types::shared_space::SharedKind::Library);
+    // A folder with no engine subfolder shares nothing.
+    let empty = tempfile::tempdir().unwrap();
+    assert!(peek_folder(empty.path()).unwrap().is_none());
+    // The status reads the members from the engine subfolder.
+    let status = share_status_at(&a.settings(), &library()).unwrap().unwrap();
+    assert_eq!(status.members.len(), 1);
+    assert_eq!(status.folder, chosen.path().to_string_lossy());
+}
+
+#[tokio::test]
+async fn computers_are_added_once_and_the_first_is_main_and_can_be_changed() {
+    let chosen = tempfile::tempdir().unwrap();
+    let (a, b) = library_pair(chosen.path()).await;
+    let (id_a, id_b) = (this_device(&a), this_device(&b));
+    assert_ne!(id_a, id_b);
+    let file = read_space_file(&engine(chosen.path())).unwrap().unwrap();
+    assert_eq!(file.devices.len(), 2);
+    assert_eq!(file.main_device, id_a, "the first to share is main");
+    lib_settle(&a, &b, chosen.path()).await;
+
+    // Later passes never rewrite space.json.
+    let path = engine(chosen.path()).join(SPACE_FILE);
+    let before = (
+        std::fs::read(&path).unwrap(),
+        std::fs::metadata(&path).unwrap().modified().unwrap(),
+    );
+    tick().await;
+    for _ in 0..3 {
+        a.lib_sync(chosen.path(), None).await.unwrap();
+        b.lib_sync(chosen.path(), Some(&id_a_member(&a)))
+            .await
+            .unwrap();
+    }
+    a.auto_all(None).await;
+    let after = (
+        std::fs::read(&path).unwrap(),
+        std::fs::metadata(&path).unwrap().modified().unwrap(),
+    );
+    assert_eq!(before.0, after.0.clone());
+    assert_eq!(before.1, after.1, "the file was not written again");
+    // The device id is kept across passes.
+    assert_eq!(this_device(&a), id_a);
+
+    let status = share_status_at(&b.settings(), &library()).unwrap().unwrap();
+    assert_eq!(status.devices.len(), 2);
+    assert_eq!(status.main_device.as_deref(), Some(id_a.as_str()));
+    assert_eq!(status.this_device.as_deref(), Some(id_b.as_str()));
+    // A Space's status carries none of it.
+    a.share(&space(), tempfile::tempdir().unwrap().path())
+        .await
+        .unwrap();
+    let space_status = share_status_at(&a.settings(), &space()).unwrap().unwrap();
+    assert!(space_status.devices.is_empty());
+    assert!(space_status.main_device.is_none() && space_status.this_device.is_none());
+
+    // The person picks another main computer; only a listed one will do.
+    assert!(library::set_main_device(chosen.path(), "nobody").is_err());
+    library::set_main_device(chosen.path(), &id_b).unwrap();
+    let status = share_status_at(&a.settings(), &library()).unwrap().unwrap();
+    assert_eq!(status.main_device.as_deref(), Some(id_b.as_str()));
+}
+
+fn id_a_member(a: &Member) -> String {
+    a.library_member_id()
+}
+
+#[tokio::test]
+async fn the_read_copy_is_written_only_by_the_main_computer() {
+    let chosen = tempfile::tempdir().unwrap();
+    let (a, b) = library_pair(chosen.path()).await;
+    let plan = a
+        .write("Plan", "We marry in May.", SPACE.to_string().into())
+        .await;
+    lib_settle(&a, &b, chosen.path()).await;
+    let copy = library::read_folder(chosen.path());
+    assert!(copy_marker(chosen.path()).exists());
+    assert!(
+        walk(&copy).contains("We marry in May."),
+        "the main computer wrote the page"
+    );
+    assert!(a
+        .db
+        .get_app_metadata(library::COPY_STATE_KEY)
+        .await
+        .unwrap()
+        .is_some());
+    assert!(b
+        .db
+        .get_app_metadata(library::COPY_STATE_KEY)
+        .await
+        .unwrap()
+        .is_none());
+
+    // Not the main computer: it writes nothing there.
+    std::fs::remove_dir_all(&copy).unwrap();
+    b.edit(&plan, "We marry in June.").await;
+    b.lib_sync(chosen.path(), Some(&a.library_member_id()))
+        .await
+        .unwrap();
+    assert!(!copy.exists(), "a computer that is not main writes no copy");
+
+    // Once the person makes it main, it does.
+    library::set_main_device(chosen.path(), &this_device(&b)).unwrap();
+    b.lib_sync(chosen.path(), Some(&a.library_member_id()))
+        .await
+        .unwrap();
+    assert!(walk(&copy).contains("We marry in June."));
+    let status = share_status_at(&b.settings(), &library()).unwrap().unwrap();
+    assert_eq!(status.reading_copy_error, None);
+}
+
+#[tokio::test]
+async fn an_unwritable_read_copy_is_shown_in_the_status_and_never_fails_the_sync() {
+    let chosen = tempfile::tempdir().unwrap();
+    let a = Member::new("Lucian").await;
+    a.lib_sync(chosen.path(), None).await.unwrap();
+    // A file where the folder should be.
+    std::fs::remove_dir_all(library::read_folder(chosen.path())).unwrap();
+    std::fs::write(library::read_folder(chosen.path()), "in the way").unwrap();
+    a.write("Plan", "We marry in May.", SPACE.to_string().into())
+        .await;
+    let counts = a.lib_sync(chosen.path(), None).await.unwrap();
+    assert_eq!(counts.exported, 1);
+    let status = share_status_at(&a.settings(), &library()).unwrap().unwrap();
+    assert!(status.reading_copy_error.is_some());
+    assert!(status.last.unwrap().error.is_none());
+}
+
+#[tokio::test]
+async fn the_inbox_is_taken_only_by_the_main_computer_and_files_are_moved_not_deleted() {
+    let chosen = tempfile::tempdir().unwrap();
+    let (a, b) = library_pair(chosen.path()).await;
+    let inbox = library::inbox_folder(chosen.path());
+    std::fs::create_dir_all(inbox.join("sub")).unwrap();
+    let ready = inbox.join("Trip idea.md");
+    std::fs::write(&ready, "Lisbon in June, book the flights early.").unwrap();
+    age(&ready, 60);
+    let text = inbox.join("Note.TXT");
+    std::fs::write(&text, "A plain text note from my phone.").unwrap();
+    age(&text, 60);
+    let fresh = inbox.join("Fresh.md");
+    std::fs::write(&fresh, "Still arriving from the cloud drive.").unwrap();
+    let hidden = inbox.join(".hidden.md");
+    std::fs::write(&hidden, "A dotfile is never taken.").unwrap();
+    age(&hidden, 60);
+    let other = inbox.join("Photo.png");
+    std::fs::write(&other, "not text").unwrap();
+    age(&other, 60);
+    let nested = inbox.join("sub/Nested.md");
+    std::fs::write(&nested, "Only the top level is taken.").unwrap();
+    age(&nested, 60);
+    let short = inbox.join("Short.md");
+    std::fs::write(&short, "hi").unwrap();
+    age(&short, 60);
+
+    // B is not main: nothing is taken.
+    b.lib_sync(chosen.path(), Some(&a.library_member_id()))
+        .await
+        .unwrap();
+    assert!(ready.exists() && text.exists());
+    assert!(b
+        .db
+        .list_memories(None, None, None, None, 50)
+        .await
+        .unwrap()
+        .is_empty());
+
+    // A is.
+    a.lib_sync(chosen.path(), None).await.unwrap();
+    assert!(!ready.exists() && !text.exists());
+    let taken = inbox.join(library::TAKEN_DIR);
+    assert_eq!(
+        std::fs::read_to_string(taken.join("Trip idea.md")).unwrap(),
+        "Lisbon in June, book the flights early."
+    );
+    assert!(taken.join("Note.TXT").exists());
+    for left in [&fresh, &hidden, &other, &nested, &short] {
+        assert!(left.exists(), "{} stays", left.display());
+    }
+    let memories =
+        a.db.list_memories(None, None, None, None, 50)
+            .await
+            .unwrap();
+    assert_eq!(memories.len(), 2);
+    let trip = memories.iter().find(|m| m.title == "Trip idea").unwrap();
+    assert!(trip.source_id.starts_with("manual_"));
+    assert!(trip.content.contains("Lisbon in June"));
+    assert_eq!(trip.space, None);
+
+    // Taken once: another pass takes nothing, and a name clash is numbered.
+    a.lib_sync(chosen.path(), None).await.unwrap();
+    assert_eq!(
+        a.db.list_memories(None, None, None, None, 50)
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+    std::fs::write(&ready, "A second idea with the same file name.").unwrap();
+    age(&ready, 60);
+    a.lib_sync(chosen.path(), None).await.unwrap();
+    assert!(taken.join("Trip idea.md").exists() && taken.join("Trip idea (2).md").exists());
+    assert_eq!(
+        a.db.list_memories(None, None, None, None, 50)
+            .await
+            .unwrap()
+            .len(),
+        3
+    );
+}
+
+#[tokio::test]
+async fn only_the_main_computer_lets_ai_write_pages() {
+    let chosen = tempfile::tempdir().unwrap();
+    let a = Member::new("Lucian").await;
+    // Sharing nothing: no gate.
+    assert!(library::page_writing_allowed_at(&a.settings()));
+    let (a, b) = library_pair(chosen.path()).await;
+    assert!(library::page_writing_allowed_at(&a.settings()), "main");
+    assert!(
+        !library::page_writing_allowed_at(&b.settings()),
+        "the other computer waits for the main one"
+    );
+    library::set_main_device(chosen.path(), &this_device(&b)).unwrap();
+    assert!(library::page_writing_allowed_at(&b.settings()));
+    assert!(!library::page_writing_allowed_at(&a.settings()));
+    // The folder cannot be read now: the last answer stands.
+    std::fs::rename(engine(chosen.path()), chosen.path().join("away")).unwrap();
+    assert!(library::page_writing_allowed_at(&b.settings()));
+    assert!(!library::page_writing_allowed_at(&a.settings()));
+}
+
+#[tokio::test]
+async fn a_pass_that_would_archive_most_of_the_library_archives_none() {
+    let chosen = tempfile::tempdir().unwrap();
+    let (a, b) = library_pair(chosen.path()).await;
+    let mut ids = Vec::new();
+    for n in 0..25 {
+        ids.push(
+            a.write(
+                &format!("Page {n}"),
+                &format!("Body {n}."),
+                SPACE.to_string().into(),
+            )
+            .await,
+        );
+    }
+    lib_settle(&a, &b, chosen.path()).await;
+    // A few archives are applied as always.
+    for id in &ids[..3] {
+        a.archive(id).await;
+    }
+    lib_settle(&a, &b, chosen.path()).await;
+    assert_eq!(b.page(&ids[0]).await.unwrap().status, "archived");
+
+    // Then the rest at once: more than 20, and most of the library.
+    for id in &ids[3..] {
+        a.archive(id).await;
+    }
+    a.lib_sync(chosen.path(), None).await.unwrap();
+    let counts = b
+        .lib_sync(chosen.path(), Some(&a.library_member_id()))
+        .await
+        .unwrap();
+    assert_eq!(counts.applied, 0);
+    assert_eq!(counts.held_back, 22);
+    for id in &ids[3..] {
+        assert_eq!(b.page(id).await.unwrap().status, "active");
+    }
+    let last = share_status_at(&b.settings(), &library())
+        .unwrap()
+        .unwrap()
+        .last
+        .unwrap();
+    assert!(last.held_back.is_some(), "the status says why");
+    // Still held on the next pass; nothing is lost.
+    let counts = b
+        .lib_sync(chosen.path(), Some(&a.library_member_id()))
+        .await
+        .unwrap();
+    assert_eq!(counts.held_back, 22);
 }

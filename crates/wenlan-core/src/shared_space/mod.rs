@@ -80,6 +80,7 @@
 //! are kept in `shared-spaces.json` under the data root, outside the
 //! database, so a rebuilt database stays the same member.
 
+pub mod library;
 pub mod remote;
 pub mod rewrite;
 pub mod version;
@@ -209,6 +210,10 @@ pub struct ShareSettings {
     /// made here through the team listener is filed under that member.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub hosted: bool,
+    /// This computer's id in the library's `space.json` `devices`: made once
+    /// when it first shares the library, never for a Space or a page.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub device_id: String,
 }
 
 /// A team server a Space syncs through.
@@ -415,8 +420,13 @@ pub fn join_as(
                 host: None,
                 read_only: false,
                 hosted: false,
+                device_id: String::new(),
             },
         };
+        let mut settings = settings;
+        if matches!(scope, Scope::Library) && settings.device_id.is_empty() {
+            settings.device_id = uuid::Uuid::new_v4().simple().to_string();
+        }
         let changed = store.get(scope) != Some(&settings);
         if changed {
             store.insert(scope, settings.clone());
@@ -466,6 +476,22 @@ pub struct SpaceFile {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub library: bool,
     pub members: Vec<SpaceMember>,
+    /// The computers of a library folder, each added once by the computer
+    /// itself (never rewritten, so a sync tool sees no conflicting copies).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub devices: Vec<SpaceDevice>,
+    /// The id of the computer that writes the phone read copy, takes the
+    /// inbox and runs background AI page writing. The first computer to
+    /// share the library; changed by the person.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub main_device: String,
+}
+
+/// A computer of a shared library.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpaceDevice {
+    pub id: String,
+    pub name: String,
 }
 
 impl SpaceFile {
@@ -537,6 +563,8 @@ pub fn ensure_space_file(
             },
             library: matches!(scope, Scope::Library),
             members: Vec::new(),
+            devices: Vec::new(),
+            main_device: String::new(),
         },
     };
     file.scope_check(scope).map_err(|reason| {
@@ -677,11 +705,23 @@ fn finish(run: &SpaceRun, space: &str, outcome: Outcome) -> SharedSyncRun {
             {
                 log::info!("[shared_space] {space}: syncing again");
             }
+            let held_back = (counts.held_back > 0).then(|| {
+                let reason = format!(
+                    "{} pages that the other computer archived were left as they are: \
+                     that is most of the library. Check the other computer, then sync again",
+                    counts.held_back
+                );
+                if before.as_ref().and_then(|run| run.held_back.as_ref()) != Some(&reason) {
+                    log::warn!("[shared_space] {space}: {reason}");
+                }
+                reason
+            });
             SharedSyncRun {
                 at,
                 counts,
                 paused: None,
                 error: None,
+                held_back,
             }
         }
         Outcome::Paused(reason) => {
@@ -693,6 +733,7 @@ fn finish(run: &SpaceRun, space: &str, outcome: Outcome) -> SharedSyncRun {
                 counts: SharedSyncCounts::default(),
                 paused: Some(reason),
                 error: None,
+                held_back: None,
             }
         }
         Outcome::Failed(error) => {
@@ -704,6 +745,7 @@ fn finish(run: &SpaceRun, space: &str, outcome: Outcome) -> SharedSyncRun {
                 counts: SharedSyncCounts::default(),
                 paused: None,
                 error: Some(error),
+                held_back: None,
             }
         }
     };
@@ -730,9 +772,24 @@ fn status_of(settings_path: &Path, scope: &Scope, settings: ShareSettings) -> Sh
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .clone();
-    let members = read_space_file(Path::new(&settings.folder))
+    let space_file = read_space_file(&folder_for(scope, &settings.folder))
         .ok()
-        .flatten()
+        .flatten();
+    let library = matches!(scope, Scope::Library);
+    let (devices, main_device) = match (&space_file, library) {
+        (Some(file), true) => (
+            file.devices
+                .iter()
+                .map(|device| wenlan_types::shared_space::SharedDevice {
+                    id: device.id.clone(),
+                    name: device.name.clone(),
+                })
+                .collect(),
+            Some(file.main_device.clone()).filter(|id| !id.is_empty()),
+        ),
+        _ => (Vec::new(), None),
+    };
+    let members = space_file
         .map(|file| file.members)
         .filter(|members| !members.is_empty())
         .unwrap_or_else(|| {
@@ -765,6 +822,15 @@ fn status_of(settings_path: &Path, scope: &Scope, settings: ShareSettings) -> Sh
             })
             .collect(),
         last,
+        devices,
+        main_device,
+        this_device: (library && !settings.device_id.is_empty())
+            .then(|| settings.device_id.clone()),
+        reading_copy_error: if library {
+            library::reading_copy_error(settings_path)
+        } else {
+            None
+        },
     }
 }
 
@@ -780,8 +846,14 @@ pub fn share_statuses_at(settings_path: &Path) -> Result<Vec<SharedSyncStatus>, 
 pub fn peek_folder(
     folder: &Path,
 ) -> Result<Option<wenlan_types::shared_space::SharedFolder>, WenlanError> {
-    let Some(file) = read_space_file(folder)? else {
-        return Ok(None);
+    // A library keeps its engine files in a subfolder of the folder the
+    // person chose.
+    let file = match read_space_file(folder)? {
+        Some(file) => file,
+        None => match read_space_file(&library::engine_folder(folder)) {
+            Ok(Some(file)) if file.library => file,
+            _ => return Ok(None),
+        },
     };
     Ok(Some(wenlan_types::shared_space::SharedFolder {
         kind: if file.library {
@@ -903,7 +975,7 @@ pub async fn sync_space(
             // Joining as a member already in the folder: one of this
             // person's other computers.
             let already = share_settings_at(target.settings_path, &scope)?.is_some();
-            let folder = target.folder.to_path_buf();
+            let folder = folder_for(&scope, &target.folder.to_string_lossy());
             let listed = tokio::task::spawn_blocking(move || read_space_file(&folder))
                 .await
                 .map_err(|error| WenlanError::Generic(format!("shared folder task: {error}")))??
@@ -976,7 +1048,7 @@ async fn run_pass(
     knowledge_path: Option<&Path>,
     automatic: bool,
 ) -> Result<Result<SharedSyncCounts, String>, WenlanError> {
-    let folder = PathBuf::from(&settings.folder);
+    let folder = folder_for(scope, &settings.folder);
     let listed = match settings.host.clone() {
         None => None,
         Some(host) => match remote::pull(&host, &folder).await {
@@ -1005,6 +1077,9 @@ async fn run_pass(
         }
     }
     let counts = pass(db, scope, &settings, settings_path, knowledge_path).await?;
+    if matches!(scope, Scope::Library) {
+        library::main_jobs(db, settings_path, &settings, &counts).await;
+    }
     if let Some((host, listed)) = listed {
         if let Err(reason) = remote::push(&host, &folder, &settings.member_id, &listed).await {
             return Ok(Err(reason));
@@ -1098,7 +1173,7 @@ pub async fn sync_shared_spaces(
             let renamed = join_at(settings_path, &scope, Path::new(&settings.folder), name)
                 .and_then(|renamed| {
                     rename_space_member(
-                        Path::new(&renamed.folder),
+                        &folder_for(&scope, &renamed.folder),
                         &SpaceMember {
                             id: renamed.member_id.clone(),
                             name: renamed.member_name.clone(),
@@ -1134,7 +1209,7 @@ async fn ready(db: &MemoryDB, scope: &Scope, settings: &ShareSettings) -> Result
             Err(error) => return Err(error.to_string()),
         }
     }
-    let folder = PathBuf::from(&settings.folder);
+    let folder = folder_for(scope, &settings.folder);
     tokio::task::spawn_blocking(move || folder_ready(&folder))
         .await
         .map_err(|error| format!("shared folder task: {error}"))?
@@ -1195,6 +1270,19 @@ fn own_shares(settings_path: &Path) -> Result<(HashSet<String>, HashSet<String>)
     Ok((spaces, pages))
 }
 
+/// The folder a pass of `scope` reads and writes: for the library, the
+/// engine subfolder of the folder the person chose (`settings.folder`).
+pub(crate) fn folder_for(scope: &Scope, folder: &str) -> PathBuf {
+    match scope {
+        Scope::Library => library::engine_folder(Path::new(folder)),
+        _ => PathBuf::from(folder),
+    }
+}
+
+/// A library pass that would archive more than this many pages here, and
+/// more than half of the library's, archives none of them.
+const MASS_ARCHIVE_MIN: usize = 20;
+
 /// What one pass reads once and every page uses.
 struct Pass<'a> {
     db: &'a MemoryDB,
@@ -1226,7 +1314,7 @@ async fn pass(
     settings_path: &Path,
     knowledge_path: Option<&Path>,
 ) -> Result<SharedSyncCounts, WenlanError> {
-    let folder = PathBuf::from(&settings.folder);
+    let folder = folder_for(scope, &settings.folder);
     let me = SpaceMember {
         id: settings.member_id.clone(),
         name: settings.member_name.clone(),
@@ -1300,6 +1388,18 @@ async fn pass(
             .await
             .map_err(|error| WenlanError::Generic(format!("shared folder task: {error}")))??
     };
+    let space_file = if matches!(scope, Scope::Library) {
+        let folder = folder.clone();
+        let device = SpaceDevice {
+            id: settings.device_id.clone(),
+            name: library::computer_name(),
+        };
+        tokio::task::spawn_blocking(move || library::add_device(&folder, &device))
+            .await
+            .map_err(|error| WenlanError::Generic(format!("shared folder task: {error}")))??
+    } else {
+        space_file
+    };
     let mut read = {
         let folder = folder.clone();
         tokio::task::spawn_blocking(move || version::read_folder(&folder))
@@ -1351,7 +1451,41 @@ async fn pass(
         .collect();
     let empty = Vec::new();
     let mut unsaved = false;
+    // Applying the folder must not archive most of the library at once (a
+    // damaged database or an emptied folder on the other computer): then
+    // none of those pages is archived this pass.
+    let mut hold: HashSet<&str> = HashSet::new();
+    if ctx.library {
+        let archiving: Vec<&str> = local
+            .values()
+            .filter(|page| page.status != "archived")
+            .filter(|page| {
+                let versions = read.pages.get(page.id.as_str()).unwrap_or(&empty);
+                let Some(head) = version::head(versions) else {
+                    return false;
+                };
+                let before = held.get(&page.id);
+                head.winner.meta.archived
+                    && before.is_none_or(|held| {
+                        held.sha != head.winner.sha && held.version == Some(page.version)
+                    })
+            })
+            .map(|page| page.id.as_str())
+            .collect();
+        if archiving.len() > MASS_ARCHIVE_MIN && archiving.len() * 2 > local.len() {
+            log::warn!(
+                "[shared_space] {key}: the folder would archive {} of {} pages here; none is archived this pass",
+                archiving.len(),
+                local.len()
+            );
+            hold.extend(archiving);
+        }
+    }
     for id in ids {
+        if hold.contains(id) {
+            counts.held_back += 1;
+            continue;
+        }
         let versions = read.pages.get(id).unwrap_or(&empty);
         let before = held.get(id).cloned();
         let exported = counts.exported;
