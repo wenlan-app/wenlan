@@ -1535,6 +1535,7 @@ carrying the authority of agreement.
 | `core/post_write/page_create.rs::create_page_impl` | `pub(super)` | no | no | — | `core/db.rs::find_matching_page_scoped`, `core/db.rs::insert_page_with_basis`, `core/db.rs::resolve_orphan_page_links`, `core/page_titles.rs::strict_same_title_note` |
 | `core/post_write/page_create.rs::replace_source_page_impl` | `pub(super)` | no | no | — | `core/db.rs::get_page` |
 | `core/post_write/page_create.rs::write_document_source_page_impl` | `pub(super)` | no | no | — | `core/db.rs::insert_document_source_page_at_hash` |
+| `core/post_write/page_link_rename.rs::update_links_to_renamed_headings` | `pub(crate)` | yes | no | — | `core/db.rs::get_page` |
 | `core/post_write/page_link_rename.rs::update_links_to_renamed_page` | `pub(crate)` | no | no | — | `core/db.rs::get_page` |
 | `core/post_write/page_removal.rs::page_in_scope` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/post_write/page_revision.rs::accept_page_revision_card_with_edit` | `pub(super)` | no | no | — | `core/db.rs::get_page` |

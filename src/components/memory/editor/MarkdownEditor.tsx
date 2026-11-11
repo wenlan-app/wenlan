@@ -36,6 +36,9 @@ export interface MarkdownEditorHandle {
   /** Select `text` where it first appears and put the cursor there, so the
    *  person can fix a sentence themselves. False when it is not in the page. */
   selectText(text: string): boolean;
+  /** Scroll so the heading whose words are `text` sits at the top, without
+   *  moving the cursor. False when the page has no such heading. */
+  revealHeading(text: string): boolean;
 }
 
 /** Replace `from`..`to` of the document with `insert`. */
@@ -183,6 +186,9 @@ const MarkdownEditorSession = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
         },
         selectText(text): boolean {
           return editorRef.current?.selectText(text) ?? false;
+        },
+        revealHeading(text): boolean {
+          return editorRef.current?.revealHeading(text) ?? false;
         },
         requestCancel(): boolean {
           if (editorRef.current) return editorRef.current.requestCancel();
