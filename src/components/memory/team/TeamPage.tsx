@@ -60,11 +60,12 @@ export function teamGroups(shares: readonly SharedStatus[] | undefined, status: 
   return groups;
 }
 
-/** Whether the left navigation shows "Team": this computer is part of one. */
+/** Whether the left navigation shows "Team": this computer syncs or hosts a
+ *  Space for one. Read from the shares alone: the shell asks this on every
+ *  screen, and the team server's own status is asked only on the Team page. */
 export function useInTeam(): boolean {
   const shares = useShares();
-  const status = useTeamStatus();
-  return teamGroups(shares.data, status.data).length > 0;
+  return teamGroups(shares.data, undefined).length > 0;
 }
 
 interface TeamPageProps {
