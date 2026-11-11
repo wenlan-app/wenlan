@@ -3,7 +3,9 @@
 //!
 //! A page's sources block names the memories and pages it cites
 //! (`[1]: [[Title]] · wenlan:<id>@<v>`). A line whose target is a page in the
-//! shared Space stays as it is: every member has that page. Every other
+//! shared Space stays as it is: every member has that page. So does a line
+//! citing a memory the person's library shares with their other computers
+//! (`kept`). Every other
 //! citation becomes a quote: at most three lines of the cited text and
 //! "from <member>'s conversation", with no id and no title of anything
 //! outside the Space. A basis line to a page outside the Space is dropped.
@@ -33,6 +35,8 @@ pub struct RewriteContext<'a> {
     pub cited_text: &'a HashMap<String, String>,
     /// The name other members know this person by.
     pub member_name: &'a str,
+    /// Memories every computer of the library has: their citations stay.
+    pub kept: &'a std::collections::HashSet<String>,
 }
 
 /// The id a locator points at: `wenlan:<id>@<v>`, or `wenlan:<id>` for a
@@ -98,6 +102,9 @@ pub fn rewrite_sources(
                 return citation.clone();
             }
             let id = target(&citation.locator);
+            if id.is_some_and(|id| ctx.kept.contains(id)) {
+                return citation.clone();
+            }
             if let Some(title) = id.and_then(|id| ctx.space_pages.get(id)) {
                 return Citation {
                     marker: citation.marker,

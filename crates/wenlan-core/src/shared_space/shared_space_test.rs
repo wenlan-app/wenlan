@@ -239,7 +239,31 @@ fn ctx<'a>(
         space_pages,
         cited_text,
         member_name: "Qi-Xuan",
+        kept: Box::leak(Box::default()),
     }
+}
+
+#[test]
+fn rewrite_keeps_a_citation_of_a_memory_the_library_shares() {
+    let space_pages = HashMap::new();
+    let cited_text = HashMap::from([("mem_kept".to_string(), "Said in chat".to_string())]);
+    let kept = std::collections::HashSet::from(["mem_kept".to_string()]);
+    let context = RewriteContext {
+        space_pages: &space_pages,
+        cited_text: &cited_text,
+        member_name: "Qi-Xuan",
+        kept: &kept,
+    };
+    let citation = Citation {
+        marker: 1,
+        label: "Said in chat".to_string(),
+        locator: Locator::Wenlan {
+            id: "mem_kept".to_string(),
+            version: 2,
+        },
+    };
+    let (out, _) = rewrite_sources(std::slice::from_ref(&citation), &[], &context);
+    assert_eq!(out, vec![citation]);
 }
 
 #[test]
@@ -361,6 +385,7 @@ fn rewrite_is_idempotent() {
         space_pages: &space_pages,
         cited_text: &nothing,
         member_name: "Someone else",
+        kept: &Default::default(),
     };
     assert_eq!(rewrite_sources(&once.0, &once.1, &elsewhere), once);
 }

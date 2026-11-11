@@ -2207,11 +2207,20 @@ impl Pass<'_> {
             })
             .filter(|id| !self.space_pages.contains_key(id))
             .collect();
+        let mut kept = HashSet::new();
+        if self.library {
+            for id in &memory_ids {
+                if memories::shared_by_library(db, id, &self.own_spaces).await? {
+                    kept.insert(id.clone());
+                }
+            }
+        }
         let cited_text = db.export_memory_texts(&memory_ids).await?;
         let ctx = rewrite::RewriteContext {
             space_pages: &self.space_pages,
             cited_text: &cited_text,
             member_name: &self.settings.member_name,
+            kept: &kept,
         };
         let (mut citations, mut basis) = rewrite::rewrite_sources(&citations, &basis, &ctx);
         // A source another member gave a sentence that is still on the page
