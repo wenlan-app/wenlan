@@ -39,14 +39,14 @@
 
 ## Why Wenlan
 
-I started Wenlan because my notes, documents, and AI chats were scattered, and keeping a note system from rotting took constant upkeep. Wenlan is for people who use AI tools every day and don't want to maintain a note system.
+I started Wenlan because my notes, documents, and AI chats were scattered, and keeping them in order took constant upkeep.
 
-- **See and undo what it changed:** You see everything your AI changed, can restore an earlier version, and decide which pages it may not change. Each citation opens the original, and a page is refused when most of its citations don't match the source.
-- **Write when you want:** Open a page and write, any time. Pages you wrote are set to **Ask me first**.
-- **Your AI keeps it organized:** The AI tool you already use turns your notes, files, and AI chats into pages, links them, and brings them up to date when a source changes. Wenlan doesn't bring an AI of its own.
-- **One click to connect:** **Connect all** in Settings sets up the AI tools on your computer. No plugins to find, install, or maintain.
-- **Share it with your team:** Share a Space through a Google Drive or iCloud Drive folder, and teammates add it on their own computers.
-- **Bring what you have:** Notes, documents, links, chats, and Obsidian vaults come in ([full list](#what-can-i-bring-in)) as local Markdown files.
+- **You decide what AI changes.** See every change, undo it, and choose which pages wait for your OK.
+- **Pages cite their sources.** A citation opens the original; a page whose citations mostly don't match isn't saved.
+- **Organized and up to date.** The AI tool you already use links your pages and updates them when a source changes.
+- **One click to connect.** **Connect all** in Settings sets up your AI tools. No plugins to install.
+- **Share a Space.** With a colleague, or across your own computers, through a Google Drive or iCloud Drive folder.
+- **Bring what you have.** Notes, documents, chats, and Obsidian vaults. [Full list](#what-can-i-bring-in).
 
 <a id="how-it-compares"></a>
 

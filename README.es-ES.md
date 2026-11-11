@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=42b83d79b43420afe05f0d58f85a792ea998b4add6239dde155bb8d23e8848fa -->
+<!-- README_SYNC: source=README.md sha256=6265efb69e302b0e1c53a294b22d6d31a48efee40dd8cb464acb194a8dd58644 -->
 
 <p align="center">
   <picture>
@@ -41,14 +41,14 @@
 
 ## Por qué Wenlan
 
-Empecé Wenlan porque mis notas, documentos y chats de IA estaban dispersos, y evitar que un sistema de notas se echara a perder exigía un mantenimiento constante. Wenlan es para quienes usan herramientas de IA a diario y no quieren mantener un sistema de notas.
+Empecé Wenlan porque mis notas, documentos y chats de IA estaban dispersos, y mantenerlos en orden exigía un esfuerzo constante.
 
-- **Ves y deshaces lo que cambió:** ves todo lo que cambió tu IA, puedes restaurar una versión anterior y decides qué páginas no puede cambiar. Cada cita abre el original, y se rechaza una página cuando la mayoría de sus citas no coinciden con la fuente.
-- **Escribe cuando quieras:** abre una página y escribe, en cualquier momento. Las páginas que escribiste quedan en **Ask me first**.
-- **Tu IA la mantiene organizada:** la herramienta de IA que ya usas convierte tus notas, archivos y chats de IA en páginas, las enlaza y las pone al día cuando cambia una fuente. Wenlan no trae una IA propia.
-- **Conexión con un clic:** **Connect all** en los ajustes configura las herramientas de IA de tu ordenador. Sin plugins que buscar, instalar ni mantener.
-- **Compártela con tu equipo:** comparte un Space a través de una carpeta de Google Drive o iCloud Drive, y tus compañeros lo añaden en sus propios ordenadores.
-- **Trae lo que ya tienes:** notas, documentos, enlaces, chats y bóvedas de Obsidian entran ([lista completa](#what-can-i-bring-in)) como archivos Markdown locales.
+- **Tú decides qué cambia la IA.** Ves cada cambio, lo deshaces y eliges qué páginas esperan tu visto bueno.
+- **Las páginas citan sus fuentes.** Una cita abre el original; una página cuyas citas casi no coinciden no se guarda.
+- **Ordenada y al día.** La herramienta de IA que ya usas enlaza tus páginas y las actualiza cuando cambia una fuente.
+- **Conexión con un clic.** **Connect all** en los ajustes configura tus herramientas de IA. Sin plugins que instalar.
+- **Comparte un Space.** Con un compañero, o entre tus propios ordenadores, a través de una carpeta de Google Drive o iCloud Drive.
+- **Trae lo que ya tienes.** Notas, documentos, chats y bóvedas de Obsidian. [Lista completa](#what-can-i-bring-in).
 
 <a id="how-it-compares"></a>
 
