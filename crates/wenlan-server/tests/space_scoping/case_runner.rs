@@ -282,7 +282,7 @@ pub fn assert_wave_2_records_catalog_contract() {
         .iter()
         .map(|case| (case.method, case.path))
         .collect::<BTreeSet<_>>();
-    assert_eq!(keys.len(), 13, "Wave 2 records must contain 13 unique keys");
+    assert_eq!(keys.len(), 14, "Wave 2 records must contain 14 unique keys");
 
     for expected in WAVE_2_RECORDS {
         let actual = route(expected.method, expected.path).expect("cataloged Wave 2 route");
