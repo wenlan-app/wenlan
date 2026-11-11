@@ -17,6 +17,8 @@ import {
   type SharedStatus,
 } from "../../../lib/tauri";
 import { ConfirmDialog } from "../../ConfirmDialog";
+import type { SettingsSection } from "../settings/SettingsSidebar";
+import { hostName } from "../settings/sections/teamHelpers";
 import { relativeMs } from "../page/format";
 import { SHARES_KEY, cloudName, others, pageShare, revealFolderLabel, shortFolder, spaceShare, useShares } from "./sharing";
 import "./sharing.css";
@@ -31,7 +33,7 @@ export type ShareTarget = {
 
 type ShareDialogProps = ShareTarget & {
   readonly onClose: () => void;
-  readonly onOpenSettings?: () => void;
+  readonly onOpenSettings?: (section?: SettingsSection) => void;
 };
 
 function errorText(error: unknown): string {
@@ -129,7 +131,7 @@ function ShareBox({ kind, target, title, onClose }: ShareTarget & { readonly onC
 function syncLine(share: SharedStatus, t: TFunction, locale: string): string {
   const last = share.last;
   if (!last) return t("sharing.syncing");
-  if (last.paused) return t("sharing.paused");
+  if (last.paused) return share.host ? t("team.pausedRemoved") : t("sharing.paused");
   const when = relativeMs(Date.parse(last.at), locale);
   if (last.counts.skipped > 0) return t("sharing.waiting", { count: last.counts.skipped });
   return t("sharing.upToDate", { when });
@@ -138,7 +140,7 @@ function syncLine(share: SharedStatus, t: TFunction, locale: string): string {
 function MembersBox({ share, onClose, onOpenSettings }: {
   readonly share: SharedStatus;
   readonly onClose: () => void;
-  readonly onOpenSettings?: () => void;
+  readonly onOpenSettings?: (section?: SettingsSection) => void;
 }) {
   const { t, i18n } = useTranslation();
   const locale = i18n.resolvedLanguage ?? i18n.language;
@@ -147,6 +149,7 @@ function MembersBox({ share, onClose, onOpenSettings }: {
   const [changing, setChanging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const cloud = cloudName(share.folder, t);
+  const team = Boolean(share.host) || Boolean(share.hosted);
   const me = share.members.find((member) => member.id === share.member_id) ?? { id: share.member_id, name: share.member_name };
   const rest = others(share);
   const change = async () => {
@@ -179,31 +182,40 @@ function MembersBox({ share, onClose, onOpenSettings }: {
   return (
     <div className="share-members">
       <h2 id="share-dialog-title">{t("sharing.membersTitle")}</h2>
-      <p className="share-hint">{t("sharing.inviteHow", { cloud: cloud ?? t("sharing.yourCloud") })}</p>
-      <div>
-        <button type="button" className="share-secondary" onClick={() => void revealSharedFolder(share.folder).catch(() => undefined)}>{revealFolderLabel(t)}</button>
-      </div>
+      {team ? (
+        <p className="share-hint">{share.host ? t("team.serverLine", { host: hostName(share.host) }) : t("team.thisComputer")}</p>
+      ) : (
+        <>
+          <p className="share-hint">{t("sharing.inviteHow", { cloud: cloud ?? t("sharing.yourCloud") })}</p>
+          <div>
+            <button type="button" className="share-secondary" onClick={() => void revealSharedFolder(share.folder).catch(() => undefined)}>{revealFolderLabel(t)}</button>
+          </div>
+        </>
+      )}
       <ul className="share-member-list">
         <li>
-          <span>{t("sharing.you", { name: me.name })}</span>
-          {onOpenSettings && <button type="button" className="share-link" onClick={() => { onClose(); onOpenSettings(); }}>{t("sharing.changeInSettings")}</button>}
+          <span>{share.host && share.read_only ? t("team.youReadOnly", { name: me.name }) : t("sharing.you", { name: me.name })}</span>
+          {onOpenSettings && !share.host && <button type="button" className="share-link" onClick={() => { onClose(); onOpenSettings(); }}>{t("sharing.changeInSettings")}</button>}
         </li>
         {rest.map((member) => <li key={member.id}><span>{member.name}</span></li>)}
         {rest.length === 0 && <li className="share-muted">{t("sharing.noOthers")}</li>}
       </ul>
       <dl className="share-facts">
-        <div>
+        {!team && <div>
           <dt>{t("sharing.folder")}</dt>
           <dd>
             <span className="share-folder-text">{shortFolder(share.folder, t)}</span>
             <button type="button" className="share-link" disabled={changing} onClick={() => void change()}>{t("sharing.change")}</button>
           </dd>
-        </div>
+        </div>}
         <div>
           <dt>{t("sharing.sync")}</dt>
           <dd className={share.last?.paused ? "share-warning-text" : undefined}>{changing ? t("sharing.syncing") : syncLine(share, t, locale)}</dd>
         </div>
       </dl>
+      {share.hosted && onOpenSettings && (
+        <p className="share-hint"><button type="button" className="share-link" onClick={() => { onClose(); onOpenSettings("team"); }}>{t("team.manage")}</button></p>
+      )}
       {error && <p className="share-warning" role="alert">{t("sharing.failed", { message: error })}</p>}
       <div className="share-actions share-actions-split">
         <button type="button" className="share-danger" onClick={() => setConfirmingStop(true)}>{t("sharing.stop")}</button>
@@ -211,7 +223,9 @@ function MembersBox({ share, onClose, onOpenSettings }: {
       </div>
       {confirmingStop && (
         <ConfirmDialog
-          message={share.kind === "space"
+          message={team
+            ? t("team.stopConfirm", { name: share.target })
+            : share.kind === "space"
             ? t("sharing.stopConfirmSpace", { name: share.target, cloud: cloud ?? t("sharing.yourCloud") })
             : t("sharing.stopConfirmPage", { cloud: cloud ?? t("sharing.yourCloud") })}
           confirmLabel={t("sharing.stop")}

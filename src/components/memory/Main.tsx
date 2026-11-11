@@ -1741,7 +1741,7 @@ export default function Main({
               onSpaceLoaded={handleSpaceLoaded}
               onSpaceRenamed={handleSpaceRenamed}
               onRegisterFlush={registerSpaceIdentityFlush}
-              onOpenSettings={() => navigateTo({ kind: "settings", section: "general" })}
+              onOpenSettings={(section) => navigateTo({ kind: "settings", section: section ?? "general" })}
             />
           ) : view.kind === "memory" ? (
             <MemoryDetail
@@ -1883,7 +1883,7 @@ export default function Main({
               onPageClick={(id) => navigateTo({ kind: "page", pageId: id })}
               onEntityClick={handleEntityClick}
               onSavePendingChange={reportPageSaving}
-              onOpenSettings={() => navigateTo({ kind: "settings", section: "general" })}
+              onOpenSettings={(section) => navigateTo({ kind: "settings", section: section ?? "general" })}
               pageTour={gettingStarted.visible || exampleWiki}
             />
             </WikiWorkspace>

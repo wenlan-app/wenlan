@@ -1,0 +1,44 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Small pure helpers for the Team settings section and the join box.
+import type { TeamMember } from "../../../../lib/tauri";
+
+export const TEAM_DOCS_URL = "https://github.com/wenlan-app/wenlan/blob/main/docs/team-server.md";
+const TEAM_URL_KEY = "wenlan-team-url";
+
+export function rememberedTeamUrl(): string {
+  try {
+    return localStorage.getItem(TEAM_URL_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+export function rememberTeamUrl(url: string) {
+  try {
+    localStorage.setItem(TEAM_URL_KEY, url);
+  } catch {
+    // Remembering the address is a convenience only.
+  }
+}
+
+/** The address a member would reach the server at, when the listener names a
+ *  real one. `0.0.0.0` and `::` only say "every network", not where to go. */
+export function addressFromListening(listening: string | null | undefined): string {
+  if (!listening) return "";
+  const host = listening.startsWith("[") ? listening.slice(1, listening.indexOf("]")) : listening.replace(/:\d+$/, "");
+  if (!host || host === "0.0.0.0" || host === "::") return "";
+  return `http://${listening}`;
+}
+
+export function prefillTeamUrl(listening: string | null | undefined): string {
+  return rememberedTeamUrl() || addressFromListening(listening);
+}
+
+/** A server's address as people read it: no scheme, no trailing slash. */
+export function hostName(url: string): string {
+  return url.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").replace(/\/+$/, "");
+}
+
+export function activeMembers(members: readonly TeamMember[]): TeamMember[] {
+  return members.filter((member) => !member.removed_at);
+}

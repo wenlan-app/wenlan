@@ -109,3 +109,44 @@ export function revealFolderLabel(
   if (ua && /\bWindows\b/.test(ua)) return t("sharing.showInExplorer");
   return t("sharing.showInFolder");
 }
+
+/** True when a Space syncs through a team server, or this computer hosts it
+ *  for a team. */
+export function isTeamShare(share: SharedStatus | undefined): boolean {
+  return Boolean(share && (share.host || share.hosted));
+}
+
+/** The share of a Space by its name, compared the way Space names are. */
+export function shareOfSpace(shares: readonly SharedStatus[] | undefined, name: string): SharedStatus | undefined {
+  const key = name.trim().toLocaleLowerCase();
+  return shares?.find((share) => share.kind === "space" && share.target.trim().toLocaleLowerCase() === key);
+}
+
+export type TeamSpaceGroup<T> = {
+  /** The server's address as people read it, or `null` for Spaces this
+   *  computer hosts. */
+  readonly host: string | null;
+  readonly spaces: T[];
+};
+
+/** Splits Spaces into the person's own and one group per team server (then
+ *  the Spaces this computer hosts). Order inside each is kept. */
+export function groupTeamSpaces<T extends { name: string }>(
+  spaces: readonly T[],
+  shares: readonly SharedStatus[] | undefined,
+): { own: T[]; groups: TeamSpaceGroup<T>[] } {
+  const own: T[] = [];
+  const byHost = new Map<string, T[]>();
+  const hosted: T[] = [];
+  for (const space of spaces) {
+    const share = shareOfSpace(shares, space.name);
+    if (share?.host) {
+      const host = share.host.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").replace(/\/+$/, "");
+      byHost.set(host, [...(byHost.get(host) ?? []), space]);
+    } else if (share?.hosted) hosted.push(space);
+    else own.push(space);
+  }
+  const groups: TeamSpaceGroup<T>[] = [...byHost].map(([host, list]) => ({ host, spaces: list }));
+  if (hosted.length > 0) groups.push({ host: null, spaces: hosted });
+  return { own, groups };
+}

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import type { SettingsSection } from "./settings/SettingsSidebar";
 import { clearPageSection, headingKey, pendingPageSection, requestPageSection, wikilinkHeading } from "../../lib/pageSection";
 import SourceDocumentPreview from "./sources/SourceDocumentPreview";
 import { SourceDocumentReader } from "./sources/SourceDocumentReader";
@@ -166,7 +167,7 @@ interface PageDetailProps {
   /** Someone still getting started: the first page Wenlan writes shows its tips. */
   pageTour?: boolean;
   /** Opens Settings › General, where the name others see is changed. */
-  onOpenSettings?: () => void;
+  onOpenSettings?: (section?: SettingsSection) => void;
 }
 
 /** How often an open page checks for edits made outside Wenlan. */

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import type { SettingsSection } from "./settings/SettingsSidebar";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -37,7 +38,7 @@ export type SpaceDetailProps = {
   readonly onOpenSource?: (file: IndexedFileInfo) => void;
   readonly onRegisterFlush?: (flush: (() => Promise<boolean>) | null) => void;
   /** Opens Settings, where the name people see is changed. */
-  readonly onOpenSettings?: () => void;
+  readonly onOpenSettings?: (section?: SettingsSection) => void;
   readonly spaceName: string;
 };
 

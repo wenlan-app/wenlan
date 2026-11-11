@@ -44,3 +44,5 @@
 .page-detail-shared-line { margin: 0 0 8px; }
 .shared-conflict-line { flex-wrap:wrap;row-gap:4px;color:var(--mem-text); }
 .shared-conflict-line .share-link { color:var(--mem-text-secondary); }
+.share-mode { display:flex;flex-direction:column;gap:6px; }
+.share-mode label, .share-choice { display:flex;gap:8px;align-items:center; }
