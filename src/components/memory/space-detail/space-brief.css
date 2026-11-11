@@ -1,13 +1,16 @@
 /* SPDX-License-Identifier: AGPL-3.0-only */
-/* A Space's Brief on top of its page (UX-SPACE-1): one soft panel, where
-   the work stands on the left and what is in progress on the right. */
+/* A Space's Brief on top of its page (UX-SPACE-1): one white panel with a
+   thin border, where the work stands on the left and what is in progress
+   on the right. */
 .space-brief {
   display: grid;
   gap: 24px 40px;
   margin: 28px 0 8px;
   padding: 26px 30px 24px;
+  border: 1px solid var(--mem-border);
   border-radius: var(--mem-r-12);
-  background: var(--mem-hover);
+  background: var(--mem-surface);
+  box-shadow: var(--mem-shadow-raised);
 }
 
 .space-brief[data-split="true"] {

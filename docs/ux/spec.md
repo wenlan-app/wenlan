@@ -441,7 +441,7 @@ and wait for evidence that people need them.
 - **UX-SPACE-1** `shipped` A Space's page opens with its Brief, in plain
   words: where the work stands in a sentence or two, when an AI tool last
   handed off, and what is in progress, newest first, one line each. Three
-  show; the rest fold under "N more". The Brief sits in one soft panel:
+  show; the rest fold under "N more". The Brief sits in one white panel with a thin border:
   where it stands on the left, what is in progress on the right. A Space
   with no Brief is its pages alone. No other new buttons or panels.
   原文：「照你說的建議。我想要把 brief 結合好，不要多餘的介面」（2026-11-10 23:10Z）；草圖選擇卡「照做，連 Brief 清理一起」（2026-11-10 23:15Z）；「space 里面应该要放一些什么去区隔它的就是价值…page 是确实是被 filter 完了，但是在这里面还有什么需要特别强调的呢？」（2026-11-10 23:02Z）
@@ -457,7 +457,7 @@ and wait for evidence that people need them.
   Pages/Sources tabs; a page's sources are read inside the page. A page the
   AI changed in the last day is quietly marked.
   原文：「不 sources 放里面我也不知道它能干嘛」（2026-11-10 23:02Z）；同 UX-SPACE-1 草圖。
-  版面：「感覺版面啥的不夠好看 UI/UX」（2026-11-11 00:24Z）後，選擇卡「1 淡色底一塊」（2026-11-11 00:30Z）：Brief 一塊淡色底，筆記用卡片、上方有「筆記」標題。
+  版面：「感覺版面啥的不夠好看 UI/UX」（2026-11-11 00:24Z）後，選擇卡「1 淡色底一塊」（2026-11-11 00:30Z）：Brief 一塊，筆記用卡片、上方有「筆記」標題；底色選擇卡「C 白底細框」（2026-11-11 01:02Z）。
 
 ## Adding to Wenlan
 
