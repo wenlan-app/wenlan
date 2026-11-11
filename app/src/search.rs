@@ -3927,10 +3927,7 @@ pub async fn team_new_member_key(
     url: Option<String>,
 ) -> Result<team::TeamMemberKey, String> {
     let client = daemon_client(&state).await;
-    let mut path = format!(
-        "/api/team/members/{}/key",
-        percent_encode_path_segment(&id)
-    );
+    let mut path = format!("/api/team/members/{}/key", percent_encode_path_segment(&id));
     if let Some(url) = url.filter(|u| !u.trim().is_empty()) {
         path.push_str(&format!("?url={}", percent_encode_path_segment(&url)));
     }
