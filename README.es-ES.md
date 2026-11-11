@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=c25afa23b469b5fa435c85a4d67f7f7176d33a4acade0657e0cde4c82556a171 -->
+<!-- README_SYNC: source=README.md sha256=b66a203afda850f7cc27bcd78b1a889129da9d730c5dfe5a7a9d1a68ef713578 -->
 
 <p align="center">
   <picture>
@@ -164,7 +164,7 @@ También puedes conectar una carpeta Open Knowledge Format (OKF) como fuente. Lo
 Tu herramienta de IA lee lo que traes y lo escribe en páginas Markdown. Enlaza las páginas relacionadas, cita de dónde sale cada frase y pone las páginas al día cuando cambia una fuente. Puedes abrir cualquier página y escribir en ella tú mismo.
 
 <p align="center">
-  <img src="./docs/assets/wenlan-updates-history.png" alt="Flujo ilustrativo: un hallazgo en un documento actualiza la memoria de V1 a V2 y después influye en una nota, que se actualiza automáticamente o queda pendiente de revisión." width="100%">
+  <img src="./docs/assets/wenlan-updates-history.animated.svg" alt="Flujo ilustrativo: una decisión guardada desde un chat de IA y una fuente que cambió pasan por Steep; una página en Ask me first recibe un cambio sugerido que espera tu aprobación, y una página en Allowed se actualiza con una cita que vuelve a la fuente." width="100%">
 </p>
 <p>Ilustración basada en el comportamiento actual de actualización; no es una captura de la app.</p>
 
