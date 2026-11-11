@@ -694,6 +694,13 @@ describe("PageCanvas", () => {
 
     fireEvent.keyDown(surface(), { key: "Escape" });
     await waitFor(() => expect(box("Beta").style.opacity).toBe("1"));
+
+    // An Escape with nothing focused still lets go, and stays on the page.
+    await user.click(screen.getByText("Alpha"));
+    await waitFor(() => expect(box("Beta").style.opacity).toBe("0.28"));
+    (document.activeElement as HTMLElement | null)?.blur();
+    expect(fireEvent.keyDown(document.body, { key: "Escape" })).toBe(false);
+    await waitFor(() => expect(box("Beta").style.opacity).toBe("1"));
   });
 
   it("says out loud when the object behind a node is gone", async () => {

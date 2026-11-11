@@ -1638,7 +1638,12 @@ function PageCanvasInner({
       const target = e.target instanceof HTMLElement ? e.target : null;
       // The note and its page menu remain usable beside this nonmodal map.
       // Only keystrokes from the actual map surface belong to its shortcuts.
-      if (!target || !surfaceRef.current?.contains(target) || e.defaultPrevented || e.isComposing) return;
+      // A focused branch also lets go of an Escape that reached no element at
+      // all: a window that is not in front has no focused element, and that
+      // Escape would otherwise leave the page instead.
+      const strayEscape =
+        e.key === "Escape" && focusLine !== null && (target === document.body || target === document.documentElement);
+      if (!target || (!surfaceRef.current?.contains(target) && !strayEscape) || e.defaultPrevented || e.isComposing) return;
       if (menu && target.closest(".page-canvas-menu")) return;
       // Naming a box or using a native field must never mutate the selection.
       if (target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) return;
