@@ -17,7 +17,7 @@ import { Funnel } from "@phosphor-icons/react";
 import { AssetLensToggle } from "../assets/AssetLensToggle";
 import { JoinSharedDialog } from "../sharing/JoinSharedDialog";
 import { PeopleIcon } from "../sharing/SharedWithLine";
-import { groupTeamSpaces, useShares } from "../sharing/sharing";
+import { groupTeamSpaces, teamLabel, useShares } from "../sharing/sharing";
 import { ConfirmedSpaces } from "./ConfirmedSpaces";
 import { SpaceEditor } from "./SpaceEditor";
 import { SuggestedSpaces } from "./SuggestedSpaces";
@@ -249,8 +249,8 @@ export function SpacesOverview(props: SpacesOverviewProps) {
           </div>
           ) : null}
           {teamGroups.map((group) => (
-            <div key={group.host ?? "hosted"} className="spaces-team-group">
-              <h2 className="spaces-group-title">{group.host ? t("team.groupTeam", { host: group.host }) : t("team.groupHosted")}</h2>
+            <div key={group.key} className="spaces-team-group">
+              <h2 className="spaces-group-title">{teamLabel(t, group.team)}</h2>
           <ConfirmedSpaces
             spaces={group.spaces}
             allSpaces={allSpaces}

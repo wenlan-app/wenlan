@@ -214,6 +214,10 @@ struct SettingsStore {
     /// are not followed again until joined by hand.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     left: BTreeSet<String>,
+    /// The team each server this Wenlan syncs through is for, by the
+    /// server's url, as the server last said ([`follow::follow_teams`]).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    teams: BTreeMap<String, wenlan_types::team::TeamInfo>,
 }
 
 /// One team Space on one server, as [`SettingsStore::left`] names it.
@@ -671,13 +675,40 @@ pub fn share_status_at(
     settings_path: &Path,
     scope: &Scope,
 ) -> Result<Option<SharedSyncStatus>, WenlanError> {
-    let Some(settings) = share_settings_at(settings_path, scope)? else {
+    let mut store = read_settings(settings_path)?;
+    let teams = std::mem::take(&mut store.teams);
+    let (entries, key) = store.entries(scope);
+    let Some(settings) = entries.remove(&key) else {
         return Ok(None);
     };
-    Ok(Some(status_of(settings_path, scope, settings)))
+    let team = team_of(settings_path, &teams, &settings);
+    Ok(Some(status_of(settings_path, scope, settings, team)))
 }
 
-fn status_of(settings_path: &Path, scope: &Scope, settings: ShareSettings) -> SharedSyncStatus {
+/// The team a share belongs to: the one its server last named, or the team
+/// this Wenlan hosts (its member list beside the settings).
+fn team_of(
+    settings_path: &Path,
+    teams: &BTreeMap<String, wenlan_types::team::TeamInfo>,
+    settings: &ShareSettings,
+) -> Option<wenlan_types::team::TeamInfo> {
+    match &settings.host {
+        Some(host) => teams.get(&host.url).cloned(),
+        None if settings.hosted => settings_path
+            .parent()
+            .map(|root| root.join(crate::team::TEAM_FILE))
+            .and_then(|path| crate::team::read_team(&path).ok())
+            .and_then(|file| file.info()),
+        None => None,
+    }
+}
+
+fn status_of(
+    settings_path: &Path,
+    scope: &Scope,
+    settings: ShareSettings,
+    team: Option<wenlan_types::team::TeamInfo>,
+) -> SharedSyncStatus {
     let last = space_run(settings_path, &scope.key())
         .last
         .lock()
@@ -704,6 +735,7 @@ fn status_of(settings_path: &Path, scope: &Scope, settings: ShareSettings) -> Sh
         },
         folder: settings.folder,
         host: settings.host.map(|host| host.url),
+        team,
         read_only: settings.read_only,
         hosted: settings.hosted,
         member_id: settings.member_id,
@@ -721,10 +753,31 @@ fn status_of(settings_path: &Path, scope: &Scope, settings: ShareSettings) -> Sh
 
 /// Everything this Wenlan shares, with each one's members and last pass.
 pub fn share_statuses_at(settings_path: &Path) -> Result<Vec<SharedSyncStatus>, WenlanError> {
-    Ok(shares_at(settings_path)?
+    let mut store = read_settings(settings_path)?;
+    let teams = std::mem::take(&mut store.teams);
+    Ok(store
+        .all()
         .into_iter()
-        .map(|(scope, settings)| status_of(settings_path, &scope, settings))
+        .map(|(scope, settings)| {
+            let team = team_of(settings_path, &teams, &settings);
+            status_of(settings_path, &scope, settings, team)
+        })
         .collect())
+}
+
+/// Remembers which team the server at `url` is for, as it just said.
+fn remember_team(
+    path: &Path,
+    url: &str,
+    team: &wenlan_types::team::TeamInfo,
+) -> Result<(), WenlanError> {
+    change_settings(path, |store| {
+        if store.teams.get(url) == Some(team) {
+            return (false, ());
+        }
+        store.teams.insert(url.to_string(), team.clone());
+        (true, ())
+    })
 }
 
 /// What a folder shares, for joining it: `None` when it shares nothing yet.

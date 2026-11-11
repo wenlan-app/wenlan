@@ -32,6 +32,8 @@ interface SidebarProps {
   readonly onNavigateSpaces?: (create: boolean) => void;
   /** Only on a computer that is part of a team. */
   readonly onNavigateTeam?: () => void;
+  /** The one team's name for its row; "Team" when there are several. */
+  readonly teamName?: string;
   readonly onOpenAbout?: () => void;
   readonly onOpenSearch?: (trigger: HTMLButtonElement) => void;
   readonly searchOpen?: boolean;
@@ -78,6 +80,7 @@ export default function Sidebar({
   onNavigateSettings,
   onNavigateSpaces = () => {},
   onNavigateTeam,
+  teamName,
   onOpenAbout,
   onOpenSearch,
   searchOpen = false,
@@ -167,7 +170,7 @@ export default function Sidebar({
               navigation: t("sidebar.navigation"),
               pages: t("sidebar.pages"),
               spaces: t("sidebar.spaces"),
-              team: t("sidebar.team"),
+              team: teamName ?? t("sidebar.team"),
             }}
             onNavigateEntities={closeAfterNavigation(onNavigateEntities, closeOverlay)}
             onNavigateGraph={closeAfterNavigation(onNavigateGraph, closeOverlay)}

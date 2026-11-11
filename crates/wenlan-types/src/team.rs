@@ -31,6 +31,32 @@ pub struct TeamSpaceAccess {
     pub access: TeamAccess,
 }
 
+/// The team a server is for: one id that never changes, and the name its
+/// owner gave it, the same for everyone on the team. Teams are told apart
+/// by `id`, never by the server's address, which may change.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamInfo {
+    pub id: String,
+    /// `None` until the owner names the team.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+/// What a person is on a team: the owner sets it up and brings people in.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TeamRole {
+    Owner,
+    #[default]
+    Member,
+}
+
+impl TeamRole {
+    pub fn is_member(&self) -> bool {
+        *self == TeamRole::Member
+    }
+}
+
 /// A member as the server lists them. The key itself is never in it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TeamMember {
@@ -49,6 +75,9 @@ pub struct TeamMember {
 /// `GET /api/team`: the member list and the Spaces this server hosts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TeamStatus {
+    /// The team this server is for. Left out by an older server.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team: Option<TeamInfo>,
     pub members: Vec<TeamMember>,
     /// Spaces this server hosts for the team, by name.
     pub spaces: Vec<String>,
@@ -83,6 +112,12 @@ pub struct TeamMemberKey {
     /// Wenlan on the member's computer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub join_code: Option<String>,
+}
+
+/// Body of `PUT /api/team`: the team's name, which every member sees.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamRenameRequest {
+    pub name: String,
 }
 
 /// Body of `PUT /api/team/members/{id}`.
@@ -122,6 +157,11 @@ pub struct TeamMe {
     pub member_id: String,
     pub name: String,
     pub spaces: Vec<TeamSpaceAccess>,
+    /// The team. Left out by an older server.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team: Option<TeamInfo>,
+    #[serde(default, skip_serializing_if = "TeamRole::is_member")]
+    pub role: TeamRole,
 }
 
 /// `GET /team/v1/spaces/{space}/files`: every file of the Space's shared

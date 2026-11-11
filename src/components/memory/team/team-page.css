@@ -94,32 +94,11 @@
   white-space: nowrap;
 }
 
-.team-page-rows .team-everyone {
-  flex: none;
-}
-
 .team-page-quiet,
 .team-page-empty {
   margin: 0;
   color: var(--mem-text-tertiary);
   font-size: 13px;
-}
-
-.team-page-share {
-  display: flex;
-  gap: 8px;
-  margin-top: 6px;
-}
-
-.team-page-share select,
-.team-page-share button {
-  padding: 5px 10px;
-  font-size: 13px;
-}
-
-.team-page-share select {
-  min-width: 0;
-  max-width: 320px;
 }
 
 .team-page-error {
@@ -142,41 +121,52 @@
   padding: 12px 0 8px;
 }
 
-.team-invite input[type="text"],
-.team-invite > .share-input {
-  max-width: 320px;
-}
-
-.team-invite-spaces {
-  display: grid;
-  gap: 4px;
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
-
-.team-invite-spaces legend {
-  margin-bottom: 4px;
-  padding: 0;
-}
-
-.team-invite-space {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-height: 34px;
-  font-size: 14px;
-}
-
-.team-invite-space label {
+.team-invite-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-width: 160px;
 }
 
-.team-invite-actions {
+.team-invite-row .share-input {
+  flex: 1;
+  min-width: 0;
+  max-width: 260px;
+}
+
+.team-page-head {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 8px;
+}
+
+.team-page-access {
+  flex: 1;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.team-page-access:hover {
+  color: var(--mem-text);
+}
+
+.team-page-access:focus-visible {
+  outline: 2px solid var(--mem-focus-ring);
+  outline-offset: 2px;
+}
+
+.team-page-add {
+  font-size: 13px;
+}
+
+.team-page-add-space {
+  max-width: 260px;
+  padding: 5px 10px;
+  font-size: 13px;
+}
+
+.team-page-waiting-block {
+  margin-top: 24px;
 }

@@ -128,6 +128,10 @@ pub struct SharedSyncStatus {
     /// The team server's address, when the Space syncs through one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<String>,
+    /// The team the Space belongs to, when it syncs through a team server
+    /// or this Wenlan hosts it; `None` until the server has said.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team: Option<crate::team::TeamInfo>,
     /// The team server lets this person read the Space only: what they
     /// change here is not taken, and the server's version is kept.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]

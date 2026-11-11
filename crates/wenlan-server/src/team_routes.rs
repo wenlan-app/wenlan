@@ -33,7 +33,8 @@ use wenlan_core::shared_space::{self, remote, Scope};
 use wenlan_core::team::{self, Member};
 use wenlan_types::team::{
     TeamAccess, TeamAddMemberRequest, TeamFileList, TeamHostSpaceRequest, TeamJoinRequest,
-    TeamJoinResponse, TeamMember, TeamMemberKey, TeamStatus, TeamUpdateMemberRequest,
+    TeamJoinResponse, TeamMember, TeamMemberKey, TeamRenameRequest, TeamStatus,
+    TeamUpdateMemberRequest,
 };
 
 use crate::error::ServerError;
@@ -56,7 +57,7 @@ fn listening() -> Option<String> {
 
 pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<SharedState> {
     router
-        .route("/api/team", get(handle_team_status))
+        .route("/api/team", get(handle_team_status).put(handle_rename_team))
         .route("/api/team/members", post(handle_add_member))
         .route(
             "/api/team/members/{id}",
@@ -80,9 +81,18 @@ async fn blocking<T: Send + 'static>(
 /// Wenlan hosts for the team.
 pub async fn handle_team_status() -> Result<Json<TeamStatus>, ServerError> {
     let status = blocking(|| {
-        let file = team::read_team(&team::team_path())?;
+        let path = team::team_path();
+        let file = team::read_team(&path)?;
         let spaces = team::hosted_spaces(&shared_space::settings_path())?;
+        // A Wenlan that hosts nothing and has no members is on no team of
+        // its own: no team.json is made for it.
+        let info = if spaces.is_empty() && file.members.is_empty() {
+            file.info()
+        } else {
+            Some(team::team_info(&path)?)
+        };
         Ok(TeamStatus {
+            team: info,
             members: file.members.iter().map(Member::to_wire).collect(),
             everyone: file
                 .everyone
@@ -98,6 +108,15 @@ pub async fn handle_team_status() -> Result<Json<TeamStatus>, ServerError> {
     })
     .await?;
     Ok(Json(status))
+}
+
+/// PUT /api/team — names the team; members' Wenlans show the name on their
+/// next sync pass.
+pub async fn handle_rename_team(
+    Json(req): Json<TeamRenameRequest>,
+) -> Result<Json<wenlan_types::team::TeamInfo>, ServerError> {
+    let info = blocking(move || team::rename_team(&team::team_path(), &req.name)).await?;
+    Ok(Json(info))
 }
 
 fn member_key(

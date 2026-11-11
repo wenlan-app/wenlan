@@ -59,7 +59,8 @@ import SettingsSidebar from "./settings/SettingsSidebar";
 import SpaceDetail from "./SpaceDetail";
 import { ThingDetail } from "./things/ThingDetail";
 import { SpacesOverview } from "./spaces";
-import { TeamPage, useInTeam } from "./team/TeamPage";
+import { TeamPage, useTeams } from "./team/TeamPage";
+import { teamLabel } from "./sharing/sharing";
 import { PagesOverview, WikiStart } from "./pages/PagesOverview";
 import { openPageMapOnVisit } from "./page/usePageInspectorSession";
 import { WikiWorkspace } from "./pages/WikiWorkspace";
@@ -870,7 +871,8 @@ export default function Main({
     ? { kind: "spaces", create: true } : { kind: "spaces" });
   const navigatePages = () => navigateTo({ kind: "pages" });
   const navigateTeam = () => navigateTo({ kind: "team" });
-  const inTeam = useInTeam();
+  const teams = useTeams();
+  const inTeam = teams.length > 0;
   const navigateHome = () => navigateTo({ kind: "home" });
   // Every import finish inside this window hands new material on through
   // these. Stable, so the cards under it do not re-render with the shell.
@@ -1618,6 +1620,7 @@ export default function Main({
             onNavigateGraph={() => navigateTo({ kind: "graph" })}
             onNavigateSpaces={navigateSpaces}
             onNavigateTeam={inTeam || view.kind === "team" ? navigateTeam : undefined}
+            teamName={teams.length === 1 ? teamLabel(t, teams[0]?.team) : undefined}
             onNavigateSettings={() => navigateTo({ kind: "settings", section: "general" })}
             onOpenSearch={openSearch}
             onOpenAbout={() => setAboutOpen(true)}

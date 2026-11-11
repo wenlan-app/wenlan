@@ -1027,6 +1027,8 @@ export interface SharedStatus {
   /** The team server this Space syncs through (its address), or null for a
    *  cloud-folder share. */
   host?: string | null;
+  /** The team the Space belongs to, once its server has said. */
+  team?: TeamInfo | null;
   /** This person may read the Space but not change it on the server. */
   read_only?: boolean;
   /** This computer hosts the Space for a team. */
@@ -1072,7 +1074,18 @@ export interface TeamMember {
   removed_at?: string | null;
 }
 
+/** The team a server is for: the same id and name for everyone on it.
+ *  `name` is missing until the owner names the team. */
+export interface TeamInfo {
+  id: string;
+  name?: string | null;
+}
+
+export type TeamRole = "owner" | "member";
+
 export interface TeamStatus {
+  /** The team this computer hosts; missing before it hosts anything. */
+  team?: TeamInfo | null;
   members: TeamMember[];
   /** Spaces this computer hosts for the team. */
   spaces: string[];
@@ -1091,11 +1104,15 @@ export interface TeamMemberKey {
 
 export interface TeamJoinResponse {
   url: string;
-  me: { member_id: string; name: string; spaces: TeamSpaceAccess[] };
+  me: { member_id: string; name: string; spaces: TeamSpaceAccess[]; team?: TeamInfo | null; role?: TeamRole };
 }
 
 export async function teamStatus(): Promise<TeamStatus> {
   return invoke("team_status");
+}
+
+export async function teamRename(name: string): Promise<TeamInfo> {
+  return invoke("team_rename", { name });
 }
 
 export async function teamAddMember(name: string, spaces: TeamSpaceAccess[], url?: string): Promise<TeamMemberKey> {

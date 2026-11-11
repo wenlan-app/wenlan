@@ -3870,6 +3870,18 @@ pub async fn team_status(state: tauri::State<'_, State>) -> Result<team::TeamSta
     client.get_json("/api/team").await
 }
 
+/// Names the team; every member sees the name.
+#[tauri::command]
+pub async fn team_rename(
+    state: tauri::State<'_, State>,
+    name: String,
+) -> Result<team::TeamInfo, String> {
+    let client = daemon_client(&state).await;
+    client
+        .put_json("/api/team", &team::TeamRenameRequest { name })
+        .await
+}
+
 /// Adds a person; the answer holds their one-time join code.
 #[tauri::command]
 pub async fn team_add_member(

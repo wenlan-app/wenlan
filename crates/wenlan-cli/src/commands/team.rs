@@ -17,6 +17,11 @@ pub enum TeamCmd {
     /// Show the members, the Spaces this computer hosts for the team, and
     /// whether the team listener is on.
     Status,
+    /// Name the team; every member's Wenlan shows the name.
+    Rename {
+        /// The team's name, such as the company's.
+        name: String,
+    },
     /// Add a member and print their join code (or key) once.
     Add {
         /// The member's name.
@@ -103,6 +108,15 @@ pub async fn run(
 ) -> Result<()> {
     match cmd {
         TeamCmd::Status => status(client, format, quiet).await,
+        TeamCmd::Rename { name } => {
+            let team = client.team_rename(&name).await?;
+            output(format, quiet, &team, || {
+                println!(
+                    "The team is now called {}",
+                    team.name.as_deref().unwrap_or(&name)
+                );
+            })
+        }
         TeamCmd::Add { name, spaces, url } => {
             let issued = client
                 .team_add_member(&TeamAddMemberRequest { name, spaces, url })
@@ -195,6 +209,12 @@ fn access_list(spaces: &[TeamSpaceAccess]) -> String {
 async fn status(client: &WenlanClient, format: ResolvedFormat, quiet: bool) -> Result<()> {
     let status = client.team_status().await?;
     output(format, quiet, &status, || {
+        if let Some(team) = &status.team {
+            match &team.name {
+                Some(name) => println!("Team: {name}"),
+                None => println!("Team: not named yet (wenlan team rename <name>)"),
+            }
+        }
         match &status.listening {
             Some(addr) => println!("Team listener: on ({addr})"),
             None => println!("Team listener: off (set WENLAN_TEAM_ADDR to turn it on)"),

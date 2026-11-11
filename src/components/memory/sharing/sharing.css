@@ -44,17 +44,20 @@
 .page-detail-shared-line { margin: 0 0 8px; }
 .shared-conflict-line { flex-wrap:wrap;row-gap:4px;color:var(--mem-text); }
 .shared-conflict-line .share-link { color:var(--mem-text-secondary); }
-.team-member-list { margin-top:-6px; }
-.team-member-list li { align-items:center; }
 .team-member-name { min-width:0;overflow-wrap:anywhere; }
-.team-member-controls { display:flex;gap:6px;align-items:center;flex:none; }
 .team-access { padding:5px 6px; }
-.share-dialog .team-add-row { flex-direction:row;gap:8px;align-items:center; }
-.share-dialog .team-add-row > input { flex:1;min-width:0; }
-.team-issued { gap:8px; }
+.team-issued { gap:6px; }
+.team-issued-head { display:flex;align-items:center;justify-content:space-between;gap:12px; }
+.team-issued-title { font-weight:500; }
+.team-issued-done { display:flex;justify-content:flex-end; }
 .team-code { font-family:var(--mem-font-mono);font-size:13px;width:100%;box-sizing:border-box; }
-.team-code-row { display:flex;gap:8px;align-items:center; }
-.team-code-row .team-code { flex:1;min-width:0; }
+.team-space-access { display:flex;flex-direction:column;gap:6px; }
+.team-space-access-choice { display:flex;align-items:center;gap:8px;min-height:34px;font-size:14px; }
+.team-space-access-choice .team-access { margin-left:auto; }
+.team-space-access-people { list-style:none;margin:0 0 0 26px;padding:0;display:flex;flex-direction:column;gap:4px; }
+.team-space-access-people li { display:flex;align-items:center;gap:8px;min-height:34px;font-size:14px; }
+.team-space-access-people .team-member-name { flex:1; }
+.team-space-access-add { max-width:260px; }
 .team-menu { position:relative; }
 .team-menu-button { border:0;background:transparent;color:var(--mem-text-secondary);width:28px;height:28px;border-radius:var(--mem-r-5);cursor:pointer;font:inherit;font-size:18px;line-height:1; }
 .team-menu-button:hover { background:var(--mem-hover);color:var(--mem-text); }

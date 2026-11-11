@@ -154,3 +154,24 @@ fn a_space_for_everyone_reaches_every_member_now_and_later() {
         Some(TeamAccess::Write)
     );
 }
+
+#[test]
+fn the_team_has_one_id_and_the_name_its_owner_gave_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(TEAM_FILE);
+    assert_eq!(read_team(&path).unwrap().info(), None);
+    let info = team_info(&path).unwrap();
+    assert_eq!(info.name, None);
+    // The id is kept: asked again, or after the team is named, it is the same.
+    assert_eq!(team_info(&path).unwrap().id, info.id);
+    let named = rename_team(&path, "  Acme ").unwrap();
+    assert_eq!(named.id, info.id);
+    assert_eq!(named.name.as_deref(), Some("Acme"));
+    assert!(rename_team(&path, " ").is_err());
+
+    // Every member's Wenlan learns the team from who they are.
+    let (_, key) = add_member(&path, "Amy", &[]).unwrap();
+    let me = authenticate(&path, &key).unwrap().unwrap().me();
+    assert_eq!(me.team, Some(named));
+    assert_eq!(me.role, TeamRole::Member);
+}

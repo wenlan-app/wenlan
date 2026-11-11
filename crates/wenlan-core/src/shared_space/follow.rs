@@ -14,7 +14,7 @@ use std::path::Path;
 
 use wenlan_types::team::TeamMe;
 
-use super::{change_settings, left_key, remote, shares_at, HostLink, ShareSettings};
+use super::{change_settings, left_key, remember_team, remote, shares_at, HostLink, ShareSettings};
 use crate::db::MemoryDB;
 use crate::error::WenlanError;
 
@@ -38,6 +38,11 @@ pub(super) async fn follow_teams(db: &MemoryDB, settings_path: &Path) {
                 continue;
             }
         };
+        if let Some(team) = &me.team {
+            if let Err(error) = remember_team(settings_path, &url, team) {
+                log::warn!("[shared_space] team {url}: name not kept: {error}");
+            }
+        }
         match follow_host(db, settings_path, &url, &key, &me).await {
             Ok(added) => {
                 for space in added {
@@ -170,6 +175,8 @@ mod tests {
                     access: *access,
                 })
                 .collect(),
+            team: None,
+            role: Default::default(),
         }
     }
 
@@ -236,5 +243,39 @@ mod tests {
             .unwrap()
             .left
             .is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_team_space_carries_the_team_its_server_named() {
+        let dir = tempfile::tempdir().unwrap();
+        let settings = dir.path().join(super::super::SETTINGS_FILE);
+        let db = MemoryDB::new(&dir.path().join("wenlan.db"), Arc::new(NoopEmitter))
+            .await
+            .unwrap();
+        follow_host(
+            &db,
+            &settings,
+            URL,
+            "wlt_k",
+            &me(&[("Design", TeamAccess::Write)]),
+        )
+        .await
+        .unwrap();
+        let team_of = |settings: &Path| {
+            super::super::share_statuses_at(settings).unwrap()[0]
+                .team
+                .clone()
+        };
+        assert_eq!(team_of(&settings), None, "until the server says");
+        let acme = wenlan_types::team::TeamInfo {
+            id: "t1".into(),
+            name: Some("Acme".into()),
+        };
+        remember_team(&settings, URL, &acme).unwrap();
+        assert_eq!(team_of(&settings), Some(acme.clone()));
+        let status = super::super::share_status_at(&settings, &Scope::Space("Design".into()))
+            .unwrap()
+            .unwrap();
+        assert_eq!(status.team, Some(acme));
     }
 }

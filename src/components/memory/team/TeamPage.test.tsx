@@ -10,7 +10,7 @@ import {
   listSpaces,
   stopSharingSpace,
   teamAddMember,
-  teamSetEveryone,
+  teamRename,
   teamStatus,
   type SharedStatus,
   type TeamMember,
@@ -30,6 +30,7 @@ vi.mock("../../../lib/tauri", async () => {
     teamAddMember: vi.fn(),
     teamUpdateMember: vi.fn(),
     teamSetEveryone: vi.fn(),
+    teamRename: vi.fn(),
     teamHostSpace: vi.fn(),
     stopSharingSpace: vi.fn(),
   };
@@ -62,6 +63,8 @@ function wrap(node: React.ReactNode) {
 
 beforeEach(async () => {
   await i18n.changeLanguage("en");
+  HTMLDialogElement.prototype.showModal ??= function showModal(this: HTMLDialogElement) { this.setAttribute("open", ""); };
+  HTMLDialogElement.prototype.close ??= function close(this: HTMLDialogElement) { this.removeAttribute("open"); };
   vi.mocked(listSpaces).mockResolvedValue([]);
   vi.mocked(teamStatus).mockRejectedValue(new Error("off"));
   localStorage.clear();
@@ -73,12 +76,17 @@ describe("teamGroups", () => {
     expect(teamGroups([share("Wedding", { host: null })], undefined)).toEqual([]);
   });
 
-  it("has the hosted team first, then one per server", () => {
+  it("has the hosted team first, then one per team, known by its id", () => {
+    const acme = { id: "t1", name: "Acme" };
     const groups = teamGroups(
-      [share("Sales", { host: "https://team.example.com/" }), share("Product", { hosted: true })],
+      [
+        share("Sales", { host: "https://team.example.com/", team: acme }),
+        share("Ops", { host: "https://moved.example.com", team: acme }),
+        share("Product", { hosted: true }),
+      ],
       hostedStatus,
     );
-    expect(groups.map((group) => group.host)).toEqual([null, "team.example.com"]);
+    expect(groups.map((group) => [group.hosted, group.team?.name ?? null, group.shares.length])).toEqual([[true, null, 1], [false, "Acme", 2]]);
   });
 });
 
@@ -88,50 +96,65 @@ describe("TeamPage on the computer that hosts the team", () => {
     vi.mocked(teamStatus).mockResolvedValue(hostedStatus);
   });
 
-  it("lists the members with how many Spaces each can use, and who can use each Space", async () => {
+  it("shows the team's Spaces first, who can use each, then its people", async () => {
     wrap(<TeamPage onOpenSpace={() => undefined} onOpenPage={() => undefined} />);
-    const amy = (await screen.findByText("Amy", { selector: ".team-page-name" })).closest("li")!;
-    expect(within(amy).getByText("2 Spaces")).toBeInTheDocument();
-    expect(within(screen.getByText("Bo", { selector: ".team-page-name" }).closest("li")!).getByText("1 Space")).toBeInTheDocument();
-    expect(screen.getByLabelText("Who can use Product")).toHaveValue("write");
-    expect(screen.getByLabelText("Who can use Roadmap")).toHaveValue("nobody");
+    const product = (await screen.findByRole("button", { name: "Product" })).closest("li")!;
+    expect(within(product).getByText("Everyone · can edit")).toBeInTheDocument();
+    expect(within(screen.getByRole("button", { name: "Roadmap" }).closest("li")!).getByText("Amy")).toBeInTheDocument();
+    expect(screen.getByText("Dee (you) · Owner")).toBeInTheDocument();
+    expect(screen.getByText("Bo", { selector: ".team-page-name" })).toBeInTheDocument();
+    const headings = screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent);
+    expect(headings.slice(0, 2)).toEqual(["Spaces", "People"]);
+    // No counts after people, no dropdowns on the page.
+    expect(screen.queryByText(/\d Spaces?$/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
   });
 
-  it("opens a Space to everyone on the team", async () => {
-    vi.mocked(teamSetEveryone).mockResolvedValue();
+  it("asks the owner to name the team once; everyone sees the name", async () => {
+    vi.mocked(teamRename).mockResolvedValue({ id: "t1", name: "Acme" });
     wrap(<TeamPage onOpenSpace={() => undefined} onOpenPage={() => undefined} />);
-    await userEvent.selectOptions(await screen.findByLabelText("Who can use Roadmap"), "read");
-    await waitFor(() => expect(teamSetEveryone).toHaveBeenCalledWith("Roadmap", "read"));
+    expect(await screen.findByRole("heading", { name: "Team", level: 1 })).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("Name your team. Everyone on it sees this name."), "Acme");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(teamRename).toHaveBeenCalledWith("Acme"));
   });
 
-  it("invites someone with the Spaces ticked; a Space for everyone needs no tick", async () => {
+  it("opens one Space's access box from its row", async () => {
+    wrap(<TeamPage onOpenSpace={() => undefined} onOpenPage={() => undefined} />);
+    await userEvent.click(await screen.findByRole("button", { name: "Who can use Roadmap" }));
+    expect(await screen.findByRole("heading", { name: "Roadmap · Team" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Only some people" })).toBeChecked();
+  });
+
+  it("invites someone by name and copies a link; no address or key is printed", async () => {
     localStorage.setItem("wenlan-team-url", "https://team.example.com");
-    vi.mocked(teamAddMember).mockResolvedValue({ member: person("c", "Cy", []), key: "wlt_k", join_code: "https://team.example.com#wlt_k" });
+    vi.mocked(teamAddMember).mockResolvedValue({ member: person("c", "Cy", []), key: "wlt_k", join_code: "https://team.example.com/join#wlt_k" });
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
     wrap(<TeamPage onOpenSpace={() => undefined} onOpenPage={() => undefined} />);
     await userEvent.click(await screen.findByRole("button", { name: "Invite someone" }));
     await userEvent.type(screen.getByLabelText("Name"), "Cy");
-    const product = screen.getByRole("checkbox", { name: "Product" });
-    expect(product).toBeChecked();
-    expect(product).toBeDisabled();
-    await userEvent.click(screen.getByRole("checkbox", { name: "Roadmap" }));
-    await userEvent.click(screen.getByRole("button", { name: "Invite" }));
-    await waitFor(() => expect(teamAddMember).toHaveBeenCalledWith("Cy", [{ space: "Roadmap", access: "write" }], "https://team.example.com"));
-    expect(await screen.findByDisplayValue("https://team.example.com#wlt_k")).toHaveAttribute("readonly");
+    await userEvent.click(screen.getByRole("button", { name: "Create invite link" }));
+    await waitFor(() => expect(teamAddMember).toHaveBeenCalledWith("Cy", [], "https://team.example.com"));
+    expect(await screen.findByText("Invite link for Cy")).toBeInTheDocument();
+    expect(screen.queryByDisplayValue(/wlt_k/)).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Copy link" }));
+    expect(writeText).toHaveBeenCalledWith("https://team.example.com/join#wlt_k");
   });
 });
 
 describe("TeamPage on a member's computer", () => {
   const joined = [
-    share("Product", { host: "https://team.example.com", members: [{ id: "me", name: "Dee" }, { id: "a", name: "Amy" }] }),
-    share("Sales", { host: "https://team.example.com", read_only: true, members: [{ id: "me", name: "Dee" }] }),
+    share("Product", { host: "https://team.example.com", team: { id: "t1", name: "Acme" }, members: [{ id: "me", name: "Dee" }, { id: "a", name: "Amy" }] }),
+    share("Sales", { host: "https://team.example.com", team: { id: "t1", name: "Acme" }, read_only: true, members: [{ id: "me", name: "Dee" }] }),
   ];
 
-  it("shows who is on the team and their own Spaces, with no way to invite", async () => {
+  it("shows the same page by the team's name, with no way to invite", async () => {
     vi.mocked(listShares).mockResolvedValue(joined);
     wrap(<TeamPage onOpenSpace={() => undefined} onOpenPage={() => undefined} />);
-    expect(await screen.findByRole("heading", { name: "Team · team.example.com" })).toBeInTheDocument();
-    expect(within(screen.getByText("Dee (you)").closest("li")!).getByText("2 Spaces")).toBeInTheDocument();
-    expect(within(screen.getByText("Amy").closest("li")!).getByText("1 Space")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Acme" })).toBeInTheDocument();
+    expect(screen.getByText("Dee (you)")).toBeInTheDocument();
+    expect(screen.getByText("Amy")).toBeInTheDocument();
     expect(within(screen.getByRole("button", { name: "Sales" }).closest("li")!).getByText("Read only")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Invite someone" })).not.toBeInTheDocument();
   });
@@ -141,7 +164,8 @@ describe("TeamPage on a member's computer", () => {
     vi.mocked(confirmAction).mockResolvedValue(true);
     vi.mocked(stopSharingSpace).mockResolvedValue();
     wrap(<TeamPage onOpenSpace={() => undefined} onOpenPage={() => undefined} />);
-    await userEvent.click(await screen.findByRole("button", { name: "Leave the team" }));
+    await userEvent.click(await screen.findByRole("button", { name: "More for Acme" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Leave Acme" }));
     await waitFor(() => expect(stopSharingSpace).toHaveBeenCalledTimes(2));
     expect(stopSharingSpace).toHaveBeenCalledWith("Product");
     expect(stopSharingSpace).toHaveBeenCalledWith("Sales");

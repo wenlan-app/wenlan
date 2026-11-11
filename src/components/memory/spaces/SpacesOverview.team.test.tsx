@@ -22,16 +22,16 @@ beforeEach(async () => {
 
 describe("SpacesOverview team groups", () => {
   it("titles the person's own Spaces only when a team group exists", async () => {
-    api.listShares.mockResolvedValue([share("Product", { host: "https://team.example.com" })]);
+    api.listShares.mockResolvedValue([share("Product", { host: "https://team.example.com", team: { id: "t1", name: "Acme" } })]);
     renderOverview();
-    expect(await screen.findByRole("heading", { name: "Team · team.example.com" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Mine" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Acme" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Private" })).toBeInTheDocument();
   });
 
   it("shows no title when nothing is shared with a team", async () => {
     api.listShares.mockResolvedValue([]);
     renderOverview();
     await screen.findByText("Reading");
-    expect(screen.queryByRole("heading", { name: "Mine" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Private" })).not.toBeInTheDocument();
   });
 });

@@ -154,6 +154,7 @@ async fn nothing_but_health_answers_without_a_member_key() {
 #[tokio::test]
 async fn a_key_reads_only_its_members_spaces() {
     let f = fixture();
+    let acme = team::rename_team(&f.state.team_path, "Acme").unwrap();
     let (status, body) = call(
         &f.state,
         Method::GET,
@@ -165,6 +166,14 @@ async fn a_key_reads_only_its_members_spaces() {
     assert_eq!(status, StatusCode::OK);
     let me: wenlan_types::team::TeamMe = serde_json::from_slice(&body).unwrap();
     assert_eq!(me.member_id, f.writer.0.id);
+    assert_eq!(
+        me.team,
+        Some(acme.clone()),
+        "the member learns the team's name"
+    );
+    // The server's own computer shows the hosted Space under the same team.
+    let hosted = shared_space::share_statuses_at(&f.state.settings_path).unwrap();
+    assert_eq!(hosted[0].team, Some(acme));
 
     let (status, body) = call(
         &f.state,

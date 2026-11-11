@@ -19,10 +19,10 @@ import {
 } from "../../../lib/tauri";
 import { ConfirmDialog } from "../../ConfirmDialog";
 import type { SettingsSection } from "../settings/SettingsSidebar";
-import { TEAM_KEY, hostName, useTeamStatus } from "./team";
-import { TeamMembers } from "./TeamMembers";
+import { TEAM_KEY, useTeamStatus } from "./team";
+import { TeamSpaceAccess } from "./TeamMembers";
 import { relativeMs } from "../page/format";
-import { SHARES_KEY, cloudName, others, pageShare, revealFolderLabel, shortFolder, spaceShare, useShares } from "./sharing";
+import { SHARES_KEY, cloudName, others, pageShare, revealFolderLabel, shortFolder, spaceShare, teamLabel, useShares } from "./sharing";
 import "./sharing.css";
 
 export type ShareTarget = {
@@ -61,6 +61,8 @@ export function ShareDialog({ kind, target, title, onClose, onOpenSettings }: Sh
     >
       {shares.isPending ? (
         <p role="status">{t("sharing.syncing")}</p>
+      ) : share && share.kind === "space" && (share.host || share.hosted) ? (
+        <TeamSpaceBox share={share} shares={shares.data ?? []} onClose={onClose} />
       ) : share ? (
         <MembersBox share={share} onClose={onClose} onOpenSettings={onOpenSettings} />
       ) : (
@@ -193,6 +195,65 @@ function syncLine(share: SharedStatus, t: TFunction, locale: string): string {
   return t("sharing.upToDate", { when });
 }
 
+/** A Space of a team: who can use it. The owner picks everyone or some
+ *  people; a member reads the same thing. A member leaves the whole team,
+ *  never one Space, so there is no "stop" here for them. */
+function TeamSpaceBox({ share, shares, onClose }: {
+  readonly share: SharedStatus;
+  readonly shares: readonly SharedStatus[];
+  readonly onClose: () => void;
+}) {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const [error, setError] = useState<string | null>(null);
+  const [confirmingStop, setConfirmingStop] = useState(false);
+  const team = teamLabel(t, share.team ?? shares.find((other) => other.hosted && other.team)?.team);
+  const me = share.members.find((member) => member.id === share.member_id) ?? { id: share.member_id, name: share.member_name };
+  const rest = others(share);
+  const broken = share.last?.paused || share.last?.error;
+  const stop = async (confirmed: boolean) => {
+    setConfirmingStop(false);
+    if (!confirmed) return;
+    try {
+      await stopSharingSpace(share.target);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: SHARES_KEY }),
+        queryClient.invalidateQueries({ queryKey: TEAM_KEY }),
+      ]);
+      onClose();
+    } catch (caught) {
+      setError(errorText(caught));
+    }
+  };
+  return (
+    <div className="share-members">
+      <h2 id="share-dialog-title">{t("team.access.title", { space: share.target, team })}</h2>
+      {share.hosted ? (
+        <TeamSpaceAccess space={share.target} team={team} onError={setError} />
+      ) : (
+        <ul className="share-member-list">
+          <li><span>{t(share.read_only ? "team.youReadOnly" : "team.access.youCanEdit", { name: me.name })}</span></li>
+          {rest.map((member) => <li key={member.id}><span>{member.name}</span></li>)}
+        </ul>
+      )}
+      {broken && <p className="share-warning" role="status">{share.last?.paused ? t("team.pausedRemoved") : share.last?.error}</p>}
+      {error && <p className="share-warning" role="alert">{t("sharing.failed", { message: error })}</p>}
+      <div className={share.hosted ? "share-actions share-actions-split" : "share-actions"}>
+        {share.hosted && <button type="button" className="share-link" onClick={() => setConfirmingStop(true)}>{t("team.access.takeOff")}</button>}
+        <button type="button" className="share-primary" onClick={onClose}>{t("sharing.done")}</button>
+      </div>
+      {confirmingStop && (
+        <ConfirmDialog
+          message={t("team.access.takeOffConfirm", { space: share.target, team })}
+          confirmLabel={t("team.access.takeOff")}
+          cancelLabel={t("sharing.cancel")}
+          onAnswer={(confirmed) => void stop(confirmed)}
+        />
+      )}
+    </div>
+  );
+}
+
 function MembersBox({ share, onClose, onOpenSettings }: {
   readonly share: SharedStatus;
   readonly onClose: () => void;
@@ -239,7 +300,7 @@ function MembersBox({ share, onClose, onOpenSettings }: {
     <div className="share-members">
       <h2 id="share-dialog-title">{share.hosted && share.kind === "space" ? t("team.hostedMembersTitle", { space: share.target }) : t("sharing.membersTitle")}</h2>
       {team ? (
-        <p className="share-hint">{share.host ? t("team.serverLine", { host: hostName(share.host) }) : t("team.thisComputer")}</p>
+        <p className="share-hint">{teamLabel(t, share.team)}</p>
       ) : (
         <>
           <p className="share-hint">{t("sharing.inviteHow", { cloud: cloud ?? t("sharing.yourCloud") })}</p>
@@ -256,7 +317,6 @@ function MembersBox({ share, onClose, onOpenSettings }: {
         {!share.hosted && rest.map((member) => <li key={member.id}><span>{member.name}</span></li>)}
         {!share.hosted && rest.length === 0 && <li className="share-muted">{t("sharing.noOthers")}</li>}
       </ul>
-      {share.hosted && <TeamMembers space={share.target} onError={setError} />}
       <dl className="share-facts">
         {!team && <div>
           <dt>{t("sharing.folder")}</dt>

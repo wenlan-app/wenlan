@@ -2,7 +2,7 @@
 // "Who changed what" on a shared Space: the newest page changes, each naming
 // the person or AI that made it, how many sentences it touched and when.
 // Opening one shows the change and can put the page back as it was before.
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
@@ -40,13 +40,11 @@ interface Props {
   /** One Space, or every Space of a team (newest first across them). */
   readonly space: string | readonly string[];
   readonly shares?: readonly SharedStatus[];
-  /** Rows that wait on someone, shown above the changes. */
-  readonly waiting?: ReactNode;
 }
 
 type SpaceChange = PageChange & { readonly space: string };
 
-export function SpaceRecentChanges({ space, shares, waiting }: Props) {
+export function SpaceRecentChanges({ space, shares }: Props) {
   const { t, i18n } = useTranslation();
   const locale = i18n.resolvedLanguage ?? i18n.language;
   const [open, setOpen] = useState<SpaceChange | null>(null);
@@ -64,13 +62,12 @@ export function SpaceRecentChanges({ space, shares, waiting }: Props) {
     .flatMap((result, index) => (result.data ?? []).map((change) => ({ ...change, space: spaces[index] })))
     .sort((a, b) => b.changed_at_ms - a.changed_at_ms)
     .slice(0, SHOWN);
-  if (rows.length === 0 && !waiting) return null;
+  if (rows.length === 0) return null;
 
   return (
     <section className="space-recent-changes" aria-label={t("team.changes.title")}>
       <h2 className="space-brief-heading">{t("team.changes.title")}</h2>
       <ul>
-        {waiting}
         {rows.map((change) => {
           const who = changeWho(change.edited_by, shares, t);
           const created = change.change_kind === "created" || change.changed_sentences == null;

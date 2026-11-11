@@ -861,6 +861,15 @@ impl WenlanClient {
         self.team_call(reqwest::Method::GET, url, None).await
     }
 
+    /// `PUT /api/team`: name the team.
+    pub async fn team_rename(&self, name: &str) -> Result<wenlan_types::team::TeamInfo> {
+        let url = self.team_url(&["api", "team"], &[])?;
+        let body = serde_json::to_value(&wenlan_types::team::TeamRenameRequest {
+            name: name.to_string(),
+        })?;
+        self.team_call(reqwest::Method::PUT, url, Some(body)).await
+    }
+
     /// `POST /api/team/members`: add a member; the key is in the answer once.
     pub async fn team_add_member(
         &self,

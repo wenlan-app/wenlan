@@ -578,6 +578,7 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   list_shares: () => get("/api/shared"),
   share_space: (a) => post(`/api/spaces/${enc(String(a.space))}/shared/sync`, { folder: String(a.folder) }),
   team_status: () => get("/api/team"),
+  team_rename: (a) => put("/api/team", { name: String(a.name) }),
   team_add_member: (a) => post("/api/team/members", { name: String(a.name), spaces: a.spaces ?? [], url: a.url ?? undefined }),
   team_update_member: (a) => put(`/api/team/members/${enc(String(a.id))}`, { name: a.name ?? undefined, spaces: a.spaces ?? undefined }),
   team_remove_member: (a) => del(`/api/team/members/${enc(String(a.id))}`),

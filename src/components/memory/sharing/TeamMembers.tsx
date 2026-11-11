@@ -1,21 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The people of a Space this computer hosts for a team: who can use it, with
-// what access, and a row to add someone. Lives in the Space's members box.
-import { useEffect, useRef, useState, type FormEvent } from "react";
+// Who can use a Space of the team this computer hosts (one box, opened from
+// the Space and from its row on the team page), and the pieces the team page
+// shares with it: a person's menu, the access choice, an invite link.
+import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import {
-  teamAddMember,
-  teamNewMemberKey,
-  teamRemoveMember,
   teamSetEveryone,
   teamUpdateMember,
   type TeamAccess,
   type TeamMember,
   type TeamMemberKey,
+  type TeamStatus,
 } from "../../../lib/tauri";
-import { confirmAction } from "../../../lib/confirmAction";
-import { TEAM_KEY, activeMembers, prefillTeamUrl, rememberTeamUrl, sameName, useTeamStatus } from "./team";
+import { TEAM_KEY, activeMembers, useTeamStatus } from "./team";
 import "./sharing.css";
 
 export function errorText(error: unknown): string {
@@ -64,7 +63,7 @@ export function MemberMenu({ member, onNewCode, onRemoveFromSpace, onRemoveFromT
       <button type="button" className="team-menu-button" aria-haspopup="menu" aria-expanded={open} aria-label={t("team.moreFor", { name: member.name })} onClick={() => setOpen(!open)}>⋯</button>
       {open && (
         <ul className="team-menu-list" role="menu">
-          <li role="none"><button type="button" role="menuitem" onClick={pick(onNewCode)}>{t("team.menuNewCode")}</button></li>
+          <li role="none"><button type="button" role="menuitem" onClick={pick(onNewCode)}>{t("team.page.newLink")}</button></li>
           {onRemoveFromSpace && <li role="none"><button type="button" role="menuitem" onClick={pick(onRemoveFromSpace)}>{t("team.menuRemoveFromSpace")}</button></li>}
           <li role="none"><button type="button" role="menuitem" data-danger="true" onClick={pick(onRemoveFromTeam)}>{t("team.menuRemoveFromTeam")}</button></li>
         </ul>
@@ -95,166 +94,120 @@ export function everyoneOf(everyone: readonly { space: string; access: TeamAcces
   return everyone?.find((entry) => entry.space === space)?.access ?? "nobody";
 }
 
-/** Who can use a hosted Space without being added one by one: everyone on
- *  the team (editing or reading), or only the people added. */
-export function EveryoneSelect({ label, value, disabled, onChange }: {
-  readonly label: string;
-  readonly value: EveryoneAccess;
-  readonly disabled?: boolean;
-  readonly onChange: (access: EveryoneAccess) => void;
-}) {
-  const { t } = useTranslation();
-  return (
-    <select className="share-input team-access team-everyone" aria-label={label} value={value} disabled={disabled} onChange={(event) => onChange(event.target.value as EveryoneAccess)}>
-      <option value="write">{t("team.page.everyoneWrite")}</option>
-      <option value="read">{t("team.page.everyoneRead")}</option>
-      <option value="nobody">{t("team.page.onlyAdded")}</option>
-    </select>
-  );
+/** Who can use a Space, in a few words: everyone (and how), the people
+ *  added, or only the owner. */
+export function teamAccessText(t: TFunction, space: string, status: TeamStatus | undefined): string {
+  const open = everyoneOf(status?.everyone, space);
+  if (open === "write") return t("team.page.everyoneWrite");
+  if (open === "read") return t("team.page.everyoneRead");
+  const names = activeMembers(status?.members ?? [])
+    .filter((member) => member.spaces.some((entry) => entry.space === space))
+    .map((member) => member.name);
+  return names.length > 0 ? names.join(t("team.page.nameSeparator")) : t("team.page.onlyYou");
 }
 
-/** A join code shown once, in the box it was made in. */
+/** An invite link shown once, in the box it was made in. It is not printed:
+ *  the button copies it, so no address or key is on screen. */
 export function IssuedCode({ name, code, onDone }: { readonly name: string; readonly code: string; readonly onDone: () => void }) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
+  const [failed, setFailed] = useState(false);
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(code);
       setCopied(true);
     } catch {
-      // The field stays selectable to copy by hand.
+      setFailed(true);
     }
   };
   return (
-    <div className="share-found team-issued" role="group" aria-label={t("team.codeField")}>
-      <span>{t("team.codeTitle", { name })}</span>
-      <div className="team-code-row">
-        <input className="share-input team-code" readOnly value={code} aria-label={t("team.codeField")} onFocus={(event) => event.currentTarget.select()} />
-        <button type="button" className="share-secondary" onClick={() => void copy()}>{t(copied ? "team.copied" : "team.copy")}</button>
+    <div className="share-found team-issued" role="group" aria-label={t("team.page.linkFor", { name })}>
+      <div className="team-issued-head">
+        <span className="team-issued-title">{t("team.page.linkFor", { name })}</span>
+        <button type="button" className="share-primary" onClick={() => void copy()}>{t(copied ? "team.copied" : "team.page.copyLink")}</button>
       </div>
-      <div><button type="button" className="share-link" onClick={onDone}>{t("team.codeDone")}</button></div>
+      <span className="share-hint">{t("team.page.linkPrivate")}</span>
+      <span className="share-hint">{t("team.page.linkGets", { name })}</span>
+      {/* When the clipboard is refused, the link is shown to copy by hand. */}
+      {failed && <input className="share-input team-code" readOnly value={code} aria-label={t("team.page.linkFor", { name })} onFocus={(event) => event.currentTarget.select()} />}
+      <div className="team-issued-done"><button type="button" className="share-link" onClick={onDone}>{t("team.codeDone")}</button></div>
     </div>
   );
 }
 
-export function TeamMembers({ space, onError }: { readonly space: string; readonly onError: (message: string | null) => void }) {
+/** Who can use one Space of the team this computer hosts: everyone on the
+ *  team, or only some people, picked from the team. New people come in only
+ *  through the team page's invite. */
+export function TeamSpaceAccess({ space, team, onError }: { readonly space: string; readonly team: string; readonly onError: (message: string | null) => void }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const status = useTeamStatus();
-  const listening = status.data?.listening;
-  const [issued, setIssued] = useState<{ name: string; code: string } | null>(null);
-  const [note, setNote] = useState<string | null>(null);
-  const [name, setName] = useState("");
-  const [access, setAccess] = useState<TeamAccess>("write");
-  const [address, setAddress] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
-  const everyone = activeMembers(status.data?.members ?? []);
-  const members = everyone.filter((member) => member.spaces.some((entry) => entry.space === space));
-  // Nothing remembered and nothing the listener says: ask once, here.
-  const knownUrl = prefillTeamUrl(listening);
-  const url = address ?? knownUrl;
-  const askForAddress = Boolean(status.data) && !knownUrl;
+  const people = activeMembers(status.data?.members ?? []);
+  const open = everyoneOf(status.data?.everyone, space);
+  const added = people.filter((member) => member.spaces.some((entry) => entry.space === space));
+  const others = people.filter((member) => !added.includes(member));
 
-  const refresh = () => queryClient.invalidateQueries({ queryKey: TEAM_KEY });
   const run = async (action: () => Promise<void>) => {
     onError(null);
-    setNote(null);
+    setPending(true);
     try {
       await action();
-      await refresh();
+      await queryClient.invalidateQueries({ queryKey: TEAM_KEY });
     } catch (caught) {
       onError(errorText(caught));
     }
+    setPending(false);
   };
-
-  const changeEveryone = (next: EveryoneAccess) => run(async () => {
-    await teamSetEveryone(space, next);
-  });
+  const setOpen = (next: EveryoneAccess) => run(async () => { await teamSetEveryone(space, next); });
   const changeAccess = (member: TeamMember, next: TeamAccess) => run(async () => {
     await teamUpdateMember(member.id, {
       spaces: member.spaces.map((entry) => (entry.space === space ? { ...entry, access: next } : entry)),
     });
   });
-  const newCode = (member: TeamMember) => run(async () => {
-    const key = await teamNewMemberKey(member.id, url.trim() || undefined);
-    if (url.trim()) rememberTeamUrl(url.trim());
-    setIssued({ name: member.name, code: codeOf(key) });
+  const addPerson = (id: string) => {
+    const member = others.find((candidate) => candidate.id === id);
+    if (!member) return;
+    void run(async () => {
+      await teamUpdateMember(member.id, { spaces: [...member.spaces, { space, access: "write" }] });
+    });
+  };
+  const removePerson = (member: TeamMember) => run(async () => {
+    await teamUpdateMember(member.id, { spaces: member.spaces.filter((entry) => entry.space !== space) });
   });
-  const removeFromSpace = async (member: TeamMember) => {
-    const ok = await confirmAction(t("team.removeFromSpaceConfirm", { name: member.name, space }), { confirm: t("team.menuRemoveFromSpace"), cancel: t("sharing.cancel") });
-    if (!ok) return;
-    await run(async () => {
-      await teamUpdateMember(member.id, { spaces: member.spaces.filter((entry) => entry.space !== space) });
-    });
-  };
-  const removeFromTeam = async (member: TeamMember) => {
-    const ok = await confirmAction(t("team.removeConfirm", { name: member.name }), { confirm: t("team.menuRemoveFromTeam"), cancel: t("sharing.cancel") });
-    if (!ok) return;
-    await run(async () => { await teamRemoveMember(member.id); });
-  };
-
-  const add = async (event: FormEvent) => {
-    event.preventDefault();
-    const typed = name.trim();
-    if (!typed || pending) return;
-    setPending(true);
-    await run(async () => {
-      const existing = everyone.find((member) => sameName(member.name, typed));
-      if (existing) {
-        // Same person: they keep the code they have and gain this Space.
-        await teamUpdateMember(existing.id, {
-          spaces: [...existing.spaces.filter((entry) => entry.space !== space), { space, access }],
-        });
-        setIssued(null);
-        setNote(t("team.addedExisting", { name: existing.name, space }));
-      } else {
-        const address = url.trim();
-        const key = await teamAddMember(typed, [{ space, access }], address || undefined);
-        if (address) rememberTeamUrl(address);
-        setIssued({ name: key.member.name, code: codeOf(key) });
-      }
-      setName("");
-    });
-    setPending(false);
-  };
 
   return (
-    <>
-      <ul className="share-member-list team-member-list">
-        <li>
-          <span className="team-member-name">{t("team.page.everyoneRow")}</span>
-          <span className="team-member-controls">
-            <EveryoneSelect label={t("team.page.whoCanUse", { space })} value={everyoneOf(status.data?.everyone, space)} onChange={(next) => void changeEveryone(next)} />
-          </span>
-        </li>
-        {members.map((member) => (
-          <li key={member.id}>
-            <span className="team-member-name">{member.name}</span>
-            <span className="team-member-controls">
-              <AccessSelect label={t("team.accessOf", { name: member.name })} value={accessOf(member, space)} onChange={(next) => void changeAccess(member, next)} />
-              <MemberMenu
-                member={member}
-                onNewCode={() => void newCode(member)}
-                onRemoveFromSpace={() => void removeFromSpace(member)}
-                onRemoveFromTeam={() => void removeFromTeam(member)}
-              />
-            </span>
+    <div className="team-space-access" role="radiogroup" aria-label={t("team.page.whoCanUse", { space })}>
+      <label className="team-space-access-choice">
+        <input type="radio" name={`team-access-${space}`} checked={open !== "nobody"} disabled={pending} onChange={() => void setOpen("write")} />
+        <span>{t("team.page.everyoneRow")}</span>
+        {open !== "nobody" && <AccessSelect label={t("team.accessOf", { name: t("team.page.everyoneRow") })} value={open} disabled={pending} onChange={(next) => void setOpen(next)} />}
+      </label>
+      <label className="team-space-access-choice">
+        <input type="radio" name={`team-access-${space}`} checked={open === "nobody"} disabled={pending} onChange={() => void setOpen("nobody")} />
+        <span>{t("team.access.some")}</span>
+      </label>
+      {open === "nobody" && (
+        <ul className="team-space-access-people">
+          {added.map((member) => (
+            <li key={member.id}>
+              <span className="team-member-name">{member.name}</span>
+              <AccessSelect label={t("team.accessOf", { name: member.name })} value={accessOf(member, space)} disabled={pending} onChange={(next) => void changeAccess(member, next)} />
+              <button type="button" className="share-link" disabled={pending} aria-label={t("team.access.removeName", { name: member.name })} onClick={() => void removePerson(member)}>{t("team.access.remove")}</button>
+            </li>
+          ))}
+          <li>
+            {others.length > 0 ? (
+              <select className="share-input team-space-access-add" aria-label={t("team.access.addFrom", { team })} value="" disabled={pending} onChange={(event) => addPerson(event.target.value)}>
+                <option value="">{t("team.access.addFrom", { team })}</option>
+                {others.map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}
+              </select>
+            ) : (
+              <span className="share-hint">{added.length === 0 ? t("team.access.noPeople") : t("team.access.everyoneAdded")}</span>
+            )}
           </li>
-        ))}
-      </ul>
-      {issued && <IssuedCode name={issued.name} code={issued.code} onDone={() => setIssued(null)} />}
-      {note && <p className="share-hint" role="status">{note}</p>}
-      {askForAddress && (
-        <label className="share-field">
-          <span className="share-label">{t("team.urlLabel")}</span>
-          <input className="share-input" value={url} onChange={(event) => setAddress(event.target.value)} placeholder={t("team.urlPlaceholder")} spellCheck={false} />
-        </label>
+        </ul>
       )}
-      <form className="team-add-row" onSubmit={add}>
-        <input className="share-input" aria-label={t("team.name")} placeholder={t("team.namePlaceholder")} value={name} onChange={(event) => setName(event.target.value)} disabled={pending} />
-        <AccessSelect label={t("team.accessNew")} value={access} disabled={pending} onChange={setAccess} />
-        <button type="submit" className="share-primary" disabled={!name.trim() || pending}>{t("team.addShort")}</button>
-      </form>
-    </>
+    </div>
   );
 }

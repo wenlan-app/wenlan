@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The team's own page, opened from "Team" in the left navigation: who is on
-// the team, which Spaces it has and who can use each, and what changed in
-// them lately. On the computer that hosts the team it also invites people
-// and opens Spaces to them; on a member's computer it only shows.
-import { useState, type FormEvent } from "react";
+// The team's own page, opened from the team's row in the left navigation.
+// One layout for everyone on the team, in this order: what waits for you,
+// the team's Spaces and who can use each, its people, and what changed
+// lately. The owner (the person at the server's computer) also invites
+// people, adds Spaces and opens each one's access box; a member reads the
+// same page and can leave the team.
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import {
@@ -15,57 +17,67 @@ import {
   teamHostSpace,
   teamNewMemberKey,
   teamRemoveMember,
-  teamSetEveryone,
-  teamUpdateMember,
+  teamRename,
   type SharedStatus,
-  type TeamAccess,
+  type TeamInfo,
   type TeamMember,
-  type TeamSpaceAccess,
   type TeamStatus,
 } from "../../../lib/tauri";
 import { confirmAction } from "../../../lib/confirmAction";
 import { SpaceRecentChanges } from "../space-detail/SpaceRecentChanges";
-import { SHARES_KEY, sharedWriter, useShares } from "../sharing/sharing";
-import { TEAM_KEY, activeMembers, hostName, prefillTeamUrl, rememberTeamUrl, sameName, useTeamStatus } from "../sharing/team";
-import { AccessSelect, EveryoneSelect, IssuedCode, MemberMenu, codeOf, errorText, everyoneOf, type EveryoneAccess } from "../sharing/TeamMembers";
+import { SHARES_KEY, sharedWriter, teamKeyOf, teamLabel, useShares } from "../sharing/sharing";
+import { TEAM_KEY, activeMembers, prefillTeamUrl, rememberTeamUrl, sameName, useTeamStatus } from "../sharing/team";
+import { IssuedCode, MemberMenu, codeOf, errorText, teamAccessText } from "../sharing/TeamMembers";
+import { ShareDialog } from "../sharing/ShareDialog";
 import "../sharing/sharing.css";
 import "../space-detail/space-brief.css";
 import "../space-detail/space-recent-changes.css";
 import "./team-page.css";
 
-/** One team this computer is part of: the one it hosts, or one per server
- *  it syncs Spaces through. */
+/** One team this computer is part of: the one it hosts, or one per team it
+ *  syncs Spaces from. */
 export type TeamGroup = {
   readonly key: string;
-  /** The server's address as people read it; `null` for this computer. */
+  /** The team's id and name, once known. */
+  readonly team: TeamInfo | null;
+  /** This computer is the team's server: its owner is here. */
+  readonly hosted: boolean;
+  /** The team server's address, for a team joined from here. Never shown. */
   readonly host: string | null;
   readonly shares: SharedStatus[];
 };
 
-/** The teams in `shares`, the hosted one first. A computer that hosts a
- *  team with people but no Space yet still has it. */
+/** The teams in `shares`, the hosted one first, each known by its team id.
+ *  A computer that hosts a team with people but no Space yet still has it. */
 export function teamGroups(shares: readonly SharedStatus[] | undefined, status: TeamStatus | undefined): TeamGroup[] {
   const hosted: SharedStatus[] = [];
-  const byHost = new Map<string, SharedStatus[]>();
+  const joined = new Map<string, { team: TeamInfo | null; host: string; shares: SharedStatus[] }>();
   for (const share of shares ?? []) {
     if (share.kind !== "space") continue;
-    if (share.hosted) hosted.push(share);
-    else if (share.host) byHost.set(share.host, [...(byHost.get(share.host) ?? []), share]);
+    if (share.hosted) {
+      hosted.push(share);
+      continue;
+    }
+    const key = teamKeyOf(share);
+    if (!key || !share.host) continue;
+    const group = joined.get(key) ?? { team: share.team ?? null, host: share.host, shares: [] };
+    group.shares.push(share);
+    joined.set(key, group);
   }
   const groups: TeamGroup[] = [];
   if (hosted.length > 0 || (status?.members?.length ?? 0) > 0 || (status?.spaces?.length ?? 0) > 0) {
-    groups.push({ key: "hosted", host: null, shares: hosted });
+    groups.push({ key: "hosted", team: status?.team ?? hosted[0]?.team ?? null, hosted: true, host: null, shares: hosted });
   }
-  for (const [url, list] of byHost) groups.push({ key: url, host: hostName(url), shares: list });
+  for (const [key, group] of joined) groups.push({ key, team: group.team, hosted: false, host: group.host, shares: group.shares });
   return groups;
 }
 
-/** Whether the left navigation shows "Team": this computer syncs or hosts a
- *  Space for one. Read from the shares alone: the shell asks this on every
- *  screen, and the team server's own status is asked only on the Team page. */
-export function useInTeam(): boolean {
+/** The teams this computer is on, for the left navigation: read from the
+ *  shares alone, since the shell asks on every screen and the team server's
+ *  own status is asked only on the Team page. */
+export function useTeams(): TeamGroup[] {
   const shares = useShares();
-  return teamGroups(shares.data, undefined).length > 0;
+  return teamGroups(shares.data, undefined);
 }
 
 interface TeamPageProps {
@@ -82,14 +94,151 @@ export function TeamPage({ onOpenSpace, onOpenPage }: TeamPageProps) {
     <div className="team-page">
       {groups.length === 0 && (shares.isPending ? null : <p className="team-page-empty">{t("team.page.none")}</p>)}
       {groups.map((group) => (
-        <section key={group.key} className="team-page-team" aria-label={group.host ? t("team.groupTeam", { host: group.host }) : t("team.groupHosted")}>
-          <h1 className="team-page-title">{group.host ? t("team.groupTeam", { host: group.host }) : t("team.groupHosted")}</h1>
-          {group.host === null
-            ? <HostedTeam group={group} status={status.data} shares={shares.data} onOpenSpace={onOpenSpace} onOpenPage={onOpenPage} />
-            : <JoinedTeam group={group} shares={shares.data} onOpenSpace={onOpenSpace} onOpenPage={onOpenPage} />}
-        </section>
+        <Team key={group.key} group={group} status={group.hosted ? status.data : undefined} shares={shares.data} onOpenSpace={onOpenSpace} onOpenPage={onOpenPage} />
       ))}
     </div>
+  );
+}
+
+type Run = (action: () => Promise<void>) => Promise<boolean>;
+
+function useRun(setError: (message: string | null) => void): Run {
+  const queryClient = useQueryClient();
+  return async (action) => {
+    setError(null);
+    try {
+      await action();
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: TEAM_KEY }),
+        queryClient.invalidateQueries({ queryKey: SHARES_KEY }),
+      ]);
+      return true;
+    } catch (caught) {
+      setError(errorText(caught));
+      return false;
+    }
+  };
+}
+
+/** One team, laid out the same for its owner and its members. */
+function Team({ group, status, shares, onOpenSpace, onOpenPage }: {
+  readonly group: TeamGroup;
+  /** The team server's own status, on the computer that hosts it. */
+  readonly status: TeamStatus | undefined;
+  readonly shares: readonly SharedStatus[] | undefined;
+  readonly onOpenSpace: (space: string) => void;
+  readonly onOpenPage: (id: string) => void;
+}) {
+  const { t } = useTranslation();
+  const [error, setError] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState(false);
+  const run = useRun(setError);
+  const owner = group.hosted;
+  const name = teamLabel(t, group.team);
+  const named = Boolean(group.team?.name?.trim());
+  const spaces = owner ? (status?.spaces ?? group.shares.map((share) => share.target)) : group.shares.map((share) => share.target);
+  const waiting = useWaitingRows(shares, group.shares, onOpenPage);
+  const leave = async () => {
+    const ok = await confirmAction(t("team.page.leaveConfirm", { team: name }), { confirm: t("team.page.leaveTeam", { team: name }), cancel: t("sharing.cancel") });
+    if (!ok) return;
+    await run(async () => {
+      for (const share of group.shares) await stopSharingSpace(share.target);
+    });
+  };
+
+  return (
+    <section className="team-page-team" aria-label={name}>
+      <div className="team-page-head">
+        <h1 className="team-page-title">{name}</h1>
+        {(named || !owner) && (
+          <TeamMenu
+            label={t("team.page.moreTeam", { team: name })}
+            items={owner
+              ? [{ label: t("team.page.rename"), onPick: () => setRenaming(true) }]
+              : [{ label: t("team.page.leaveTeam", { team: name }), onPick: () => void leave(), danger: true }]}
+          />
+        )}
+      </div>
+      {owner && (!named || renaming) && (
+        <NameTeam initial={group.team?.name ?? ""} onDone={() => setRenaming(false)} canCancel={named} />
+      )}
+
+      {waiting && (
+        <section className="space-recent-changes team-page-waiting-block" aria-label={t("team.page.waitingTitle")}>
+          <h2 className="space-brief-heading">{t("team.page.waitingTitle")}</h2>
+          <ul>{waiting}</ul>
+        </section>
+      )}
+
+      <TeamSpaces group={group} status={status} shares={shares} spaces={spaces} owner={owner} teamName={name} run={run} onOpenSpace={onOpenSpace} />
+      <TeamPeople group={group} status={status} owner={owner} run={run} />
+      {error && <p className="share-error team-page-error" role="alert">{error}</p>}
+      <SpaceRecentChanges space={spaces} shares={shares} />
+    </section>
+  );
+}
+
+/** A small "⋯" menu beside the team's name. */
+function TeamMenu({ label, items }: {
+  readonly label: string;
+  readonly items: readonly { label: string; onPick: () => void; danger?: boolean }[];
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (event: MouseEvent) => { if (!ref.current?.contains(event.target as Node)) setOpen(false); };
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", away);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("mousedown", away);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [open]);
+  return (
+    <div className="team-menu" ref={ref}>
+      <button type="button" className="team-menu-button" aria-haspopup="menu" aria-expanded={open} aria-label={label} onClick={() => setOpen(!open)}>⋯</button>
+      {open && (
+        <ul className="team-menu-list" role="menu">
+          {items.map((item) => (
+            <li key={item.label} role="none">
+              <button type="button" role="menuitem" data-danger={item.danger ? "true" : undefined} onClick={() => { setOpen(false); item.onPick(); }}>{item.label}</button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/** The owner names the team once, and may rename it; everyone on it sees
+ *  the name. */
+function NameTeam({ initial, canCancel, onDone }: { readonly initial: string; readonly canCancel: boolean; readonly onDone: () => void }) {
+  const { t } = useTranslation();
+  const [name, setName] = useState(initial);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  const run = useRun(setError);
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    const typed = name.trim();
+    if (!typed || pending) return;
+    setPending(true);
+    const ok = await run(async () => { await teamRename(typed); });
+    setPending(false);
+    if (ok) onDone();
+  };
+  return (
+    <form className="team-page-name-team" onSubmit={(event) => void submit(event)}>
+      <label className="share-label" htmlFor="team-name">{t("team.page.nameTeam")}</label>
+      <div className="team-page-name-row">
+        <input id="team-name" className="share-input" placeholder={t("team.page.nameTeamPlaceholder")} value={name} onChange={(event) => setName(event.target.value)} disabled={pending} maxLength={60} autoFocus={canCancel} />
+        <button type="submit" className="share-primary" disabled={!name.trim() || pending}>{t("team.page.nameTeamSave")}</button>
+        {canCancel && <button type="button" className="share-link" onClick={onDone}>{t("sharing.cancel")}</button>}
+      </div>
+      {error && <p className="share-error team-page-error" role="alert">{error}</p>}
+    </form>
   );
 }
 
@@ -121,7 +270,7 @@ function useWaitingRows(shares: readonly SharedStatus[] | undefined, teamShares:
       <li key={item.revision_source_id}>
         <button type="button" onClick={() => onOpenPage(item.target_source_id)}>
           <span className="space-recent-changes-what">{t("team.page.wants", { who, title: page.title })}</span>
-          <span className="space-recent-changes-meta team-page-waiting">{t("team.page.waiting")}</span>
+          <span className="space-recent-changes-meta team-page-waiting">{t("team.page.review")}</span>
         </button>
       </li>
     )];
@@ -138,175 +287,160 @@ function SectionHeading({ title, action }: { readonly title: string; readonly ac
   );
 }
 
-function HostedTeam({ group, status, shares, onOpenSpace, onOpenPage }: {
+function TeamSpaces({ group, status, shares, spaces, owner, teamName, run, onOpenSpace }: {
   readonly group: TeamGroup;
   readonly status: TeamStatus | undefined;
   readonly shares: readonly SharedStatus[] | undefined;
+  readonly spaces: readonly string[];
+  readonly owner: boolean;
+  readonly teamName: string;
+  readonly run: Run;
   readonly onOpenSpace: (space: string) => void;
-  readonly onOpenPage: (id: string) => void;
 }) {
   const { t } = useTranslation();
-  const queryClient = useQueryClient();
-  const [error, setError] = useState<string | null>(null);
-  const [issued, setIssued] = useState<{ name: string; code: string } | null>(null);
-  const [inviting, setInviting] = useState(false);
-  const [sharing, setSharing] = useState("");
-  const members = activeMembers(status?.members ?? []);
-  const hostedSpaces = status?.spaces ?? group.shares.map((share) => share.target);
-  const everyone = status?.everyone ?? [];
-  const url = prefillTeamUrl(status?.listening);
-  const allSpaces = useQuery({ queryKey: ["spaces"], queryFn: listSpaces });
-  const shareable = (allSpaces.data ?? [])
+  const [boxFor, setBoxFor] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
+  const allSpaces = useQuery({ queryKey: ["spaces"], queryFn: listSpaces, enabled: owner });
+  // The owner's Private Spaces: not shared any way yet.
+  const addable = (allSpaces.data ?? [])
     .map((space) => space.name)
     .filter((name) => !(shares ?? []).some((share) => share.kind === "space" && share.target === name));
-  const waiting = useWaitingRows(shares, group.shares, onOpenPage);
-
-  const run = async (action: () => Promise<void>) => {
-    setError(null);
-    try {
-      await action();
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: TEAM_KEY }),
-        queryClient.invalidateQueries({ queryKey: SHARES_KEY }),
-      ]);
-    } catch (caught) {
-      setError(errorText(caught));
-    }
-  };
-  const spacesOf = (member: TeamMember) => new Set([
-    ...member.spaces.map((entry) => entry.space),
-    ...everyone.map((entry) => entry.space),
-  ]).size;
-  const newCode = (member: TeamMember) => run(async () => {
-    const key = await teamNewMemberKey(member.id, url.trim() || undefined);
-    setIssued({ name: member.name, code: codeOf(key) });
-  });
-  const removeFromTeam = async (member: TeamMember) => {
-    const ok = await confirmAction(t("team.removeConfirm", { name: member.name }), { confirm: t("team.menuRemoveFromTeam"), cancel: t("sharing.cancel") });
-    if (ok) await run(async () => { await teamRemoveMember(member.id); });
-  };
-  const changeEveryone = (space: string, next: EveryoneAccess) => run(async () => { await teamSetEveryone(space, next); });
-  const share = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!sharing) return;
-    await run(async () => {
-      await teamHostSpace(sharing);
-      setSharing("");
-    });
+  const add = async (space: string) => {
+    setAdding(false);
+    if (!space) return;
+    const ok = await confirmAction(t("team.page.addSpaceConfirm", { space, team: teamName }), { confirm: t("team.page.addSpaceAction"), cancel: t("sharing.cancel") });
+    if (ok) await run(async () => { await teamHostSpace(space); });
   };
 
   return (
-    <>
-      <div className="team-page-block">
-        <SectionHeading
-          title={t("team.page.members")}
-          action={!inviting && <button type="button" className="share-secondary team-page-action" onClick={() => { setInviting(true); setIssued(null); }}>{t("team.page.invite")}</button>}
-        />
-        {inviting && (
-          <InviteForm
-            members={members}
-            spaces={hostedSpaces}
-            everyone={everyone}
-            initialUrl={url}
-            onCancel={() => setInviting(false)}
-            onIssued={(next) => { setInviting(false); setIssued(next); }}
-            onDone={() => setInviting(false)}
-            run={run}
-          />
-        )}
-        {issued && <IssuedCode name={issued.name} code={issued.code} onDone={() => setIssued(null)} />}
-        {members.length === 0 && !inviting
-          ? <p className="team-page-quiet">{t("team.page.noMembers")}</p>
-          : (
-            <ul className="team-page-rows">
-              {members.map((member) => (
-                <li key={member.id}>
-                  <span className="team-page-name">{member.name}</span>
-                  <span className="team-page-meta">{t("team.page.spaceCount", { count: spacesOf(member) })}</span>
-                  <MemberMenu member={member} onNewCode={() => void newCode(member)} onRemoveFromTeam={() => void removeFromTeam(member)} />
-                </li>
-              ))}
-            </ul>
-          )}
-      </div>
-
-      <div className="team-page-block">
-        <SectionHeading title={t("team.page.spaces")} />
-        {hostedSpaces.length === 0
-          ? <p className="team-page-quiet">{t("team.noneHosted")}</p>
-          : (
-            <ul className="team-page-rows">
-              {hostedSpaces.map((space) => {
-                const open = everyoneOf(everyone, space);
-                // People added by name, unless everyone has the same access anyway.
-                const names = members
-                  .filter((member) => member.spaces.some((entry) => entry.space === space && entry.access !== open))
-                  .map((member) => member.name);
-                return (
-                  <li key={space}>
-                    <button type="button" className="team-page-name team-page-open" onClick={() => onOpenSpace(space)}>{space}</button>
-                    <span className="team-page-meta">{names.length > 0 ? names.join(t("team.page.nameSeparator")) : open === "nobody" ? t("team.page.nobodyYet") : ""}</span>
-                    <EveryoneSelect label={t("team.page.whoCanUse", { space })} value={open} onChange={(next) => void changeEveryone(space, next)} />
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        {shareable.length > 0 && (
-          <form className="team-page-share" onSubmit={(event) => void share(event)}>
-            <select className="share-input" aria-label={t("team.page.shareSpace")} value={sharing} onChange={(event) => setSharing(event.target.value)}>
-              <option value="">{t("team.page.shareSpace")}</option>
-              {shareable.map((name) => <option key={name} value={name}>{name}</option>)}
-            </select>
-            <button type="submit" className="share-secondary" disabled={!sharing}>{t("team.page.shareAction")}</button>
-          </form>
-        )}
-      </div>
-
-      {error && <p className="share-error team-page-error" role="alert">{error}</p>}
-      <SpaceRecentChanges space={hostedSpaces} shares={shares} waiting={waiting} />
-    </>
+    <div className="team-page-block">
+      <SectionHeading title={t("team.page.spaces")} />
+      {spaces.length === 0 ? (
+        <p className="team-page-quiet">{t("team.noneHosted")}</p>
+      ) : (
+        <ul className="team-page-rows">
+          {spaces.map((space) => {
+            const share = group.shares.find((candidate) => candidate.target === space);
+            return (
+              <li key={space}>
+                <button type="button" className="team-page-name team-page-open" onClick={() => onOpenSpace(space)}>{space}</button>
+                {owner ? (
+                  <button type="button" className="team-page-meta team-page-access" aria-label={t("team.page.whoCanUse", { space })} onClick={() => setBoxFor(space)}>
+                    {teamAccessText(t, space, status)}
+                  </button>
+                ) : (
+                  <span className="team-page-meta">{t(share?.read_only ? "team.readOnly" : "team.canEdit")}</span>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {owner && addable.length > 0 && (adding ? (
+        <select className="share-input team-page-add-space" aria-label={t("team.page.addSpacePick")} value="" autoFocus onChange={(event) => void add(event.target.value)} onBlur={() => setAdding(false)}>
+          <option value="">{t("team.page.addSpacePick")}</option>
+          {addable.map((name) => <option key={name} value={name}>{name}</option>)}
+        </select>
+      ) : (
+        <div><button type="button" className="share-link team-page-add" onClick={() => setAdding(true)}>{t("team.page.addSpace")}</button></div>
+      ))}
+      {boxFor && <ShareDialog kind="space" target={boxFor} title={boxFor} onClose={() => setBoxFor(null)} />}
+    </div>
   );
 }
 
-/** Invite one person: their name and the Spaces they can use. Spaces open
- *  to everyone come with it. Someone already on the team keeps their code
- *  and gains the Spaces. */
-function InviteForm({ members, spaces, everyone, initialUrl, onCancel, onIssued, onDone, run }: {
+function TeamPeople({ group, status, owner, run }: {
+  readonly group: TeamGroup;
+  readonly status: TeamStatus | undefined;
+  readonly owner: boolean;
+  readonly run: Run;
+}) {
+  const { t } = useTranslation();
+  const [inviting, setInviting] = useState(false);
+  const [issued, setIssued] = useState<{ name: string; code: string } | null>(null);
+  const url = prefillTeamUrl(status?.listening);
+  const me = group.shares[0];
+  // The owner's own name: what the team sees for edits made on the server.
+  const ownerName = me?.member_name;
+  const newLink = (member: TeamMember) => run(async () => {
+    const key = await teamNewMemberKey(member.id, url.trim() || undefined);
+    setIssued({ name: member.name, code: codeOf(key) });
+  });
+  const remove = async (member: TeamMember) => {
+    const ok = await confirmAction(t("team.removeConfirm", { name: member.name }), { confirm: t("team.menuRemoveFromTeam"), cancel: t("sharing.cancel") });
+    if (ok) await run(async () => { await teamRemoveMember(member.id); });
+  };
+
+  // A member's computer knows people from the Spaces' member lists.
+  const joined = new Map<string, string>();
+  if (!owner) for (const share of group.shares) for (const member of share.members) joined.set(member.id, member.name);
+  const members = owner ? activeMembers(status?.members ?? []) : [];
+
+  return (
+    <div className="team-page-block">
+      <SectionHeading
+        title={t("team.page.people")}
+        action={owner && !inviting && <button type="button" className="share-secondary team-page-action" onClick={() => { setInviting(true); setIssued(null); }}>{t("team.page.invite")}</button>}
+      />
+      {inviting && (
+        <InviteForm
+          members={members}
+          initialUrl={url}
+          onCancel={() => setInviting(false)}
+          onIssued={(next) => { setInviting(false); setIssued(next); }}
+          run={run}
+        />
+      )}
+      {issued && <IssuedCode name={issued.name} code={issued.code} onDone={() => setIssued(null)} />}
+      <ul className="team-page-rows">
+        {owner ? (
+          <>
+            {ownerName && <li><span className="team-page-name">{t("team.page.youOwner", { name: ownerName })}</span></li>}
+            {members.map((member) => (
+              <li key={member.id}>
+                <span className="team-page-name">{member.name}</span>
+                <span className="team-page-meta" />
+                <MemberMenu member={member} onNewCode={() => void newLink(member)} onRemoveFromTeam={() => void remove(member)} />
+              </li>
+            ))}
+          </>
+        ) : (
+          [...joined].map(([id, name]) => (
+            <li key={id}><span className="team-page-name">{id === me?.member_id ? t("team.page.you", { name }) : name}</span></li>
+          ))
+        )}
+      </ul>
+      {owner && members.length === 0 && !inviting && !issued && <p className="team-page-quiet">{t("team.page.noMembers")}</p>}
+    </div>
+  );
+}
+
+/** Invite one person: their name, then a link to copy. They get every
+ *  Space open to everyone; a Space for some people is opened to them from
+ *  that Space. Someone already on the team gets a new link. */
+function InviteForm({ members, initialUrl, onCancel, onIssued, run }: {
   readonly members: readonly TeamMember[];
-  readonly spaces: readonly string[];
-  readonly everyone: readonly TeamSpaceAccess[];
   readonly initialUrl: string;
   readonly onCancel: () => void;
   readonly onIssued: (issued: { name: string; code: string }) => void;
-  readonly onDone: () => void;
-  readonly run: (action: () => Promise<void>) => Promise<void>;
+  readonly run: Run;
 }) {
   const { t } = useTranslation();
   const [name, setName] = useState("");
   const [address, setAddress] = useState(initialUrl);
-  const [picked, setPicked] = useState<Record<string, TeamAccess | undefined>>({});
   const [pending, setPending] = useState(false);
-  const forEveryone = (space: string) => everyoneOf(everyone, space) !== "nobody";
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     const typed = name.trim();
     if (!typed || pending) return;
-    const chosen: TeamSpaceAccess[] = spaces
-      .filter((space) => !forEveryone(space) && picked[space])
-      .map((space) => ({ space, access: picked[space] as TeamAccess }));
     setPending(true);
+    const url = address.trim();
     await run(async () => {
       const existing = members.find((member) => sameName(member.name, typed));
-      if (existing) {
-        const kept = existing.spaces.filter((entry) => !chosen.some((next) => next.space === entry.space));
-        await teamUpdateMember(existing.id, { spaces: [...kept, ...chosen] });
-        onDone();
-        return;
-      }
-      const url = address.trim();
-      const key = await teamAddMember(typed, chosen, url || undefined);
+      const key = existing
+        ? await teamNewMemberKey(existing.id, url || undefined)
+        : await teamAddMember(typed, [], url || undefined);
       if (url) rememberTeamUrl(url);
       onIssued({ name: key.member.name, code: codeOf(key) });
     });
@@ -315,107 +449,17 @@ function InviteForm({ members, spaces, everyone, initialUrl, onCancel, onIssued,
 
   return (
     <form className="team-invite" onSubmit={(event) => void submit(event)}>
-      <input className="share-input" aria-label={t("team.name")} placeholder={t("team.namePlaceholder")} value={name} onChange={(event) => setName(event.target.value)} disabled={pending} autoFocus />
-      {spaces.length > 0 && (
-        <fieldset className="team-invite-spaces">
-          <legend className="share-label">{t("team.page.inviteSpaces")}</legend>
-          {spaces.map((space) => {
-            const open = forEveryone(space);
-            const access = picked[space];
-            return (
-              <div key={space} className="team-invite-space">
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={open || Boolean(access)}
-                    disabled={open || pending}
-                    onChange={(event) => setPicked({ ...picked, [space]: event.target.checked ? "write" : undefined })}
-                  />
-                  <span>{space}</span>
-                </label>
-                {open
-                  ? <span className="team-page-meta">{t("team.page.inviteEveryone")}</span>
-                  : access && <AccessSelect label={t("team.accessOf", { name: space })} value={access} disabled={pending} onChange={(next) => setPicked({ ...picked, [space]: next })} />}
-              </div>
-            );
-          })}
-        </fieldset>
-      )}
+      <div className="team-invite-row">
+        <input className="share-input" aria-label={t("team.name")} placeholder={t("team.namePlaceholder")} value={name} onChange={(event) => setName(event.target.value)} disabled={pending} autoFocus />
+        <button type="submit" className="share-primary" disabled={!name.trim() || pending}>{t("team.page.createLink")}</button>
+        <button type="button" className="share-link" onClick={onCancel}>{t("sharing.cancel")}</button>
+      </div>
       {!initialUrl && (
         <label className="share-field">
           <span className="share-label">{t("team.urlLabel")}</span>
           <input className="share-input" value={address} onChange={(event) => setAddress(event.target.value)} placeholder={t("team.urlPlaceholder")} spellCheck={false} />
         </label>
       )}
-      <div className="team-invite-actions">
-        <button type="submit" className="share-primary" disabled={!name.trim() || pending}>{t("team.page.inviteAction")}</button>
-        <button type="button" className="share-link" onClick={onCancel}>{t("sharing.cancel")}</button>
-      </div>
     </form>
-  );
-}
-
-function JoinedTeam({ group, shares, onOpenSpace, onOpenPage }: {
-  readonly group: TeamGroup;
-  readonly shares: readonly SharedStatus[] | undefined;
-  readonly onOpenSpace: (space: string) => void;
-  readonly onOpenPage: (id: string) => void;
-}) {
-  const { t } = useTranslation();
-  const queryClient = useQueryClient();
-  const [error, setError] = useState<string | null>(null);
-  const waiting = useWaitingRows(shares, group.shares, onOpenPage);
-  const me = group.shares[0]?.member_id;
-  // Everyone in any of the team's Spaces, by person.
-  const people = new Map<string, { name: string; spaces: number }>();
-  for (const share of group.shares) {
-    for (const member of share.members) {
-      const seen = people.get(member.id);
-      people.set(member.id, { name: member.name, spaces: (seen?.spaces ?? 0) + 1 });
-    }
-  }
-  const leave = async () => {
-    const ok = await confirmAction(t("team.page.leaveConfirm", { host: group.host ?? "" }), { confirm: t("team.page.leave"), cancel: t("sharing.cancel") });
-    if (!ok) return;
-    setError(null);
-    try {
-      for (const share of group.shares) await stopSharingSpace(share.target);
-      await queryClient.invalidateQueries({ queryKey: SHARES_KEY });
-    } catch (caught) {
-      setError(errorText(caught));
-    }
-  };
-
-  return (
-    <>
-      <div className="team-page-block">
-        <SectionHeading title={t("team.page.members")} />
-        <ul className="team-page-rows">
-          {[...people].map(([id, person]) => (
-            <li key={id}>
-              <span className="team-page-name">{id === me ? t("team.page.you", { name: person.name }) : person.name}</span>
-              <span className="team-page-meta">{t("team.page.spaceCount", { count: person.spaces })}</span>
-            </li>
-          ))}
-        </ul>
-      </div>
-      <div className="team-page-block">
-        <SectionHeading title={t("team.page.spaces")} />
-        <ul className="team-page-rows">
-          {group.shares.map((share) => (
-            <li key={share.target}>
-              <button type="button" className="team-page-name team-page-open" onClick={() => onOpenSpace(share.target)}>{share.target}</button>
-              <span className="team-page-meta">{t(share.read_only ? "team.readOnly" : "team.canEdit")}</span>
-            </li>
-          ))}
-        </ul>
-        <p className="team-page-quiet">{t("team.page.joinedHint")}</p>
-      </div>
-      {error && <p className="share-error team-page-error" role="alert">{error}</p>}
-      <SpaceRecentChanges space={group.shares.map((share) => share.target)} shares={shares} waiting={waiting} />
-      <div className="team-page-leave">
-        <button type="button" className="share-link" onClick={() => void leave()}>{t("team.page.leave")}</button>
-      </div>
-    </>
   );
 }

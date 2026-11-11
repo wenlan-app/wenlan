@@ -24,7 +24,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use wenlan_types::team::{TeamAccess, TeamMe, TeamMember, TeamSpaceAccess};
+use wenlan_types::team::{TeamAccess, TeamInfo, TeamMe, TeamMember, TeamRole, TeamSpaceAccess};
 
 use crate::error::WenlanError;
 use crate::shared_space::{self, version, Scope, SpaceMember};
@@ -46,10 +46,17 @@ pub struct Member {
     pub added_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub removed_at: Option<String>,
+    /// What they are on the team. Members added by the owner are members;
+    /// the owner is the person at the server's own computer.
+    #[serde(default, skip_serializing_if = "TeamRole::is_member")]
+    pub role: TeamRole,
     /// The Spaces everyone on the team has ([`TeamFile::everyone`]), filled
     /// in when the list is read. Their own entry for a Space wins.
     #[serde(skip)]
     pub everyone: BTreeMap<String, TeamAccess>,
+    /// The team ([`TeamFile::info`]), filled in when the list is read.
+    #[serde(skip)]
+    pub team: Option<TeamInfo>,
 }
 
 impl Member {
@@ -90,6 +97,8 @@ impl Member {
                 .into_iter()
                 .map(|(space, access)| TeamSpaceAccess { space, access })
                 .collect(),
+            team: self.team.clone(),
+            role: self.role,
         }
     }
 
@@ -108,6 +117,13 @@ impl Member {
 pub struct TeamFile {
     #[serde(default = "format_one")]
     pub format: u32,
+    /// The team's id, made the first time the list is written; it never
+    /// changes, so members' computers know the team wherever it moves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// The name the owner gave the team; every member sees it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     #[serde(default)]
     pub members: Vec<Member>,
     /// Spaces every member has, now and when added later (a team's
@@ -124,9 +140,21 @@ impl Default for TeamFile {
     fn default() -> Self {
         Self {
             format: FORMAT,
+            id: None,
+            name: None,
             members: Vec::new(),
             everyone: BTreeMap::new(),
         }
+    }
+}
+
+impl TeamFile {
+    /// The team's id and name; `None` before the list was first written.
+    pub fn info(&self) -> Option<TeamInfo> {
+        self.id.as_ref().map(|id| TeamInfo {
+            id: id.clone(),
+            name: self.name.clone(),
+        })
     }
 }
 
@@ -150,8 +178,10 @@ pub fn read_team(path: &Path) -> Result<TeamFile, WenlanError> {
             file.format
         )));
     }
+    let info = file.info();
     for member in &mut file.members {
         member.everyone = file.everyone.clone();
+        member.team = info.clone();
     }
     Ok(file)
 }
@@ -175,6 +205,9 @@ fn change_team<T>(
         .open(path.with_extension("lock"))?;
     fs2::FileExt::lock_exclusive(&lock)?;
     let mut file = read_team(path)?;
+    if file.id.is_none() {
+        file.id = Some(uuid::Uuid::new_v4().simple().to_string());
+    }
     let out = change(&mut file)?;
     let mut tmp = tempfile::NamedTempFile::new_in(parent)?;
     tmp.write_all(serde_json::to_string_pretty(&file)?.as_bytes())?;
@@ -201,6 +234,31 @@ fn key_hash(key: &str) -> String {
 
 fn now() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+}
+
+/// The team's id and name, making the id when the team has none yet.
+pub fn team_info(path: &Path) -> Result<TeamInfo, WenlanError> {
+    if let Some(info) = read_team(path)?.info() {
+        return Ok(info);
+    }
+    change_team(path, |file| Ok(file.info()))?
+        .ok_or_else(|| WenlanError::Generic("the team has no id".into()))
+}
+
+/// Names the team. Every member's Wenlan shows the new name on its next
+/// sync pass.
+pub fn rename_team(path: &Path, name: &str) -> Result<TeamInfo, WenlanError> {
+    let name = name.trim();
+    if name.is_empty() || name.chars().count() > 60 {
+        return Err(WenlanError::Validation(
+            "a team needs a name of 1 to 60 characters".into(),
+        ));
+    }
+    change_team(path, |file| {
+        file.name = Some(name.to_string());
+        Ok(file.info())
+    })?
+    .ok_or_else(|| WenlanError::Generic("the team has no id".into()))
 }
 
 fn clean_name(name: &str) -> Result<String, WenlanError> {
@@ -236,10 +294,13 @@ pub fn add_member(
         spaces: access_map(spaces),
         added_at: now(),
         removed_at: None,
+        role: TeamRole::Member,
         everyone: BTreeMap::new(),
+        team: None,
     };
     change_team(path, |file| {
         member.everyone = file.everyone.clone();
+        member.team = file.info();
         file.members.push(member.clone());
         Ok(())
     })?;
