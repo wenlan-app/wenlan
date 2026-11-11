@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Bring what Claude Code and Codex remember on this computer into Wenlan,
-//! once, when the person asks (design:
+//! Follow what Claude Code and Codex remember on this computer, one way,
+//! once the person turns it on (design:
 //! /mnt/project-files/ai-memory-locations/2026-11-11-fable-coexistence-design-v2.md).
 //!
 //! Those tools keep plain-text memory files: Claude Code under
 //! `<claude dir>/projects/<project>/memory/*.md`, Codex under
 //! `<codex dir>/memories/*.md`. This module only reads them; nothing is ever
-//! written back to either tool.
+//! written back to either tool. Each memory's owner is the tool's file:
+//! Wenlan adds a point when one appears, follows an edit, and removes its
+//! own point when the memory goes (the follow pass in `wenlan-server`).
 //!
-//! Each memory passes three gates, and anything the gates are unsure of is
-//! left out (nobody reviews the result, so missing one is better than keeping
-//! a wrong one):
+//! Each new or edited memory passes three gates, and anything the gates are
+//! unsure of is left out (nobody reviews the result, so missing one is better
+//! than keeping a wrong one):
 //! 1. [`looks_sensitive`]: Wenlan's secret and personal-data patterns. A hit
 //!    drops the whole memory; its text is not kept anywhere.
 //! 2. [`keep_prompt`]: yes/no questions to a model. Only knowledge that is
@@ -22,8 +24,8 @@
 //! 3. [`match_prompt`]: the nearest existing points and pages in the same
 //!    Space go to a model with the memory. New → it is copied in as a new
 //!    point marked as coming from that tool's memory; Wenlan already holds
-//!    it, or it does not fit → it is left out and only counted. A memory
-//!    never replaces or changes anything.
+//!    it (also when the tool learned it from Wenlan), or it does not fit → it
+//!    is left out and only noted.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -281,6 +283,57 @@ fn cut(text: &str, max: usize) -> String {
 }
 
 /// Text with case, spacing and punctuation set aside.
+/// One memory's identity while it is followed: its tool, its project and
+/// its words. Moving it to another file keeps it; changing its words makes it
+/// another memory (the follow pass tells an edit from a new one by its file).
+pub fn memory_key(memory: &FoundMemory) -> String {
+    let hash = text_hash(&memory.text);
+    let project = memory
+        .project_dir
+        .as_deref()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    format!("{}\t{project}\t{hash}", memory.tool.as_str())
+}
+
+/// A short fingerprint of a text's words, blind to case and punctuation.
+pub fn text_hash(text: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(normalized(text).as_bytes());
+    digest.iter().take(12).map(|b| format!("{b:02x}")).collect()
+}
+
+/// The tool a [`memory_key`] belongs to.
+pub fn key_tool(key: &str) -> Option<MemoryTool> {
+    match key.split('\t').next()? {
+        "claude-code" => Some(MemoryTool::ClaudeCode),
+        "codex" => Some(MemoryTool::Codex),
+        _ => None,
+    }
+}
+
+/// The tools whose memory folder is on this computer now. A tool whose
+/// folder is missing (uninstalled, or another computer's disk not mounted)
+/// has its memories kept as they are, never read as all deleted.
+pub fn tools_present(roots: &TranscriptRoots) -> Vec<MemoryTool> {
+    let mut out = Vec::new();
+    if roots
+        .claude_dir
+        .as_ref()
+        .is_some_and(|d| d.join("projects").is_dir())
+    {
+        out.push(MemoryTool::ClaudeCode);
+    }
+    if roots
+        .codex_dir
+        .as_ref()
+        .is_some_and(|d| d.join("memories").is_dir())
+    {
+        out.push(MemoryTool::Codex);
+    }
+    out
+}
+
 pub fn normalized(text: &str) -> String {
     text.chars()
         .filter(|c| c.is_alphanumeric())

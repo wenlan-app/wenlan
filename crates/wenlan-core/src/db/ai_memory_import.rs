@@ -1,90 +1,175 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The record of the one-time import of AI tools' memory
-//! (`crate::ai_memory_import`), kept for its one Undo, and the lookups the
-//! import needs: which Space a Claude Code project's memory belongs in.
+//! What Wenlan keeps while it follows AI tools' memory
+//! (`crate::ai_memory_import`): whether the person turned following on, and
+//! a ledger of every tool memory already decided, with the point it became.
+//! Also the lookup of which Space a Claude Code project's memory belongs in.
+//!
+//! The ledger lives in `source_sync_state` under its own source id, one row
+//! per memory (keyed by [`crate::ai_memory_import::memory_key`]); the row's
+//! `content_hash` column holds the [`Decided`] outcome as JSON.
 
 use super::MemoryDB;
 use crate::ai_memory_import::ImportCounts;
 use crate::WenlanError;
 
-/// Where the import keeps what it did while it stands. Unset, it may run
-/// (again).
-const PASS_KEY: &str = "ai_memory_import_v1";
+/// Where following is recorded while it is on. Unset, nothing is followed.
+const FOLLOW_KEY: &str = "ai_memory_import_v1";
+/// The ledger's source id in `source_sync_state`.
+const LEDGER: &str = "ai-memory";
 
 fn db_err(context: &str) -> impl Fn(libsql::Error) -> WenlanError + '_ {
     move |e| WenlanError::VectorDb(format!("{context}: {e}"))
 }
 
-/// What one import did.
+/// Following, while it is on.
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct AiMemoryImport {
+    /// When the person turned it on.
     pub at: i64,
+    /// When the tools' memory was last read, and what that pass did.
+    #[serde(default)]
+    pub last_at: i64,
     pub counts: ImportCounts,
-    /// The new points the import wrote, by `source_id`. Undo forgets these
-    /// and nothing else.
-    pub written: Vec<String>,
-    /// How many came from each tool, as in `agent_sessions.tool`.
+    /// How many memories each tool keeps, as in `agent_sessions.tool`.
     #[serde(default)]
     pub by_tool: Vec<(String, usize)>,
 }
 
+/// What became of one tool memory.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "o", rename_all = "snake_case")]
+pub enum Decided {
+    /// Written as this point, with the fingerprint of the words written
+    /// ([`crate::ai_memory_import::text_hash`]): a point whose words no
+    /// longer match was edited after, and is not Wenlan's to change.
+    Point {
+        id: String,
+        hash: String,
+    },
+    Sensitive,
+    NotKnowledge,
+    /// Wenlan already held it.
+    Already,
+    /// Disagreed with what Wenlan holds, or could not be told apart.
+    Conflict,
+}
+
+/// One ledger row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LedgerRow {
+    pub key: String,
+    /// The memory file it was read from, to tell an edit from a new memory.
+    pub file: String,
+    pub decided: Decided,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Stored {
+    f: String,
+    #[serde(flatten)]
+    d: Decided,
+}
+
 impl MemoryDB {
-    /// The import, if it ran and was not taken back.
+    /// Following, if the person turned it on.
     pub async fn ai_memory_import(&self) -> Result<Option<AiMemoryImport>, WenlanError> {
         Ok(self
-            .get_app_metadata(PASS_KEY)
+            .get_app_metadata(FOLLOW_KEY)
             .await?
             .and_then(|value| serde_json::from_str(&value).ok()))
     }
 
-    /// Record what an import did, once it is done. Refused while an earlier
-    /// one stands: the caller checks first, and this keeps two runs from both
-    /// landing.
+    /// Record following and what its latest pass did.
     pub async fn record_ai_memory_import(&self, pass: &AiMemoryImport) -> Result<(), WenlanError> {
         let value = serde_json::to_string(pass)
             .map_err(|e| WenlanError::Generic(format!("ai memory import record: {e}")))?;
-        let conn = self.conn.lock().await;
-        let changed = conn
-            .execute(
-                "INSERT INTO app_metadata (key, value) VALUES (?1, ?2)
-                 ON CONFLICT(key) DO NOTHING",
-                libsql::params![PASS_KEY, value],
-            )
-            .await
-            .map_err(db_err("ai memory import record"))?;
-        if changed == 0 {
-            return Err(WenlanError::Conflict(
-                "the AI memory import already ran; take it back first".into(),
-            ));
-        }
-        Ok(())
+        self.set_app_metadata(FOLLOW_KEY, &value).await
     }
 
-    /// Take the whole import back: every point it wrote is forgotten. A
-    /// memory the person
-    /// has since edited is theirs now and stays. Returns what was taken back,
-    /// or `None` when no import stands.
+    /// Every memory decided so far.
+    pub async fn ai_memory_ledger(&self) -> Result<Vec<LedgerRow>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT file_path, content_hash FROM source_sync_state WHERE source_id = ?1",
+                libsql::params![LEDGER],
+            )
+            .await
+            .map_err(db_err("ai memory ledger"))?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await.map_err(db_err("ai memory ledger row"))? {
+            let key: String = row.get(0).map_err(db_err("ai memory ledger key"))?;
+            let raw: String = row.get(1).map_err(db_err("ai memory ledger value"))?;
+            // A row this version cannot read is left alone, never acted on.
+            if let Ok(stored) = serde_json::from_str::<Stored>(&raw) {
+                out.push(LedgerRow {
+                    key,
+                    file: stored.f,
+                    decided: stored.d,
+                });
+            }
+        }
+        Ok(out)
+    }
+
+    /// Note what became of one memory.
+    pub async fn set_ai_memory_decided(
+        &self,
+        key: &str,
+        file: &str,
+        decided: &Decided,
+    ) -> Result<(), WenlanError> {
+        let value = serde_json::to_string(&Stored {
+            f: file.to_string(),
+            d: decided.clone(),
+        })
+        .map_err(|e| WenlanError::Generic(format!("ai memory ledger: {e}")))?;
+        self.upsert_sync_state(LEDGER, key, 0, &value).await
+    }
+
+    /// The memory left its tool: forget the ledger row.
+    pub async fn drop_ai_memory_decided(&self, key: &str) -> Result<(), WenlanError> {
+        self.delete_sync_state(LEDGER, key).await
+    }
+
+    /// Stop following: every point it wrote is forgotten, except one the
+    /// person has edited since (theirs now), and the ledger is cleared, so
+    /// turning it on again starts over. Returns the record, or `None` when
+    /// following was off.
     pub async fn undo_ai_memory_import(&self) -> Result<Option<AiMemoryImport>, WenlanError> {
         let Some(pass) = self.ai_memory_import().await? else {
             return Ok(None);
         };
-        self.forget_ai_memory_rows(&pass.written).await?;
+        let points: Vec<(String, String)> = self
+            .ai_memory_ledger()
+            .await?
+            .into_iter()
+            .filter_map(|row| match row.decided {
+                Decided::Point { id, hash } => Some((id, hash)),
+                _ => None,
+            })
+            .collect();
+        self.forget_ai_memory_rows(&points).await?;
+        self.delete_all_sync_state(LEDGER).await?;
         let conn = self.conn.lock().await;
         conn.execute(
             "DELETE FROM app_metadata WHERE key = ?1",
-            libsql::params![PASS_KEY],
+            libsql::params![FOLLOW_KEY],
         )
         .await
         .map_err(db_err("ai memory import undo record"))?;
         Ok(Some(pass))
     }
 
-    /// Forget memories an import wrote, leaving any the person edited since.
-    /// Also used when an import fails partway, so it leaves nothing behind.
-    pub async fn forget_ai_memory_rows(&self, ids: &[String]) -> Result<usize, WenlanError> {
+    /// Forget points the import wrote, by id and the fingerprint of the
+    /// words written, leaving any edited since.
+    pub async fn forget_ai_memory_rows(
+        &self,
+        points: &[(String, String)],
+    ) -> Result<usize, WenlanError> {
         let mut forgotten = 0;
-        for id in ids {
-            if self.person_edited_memory(id).await? {
+        for (id, hash) in points {
+            if self.ai_memory_point(id, hash).await? != PointState::Untouched {
                 continue;
             }
             self.delete_by_source_id("memory", id).await?;
@@ -93,24 +178,56 @@ impl MemoryDB {
         Ok(forgotten)
     }
 
-    async fn person_edited_memory(&self, id: &str) -> Result<bool, WenlanError> {
+    /// Whether a point the import wrote is still there, and still as written
+    /// (its words match `hash`).
+    pub async fn ai_memory_point(&self, id: &str, hash: &str) -> Result<PointState, WenlanError> {
         let conn = self.conn.lock().await;
         let mut rows = conn
             .query(
-                "SELECT authored_content IS NOT NULL FROM memories
+                "SELECT COALESCE(authored_content, content) FROM memories
                   WHERE source = 'memory' AND source_id = ?1 AND chunk_index = 0",
                 libsql::params![id],
             )
             .await
-            .map_err(db_err("ai memory import author"))?;
+            .map_err(db_err("ai memory point"))?;
+        Ok(
+            match rows.next().await.map_err(db_err("ai memory point row"))? {
+                Some(row) => {
+                    let text = row.get::<String>(0).unwrap_or_default();
+                    if crate::ai_memory_import::text_hash(&text) == hash {
+                        PointState::Untouched
+                    } else {
+                        PointState::PersonEdited
+                    }
+                }
+                None => PointState::Gone,
+            },
+        )
+    }
+
+    /// The Space a written point is in now (`None`: unsorted), so an edit
+    /// of its memory stays where the person may have moved it.
+    pub async fn ai_memory_point_space(&self, id: &str) -> Result<Option<String>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT space FROM memories
+                  WHERE source = 'memory' AND source_id = ?1 AND chunk_index = 0",
+                libsql::params![id],
+            )
+            .await
+            .map_err(db_err("ai memory point space"))?;
         Ok(
             match rows
                 .next()
                 .await
-                .map_err(db_err("ai memory import author row"))?
+                .map_err(db_err("ai memory point space row"))?
             {
-                Some(row) => row.get::<i64>(0).unwrap_or(0) != 0,
-                None => false,
+                Some(row) => row
+                    .get::<Option<String>>(0)
+                    .unwrap_or(None)
+                    .filter(|s| !s.is_empty() && s != super::UNFILED_SPACE_ID),
+                None => None,
             },
         )
     }
@@ -153,4 +270,16 @@ impl MemoryDB {
             },
         )
     }
+}
+
+/// A written point, as it stands now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PointState {
+    /// As the import wrote it: it follows its memory.
+    Untouched,
+    /// Edited since it was written (by the person, or at their word): theirs,
+    /// never changed or removed by following.
+    PersonEdited,
+    /// The person removed it: it does not come back.
+    Gone,
 }

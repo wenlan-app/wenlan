@@ -242,3 +242,50 @@ fn match_prompt_shows_candidates_under_their_memory() {
     assert!(prompt.contains("M0: DB is canonical\n  M0K0 (page) Storage: The database"));
     assert!(!prompt.contains("replaces"));
 }
+
+#[test]
+fn a_memory_keeps_its_identity_across_files_but_not_across_words_or_tools() {
+    let at = |tool, path: &str, text: &str| FoundMemory {
+        tool,
+        project_dir: None,
+        path: path.into(),
+        text: text.into(),
+    };
+    let a = memory_key(&at(
+        MemoryTool::ClaudeCode,
+        "/m/a.md",
+        "Ship via the queue.",
+    ));
+    assert_eq!(
+        a,
+        memory_key(&at(MemoryTool::ClaudeCode, "/m/b.md", "ship via the queue"))
+    );
+    assert_ne!(
+        a,
+        memory_key(&at(
+            MemoryTool::ClaudeCode,
+            "/m/a.md",
+            "Ship via the merge queue."
+        ))
+    );
+    let codex = memory_key(&at(MemoryTool::Codex, "/m/a.md", "Ship via the queue."));
+    assert_ne!(a, codex);
+    assert_eq!(key_tool(&a), Some(MemoryTool::ClaudeCode));
+    assert_eq!(key_tool(&codex), Some(MemoryTool::Codex));
+}
+
+#[test]
+fn only_a_tool_whose_memory_folder_is_here_counts_as_present() {
+    let tmp = tempfile::tempdir().unwrap();
+    assert!(tools_present(&roots(tmp.path())).is_empty());
+    fs::create_dir_all(tmp.path().join(".claude/projects")).unwrap();
+    assert_eq!(
+        tools_present(&roots(tmp.path())),
+        vec![MemoryTool::ClaudeCode]
+    );
+    fs::create_dir_all(tmp.path().join(".codex/memories")).unwrap();
+    assert_eq!(
+        tools_present(&roots(tmp.path())),
+        vec![MemoryTool::ClaudeCode, MemoryTool::Codex]
+    );
+}
