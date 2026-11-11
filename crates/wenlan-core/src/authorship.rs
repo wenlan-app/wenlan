@@ -396,6 +396,13 @@ pub fn version_author(edited_by: &str, creation_kind: &str) -> VersionAuthor {
         };
     }
     match edited_by {
+        // The person, or their AI tool, on another of their own computers
+        // sharing the same folder as the same member.
+        crate::shared_space::OWN_DEVICE_PERSON => return VersionAuthor::Person,
+        crate::shared_space::OWN_DEVICE_AI => return VersionAuthor::Ai,
+        _ => {}
+    }
+    match edited_by {
         // A person in the app or the vault, a card or proposal the person
         // accepted, a version the person restored, a draft the person
         // published.

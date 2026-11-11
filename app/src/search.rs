@@ -3777,6 +3777,8 @@ pub async fn share_space(
     let request = shared_space::SharedSyncRequest {
         folder,
         member_name: None,
+        host: None,
+        member_id: None,
     };
     client
         .post_json(
@@ -3800,6 +3802,8 @@ pub async fn share_page(
     let request = shared_space::SharedSyncRequest {
         folder,
         member_name: None,
+        host: None,
+        member_id: None,
     };
     client
         .post_json(

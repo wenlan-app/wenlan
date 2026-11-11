@@ -254,6 +254,8 @@ async fn share_sync(
             &wenlan_types::shared_space::SharedSyncRequest {
                 folder: folder.to_string_lossy().into_owned(),
                 member_name: name.map(str::to_string),
+                host: None,
+                member_id: None,
             },
         )
         .await?;

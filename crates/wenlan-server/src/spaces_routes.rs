@@ -299,6 +299,10 @@ async fn shared_sync(
             s.lint_config.page_root().map(std::path::Path::to_path_buf),
         )
     };
+    let settings = wenlan_core::shared_space::settings_path();
+    if let Some(host) = req.host {
+        return host_sync(&db, scope, host, &settings, page_root.as_deref()).await;
+    }
     let folder = shared_folder_path(&req.folder)?;
     let member_name = shared_member_name(&db, req.member_name.as_deref()).await?;
     let scope = match scope {
@@ -310,7 +314,11 @@ async fn shared_sync(
         ),
         page => page,
     };
-    let settings = wenlan_core::shared_space::settings_path();
+    let member_id = req
+        .member_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty());
     let counts = wenlan_core::shared_space::sync_space(
         &db,
         wenlan_core::shared_space::SyncTarget {
@@ -319,6 +327,80 @@ async fn shared_sync(
             member_name: &member_name,
             settings_path: &settings,
             knowledge_path: page_root.as_deref(),
+            member_id,
+            host: None,
+        },
+    )
+    .await?;
+    Ok(Json(counts))
+}
+
+/// A Space synced through a team server: the server says who the key
+/// belongs to (the member id and name) and whether they may use the Space;
+/// this Wenlan keeps its copy of the server's folder under the data root.
+/// The Space is made here when there is none with that name yet.
+async fn host_sync(
+    db: &wenlan_core::db::MemoryDB,
+    scope: wenlan_core::shared_space::Scope,
+    host: wenlan_types::shared_space::SharedHost,
+    settings: &std::path::Path,
+    page_root: Option<&std::path::Path>,
+) -> Result<Json<wenlan_types::shared_space::SharedSyncCounts>, ServerError> {
+    use wenlan_core::shared_space::{remote, HostLink, Scope};
+    let Scope::Space(name) = scope else {
+        return Err(ServerError::ValidationError(
+            "a team server shares whole Spaces, not single pages".into(),
+        ));
+    };
+    let (url, key) = crate::team_routes::join_parts(&host.code, host.key.as_deref())?;
+    let me = remote::me(&url, &key)
+        .await
+        .map_err(ServerError::ValidationError)?;
+    let remote_space = host
+        .space
+        .as_deref()
+        .map(str::trim)
+        .filter(|space| !space.is_empty())
+        .unwrap_or(name.trim())
+        .to_string();
+    if !me.spaces.iter().any(|entry| entry.space == remote_space) {
+        return Err(ServerError::ValidationError(format!(
+            "the team server does not let {} use {remote_space:?}",
+            me.name
+        )));
+    }
+    let space = match db
+        .registered_space_or_none(Some(&name))
+        .await
+        .map_err(|e| ServerError::Internal(e.to_string()))?
+    {
+        Some(space) => space,
+        None => {
+            db.create_space(name.trim(), None, false)
+                .await
+                .map_err(|e| ServerError::Internal(e.to_string()))?;
+            db.registered_space_or_none(Some(&name))
+                .await
+                .map_err(|e| ServerError::Internal(e.to_string()))?
+                .ok_or_else(|| ServerError::NotFound(format!("no Space named {name:?}")))?
+        }
+    };
+    let folder = remote::mirror_folder(settings, &url, &remote_space);
+    let scope = Scope::Space(space);
+    let counts = wenlan_core::shared_space::sync_space(
+        db,
+        wenlan_core::shared_space::SyncTarget {
+            scope: &scope,
+            folder: &folder,
+            member_name: &me.name,
+            settings_path: settings,
+            knowledge_path: page_root,
+            member_id: Some(&me.member_id),
+            host: Some(HostLink {
+                url,
+                key,
+                space: remote_space,
+            }),
         },
     )
     .await?;

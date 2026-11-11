@@ -23,7 +23,7 @@ interface BasisDiffDialogProps {
 
 // The writers the daemon records for a person (app editor, vault file edit).
 // Anything else is described by the shared revision label, never the raw slug.
-const HUMAN_WRITERS = new Set(["manual_edit", "fs_edit", "human"]);
+const HUMAN_WRITERS = new Set(["manual_edit", "fs_edit", "human", "own_device"]);
 
 function whenLabel(seconds: number, language: string): string {
   try {

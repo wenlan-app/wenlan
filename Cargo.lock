@@ -9279,6 +9279,7 @@ dependencies = [
  "libsql",
  "openssl-sys",
  "reqwest 0.12.28",
+ "rmcp",
  "serde",
  "serde_json",
  "service-manager",
@@ -9297,6 +9298,7 @@ dependencies = [
  "url",
  "uuid",
  "wenlan-core",
+ "wenlan-mcp",
  "wenlan-types",
  "zip 2.4.2",
 ]

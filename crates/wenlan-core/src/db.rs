@@ -19337,13 +19337,31 @@ pub struct BackupReceipt {
 /// shared Space wrote keeps that member (`shared_person:<member>`,
 /// `shared_ai:<member>`). Other pages, and internal callers that name no
 /// actor, keep `create`.
-fn create_label<'a>(creation_kind: &str, actor: &'a str) -> &'a str {
+///
+/// The person's own other computer keeps `own_device` / `own_device_ai`. On
+/// a team server, a page a member's AI tool made through the team listener
+/// (a team agent name, `<tool>@team.<member>`) is that member's AI tool's:
+/// `shared_ai:<member>`.
+fn create_label<'a>(creation_kind: &str, actor: &'a str) -> std::borrow::Cow<'a, str> {
+    use std::borrow::Cow;
     match (creation_kind, actor) {
-        ("authored", "unknown") => "person_create",
-        ("authored", "") => "create",
-        ("authored", shared) if crate::shared_space::shared_writer(shared).is_some() => shared,
-        ("authored", _) => "agent_create",
-        _ => "create",
+        ("authored", "unknown") => Cow::Borrowed("person_create"),
+        ("authored", "") => Cow::Borrowed("create"),
+        ("authored", shared) if crate::shared_space::shared_writer(shared).is_some() => {
+            Cow::Borrowed(shared)
+        }
+        ("authored", own)
+            if own == crate::shared_space::OWN_DEVICE_PERSON
+                || own == crate::shared_space::OWN_DEVICE_AI =>
+        {
+            Cow::Borrowed(own)
+        }
+        ("authored", team) if wenlan_types::team::split_team_agent(team).is_some() => {
+            let (_, member) = wenlan_types::team::split_team_agent(team).unwrap_or_default();
+            Cow::Owned(format!("{}:{member}", crate::shared_space::SHARED_AI))
+        }
+        ("authored", _) => Cow::Borrowed("agent_create"),
+        _ => Cow::Borrowed("create"),
     }
 }
 
@@ -54113,7 +54131,11 @@ impl MemoryDB {
                    (page_id, version, title, content, source_memory_ids, edited_by, created_at) \
                  SELECT id, version, title, content, source_memory_ids, ?3, ?2 \
                  FROM pages WHERE id = ?1",
-                libsql::params![id, linked_at, create_label(creation_kind, basis_actor)],
+                libsql::params![
+                    id,
+                    linked_at,
+                    create_label(creation_kind, basis_actor).into_owned()
+                ],
             )
             .await
         {

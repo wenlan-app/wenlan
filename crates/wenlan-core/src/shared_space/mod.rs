@@ -7,7 +7,7 @@
 //!
 //! ```text
 //! <folder>/space.json                                  {"format":1,"space":…,"page":…,"members":[{"id":…,"name":…}]}
-//! <folder>/members/<member_id>/pages/<page_id>/<sha256>.md   one file per page version
+//! <folder>/members/<member_id>/pages/<page_id>/<sha256>.wlv  one file per page version (`.md` from older Wenlans is still read)
 //! ```
 //!
 //! `page` is there only when the folder shares one page: its id. `space` is
@@ -68,6 +68,7 @@
 //! are kept in `shared-spaces.json` under the data root, outside the
 //! database, so a rebuilt database stays the same member.
 
+pub mod remote;
 pub mod rewrite;
 pub mod version;
 
@@ -96,6 +97,12 @@ pub const SETTINGS_FILE: &str = "shared-spaces.json";
 /// then `:` and their member id.
 pub const SHARED_PERSON: &str = "shared_person";
 pub const SHARED_AI: &str = "shared_ai";
+
+/// `page_history.edited_by` of a version this person wrote on another of
+/// their own computers (the same member id): their own sentences, and
+/// their own AI tool's, never another member's.
+pub const OWN_DEVICE_PERSON: &str = "own_device";
+pub const OWN_DEVICE_AI: &str = "own_device_ai";
 
 /// What a folder shares.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -130,6 +137,20 @@ pub fn shared_writer(edited_by: &str) -> Option<(AuthorKind, &str)> {
     version::is_safe_id(member).then_some((kind, member))
 }
 
+/// The `edited_by` that records, here, a version `author` wrote, when this
+/// Wenlan is member `me`: the person's own (`OWN_DEVICE_*`) when they wrote
+/// it on another of their computers, else that member's.
+pub fn writer_edited_by(author: &Author, me: &str) -> String {
+    if author.member == me {
+        return match author.kind {
+            AuthorKind::Person => OWN_DEVICE_PERSON,
+            AuthorKind::Ai => OWN_DEVICE_AI,
+        }
+        .to_string();
+    }
+    shared_edited_by(author)
+}
+
 /// The `edited_by` that records a version `author` wrote.
 pub fn shared_edited_by(author: &Author) -> String {
     let kind = match author.kind {
@@ -142,11 +163,42 @@ pub fn shared_edited_by(author: &Author) -> String {
 // ===== This Wenlan's settings =====
 
 /// This Wenlan's part in one shared Space.
+///
+/// `member_id` is the person, not the computer: every Wenlan of one person
+/// that joins the folder as the same member writes under the same
+/// `members/<member_id>/`, and takes the versions found there as the
+/// person's own (`OWN_DEVICE_*`). A team server gives the id; a folder
+/// shared between people takes the one picked on joining (the person's
+/// other computer), else a new one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShareSettings {
     pub member_id: String,
     pub member_name: String,
     pub folder: String,
+    /// The team server this Space syncs through; `folder` is then this
+    /// Wenlan's copy of the server's folder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<HostLink>,
+    /// The team server lets this person read only: edits made here are not
+    /// written as versions, and the server's version is taken over them.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub read_only: bool,
+    /// This Wenlan hosts the Space for a team (`crate::team`): it writes
+    /// the folder for every member, and a team member's AI tool's edit
+    /// made here through the team listener is filed under that member.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hosted: bool,
+}
+
+/// A team server a Space syncs through.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HostLink {
+    /// The server's address, such as `https://wenlan.example.com`.
+    pub url: String,
+    /// This person's member key.
+    pub key: String,
+    /// The Space's name on the server.
+    pub space: String,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -263,26 +315,81 @@ pub fn join_at(
     folder: &Path,
     member_name: &str,
 ) -> Result<ShareSettings, WenlanError> {
+    join_as(path, scope, folder, member_name, None)
+}
+
+/// [`join_at`], joining as `member_id` when this Wenlan does not share
+/// `scope` yet: the person's own other computer, already a member of the
+/// folder, or the id a team server gave. A share that already has another
+/// member id is refused: what it remembers was written as that member.
+pub fn join_as(
+    path: &Path,
+    scope: &Scope,
+    folder: &Path,
+    member_name: &str,
+    member_id: Option<&str>,
+) -> Result<ShareSettings, WenlanError> {
+    if let Some(id) = member_id {
+        if !version::is_safe_id(id) {
+            return Err(WenlanError::Validation(format!("{id} is not a member id")));
+        }
+    }
     let folder = folder.to_string_lossy().into_owned();
     change_settings(path, |store| {
         let (entries, key) = store.entries(scope);
         let settings = match entries.get(&key) {
-            Some(existing) => ShareSettings {
-                member_id: existing.member_id.clone(),
-                member_name: member_name.to_string(),
-                folder: folder.clone(),
-            },
+            Some(existing) => {
+                if member_id.is_some_and(|id| id != existing.member_id) {
+                    return (
+                        false,
+                        Err(WenlanError::Validation(
+                            "this is shared from here as another member already; stop sharing it first"
+                                .into(),
+                        )),
+                    );
+                }
+                ShareSettings {
+                    member_name: member_name.to_string(),
+                    folder: folder.clone(),
+                    ..existing.clone()
+                }
+            }
             None => ShareSettings {
-                member_id: uuid::Uuid::new_v4().simple().to_string(),
+                member_id: member_id
+                    .map(str::to_string)
+                    .unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string()),
                 member_name: member_name.to_string(),
                 folder,
+                host: None,
+                read_only: false,
+                hosted: false,
             },
         };
         let changed = entries.get(&key) != Some(&settings);
         if changed {
             entries.insert(key, settings.clone());
         }
-        (changed, settings)
+        (changed, Ok(settings))
+    })?
+}
+
+/// Changes what this Wenlan remembers of `scope` beside its folder and
+/// member (the team server, read only, hosted). Returns the settings, or
+/// `None` when it does not share `scope`.
+pub fn update_share(
+    path: &Path,
+    scope: &Scope,
+    change: impl FnOnce(&mut ShareSettings),
+) -> Result<Option<ShareSettings>, WenlanError> {
+    change_settings(path, |store| {
+        let (entries, key) = store.entries(scope);
+        let Some(settings) = entries.get_mut(&key) else {
+            return (false, None);
+        };
+        let before = settings.clone();
+        change(settings);
+        let after = settings.clone();
+        (before != after, Some(after))
     })
 }
 
@@ -372,9 +479,11 @@ pub fn ensure_space_file(
         ))
     })?;
     let before = file.clone();
-    match file.members.iter_mut().find(|member| member.id == me.id) {
-        Some(member) => member.name = me.name.clone(),
-        None => file.members.push(me.clone()),
+    // An entry already there keeps its name: two computers of one person
+    // share the id and may have different profile names, and a pass must
+    // not rename them back and forth. A real rename is `rename_space_member`.
+    if !file.members.iter().any(|member| member.id == me.id) {
+        file.members.push(me.clone());
     }
     if file != before || !path.exists() {
         let mut tmp = tempfile::NamedTempFile::new_in(folder)?;
@@ -384,6 +493,42 @@ pub fn ensure_space_file(
             .map_err(|error| WenlanError::Io(error.error))?;
     }
     Ok(file)
+}
+
+/// Sets `me`'s name in the folder's `space.json`, which must be there
+/// already: the person changed the name others see.
+pub fn rename_space_member(folder: &Path, me: &SpaceMember) -> Result<(), WenlanError> {
+    add_space_members(folder, std::slice::from_ref(me))
+}
+
+/// Adds `members` (or their new names) to the folder's `space.json`, which
+/// must be there already. Members not named stay. For a team server, which
+/// lists everyone who can use a Space it hosts.
+pub fn add_space_members(folder: &Path, members: &[SpaceMember]) -> Result<(), WenlanError> {
+    use std::io::Write;
+    let path = folder.join(SPACE_FILE);
+    let Some(mut file) = read_space_file(folder)? else {
+        return Err(WenlanError::NotFound(format!("{}", path.display())));
+    };
+    let before = file.clone();
+    for wanted in members {
+        match file
+            .members
+            .iter_mut()
+            .find(|member| member.id == wanted.id)
+        {
+            Some(member) => member.name = wanted.name.clone(),
+            None => file.members.push(wanted.clone()),
+        }
+    }
+    if file != before {
+        let mut tmp = tempfile::NamedTempFile::new_in(folder)?;
+        tmp.write_all((serde_json::to_string_pretty(&file)? + "\n").as_bytes())?;
+        tmp.flush()?;
+        tmp.persist(&path)
+            .map_err(|error| WenlanError::Io(error.error))?;
+    }
+    Ok(())
 }
 
 // ===== What this Wenlan last held of each page =====
@@ -538,6 +683,9 @@ fn status_of(settings_path: &Path, scope: &Scope, settings: ShareSettings) -> Sh
             Scope::Space(name) | Scope::Page(name) => name.clone(),
         },
         folder: settings.folder,
+        host: settings.host.map(|host| host.url),
+        read_only: settings.read_only,
+        hosted: settings.hosted,
         member_id: settings.member_id,
         member_name: settings.member_name,
         members: members
@@ -597,6 +745,12 @@ pub struct SyncTarget<'a> {
     pub settings_path: &'a Path,
     /// The pages folder, so applied pages get their file too.
     pub knowledge_path: Option<&'a Path>,
+    /// Join as this member (see [`join_as`]): the person's own other
+    /// computer, or the id a team server gave.
+    pub member_id: Option<&'a str>,
+    /// Sync through this team server; `folder` is then this Wenlan's copy of
+    /// its folder ([`remote::mirror_folder`]).
+    pub host: Option<HostLink>,
 }
 
 /// One sync pass of `target.scope` with its folder (see the module docs),
@@ -672,26 +826,143 @@ pub async fn sync_space(
             target.folder.display()
         )));
     }
+    if target.host.is_none() {
+        if let Some(id) = target.member_id {
+            // Joining as a member already in the folder: one of this
+            // person's other computers.
+            let already = share_settings_at(target.settings_path, &scope)?.is_some();
+            let folder = target.folder.to_path_buf();
+            let listed = tokio::task::spawn_blocking(move || read_space_file(&folder))
+                .await
+                .map_err(|error| WenlanError::Generic(format!("shared folder task: {error}")))??
+                .is_some_and(|file| file.members.iter().any(|member| member.id == id));
+            if !already && !listed {
+                return Err(WenlanError::Validation(format!(
+                    "{id} is not a member of {}",
+                    target.folder.display()
+                )));
+            }
+        }
+    }
     let key = scope.key();
     let run = space_run(target.settings_path, &key);
     let _pass = run.lock.lock().await;
     let result = async {
-        let settings = join_at(target.settings_path, &scope, target.folder, member_name)?;
+        let mut settings = join_as(
+            target.settings_path,
+            &scope,
+            target.folder,
+            member_name,
+            target.member_id,
+        )?;
+        if let Some(host) = target.host.clone() {
+            settings = update_share(target.settings_path, &scope, |settings| {
+                settings.host = Some(host);
+            })?
+            .unwrap_or(settings);
+        }
         if let Scope::Space(space) = &scope {
             stop_page_shares_in(db, target.settings_path, space).await?;
         }
-        pass(db, &scope, &settings, target.knowledge_path).await
+        run_pass(
+            db,
+            &scope,
+            settings,
+            target.settings_path,
+            target.knowledge_path,
+            false,
+        )
+        .await
     }
     .await;
-    finish(
-        &run,
-        &key,
-        match &result {
-            Ok(counts) => Outcome::Done(*counts),
-            Err(error) => Outcome::Failed(error.to_string()),
+    match result {
+        Ok(Ok(counts)) => {
+            finish(&run, &key, Outcome::Done(counts));
+            Ok(counts)
+        }
+        Ok(Err(reason)) => {
+            finish(&run, &key, Outcome::Paused(reason.clone()));
+            Err(WenlanError::Validation(reason))
+        }
+        Err(error) => {
+            finish(&run, &key, Outcome::Failed(error.to_string()));
+            Err(error)
+        }
+    }
+}
+
+/// One pass of `scope`, with the team server's pull before it and push
+/// after it when the Space syncs through one. `Ok(Err(reason))` when it is
+/// paused: the server or the folder cannot be reached, nothing was
+/// changed here. `automatic` passes also wait for the folder to be whole
+/// ([`ready`]).
+async fn run_pass(
+    db: &MemoryDB,
+    scope: &Scope,
+    mut settings: ShareSettings,
+    settings_path: &Path,
+    knowledge_path: Option<&Path>,
+    automatic: bool,
+) -> Result<Result<SharedSyncCounts, String>, WenlanError> {
+    let folder = PathBuf::from(&settings.folder);
+    let listed = match settings.host.clone() {
+        None => None,
+        Some(host) => match remote::pull(&host, &folder).await {
+            Err(reason) => return Ok(Err(reason)),
+            Ok(listed) => {
+                let read_only = listed.access == wenlan_types::team::TeamAccess::Read;
+                if read_only != settings.read_only {
+                    if let Some(now) = update_share(settings_path, scope, |settings| {
+                        settings.read_only = read_only;
+                    })? {
+                        settings = now;
+                    }
+                }
+                Some((host, listed))
+            }
         },
-    );
-    result
+    };
+    if automatic {
+        if let Err(reason) = ready(db, scope, &settings).await {
+            return Ok(Err(reason));
+        }
+    }
+    if settings.hosted {
+        if let Scope::Space(space) = scope {
+            list_team_members(settings_path, &folder, space).await;
+        }
+    }
+    let counts = pass(db, scope, &settings, knowledge_path).await?;
+    if let Some((host, listed)) = listed {
+        if let Err(reason) = remote::push(&host, &folder, &settings.member_id, &listed).await {
+            return Ok(Err(reason));
+        }
+    }
+    Ok(Ok(counts))
+}
+
+/// A Space this Wenlan hosts: lists everyone who can use it in its
+/// `space.json` before the pass (see `crate::team`).
+async fn list_team_members(settings_path: &Path, folder: &Path, space: &str) {
+    let team = settings_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(crate::team::TEAM_FILE);
+    let folder = folder.to_path_buf();
+    let space = space.to_string();
+    let done = tokio::task::spawn_blocking(move || {
+        let members = crate::team::read_team(&team)?.members;
+        if folder.join(SPACE_FILE).exists() {
+            crate::team::list_members_in_space_file(&folder, &space, &members)?;
+        }
+        Ok::<(), WenlanError>(())
+    })
+    .await;
+    match done {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => log::warn!("[shared_space] team members not listed: {error}"),
+        Err(error) => log::warn!("[shared_space] team members not listed: {error}"),
+    }
 }
 
 /// Stops sharing alone the pages of `space`, now that the whole Space is
@@ -747,19 +1018,33 @@ pub async fn sync_shared_spaces(
             log::debug!("[shared_space] {key}: a pass is already running");
             continue;
         };
-        if let Some(name) = person_name.filter(|name| *name != settings.member_name) {
-            match join_at(settings_path, &scope, Path::new(&settings.folder), name) {
+        // A team server's member is named by the server.
+        if let Some(name) = person_name
+            .filter(|name| *name != settings.member_name)
+            .filter(|_| settings.host.is_none())
+        {
+            let renamed = join_at(settings_path, &scope, Path::new(&settings.folder), name)
+                .and_then(|renamed| {
+                    rename_space_member(
+                        Path::new(&renamed.folder),
+                        &SpaceMember {
+                            id: renamed.member_id.clone(),
+                            name: renamed.member_name.clone(),
+                        },
+                    )?;
+                    Ok(renamed)
+                });
+            match renamed {
                 Ok(renamed) => settings = renamed,
                 Err(error) => log::warn!("[shared_space] {key}: name not changed: {error}"),
             }
         }
-        let outcome = match ready(db, &scope, &settings).await {
-            Err(reason) => Outcome::Paused(reason),
-            Ok(()) => match pass(db, &scope, &settings, knowledge_path).await {
-                Ok(counts) => Outcome::Done(counts),
+        let outcome =
+            match run_pass(db, &scope, settings, settings_path, knowledge_path, true).await {
+                Ok(Ok(counts)) => Outcome::Done(counts),
+                Ok(Err(reason)) => Outcome::Paused(reason),
                 Err(error) => Outcome::Failed(error.to_string()),
-            },
-        };
+            };
         out.push((key.clone(), finish(&run, &key, outcome)));
     }
     out
@@ -1050,6 +1335,9 @@ impl Pass<'_> {
             // version taken earlier).
             return Ok(Some(at(&head.winner.sha)));
         }
+        // A member who may only read writes no version: the team's version
+        // is taken over the edit, which stays in this page's history.
+        let changed = changed && !self.settings.read_only;
         if changed {
             return match self
                 .export_page(page, versions, head.as_ref(), base)
@@ -1128,7 +1416,7 @@ impl Pass<'_> {
             Some(Held {
                 version: Some(_), ..
             }) => {
-                if winner.meta.archived {
+                if winner.meta.archived || self.settings.read_only {
                     return Ok(Some(deleted(&winner.sha)));
                 }
                 match self.export_tombstone(&head).await? {
@@ -1255,7 +1543,15 @@ impl Pass<'_> {
         if current.status == "active"
             && version::body_digest(&current.content) != head.meta.body_digest
         {
-            if !apply_update(self.db, &current, head, self.knowledge_path).await? {
+            if !apply_update(
+                self.db,
+                &current,
+                head,
+                self.knowledge_path,
+                &self.settings.member_id,
+            )
+            .await?
+            {
                 return Ok(stopped(wrote, &current));
             }
             wrote = true;
@@ -1314,7 +1610,7 @@ impl Pass<'_> {
             return Ok(None);
         };
         let title = self.free_title(id, &head.page.title, head).await?;
-        let agent = shared_edited_by(&head.meta.author);
+        let agent = writer_edited_by(&head.meta.author, &self.settings.member_id);
         let distillation = crate::tuning::DistillationConfig::default();
         let write = crate::post_write::PageWrite::Create {
             page_id: Some(id),
@@ -1437,12 +1733,13 @@ impl Pass<'_> {
             parent: parent.map(|parent| parent.sha.clone()),
             merged,
             body_digest: version::body_digest(&page.content),
-            author: local_author(db, page, &self.settings.member_id).await?,
+            author: self.author_of(page).await?,
             ts: now_ts(),
             archived: page.status == "archived",
         };
+        let member = meta.author.member.clone();
         let text = version::render(&file, &meta);
-        let name = format!("{}.md", version::sha256_hex(text.as_bytes()));
+        let name = version::version_file_name(&version::sha256_hex(text.as_bytes()));
         match version::parse(&name, text.as_bytes()) {
             Ok(read) if read.page.body == page.content && read.page.title == page.title => {}
             _ => {
@@ -1453,7 +1750,48 @@ impl Pass<'_> {
                 return Ok(None);
             }
         }
-        self.write(&page.id, text).await.map(Some)
+        self.write_as(&member, &page.id, text).await.map(Some)
+    }
+
+    /// Who wrote the page's current version here. On a team server, an edit
+    /// a member's AI tool made through the team listener (a team agent name,
+    /// or `shared_*:<member>` on a page it made) is that member's, when they
+    /// are in the Space's member list.
+    async fn author_of(&self, page: &Page) -> Result<Author, WenlanError> {
+        let author = local_author(self.db, page, &self.settings.member_id).await?;
+        if !self.settings.hosted {
+            return Ok(author);
+        }
+        let edited_by = self
+            .db
+            .list_page_history(&page.id, 1)
+            .await?
+            .into_iter()
+            .next()
+            .map(|row| row.edited_by)
+            .unwrap_or_default();
+        let from_create =
+            shared_writer(&edited_by).map(|(kind, member)| (kind, member.to_string(), None));
+        let from_agent = author.agent.as_deref().and_then(|agent| {
+            let (tool, member) = wenlan_types::team::split_team_agent(agent)?;
+            Some((author.kind, member.to_string(), Some(tool.to_string())))
+        });
+        match from_agent.or(from_create) {
+            Some((kind, member, agent)) if self.names.contains_key(&member) => Ok(Author {
+                member,
+                kind,
+                agent,
+            }),
+            _ => Ok(Author {
+                // A team agent name of no member here: the tool only.
+                agent: author.agent.map(|agent| {
+                    wenlan_types::team::split_team_agent(&agent)
+                        .map(|(tool, _)| tool.to_string())
+                        .unwrap_or(agent)
+                }),
+                ..author
+            }),
+        }
     }
 
     /// Writes a version that archives the head, for a page the person
@@ -1489,8 +1827,20 @@ impl Pass<'_> {
     }
 
     async fn write(&self, page_id: &str, text: String) -> Result<String, WenlanError> {
-        let folder = self.folder.clone();
         let member = self.settings.member_id.clone();
+        self.write_as(&member, page_id, text).await
+    }
+
+    /// Writes a version under `member`'s folder: this Wenlan's own, or, on a
+    /// team server, the member it was written for ([`Self::author_of`]).
+    async fn write_as(
+        &self,
+        member: &str,
+        page_id: &str,
+        text: String,
+    ) -> Result<String, WenlanError> {
+        let folder = self.folder.clone();
+        let member = member.to_string();
         let page_id = page_id.to_string();
         let (sha, _) = tokio::task::spawn_blocking(move || {
             version::write_version(&folder, &member, &page_id, &text)
@@ -1631,8 +1981,9 @@ async fn apply_update(
     page: &Page,
     head: &PageVersion,
     knowledge_path: Option<&Path>,
+    me: &str,
 ) -> Result<bool, WenlanError> {
-    let edited_by = shared_edited_by(&head.meta.author);
+    let edited_by = writer_edited_by(&head.meta.author, me);
     let write = crate::post_write::PageWrite::UpdatePreservingSources {
         page_id: &page.id,
         req: wenlan_types::requests::UpdatePageRequest {

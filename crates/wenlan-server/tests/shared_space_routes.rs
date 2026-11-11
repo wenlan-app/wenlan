@@ -109,6 +109,8 @@ async fn shared_sync_writes_the_space_pages_and_returns_counts() {
     let req = SharedSyncRequest {
         folder: shared.path().to_string_lossy().into_owned(),
         member_name: Some("Qi-Xuan".to_string()),
+        host: None,
+        member_id: None,
     };
 
     let (status, _) = post_sync(&router, "Nowhere", &req).await;

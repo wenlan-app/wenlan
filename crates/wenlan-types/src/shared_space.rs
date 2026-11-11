@@ -18,12 +18,36 @@ use serde::{Deserialize, Serialize};
 /// `POST /api/pages/{id}/shared/sync`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SharedSyncRequest {
-    /// The shared folder, an absolute path on this computer.
+    /// The shared folder, an absolute path on this computer. Empty when
+    /// `host` is given: the Space then syncs through a team server.
+    #[serde(default)]
     pub folder: String,
+    /// Sync through a team server instead of a folder (see
+    /// [`crate::team`]). The name is the server's, `member_name` is ignored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<SharedHost>,
+    /// Join the folder as this member, one already in it: this person's own
+    /// other computer. Their sentences then stay theirs here. Left out, a
+    /// new member the first time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub member_id: Option<String>,
     /// The name other members see for this person. Left out, the name in
     /// this Wenlan's profile; the call is refused when that is empty too.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub member_name: Option<String>,
+}
+
+/// A team server to sync a Space through.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SharedHost {
+    /// The join code (`<url>#<key>`), or the server's url when `key` is
+    /// given apart.
+    pub code: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+    /// The Space's name on the server. Left out, the Space's name here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub space: Option<String>,
 }
 
 /// Whether a folder shares a whole Space or one page.
@@ -98,8 +122,19 @@ pub struct SharedSyncStatus {
     pub kind: SharedKind,
     /// The Space's name here, or the page's id.
     pub target: String,
-    /// The shared folder on this computer.
+    /// The shared folder on this computer (for a Space synced through a
+    /// team server, Wenlan's own copy of the server's folder).
     pub folder: String,
+    /// The team server's address, when the Space syncs through one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    /// The team server lets this person read the Space only: what they
+    /// change here is not taken, and the server's version is kept.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub read_only: bool,
+    /// This Wenlan hosts the Space for a team (see [`crate::team`]).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hosted: bool,
     /// This person's member id, to find them in `members`; never shown.
     pub member_id: String,
     /// The name other members see for this person.

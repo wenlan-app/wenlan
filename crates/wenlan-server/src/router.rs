@@ -110,6 +110,7 @@ pub fn build_router_with_shutdown(state: SharedState, shutdown: ShutdownHandle) 
     let router = telemetry_routes::register(router);
     let router = crate::theme_routes::register(router);
     let router = crate::trust_scan_routes::register(router);
+    let router = crate::team_routes::register(router);
 
     router
         .finish()

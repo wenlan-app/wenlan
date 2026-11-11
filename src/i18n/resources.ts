@@ -996,6 +996,8 @@ const en = {
   revisionLabel: {
     writer: {
       manualEdit: "You edited in the app",
+      ownDevice: "You edited on another computer",
+      ownDeviceAi: "Your AI tool, on another computer",
       fsEdit: "You edited the file",
       agentRefresh: "Updated by an agent",
       agentRefreshNamed: "Updated by {{agent}}",
@@ -4333,6 +4335,8 @@ const zhHans = {
   revisionLabel: {
     writer: {
       manualEdit: "你在 app 里编辑",
+      ownDevice: "你在另一台电脑上编辑",
+      ownDeviceAi: "你的 AI 工具（另一台电脑）",
       fsEdit: "你在文件里编辑",
       agentRefresh: "Agent 更新",
       agentRefreshNamed: "{{agent}} 更新",
@@ -7625,6 +7629,8 @@ const zhHant = {
   revisionLabel: {
     writer: {
       manualEdit: "你在 app 裡編輯",
+      ownDevice: "你在另一台電腦上編輯",
+      ownDeviceAi: "你的 AI 工具（另一台電腦）",
       fsEdit: "你在檔案裡編輯",
       agentRefresh: "Agent 更新",
       agentRefreshNamed: "{{agent}} 更新",

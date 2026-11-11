@@ -130,14 +130,46 @@ pub fn body_digest(body: &str) -> String {
     sha256_hex(body.as_bytes())
 }
 
-/// A version file's name, `<sha256>.md`, when `name` is one.
+/// The extension version files are written with. Not `.md`, so an AI tool
+/// browsing a shared folder (a Drive connector) does not take the history
+/// of a page for notes and answer from an old version.
+pub const VERSION_EXT: &str = "wlv";
+/// The extension older Wenlans wrote; still read.
+const OLD_VERSION_EXT: &str = "md";
+
+/// A version file's name, `<sha256>.wlv` (or `<sha256>.md` as older
+/// Wenlans wrote), when `name` is one.
 pub fn version_sha(name: &str) -> Option<&str> {
-    let sha = name.strip_suffix(".md")?;
+    let (sha, ext) = name.rsplit_once('.')?;
+    if ext != VERSION_EXT && ext != OLD_VERSION_EXT {
+        return None;
+    }
     (sha.len() == 64
         && sha
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
     .then_some(sha)
+}
+
+/// The file name a version with `sha` is written under.
+pub fn version_file_name(sha: &str) -> String {
+    format!("{sha}.{VERSION_EXT}")
+}
+
+/// Whether the version file at `path`, under either extension, is there.
+pub fn version_file_exists(path: &Path) -> bool {
+    path.exists()
+        || [VERSION_EXT, OLD_VERSION_EXT]
+            .iter()
+            .any(|ext| path.with_extension(ext).exists())
+}
+
+/// A version file's path with no extension, so the same version under the
+/// old and new name compares equal.
+pub fn version_key(path: &str) -> &str {
+    path.strip_suffix(&format!(".{VERSION_EXT}"))
+        .or_else(|| path.strip_suffix(&format!(".{OLD_VERSION_EXT}")))
+        .unwrap_or(path)
 }
 
 /// A name that is safe as one folder name on every platform: a page or
@@ -318,6 +350,16 @@ pub struct FolderRead {
     pub skipped: u32,
 }
 
+/// `<name>` when `name` is `<name> (N)`: the second folder Google Drive
+/// keeps when two computers made the same new folder before seeing each
+/// other's. Its versions are read as the folder's own (their names are
+/// their sha, so the two never hold different files under one name).
+fn drive_copy_of(name: &str) -> Option<&str> {
+    let (base, rest) = name.rsplit_once(" (")?;
+    let number = rest.strip_suffix(')')?;
+    (!number.is_empty() && number.bytes().all(|b| b.is_ascii_digit())).then_some(base)
+}
+
 fn sub_dirs(dir: &Path) -> Vec<(String, PathBuf)> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
@@ -326,6 +368,7 @@ fn sub_dirs(dir: &Path) -> Vec<(String, PathBuf)> {
         .flatten()
         .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
         .filter_map(|entry| Some((entry.file_name().into_string().ok()?, entry.path())))
+        .map(|(name, path)| (drive_copy_of(&name).unwrap_or(&name).to_string(), path))
         .filter(|(name, _)| is_safe_id(name))
         .collect();
     out.sort();
@@ -405,8 +448,8 @@ pub fn write_version(
         .join(PAGES_DIR)
         .join(page_id);
     std::fs::create_dir_all(&dir)?;
-    let path = dir.join(format!("{sha}.md"));
-    if path.exists() {
+    let path = dir.join(version_file_name(&sha));
+    if version_file_exists(&path) {
         return Ok((sha, false));
     }
     let mut tmp = tempfile::Builder::new()

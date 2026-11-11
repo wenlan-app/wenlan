@@ -145,6 +145,16 @@ wenlan spaces default work
 wenlan spaces move scratch career
 ```
 
+**`wenlan team`**
+
+Run a team server (add members, host Spaces) or join one with a join code.
+
+```bash
+wenlan team status
+wenlan team add Ana --access Work --access Notes:read --url https://wenlan.example.com
+wenlan team join "https://wenlan.example.com#wlt_…" --server-space Work
+```
+
 ### Setup
 
 **`wenlan status`**
@@ -565,6 +575,113 @@ Options:
 
 - `--folder <FOLDER>`: The shared folder. The first sync adds you to it.
 - `--name <NAME>`: The name the other members see for you. Left out, your display name in Settings.
+
+### `wenlan team`
+
+Run or join a team server: add members, host Spaces, join with a code (status, add, update, remove, new-key, host, join).
+
+```text
+wenlan team [OPTIONS] <COMMAND>
+```
+
+#### `wenlan team status`
+
+Show the members, the Spaces this computer hosts for the team, and whether the team listener is on.
+
+```text
+wenlan team status [OPTIONS]
+```
+
+#### `wenlan team add`
+
+Add a member and print their join code (or key) once.
+
+```text
+wenlan team add [OPTIONS] <NAME>
+```
+
+Arguments:
+
+- `<NAME>`: The member's name.
+
+Options:
+
+- `--access <SPACE[:read]>`: A Space the member can use, `Space` for read and write or `Space:read` for read only. Repeat for more Spaces.
+- `--url <URL>`: The address the member's computer reaches this server at, put in the join code. Left out, only the key is printed.
+
+#### `wenlan team update`
+
+Rename a member or replace the Spaces they can use.
+
+```text
+wenlan team update [OPTIONS] <MEMBER_ID>
+```
+
+Arguments:
+
+- `<MEMBER_ID>`: The member's id (see `wenlan team status`).
+
+Options:
+
+- `--name <NAME>`: The new name.
+- `--access <SPACE[:read]>`: A Space the member can use, `Space` or `Space:read`. Repeat for more; the list replaces the current one.
+
+#### `wenlan team remove`
+
+Remove a member: their key stops working at once.
+
+```text
+wenlan team remove [OPTIONS] <MEMBER_ID>
+```
+
+Arguments:
+
+- `<MEMBER_ID>`: The member's id (see `wenlan team status`).
+
+#### `wenlan team new-key`
+
+Give a member a new key; the old one stops working.
+
+```text
+wenlan team new-key [OPTIONS] <MEMBER_ID>
+```
+
+Arguments:
+
+- `<MEMBER_ID>`: The member's id (see `wenlan team status`).
+
+Options:
+
+- `--url <URL>`: The address the member's computer reaches this server at, put in the join code.
+
+#### `wenlan team host`
+
+Host a Space of this computer for the team.
+
+```text
+wenlan team host [OPTIONS] <SPACE>
+```
+
+Arguments:
+
+- `<SPACE>`: Space name.
+
+#### `wenlan team join`
+
+Join a team server with a join code: list the Spaces you can use, or sync one of them with --server-space.
+
+```text
+wenlan team join [OPTIONS] <CODE>
+```
+
+Arguments:
+
+- `<CODE>`: The join code you were sent (`https://…#wlt_…`).
+
+Options:
+
+- `--server-space <SERVER_SPACE>`: Sync this Space of the server (not `--space`, which picks a Space on this computer). Left out, the Spaces you can use are listed.
+- `--as <LOCAL_SPACE>`: The Space's name on this computer. Left out, the server's name.
 
 ### `wenlan wiki`
 
