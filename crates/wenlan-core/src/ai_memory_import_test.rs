@@ -109,27 +109,44 @@ fn sensitive_memories_are_caught() {
 }
 
 #[test]
-fn keep_needs_useful_and_three_noes_for_each_memory() {
+fn keep_needs_useful_and_three_noes_and_files_the_persons_own_life_apart() {
     let raw = r#"Here you go:
 ```json
 {"answers": [
- {"m": "M0", "useful": true, "tool": false, "expires": false, "private": false},
- {"m": "M1", "useful": true, "tool": true, "expires": false, "private": false},
- {"m": "M2", "useful": true, "tool": false, "expires": true, "private": false},
- {"m": "M3", "useful": true, "tool": false, "expires": false},
- {"m": "M9", "useful": true, "tool": false, "expires": false, "private": false}
+ {"m": "M0", "useful": true, "tool": false, "expires": false, "others": false, "personal": false},
+ {"m": "M1", "useful": true, "tool": true, "expires": false, "others": false, "personal": false},
+ {"m": "M2", "useful": true, "tool": false, "expires": true, "others": false, "personal": false},
+ {"m": "M3", "useful": true, "tool": false, "expires": false, "personal": false},
+ {"m": "M4", "useful": true, "tool": false, "expires": false, "others": false, "personal": true},
+ {"m": "M5", "useful": true, "tool": false, "expires": false, "others": true, "personal": true},
+ {"m": "M6", "useful": true, "tool": false, "expires": false, "others": false},
+ {"m": "M9", "useful": true, "tool": false, "expires": false, "others": false, "personal": false}
 ]}
 ```"#;
-    assert_eq!(parse_keep(raw, 5), vec![true, false, false, false, false]);
+    assert_eq!(
+        parse_keep(raw, 7),
+        vec![
+            Keep::Work,
+            Keep::Drop,
+            Keep::Drop,
+            // Not answered: unsure.
+            Keep::Drop,
+            Keep::Personal,
+            // Someone else's personal details.
+            Keep::Drop,
+            // Unsure where it belongs.
+            Keep::Drop,
+        ]
+    );
 }
 
 #[test]
 fn keep_trusts_neither_of_two_answers_for_one_memory() {
     let raw = r#"{"answers": [
- {"m": "M0", "useful": true, "tool": false, "expires": false, "private": false},
- {"m": "M0", "useful": true, "tool": false, "expires": false, "private": false}]}"#;
-    assert_eq!(parse_keep(raw, 1), vec![false]);
-    assert_eq!(parse_keep("not json", 2), vec![false, false]);
+ {"m": "M0", "useful": true, "tool": false, "expires": false, "others": false, "personal": false},
+ {"m": "M0", "useful": true, "tool": false, "expires": false, "others": false, "personal": false}]}"#;
+    assert_eq!(parse_keep(raw, 1), vec![Keep::Drop]);
+    assert_eq!(parse_keep("not json", 2), vec![Keep::Drop, Keep::Drop]);
 }
 
 #[test]
