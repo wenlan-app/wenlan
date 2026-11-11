@@ -687,6 +687,8 @@ describe("PageCanvas", () => {
 
     await user.click(screen.getByText("Alpha"));
     await waitFor(() => expect(box("Beta").style.opacity).toBe("0.28"));
+    // Escape has to reach the map even where a click does not focus a button.
+    expect(document.activeElement).toBe(surface());
     expect(box("Alpha").style.opacity).toBe("1");
     expect(box("Alpha item").style.opacity).toBe("1");
 

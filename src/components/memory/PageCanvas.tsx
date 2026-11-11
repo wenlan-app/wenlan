@@ -1043,7 +1043,13 @@ function PageCanvasInner({
       }
       const line = outlineLine(map, id);
       if (!line) return;
-      if (line.kind === "heading") setFocusLine((current) => (current === line.id ? null : line.id));
+      if (line.kind === "heading") {
+        setFocusLine((current) => (current === line.id ? null : line.id));
+        // WebKit does not focus a clicked button, so the Escape that should
+        // let go of the branch would otherwise land outside the map and leave
+        // the page instead.
+        surfaceRef.current?.focus({ preventScroll: true });
+      }
       const parent = line.kind === "heading"
         ? line
         : map?.outline?.find((l) => l.id === line.parent_id) ?? null;
