@@ -5930,6 +5930,33 @@ pub async fn undo_old_memory_pass(
     Ok(client.undo_old_memory_pass().await?.pass)
 }
 
+/// What AI tools remember on this computer, and following, if it is on.
+#[tauri::command]
+pub async fn get_ai_memory_import(
+    state: tauri::State<'_, State>,
+) -> Result<wenlan_types::ai_memory_import::AiMemoryImportStatus, String> {
+    let client = { state.read().await.client.clone() };
+    client.get_ai_memory_import().await
+}
+
+/// The person turns following AI tools' memory on.
+#[tauri::command]
+pub async fn start_ai_memory_import(
+    state: tauri::State<'_, State>,
+) -> Result<wenlan_types::ai_memory_import::AiMemoryImportSummary, String> {
+    let client = { state.read().await.client.clone() };
+    client.start_ai_memory_import().await
+}
+
+/// The person turns following AI tools' memory off.
+#[tauri::command]
+pub async fn stop_ai_memory_import(
+    state: tauri::State<'_, State>,
+) -> Result<wenlan_types::ai_memory_import::AiMemoryImportUndo, String> {
+    let client = { state.read().await.client.clone() };
+    client.stop_ai_memory_import().await
+}
+
 /// Move a conversation between things (UX-THING-1): into `to_thing_id`, or
 /// into a new thing named `new_title`.
 #[tauri::command]
