@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useRef, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { Books, ChatsCircle } from "@phosphor-icons/react";
+import { Books, ChatsCircle, Lightbulb } from "@phosphor-icons/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
@@ -19,6 +19,7 @@ import ZoteroSourceDialog from "./ZoteroSourceDialog";
 import LinkVaultDialog from "./LinkVaultDialog";
 import { ImportFlow } from "../../ChatImport/ImportFlow";
 import SourceDialog from "./SourceDialog";
+import AiMemoryDialog from "./AiMemoryDialog";
 import { SourceTypeIcon } from "./SourceTypeIcon";
 import { rememberAddedFolder } from "./FolderImportOrganize";
 import { useTranslation } from "react-i18next";
@@ -49,6 +50,7 @@ export default function AddSourceMenu({ onClose, start = "menu", onQuickChats, t
   const [linkPath, setLinkPath] = useState<string | undefined>(undefined);
   const [showChats, setShowChats] = useState(start === "chats");
   const [showFullChats, setShowFullChats] = useState(false);
+  const [showAiMemory, setShowAiMemory] = useState(false);
   // A failure to add a source is shown here in the dialog, next to the choice
   // that failed, rather than as a toast that disappears.
   const [failure, setFailure] = useState<string | null>(null);
@@ -151,13 +153,14 @@ export default function AddSourceMenu({ onClose, start = "menu", onQuickChats, t
   if (showWeb) return <AddWebSourceDialog onClose={onClose} />;
   if (showZotero) return <ZoteroSourceDialog onClose={onClose} />;
   if (showLinkVault) return <LinkVaultDialog onClose={onClose} initialPath={linkPath} />;
-  // Past AI chats: where the quick paste exists it comes first, because the
-  // full export arrives by email, sometimes a day later. The full history is
-  // the link under it; without the quick way it is shown at once.
+  if (showAiMemory) return <AiMemoryDialog onClose={onClose} onPaste={onQuickChats} />;
+  // Past AI chats: what AI remembers comes first (tools on this computer are
+  // followed, cloud ones pasted in once), because the full export arrives by
+  // email, sometimes a day later. The full history is the link under it.
   if (showChats) return <SourceDialog title={t("sourceAccess.chatHistory")} onClose={onClose}>
-    {onQuickChats && !showFullChats ? <>
-      <button type="button" className="source-add-option" data-testid="source-chats-quick" onClick={() => { onClose(); onQuickChats(); }}>
-        <ChatsCircle aria-hidden="true" size={20} weight="regular" data-resource-icon="chats" /><span className="source-add-option-copy"><strong>{t("sourceAccess.chatQuickTitle")}</strong><span>{t("sourceAccess.chatQuickHint")}</span></span>
+    {!showFullChats ? <>
+      <button type="button" className="source-add-option" data-testid="source-chats-quick" onClick={() => setShowAiMemory(true)}>
+        <Lightbulb aria-hidden="true" size={20} weight="regular" data-resource-icon="ai-memory" /><span className="source-add-option-copy"><strong>{t("sourceAccess.aiMemory")}</strong><span>{t("sourceAccess.aiMemoryHint")}</span></span>
       </button>
       <p className="source-add-more">
         <button type="button" className="source-add-more-link" data-testid="source-chats-full" onClick={() => setShowFullChats(true)}>

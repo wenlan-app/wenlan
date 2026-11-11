@@ -80,3 +80,7 @@
 .source-add-more-link:hover { color:var(--mem-text); }
 .source-add-more-link:focus-visible { outline:2px solid var(--mem-accent-indigo); outline-offset:2px; border-radius:var(--mem-r-2); }
 .source-add-more-link:disabled { cursor:default; opacity:.6; }
+.source-ai-memory { display:flex; flex-direction:column; align-items:flex-start; gap:8px; padding:4px 12px 16px; }
+.source-ai-memory h3 { margin:0; font-size:12px; font-weight:500; color:var(--mem-text-tertiary); }
+.source-ai-memory p { margin:0; }
+.source-ai-memory-row { display:flex; align-items:center; gap:12px; font-size:13px; color:var(--mem-text-secondary); }

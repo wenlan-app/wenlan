@@ -2163,6 +2163,30 @@ impl WenlanClient {
         self.post_empty("/api/things/old-pass/undo").await
     }
 
+    /// `GET /api/import/ai-memory`: what AI tools remember on this computer,
+    /// and following, if it is on. Counts only.
+    pub async fn get_ai_memory_import(
+        &self,
+    ) -> Result<wenlan_types::ai_memory_import::AiMemoryImportStatus, String> {
+        self.get_json("/api/import/ai-memory").await
+    }
+
+    /// `POST /api/import/ai-memory`: the person turns following AI tools'
+    /// memory on, and a pass runs now.
+    pub async fn start_ai_memory_import(
+        &self,
+    ) -> Result<wenlan_types::ai_memory_import::AiMemoryImportSummary, String> {
+        self.post_json_as_person("/api/import/ai-memory", &()).await
+    }
+
+    /// `POST /api/import/ai-memory/undo`: the person turns following off.
+    pub async fn stop_ai_memory_import(
+        &self,
+    ) -> Result<wenlan_types::ai_memory_import::AiMemoryImportUndo, String> {
+        self.post_json_as_person("/api/import/ai-memory/undo", &())
+            .await
+    }
+
     /// `POST /api/things/nights/undo`: the person takes back the whole night
     /// on the big map, every thing whose newest night ran at or after `since`
     /// (UX-GRAPH-5).

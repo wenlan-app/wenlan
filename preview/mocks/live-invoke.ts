@@ -1312,6 +1312,9 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
     post(`/api/things/${enc(String(a?.id ?? ""))}/tidy/${enc(String(a?.memoryId ?? ""))}/undo`, {}, AS_PERSON),
   get_old_memory_pass: () => get("/api/things/old-pass").then((r) => r?.pass ?? null),
   undo_old_memory_pass: () => post("/api/things/old-pass/undo", {}, AS_PERSON).then((r) => r?.pass ?? null),
+  get_ai_memory_import: () => get("/api/import/ai-memory"),
+  start_ai_memory_import: () => post("/api/import/ai-memory", {}, AS_PERSON),
+  stop_ai_memory_import: () => post("/api/import/ai-memory/undo", {}, AS_PERSON),
   answer_thing_map_proposal: (a) => post(`/api/things/${enc(String(a?.id ?? ""))}/map/ops`, {
     expected_revision: Number(a?.revision ?? 0),
     ops: [{ op: a?.accept ? "accept" : "reject", proposal_id: String(a?.proposalId ?? "") }],

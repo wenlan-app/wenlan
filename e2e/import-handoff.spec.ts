@@ -163,14 +163,15 @@ test("an import hands background work to Activity after returning to the workspa
   await expect(statusLine).toHaveAccessibleName("Activity");
   await expect(statusLine).not.toHaveAttribute("data-state");
 
-  // Account menu → Settings → Sources → Add source → Past AI chats → the
-  // quick paste of what an AI remembers.
+  // Account menu → Settings → Sources → Add source → Past AI chats → What AI
+  // remembers → the quick paste for tools whose memory is in their cloud.
   await page.getByRole("button", { name: /account menu/i }).click();
   await page.getByRole("menuitem", { name: "Settings" }).click();
   await page.getByRole("button", { name: "Sources", exact: true }).click();
   await page.getByRole("button", { name: /^Add (your first )?source/ }).first().click();
   await page.getByRole("button", { name: /^Past AI chats/ }).click();
   await page.getByTestId("source-chats-quick").click();
+  await page.getByRole("button", { name: "Paste it in" }).click();
 
   await page
     .getByPlaceholder(/paste your memories/i)
