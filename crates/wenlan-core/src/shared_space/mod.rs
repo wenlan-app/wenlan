@@ -1102,7 +1102,18 @@ fn local_state(page: &Page) -> version::State {
         title: page.title.clone(),
         body_digest: version::body_digest(&page.content),
         archived: page.status == "archived",
+        locked: page.review_required,
     }
+}
+
+/// `page` differs from `version` in its lock only.
+fn lock_only(version: &PageVersion, page: &Page) -> bool {
+    let state = local_state(page);
+    version.meta.locked != state.locked
+        && version::State {
+            locked: state.locked,
+            ..version.state()
+        } == state
 }
 
 /// The newest version with this content.
@@ -1303,9 +1314,13 @@ impl Pass<'_> {
         // The version this page was last in step with, and whether it was
         // changed here since.
         let (base, changed) = match (held, recorded) {
+            // Locking or unlocking a page keeps its version, so a lock that
+            // differs from the version it was last in step with was changed
+            // here (an apply sets the lock to the version's).
             (Some(held), Some(version)) => (
                 Some(version),
-                held.version != Some(page.version) && version.state() != state,
+                (held.version != Some(page.version) && version.state() != state)
+                    || version.meta.locked != page.review_required,
             ),
             // The version it was last in step with cannot be read this pass
             // (a cloud file not downloaded yet, or one still arriving), but
@@ -1593,6 +1608,12 @@ impl Pass<'_> {
                 }
             }
         }
+        if current.review_required != head.meta.locked {
+            self.db
+                .set_page_review_required(id, head.meta.locked)
+                .await?;
+            wrote = true;
+        }
         Ok(Applied {
             wrote,
             complete: true,
@@ -1652,6 +1673,9 @@ impl Pass<'_> {
         // A create keeps no changelog; record the member so the page's rows
         // say who wrote it.
         self.db.record_page_writer(id, page.version, &agent).await?;
+        if head.meta.locked {
+            self.db.set_page_review_required(id, true).await?;
+        }
         Ok(Some(if title == head.page.title {
             page.version
         } else {
@@ -1733,9 +1757,18 @@ impl Pass<'_> {
             parent: parent.map(|parent| parent.sha.clone()),
             merged,
             body_digest: version::body_digest(&page.content),
-            author: self.author_of(page).await?,
+            author: match parent.filter(|parent| lock_only(parent, page)) {
+                // Only the lock changed: the person here did that.
+                Some(_) => Author {
+                    member: self.settings.member_id.clone(),
+                    kind: AuthorKind::Person,
+                    agent: None,
+                },
+                None => self.author_of(page).await?,
+            },
             ts: now_ts(),
             archived: page.status == "archived",
+            locked: page.review_required,
         };
         let member = meta.author.member.clone();
         let text = version::render(&file, &meta);
@@ -1821,6 +1854,7 @@ impl Pass<'_> {
             },
             ts: now_ts(),
             archived: true,
+            locked: winner.meta.locked,
         };
         let text = version::render(&winner.page, &meta);
         self.write(&id, text).await.map(Some)

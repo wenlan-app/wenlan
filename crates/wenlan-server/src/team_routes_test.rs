@@ -105,6 +105,7 @@ fn version_text(page: &str, member: &str, body: &str) -> String {
             },
             ts: "2026-11-11T05:00:00Z".into(),
             archived: false,
+            locked: false,
         },
     )
 }

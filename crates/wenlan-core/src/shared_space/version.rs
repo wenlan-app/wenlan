@@ -91,6 +91,9 @@ pub struct VersionMeta {
     pub ts: String,
     /// The version archives the page.
     pub archived: bool,
+    /// The page is locked for review: an AI tool's change to it waits for a
+    /// member to take it. Old versions without the key read as unlocked.
+    pub locked: bool,
 }
 
 /// What two versions, or a version and the page here, are compared by.
@@ -99,6 +102,7 @@ pub struct State {
     pub title: String,
     pub body_digest: String,
     pub archived: bool,
+    pub locked: bool,
 }
 
 /// A version read from the folder.
@@ -117,6 +121,7 @@ impl PageVersion {
             title: self.page.title.clone(),
             body_digest: self.meta.body_digest.clone(),
             archived: self.meta.archived,
+            locked: self.meta.locked,
         }
     }
 }
@@ -214,6 +219,9 @@ pub fn render(page: &PageFile, meta: &VersionMeta) -> String {
     if meta.archived {
         shared.insert(key("archived"), serde_yaml::Value::Bool(true));
     }
+    if meta.locked {
+        shared.insert(key("locked"), serde_yaml::Value::Bool(true));
+    }
 
     let mut page = page.clone();
     page.other.shift_remove(SHARED_KEY);
@@ -280,6 +288,11 @@ pub fn parse(name: &str, bytes: &[u8]) -> Result<PageVersion, WenlanError> {
             None => false,
             Some(serde_yaml::Value::Bool(archived)) => *archived,
             Some(_) => return Err(invalid(format!("{name}: archived is not true or false"))),
+        },
+        locked: match shared.get("locked") {
+            None => false,
+            Some(serde_yaml::Value::Bool(locked)) => *locked,
+            Some(_) => return Err(invalid(format!("{name}: locked is not true or false"))),
         },
     };
     if meta.body_digest != body_digest(&page.body) {

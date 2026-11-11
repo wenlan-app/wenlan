@@ -55965,8 +55965,10 @@ impl MemoryDB {
             // Review lock (PR A): a machine writer never lands on a locked
             // page. The gate above already staged a card for a lock it saw;
             // this predicate catches a lock set after that read. Human writers
-            // (the editor, the vault watcher, accepting a revision card) pass.
-            if !matches!(link_reason, "manual_edit" | "fs_edit" | "revision_accept") {
+            // (the editor, the vault watcher, accepting a revision card) pass,
+            // and so does another member's version of a shared page, which
+            // lands as that member saved it.
+            if !lock_passes(link_reason) {
                 sql.push_str(" AND COALESCE(review_required, 0) = 0");
             }
             let update_result = match (expected_version, expected_source_revision) {
@@ -56136,8 +56138,10 @@ impl MemoryDB {
             // Review lock (PR A): a machine writer never lands on a locked
             // page. The gate above already staged a card for a lock it saw;
             // this predicate catches a lock set after that read. Human writers
-            // (the editor, the vault watcher, accepting a revision card) pass.
-            if !matches!(link_reason, "manual_edit" | "fs_edit" | "revision_accept") {
+            // (the editor, the vault watcher, accepting a revision card) pass,
+            // and so does another member's version of a shared page, which
+            // lands as that member saved it.
+            if !lock_passes(link_reason) {
                 sql.push_str(" AND COALESCE(review_required, 0) = 0");
             }
             let update_result = match (expected_version, expected_source_revision) {
@@ -64512,6 +64516,19 @@ const ARCHIVED_TOPIC_SQL: &str = "EXISTS (SELECT 1 FROM entity_page_map epm_a
 pub(crate) const HUB_MIN_LINKS: i64 = 200;
 /// Share of all linked memories (percent) a hub topic is linked to.
 pub(crate) const HUB_MIN_SHARE_PERCENT: i64 = 10;
+
+/// A writer the review lock never holds back: the person here (the editor,
+/// the vault watcher, accepting a revision card), another member's saved
+/// version of a shared page, or the person's own other computer. The same
+/// writers the write gate treats as a person (`post_write::Writer::classify`).
+fn lock_passes(edited_by: &str) -> bool {
+    matches!(edited_by, "manual_edit" | "fs_edit" | "revision_accept")
+        || crate::shared_space::shared_writer(edited_by).is_some()
+        || matches!(
+            edited_by,
+            crate::shared_space::OWN_DEVICE_PERSON | crate::shared_space::OWN_DEVICE_AI
+        )
+}
 
 /// True when a topic with `links` linked memories, out of `total` memories
 /// that have any topic, is a hub: too common to tell memories apart.

@@ -1303,3 +1303,42 @@ async fn a_member_who_may_only_read_takes_the_shared_version_over_their_edit() {
     let read = version::read_folder(folder.path());
     assert_eq!(read.pages[&id].len(), 1);
 }
+
+#[tokio::test]
+async fn a_lock_set_on_one_side_reaches_the_other_and_so_does_the_unlock() {
+    let folder = tempfile::tempdir().unwrap();
+    let folder = folder.path().to_path_buf();
+    let a = Member::new("Qi-Xuan").await;
+    let b = Member::new("Ana").await;
+    let id = a
+        .write("Menu", "Fish or pasta.", SPACE.to_string().into())
+        .await;
+    a.sync(&folder).await;
+    b.sync(&folder).await;
+    assert!(!b.page(&id).await.unwrap().review_required);
+
+    a.db.set_page_review_required(&id, true).await.unwrap();
+    assert_eq!(a.sync(&folder).await, counts(1, 0));
+    assert_eq!(b.sync(&folder).await, counts(0, 1));
+    assert!(b.page(&id).await.unwrap().review_required);
+    assert_eq!(b.content(&id).await, "Fish or pasta.");
+    // The lock alone is the person's doing, whoever wrote the text.
+    let locked = walk(&folder);
+    assert!(locked.contains("locked: true"), "{locked}");
+    assert_eq!(a.sync(&folder).await, zero());
+    assert_eq!(b.sync(&folder).await, zero());
+
+    b.db.set_page_review_required(&id, false).await.unwrap();
+    assert_eq!(b.sync(&folder).await, counts(1, 0));
+    assert_eq!(a.sync(&folder).await, counts(0, 1));
+    assert!(!a.page(&id).await.unwrap().review_required);
+    settle(&a, &b, &folder).await;
+
+    // An edit keeps the lock it was made under.
+    a.db.set_page_review_required(&id, true).await.unwrap();
+    settle(&a, &b, &folder).await;
+    b.edit(&id, "Fish, pasta or soup.").await;
+    settle(&a, &b, &folder).await;
+    assert_eq!(a.content(&id).await, "Fish, pasta or soup.");
+    assert!(a.page(&id).await.unwrap().review_required);
+}
