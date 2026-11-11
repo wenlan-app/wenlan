@@ -129,7 +129,7 @@ function Facts({ share, t, pickingMain, onPickMain, onChooseMain, onChangeFolder
   const main = devices.find((device) => device.id === share.main_device);
   const computers = devices
     .map((device) => (device.id === share.this_device ? t("librarySync.thisOne", { name: device.name }) : device.name))
-    .join(", ");
+    .join(t("librarySync.listJoin"));
   return (
     <dl className="library-sync-facts">
       {devices.length > 0 && (
