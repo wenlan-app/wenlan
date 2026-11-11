@@ -410,13 +410,18 @@ how the person wants the assistant to reply, how the assistant should report, su
 format its work, or a rule for how the assistant should behave \
 (\"never say X\", \"always check Y first\")?\n\
 \"expires\": does it only hold for a while: where a pull request, review, release or task \
-stands, a version number, what is \"current\" or \"now\", a date that will pass?\n\
+stands, a version number, what is \"current\" or \"now\", a date that will pass? Also a note \
+that something was done, added, integrated or fixed (a progress report), like \"The comparison \
+guide is integrated in both routes\".\n\
 \"others\": does it hold other people's personal details (their contact details, health, \
 money, family or private life)?\n\
 \"id\": is it mainly an identifier or account detail: a name, username, handle, email, \
 account, property or project id, key, URL or file path, with no lesson or decision attached?\n\
 \"alone\": would a reader understand it on its own, months later, without the conversation or \
-project it came from (a full statement, not a bare fragment or label)?\n\
+project it came from (a full statement, not a bare fragment or label)? These are NOT alone: a \
+bare list item or label lifted from a longer note, like \"Starter prompts: AsyncStorage cached \
+with 24h TTL\" or \"Use @some/package with dev build\", or a quote of what someone said with \
+no conclusion.\n\
 \"personal\": is it about the person themselves rather than their work: their own private \
 life (health, money, family, home, plans of their own)?\n\
 When you are not sure, answer \"useful\": false.\n\
