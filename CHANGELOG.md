@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.21.5](https://github.com/wenlan-app/wenlan/compare/v0.21.4...v0.21.5) (2026-11-11)
+
+
+### Features
+
+* **home:** what you're working on becomes an experiment; home opens with last night and your recent Spaces ([#1247](https://github.com/wenlan-app/wenlan/issues/1247)) ([d938b72](https://github.com/wenlan-app/wenlan/commit/d938b72d363cbca6f0b05cc24ac212334d06d399))
+* **mind-map:** move page lines on the map, show it down to a level, find a line ([#1262](https://github.com/wenlan-app/wenlan/issues/1262)) ([8f9b12d](https://github.com/wenlan-app/wenlan/commit/8f9b12d7ef935f9adc7dd1014dcbf87a5b1b34b4))
+* **mind-map:** open a page's mind map on its own headings and items ([#1256](https://github.com/wenlan-app/wenlan/issues/1256)) ([56fcf0f](https://github.com/wenlan-app/wenlan/commit/56fcf0fe0d627a572ebb2d08e265f57c367806ed))
+* **onboarding:** pick once who writes pages; fewer questions when adding material ([#1255](https://github.com/wenlan-app/wenlan/issues/1255)) ([797f138](https://github.com/wenlan-app/wenlan/commit/797f1386826156d86f7a0765c09a7df8141da1c0))
+* **page:** keep Escape inside the page and show renamed link targets while writing ([#1258](https://github.com/wenlan-app/wenlan/issues/1258)) ([1dc5e57](https://github.com/wenlan-app/wenlan/commit/1dc5e5704e401ef30c4ea730fac73e08b4650e43))
+* **page:** rename a page from its title line and unify the top-bar buttons ([#1253](https://github.com/wenlan-app/wenlan/issues/1253)) ([15018f7](https://github.com/wenlan-app/wenlan/commit/15018f7301911704ab2219399f59c0fee61abbc0))
+* **pages:** person-asked sentence edits land directly; restore an earlier version ([#1236](https://github.com/wenlan-app/wenlan/issues/1236)) ([4d8b1d0](https://github.com/wenlan-app/wenlan/commit/4d8b1d08a72132b8079136b415ddffb89b4a2d90))
+* **spaces:** a Space opens on its Brief, said plainly, above its pages ([#1257](https://github.com/wenlan-app/wenlan/issues/1257)) ([293dac3](https://github.com/wenlan-app/wenlan/commit/293dac3d4f828253c5584443cadb11815632b017))
+* **steep:** show the note groups Automatic set aside and let them be handed on ([#1248](https://github.com/wenlan-app/wenlan/issues/1248)) ([2088f4b](https://github.com/wenlan-app/wenlan/commit/2088f4bf89bc83c9beca8a29b62d0a30d6870f07))
+* **steep:** write new pages in Automatic, including from folders ([#1242](https://github.com/wenlan-app/wenlan/issues/1242)) ([81cb85d](https://github.com/wenlan-app/wenlan/commit/81cb85d99ad8974dc8ec15cf1b47a87015e2d567))
+
+
+### Bug Fixes
+
+* **pages:** a change the person asked for is not blocked by sources it leaves alone ([#1252](https://github.com/wenlan-app/wenlan/issues/1252)) ([f4189f8](https://github.com/wenlan-app/wenlan/commit/f4189f805c4ca55b766fa5e9791348f9e731f448))
+* **pages:** let an AI archive an original it kept itself ([#1250](https://github.com/wenlan-app/wenlan/issues/1250)) ([9fc9812](https://github.com/wenlan-app/wenlan/commit/9fc981225f9645c1a60f93b1c8c8c6722fd27f1d))
+* **spaces:** ask before deleting a Space in a dialog, reorder cards by drag ([#1251](https://github.com/wenlan-app/wenlan/issues/1251)) ([09e4db4](https://github.com/wenlan-app/wenlan/commit/09e4db4d2e12f7e81d4df734fe690448bf33f6d6))
+* **things:** a conversation that kept a diagram always counts as work ([#1245](https://github.com/wenlan-app/wenlan/issues/1245)) ([e462bd3](https://github.com/wenlan-app/wenlan/commit/e462bd352d9715786f4f365d04d418963d4526f6))
+
 ## [0.21.4](https://github.com/wenlan-app/wenlan/compare/v0.21.3...v0.21.4) (2026-11-10)
 
 
