@@ -316,9 +316,12 @@ fn manifest_counts_match_the_spec() {
     // `/api/steep/new/set-aside/release` (gives them back; a count).
     // Then 343 after the seven `/api/team` routes (the team server's member
     // list, keys shown once, hosting a Space and joining one; no page text).
+    // Then 346 after POST `/api/library/shared/sync`, GET and DELETE
+    // `/api/library/shared` (the whole library shared between one person's
+    // own computers; receipts, names and counts, no page text).
     assert_eq!(
         HTTP_READERS.len(),
-        343,
+        346,
         "registered (method, path, handler) triples"
     );
     assert_eq!(MCP_READERS.len(), 55, "#[tool( declarations");
@@ -329,7 +332,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        355,
+        358,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -337,7 +340,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        338,
+        341,
         "main builder entries"
     );
     assert_eq!(
@@ -528,7 +531,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::None)
             .count(),
-        333 // Existing 273 plus 22 research workflow routes, 7 custom-theme routes, a memory's conversation lines, the nights undo, the memory restore, the two trust scan routes, keeping a session original, the 8 sharing routes, one tidy's undo, the three old-pass routes and the four linked-vault routes, the two set-aside routes, and the seven team routes, all with no page markers.
+        336 // Existing 273 plus 22 research workflow routes, 7 custom-theme routes, a memory's conversation lines, the nights undo, the memory restore, the two trust scan routes, keeping a session original, the 11 sharing routes, one tidy's undo, the three old-pass routes and the four linked-vault routes, the two set-aside routes, and the seven team routes, all with no page markers.
     );
 }
 

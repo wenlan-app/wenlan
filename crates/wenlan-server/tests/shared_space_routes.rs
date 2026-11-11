@@ -2,7 +2,8 @@
 //! `POST /api/spaces/{name}/shared/sync`: one sync pass of a Space with its
 //! shared folder, `GET /api/spaces/{name}/shared`: how it is shared and its
 //! last pass, `DELETE` to stop, the same three for one page under
-//! `/api/pages/{id}/shared`, `GET /api/shared` and `POST /api/shared/folder`.
+//! `/api/pages/{id}/shared`, the same for the whole library under
+//! `/api/library/shared`, `GET /api/shared` and `POST /api/shared/folder`.
 //! The pass itself is tested in `wenlan_core::shared_space`; this pins the
 //! routes' contract. One test, because the settings file follows
 //! `WENLAN_DATA_DIR`, which is the whole process's.
@@ -283,4 +284,45 @@ async fn shared_sync_writes_the_space_pages_and_returns_counts() {
     assert!(list.shares.is_empty());
     assert!(db.get_page(&venue).await.unwrap().is_some());
     assert!(db.get_page(&page).await.unwrap().is_some());
+
+    // The whole library, between this person's own computers.
+    let (status, _) = call(&router, Method::GET, "/api/library/shared", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "not shared yet");
+    let library_folder = tempfile::tempdir().unwrap();
+    let (status, body) = call(
+        &router,
+        Method::POST,
+        "/api/library/shared/sync",
+        Some(serde_json::json!({
+            "folder": library_folder.path().to_string_lossy(),
+            "member_name": "Qi-Xuan",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let counts: SharedSyncCounts = serde_json::from_slice(&body).unwrap();
+    assert_eq!(counts.exported, 2, "both pages, none shared elsewhere now");
+    let (status, body) = call(&router, Method::GET, "/api/library/shared", None).await;
+    assert_eq!(status, StatusCode::OK);
+    let library: SharedSyncStatus = serde_json::from_slice(&body).unwrap();
+    assert_eq!(library.kind, SharedKind::Library);
+    let (_, body) = call(
+        &router,
+        Method::POST,
+        "/api/shared/folder",
+        Some(serde_json::json!({ "folder": library_folder.path().to_string_lossy() })),
+    )
+    .await;
+    let peek: SharedFolderResponse = serde_json::from_slice(&body).unwrap();
+    assert_eq!(peek.shared.unwrap().kind, SharedKind::Library);
+    let (_, body) = call(&router, Method::GET, "/api/shared", None).await;
+    let list: SharedListResponse = serde_json::from_slice(&body).unwrap();
+    assert_eq!(list.shares.len(), 1);
+    assert_eq!(list.shares[0].kind, SharedKind::Library);
+    let (status, _) = call(&router, Method::DELETE, "/api/library/shared", None).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = call(&router, Method::DELETE, "/api/library/shared", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(library_folder.path().join("space.json").exists());
+    assert!(db.get_page(&venue).await.unwrap().is_some());
 }

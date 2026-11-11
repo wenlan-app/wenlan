@@ -844,6 +844,9 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/pages/{id}/shared/sync` | main | no | not_applicable | `none` | — | receipt only: counts of page versions of one page written to and taken from its shared folder; page files go to the folder, not the response |
 | `GET` | `/api/pages/{id}/shared` | main | no | not_applicable | `none` | — | status only: one page's shared folder, member names and last sync pass; no page text |
 | `DELETE` | `/api/pages/{id}/shared` | main | no | not_applicable | `none` | — | receipt only: stops sharing one page from here; {ok: true} |
+| `POST` | `/api/library/shared/sync` | main | no | not_applicable | `none` | — | receipt only: counts of page versions of the whole library written to and taken from its shared folder; page files go to the folder, not the response |
+| `GET` | `/api/library/shared` | main | no | not_applicable | `none` | — | status only: the library's shared folder, member names and last sync pass; no page text |
+| `DELETE` | `/api/library/shared` | main | no | not_applicable | `none` | — | receipt only: stops sharing the library from here; {ok: true} |
 | `GET` | `/api/shared` | main | no | not_applicable | `none` | — | status only: every shared Space name or page id with its folder, member names and last sync pass; no page text |
 | `POST` | `/api/shared/folder` | main | no | not_applicable | `none` | — | status only: what a folder's space.json says it shares (a Space name or a page title and id) and member names; no page text |
 | `POST` | `/api/spaces/{name}/star` | main | yes | automatic | `none` | `handle_toggle_space_starred` | opaque response type — fail-closed |

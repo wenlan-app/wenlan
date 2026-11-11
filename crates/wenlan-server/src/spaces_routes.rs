@@ -196,6 +196,11 @@ pub(crate) fn register_extended(router: TrackedRouter<SharedState>) -> TrackedRo
             "/api/pages/{id}/shared",
             get(handle_page_shared_status).delete(handle_page_shared_leave),
         )
+        .route("/api/library/shared/sync", post(handle_library_shared_sync))
+        .route(
+            "/api/library/shared",
+            get(handle_library_shared_status).delete(handle_library_shared_leave),
+        )
         .route("/api/shared", get(handle_shared_list))
         .route("/api/shared/folder", post(handle_shared_folder))
         .route(
@@ -498,6 +503,31 @@ pub async fn handle_page_shared_leave(
     Path(id): Path<String>,
 ) -> Result<Json<wenlan_types::responses::SuccessResponse>, ServerError> {
     shared_leave(&wenlan_core::shared_space::Scope::Page(id))
+}
+
+/// POST /api/library/shared/sync — one sync pass of the whole library with
+/// its folder, between this person's own computers. The first call makes
+/// the folder's `space.json` (or joins it as the member id in the request,
+/// found in that file). Pages of a Space or a page that has its own share
+/// stay in that share. Returns counts only.
+pub async fn handle_library_shared_sync(
+    State(state): State<Arc<RwLock<ServerState>>>,
+    Json(req): Json<wenlan_types::shared_space::SharedSyncRequest>,
+) -> Result<Json<wenlan_types::shared_space::SharedSyncCounts>, ServerError> {
+    shared_sync(&state, wenlan_core::shared_space::Scope::Library, req).await
+}
+
+/// GET /api/library/shared — how this Wenlan shares the library.
+pub async fn handle_library_shared_status(
+) -> Result<Json<wenlan_types::shared_space::SharedSyncStatus>, ServerError> {
+    shared_status(&wenlan_core::shared_space::Scope::Library)
+}
+
+/// DELETE /api/library/shared — stops sharing the library from here; the
+/// pages and the folder stay as they are.
+pub async fn handle_library_shared_leave(
+) -> Result<Json<wenlan_types::responses::SuccessResponse>, ServerError> {
+    shared_leave(&wenlan_core::shared_space::Scope::Library)
 }
 
 /// GET /api/shared — every Space and page this Wenlan shares, with their
