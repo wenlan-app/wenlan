@@ -41,14 +41,11 @@ describe("Settings page chat import section", () => {
     ).toBeInTheDocument();
   });
 
-  it("distinguishes short-memory entry from chat-history imports and shows provider export paths", () => {
-    render(<SourcesSection onImport={() => {}} />);
+  it("Settings → Sources has no separate memory or chat import blocks; everything comes in through Add your material", () => {
+    render(<SourcesSection />);
 
-    expect(screen.getByText("Add short memory entries: paste text or select text files, with one memory per line.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Paste or import" })).toBeInTheDocument();
-    expect(screen.getByText(/Import conversations from a ChatGPT or Claude export ZIP/)).toBeInTheDocument();
-    expect(screen.getByText("How to export")).toBeInTheDocument();
-    expect(screen.getByText("Settings → Data controls → Export data")).toBeInTheDocument();
-    expect(screen.getByText("Settings → Privacy → Export data")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Paste or import" })).toBeNull();
+    expect(screen.queryByTestId("chat-import-drop-zone")).toBeNull();
+    expect(screen.queryByText("How to export")).toBeNull();
   });
 });

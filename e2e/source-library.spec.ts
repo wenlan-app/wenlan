@@ -135,16 +135,14 @@ test("empty sources retains its library shell and offers clear localized add cho
   await capture(page, "sources-after-empty-light.png");
   await page.getByRole("button", { name: "新增", exact: true }).first().click();
   const menu = page.getByRole("dialog", { name: "加入你的資料", exact: true });
-  await expect(menu.getByRole("button", { name: /Obsidian vault|Obsidian 庫/ })).toBeVisible();
-  await expect(menu.getByRole("button", { name: /Files|檔案/ })).toBeVisible();
-  await expect(menu.getByRole("button", { name: /連結和文字/ })).toBeVisible();
+  // Four ways in; an Obsidian vault comes in as a folder, a link is the small link under them.
+  await expect(menu.locator(".source-add-option")).toHaveCount(4);
+  await expect(menu.getByRole("button", { name: /^資料夾/ })).toContainText("Obsidian");
+  await expect(menu.getByRole("button", { name: /^檔案/ })).toBeVisible();
+  await expect(menu.getByTestId("source-add-link")).toBeVisible();
   await capture(page, "sources-after-add-light.png");
-  await menu.getByRole("button", { name: /Obsidian vault|Obsidian 庫/ }).click();
-  const linkVault = page.getByRole("dialog", { name: "接上 Obsidian 庫", exact: true });
-  await expect(linkVault).toBeVisible();
-  await linkVault.getByRole("button", { name: "選其他資料夾…", exact: true }).click();
+  await menu.getByRole("button", { name: /^資料夾/ }).click();
   await expect.poll(() => state.nativeDialogCalls.length).toBe(1);
-  await expect(linkVault).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toHaveCount(0);
   expect(state.errors.pageErrors).toEqual([]); expect(state.errors.consoleErrors).toEqual([]);
@@ -155,7 +153,7 @@ test("a web excerpt can be saved then reopened at 375px in dark mode", async ({ 
   await page.setViewportSize({ width: 375, height: 812 });
   await capture(page, "sources-after-library-dark-narrow.png");
   await page.getByRole("button", { name: "新增", exact: true }).click();
-  await page.getByRole("button", { name: /連結和文字/ }).click();
+  await page.getByTestId("source-add-link").click();
   const form = page.getByRole("dialog", { name: "加入連結與文字", exact: true });
   await form.getByLabel("連結", { exact: true }).fill("https://example.org/book?chapter=2");
   await form.getByLabel("標題（選填）", { exact: true }).fill("書中的一段話");
@@ -179,7 +177,7 @@ test("a web excerpt can be saved then reopened at 375px in dark mode", async ({ 
 test("another excerpt from the same URL requires explicit replacement", async ({ page }) => {
   const state = await setup(page);
   await page.getByRole("button", { name: "新增", exact: true }).click();
-  await page.getByRole("button", { name: /連結和文字/ }).click();
+  await page.getByTestId("source-add-link").click();
   const dialog = page.getByRole("dialog", { name: "加入連結與文字", exact: true });
   await dialog.getByLabel("連結", { exact: true }).fill("https://example.org/article");
   await dialog.getByLabel("標題（選填）", { exact: true }).fill("新的摘錄");
@@ -198,7 +196,7 @@ test("another excerpt from the same URL requires explicit replacement", async ({
 test("a concurrent first save preserves the winning excerpt until explicit replacement", async ({ page }) => {
   const state = await setup(page);
   await page.getByRole("button", { name: "新增", exact: true }).click();
-  await page.getByRole("button", { name: /連結和文字/ }).click();
+  await page.getByTestId("source-add-link").click();
   const dialog = page.getByRole("dialog", { name: "加入連結與文字", exact: true });
   const url = "https://example.org/concurrent";
   await dialog.getByLabel("連結", { exact: true }).fill(url);
