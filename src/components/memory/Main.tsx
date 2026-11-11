@@ -716,7 +716,22 @@ export default function Main({
   }, [initialMemoryId, activeTab, pageSavePending, movingNote]);
 
   // New destinations branch from the current entry only after saving succeeds.
-  const navigateTo = (next: View, onRefused?: () => void) => {
+  // Private or one team, picked at the top left; none of it shows for
+  // someone on no team.
+  const scope = useScopeState();
+  const teamSide = scope.team;
+  // A page started on a team's side belongs to that team: it goes in the
+  // Space being looked at, else the team's first Space the person can edit.
+  // Never in Private, where the team's side would lose it.
+  const onSide = (next: View): View => {
+    if (next.kind !== "page-draft" || next.space || next.draftId || !teamSide) return next;
+    const current = viewRef.current;
+    const here = current.kind === "space" ? current.spaceName : null;
+    const space = here && scope.teamWritable.includes(here) ? here : scope.teamWritable[0];
+    return space ? { ...next, space } : next;
+  };
+  const navigateTo = (requested: View, onRefused?: () => void) => {
+    let next = onSide(requested);
     if (movingNoteRef.current) return;
     if (exampleWikiActive() && next.kind === "page-draft") { showExampleWikiReadOnly(); onRefused?.(); return; }
     if (isNoteView(next) && secondaryGroupRef.current?.contains(next)) {
@@ -871,10 +886,6 @@ export default function Main({
   const navigateSpaces = (create: boolean) => navigateTo(create
     ? { kind: "spaces", create: true } : { kind: "spaces" });
   const navigatePages = () => navigateTo({ kind: "pages" });
-  // Private or one team, picked at the top left; none of it shows for
-  // someone on no team.
-  const scope = useScopeState();
-  const teamSide = scope.team;
   const navigateHome = () => navigateTo(teamSide ? { kind: "team" } : { kind: "home" });
   // Every import finish inside this window hands new material on through
   // these. Stable, so the cards under it do not re-render with the shell.
@@ -993,7 +1004,12 @@ export default function Main({
   const displayedSearchQuery = pendingDraftSearchQuery ?? query;
   // Memories are the AI's notes, not what was said: search shows the
   // conversation's own words instead (UX-FIND-1), and source passages with them.
-  const sourceResults = results.filter((result) => searchResultTarget(result).kind === "file");
+  const { empty: libraryEmpty, pages: pagesOnSide } = useLibraryInventory();
+  // Search follows the side shown. A team's side finds only the team's
+  // pages: conversations, sources, topics and things are the person's own.
+  const split = scope.teams.length > 0;
+  const onTeamSide = Boolean(teamSide);
+  const sourceResults = onTeamSide ? [] : results.filter((result) => searchResultTarget(result).kind === "file");
 
   useEffect(() => {
     if (view.kind !== "page-draft" && view.kind !== "page") setPendingDraftSearchQuery(null);
@@ -1025,7 +1041,7 @@ export default function Main({
     queryFn: listThings,
     enabled: thingsOn && debouncedQuery.trim().length > 0,
   });
-  const thingResults = thingsOn ? matchingThings(allThings, debouncedQuery) : [];
+  const thingResults = thingsOn && !onTeamSide ? matchingThings(allThings, debouncedQuery) : [];
   // Archived pages are out of the folder tree (as in Obsidian), so search is
   // where you find one: matched by title, opened read only with Restore.
   const { data: archivedPages = [] } = useQuery({
@@ -1035,8 +1051,13 @@ export default function Main({
     enabled: debouncedQuery.trim().length > 0,
   });
   const archivedResults = archivedPages
-    .filter(page => isKnowledgePage(page) && matchesAllWords(page.title, debouncedQuery))
+    .filter(page => isKnowledgePage(page) && scope.inScope(page.space) && matchesAllWords(page.title, debouncedQuery))
     .slice(0, 3);
+  const pageResultsOnSide = conceptResults.filter((page) => scope.inScope(page.space));
+  const pageIdsOnSide = new Set(pagesOnSide.map((page) => page.id));
+  const recentOnSide = split
+    ? recentSearchItems.filter((item) => item.kind === "space" ? scope.inScope(item.title) : pageIdsOnSide.has(item.id))
+    : recentSearchItems;
 
   const searchLoading = !!displayedSearchQuery.trim() && (
     displayedSearchQuery !== debouncedQuery || memorySearchLoading || entitySearchLoading || conceptSearchLoading
@@ -1106,7 +1127,6 @@ export default function Main({
   // The directory has nothing to say to a brand-new library, and it reads as a
   // second sidebar next to the open getting-started checklist, so both give the
   // Wiki a single column; see WikiWorkspace `directoryHidden`.
-  const { empty: libraryEmpty } = useLibraryInventory();
   const gettingStarted = useGettingStartedState();
   const exampleWikiSwitch = useExampleWikiSwitch();
   // Opening or leaving the example changes which wiki every read answers
@@ -2062,7 +2082,7 @@ export default function Main({
       >
         <RecentlyOpened
           query={displayedSearchQuery}
-          items={recentSearchItems}
+          items={recentOnSide}
           onSelect={(item) => {
             dismissSearch();
             navigateTo(item.kind === "page"
@@ -2073,12 +2093,12 @@ export default function Main({
         <SearchResults
           query={displayedSearchQuery}
           thingResults={thingResults}
-          conceptResults={conceptResults}
+          conceptResults={pageResultsOnSide}
           archivedResults={archivedResults}
-          conversationHits={conversationHits}
+          conversationHits={onTeamSide ? [] : conversationHits}
           conversationsLoading={conversationSearchLoading}
           sourceResults={sourceResults}
-          entityResults={entityResults}
+          entityResults={onTeamSide ? [] : entityResults}
           loading={searchLoading}
           error={searchError}
           ready={!searchLoading && !searchError}

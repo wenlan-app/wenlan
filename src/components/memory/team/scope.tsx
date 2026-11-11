@@ -24,6 +24,8 @@ export type ScopeState = {
   readonly teamSpaces: ReadonlySet<string>;
   /** Whether a page or Space in `space` belongs on the side shown. */
   readonly inScope: (space: string | null | undefined) => boolean;
+  /** The shown team's Spaces this person may write in; empty on Private. */
+  readonly teamWritable: readonly string[];
 };
 
 function readStored(): string {
@@ -67,7 +69,13 @@ export function useScopeState(): ScopeState {
     (space: string | null | undefined) => (team ? Boolean(space && shown.has(space)) : !(space && teamSpaces.has(space))),
     [team, shown, teamSpaces],
   );
-  return { teams, team, setScope, teamSpaces, inScope };
+  const teamWritable = useMemo(() => {
+    if (!team) return [];
+    // The owner writes in every Space of the team; a member where not read only.
+    if (team.hosted) return spacesOfTeam(team, hostedSpaces);
+    return team.shares.filter((share) => !share.read_only).map((share) => share.target);
+  }, [team, hostedSpaces]);
+  return { teams, team, setScope, teamSpaces, inScope, teamWritable };
 }
 
 const everything: ScopeState = {
@@ -76,6 +84,7 @@ const everything: ScopeState = {
   setScope: () => {},
   teamSpaces: new Set(),
   inScope: () => true,
+  teamWritable: [],
 };
 
 const ScopeContext = createContext<ScopeState>(everything);

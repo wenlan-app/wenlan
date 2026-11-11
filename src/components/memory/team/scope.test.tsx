@@ -23,7 +23,12 @@ const acme = { id: "t1", name: "Acme" };
 
 function Probe() {
   const scope = useScope();
-  return <p data-testid="probe">{["Wedding", "Product", null].map((space) => `${space ?? "none"}:${scope.inScope(space)}`).join(" ")}</p>;
+  return (
+    <>
+      <p data-testid="probe">{["Wedding", "Product", null].map((space) => `${space ?? "none"}:${scope.inScope(space)}`).join(" ")}</p>
+      <p data-testid="writable">{scope.teamWritable.join(",")}</p>
+    </>
+  );
 }
 
 function Shell({ onSwitched = () => undefined }: { readonly onSwitched?: () => void }) {
@@ -70,6 +75,8 @@ describe("the Private / team switch", () => {
     expect(onSwitched).toHaveBeenCalled();
     expect(await screen.findByRole("button", { name: "Showing Acme. Switch" })).toBeInTheDocument();
     expect(screen.getByTestId("probe")).toHaveTextContent("Wedding:false Product:true none:false");
+    // A page started here goes in a Space of the team the person can edit.
+    expect(screen.getByTestId("writable")).toHaveTextContent("Product");
     // The side is remembered for the next start.
     expect(localStorage.getItem("wenlan-scope")).toBe("team:t1");
   });
@@ -80,6 +87,17 @@ describe("the Private / team switch", () => {
     wrap(<Shell />);
     expect(await screen.findByRole("button", { name: "Showing Private. Switch" })).toBeInTheDocument();
   });
+});
+
+it("offers no read-only Space of a team for new pages", async () => {
+  localStorage.setItem("wenlan-scope", "team:t1");
+  vi.mocked(listShares).mockResolvedValue([
+    share("Product", { host: "https://team.example.com", team: acme }),
+    share("Handbook", { host: "https://team.example.com", team: acme, read_only: true }),
+  ]);
+  wrap(<Shell />);
+  expect(await screen.findByRole("button", { name: "Showing Acme. Switch" })).toBeInTheDocument();
+  expect(screen.getByTestId("writable").textContent).toBe("Product");
 });
 
 describe("folders on one side", () => {
