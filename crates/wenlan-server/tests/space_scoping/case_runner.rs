@@ -66,6 +66,7 @@ pub const WAVE_2_RECORDS: &[ExpectedContract] = &[
         "/api/brief/history/{version}",
         SelectionGate::SingleId404,
     ),
+    query(Method::Get, "/api/brief/plain"),
     header(Method::Get, "/api/memory/pending-revisions"),
     header_gate(
         Method::Get,

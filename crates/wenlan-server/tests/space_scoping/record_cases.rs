@@ -98,6 +98,7 @@ pub async fn unknown_selectors_are_rejected() {
         ("/api/decisions", "/api/decisions"),
         ("/api/brief/history", "/api/brief/history"),
         ("/api/brief/history/1", "/api/brief/history/{version}"),
+        ("/api/brief/plain", "/api/brief/plain"),
         (
             "/api/memory/pending-revisions",
             "/api/memory/pending-revisions",
