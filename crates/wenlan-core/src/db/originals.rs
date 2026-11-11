@@ -57,6 +57,15 @@ pub struct OriginalRecord {
     pub replaces: Option<String>,
 }
 
+impl OriginalRecord {
+    /// Kept by an AI tool in a live session (`keep_session_original`), not
+    /// brought in with an imported chat. An imported chat always has a link
+    /// back to its conversation; a live session has none.
+    pub fn kept_in_live_session(&self) -> bool {
+        self.conversation_url.is_empty()
+    }
+}
+
 fn db_error(context: &str) -> impl Fn(libsql::Error) -> WenlanError + '_ {
     move |e| WenlanError::VectorDb(format!("{context}: {e}"))
 }

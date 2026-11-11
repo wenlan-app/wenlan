@@ -64,13 +64,30 @@ pub fn page_removal_refusal_message(code: PageRemovalErrorCode) -> &'static str 
 /// Does `page` hold the person's work, so that an AI may not remove it?
 ///
 /// True for a review-locked page, a human-owned one (`user_edited` or
-/// `authored`), a page made from an original, a page with any version the
-/// person wrote (`manual_edit`, `fs_edit`, an accepted revision, ...), and a
-/// page with any sentence `authorship::is_protected` keeps from a machine.
+/// `authored`), a page made from an original the person brought in (an
+/// imported chat), a page with any version the person wrote (`manual_edit`,
+/// `fs_edit`, an accepted revision, ...), and a page with any sentence
+/// `authorship::is_protected` keeps from a machine.
+///
+/// An original an AI tool kept by itself in a live session is the AI's own
+/// work, so the AI may archive it (it can be restored) unless the person
+/// edited it since.
 pub async fn page_holds_persons_work(db: &MemoryDB, page: &Page) -> Result<bool, WenlanError> {
     let guarded = super::page_is_human_owned(page) || page.review_required;
-    if guarded || page.creation_kind == "original" {
+    if guarded {
         return Ok(true);
+    }
+    // An AI-kept original's sentences read as `Original`, which keeps them
+    // from being rewritten (UX-ART-3); that guards edits, not archiving.
+    let mut kept_by_ai = false;
+    if page.creation_kind == "original" {
+        kept_by_ai = db
+            .get_original(&page.id)
+            .await?
+            .is_some_and(|record| record.kept_in_live_session());
+        if !kept_by_ai {
+            return Ok(true);
+        }
     }
     let history = db.list_page_history(&page.id, 200).await?;
     if history.iter().any(|entry| {
@@ -82,7 +99,13 @@ pub async fn page_holds_persons_work(db: &MemoryDB, page: &Page) -> Result<bool,
     Ok(crate::sentences::page_authorship(db, page)
         .await?
         .iter()
-        .any(|row| crate::authorship::is_protected(row.author, guarded)))
+        .any(|row| {
+            if kept_by_ai {
+                row.author == wenlan_types::authorship::SentenceAuthor::Person
+            } else {
+                crate::authorship::is_protected(row.author, guarded)
+            }
+        }))
 }
 
 /// The page `id` as the caller may see it. `Ok(None)` when no page has the
@@ -264,5 +287,179 @@ mod tests {
             "{:?}",
             logs.lines()
         );
+    }
+
+    async fn original(db: &MemoryDB, id: &str, conversation_url: &str) {
+        page(db, id, "original").await;
+        db.insert_original(&crate::db::originals::OriginalRecord {
+            page_id: id.to_string(),
+            vendor: "claude-code".to_string(),
+            conversation_id: format!("conv-{id}"),
+            artifact_id: format!("art-{id}"),
+            kind: "svg".to_string(),
+            title: Some("Flow".to_string()),
+            file_path: format!("originals/claude-code/conv-{id}/art.svg"),
+            conversation_url: conversation_url.to_string(),
+            written_at: Some(0),
+            imported_at: 0,
+            replaces: None,
+        })
+        .await
+        .unwrap();
+    }
+
+    /// An original an AI tool kept by itself in a live session, the way the
+    /// keep route makes it. Returns its page id.
+    async fn kept(db: &MemoryDB, root: &std::path::Path, content: &str) -> String {
+        use crate::chat_import::originals::{
+            keep_session_original, SessionOriginal, SessionOriginalFormat,
+        };
+        let session = wenlan_types::sessions::SessionRef::new("claude-code", "drawing").unwrap();
+        let (kept, created) = keep_session_original(
+            db,
+            root,
+            None,
+            SessionOriginal {
+                session: Some(&session),
+                title: "Release flow",
+                content,
+                format: SessionOriginalFormat::Svg,
+                space: wenlan_types::WriteSpaceTarget::Uncategorized,
+                workspace: None,
+                source_memory_ids: Vec::new(),
+                replaces: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(created);
+        kept.page_id
+    }
+
+    async fn person_edits(db: &MemoryDB, id: &str) {
+        let wrote = crate::post_write::page_write(
+            db,
+            crate::post_write::PageWrite::Update {
+                page_id: id,
+                req: wenlan_types::requests::UpdatePageRequest {
+                    content: "Kestrels hover before they stoop. I drew this one.".to_string(),
+                    source_memory_ids: vec![],
+                    expected_version: None,
+                    caller_id: None,
+                    operation_id: None,
+                },
+                edited_by: "manual_edit",
+                require_stale: false,
+                expected_source_revision: None,
+                knowledge_path: None,
+                citations: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(wrote.wrote, "{:?}", wrote.warnings);
+    }
+
+    #[tokio::test]
+    async fn an_ai_may_archive_an_original_it_kept_in_a_live_session() {
+        let (db, dir) = test_db().await;
+        let kept1 = kept(
+            &db,
+            dir.path(),
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><rect/></svg>",
+        )
+        .await;
+        let archived = archive_page_as(
+            &db,
+            &kept1,
+            PageRemover::Ai("claude-code"),
+            &ReadScope::Global,
+        )
+        .await
+        .unwrap();
+        assert!(archived.is_some());
+        // Archiving is the most an AI may do: deleting for good stays the person's.
+        let kept2 = kept(
+            &db,
+            dir.path(),
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><circle/></svg>",
+        )
+        .await;
+        let delete = delete_page_permanently(
+            &db,
+            &kept2,
+            PageRemover::Ai("claude-code"),
+            &ReadScope::Global,
+        )
+        .await;
+        assert!(matches!(
+            delete,
+            Err(PageRemovalError::Refused(
+                PageRemovalErrorCode::PermanentDeleteNeedsPerson
+            ))
+        ));
+    }
+
+    #[tokio::test]
+    async fn an_imported_original_stays_the_persons() {
+        let (db, _dir) = test_db().await;
+        original(&db, "imp1", "https://claude.ai/chat/abc").await;
+        let archive = archive_page_as(
+            &db,
+            "imp1",
+            PageRemover::Ai("claude-code"),
+            &ReadScope::Global,
+        )
+        .await;
+        assert!(matches!(
+            archive,
+            Err(PageRemovalError::Refused(
+                PageRemovalErrorCode::PageIsThePersons
+            ))
+        ));
+    }
+
+    #[tokio::test]
+    async fn an_original_page_without_its_record_stays_the_persons() {
+        let (db, _dir) = test_db().await;
+        page(&db, "bare1", "original").await;
+        let archive = archive_page_as(
+            &db,
+            "bare1",
+            PageRemover::Ai("claude-code"),
+            &ReadScope::Global,
+        )
+        .await;
+        assert!(matches!(
+            archive,
+            Err(PageRemovalError::Refused(
+                PageRemovalErrorCode::PageIsThePersons
+            ))
+        ));
+    }
+
+    #[tokio::test]
+    async fn an_ai_kept_original_the_person_edited_stays_theirs() {
+        let (db, dir) = test_db().await;
+        let kept3 = kept(
+            &db,
+            dir.path(),
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><rect/></svg>",
+        )
+        .await;
+        person_edits(&db, &kept3).await;
+        let archive = archive_page_as(
+            &db,
+            &kept3,
+            PageRemover::Ai("claude-code"),
+            &ReadScope::Global,
+        )
+        .await;
+        assert!(matches!(
+            archive,
+            Err(PageRemovalError::Refused(
+                PageRemovalErrorCode::PageIsThePersons
+            ))
+        ));
     }
 }

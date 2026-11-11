@@ -393,6 +393,75 @@ async fn ux_who_7_only_the_person_can_delete_a_page_for_good() {
     assert_eq!(db.get_page(&id).await.unwrap().unwrap().status, "active");
 }
 
+/// A diagram an AI tool kept by itself in a live session is the AI's own
+/// work: the AI may archive it (the person can restore it), never delete it
+/// for good. What the person imported stays theirs.
+#[tokio::test]
+async fn ux_who_7_an_ai_may_archive_an_original_it_kept_but_not_delete_it_for_good() {
+    let _lock = data_dir_lock().lock().await;
+    let _data = ScratchDataDir::new();
+    let (app, _tmp, db) = common::test_app().await;
+    let mut kept = Vec::new();
+    for (title, content) in [
+        (
+            "Test flow",
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><rect/></svg>",
+        ),
+        (
+            "Test flow two",
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><circle/></svg>",
+        ),
+    ] {
+        // The keep route as an AI tool calls it, with only its name.
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/originals")
+                    .header("x-agent-name", "claude-code")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({"title": title, "content": content, "format": "svg"}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), 1_000_000).await.unwrap();
+        let value: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(status, StatusCode::OK, "{value}");
+        kept.push(value["page_id"].as_str().unwrap().to_string());
+    }
+
+    let (status, value) = send(
+        &app,
+        Method::DELETE,
+        &format!("/api/pages/{}", kept[0]),
+        Caller::Agent("claude-code"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{value}");
+    assert_eq!(removal(value).status, PageRemovalStatus::Archived);
+    let page = db.get_page(&kept[0]).await.unwrap().unwrap();
+    assert_eq!(page.status, "archived");
+
+    let (status, value) = send(
+        &app,
+        Method::DELETE,
+        &format!("/api/pages/{}?permanent=true", kept[1]),
+        Caller::Agent("claude-code"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{value}");
+    assert_eq!(value["code"], "permanent_delete_needs_person", "{value}");
+    let page = db.get_page(&kept[1]).await.unwrap().unwrap();
+    assert_eq!(page.status, "active");
+}
+
 #[tokio::test]
 async fn ux_who_7_deleting_a_page_that_does_not_exist_is_not_found() {
     let _lock = data_dir_lock().lock().await;

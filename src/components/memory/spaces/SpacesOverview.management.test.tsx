@@ -56,7 +56,7 @@ describe("SpacesOverview management", () => {
     // Then navigation and direct command mapping are preserved without confirmation
     expect(onSelectSpace).toHaveBeenCalledWith("Work");
     await waitFor(() => expect(api.deleteSpace).toHaveBeenCalledWith("Suggested"));
-    expect(within(suggestedRow).queryByRole("button", { name: labels.confirmDelete })).not.toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   });
 
   it("keeps suggestions in the header above a long confirmed inventory", async () => {
@@ -170,7 +170,7 @@ describe("SpacesOverview management", () => {
     fireEvent.click(screen.getByRole("button", { name: labels.actionsFor("Work") }));
     fireEvent.click(screen.getByRole("menuitem", { name: labels.delete }));
     expect(api.deleteSpace).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: labels.confirmDelete }));
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: labels.delete }));
     await waitFor(() => expect(api.deleteSpace).toHaveBeenCalledWith("Work"));
   });
 
@@ -190,14 +190,13 @@ describe("SpacesOverview management", () => {
     expect(trigger).toHaveFocus();
   });
 
-  it("routes menu and pointer moves through the same within-group reorder command", async () => {
+  it("routes keyboard and pointer moves through the same within-group reorder command", async () => {
     // Given ordered starred and unstarred groups
     renderOverview();
     await screen.findByText("Work");
 
-    // When moving Personal up through the menu
-    fireEvent.click(screen.getByRole("button", { name: labels.actionsFor("Personal") }));
-    fireEvent.click(screen.getByRole("menuitem", { name: labels.moveUp }));
+    // When moving Personal up from its drag handle's keyboard
+    fireEvent.keyDown(screen.getByRole("button", { name: labels.dragSpace("Personal") }), { key: "ArrowUp" });
     await waitFor(() => expect(api.reorderSpace).toHaveBeenCalledWith("Personal", 0));
     await waitFor(() => expect(screen.getByRole("button", { name: labels.actionsFor("Personal") })).toBeEnabled());
 
@@ -222,7 +221,8 @@ describe("SpacesOverview management", () => {
       expect(screen.getByRole("button", { name: labels.actionsFor("Work") })).toBeEnabled(),
     );
     fireEvent.click(screen.getByRole("button", { name: labels.actionsFor("Work") }));
-    expect(await screen.findByRole("menuitem", { name: labels.moveUp })).toBeDisabled();
+    // Reordering is drag only: the menu carries no move up / move down.
+    expect((await screen.findAllByRole("menuitem")).map((item) => item.textContent)).toEqual([labels.star, labels.rename, labels.delete]);
   });
 
   it("isolates pending and error state to the affected row and invalidates dependent data", async () => {
@@ -258,7 +258,7 @@ describe("SpacesOverview management", () => {
     api.toggleSpaceStarred.mockResolvedValue(true);
     fireEvent.click(screen.getByRole("button", { name: labels.actionsFor("Personal") }));
     fireEvent.click(screen.getByRole("menuitem", { name: labels.delete }));
-    fireEvent.click(screen.getByRole("button", { name: labels.confirmDelete }));
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: labels.delete }));
     await waitFor(() => expect(api.deleteSpace).toHaveBeenCalledWith("Personal"));
 
     // Then spaces and dependent page/cache families are invalidated

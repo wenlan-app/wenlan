@@ -78,7 +78,8 @@ test("renames an active page while preserving its identity and body after revisi
   await page.getByRole("textbox", { name: "Page title" }).press("Enter");
   await expect(page.getByRole("button", { name: "Renaming…" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Cancel rename" })).toBeDisabled();
-  await expect(page.getByRole("button", { name: "Edit page" })).toBeDisabled();
+  // There is no edit pencil; the reading surface ignores clicks while the rename runs.
+  await expect(page.getByRole("button", { name: "Edit page" })).toHaveCount(0);
   await page.getByRole("button", { name: "Page actions" }).click();
 
   await expect(page.getByRole("heading", { level: 1, name: "Renamed architecture" })).toBeVisible();
