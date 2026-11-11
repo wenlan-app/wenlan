@@ -98,6 +98,7 @@ pub async fn unknown_selectors_are_rejected() {
         ("/api/decisions", "/api/decisions"),
         ("/api/brief/history", "/api/brief/history"),
         ("/api/brief/history/1", "/api/brief/history/{version}"),
+        ("/api/brief/plain", "/api/brief/plain"),
         (
             "/api/memory/pending-revisions",
             "/api/memory/pending-revisions",
@@ -474,7 +475,7 @@ pub async fn history_and_chunk_source_priority_are_scoped() {
 
 pub fn registry_matches_catalog() {
     super::case_runner::assert_wave_2_records_catalog_contract();
-    assert_eq!(WAVE_2_RECORDS.len(), 13);
+    assert_eq!(WAVE_2_RECORDS.len(), 14);
 }
 
 /// Research cards carry private evidence; legacy generic cards have no Space identity.

@@ -24,6 +24,7 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
             post(handle_read_brief).patch(handle_update_brief),
         )
         .route("/api/brief/history", get(handle_brief_history))
+        .route("/api/brief/plain", get(handle_brief_plain))
         .route("/api/brief/history/{version}", get(handle_brief_version))
 }
 
@@ -371,6 +372,41 @@ pub async fn handle_brief_version(
         .ok_or_else(|| {
             ServerError::NotFound(format!("no Brief version {version} in Space '{space}'"))
         })
+}
+
+/// GET /api/brief/plain — the plain lines the night wrote for the resolved
+/// Space's Brief (UX-SPACE-2), for the Space's page. Lines written for an
+/// older Brief version still answer: the page shows them until the next
+/// night, and falls back to the Brief's own words for an item without one.
+pub async fn handle_brief_plain(
+    State(state): State<SharedState>,
+    SpaceHeader(header_space): SpaceHeader,
+    Query(query): Query<BriefHistoryQuery>,
+) -> Result<Json<wenlan_types::BriefPlainView>, ServerError> {
+    let db = {
+        let state = state.read().await;
+        state.db.clone().ok_or(ServerError::DbNotInitialized)?
+    };
+    let Some(space) = resolve_space(&db, query.space.as_deref(), header_space.as_deref()).await?
+    else {
+        return Ok(Json(wenlan_types::BriefPlainView::default()));
+    };
+    let Some(record) = db.get_space(&space).await? else {
+        return Ok(Json(wenlan_types::BriefPlainView::default()));
+    };
+    let plain = crate::brief_plain_night::load(&db, &record.id).await;
+    Ok(Json(match plain {
+        Some(plain) => wenlan_types::BriefPlainView {
+            space: Some(space),
+            brief_version: Some(plain.brief_version),
+            summary: plain.summary,
+            lines: plain.lines,
+        },
+        None => wenlan_types::BriefPlainView {
+            space: Some(space),
+            ..Default::default()
+        },
+    }))
 }
 
 #[cfg(test)]

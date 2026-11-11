@@ -446,6 +446,30 @@ and wait for evidence that people need them.
   shows under it.
   原文：有用的图自己存：画出计划、流程、架构，或你接着用的图，AI 自己存；随手小草图不存。eli5 的 ASCII 图也算。（2026-11-08 22:26）
 
+## A Space's page
+
+- **UX-SPACE-1** `shipped` A Space's page opens with its Brief, in plain
+  words: where the work stands in a sentence or two, when an AI tool last
+  handed off, and what is in progress, newest first, one line each. Three
+  show; the rest fold under "N more". The Brief sits in one white panel with a thin border:
+  where it stands on the left, what is in progress on the right. A Space
+  with no Brief is its pages alone. No other new buttons or panels.
+  原文：「照你說的建議。我想要把 brief 結合好，不要多餘的介面」（2026-11-10 23:10Z）；草圖選擇卡「照做，連 Brief 清理一起」（2026-11-10 23:15Z）；「space 里面应该要放一些什么去区隔它的就是价值…page 是确实是被 filter 完了，但是在这里面还有什么需要特别强调的呢？」（2026-11-10 23:02Z）
+- **UX-SPACE-2** `shipped` Each night, a Space whose Brief changed gets
+  those lines written for people, in their language, with no pull request
+  numbers, version numbers, hashes or paths; until then an item shows the
+  first sentence the AI wrote. The night closes an item only when a newer
+  note in the Space says, word for word, that it is done, and records the
+  close in the Brief's history. The Brief text the AI tool wrote is kept as
+  it is.
+  原文：同 UX-SPACE-1：選擇卡「照做，連 Brief 清理一起」，問：「照這張草圖做 Space 頁面，並讓每晚整理順便清理 Brief？」（2026-11-10 23:15Z）
+- **UX-SPACE-3** `shipped` Under the Brief are the Space's pages, with no
+  Pages/Sources tabs; a page's sources are read inside the page. A page the
+  AI changed in the last day is quietly marked.
+  原文：「不 sources 放里面我也不知道它能干嘛」（2026-11-10 23:02Z）；同 UX-SPACE-1 草圖。
+  版面：「感覺版面啥的不夠好看 UI/UX」（2026-11-11 00:24Z）後，選擇卡「1 淡色底一塊」（2026-11-11 00:30Z）：Brief 一塊，筆記用卡片、上方有「筆記」標題；底色選擇卡「C 白底細框」（2026-11-11 01:02Z）。
+  與首頁一致：選 A，「首頁和空間的排版要一致，譬如間距和周遭」（2026-11-11）。首頁對齊空間頁：兩頁用同一條 840px 欄、第一行同高（「我以為是對其 space?」，2026-11-11 02:04Z）；區塊小標題、間距與卡片樣式（細框、無陰影、無圖示）和首頁相同。
+
 ## Adding to Wenlan
 
 - **UX-ADD-1** `planned` There is one "Add to Wenlan" in the app; the shortcut,

@@ -556,6 +556,7 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/brief` | main | yes | automatic | `none` | `handle_read_brief` | Brief.last_session_summary, BriefItem.text, SearchResult.content |
 | `GET` | `/api/brief/history` | main | no | not_applicable | `none` | — | Brief update log: Brief text only, no page prose |
 | `GET` | `/api/brief/history/{version}` | main | no | not_applicable | `none` | — | past Brief snapshot: Brief text only, no page prose |
+| `GET` | `/api/brief/plain` | main | no | not_applicable | `none` | — | BriefPlainView: plain lines rewritten from Brief text, no page prose |
 | `GET` | `/api/briefing` | main | yes | automatic | `none` | `handle_get_briefing` | BriefingResponse.content = revision-card titles |
 | `GET` | `/api/capture-stats` | main | yes | automatic | `none` | `handle_capture_stats` | opaque response type — fail-closed |
 | `POST` | `/api/chunks/delete-bulk` | main | no | not_applicable | `none` | — | no prose fields |

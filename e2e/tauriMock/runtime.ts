@@ -489,6 +489,7 @@ export class TauriMockRuntime {
         requiredString(command, args, "id");
         return null;
       case "search": return this.search(args);
+      case "get_space_brief": return this.fixture.spaceBriefs?.[requiredString(command, args, "name")] ?? null;
       default: return baseResponse(command, args, { activityRows: this.activityRows, memoryCount: this.memories.length });
     }
   }

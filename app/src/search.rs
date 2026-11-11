@@ -3930,6 +3930,108 @@ pub async fn list_working_on(state: tauri::State<'_, State>) -> Result<Vec<Worki
     Ok(working_on_items(briefs))
 }
 
+/// One Space's Brief as its page shows it (UX-SPACE-1): where the work
+/// stands and the items in progress, each in the night's plain line when it
+/// has one. `handed_off_at` is in seconds.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SpaceBriefView {
+    pub summary: Option<String>,
+    pub handed_off_at: Option<i64>,
+    pub active: Vec<SpaceBriefLine>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SpaceBriefLine {
+    pub id: String,
+    pub line: String,
+    /// The night has not written this one in plain words yet.
+    pub raw: bool,
+}
+
+/// `None` when the Space has no Brief, or nothing in it to show.
+#[tauri::command]
+pub async fn get_space_brief(
+    state: tauri::State<'_, State>,
+    name: String,
+) -> Result<Option<SpaceBriefView>, String> {
+    let client = daemon_client(&state).await;
+    let request = BriefReadRequest {
+        space: Some(name.clone()),
+        ..Default::default()
+    };
+    let response: BriefReadResponse = client.post_json("/api/brief", &request).await?;
+    let Some(brief) = response.brief else {
+        return Ok(None);
+    };
+    let path = format!(
+        "/api/brief/plain?space={}",
+        crate::api::percent_encode_path_segment(&name)
+    );
+    let plain = match client.get_json::<BriefPlainView>(&path).await {
+        Ok(plain) => plain,
+        Err(error) => {
+            log::warn!("[space] plain Brief for {name}: {error}");
+            BriefPlainView::default()
+        }
+    };
+    Ok(space_brief_view(brief, plain))
+}
+
+/// The first sentence of an item an AI wrote, cut short, until the night
+/// writes its plain line.
+fn first_sentence(text: &str) -> String {
+    const MAX: usize = 80;
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let end = text
+        .char_indices()
+        .find(|(i, c)| {
+            matches!(c, '。' | '！' | '？')
+                || (matches!(c, '.' | '!' | '?') && text[i + c.len_utf8()..].starts_with(' '))
+        })
+        .map(|(i, c)| i + c.len_utf8())
+        .unwrap_or(text.len());
+    let sentence = text[..end].trim();
+    if sentence.chars().count() <= MAX {
+        sentence.to_string()
+    } else {
+        format!("{}…", sentence.chars().take(MAX).collect::<String>())
+    }
+}
+
+fn space_brief_view(brief: Brief, plain: BriefPlainView) -> Option<SpaceBriefView> {
+    let summary = plain
+        .summary
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| Some(brief.last_session_summary.trim().to_string()))
+        .filter(|s| !s.is_empty());
+    let mut active: Vec<_> = brief.active.into_iter().collect();
+    active.sort_by(|a, b| b.added_at.cmp(&a.added_at).then_with(|| a.id.cmp(&b.id)));
+    let active: Vec<SpaceBriefLine> = active
+        .into_iter()
+        .map(|item| match plain.lines.get(&item.id) {
+            Some(line) => SpaceBriefLine {
+                id: item.id,
+                line: line.clone(),
+                raw: false,
+            },
+            None => SpaceBriefLine {
+                line: first_sentence(&item.text),
+                id: item.id,
+                raw: true,
+            },
+        })
+        .filter(|line| !line.line.is_empty())
+        .collect();
+    if summary.is_none() && active.is_empty() {
+        return None;
+    }
+    Some(SpaceBriefView {
+        summary,
+        handed_off_at: brief.last_handoff_at,
+        active,
+    })
+}
+
 fn working_on_items(briefs: Vec<Brief>) -> Vec<WorkingOnItem> {
     let mut items: Vec<WorkingOnItem> = briefs
         .into_iter()
@@ -8113,6 +8215,48 @@ mod working_on_tests {
             gate: None,
             version: 1,
         }
+    }
+
+    #[test]
+    fn ux_space_1_brief_view_prefers_plain_lines_and_falls_back_to_a_first_sentence() {
+        let mut b = brief(
+            "wenlan",
+            vec![
+                item("a", "Windows signing is unresolved. PR #794 closed.", 10),
+                item("b", "Merge PR #1210 (head 967c4c6)", 20),
+            ],
+        );
+        b.last_session_summary = "Trust fixes merged (#1236).".into();
+        b.last_handoff_at = Some(99);
+        let mut plain = BriefPlainView {
+            summary: Some("可信度修正都合併了。".into()),
+            ..Default::default()
+        };
+        plain.lines.insert("b".into(), "合併共用空間".into());
+        let view = space_brief_view(b.clone(), plain).unwrap();
+        assert_eq!(view.summary.as_deref(), Some("可信度修正都合併了。"));
+        assert_eq!(view.handed_off_at, Some(99));
+        assert_eq!(
+            view.active[0],
+            SpaceBriefLine {
+                id: "b".into(),
+                line: "合併共用空間".into(),
+                raw: false
+            }
+        );
+        assert_eq!(
+            view.active[1],
+            SpaceBriefLine {
+                id: "a".into(),
+                line: "Windows signing is unresolved.".into(),
+                raw: true
+            }
+        );
+        let raw = space_brief_view(b, BriefPlainView::default()).unwrap();
+        assert_eq!(raw.summary.as_deref(), Some("Trust fixes merged (#1236)."));
+        let mut empty = brief("x", vec![]);
+        empty.last_session_summary = " ".into();
+        assert!(space_brief_view(empty, BriefPlainView::default()).is_none());
     }
 
     fn brief(space: &str, active: Vec<BriefItem>) -> Brief {

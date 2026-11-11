@@ -367,3 +367,56 @@ async fn history_is_scoped_to_the_resolved_space() {
     let (status, _) = get_request(app, "/api/brief/history/1", Some("missing")).await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
+
+#[tokio::test]
+async fn ux_space_2_plain_route_reads_the_nights_lines_for_the_resolved_space() {
+    let (app, _temp, db) = fixture().await;
+    let (status, _) = json_request(
+        app.clone(),
+        Method::PATCH,
+        update("work", "op-1", "Merge the share PR"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // nothing written yet: the Space resolves, with no lines
+    let (status, body) = get_request(app.clone(), "/api/brief/plain?space=work", None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let empty: wenlan_types::BriefPlainView = serde_json::from_value(body).unwrap();
+    assert_eq!(empty.space.as_deref(), Some("work"));
+    assert!(empty.lines.is_empty());
+    assert_eq!(empty.summary, None);
+
+    let space = db.get_space("work").await.unwrap().unwrap();
+    let plain = wenlan_core::brief_plain::BriefPlain {
+        brief_version: 1,
+        language: "English".into(),
+        summary: Some("Sharing is nearly done.".into()),
+        lines: [("item-1".to_string(), "Merge sharing".to_string())].into(),
+        written_at: 1,
+    };
+    db.set_app_metadata(
+        &wenlan_core::brief_plain::metadata_key(&space.id),
+        &serde_json::to_string(&plain).unwrap(),
+    )
+    .await
+    .unwrap();
+
+    // the header selects the Space just like the Brief read route
+    let (status, body) = get_request(app.clone(), "/api/brief/plain", Some("work")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let view: wenlan_types::BriefPlainView = serde_json::from_value(body).unwrap();
+    assert_eq!(view.brief_version, Some(1));
+    assert_eq!(view.summary.as_deref(), Some("Sharing is nearly done."));
+    assert_eq!(view.lines["item-1"], "Merge sharing");
+
+    // another Space never sees these lines; an unknown one is rejected
+    db.create_space("personal", None, false).await.unwrap();
+    let (status, body) = get_request(app.clone(), "/api/brief/plain?space=personal", None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let other: wenlan_types::BriefPlainView = serde_json::from_value(body).unwrap();
+    assert!(other.lines.is_empty());
+    let (status, _) = get_request(app, "/api/brief/plain", Some("missing")).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+}

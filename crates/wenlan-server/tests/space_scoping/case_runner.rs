@@ -66,6 +66,7 @@ pub const WAVE_2_RECORDS: &[ExpectedContract] = &[
         "/api/brief/history/{version}",
         SelectionGate::SingleId404,
     ),
+    query(Method::Get, "/api/brief/plain"),
     header(Method::Get, "/api/memory/pending-revisions"),
     header_gate(
         Method::Get,
@@ -281,7 +282,7 @@ pub fn assert_wave_2_records_catalog_contract() {
         .iter()
         .map(|case| (case.method, case.path))
         .collect::<BTreeSet<_>>();
-    assert_eq!(keys.len(), 13, "Wave 2 records must contain 13 unique keys");
+    assert_eq!(keys.len(), 14, "Wave 2 records must contain 14 unique keys");
 
     for expected in WAVE_2_RECORDS {
         let actual = route(expected.method, expected.path).expect("cataloged Wave 2 route");
@@ -414,8 +415,8 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
     // into a Space adds one PageWorkspace-scoped single-id route.
     // Restoring an earlier page version adds one PageWorkspace-scoped
     // single-id route. The list of note groups Automatic set aside adds one
-    // more scoped reader.
-    assert_eq!(rows.len(), 136);
+    // more scoped reader. A Space's plain Brief lines add one more.
+    assert_eq!(rows.len(), 137);
     assert_eq!(
         rows.iter()
             .filter(|row| row.scope_binding == ScopeBinding::Global)
@@ -426,7 +427,7 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
         rows.iter()
             .filter(|row| row.scope_binding != ScopeBinding::Global)
             .count(),
-        109
+        110
     );
     assert_eq!(
         rows.iter()
