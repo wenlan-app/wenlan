@@ -709,6 +709,7 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `GET` | `/api/steep/new/set-aside` | main | no | not_applicable | `none` | — | SteepSetAsideItem.title: the same uncited, reviewed memory rows as /api/steep/new, filtered to the caller's scope; group name: the topic Automatic's writer named; no page prose |
 | `POST` | `/api/steep/new/set-aside/release` | main | no | not_applicable | `none` | — | receipt only: how many set-aside items in the caller's scope were given back |
 | `GET` | `/api/team` | main | no | not_applicable | `none` | — | status only: team member names, their Spaces and access, the hosted Space names and the team listener address; no key, no page text |
+| `PUT` | `/api/team` | main | no | not_applicable | `none` | — | receipt only: the team's id and the name its owner gave it; no page text |
 | `POST` | `/api/team/members` | main | no | not_applicable | `none` | — | receipt only: the member just added and their new key, shown once; no page text |
 | `PUT` | `/api/team/members/{id}` | main | no | not_applicable | `none` | — | receipt only: the member's name and Spaces; no page text |
 | `DELETE` | `/api/team/members/{id}` | main | no | not_applicable | `none` | — | receipt only: the removed member's name and Spaces; no page text |
