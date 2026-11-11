@@ -1135,6 +1135,7 @@ async fn handle_create_page_inner(
         &req.source_memory_ids,
         &citation_scope,
         &citation_targets,
+        None,
     )
     .await?;
     let (citations_json, citations_summary) = match checked {
@@ -2239,6 +2240,7 @@ async fn check_write_citations(
     source_ids: &[String],
     scope: &wenlan_core::read_scope::ReadScope,
     targets: &[wenlan_types::pages::PdfCitationInput],
+    current: Option<wenlan_core::citations::PageAsItStands<'_>>,
 ) -> Result<
     (
         Option<(String, String, String)>,
@@ -2247,7 +2249,11 @@ async fn check_write_citations(
     ServerError,
 > {
     use wenlan_core::citations::WriteCitations;
-    match wenlan_core::citations::check_write_citations(db, content, source_ids, scope).await? {
+    match wenlan_core::citations::check_write_citations_keeping(
+        db, content, source_ids, scope, current,
+    )
+    .await?
+    {
         Ok(WriteCitations::Uncited { snapshots }) if targets.is_empty() => Ok((None, snapshots)),
         Ok(WriteCitations::Uncited { .. }) => Err(ServerError::ValidationError(
             "PDF targets require citation markers".into(),
@@ -2498,6 +2504,15 @@ async fn handle_refresh_page_inner(
         &req.source_memory_ids,
         &citation_scope,
         &req.citation_targets,
+        // A write the person asked for may leave sentences citing sources
+        // this Space can no longer read, as long as it does not change them.
+        person_asked
+            .is_some()
+            .then(|| wenlan_core::citations::PageAsItStands {
+                body: &existing.content,
+                citations: &existing.citations,
+                source_ids: &existing.source_memory_ids,
+            }),
     )
     .await?;
     let citations_summary = checked_citations.as_ref().map(|(_, _, s)| s.clone());
