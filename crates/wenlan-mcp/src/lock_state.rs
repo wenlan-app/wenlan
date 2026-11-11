@@ -16,6 +16,27 @@ use std::sync::RwLock;
 static LOCKED: RwLock<Option<String>> = RwLock::new(None);
 static DEFAULT: RwLock<Option<String>> = RwLock::new(None);
 
+tokio::task_local! {
+    /// A strict Space pin for one MCP connection, set while it handles a
+    /// call: a team server serves every member's connection from one
+    /// process, each pinned to the Space it was opened for. It wins over the
+    /// process-wide `WENLAN_SPACE` and turns off `WENLAN_DEFAULT_SPACE`.
+    static SESSION_PIN: String;
+}
+
+/// Runs `work` with `pin` as the strict Space pin (see [`SESSION_PIN`]);
+/// `None` runs it under the process-wide pin as before.
+pub async fn with_session_pin<F: std::future::Future>(pin: Option<String>, work: F) -> F::Output {
+    match pin {
+        Some(pin) => SESSION_PIN.scope(pin, work).await,
+        None => work.await,
+    }
+}
+
+fn session_pin() -> Option<String> {
+    SESSION_PIN.try_with(Clone::clone).ok()
+}
+
 /// Initialise from the environment. Call once at process startup before
 /// accepting any requests. Subsequent calls overwrite the value, which is
 /// intentional for test isolation.
@@ -34,6 +55,9 @@ pub fn init_from_env() {
 
 /// Return the locked space slug, or `None` if `WENLAN_SPACE` was not set.
 pub fn locked_space() -> Option<String> {
+    if let Some(pin) = session_pin() {
+        return Some(pin);
+    }
     LOCKED
         .read()
         .expect("lock_state read lock poisoned")
@@ -42,6 +66,9 @@ pub fn locked_space() -> Option<String> {
 
 /// Return the overridable process fallback from `WENLAN_DEFAULT_SPACE`.
 pub fn default_space() -> Option<String> {
+    if session_pin().is_some() {
+        return None;
+    }
     DEFAULT
         .read()
         .expect("default_state read lock poisoned")
@@ -57,6 +84,9 @@ pub fn clear_default_space() {
 
 /// Return `true` if a space lock is active.
 pub fn is_locked() -> bool {
+    if session_pin().is_some() {
+        return true;
+    }
     LOCKED
         .read()
         .expect("lock_state read lock poisoned")

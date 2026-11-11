@@ -144,6 +144,20 @@ fn version_file_is_named_by_its_bytes() {
         Some(sha.as_str())
     );
     assert_eq!(version::version_sha(&format!(".{sha}.md.icloud")), None);
+    // Written as `.wlv` now; `.md` from older Wenlans is still read.
+    assert_eq!(
+        version::version_file_name(&sha),
+        format!("{sha}.{}", version::VERSION_EXT)
+    );
+    assert_eq!(
+        version::version_sha(&version::version_file_name(&sha)),
+        Some(sha.as_str())
+    );
+    assert_eq!(version::version_sha(&format!("{sha}.txt")), None);
+    assert_eq!(
+        version::version_key(&format!("members/m/pages/p/{sha}.md")),
+        version::version_key(&format!("members/m/pages/p/{sha}.wlv"))
+    );
 }
 
 #[test]
@@ -481,4 +495,20 @@ fn settings_keep_the_member_id_and_space_file_adds_members() {
     )
     .unwrap();
     assert!(ensure_space_file(&folder, &wedding, "Wedding", &file.members[0]).is_err());
+}
+
+#[test]
+fn a_drive_copy_of_a_folder_is_read_as_the_folder() {
+    let folder = tempfile::tempdir().unwrap();
+    let text = version::render(
+        &page("page_1", "Table 1."),
+        &meta(None, "Table 1.", "m1", "2026-11-08T11:00:00Z"),
+    );
+    let sha = version::sha256_hex(text.as_bytes());
+    let copy = folder.path().join("members/m1 (1)/pages/page_1 (2)");
+    std::fs::create_dir_all(&copy).unwrap();
+    std::fs::write(copy.join(version::version_file_name(&sha)), &text).unwrap();
+    let read = version::read_folder(folder.path());
+    assert_eq!(read.pages["page_1"].len(), 1);
+    assert_eq!(read.skipped, 0);
 }

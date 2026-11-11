@@ -827,6 +827,100 @@ impl WenlanClient {
         resp.json().await.context("parsing shared sync response")
     }
 
+    /// A daemon URL from percent-encoded path segments and an optional query.
+    fn team_url(&self, segments: &[&str], query: &[(&str, &str)]) -> Result<String> {
+        let mut url = reqwest::Url::parse(&self.base_url).context("parsing the daemon URL")?;
+        url.path_segments_mut()
+            .map_err(|_| anyhow::anyhow!("the daemon URL cannot take a path"))?
+            .pop_if_empty()
+            .extend(segments);
+        if !query.is_empty() {
+            url.query_pairs_mut().extend_pairs(query);
+        }
+        Ok(url.into())
+    }
+
+    async fn team_call<T: serde::de::DeserializeOwned>(
+        &self,
+        method: reqwest::Method,
+        url: String,
+        body: Option<serde_json::Value>,
+    ) -> Result<T> {
+        let mut req = self.http.request(method.clone(), &url);
+        if let Some(body) = body {
+            req = req.json(&body);
+        }
+        let resp = self.send(req, &format!("{method} {url} failed")).await?;
+        let resp = ensure_daemon_success(resp, &url).await?;
+        resp.json().await.context("parsing the team response")
+    }
+
+    /// `GET /api/team`: the member list and hosted Spaces.
+    pub async fn team_status(&self) -> Result<wenlan_types::team::TeamStatus> {
+        let url = self.team_url(&["api", "team"], &[])?;
+        self.team_call(reqwest::Method::GET, url, None).await
+    }
+
+    /// `POST /api/team/members`: add a member; the key is in the answer once.
+    pub async fn team_add_member(
+        &self,
+        req: &wenlan_types::team::TeamAddMemberRequest,
+    ) -> Result<wenlan_types::team::TeamMemberKey> {
+        let url = self.team_url(&["api", "team", "members"], &[])?;
+        self.team_call(reqwest::Method::POST, url, Some(serde_json::to_value(req)?))
+            .await
+    }
+
+    /// `PUT /api/team/members/{id}`: rename a member or replace their Spaces.
+    pub async fn team_update_member(
+        &self,
+        id: &str,
+        req: &wenlan_types::team::TeamUpdateMemberRequest,
+    ) -> Result<wenlan_types::team::TeamMember> {
+        let url = self.team_url(&["api", "team", "members", id], &[])?;
+        self.team_call(reqwest::Method::PUT, url, Some(serde_json::to_value(req)?))
+            .await
+    }
+
+    /// `DELETE /api/team/members/{id}`: remove a member; their key stops working.
+    pub async fn team_remove_member(&self, id: &str) -> Result<wenlan_types::team::TeamMember> {
+        let url = self.team_url(&["api", "team", "members", id], &[])?;
+        self.team_call(reqwest::Method::DELETE, url, None).await
+    }
+
+    /// `POST /api/team/members/{id}/key`: a new key for a member.
+    pub async fn team_new_member_key(
+        &self,
+        id: &str,
+        server_url: Option<&str>,
+    ) -> Result<wenlan_types::team::TeamMemberKey> {
+        let query: Vec<(&str, &str)> = server_url.map(|u| ("url", u)).into_iter().collect();
+        let url = self.team_url(&["api", "team", "members", id, "key"], &query)?;
+        self.team_call(reqwest::Method::POST, url, None).await
+    }
+
+    /// `POST /api/team/spaces`: host a Space for the team.
+    pub async fn team_host_space(
+        &self,
+        space: &str,
+    ) -> Result<wenlan_types::shared_space::SharedSyncCounts> {
+        let url = self.team_url(&["api", "team", "spaces"], &[])?;
+        let body = serde_json::to_value(&wenlan_types::team::TeamHostSpaceRequest {
+            space: space.to_string(),
+        })?;
+        self.team_call(reqwest::Method::POST, url, Some(body)).await
+    }
+
+    /// `POST /api/team/join`: read a join code and list the Spaces it opens.
+    pub async fn team_join(&self, code: &str) -> Result<wenlan_types::team::TeamJoinResponse> {
+        let url = self.team_url(&["api", "team", "join"], &[])?;
+        let body = serde_json::to_value(&wenlan_types::team::TeamJoinRequest {
+            code: code.to_string(),
+            key: None,
+        })?;
+        self.team_call(reqwest::Method::POST, url, Some(body)).await
+    }
+
     /// `GET /api/spaces/{space}/wiki/repo`: the repository `space` is bound
     /// to, if any.
     pub async fn repo_wiki_binding(

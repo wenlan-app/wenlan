@@ -460,6 +460,9 @@ pub struct WenlanMcpServer {
     agent_work_cache: std::sync::Arc<std::sync::Mutex<LintAgentWorkCache>>,
     lint_report_cache: std::sync::Arc<std::sync::Mutex<LintReportCache>>,
     user_id: Option<String>,
+    /// This connection's own strict Space pin (a team server's member
+    /// connection), applied around every call (`lock_state::with_session_pin`).
+    space_pin: Option<String>,
 }
 
 // ===== Parameter Structs =====
@@ -1490,6 +1493,7 @@ fn person_asked_problem(quote: &str) -> Option<&'static str> {
 
 /// The line a held-back write_page reply ends with on a local connection:
 /// how to retry when the person really did ask for the change.
+const TEAM_REFRESH_NEEDS_VERSION: &str = "Other people on this team change these pages too: read_page first and pass its page.version as expected_version. Nothing was written.";
 const PERSON_ASKED_RETRY_HINT: &str = "If the person explicitly asked you in this conversation for this exact change to their sentences, read_page again and retry write_page with that expected_version and person_asked set to their exact words. Never set it on your own judgment.";
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -4289,6 +4293,14 @@ impl WenlanMcpServer {
                             .to_string(),
                     )]));
                 }
+                // On a team server other people change the same pages, so a
+                // refresh lands only on the version this tool last read.
+                if self.agent_identity.team_member().is_some() && params.expected_version.is_none()
+                {
+                    return Ok(CallToolResult::error(vec![ContentBlock::text(
+                        TEAM_REFRESH_NEEDS_VERSION,
+                    )]));
+                }
                 if self.tool_profile == ToolProfile::WebWrite {
                     if !is_opaque_page_id(&page_id) {
                         return Ok(CallToolResult::error(vec![ContentBlock::text(
@@ -6333,6 +6345,7 @@ impl WenlanMcpServer {
                 LintReportCache::default(),
             )),
             user_id,
+            space_pin: None,
         }
     }
 
@@ -6340,6 +6353,13 @@ impl WenlanMcpServer {
     /// contract or its Standard default.
     pub fn with_tool_profile(mut self, tool_profile: ToolProfile) -> Self {
         self.tool_profile = tool_profile;
+        self
+    }
+
+    /// Pin this connection, and only it, to one Space, as `WENLAN_SPACE`
+    /// pins a whole process: the Space the caller names is ignored.
+    pub fn with_space_pin(mut self, space: String) -> Self {
+        self.space_pin = Some(space);
         self
     }
 
@@ -7473,7 +7493,8 @@ impl ServerHandler for WenlanMcpServer {
             return Ok(refusal);
         }
         let tcc = ToolCallContext::new(self, request, context);
-        self.tool_router.call(tcc).await
+        crate::lock_state::with_session_pin(self.space_pin.clone(), self.tool_router.call(tcc))
+            .await
     }
 
     async fn list_tools(
@@ -7482,7 +7503,7 @@ impl ServerHandler for WenlanMcpServer {
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
         let tools = self.visible_tools();
-        let tools = if crate::lock_state::is_locked() {
+        let tools = if crate::lock_state::is_locked() || self.space_pin.is_some() {
             tools
                 .into_iter()
                 .map(strip_space_from_tool_schema)
@@ -7508,6 +7529,21 @@ impl ServerHandler for WenlanMcpServer {
                     name,
                     self.agent_identity.current()
                 );
+            }
+        }
+        // A team member's AI tool was let in by the server's owner, who gave
+        // that person a key: register it as trusted now, or the page gate
+        // would hide every page from it until its first write.
+        if self.agent_identity.team_member().is_some() {
+            let request = wenlan_types::requests::RegisterAgentRequest {
+                name: self.agent_identity.current(),
+            };
+            if let Err(error) = self
+                .client
+                .post::<_, wenlan_types::responses::AgentResponse>("/api/agents", &request)
+                .await
+            {
+                tracing::warn!("could not register the team member's AI tool: {error}");
             }
         }
     }
@@ -9214,6 +9250,35 @@ mod tests {
             let refreshed = server.write_page_impl(refresh).await.unwrap();
             assert_eq!(text_of(&refreshed), WEB_WRITE_BAD_ID_MESSAGE, "{id:?}");
         }
+        assert!(received(&mock).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_team_members_ai_refreshes_only_the_version_it_read() {
+        use wiremock::MockServer;
+
+        let mock = MockServer::start().await;
+        let identity = crate::client::AgentIdentity::new("remote-mcp".into(), false)
+            .for_team_member("m1".into());
+        let server = WenlanMcpServer::new_with_identity(
+            WenlanClient::new(mock.uri()),
+            TransportMode::Http,
+            identity,
+            None,
+        )
+        .with_tool_profile(ToolProfile::WebWrite)
+        .with_space_pin("Design".into());
+        let mut refresh = write_params(Some("page_1"));
+        refresh.basis = Vec::new();
+        refresh.expected_version = None;
+        let result = crate::lock_state::with_session_pin(
+            Some("Design".into()),
+            server.write_page_impl(refresh),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(text_of(&result), TEAM_REFRESH_NEEDS_VERSION);
         assert!(received(&mock).await.is_empty());
     }
 

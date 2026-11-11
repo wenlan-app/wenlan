@@ -17,6 +17,9 @@ path = "src/main.rs"
 [dependencies]
 wenlan-types = { workspace = true }
 wenlan-core = { workspace = true }
+# The team listener serves MCP to team members' AI tools (`team_routes`).
+wenlan-mcp = { path = "../wenlan-mcp" }
+rmcp = { version = "~2.1", features = ["server", "transport-streamable-http-server"] }
 
 serde = { workspace = true }
 serde_json = { workspace = true }

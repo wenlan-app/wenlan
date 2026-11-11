@@ -3777,6 +3777,8 @@ pub async fn share_space(
     let request = shared_space::SharedSyncRequest {
         folder,
         member_name: None,
+        host: None,
+        member_id: None,
     };
     client
         .post_json(
@@ -3800,6 +3802,8 @@ pub async fn share_page(
     let request = shared_space::SharedSyncRequest {
         folder,
         member_name: None,
+        host: None,
+        member_id: None,
     };
     client
         .post_json(
@@ -3853,6 +3857,134 @@ pub async fn look_in_shared_folder(
         .post_json(
             "/api/shared/folder",
             &shared_space::SharedFolderRequest { folder },
+        )
+        .await
+}
+
+// ── Team server ───────────────────────────────────────────────────────
+
+/// The team server's people and hosted Spaces, and whether it listens.
+#[tauri::command]
+pub async fn team_status(state: tauri::State<'_, State>) -> Result<team::TeamStatus, String> {
+    let client = daemon_client(&state).await;
+    client.get_json("/api/team").await
+}
+
+/// Adds a person; the answer holds their one-time join code.
+#[tauri::command]
+pub async fn team_add_member(
+    state: tauri::State<'_, State>,
+    name: String,
+    spaces: Vec<team::TeamSpaceAccess>,
+    url: Option<String>,
+) -> Result<team::TeamMemberKey, String> {
+    let client = daemon_client(&state).await;
+    client
+        .post_json(
+            "/api/team/members",
+            &team::TeamAddMemberRequest { name, spaces, url },
+        )
+        .await
+}
+
+/// Renames a person or changes the Spaces they use.
+#[tauri::command]
+pub async fn team_update_member(
+    state: tauri::State<'_, State>,
+    id: String,
+    name: Option<String>,
+    spaces: Option<Vec<team::TeamSpaceAccess>>,
+) -> Result<team::TeamMember, String> {
+    let client = daemon_client(&state).await;
+    client
+        .put_json(
+            &format!("/api/team/members/{}", percent_encode_path_segment(&id)),
+            &team::TeamUpdateMemberRequest { name, spaces },
+        )
+        .await
+}
+
+/// Removes a person: their key stops working at once.
+#[tauri::command]
+pub async fn team_remove_member(
+    state: tauri::State<'_, State>,
+    id: String,
+) -> Result<team::TeamMember, String> {
+    let client = daemon_client(&state).await;
+    client
+        .delete_path(&format!(
+            "/api/team/members/{}",
+            percent_encode_path_segment(&id)
+        ))
+        .await
+}
+
+/// Gives a person a new key (and join code when `url` is given).
+#[tauri::command]
+pub async fn team_new_member_key(
+    state: tauri::State<'_, State>,
+    id: String,
+    url: Option<String>,
+) -> Result<team::TeamMemberKey, String> {
+    let client = daemon_client(&state).await;
+    let mut path = format!("/api/team/members/{}/key", percent_encode_path_segment(&id));
+    if let Some(url) = url.filter(|u| !u.trim().is_empty()) {
+        path.push_str(&format!("?url={}", percent_encode_path_segment(&url)));
+    }
+    client.post_empty(&path).await
+}
+
+/// Hosts a local Space for the team.
+#[tauri::command]
+pub async fn team_host_space(
+    state: tauri::State<'_, State>,
+    space: String,
+) -> Result<shared_space::SharedSyncCounts, String> {
+    let client = daemon_client(&state).await;
+    client
+        .post_json("/api/team/spaces", &team::TeamHostSpaceRequest { space })
+        .await
+}
+
+/// Reads a join code: the server's Spaces this person can use.
+#[tauri::command]
+pub async fn team_join(
+    state: tauri::State<'_, State>,
+    code: String,
+    key: Option<String>,
+) -> Result<team::TeamJoinResponse, String> {
+    let client = daemon_client(&state).await;
+    client
+        .post_json("/api/team/join", &team::TeamJoinRequest { code, key })
+        .await
+}
+
+/// Joins one of the server's Spaces into the local Space `local_space`.
+#[tauri::command]
+pub async fn join_team_space(
+    state: tauri::State<'_, State>,
+    local_space: String,
+    code: String,
+    server_space: String,
+) -> Result<shared_space::SharedSyncCounts, String> {
+    let client = daemon_client(&state).await;
+    let request = shared_space::SharedSyncRequest {
+        folder: String::new(),
+        member_name: None,
+        member_id: None,
+        host: Some(shared_space::SharedHost {
+            code,
+            key: None,
+            space: Some(server_space),
+        }),
+    };
+    client
+        .post_json(
+            &format!(
+                "/api/spaces/{}/shared/sync",
+                percent_encode_path_segment(&local_space)
+            ),
+            &request,
         )
         .await
 }

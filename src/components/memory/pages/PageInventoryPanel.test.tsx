@@ -31,12 +31,15 @@ describe("folder tree",()=>{
   expect(screen.getByRole("button",{name:"Open Page 0"})).toBeInTheDocument();
   expect(screen.queryByRole("button",{name:"Open Shadow"})).not.toBeInTheDocument();
   expect(onNoteCountChange).toHaveBeenLastCalledWith(60);
+  // Pages without folders need no "no pages" line above them.
+  expect(screen.queryByText("No pages yet")).not.toBeInTheDocument();
  });
  it("offers New folder in the header New menu after an empty folder list loads", async () => {
+  active.mockResolvedValue([]);
   vi.mocked(knowledgeFoldersList).mockResolvedValue({ folders: [], truncated: false });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(<QueryClientProvider client={client}><WikiWorkspace inventoryMode="folders" onBrowse={vi.fn()} onCreatePage={vi.fn()} onOpenDraft={vi.fn()} onOpenPage={vi.fn()}><textarea /></WikiWorkspace></QueryClientProvider>);
-  expect(await screen.findByText("Create a folder to organize your pages.")).toBeInTheDocument();
+  expect(await screen.findByText("No pages yet")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "New page or folder" }));
   await waitFor(() => expect(screen.getByRole("menuitem", { name: "New folder" })).toHaveAttribute("aria-disabled", "false"));
   expect(screen.queryByRole("button", { name: "New folder" })).not.toBeInTheDocument();

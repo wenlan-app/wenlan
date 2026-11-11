@@ -73,6 +73,10 @@ impl<'a> Writer<'a> {
             // Wenlan let land). Taking it here is copying a page someone
             // saved, so it lands as written like a person's save.
             other if crate::shared_space::shared_writer(other).is_some() => Writer::Human(other),
+            // The same, from another of this person's own computers.
+            crate::shared_space::OWN_DEVICE_PERSON | crate::shared_space::OWN_DEVICE_AI => {
+                Writer::Human(edited_by)
+            }
             other => Writer::Pipeline(PipelineStage::Unknown(other)),
         }
     }

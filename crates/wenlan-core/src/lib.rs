@@ -104,6 +104,7 @@ pub mod steep_organize;
 pub mod store;
 pub mod synthesis;
 pub mod tags;
+pub mod team;
 pub(crate) mod temporal_query;
 #[cfg(test)]
 pub(crate) mod test_log;

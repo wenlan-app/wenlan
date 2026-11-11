@@ -338,3 +338,13 @@
     transition-duration: 0s;
   }
 }
+
+.spaces-team-group { padding-top: 28px; }
+.spaces-team-group .spaces-section { padding-top: 0; }
+.spaces-group-title {
+  margin: 0 0 12px;
+  color: var(--mem-text-secondary);
+  font-family: var(--mem-font-body);
+  font-size: var(--mem-text-meta);
+  font-weight: 400;
+}

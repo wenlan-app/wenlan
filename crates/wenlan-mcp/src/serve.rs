@@ -261,6 +261,45 @@ pub async fn run_serve_with_profile(
     Ok(())
 }
 
+/// The MCP service a team server serves one member's AI tools in one
+/// Space: `web-write` for a member who may write, `query-only` for one who
+/// may only read, pinned to that Space for this connection only, and writing
+/// as `<tool>@team.<member>` so the server files the edits under them. The
+/// caller checks the member's key before every request; the service itself
+/// has no authentication and must only be reached through that check.
+pub fn team_member_service(
+    origin_url: String,
+    member_id: String,
+    space: String,
+    tool_profile: ToolProfile,
+) -> StreamableHttpService<WenlanMcpServer, LocalSessionManager> {
+    let config = StreamableHttpServerConfig::default()
+        .disable_allowed_hosts()
+        .with_sse_keep_alive(Some(Duration::from_secs(15)));
+    StreamableHttpService::new(
+        move || {
+            let identity =
+                AgentIdentity::new("remote-mcp".into(), false).for_team_member(member_id.clone());
+            Ok(WenlanMcpServer::new_with_identity(
+                WenlanClient::new(origin_url.clone()),
+                TransportMode::Http,
+                identity,
+                None,
+            )
+            .with_tool_profile(tool_profile)
+            .with_space_pin(space.clone()))
+        },
+        Arc::new(LocalSessionManager::default()),
+        config,
+    )
+}
+
+/// The first-message guard every HTTP profile runs, for a caller that
+/// serves MCP from its own router (a team server).
+pub async fn guard_initialization(req: Request, next: Next) -> axum::response::Response {
+    validate_initialization(req, next).await
+}
+
 // Reject invalid first messages before SDK session allocation on every HTTP
 // tool profile. The SDK also cleans up failed initialization, while this guard
 // retains Wenlan's bounded body size, read timeout, and initialization contract.

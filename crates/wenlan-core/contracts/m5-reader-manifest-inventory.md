@@ -708,6 +708,13 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/steep/new/tasks` | main | no | not_applicable | `none` | — | SteepOrganizeTask.prompt: the same uncited, reviewed memory rows as /api/steep/new/claim, for a claim made in the caller's scope; no page prose |
 | `GET` | `/api/steep/new/set-aside` | main | no | not_applicable | `none` | — | SteepSetAsideItem.title: the same uncited, reviewed memory rows as /api/steep/new, filtered to the caller's scope; group name: the topic Automatic's writer named; no page prose |
 | `POST` | `/api/steep/new/set-aside/release` | main | no | not_applicable | `none` | — | receipt only: how many set-aside items in the caller's scope were given back |
+| `GET` | `/api/team` | main | no | not_applicable | `none` | — | status only: team member names, their Spaces and access, the hosted Space names and the team listener address; no key, no page text |
+| `POST` | `/api/team/members` | main | no | not_applicable | `none` | — | receipt only: the member just added and their new key, shown once; no page text |
+| `PUT` | `/api/team/members/{id}` | main | no | not_applicable | `none` | — | receipt only: the member's name and Spaces; no page text |
+| `DELETE` | `/api/team/members/{id}` | main | no | not_applicable | `none` | — | receipt only: the removed member's name and Spaces; no page text |
+| `POST` | `/api/team/members/{id}/key` | main | no | not_applicable | `none` | — | receipt only: the member and their new key, shown once; no page text |
+| `POST` | `/api/team/spaces` | main | no | not_applicable | `none` | — | receipt only: counts of the first sync pass of the Space hosted for the team; page files go to the folder, not the response |
+| `POST` | `/api/team/join` | main | no | not_applicable | `none` | — | status only: the team server's address, this member's id and name and the Space names they may use; no page text |
 | `POST` | `/api/steep/new/commit` | main | no | not_applicable | `none` | — | receipt only: outcome, new note id and title, citation counts; the token was issued by a Space-scoped claim |
 | `POST` | `/api/pages/{id}/code-basis/confirm` | main | no | not_applicable | `none` | — | receipt only: CodeBasisRef carries file path, lines and state, no note prose |
 | `DELETE` | `/api/pages/{id}/code-basis` | main | no | not_applicable | `none` | — | receipt only: removed flag, no prose |
@@ -984,6 +991,7 @@ the projection-directory reader.
 | `wenlan entities` | yes | automatic | `none` | subcommand renderer |
 | `wenlan export` | yes | automatic | `none` | subcommand renderer |
 | `wenlan wiki` | yes | automatic | `none` | subcommand renderer |
+| `wenlan team` | yes | automatic | `none` | subcommand renderer |
 | `wenlan sweep` | yes | automatic | `none` | subcommand renderer |
 
 ## Projection, export, internal
@@ -1561,10 +1569,10 @@ carrying the authority of agreement.
 | `core/shared_space/mod.rs::apply_create` | `private` | no | no | — | `core/shared_space/mod.rs::free_title` |
 | `core/shared_space/mod.rs::apply_version` | `private` | no | no | — | `core/shared_space/mod.rs::free_title` |
 | `core/shared_space/mod.rs::reload` | `private` | no | no | — | `core/db.rs::get_page` |
+| `core/shared_space/mod.rs::run_pass` | `private` | no | no | — | `core/shared_space/mod.rs::pass` |
 | `core/shared_space/mod.rs::stop_page_shares_in` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/shared_space/mod.rs::sync_missing` | `private` | no | no | — | `core/db.rs::get_page` |
-| `core/shared_space/mod.rs::sync_shared_spaces` | `pub` | no | **yes** | `server/scheduler.rs::spawn_scheduler` | `core/shared_space/mod.rs::pass` |
-| `core/shared_space/mod.rs::sync_space` | `pub` | no | **yes** | `server/spaces_routes.rs::shared_sync` | `core/db.rs::get_page`, `core/shared_space/mod.rs::pass` |
+| `core/shared_space/mod.rs::sync_space` | `pub` | no | **yes** | `server/spaces_routes.rs::host_sync`, `server/spaces_routes.rs::shared_sync`, `server/team_routes.rs::handle_host_space` | `core/db.rs::get_page` |
 | `core/sources/page_watcher.rs::archive_deleted_pages` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/sources/page_watcher.rs::bring_back_archived_page` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/sources/page_watcher.rs::create_adopted_page` | `private` | no | no | — | `core/db.rs::get_page` |
@@ -1753,6 +1761,7 @@ carrying the authority of agreement.
 | `core/sentences.rs::revert_ai_write` | `pub` | no | **yes** | `server/sentence_routes.rs::handle_revert_sentences` | `core/sentences.rs::load_page` |
 | `core/sentences.rs::unit_citations` | `private` | no | no | — | `core/sentences.rs::source_states` |
 | `core/shared_space/mod.rs::sync_page` | `private` | no | no | — | `core/shared_space/mod.rs::apply_version`, `core/shared_space/mod.rs::reload` |
+| `core/shared_space/mod.rs::sync_shared_spaces` | `pub` | no | **yes** | `server/scheduler.rs::spawn_scheduler` | `core/shared_space/mod.rs::run_pass` |
 | `core/sources/page_watcher.rs::adopt_note` | `private` | no | no | — | `core/sources/page_watcher.rs::create_adopted_page` |
 | `core/sources/page_watcher.rs::sync_pass` | `private` | no | no | — | `core/sources/page_watcher.rs::archive_deleted_pages`, `core/sources/page_watcher.rs::finish_pending_adoptions`, `core/sources/page_watcher.rs::sync_one_file` |
 | `core/steep_new.rs::claim_new` | `pub` | no | no | — | `core/steep_new.rs::claim_new_on` |
@@ -1797,7 +1806,7 @@ carrying the authority of agreement.
 | `server/routes.rs::handle_context` | `pub` | no | no | — | `server/brief_routes.rs::handle_read_brief` |
 | `server/routes.rs::handle_search` | `pub` | no | no | — | `server/routes.rs::handle_search_inner` |
 | `server/scheduler.rs::fire_steep_phase` | `private` | no | no | `server/scheduler.rs::fire_steep_phase_safe` | `core/refinery/mod.rs::run_periodic_steep_phase_with_api` |
-| `server/scheduler.rs::spawn_scheduler` | `pub` | no | **yes** | `server/main.rs::run_daemon` | `core/shared_space/mod.rs::sync_shared_spaces`, `core/trust_scan.rs::run_and_store`, `server/scheduler.rs::fire_maintenance_stage_safe` |
+| `server/scheduler.rs::spawn_scheduler` | `pub` | no | **yes** | `server/main.rs::run_daemon` | `core/trust_scan.rs::run_and_store`, `server/scheduler.rs::fire_maintenance_stage_safe` |
 | `server/scheduler/ambient.rs::run_ambient_job` | `pub(super)` | no | no | `server/scheduler/ambient.rs::run_ambient_job_safe` | `core/post_ingest.rs::run_page_growth_slice` |
 | `server/sentence_routes.rs::handle_accept_sentence_proposal` | `pub` | no | no | — | `server/sentence_routes.rs::require_visible_page` |
 | `server/sentence_routes.rs::handle_flag_sentence` | `pub` | no | no | — | `server/sentence_routes.rs::require_visible_page` |
@@ -1809,10 +1818,12 @@ carrying the authority of agreement.
 | `server/source_lifecycle_routes.rs::write` | `private` | yes | no | — | `core/db/citation_provenance.rs::set_source_lifecycle` |
 | `server/source_routes.rs::sync_directory_source` | `pub(crate)` | no | no | `server/scheduler.rs::sync_directory_sources_in_scope`, `server/source_routes.rs::handle_sync_source` | `core/db.rs::rebind_source_id_with_source_page` |
 | `server/source_routes/okf_sync.rs::sync_okf_source_in_batches` | `pub(super)` | no | no | `server/source_routes/okf_sync.rs::sync_okf_source` | `core/db.rs::rebind_source_id_with_source_page`, `core/db/okf_concepts.rs::refresh_okf_concept_linkers` |
+| `server/spaces_routes.rs::host_sync` | `private` | no | no | `server/spaces_routes.rs::shared_sync` | `core/shared_space/mod.rs::sync_space` |
 | `server/spaces_routes.rs::shared_sync` | `private` | yes | no | — | `core/shared_space/mod.rs::sync_space` |
 | `server/steep_new_routes.rs::handle_steep_new_claim` | `pub` | no | no | — | `core/steep_new.rs::claim_new_on` |
 | `server/steep_new_routes.rs::handle_steep_new_links` | `pub` | no | no | — | `core/steep_new.rs::links_new` |
 | `server/steep_new_routes.rs::handle_steep_new_organize` | `pub` | no | no | — | `core/steep_new.rs::organize_new` |
+| `server/team_routes.rs::handle_host_space` | `pub` | no | no | — | `core/shared_space/mod.rs::sync_space` |
 | `server/things_intake.rs::dream_once` | `private` | no | no | `server/things_intake.rs::look_once` | `server/things_intake.rs::dream_with` |
 | `server/things_routes.rs::handle_connect_night_points` | `pub` | no | no | — | `server/things_intake.rs::connect_old_night_points` |
 

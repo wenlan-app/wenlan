@@ -13,10 +13,14 @@ import {
   shareSpace,
   stopSharingPage,
   stopSharingSpace,
+  teamHostSpace,
   type SharedKind,
   type SharedStatus,
 } from "../../../lib/tauri";
 import { ConfirmDialog } from "../../ConfirmDialog";
+import type { SettingsSection } from "../settings/SettingsSidebar";
+import { TEAM_KEY, hostName, useTeamStatus } from "./team";
+import { TeamMembers } from "./TeamMembers";
 import { relativeMs } from "../page/format";
 import { SHARES_KEY, cloudName, others, pageShare, revealFolderLabel, shortFolder, spaceShare, useShares } from "./sharing";
 import "./sharing.css";
@@ -31,7 +35,7 @@ export type ShareTarget = {
 
 type ShareDialogProps = ShareTarget & {
   readonly onClose: () => void;
-  readonly onOpenSettings?: () => void;
+  readonly onOpenSettings?: (section?: SettingsSection) => void;
 };
 
 function errorText(error: unknown): string {
@@ -71,8 +75,14 @@ function ShareBox({ kind, target, title, onClose }: ShareTarget & { readonly onC
   const queryClient = useQueryClient();
   const [folder, setFolder] = useState<string | null>(null);
   const [taken, setTaken] = useState(false);
-  const [pending, setPending] = useState(false);
+  const [pending, setPending] = useState<"team" | "folder" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Only a computer that runs a team server can host a Space for a team; it
+  // is asked first how to share, and goes straight on with the answer.
+  const teamStatus = useTeamStatus();
+  const canHost = kind === "space" && Boolean(teamStatus.data?.listening);
+  const [step, setStep] = useState<"choose" | "folder">("choose");
+  const choosing = canHost && step === "choose";
   const choose = async () => {
     const chosen = await openDialog({ directory: true, multiple: false });
     if (typeof chosen !== "string") return;
@@ -85,10 +95,26 @@ function ShareBox({ kind, target, title, onClose }: ShareTarget & { readonly onC
       // A folder that cannot be read is reported when sharing.
     }
   };
+  const hostForTeam = async () => {
+    if (pending) return;
+    setPending("team");
+    setError(null);
+    try {
+      await teamHostSpace(target);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: SHARES_KEY }),
+        queryClient.invalidateQueries({ queryKey: TEAM_KEY }),
+      ]);
+    } catch (caught) {
+      setError(errorText(caught));
+    } finally {
+      setPending(null);
+    }
+  };
   const share = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!folder || taken || pending) return;
-    setPending(true);
+    if (pending || choosing || !folder || taken) return;
+    setPending("folder");
     setError(null);
     try {
       if (kind === "space") await shareSpace(target, folder);
@@ -97,31 +123,63 @@ function ShareBox({ kind, target, title, onClose }: ShareTarget & { readonly onC
     } catch (caught) {
       setError(errorText(caught));
     } finally {
-      setPending(false);
+      setPending(null);
     }
   };
   const outsideCloud = folder !== null && cloudName(folder, t) === null;
   return (
     <form onSubmit={share}>
       <h2 id="share-dialog-title">{t("sharing.shareTitle", { name: title })}</h2>
-      <div className="share-field">
-        <span className="share-label">{t("sharing.folder")}</span>
-        <div className="share-folder-row">
-          <span className="share-folder" data-empty={folder === null}>
-            <FolderIcon />
-            <span>{folder ? shortFolder(folder, t) : t("sharing.noFolder")}</span>
-          </span>
-          <button type="button" className="share-secondary" onClick={() => void choose()} disabled={pending}>{t("sharing.choose")}</button>
-        </div>
-        <p className="share-hint">{t(kind === "space" ? "sharing.folderHintSpace" : "sharing.folderHintPage")}</p>
-        {taken && <p className="share-warning" role="alert">{t("sharing.alreadyShared")}</p>}
-        {!taken && outsideCloud && <p className="share-warning">{t("sharing.notCloud")}</p>}
-        {error && <p className="share-warning" role="alert">{t("sharing.failed", { message: error })}</p>}
-      </div>
-      <div className="share-actions">
-        <button type="button" className="share-secondary" onClick={onClose} disabled={pending}>{t("sharing.cancel")}</button>
-        <button type="submit" className="share-primary" disabled={!folder || taken || pending}>{t(pending ? "sharing.sharing" : "sharing.share")}</button>
-      </div>
+      {choosing ? (
+        <>
+          <ul className="share-ways">
+            <li>
+              <button type="button" className="share-way" disabled={pending !== null} onClick={() => void hostForTeam()}>
+                <span className="share-way-text">
+                  <span className="share-way-title">{t("team.shareChoiceTeam")}</span>
+                  <span className="share-way-hint">{t(pending === "team" ? "sharing.sharing" : "team.shareTeamHint")}</span>
+                </span>
+                <span aria-hidden="true" className="share-way-chevron">›</span>
+              </button>
+            </li>
+            <li>
+              <button type="button" className="share-way" disabled={pending !== null} onClick={() => { setStep("folder"); setError(null); }}>
+                <span className="share-way-text">
+                  <span className="share-way-title">{t("team.shareChoiceFolder")}</span>
+                  <span className="share-way-hint">{t("team.shareFolderHint")}</span>
+                </span>
+                <span aria-hidden="true" className="share-way-chevron">›</span>
+              </button>
+            </li>
+          </ul>
+          {error && <p className="share-warning" role="alert">{t("sharing.failed", { message: error })}</p>}
+          <div className="share-actions">
+            <button type="button" className="share-secondary" onClick={onClose} disabled={pending !== null}>{t("sharing.cancel")}</button>
+          </div>
+        </>
+      ) : (
+        <>
+          {canHost && <button type="button" className="share-link share-back" onClick={() => { setStep("choose"); setError(null); }}>{t("team.shareBack")}</button>}
+          <div className="share-field">
+            <span className="share-label">{t("sharing.folder")}</span>
+            <div className="share-folder-row">
+              <span className="share-folder" data-empty={folder === null}>
+                <FolderIcon />
+                <span>{folder ? shortFolder(folder, t) : t("sharing.noFolder")}</span>
+              </span>
+              <button type="button" className="share-secondary" onClick={() => void choose()} disabled={pending !== null}>{t("sharing.choose")}</button>
+            </div>
+            <p className="share-hint">{t(kind === "space" ? "sharing.folderHintSpace" : "sharing.folderHintPage")}</p>
+            {taken && <p className="share-warning" role="alert">{t("sharing.alreadyShared")}</p>}
+            {!taken && outsideCloud && <p className="share-warning">{t("sharing.notCloud")}</p>}
+            {error && <p className="share-warning" role="alert">{t("sharing.failed", { message: error })}</p>}
+          </div>
+          <div className="share-actions">
+            <button type="button" className="share-secondary" onClick={onClose} disabled={pending !== null}>{t("sharing.cancel")}</button>
+            <button type="submit" className="share-primary" disabled={!folder || taken || pending !== null}>{t(pending ? "sharing.sharing" : "sharing.share")}</button>
+          </div>
+        </>
+      )}
     </form>
   );
 }
@@ -129,7 +187,7 @@ function ShareBox({ kind, target, title, onClose }: ShareTarget & { readonly onC
 function syncLine(share: SharedStatus, t: TFunction, locale: string): string {
   const last = share.last;
   if (!last) return t("sharing.syncing");
-  if (last.paused) return t("sharing.paused");
+  if (last.paused) return share.host ? t("team.pausedRemoved") : t("sharing.paused");
   const when = relativeMs(Date.parse(last.at), locale);
   if (last.counts.skipped > 0) return t("sharing.waiting", { count: last.counts.skipped });
   return t("sharing.upToDate", { when });
@@ -138,7 +196,7 @@ function syncLine(share: SharedStatus, t: TFunction, locale: string): string {
 function MembersBox({ share, onClose, onOpenSettings }: {
   readonly share: SharedStatus;
   readonly onClose: () => void;
-  readonly onOpenSettings?: () => void;
+  readonly onOpenSettings?: (section?: SettingsSection) => void;
 }) {
   const { t, i18n } = useTranslation();
   const locale = i18n.resolvedLanguage ?? i18n.language;
@@ -147,6 +205,7 @@ function MembersBox({ share, onClose, onOpenSettings }: {
   const [changing, setChanging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const cloud = cloudName(share.folder, t);
+  const team = Boolean(share.host) || Boolean(share.hosted);
   const me = share.members.find((member) => member.id === share.member_id) ?? { id: share.member_id, name: share.member_name };
   const rest = others(share);
   const change = async () => {
@@ -178,27 +237,34 @@ function MembersBox({ share, onClose, onOpenSettings }: {
   };
   return (
     <div className="share-members">
-      <h2 id="share-dialog-title">{t("sharing.membersTitle")}</h2>
-      <p className="share-hint">{t("sharing.inviteHow", { cloud: cloud ?? t("sharing.yourCloud") })}</p>
-      <div>
-        <button type="button" className="share-secondary" onClick={() => void revealSharedFolder(share.folder).catch(() => undefined)}>{revealFolderLabel(t)}</button>
-      </div>
+      <h2 id="share-dialog-title">{share.hosted && share.kind === "space" ? t("team.hostedMembersTitle", { space: share.target }) : t("sharing.membersTitle")}</h2>
+      {team ? (
+        <p className="share-hint">{share.host ? t("team.serverLine", { host: hostName(share.host) }) : t("team.thisComputer")}</p>
+      ) : (
+        <>
+          <p className="share-hint">{t("sharing.inviteHow", { cloud: cloud ?? t("sharing.yourCloud") })}</p>
+          <div>
+            <button type="button" className="share-secondary" onClick={() => void revealSharedFolder(share.folder).catch(() => undefined)}>{revealFolderLabel(t)}</button>
+          </div>
+        </>
+      )}
       <ul className="share-member-list">
         <li>
-          <span>{t("sharing.you", { name: me.name })}</span>
-          {onOpenSettings && <button type="button" className="share-link" onClick={() => { onClose(); onOpenSettings(); }}>{t("sharing.changeInSettings")}</button>}
+          <span>{share.host && share.read_only ? t("team.youReadOnly", { name: me.name }) : t("sharing.you", { name: me.name })}</span>
+          {onOpenSettings && !share.host && <button type="button" className="share-link" onClick={() => { onClose(); onOpenSettings(); }}>{t("sharing.changeInSettings")}</button>}
         </li>
-        {rest.map((member) => <li key={member.id}><span>{member.name}</span></li>)}
-        {rest.length === 0 && <li className="share-muted">{t("sharing.noOthers")}</li>}
+        {!share.hosted && rest.map((member) => <li key={member.id}><span>{member.name}</span></li>)}
+        {!share.hosted && rest.length === 0 && <li className="share-muted">{t("sharing.noOthers")}</li>}
       </ul>
+      {share.hosted && <TeamMembers space={share.target} onError={setError} />}
       <dl className="share-facts">
-        <div>
+        {!team && <div>
           <dt>{t("sharing.folder")}</dt>
           <dd>
             <span className="share-folder-text">{shortFolder(share.folder, t)}</span>
             <button type="button" className="share-link" disabled={changing} onClick={() => void change()}>{t("sharing.change")}</button>
           </dd>
-        </div>
+        </div>}
         <div>
           <dt>{t("sharing.sync")}</dt>
           <dd className={share.last?.paused ? "share-warning-text" : undefined}>{changing ? t("sharing.syncing") : syncLine(share, t, locale)}</dd>
@@ -211,7 +277,9 @@ function MembersBox({ share, onClose, onOpenSettings }: {
       </div>
       {confirmingStop && (
         <ConfirmDialog
-          message={share.kind === "space"
+          message={team
+            ? t("team.stopConfirm", { name: share.target })
+            : share.kind === "space"
             ? t("sharing.stopConfirmSpace", { name: share.target, cloud: cloud ?? t("sharing.yourCloud") })
             : t("sharing.stopConfirmPage", { cloud: cloud ?? t("sharing.yourCloud") })}
           confirmLabel={t("sharing.stop")}
