@@ -243,7 +243,7 @@
   .home-columns--spaces .home-space-lead .home-space-title { font-size:22px; }
   .home-columns--spaces .home-space-lead .home-space-text { font-size:13px; }
 }
-.home-columns--spaces .wiki-new-pages-row { border-radius:var(--mem-r-8);padding:16px; }
+.home-columns--spaces .wiki-new-pages-row { border-color:var(--mem-border);border-radius:var(--mem-r-10);padding:16px; }
 .home-columns--spaces .wiki-new-pages-icon { display:none; }
 .home-columns--spaces .wiki-new-pages-title { font-size:15px; }
 /* The summary is read whole: two lines before it is cut. */
