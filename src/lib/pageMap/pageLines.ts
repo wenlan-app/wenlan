@@ -20,6 +20,33 @@ const MORE_PREFIX = `${PAGE_LINE_PREFIX}more:`;
 const FOLD_OVER = 3;
 /** How many items a folded heading still shows. */
 const FOLDED_SHOWS = 2;
+/**
+ * How many levels under the page open drawn. A heading at this level keeps
+ * whatever sits under it folded, so a deeply nested page still opens as a
+ * short tree.
+ */
+const OPEN_DEPTH = 3;
+
+/** Each line's level under the page: 1 for a line hanging off the page. */
+function depths(outline: readonly PageOutlineNode[]): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const line of outline) {
+    // Parents always come before their children in reading order.
+    out.set(line.id, line.parent_id ? (out.get(line.parent_id) ?? 0) + 1 : 1);
+  }
+  return out;
+}
+
+/** Headings at the deepest drawn level that have lines under them. */
+function deepHeadings(outline: readonly PageOutlineNode[]): Set<string> {
+  const depth = depths(outline);
+  const parents = new Set(outline.map((l) => l.parent_id).filter((p): p is string => p !== null));
+  return new Set(
+    outline
+      .filter((l) => l.kind === "heading" && (depth.get(l.id) ?? 0) >= OPEN_DEPTH && parents.has(l.id))
+      .map((l) => l.id),
+  );
+}
 
 export function isPageLine(id: string): boolean {
   return id.startsWith(PAGE_LINE_PREFIX);
@@ -108,10 +135,21 @@ export function withPageLines(map: PageMap | undefined, options: PageLinesOption
     const folded = parent !== null && items.length > FOLD_OVER && !options.open.has(parent);
     for (const item of folded ? items.slice(0, FOLDED_SHOWS) : items) shown.add(item.id);
   }
+  // Too many levels: a deep heading stays shut until opened, and so does
+  // everything under it.
+  const deep = deepHeadings(outline);
+  const hidden = new Set<string>();
+  for (const line of outline) {
+    const parent = line.parent_id;
+    if (parent !== null && (hidden.has(parent) || (deep.has(parent) && !options.open.has(parent)))) {
+      hidden.add(line.id);
+    }
+  }
 
   // Page lines come first, in reading order, ahead of the person's own boxes.
   const base = -1_000_000;
   outline.forEach((line, index) => {
+    if (hidden.has(line.id)) return;
     if (line.kind === "item" && !shown.has(line.id)) return;
     out.push(
       box(
@@ -124,8 +162,22 @@ export function withPageLines(map: PageMap | undefined, options: PageLinesOption
       ),
     );
   });
+  for (const id of deep) {
+    if (options.open.has(id) || hidden.has(id)) continue;
+    out.push(
+      box(
+        `${MORE_PREFIX}${id}`,
+        `${PAGE_LINE_PREFIX}${id}`,
+        base + outline.findIndex((l) => l.id === id) + 0.5,
+        "outline",
+        `${options.pageId}#more`,
+        options.showRestLabel,
+      ),
+    );
+  }
   for (const [parent, items] of itemsOf) {
     if (parent === null || options.open.has(parent) || items.length <= FOLD_OVER) continue;
+    if (deep.has(parent) || hidden.has(parent)) continue;
     const lastShown = outline.indexOf(items[FOLDED_SHOWS - 1]);
     out.push(
       box(
@@ -141,7 +193,7 @@ export function withPageLines(map: PageMap | undefined, options: PageLinesOption
   return out;
 }
 
-/** Headings that fold, so the box can show a toggle. */
+/** Headings that fold (long, or too deep), so the box can show a toggle. */
 export function foldableHeadings(map: PageMap | undefined): Set<string> {
   const counts = new Map<string, number>();
   for (const line of map?.outline ?? []) {
@@ -149,5 +201,6 @@ export function foldableHeadings(map: PageMap | undefined): Set<string> {
       counts.set(line.parent_id, (counts.get(line.parent_id) ?? 0) + 1);
     }
   }
-  return new Set([...counts].filter(([, n]) => n > FOLD_OVER).map(([id]) => id));
+  const long = [...counts].filter(([, n]) => n > FOLD_OVER).map(([id]) => id);
+  return new Set([...long, ...deepHeadings(map?.outline ?? [])]);
 }

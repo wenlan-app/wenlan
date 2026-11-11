@@ -89,3 +89,31 @@ describe("withPageLines", () => {
     expect(outlineLine(map, "outline:more:h:a")).toBeNull();
   });
 });
+
+describe("withPageLines on deep pages", () => {
+  // page › h1 › h2 › h3 › h4 › item
+  const outline = [
+    line("h:1", null, "heading"),
+    line("h:1/2", "h:1", "heading"),
+    line("h:1/2/3", "h:1/2", "heading"),
+    line("h:1/2/3/4", "h:1/2/3", "heading"),
+    line("h:1/2/3/4#1", "h:1/2/3/4", "item"),
+  ];
+  const map = mapWith([], outline);
+
+  it("draws three levels and keeps the rest folded under the third", () => {
+    const ids = withPageLines(map, { ...base, open: new Set() }).map((n) => n.id);
+    expect(ids).toEqual([PAGE_LINE_ROOT, "outline:h:1", "outline:h:1/2", "outline:h:1/2/3", "outline:more:h:1/2/3"]);
+    expect(foldableHeadings(map).has("h:1/2/3")).toBe(true);
+  });
+
+  it("opens one level at a time", () => {
+    const one = withPageLines(map, { ...base, open: new Set(["h:1/2/3"]) }).map((n) => n.id);
+    expect(one).toContain("outline:h:1/2/3/4");
+    expect(one).not.toContain("outline:h:1/2/3/4#1");
+    expect(one).toContain("outline:more:h:1/2/3/4");
+    const both = withPageLines(map, { ...base, open: new Set(["h:1/2/3", "h:1/2/3/4"]) }).map((n) => n.id);
+    expect(both).toContain("outline:h:1/2/3/4#1");
+    expect(both.some((id) => id.startsWith("outline:more:"))).toBe(false);
+  });
+});
