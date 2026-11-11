@@ -1,7 +1,7 @@
 .space-dossier {
   --mem-text-tertiary: var(--mem-text-meta-aa);
-  --space-leading-gutter: max(0px, calc((var(--space-unobstructed-width, 100%) - 960px) / 2));
-  width: min(960px, calc(100% - var(--space-leading-gutter)));
+  --space-leading-gutter: max(0px, calc((var(--space-unobstructed-width, 100%) - 840px) / 2));
+  width: min(840px, calc(100% - var(--space-leading-gutter)));
   margin-inline: var(--space-leading-gutter) auto;
   padding: 4px 0 48px;
   color: var(--mem-text);
@@ -219,12 +219,3 @@
 }
 
 .space-dossier-error { display: flex; align-items: center; gap: 12px; font-size: 13px; }
-
-/* The Space page sits where home sits (UX-SPACE-3): the same 960px column
-   and the same first line, so moving between them does not jump. */
-@media (min-width: 900px) {
-  .memory-main-content:has(> .space-dossier) {
-    padding-top: 32px;
-    padding-inline: 40px;
-  }
-}
