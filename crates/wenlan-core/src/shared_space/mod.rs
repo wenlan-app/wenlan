@@ -1082,7 +1082,16 @@ async fn run_pass(
             list_team_members(settings_path, &folder, space).await;
         }
     }
-    let counts = pass(db, scope, &settings, settings_path, knowledge_path).await?;
+    let edit_settle = if automatic { EDIT_SETTLE_SECS } else { 0 };
+    let counts = pass(
+        db,
+        scope,
+        &settings,
+        settings_path,
+        knowledge_path,
+        edit_settle,
+    )
+    .await?;
     if matches!(scope, Scope::Library) {
         library::main_jobs(db, settings_path, &settings, &counts).await;
     }
@@ -1310,6 +1319,24 @@ struct Pass<'a> {
     library: bool,
     /// The library leaves out these Spaces, which have their own share here.
     own_spaces: HashSet<String>,
+    /// Seconds the person's typing must have stopped before an edit is
+    /// written as a version; 0 writes at once.
+    edit_settle: i64,
+}
+
+/// How long an automatic pass waits after the person's last save of a page
+/// before writing it as a version, so a typing session is one version
+/// rather than one every pass. A sync the person asks for writes at once.
+const EDIT_SETTLE_SECS: i64 = if cfg!(test) { 0 } else { 120 };
+
+/// Whether the person is still typing on this page: its newest save is by
+/// the editor or a file edit, less than `settle` seconds ago.
+fn still_typing(last: Option<&crate::db::PageHistoryEntry>, now: i64, settle: i64) -> bool {
+    settle > 0
+        && last.is_some_and(|row| {
+            crate::page_history::folds(Some(row.edited_by.as_str()))
+                && now - row.created_at < settle
+        })
 }
 
 /// One pass of `scope` with the folder in `settings`.
@@ -1319,6 +1346,7 @@ async fn pass(
     settings: &ShareSettings,
     settings_path: &Path,
     knowledge_path: Option<&Path>,
+    edit_settle: i64,
 ) -> Result<SharedSyncCounts, WenlanError> {
     let folder = folder_for(scope, &settings.folder);
     let me = SpaceMember {
@@ -1447,6 +1475,7 @@ async fn pass(
         unread: read.skipped,
         library: matches!(scope, Scope::Library),
         own_spaces,
+        edit_settle,
     };
     let mut held = read_held(db, &key).await?;
 
@@ -1670,6 +1699,18 @@ impl Pass<'_> {
         // A member who may only read writes no version: the team's version
         // is taken over the edit, which stays in this page's history.
         let changed = changed && !self.settings.read_only;
+        if changed && self.edit_settle > 0 {
+            let last = self.db.list_page_history(&page.id, 1).await?;
+            if still_typing(
+                last.first(),
+                chrono::Utc::now().timestamp(),
+                self.edit_settle,
+            ) {
+                // Written once the typing stops; the head waits too, so it
+                // is never taken over the edit.
+                return Ok(None);
+            }
+        }
         if changed {
             return match self
                 .export_page(page, versions, head.as_ref(), base)

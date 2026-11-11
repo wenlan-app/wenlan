@@ -2378,3 +2378,24 @@ async fn a_second_pass_does_not_read_a_version_file_again() {
     let second = memories::read_folder(&engine);
     assert!(Arc::ptr_eq(&version, &second.memories["mem_once"][0]));
 }
+
+#[test]
+fn an_automatic_pass_waits_for_typing_to_stop() {
+    let row = |by: &str, at: i64| crate::db::PageHistoryEntry {
+        version: 3,
+        title: None,
+        content: String::new(),
+        source_memory_ids: vec![],
+        edited_by: by.into(),
+        created_at: at,
+    };
+    // The editor saved 30 s ago: still typing.
+    assert!(still_typing(Some(&row("manual_edit", 970)), 1_000, 120));
+    // Two minutes since the last save: written now.
+    assert!(!still_typing(Some(&row("manual_edit", 880)), 1_000, 120));
+    // An AI edit, or a sync the person asked for, is written at once.
+    assert!(!still_typing(Some(&row("agent_refresh", 990)), 1_000, 120));
+    assert!(!still_typing(Some(&row("fs_edit", 990)), 1_000, 0));
+    assert!(still_typing(Some(&row("fs_edit", 990)), 1_000, 120));
+    assert!(!still_typing(None, 1_000, 120));
+}
