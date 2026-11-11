@@ -1,7 +1,7 @@
 .space-dossier-content {
   display: flex;
   flex-direction: column;
-  gap: 32px;
+  gap: 48px;
 }
 
 .space-dossier h2 {
@@ -44,35 +44,38 @@
   gap: 14px;
 }
 
+/* Cards match home's recent pages (UX-SPACE-3): outlined, flat, no icon. */
 .space-dossier-page-list[data-lens="cards"] > button {
-  align-items: start;
-  min-height: 122px;
-  padding: 16px 18px;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  row-gap: 6px;
+  padding: 16px;
   border: 1px solid var(--mem-border);
   border-radius: var(--mem-r-10);
-  background: var(--mem-surface);
-  box-shadow: var(--mem-shadow-raised);
+  background: none;
+  box-shadow: none;
 }
 
 .space-dossier-page-list[data-lens="cards"] > button:hover {
   background: var(--mem-hover);
 }
 
-/* A card: icon beside the title, the summary and tag under both. */
-.space-dossier-page-list[data-lens="cards"] > button {
-  grid-template-columns: 20px minmax(0, 1fr);
-  align-content: start;
-  row-gap: 8px;
-}
-
 .space-dossier-page-list[data-lens="cards"] .space-dossier-page-text {
   display: contents;
 }
 
-.space-dossier-page-list[data-lens="cards"] .space-dossier-page-summary,
-.space-dossier-page-list[data-lens="cards"] .space-dossier-page-fresh,
+.space-dossier-page-list[data-lens="cards"] .space-dossier-page-title {
+  font: 600 15px/1.4 var(--mem-font-body);
+}
+
+.space-dossier-page-list[data-lens="cards"] .space-dossier-page-summary {
+  color: var(--mem-text-tertiary);
+  font: 13px/1.5 var(--mem-font-body);
+}
+
 .space-dossier-page-list[data-lens="cards"] .shared-row-meta {
-  grid-column: 1 / -1;
+  color: var(--mem-text-tertiary);
+  font-size: 13px;
 }
 
 .space-dossier-page-summary {
@@ -267,12 +270,15 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin: 32px 0 14px;
+  margin: 48px 0 12px;
 }
 
+/* Section titles read like home's: small, quiet, body font. */
 .space-dossier .space-project-heading {
   margin: 0;
-  font: 500 19px/1.3 var(--mem-font-heading);
+  color: var(--mem-text-tertiary);
+  font: 400 13px/1.4 var(--mem-font-body);
+  letter-spacing: 0;
 }
 
 .space-project-controls > .asset-lens-toggle {

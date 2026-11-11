@@ -458,6 +458,7 @@ and wait for evidence that people need them.
   AI changed in the last day is quietly marked.
   原文：「不 sources 放里面我也不知道它能干嘛」（2026-11-10 23:02Z）；同 UX-SPACE-1 草圖。
   版面：「感覺版面啥的不夠好看 UI/UX」（2026-11-11 00:24Z）後，選擇卡「1 淡色底一塊」（2026-11-11 00:30Z）：Brief 一塊，筆記用卡片、上方有「筆記」標題；底色選擇卡「C 白底細框」（2026-11-11 01:02Z）。
+  與首頁一致：選 A，「首頁和空間的排版要一致，譬如間距和周遭」（2026-11-11）。空間頁和首頁用同一條 960px 欄、第一行同高；區塊小標題、間距與卡片樣式（細框、無陰影、無圖示）和首頁相同。
 
 ## Adding to Wenlan
 

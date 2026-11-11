@@ -140,7 +140,8 @@ describe("SpaceDetail editorial dossier", () => {
 
     const region = await screen.findByRole("region", { name: "Pages" });
     const rows = within(region).getAllByRole("button");
-    expect(rows[0].querySelector("svg")).toHaveAttribute("width", "20");
+    // Cards (the default lens) carry no page icon, like home's cards (UX-SPACE-3).
+    expect(rows[0].querySelector("svg")).toBeNull();
     expect(rows.map((row) => row.textContent)).toEqual([
       expect.stringContaining("Alpha"), expect.stringContaining("Beta"),
       expect.stringContaining("Charlie"), expect.stringContaining("Delta"),

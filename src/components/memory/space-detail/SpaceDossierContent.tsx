@@ -46,7 +46,7 @@ export function SpaceDossierContent({ copy, navigation, pages, lens, shares }: S
           <div className="space-dossier-page-list" data-lens={lens}>
             {visiblePages.map((page) => (
               <button key={page.id} onClick={() => navigation.onSelectPage(page.id)} type="button">
-                <PageIcon />
+                {lens !== "cards" && <PageIcon />}
                 <span className="space-dossier-page-text">
                   <span className="space-dossier-page-title">{page.title}{lens !== "cards" && aiUpdatedRecently(page) && <span className="space-dossier-page-fresh">{t("spaceDetail.brief.aiUpdated")}</span>}</span>{" "}
                   {page.summary?.trim() && <span className="space-dossier-page-summary">{page.summary}</span>}

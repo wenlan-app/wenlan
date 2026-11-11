@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: AGPL-3.0-only */
 /* A Space's Brief on top of its page (UX-SPACE-1): one white panel with a
-   thin border, where the work stands on the left and what is in progress
+   thin border, flat like home's cards, where the work stands on the left and what is in progress
    on the right. */
 .space-brief {
   display: grid;
@@ -8,9 +8,8 @@
   margin: 28px 0 8px;
   padding: 26px 30px 24px;
   border: 1px solid var(--mem-border);
-  border-radius: var(--mem-r-12);
+  border-radius: var(--mem-r-10);
   background: var(--mem-surface);
-  box-shadow: var(--mem-shadow-raised);
 }
 
 .space-brief[data-split="true"] {
@@ -32,7 +31,7 @@
 .space-brief-summary {
   margin: 0;
   color: var(--mem-text);
-  font: 500 18px/1.65 var(--mem-font-body);
+  font: 400 15px/1.65 var(--mem-font-body);
   overflow-wrap: anywhere;
 }
 
@@ -51,8 +50,9 @@
 .space-dossier .space-brief-heading,
 .space-brief-heading {
   margin: 0;
-  color: var(--mem-text-secondary);
-  font: 500 12px/1.4 var(--mem-font-body);
+  color: var(--mem-text-tertiary);
+  font: 400 13px/1.4 var(--mem-font-body);
+  letter-spacing: 0;
 }
 
 .space-brief-items ul {
