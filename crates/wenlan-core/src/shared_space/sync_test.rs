@@ -2012,3 +2012,354 @@ async fn a_pass_that_would_archive_most_of_the_library_archives_none() {
         .unwrap();
     assert_eq!(counts.held_back, 22);
 }
+
+// ===== The library's memories =====
+
+impl Member {
+    /// A memory saved the way a capture is stored.
+    async fn save_memory(&self, id: &str, text: &str, space: Option<&str>) {
+        self.db
+            .upsert_documents(vec![crate::sources::RawDocument {
+                source: "memory".to_string(),
+                source_id: id.to_string(),
+                title: text.chars().take(30).collect(),
+                content: text.to_string(),
+                last_modified: chrono::Utc::now().timestamp(),
+                memory_type: Some("fact".to_string()),
+                space: space.map(str::to_string),
+                source_agent: Some("claude-code".to_string()),
+                ..Default::default()
+            }])
+            .await
+            .unwrap();
+    }
+
+    async fn memory_text(&self, id: &str) -> Option<String> {
+        self.db
+            .get_memory_detail(id)
+            .await
+            .unwrap()
+            .map(|memory| memory.content)
+    }
+
+    /// Rows of the memory here, and whether they are forgotten.
+    async fn memory_rows(&self, id: &str) -> (usize, bool) {
+        let rows: Vec<_> = self
+            .db
+            .export_memory_rows()
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|row| row.source_id == id)
+            .collect();
+        let forgotten = rows
+            .iter()
+            .all(|row| row.supersede_mode.as_deref() == Some("evicted"));
+        (rows.len(), !rows.is_empty() && forgotten)
+    }
+}
+
+fn memory_files(folder: &Path) -> Vec<PathBuf> {
+    folder_files(folder)
+        .into_iter()
+        .map(|(path, _)| path)
+        .filter(|path| path.to_string_lossy().contains("/memories/"))
+        .collect()
+}
+
+#[tokio::test]
+async fn a_memory_reaches_the_other_computer_with_its_id_and_is_queued_to_be_found() {
+    let chosen = tempfile::tempdir().unwrap();
+    let (a, b) = library_pair(chosen.path()).await;
+    let engine = library::engine_folder(chosen.path());
+    a.save_memory(
+        "mem_otters",
+        "The harbour survey counted nine otters near the old pier.",
+        Some(SPACE),
+    )
+    .await;
+
+    let got = a.lib_sync(chosen.path(), None).await.unwrap();
+    assert_eq!(got.memories_exported, 1);
+    let files = memory_files(&engine);
+    assert_eq!(files.len(), 1);
+    assert!(files[0].to_string_lossy().ends_with(".wlv"));
+    assert!(files[0]
+        .to_string_lossy()
+        .contains(&format!("{}/memories/mem_otters/", a.library_member_id())));
+
+    let got = b
+        .lib_sync(chosen.path(), Some(&a.library_member_id()))
+        .await
+        .unwrap();
+    assert_eq!(got.memories_applied, 1);
+    assert_eq!(got.memories_exported, 0, "taken, not written back");
+    assert_eq!(
+        b.memory_text("mem_otters").await.as_deref(),
+        Some("The harbour survey counted nine otters near the old pier.")
+    );
+    assert_eq!(
+        b.db.get_memory_detail("mem_otters")
+            .await
+            .unwrap()
+            .unwrap()
+            .space
+            .as_deref(),
+        Some(SPACE)
+    );
+
+    // Queued like a new capture: no vector yet, no enrichment receipt, so
+    // the catch-up and the ambient classification lane take it.
+    assert_eq!(b.db.count_null_memory_embeddings().await.unwrap(), 1);
+    assert!(b
+        .db
+        .get_enrichment_steps("mem_otters")
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(b
+        .db
+        .get_classification_candidate_for("mem_otters", crate::post_ingest::ENRICHMENT_MAX_ATTEMPTS)
+        .await
+        .unwrap()
+        .is_some());
+    // The catch-up embeds it, and B finds it.
+    b.db.recover_null_memory_embeddings(&NoopEmitter)
+        .await
+        .unwrap();
+    assert_eq!(b.db.count_null_memory_embeddings().await.unwrap(), 0);
+    let found =
+        b.db.search_memory(
+            "otters near the pier",
+            5,
+            None,
+            &ReadScope::Global,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(
+        found.iter().any(|hit| hit.source_id == "mem_otters"),
+        "B finds the memory A saved"
+    );
+
+    // Nothing more to do, and no churn from enrichment on either side.
+    lib_settle(&a, &b, chosen.path()).await;
+    assert_eq!(memory_files(&engine).len(), 1);
+}
+
+#[tokio::test]
+async fn an_edit_on_the_other_computer_and_a_delete_reach_back() {
+    let chosen = tempfile::tempdir().unwrap();
+    let (a, b) = library_pair(chosen.path()).await;
+    a.save_memory("mem_tea", "Mara drinks green tea in the morning.", None)
+        .await;
+    lib_settle(&a, &b, chosen.path()).await;
+    assert!(b.memory_text("mem_tea").await.is_some());
+
+    // B edits it (the same id, new text, as a replace).
+    tick().await;
+    b.save_memory("mem_tea", "Mara now drinks black tea in the morning.", None)
+        .await;
+    lib_settle(&a, &b, chosen.path()).await;
+    assert_eq!(
+        a.memory_text("mem_tea").await.as_deref(),
+        Some("Mara now drinks black tea in the morning.")
+    );
+    assert!(!a.memory_rows("mem_tea").await.1);
+
+    // A forgets it; B forgets it too (restorable), and it is not made again.
+    tick().await;
+    a.db.forget_memory("mem_tea", "person", "test")
+        .await
+        .unwrap();
+    lib_settle(&a, &b, chosen.path()).await;
+    assert_eq!(b.memory_rows("mem_tea").await, (1, true));
+    // A restore on A brings it back on B.
+    tick().await;
+    assert!(a
+        .db
+        .restore_forgotten_memory("mem_tea", "person")
+        .await
+        .unwrap());
+    lib_settle(&a, &b, chosen.path()).await;
+    assert_eq!(b.memory_rows("mem_tea").await, (1, false));
+
+    // A permanent delete on A is forgotten for the others too.
+    tick().await;
+    a.db.delete_by_source_id("memory", "mem_tea").await.unwrap();
+    lib_settle(&a, &b, chosen.path()).await;
+    assert_eq!(b.memory_rows("mem_tea").await, (1, true));
+    assert_eq!(a.memory_rows("mem_tea").await.0, 0, "not made again on A");
+}
+
+#[tokio::test]
+async fn a_rebuilt_database_takes_the_memories_by_content_and_writes_nothing() {
+    let chosen = tempfile::tempdir().unwrap();
+    let (a, mut b) = library_pair(chosen.path()).await;
+    for n in 0..3 {
+        a.save_memory(
+            &format!("mem_{n}"),
+            &format!("Memory number {n} about the lighthouse keeper."),
+            None,
+        )
+        .await;
+    }
+    lib_settle(&a, &b, chosen.path()).await;
+    let engine = library::engine_folder(chosen.path());
+    let files = memory_files(&engine).len();
+    assert_eq!(files, 3);
+
+    // B's database is rebuilt from the same folder: it takes them again by
+    // content, writes no version, and a database that had the memories
+    // already (a restore) writes none either.
+    b.db = Member::open(b.dir.path(), "rebuilt.db").await;
+    let got = b
+        .lib_sync(chosen.path(), Some(&a.library_member_id()))
+        .await
+        .unwrap();
+    assert_eq!(got.memories_applied, 3);
+    assert_eq!(got.memories_exported, 0);
+    assert_eq!(memory_files(&engine).len(), files);
+    lib_settle(&a, &b, chosen.path()).await;
+    assert_eq!(memory_files(&engine).len(), files);
+
+    // A rebuilt A that already has them (same ids, same text) is in step.
+    let mut a = a;
+    let held =
+        a.db.get_app_metadata(&format!("shared_space.held_memories:{LIBRARY_KEY}"))
+            .await
+            .unwrap();
+    assert!(held.is_some());
+    a.db = Member::open(a.dir.path(), "rebuilt.db").await;
+    for n in 0..3 {
+        a.save_memory(
+            &format!("mem_{n}"),
+            &format!("Memory number {n} about the lighthouse keeper."),
+            None,
+        )
+        .await;
+    }
+    let got = a.lib_sync(chosen.path(), None).await.unwrap();
+    assert_eq!(got.memories_exported, 0, "{got:?}");
+    assert_eq!(got.memories_applied, 0, "{got:?}");
+    assert_eq!(memory_files(&engine).len(), files);
+}
+
+#[tokio::test]
+async fn documents_originals_and_memories_of_a_shared_space_stay_out() {
+    let chosen = tempfile::tempdir().unwrap();
+    let wedding = tempfile::tempdir().unwrap();
+    let a = Member::new("Lucian").await;
+    a.share(&space(), wedding.path()).await.unwrap();
+    a.save_memory(
+        "mem_shared_space",
+        "The caterer needs a head count by May.",
+        Some(SPACE),
+    )
+    .await;
+    a.save_memory(
+        "mem_kept",
+        "A plain memory about a garden gate.",
+        Some("Private"),
+    )
+    .await;
+    // A document read from a folder, a saved web page, an imported chat.
+    for (source, id) in [
+        ("local_files", "doc::notes.md"),
+        ("webpage", "https://example.com/post"),
+        ("memory", "import_claude_conv1"),
+        ("file", "zotero::paper"),
+    ] {
+        a.db.upsert_documents(vec![crate::sources::RawDocument {
+            source: source.to_string(),
+            source_id: id.to_string(),
+            title: "Source material".to_string(),
+            content: "Long source material that is not a memory the person saved.".to_string(),
+            last_modified: chrono::Utc::now().timestamp(),
+            ..Default::default()
+        }])
+        .await
+        .unwrap();
+    }
+    let got = a.lib_sync(chosen.path(), None).await.unwrap();
+    assert_eq!(got.memories_exported, 1);
+    let engine = library::engine_folder(chosen.path());
+    let files = memory_files(&engine);
+    assert_eq!(files.len(), 1);
+    let text = walk(&engine);
+    assert!(text.contains("garden gate"));
+    assert!(
+        !text.contains("caterer"),
+        "a Space with its own share stays out"
+    );
+    assert!(
+        !text.contains("source material"),
+        "originals are not written"
+    );
+
+    // The Space share carries pages only: no memory folder in it.
+    a.share(&space(), wedding.path()).await.unwrap();
+    assert!(memory_files(wedding.path()).is_empty());
+    assert!(!walk(wedding.path()).contains("caterer"));
+
+    // And the other computer does not get the Space's memory.
+    let b = Member::new("h1646").await;
+    b.lib_sync(chosen.path(), Some(&a.library_member_id()))
+        .await
+        .unwrap();
+    assert!(b.memory_text("mem_kept").await.is_some());
+    assert!(b.memory_text("mem_shared_space").await.is_none());
+    assert!(b.memory_text("import_claude_conv1").await.is_none());
+}
+
+#[tokio::test]
+async fn a_pass_that_would_forget_most_memories_forgets_none() {
+    let chosen = tempfile::tempdir().unwrap();
+    let (a, b) = library_pair(chosen.path()).await;
+    for n in 0..25 {
+        a.save_memory(
+            &format!("mem_{n}"),
+            &format!("Note {n} about the weekly market stall."),
+            None,
+        )
+        .await;
+    }
+    lib_settle(&a, &b, chosen.path()).await;
+    for n in 0..25 {
+        a.db.forget_memory(&format!("mem_{n}"), "person", "test")
+            .await
+            .unwrap();
+    }
+    a.lib_sync(chosen.path(), None).await.unwrap();
+    let got = b
+        .lib_sync(chosen.path(), Some(&a.library_member_id()))
+        .await
+        .unwrap();
+    assert_eq!(got.memories_applied, 0);
+    assert_eq!(got.memories_held_back, 25);
+    assert_eq!(b.memory_rows("mem_0").await, (1, false));
+}
+
+#[tokio::test]
+async fn a_second_pass_does_not_read_a_version_file_again() {
+    let chosen = tempfile::tempdir().unwrap();
+    let a = Member::new("Lucian").await;
+    a.lib_sync(chosen.path(), None).await.unwrap();
+    a.save_memory("mem_once", "A memory read once, however many passes.", None)
+        .await;
+    a.lib_sync(chosen.path(), None).await.unwrap();
+    let engine = library::engine_folder(chosen.path());
+    let first = memories::read_folder(&engine);
+    assert_eq!(first.memories.len(), 1);
+    // Break the file's bytes: the name no longer matches. A pass that read it
+    // again would skip it; one that knows its sha does not look.
+    let file = memory_files(&engine).remove(0);
+    let version = first.memories["mem_once"][0].clone();
+    std::fs::write(&file, b"changed").unwrap();
+    let second = memories::read_folder(&engine);
+    assert!(Arc::ptr_eq(&version, &second.memories["mem_once"][0]));
+}

@@ -76,11 +76,17 @@
 //! `space.json` says `"library": true`. The second computer joins with the
 //! member id found there (one person, one id).
 //!
+//! Only the library also carries the person's memories (`memories`): one
+//! `members/<member>/memories/<memory_id>/<sha256>.wlv` per version, picked
+//! and applied by the same rules after the pages. A Space or a page share
+//! never does, and the team server's reader walks `pages/` only.
+//!
 //! This Wenlan's member id, name and folder for each shared Space and page
 //! are kept in `shared-spaces.json` under the data root, outside the
 //! database, so a rebuilt database stays the same member.
 
 pub mod library;
+mod memories;
 pub mod remote;
 pub mod rewrite;
 pub mod version;
@@ -1514,6 +1520,10 @@ async fn pass(
     if unsaved {
         save_held(db, &key, &held).await?;
     }
+    if ctx.library {
+        // The library's memories go the same way, after its pages.
+        memories::sync(db, settings, &ctx.folder, &ctx.own_spaces, &mut counts).await?;
+    }
     Ok(counts)
 }
 
@@ -1599,22 +1609,7 @@ impl Pass<'_> {
     /// Makes the Space `name` here when there is none (a page of another
     /// computer's Space). `false` when it could not be made this pass.
     async fn ensure_space(&self, name: &str) -> Result<bool, WenlanError> {
-        if self.db.get_space(name).await?.is_some() {
-            return Ok(true);
-        }
-        match self.db.create_space(name, None, false).await {
-            Ok(_) => {
-                log::info!("[shared_space] made the Space {name:?} for the library");
-                Ok(true)
-            }
-            // Made meanwhile, or a name no Space can have.
-            Err(error) => {
-                if self.db.get_space(name).await?.is_some() {
-                    return Ok(true);
-                }
-                skipped_write(name, error)
-            }
-        }
+        ensure_space(self.db, name).await
     }
 
     /// A page of the Space that is here. Returns what to remember of it.
@@ -2420,6 +2415,27 @@ fn base_of<'a>(
         })
         .unwrap_or_default();
     (parent, merged)
+}
+
+/// Makes the Space `name` here when there is none (a page or memory of
+/// another computer's Space). `false` when it could not be made this pass.
+async fn ensure_space(db: &MemoryDB, name: &str) -> Result<bool, WenlanError> {
+    if db.get_space(name).await?.is_some() {
+        return Ok(true);
+    }
+    match db.create_space(name, None, false).await {
+        Ok(_) => {
+            log::info!("[shared_space] made the Space {name:?} for the library");
+            Ok(true)
+        }
+        // Made meanwhile, or a name no Space can have.
+        Err(error) => {
+            if db.get_space(name).await?.is_some() {
+                return Ok(true);
+            }
+            skipped_write(name, error).map(|_| false)
+        }
+    }
 }
 
 /// A write refused for this page only (it moved since it was read, or the

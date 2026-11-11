@@ -1575,7 +1575,7 @@ carrying the authority of agreement.
 | `core/shared_space/mod.rs::reload` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/shared_space/mod.rs::run_pass` | `private` | no | no | — | `core/shared_space/mod.rs::pass` |
 | `core/shared_space/mod.rs::stop_page_shares_in` | `private` | no | no | — | `core/db.rs::get_page` |
-| `core/shared_space/mod.rs::sync_missing` | `private` | no | no | — | `core/db.rs::get_page` |
+| `core/shared_space/mod.rs::sync_missing` | `private` | yes | no | — | `core/db.rs::get_page` |
 | `core/shared_space/mod.rs::sync_space` | `pub` | no | **yes** | `server/spaces_routes.rs::host_sync`, `server/spaces_routes.rs::shared_sync`, `server/team_routes.rs::handle_host_space` | `core/db.rs::get_page` |
 | `core/sources/page_watcher.rs::archive_deleted_pages` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/sources/page_watcher.rs::bring_back_archived_page` | `private` | no | no | — | `core/db.rs::get_page` |
