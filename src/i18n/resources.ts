@@ -332,7 +332,6 @@ const en = {
       welcome: {
         lead: "Your wiki lives on your computer. Where do you want to start?",
         exampleLink: "Or look around an example wiki first",
-        foot: "You can add more material any time.",
         folder: { title: "Use a folder or Obsidian vault", hint: "Notes, docs or code. Kept in sync, never moved." },
         chats: { title: "Bring in past AI chats", hint: "From ChatGPT or Claude. Bring in new ones any time." },
         empty: { title: "Start empty", hint: "Write your first page yourself." },
@@ -3671,7 +3670,6 @@ const zhHans = {
       welcome: {
         lead: "你的 wiki 存在你自己的电脑上。想从哪里开始？",
         exampleLink: "或先逛逛范例 wiki",
-        foot: "之后随时可以再加资料。",
         folder: { title: "用文件夹或 Obsidian 库", hint: "笔记、文件或代码，留在原处，有改动自动跟上。" },
         chats: { title: "带入以前的 AI 聊天", hint: "从 ChatGPT 或 Claude，之后有新的再带进来。" },
         empty: { title: "从空白开始", hint: "自己写第一篇。" },
@@ -6949,7 +6947,6 @@ const zhHant = {
       welcome: {
         lead: "你的 wiki 存在你自己的電腦上。想從哪裡開始？",
         exampleLink: "或先逛逛範例 wiki",
-        foot: "之後隨時可以再加資料。",
         folder: { title: "用資料夾或 Obsidian 庫", hint: "筆記、文件或程式碼，留在原處，有改動自動跟上。" },
         chats: { title: "帶入以前的 AI 聊天", hint: "從 ChatGPT 或 Claude，之後有新的再帶進來。" },
         empty: { title: "從空白開始", hint: "自己寫第一篇。" },

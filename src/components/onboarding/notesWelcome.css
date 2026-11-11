@@ -50,12 +50,6 @@
   margin: 8px -12px 0;
 }
 
-.notes-welcome__foot {
-  margin: 16px 0 0;
-  color: var(--mem-text-tertiary);
-  font-size: 13px;
-}
-
 @media (max-height: 600px) {
   .notes-welcome__main {
     padding-block: 24px;
@@ -115,9 +109,9 @@
   flex-wrap: wrap;
   align-items: baseline;
   gap: 4px 12px;
-  margin: 16px 0 0;
-  color: var(--mem-text-secondary);
-  font: 400 14px/1.5 var(--mem-font-body);
+  margin: 24px 0 0;
+  color: var(--mem-text-tertiary);
+  font: 400 13px/1.5 var(--mem-font-body);
 }
 
 .notes-welcome__example {

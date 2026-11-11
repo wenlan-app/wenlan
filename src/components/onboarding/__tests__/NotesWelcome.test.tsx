@@ -56,7 +56,7 @@ describe("NotesWelcome", () => {
     tauri.detectMcpClients.mockResolvedValue([]);
   });
 
-  it("says in one line who writes the pages, then offers three ways in and the example as a link, and nothing else to fill in", () => {
+  it("offers three ways in and the example as a link, then says in one quiet line who writes the pages, and nothing else to fill in", () => {
     renderQ(<NotesWelcome onComplete={vi.fn()} />);
 
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(i18n.t("setup.welcomeTitle"));
@@ -64,7 +64,7 @@ describe("NotesWelcome", () => {
     expect(screen.getByTestId("notes-welcome-writer-line")).toBeInTheDocument();
     expect(screen.getByText(i18n.t("setup.notesFirst.welcome.lead"))).toBeInTheDocument();
     expect(screen.getAllByRole("button").map((button) => button.dataset.testid)).toEqual([
-      "notes-welcome-writer-change", "notes-welcome-folder", "notes-welcome-chats", "notes-welcome-empty", "notes-welcome-example",
+      "notes-welcome-folder", "notes-welcome-chats", "notes-welcome-empty", "notes-welcome-example", "notes-welcome-writer-change",
     ]);
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();

@@ -114,46 +114,6 @@ export function NotesWelcome({ onComplete, onContinueWithoutDaemon }: NotesWelco
           <h1 id={titleId} className="notes-welcome__title">
             {t("setup.welcomeTitle")}
           </h1>
-          {!changing ? (
-            <p className="notes-welcome__writer-line" data-testid="notes-welcome-writer-line">
-              <span>{t(`setup.notesFirst.writer.line.${writer}`, { tool: toolName })}</span>
-              <button
-                type="button"
-                className="source-add-more-link"
-                data-testid="notes-welcome-writer-change"
-                disabled={pending}
-                onClick={() => setChanging(true)}
-              >
-                {t("setup.notesFirst.writer.change")}
-              </button>
-            </p>
-          ) : (<>
-            <h2 id={writerId} className="notes-welcome__question">{t("setup.notesFirst.writer.question")}</h2>
-            <div className="notes-welcome__writers" role="radiogroup" aria-labelledby={writerId}>
-              {(["tool", "local", "none"] as const).map((choice) => choice === "tool" && !tool ? null : (
-                <button
-                  key={choice}
-                  type="button"
-                  role="radio"
-                  aria-checked={writer === choice}
-                  className="source-add-option notes-welcome__writer"
-                  data-testid={`notes-welcome-writer-${choice}`}
-                  disabled={pending}
-                  onClick={() => setPicked(choice)}
-                >
-                  <span className="notes-welcome__radio" aria-hidden="true" />
-                  <span className="source-add-option-copy">
-                    <strong>{choice === "tool"
-                      ? t("setup.notesFirst.writer.tool.title", { tool: toolName })
-                      : t(`setup.notesFirst.writer.${choice}.title`)}</strong>
-                    <span>{choice === "tool"
-                      ? t(tool?.client_type === "claude_code" ? "setup.notesFirst.writer.tool.hintNextSession" : "setup.notesFirst.writer.tool.hint", { tool: toolName })
-                      : t(`setup.notesFirst.writer.${choice}.hint`)}</span>
-                  </span>
-                </button>
-              ))}
-            </div>
-          </>)}
           <h2 className="notes-welcome__question">{t("setup.notesFirst.welcome.lead")}</h2>
           {failed && (
             <p className="notes-welcome__error" role="alert">
@@ -195,7 +155,48 @@ export function NotesWelcome({ onComplete, onContinueWithoutDaemon }: NotesWelco
               {t("setup.notesFirst.welcome.exampleLink")}
             </button>
           </p>
-          <p className="notes-welcome__foot">{t("setup.notesFirst.welcome.foot")}</p>
+          {/* Who writes the pages: a quiet default under the ways in, not a
+              second heading above them. "Change" opens the choices here. */}
+          {!changing ? (
+            <p className="notes-welcome__writer-line" data-testid="notes-welcome-writer-line">
+              <span>{t(`setup.notesFirst.writer.line.${writer}`, { tool: toolName })}</span>
+              <button
+                type="button"
+                className="source-add-more-link"
+                data-testid="notes-welcome-writer-change"
+                disabled={pending}
+                onClick={() => setChanging(true)}
+              >
+                {t("setup.notesFirst.writer.change")}
+              </button>
+            </p>
+          ) : (<>
+            <h2 id={writerId} className="notes-welcome__question">{t("setup.notesFirst.writer.question")}</h2>
+            <div className="notes-welcome__writers" role="radiogroup" aria-labelledby={writerId}>
+              {(["tool", "local", "none"] as const).map((choice) => choice === "tool" && !tool ? null : (
+                <button
+                  key={choice}
+                  type="button"
+                  role="radio"
+                  aria-checked={writer === choice}
+                  className="source-add-option notes-welcome__writer"
+                  data-testid={`notes-welcome-writer-${choice}`}
+                  disabled={pending}
+                  onClick={() => setPicked(choice)}
+                >
+                  <span className="notes-welcome__radio" aria-hidden="true" />
+                  <span className="source-add-option-copy">
+                    <strong>{choice === "tool"
+                      ? t("setup.notesFirst.writer.tool.title", { tool: toolName })
+                      : t(`setup.notesFirst.writer.${choice}.title`)}</strong>
+                    <span>{choice === "tool"
+                      ? t(tool?.client_type === "claude_code" ? "setup.notesFirst.writer.tool.hintNextSession" : "setup.notesFirst.writer.tool.hint", { tool: toolName })
+                      : t(`setup.notesFirst.writer.${choice}.hint`)}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </>)}
         </div>
       </main>
     </div>
