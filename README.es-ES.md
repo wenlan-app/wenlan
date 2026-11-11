@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=87eb3dd59c992f695f013602d78e169e1f40d1748a818e868175935230be1f34 -->
+<!-- README_SYNC: source=README.md sha256=9d94f476f2559824c35911f65d90eebdad737a46d4ecfdb021f32cc06f9f656d -->
 
 <p align="center">
   <picture>
@@ -92,7 +92,9 @@ Crea una página o trae una bóveda de Obsidian, un grafo de Logseq, una carpeta
 
 En los ajustes de la aplicación, **Add a tool** encuentra las herramientas de IA de tu ordenador y **Connect all** las configura con un solo clic. No hay nada más que instalar ni mantener al día. Después, inicia una nueva sesión de IA y pide:
 
-> /recall mis páginas y decisiones anteriores sobre esto y luego ayúdame con: …
+> /wenlan ¿qué decidí antes sobre esto? Luego ayúdame con: …
+
+`/wenlan` (`$wenlan` en Codex) es el único comando que hay que recordar: después, di lo que quieres.
 
 Para configurar una herramienta a mano, o ver qué se conecta:
 
@@ -181,7 +183,7 @@ Tu herramienta de IA lee lo que traes y lo escribe en páginas Markdown. Enlaza 
 - **Al día:** Cuando cambia una fuente, una memoria o el código citado, se marcan las páginas que dependen de ello. Sin ningún modelo, Wenlan también sugiere fusionar páginas casi duplicadas y lista los `[[enlaces]]` que aún no apuntan a ninguna página.
 - **Tú decides qué puede cambiar la IA:** Las páginas que escribiste empiezan en **Ask me first**, así que los cambios de la IA esperan tu visto bueno. Pon cualquier página en **Allowed** o **Ask me first**, mira qué cambió y restaura una versión anterior.
 - **Dos formas de funcionar:** En **On demand**, el modo por defecto, tu herramienta de IA escribe mientras trabaja, así que no hay ninguna clave de API que configurar. En **Automatic**, Wenlan lo hace en segundo plano con el modelo que elijas, en tu ordenador o en la nube. [Guía de Steep](docs/steep.md).
-- **En tu herramienta de IA:** `/recall` recupera páginas y decisiones anteriores, `/capture` guarda una decisión o lección, `/handoff` guarda dónde lo dejaste y `/brief` lo retoma la próxima vez. [Comandos del plugin](plugin/skills/README.md).
+- **En tu herramienta de IA:** escribe `/wenlan` y di lo que quieres: recuperar decisiones anteriores, guardar una lección o retomar donde lo dejaste. Atajos: `/recall`, `/capture`, `/handoff`, `/brief`. [Comandos del plugin](plugin/skills/README.md).
 - **En la app:** Añade material, escribe y edita páginas, sigue las citas y revisa los cambios propuestos sin conectar ninguna IA. Las páginas pueden incluir diagramas Mermaid, que la app dibuja.
 
 ¿Ya usas Claude Code o Codex con una carpeta de notas? Sigue haciéndolo. Wenlan se conecta a la misma herramienta y añade lo que una carpeta no hace por sí sola: comprobación de citas, avisos cuando cambian las fuentes y control por página de lo que puede cambiar la IA.

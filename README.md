@@ -90,7 +90,9 @@ Create a page, or bring in an Obsidian vault, a Logseq graph, a folder, or earli
 
 In the App's Settings, **Add a tool** finds the AI tools on your computer and **Connect all** sets them up in one press. There is nothing else to install or keep updated. Then start a new AI session and ask:
 
-> /recall my earlier pages and decisions on this, then help me: …
+> /wenlan what did I decide about this before? Then help me: …
+
+`/wenlan` (`$wenlan` in Codex) is the one command to remember: say what you want after it.
 
 To set up a tool by hand, or to see what gets connected:
 
@@ -168,7 +170,7 @@ Your AI tool reads what you bring in and writes it into Markdown pages. It links
 - **Kept current:** When a source, memory, or cited code changes, the pages that rely on it are flagged for an update. Without any model, Wenlan also suggests merging near-duplicate pages and lists `[[links]]` that point to no page yet.
 - **You decide what AI may change:** Pages you wrote start on **Ask me first**, so AI changes wait for your OK. Set any page to **Allowed** or **Ask me first**, see what changed, and restore an earlier version.
 - **Two ways to run it:** In **On demand**, the default, your AI tool does the writing while it works, so there is no API key to set up. In **Automatic**, Wenlan does it in the background with a model you choose, on your computer or in the cloud. [Steep guide](docs/steep.md).
-- **In your AI tool:** `/recall` brings back earlier pages and decisions, `/capture` saves a decision or lesson, `/handoff` saves where you stopped, and `/brief` picks it up next time. [Plugin commands](plugin/skills/README.md).
+- **In your AI tool:** type `/wenlan` and say what you want: look up earlier decisions, save a lesson, or pick up where you stopped. Shortcuts: `/recall`, `/capture`, `/handoff`, `/brief`. [Plugin commands](plugin/skills/README.md).
 - **In the app:** Add material, write and edit pages, follow citations, and review proposed changes without connecting an AI. Pages can include Mermaid diagrams, which the app draws.
 
 Already using Claude Code or Codex on a folder of notes? Keep doing that. Wenlan connects to the same tool and adds what a folder can't do alone: citation checks, flags when sources change, and per-page control over what AI may change.
