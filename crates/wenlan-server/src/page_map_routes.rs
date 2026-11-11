@@ -205,6 +205,7 @@ async fn build_map_response(
         edges,
         independent_ideas: true,
         outline: vec![],
+        page_version: None,
     })
 }
 
@@ -247,12 +248,14 @@ pub async fn handle_get_page_map(
             edges: vec![],
             independent_ideas: true,
             outline: vec![],
+            page_version: None,
         },
     };
     // The page's own headings and items are read live on every GET: they are
     // the page, drawn as a tree, so they are never stored or proposed.
     let mut response = response;
     response.outline = wenlan_core::page_outline::page_outline(&page.content, &page.title);
+    response.page_version = Some(page.version);
     Ok(Json(response))
 }
 
@@ -583,6 +586,7 @@ pub async fn handle_improve_page_map(
             edges: vec![],
             independent_ideas: true,
             outline: vec![],
+            page_version: None,
         },
     };
     Ok(Json(response))

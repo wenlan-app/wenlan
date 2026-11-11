@@ -3447,6 +3447,18 @@ p.entity-error {
   line-height: 1.45;
 }
 
+.page-canvas-notice-undo {
+  margin-left: 8px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--mem-text-primary);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
 .page-canvas-banner {
   margin: 0;
   color: var(--mem-text-tertiary);

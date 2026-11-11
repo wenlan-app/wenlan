@@ -3321,7 +3321,7 @@ export default function PageDetail({
             <SourceDocumentReader readingSessionKey={readingSessionKey} key={`${pageId}:${pdfPreview.source_id}`} file={pdfPreview} space={page.space ?? undefined} citation={pdfCitation?.pageId === pageId && pdfCitation.sourceId === pdfPreview.source_id ? pdfCitation.citation : undefined} />
           </div>}
           {!pdfPreviewOpen && (showCanvas ? <PageCanvas key={pageId} pageId={pageId} pageTitle={page.title} labelOverrides={labelOverrides}
-            onMemoryClick={onMemoryClick} onPageClick={onPageClick} onEntityClick={onEntityClick} onSectionClick={showPageLine} />
+            onMemoryClick={onMemoryClick} onPageClick={onPageClick} onEntityClick={onEntityClick} onSectionClick={showPageLine} pageEditDirty={editDirty} />
             : <DetailInfoContent className="note-inspector-info">
           {pageHasTwoLengths && <SummaryViewSwitch
             on={pageLength === "short"}

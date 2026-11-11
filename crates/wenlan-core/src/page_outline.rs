@@ -40,6 +40,13 @@ const SKIPPED_HEADINGS: &[&str] = &[
 /// The outline of `body` for the page called `title`.
 pub fn page_outline(body: &str, title: &str) -> Vec<OutlineNode> {
     let human = crate::page_body::human_part(strip_frontmatter(body));
+    // Both cuts return a slice of `body`, so the line breaks before `human`
+    // give each line's place in the whole body. Checked rather than assumed:
+    // without it a node simply carries no line and stays read-only.
+    let offset = (human.as_ptr() as usize).checked_sub(body.as_ptr() as usize);
+    let first_line = offset
+        .filter(|o| *o + human.len() <= body.len() && body.is_char_boundary(*o))
+        .map(|o| body[..o].matches('\n').count());
     let mut out = Vec::new();
     // (level, id) of the open headings, innermost last.
     let mut stack: Vec<(usize, String)> = Vec::new();
@@ -52,7 +59,8 @@ pub fn page_outline(body: &str, title: &str) -> Vec<OutlineNode> {
     let mut first_heading = true;
     let title_norm = normalize(title);
 
-    for raw in human.lines() {
+    for (index, raw) in human.lines().enumerate() {
+        let line_no = first_line.map(|first| first + index);
         if out.len() >= MAX_NODES {
             break;
         }
@@ -105,6 +113,7 @@ pub fn page_outline(body: &str, title: &str) -> Vec<OutlineNode> {
                 label: shorten(&text),
                 text,
                 anchor: Some(anchor),
+                line: line_no,
             });
             stack.push((level, id));
             continue;
@@ -150,6 +159,7 @@ pub fn page_outline(body: &str, title: &str) -> Vec<OutlineNode> {
                 label,
                 text,
                 anchor: None,
+                line: line_no,
             });
         }
     }
@@ -423,6 +433,7 @@ fn paragraph_fallback(body: &str) -> Vec<OutlineNode> {
             label: shorten(&sentence),
             text,
             anchor: None,
+            line: None,
         });
         if out.len() >= MAX_FALLBACK_ITEMS {
             break;
@@ -452,6 +463,26 @@ mod tests {
             .iter()
             .map(|n| (n.id.as_str(), n.parent_id.as_deref(), n.label.as_str()))
             .collect()
+    }
+
+    #[test]
+    fn each_node_names_the_body_line_it_was_read_from() {
+        let body = "---\ntitle: T\n---\n# Plan\n\n- first\n- second\n\n**Lead.** rest\n";
+        let nodes = page_outline(body, "T");
+        let lines: Vec<&str> = body.lines().collect();
+        let at: Vec<(&str, &str)> = nodes
+            .iter()
+            .map(|n| (n.label.as_str(), lines[n.line.expect("line")]))
+            .collect();
+        assert_eq!(
+            at,
+            vec![
+                ("Plan", "# Plan"),
+                ("first", "- first"),
+                ("second", "- second"),
+                ("Lead", "**Lead.** rest"),
+            ]
+        );
     }
 
     #[test]

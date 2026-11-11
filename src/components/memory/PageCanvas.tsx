@@ -34,10 +34,12 @@ import {
   asPageMapApiError,
   createPageMapNode,
   deletePageMapNode,
+  getPage,
   getPageMap,
   improvePageMap,
   patchPageMapNode,
   putPageMapLayout,
+  updatePage,
   type PageMapLayoutPosition,
   type PageMap,
   type PageMapNode,
@@ -60,11 +62,13 @@ import {
   moreFor,
   outlineLine,
   PAGE_LINE_PREFIX,
+  PAGE_LINE_ROOT,
   shutByDepth,
   withinLine,
   withPageLines,
 } from "../../lib/pageMap/pageLines";
 import { mixOver, useGraphPalette } from "../../lib/graph/palette";
+import { applyOutlineEdit, editableText, type OutlineEdit } from "../../lib/pageMap/outlineEdits";
 import CanvasNode, { type CanvasNodeData } from "./canvas/CanvasNode";
 import SpineEdge from "./canvas/SpineEdge";
 import "./canvas/pageCanvasApply.css";
@@ -79,7 +83,20 @@ interface PageCanvasProps {
   onEntityClick?: (entityId: string) => void;
   /** Show the part of the page a heading or item of the map came from. */
   onSectionClick?: (line: { text: string; heading: string | null }) => void;
+  /** The page has edits in its editor not yet saved: its lines wait until they are. */
+  pageEditDirty?: boolean;
 }
+
+/** Why an edit made on the map did not reach the page. */
+class LineEditRefused extends Error {
+  constructor(readonly reason: "moved" | "notEditable" | "failed") {
+    super(`page line edit refused: ${reason}`);
+    this.name = "LineEditRefused";
+  }
+}
+
+/** Inline marks a renamed line would lose, since the box shows plain text. */
+const INLINE_MARKS = /\[\[|\]\(|`|<[a-z]/i;
 
 // The map shape this build knows how to edit. A map stamped higher was written
 // by a newer Wenlan: render it, never write to it (spec: degrade, never
@@ -319,6 +336,7 @@ function PageCanvasInner({
   onPageClick,
   onEntityClick,
   onSectionClick,
+  pageEditDirty = false,
 }: PageCanvasProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -343,11 +361,19 @@ function PageCanvasInner({
   // of re-deriving the whole tree, and every other node keeps its identity so
   // memo(CanvasNode) actually holds.
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
-  const [draft, setDraft] = useState<{ parentId: string; x: number; y: number; label: string; refId: string } | null>(null);
+  const [draft, setDraft] = useState<{
+    parentId: string;
+    x: number;
+    y: number;
+    label: string;
+    refId: string;
+    /** Set when the new box is a new line of the page rather than a box of the map's own. */
+    line?: { op: "addUnder" | "addAfter"; line: number };
+  } | null>(null);
   // The named idea stays visible while the map write/refetch completes. Its
   // ref_id is stable across retries so an uncertain response cannot duplicate it.
   const [pending, setPending] = useState<
-    { parentId: string; label: string; x: number; y: number; refId: string } | null
+    { parentId: string; label: string; x: number; y: number; refId: string; line?: { op: "addUnder" | "addAfter"; line: number } } | null
   >(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -715,6 +741,144 @@ function PageCanvasInner({
       handleMutationError(error instanceof PartialSubtreeDelete ? error.reason : error);
     },
   });
+
+  // A line drawn from the page is the page: renaming, adding or deleting one
+  // writes the page itself, the way the editor does, and only onto the
+  // version the map was read from. Each write can be taken back.
+  const undoRef = useRef<{ before: string; after: string }[]>([]);
+  const [undoOffer, setUndoOffer] = useState(false);
+  useEffect(() => {
+    undoRef.current = [];
+    setUndoOffer(false);
+  }, [pageId]);
+  const writePage = useCallback(
+    async (content: string, expectedVersion: number) => {
+      const outcome = await updatePage({
+        id: pageId,
+        content,
+        expectedVersion,
+        callerId: "wenlan-app",
+        operationId: globalThis.crypto.randomUUID(),
+      });
+      if (outcome.outcome === "conflict") throw new LineEditRefused("moved");
+      if (outcome.outcome !== "saved") throw new LineEditRefused("failed");
+    },
+    [pageId],
+  );
+  const refreshPage = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: ["page-map", pageId] });
+    void queryClient.invalidateQueries({ queryKey: ["page", pageId] });
+    void queryClient.invalidateQueries({ queryKey: ["pages"] });
+  }, [queryClient, pageId]);
+  const lineEditMutation = useMutation({
+    mutationFn: async (edit: OutlineEdit) => {
+      const expected = map?.page_version;
+      const page = await getPage(pageId);
+      if (!page || expected == null || page.version !== expected) throw new LineEditRefused("moved");
+      const raw = page.content.split(/\r?\n/)[edit.line] ?? "";
+      if (edit.op === "rename" && INLINE_MARKS.test(raw)) throw new LineEditRefused("notEditable");
+      const next = applyOutlineEdit(page.content, edit);
+      if (next === null) throw new LineEditRefused("notEditable");
+      if (next === page.content) return;
+      await writePage(next, page.version);
+      undoRef.current.push({ before: page.content, after: next });
+    },
+    onSuccess: () => {
+      setUndoOffer(undoRef.current.length > 0);
+      setNotice(undoRef.current.length > 0 ? t("pageCanvas.lineEdited") : null);
+    },
+    onError: (error) => {
+      const reason = error instanceof LineEditRefused ? error.reason : "failed";
+      setNotice(
+        t(
+          reason === "moved"
+            ? "pageCanvas.lineMoved"
+            : reason === "notEditable"
+              ? "pageCanvas.lineNotEditable"
+              : "pageCanvas.lineEditFailed",
+        ),
+      );
+    },
+    onSettled: () => {
+      setPending(null);
+      refreshPage();
+    },
+  });
+  const { mutate: mutateLine } = lineEditMutation;
+  const undoLineEdit = useCallback(async () => {
+    const last = undoRef.current.pop();
+    setUndoOffer(undoRef.current.length > 0);
+    if (!last) return;
+    try {
+      const page = await getPage(pageId);
+      // Only put back what the map changed: anything written since stays.
+      if (!page || page.content !== last.after) throw new LineEditRefused("moved");
+      await writePage(last.before, page.version);
+      setNotice(t("pageCanvas.lineUndone"));
+    } catch (error) {
+      setNotice(
+        t(error instanceof LineEditRefused && error.reason === "moved" ? "pageCanvas.lineMoved" : "pageCanvas.lineEditFailed"),
+      );
+    } finally {
+      refreshPage();
+    }
+  }, [pageId, writePage, refreshPage, t]);
+  // Whether a line of the page can be changed from here right now.
+  const lineEditable = useCallback(
+    (id: string) => {
+      if (readOnly || map?.page_version == null) return null;
+      const line = outlineLine(map, id);
+      return line && line.line != null ? line : null;
+    },
+    [readOnly, map],
+  );
+  // Unsaved typing in the editor would be overwritten by a write from here.
+  const linesPaused = useCallback(() => {
+    if (!pageEditDirty) return false;
+    setNotice(t("pageCanvas.lineEditPaused"));
+    return true;
+  }, [pageEditDirty, t]);
+  const editLine = useCallback(
+    (edit: OutlineEdit) => {
+      if (linesPaused()) return;
+      setMenu(null);
+      mutateLine(edit);
+    },
+    [linesPaused, mutateLine],
+  );
+  // The words being renamed, read from the page itself: the box shows a
+  // shortened label, and renaming must start from what the page says.
+  const [lineRename, setLineRename] = useState<{ id: string; line: number; text: string } | null>(null);
+  const lineRenameRef = useRef(lineRename);
+  lineRenameRef.current = lineRename;
+  const startLineRename = useCallback(
+    async (id: string) => {
+      const line = lineEditable(id);
+      if (!line || line.line == null || linesPaused()) return;
+      const at = line.line;
+      try {
+        const page = await getPage(pageId);
+        if (!page || page.version !== map?.page_version) {
+          setNotice(t("pageCanvas.lineMoved"));
+          refreshPage();
+          return;
+        }
+        const raw = page.content.split(/\r?\n/)[at];
+        const text = raw !== undefined && !INLINE_MARKS.test(raw) ? editableText(raw) : null;
+        if (text === null) {
+          setNotice(t("pageCanvas.lineNotEditable"));
+          return;
+        }
+        setMenu(null);
+        setNotice(null);
+        setLineRename({ id, line: at, text });
+        setEditingId(id);
+      } catch {
+        setNotice(t("pageCanvas.lineEditFailed"));
+      }
+    },
+    [lineEditable, linesPaused, pageId, map?.page_version, refreshPage, t],
+  );
 
   // Every canvas add gesture creates an independent idea. It never writes the
   // page body, and uses the fresh map revision plus the draft's stable ref_id so
@@ -1180,13 +1344,25 @@ function PageCanvasInner({
           onDismiss: () => mutateStatus({ nodeId: v.node.id, status: "dismissed" }),
           onCommit: (label: string) => {
             const trimmed = label.trim();
+            if (pageLine) {
+              const renaming = lineRenameRef.current;
+              setEditingId(null);
+              setLineRename(null);
+              if (renaming && renaming.id === v.node.id && trimmed && trimmed !== renaming.text.trim()) {
+                editLine({ op: "rename", line: renaming.line, text: trimmed });
+              }
+              return;
+            }
             if (!trimmed || trimmed === v.label) {
               setEditingId(null);
               return;
             }
             return mutateRenameAsync({ nodeId: v.node.id, label: trimmed }).then(() => undefined);
           },
-          onCancel: () => setEditingId(null),
+          onCancel: () => {
+            setEditingId(null);
+            setLineRename(null);
+          },
         };
         return {
           id: v.node.id,
@@ -1199,7 +1375,7 @@ function PageCanvasInner({
           data,
         };
       }),
-    [views, readOnly, palette, openNode, mutateStatus, mutateRename, mutateRenameAsync, t, map, foldable, branchOpen, toggleBranch, layoutMode, inkOf, isDimmed],
+    [views, readOnly, palette, openNode, mutateStatus, mutateRename, mutateRenameAsync, t, map, foldable, branchOpen, toggleBranch, layoutMode, inkOf, isDimmed, editLine],
   );
 
   // Fold the server's copy into local state, keeping what the user has done
@@ -1240,6 +1416,11 @@ function PageCanvasInner({
       if (!trimmed) return;
       setDraft(null);
       setPending({ ...pending, label: trimmed });
+      if (pending.line) {
+        // A new line of the page: the box stays drawn until the page is reread.
+        mutateLine({ op: pending.line.op, line: pending.line.line, text: trimmed });
+        return;
+      }
       mutateAdd({
         targetPageId: pageId,
         targetPageTitle: pageTitle,
@@ -1250,7 +1431,7 @@ function PageCanvasInner({
         refId: pending.refId,
       });
     },
-    [draft, mutateAdd, pageId, pageTitle],
+    [draft, mutateAdd, mutateLine, pageId, pageTitle],
   );
 
   // One box, two moments: being named, then waiting for the daemon. It keeps the
@@ -1277,8 +1458,8 @@ function PageCanvasInner({
       width: DRAFT_SIZE.width,
       height: DRAFT_SIZE.height,
       editing: naming,
-      placeholder: t("pageCanvas.newSectionPlaceholder"),
-      nameInputLabel: t("pageCanvas.newSectionPlaceholder"),
+      placeholder: t(spot.line ? "pageCanvas.newLinePlaceholder" : "pageCanvas.newSectionPlaceholder"),
+      nameInputLabel: t(spot.line ? "pageCanvas.newLinePlaceholder" : "pageCanvas.newSectionPlaceholder"),
       onNameChange: (label: string) => {
         setDraft((current) => current ? { ...current, label } : current);
       },
@@ -1357,6 +1538,30 @@ function PageCanvasInner({
   const startDraft = useCallback(
     (mode: "child" | "sibling") => {
       const selected = nodesRef.current.find((n) => n.selected);
+      const line = selected ? lineEditable(selected.id) : null;
+      if (selected && line && line.line != null) {
+        // On a line of the page, Tab and Enter write a new line of the page:
+        // Tab goes inside a heading, Enter (or Tab on an item) adds the next one.
+        if (linesPaused()) return;
+        const op = mode === "child" && line.kind === "heading" ? "addUnder" : "addAfter";
+        const parentId = op === "addUnder"
+          ? selected.id
+          : line.parent_id
+            ? `${PAGE_LINE_PREFIX}${line.parent_id}`
+            : (rootId ?? PAGE_LINE_ROOT);
+        setEditingId(null);
+        setMenu(null);
+        setNotice(null);
+        setDraft({
+          parentId,
+          x: selected.position.x + DRAFT_OFFSET.x,
+          y: selected.position.y + DRAFT_OFFSET.y,
+          label: "",
+          refId: globalThis.crypto.randomUUID(),
+          line: { op, line: line.line },
+        });
+        return;
+      }
       if (!rootId && !selected) return;
       const anchorId = selected?.id ?? (rootId as string);
       const parentId =
@@ -1367,7 +1572,7 @@ function PageCanvasInner({
         nodesRef.current.find((n) => n.id === anchorId)?.position ?? { x: 0, y: 0 };
       startDraftAt(parentId, base.x + DRAFT_OFFSET.x, base.y + DRAFT_OFFSET.y);
     },
-    [views, rootId, startDraftAt],
+    [views, rootId, startDraftAt, lineEditable, linesPaused],
   );
 
   // A box drawn on empty canvas still has to join the tree — every node here
@@ -1483,6 +1688,13 @@ function PageCanvasInner({
   );
 
   const deleteSelection = useCallback(() => {
+    const picked = nodesRef.current.filter((n) => n.selected && n.id !== DRAFT_ID);
+    const line = picked.length === 1 ? lineEditable(picked[0].id) : null;
+    if (line && line.line != null) {
+      // One line of the page: it leaves the page, with everything it holds.
+      editLine({ op: "delete", line: line.line });
+      return;
+    }
     const selected = nodesRef.current
       .filter((n) => n.selected && n.id !== DRAFT_ID && !isPageLine(n.id))
       .map((n) => n.id);
@@ -1500,7 +1712,7 @@ function PageCanvasInner({
     }
     setMenu(null);
     mutateRemove(deletable);
-  }, [views, mutateRemove, t]);
+  }, [views, mutateRemove, t, lineEditable, editLine]);
 
   const restoreMenuFocus = useCallback((restore = true) => {
     setMenu(null);
@@ -1568,14 +1780,15 @@ function PageCanvasInner({
     (_event: ReactMouseEvent, node: Node) => {
       if (node.id === DRAFT_ID) return;
       if (isPageLine(node.id)) {
-        openPageLine(node.id);
+        if (lineEditable(node.id)) void startLineRename(node.id);
+        else openPageLine(node.id);
         return;
       }
       if (readOnly) return;
       setMenu(null);
       setEditingId(node.id);
     },
-    [readOnly, openPageLine],
+    [readOnly, openPageLine, lineEditable, startLineRename],
   );
 
   const menuItems = useMemo<MenuItem[]>(() => {
@@ -1774,6 +1987,16 @@ function PageCanvasInner({
       // the webview its own Cmd+plus page zoom, so letting that press reach the
       // zoom keys below would resize the app UI and the map at once. Cmd+Tab and
       // Cmd+Arrow are the system's too, and were being swallowed here.
+      // Taking back a change the map made to the page. With nothing of the
+      // map's to take back, the press stays the window's.
+      if (
+        (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey &&
+        e.key.toLowerCase() === "z" && !readOnly && undoRef.current.length > 0
+      ) {
+        e.preventDefault();
+        void undoLineEdit();
+        return;
+      }
       if (e.metaKey || e.ctrlKey) return;
 
       if (!e.altKey && (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey))) {
@@ -1871,7 +2094,8 @@ function PageCanvasInner({
           break;
         case "F2":
           e.preventDefault();
-          if (selected && !isPageLine(selected.id)) setEditingId(selected.id);
+          if (selected && isPageLine(selected.id)) void startLineRename(selected.id);
+          else if (selected) setEditingId(selected.id);
           break;
         case "Delete":
         case "Backspace":
@@ -1909,6 +2133,8 @@ function PageCanvasInner({
       openKeyboardContextMenu,
       startDraft,
       deleteSelection,
+      startLineRename,
+      undoLineEdit,
       nudge,
       stepSelection,
       selectAll,
@@ -1936,12 +2162,23 @@ function PageCanvasInner({
     if (!editingId && !draftNode) return base;
     const out = editingId
       ? base.map((n) =>
-          n.id === editingId ? { ...n, data: { ...n.data, editing: true } } : n,
+          n.id === editingId
+            ? {
+                ...n,
+                data: {
+                  ...n.data,
+                  editing: true,
+                  ...(lineRename?.id === n.id
+                    ? { label: lineRename.text, nameInputLabel: t("pageCanvas.nodeNameLabel") }
+                    : {}),
+                },
+              }
+            : n,
         )
       : base.slice();
     if (draftNode) out.push(draftNode);
     return out;
-  }, [nodes, serverNodes, editingId, draftNode]);
+  }, [nodes, serverNodes, editingId, draftNode, lineRename, t]);
 
   const rfEdges = useMemo<Edge[]>(() => {
     const rendered = new Set(views.map((v) => v.node.id));
@@ -2072,6 +2309,16 @@ function PageCanvasInner({
   const shownSuggestions = showSuggestions
     ? (map?.nodes ?? []).filter((n) => countsAsSuggestion(n, map)).length
     : 0;
+  const noticeView = notice ? (
+    <span role="status" aria-live="polite" className="page-canvas-notice">
+      {notice}
+      {undoOffer && !readOnly && (
+        <button type="button" className="page-canvas-notice-undo" onClick={() => void undoLineEdit()}>
+          {t("pageCanvas.lineUndo")}
+        </button>
+      )}
+    </span>
+  ) : null;
   const relatedActions = readOnly || !map || map.map_schema < 1 ? null : (
     <>
       {!showSuggestions && (
@@ -2168,7 +2415,7 @@ function PageCanvasInner({
               onClose={restoreMenuFocus}
             />
           )}
-          {notice && <span role="status" aria-live="polite" className="page-canvas-notice">{notice}</span>}
+          {noticeView}
           {!readOnly && <CanvasHelp open={helpOpen} setOpen={setHelpOpen} />}
         </div>
       </div></>
@@ -2277,11 +2524,7 @@ function PageCanvasInner({
         )}
         <div className="page-canvas-actions">
           {relatedActions}
-          {notice && (
-            <span role="status" aria-live="polite" className="page-canvas-notice">
-              {notice}
-            </span>
-          )}
+          {noticeView}
         </div>
         {!readOnly && <CanvasHelp open={helpOpen} setOpen={setHelpOpen} />}
       </div>

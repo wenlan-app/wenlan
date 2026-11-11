@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, cleanup, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { PageMap, PageMapNode } from "../../lib/tauri";
+import type { PageMap, PageMapNode, PageOutlineNode } from "../../lib/tauri";
 import PageCanvas from "./PageCanvas";
 
 // React Flow measures its container, and jsdom reports 0x0 — it would render
@@ -742,6 +742,84 @@ describe("PageCanvas", () => {
     await waitFor(() => expect(screen.queryByText("Alpha item")).toBeNull());
     await user.click(screen.getByRole("button", { name: "Show what is under Alpha" }));
     await screen.findByText("Alpha item");
+  });
+
+  it("UX-VIEW-8 writes renames, new lines and deletes from the map into the page, and takes them back", async () => {
+    const { getPageMap, getPage, updatePage } = await tauri();
+    const body = ["# Alpha", "", "- one", "- two", "", "# Beta", "", "Last."].join("\n");
+    let content = body;
+    let version = 4;
+    (getPageMap as ReturnType<typeof vi.fn>).mockImplementation(async () =>
+      makeMap({
+        nodes: [node({ id: "n_root", ref_kind: "page", ref_id: "p1" })],
+        edges: [],
+        page_version: version,
+        // Read from the page as it stands, the way the daemon does.
+        outline: [
+          { id: "h:a", parent_id: null, kind: "heading", label: "Alpha", text: "Alpha", line: 0 },
+          { id: "h:a#1", parent_id: "h:a", kind: "item", label: "one", text: "one", line: 2 },
+          { id: "h:b", parent_id: null, kind: "heading", label: "Beta", text: "Beta", line: content.split("\n").indexOf("# Beta") },
+        ].filter((line) => line.line >= 0) as PageOutlineNode[],
+      }),
+    );
+    (getPage as ReturnType<typeof vi.fn>).mockImplementation(async () => ({ id: "p1", content, version }));
+    (updatePage as ReturnType<typeof vi.fn>).mockImplementation(async (input: { content: string; expectedVersion: number }) => {
+      expect(input.expectedVersion).toBe(version);
+      content = input.content;
+      version += 1;
+      return { outcome: "saved" };
+    });
+    const { user } = renderCanvas();
+    await screen.findByText("Alpha");
+
+    // F2 renames the line in the page, keeping it a heading.
+    await user.click(screen.getByLabelText("select outline:h:a"));
+    fireEvent.keyDown(surface(), { key: "F2" });
+    const field = await screen.findByDisplayValue("Alpha");
+    await user.clear(field);
+    await user.type(field, "Alpha two{Enter}");
+    await waitFor(() => expect(content.split("\n")[0]).toBe("# Alpha two"));
+    expect(await screen.findByRole("button", { name: "Undo" })).toBeTruthy();
+
+    // Enter on an item writes the next item of the same list.
+    await user.click(screen.getByLabelText("select outline:h:a#1"));
+    fireEvent.keyDown(surface(), { key: "Enter" });
+    const added = await screen.findByPlaceholderText("New line");
+    await user.type(added, "one and a half{Enter}");
+    await waitFor(() => expect(content.split("\n").slice(2, 5)).toEqual(["- one", "- one and a half", "- two"]));
+
+    // Delete takes the whole heading section out of the page.
+    await user.click(screen.getByLabelText("select outline:h:b"));
+    fireEvent.keyDown(surface(), { key: "Delete" });
+    await waitFor(() => expect(content).not.toContain("Beta"));
+    expect(content).not.toContain("Last.");
+
+    // Cmd+Z puts each change back, newest first.
+    fireEvent.keyDown(surface(), { key: "z", metaKey: true });
+    await waitFor(() => expect(content).toContain("# Beta"));
+    fireEvent.keyDown(surface(), { key: "z", metaKey: true });
+    await waitFor(() => expect(content).not.toContain("one and a half"));
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(content).toBe(body));
+  });
+
+  it("UX-VIEW-8 refuses a map edit when the page changed since the map was read", async () => {
+    const { getPageMap, getPage, updatePage } = await tauri();
+    (getPageMap as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeMap({
+        nodes: [node({ id: "n_root", ref_kind: "page", ref_id: "p1" })],
+        edges: [],
+        page_version: 2,
+        outline: [{ id: "h:a", parent_id: null, kind: "heading", label: "Alpha", text: "Alpha", line: 0 }],
+      }),
+    );
+    (getPage as ReturnType<typeof vi.fn>).mockResolvedValue({ id: "p1", content: "# Alpha", version: 3 });
+    const { user } = renderCanvas();
+    await screen.findByText("Alpha");
+    await user.click(screen.getByLabelText("select outline:h:a"));
+    fireEvent.keyDown(surface(), { key: "Delete" });
+    expect(await screen.findByText(/page changed a moment ago/i)).toBeTruthy();
+    expect(updatePage).not.toHaveBeenCalled();
   });
 
   it("says out loud when the object behind a node is gone", async () => {

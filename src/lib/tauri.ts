@@ -5220,6 +5220,8 @@ export interface PageMap {
   edges: PageMapEdge[];
   /** The page's own headings and items, read live. Older daemons omit it. */
   outline?: PageOutlineNode[];
+  /** The page version `outline` was read from; an edit on the map lands on it. */
+  page_version?: number;
 }
 
 /** One line of the page drawn on its map: a heading, or an item under one. */
@@ -5230,6 +5232,8 @@ export interface PageOutlineNode {
   label: string;
   text: string;
   anchor?: string;
+  /** Zero-based line of the page body behind this node, when one line is. */
+  line?: number;
 }
 
 export interface PageMapNodeMutation {

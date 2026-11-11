@@ -83,6 +83,11 @@ pub struct PageOutlineNode {
     /// Heading slug, so a click can jump to that section of the page.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub anchor: Option<String>,
+    /// Zero-based line in the page body this node was read from, so an edit
+    /// made on the map can land on that line. Absent where no single line
+    /// stands behind the node.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<usize>,
 }
 
 /// Full map read: `GET /api/pages/{id}/map` and `PUT .../map/layout`, which
@@ -104,6 +109,10 @@ pub struct PageMapResponse {
     /// daemons omit it; clients then show only stored nodes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub outline: Vec<PageOutlineNode>,
+    /// The page version `outline` was read from (GET only). An edit made on
+    /// the map is applied to that version and refused if the page moved on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_version: Option<i64>,
 }
 
 /// `POST /api/pages/{id}/map/nodes`. `ref_kind`/`ref_id` are `Option` on the
@@ -299,6 +308,7 @@ mod tests {
             edges: vec![],
             independent_ideas: false,
             outline: vec![],
+            page_version: None,
         };
         let json = serde_json::to_string(&response).unwrap();
         assert!(!json.contains("viewport"));
