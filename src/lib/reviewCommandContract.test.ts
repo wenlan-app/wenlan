@@ -41,6 +41,9 @@ const OUTSIDE_THE_REVIEW_SURFACE: readonly string[] = [
   // no shares and must not pretend a folder was shared or joined.
   "share_space",
   "share_page",
+  "share_library",
+  "stop_sharing_library",
+  "set_library_main_device",
   "stop_sharing_space",
   "stop_sharing_page",
   "look_in_shared_folder",
