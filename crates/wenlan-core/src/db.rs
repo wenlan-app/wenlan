@@ -47445,6 +47445,12 @@ impl MemoryDB {
                     .map(str::to_string)
             });
             let review_reason = revision_review_reason(structured_fields.as_ref());
+            let edited_by = structured_fields
+                .as_ref()
+                .and_then(|v| v.get("edited_by"))
+                .and_then(|v| v.as_str())
+                .filter(|edited_by| crate::shared_space::shared_writer(edited_by).is_some())
+                .map(str::to_string);
             let targets_a_page = row.get::<i64>(6).unwrap_or(0) != 0;
             let chunk = row
                 .get::<String>(2)
@@ -47486,6 +47492,7 @@ impl MemoryDB {
                 target_kind: revision_target_kind(row.get::<i64>(6).unwrap_or(0)),
                 grounded_in,
                 review_reason,
+                edited_by,
             });
         }
         Ok(out)
@@ -47621,6 +47628,12 @@ impl MemoryDB {
                     .map(str::to_string)
             });
             let review_reason = revision_review_reason(structured_fields.as_ref());
+            let edited_by = structured_fields
+                .as_ref()
+                .and_then(|v| v.get("edited_by"))
+                .and_then(|v| v.as_str())
+                .filter(|edited_by| crate::shared_space::shared_writer(edited_by).is_some())
+                .map(str::to_string);
             let targets_a_page = row.get::<i64>(6).unwrap_or(0) != 0;
             let chunk = row
                 .get::<String>(2)
@@ -47662,6 +47675,7 @@ impl MemoryDB {
                 target_kind: revision_target_kind(row.get::<i64>(6).unwrap_or(0)),
                 grounded_in,
                 review_reason,
+                edited_by,
             });
         }
         Ok(out)

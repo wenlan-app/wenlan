@@ -50,6 +50,25 @@ const SHARED_KEY: &str = "shared";
 /// `members/<member_id>/pages/<page_id>/<sha256>.md`.
 pub const MEMBERS_DIR: &str = "members";
 pub const PAGES_DIR: &str = "pages";
+/// `members/<member_id>/proposals/<page_id>/<sha256>.wlv`: an AI tool's change
+/// to a locked page, waiting for a member to take it. A version file with
+/// `proposal: true`; it never takes part in picking a page's head.
+pub const PROPOSALS_DIR: &str = "proposals";
+/// `members/<member_id>/decisions/<page_id>/<sha256>.wlv`: that member took
+/// or turned down a proposal. A version file with `decides` and `decision`
+/// and an empty body.
+pub const DECISIONS_DIR: &str = "decisions";
+/// Every folder a member writes files in, as `members/<id>/<kind>/<page>/`.
+pub const KIND_DIRS: [&str; 3] = [PAGES_DIR, PROPOSALS_DIR, DECISIONS_DIR];
+
+/// A member's answer to a proposal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Decides {
+    /// The proposal's sha.
+    pub proposal: String,
+    /// Taken (`accepted`) or turned down (`rejected`).
+    pub accepted: bool,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthorKind {
@@ -94,6 +113,10 @@ pub struct VersionMeta {
     /// The page is locked for review: an AI tool's change to it waits for a
     /// member to take it. Old versions without the key read as unlocked.
     pub locked: bool,
+    /// The file is a proposal, not a version (see [`PROPOSALS_DIR`]).
+    pub proposal: bool,
+    /// The file is a decision on a proposal (see [`DECISIONS_DIR`]).
+    pub decides: Option<Decides>,
 }
 
 /// What two versions, or a version and the page here, are compared by.
@@ -222,6 +245,20 @@ pub fn render(page: &PageFile, meta: &VersionMeta) -> String {
     if meta.locked {
         shared.insert(key("locked"), serde_yaml::Value::Bool(true));
     }
+    if meta.proposal {
+        shared.insert(key("proposal"), serde_yaml::Value::Bool(true));
+    }
+    if let Some(decides) = &meta.decides {
+        shared.insert(key("decides"), text(&decides.proposal));
+        shared.insert(
+            key("decision"),
+            text(if decides.accepted {
+                "accepted"
+            } else {
+                "rejected"
+            }),
+        );
+    }
 
     let mut page = page.clone();
     page.other.shift_remove(SHARED_KEY);
@@ -294,6 +331,26 @@ pub fn parse(name: &str, bytes: &[u8]) -> Result<PageVersion, WenlanError> {
             Some(serde_yaml::Value::Bool(locked)) => *locked,
             Some(_) => return Err(invalid(format!("{name}: locked is not true or false"))),
         },
+        proposal: match shared.get("proposal") {
+            None => false,
+            Some(serde_yaml::Value::Bool(proposal)) => *proposal,
+            Some(_) => return Err(invalid(format!("{name}: proposal is not true or false"))),
+        },
+        decides: match scalar(&shared, "decides") {
+            None => None,
+            Some(proposal) => Some(Decides {
+                proposal,
+                accepted: match scalar(&shared, "decision").as_deref() {
+                    Some("accepted") => true,
+                    Some("rejected") => false,
+                    _ => {
+                        return Err(invalid(format!(
+                            "{name}: decision is not accepted or rejected"
+                        )))
+                    }
+                },
+            }),
+        },
     };
     if meta.body_digest != body_digest(&page.body) {
         return Err(invalid(format!("{name}: body does not match body_digest")));
@@ -358,6 +415,10 @@ pub fn head(versions: &[PageVersion]) -> Option<Head<'_>> {
 #[derive(Debug, Default)]
 pub struct FolderRead {
     pub pages: HashMap<String, Vec<PageVersion>>,
+    /// Proposals by page (see [`PROPOSALS_DIR`]).
+    pub proposals: HashMap<String, Vec<PageVersion>>,
+    /// Decisions by page (see [`DECISIONS_DIR`]).
+    pub decisions: HashMap<String, Vec<PageVersion>>,
     /// Files that are not whole versions yet: a cloud placeholder
     /// (`.<name>.icloud`), a file still arriving, or a damaged one.
     pub skipped: u32,
@@ -390,13 +451,33 @@ fn sub_dirs(dir: &Path) -> Vec<(String, PathBuf)> {
 
 /// Reads every member's versions. A file that cannot be read is skipped and
 /// counted; reading goes on.
+/// Proposals and decisions that cannot be read yet are not counted: only
+/// a version not read yet holds back writing over a page.
 pub fn read_folder(folder: &Path) -> FolderRead {
     let mut read = FolderRead::default();
     let mut seen = HashSet::new();
     for (member, member_dir) in sub_dirs(&folder.join(MEMBERS_DIR)) {
-        for (page_id, page_dir) in sub_dirs(&member_dir.join(PAGES_DIR)) {
+        for kind in KIND_DIRS {
+            read_kind(&mut read, &mut seen, &member, &member_dir, kind);
+        }
+    }
+    read
+}
+
+/// A file read from `kind` is taken only when it is that kind of file: a
+/// proposal or decision filed under `pages/` must never become a page's head.
+fn read_kind(
+    read: &mut FolderRead,
+    seen: &mut HashSet<String>,
+    member: &str,
+    member_dir: &Path,
+    kind: &str,
+) {
+    let counts = kind == PAGES_DIR;
+    {
+        for (page_id, page_dir) in sub_dirs(&member_dir.join(kind)) {
             let Ok(entries) = std::fs::read_dir(&page_dir) else {
-                read.skipped += 1;
+                read.skipped += u32::from(counts);
                 continue;
             };
             for entry in entries.flatten() {
@@ -404,7 +485,7 @@ pub fn read_folder(folder: &Path) -> FolderRead {
                     continue;
                 };
                 if name.ends_with(".icloud") {
-                    read.skipped += 1;
+                    read.skipped += u32::from(counts);
                     continue;
                 }
                 if version_sha(&name).is_none() {
@@ -417,25 +498,43 @@ pub fn read_folder(folder: &Path) -> FolderRead {
                 match version {
                     Ok(version)
                         if version.page.id.as_deref() == Some(page_id.as_str())
-                            && version.meta.author.member == member =>
+                            && version.meta.author.member == member
+                            && file_kind(&version.meta) == kind =>
                     {
                         if seen.insert(version.sha.clone()) {
-                            read.pages.entry(page_id.clone()).or_default().push(version);
+                            let into = match kind {
+                                PROPOSALS_DIR => &mut read.proposals,
+                                DECISIONS_DIR => &mut read.decisions,
+                                _ => &mut read.pages,
+                            };
+                            into.entry(page_id.clone()).or_default().push(version);
                         }
                     }
                     Ok(_) => {
-                        log::warn!("[shared_space] {name} is filed under another page or member");
-                        read.skipped += 1;
+                        log::warn!(
+                            "[shared_space] {name} is filed under another page, member or kind"
+                        );
+                        read.skipped += u32::from(counts);
                     }
                     Err(error) => {
                         log::debug!("[shared_space] skipping {name}: {error}");
-                        read.skipped += 1;
+                        read.skipped += u32::from(counts);
                     }
                 }
             }
         }
     }
-    read
+}
+
+/// The folder a file with `meta` belongs in.
+pub fn file_kind(meta: &VersionMeta) -> &'static str {
+    if meta.decides.is_some() {
+        DECISIONS_DIR
+    } else if meta.proposal {
+        PROPOSALS_DIR
+    } else {
+        PAGES_DIR
+    }
 }
 
 /// Writes one version under `members/<member>/pages/<page_id>/`. Written to
@@ -448,7 +547,21 @@ pub fn write_version(
     page_id: &str,
     text: &str,
 ) -> Result<(String, bool), WenlanError> {
+    write_file(folder, member, PAGES_DIR, page_id, text)
+}
+
+/// [`write_version`] into `kind` (one of [`KIND_DIRS`]).
+pub fn write_file(
+    folder: &Path,
+    member: &str,
+    kind: &str,
+    page_id: &str,
+    text: &str,
+) -> Result<(String, bool), WenlanError> {
     use std::io::Write;
+    if !KIND_DIRS.contains(&kind) {
+        return Err(invalid(format!("{kind} is not a shared folder kind")));
+    }
     if !is_safe_id(member) || !is_safe_id(page_id) {
         return Err(invalid(format!(
             "{member}/{page_id} is not a folder name a version can go in"
@@ -458,7 +571,7 @@ pub fn write_version(
     let dir = folder
         .join(MEMBERS_DIR)
         .join(member)
-        .join(PAGES_DIR)
+        .join(kind)
         .join(page_id);
     std::fs::create_dir_all(&dir)?;
     let path = dir.join(version_file_name(&sha));

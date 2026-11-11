@@ -106,6 +106,8 @@ fn version_text(page: &str, member: &str, body: &str) -> String {
             ts: "2026-11-11T05:00:00Z".into(),
             archived: false,
             locked: false,
+            proposal: false,
+            decides: None,
         },
     )
 }
@@ -307,6 +309,72 @@ async fn a_writer_sends_only_their_own_whole_versions() {
         version::sha256_hex(&body),
         version::version_sha(&name).unwrap()
     );
+}
+
+#[tokio::test]
+async fn a_writers_proposals_and_decisions_land_in_their_own_folders() {
+    let f = fixture();
+    let page = "page_plan";
+    let put = |meta_change: fn(&mut version::VersionMeta), body: &'static str| {
+        let mut file = wenlan_core::store::format::page::PageFile::new("Plan", body);
+        file.id = Some(page.into());
+        let mut meta = version::VersionMeta {
+            parent: None,
+            merged: Vec::new(),
+            body_digest: version::body_digest(body),
+            author: version::Author {
+                member: f.writer.0.id.clone(),
+                kind: version::AuthorKind::Ai,
+                agent: Some("claude-code".into()),
+            },
+            ts: "2026-11-11T05:00:00Z".into(),
+            archived: false,
+            locked: true,
+            proposal: false,
+            decides: None,
+        };
+        meta_change(&mut meta);
+        version::render(&file, &meta)
+    };
+    let proposal = put(|meta| meta.proposal = true, "We marry in May.");
+    let decision = put(
+        |meta| {
+            meta.author.kind = version::AuthorKind::Person;
+            meta.author.agent = None;
+            meta.decides = Some(version::Decides {
+                proposal: "a".repeat(64),
+                accepted: false,
+            });
+        },
+        "",
+    );
+    for (text, kind) in [(proposal, "proposals"), (decision, "decisions")] {
+        let name = version::version_file_name(&version::sha256_hex(text.as_bytes()));
+        let (status, _) = call(
+            &f.state,
+            Method::PUT,
+            &format!("/team/v1/spaces/Design/versions/{page}/{name}"),
+            Some(&f.writer.1),
+            text.into(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{kind}");
+        let dir = f.folder.join("members").join(&f.writer.0.id);
+        assert!(dir.join(kind).join(page).join(&name).is_file(), "{kind}");
+        assert!(!dir.join("pages").join(page).join(&name).exists(), "{kind}");
+    }
+    let (status, body) = call(
+        &f.state,
+        Method::GET,
+        "/team/v1/spaces/Design/files",
+        Some(&f.reader.1),
+        vec![],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let list: TeamFileList = serde_json::from_slice(&body).unwrap();
+    assert!(list.files.iter().any(|path| path.contains("/proposals/")));
+    assert!(list.files.iter().any(|path| path.contains("/decisions/")));
 }
 
 #[tokio::test]

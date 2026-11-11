@@ -1863,6 +1863,9 @@ export interface PendingRevisionItem {
   /** Why a page revision card needs review: "authored", "locked",
    * "background" or "owned". Absent when the daemon cannot say (memory revisions, old cards). */
   review_reason?: string | null;
+  /** The shared Space member whose change this card is ("shared_ai:<id>" or
+   * "shared_person:<id>"). Absent for cards made on this computer. */
+  edited_by?: string | null;
 }
 
 export interface RevisionAcceptResponse {

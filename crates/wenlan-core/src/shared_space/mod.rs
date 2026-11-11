@@ -69,6 +69,7 @@
 //! database, so a rebuilt database stays the same member.
 
 pub mod remote;
+mod review;
 pub mod rewrite;
 pub mod version;
 
@@ -1208,6 +1209,8 @@ async fn pass(
         // A page folder holds that page only; anything else in it is not
         // taken.
         read.pages.retain(|page, _| page == id);
+        read.proposals.retain(|page, _| page == id);
+        read.decisions.retain(|page, _| page == id);
     }
     let mut counts = SharedSyncCounts {
         skipped: read.skipped,
@@ -1271,6 +1274,12 @@ async fn pass(
     if unsaved {
         save_held(db, &key, &held).await?;
     }
+    let heads: HashMap<String, String> = held
+        .iter()
+        .filter(|(_, held)| held.version.is_some())
+        .map(|(id, held)| (id.clone(), held.sha.clone()))
+        .collect();
+    ctx.review(&read.proposals, &read.decisions, &heads).await?;
     Ok(counts)
 }
 
@@ -1769,6 +1778,8 @@ impl Pass<'_> {
             ts: now_ts(),
             archived: page.status == "archived",
             locked: page.review_required,
+            proposal: false,
+            decides: None,
         };
         let member = meta.author.member.clone();
         let text = version::render(&file, &meta);
@@ -1855,6 +1866,8 @@ impl Pass<'_> {
             ts: now_ts(),
             archived: true,
             locked: winner.meta.locked,
+            proposal: false,
+            decides: None,
         };
         let text = version::render(&winner.page, &meta);
         self.write(&id, text).await.map(Some)
@@ -1873,11 +1886,23 @@ impl Pass<'_> {
         page_id: &str,
         text: String,
     ) -> Result<String, WenlanError> {
+        self.write_kind(member, version::PAGES_DIR, page_id, text)
+            .await
+    }
+
+    /// [`Self::write_as`] into `kind` (one of [`version::KIND_DIRS`]).
+    async fn write_kind(
+        &self,
+        member: &str,
+        kind: &'static str,
+        page_id: &str,
+        text: String,
+    ) -> Result<String, WenlanError> {
         let folder = self.folder.clone();
         let member = member.to_string();
         let page_id = page_id.to_string();
         let (sha, _) = tokio::task::spawn_blocking(move || {
-            version::write_version(&folder, &member, &page_id, &text)
+            version::write_file(&folder, &member, kind, &page_id, &text)
         })
         .await
         .map_err(|error| WenlanError::Generic(format!("shared folder task: {error}")))??;

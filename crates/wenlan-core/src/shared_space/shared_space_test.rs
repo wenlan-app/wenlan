@@ -19,6 +19,8 @@ fn meta(parent: Option<&str>, body: &str, member: &str, ts: &str) -> VersionMeta
         ts: ts.to_string(),
         archived: false,
         locked: false,
+        proposal: false,
+        decides: None,
     }
 }
 

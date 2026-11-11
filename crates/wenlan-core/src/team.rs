@@ -359,12 +359,14 @@ pub fn list_members_in_space_file(
 
 /// Everything the team listener needs to check a version a member sends:
 /// it is whole, it is theirs, and it is filed under its page.
+/// Returns the folder kind the file goes in (a version, a proposal or a
+/// decision; see [`version::KIND_DIRS`]).
 pub fn check_member_version(
     member: &str,
     page_id: &str,
     name: &str,
     bytes: &[u8],
-) -> Result<(), WenlanError> {
+) -> Result<&'static str, WenlanError> {
     if !version::is_safe_id(page_id) {
         return Err(WenlanError::Validation(format!(
             "{page_id} is not a page id"
@@ -381,7 +383,7 @@ pub fn check_member_version(
             "{name} was written by another member"
         )));
     }
-    Ok(())
+    Ok(version::file_kind(&read.meta))
 }
 
 /// Paths of every file in a hosted Space's folder, as the team listener
@@ -405,8 +407,11 @@ pub fn list_folder_files(folder: &Path) -> Vec<String> {
         out
     };
     let members_dir = folder.join(version::MEMBERS_DIR);
-    for member in dirs(&members_dir) {
-        let pages_dir = members_dir.join(&member).join(version::PAGES_DIR);
+    for (member, kind) in dirs(&members_dir)
+        .into_iter()
+        .flat_map(|member| version::KIND_DIRS.map(|kind| (member.clone(), kind)))
+    {
+        let pages_dir = members_dir.join(&member).join(kind);
         for page in dirs(&pages_dir) {
             let Ok(entries) = std::fs::read_dir(pages_dir.join(&page)) else {
                 continue;
@@ -419,9 +424,8 @@ pub fn list_folder_files(folder: &Path) -> Vec<String> {
             names.sort();
             for name in names {
                 files.push(format!(
-                    "{}/{member}/{}/{page}/{name}",
-                    version::MEMBERS_DIR,
-                    version::PAGES_DIR
+                    "{}/{member}/{kind}/{page}/{name}",
+                    version::MEMBERS_DIR
                 ));
             }
         }
@@ -439,7 +443,7 @@ pub fn served_path(folder: &Path, path: &str) -> Option<PathBuf> {
     match parts.as_slice() {
         [members, member, pages, page, name]
             if *members == version::MEMBERS_DIR
-                && *pages == version::PAGES_DIR
+                && version::KIND_DIRS.contains(pages)
                 && version::is_safe_id(member)
                 && version::is_safe_id(page)
                 && version::version_sha(name).is_some() =>

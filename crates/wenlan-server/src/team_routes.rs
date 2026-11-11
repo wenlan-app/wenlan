@@ -472,10 +472,11 @@ async fn team_put_version(
     }
     let id = member.id.clone();
     let stored = tokio::task::spawn_blocking(move || {
-        team::check_member_version(&id, &page, &name, &body)?;
+        let kind = team::check_member_version(&id, &page, &name, &body)?;
         let text = std::str::from_utf8(&body)
             .map_err(|_| wenlan_core::error::WenlanError::Validation("not text".into()))?;
-        shared_space::version::write_version(&folder, &id, &page, text)
+        // A version, a proposal or a decision, each in its own folder.
+        shared_space::version::write_file(&folder, &id, kind, &page, text)
     })
     .await;
     match stored {
