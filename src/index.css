@@ -440,6 +440,8 @@ html[data-theme="dark"] {
   --mem-control-border: #70788C;
   --mem-hover: rgba(143, 179, 234, 0.09);
   --mem-hover-strong: rgba(143, 179, 234, 0.15);
+  --mem-linked-band: rgba(111, 143, 214, 0.32);
+  --mem-linked-band-edge: rgba(143, 168, 224, 0.75);
   --mem-confirm-bg: rgba(189, 137, 103, 0.14);
   --mem-indigo-bg: rgba(169, 174, 242, 0.13);
   --mem-distilled-border: rgba(169, 174, 242, 0.36);
@@ -565,6 +567,8 @@ html[data-theme="light"] {
   --mem-control-border: #858D9C;
   --mem-hover: rgba(101, 116, 139, 0.08);
   --mem-hover-strong: rgba(101, 116, 139, 0.14);
+  --mem-linked-band: rgba(75, 111, 214, 0.16);
+  --mem-linked-band-edge: rgba(75, 111, 214, 0.6);
   --mem-confirm-bg: rgba(180, 106, 58, 0.09);
   --mem-indigo-bg: rgba(94, 88, 200, 0.08);
   --mem-distilled-border: rgba(94, 88, 200, 0.28);
@@ -3465,6 +3469,37 @@ p.entity-error {
   font-family: var(--mem-font-body);
   font-size: var(--mem-text-description);
   line-height: 1.5;
+}
+
+/* The map's own bar: the way back after stepping into a linked page. It floats
+   at the pane's top-left with the same 10px inset as the actions at the top
+   right, so both sit on one row instead of the bar pushing the pane down. The
+   room it leaves the actions is their widest label. */
+.page-canvas-bar {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 5;
+  max-width: calc(100% - 210px);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.page-canvas-back {
+  max-width: 100%;
+  overflow: hidden;
+  padding: 2px 10px;
+  border: 1px solid var(--mem-border);
+  border-radius: var(--mem-r-8);
+  background: var(--mem-hover);
+  color: var(--mem-text-primary);
+  font-family: var(--mem-font-body);
+  font-size: var(--mem-text-description);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
 }
 
 .page-canvas-surface {

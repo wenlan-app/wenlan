@@ -5249,6 +5249,22 @@ export interface PageOutlineNode {
   anchor?: string;
   /** Zero-based line of the page body behind this node, when one line is. */
   line?: number;
+  /** `[[links]]` written in this node, resolved by the daemon. */
+  links?: PageOutlineLink[];
+}
+
+/** A `[[link]]` of the page body, as the daemon resolved it. */
+export interface PageOutlineLink {
+  /** The link as written (no alias, no heading): the key the daemon resolved. */
+  target: string;
+  /** The title to show. */
+  title: string;
+  /** The page it reaches; absent when it reaches no page the reader can see. */
+  page_id?: string;
+  /** The target's Space name, only when it is not this page's Space. */
+  space?: string;
+  /** The item's whole text is this one link. */
+  whole_line?: boolean;
 }
 
 export interface PageMapNodeMutation {

@@ -66,6 +66,28 @@ pub enum OutlineKind {
     Item,
 }
 
+/// A `[[link]]` found in the page body, kept with the outline node it belongs
+/// to. The daemon fills `page_id` and `space` when it resolves the link; the
+/// reader never matches titles itself.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OutlineLink {
+    /// The link target as written (no `#heading`, no `|alias`): the key the
+    /// link graph resolves.
+    pub target: String,
+    /// The title to show: the alias when written, else the target page's title.
+    pub title: String,
+    /// The page the link reaches. `None` when it does not resolve to a page
+    /// the reader can see.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_id: Option<String>,
+    /// The target's Space name, only when it differs from this page's Space.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub space: Option<String>,
+    /// True when the item's whole text is this one link.
+    #[serde(default)]
+    pub whole_line: bool,
+}
+
 /// One node of a page's own outline, read live from the page body on every
 /// map read (never stored, never a suggestion). `parent_id: None` hangs it
 /// directly under the page.
@@ -88,6 +110,11 @@ pub struct PageOutlineNode {
     /// stands behind the node.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line: Option<usize>,
+    /// `[[links]]` written in this node: in the item's text, or (for a
+    /// heading) in the heading itself and in the paragraphs under it that are
+    /// not items. Absent when there are none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub links: Vec<OutlineLink>,
 }
 
 /// Full map read: `GET /api/pages/{id}/map` and `PUT .../map/layout`, which
@@ -295,6 +322,16 @@ mod tests {
             serde_json::from_str(r#"{"base_revision": 1, "from_node": "a", "to_node": "b"}"#)
                 .unwrap();
         assert_eq!(req.kind, "link");
+    }
+
+    #[test]
+    fn outline_node_without_links_omits_them_and_reads_older_payloads() {
+        let node: PageOutlineNode = serde_json::from_str(
+            r#"{"id":"h:a","parent_id":null,"kind":"heading","label":"A","text":"A"}"#,
+        )
+        .unwrap();
+        assert!(node.links.is_empty());
+        assert!(!serde_json::to_string(&node).unwrap().contains("links"));
     }
 
     #[test]

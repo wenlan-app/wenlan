@@ -191,6 +191,13 @@ and wait for evidence that people need them.
   the map was drawn, nothing is written and the map says so.
   原文：「那些如果想要手動做基本的還是允許啊？除非是進階複雜操作」「要能刪除」（2026-11-11）
   「就把之前的先合併，之後的繼續做完，因為這些都蠻基本的」（2026-11-11）
+- **UX-VIEW-9** `shipped` A `[[link]]` to a page is a door on the mind map,
+  drawn under the heading it was written in. Opening it grows only that page's
+  headings in place, read-only and on a tinted band; links inside it are grey
+  and one hop only (a click makes that page the center, with a way back). A
+  link back to the center never expands, and the same page written twice is a
+  door plus a grey copy that goes to it.
+  原文：「ok 沒問題」（2026-11-11），核准了心智圖「門」的草圖
 - **UX-VIEW-6** `planned` A thing's short text is a recap in a fixed order:
   where it stands and the next step (at most two sentences), what is decided,
   what is still open, then the background. A group with nothing in it is not

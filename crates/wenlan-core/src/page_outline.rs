@@ -16,7 +16,7 @@
 //! - A page with no headings and no items falls back to the first sentence
 //!   of its paragraphs.
 
-pub use wenlan_types::page_map::{OutlineKind, PageOutlineNode as OutlineNode};
+pub use wenlan_types::page_map::{OutlineKind, OutlineLink, PageOutlineNode as OutlineNode};
 
 /// Upper bound on outline nodes, so a huge page can't produce an unreadable map.
 const MAX_NODES: usize = 400;
@@ -105,6 +105,7 @@ pub fn page_outline(body: &str, title: &str) -> Vec<OutlineNode> {
                 None => format!("h:{}", short_slug(&anchor, out.len())),
             };
             let id = unique(base, &mut used_ids);
+            let links = scan_links(&heading, false);
             let text = clean_inline(&heading);
             out.push(OutlineNode {
                 id: id.clone(),
@@ -114,6 +115,7 @@ pub fn page_outline(body: &str, title: &str) -> Vec<OutlineNode> {
                 text,
                 anchor: Some(anchor),
                 line: line_no,
+                links,
             });
             stack.push((level, id));
             continue;
@@ -138,7 +140,20 @@ pub fn page_outline(body: &str, title: &str) -> Vec<OutlineNode> {
             table_row = 0;
             bold_lead(trimmed).map(|_| trimmed.to_string())
         };
+        if item.is_none() {
+            // A paragraph (or an indented list line): its links belong to the
+            // heading it sits under. Before any heading there is no owner.
+            if let Some(owner) = parent.as_deref() {
+                let found = scan_links(trimmed, false);
+                if !found.is_empty() {
+                    if let Some(node) = out.iter_mut().rev().find(|n| n.id == owner) {
+                        node.links.extend(found);
+                    }
+                }
+            }
+        }
         if let Some(text) = item {
+            let links = scan_links(&text, true);
             let text = clean_inline(&text);
             if text.is_empty() {
                 continue;
@@ -160,6 +175,7 @@ pub fn page_outline(body: &str, title: &str) -> Vec<OutlineNode> {
                 text,
                 anchor: None,
                 line: line_no,
+                links,
             });
         }
     }
@@ -250,6 +266,66 @@ fn first_table_cell(row: &str) -> Option<String> {
         Some(second) if width <= 20 => Some(format!("{first} · {second}")),
         _ => Some(first.to_string()),
     }
+}
+
+/// The `[[links]]` in one line of text, in reading order, unresolved.
+/// Embeds (`![[x]]`), escaped (`\\[[x]]`) and inline-code links are not links.
+/// `[[a|b]]` shows `b`; `[[a#h]]` reaches `a`. With `item` set, a link that is
+/// the whole text of the line is marked `whole_line`.
+fn scan_links(text: &str, item: bool) -> Vec<OutlineLink> {
+    let bytes = text.as_bytes();
+    let mut found: Vec<(usize, usize, OutlineLink)> = Vec::new();
+    let mut i = 0;
+    let mut in_code = false;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'`' => {
+                in_code = !in_code;
+                i += 1;
+            }
+            b'[' if !in_code && bytes[i..].starts_with(b"[[") => {
+                let escaped = i > 0 && matches!(bytes[i - 1], b'\\' | b'!');
+                let Some(len) = text[i + 2..].find("]]") else {
+                    break;
+                };
+                let inner = &text[i + 2..i + 2 + len];
+                let end = i + 2 + len + 2;
+                if escaped || inner.contains('[') {
+                    i += 2;
+                    continue;
+                }
+                let (left, alias) = match inner.split_once('|') {
+                    Some((l, a)) => (l, Some(a.trim())),
+                    None => (inner, None),
+                };
+                let target = left.split('#').next().unwrap_or(left).trim();
+                if !target.is_empty() {
+                    let title = alias.filter(|a| !a.is_empty()).unwrap_or(target);
+                    found.push((
+                        i,
+                        end,
+                        OutlineLink {
+                            target: target.to_string(),
+                            title: title.to_string(),
+                            page_id: None,
+                            space: None,
+                            whole_line: false,
+                        },
+                    ));
+                }
+                i = end;
+            }
+            _ => i += 1,
+        }
+    }
+    if item && found.len() == 1 {
+        let (start, end, link) = &mut found[0];
+        let lead = text.len() - text.trim_start().len();
+        if *start == lead && *end == text.trim_end().len() {
+            link.whole_line = true;
+        }
+    }
+    found.into_iter().map(|(_, _, link)| link).collect()
 }
 
 /// Plain text: wikilinks show their display name, links their text, emphasis
@@ -434,6 +510,7 @@ fn paragraph_fallback(body: &str) -> Vec<OutlineNode> {
             text,
             anchor: None,
             line: None,
+            links: Vec::new(),
         });
         if out.len() >= MAX_FALLBACK_ITEMS {
             break;
@@ -569,5 +646,83 @@ mod tests {
     fn frontmatter_is_not_read() {
         let nodes = page_outline("---\ntitle: X\ntags: [a]\n---\n\n## Body\n", "X");
         assert_eq!(labels(&nodes), vec![("h:body", None, "Body")]);
+    }
+
+    fn link_shape(l: &OutlineLink) -> (&str, &str, bool) {
+        (l.target.as_str(), l.title.as_str(), l.whole_line)
+    }
+
+    #[test]
+    fn a_whole_line_link_is_marked_and_keeps_its_item() {
+        let nodes = page_outline("## Method\n\n- [[Pomodoro]]\n- 1. plain\n", "P");
+        let door = &nodes[1];
+        assert_eq!(door.kind, OutlineKind::Item);
+        assert_eq!(door.line, Some(2));
+        assert_eq!(
+            door.links.iter().map(link_shape).collect::<Vec<_>>(),
+            vec![("Pomodoro", "Pomodoro", true)]
+        );
+        assert!(nodes[2].links.is_empty());
+    }
+
+    #[test]
+    fn a_link_inside_text_is_not_a_whole_line_link() {
+        let nodes = page_outline(
+            "## A\n\n- try [[Focus]] daily\n- [[One]] and [[Two]]\n",
+            "P",
+        );
+        assert_eq!(
+            nodes[1].links.iter().map(link_shape).collect::<Vec<_>>(),
+            vec![("Focus", "Focus", false)]
+        );
+        assert_eq!(
+            nodes[2].links.iter().map(link_shape).collect::<Vec<_>>(),
+            vec![("One", "One", false), ("Two", "Two", false)]
+        );
+    }
+
+    #[test]
+    fn a_paragraph_link_is_recorded_on_its_heading_in_reading_order() {
+        let body = "## First\n\nSee [[Alpha]] first.\n\n- item\n\nThen [[Beta]].\n\n## Second\n\nNo links.\n";
+        let nodes = page_outline(body, "P");
+        assert_eq!(
+            nodes[0].links.iter().map(link_shape).collect::<Vec<_>>(),
+            vec![("Alpha", "Alpha", false), ("Beta", "Beta", false)]
+        );
+        assert!(nodes[1].links.is_empty());
+        assert!(nodes[2].links.is_empty());
+    }
+
+    #[test]
+    fn an_alias_shows_the_alias_and_resolves_the_target() {
+        let nodes = page_outline("## A\n\n- [[Pomodoro technique|the timer]]\n", "P");
+        assert_eq!(
+            nodes[1].links.iter().map(link_shape).collect::<Vec<_>>(),
+            vec![("Pomodoro technique", "the timer", true)]
+        );
+    }
+
+    #[test]
+    fn a_heading_anchor_link_reaches_the_page_not_the_heading() {
+        let nodes = page_outline("## A\n\n- [[Focus#Why it works]]\n- [[#Same page]]\n", "P");
+        assert_eq!(
+            nodes[1].links.iter().map(link_shape).collect::<Vec<_>>(),
+            vec![("Focus", "Focus", true)]
+        );
+        // `[[#Same page]]` reaches no page: it is no link at all.
+        assert!(nodes
+            .iter()
+            .all(|n| n.links.iter().all(|l| l.target != "Same page")));
+    }
+
+    #[test]
+    fn links_in_code_fences_code_spans_and_embeds_are_ignored() {
+        let body = "## A\n\n```md\n- [[Fenced]]\n[[Also fenced]]\n```\n\nUse `[[Spanned]]` and ![[Embedded]] here.\n\n- real [[Kept]]\n";
+        let nodes = page_outline(body, "P");
+        let all: Vec<&str> = nodes
+            .iter()
+            .flat_map(|n| n.links.iter().map(|l| l.target.as_str()))
+            .collect();
+        assert_eq!(all, vec!["Kept"]);
     }
 }

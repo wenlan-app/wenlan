@@ -209,6 +209,62 @@ async fn build_map_response(
     })
 }
 
+/// Fill in which page each `[[link]]` of the outline reaches, from the same
+/// link graph the page's own links list reads (never a second title matcher).
+/// A target the reader may not see reads as unresolved, as a dangling link
+/// does. `space` is named only when the target lives in another Space.
+async fn resolve_outline_links(
+    db: &MemoryDB,
+    grant: &TruthGrant,
+    page: &wenlan_core::pages::Page,
+    outline: &mut [wenlan_core::page_outline::OutlineNode],
+) -> Result<(), ServerError> {
+    if outline.iter().all(|node| node.links.is_empty()) {
+        return Ok(());
+    }
+    let outbound = db
+        .get_page_outbound_links_scoped(&page.id, &wenlan_core::read_scope::ReadScope::Global)
+        .await?;
+    let by_label: std::collections::HashMap<String, String> = outbound
+        .into_iter()
+        .filter_map(|link| {
+            link.target_page_id
+                .map(|id| (link.label.to_lowercase(), id))
+        })
+        .collect();
+    // Target id -> (title, Space when it differs from this page's).
+    let mut targets: std::collections::HashMap<String, Option<(String, Option<String>)>> =
+        Default::default();
+    for node in outline.iter_mut() {
+        for link in node.links.iter_mut() {
+            let Some(id) = by_label.get(&link.target.to_lowercase()) else {
+                continue;
+            };
+            if !targets.contains_key(id) {
+                let seen = visible_page(db, grant, id)
+                    .await?
+                    .filter(|target| target.status == "active")
+                    .map(|target| {
+                        let space = target
+                            .space
+                            .clone()
+                            .filter(|space| Some(space) != page.space.as_ref());
+                        (target.title, space)
+                    });
+                targets.insert(id.clone(), seen);
+            }
+            if let Some(Some((title, space))) = targets.get(id) {
+                link.page_id = Some(id.clone());
+                link.space = space.clone();
+                if link.title == link.target {
+                    link.title = title.clone();
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Deserialize)]
 pub struct MapIncludeQuery {
     #[serde(default)]
@@ -255,6 +311,7 @@ pub async fn handle_get_page_map(
     // the page, drawn as a tree, so they are never stored or proposed.
     let mut response = response;
     response.outline = wenlan_core::page_outline::page_outline(&page.content, &page.title);
+    resolve_outline_links(&db, &view.grant, &page, &mut response.outline).await?;
     response.page_version = Some(page.version);
     Ok(Json(response))
 }
@@ -1102,6 +1159,48 @@ mod tests {
             map.revision, 0,
             "reading the outline must not write the map"
         );
+    }
+
+    #[tokio::test]
+    async fn get_page_map_resolves_outline_links_to_page_ids_and_leaves_misses_bare() {
+        let (db, _tmp) = new_test_db().await;
+        let target_id = seed_page_with_content(&db, "Pomodoro", "## Why\n\n- it works\n").await;
+        let page_id = seed_page_with_content(
+            &db,
+            "Links Page",
+            "## Method\n\n- [[Pomodoro]]\n- see [[No Such Page]] and [[pomodoro|the timer]]\n",
+        )
+        .await;
+        let state = state_with_db(db.clone());
+
+        let Json(map) = handle_get_page_map(
+            State(state),
+            Path(page_id),
+            crate::truth_guard::TruthView::automatic(),
+            Query(MapIncludeQuery { include: None }),
+        )
+        .await
+        .unwrap();
+
+        let whole = map.outline.iter().find(|n| n.label == "Pomodoro").unwrap();
+        assert_eq!(whole.links.len(), 1);
+        assert_eq!(whole.links[0].page_id.as_deref(), Some(target_id.as_str()));
+        assert!(whole.links[0].whole_line);
+        assert_eq!(whole.links[0].title, "Pomodoro");
+        let mixed = map
+            .outline
+            .iter()
+            .find(|n| n.text.starts_with("see"))
+            .unwrap();
+        assert_eq!(mixed.links[0].target, "No Such Page");
+        assert_eq!(mixed.links[0].page_id, None, "a miss has no page id");
+        assert_eq!(mixed.links[1].page_id.as_deref(), Some(target_id.as_str()));
+        assert_eq!(
+            mixed.links[1].title, "the timer",
+            "an alias is kept as shown"
+        );
+        assert_eq!(map.revision, 0, "resolving links must not write the map");
+        assert!(map.nodes.is_empty());
     }
 
     #[tokio::test]
