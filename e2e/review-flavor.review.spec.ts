@@ -38,14 +38,14 @@ async function storedReviewPages(page: Page, status: "active" | "draft"): Promis
   }, status);
 }
 
-async function closeWritingView(page: Page): Promise<void> {
+async function saveWithEscape(page: Page): Promise<void> {
   const editor = page.getByRole("textbox", { name: "Page editor", exact: true });
   await expect(editor).toBeVisible();
   await expect(editor).toBeEditable();
-  // Escape flushes and returns to the reading surface. The editor may remain
-  // mounted as part of the workspace, so assert its user-visible state.
+  // Escape saves what is typed; a page has one state, so it stays open for writing.
   await editor.press("Escape");
-  await expect(editor).not.toBeVisible();
+  await expect(editor).toBeVisible();
+  await expect(editor).toBeEditable();
   await expect(page.locator(".page-detail")).toBeVisible();
 }
 
@@ -134,7 +134,7 @@ test("proves Review identity and exercises Wiki Page mutations", async ({ page }
 
   // Reopening uses persisted fixture content rather than the original editor DOM.
   await openFixtureArchitecture(page);
-  await closeWritingView(page);
+  await saveWithEscape(page);
   await expect(page.getByText("Edited through the Review-flavor lane.")).toBeVisible();
 
   const info = page.getByRole("button", { name: "Info", exact: true });
