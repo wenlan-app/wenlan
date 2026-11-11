@@ -253,15 +253,15 @@ pub(super) async fn main_jobs(
 
 async fn write_copy(db: &MemoryDB, settings_path: &Path, chosen: &Path) -> Result<(), String> {
     let (own_spaces, own_pages) = own_shares(settings_path).map_err(|e| e.to_string())?;
-    let mut pages = reading_copy::pages_for_copy(db, &own_spaces)
-        .await
-        .map_err(|e| e.to_string())?;
-    pages.retain(|page| !own_pages.contains(&page.id));
     let mut state: CopyState = match db.get_app_metadata(COPY_STATE_KEY).await {
         Ok(Some(raw)) => serde_json::from_str(&raw).unwrap_or_default(),
         Ok(None) => CopyState::default(),
         Err(error) => return Err(error.to_string()),
     };
+    let mut pages = reading_copy::pages_for_copy(db, &own_spaces, &state)
+        .await
+        .map_err(|e| e.to_string())?;
+    pages.retain(|page| !own_pages.contains(&page.id));
     let dir = read_folder(chosen);
     let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     let (state, result) = tokio::task::spawn_blocking(move || {

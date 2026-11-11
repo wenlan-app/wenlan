@@ -10,6 +10,7 @@ fn page(id: &str, title: &str, space: Option<&str>, body: &str) -> CopyPage {
         space: space.map(String::from),
         body: body.into(),
         modified: "2026-11-11T00:00:00Z".into(),
+        history: None,
     }
 }
 
@@ -246,4 +247,134 @@ fn case_only_rename_leaves_one_file() {
         .collect();
     assert_eq!(names, vec!["title.md".to_string()]);
     assert_eq!(st.files.len(), 1);
+}
+
+fn version(at: &str, by_person: bool, body: &str) -> CopyVersion {
+    CopyVersion {
+        at: at.into(),
+        by_person,
+        body: body.into(),
+    }
+}
+
+fn with_history(mut p: CopyPage, versions: Vec<CopyVersion>) -> CopyPage {
+    p.history = Some(versions);
+    p
+}
+
+#[test]
+fn history_file_holds_earlier_versions_newest_first() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut st = CopyState::default();
+    let p = with_history(
+        page("a1", "Alpha", Some("Work"), "v3"),
+        vec![
+            version("2026-11-10T10:00:00Z", false, "v2"),
+            version("2026-11-09T10:00:00Z", true, "v1"),
+        ],
+    );
+    let r = run(tmp.path(), &[p.clone()], &mut st);
+    assert_eq!(r.written, 2);
+    let h = read(tmp.path(), "歷史/Work/Alpha.md");
+    assert!(h.contains("earlier_versions: true"));
+    let v2 = h.find("## 2026-11-10T10:00:00Z · AI 改的").unwrap();
+    let v1 = h.find("## 2026-11-09T10:00:00Z · 使用者改的").unwrap();
+    assert!(v2 < v1 && h.contains("v2") && h.contains("v1"));
+    assert!(!h.contains("v3"));
+    assert!(read(tmp.path(), INSTRUCTIONS_FILE).contains("歷史"));
+    // Unchanged page: history not read again, file kept, nothing written.
+    assert!(!st.needs_history("a1", &p.modified));
+    let r = run(
+        tmp.path(),
+        &[page("a1", "Alpha", Some("Work"), "v3")],
+        &mut st,
+    );
+    assert_eq!((r.written, r.removed), (0, 0));
+    assert!(tmp.path().join("歷史/Work/Alpha.md").exists());
+}
+
+#[test]
+fn history_file_follows_a_moved_page_without_rereading() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut st = CopyState::default();
+    let p = with_history(
+        page("a1", "Alpha", Some("Work"), "v2"),
+        vec![version("2026-11-10T10:00:00Z", true, "v1")],
+    );
+    run(tmp.path(), &[p], &mut st);
+    let before = read(tmp.path(), "歷史/Work/Alpha.md");
+    run(
+        tmp.path(),
+        &[page("a1", "Alpha", Some("Home"), "v2")],
+        &mut st,
+    );
+    assert_eq!(read(tmp.path(), "歷史/Home/Alpha.md"), before);
+    assert!(!tmp.path().join("歷史/Work").exists());
+    assert!(!tmp.path().join("Work").exists());
+}
+
+#[test]
+fn removed_page_takes_its_history_and_empty_folders_with_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut st = CopyState::default();
+    let a = with_history(
+        page("a1", "Alpha", Some("Work"), "v2"),
+        vec![version("2026-11-10T10:00:00Z", true, "v1")],
+    );
+    let b = page("b2", "Beta", None, "b");
+    run(tmp.path(), &[a, b.clone()], &mut st);
+    let r = run(tmp.path(), &[b], &mut st);
+    assert_eq!(r.removed, 2);
+    assert!(!tmp.path().join(HISTORY_DIR).exists());
+    assert!(!st.history_seen.contains_key("a1"));
+}
+
+#[test]
+fn a_page_with_no_earlier_version_has_no_history_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut st = CopyState::default();
+    let p = with_history(page("a1", "Alpha", Some("Work"), "v1"), vec![]);
+    run(tmp.path(), &[p], &mut st);
+    assert!(!tmp.path().join(HISTORY_DIR).exists());
+    assert!(!st.needs_history("a1", "2026-11-11T00:00:00Z"));
+}
+
+fn row(version: i64, by: &str, at: i64, body: &str) -> crate::db::PageHistoryEntry {
+    crate::db::PageHistoryEntry {
+        version,
+        title: None,
+        content: body.into(),
+        source_memory_ids: vec![],
+        edited_by: by.into(),
+        created_at: at,
+    }
+}
+
+#[test]
+fn earlier_versions_skip_current_fold_saves_and_cap() {
+    // Newest first: current, two saves of one run, an AI edit, the birth.
+    let rows = vec![
+        row(5, "manual_edit", 10_000, "now"),
+        row(4, "manual_edit", 9_900, "typing 2"),
+        row(3, "manual_edit", 9_800, "typing 1"),
+        row(2, "agent_refresh", 5_000, "ai text"),
+        row(1, "person_create", 1_000, "first"),
+    ];
+    let v = earlier_versions(&rows, "now");
+    let bodies: Vec<&str> = v.iter().map(|v| v.body.as_str()).collect();
+    assert_eq!(bodies, vec!["ai text", "first"]);
+    assert!(!v[0].by_person && v[1].by_person);
+    assert_eq!(v[0].at, "1970-01-01T01:23:20Z");
+
+    let many: Vec<_> = (0..30)
+        .map(|i| {
+            row(
+                30 - i,
+                "agent_refresh",
+                100_000 - i * 1000,
+                &format!("t{i}"),
+            )
+        })
+        .collect();
+    assert_eq!(earlier_versions(&many, "t0").len(), HISTORY_KEEP);
 }
