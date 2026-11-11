@@ -8,7 +8,7 @@
 <p align="center">
   <strong>Write when you want; your AI keeps it organized.</strong><br>
   Open-source Obsidian alternative that works with your existing vault. Connects to your AI tools in one click, with no plugins to install or maintain.<br>
-  Share it with your team. Your notes stay on your computer and go only to the AI tools you pick.
+  Share it with your team. Your notes are files on your computer and go only where you send them.
 </p>
 
 <p align="center">
@@ -47,6 +47,18 @@ I started Wenlan because my notes, documents, and AI chats were scattered, and k
 - **One click to connect:** **Connect all** in Settings sets up the AI tools on your computer. No plugins to find, install, or maintain.
 - **Share it with your team:** Share a Space through a Google Drive or iCloud Drive folder, and teammates add it on their own computers.
 - **Bring what you have:** Notes, documents, links, chats, and Obsidian vaults come in ([full list](#what-can-i-bring-in)) as local Markdown files.
+
+<a id="how-it-compares"></a>
+
+### How it compares
+
+| | Obsidian with plugins | An AI tool on a Markdown folder | Wenlan |
+|---|---|---|---|
+| Who keeps it organized | You, with plugins you find and update | Your AI, each time you ask | Your AI tools as they work, and again when a source changes |
+| Setup | Find, install, and update plugins | Write your own instructions | **Connect all** in Settings, one click |
+| Checking the AI's work | Depends on the plugin | Read every diff yourself | Each citation opens the original; a page whose citations mostly don't match is refused |
+| What the AI may change | Depends on the plugin | Anything in the folder | You choose per page, and can restore an earlier version |
+| Your existing vault | It is your vault | Point the AI at it | Link it in; notes stay where they are |
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
@@ -93,24 +105,22 @@ Use `$recall` in Codex; with an MCP-only tool, just ask it to check Wenlan first
 When an import finishes, the app offers **Write pages with** your AI tool to turn it into your first cited pages. No command needed.
 
 <a id="what-can-i-bring-in"></a>
+<a id="sources-and-imports"></a>
 
 <br>
 
-## Sources and imports
+## What you can bring in
 
 | Bring in | How you can use it |
 | --- | --- |
-| Markdown, text, text-based PDFs, DOCX, or a folder | Search and cite the imported text. Import a folder once, or keep it in sync as its files change. |
+| Markdown, text, text-based PDFs, DOCX, or a folder | Search and cite the text. Import a folder once, or keep it in sync as its files change. |
 | An Obsidian vault or a Logseq graph | Search and cite existing notes. Keep it in sync to follow changes in the background, or import it once. Notes you wrote start on **Ask me first**: AI changes to them come as suggestions you accept or decline, and you can change that per page. |
-| Web links | Paste a link into a page and it is saved as a source. YouTube, X, Threads, Instagram, and RedNote links show as a card, a playable video, or the original post. Or paste text with its URL to save that excerpt. |
+| Web links | Paste a link into a page and it is saved as a source. YouTube, X, Threads, Instagram, and RedNote links show as a card, a playable video, or the original post. |
 | Gmail, Notion, Google Drive, Slack, GitHub | Your AI tool reads them with its own connectors and saves what matters to Wenlan with a link to the original. |
+| Your AI chats | Your AI tools save the decisions, findings, and progress from each conversation as memories, not full transcripts. ChatGPT or Claude export ZIPs bring in earlier conversations as snapshots. |
 | A code repository | `/wenlan wiki` writes pages tied to the code lines they rely on. [Code wiki](#code-repository-wiki). |
-| An OKF bundle | Connect an Open Knowledge Format folder, such as an OpenWiki or a Wenlan export, as a source. |
-| Your AI chats as you work | Claude Code, Codex, and your other AI tools save the decisions, findings, and progress from each conversation as memories, and pages cite them. Full transcripts are not imported. |
-| ChatGPT or Claude export ZIPs | Retrieve earlier conversation text, including a last message that got no reply, and cite it as context; imports are snapshots, not live account connections. |
-| Existing memories as text | Save preferences, decisions, or lessons as individual memories. |
 
-Scanned PDFs need text extraction first; chat attachments are not imported. [Import guide](docs/import-guide.md).
+You can also connect an Open Knowledge Format (OKF) folder as a source. Scanned PDFs need text extraction first; chat attachments are not imported. [Import guide](docs/import-guide.md).
 
 <a id="what-makes-wenlan-distinct"></a>
 <a id="why-is-wenlan-different"></a>
@@ -120,176 +130,84 @@ Scanned PDFs need text extraction first; chat attachments are not imported. [Imp
 <a id="atomic-memory"></a>
 <a id="maintained-page"></a>
 <a id="local-markdown-that-works-with-obsidian"></a>
-
 <a id="keep-knowledge-current-and-preserve-history"></a>
-
-<br>
-
-## Steep: keep knowledge useful as it changes
-
-<p align="center">
-  <img src="./docs/assets/wenlan-updates-history.png" alt="Illustrative flow: a finding in a source document updates memory from V1 to V2, then informs a page that is either updated automatically or sent for review." width="100%">
-</p>
-<p>Illustration based on current update behavior; not an App screenshot.</p>
-
-Saving material is only the start. **Steep prepares it for reuse and keeps supported pages current**, so you and your AI can build on earlier findings instead of repeatedly working through the originals.
-
-Choose one of two modes in Settings:
-
-- **On demand** (new installs start here): your AI tool handles the knowledge work you request and can catch up on new material and pages waiting for refresh. Saving material also makes eligible work available to the tool; `/wenlan steep` asks it to catch up in one pass.
-- **Automatic:** Wenlan processes eligible background work with the models you assign. It does not infer a goal to reorganize existing knowledge; tell your AI what you want changed.
-
-What steep does:
-
-- **Enrich memories:** Add types, structured details, search cues, and graph links so individual findings are easier to retrieve in context.
-- **Follow the evidence:** Changed sources, memories, or cited code flag dependent pages for refresh; new memories can enrich eligible pages. Refresh keeps the saved page if a draft fails citation checks. Passing these checks does not establish factual correctness.
-- **Keep control and history:** Background refresh updates eligible AI-maintained pages; your authored or edited pages receive proposed revisions. Explicit memory replacements hide or archive earlier memories while preserving their links. Page revisions remain inspectable.
-- **Organize around your goal:** Ask Steep to reorganize existing knowledge when you want changes across memories, pages, folders, topics, or relationships. It follows the request and updates only what is needed; routine organization does not require a separate plan confirmation.
-- **Ask me first:** With **Ask me first on pages I wrote** on, as it is for new installs, AI changes to pages you wrote or edited wait for your OK. Each page's **AI changes** setting shows **Allowed** or **Ask me first**. Pages AI wrote keep updating.
-
+<a id="steep-keep-knowledge-useful-as-it-changes"></a>
 <a id="what-it-does-on-its-own"></a>
-
-### What it does on its own
-
-In both modes, without a model, Wenlan:
-
-- **Flags out-of-date pages** when their sources, memories, or cited code change. Repository wiki pages show what changed in the code.
-- **Suggests merging near-duplicate pages** as a card for you or your AI to accept or dismiss.
-- **Tidies page links:** lists `[[links]]` that point to no page yet, and drops citations to memories you deleted.
-
-Rewriting a flagged page takes a model. In Automatic, Wenlan does it in the background. In On demand, your AI tool is told which pages are waiting and can bring them up to date while it works.
-
-[Steep guide: triggers, review rules, and model setup](docs/steep.md). Choose an on-device model, a local server, or a cloud provider; model-backed background work is optional.
-
-<a id="code-repository-wiki"></a>
-
-<br>
-
-## A wiki for your code repository
-
-Run `/wenlan wiki` (`$wenlan wiki` in Codex) in a repository. Your AI tool plans the wiki from the repository itself: an overview that lists every page, then one page for each part or flow a newcomer needs. A small tool gets a few pages, a large monorepo many more. A rerun writes only the pages that are missing.
-
-- **Tied to the code:** Each page records the code lines it was read from. When that code changes, the page shows what changed with one Review button, and steep brings the page up to date.
-- **In the repository as a pull request:** The GitHub button on a Space connects it to its repository and puts the pages that rely on that code in the repository's `wiki/` folder as a pull request. Run it from the button, or turn on the daily update: it runs your own AI tool on your computer, or runs on GitHub Actions with your AI tool's key saved as a repository secret, so your computer can stay off. The same pull request fixes sentences in the repository's own docs that the code no longer agrees with, for you to review.
-- **Your edits stay:** A wiki page someone edited in the repository keeps that edit. Pages that cite your memories or chats stay out of the repository.
-
 <a id="what-does-wenlan-build"></a>
 <a id="why-it-compounds"></a>
 <a id="what-is-this"></a>
 <a id="what-you-get"></a>
 <a id="what-can-it-do"></a>
 <a id="knowledge-graph"></a>
-
 <a id="browse-and-organize-your-knowledge"></a>
-
 <a id="connect-your-knowledge"></a>
-
-<br>
-
-## Organize scattered material into knowledge
-
+<a id="organize-scattered-material-into-knowledge"></a>
 <a id="explore-your-personal-knowledge-graph"></a>
-
-<p align="center">
-  <img src="./docs/assets/wenlan-personal-graph.png" alt="Wenlan knowledge graph with illustrative regions for personal interests, research, and development" width="100%">
-</p>
-<p>App nodes and connections; translated labels and illustrative regions.</p>
-
-**Sources** preserve documents and conversations; **memories** keep the decisions, lessons, and reasons worth reusing. Combine them in editable **Markdown pages with citations**, connect pages with `[[wikilinks]]`, and follow citations back to the originals. Pages can include Mermaid diagrams, which the App draws; when an AI tool writes a page, Wenlan checks its diagrams for common mistakes and names the line to fix.
-
-- **Atomic memories:** Following [Zettelkasten’s principle of atomicity](https://zettelkasten.de/posts/create-zettel-from-reading-notes/), keep findings independently retrievable and reusable without loading an entire conversation or page.
-- **Shared topics:** With an enrichment model configured, LLM entity extraction and entity resolution link mentions of the same person, project, or concept across documents and conversations, retaining their memories and sources.
-- **Knowledge communities:** Group connected topics to reveal related knowledge across your material. Label Propagation runs by default; Leiden is available as an opt-in algorithm. [Graph details](docs/technical-foundations.md#graph-data-and-entity-resolution).
-
 <a id="daily-workflow"></a>
-
-<br>
-
-## In everyday use
-
-Save new findings and progress as you work, and start the next session with them.
-
-<p align="center">
-  <img src="./docs/assets/wenlan-daily-workflow.png" alt="Sources and saved memories accumulate in Wenlan; use them in the App or AI tools, then save new memories and work progress for later." width="100%">
-</p>
-
-Simplified workflow. Plugin commands and page organization are optional, with no fixed sequence.
-
-- **Work in the App.** Add material, write or edit pages, follow citations, and review proposed changes without connecting AI. The menu bar (or tray) icon opens a small panel with what needs you, your latest pages, and Quick capture.
-- **Use your knowledge and write new pages.** Ask your AI to find relevant sources and memories for the task (`/recall`). It can also write cited pages or update existing ones from their current version, then save them to Wenlan. When a page cites its sources as `[n]`, Wenlan compares each cited sentence with its source and refuses the page when most of its citations don't match.
-- **Keep what you learn.** Save a decision or lesson, with its reasons and sources, in the App or through your AI (`/capture`).
-- **Pause and resume.** Save findings and a session log, update affected pages, and record progress and next steps in the project Brief (`/handoff`). Pick up that context next time (`/brief`).
-
-**Organize existing knowledge around your goal:** Ask Steep (`/wenlan steep`) to update the memories, pages, folders, topics, or relationships relevant to your request. [Steep guide](docs/steep.md) and [plugin commands](plugin/skills/README.md).
-
+<a id="in-everyday-use"></a>
 <a id="how-wenlan-works"></a>
 <a id="how-does-it-work"></a>
+<a id="use-your-knowledge-with-ai"></a>
+<a id="put-your-knowledge-to-work-with-ai"></a>
+<a id="if-you-already-use-claude-code-on-your-notes"></a>
+
+<br>
+
+## How it stays organized
+
+Your AI tool reads what you bring in and writes it into Markdown pages. It links related pages, cites where each sentence came from, and brings pages up to date when a source changes. You can open any page and write in it yourself.
+
+<p align="center">
+  <img src="./docs/assets/wenlan-updates-history.png" alt="Illustrative flow: a finding in a source document updates memory from V1 to V2, then informs a page that is either updated automatically or sent for review." width="100%">
+</p>
+<p>Illustration based on current update behavior; not an App screenshot.</p>
+
+- **Pages with sources:** Each citation opens the original. When a page cites its sources as `[n]`, Wenlan compares each cited sentence with its source and refuses the page when most citations don't match. Passing the check does not prove a page correct.
+- **Kept current:** When a source, memory, or cited code changes, the pages that rely on it are flagged for an update. Without any model, Wenlan also suggests merging near-duplicate pages and lists `[[links]]` that point to no page yet.
+- **You decide what AI may change:** Pages you wrote start on **Ask me first**, so AI changes wait for your OK. Set any page to **Allowed** or **Ask me first**, see what changed, and restore an earlier version.
+- **Two ways to run it:** In **On demand**, the default, your AI tool does the writing while it works, so there is no API key to set up. In **Automatic**, Wenlan does it in the background with a model you choose, on your computer or in the cloud. [Steep guide](docs/steep.md).
+- **In your AI tool:** `/recall` brings back earlier pages and decisions, `/capture` saves a decision or lesson, `/handoff` saves where you stopped, and `/brief` picks it up next time. [Plugin commands](plugin/skills/README.md).
+- **In the app:** Add material, write and edit pages, follow citations, and review proposed changes without connecting an AI. Pages can include Mermaid diagrams, which the app draws.
+
+Already using Claude Code or Codex on a folder of notes? Keep doing that. Wenlan connects to the same tool and adds what a folder can't do alone: citation checks, flags when sources change, and per-page control over what AI may change.
+
+<a id="code-repository-wiki"></a>
+<a id="a-wiki-for-your-code-repository"></a>
+
+<br>
+
+## A wiki for your code repository
+
+Run `/wenlan wiki` (`$wenlan wiki` in Codex) in a repository. Your AI tool writes an overview and one page for each part or flow a newcomer needs. A rerun writes only the pages that are missing.
+
+- **Tied to the code:** Each page records the code lines it was read from, and shows what changed when that code changes.
+- **As a pull request:** The GitHub button on a Space puts the pages in the repository's `wiki/` folder as a pull request, when you press it or daily. The daily run uses your own AI tool on your computer, or GitHub Actions with your AI tool's key saved as a repository secret. The same pull request fixes sentences in the repository's docs that the code no longer agrees with.
+- **Your edits stay:** A wiki page someone edited in the repository keeps that edit. Pages that cite your memories or chats stay out of the repository.
 
 <a id="what-wenlan-is-not"></a>
 <a id="retrieval"></a>
 <a id="retrieval-across-words-meaning-and-connections"></a>
-
-<a id="use-your-knowledge-with-ai"></a>
-
-<br>
-
-## Put your knowledge to work with AI
-
-Once your material is in Wenlan, your AI tools can build on it: retrieve earlier decisions with their supporting material, save new work, and keep using it as the evidence changes.
-
-<a id="if-you-already-use-claude-code-on-your-notes"></a>
-
-### If you already use Claude Code or Codex on your notes
-
-Keep doing that. Wenlan connects to the same AI tool and adds the checks a folder of Markdown can't do by itself: a page refused when most of its citations don't match the source, flags when sources change, and you decide which pages AI may change on its own and which wait for your OK.
-
-**Use it for:**
-
-- **Development:** Bring earlier technical decisions, lessons, and acceptance criteria into implementation and debugging.
-- **Products and websites:** Use customer research, positioning, and design principles to draft specifications or build pages.
-- **Research and learning:** Turn reading material and saved findings into cited reports or study guides you can reuse.
-
-**Retrieval and connections:** Plugins guide retrieval and saving; MCP connections expose the tools for your AI to call.
-
-- **[Local hybrid retrieval](docs/technical-foundations.md#retrieval-pipeline):** Find exact terms and similar meaning with SQLite FTS5 and BGE embeddings in a libSQL DiskANN vector index, fused by weighted Reciprocal Rank Fusion (RRF); base search needs no API key.
-- **Graph-assisted ranking:** Shared-entity links boost related memories even when their wording differs. Optional cross-encoder reranking compares each candidate with the question to refine the order.
-- **Space-scoped retrieval:** Select a Space to limit returned knowledge to the relevant project or personal collection.
-
-Turn on **Web access** in Settings to let supported web AI clients such as Claude, ChatGPT, or Muse search your library or a chosen Space while your computer is online. When you allow an app, choose search only or search and write; a write app can also add, edit and delete, and AI apps can ask you before each change. This feature is experimental; queries and results pass through a relay. See the [privacy limits](docs/PRIVACY.md#pre-release-standalone-wenlan-relay-connector).
-
 <a id="architecture"></a>
 
 <br>
 
-## Architecture
+## For technical readers
 
-**One local knowledge base.** App, CLI, and connected AI tools read and write through Wenlan’s local service. Pages are Markdown files; memories, relationships, and search indexes live in local libSQL.
-
-**Built with** Rust for the local service, CLI, and MCP server, and Tauri with React and TypeScript for the desktop app.
+**One local knowledge base.** The app, CLI, and connected AI tools read and write through Wenlan’s local service. Pages are Markdown files; memories, relationships, and search indexes live in local libSQL. The service, CLI, and MCP server are written in Rust; the desktop app uses Tauri with React and TypeScript.
 
 <p align="center">
   <img src="./docs/assets/wenlan-architecture.png" alt="Architecture overview: App and AI tools share a local knowledge base, with optional background enrichment models." width="100%">
 </p>
 
-Architecture overview. [Retrieval, evidence, and models](docs/technical-foundations.md).
+- **Retrieval:** SQLite FTS5 finds exact terms and BGE embeddings in a libSQL DiskANN index find similar meaning, fused by weighted Reciprocal Rank Fusion (RRF). Base search needs no API key. Shared-entity links boost related memories, and optional cross-encoder reranking refines the order. Choosing a Space limits results to that project.
+- **Graph:** With an enrichment model, entity extraction and resolution link mentions of the same person, project, or concept across sources. Label Propagation (default) or Leiden groups related topics.
+- **Memories:** Findings are saved as small, separate memories, so one can be found without loading a whole conversation or page.
 
-<a id="models-and-privacy"></a>
-
-<br>
-
-## Data and privacy
-
-**Export your wiki:** Export eligible pages as an Open Knowledge Format (OKF) wiki.
-
-A cloud AI client may send retrieved knowledge to its provider, and a cloud model receives the material it processes. Local storage does not keep those interactions local. Usage statistics are off by default.
-
-[File locations, backup, and removal](docs/setup-and-data.md#backup-and-removal) · [Network and privacy details](docs/PRIVACY.md#when-wenlan-reaches-the-network).
+[Retrieval, evidence, and models](docs/technical-foundations.md).
 
 <a id="evaluation"></a>
 
-<br>
-
-## Evaluation
+### Evaluation
 
 These LongMemEval (LME) snapshots measure retrieval of saved knowledge, not AI answer quality. Recall@5 measures how much relevant material appears in the top five results.
 
@@ -305,6 +223,19 @@ On a 10,000-page test (generated pages, M2 Pro with 16 GB, v0.20.0), App search 
 Importing a 10,000-note Obsidian vault in 0.20.2 (invented notes, M2 Pro Mac with 16 GB, debug build, Claude Code writing the pages): searchable in 15 s, the first page in about 2 minutes, and 8 cited pages in about 4 minutes.
 
 [Evaluation method and benchmark details](docs/eval/README.md).
+
+<a id="models-and-privacy"></a>
+<a id="data-and-privacy"></a>
+
+<br>
+
+## Data and privacy
+
+Pages are Markdown files on your computer. Export eligible pages as an Open Knowledge Format (OKF) wiki. A cloud AI tool may send what it retrieves to its provider, and a cloud model receives the material it processes, so local storage does not keep those interactions local. Usage statistics are off by default.
+
+**Web access (experimental):** Turn on **Web access** in Settings to let web AI clients such as Claude, ChatGPT, or Muse search your library or a chosen Space while your computer is online. When you allow an app, choose search only or search and write; a write app can also add, edit and delete, and AI apps can ask you before each change. Queries and results pass through a relay. See the [privacy limits](docs/PRIVACY.md#pre-release-standalone-wenlan-relay-connector).
+
+[File locations, backup, and removal](docs/setup-and-data.md#backup-and-removal) · [Network and privacy details](docs/PRIVACY.md#when-wenlan-reaches-the-network).
 
 <a id="learn-more"></a>
 <a id="whats-new"></a>
