@@ -229,6 +229,8 @@ export function SpacesOverview(props: SpacesOverviewProps) {
       {query.isPending && lastGood === null ? null : (
         <>
           {ownConfirmed.length > 0 || teamGroups.length === 0 ? (
+          <div className={teamGroups.length > 0 ? "spaces-team-group" : undefined}>
+            {teamGroups.length > 0 ? <h2 className="spaces-group-title">{t("team.groupMine")}</h2> : null}
           <ConfirmedSpaces
             spaces={ownConfirmed}
             allSpaces={allSpaces}
@@ -244,6 +246,7 @@ export function SpacesOverview(props: SpacesOverviewProps) {
             onReorder={(space, target) => submit({ kind: "reorder", space, target })}
             onDelete={(space) => submit({ kind: "delete", space })}
           />
+          </div>
           ) : null}
           {teamGroups.map((group) => (
             <div key={group.host ?? "hosted"} className="spaces-team-group">

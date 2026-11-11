@@ -37,11 +37,11 @@ export function JoinSharedDialog({ onClose, onJoined }: JoinSharedDialogProps) {
   const shares = useShares();
   const spaces = useQuery({ queryKey: ["spaces"], queryFn: listSpaces });
   const dialogRef = useRef<HTMLDialogElement>(null);
-  const [mode, setMode] = useState<"folder" | "code">("folder");
+  const [mode, setMode] = useState<"folder" | "code">("code");
   const [code, setCode] = useState("");
   const [checked, setChecked] = useState<{ code: string; response: TeamJoinResponse } | null>(null);
   const [checking, setChecking] = useState(false);
-  const [serverSpace, setServerSpace] = useState<string | null>(null);
+  const [names, setNames] = useState<Record<string, string>>({});
   const [folder, setFolder] = useState<string | null>(null);
   const [found, setFound] = useState<SharedFolder | null | undefined>(undefined);
   const [localName, setLocalName] = useState("");
@@ -75,55 +75,52 @@ export function JoinSharedDialog({ onClose, onJoined }: JoinSharedDialogProps) {
     setChecking(true);
     setError(null);
     setChecked(null);
-    setServerSpace(null);
+    setNames({});
     try {
       const response = await teamJoin(trimmed);
       setChecked({ code: trimmed, response });
-      const first = response.me.spaces[0]?.space ?? null;
-      setServerSpace(first);
-      if (first) setLocalName(first);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
       setChecking(false);
     }
   };
-  const chooseServerSpace = (name: string) => {
-    setServerSpace(name);
-    setLocalName(name);
-  };
 
   const spaceNames = new Set((spaces.data ?? []).map((space) => space.name.trim().toLocaleLowerCase()));
-  const baseName = mode === "code" ? serverSpace ?? "" : found?.name ?? "";
-  const nameTaken = (mode === "code" ? serverSpace !== null : found?.kind === "space") && spaceNames.has(baseName.trim().toLocaleLowerCase());
-  const chosenName = nameTaken ? localName.trim() : baseName;
+  const nameTaken = found?.kind === "space" && spaceNames.has((found?.name ?? "").trim().toLocaleLowerCase());
+  const chosenName = nameTaken ? localName.trim() : found?.name ?? "";
   const stillTaken = nameTaken && spaceNames.has(chosenName.toLocaleLowerCase());
+  // The name a server Space gets here: its own, unless the person renamed it.
+  const localNameOf = (serverSpace: string) => (names[serverSpace] ?? serverSpace).trim();
+  const takenHere = (serverSpace: string) => spaceNames.has(serverSpace.trim().toLocaleLowerCase());
+  const refreshAfterJoin = () => Promise.all([
+    queryClient.invalidateQueries({ queryKey: SHARES_KEY }),
+    queryClient.invalidateQueries({ queryKey: ["spaces"] }),
+    queryClient.invalidateQueries({ queryKey: ["pages"] }),
+    queryClient.invalidateQueries({ queryKey: ["recent-pages"] }),
+  ]);
+  const joinServerSpace = async (serverSpace: string) => {
+    const local = localNameOf(serverSpace);
+    if (!checked || pending || !local || (takenHere(serverSpace) && spaceNames.has(local.toLocaleLowerCase()))) return;
+    setPending(true);
+    setError(null);
+    try {
+      await joinTeamSpace(local, checked.code, serverSpace);
+      await refreshAfterJoin();
+      onClose();
+      onJoined?.("space", local);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setPending(false);
+    }
+  };
   const already = mode === "folder" && found && (shares.data ?? []).some((share) => share.folder === folder
     || (found.kind === "page" && share.kind === "page" && share.target === found.page_id));
 
   const join = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (mode === "code") {
-      if (!checked || !serverSpace || pending || !chosenName || stillTaken) return;
-      setPending(true);
-      setError(null);
-      try {
-        await joinTeamSpace(chosenName, checked.code, serverSpace);
-        await Promise.all([
-          queryClient.invalidateQueries({ queryKey: SHARES_KEY }),
-          queryClient.invalidateQueries({ queryKey: ["spaces"] }),
-          queryClient.invalidateQueries({ queryKey: ["pages"] }),
-          queryClient.invalidateQueries({ queryKey: ["recent-pages"] }),
-        ]);
-        onClose();
-        onJoined?.("space", chosenName);
-      } catch (caught) {
-        setError(caught instanceof Error ? caught.message : String(caught));
-      } finally {
-        setPending(false);
-      }
-      return;
-    }
+    if (mode === "code") return;
     if (!folder || !found || already || pending || (found.kind === "space" && (!chosenName || stillTaken))) return;
     setPending(true);
     setError(null);
@@ -158,14 +155,9 @@ export function JoinSharedDialog({ onClose, onJoined }: JoinSharedDialogProps) {
     >
       <form onSubmit={join}>
         <h2 id="join-dialog-title">{t("sharing.joinTitle")}</h2>
-        <div className="share-mode" role="radiogroup" aria-label={t("sharing.joinTitle")}>
-          {(["folder", "code"] as const).map((value) => (
-            <label key={value}>
-              <input type="radio" name="join-mode" checked={mode === value} disabled={pending} onChange={() => { setMode(value); setError(null); }} />
-              <span>{t(value === "folder" ? "team.joinChoiceFolder" : "team.joinChoiceCode")}</span>
-            </label>
-          ))}
-        </div>
+        {mode === "folder" && (
+          <button type="button" className="share-link share-back" onClick={() => { setMode("code"); setError(null); }}>{t("team.joinUseCode")}</button>
+        )}
         {mode === "folder" && (
           <>
         <div className="share-field">
@@ -212,40 +204,48 @@ export function JoinSharedDialog({ onClose, onJoined }: JoinSharedDialogProps) {
                 onPaste={(event) => { const pasted = event.clipboardData.getData("text"); setCode(pasted); void checkCode(pasted); event.preventDefault(); }}
                 onBlur={(event) => void checkCode(event.target.value)}
               />
-              <p className="share-hint">{checking ? t("team.joinChecking") : t("team.joinCodeHint")}</p>
+              {checking && <p className="share-hint">{t("team.joinChecking")}</p>}
             </div>
             {checked && checked.response.me.spaces.length === 0 && <p className="share-warning">{t("team.joinNoSpaces")}</p>}
             {checked && checked.response.me.spaces.length > 0 && (
-              <div className="share-field" role="radiogroup" aria-label={t("team.joinAvailable")}>
+              <div className="share-field">
                 <span className="share-label">{t("team.joinAvailable")}</span>
-                {checked.response.me.spaces.map((entry) => (
-                  <label key={entry.space} className="share-choice">
-                    <input type="radio" name="join-server-space" checked={serverSpace === entry.space} disabled={pending} onChange={() => chooseServerSpace(entry.space)} />
-                    <span>{entry.access === "read" ? t("team.joinAccessFor", { space: entry.space, access: t("team.readOnly") }) : entry.space}</span>
-                  </label>
-                ))}
+                <ul className="share-rows">
+                  {checked.response.me.spaces.map((entry) => {
+                    const local = localNameOf(entry.space);
+                    const blocked = takenHere(entry.space) && spaceNames.has(local.toLocaleLowerCase());
+                    return (
+                      <li key={entry.space}>
+                        <div className="share-row-line">
+                          <span className="share-row-name">{entry.access === "read" ? t("team.joinAccessFor", { space: entry.space, access: t("team.readOnly") }) : entry.space}</span>
+                          <button type="button" className="share-secondary" aria-label={t("team.joinSpace", { space: entry.space })} disabled={pending || !local || blocked} onClick={() => void joinServerSpace(entry.space)}>{t(pending ? "sharing.joining" : "sharing.join")}</button>
+                        </div>
+                        {takenHere(entry.space) && (
+                          <label className="share-field">
+                            <span className="share-label">{t("sharing.joinNameTaken")}</span>
+                            <input className="share-input" value={names[entry.space] ?? entry.space} onChange={(event) => setNames({ ...names, [entry.space]: event.target.value })} disabled={pending} />
+                          </label>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
               </div>
             )}
-            {nameTaken && (
-              <label className="share-field">
-                <span className="share-label">{t("sharing.joinNameTaken")}</span>
-                <input className="share-input" value={localName} onChange={(event) => setLocalName(event.target.value)} disabled={pending} />
-              </label>
-            )}
+            <p className="share-hint">
+              {t("team.joinFolderAsk")}{" "}
+              <button type="button" className="share-link" onClick={() => { setMode("folder"); setError(null); }}>{t("sharing.chooseFolder")}</button>
+            </p>
           </>
         )}
         {error && <p className="share-warning" role="alert">{t("sharing.joinFailed", { message: error })}</p>}
         <div className="share-actions">
           <button type="button" className="share-secondary" onClick={onClose} disabled={pending}>{t("sharing.cancel")}</button>
-          <button
-            type="submit"
-            className="share-primary"
-            disabled={mode === "code"
-              ? !checked || !serverSpace || pending || !chosenName || stillTaken
-              : !found || Boolean(already) || pending || (found.kind === "space" && (!chosenName || stillTaken))}
-          >
-            {t(pending ? "sharing.joining" : "sharing.join")}
-          </button>
+          {mode === "folder" && (
+            <button type="submit" className="share-primary" disabled={!found || Boolean(already) || pending || (found.kind === "space" && (!chosenName || stillTaken))}>
+              {t(pending ? "sharing.joining" : "sharing.join")}
+            </button>
+          )}
         </div>
       </form>
     </dialog>
