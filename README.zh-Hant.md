@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=ec1bb96d7ce23c02c13d7923b8173ecce27a71dc0db0ba6b6251ced99b5f5796 -->
+<!-- README_SYNC: source=README.md sha256=92282c0f0e22c4db652941ede00896957ef511ce1e8d76147d3ae3a04d05eb8b -->
 
 <p align="center">
   <picture>
@@ -165,7 +165,7 @@
 你的 AI 工具會讀你帶進來的資料，寫成 Markdown 筆記：把相關的筆記連起來，標出每句話的出處，來源變了就跟著更新。任何一篇筆記你都可以打開自己寫。
 
 <p align="center">
-  <img src="./docs/assets/wenlan-updates-history-zh-Hant.animated.svg" alt="示意流程：AI 對話裡存下的決定和改過的來源一起經過沉澱；設成「先問我」的筆記收到等你核准的建議，設成「直接改」的筆記自動更新，並附上回到原文的引用。" width="100%">
+  <img src="./docs/assets/wenlan-updates-history-zh-Hant.animated.svg" alt="示意流程：AI 對話、文件與資料夾（含 Obsidian）、程式碼和網頁內容進入沉澱，更新筆記（一篇自動更新並附引用，一篇等你點頭）、找出新關聯、提醒矛盾；下次再問，你的 AI 工具會引用更新後的筆記。" width="100%">
 </p>
 <p>示意圖依據目前的更新行為繪製；並非 App 截圖。</p>
 
