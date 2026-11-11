@@ -50,12 +50,14 @@ pub struct SharedHost {
     pub space: Option<String>,
 }
 
-/// Whether a folder shares a whole Space or one page.
+/// Whether a folder shares a whole Space, one page, or the whole library.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SharedKind {
     Space,
     Page,
+    /// Every page of every Space, between one person's own computers.
+    Library,
 }
 
 /// A member of a shared Space or page, as its folder lists them.
