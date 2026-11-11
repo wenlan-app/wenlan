@@ -52,8 +52,10 @@ impl LlmProvider for Judge {
                     .into_iter()
                     .map(|(m, text)| {
                         let habit = text.contains("zsh");
+                        let others = text.contains("Dana");
+                        let personal = text.contains("dentist") || others;
                         format!(
-                            r#"{{"m": "{m}", "useful": {}, "tool": {habit}, "expires": false, "private": false}}"#,
+                            r#"{{"m": "{m}", "useful": {}, "tool": {habit}, "expires": false, "others": {others}, "personal": {personal}}}"#,
                             !habit
                         )
                     })
@@ -77,7 +79,7 @@ impl LlmProvider for Judge {
                         Some(with) => format!(
                             r#"{{"m": "{m}", "verdict": "same", "with": "{with}", "sentence": "Releases go out only through the merge queue."}}"#
                         ),
-                        None if text.contains("Lore") => {
+                        None if text.contains("Lore") || text.contains("dentist") => {
                             format!(r#"{{"m": "{m}", "verdict": "new"}}"#)
                         }
                         None => format!(r#"{{"m": "{m}", "verdict": "conflict"}}"#),
@@ -310,6 +312,43 @@ async fn a_memory_a_page_already_says_becomes_one_more_source_of_it() {
     let sources = db.get_page(&page).await.unwrap().unwrap().source_memory_ids;
     assert!(!sources.contains(&pass.written[0]), "{sources:?}");
     assert!(sources.contains(&"mem_first".to_string()), "{sources:?}");
+}
+
+/// The person's own life is kept and filed unsorted, never in the project's
+/// Space; someone else's personal details are left out.
+#[tokio::test]
+async fn the_persons_own_life_is_kept_apart_and_other_peoples_is_left_out() {
+    let _one = ONE_AT_A_TIME.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let db = MemoryDB::new(dir.path(), Arc::new(NoopEmitter))
+        .await
+        .unwrap();
+    let model = Judge::new(false);
+    let keep = Keep(&db, Default::default());
+    let pass = run(
+        &db,
+        model.as_ref(),
+        &keep,
+        vec![
+            memory("I see the dentist every March for a checkup."),
+            memory("Dana's divorce is why she moved teams last spring."),
+        ],
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        (pass.counts.added, pass.counts.not_knowledge),
+        (1, 1),
+        "{:?}",
+        pass.counts
+    );
+    let kept = db
+        .get_memory_detail(&pass.written[0])
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(kept.content, "I see the dentist every March for a checkup.");
+    assert_eq!(kept.space, None, "filed unsorted, not in a project's Space");
 }
 
 /// Reading is all the import does to the tools' own files.

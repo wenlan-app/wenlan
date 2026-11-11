@@ -57,6 +57,9 @@ pub fn count_by_tool(found: &[FoundMemory]) -> Vec<(String, usize)> {
 
 struct Kept {
     memory: FoundMemory,
+    /// About the person's own life: filed unsorted, never in a project's or
+    /// a shared Space.
+    personal: bool,
     space: Option<String>,
     candidates: Vec<Candidate>,
 }
@@ -103,7 +106,7 @@ pub async fn run(
     counts.sensitive = sensitive.len();
     drop(sensitive);
 
-    // 2. The four questions.
+    // 2. The questions: knowledge only, the person's own life filed apart.
     let mut knowledge = Vec::new();
     for batch in clean.chunks(gates::KEEP_BATCH) {
         let texts: Vec<&str> = batch.iter().map(|m| m.text.as_str()).collect();
@@ -113,10 +116,10 @@ pub async fn run(
             continue;
         };
         for (memory, keep) in batch.iter().zip(gates::parse_keep(&answer, batch.len())) {
-            if keep {
-                knowledge.push(memory.clone());
-            } else {
-                counts.not_knowledge += 1;
+            match keep {
+                gates::Keep::Work => knowledge.push((memory.clone(), false)),
+                gates::Keep::Personal => knowledge.push((memory.clone(), true)),
+                gates::Keep::Drop => counts.not_knowledge += 1,
             }
         }
     }
@@ -124,8 +127,9 @@ pub async fn run(
     // 3. What Wenlan already holds near each one, in its Space.
     let mut spaces: HashMap<std::path::PathBuf, Option<String>> = HashMap::new();
     let mut kept = Vec::with_capacity(knowledge.len());
-    for memory in knowledge {
+    for (memory, personal) in knowledge {
         let space = match &memory.project_dir {
+            _ if personal => None,
             Some(dir) => match spaces.get(dir) {
                 Some(space) => space.clone(),
                 None => {
@@ -139,9 +143,15 @@ pub async fn run(
             },
             None => None,
         };
-        let candidates = candidates(db, &memory.text, space.as_deref()).await?;
+        let scope = match (&space, personal) {
+            (_, true) => ReadScope::Uncategorized,
+            (Some(space), false) => ReadScope::Space(space.clone()),
+            (None, false) => ReadScope::Global,
+        };
+        let candidates = candidates(db, &memory.text, &scope).await?;
         kept.push(Kept {
             memory,
+            personal,
             space,
             candidates,
         });
@@ -271,15 +281,21 @@ async fn decide_and_write(
 async fn candidates(
     db: &MemoryDB,
     text: &str,
-    space: Option<&str>,
+    scope: &ReadScope,
 ) -> Result<Vec<Candidate>, String> {
-    let scope = match space {
-        Some(space) => ReadScope::Space(space.to_string()),
-        None => ReadScope::Global,
-    };
+    // Words only: page search reads its query as full-text syntax, where a
+    // stray period or quote is an error, not a character.
+    let text: String = text
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { ' ' })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let text = text.as_str();
     let mut out = Vec::new();
     let pages = db
-        .search_pages_scoped(text, CANDIDATE_PAGES, None, &scope)
+        .search_pages_scoped(text, CANDIDATE_PAGES, None, scope)
         .await
         .map_err(|e| e.to_string())?;
     for page in pages {
@@ -297,7 +313,7 @@ async fn candidates(
         });
     }
     let points = db
-        .search_memory(text, CANDIDATE_POINTS, None, &scope, None, None, None, None)
+        .search_memory(text, CANDIDATE_POINTS, None, scope, None, None, None, None)
         .await
         .map_err(|e| e.to_string())?;
     for point in points {
@@ -374,6 +390,7 @@ fn new_point(kept: &Kept) -> StoreMemoryRequest {
         content: kept.memory.text.clone(),
         memory_type: Some("fact".into()),
         space: match &kept.space {
+            _ if kept.personal => WriteSpaceTarget::Uncategorized,
             Some(space) => WriteSpaceTarget::Named(space.clone()),
             None => WriteSpaceTarget::Inherit,
         },
