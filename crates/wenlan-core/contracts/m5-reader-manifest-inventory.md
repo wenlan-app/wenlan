@@ -1351,6 +1351,7 @@ carrying the authority of agreement.
 | `core/post_ingest.rs::run_post_ingest_enrichment` | `pub` | no | no | — | `core/db.rs::get_entity_detail` |
 | `core/post_write.rs::rename_page` | `pub` | yes | no | — | `core/db/page_rename.rs::commit_page_title_rename` |
 | `core/post_write.rs::rename_page_title_cas` | `pub(crate)` | no | no | — | `core/db/repair_page_rename.rs::rename_page_title_cas_inner` |
+| `core/reading_copy.rs::pages_for_copy` | `pub` | no | no | — | `core/db.rs::list_pages_by_space` |
 | `core/refinery/mod.rs::run_redistill_page_slice` | `pub` | no | no | — | `core/db.rs::get_stale_page_after` |
 | `core/repair.rs::apply_repair_with_pages_inner` | `private` | no | no | — | `core/db/repair_deterministic.rs::apply_deterministic_repair_cas` |
 | `core/repair.rs::prepare_memory_reclassification_with_pages` | `pub` | no | **yes** | `server/repair_routes.rs::handle_prepare` | `core/repair.rs::prepare_rename_page_title` |
@@ -1757,6 +1758,8 @@ carrying the authority of agreement.
 | `core/sentences.rs::reject_sentence_proposal` | `pub` | no | **yes** | `server/sentence_routes.rs::handle_reject_sentence_proposal` | `core/sentences.rs::load_page` |
 | `core/sentences.rs::revert_ai_write` | `pub` | no | **yes** | `server/sentence_routes.rs::handle_revert_sentences` | `core/sentences.rs::load_page` |
 | `core/sentences.rs::unit_citations` | `private` | no | no | — | `core/sentences.rs::source_states` |
+| `core/shared_space/mod.rs::archive_here` | `private` | no | no | — | `core/export/knowledge.rs::archive_page_if_still_archived`, `core/shared_space/mod.rs::reload` |
+| `core/shared_space/mod.rs::move_to_space` | `private` | no | no | — | `core/shared_space/mod.rs::reload` |
 | `core/shared_space/mod.rs::sync_page` | `private` | no | no | — | `core/shared_space/mod.rs::apply_version`, `core/shared_space/mod.rs::reload` |
 | `core/shared_space/mod.rs::sync_shared_spaces` | `pub` | no | **yes** | `server/scheduler.rs::spawn_scheduler` | `core/shared_space/mod.rs::run_pass` |
 | `core/sources/page_watcher.rs::adopt_note` | `private` | no | no | — | `core/sources/page_watcher.rs::create_adopted_page` |

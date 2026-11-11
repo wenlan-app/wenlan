@@ -26,6 +26,9 @@
 //! ---
 //! ```
 //!
+//! A version of the whole library (`Scope::Library`) also carries the page's
+//! Space in a `space` key beside `shared`, left out for an Unfiled page.
+//!
 //! A version's content is its title (the page's own `title` key), its body
 //! and whether it archives the page ([`State`]): a rename is a new version
 //! even when the body is the same, and so is an archive (a tombstone that
@@ -46,6 +49,9 @@ use crate::store::format::page::{self, PageFile};
 
 /// The frontmatter key that holds a version's sharing facts.
 const SHARED_KEY: &str = "shared";
+
+/// The frontmatter key of a library version's Space (see `Scope::Library`).
+pub const SPACE_KEY: &str = "space";
 
 /// `members/<member_id>/pages/<page_id>/<sha256>.md`.
 pub const MEMBERS_DIR: &str = "members";
@@ -99,6 +105,9 @@ pub struct State {
     pub title: String,
     pub body_digest: String,
     pub archived: bool,
+    /// The page's Space, for the library only: [`PageVersion::state`] and a
+    /// Space or page share leave it `None`.
+    pub space: Option<String>,
 }
 
 /// A version read from the folder.
@@ -117,6 +126,16 @@ impl PageVersion {
             title: self.page.title.clone(),
             body_digest: self.meta.body_digest.clone(),
             archived: self.meta.archived,
+            space: None,
+        }
+    }
+
+    /// The Space a library version names (its frontmatter `space`; none for
+    /// a page that was Unfiled).
+    pub fn space(&self) -> Option<&str> {
+        match self.page.other.get(SPACE_KEY) {
+            Some(serde_yaml::Value::String(space)) => Some(space.as_str()),
+            _ => None,
         }
     }
 }
