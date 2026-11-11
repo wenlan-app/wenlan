@@ -223,6 +223,16 @@ function branchLook(
   return { ...base, style };
 }
 
+/**
+ * A guess the map would show once revealed. Stored section boxes give way to
+ * the page's own headings whenever the daemon sends them, so a guessed section
+ * then has nowhere to appear and must not be counted.
+ */
+function countsAsSuggestion(n: PageMapNode, map: PageMap | undefined): boolean {
+  if (n.status !== "suggested") return false;
+  return !(n.ref_kind === "section" && (map?.outline?.length ?? 0) > 0);
+}
+
 /** Drawn as text on a stroke rather than as a box: page lines past the first ring. */
 function onStroke(v: { node: { id: string }; depth: number }): boolean {
   return isPageLine(v.node.id) && v.depth >= 2 && moreFor(v.node.id) === null;
@@ -476,8 +486,8 @@ function PageCanvasInner({
     () =>
       showSuggestions
         ? 0
-        : (map?.nodes ?? []).filter((n) => n.status === "suggested" && n.ref_kind !== "section").length,
-    [map?.nodes, showSuggestions],
+        : (map?.nodes ?? []).filter((n) => countsAsSuggestion(n, map)).length,
+    [map, showSuggestions],
   );
 
   // Box metrics and collapse state by id, so the layout PUT can be built from
@@ -1987,7 +1997,7 @@ function PageCanvasInner({
   // AI guesses wait behind one visible button and never show a count: the
   // page's own lines are the map, these are extras to take or leave.
   const shownSuggestions = showSuggestions
-    ? (map?.nodes ?? []).filter((n) => n.status === "suggested" && n.ref_kind !== "section").length
+    ? (map?.nodes ?? []).filter((n) => countsAsSuggestion(n, map)).length
     : 0;
   const relatedActions = readOnly || !map || map.map_schema < 1 ? null : (
     <>

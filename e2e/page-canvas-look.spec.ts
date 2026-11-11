@@ -37,7 +37,7 @@ for (const theme of THEMES) {
       await shot("1-resting");
       await page.screenshot({ path: `shots/${theme}-1-resting-page.png` });
 
-      await page.getByRole("button", { name: /suggestion/ }).click();
+      await page.getByRole("button", { name: "Add related memories" }).click();
       await box(page, "Vector search").hover();
       await page.waitForTimeout(200);
       await shot("2-suggestions");
@@ -69,7 +69,7 @@ for (const theme of THEMES) {
       ).toBeVisible();
       await shot("5-deleted");
 
-      await page.locator(".react-flow__pane").dblclick({ position: { x: 120, y: 90 } });
+      await page.locator(".react-flow__pane").dblclick({ position: { x: 40, y: 350 } });
       await page.waitForTimeout(300);
       await shot("6-naming");
     });
@@ -107,7 +107,7 @@ for (const theme of THEMES) {
       const spanX = Math.max(...boxes.map((b) => b.right)) - Math.min(...boxes.map((b) => b.left));
       const spanY = Math.max(...boxes.map((b) => b.bottom)) - Math.min(...boxes.map((b) => b.top));
       expect(spanY).toBeGreaterThan(spanX);
-      await page.getByRole("button", { name: /suggestion/ }).click();
+      await page.getByRole("button", { name: "Add related memories" }).click();
       await page.waitForTimeout(400);
       await page.locator(".page-canvas").screenshot({ path: `shots/${theme}-9-large-suggested.png` });
     });
