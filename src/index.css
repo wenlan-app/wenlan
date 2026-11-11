@@ -4221,11 +4221,12 @@ html[data-theme-bg="window"] body::after {
   pointer-events: none;
 }
 
-/* Find on the page map: a small field in the top left of the map. */
+/* Find on the page map: a small field beside the zoom buttons, clear of the
+   buttons and notices along the top. */
 .page-canvas-search {
   position: absolute;
-  top: 10px;
-  left: 10px;
+  bottom: 10px;
+  left: 52px;
   z-index: 6;
   display: flex;
   align-items: center;
@@ -4237,7 +4238,7 @@ html[data-theme-bg="window"] body::after {
 }
 
 .page-canvas-search input {
-  width: 180px;
+  width: 160px;
   border: none;
   outline: none;
   background: none;
