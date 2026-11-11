@@ -72,3 +72,63 @@ describe("applyOutlineEdit", () => {
     expect(out).toEqual(["# B"]);
   });
 });
+
+describe("applyOutlineEdit move", () => {
+  const doc = [
+    "# A", // 0
+    "", // 1
+    "- one", // 2
+    "  - one.1", // 3
+    "- two", // 4
+    "", // 5
+    "## A1", // 6
+    "", // 7
+    "- deep", // 8
+    "", // 9
+    "# B", // 10
+    "", // 11
+    "1. bee", // 12
+    "", // 13
+    "# C", // 14
+    "c text", // 15
+  ].join("\n");
+
+  it("moves an item after its sibling, nested lines and all", () => {
+    expect(lines(applyOutlineEdit(doc, { op: "move", line: 2, target: 4, place: "after" })).slice(0, 5))
+      .toEqual(["# A", "", "- two", "- one", "  - one.1"]);
+  });
+
+  it("moves an item before an item of another list, taking that list's marker", () => {
+    const out = lines(applyOutlineEdit(doc, { op: "move", line: 4, target: 12, place: "before" }));
+    expect(out).toContain("1. two");
+    expect(out.indexOf("1. two")).toBe(out.indexOf("1. bee") - 1);
+    expect(out).not.toContain("- two");
+  });
+
+  it("moves an item into a heading, joining the list there", () => {
+    const out = lines(applyOutlineEdit(doc, { op: "move", line: 8, target: 10, place: "under" }));
+    expect(out.slice(out.indexOf("# B"), out.indexOf("# B") + 4)).toEqual(["# B", "", "1. bee", "2. deep"]);
+    expect(out.join("\n")).toContain("## A1\n\n# B");
+  });
+
+  it("moves a heading section after another, keeping its level", () => {
+    const out = lines(applyOutlineEdit(doc, { op: "move", line: 0, target: 10, place: "after" }));
+    expect(out.slice(0, 4)).toEqual(["# B", "", "1. bee", ""]);
+    expect(out.indexOf("# A")).toBeLessThan(out.indexOf("# C"));
+    expect(out).toContain("## A1");
+  });
+
+  it("moves a heading under another, one level deeper with its subheadings", () => {
+    const out = lines(applyOutlineEdit(doc, { op: "move", line: 0, target: 14, place: "under" }));
+    expect(out).toContain("## A");
+    expect(out).toContain("### A1");
+    expect(out.indexOf("## A")).toBeGreaterThan(out.indexOf("c text"));
+  });
+
+  it("refuses moves that make no sense", () => {
+    expect(applyOutlineEdit(doc, { op: "move", line: 0, target: 6, place: "after" })).toBeNull(); // into itself
+    expect(applyOutlineEdit(doc, { op: "move", line: 0, target: 2, place: "after" })).toBeNull(); // heading next to an item
+    expect(applyOutlineEdit(doc, { op: "move", line: 2, target: 10, place: "after" })).toBeNull(); // item beside a heading
+    expect(applyOutlineEdit(doc, { op: "move", line: 2, target: 2, place: "after" })).toBeNull();
+  });
+});

@@ -18,6 +18,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import {
   Background,
+  ControlButton,
   Controls,
   ReactFlow,
   ReactFlowProvider,
@@ -57,7 +58,10 @@ import {
 import {
   branchHeadings,
   branchSlots,
+  foldableHeadings,
   isPageLine,
+  lineAncestors,
+  lineDepths,
   lineIdOf,
   moreFor,
   outlineLine,
@@ -68,7 +72,7 @@ import {
   withPageLines,
 } from "../../lib/pageMap/pageLines";
 import { mixOver, useGraphPalette } from "../../lib/graph/palette";
-import { applyOutlineEdit, editableText, type OutlineEdit } from "../../lib/pageMap/outlineEdits";
+import { applyOutlineEdit, editableText, type MovePlace, type OutlineEdit } from "../../lib/pageMap/outlineEdits";
 import CanvasNode, { type CanvasNodeData } from "./canvas/CanvasNode";
 import SpineEdge from "./canvas/SpineEdge";
 import "./canvas/pageCanvasApply.css";
@@ -144,6 +148,9 @@ const SHORTCUTS = [
   { cap: "Enter", key: "pageCanvas.hintAddSibling" },
   { cap: "F2", key: "pageCanvas.hintRename" },
   { cap: "Delete", key: "pageCanvas.hintDelete" },
+  { cap: "Option ↑ ↓", key: "pageCanvas.hintMoveLine" },
+  { cap: "Option 1–9, 0", key: "pageCanvas.hintFoldLevel" },
+  { cap: "/", key: "pageCanvas.hintSearch" },
   { cap: "+ -", key: "pageCanvas.hintZoom" },
   { cap: "Shift 0", key: "pageCanvas.hintActualSize" },
   { cap: "Shift 1", key: "pageCanvas.hintFit" },
@@ -316,6 +323,15 @@ function readOpenHeadings(key: string): Set<string> {
   }
 }
 
+/** Keep which headings are open or shut on this device; a convenience only. */
+function rememberHeadings(key: string, ids: ReadonlySet<string>): void {
+  try {
+    localStorage.setItem(key, JSON.stringify([...ids]));
+  } catch {
+    // Private windows and blocked storage: the fold still works this session.
+  }
+}
+
 const nodeTypes: NodeTypes = { pageMapNode: CanvasNode as NodeTypes[string] };
 const edgeTypes: EdgeTypes = { spine: SpineEdge };
 
@@ -349,6 +365,8 @@ function PageCanvasInner({
     zoomIn,
     zoomOut,
     zoomTo,
+    setCenter,
+    getZoom,
     viewportInitialized,
   } = useReactFlow();
   const [notice, setNotice] = useState<string | null>(null);
@@ -504,6 +522,69 @@ function PageCanvasInner({
       if (deepShut.has(id) && opening !== openHeadings.has(id)) toggleHeading(id);
     },
     [branchOpen, closedKey, deepShut, openHeadings, toggleHeading],
+  );
+  // The whole map shut down to one level at once (Option 1–9), or opened
+  // all the way (Option 0), the way an outliner's level keys work.
+  const foldToLevel = useCallback(
+    (level: number | null) => {
+      const depth = lineDepths(map);
+      const closed = new Set<string>();
+      const open = new Set(openHeadings);
+      for (const id of branchHeadings(map)) {
+        if (level !== null && (depth.get(id) ?? 0) >= level) {
+          closed.add(id);
+          open.delete(id);
+        } else if (deepShut.has(id)) open.add(id);
+      }
+      if (level === null) for (const id of foldableHeadings(map)) open.add(id);
+      setClosedHeadings(closed);
+      setOpenHeadings(open);
+      rememberHeadings(closedKey, closed);
+      rememberHeadings(openKey, open);
+    },
+    [map, openHeadings, deepShut, closedKey, openKey],
+  );
+  // A line found by search: everything it hangs on opens so it is drawn, then
+  // the map moves to it once it is laid out.
+  const [revealId, setRevealId] = useState<string | null>(null);
+  const revealLine = useCallback(
+    (lineId: string) => {
+      const ups = lineAncestors(map, lineId);
+      const parent = ups[0];
+      setClosedHeadings((current) => {
+        const next = new Set(current);
+        for (const id of ups) next.delete(id);
+        rememberHeadings(closedKey, next);
+        return next;
+      });
+      setOpenHeadings((current) => {
+        const next = new Set(current);
+        for (const id of ups) if (deepShut.has(id) || id === parent) next.add(id);
+        rememberHeadings(openKey, next);
+        return next;
+      });
+      setRevealId(`${PAGE_LINE_PREFIX}${lineId}`);
+    },
+    [map, deepShut, closedKey, openKey],
+  );
+  const [search, setSearch] = useState<{ query: string; at: number } | null>(null);
+  useEffect(() => setSearch(null), [pageId]);
+  const searchMatches = useMemo(() => {
+    const query = search?.query.trim().toLocaleLowerCase();
+    if (!query) return [];
+    return (map?.outline ?? [])
+      .filter((line) => `${line.label} ${line.text}`.toLocaleLowerCase().includes(query))
+      .map((line) => line.id);
+  }, [search?.query, map]);
+  const searchStep = useCallback(
+    (direction: 1 | -1) => {
+      if (!search || searchMatches.length === 0) return;
+      const total = searchMatches.length;
+      const at = search.at < 0 ? (direction === 1 ? 0 : total - 1) : (search.at + direction + total) % total;
+      setSearch({ ...search, at });
+      revealLine(searchMatches[at]);
+    },
+    [search, searchMatches, revealLine],
   );
   const showRestLabel = t("pageCanvas.showRest");
   const visibleNodes = useMemo(
@@ -846,6 +927,63 @@ function PageCanvasInner({
     },
     [linesPaused, mutateLine],
   );
+  // A moved line keeps the selection: after the page is reread, the line with
+  // the same words is picked again, so Option-arrow can be pressed repeatedly.
+  const [moveFollow, setMoveFollow] = useState<{ label: string; version: number } | null>(null);
+  useEffect(() => {
+    if (!moveFollow || map?.page_version == null || map.page_version === moveFollow.version) return;
+    const found = (map.outline ?? []).find((line) => line.label === moveFollow.label);
+    setMoveFollow(null);
+    if (found) setRevealId(`${PAGE_LINE_PREFIX}${found.id}`);
+  }, [moveFollow, map]);
+  const moveLine = useCallback(
+    (sourceId: string, targetId: string, place: MovePlace) => {
+      const source = lineEditable(sourceId);
+      const target = lineEditable(targetId);
+      if (!source || !target || source.line == null || target.line == null) return;
+      if (map?.page_version != null) setMoveFollow({ label: source.label, version: map.page_version });
+      editLine({ op: "move", line: source.line, target: target.line, place });
+    },
+    [lineEditable, editLine, map],
+  );
+  // Option-arrow: past the neighbour of the same kind under the same heading.
+  const moveLineStep = useCallback(
+    (id: string, direction: 1 | -1): boolean => {
+      const line = lineEditable(id);
+      if (!line) return false;
+      const row = (map?.outline ?? []).filter(
+        (l) => l.parent_id === line.parent_id && (l.kind === "heading") === (line.kind === "heading"),
+      );
+      const next = row[row.findIndex((l) => l.id === line.id) + direction];
+      if (next) moveLine(id, `${PAGE_LINE_PREFIX}${next.id}`, direction === 1 ? "after" : "before");
+      return true;
+    },
+    [lineEditable, map, moveLine],
+  );
+  // Where a line dragged to `point` would land: above or below an item, or
+  // above, into or below a heading. Never inside what it carries.
+  const dropFor = useCallback(
+    (sourceId: string, point: { x: number; y: number }): { id: string; place: MovePlace } | null => {
+      const source = lineEditable(sourceId);
+      if (!source || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return null;
+      for (const v of views) {
+        if (v.node.id === sourceId) continue;
+        if (Math.abs(point.x - v.x) > v.width / 2 || Math.abs(point.y - v.y) > v.height / 2 + 4) continue;
+        const target = lineEditable(v.node.id);
+        if (!target || lineAncestors(map, target.id).includes(source.id)) return null;
+        const rel = (point.y - (v.y - v.height / 2)) / v.height;
+        if (target.kind === "heading") {
+          if (source.kind !== "heading") return { id: v.node.id, place: "under" };
+          return { id: v.node.id, place: rel < 1 / 3 ? "before" : rel > 2 / 3 ? "after" : "under" };
+        }
+        if (source.kind === "heading") return null;
+        return { id: v.node.id, place: rel < 0.5 ? "before" : "after" };
+      }
+      return null;
+    },
+    [lineEditable, views, map],
+  );
+  const [drop, setDrop] = useState<{ id: string; place: MovePlace } | null>(null);
   // The words being renamed, read from the page itself: the box shows a
   // shortened label, and renaming must start from what the page says.
   const [lineRename, setLineRename] = useState<{ id: string; line: number; text: string } | null>(null);
@@ -1240,9 +1378,42 @@ function PageCanvasInner({
     [flushLayout],
   );
 
+  const dragPoint = useCallback(
+    (event: MouseEvent | TouchEvent | ReactMouseEvent) => {
+      const touch = "changedTouches" in event ? event.changedTouches[0] : null;
+      const at = touch ?? (event as MouseEvent);
+      return screenToFlowPosition({ x: at.clientX, y: at.clientY });
+    },
+    [screenToFlowPosition],
+  );
+  const handleNodeDrag = useCallback(
+    (event: MouseEvent | TouchEvent | ReactMouseEvent, node: Node) => {
+      if (!isPageLine(node.id)) return;
+      const next = dropFor(node.id, dragPoint(event));
+      setDrop((current) =>
+        current?.id === next?.id && current?.place === next?.place ? current : next,
+      );
+    },
+    [dropFor, dragPoint],
+  );
   const handleNodeDragStop = useCallback(
-    (_event: unknown, node: Node) => markMoved([node.id]),
-    [markMoved],
+    (event: MouseEvent | TouchEvent | ReactMouseEvent, node: Node) => {
+      if (!isPageLine(node.id)) {
+        markMoved([node.id]);
+        return;
+      }
+      // A line of the page goes back to its place in the page's order; where
+      // it was dropped decides only where in the page it moves to.
+      setDrop(null);
+      const placed = views.find((v) => v.node.id === node.id);
+      if (placed) {
+        const home = { x: placed.x - placed.width / 2, y: placed.y - placed.height / 2 };
+        setNodes((ns) => ns.map((n) => (n.id === node.id ? { ...n, position: home } : n)));
+      }
+      const target = dropFor(node.id, dragPoint(event));
+      if (target) moveLine(node.id, target.id, target.place);
+    },
+    [markMoved, views, setNodes, dropFor, dragPoint, moveLine],
   );
 
   // A line of the page opens the part of the page it came from; "show the
@@ -1369,13 +1540,14 @@ function PageCanvasInner({
           type: "pageMapNode",
           // The page's lines are laid out by the page's own order.
           // The narrow list is not a canvas to arrange; the wide tree is.
-          draggable: !readOnly && !pageLine && layoutMode !== "indent",
+          // A line of the page can be dragged to another place in the page.
+          draggable: !readOnly && (pageLine ? !!lineEditable(v.node.id) : layoutMode !== "indent"),
           connectable: !readOnly && !moreFor(v.node.id),
           position: { x: v.x - v.width / 2, y: v.y - v.height / 2 },
           data,
         };
       }),
-    [views, readOnly, palette, openNode, mutateStatus, mutateRename, mutateRenameAsync, t, map, foldable, branchOpen, toggleBranch, layoutMode, inkOf, isDimmed, editLine],
+    [views, readOnly, palette, openNode, mutateStatus, mutateRename, mutateRenameAsync, t, map, foldable, branchOpen, toggleBranch, layoutMode, inkOf, isDimmed, editLine, lineEditable],
   );
 
   // Fold the server's copy into local state, keeping what the user has done
@@ -1403,6 +1575,17 @@ function PageCanvasInner({
       });
     });
   }, [serverNodes, setNodes]);
+
+  // Declared after the sync above so a line drawn just now is in `nodes` by the
+  // time it is selected.
+  useEffect(() => {
+    if (!revealId) return;
+    const at = views.find((v) => v.node.id === revealId);
+    if (!at) return;
+    setRevealId(null);
+    setNodes((ns) => ns.map((n) => (n.selected !== (n.id === revealId) ? { ...n, selected: n.id === revealId } : n)));
+    void setCenter(at.x, at.y, { zoom: Math.max(getZoom(), 0.9), duration: 200 });
+  }, [revealId, views, setNodes, setCenter, getZoom]);
 
   const commitDraft = useCallback(
     (label: string) => {
@@ -1816,6 +1999,12 @@ function PageCanvasInner({
         }
       }
       items.push({ key: "all", label: t("pageCanvas.menuSelectAll"), run: selectAll });
+      if (hasPageLines) {
+        for (const level of [1, 2, 3]) {
+          items.push({ key: `fold-${level}`, label: t("pageCanvas.menuFoldTo", { count: level }), run: () => foldToLevel(level) });
+        }
+        items.push({ key: "fold-all", label: t("pageCanvas.menuUnfoldAll"), run: () => foldToLevel(null) });
+      }
       return items;
     }
     const view = views.find((v) => v.node.id === menu.nodeId);
@@ -1894,6 +2083,8 @@ function PageCanvasInner({
     openPageLine,
     startDraftAt,
     deleteSelection,
+    hasPageLines,
+    foldToLevel,
   ]);
 
   useLayoutEffect(() => {
@@ -2076,7 +2267,28 @@ function PageCanvasInner({
         );
         return;
       }
+      // Option 1–9 shows the map down to that level; Option 0 shows all of it.
+      // e.code: Option+digit types a symbol on a Mac keyboard.
+      if (e.altKey && !e.shiftKey && /^Digit[0-9]$/.test(e.code) && hasPageLines) {
+        e.preventDefault();
+        const level = Number(e.code.slice(5));
+        foldToLevel(level === 0 ? null : level);
+        return;
+      }
+      if (e.key === "/" && !e.altKey) {
+        e.preventDefault();
+        setSearch((current) => current ?? { query: "", at: -1 });
+        return;
+      }
       if (readOnly) return;
+      if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+        const picked = nodesRef.current.filter((n) => n.selected);
+        if (picked.length === 1 && isPageLine(picked[0].id)) {
+          e.preventDefault();
+          if (!linesPaused()) moveLineStep(picked[0].id, e.key === "ArrowDown" ? 1 : -1);
+          return;
+        }
+      }
       // Every shortcut below moves, renames or removes something the open menu
       // is pointing at, so the menu stops being about anything.
       if (menu) setMenu(null);
@@ -2148,6 +2360,10 @@ function PageCanvasInner({
       editingId,
       helpOpen,
       focusLine,
+      hasPageLines,
+      foldToLevel,
+      moveLineStep,
+      linesPaused,
     ],
   );
 
@@ -2158,7 +2374,10 @@ function PageCanvasInner({
     // First frame with data: state is still empty because the sync effect has
     // not run yet, and mounting React Flow on an empty array would make
     // fitView frame nothing.
-    const base = nodes.length === 0 ? serverNodes : nodes;
+    const raw = nodes.length === 0 ? serverNodes : nodes;
+    const base = drop
+      ? raw.map((n) => (n.id === drop.id ? { ...n, className: `is-drop-${drop.place}` } : n))
+      : raw;
     if (!editingId && !draftNode) return base;
     const out = editingId
       ? base.map((n) =>
@@ -2178,7 +2397,7 @@ function PageCanvasInner({
       : base.slice();
     if (draftNode) out.push(draftNode);
     return out;
-  }, [nodes, serverNodes, editingId, draftNode, lineRename, t]);
+  }, [nodes, serverNodes, editingId, draftNode, lineRename, t, drop]);
 
   const rfEdges = useMemo<Edge[]>(() => {
     const rendered = new Set(views.map((v) => v.node.id));
@@ -2455,6 +2674,7 @@ function PageCanvasInner({
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
           onNodesChange={onNodesChange}
+          onNodeDrag={handleNodeDrag}
           onNodeDragStop={handleNodeDragStop}
           onNodeDoubleClick={handleNodeDoubleClick}
           onNodeContextMenu={handleNodeContextMenu}
@@ -2509,7 +2729,20 @@ function PageCanvasInner({
           {/* React Flow's fit button calls `fitView` with the options passed
               here, not the ones on <ReactFlow>, so the button has to be handed
               the same object as the key or the two disagree. */}
-          <Controls showInteractive={false} fitViewOptions={FIT_ALL_VIEW} />
+          <Controls showInteractive={false} fitViewOptions={FIT_ALL_VIEW}>
+            {hasPageLines && (
+              <ControlButton
+                onClick={() => setSearch((current) => (current ? null : { query: "", at: -1 }))}
+                aria-label={t("pageCanvas.searchButton")}
+                title={t("pageCanvas.searchButton")}
+              >
+                <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+                  <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.6" />
+                  <path d="M10.5 10.5 14 14" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                </svg>
+              </ControlButton>
+            )}
+          </Controls>
         </ReactFlow>
         {menu && menuItems.length > 0 && (
           <ContextMenu
@@ -2525,12 +2758,77 @@ function PageCanvasInner({
             {t("pageCanvas.readOnlyBadge")}
           </span>
         )}
+        {search && (
+          <MapSearch
+            query={search.query}
+            at={search.at}
+            total={searchMatches.length}
+            onQuery={(query) => setSearch({ query, at: -1 })}
+            onStep={searchStep}
+            onClose={() => {
+              setSearch(null);
+              surfaceRef.current?.focus({ preventScroll: true });
+            }}
+          />
+        )}
         <div className="page-canvas-actions">
           {relatedActions}
           {noticeView}
         </div>
         {!readOnly && <CanvasHelp open={helpOpen} setOpen={setHelpOpen} />}
       </div>
+    </div>
+  );
+}
+
+/** Find a line of the page on its map: Enter goes to the next one, Shift Enter back. */
+function MapSearch({
+  query,
+  at,
+  total,
+  onQuery,
+  onStep,
+  onClose,
+}: {
+  query: string;
+  at: number;
+  total: number;
+  onQuery: (query: string) => void;
+  onStep: (direction: 1 | -1) => void;
+  onClose: () => void;
+}) {
+  const { t } = useTranslation();
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => inputRef.current?.focus({ preventScroll: true }), []);
+  const count = query.trim()
+    ? total === 0
+      ? t("pageCanvas.searchNone")
+      : at >= 0
+        ? t("pageCanvas.searchCount", { at: at + 1, total })
+        : String(total)
+    : "";
+  return (
+    <div className="page-canvas-search" role="search">
+      <input
+        ref={inputRef}
+        type="search"
+        value={query}
+        placeholder={t("pageCanvas.searchPlaceholder")}
+        aria-label={t("pageCanvas.searchLabel")}
+        onChange={(e) => onQuery(e.target.value)}
+        // The map's own keys stay out of the field while typing.
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          if (e.key === "Escape") {
+            e.preventDefault();
+            onClose();
+          } else if (e.key === "Enter") {
+            e.preventDefault();
+            onStep(e.shiftKey ? -1 : 1);
+          }
+        }}
+      />
+      {count && <span className="page-canvas-search-count" aria-live="polite">{count}</span>}
     </div>
   );
 }

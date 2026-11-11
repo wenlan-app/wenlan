@@ -21,7 +21,16 @@ export type OutlineEdit =
   | { op: "addUnder"; line: number; text: string }
   /** A new item right after this item, or a new heading after this heading's section. */
   | { op: "addAfter"; line: number; text: string }
-  | { op: "delete"; line: number };
+  | { op: "delete"; line: number }
+  /**
+   * Move a line and everything that belongs with it next to another line, or
+   * into a heading. Items move among items, headings among headings; a heading
+   * moved under another heading becomes one level deeper.
+   */
+  | { op: "move"; line: number; target: number; place: MovePlace };
+
+/** Where a moved line lands relative to its target. */
+export type MovePlace = "before" | "after" | "under";
 
 const HEADING = /^ {0,3}(#{1,6})[ \t]+(.*?)[ \t]*(?:#+[ \t]*)?$/;
 const LIST = /^( {0,3})([-*+]|\d{1,9}[.)])([ \t]+)(\[[ xX]\][ \t]+)?(.*)$/;
@@ -132,6 +141,11 @@ export function applyOutlineEdit(body: string, edit: OutlineEdit): string | null
   const shape = lineShape(raw);
   if (!shape) return null;
 
+  if (edit.op === "move") {
+    const moved = moveBlock(lines, edit.line, shape, edit.target, edit.place);
+    return moved ? moved.join(newline) : null;
+  }
+
   if (edit.op === "rename") {
     const text = oneLine(edit.text);
     if (!text) return null;
@@ -219,4 +233,141 @@ function addItemAfter(
   // A paragraph item needs a blank line on each side to stay its own paragraph.
   lines.splice(end, 0, ...(shape.kind === "list" ? [added] : ["", added]));
   return lines.join(newline);
+}
+
+/** Where the block a line owns ends: a heading's section, an item's lines. */
+function blockEnd(lines: readonly string[], line: number, shape: LineShape): number {
+  return shape.kind === "heading" ? nextHeading(lines, line, shape.level) : itemEnd(lines, line, shape);
+}
+
+/** Drop blank lines at both ends of a block. */
+function trimBlank(block: string[]): string[] {
+  let start = 0;
+  let end = block.length;
+  while (start < end && block[start].trim() === "") start++;
+  while (end > start && block[end - 1].trim() === "") end--;
+  return block.slice(start, end);
+}
+
+/** Where a heading's own content ends: before its first subheading or the next heading. */
+function ownContentEnd(lines: readonly string[], heading: number): number {
+  let end = nextHeading(lines, heading, null);
+  while (end > heading + 1 && lines[end - 1].trim() === "") end--;
+  return end;
+}
+
+/** Collapse a run of blank lines around `at` to one, and none at the very top. */
+function squeezeBlanks(lines: string[], at: number): void {
+  let start = Math.min(at, lines.length);
+  while (start > 0 && lines[start - 1].trim() === "") start--;
+  let end = start;
+  while (end < lines.length && lines[end].trim() === "") end++;
+  if (end - start > 1) lines.splice(start + 1, end - start - 1);
+}
+
+/** Re-level every heading in a heading's block by the same step. */
+function relevel(block: string[], delta: number): string[] {
+  if (delta === 0) return block;
+  let fenced = false;
+  return block.map((raw) => {
+    if (FENCE.test(raw)) fenced = !fenced;
+    if (fenced) return raw;
+    const m = HEADING.exec(raw);
+    if (!m) return raw;
+    const level = Math.min(6, Math.max(1, m[1].length + delta));
+    return `${"#".repeat(level)} ${m[2]}`;
+  });
+}
+
+/** A list item's block given a new indent and marker, its nested lines shifted along. */
+function reindentItem(block: string[], from: Extract<LineShape, { kind: "list" }>, indent: string, marker: string): string[] {
+  const first = LIST.exec(block[0])!;
+  const shift = indent.length - from.indent.length;
+  const head = `${indent}${marker}${first[4] ?? ""}${first[5]}`;
+  const rest = block.slice(1).map((raw) => {
+    if (raw.trim() === "") return raw;
+    if (shift >= 0) return " ".repeat(shift) + raw;
+    const cut = Math.min(-shift, indentOf(raw));
+    return raw.slice(cut);
+  });
+  return [head, ...rest];
+}
+
+function moveBlock(
+  source: readonly string[],
+  line: number,
+  shape: LineShape,
+  target: number,
+  place: MovePlace,
+): string[] | null {
+  const targetShape = lineShape(source[target]);
+  if (!targetShape || target === line) return null;
+  const end = blockEnd(source, line, shape);
+  // A line cannot go inside what it carries along.
+  if (target > line && target < end) return null;
+  if (shape.kind === "heading" && targetShape.kind !== "heading") return null;
+  if (shape.kind !== "heading" && targetShape.kind !== "heading" && place === "under") return null;
+  if (shape.kind !== "heading" && targetShape.kind === "heading" && place !== "under") return null;
+  if (shape.kind !== "heading" && targetShape.kind !== "heading" && shape.kind !== targetShape.kind) return null;
+
+  let block = trimBlank(source.slice(line, end));
+  const lines = source.slice();
+  lines.splice(line, end - line);
+  squeezeBlanks(lines, line);
+  // The target's own line, now that the block is out.
+  const removed = source.length - lines.length;
+  const at = target > line ? target - removed : target;
+  if (lineShape(lines[at])?.kind !== targetShape.kind) return null;
+
+  if (shape.kind === "heading" && targetShape.kind === "heading") {
+    const level = place === "under" ? targetShape.level + 1 : targetShape.level;
+    if (level > 6) return null;
+    block = relevel(block, level - shape.level);
+    const insertAt = place === "before" ? at : nextHeading(lines, at, targetShape.level);
+    return insertBlock(lines, insertAt, block, true);
+  }
+
+  if (place === "under" && targetShape.kind === "heading") {
+    const ownEnd = ownContentEnd(lines, at);
+    if (shape.kind === "list") {
+      // Join the list the heading's own content ends in, as adding does.
+      for (let i = ownEnd - 1; i > at; i--) {
+        const item = lineShape(lines[i]);
+        if (item?.kind === "list" && item.indent === "") {
+          if (itemEnd(lines, i, item) >= ownEnd) {
+            const joined = reindentItem(block, shape, "", nextMarker(item.marker));
+            lines.splice(ownEnd, 0, ...joined);
+            return lines;
+          }
+          break;
+        }
+        if (indentOf(lines[i]) === 0 && lines[i].trim() !== "") break;
+      }
+      return insertBlock(lines, ownEnd, reindentItem(block, shape, "", "- "), true);
+    }
+    return insertBlock(lines, ownEnd, block, true);
+  }
+
+  // An item next to another item of the same kind.
+  if (shape.kind === "list" && targetShape.kind === "list") {
+    const marker = place === "before" ? targetShape.marker : nextMarker(targetShape.marker);
+    const moved = reindentItem(block, shape, targetShape.indent, marker);
+    const insertAt = place === "before" ? at : itemEnd(lines, at, targetShape);
+    lines.splice(insertAt, 0, ...moved);
+    return lines;
+  }
+  const insertAt = place === "before" ? at : itemEnd(lines, at, targetShape);
+  return insertBlock(lines, insertAt, block, true);
+}
+
+/** Put a block in as its own paragraph, a blank line on each side. */
+function insertBlock(lines: string[], at: number, block: string[], spaced: boolean): string[] {
+  if (!spaced) {
+    lines.splice(at, 0, ...block);
+    return lines;
+  }
+  const before = at > 0 && lines[at - 1].trim() !== "" ? [""] : [];
+  const after = at < lines.length && lines[at].trim() !== "" ? [""] : [];
+  lines.splice(at, 0, ...before, ...block, ...after);
+  return lines;
 }
