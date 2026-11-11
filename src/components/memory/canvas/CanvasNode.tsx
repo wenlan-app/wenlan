@@ -18,6 +18,7 @@ const SLOT_BY_REF_KIND: Record<PageMapRefKind, GraphSlot> = {
   entity: "concept",
   section: "tool",
   idea: "concept",
+  outline: "neutral",
 };
 
 export interface CanvasNodeData extends Record<string, unknown> {
@@ -47,6 +48,14 @@ export interface CanvasNodeData extends Record<string, unknown> {
   nameInputLabel?: string;
   onNameChange?: (label: string) => void;
   onOpen: () => void;
+  /** Drawn as a quiet text link rather than a box ("show the rest"). */
+  link?: boolean;
+  /** The whole line behind a shortened label, shown on hover. */
+  hint?: string;
+  /** A heading whose items fold: whether they are shown now. */
+  /** Set only on a heading that folds: whether its items all show. */
+  unfolded?: boolean;
+  onToggleFold?: () => void;
   onAccept: () => void;
   onDismiss: () => void;
   onCommit: (label: string) => void | Promise<void>;
@@ -131,10 +140,12 @@ function CanvasNode({
         boxSizing: "border-box",
         padding: "0 10px",
         borderRadius: "var(--mem-r-10)",
-        border: `${isRoot ? 1.5 : 1}px ${suggested ? "dashed" : "solid"} ${
-          branch ? slotColor : compositeOver(slotColor, palette.surface, 0.5)
-        }`,
-        backgroundColor: fill,
+        border: data.link
+          ? "1px solid transparent"
+          : `${isRoot ? 1.5 : 1}px ${suggested ? "dashed" : "solid"} ${
+              branch ? slotColor : compositeOver(slotColor, palette.surface, 0.5)
+            }`,
+        backgroundColor: data.link ? "transparent" : fill,
         opacity: dangling ? 0.45 : suggested ? 0.75 : 1,
         // Selection has to be visible or the keyboard shortcuts have no
         // referent — "Delete removes the selected box" is meaningless if
@@ -162,7 +173,7 @@ function CanvasNode({
         <button
           type="button"
           onClick={data.onOpen}
-          title={dangling ? t("pageCanvas.dangling") : label}
+          title={dangling ? t("pageCanvas.dangling") : (data.hint ?? label)}
           aria-label={
             dangling ? t("pageCanvas.danglingNode", { label }) : label
           }
@@ -184,13 +195,32 @@ function CanvasNode({
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
-            color: dangling ? palette.labelMuted : palette.label,
+            color: dangling || data.link ? palette.labelMuted : palette.label,
+            textDecoration: data.link ? "underline" : undefined,
+            textUnderlineOffset: data.link ? 3 : undefined,
             fontFamily: "var(--mem-font-body)",
             fontSize: 12,
             fontWeight: isRoot ? 600 : branch ? 500 : 400,
           }}
         >
           {label}
+        </button>
+      )}
+      {data.unfolded !== undefined && data.onToggleFold && !editing && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            data.onToggleFold?.();
+          }}
+          aria-expanded={data.unfolded}
+          aria-label={t(data.unfolded ? "pageCanvas.foldItems" : "pageCanvas.unfoldItems", { label })}
+          title={t(data.unfolded ? "pageCanvas.foldItems" : "pageCanvas.unfoldItems", { label })}
+          style={controlStyle(palette.labelMuted)}
+        >
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
+            {data.unfolded ? <polyline points="15 18 9 12 15 6" /> : <polyline points="9 18 15 12 9 6" />}
+          </svg>
         </button>
       )}
       {showControls && (

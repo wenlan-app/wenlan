@@ -224,3 +224,131 @@ function transpose(node: MapNodeInput): MapNodeInput {
     children: node.children?.map(transpose),
   };
 }
+
+/** Horizontal room between a box and its children, px. */
+const TREE_GAP_X = 44;
+/** Vertical room between sibling boxes, px. */
+const TREE_GAP_Y = 10;
+/**
+ * Box width for a line of the page. Wider than `nodeBoxSize` allows, because
+ * these labels were already shortened to one readable clause, and aware that a
+ * CJK character takes about twice the room of a Latin one.
+ */
+export function lineBoxWidth(label: string, extra = 0): number {
+  let px = 0;
+  for (const ch of label) px += /[\u1100-\u115f\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60]/u.test(ch) ? 12.5 : 6.9;
+  return Math.min(340, Math.max(NODE_MIN_WIDTH, Math.round(px + NODE_PADDING_X + extra)));
+}
+
+/** Outline boxes are shorter than the radial map's: they are lines of a page. */
+export const OUTLINE_NODE_HEIGHT = 32;
+
+/**
+ * Left-to-right tidy tree: the page on the left, its headings to the right,
+ * each heading's items to the right of it, siblings stacked top to bottom in
+ * reading order. This is the shape an outline already has, so the map reads
+ * like the page instead of a ring that has to be decoded.
+ *
+ * Boxes the person dragged (`placed` with coordinates) keep their spot; every
+ * other box takes its computed slot.
+ */
+export function layoutTree(
+  nodes: readonly PageMapNode[],
+  overrides: ReadonlyMap<string, string>,
+  fallback?: string,
+  heightOf: (n: PageMapNode) => number = () => NODE_HEIGHT,
+  widthOf: (n: PageMapNode, label: string, base: number) => number = (_n, _l, base) => base,
+): CanvasNodeView[] {
+  const label = (n: PageMapNode) => displayLabel(n, overrides, fallback);
+  const spine = buildSpine(nodes, label);
+  if (!spine) return [];
+
+  interface Box { id: string; width: number; height: number; children: Box[]; span: number }
+  const toBox = (n: MapNodeInput): Box => {
+    const node = spine.byId.get(n.id);
+    const height = node ? heightOf(node) : n.height;
+    const width = node ? widthOf(node, label(node), n.width) : n.width;
+    return { id: n.id, width, height, children: (n.children ?? []).map(toBox), span: 0 };
+  };
+  const root = toBox(spine.root);
+  const measure = (b: Box): number => {
+    const kids = b.children.reduce((sum, k) => sum + measure(k), 0);
+    const gaps = Math.max(0, b.children.length - 1) * TREE_GAP_Y;
+    b.span = Math.max(b.height, kids + gaps);
+    return b.span;
+  };
+  measure(root);
+
+  const views: CanvasNodeView[] = [];
+  const place = (b: Box, left: number, top: number, depth: number) => {
+    const node = spine.byId.get(b.id);
+    if (!node) return;
+    const cx = left + b.width / 2;
+    const cy = top + b.span / 2;
+    const pinned = node.placed && Number.isFinite(node.x) && Number.isFinite(node.y);
+    views.push({
+      node,
+      label: label(node),
+      x: pinned ? (node.x as number) : cx,
+      y: pinned ? (node.y as number) : cy,
+      width: b.width,
+      height: b.height,
+      depth,
+    });
+    const kidsSpan =
+      b.children.reduce((sum, k) => sum + k.span, 0) +
+      Math.max(0, b.children.length - 1) * TREE_GAP_Y;
+    let cursor = top + (b.span - kidsSpan) / 2;
+    for (const kid of b.children) {
+      place(kid, left + b.width + TREE_GAP_X, cursor, depth + 1);
+      cursor += kid.span + TREE_GAP_Y;
+    }
+  };
+  // The page box sits at the origin, as it does on the radial layout.
+  place(root, -root.width / 2, -root.span / 2, 0);
+  return views;
+}
+
+/** How far each level steps in on the indented outline, px. */
+export const INDENT_STEP = 26;
+const INDENT_GAP_Y = 8;
+
+/**
+ * Top-to-bottom indented outline, for a narrow panel: the page on the first
+ * row, each heading one step in below it, each item one step in below its
+ * heading. A side panel is a column, and a left-to-right tree in a column
+ * either shrinks to unreadable or runs off both edges.
+ */
+export function layoutIndented(
+  nodes: readonly PageMapNode[],
+  overrides: ReadonlyMap<string, string>,
+  fallback?: string,
+  heightOf: (n: PageMapNode) => number = () => NODE_HEIGHT,
+  widthOf: (n: PageMapNode, label: string, base: number) => number = (_n, _l, base) => base,
+): CanvasNodeView[] {
+  const label = (n: PageMapNode) => displayLabel(n, overrides, fallback);
+  const spine = buildSpine(nodes, label);
+  if (!spine) return [];
+  const views: CanvasNodeView[] = [];
+  let top = 0;
+  const walk = (n: MapNodeInput, depth: number) => {
+    const node = spine.byId.get(n.id);
+    if (!node) return;
+    const height = heightOf(node);
+    const width = widthOf(node, label(node), n.width);
+    const pinned = node.placed && Number.isFinite(node.x) && Number.isFinite(node.y);
+    views.push({
+      node,
+      label: label(node),
+      x: pinned ? (node.x as number) : depth * INDENT_STEP + width / 2,
+      y: pinned ? (node.y as number) : top + height / 2,
+      width,
+      height,
+      depth,
+    });
+    top += height + INDENT_GAP_Y;
+    for (const kid of n.children ?? []) walk(kid, depth + 1);
+  };
+  walk(spine.root, 0);
+  return views;
+}

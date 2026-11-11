@@ -1609,7 +1609,7 @@ carrying the authority of agreement.
 | `server/page_export_routes.rs::capture` | `private` | yes | no | — | `core/db/page_export.rs::capture_page_export` |
 | `server/page_export_routes.rs::versions` | `private` | no | no | — | `core/db/page_export.rs::page_export_versions` |
 | `server/page_map_routes.rs::ensure_page_is_active` | `private` | no | no | `server/page_map_routes.rs::handle_create_map_edge`, `server/page_map_routes.rs::handle_create_map_node`, `server/page_map_routes.rs::handle_delete_map_edge`, `server/page_map_routes.rs::handle_delete_map_node`, `server/page_map_routes.rs::handle_improve_page_map`, `server/page_map_routes.rs::handle_patch_map_edge`, `server/page_map_routes.rs::handle_patch_map_node`, `server/page_map_routes.rs::handle_put_page_map_layout`, `server/page_map_routes.rs::handle_reset_page_map` | `core/db.rs::get_page` |
-| `server/page_map_routes.rs::visible_page` | `private` | no | no | `server/page_map_routes.rs::compute_ref_state`, `server/page_map_routes.rs::ensure_page_exists` | `core/db.rs::get_page` |
+| `server/page_map_routes.rs::visible_page` | `private` | no | no | `server/page_map_routes.rs::compute_ref_state`, `server/page_map_routes.rs::handle_get_page_map` | `core/db.rs::get_page` |
 | `server/page_map_routes.rs::wire_node` | `private` | no | no | `server/page_map_routes.rs::build_map_response`, `server/page_map_routes.rs::handle_create_map_node`, `server/page_map_routes.rs::handle_delete_map_node`, `server/page_map_routes.rs::handle_patch_map_node` | `server/page_map_routes.rs::compute_ref_state` |
 | `server/page_routes.rs::archive_page_for` | `private` | no | no | `server/page_routes.rs::handle_archive_page`, `server/page_routes.rs::handle_delete_page` | `core/db.rs::get_page` |
 | `server/page_routes.rs::handle_create_page_inner` | `private` | no | no | `server/page_routes.rs::handle_create_page` | `core/db.rs::get_page`, `core/db/page_basis.rs::check_basis_candidates` |
@@ -1773,11 +1773,11 @@ carrying the authority of agreement.
 | `server/page_basis_routes.rs::handle_confirm_basis` | `pub` | no | no | — | `core/db/page_basis.rs::confirm_page_basis` |
 | `server/page_basis_routes.rs::handle_mark_basis` | `pub` | no | no | — | `core/db/page_basis.rs::mark_page_basis_in` |
 | `server/page_map_routes.rs::build_map_response` | `private` | no | no | `server/page_map_routes.rs::handle_get_page_map`, `server/page_map_routes.rs::handle_improve_page_map`, `server/page_map_routes.rs::handle_put_page_map_layout` | `server/page_map_routes.rs::wire_node` |
-| `server/page_map_routes.rs::ensure_page_exists` | `private` | no | no | `server/page_map_routes.rs::handle_get_page_map` | `server/page_map_routes.rs::visible_page` |
 | `server/page_map_routes.rs::handle_create_map_edge` | `pub` | no | no | — | `server/page_map_routes.rs::ensure_page_is_active` |
 | `server/page_map_routes.rs::handle_create_map_node` | `pub` | no | no | — | `server/page_map_routes.rs::ensure_page_is_active`, `server/page_map_routes.rs::wire_node` |
 | `server/page_map_routes.rs::handle_delete_map_edge` | `pub` | no | no | — | `server/page_map_routes.rs::ensure_page_is_active` |
 | `server/page_map_routes.rs::handle_delete_map_node` | `pub` | no | no | — | `server/page_map_routes.rs::ensure_page_is_active`, `server/page_map_routes.rs::wire_node` |
+| `server/page_map_routes.rs::handle_get_page_map` | `pub` | no | no | — | `server/page_map_routes.rs::visible_page` |
 | `server/page_map_routes.rs::handle_improve_page_map` | `pub` | no | no | — | `core/page_map_improve.rs::improve_page_map`, `server/page_map_routes.rs::ensure_page_is_active` |
 | `server/page_map_routes.rs::handle_patch_map_edge` | `pub` | no | no | — | `server/page_map_routes.rs::ensure_page_is_active` |
 | `server/page_map_routes.rs::handle_patch_map_node` | `pub` | no | no | — | `server/page_map_routes.rs::ensure_page_is_active`, `server/page_map_routes.rs::wire_node` |

@@ -5171,7 +5171,9 @@ export async function cancelGuardedQuitRequest(
 // sent (see the note in app/src/api.rs), which makes these interfaces the only
 // typing the UI gets — keep them in step with that file field for field.
 
-export type PageMapRefKind = "memory" | "entity" | "page" | "section" | "idea";
+// "outline" never reaches the daemon: it marks an item the app drew from the
+// page body (see lib/pageMap/pageLines.ts).
+export type PageMapRefKind = "memory" | "entity" | "page" | "section" | "idea" | "outline";
 export type PageMapStatus = "suggested" | "active" | "dismissed";
 
 export interface PageMapNode {
@@ -5216,6 +5218,18 @@ export interface PageMap {
   viewport?: PageMapViewport | null; // omitted by the daemon when unset
   nodes: PageMapNode[];
   edges: PageMapEdge[];
+  /** The page's own headings and items, read live. Older daemons omit it. */
+  outline?: PageOutlineNode[];
+}
+
+/** One line of the page drawn on its map: a heading, or an item under one. */
+export interface PageOutlineNode {
+  id: string;
+  parent_id: string | null; // null = directly under the page
+  kind: "heading" | "item";
+  label: string;
+  text: string;
+  anchor?: string;
 }
 
 export interface PageMapNodeMutation {

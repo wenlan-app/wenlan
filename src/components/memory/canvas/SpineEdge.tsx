@@ -44,7 +44,35 @@ function SpineEdge({
   targetY,
   style,
   markerEnd,
+  data,
 }: EdgeProps) {
+  // On the left-to-right tree the line leaves its parent sideways and arrives
+  // at its child sideways, so siblings fan out like an outline's indents.
+  const shape = data as
+    | { tree?: boolean; indent?: { fromX: number; fromY: number; toX: number } }
+    | undefined;
+  // On the indented outline a line drops from under the parent's first letter
+  // and turns right into the child, as an outline's guide lines do.
+  if (shape?.indent) {
+    const { fromX, fromY, toX } = shape.indent;
+    return (
+      <BaseEdge
+        path={`M${fromX},${fromY} V${targetY - 6} Q${fromX},${targetY} ${fromX + 6},${targetY} H${toX}`}
+        style={style}
+        markerEnd={markerEnd}
+      />
+    );
+  }
+  if (shape?.tree) {
+    const mx = (sourceX + targetX) / 2;
+    return (
+      <BaseEdge
+        path={`M${sourceX},${sourceY} C${mx},${sourceY} ${mx},${targetY} ${targetX},${targetY}`}
+        style={style}
+        markerEnd={markerEnd}
+      />
+    );
+  }
   const dx = targetX - sourceX;
   const dy = targetY - sourceY;
   const span = Math.hypot(dx, dy);

@@ -80,17 +80,6 @@ async fn visible_page(
     Ok(wenlan_core::truth_adapter::filter_page(db, grant, page).await?)
 }
 
-async fn ensure_page_exists(
-    db: &MemoryDB,
-    grant: &TruthGrant,
-    page_id: &str,
-) -> Result<(), ServerError> {
-    visible_page(db, grant, page_id)
-        .await?
-        .ok_or_else(|| ServerError::NotFound(format!("page {page_id} not found")))?;
-    Ok(())
-}
-
 async fn ensure_page_is_active(db: &MemoryDB, page_id: &str) -> Result<(), ServerError> {
     let page = db
         .get_page(page_id)
@@ -215,6 +204,7 @@ async fn build_map_response(
         nodes,
         edges,
         independent_ideas: true,
+        outline: vec![],
     })
 }
 
@@ -240,7 +230,9 @@ pub async fn handle_get_page_map(
         let s = state.read().await;
         s.db.clone().ok_or(ServerError::DbNotInitialized)?
     };
-    ensure_page_exists(&db, &view.grant, &page_id).await?;
+    let page = visible_page(&db, &view.grant, &page_id)
+        .await?
+        .ok_or_else(|| ServerError::NotFound(format!("page {page_id} not found")))?;
 
     let include_dismissed = query.include.as_deref() == Some("dismissed");
     let data = db.get_page_map(&page_id, include_dismissed).await?;
@@ -254,8 +246,13 @@ pub async fn handle_get_page_map(
             nodes: vec![],
             edges: vec![],
             independent_ideas: true,
+            outline: vec![],
         },
     };
+    // The page's own headings and items are read live on every GET: they are
+    // the page, drawn as a tree, so they are never stored or proposed.
+    let mut response = response;
+    response.outline = wenlan_core::page_outline::page_outline(&page.content, &page.title);
     Ok(Json(response))
 }
 
@@ -585,6 +582,7 @@ pub async fn handle_improve_page_map(
             nodes: vec![],
             edges: vec![],
             independent_ideas: true,
+            outline: vec![],
         },
     };
     Ok(Json(response))
@@ -1072,6 +1070,34 @@ mod tests {
             Err(ServerError::ValidationError(_)) => {}
             _ => panic!("expected ValidationError (422) for root dismissal"),
         }
+    }
+
+    #[tokio::test]
+    async fn get_page_map_reads_the_pages_own_outline_without_storing_it() {
+        let (db, _tmp) = new_test_db().await;
+        let page_id = seed_page_with_content(
+            &db,
+            "Outline Page",
+            "## Plan\n\n- first step\n- second step\n\n## Open questions\n\nWho decides?\n",
+        )
+        .await;
+        let state = state_with_db(db);
+
+        let Json(map) = handle_get_page_map(
+            State(state),
+            Path(page_id),
+            crate::truth_guard::TruthView::automatic(),
+            Query(MapIncludeQuery { include: None }),
+        )
+        .await
+        .unwrap();
+
+        let labels: Vec<&str> = map.outline.iter().map(|n| n.label.as_str()).collect();
+        assert!(labels.starts_with(&["Plan", "first step", "second step", "Open questions"]));
+        assert_eq!(
+            map.revision, 0,
+            "reading the outline must not write the map"
+        );
     }
 
     #[tokio::test]

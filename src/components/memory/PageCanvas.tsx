@@ -43,7 +43,23 @@ import {
   type PageMapNode,
   type PageMapStatus,
 } from "../../lib/tauri";
-import { layoutMap, nodeBoxSize, NODE_HEIGHT } from "../../lib/pageMap/tree";
+import {
+  layoutIndented,
+  layoutMap,
+  layoutTree,
+  lineBoxWidth,
+  nodeBoxSize,
+  NODE_HEIGHT,
+  OUTLINE_NODE_HEIGHT,
+} from "../../lib/pageMap/tree";
+import {
+  foldableHeadings,
+  isPageLine,
+  moreFor,
+  outlineLine,
+  PAGE_LINE_PREFIX,
+  withPageLines,
+} from "../../lib/pageMap/pageLines";
 import { useGraphPalette } from "../../lib/graph/palette";
 import CanvasNode, { type CanvasNodeData } from "./canvas/CanvasNode";
 import SpineEdge from "./canvas/SpineEdge";
@@ -57,6 +73,8 @@ interface PageCanvasProps {
   onMemoryClick: (sourceId: string) => void;
   onPageClick?: (pageId: string) => void;
   onEntityClick?: (entityId: string) => void;
+  /** Show the part of the page a heading or item of the map came from. */
+  onSectionClick?: (line: { text: string; heading: string | null }) => void;
 }
 
 // The map shape this build knows how to edit. A map stamped higher was written
@@ -211,6 +229,16 @@ class PartialSubtreeDelete extends Error {
   }
 }
 
+function readOpenHeadings(key: string): Set<string> {
+  try {
+    const raw = localStorage.getItem(key);
+    const parsed: unknown = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
 const nodeTypes: NodeTypes = { pageMapNode: CanvasNode as NodeTypes[string] };
 const edgeTypes: EdgeTypes = { spine: SpineEdge };
 
@@ -230,12 +258,21 @@ function PageCanvasInner({
   onMemoryClick,
   onPageClick,
   onEntityClick,
+  onSectionClick,
 }: PageCanvasProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const palette = useGraphPalette();
-  const { getViewport, screenToFlowPosition, fitView, zoomIn, zoomOut, zoomTo } =
-    useReactFlow();
+  const {
+    getViewport,
+    setViewport,
+    screenToFlowPosition,
+    fitView,
+    zoomIn,
+    zoomOut,
+    zoomTo,
+    viewportInitialized,
+  } = useReactFlow();
   const [notice, setNotice] = useState<string | null>(null);
   const [menu, setMenu] = useState<CanvasMenu | null>(null);
   const surfaceRef = useRef<HTMLDivElement | null>(null);
@@ -254,6 +291,24 @@ function PageCanvasInner({
   >(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  // Headings the person unfolded on this page, remembered per page on this
+  // device. A convenience only: losing it just folds long sections again.
+  const openKey = `wenlan.pageMap.open.${pageId}`;
+  const [openHeadings, setOpenHeadings] = useState<Set<string>>(() => readOpenHeadings(openKey));
+  useEffect(() => setOpenHeadings(readOpenHeadings(openKey)), [openKey]);
+  const toggleHeading = useCallback((id: string) => {
+    setOpenHeadings((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      try {
+        localStorage.setItem(openKey, JSON.stringify([...next]));
+      } catch {
+        // Private windows and blocked storage: the fold still works this session.
+      }
+      return next;
+    });
+  }, [openKey]);
   const [helpOpen, setHelpOpen] = useState(false);
   const [ideaDraft, setIdeaDraft] = useState("");
   const [ideaEntryOpen, setIdeaEntryOpen] = useState(false);
@@ -328,15 +383,38 @@ function PageCanvasInner({
 
   // Suggestions are the daemon's guesses, not the user's map, so a page opens
   // on what the user actually put there. The counted reveal keeps them reachable.
-  const visibleNodes = useMemo(() => {
-    const all = map?.nodes ?? [];
-    return showSuggestions ? all : all.filter((n) => n.status !== "suggested");
-  }, [map?.nodes, showSuggestions]);
-  const views = useMemo(
-    () => layoutMap(visibleNodes, labelOverrides, untitled, "portrait"),
-    [visibleNodes, labelOverrides, untitled],
+  //
+  // The page's own headings and items join them read-only: the map opens on
+  // what the page already says (UX-VIEW-4).
+  const showRestLabel = t("pageCanvas.showRest");
+  const visibleNodes = useMemo(
+    () => withPageLines(map, { pageId, pageTitle, open: openHeadings, showSuggestions, showRestLabel }),
+    [map, pageId, pageTitle, openHeadings, showSuggestions, showRestLabel],
   );
-  const isEmptyMap = !map || map.revision === 0 || views.length === 0;
+  const foldable = useMemo(() => foldableHeadings(map), [map]);
+  const hasPageLines = useMemo(() => visibleNodes.some((n) => isPageLine(n.id)), [visibleNodes]);
+  // The side panel is a column: the page's lines read top to bottom there,
+  // indented by level. With room to spare they grow left to right.
+  const [narrow, setNarrow] = useState(true);
+  const layoutMode = !hasPageLines ? "radial" : narrow ? "indent" : "tree";
+  const views = useMemo(() => {
+    if (layoutMode === "radial") return layoutMap(visibleNodes, labelOverrides, untitled, "portrait");
+    const heightOf = (n: PageMapNode) => (isPageLine(n.id) ? OUTLINE_NODE_HEIGHT : NODE_HEIGHT);
+    const widthOf = (n: PageMapNode, label: string, base: number) =>
+      isPageLine(n.id)
+        ? lineBoxWidth(label, foldable.has(n.id.slice(PAGE_LINE_PREFIX.length)) ? 24 : 0)
+        : base;
+    return layoutMode === "indent"
+      ? layoutIndented(visibleNodes, labelOverrides, untitled, heightOf, widthOf)
+      : layoutTree(visibleNodes, labelOverrides, untitled, heightOf, widthOf);
+  }, [layoutMode, visibleNodes, labelOverrides, untitled, foldable]);
+  // Nothing stored yet. The page's lines may still be on screen; this only
+  // decides how a new box of the person's own gets its first parent.
+  const storedRootId = useMemo(
+    () => map?.nodes.find((n) => n.parent_id === null && n.status !== "dismissed")?.id ?? null,
+    [map?.nodes],
+  );
+  const isEmptyMap = !map || map.revision === 0 || storedRootId === null;
 
   // Suggestions outlive the session that hid them: `showSuggestions` resets on
   // every mount, so without a count to offer back, a reload would strand the
@@ -345,7 +423,7 @@ function PageCanvasInner({
     () =>
       showSuggestions
         ? 0
-        : (map?.nodes ?? []).filter((n) => n.status === "suggested").length,
+        : (map?.nodes ?? []).filter((n) => n.status === "suggested" && n.ref_kind !== "section").length,
     [map?.nodes, showSuggestions],
   );
 
@@ -354,7 +432,7 @@ function PageCanvasInner({
   const metaRef = useRef(new Map<string, { width: number; height: number; collapsed: boolean }>());
   useEffect(() => {
     metaRef.current = new Map(
-      views.map((v) => [
+      views.filter((v) => !isPageLine(v.node.id)).map((v) => [
         v.node.id,
         { width: v.width, height: v.height, collapsed: v.node.collapsed },
       ]),
@@ -394,10 +472,29 @@ function PageCanvasInner({
       return improvePageMap(pageId);
     },
     onMutate: () => setNotice(t("pageCanvas.generating")),
-    onSuccess: () => {
-      setShowSuggestions(true);
+    onSuccess: (fresh) => {
       onMutated();
+      const found = fresh.nodes.some((n) => n.status === "suggested" && n.ref_kind !== "section");
+      setShowSuggestions(found);
+      if (!found) setNotice(t("pageCanvas.noRelated"));
     },
+    onError: handleMutationError,
+  });
+
+  // Each accept moves the map's revision, so they go one after another, each
+  // on the revision the last one returned.
+  const acceptAllMutation = useMutation({
+    mutationFn: async () => {
+      let revision = revisionRef.current;
+      const ids = (map?.nodes ?? [])
+        .filter((n) => n.status === "suggested" && n.ref_kind !== "section")
+        .map((n) => n.id);
+      for (const id of ids) {
+        const result = await patchPageMapNode(pageId, id, { base_revision: revision, status: "active" });
+        revision = result.revision;
+      }
+    },
+    onSuccess: onMutated,
     onError: handleMutationError,
   });
 
@@ -882,14 +979,34 @@ function PageCanvasInner({
     [markMoved],
   );
 
+  // A line of the page opens the part of the page it came from; "show the
+  // rest" unfolds its heading; the page box itself has nowhere else to go.
+  const openPageLine = useCallback(
+    (id: string) => {
+      const heading = moreFor(id);
+      if (heading !== null) {
+        toggleHeading(heading);
+        return;
+      }
+      const line = outlineLine(map, id);
+      if (!line) return;
+      const parent = line.kind === "heading"
+        ? line
+        : map?.outline?.find((l) => l.id === line.parent_id) ?? null;
+      onSectionClick?.({ text: line.text, heading: parent?.text ?? null });
+    },
+    [map, onSectionClick, toggleHeading],
+  );
+
   const openNode = useCallback(
     (node: PageMapNode) => {
+      if (isPageLine(node.id)) return openPageLine(node.id);
       if (node.ref_kind === "memory") onMemoryClick(node.ref_id);
       else if (node.ref_kind === "page") onPageClick?.(node.ref_id);
       else if (node.ref_kind === "entity") onEntityClick?.(node.ref_id);
       // "section" and "idea" are pure grouping nodes with no backing page.
     },
-    [onMemoryClick, onPageClick, onEntityClick],
+    [onMemoryClick, onPageClick, onEntityClick, openPageLine],
   );
 
   const { mutate: mutateStatus } = statusMutation;
@@ -903,6 +1020,9 @@ function PageCanvasInner({
   const serverNodes = useMemo<Node[]>(
     () =>
       views.map((v) => {
+        const pageLine = isPageLine(v.node.id);
+        const line = pageLine ? outlineLine(map, v.node.id) : null;
+        const foldId = line?.kind === "heading" && foldable.has(line.id) ? line.id : null;
         const data: CanvasNodeData = {
           label: v.label,
           refKind: v.node.ref_kind,
@@ -912,8 +1032,13 @@ function PageCanvasInner({
           depth: v.depth,
           // Layout puts the page at the origin, so the box's own center already
           // points away from it.
-          outward: Math.atan2(v.y, v.x),
-          readOnly,
+          // The tree grows rightward, so the grow dot sits on the right.
+          outward: 0,
+          readOnly: readOnly || pageLine,
+          hint: line && line.text !== v.label ? line.text : undefined,
+          link: moreFor(v.node.id) !== null,
+          unfolded: foldId ? openHeadings.has(foldId) : undefined,
+          onToggleFold: foldId ? () => toggleHeading(foldId) : undefined,
           palette,
           width: v.width,
           height: v.height,
@@ -935,12 +1060,14 @@ function PageCanvasInner({
         return {
           id: v.node.id,
           type: "pageMapNode",
-          draggable: !readOnly,
+          // The page's lines are laid out by the page's own order.
+          draggable: !readOnly && !pageLine,
+          connectable: !readOnly && !moreFor(v.node.id),
           position: { x: v.x - v.width / 2, y: v.y - v.height / 2 },
           data,
         };
       }),
-    [views, readOnly, palette, openNode, mutateStatus, mutateRename, mutateRenameAsync, t],
+    [views, readOnly, palette, openNode, mutateStatus, mutateRename, mutateRenameAsync, t, map, foldable, openHeadings, toggleHeading],
   );
 
   // Fold the server's copy into local state, keeping what the user has done
@@ -1045,16 +1172,46 @@ function PageCanvasInner({
     };
   }, [draft, pending, views, palette, commitDraft, t]);
 
-  const rootId = useMemo(
-    () => views.find((v) => v.node.parent_id === null)?.node.id ?? null,
-    [views],
-  );
+  // The stored page box. Null while nothing is stored, even when the page's
+  // own lines are drawn around a stand-in page box.
+  const rootId = storedRootId;
+
+  const localPoint = useCallback((clientX: number, clientY: number) => {
+    const box = surfaceRef.current?.getBoundingClientRect();
+    return { x: clientX - (box?.left ?? 0), y: clientY - (box?.top ?? 0) };
+  }, []);
+
+  const openEmptyIdeaAt = useCallback((x: number, y: number) => {
+    const surface = surfaceRef.current;
+    const width = surface?.clientWidth ?? 320;
+    const height = surface?.clientHeight ?? 240;
+    const formWidth = Math.min(280, Math.max(120, width - 16));
+    const left = Math.min(Math.max(8, x), Math.max(8, width - formWidth - 8));
+    const top = Math.min(Math.max(8, y + 8), Math.max(8, height - 140));
+    setIdeaError(null);
+    setMenu(null);
+    setIdeaEntryAnchor({ x: left, y: top });
+    refocusSurfaceRef.current = false;
+    setIdeaEntryOpen(true);
+    return false;
+  }, []);
 
   const startDraftAt = useCallback((parentId: string, x: number, y: number) => {
     if (readOnly) return;
     if (!independentIdeasSupported) {
       setNotice(t("pageCanvas.independentIdeasUnavailable"));
       return;
+    }
+    if (isPageLine(parentId)) {
+      // The page's lines live in the page, not in the map, so a box of the
+      // person's own hangs off the page box instead.
+      if (rootId) {
+        parentId = rootId;
+      } else {
+        const surface = surfaceRef.current;
+        openEmptyIdeaAt((surface?.clientWidth ?? 320) / 2, (surface?.clientHeight ?? 240) / 2);
+        return;
+      }
     }
     setEditingId(null);
     setMenu(null);
@@ -1063,17 +1220,17 @@ function PageCanvasInner({
     // read as a complaint about that one.
     setNotice(null);
     setDraft({ parentId, x, y, label: "", refId: globalThis.crypto.randomUUID() });
-  }, [readOnly, independentIdeasSupported, t]);
+  }, [readOnly, independentIdeasSupported, t, rootId, openEmptyIdeaAt]);
 
   const startDraft = useCallback(
     (mode: "child" | "sibling") => {
-      if (!rootId) return;
       const selected = nodesRef.current.find((n) => n.selected);
-      const anchorId = selected?.id ?? rootId;
+      if (!rootId && !selected) return;
+      const anchorId = selected?.id ?? (rootId as string);
       const parentId =
         !selected || mode === "child"
           ? anchorId
-          : (views.find((v) => v.node.id === anchorId)?.node.parent_id ?? rootId);
+          : (views.find((v) => v.node.id === anchorId)?.node.parent_id ?? rootId ?? anchorId);
       const base =
         nodesRef.current.find((n) => n.id === anchorId)?.position ?? { x: 0, y: 0 };
       startDraftAt(parentId, base.x + DRAFT_OFFSET.x, base.y + DRAFT_OFFSET.y);
@@ -1086,7 +1243,12 @@ function PageCanvasInner({
   // itself. It lands centered on the pointer, where the user aimed.
   const addBoxAt = useCallback(
     (clientX: number, clientY: number, parentId?: string) => {
-      if (readOnly || !rootId) return;
+      if (readOnly) return;
+      if (!rootId) {
+        const point = localPoint(clientX, clientY);
+        openEmptyIdeaAt(point.x, point.y);
+        return;
+      }
       if (!independentIdeasSupported) {
         setNotice(t("pageCanvas.independentIdeasUnavailable"));
         return;
@@ -1106,7 +1268,7 @@ function PageCanvasInner({
         point.y - DRAFT_SIZE.height / 2,
       );
     },
-    [readOnly, independentIdeasSupported, rootId, screenToFlowPosition, getViewport, startDraftAt, t],
+    [readOnly, independentIdeasSupported, rootId, screenToFlowPosition, getViewport, startDraftAt, t, localPoint, openEmptyIdeaAt],
   );
 
   // Drag a box's connector into empty space and let go: the new box is already
@@ -1139,7 +1301,7 @@ function PageCanvasInner({
   const nudge = useCallback(
     (dx: number, dy: number) => {
       const ids = nodesRef.current
-        .filter((n) => n.selected && n.id !== DRAFT_ID)
+        .filter((n) => n.selected && n.id !== DRAFT_ID && !isPageLine(n.id))
         .map((n) => n.id);
       if (ids.length === 0) return;
       const moving = new Set(ids);
@@ -1157,7 +1319,7 @@ function PageCanvasInner({
 
   const deleteSelection = useCallback(() => {
     const selected = nodesRef.current
-      .filter((n) => n.selected && n.id !== DRAFT_ID)
+      .filter((n) => n.selected && n.id !== DRAFT_ID && !isPageLine(n.id))
       .map((n) => n.id);
     if (selected.length === 0) return;
     const roots = new Set(
@@ -1174,26 +1336,6 @@ function PageCanvasInner({
     setMenu(null);
     mutateRemove(deletable);
   }, [views, mutateRemove, t]);
-
-  const localPoint = useCallback((clientX: number, clientY: number) => {
-    const box = surfaceRef.current?.getBoundingClientRect();
-    return { x: clientX - (box?.left ?? 0), y: clientY - (box?.top ?? 0) };
-  }, []);
-
-  const openEmptyIdeaAt = useCallback((x: number, y: number) => {
-    const surface = surfaceRef.current;
-    const width = surface?.clientWidth ?? 320;
-    const height = surface?.clientHeight ?? 240;
-    const formWidth = Math.min(280, Math.max(120, width - 16));
-    const left = Math.min(Math.max(8, x), Math.max(8, width - formWidth - 8));
-    const top = Math.min(Math.max(8, y + 8), Math.max(8, height - 140));
-    setIdeaError(null);
-    setMenu(null);
-    setIdeaEntryAnchor({ x: left, y: top });
-    refocusSurfaceRef.current = false;
-    setIdeaEntryOpen(true);
-    return false;
-  }, []);
 
   const restoreMenuFocus = useCallback((restore = true) => {
     setMenu(null);
@@ -1259,11 +1401,16 @@ function PageCanvasInner({
 
   const handleNodeDoubleClick = useCallback(
     (_event: ReactMouseEvent, node: Node) => {
-      if (readOnly || node.id === DRAFT_ID) return;
+      if (node.id === DRAFT_ID) return;
+      if (isPageLine(node.id)) {
+        openPageLine(node.id);
+        return;
+      }
+      if (readOnly) return;
       setMenu(null);
       setEditingId(node.id);
     },
-    [readOnly],
+    [readOnly, openPageLine],
   );
 
   const menuItems = useMemo<MenuItem[]>(() => {
@@ -1284,7 +1431,7 @@ function PageCanvasInner({
         if (map && map.map_schema >= 1 && map.map_schema <= SUPPORTED_MAP_SCHEMA) {
           items.push({
             key: "generate",
-            label: improveMutation.isPending ? t("pageCanvas.generating") : t("pageCanvas.generate"),
+            label: improveMutation.isPending ? t("pageCanvas.generating") : t("pageCanvas.addRelated"),
             disabled: improveMutation.isPending,
             run: () => { improveMutation.mutate(); },
           });
@@ -1295,6 +1442,13 @@ function PageCanvasInner({
     }
     const view = views.find((v) => v.node.id === menu.nodeId);
     if (!view) return [];
+    if (isPageLine(view.node.id)) {
+      // A line of the page is changed in the page, so the map offers only the
+      // way there.
+      return outlineLine(map, view.node.id)
+        ? [{ key: "open", label: t("pageCanvas.menuShowInPage"), run: () => { openPageLine(view.node.id); return false; } }]
+        : [];
+    }
     const items: MenuItem[] = [];
     // A section is a heading in the page body — there is nothing behind it to
     // open, so the verb is omitted rather than shown doing nothing.
@@ -1359,6 +1513,7 @@ function PageCanvasInner({
     openEmptyIdeaAt,
     selectAll,
     openNode,
+    openPageLine,
     startDraftAt,
     deleteSelection,
   ]);
@@ -1543,7 +1698,7 @@ function PageCanvasInner({
           break;
         case "F2":
           e.preventDefault();
-          if (selected) setEditingId(selected.id);
+          if (selected && !isPageLine(selected.id)) setEditingId(selected.id);
           break;
         case "Delete":
         case "Backspace":
@@ -1615,16 +1770,27 @@ function PageCanvasInner({
 
   const rfEdges = useMemo<Edge[]>(() => {
     const rendered = new Set(views.map((v) => v.node.id));
+    const byId = new Map(views.map((v) => [v.node.id, v]));
     const edges: Edge[] = [];
     for (const v of views) {
       const parent = v.node.parent_id;
       if (!parent || !rendered.has(parent)) continue;
+      const from = byId.get(parent);
       // "tree-" prefix keeps derived spine edges out of the server id space.
       edges.push({
         id: `tree-${v.node.id}`,
         source: parent,
         sourceHandle: "anchor",
         target: v.node.id,
+        data: layoutMode === "indent" && from
+          ? {
+              indent: {
+                fromX: from.x - from.width / 2 + 12,
+                fromY: from.y + from.height / 2,
+                toX: v.x - v.width / 2,
+              },
+            }
+          : { tree: layoutMode === "tree" },
         // The lines are the structure, so they thin out as the structure does:
         // spokes off the page carry weight, the twigs past them recede. Drawn in
         // one flat ink they were the faintest thing on a map they hold together.
@@ -1662,7 +1828,7 @@ function PageCanvasInner({
       });
     }
     return edges;
-  }, [views, map?.edges, palette, draft, pending]);
+  }, [views, map?.edges, palette, draft, pending, layoutMode]);
 
   // Capture keeps the map's layered Escape ahead of parent page handlers.
   // The listener is scoped to surface descendants so neighboring note text,
@@ -1680,6 +1846,85 @@ function PageCanvasInner({
 
   // Rendering nothing here made every slow fetch look like a canvas that had
   // simply failed to arrive, with no way to tell waiting from broken.
+  // How wide the map has to be before the page's lines grow sideways.
+  useEffect(() => {
+    const surface = surfaceRef.current;
+    if (!surface) return;
+    const measure = () => setNarrow(surface.clientWidth < 640);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(surface);
+    return () => observer.disconnect();
+  }, [isLoading, views.length === 0]);
+
+  // A page's lines open where reading starts: the page box at the top left,
+  // at actual size, rather than the whole tree shrunk to fit. Once per page
+  // and shape, so a refetch never moves the view under the reader.
+  const framedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (layoutMode === "radial" || views.length === 0 || !viewportInitialized) return;
+    const surface = surfaceRef.current;
+    if (!surface) return;
+    const key = `${pageId}:${layoutMode}`;
+    if (framedRef.current === key) return;
+    framedRef.current = key;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const v of views) {
+      minX = Math.min(minX, v.x - v.width / 2);
+      maxX = Math.max(maxX, v.x + v.width / 2);
+      minY = Math.min(minY, v.y - v.height / 2);
+      maxY = Math.max(maxY, v.y + v.height / 2);
+    }
+    const pad = 20;
+    const w = surface.clientWidth;
+    const h = surface.clientHeight;
+    const zoom = layoutMode === "indent"
+      ? Math.min(1, Math.max(0.75, (w - pad * 2) / (maxX - minX)))
+      : Math.min(1, Math.max(0.75, (h - pad * 2) / (maxY - minY)));
+    const tall = (maxY - minY) * zoom > h - pad * 2;
+    void setViewport({
+      x: pad - minX * zoom,
+      // Clear of the suggestions button in the top corner.
+      y: layoutMode === "indent" || tall ? pad + 52 - minY * zoom : h / 2 - ((minY + maxY) / 2) * zoom,
+      zoom,
+    });
+  }, [layoutMode, views, pageId, setViewport, viewportInitialized]);
+
+  // AI guesses wait behind one visible button and never show a count: the
+  // page's own lines are the map, these are extras to take or leave.
+  const shownSuggestions = showSuggestions
+    ? (map?.nodes ?? []).filter((n) => n.status === "suggested" && n.ref_kind !== "section").length
+    : 0;
+  const relatedActions = readOnly || !map || map.map_schema < 1 ? null : (
+    <>
+      {!showSuggestions && (
+        <button
+          type="button"
+          className="page-canvas-reveal"
+          disabled={improveMutation.isPending}
+          onClick={() => (hiddenSuggestions > 0 ? setShowSuggestions(true) : improveMutation.mutate())}
+        >
+          {improveMutation.isPending ? t("pageCanvas.generating") : t("pageCanvas.addRelated")}
+        </button>
+      )}
+      {showSuggestions && shownSuggestions > 0 && (
+        <button
+          type="button"
+          className="page-canvas-reveal"
+          disabled={acceptAllMutation.isPending}
+          onClick={() => acceptAllMutation.mutate()}
+        >
+          {t("pageCanvas.acceptAll")}
+        </button>
+      )}
+      {showSuggestions && (
+        <button type="button" className="page-canvas-reveal" onClick={() => setShowSuggestions(false)}>
+          {t("pageCanvas.hideRelated")}
+        </button>
+      )}
+    </>
+  );
+
   if (isLoading) {
     return <CanvasMessage title={t("pageCanvas.loading")} live />;
   }
@@ -1711,7 +1956,7 @@ function PageCanvasInner({
     </>;
   }
 
-  if (!map || map.revision === 0 || views.length === 0) {
+  if (views.length === 0) {
     return (
       <><div className="page-canvas">
       <div
@@ -1736,6 +1981,7 @@ function PageCanvasInner({
             <p className="page-canvas-message-body">{t(readOnly ? "pageCanvas.emptyBody" : "pageCanvas.ideasEmptyBody")}</p>
           </div>
           {ideaEntry}
+          <div className="page-canvas-actions">{relatedActions}</div>
           {menu && menuItems.length > 0 && (
             <ContextMenu
               menuRef={menuElementRef}
@@ -1812,7 +2058,7 @@ function PageCanvasInner({
           // Flow it would drop the box from the canvas locally and leave the
           // daemon's copy untouched.
           deleteKeyCode={null}
-          fitView
+          fitView={!hasPageLines}
           fitViewOptions={OPENING_VIEW}
           // Below React Flow's default floor of 0.5, because the legibility
           // floor belongs to the opening view above and nowhere else. Left at
@@ -1852,18 +2098,7 @@ function PageCanvasInner({
           </span>
         )}
         <div className="page-canvas-actions">
-          {hiddenSuggestions > 0 && (
-            <button
-              type="button"
-              className="page-canvas-reveal"
-              onClick={() => setShowSuggestions(true)}
-            >
-              <span aria-hidden="true" className="page-canvas-reveal-dot">
-                {"\u25CF"}
-              </span>
-              {t("pageCanvas.showSuggestions", { count: hiddenSuggestions })}
-            </button>
-          )}
+          {relatedActions}
           {notice && (
             <span role="status" aria-live="polite" className="page-canvas-notice">
               {notice}

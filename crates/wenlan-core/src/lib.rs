@@ -66,6 +66,7 @@ pub mod page_body;
 pub mod page_history;
 pub mod page_map_improve;
 pub mod page_markdown;
+pub mod page_outline;
 pub mod page_projection_tracker;
 pub mod page_titles;
 pub mod pages;

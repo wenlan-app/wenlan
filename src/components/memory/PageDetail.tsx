@@ -352,6 +352,28 @@ export default function PageDetail({
   const inspectorId = useId();
   const documentToolsHost = useContext(WorkspaceDocumentToolsHostContext);
   const noteGroup = useContext(WorkspaceNoteGroupContext);
+  // A heading or item clicked on the mind map shows where it is in the page.
+  const showPageLine = useCallback(({ text, heading }: { text: string; heading: string | null }) => {
+    const root = pageDetailRootRef.current;
+    if (!root) return;
+    const norm = (value: string) => value.replace(/\s+/g, " ").trim().toLowerCase();
+    const outsideMap = (el: Element) => !el.closest(".page-canvas, .note-inspector-panel");
+    const find = (selector: string, want: string, prefix: boolean) => {
+      const target = norm(want);
+      if (!target) return null;
+      return Array.from(root.querySelectorAll(selector)).find((el) => {
+        if (!outsideMap(el)) return false;
+        const have = norm(el.textContent ?? "");
+        return prefix ? have.startsWith(target.slice(0, 40)) : have === target;
+      }) ?? null;
+    };
+    const headings = "h1, h2, h3, h4, h5, h6";
+    const hit = text === heading
+      ? find(headings, text, false)
+      : find("li, td, p", text, true) ?? (heading ? find(headings, heading, false) : null);
+    hit?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, []);
+
   const setPageDetailRootRef = useCallback((node: HTMLDivElement | null) => {
     readingPositionCleanupRef.current?.();
     readingPositionCleanupRef.current = node ? preserveReadingPosition(node) : null;
@@ -3299,7 +3321,7 @@ export default function PageDetail({
             <SourceDocumentReader readingSessionKey={readingSessionKey} key={`${pageId}:${pdfPreview.source_id}`} file={pdfPreview} space={page.space ?? undefined} citation={pdfCitation?.pageId === pageId && pdfCitation.sourceId === pdfPreview.source_id ? pdfCitation.citation : undefined} />
           </div>}
           {!pdfPreviewOpen && (showCanvas ? <PageCanvas key={pageId} pageId={pageId} pageTitle={page.title} labelOverrides={labelOverrides}
-            onMemoryClick={onMemoryClick} onPageClick={onPageClick} onEntityClick={onEntityClick} />
+            onMemoryClick={onMemoryClick} onPageClick={onPageClick} onEntityClick={onEntityClick} onSectionClick={showPageLine} />
             : <DetailInfoContent className="note-inspector-info">
           {pageHasTwoLengths && <SummaryViewSwitch
             on={pageLength === "short"}

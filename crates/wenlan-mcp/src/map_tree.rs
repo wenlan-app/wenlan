@@ -171,6 +171,7 @@ mod tests {
             nodes,
             edges: vec![],
             independent_ideas: true,
+            outline: vec![],
         }
     }
 
