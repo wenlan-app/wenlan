@@ -13,10 +13,8 @@ pub struct ImportCounts {
     pub sensitive: usize,
     /// Left out by the four questions (tool habits, expiring, private, unsure).
     pub not_knowledge: usize,
-    /// Already said by an existing point or the person's own page: nothing added.
+    /// Wenlan already holds it: nothing added.
     pub already: usize,
-    /// Added as one more source of an existing page.
-    pub attached: usize,
     /// Added as new points.
     pub added: usize,
     /// Disagreed with what Wenlan holds, or could not be told: left out.
