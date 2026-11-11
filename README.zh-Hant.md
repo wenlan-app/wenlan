@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=00a8b2a25c5679a289f8c4e9190c892df96e72616a081a4003eab0898b8f0aa8 -->
+<!-- README_SYNC: source=README.md sha256=c25afa23b469b5fa435c85a4d67f7f7176d33a4acade0657e0cde4c82556a171 -->
 
 <p align="center">
   <picture>
@@ -97,15 +97,7 @@
 
 只要記得 `/wenlan`（Codex 裡是 `$wenlan`），後面直接說你要做什麼。
 
-想自己手動設定，或看看會連上什麼：
-
-| AI 工具 | 會設定什麼 | 說明 |
-|---|---|---|
-| Claude Code／Claude Desktop | 插件／MCP | [Claude 指南](docs/setup-with-ai.md#claude-code) |
-| ChatGPT Desktop（Codex）、Codex CLI | 插件 | [Codex 指南](docs/setup-with-ai.md#codex) |
-| Cursor、GitHub Copilot、VS Code、Gemini CLI、Antigravity、Windsurf、Kiro、OpenCode、Kimi Code | MCP 和技能 | [MCP 指南](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
-| Muse Code 和其他 MCP 工具 | MCP | [MCP 指南](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
-| Grok Bot | 本機 CLI，或 MCP | [Grok Bot 指南](docs/setup-with-ai.md#grok-bot) |
+支援 Claude Code、Claude Desktop、Codex、Cursor、GitHub Copilot、VS Code、Gemini CLI、Windsurf、Grok Bot 和其他 MCP 工具。[手動設定](docs/setup-with-ai.md)。
 
 匯入完成後，App 會提供「用（你的 AI 工具）寫頁面」，把資料寫成第一批帶引用的筆記，不用輸入指令。
 
@@ -116,14 +108,12 @@
 
 ## 能帶進什麼
 
-| 可以帶入什麼 | 匯入後怎麼用 |
-| --- | --- |
-| Markdown、文字檔、文字型 PDF、DOCX 或資料夾 | 搜尋、引用裡面的文字。資料夾可以只匯入一次，也可以持續同步檔案的變更。 |
-| Obsidian 儲存庫或 Logseq 圖譜 | 搜尋、引用既有筆記。選擇持續同步，在背景跟上變更；或只匯入一次。你寫的筆記預設是「先問我」：AI 的修改會變成建議，由你接受或不要；每篇筆記都可以改這個設定。 |
-| 網頁連結 | 在筆記裡貼上連結，就會存成來源。YouTube、X、Threads、Instagram 和小紅書的連結會顯示成卡片、可播放的影片或原始貼文。 |
-| Gmail、Notion、Google Drive、Slack、GitHub | 你的 AI 工具用它自己的連接器讀取，把重要的內容存進文瀾，並附上原文連結。 |
-| 你的 AI 對話 | 你的 AI 工具會把每次對話裡的決定、發現和進度存成記憶，不會存完整對話紀錄。ChatGPT 或 Claude 匯出的 ZIP 可以帶進先前的對話，保留匯入當時的內容。 |
-| 程式碼儲存庫 | `/wenlan wiki` 寫出對應到程式碼行數的筆記。[程式碼 wiki](#code-repository-wiki)。 |
+- **檔案和資料夾：** Markdown、文字檔、文字型 PDF、DOCX。可以只匯入一次，也可以讓資料夾持續同步。
+- **Obsidian vault 和 Logseq 圖譜：** 持續同步或只匯入一次。你自己寫的筆記預設是「先問我」。
+- **網頁連結：** 在筆記裡貼上連結就會存成來源。YouTube、X、Threads、Instagram 和小紅書會顯示成卡片或影片。
+- **Gmail、Notion、Google Drive、Slack、GitHub：** 你的 AI 工具用自己的連接器讀取，把重要的內容存進來，附上原文連結。
+- **AI 對話：** 決定和發現會存成記憶，不存完整對話紀錄。ChatGPT 和 Claude 匯出的 ZIP 也能帶進來。
+- **程式碼儲存庫：** `/wenlan wiki` 寫出對應到程式碼的筆記。[程式碼 wiki](#code-repository-wiki)。
 
 也可以把 Open Knowledge Format（OKF）資料夾連接成來源。掃描版 PDF 須先擷取文字；對話附件不會匯入。[匯入教學](docs/import-guide.zh-Hant.md)。
 

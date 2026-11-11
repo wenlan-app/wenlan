@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=00a8b2a25c5679a289f8c4e9190c892df96e72616a081a4003eab0898b8f0aa8 -->
+<!-- README_SYNC: source=README.md sha256=c25afa23b469b5fa435c85a4d67f7f7176d33a4acade0657e0cde4c82556a171 -->
 
 <p align="center">
   <picture>
@@ -97,15 +97,7 @@ En los ajustes de la aplicación, **Add a tool** encuentra las herramientas de I
 
 `/wenlan` (`$wenlan` en Codex) es el único comando que hay que recordar: después, di lo que quieres.
 
-Para configurar una herramienta a mano, o ver qué se conecta:
-
-| Herramienta de IA | Qué se configura | Guía |
-|---|---|---|
-| Claude Code / Claude Desktop | Plugin / MCP | [Guía de Claude](docs/setup-with-ai.md#claude-code) |
-| ChatGPT Desktop (Codex), Codex CLI | Plugin | [Guía de Codex](docs/setup-with-ai.md#codex) |
-| Cursor, GitHub Copilot, VS Code, Gemini CLI, Antigravity, Windsurf, Kiro, OpenCode, Kimi Code | MCP y skills | [Guía de MCP](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
-| Muse Code y otros clientes MCP | MCP | [Guía de MCP](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
-| Grok Bot | CLI en tu ordenador, o MCP | [Guía de Grok Bot](docs/setup-with-ai.md#grok-bot) |
+Funciona con Claude Code, Claude Desktop, Codex, Cursor, GitHub Copilot, VS Code, Gemini CLI, Windsurf, Grok Bot y otras herramientas MCP. [Configurar una a mano](docs/setup-with-ai.md).
 
 Cuando termina una importación, la aplicación ofrece **Write pages with** tu herramienta de IA para convertirla en tus primeras páginas con citas. No hace falta ningún comando.
 
@@ -116,14 +108,12 @@ Cuando termina una importación, la aplicación ofrece **Write pages with** tu h
 
 ## Qué puedes traer
 
-| Qué traer | Cómo puedes usarlo |
-| --- | --- |
-| Markdown, texto, PDF con texto, DOCX o una carpeta | Busca y cita el texto. Importa una carpeta una vez o mantenla sincronizada mientras cambian sus archivos. |
-| Una bóveda de Obsidian o un grafo de Logseq | Busca y cita notas existentes. Mantenla sincronizada para seguir los cambios en segundo plano, o impórtala una vez. Las notas que escribiste empiezan en **Ask me first**: los cambios de la IA llegan como sugerencias que aceptas o rechazas, y puedes cambiarlo en cada página. |
-| Enlaces web | Pega un enlace en una página y se guarda como fuente. Los enlaces de YouTube, X, Threads, Instagram y RedNote se muestran como tarjeta, vídeo reproducible o la publicación original. |
-| Gmail, Notion, Google Drive, Slack, GitHub | Tu herramienta de IA los lee con sus propios conectores y guarda en Wenlan lo importante, con un enlace al original. |
-| Tus chats con IA | Tus herramientas de IA guardan como memorias las decisiones, hallazgos y avances de cada conversación, no las transcripciones completas. Los ZIP exportados de ChatGPT o Claude traen conversaciones anteriores como instantáneas. |
-| Un repositorio de código | `/wenlan wiki` escribe páginas ligadas a las líneas de código en las que se basan. [Wiki de código](#code-repository-wiki). |
+- **Archivos y carpetas:** Markdown, texto, PDF con texto y DOCX. Importa una vez o mantén una carpeta sincronizada.
+- **Bóvedas de Obsidian y grafos de Logseq:** mantenlos sincronizados o impórtalos una vez. Las notas que escribiste empiezan en **Ask me first**.
+- **Enlaces web:** pega un enlace en una página y se convierte en fuente. Los enlaces de YouTube, X, Threads, Instagram y RedNote se muestran como tarjeta o vídeo.
+- **Gmail, Notion, Google Drive, Slack, GitHub:** tu herramienta de IA los lee con sus propios conectores y guarda lo importante, con un enlace al original.
+- **Chats de IA:** las decisiones y hallazgos se guardan como memorias, no como transcripciones completas. También sirven los ZIP exportados de ChatGPT y Claude.
+- **Un repositorio de código:** `/wenlan wiki` escribe páginas ligadas al código. [Wiki de código](#code-repository-wiki).
 
 También puedes conectar una carpeta Open Knowledge Format (OKF) como fuente. Los PDF escaneados necesitan extracción de texto primero; los adjuntos de los chats no se importan. [Guía de importación](docs/import-guide.md).
 

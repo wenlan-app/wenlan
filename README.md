@@ -95,15 +95,7 @@ In the App's Settings, **Add a tool** finds the AI tools on your computer and **
 
 `/wenlan` (`$wenlan` in Codex) is the one command to remember: say what you want after it.
 
-To set up a tool by hand, or to see what gets connected:
-
-| AI tool | What gets set up | Guide |
-|---|---|---|
-| Claude Code / Claude Desktop | Plugin / MCP | [Claude guide](docs/setup-with-ai.md#claude-code) |
-| ChatGPT Desktop (Codex), Codex CLI | Plugin | [Codex guide](docs/setup-with-ai.md#codex) |
-| Cursor, GitHub Copilot, VS Code, Gemini CLI, Antigravity, Windsurf, Kiro, OpenCode, Kimi Code | MCP and skills | [MCP guide](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
-| Muse Code and other MCP clients | MCP | [MCP guide](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
-| Grok Bot | CLI on your computer, or MCP | [Grok Bot guide](docs/setup-with-ai.md#grok-bot) |
+Works with Claude Code, Claude Desktop, Codex, Cursor, GitHub Copilot, VS Code, Gemini CLI, Windsurf, Grok Bot, and other MCP tools. [Set one up by hand](docs/setup-with-ai.md).
 
 When an import finishes, the app offers **Write pages with** your AI tool to turn it into your first cited pages. No command needed.
 
@@ -114,14 +106,12 @@ When an import finishes, the app offers **Write pages with** your AI tool to tur
 
 ## What you can bring in
 
-| Bring in | How you can use it |
-| --- | --- |
-| Markdown, text, text-based PDFs, DOCX, or a folder | Search and cite the text. Import a folder once, or keep it in sync as its files change. |
-| An Obsidian vault or a Logseq graph | Search and cite existing notes. Keep it in sync to follow changes in the background, or import it once. Notes you wrote start on **Ask me first**: AI changes to them come as suggestions you accept or decline, and you can change that per page. |
-| Web links | Paste a link into a page and it is saved as a source. YouTube, X, Threads, Instagram, and RedNote links show as a card, a playable video, or the original post. |
-| Gmail, Notion, Google Drive, Slack, GitHub | Your AI tool reads them with its own connectors and saves what matters to Wenlan with a link to the original. |
-| Your AI chats | Your AI tools save the decisions, findings, and progress from each conversation as memories, not full transcripts. ChatGPT or Claude export ZIPs bring in earlier conversations as snapshots. |
-| A code repository | `/wenlan wiki` writes pages tied to the code lines they rely on. [Code wiki](#code-repository-wiki). |
+- **Files and folders:** Markdown, text, text-based PDFs, and DOCX. Import once, or keep a folder in sync.
+- **Obsidian vaults and Logseq graphs:** keep them in sync, or import once. Notes you wrote start on **Ask me first**.
+- **Web links:** paste a link into a page and it becomes a source. YouTube, X, Threads, Instagram, and RedNote links show as a card or video.
+- **Gmail, Notion, Google Drive, Slack, GitHub:** your AI tool reads them with its own connectors and saves what matters, with a link to the original.
+- **AI chats:** decisions and findings are saved as memories, not full transcripts. ChatGPT and Claude export ZIPs work too.
+- **A code repository:** `/wenlan wiki` writes pages tied to the code. [Code wiki](#code-repository-wiki).
 
 You can also connect an Open Knowledge Format (OKF) folder as a source. Scanned PDFs need text extraction first; chat attachments are not imported. [Import guide](docs/import-guide.md).
 

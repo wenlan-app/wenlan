@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=00a8b2a25c5679a289f8c4e9190c892df96e72616a081a4003eab0898b8f0aa8 -->
+<!-- README_SYNC: source=README.md sha256=c25afa23b469b5fa435c85a4d67f7f7176d33a4acade0657e0cde4c82556a171 -->
 
 <p align="center">
   <picture>
@@ -97,15 +97,7 @@
 
 只要记得 `/wenlan`（Codex 里是 `$wenlan`），后面直接说你要做什么。
 
-想自己手动设置，或看看会连上什么：
-
-| AI 工具 | 会设置什么 | 说明 |
-|---|---|---|
-| Claude Code / Claude Desktop | 插件 / MCP | [Claude 指南](docs/setup-with-ai.md#claude-code) |
-| ChatGPT Desktop（Codex）、Codex CLI | 插件 | [Codex 指南](docs/setup-with-ai.md#codex) |
-| Cursor、GitHub Copilot、VS Code、Gemini CLI、Antigravity、Windsurf、Kiro、OpenCode、Kimi Code | MCP 和技能 | [MCP 指南](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
-| Muse Code 和其他 MCP 工具 | MCP | [MCP 指南](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
-| Grok Bot | 本机 CLI，或 MCP | [Grok Bot 指南](docs/setup-with-ai.md#grok-bot) |
+支持 Claude Code、Claude Desktop、Codex、Cursor、GitHub Copilot、VS Code、Gemini CLI、Windsurf、Grok Bot 和其他 MCP 工具。[手动设置](docs/setup-with-ai.md)。
 
 导入完成后，App 会提供“用（你的 AI 工具）写页面”，把资料写成第一批带引用的笔记，不用输入指令。
 
@@ -116,14 +108,12 @@
 
 ## 能带进什么
 
-| 可以带入什么 | 导入后怎么用 |
-| --- | --- |
-| Markdown、文本文件、文本型 PDF、DOCX 或文件夹 | 搜索、引用里面的文字。文件夹可以只导入一次，也可以持续同步文件的变化。 |
-| Obsidian 仓库或 Logseq 图谱 | 搜索和引用现有笔记。选择持续同步，在后台跟上变化；或只导入一次。你写的笔记默认是“先问我”：AI 的修改会变成建议，由你接受或不要；每篇笔记都可以改这个设置。 |
-| 网页链接 | 在笔记里粘贴链接，就会保存为来源。YouTube、X、Threads、Instagram 和小红书的链接会显示成卡片、可播放的视频或原始帖子。 |
-| Gmail、Notion、Google Drive、Slack、GitHub | 你的 AI 工具用它自己的连接器读取，把重要的内容存进文澜，并附上原文链接。 |
-| 你的 AI 对话 | 你的 AI 工具会把每次对话里的决定、发现和进度存成记忆，不会存完整对话记录。ChatGPT 或 Claude 导出的 ZIP 可以带入之前的对话，保留导入当时的内容。 |
-| 代码仓库 | `/wenlan wiki` 写出对应到代码行的笔记。[代码 wiki](#code-repository-wiki)。 |
+- **文件和文件夹：** Markdown、文本文件、文本型 PDF、DOCX。可以只导入一次，也可以让文件夹持续同步。
+- **Obsidian 仓库和 Logseq 图谱：** 持续同步或只导入一次。你自己写的笔记默认是“先问我”。
+- **网页链接：** 在笔记里粘贴链接就会保存为来源。YouTube、X、Threads、Instagram 和小红书会显示成卡片或视频。
+- **Gmail、Notion、Google Drive、Slack、GitHub：** 你的 AI 工具用自己的连接器读取，把重要的内容存进来，附上原文链接。
+- **AI 对话：** 决定和发现会存成记忆，不存完整对话记录。ChatGPT 和 Claude 导出的 ZIP 也能带进来。
+- **代码仓库：** `/wenlan wiki` 写出对应到代码的笔记。[代码 wiki](#code-repository-wiki)。
 
 也可以把 Open Knowledge Format（OKF）文件夹连接为来源。扫描版 PDF 需要先提取文字；对话附件不会导入。[导入指南](docs/import-guide.md)。
 
