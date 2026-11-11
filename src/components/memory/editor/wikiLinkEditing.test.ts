@@ -162,6 +162,15 @@ describe("wiki link editing", () => {
     expect(view.state.doc.toString()).toBe(source);
   });
 
+  it("reads a plain link to a renamed page as its new name, leaving aliases and the stored text alone", () => {
+    const source = "Read [[Target]] or [[Target|my shorthand]].";
+    const { view } = make(source, targets, { pageTitles: new Map([["page-target", "Renamed target"]]) });
+    const anchors = [...view.contentDOM.querySelectorAll<HTMLAnchorElement>("a[data-wiki-page-id]")];
+    expect(anchors.map((anchor) => anchor.textContent)).toEqual(["Renamed target", "my shorthand"]);
+    expect(anchors[0].getAttribute("aria-label")).toBe("Renamed target");
+    expect(view.state.doc.toString()).toBe(source);
+  });
+
   it("keeps a page name that holds \" #\" whole instead of cutting it at the heading mark", () => {
     const source = "See [[P0 #1 reranker]] and [[City Walk#day]].";
     const { view } = make(source);
