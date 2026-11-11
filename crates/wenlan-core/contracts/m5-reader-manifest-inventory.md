@@ -1573,6 +1573,7 @@ carrying the authority of agreement.
 | `core/sentences.rs::source_states` | `private` | no | no | — | `core/db/citation_sources.rs::citation_page_source` |
 | `core/shared_space/library.rs::write_copy` | `private` | no | no | — | `core/reading_copy.rs::pages_for_copy` |
 | `core/shared_space/mod.rs::apply_create` | `private` | no | no | — | `core/shared_space/mod.rs::free_title` |
+| `core/shared_space/mod.rs::apply_sources` | `private` | no | no | — | `core/db.rs::set_page_citations` |
 | `core/shared_space/mod.rs::apply_version` | `private` | no | no | — | `core/shared_space/mod.rs::free_title` |
 | `core/shared_space/mod.rs::reload` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/shared_space/mod.rs::run_pass` | `private` | no | no | — | `core/shared_space/mod.rs::pass` |

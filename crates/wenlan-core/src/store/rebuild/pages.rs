@@ -210,7 +210,11 @@ fn entity_row(mut file: entity::EntityFile, problems: &mut Vec<String>) -> Optio
 /// marker has a sources line, in occurrence order. Verification fields
 /// (score, status, scope, digest) are cache; they get the values of a
 /// citation not yet checked.
-fn citations_of(file: &PageFile, id: &str, problems: &mut Vec<String>) -> Option<String> {
+pub(crate) fn citations_of(
+    file: &PageFile,
+    id: &str,
+    problems: &mut Vec<String>,
+) -> Option<String> {
     let mut records = Vec::new();
     for (occurrence, (start, end)) in crate::citations::marker_spans(&file.body)
         .into_iter()

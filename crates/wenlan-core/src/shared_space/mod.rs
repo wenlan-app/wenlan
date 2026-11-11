@@ -1529,6 +1529,12 @@ async fn pass(
             hold.extend(archiving);
         }
     }
+    if ctx.library {
+        // The library's memories go the same way, before its pages: a page
+        // taken here cites them, and a citation of a memory that is here
+        // links to it.
+        memories::sync(db, settings, &ctx.folder, &ctx.own_spaces, &mut counts).await?;
+    }
     for id in ids {
         if hold.contains(id) {
             counts.held_back += 1;
@@ -1561,10 +1567,6 @@ async fn pass(
     }
     if unsaved {
         save_held(db, &key, &held).await?;
-    }
-    if ctx.library {
-        // The library's memories go the same way, after its pages.
-        memories::sync(db, settings, &ctx.folder, &ctx.own_spaces, &mut counts).await?;
     }
     Ok(counts)
 }
@@ -1980,6 +1982,7 @@ impl Pass<'_> {
                 return Ok(stopped(wrote, &current));
             }
             wrote = true;
+            self.apply_sources(id, head).await?;
             current = self.reload(id).await?;
         }
         if self.library
@@ -2103,6 +2106,22 @@ impl Pass<'_> {
     }
 
     /// Makes the head here as a new page. Returns the version to remember.
+    /// The library takes a version's sources along: the person's other
+    /// computer has the memories and pages they cite, so the page here links
+    /// back to them and its memories count as written into a page (nightly
+    /// organize does not write them again). A Space or page share keeps
+    /// sources private, as quotes.
+    async fn apply_sources(&self, id: &str, head: &PageVersion) -> Result<(), WenlanError> {
+        if !self.library {
+            return Ok(());
+        }
+        let mut file = head.page.clone();
+        let quote = crate::store::format::page::Locator::Other(rewrite::QUOTE_LOCATOR.to_string());
+        file.citations.retain(|citation| citation.locator != quote);
+        let json = crate::store::rebuild::pages::citations_of(&file, id, &mut Vec::new());
+        self.db.set_page_citations(id, json.as_deref()).await
+    }
+
     async fn apply_create(&self, head: &PageVersion) -> Result<Option<i64>, WenlanError> {
         let Some(id) = head.page.id.as_deref() else {
             return Ok(None);
@@ -2158,6 +2177,7 @@ impl Pass<'_> {
                 return Ok(None);
             }
         }
+        self.apply_sources(id, head).await?;
         // A page made under another title is shared under it next pass.
         let page = self.reload(id).await?;
         // A create keeps no changelog; record the member so the page's rows

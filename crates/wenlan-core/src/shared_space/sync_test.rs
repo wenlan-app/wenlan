@@ -2429,3 +2429,48 @@ fn an_automatic_pass_waits_for_typing_to_stop() {
     assert!(still_typing(Some(&row("fs_edit", 990)), base, 1_000, 120));
     assert!(!still_typing(None, base, 1_000, 120));
 }
+
+#[tokio::test]
+async fn a_library_page_keeps_its_sources_on_the_other_computer() {
+    let chosen = tempfile::tempdir().unwrap();
+    let (a, b) = library_pair(chosen.path()).await;
+    a.save_memory("mem_fish", "We said fish is fine for Grandma.", Some(SPACE))
+        .await;
+    let menu = a
+        .write("Menu", "Fish is fine [1].", SPACE.to_string().into())
+        .await;
+    let citations = serde_json::json!([
+        {"occurrence": 1, "marker": 1, "source_kind": "memory", "locator": "mem_fish",
+         "score": 1.0, "status": "verified", "cited_version": 1},
+    ]);
+    a.db.set_page_citations_for_test(&menu, &citations.to_string())
+        .await
+        .unwrap();
+
+    a.lib_sync(chosen.path(), None).await.unwrap();
+    b.lib_sync(chosen.path(), Some(&a.library_member_id()))
+        .await
+        .unwrap();
+
+    // The page links back to the memory, which came along too.
+    let page = b.page(&menu).await.expect("B has the page");
+    assert_eq!(page.content, "Fish is fine [1].");
+    assert!(
+        page.citations
+            .iter()
+            .any(|c| c.locator == "mem_fish" && !c.historical),
+        "{:?}",
+        page.citations
+    );
+    assert!(b.memory_text("mem_fish").await.is_some());
+    // So B counts the memory as written into a page: a nightly organize
+    // there would not write it again.
+    let unpaged = b.db.list_unpaged_memory_rows(100).await.unwrap();
+    assert!(!unpaged.iter().any(|row| row.source_id == "mem_fish"));
+    // And taking the sources writes no new version back.
+    let again = b
+        .lib_sync(chosen.path(), Some(&a.library_member_id()))
+        .await
+        .unwrap();
+    assert_eq!(again.exported, 0, "{again:?}");
+}
