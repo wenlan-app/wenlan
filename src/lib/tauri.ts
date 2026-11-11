@@ -4091,6 +4091,10 @@ export interface PageChange {
   title: string;
   change_kind: PageChangeKind;
   changed_at_ms: number;
+  /** Who wrote the change: `human`, an agent, `shared_person:<member>`, ... */
+  edited_by?: string | null;
+  /** Sentences that change added, changed or removed. Absent for a new page. */
+  changed_sentences?: number | null;
 }
 
 /** @deprecated Use {@link PageChange} instead. */
@@ -4100,8 +4104,9 @@ export async function listRecentRetrievals(limit?: number): Promise<RetrievalEve
   return invoke<RetrievalEvent[]>("list_recent_retrievals", { limit: limit ?? 10 });
 }
 
-export async function listRecentChanges(limit?: number): Promise<PageChange[]> {
-  return invoke<PageChange[]>("list_recent_changes", { limit: limit ?? 10 });
+/** The newest page changes, newest first. With `space`, only that Space's pages. */
+export async function listRecentChanges(limit?: number, space?: string): Promise<PageChange[]> {
+  return invoke<PageChange[]>("list_recent_changes", { limit: limit ?? 10, space: space ?? null });
 }
 
 export type ActivityKind = "concept" | "memory";

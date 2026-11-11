@@ -854,7 +854,10 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
       (r) => r.pages ?? r,
     ),
   list_recent_changes: (a) =>
-    get(`/api/pages/recent-changes${qs({ limit: a?.limit })}`).then((r) => r.changes ?? r),
+    get(
+      `/api/pages/recent-changes${qs({ limit: a?.limit })}`,
+      a?.space ? { "x-wenlan-space": a.space } : undefined,
+    ).then((r) => r.changes ?? r),
   get_page_sources: (a) => get(`/api/pages/${enc(a.pageId)}/sources`).then((r) => r?.sources ?? r),
   get_page_links: (a) => get(`/api/pages/${enc(a.pageId)}/links`),
   get_page_sessions: (a) => get(`/api/pages/${enc(a.pageId)}/sessions`),

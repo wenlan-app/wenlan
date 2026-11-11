@@ -1935,9 +1935,29 @@ impl WenlanClient {
     pub async fn list_recent_changes(
         &self,
         limit: i64,
+        space: Option<&str>,
     ) -> Result<Vec<wenlan_types::PageChange>, String> {
         let path = format!("/api/pages/recent-changes?limit={}", limit);
-        self.get_json(&path).await
+        let Some(space) = space.map(str::trim).filter(|space| !space.is_empty()) else {
+            return self.get_json(&path).await;
+        };
+        // The route reads its Space from the Space header, like the rest of
+        // the page reads.
+        let resp = self
+            .client
+            .get(self.url(&path))
+            .header("x-wenlan-space", space)
+            .send()
+            .await
+            .map_err(|e| format!("HTTP GET {}: {}", path, e))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(format!("HTTP GET {} returned {}: {}", path, status, body));
+        }
+        resp.json()
+            .await
+            .map_err(|e| format!("Parse {}: {}", path, e))
     }
 
     pub async fn list_recent_memories(

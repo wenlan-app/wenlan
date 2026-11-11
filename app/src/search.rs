@@ -7750,12 +7750,15 @@ pub async fn list_recent_retrievals(
 pub async fn list_recent_changes(
     state: tauri::State<'_, State>,
     limit: Option<i64>,
+    space: Option<String>,
 ) -> Result<Vec<wenlan_types::PageChange>, String> {
     let client = {
         let s = state.read().await;
         s.client.clone()
     };
-    client.list_recent_changes(limit.unwrap_or(10)).await
+    client
+        .list_recent_changes(limit.unwrap_or(10), space.as_deref())
+        .await
 }
 
 #[tauri::command]

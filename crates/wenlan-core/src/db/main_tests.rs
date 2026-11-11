@@ -60269,3 +60269,49 @@ async fn unfiled_memories_get_a_shown_main_topic() {
         "the repair runs once"
     );
 }
+
+#[tokio::test]
+async fn recent_changes_name_the_writer_and_count_changed_sentences() {
+    let (db, _dir) = test_db().await;
+    let now = chrono::Utc::now().to_rfc3339();
+    db.insert_page(
+        "page_who",
+        "Roadmap",
+        None,
+        "Alpha is first. Beta is second.",
+        None,
+        None,
+        &[],
+        &now,
+    )
+    .await
+    .unwrap();
+    db.update_page_content(
+        "page_who",
+        "Alpha is first. Beta was rewritten. Gamma is new.",
+        &[],
+        "shared_person:amy",
+    )
+    .await
+    .unwrap();
+    let changes = db.list_recent_changes(10).await.unwrap();
+    let change = changes.iter().find(|c| c.page_id == "page_who").unwrap();
+    assert_eq!(change.edited_by.as_deref(), Some("shared_person:amy"));
+    assert_eq!(change.changed_sentences, Some(2));
+    {
+        let conn = db.conn.lock().await;
+        conn.execute(
+            "UPDATE pages SET space = 'Product', workspace = 'Product' WHERE id = 'page_who'",
+            (),
+        )
+        .await
+        .unwrap();
+    }
+    let scoped = db
+        .list_recent_changes_scoped(10, &ReadScope::Space("Product".to_string()))
+        .await
+        .unwrap();
+    assert_eq!(scoped.len(), 1);
+    assert_eq!(scoped[0].edited_by.as_deref(), Some("shared_person:amy"));
+    assert_eq!(scoped[0].changed_sentences, Some(2));
+}

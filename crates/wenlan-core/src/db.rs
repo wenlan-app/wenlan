@@ -52523,6 +52523,7 @@ impl MemoryDB {
             .map_err(|e| WenlanError::VectorDb(format!("list_recent_changes scan: {e}")))?;
 
         let mut out = Vec::new();
+        let mut versions = Vec::new();
         while let Some(row) = rows
             .next()
             .await
@@ -52551,9 +52552,44 @@ impl MemoryDB {
                 title,
                 change_kind,
                 changed_at_ms,
+                edited_by: None,
+                changed_sentences: None,
             });
+            versions.push(version);
         }
+        drop(rows);
+        drop(conn);
+        self.annotate_page_changes(&mut out, &versions).await;
         Ok(out)
+    }
+
+    /// Fill in who wrote each change and how many sentences it changed, from
+    /// `page_history`. `versions[i]` is the current version of `changes[i]`.
+    /// A missing history row leaves the fields empty rather than failing the
+    /// feed.
+    pub(crate) async fn annotate_page_changes(
+        &self,
+        changes: &mut [wenlan_types::PageChange],
+        versions: &[i64],
+    ) {
+        for (change, &version) in changes.iter_mut().zip(versions) {
+            let Ok(Some(current)) = self.get_page_history_at(&change.page_id, version).await else {
+                continue;
+            };
+            if !current.edited_by.is_empty() {
+                change.edited_by = Some(current.edited_by.clone());
+            }
+            if version <= 1 {
+                continue;
+            }
+            if let Ok(Some(previous)) = self.get_page_history_at(&change.page_id, version - 1).await
+            {
+                change.changed_sentences = Some(crate::authorship::changed_sentence_count(
+                    &previous.content,
+                    &current.content,
+                ));
+            }
+        }
     }
 
     /// Return up to `limit` most-recently-modified memories, ordered newest first.

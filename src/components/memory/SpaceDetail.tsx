@@ -21,6 +21,7 @@ import {
 import { useUnobstructedContentWidth } from "./useUnobstructedContentWidth";
 import { ShareDialog } from "./sharing/ShareDialog";
 import { SharedWithLine } from "./sharing/SharedWithLine";
+import { SpaceRecentChanges } from "./space-detail/SpaceRecentChanges";
 import { spaceShare, useShares } from "./sharing/sharing";
 import "./space-detail/space-detail-header.css";
 import "./space-detail/space-detail.css";
@@ -175,6 +176,7 @@ export default function SpaceDetail({
       />
 
       <SpaceBrief spaceName={space.name} />
+      {share && <SpaceRecentChanges space={space.name} shares={shares.data} />}
       <SpaceProjectContent
         key={`${space.id}:${space.name}`}
         copy={copy}

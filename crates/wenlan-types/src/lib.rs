@@ -346,6 +346,8 @@ mod retrieval_event_tests {
             title: "Wiki-style prose pages".into(),
             change_kind: PageChangeKind::Revised,
             changed_at_ms: 1_700_000_000_000,
+            edited_by: None,
+            changed_sentences: None,
         };
         let s = serde_json::to_string(&c).unwrap();
         assert!(
