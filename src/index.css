@@ -4266,5 +4266,5 @@ html[data-theme-bg="window"] body::after {
 .react-flow__node.is-drop-under {
   outline: 2px solid var(--mem-text-primary);
   outline-offset: 2px;
-  border-radius: 8px;
+  border-radius: var(--mem-r-8);
 }
