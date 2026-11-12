@@ -90,6 +90,32 @@ pub struct CopyFile {
     /// The page's history file rather than the page itself.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub history: bool,
+    /// The file's size and modification time right after Wenlan wrote or
+    /// last read it. A file that kept both is taken as unchanged without
+    /// reading it again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stamp: Option<FileStamp>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileStamp {
+    pub len: u64,
+    /// Nanoseconds since the Unix epoch.
+    pub modified: u128,
+}
+
+fn stamp_of(path: &Path) -> Option<FileStamp> {
+    let meta = fs::metadata(path).ok()?;
+    let modified = meta
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_nanos();
+    Some(FileStamp {
+        len: meta.len(),
+        modified,
+    })
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -220,6 +246,10 @@ pub fn write_reading_copy(
                 if old_rel != history_rel {
                     let from = dir.join(rel_to_path(&old_rel));
                     let to = dir.join(rel_to_path(&history_rel));
+                    if !plainly_inside(dir, &from) || !plainly_inside(dir, &to) {
+                        state.history_seen.remove(&page.id);
+                        continue;
+                    }
                     let moved = to
                         .parent()
                         .map_or(Ok(()), fs::create_dir_all)
@@ -264,6 +294,11 @@ pub fn write_reading_copy(
         let desired_lower: HashSet<String> = keep.iter().map(|k| k.to_lowercase()).collect();
         for rel in stale {
             let path = dir.join(rel_to_path(&rel));
+            if !plainly_inside(dir, &path) {
+                // Never follow a link out of the reading copy; forget the file.
+                state.files.remove(&rel);
+                continue;
+            }
             if !desired_lower.contains(&rel.to_lowercase()) || exact_name_present(&path) {
                 match fs::remove_file(&path) {
                     Ok(()) => {}
@@ -304,23 +339,36 @@ fn put(
 ) -> Result<(), WenlanError> {
     let sha = sha_hex(&bytes);
     let target = dir.join(rel_to_path(rel));
-    // What Wenlan wrote last time, still there at the same size: not read
-    // again, so a large library is not re-read on every pass.
-    let recorded_same = state.files.get(rel).is_some_and(|file| file.sha256 == sha)
-        && fs::metadata(&target).is_ok_and(|meta| meta.len() == bytes.len() as u64);
+    if !plainly_inside(dir, &target) {
+        log::warn!("[reading_copy] a folder on the way to {rel} links elsewhere; not written");
+        return Ok(());
+    }
+    // What Wenlan wrote last time, still there with the same size and
+    // modification time: not read again, so a large library is not re-read
+    // on every pass. Anything else (no stamp, a file someone replaced, a
+    // cloud placeholder) is read and compared.
+    let now = stamp_of(&target);
+    let recorded_same = now.is_some()
+        && state
+            .files
+            .get(rel)
+            .is_some_and(|file| file.sha256 == sha && file.stamp == now);
     let on_disk_same = recorded_same || fs::read(&target).map(|b| b == bytes).unwrap_or(false);
-    if on_disk_same {
+    let stamp = if on_disk_same {
         result.unchanged += 1;
+        now
     } else {
         write_atomic(&target, &bytes)?;
         result.written += 1;
-    }
+        stamp_of(&target)
+    };
     state.files.insert(
         rel.to_string(),
         CopyFile {
             sha256: sha,
             page_id: page_id.to_string(),
             history,
+            stamp,
         },
     );
     Ok(())
@@ -407,6 +455,28 @@ fn yaml_str(s: &str) -> String {
 
 fn sha_hex(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
+}
+
+/// Whether every folder between `dir` and `path` is a real folder, not a
+/// link to somewhere else (a symlink, or a junction on Windows). Wenlan
+/// writes and removes files only there, so a link inside the reading copy
+/// can never send a write or a removal outside it. Folders not made yet
+/// count as inside: Wenlan makes them as plain folders.
+fn plainly_inside(dir: &Path, path: &Path) -> bool {
+    let Ok(rel) = path.strip_prefix(dir) else {
+        return false;
+    };
+    let mut at = dir.to_path_buf();
+    let folders: Vec<_> = rel.components().collect();
+    for part in folders.iter().take(folders.len().saturating_sub(1)) {
+        at.push(part);
+        match fs::symlink_metadata(&at) {
+            Ok(meta) if meta.file_type().is_symlink() || !meta.is_dir() => return false,
+            Ok(_) => {}
+            Err(_) => return true,
+        }
+    }
+    true
 }
 
 fn rel_to_path(rel: &str) -> PathBuf {

@@ -200,6 +200,42 @@ fn external_edit_is_overwritten() {
 }
 
 #[test]
+fn an_edit_of_the_same_size_is_overwritten_too() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut st = CopyState::default();
+    let pages = vec![page("a1", "A", Some("W"), "x")];
+    run(tmp.path(), &pages, &mut st);
+    let path = tmp.path().join("W/A.md");
+    let mine = fs::read(&path).unwrap();
+    let mut theirs = mine.clone();
+    *theirs.last_mut().unwrap() = b'y';
+    fs::write(&path, &theirs).unwrap();
+    // A later write leaves a different modification time; pin one so a
+    // coarse file clock cannot leave the time Wenlan recorded.
+    let file = fs::File::options().write(true).open(&path).unwrap();
+    file.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000))
+        .unwrap();
+    drop(file);
+    let r = run(tmp.path(), &pages, &mut st);
+    assert_eq!(r.written, 1);
+    assert_eq!(fs::read(&path).unwrap(), mine);
+    // And a file left alone is not rewritten.
+    let r = run(tmp.path(), &pages, &mut st);
+    assert_eq!((r.written, r.unchanged), (0, 1));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_linked_folder_inside_the_copy_is_never_written_through() {
+    let tmp = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(outside.path(), tmp.path().join("W")).unwrap();
+    let mut st = CopyState::default();
+    run(tmp.path(), &[page("a1", "A", Some("W"), "x")], &mut st);
+    assert_eq!(fs::read_dir(outside.path()).unwrap().count(), 0);
+}
+
+#[test]
 fn instructions_written_once_and_on_change() {
     let tmp = tempfile::tempdir().unwrap();
     let mut st = CopyState::default();

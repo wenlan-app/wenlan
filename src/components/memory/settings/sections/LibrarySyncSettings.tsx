@@ -145,9 +145,11 @@ export default function LibrarySyncSettings() {
 
 const NEXT_DONE_KEY = "wenlan-sync-next-done";
 
-function readNextDone(): boolean {
+/** Closed for this folder: syncing to another folder later lists the steps
+ *  again. */
+function readNextDone(folder: string): boolean {
   try {
-    return localStorage.getItem(NEXT_DONE_KEY) === "1";
+    return localStorage.getItem(NEXT_DONE_KEY) === folder;
   } catch {
     return false;
   }
@@ -157,7 +159,8 @@ function readNextDone(): boolean {
  *  itself once it joins) and the phone's AI (Wenlan cannot see that one, so
  *  the person closes the row). */
 function NextSteps({ share, t }: { readonly share: SharedStatus; readonly t: TFunction }) {
-  const [done, setDone] = useState(readNextDone);
+  const [doneFor, setDoneFor] = useState<string | null>(null);
+  const done = doneFor === share.folder || readNextDone(share.folder);
   const [howTo, setHowTo] = useState(false);
   if (done) return null;
   const other = (share.devices ?? []).find((device) => device.id !== share.this_device);
@@ -165,11 +168,11 @@ function NextSteps({ share, t }: { readonly share: SharedStatus; readonly t: TFu
   const folderName = share.folder.split(/[\\/]+/).filter(Boolean).pop() ?? share.folder;
   const close = () => {
     try {
-      localStorage.setItem(NEXT_DONE_KEY, "1");
+      localStorage.setItem(NEXT_DONE_KEY, share.folder);
     } catch {
       // Shown again next time; nothing is lost.
     }
-    setDone(true);
+    setDoneFor(share.folder);
   };
   return (
     <div className="settings-row px-5 py-4">
@@ -300,15 +303,26 @@ export function LibrarySyncDialog({ onClose }: { readonly onClose: () => void })
     return () => dialog?.close();
   }, []);
 
+  // The folder whose contents were looked at, so Start waits until it is
+  // known whether the other computer's library is there (then it merges).
+  // Only the latest look counts: one for a folder chosen since is dropped.
+  const [lookedAt, setLookedAt] = useState<string | null>(null);
+  const looks = useRef(0);
   const lookIn = async (chosen: string) => {
+    const look = ++looks.current;
     setFolder(chosen);
     setFound(null);
+    setLookedAt(null);
     setError(null);
+    let there: SharedFolder | null = null;
     try {
-      setFound(await lookInSharedFolder(chosen));
+      there = await lookInSharedFolder(chosen);
     } catch {
       // A folder that cannot be read is reported when syncing starts.
     }
+    if (look !== looks.current) return;
+    setFound(there);
+    setLookedAt(chosen);
   };
   const chosenByHand = useRef(false);
   useEffect(() => {
@@ -356,7 +370,7 @@ export function LibrarySyncDialog({ onClose }: { readonly onClose: () => void })
   const taken = found !== null && !merging;
   const start = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!folder || taken || pending) return;
+    if (!folder || taken || pending || lookedAt !== folder) return;
     setPending(true);
     setError(null);
     try {
@@ -423,7 +437,7 @@ export function LibrarySyncDialog({ onClose }: { readonly onClose: () => void })
         {error && <p className="share-warning" role="alert">{t("librarySync.failed", { message: error })}</p>}
         <div className="share-actions">
           <button type="button" className="share-secondary" onClick={onClose} disabled={pending}>{t("sharing.cancel")}</button>
-          <button type="submit" className="share-primary" disabled={!folder || taken || pending}>
+          <button type="submit" className="share-primary" disabled={!folder || taken || pending || lookedAt !== folder}>
             {merging
               ? t(pending ? "librarySync.merging" : "librarySync.merge")
               : t(pending ? "librarySync.starting" : "librarySync.start")}

@@ -1091,6 +1091,35 @@ async fn a_page_deleted_here_is_not_made_again_and_is_archived_for_the_others() 
 }
 
 #[tokio::test]
+async fn an_edit_made_elsewhere_after_the_copy_deleted_here_brings_the_page_back() {
+    let folder = tempfile::tempdir().unwrap();
+    let folder = folder.path().to_path_buf();
+    let a = Member::new("Qi-Xuan").await;
+    let b = Member::new("Ana").await;
+    let id = a
+        .write("Band", "The Swing Trio.", SPACE.to_string().into())
+        .await;
+    a.sync(&folder).await;
+    b.sync(&folder).await;
+
+    // B deletes its copy while away; A edits meanwhile and shares it.
+    b.db.delete_page(&id).await.unwrap();
+    a.edit(&id, "The Swing Trio, and a singer.").await;
+    a.sync(&folder).await;
+
+    b.sync(&folder).await;
+    let page = b.page(&id).await.expect("back on B");
+    assert_eq!(page.status, "active");
+    assert_eq!(page.content, "The Swing Trio, and a singer.");
+    a.sync(&folder).await;
+    assert_eq!(
+        a.page(&id).await.unwrap().status,
+        "active",
+        "never archived on A"
+    );
+}
+
+#[tokio::test]
 async fn one_page_is_shared_alone_and_lands_with_no_space() {
     let folder = tempfile::tempdir().unwrap();
     let folder = folder.path().join("Venue (shared)");
@@ -2139,6 +2168,42 @@ async fn a_pass_that_would_archive_most_of_the_library_archives_none() {
     assert_eq!(counts.held_back, 22);
 }
 
+#[tokio::test]
+async fn pages_archived_long_ago_do_not_hide_a_pass_that_archives_most_pages_in_use() {
+    let chosen = tempfile::tempdir().unwrap();
+    let (a, b) = library_pair(chosen.path()).await;
+    let mut ids = Vec::new();
+    for n in 0..50 {
+        ids.push(
+            a.write(
+                &format!("Page {n}"),
+                &format!("Body {n}."),
+                SPACE.to_string().into(),
+            )
+            .await,
+        );
+    }
+    lib_settle(&a, &b, chosen.path()).await;
+    // Half the library was put away earlier: exactly half, so it is applied.
+    for id in &ids[25..] {
+        a.archive(id).await;
+    }
+    lib_settle(&a, &b, chosen.path()).await;
+    assert_eq!(b.page(&ids[49]).await.unwrap().status, "archived");
+
+    // Then 22 of the 25 pages still in use at once.
+    for id in &ids[..22] {
+        a.archive(id).await;
+    }
+    a.lib_sync(chosen.path(), None).await.unwrap();
+    let counts = b
+        .lib_sync(chosen.path(), Some(&a.library_member_id()))
+        .await
+        .unwrap();
+    assert_eq!(counts.held_back, 22);
+    assert_eq!(b.page(&ids[0]).await.unwrap().status, "active");
+}
+
 // ===== The library's memories =====
 
 impl Member {
@@ -3052,5 +3117,49 @@ async fn the_library_keeps_an_edit_it_cannot_put_together_as_a_second_page() {
         let kept = titled(computer, &second).await.expect("the second page");
         assert_eq!(kept.content, "Fish or pasta, and a cake.");
         assert_eq!(kept.space.as_deref(), Some(SPACE));
+    }
+}
+
+#[tokio::test]
+async fn an_edit_that_lost_is_kept_once_even_when_a_third_computer_had_it() {
+    let chosen = tempfile::tempdir().unwrap();
+    let folder = chosen.path();
+    let (a, b) = library_pair(folder).await;
+    let me = a.library_member_id();
+    let c = Member::new("Third").await;
+    c.lib_sync(folder, Some(&me)).await.unwrap();
+    let id = a
+        .write("Menu", "Fish or pasta.", SPACE.to_string().into())
+        .await;
+    for _ in 0..3 {
+        a.lib_sync(folder, None).await.unwrap();
+        b.lib_sync(folder, Some(&me)).await.unwrap();
+        c.lib_sync(folder, Some(&me)).await.unwrap();
+    }
+
+    // B's edit reaches C first; A's, made later, wins.
+    b.edit(&id, "Fish or pasta, and a cake.").await;
+    b.lib_sync(folder, Some(&me)).await.unwrap();
+    c.lib_sync(folder, Some(&me)).await.unwrap();
+    assert_eq!(c.content(&id).await, "Fish or pasta, and a cake.");
+    tick().await;
+    a.edit(&id, "Fish, pasta or risotto.").await;
+    for _ in 0..4 {
+        a.lib_sync(folder, None).await.unwrap();
+        c.lib_sync(folder, Some(&me)).await.unwrap();
+        b.lib_sync(folder, Some(&me)).await.unwrap();
+    }
+    for computer in [&a, &b, &c] {
+        assert_eq!(computer.content(&id).await, "Fish, pasta or risotto.");
+        let kept: Vec<Page> = computer
+            .db
+            .list_pages_by_space("active", None, 1_000_000, 0)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|page| page.title.starts_with("Menu ("))
+            .collect();
+        assert_eq!(kept.len(), 1, "one second page, not one per computer");
+        assert_eq!(kept[0].content, "Fish or pasta, and a cake.");
     }
 }

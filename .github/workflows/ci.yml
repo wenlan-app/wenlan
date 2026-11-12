@@ -492,6 +492,9 @@ jobs:
               - 'crates/wenlan-core/src/export/knowledge.rs'
               - 'crates/wenlan-core/src/export/knowledge_folders.rs'
               - 'crates/wenlan-core/src/export/knowledge_folders_test.rs'
+              # The refusal to write through a linked folder is proved
+              # against a real symlink, which is `cfg(unix)`.
+              - 'crates/wenlan-core/src/reading_copy_test.rs'
               # The embed lookup's no-symlink case is `cfg(unix)`.
               - 'crates/wenlan-core/src/page_markdown.rs'
               - 'crates/wenlan-core/src/pages_folder.rs'
@@ -620,6 +623,9 @@ jobs:
               - 'crates/wenlan-core/src/export/knowledge.rs'
               - 'crates/wenlan-core/src/export/knowledge_folders.rs'
               - 'crates/wenlan-core/src/export/knowledge_folders_test.rs'
+              # The refusal to write through a linked folder is proved
+              # against a real symlink, which is `cfg(unix)`.
+              - 'crates/wenlan-core/src/reading_copy_test.rs'
               # The embed lookup's no-symlink case is `cfg(unix)`.
               - 'crates/wenlan-core/src/page_markdown.rs'
               - 'crates/wenlan-core/src/pages_folder.rs'

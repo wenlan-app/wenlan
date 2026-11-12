@@ -101,6 +101,9 @@ impl Versioned for Arc<MemVersion> {
     fn ts(&self) -> &str {
         &self.meta.ts
     }
+    fn by_person(&self) -> bool {
+        self.meta.author.kind == AuthorKind::Person
+    }
 }
 
 fn text(value: &str) -> serde_yaml::Value {
@@ -850,5 +853,38 @@ impl MemPass<'_> {
         .await
         .map_err(|error| WenlanError::Generic(format!("shared folder task: {error}")))??;
         Ok(Some(sha))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::shared_space::version::head_of;
+
+    fn version(sha: &str, kind: AuthorKind, ts: &str) -> Arc<MemVersion> {
+        Arc::new(MemVersion {
+            sha: sha.to_string(),
+            meta: MemMeta {
+                parent: Some("base".to_string()),
+                merged: Vec::new(),
+                author: Author {
+                    member: "me".to_string(),
+                    kind,
+                    agent: None,
+                },
+                ts: ts.to_string(),
+                deleted: false,
+            },
+            file: MemoryFile::new("m-1".to_string(), sha.to_string()),
+            digest: sha.to_string(),
+        })
+    }
+
+    #[test]
+    fn a_persons_memory_edit_wins_over_a_later_ai_edit_made_at_the_same_time() {
+        let person = version("p", AuthorKind::Person, "2026-11-12T10:00:00Z");
+        let ai = version("a", AuthorKind::Ai, "2026-11-12T11:00:00Z");
+        let versions = vec![ai, person];
+        assert_eq!(head_of(&versions).unwrap().winner.sha, "p");
     }
 }

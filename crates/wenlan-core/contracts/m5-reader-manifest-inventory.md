@@ -1581,7 +1581,7 @@ carrying the authority of agreement.
 | `core/shared_space/mod.rs::apply_sources` | `private` | no | no | — | `core/db.rs::set_page_citations` |
 | `core/shared_space/mod.rs::free_title` | `private` | no | no | — | `core/shared_space/mod.rs::taken_titles` |
 | `core/shared_space/mod.rs::held_space_of` | `private` | no | no | — | `core/db.rs::get_page` |
-| `core/shared_space/mod.rs::keep_as_second_page` | `private` | no | no | — | `core/shared_space/mod.rs::taken_titles` |
+| `core/shared_space/mod.rs::keep_as_second_page` | `private` | no | no | — | `core/db.rs::get_page`, `core/shared_space/mod.rs::taken_titles` |
 | `core/shared_space/mod.rs::reload` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/shared_space/mod.rs::run_pass` | `private` | no | no | — | `core/shared_space/mod.rs::pass` |
 | `core/shared_space/mod.rs::stop_page_shares_in` | `private` | no | no | — | `core/db.rs::get_page` |

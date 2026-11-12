@@ -184,6 +184,30 @@ describe("library sync row", () => {
     expect(screen.queryByText("Next steps")).not.toBeInTheDocument();
   });
 
+  it("waits to know what the folder holds before it starts", async () => {
+    vi.mocked(suggestLibraryFolder).mockResolvedValue({ folder: FOLDER, cloud: "google_drive" });
+    let answer: (value: Awaited<ReturnType<typeof lookInSharedFolder>>) => void = () => undefined;
+    vi.mocked(lookInSharedFolder).mockReturnValue(new Promise((resolve) => { answer = resolve; }));
+    renderRow();
+    await userEvent.click(await screen.findByRole("button", { name: "Sync to other computers and phone" }));
+    expect(await screen.findByText("Google Drive › Wenlan")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start syncing" })).toBeDisabled();
+    answer({ kind: "library", name: "library", members: [{ id: "m-1", name: "Me" }] });
+    await userEvent.click(await screen.findByRole("button", { name: "Merge" }));
+    await waitFor(() => expect(shareLibrary).toHaveBeenCalledWith(FOLDER, "m-1"));
+  });
+
+  it("lists the next steps again for another folder", async () => {
+    vi.mocked(listShares).mockResolvedValue([{ ...on, devices: [on.devices![0]] }]);
+    const { unmount } = renderRow();
+    await userEvent.click(await screen.findByRole("button", { name: "Done" }));
+    expect(screen.queryByText("Next steps")).not.toBeInTheDocument();
+    unmount();
+    vi.mocked(listShares).mockResolvedValue([{ ...on, folder: `${FOLDER} 2`, devices: [on.devices![0]] }]);
+    renderRow();
+    expect(await screen.findByText("Next steps")).toBeInTheDocument();
+  });
+
   it("shows a held-back run as a warning", async () => {
     vi.mocked(listShares).mockResolvedValue([{ ...on, last: { ...on.last!, held_back: "x" } }]);
     renderRow();

@@ -1766,11 +1766,17 @@ async fn pass(
             })
             .map(|page| page.id.as_str())
             .collect();
-        if archiving.len() > MASS_ARCHIVE_MIN && archiving.len() * 2 > local.len() {
+        // Measured against the pages still in use: pages archived long ago
+        // must not make a large share of the live library look small.
+        let active = local
+            .values()
+            .filter(|page| page.status != "archived")
+            .count();
+        if archiving.len() > MASS_ARCHIVE_MIN && archiving.len() * 2 > active {
             log::warn!(
-                "[shared_space] {key}: the folder would archive {} of {} pages here; none is archived this pass",
+                "[shared_space] {key}: the folder would archive {} of {} pages in use here; none is archived this pass",
                 archiving.len(),
-                local.len()
+                active
             );
             hold.extend(archiving);
         }
@@ -2065,11 +2071,15 @@ impl Pass<'_> {
         // This page is an earlier version, or an edit made at the same time
         // as the head that lost to it: take the head. What it had stays in
         // this page's history.
-        let mine = head
-            .leaves
-            .iter()
-            .copied()
-            .find(|leaf| leaf.sha != head.winner.sha && self.version_state(leaf) == state);
+        // Only the computer that wrote the losing edit keeps it: another
+        // computer that took it before the head arrived holds the same text,
+        // and would keep a second copy under its own name.
+        let own = self.own_device();
+        let mine = head.leaves.iter().copied().find(|leaf| {
+            leaf.sha != head.winner.sha
+                && self.version_state(leaf) == state
+                && (leaf.meta.device.is_none() || leaf.meta.device == own)
+        });
         let lost = mine.is_some();
         // Two edits a person made at the same time on two computers (or two
         // members): put together when they changed different lines, else
@@ -2097,7 +2107,9 @@ impl Pass<'_> {
             counts.applied += 1;
             if lost {
                 let merged = match (&together, mine) {
-                    (Together::Merged(merged), _) => self.write_merged(&page.id, merged).await?,
+                    (Together::Merged(merged), _) => {
+                        self.write_merged(&page.id, applied.at, merged).await?
+                    }
                     (Together::Both, Some(mine)) => {
                         self.keep_as_second_page(page, mine).await?;
                         false
@@ -2159,12 +2171,22 @@ impl Pass<'_> {
             version: None,
             space: None,
         };
+        // Deleted here over a version that is no longer the head: someone
+        // edited it elsewhere since, never seen here. That edit is not
+        // archived by a delete made over an older copy; the page comes back.
+        let edited_since = matches!(
+            held,
+            Some(Held { sha, version: Some(_), .. })
+                if sha != &winner.sha
+                    && !winner.meta.archived
+                    && versions.iter().any(|version| &version.sha == sha)
+        );
         match held {
             // The person deleted it here. It is not made again: the others
             // get a version that archives it, which a restore undoes.
             Some(Held {
                 version: Some(_), ..
-            }) => {
+            }) if !edited_since => {
                 if winner.meta.archived || self.settings.read_only {
                     return Ok(Some(deleted(&winner.sha)));
                 }
@@ -2267,9 +2289,16 @@ impl Pass<'_> {
     /// Writes two edits put together onto the page, which holds the head
     /// now. The next pass shares it as a version after both. `false` when
     /// it could not be written: the person is told as for a lost edit.
-    async fn write_merged(&self, id: &str, merged: &Merged) -> Result<bool, WenlanError> {
+    async fn write_merged(
+        &self,
+        id: &str,
+        applied_at: i64,
+        merged: &Merged,
+    ) -> Result<bool, WenlanError> {
         let mut current = self.reload(id).await?;
-        if current.status != "active" {
+        // Edited here since the head was applied: that edit is never written
+        // over; it goes to the others as an edit of its own next pass.
+        if current.status != "active" || current.version != applied_at {
             return Ok(false);
         }
         if current.content != merged.body {
@@ -2338,7 +2367,12 @@ impl Pass<'_> {
         } else {
             self.settings.member_name.clone()
         };
-        let id = crate::pages::new_page_id();
+        // Named by the edit it keeps, so a pass that stopped halfway, or a
+        // second computer with the same edit, never makes it twice.
+        let id = second_page_id(&page.id, &mine.sha);
+        if self.db.get_page(&id).await?.is_some() {
+            return Ok(());
+        }
         let taken = self.taken_titles(&id, mine).await?;
         let title = free_name(&taken, &mine.page.title, &who);
         let space = match self.scope {
@@ -2391,6 +2425,12 @@ impl Pass<'_> {
             }
         }
         Ok(())
+    }
+
+    /// The library: this computer's id, written into each version it makes.
+    fn own_device(&self) -> Option<String> {
+        (self.library && !self.settings.device_id.is_empty())
+            .then(|| self.settings.device_id.clone())
     }
 
     /// The library: the Space page `id` is in here now, to hold with it.
@@ -2845,6 +2885,7 @@ impl Pass<'_> {
             locked: page.review_required,
             proposal: false,
             decides: None,
+            device: self.own_device(),
         };
         let member = meta.author.member.clone();
         let text = version::render(&file, &meta);
@@ -2933,6 +2974,7 @@ impl Pass<'_> {
             locked: winner.meta.locked,
             proposal: false,
             decides: None,
+            device: self.own_device(),
         };
         let text = version::render(&winner.page, &meta);
         self.write(&id, text).await.map(Some)
@@ -3111,6 +3153,21 @@ fn versions_between<'a>(
 }
 
 /// `wanted (who)`, or `wanted (who N)` when that is taken too.
+/// The id of the second page that keeps `sha`, an edit of page `id` that
+/// lost to another made at the same time: the same on every pass and every
+/// computer.
+fn second_page_id(id: &str, sha: &str) -> String {
+    let digest = version::sha256_hex(format!("{id}\n{sha}").as_bytes());
+    let mut bytes = [0u8; 16];
+    for (n, byte) in bytes.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&digest[n * 2..n * 2 + 2], 16).unwrap_or(0);
+    }
+    format!(
+        "page_{}",
+        uuid::Builder::from_random_bytes(bytes).into_uuid()
+    )
+}
+
 fn free_name(taken: &HashSet<String>, wanted: &str, who: &str) -> String {
     let mut candidate = format!("{wanted} ({who})");
     let mut n = 2;
@@ -3233,9 +3290,11 @@ fn base_of<'a>(
             .filter(|version| &version.meta.body_digest == digest)
             .max_by(|a, b| (&a.meta.ts, &a.sha).cmp(&(&b.meta.ts, &b.sha)))
     };
-    let parent = known
-        .or_else(|| history.iter().find_map(newest))
-        .or_else(|| head.map(|head| head.winner));
+    // Never the head when this page is not known to have held it: an edit
+    // of an older copy written as the head's child would replace the head
+    // without ever having had its text. With no proven parent it is a
+    // version of its own, and the two are put together or both kept.
+    let parent = known.or_else(|| history.iter().find_map(newest));
     let merged = head
         .map(|head| {
             head.leaves

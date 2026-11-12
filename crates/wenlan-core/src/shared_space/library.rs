@@ -56,7 +56,19 @@ const CAPTURE_MIN_CHARS: usize = 10;
 /// not chosen one.
 pub const LIBRARY_FOLDER_NAME: &str = "Wenlan";
 /// Google Drive's own folder, by the names it has in the person's language.
-const MY_DRIVE: [&str; 3] = ["My Drive", "我的雲端硬碟", "我的云端硬盘"];
+const MY_DRIVE: [&str; 11] = [
+    "My Drive",
+    "我的雲端硬碟",
+    "我的云端硬盘",
+    "マイドライブ",
+    "내 드라이브",
+    "Mi unidad",
+    "Mon Drive",
+    "Meine Ablage",
+    "Meu Drive",
+    "Il mio Drive",
+    "Mijn Drive",
+];
 
 /// A cloud drive's folder on this computer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,7 +78,7 @@ pub enum CloudDrive {
 }
 
 /// Where the library goes when the person turns syncing on: a library
-/// already in their Google Drive (their other computer's), else a new
+/// already in any of their cloud drives (their other computer's), else a new
 /// [`LIBRARY_FOLDER_NAME`] folder there; iCloud Drive when there is no
 /// Google Drive, since a phone AI reads only Google Drive. `None` when this
 /// computer has neither. `drive_roots` are Windows drive roots (`G:\`),
@@ -98,29 +110,39 @@ pub fn suggested_folder(home: &Path, drive_roots: &[PathBuf]) -> Option<(CloudDr
         home.join("Library/Mobile Documents/com~apple~CloudDocs"),
         home.join("iCloudDrive"),
     ];
-    let roots = google
+    let roots: Vec<(CloudDrive, PathBuf)> = google
         .into_iter()
         .map(|root| (CloudDrive::GoogleDrive, root))
-        .chain(icloud.into_iter().map(|root| (CloudDrive::ICloud, root)));
-    for (cloud, root) in roots {
-        if !root.is_dir() {
-            continue;
-        }
-        let mut libraries: Vec<PathBuf> = std::fs::read_dir(&root)
+        .chain(icloud.into_iter().map(|root| (CloudDrive::ICloud, root)))
+        .filter(|(_, root)| root.is_dir())
+        .collect();
+    // A library already in any of them (the other computer's) comes first,
+    // so a second account or drive never splits the library in two.
+    for (cloud, root) in &roots {
+        let mut libraries: Vec<PathBuf> = std::fs::read_dir(root)
             .into_iter()
             .flatten()
             .flatten()
             .map(|entry| entry.path())
-            .filter(|folder| folder.join(ENGINE_DIR).join(SPACE_FILE).is_file())
+            .filter(|folder| holds_library(folder))
             .collect();
         libraries.sort();
-        let folder = libraries
-            .into_iter()
-            .next()
-            .unwrap_or_else(|| root.join(LIBRARY_FOLDER_NAME));
-        return Some((cloud, folder));
+        if let Some(folder) = libraries.into_iter().next() {
+            return Some((*cloud, folder));
+        }
     }
-    None
+    roots
+        .into_iter()
+        .next()
+        .map(|(cloud, root)| (cloud, root.join(LIBRARY_FOLDER_NAME)))
+}
+
+/// `folder` holds a synced library (not a shared Space, not something else).
+fn holds_library(folder: &Path) -> bool {
+    read_space_file(&folder.join(ENGINE_DIR))
+        .ok()
+        .flatten()
+        .is_some_and(|file| file.library)
 }
 
 /// [`suggested_folder`] on this computer.

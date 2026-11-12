@@ -22,6 +22,7 @@
 //!     agent: <AI tool, when kind is ai and it is known>
 //!   ts: <when it was written; for display, and to pick between two
 //!        versions written at the same time>
+//!   device: <the library: the computer that wrote it>
 //!   archived: true   (only on a version that archives the page)
 //! ---
 //! ```
@@ -125,6 +126,9 @@ pub struct VersionMeta {
     pub proposal: bool,
     /// The file is a decision on a proposal (see [`DECISIONS_DIR`]).
     pub decides: Option<Decides>,
+    /// The library: the computer that wrote the version (its id in
+    /// `space.json`). Older versions have none.
+    pub device: Option<String>,
 }
 
 /// What two versions, or a version and the page here, are compared by.
@@ -260,6 +264,9 @@ pub fn render(page: &PageFile, meta: &VersionMeta) -> String {
     shared.insert(key("body_digest"), text(&meta.body_digest));
     shared.insert(key("author"), serde_yaml::Value::Mapping(author));
     shared.insert(key("ts"), text(&meta.ts));
+    if let Some(device) = &meta.device {
+        shared.insert(key("device"), text(device));
+    }
     if meta.archived {
         shared.insert(key("archived"), serde_yaml::Value::Bool(true));
     }
@@ -342,6 +349,7 @@ pub fn parse(name: &str, bytes: &[u8]) -> Result<PageVersion, WenlanError> {
             .ok_or_else(|| invalid(format!("{name}: no body_digest")))?,
         author,
         ts: scalar(&shared, "ts").unwrap_or_default(),
+        device: scalar(&shared, "device"),
         archived: match shared.get("archived") {
             None => false,
             Some(serde_yaml::Value::Bool(archived)) => *archived,
@@ -400,9 +408,7 @@ pub trait Versioned {
     fn ts(&self) -> &str;
     /// A person made this version (not an AI tool). Between edits made at
     /// the same time, a person's wins over an AI's.
-    fn by_person(&self) -> bool {
-        true
-    }
+    fn by_person(&self) -> bool;
 }
 
 impl Versioned for PageVersion {

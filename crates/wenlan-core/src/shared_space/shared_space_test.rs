@@ -21,6 +21,7 @@ fn meta(parent: Option<&str>, body: &str, member: &str, ts: &str) -> VersionMeta
         locked: false,
         proposal: false,
         decides: None,
+        device: None,
     }
 }
 
@@ -549,7 +550,7 @@ fn a_drive_copy_of_a_folder_is_read_as_the_folder() {
 
 #[test]
 fn the_library_goes_into_google_drive_by_itself() {
-    use super::library::{suggested_folder, CloudDrive, ENGINE_DIR};
+    use super::library::{suggested_folder, CloudDrive};
     let home = tempfile::tempdir().unwrap();
     let home = home.path();
     assert_eq!(suggested_folder(home, &[]), None);
@@ -570,14 +571,34 @@ fn the_library_goes_into_google_drive_by_itself() {
         Some((CloudDrive::GoogleDrive, drive.join("Wenlan")))
     );
 
-    // The other computer's library there, under any name, is the one.
-    let theirs = drive.join("文瀾");
-    std::fs::create_dir_all(theirs.join(ENGINE_DIR)).unwrap();
-    std::fs::write(theirs.join(ENGINE_DIR).join(super::SPACE_FILE), "{}").unwrap();
+    // A shared Space or an unreadable file there is not a library.
+    let space = drive.join("Wedding");
+    space_json(&space, r#"{"format":1,"space":"Wedding","members":[]}"#);
+    let broken = drive.join("Broken");
+    space_json(&broken, "{}");
+    assert_eq!(
+        suggested_folder(home, &[]),
+        Some((CloudDrive::GoogleDrive, drive.join("Wenlan")))
+    );
+
+    // The other computer's library, under any name and in any of the
+    // drives (here a second Google account), is the one.
+    let other = home.join("Library/CloudStorage/GoogleDrive-zz@example.com/My Drive");
+    let theirs = other.join("文瀾");
+    space_json(
+        &theirs,
+        r#"{"format":1,"space":"library","library":true,"members":[]}"#,
+    );
     assert_eq!(
         suggested_folder(home, &[]),
         Some((CloudDrive::GoogleDrive, theirs))
     );
+}
+
+fn space_json(folder: &std::path::Path, text: &str) {
+    let engine = folder.join(super::library::ENGINE_DIR);
+    std::fs::create_dir_all(&engine).unwrap();
+    std::fs::write(engine.join(super::SPACE_FILE), text).unwrap();
 }
 
 #[test]
