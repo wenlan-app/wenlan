@@ -57,7 +57,7 @@ Rules for a look (window.wenlan, api 1):
 2. Nothing may load from the internet: no http(s) URLs, no remote fonts, images, scripts or CSS. Draw pictures as inline SVG or data: URLs.
 3. Read everything from window.wenlan when the page loads and fill the elements from script. Never copy the page's text into the HTML: a look that does is refused, and it would go stale when the page changes.
 4. wenlan.page has title, text (Markdown), html (rendered), sections[{heading, level, text, html, items[{text, done}], tables[{columns, rows}]}] and links[{title, id}]. Use items and tables instead of parsing text. Arrays are never null; done is true, false or null.
-5. wenlan.space.pages lists the pages of the same Space, newest first, at most 200: {id, title, created, modified, summary}. wenlan.space.more says there are more. Use it for home pages and lists.
+5. wenlan.space.name is the Space's name and is empty for a page in no Space, so show nothing for it then. wenlan.space.pages lists the pages of the same Space, newest first, at most 200: {id, title, created, modified, summary}. wenlan.space.more says there are more. Use it for home pages and lists.
 6. wenlan.open(pageId) opens a Wenlan page. It is the only way out. An <a data-wenlan-page=\"id\"> inside page.html already works. Web links do not open.
 7. The look is read only. No localStorage, cookies, fetch, forms, popups or editing: the person edits the text in Wenlan's Text view.
 8. Colors arrive as CSS variables: --look-bg, --look-surface, --look-text, --look-muted, --look-border, --look-accent, --look-radius, --look-font, --look-mono. Use them so the look reads in light and dark. wenlan.theme.mode is \"light\" or \"dark\".

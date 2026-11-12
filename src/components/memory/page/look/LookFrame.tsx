@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { LookData } from "../../../../lib/tauri";
 import {
@@ -60,7 +60,9 @@ export function LookFrame({ data, html, title, onReady, onError, onOpenPage }: {
   const document_ = useMemo(() => buildLookDocument({ data, html, theme }), [data, html, theme]);
   const known = useMemo(() => knownPageIds(data), [data]);
 
-  useEffect(() => {
+  // A layout effect: the listener is in place before the frame can load and
+  // speak, so its first messages are never missed.
+  useLayoutEffect(() => {
     readyRef.current = false;
     // The clock only runs while the app is on screen: a hidden window may
     // hold the frame back, and that is not the look's fault.

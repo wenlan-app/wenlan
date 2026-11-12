@@ -210,8 +210,14 @@ export const INNER_HELPER_SCRIPT = `(function () {
   data.onChange = function (fn) { if (typeof fn === "function") listeners.push(fn); };
   data.open = function (pageId) { send({ kind: "open", pageId: String(pageId) }); };
   window.wenlan = data;
-  window.onerror = function (message, source, line) {
-    send({ kind: "error", message: String(message || "Script error") + (line ? " (line " + line + ")" : "") });
+  window.onerror = function (message, source, line, column, error) {
+    var text = error && error.message ? String(error.message) : String(message || "");
+    // WebKit hides the cause of an error in a sandboxed frame. Say so, so the
+    // AI that wrote the look knows to check its own script.
+    if (!text || /^Script error\.?$/.test(text)) {
+      text = "A script in the look failed; this browser hides the cause. Check the look's script with read_page_look";
+    }
+    send({ kind: "error", message: text + (line ? " (line " + line + ")" : "") });
   };
   window.addEventListener("unhandledrejection", function (event) {
     var reason = event.reason;
