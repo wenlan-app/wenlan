@@ -138,6 +138,18 @@ impl AmbientAvailability {
         }
     }
 
+    /// A computer that shares the library without being its main computer
+    /// lets no background job write or rewrite page text: page growth, and
+    /// the recheck that rewrites a page's code notes. Capture, indexing,
+    /// embedding and classification are not page writing and keep running.
+    pub(super) const fn with_page_writing(mut self, allowed: bool) -> Self {
+        if !allowed {
+            self.page_growth = false;
+            self.code_basis_recheck = false;
+        }
+        self
+    }
+
     pub(super) const fn supports(self, job: AmbientJob) -> bool {
         match job {
             AmbientJob::Document => self.document,

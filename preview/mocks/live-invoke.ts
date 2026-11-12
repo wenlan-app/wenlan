@@ -592,8 +592,21 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   join_team_space: (a) => post(`/api/spaces/${enc(String(a.localSpace))}/shared/sync`, { folder: "", member_name: null, member_id: null, host: { code: String(a.code), key: null, space: String(a.serverSpace) } }),
   share_page: (a) => post(`/api/pages/${enc(String(a.id))}/shared/sync`, { folder: String(a.folder) }),
   stop_sharing_space: (a) => del(`/api/spaces/${enc(String(a.space))}/shared`),
+  share_library: (a) =>
+    post("/api/library/shared/sync", {
+      folder: String(a.folder),
+      member_id: a.memberId ?? null,
+    }),
+  stop_sharing_library: () => del("/api/library/shared"),
+  set_library_main_device: (a) =>
+    post("/api/library/shared/main", { device_id: String(a.deviceId) }),
   stop_sharing_page: (a) => del(`/api/pages/${enc(String(a.id))}/shared`),
   look_in_shared_folder: (a) => post("/api/shared/folder", { folder: String(a.folder) }),
+  // The browser cannot look for a cloud drive; a harness may name one.
+  suggest_library_folder: async () => {
+    const folder = (globalThis as { __WENLAN_PREVIEW_SUGGESTED_FOLDER?: unknown }).__WENLAN_PREVIEW_SUGGESTED_FOLDER;
+    return typeof folder === "string" ? { folder, cloud: "google_drive" } : { folder: null, cloud: null };
+  },
   // The browser has no Finder; the folder path is shown in the box instead.
   reveal_shared_folder: async () => undefined,
   rename_page: (a): Promise<RenamePageResponse> =>

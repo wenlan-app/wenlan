@@ -322,13 +322,19 @@ fn manifest_counts_match_the_spec() {
     // (following AI tools' memory; a time and counts only), and 348 after
     // PUT `/api/team` (names the team; its id and name only). Then 352
     // after starting and stopping a team here and keeping or forgetting a
-    // team joined (statuses and receipts only). Then 358 after the six page
-    // look routes (GET/PUT/DELETE `/api/pages/{id}/look`, POST
-    // `/look/restore` and `/look/error`, and GET `/look/data`, the only
-    // page-bearing one) and 57 tools with `read_page_look` and `set_page_look`.
+    // team joined (statuses and receipts only).
+    // Then 355 after POST `/api/library/shared/sync`, GET and DELETE
+    // `/api/library/shared` (the whole library shared between one person's
+    // own computers; receipts, names and counts, no page text).
+    // Then 356 after POST `/api/library/shared/main` (which computer of the
+    // library is the main one; names and a status, no page text).
+    // Then 362 after the six page look routes (GET/PUT/DELETE
+    // `/api/pages/{id}/look`, POST `/look/restore` and `/look/error`, and GET
+    // `/look/data`, the only page-bearing one) and 57 tools with
+    // `read_page_look` and `set_page_look`.
     assert_eq!(
         HTTP_READERS.len(),
-        358,
+        362,
         "registered (method, path, handler) triples"
     );
     assert_eq!(MCP_READERS.len(), 57, "#[tool( declarations");
@@ -339,7 +345,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        370,
+        374,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -347,7 +353,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        353,
+        357,
         "main builder entries"
     );
     assert_eq!(
@@ -538,7 +544,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::None)
             .count(),
-        348 // Existing 273 plus 22 research workflow routes, 7 custom-theme routes, a memory's conversation lines, the nights undo, the memory restore, the two trust scan routes, keeping a session original, the 8 sharing routes, one tidy's undo, the three old-pass routes and the four linked-vault routes, the two set-aside routes, the plain Brief lines, the seven team routes and naming the team, the three AI-memory routes, the four team start/stop/membership routes and the six page look routes, all with no page markers.
+        352 // Existing 273 plus 22 research workflow routes, 7 custom-theme routes, a memory's conversation lines, the nights undo, the memory restore, the two trust scan routes, keeping a session original, the 12 sharing routes, one tidy's undo, the three old-pass routes and the four linked-vault routes, the two set-aside routes, the plain Brief lines, the seven team routes and naming the team, the three AI-memory routes, the four team start/stop/membership routes and the six page look routes, all with no page markers.
     );
 }
 
