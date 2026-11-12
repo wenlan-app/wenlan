@@ -194,6 +194,8 @@ async fn pages_follow_their_space_and_their_folder_on_disk() {
     let stats = arrange(&db, root, &settings, &[]).await.unwrap();
     assert_eq!(stats.renamed, 1, "{stats:?}");
     assert_eq!(page_space(&db, "p-b").await.as_deref(), Some("工作"));
+    let text = std::fs::read_to_string(root.join("工作/品牌/計畫.md")).unwrap();
+    assert!(text.contains("工作") && !text.contains("Wenlan"), "{text}");
     // Next pass: everything is where it belongs, nothing moves.
     let stats = arrange(&db, root, &settings, &[]).await.unwrap();
     assert_eq!(stats.moved, 0, "{stats:?}");

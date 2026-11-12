@@ -644,6 +644,18 @@ pub async fn arrange(
                     log::info!(
                         "[space-folders] Space {space} renamed to {folder}, as its folder was"
                     );
+                    // Its files' `space:` line says the new name too.
+                    let projection = crate::export::knowledge::KnowledgeProjectionWrite::new(
+                        root.to_path_buf(),
+                        db,
+                    );
+                    for placement in pages.iter().filter(|p| p.space.as_deref() == Some(&space)) {
+                        if let Ok(Some(page)) = db.get_page(&placement.id).await {
+                            if let Err(error) = projection.write_page_gated(db, &page).await {
+                                log::warn!("[space-folders] {} is in {folder} but its file was not rewritten: {error}", placement.id);
+                            }
+                        }
+                    }
                 }
                 Err(error) => {
                     stats.failed += 1;
