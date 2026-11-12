@@ -11,7 +11,7 @@ import { TEAM_DOCS_URL } from "../sharing/team";
 import "../sharing/sharing.css";
 import "./server-setup.css";
 
-export const SERVER_IMAGE = "ghcr.io/wenlan-app/wenlan-server:latest";
+export const SERVER_IMAGE = "ghcr.io/wenlan-app/wenlan-server";
 const EXAMPLE_URL = "https://wenlan.example.com";
 
 /** An address that can go in a shell command as is: http(s), no spaces or
@@ -24,7 +24,7 @@ export function usableServerUrl(value: string): string | null {
 /** The two lines run on the server: start it, then show the owner's link. */
 export function serverCommand(url: string): string {
   return [
-    `docker run -d --name wenlan --restart unless-stopped -p 7879:7879 -e WENLAN_TEAM_ADDR=0.0.0.0:7879 -e WENLAN_TEAM_URL=${url} -v wenlan-data:/data ${SERVER_IMAGE}`,
+    `docker run -d --name wenlan --restart unless-stopped -p 7879:7879 -v wenlan-data:/data ${SERVER_IMAGE} team ${url}`,
     "docker logs wenlan",
   ].join("\n");
 }

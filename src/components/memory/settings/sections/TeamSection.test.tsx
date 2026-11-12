@@ -56,7 +56,8 @@ describe("TeamSection", () => {
     await userEvent.type(screen.getByPlaceholderText("https://wenlan.example.com"), "https://wenlan.acme.com/");
     expect(copy).toBeEnabled();
     const command = screen.getByText(/docker run/).closest("pre") as HTMLElement;
-    expect(command.textContent).toContain("WENLAN_TEAM_URL=https://wenlan.acme.com ");
+    expect(command.textContent).toContain("wenlan-server team https://wenlan.acme.com");
+    expect(command.textContent).not.toContain("WENLAN_");
     expect(command.textContent).toContain("-p 7879:7879 ");
     expect(command.textContent).not.toContain("7878");
     expect(command.textContent).toContain("docker logs wenlan");

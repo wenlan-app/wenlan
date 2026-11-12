@@ -639,6 +639,18 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Run as a team server on a machine nobody sits at (Docker, a small
+    /// cloud machine): the team listener on every network, and on first
+    /// start the owner's invite link in the output. Same as setting
+    /// `WENLAN_TEAM_ADDR` (and `WENLAN_TEAM_URL`).
+    Team {
+        /// The address people reach this server at, put in every invite
+        /// link: `https://wenlan.example.com`, or its Tailscale address.
+        url: Option<String>,
+        /// Where the team listener listens.
+        #[arg(long, default_value = "0.0.0.0:7879")]
+        listen: std::net::SocketAddr,
+    },
     /// Internal maintenance: delete archived stale pages. Daemon must be stopped first.
     #[command(name = "backfill-stale-pages", hide = true)]
     BackfillStalePages {
@@ -1032,6 +1044,17 @@ async fn main() -> anyhow::Result<()> {
     if let Some(port) = cli.port {
         std::env::set_var("WENLAN_PORT", port.to_string());
     }
+    if let Some(Command::Team { url, listen }) = &cli.command {
+        if std::env::var_os(wenlan_server::team_routes::TEAM_ADDR_ENV).is_none() {
+            std::env::set_var(
+                wenlan_server::team_routes::TEAM_ADDR_ENV,
+                listen.to_string(),
+            );
+        }
+        if let Some(url) = url.as_deref().map(str::trim).filter(|url| !url.is_empty()) {
+            std::env::set_var(wenlan_server::team_routes::TEAM_URL_ENV, url);
+        }
+    }
 
     // Resolving the path is read-only. Before rotating tracing is available,
     // a bounded bootstrap file keeps launchd failures and panics observable;
@@ -1046,7 +1069,8 @@ async fn main() -> anyhow::Result<()> {
             cli.repair_manifest_digest.clone(),
         )?;
 
-        if cli.command.is_some() && startup_repair_claim.is_some() {
+        let daemon = matches!(cli.command, None | Some(Command::Team { .. }));
+        if !daemon && startup_repair_claim.is_some() {
             anyhow::bail!("startup repair claim is only valid when running the daemon");
         }
 
@@ -1072,7 +1096,7 @@ async fn main() -> anyhow::Result<()> {
                 refresh,
             }) => cmd_export::run(out, pages, refresh).await,
             Some(Command::RebuildCheck { export, work }) => cmd_export::check(export, work).await,
-            None => run_daemon(startup_repair_claim).await,
+            None | Some(Command::Team { .. }) => run_daemon(startup_repair_claim).await,
         }
     }
     .await;

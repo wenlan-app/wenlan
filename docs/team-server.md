@@ -57,10 +57,8 @@ The team listener speaks plain HTTP. Do one of these:
   address. Traffic is encrypted by Tailscale.
 - **HTTPS**: put a reverse proxy (Caddy, nginx, Cloudflare Tunnel) in front
   and use `https://wenlan.example.com`. The Docker setup below has one built
-  in: point a domain at the box, open ports 80 and 443, and start it with
-  `WENLAN_DOMAIN=wenlan.example.com docker compose --profile https up -d`.
-  Caddy gets the certificate and renews it, and invite links use
-  `https://wenlan.example.com`.
+  in (see *More options* below): Caddy gets the certificate and renews it,
+  and invite links use `https://wenlan.example.com`.
 
 A member's Wenlan refuses a plain `http://` address unless it is inside a
 private network (this computer, a LAN address, `.local`, Tailscale).
@@ -85,28 +83,20 @@ everyone, or to some people, from the line under its title.
 
 ### A box nobody sits at (Docker on a NAS or a small cloud machine)
 
-1. Start it with [`docker/team/compose.yaml`](../docker/team/compose.yaml):
-
-   ```bash
-   WENLAN_TEAM_URL=https://wenlan.example.com docker compose -f docker/team/compose.yaml up -d
-   docker compose -f docker/team/compose.yaml logs wenlan
-   ```
-
-   Only the team listener (7879) is published. The daemon's own port (7878)
-   stays inside the container, as the Docker notes say. `WENLAN_TEAM_URL` is
-   the address put in every invite link: the box's `https://` address behind a
-   reverse proxy, or its Tailscale address such as `http://nas.tailnet.ts.net:7879`.
-   Set it: inside a container Wenlan cannot see the box's own address.
-
-   Without the compose file, the same in one command (Settings › Team ›
-   *Run it on a server* fills in the address and copies it for you):
+1. On the box, start it with the address people reach it at:
 
    ```bash
    docker run -d --name wenlan --restart unless-stopped -p 7879:7879 \
-     -e WENLAN_TEAM_ADDR=0.0.0.0:7879 -e WENLAN_TEAM_URL=https://wenlan.example.com \
-     -v wenlan-data:/data ghcr.io/wenlan-app/wenlan-server:latest
+     -v wenlan-data:/data ghcr.io/wenlan-app/wenlan-server team https://wenlan.example.com
    docker logs wenlan
    ```
+
+   Settings › Team › *Run it on a server* fills in the address and copies
+   these two lines for you. The address goes in every invite link: the box's
+   `https://` address behind a reverse proxy, or its Tailscale address such
+   as `http://nas.tailnet.ts.net:7879`. Inside a container Wenlan cannot see
+   the box's own address, so give it. Only the team port (7879) is published;
+   the daemon's own port stays inside the container.
 
 2. The first start prints **the owner's invite link** once, in the logs. Open
    it in your own Wenlan (Settings › Team › Join with an invite link). You are
@@ -116,33 +106,36 @@ everyone, or to some people, from the line under its title.
    yours until you open it to everyone, or to some people, from the line
    under its title. The team sees you by the name in your Wenlan profile.
 
-   Data in a folder on the box (a NAS share) rather than Docker's own
-   volume: swap the volume line in the compose file for the folder and
-   uncomment `user: "0:0"` there (with `docker run`: `--user 0:0`). The
-   image's own user cannot write a folder that belongs to someone else on
-   the host; without it the server stops at start and says so.
-
    Lost the link? Start the container once with
-   `WENLAN_TEAM_NEW_OWNER_LINK=1`: a new one is printed and the old one stops
-   working.
+   `-e WENLAN_TEAM_NEW_OWNER_LINK=1`: a new one is printed and the old one
+   stops working.
+
+**More options** with [`docker/team/compose.yaml`](../docker/team/compose.yaml):
+
+- *Automatic HTTPS.* Point a domain at the box, open ports 80 and 443, then
+  `WENLAN_DOMAIN=wenlan.example.com docker compose --profile https up -d`.
+  Caddy gets the certificate and renews it.
+- *Data in a folder on the box* (a NAS share) rather than Docker's own
+  volume: swap the volume line in the compose file for the folder and
+  uncomment `user: "0:0"` (with `docker run`: `--user 0:0`). The image's own
+  user cannot write a folder that belongs to someone else on the host;
+  without it the server stops at start and says so.
 
 ### Keep it running
 
-A restart of the box brings the server back by itself (`--restart unless-stopped`).
-Two things still need a person:
+A restart of the box brings the server back by itself. Two things still
+need a person:
 
-- **Updates.** The server does not update itself. When a new Wenlan is out:
+- **Updates.** The server does not update itself. When a new Wenlan is out,
+  pull the image and start the container again with the same line:
 
   ```bash
-  # with the compose file
-  docker compose -f docker/team/compose.yaml pull
-  docker compose -f docker/team/compose.yaml up -d
-  # or, started with docker run
-  docker pull ghcr.io/wenlan-app/wenlan-server:latest
+  docker pull ghcr.io/wenlan-app/wenlan-server
   docker rm -f wenlan
-  # then the same docker run line as before
+  # then the same docker run line as above
   ```
 
+  With the compose file: `docker compose pull && docker compose up -d`.
   The team, its people and pages live in the `wenlan-data` volume and stay.
 - **Backups.** Everything is in the `wenlan-data` volume on that box. Back it
   up with the host's own snapshots, or copy the volume. Each member's

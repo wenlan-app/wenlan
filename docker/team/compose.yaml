@@ -14,14 +14,14 @@
 # Spaces from your own computer. Nobody needs to touch this box again.
 services:
   wenlan:
-    image: ghcr.io/wenlan-app/wenlan-server:latest
+    image: ghcr.io/wenlan-app/wenlan-server
+    command: ["team"]
     restart: unless-stopped
     ports:
       # The team listener only. The daemon's own port (7878) stays inside the
       # container: it has no sign-in and must never be published.
       - "7879:7879"
     environment:
-      WENLAN_TEAM_ADDR: 0.0.0.0:7879
       # The address people reach this box at, put in every invite link:
       # https://… behind a reverse proxy, or its Tailscale address. With the
       # `https` profile it is https://$WENLAN_DOMAIN unless set here.
