@@ -40,6 +40,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:all": "pnpm test && cd app && cargo test",
+    "test:rust": "cargo test --workspace --exclude wenlan-app",
+    "check": "cargo fmt --check --all && cargo clippy --workspace --exclude wenlan-app --all-targets -- -D warnings && tsc -b",
     "test:coverage:all": "pnpm test:coverage && cd app && cargo llvm-cov --html"
   },
   "dependencies": {
