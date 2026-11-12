@@ -343,6 +343,13 @@ fn put(
         log::warn!("[reading_copy] a folder on the way to {rel} links elsewhere; not written");
         return Ok(());
     }
+    // A case-only rename on a case-insensitive disk (macOS, Windows): the
+    // old file answers to the new name, so give it that name first.
+    // Otherwise the same bytes would count as already written under the old
+    // name, and removing the old name would remove the only file.
+    if let Some(other_case) = same_file_other_case(&target) {
+        let _ = fs::rename(&other_case, &target);
+    }
     // What Wenlan wrote last time, still there with the same size and
     // modification time: not read again, so a large library is not re-read
     // on every pass. Anything else (no stamp, a file someone replaced, a
@@ -386,6 +393,24 @@ fn exact_name_present(path: &Path) -> bool {
             .filter_map(Result::ok)
             .any(|entry| entry.file_name() == name)
     })
+}
+
+/// The file the disk opens for `path` when it lists it under a name that
+/// differs only by case. Only a case-insensitive disk opens one; a
+/// case-sensitive disk returns None.
+fn same_file_other_case(path: &Path) -> Option<PathBuf> {
+    let parent = path.parent()?;
+    let name = path.file_name()?.to_str()?;
+    if fs::symlink_metadata(path).is_err() || exact_name_present(path) {
+        return None;
+    }
+    let lower = name.to_lowercase();
+    fs::read_dir(parent)
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name())
+        .find(|other| other.to_str().is_some_and(|o| o.to_lowercase() == lower))
+        .map(|other| parent.join(other))
 }
 
 fn instructions_text(now: &str) -> String {
