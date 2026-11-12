@@ -14,7 +14,7 @@ use std::path::Path;
 
 use wenlan_types::team::TeamMe;
 
-use super::{change_settings, left_key, remember_team, remote, shares_at, HostLink, ShareSettings};
+use super::{change_settings, remember_team, remote, shares_at, was_left, HostLink, ShareSettings};
 use crate::db::MemoryDB;
 use crate::error::WenlanError;
 
@@ -83,7 +83,8 @@ pub(super) async fn follow_host(
     for entry in &me.spaces {
         let remote_space = entry.space.as_str();
         let team = me.team.as_ref().and_then(|team| team.name.as_deref());
-        let Some(local) = local_space(db, settings_path, url, remote_space, team).await? else {
+        let id = entry.id.as_deref();
+        let Some(local) = local_space(db, settings_path, url, remote_space, id, team).await? else {
             continue;
         };
         let host = HostLink {
@@ -106,7 +107,7 @@ pub(super) async fn follow_host(
         let joined = change_settings(settings_path, |store| {
             // Checked again under the lock: a join by hand may have won.
             if followed(&store.spaces, url, remote_space)
-                || store.left.contains(&left_key(url, remote_space))
+                || was_left(&store.left, url, remote_space, id)
                 || store.spaces.contains_key(&local)
             {
                 return (false, false);
@@ -207,12 +208,11 @@ async fn local_space(
     settings_path: &Path,
     url: &str,
     remote_space: &str,
+    id: Option<&str>,
     team: Option<&str>,
 ) -> Result<Option<String>, WenlanError> {
     let store = super::read_settings(settings_path)?;
-    if followed(&store.spaces, url, remote_space)
-        || store.left.contains(&left_key(url, remote_space))
-    {
+    if followed(&store.spaces, url, remote_space) || was_left(&store.left, url, remote_space, id) {
         return Ok(None);
     }
     let server = match team.map(str::trim).filter(|name| !name.is_empty()) {
@@ -330,7 +330,16 @@ mod tests {
         );
 
         // Joining it again by hand (which syncs it at once) clears that.
-        super::super::rejoined(&settings, URL, "Design").unwrap();
+        super::super::rejoined(
+            &settings,
+            &HostLink {
+                url: URL.into(),
+                key: "wlt_k".into(),
+                space: "Design".into(),
+                space_id: None,
+            },
+        )
+        .unwrap();
         assert!(super::super::read_settings(&settings)
             .unwrap()
             .left
@@ -418,6 +427,23 @@ mod tests {
         );
         follow_renames(&db, &settings, URL, &again).await.unwrap();
         assert_eq!(host_of("Our plans").unwrap().space, "Plans");
+
+        // Left here, then renamed on the server: still left.
+        super::super::leave_at(&settings, &Scope::Space("Our plans".into())).unwrap();
+        let after_leaving = with_ids(
+            me(&[("Ideas", TeamAccess::Write), ("Visual", TeamAccess::Write)]),
+            &["s1", "s2"],
+        );
+        follow_renames(&db, &settings, URL, &after_leaving)
+            .await
+            .unwrap();
+        assert!(
+            follow_host(&db, &settings, URL, "wlt_k", &after_leaving)
+                .await
+                .unwrap()
+                .is_empty(),
+            "a Space left here is not followed again under its new name"
+        );
     }
 
     #[tokio::test]

@@ -301,6 +301,19 @@ fn left_key(url: &str, space: &str) -> String {
     format!("{url}\n{space}")
 }
 
+/// The same Space by its id on the server, which a rename there keeps.
+fn left_id_key(url: &str, id: &str) -> String {
+    format!("{url}\n\n{id}")
+}
+
+/// Whether this person stopped syncing the team Space `space` (with the
+/// server's `id` for it, when known) here: by its name, or by its id under
+/// any name it had.
+fn was_left(left: &BTreeSet<String>, url: &str, space: &str, id: Option<&str>) -> bool {
+    left.contains(&left_key(url, space))
+        || id.is_some_and(|id| left.contains(&left_id_key(url, id)))
+}
+
 impl SettingsStore {
     fn entries(&mut self, scope: &Scope) -> (&mut BTreeMap<String, ShareSettings>, String) {
         match scope {
@@ -396,6 +409,9 @@ pub fn leave_at(path: &Path, scope: &Scope) -> Result<bool, WenlanError> {
         let removed = entries.remove(&key);
         if let Some(host) = removed.as_ref().and_then(|settings| settings.host.as_ref()) {
             store.left.insert(left_key(&host.url, &host.space));
+            if let Some(id) = &host.space_id {
+                store.left.insert(left_id_key(&host.url, id));
+            }
         }
         (removed.is_some(), removed.is_some())
     })
@@ -429,8 +445,15 @@ pub fn rename_share(path: &Path, from: &str, to: &str) -> Result<bool, WenlanErr
 
 /// Forgets that this person left `space` on the server at `url`: they
 /// joined it again.
-fn rejoined(path: &Path, url: &str, space: &str) -> Result<(), WenlanError> {
-    change_settings(path, |store| (store.left.remove(&left_key(url, space)), ()))
+fn rejoined(path: &Path, host: &HostLink) -> Result<(), WenlanError> {
+    change_settings(path, |store| {
+        let by_name = store.left.remove(&left_key(&host.url, &host.space));
+        let by_id = host
+            .space_id
+            .as_deref()
+            .is_some_and(|id| store.left.remove(&left_id_key(&host.url, id)));
+        (by_name || by_id, ())
+    })
 }
 
 /// Records that this Wenlan shares `scope` through `folder` as
@@ -1031,7 +1054,7 @@ pub async fn sync_space(
             target.member_id,
         )?;
         if let Some(host) = target.host.clone() {
-            rejoined(target.settings_path, &host.url, &host.space)?;
+            rejoined(target.settings_path, &host)?;
             settings = update_share(target.settings_path, &scope, |settings| {
                 settings.host = Some(host);
             })?
