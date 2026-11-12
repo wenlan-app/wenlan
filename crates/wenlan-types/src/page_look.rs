@@ -14,6 +14,13 @@ pub const LOOK_API: u32 = 1;
 /// Most pages `space.pages` lists.
 pub const LOOK_SPACE_PAGES_MAX: usize = 200;
 
+/// The id the home screen's look is kept under, in place of a page id
+/// (UX-LOOK-10). No page has it: page ids are opaque generated strings.
+pub const HOME_LOOK_ID: &str = "home";
+
+/// Most pages `home.pages` lists.
+pub const LOOK_HOME_PAGES_MAX: usize = 200;
+
 /// One saved look for a page.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PageLook {
@@ -102,6 +109,43 @@ pub struct LookData {
     pub page: LookPageData,
     pub space: LookSpaceData,
     pub theme: LookTheme,
+    /// Only in the home screen's look (UX-LOOK-10): the person's Spaces and
+    /// their pages. A page's look never has it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home: Option<LookHomeData>,
+}
+
+/// `window.wenlan.home`: what the home screen shows, for a look of it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LookHomeData {
+    /// The person's Spaces, the one with the page changed last first.
+    pub spaces: Vec<LookHomeSpace>,
+    /// Pages across every Space, changed last first, at most
+    /// [`LOOK_HOME_PAGES_MAX`], without their text.
+    pub pages: Vec<LookHomePage>,
+    /// True when there are more pages than `pages` lists.
+    pub more: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LookHomeSpace {
+    pub name: String,
+    /// Empty when the Space has none.
+    pub description: String,
+    pub starred: bool,
+    /// When its newest listed page changed; empty when none is listed.
+    pub modified: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LookHomePage {
+    pub id: String,
+    pub title: String,
+    /// The Space's name; empty when the page is in none.
+    pub space: String,
+    pub created: String,
+    pub modified: String,
+    pub summary: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

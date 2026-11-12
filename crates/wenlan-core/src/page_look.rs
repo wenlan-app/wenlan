@@ -25,9 +25,11 @@ use std::sync::LazyLock;
 
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use regex::Regex;
+use wenlan_types::memory::Space;
 use wenlan_types::page_look::{
-    LookData, LookImage, LookItem, LookLink, LookPageData, LookSection, LookSpaceData,
-    LookSpacePage, LookTable, LookTheme, LOOK_API, LOOK_SPACE_PAGES_MAX,
+    LookData, LookHomeData, LookHomePage, LookHomeSpace, LookImage, LookItem, LookLink,
+    LookPageData, LookSection, LookSpaceData, LookSpacePage, LookTable, LookTheme, HOME_LOOK_ID,
+    LOOK_API, LOOK_HOME_PAGES_MAX, LOOK_SPACE_PAGES_MAX,
 };
 use wenlan_types::pages::Page;
 
@@ -156,6 +158,82 @@ pub fn look_data(
         theme: LookTheme {
             mode: "dark".to_string(),
         },
+        home: None,
+    }
+}
+
+/// `window.wenlan` for the home screen's look (UX-LOOK-10). `spaces` are the
+/// person's own Spaces; `pages` every page the caller may see, changed last
+/// first (at most [`LOOK_HOME_PAGES_MAX`] are used); `more` is true when
+/// there are pages beyond the ones given. `page` is an empty stand-in with
+/// the id [`HOME_LOOK_ID`], so a look written for a page still loads.
+pub fn home_look_data(spaces: &[Space], pages: &[Page], more: bool) -> LookData {
+    let listed: Vec<&Page> = pages.iter().take(LOOK_HOME_PAGES_MAX).collect();
+    let mut last_changed: HashMap<&str, &str> = HashMap::new();
+    for page in &listed {
+        if let Some(space) = page.space.as_deref() {
+            let at = last_changed.entry(space).or_insert("");
+            if page.last_modified.as_str() > *at {
+                *at = page.last_modified.as_str();
+            }
+        }
+    }
+    let mut own: Vec<&Space> = spaces.iter().filter(|space| !space.suggested).collect();
+    own.sort_by(|a, b| {
+        let at = |space: &Space| last_changed.get(space.name.as_str()).copied().unwrap_or("");
+        at(b)
+            .cmp(at(a))
+            .then(b.starred.cmp(&a.starred))
+            .then(a.sort_order.cmp(&b.sort_order))
+    });
+    LookData {
+        api: LOOK_API,
+        page: LookPageData {
+            id: HOME_LOOK_ID.to_string(),
+            title: String::new(),
+            space: String::new(),
+            created: String::new(),
+            modified: String::new(),
+            text: String::new(),
+            html: String::new(),
+            sections: Vec::new(),
+            links: Vec::new(),
+            images: Vec::new(),
+        },
+        space: LookSpaceData {
+            name: String::new(),
+            pages: Vec::new(),
+            more: false,
+        },
+        theme: LookTheme {
+            mode: "dark".to_string(),
+        },
+        home: Some(LookHomeData {
+            spaces: own
+                .into_iter()
+                .map(|space| LookHomeSpace {
+                    name: space.name.clone(),
+                    description: space.description.clone().unwrap_or_default(),
+                    starred: space.starred,
+                    modified: last_changed
+                        .get(space.name.as_str())
+                        .map(|at| at.to_string())
+                        .unwrap_or_default(),
+                })
+                .collect(),
+            pages: listed
+                .iter()
+                .map(|p| LookHomePage {
+                    id: p.id.clone(),
+                    title: p.title.clone(),
+                    space: p.space.clone().unwrap_or_default(),
+                    created: p.created_at.clone(),
+                    modified: p.last_modified.clone(),
+                    summary: page_summary(p),
+                })
+                .collect(),
+            more: more || pages.len() > listed.len(),
+        }),
     }
 }
 

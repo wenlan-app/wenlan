@@ -9,15 +9,20 @@ use rmcp::model::{CallToolResult, ContentBlock};
 use rmcp::ErrorData as McpError;
 use serde::Deserialize;
 use wenlan_types::page_look::{
-    LookData, PageLookResponse, SetPageLookRequest, SetPageLookResponse,
+    LookData, PageLookResponse, SetPageLookRequest, SetPageLookResponse, HOME_LOOK_ID,
 };
+
+/// What the person or AI writes for the home screen in place of a page.
+pub(crate) const HOME_PAGE_ARG: &str = "@home";
 
 use super::TransportMode;
 use super::{is_opaque_page_id, tool_error, url_encode_simple, WenlanError, WenlanMcpServer};
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ReadPageLookParams {
-    #[schemars(description = "The page's title as the person says it, or its page_id.")]
+    #[schemars(
+        description = "The page's title as the person says it, or its page_id. @home is the home screen."
+    )]
     pub page: String,
     #[schemars(
         description = "This conversation as <tool>:<id>, e.g. claude-code:<session id>. Defaults to WENLAN_SESSION."
@@ -28,7 +33,9 @@ pub struct ReadPageLookParams {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SetPageLookParams {
-    #[schemars(description = "The page's title as the person says it, or its page_id.")]
+    #[schemars(
+        description = "The page's title as the person says it, or its page_id. @home is the home screen."
+    )]
     pub page: String,
     #[schemars(description = "The look: one self-contained HTML document. Give this or path.")]
     #[serde(default)]
@@ -63,6 +70,14 @@ Rules for a look (window.wenlan, api 1):
 8. Colors arrive as CSS variables: --look-bg, --look-surface, --look-text, --look-muted, --look-border, --look-accent, --look-radius, --look-font, --look-mono. Use them so the look reads in light and dark. wenlan.theme.mode is \"light\" or \"dark\".
 9. The look fills the page's column, which already has its margins: put no padding, margin, max-width or background on html or body, and start content at the left edge. The app shows no title above the look, so show wenlan.page.title at its top. Make it work from 320px wide, handle a page with no sections, tables or items, and keep the look to what the page says.
 10. Saving replaces the look and keeps the one before it, which the person can put back. Only change a look when asked.";
+
+const HOME_RULES: &str = "\
+This is the home screen's look, not a page's (it replaces Wenlan's home while it is set; the person's pencil shows the usual home):
+- wenlan.page has no text: page.title is empty, sections, links and images are empty, and wenlan.space is empty. Read wenlan.home instead.
+- wenlan.home.spaces lists the person's Spaces, the one with the page changed last first: {name, description, starred, modified}. modified is empty for a Space with no listed page.
+- wenlan.home.pages lists pages across every Space, changed last first, at most 200: {id, title, space, created, modified, summary}. space is empty for a page in no Space. wenlan.home.more says there are more.
+- wenlan.open(pageId) opens any page in home.pages. wenlan.check does nothing here.
+- Show a heading of your own at the top; a home has no page title. Rule 3 still holds: build every list from wenlan.home, never write page titles into the HTML.";
 
 const EXAMPLE: &str = r#"Example: a dashboard that counts done items and shows each table as cards.
 
@@ -116,6 +131,12 @@ fn trimmed(data: &LookData) -> LookData {
         out.space.pages.truncate(SPACE_PAGES_SHOWN);
         out.space.more = true;
     }
+    if let Some(home) = &mut out.home {
+        if home.pages.len() > SPACE_PAGES_SHOWN {
+            home.pages.truncate(SPACE_PAGES_SHOWN);
+            home.more = true;
+        }
+    }
     out
 }
 
@@ -142,6 +163,9 @@ impl WenlanMcpServer {
         let page = page.trim();
         if page.is_empty() {
             return Err("Give the page's title or page_id.".into());
+        }
+        if page.eq_ignore_ascii_case(HOME_PAGE_ARG) {
+            return Ok(HOME_LOOK_ID.to_string());
         }
         if is_opaque_page_id(page)
             && client
@@ -214,11 +238,15 @@ impl WenlanMcpServer {
         };
         let data_json = serde_json::to_string_pretty(&trimmed(&data))
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        let home = page_id == HOME_LOOK_ID;
         let look = match &current.look {
             Some(look) => {
                 let mut text = format!(
-                    "This page has a look (version {}, written for api {}):\n{}",
-                    look.id, look.api, look.html
+                    "This {} has a look (version {}, written for api {}):\n{}",
+                    if home { "home screen" } else { "page" },
+                    look.id,
+                    look.api,
+                    look.html
                 );
                 if let Some(error) = &look.last_error {
                     text.push_str(&format!(
@@ -227,8 +255,15 @@ impl WenlanMcpServer {
                 }
                 text
             }
+            None if home => "The home screen has no look yet.".to_string(),
             None => "This page has no look yet.".to_string(),
         };
+        if home {
+            let text = format!(
+                "Wenlan's home screen (page {HOME_PAGE_ARG}).\n\n{look}\n\nThe data the home screen gives a look, as window.wenlan (lists trimmed here):\n{data_json}\n\n{RULES}\n\n{HOME_RULES}\n\n{EXAMPLE}\n\nWhen it is ready, call set_page_look with page {HOME_PAGE_ARG} and the HTML. A refusal names the rule it broke; fix that and save again.",
+            );
+            return Ok(CallToolResult::success(vec![ContentBlock::text(text)]));
+        }
         let text = format!(
             "Page \"{title}\" (page_id {id}).\n\n{look}\n\nThe data this page gives a look, as window.wenlan (text trimmed here):\n{data_json}\n\n{RULES}\n\n{EXAMPLE}\n\nWhen it is ready, call set_page_look with this page and the HTML. A refusal names the rule it broke; fix that and save again.",
             title = data.page.title,
@@ -290,8 +325,10 @@ impl WenlanMcpServer {
             }
             Err(error) => return Ok(tool_error(error, "set page look")),
         };
-        let text = if saved.created {
-            "Saved. Wenlan now shows this page with the look (Look | Text switch in the page header), filled with the page's current text. The earlier look, if any, is kept and the person can put it back. Tell the person to open the page in Wenlan."
+        let text = if saved.created && page_id == HOME_LOOK_ID {
+            "Saved. Wenlan's home screen now shows this look, filled with the person's current pages and Spaces. The pencil at its top right shows the usual home. The earlier look, if any, is kept and the person can put it back. Tell the person to open Home in Wenlan."
+        } else if saved.created {
+            "Saved. Wenlan now opens this page on the look, filled with the page's current text. The pencil in the page's top bar shows the text for editing. The earlier look, if any, is kept and the person can put it back. Tell the person to open the page in Wenlan."
         } else {
             "That is already the page's look. Nothing changed."
         };

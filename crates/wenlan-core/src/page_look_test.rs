@@ -380,3 +380,71 @@ Intro ![The view](_attachments/view.png) here.
         "a section names the page's places"
     );
 }
+
+fn space(name: &str, starred: bool, sort_order: i64, suggested: bool) -> Space {
+    Space {
+        id: format!("sp_{name}"),
+        name: name.to_string(),
+        description: Some(format!("{name} things")),
+        suggested,
+        starred,
+        is_default: false,
+        sort_order,
+        memory_count: 0,
+        entity_count: 0,
+        created_at: 0.0,
+        updated_at: 0.0,
+    }
+}
+
+/// UX-LOOK-10: the home screen's data lists the pages and the person's own
+/// Spaces, the one changed last first, with an empty stand-in page.
+#[test]
+fn ux_look_10_home_data_lists_pages_and_spaces_changed_last_first() {
+    let mut work = page("pg_work", "Standup notes", "Shipped the thing.");
+    work.space = Some("Work".into());
+    work.last_modified = "2026-11-03T10:00:00Z".into();
+    let travel = page("pg_trip", "Japan trip", TRIP);
+    let mut loose = page("pg_loose", "Loose idea", "No Space.");
+    loose.space = None;
+    loose.last_modified = "2026-11-01T10:00:00Z".into();
+    let spaces = [
+        space("Travel", true, 0, false),
+        space("Empty", true, 1, false),
+        space("Work", false, 2, false),
+        space("Maybe", false, 3, true),
+    ];
+    let data = home_look_data(&spaces, &[work, travel, loose], false);
+
+    assert_eq!(data.page.id, HOME_LOOK_ID);
+    assert!(data.page.sections.is_empty() && data.space.pages.is_empty());
+    let home = data.home.expect("home data");
+    let names: Vec<&str> = home.spaces.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(
+        names,
+        ["Work", "Travel", "Empty"],
+        "suggested Spaces are left out"
+    );
+    assert_eq!(home.spaces[0].modified, "2026-11-03T10:00:00Z");
+    assert_eq!(home.spaces[2].modified, "");
+    assert_eq!(home.spaces[1].description, "Travel things");
+    let pages: Vec<(&str, &str)> = home
+        .pages
+        .iter()
+        .map(|p| (p.title.as_str(), p.space.as_str()))
+        .collect();
+    assert_eq!(
+        pages,
+        [
+            ("Standup notes", "Work"),
+            ("Japan trip", "Travel"),
+            ("Loose idea", "")
+        ]
+    );
+    assert!(!home.pages[1].summary.contains("Secret instructions"));
+    assert!(!home.more);
+
+    // A page's own data never carries `home`, so its JSON shape is unchanged.
+    let json = serde_json::to_value(trip_data()).unwrap();
+    assert!(json.get("home").is_none());
+}

@@ -16,6 +16,10 @@
 //! A look is stored in its own table, so the page file and the vault do not
 //! change when one is set. Every route answers only for a page the caller can
 //! see in its Space and under its truth grant; any other page reads as absent.
+//!
+//! The id `home` ([`HOME_LOOK_ID`]) names the home screen's look (UX-LOOK-10)
+//! on the same routes. Its data lists the pages the caller may see, filtered
+//! the same way, and the Spaces they are in.
 
 use std::sync::Arc;
 
@@ -28,7 +32,7 @@ use wenlan_core::db::MemoryDB;
 use wenlan_types::page_look::{
     LookData, PageLookErrorRequest, PageLookErrorResponse, PageLookResponse,
     RemovePageLookResponse, RestorePageLookRequest, SetPageLookRequest, SetPageLookResponse,
-    LOOK_API, LOOK_SPACE_PAGES_MAX,
+    HOME_LOOK_ID, LOOK_API, LOOK_HOME_PAGES_MAX, LOOK_SPACE_PAGES_MAX,
 };
 use wenlan_types::pages::Page;
 
@@ -119,7 +123,9 @@ pub async fn handle_get_page_look(
     Path(id): Path<String>,
 ) -> Result<Json<PageLookResponse>, ServerError> {
     let db = open_db(&state).await?;
-    visible_page(&db, &view, header_space.as_deref(), &id).await?;
+    if id != HOME_LOOK_ID {
+        visible_page(&db, &view, header_space.as_deref(), &id).await?;
+    }
     Ok(Json(PageLookResponse {
         look: db.get_active_page_look(&id).await?,
         versions: db.list_page_look_versions(&id).await?,
@@ -136,8 +142,15 @@ pub async fn handle_set_page_look(
     Json(req): Json<SetPageLookRequest>,
 ) -> Result<Json<SetPageLookResponse>, ServerError> {
     let db = open_db(&state).await?;
-    let page = lookable_page(&db, &view, header_space.as_deref(), &id).await?;
-    wenlan_core::page_look::check_look(&req.html, &page.content)
+    // The home screen has no text of its own to copy.
+    let content = if id == HOME_LOOK_ID {
+        String::new()
+    } else {
+        lookable_page(&db, &view, header_space.as_deref(), &id)
+            .await?
+            .content
+    };
+    wenlan_core::page_look::check_look(&req.html, &content)
         .map_err(|reason| ServerError::ValidationError(format!("look_refused: {reason}")))?;
     let session = crate::session_routes::extract_session_ref(&headers).map(|s| s.to_string());
     let (look_id, created) = db
@@ -158,7 +171,9 @@ pub async fn handle_remove_page_look(
     Path(id): Path<String>,
 ) -> Result<Json<RemovePageLookResponse>, ServerError> {
     let db = open_db(&state).await?;
-    visible_page(&db, &view, header_space.as_deref(), &id).await?;
+    if id != HOME_LOOK_ID {
+        visible_page(&db, &view, header_space.as_deref(), &id).await?;
+    }
     let removed_id = db.remove_page_look(&id).await?;
     Ok(Json(RemovePageLookResponse {
         page_id: id,
@@ -175,7 +190,9 @@ pub async fn handle_restore_page_look(
     Json(req): Json<RestorePageLookRequest>,
 ) -> Result<Json<SetPageLookResponse>, ServerError> {
     let db = open_db(&state).await?;
-    lookable_page(&db, &view, header_space.as_deref(), &id).await?;
+    if id != HOME_LOOK_ID {
+        lookable_page(&db, &view, header_space.as_deref(), &id).await?;
+    }
     let look_id = db.restore_page_look(&id, req.id).await?.ok_or_else(|| {
         ServerError::NotFound(format!("page {id} has no earlier look to restore"))
     })?;
@@ -195,7 +212,9 @@ pub async fn handle_page_look_error(
     Json(req): Json<PageLookErrorRequest>,
 ) -> Result<Json<PageLookErrorResponse>, ServerError> {
     let db = open_db(&state).await?;
-    visible_page(&db, &view, header_space.as_deref(), &id).await?;
+    if id != HOME_LOOK_ID {
+        visible_page(&db, &view, header_space.as_deref(), &id).await?;
+    }
     let message: String = req.message.trim().chars().take(2000).collect();
     let recorded = !message.is_empty() && db.record_page_look_error(&id, &message).await?;
     Ok(Json(PageLookErrorResponse { recorded }))
@@ -214,6 +233,9 @@ pub async fn handle_get_page_look_data(
 ) -> Result<Json<LookData>, ServerError> {
     let db = open_db(&state).await?;
     let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
+    if id == HOME_LOOK_ID {
+        return home_look_data(&db, &view, &scope).await.map(Json);
+    }
     let page = visible_page(&db, &view, header_space.as_deref(), &id).await?;
     let space_name = page.space.clone().unwrap_or_default();
 
@@ -259,6 +281,36 @@ pub async fn handle_get_page_look_data(
         &space_pages,
         more,
     )))
+}
+
+/// `window.wenlan` for the home screen (UX-LOOK-10): the pages the caller
+/// may see, changed last first, and the person's Spaces. A caller held to one
+/// Space sees only the Spaces its pages are in.
+async fn home_look_data(
+    db: &MemoryDB,
+    view: &crate::truth_guard::TruthView,
+    scope: &wenlan_core::read_scope::ReadScope,
+) -> Result<LookData, ServerError> {
+    let listed = db
+        .list_pages("active", (LOOK_HOME_PAGES_MAX + 1) as i64, 0)
+        .await?;
+    let more = listed.len() > LOOK_HOME_PAGES_MAX;
+    let ids: Vec<String> = listed.iter().map(|p| p.id.clone()).collect();
+    let visible = crate::page_basis_routes::visible_ids(db, &view.grant, scope, &ids).await?;
+    let pages: Vec<Page> = listed
+        .into_iter()
+        .take(LOOK_HOME_PAGES_MAX)
+        .filter(|p| visible.contains(&p.id) && p.kind != "entity")
+        .collect();
+    let mut spaces = db.list_spaces().await?;
+    if !matches!(scope, wenlan_core::read_scope::ReadScope::Global) {
+        let named: std::collections::HashSet<&str> =
+            pages.iter().filter_map(|p| p.space.as_deref()).collect();
+        spaces.retain(|space| named.contains(space.name.as_str()));
+    }
+    Ok(wenlan_core::page_look::home_look_data(
+        &spaces, &pages, more,
+    ))
 }
 
 #[cfg(test)]
@@ -456,5 +508,47 @@ mod tests {
         // An unknown page reads as absent.
         let (status, _) = send(&app, "GET", "/api/pages/pg_nope/look", None).await;
         assert_eq!(status, 404);
+
+        // UX-LOOK-10: the home screen keeps its own look on the same routes,
+        // and its data lists the pages, with no page text of its own.
+        let home = "/api/pages/home/look";
+        let (status, none) = send(&app, "GET", home, None).await;
+        assert_eq!(status, 200, "{none}");
+        assert!(none["look"].is_null());
+        let (status, saved) = send(&app, "PUT", home, Some(json!({ "html": first }))).await;
+        assert_eq!(status, 200, "{saved}");
+        assert_eq!(saved["page_id"], "home");
+        let (_, got) = send(&app, "GET", home, None).await;
+        assert_eq!(got["look"]["html"], first);
+        let (_, page_look) = send(&app, "GET", &uri, None).await;
+        assert_eq!(
+            page_look["look"]["html"], second,
+            "the page keeps its own look"
+        );
+        let (status, data) = send(&app, "GET", &format!("{home}/data"), None).await;
+        assert_eq!(status, 200, "{data}");
+        assert_eq!(data["page"]["id"], "home");
+        assert_eq!(data["page"]["sections"].as_array().unwrap().len(), 0);
+        let titles: Vec<&str> = data["home"]["pages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p["title"].as_str().unwrap())
+            .collect();
+        assert!(titles.contains(&"Kyoto trip"), "{data}");
+        assert!(data["home"]["spaces"].is_array());
+        let (status, refused) = send(
+            &app,
+            "PUT",
+            home,
+            Some(json!({ "html": "<html><script src=\"https://example.com/x.js\"></script></html>" })),
+        )
+        .await;
+        assert_eq!(status, 422, "{refused}");
+        let (status, removed) = send(&app, "DELETE", home, None).await;
+        assert_eq!(status, 200);
+        assert!(removed["removed_id"].is_number());
+        let (_, off) = send(&app, "GET", home, None).await;
+        assert!(off["look"].is_null());
     }
 }
