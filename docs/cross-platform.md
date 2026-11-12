@@ -30,9 +30,10 @@ path skips the old uninstaller and keeps the existing shortcuts); running the fu
 installer moves it.
 
 The Linux desktop app ships for x86_64 as an AppImage and a `.deb`, built on
-`ubuntu-22.04` so the AppImage's glibc floor stays at 2.35 (Ubuntu 22.04, Debian 12
-and newer). The tauri updater picks `linux-x86_64-appimage` or `linux-x86_64-deb` by
-how the app was installed. `scripts/verify-linux-app-bundle.sh` is the proof: it
+`ubuntu-24.04`, so it needs glibc 2.39 or newer (Ubuntu 24.04, Debian 13, Fedora 40),
+the same floor as the Linux CLI archives: the prebuilt static ONNX Runtime references
+glibc 2.38 symbols, so linking on 22.04 fails. The tauri updater picks
+`linux-x86_64-appimage` or `linux-x86_64-deb` by how the app was installed. `scripts/verify-linux-app-bundle.sh` is the proof: it
 checks both packages carry the three sidecars, then opens the AppImage under Xvfb
 and waits for the bundled daemon's `/api/health`. Two Linux-only traps it found:
 a hidden GTK window has no GDK surface until shown, so making the toast window

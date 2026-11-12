@@ -1512,15 +1512,17 @@ jobs:
 
   # The Linux counterpart of app-bundle. Same guards; no OS-level code signing
   # exists for an AppImage or a .deb, so the only signature is Tauri's updater
-  # one. Built on the oldest supported Ubuntu runner on purpose: an AppImage
-  # only runs where the glibc is at least as new as the one it was linked
-  # against, so 22.04 keeps 22.04, 24.04, Debian 12 and newer Fedora working.
-  # The daemon sidecars are compiled here by the Tauri build hook for the same
-  # reason; the CLI tarballs keep their own receipt-bound bytes.
+  # one. An AppImage only runs where the glibc is at least as new as the one
+  # it was linked against, so the runner sets the floor: 24.04's glibc 2.39.
+  # It cannot go lower while the daemon links the prebuilt static ONNX
+  # Runtime, which references glibc 2.38 symbols (a 22.04 link fails); the
+  # Linux CLI tarballs carry the same floor. The daemon sidecars are compiled
+  # here by the Tauri build hook; the CLI tarballs keep their own
+  # receipt-bound bytes.
   app-bundle-linux:
     name: Build Linux desktop app bundle
     needs: [resolve-promotion, bind-release-tag]
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     # About 25 minutes cold on a 4-core machine (sidecars, then the app, both
     # packages and the launch smoke); this leaves room for a slow
     # runner without letting a hung smoke sit for GitHub's six-hour default.
