@@ -200,6 +200,7 @@ fn update_config_request(
         ui_language: None,
         page_map_auto_suggest: None,
         chat_check_enabled: None,
+        space_folders: None,
         only_if_unset: None,
     }
 }

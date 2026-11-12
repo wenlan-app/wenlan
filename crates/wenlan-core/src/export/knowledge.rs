@@ -2545,7 +2545,14 @@ impl KnowledgeProjectionWriteRef<'_> {
             );
             return Ok(None);
         };
-        let folder = database.page_initial_folder_path(&page.id).await?;
+        let mut folder = database.page_initial_folder_path(&page.id).await?;
+        if folder.is_empty() {
+            if let Some(space_folder) =
+                crate::space_folders::new_page_folder(database, &self.writer.path, page).await
+            {
+                folder = space_folder;
+            }
+        }
         check_permit(&permit, page)?;
         skip_if_archived_since_read(
             page,
@@ -6048,7 +6055,14 @@ impl KnowledgeProjectionWrite {
             );
             return Ok(None);
         };
-        let folder = database.page_initial_folder_path(&page.id).await?;
+        let mut folder = database.page_initial_folder_path(&page.id).await?;
+        if folder.is_empty() {
+            if let Some(space_folder) =
+                crate::space_folders::new_page_folder(database, &self.writer.path, page).await
+            {
+                folder = space_folder;
+            }
+        }
         check_permit(&permit, page)?;
         skip_if_archived_since_read(
             page,

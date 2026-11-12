@@ -94,6 +94,32 @@ fn space_label(space: &str) -> String {
 }
 
 impl MemoryDB {
+    /// Every active page's Space by page id (`None` for none), for keeping
+    /// each Space's pages in its folder (`space_folders`).
+    pub async fn active_page_spaces(
+        &self,
+    ) -> Result<std::collections::HashMap<String, Option<String>>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query("SELECT id, space FROM pages WHERE status='active'", ())
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("page spaces: {e}")))?;
+        let mut out = std::collections::HashMap::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("page spaces row: {e}")))?
+        {
+            let id: String = row
+                .get(0)
+                .map_err(|e| WenlanError::VectorDb(format!("page id: {e}")))?;
+            let space: Option<String> = row
+                .get(1)
+                .map_err(|e| WenlanError::VectorDb(format!("page space: {e}")))?;
+            out.insert(id, space.filter(|s| !s.is_empty()));
+        }
+        Ok(out)
+    }
     /// Move one active ordinary page (kind `concept` or `authored`) into the
     /// registered Space `target`, or into no Space when `target` is `None` or
     /// empty. Only an unlocked caller (`ReadScope::Global`) may move a page

@@ -334,3 +334,26 @@ html[data-theme="light"] .wiki-shared-tools-rail { background: var(--mem-bg); }
 /* The shell renders the one directory into this slot while it is a column of
    the workspace; the slot itself takes no box, so the column keeps its rules. */
 .wiki-workspace-directory-slot { display: contents; }
+
+/* Asked once: keep each Space's pages in a folder of its own. */
+.wiki-space-folders-prompt {
+  margin: 0 10px 10px 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--mem-hover);
+  font-family: var(--mem-font-body);
+}
+.wiki-space-folders-ask { margin: 0; font-size: 13px; color: var(--mem-text); }
+.wiki-space-folders-hint { margin: 4px 0 8px; font-size: 12px; color: var(--mem-text-secondary); }
+.wiki-space-folders-actions { display: flex; gap: 8px; }
+.wiki-space-folders-actions button {
+  border: 0;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--mem-text);
+  background: var(--mem-surface);
+}
+.wiki-space-folders-actions .wiki-space-folders-yes { background: var(--mem-accent-page); color: var(--mem-bg); }

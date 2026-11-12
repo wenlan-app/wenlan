@@ -263,6 +263,41 @@ async fn sync_pass(
     // A file deleted in the folder archives its page, which a restore brings
     // back. Only a full pass decides, since a targeted one did not look.
     if only.is_none() {
+        // Each Space's pages in its folder: a file moved here follows its
+        // page's Space, and a page the person moved to another Space's
+        // folder takes that Space. Off until the person agrees.
+        let config = crate::config::load_config();
+        if config.space_folders == Some(true) && !crate::space_folders::is_on(knowledge_path) {
+            if let Err(error) = crate::space_folders::turn_on(knowledge_path) {
+                log::warn!("[space-folders] could not turn on: {error}");
+            }
+        }
+        if config.space_folders == Some(false) && crate::space_folders::is_on(knowledge_path) {
+            if let Err(error) = crate::space_folders::turn_off(knowledge_path) {
+                log::warn!("[space-folders] could not turn off: {error}");
+            }
+        }
+        if config.space_folders == Some(true) && crate::space_folders::is_on(knowledge_path) {
+            let skip: Vec<String> = config
+                .linked_vaults
+                .into_iter()
+                .map(|vault| vault.folder)
+                .collect();
+            match crate::space_folders::arrange(
+                db,
+                knowledge_path,
+                &crate::shared_space::settings_path(),
+                &skip,
+            )
+            .await
+            {
+                Ok(stats) if stats.moved + stats.respaced + stats.failed > 0 => {
+                    log::info!("[space-folders] {stats:?}")
+                }
+                Ok(_) => {}
+                Err(error) => log::warn!("[space-folders] pass failed: {error}"),
+            }
+        }
         finish_pending_adoptions(db, knowledge_path).await;
         archive_deleted_pages(db, knowledge_path, &mut stats).await;
     }

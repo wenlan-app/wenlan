@@ -1575,6 +1575,15 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
     if (typeof value !== "boolean") throw new Error("Invalid background AI setting");
     return value;
   },
+  get_space_folders: async () => {
+    const value = (await get("/api/config")).space_folders;
+    return typeof value === "boolean" ? value : null;
+  },
+  set_space_folders: async (a) => {
+    if (typeof a?.on !== "boolean") throw new Error("Invalid Space folders setting");
+    const updated = await put("/api/config", { space_folders: a.on });
+    if (updated?.space_folders !== a.on) throw new Error("The daemon does not support Space folders yet");
+  },
   set_ui_language: (a) => put("/api/config", { ui_language: String(a?.language ?? "") }).then(() => undefined),
   set_background_ai_enabled: async (a) => {
     if (typeof a?.enabled !== "boolean") throw new Error("Invalid background AI setting");

@@ -275,6 +275,8 @@ mod source_annotations_test;
 #[cfg(test)]
 mod source_lookup_plan_test;
 #[cfg(test)]
+mod space_folders_test;
+#[cfg(test)]
 mod space_rename_test;
 #[cfg(test)]
 pub(crate) mod steep_code_test;
