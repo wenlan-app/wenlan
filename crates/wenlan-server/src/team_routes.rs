@@ -438,12 +438,20 @@ async fn server_name(db: &wenlan_core::db::MemoryDB) -> Result<String, ServerErr
 /// the server who the key belongs to, and returns the Spaces they can use.
 /// Nothing is joined yet.
 pub async fn handle_join(
+    State(state): State<SharedState>,
     Json(req): Json<TeamJoinRequest>,
 ) -> Result<Json<TeamJoinResponse>, ServerError> {
     let (url, key) = join_parts(&req.code, req.key.as_deref())?;
-    let me = remote::me(&url, &key)
+    let mut me = remote::me(&url, &key)
         .await
         .map_err(ServerError::ValidationError)?;
+    // The name joining takes on (see handle_remember_membership), not the
+    // stand-in a server nobody sits at starts its owner with.
+    if me.role == TeamRole::Owner && me.name == OWNER_STAND_IN {
+        if let Some(name) = own_name(&state).await {
+            me.name = name;
+        }
+    }
     Ok(Json(TeamJoinResponse { url, me }))
 }
 
