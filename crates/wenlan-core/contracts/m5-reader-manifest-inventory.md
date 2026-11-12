@@ -1364,6 +1364,7 @@ carrying the authority of agreement.
 | `core/repair.rs::projection_page_row_from_snapshot` | `private` | no | no | — | `core/repair.rs::projection_page_receipt_sql` |
 | `core/repair_plan/deterministic.rs::resolve_current` | `pub(crate)` | yes | no | — | `core/repair_plan/deterministic.rs::resolve_duplicate_page_titles`, `core/repair_plan/deterministic.rs::resolve_orphan_links`, `core/repair_plan/deterministic.rs::resolve_source_pages` |
 | `core/repair_plan/deterministic.rs::target_still_actionable` | `pub(super)` | no | no | — | `core/repair_plan/deterministic.rs::renamed_page_title_still_actionable`, `core/repair_plan/deterministic.rs::resolve_orphan_links`, `core/repair_plan/deterministic.rs::resolve_source_pages` |
+| `core/shared_space/mod.rs::apply_create_untitled_body` | `private` | no | no | — | `core/db/page_drafts.rs::publish_page_draft` |
 | `core/shared_space/mod.rs::free_title` | `private` | no | no | — | `core/db.rs::list_pages_by_space` |
 | `core/shared_space/mod.rs::pass` | `private` | no | no | — | `core/db.rs::list_pages_by_space` |
 | `core/steep.rs::steep_work` | `private` | no | no | — | `core/db/steep.rs::list_steep_code_pages`, `core/db/steep.rs::list_steep_pages` |
@@ -1572,7 +1573,7 @@ carrying the authority of agreement.
 | `core/sentences.rs::recheck_sentence` | `pub` | no | **yes** | `server/sentence_routes.rs::handle_recheck_sentence` | `core/db/sentence_history.rs::set_page_citations_at_page_version` |
 | `core/sentences.rs::source_states` | `private` | no | no | — | `core/db/citation_sources.rs::citation_page_source` |
 | `core/shared_space/library.rs::write_copy` | `private` | no | no | — | `core/reading_copy.rs::pages_for_copy` |
-| `core/shared_space/mod.rs::apply_create` | `private` | no | no | — | `core/shared_space/mod.rs::free_title` |
+| `core/shared_space/mod.rs::apply_create` | `private` | no | no | — | `core/shared_space/mod.rs::apply_create_untitled_body`, `core/shared_space/mod.rs::free_title` |
 | `core/shared_space/mod.rs::apply_sources` | `private` | no | no | — | `core/db.rs::set_page_citations` |
 | `core/shared_space/mod.rs::apply_version` | `private` | no | no | — | `core/shared_space/mod.rs::free_title` |
 | `core/shared_space/mod.rs::held_space_of` | `private` | no | no | — | `core/db.rs::get_page` |

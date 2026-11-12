@@ -186,7 +186,8 @@ fn is_main(file: &SpaceFile, settings: &ShareSettings) -> bool {
 
 /// Whether AI may write or rewrite page text on this computer: always,
 /// unless it shares the library and another computer is the main one. The
-/// answer when the folder cannot be read is the last one known, else yes.
+/// answer when the folder cannot be read is the last one known, else no: a
+/// computer that cannot tell must not write over the main one's work.
 pub fn page_writing_allowed_at(settings_path: &Path) -> bool {
     let Ok(Some(settings)) = share_settings_at(settings_path, &Scope::Library) else {
         return true;
@@ -200,7 +201,7 @@ pub fn page_writing_allowed_at(settings_path: &Path) -> bool {
             with_known(settings_path, |known| known.main = Some(main));
             main
         }
-        _ => with_known(settings_path, |known| known.main).unwrap_or(true),
+        _ => with_known(settings_path, |known| known.main).unwrap_or(false),
     }
 }
 
@@ -294,9 +295,32 @@ async fn write_copy(db: &MemoryDB, settings_path: &Path, chosen: &Path) -> Resul
 /// app's capture sends to `/api/ingest/memory` (source `memory`, a
 /// `manual_` id, `capture_source` manual, no Space).
 pub async fn capture_text(db: &MemoryDB, title: &str, content: &str) -> Result<usize, WenlanError> {
+    capture_text_as(
+        db,
+        &format!("manual_{}", uuid::Uuid::new_v4()),
+        title,
+        content,
+    )
+    .await
+}
+
+/// The id an inbox file is kept under: the same file is the same memory,
+/// however often it is taken (a move to `已收` that failed, two computers
+/// that both took it).
+fn inbox_memory_id(title: &str, content: &str) -> String {
+    let digest = super::version::sha256_hex(format!("{title}\n{content}").as_bytes());
+    format!("manual_inbox_{}", &digest[..32])
+}
+
+async fn capture_text_as(
+    db: &MemoryDB,
+    source_id: &str,
+    title: &str,
+    content: &str,
+) -> Result<usize, WenlanError> {
     let doc = crate::sources::RawDocument {
         source: "memory".into(),
-        source_id: format!("manual_{}", uuid::Uuid::new_v4()),
+        source_id: source_id.to_string(),
         title: title.to_string(),
         content: content.to_string(),
         last_modified: chrono::Utc::now().timestamp(),
@@ -401,7 +425,15 @@ async fn take_inbox(db: &MemoryDB, settings_path: &Path, chosen: &Path) -> Resul
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| "Untitled".into());
-        match capture_text(db, &title, &text).await {
+        let id = inbox_memory_id(&title, &text);
+        let kept = db.get_memory_detail(&id).await.ok().flatten().is_some();
+        let saved = if kept {
+            // Taken before; only the move to `已收` is left.
+            Ok(1)
+        } else {
+            capture_text_as(db, &id, &title, &text).await
+        };
+        match saved {
             Ok(chunks) if chunks > 0 => {}
             Ok(_) => {
                 log::warn!(

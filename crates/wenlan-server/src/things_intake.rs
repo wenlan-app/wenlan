@@ -580,7 +580,21 @@ pub async fn dream_with(
         // Then tidy what the AI wrote around it (UX-GRAPH-7). A failure
         // here tidies nothing and does not stop the night. Each tidy keeps
         // its own map changes, so it can be taken back alone.
-        let mut tidied = tidy_thing(db, &thing.thing_id, model, writer).await;
+        // With a synced library only the main computer tidies: two computers
+        // hiding the same memories could each keep a different one, and the
+        // hides sync to both.
+        let tidy_here = tokio::task::spawn_blocking(|| {
+            wenlan_core::shared_space::library::page_writing_allowed_at(
+                &wenlan_core::shared_space::settings_path(),
+            )
+        })
+        .await
+        .unwrap_or(false);
+        let mut tidied = if tidy_here {
+            tidy_thing(db, &thing.thing_id, model, writer).await
+        } else {
+            Vec::new()
+        };
         for tidy in &mut tidied {
             let write = TidyMapWrite {
                 old: tidy.old.clone(),

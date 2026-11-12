@@ -2678,3 +2678,65 @@ async fn sharing_the_library_through_another_folder_writes_every_page_there() {
         .unwrap();
     assert_eq!(b.content(&id).await, "Fish.");
 }
+
+#[tokio::test]
+async fn a_page_with_a_title_and_no_text_reaches_the_other_computer() {
+    let chosen = tempfile::tempdir().unwrap();
+    let (a, b) = library_pair(chosen.path()).await;
+    let draft =
+        a.db.create_page_draft("Ideas", "", Some(SPACE), None)
+            .await
+            .unwrap();
+    let id = draft.id.clone();
+    a.db.publish_page_draft(&id, draft.version).await.unwrap();
+    lib_settle(&a, &b, chosen.path()).await;
+    let there = b.page(&id).await.expect("B has the empty page");
+    assert_eq!(there.title, "Ideas");
+    assert_eq!(there.status, "active");
+
+    a.edit(&id, "First idea.").await;
+    lib_settle(&a, &b, chosen.path()).await;
+    assert_eq!(b.content(&id).await, "First idea.");
+}
+
+#[tokio::test]
+async fn an_inbox_file_that_cannot_be_moved_is_still_kept_once() {
+    let chosen = tempfile::tempdir().unwrap();
+    let (a, _b) = library_pair(chosen.path()).await;
+    let inbox = library::inbox_folder(chosen.path());
+    std::fs::create_dir_all(&inbox).unwrap();
+    // `已收` cannot be made: a file has its name.
+    std::fs::write(inbox.join(library::TAKEN_DIR), "in the way").unwrap();
+    let idea = inbox.join("Idea.md");
+    std::fs::write(&idea, "Book the flights to Lisbon early.").unwrap();
+    age(&idea, 60);
+    for _ in 0..3 {
+        a.lib_sync(chosen.path(), None).await.unwrap();
+    }
+    assert!(idea.exists());
+    let kept =
+        a.db.list_memories(None, None, None, None, 50)
+            .await
+            .unwrap();
+    assert_eq!(kept.len(), 1, "{kept:?}");
+}
+
+#[tokio::test]
+async fn the_main_computer_stays_main_when_it_shares_the_library_again() {
+    let chosen = tempfile::tempdir().unwrap();
+    let (a, b) = library_pair(chosen.path()).await;
+    assert!(library::page_writing_allowed_at(&a.settings()));
+    assert!(leave_at(&a.settings(), &library()).unwrap());
+    a.lib_sync(chosen.path(), Some(&a_member(&b)))
+        .await
+        .unwrap();
+    assert!(
+        library::page_writing_allowed_at(&a.settings()),
+        "still main"
+    );
+    assert!(!library::page_writing_allowed_at(&b.settings()));
+}
+
+fn a_member(b: &Member) -> String {
+    b.library_member_id()
+}

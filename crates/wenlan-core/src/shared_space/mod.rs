@@ -361,6 +361,25 @@ fn change_settings<T>(
     Ok(out)
 }
 
+/// This computer's id in a library folder, made once and kept beside the
+/// sharing settings: the library shared again from here (stopped and
+/// started, or another folder) is the same computer, so it stays the main
+/// one when it was.
+fn this_computer_id(settings_path: &Path) -> String {
+    let file = settings_path.with_file_name("this-computer-id");
+    if let Ok(id) = std::fs::read_to_string(&file) {
+        let id = id.trim();
+        if version::is_safe_id(id) && !id.is_empty() {
+            return id.to_string();
+        }
+    }
+    let id = uuid::Uuid::new_v4().simple().to_string();
+    if let Err(error) = std::fs::write(&file, &id) {
+        log::warn!("[shared_space] this computer's id is not kept ({error})");
+    }
+    id
+}
+
 /// Stops sharing `scope` from here: this Wenlan forgets the folder and
 /// stops its passes. The pages here and everything in the folder stay as
 /// they are. Returns whether it was shared.
@@ -431,7 +450,7 @@ pub fn join_as(
         };
         let mut settings = settings;
         if matches!(scope, Scope::Library) && settings.device_id.is_empty() {
-            settings.device_id = uuid::Uuid::new_v4().simple().to_string();
+            settings.device_id = this_computer_id(path);
         }
         let changed = store.get(scope) != Some(&settings);
         if changed {
@@ -2265,6 +2284,11 @@ impl Pass<'_> {
         }
         let title = self.free_title(id, &head.page.title, head).await?;
         let agent = writer_edited_by(&head.meta.author, &self.settings.member_id);
+        if head.page.body.trim().is_empty() {
+            return self
+                .apply_create_untitled_body(id, &title, head, &agent)
+                .await;
+        }
         let distillation = crate::tuning::DistillationConfig::default();
         let write = crate::post_write::PageWrite::Create {
             page_id: Some(id),
@@ -2315,6 +2339,55 @@ impl Pass<'_> {
         // A create keeps no changelog; record the member so the page's rows
         // say who wrote it.
         self.db.record_page_writer(id, page.version, &agent).await?;
+        Ok(Some(if title == head.page.title {
+            page.version
+        } else {
+            0
+        }))
+    }
+
+    /// A page with a title and no text yet: made the way the app makes one
+    /// (a draft, then published), since a page write refuses an empty body.
+    async fn apply_create_untitled_body(
+        &self,
+        id: &str,
+        title: &str,
+        head: &PageVersion,
+        agent: &str,
+    ) -> Result<Option<i64>, WenlanError> {
+        let space = match &self.scope {
+            Scope::Space(space) => Some(space.as_str()),
+            Scope::Page(_) => None,
+            Scope::Library => named_space(head.space()),
+        };
+        let draft = match self
+            .db
+            .create_page_draft_with_id(id, title, &head.page.body, space, None)
+            .await
+        {
+            Ok(draft) => draft,
+            Err(error) => {
+                skipped_write(id, error)?;
+                return Ok(None);
+            }
+        };
+        let page = match self.db.publish_page_draft(id, draft.version).await {
+            Ok(crate::pages::PageDraftPublishOutcome::Published(page)) => page,
+            Ok(_) => {
+                log::info!("[shared_space] {id}: the empty page could not be published this pass");
+                return Ok(None);
+            }
+            Err(error) => {
+                skipped_write(id, error)?;
+                return Ok(None);
+            }
+        };
+        if let Some(root) = self.knowledge_path {
+            crate::export::knowledge::KnowledgeProjectionWrite::new(root.to_path_buf(), self.db)
+                .write_page_gated(self.db, &page)
+                .await?;
+        }
+        self.db.record_page_writer(id, page.version, agent).await?;
         Ok(Some(if title == head.page.title {
             page.version
         } else {
