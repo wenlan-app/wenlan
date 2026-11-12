@@ -339,7 +339,7 @@ html[data-theme="light"] .wiki-shared-tools-rail { background: var(--mem-bg); }
 .wiki-space-folders-prompt {
   margin: 0 10px 10px 8px;
   padding: 10px 12px;
-  border-radius: 8px;
+  border-radius: var(--mem-r-8);
   background: var(--mem-hover);
   font-family: var(--mem-font-body);
 }
@@ -348,7 +348,7 @@ html[data-theme="light"] .wiki-shared-tools-rail { background: var(--mem-bg); }
 .wiki-space-folders-actions { display: flex; gap: 8px; }
 .wiki-space-folders-actions button {
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--mem-r-6);
   padding: 4px 10px;
   font: inherit;
   font-size: 12px;
