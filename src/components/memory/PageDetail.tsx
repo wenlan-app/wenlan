@@ -2863,7 +2863,14 @@ export default function PageDetail({
   // The pencil sits beside the page's actions only on a page with a design
   // (UX-LOOK-2), so the design starts where the text's title does.
   const lookPencil = pageLook.hasLook
-    ? <LookPencil editing={!pageLook.shown} onChange={pageLook.choose} />
+    ? <LookPencil
+        editing={!pageLook.shown}
+        onChange={(next) => {
+          // Back to the design: save what was just typed so the design shows it.
+          if (next === "look") void flushEditor();
+          pageLook.choose(next);
+        }}
+      />
     : null;
   const documentTools = (
     <div className="page-document-tools">

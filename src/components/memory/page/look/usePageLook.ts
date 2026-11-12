@@ -23,8 +23,8 @@ export const lookQueryKey = (pageId: string) => ["page-look", pageId] as const;
 
 /**
  * A page's look and how it is shown: a page with a look opens on it every
- * time, "Edit text" shows the text until "Done", and the text shows when the
- * look cannot be shown. A failure lasts
+ * time, the pencil shows the text until it is pressed again, and the text
+ * shows when the look cannot be shown. A failure lasts
  * for that look and that version of the page; a new look or a changed page
  * tries again, and so does choosing Look.
  */
