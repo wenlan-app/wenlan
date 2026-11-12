@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-only
 # Installs what `pnpm tauri build` needs to compile and bundle the Linux desktop
 # app on an Ubuntu runner: the WebKitGTK 4.1 webview, the tray library, the
 # SVG/icon loader and the tools the AppImage bundler shells out to. xvfb is

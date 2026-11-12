@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-only
 # Proves a Linux desktop build is something a person can install and open,
 # rather than trusting that `tauri build` exiting 0 means that.
 #
