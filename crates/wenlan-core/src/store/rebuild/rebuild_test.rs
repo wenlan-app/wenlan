@@ -652,3 +652,103 @@ async fn what_the_ai_worked_out_comes_back_without_its_support_edges() {
         .await;
     assert!(refused.is_err(), "{refused:?}");
 }
+
+/// UX-LOOK-6: a page's looks, every version, are exported to a backstage
+/// settings file and come back in a rebuilt database; the file holding the
+/// pages never carries them.
+#[tokio::test]
+async fn ux_look_6_a_pages_looks_and_their_versions_survive_export_and_rebuild() {
+    let (db, _db_dir) = test_db().await;
+    db.insert_page_with_kind(
+        "pg1",
+        "Trip",
+        None,
+        "Body text.",
+        None,
+        Some("sp"),
+        &[],
+        "2026-10-31T00:00:00Z",
+        "authored",
+        "confirmed",
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    db.set_page_look("pg1", "<h1>first look</h1>", 1, Some("claude-code:s1"))
+        .await
+        .unwrap();
+    db.set_page_look("pg1", "<h1>second look</h1>", 1, None)
+        .await
+        .unwrap();
+    db.record_page_look_error("pg1", "ReferenceError: x")
+        .await
+        .unwrap();
+
+    let out = tempfile::tempdir().unwrap();
+    let data_root = tempfile::tempdir().unwrap();
+    let target = out.path().join("export");
+    export_lossless(
+        &db,
+        &crate::store::export::run::PagesFolder::default(),
+        data_root.path(),
+        &target,
+    )
+    .await
+    .unwrap();
+
+    // In a backstage settings file, and in no file of the pages.
+    let looks = std::fs::read_to_string(target.join("backstage/settings/looks.json")).unwrap();
+    assert!(looks.contains("first look") && looks.contains("second look"));
+    let mut stack = vec![target.clone()];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if !path.ends_with("backstage/settings/looks.json") {
+                if let Ok(text) = std::fs::read_to_string(&path) {
+                    assert!(
+                        !text.contains("first look") && !text.contains("second look"),
+                        "a look leaked into {}",
+                        path.display()
+                    );
+                }
+            }
+        }
+    }
+
+    let (fresh, _fresh_dir) = test_db().await;
+    let rebuilt = rebuild_tables(&target, &fresh).await.unwrap();
+    assert!(rebuilt.problems.is_empty(), "{:?}", rebuilt.problems);
+    let diffs = compare_tables(&db, &fresh, &["page_looks"]).await.unwrap();
+    assert!(diffs.is_empty(), "{diffs:#?}");
+
+    let active = fresh.get_active_page_look("pg1").await.unwrap().unwrap();
+    assert_eq!(active.html, "<h1>second look</h1>");
+    assert_eq!(active.last_error.as_deref(), Some("ReferenceError: x"));
+    let versions = fresh.list_page_look_versions("pg1").await.unwrap();
+    assert_eq!(versions.len(), 2);
+    assert_eq!(
+        versions
+            .iter()
+            .filter(|v| v.session.as_deref() == Some("claude-code:s1"))
+            .count(),
+        1
+    );
+    // The earlier version can still be put back.
+    assert!(fresh
+        .restore_page_look("pg1", Some(versions[1].id))
+        .await
+        .unwrap()
+        .is_some());
+    assert_eq!(
+        fresh
+            .get_active_page_look("pg1")
+            .await
+            .unwrap()
+            .unwrap()
+            .html,
+        "<h1>first look</h1>"
+    );
+}

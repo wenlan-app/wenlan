@@ -197,8 +197,8 @@ async fn deleting_a_page_deletes_its_looks() {
 }
 
 /// UX-LOOK-6 (and the byte-for-byte promise): a look is its own row on this
-/// computer. Setting one leaves the page as it was, and the table is not one
-/// the file migration moves into the vault.
+/// computer. Setting one leaves the page as it was, and the table is a File
+/// table, exported to a backstage settings file and never to the vault.
 #[tokio::test]
 async fn ux_look_6_a_look_is_its_own_local_row_and_leaves_the_page_untouched() {
     use crate::db::table_classes::{table_class, TableClass};
@@ -242,5 +242,5 @@ async fn ux_look_6_a_look_is_its_own_local_row_and_leaves_the_page_untouched() {
             &before.summary
         )
     );
-    assert_eq!(table_class("page_looks"), Some(TableClass::Cache));
+    assert_eq!(table_class("page_looks"), Some(TableClass::File));
 }
