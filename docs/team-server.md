@@ -116,6 +116,28 @@ everyone, or to some people, from the line under its title.
    `WENLAN_TEAM_NEW_OWNER_LINK=1`: a new one is printed and the old one stops
    working.
 
+### Keep it running
+
+A restart of the box brings the server back by itself (`--restart unless-stopped`).
+Two things still need a person:
+
+- **Updates.** The server does not update itself. When a new Wenlan is out:
+
+  ```bash
+  # with the compose file
+  docker compose -f docker/team/compose.yaml pull
+  docker compose -f docker/team/compose.yaml up -d
+  # or, started with docker run
+  docker pull ghcr.io/wenlan-app/wenlan-server:latest
+  docker rm -f wenlan
+  # then the same docker run line as before
+  ```
+
+  The team, its people and pages live in the `wenlan-data` volume and stay.
+- **Backups.** Everything is in the `wenlan-data` volume on that box. Back it
+  up with the host's own snapshots, or copy the volume. Each member's
+  computer also keeps a full copy of the Spaces open to them.
+
 ### From a terminal
 
 On the server itself, the same can be done with commands:
