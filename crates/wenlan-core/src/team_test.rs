@@ -5,6 +5,7 @@ fn access(space: &str, access: TeamAccess) -> TeamSpaceAccess {
     TeamSpaceAccess {
         space: space.into(),
         access,
+        id: None,
     }
 }
 
@@ -187,14 +188,19 @@ fn a_server_nobody_sits_at_has_one_owner_who_can_edit_every_hosted_space() {
 
     let found = authenticate(&path, &first).unwrap().unwrap();
     assert_eq!(found.access("Product"), Some(TeamAccess::Write));
-    let me = found.me(&["Product".to_string(), "Design".to_string()]);
+    let me = found.me(&[
+        ("Product".to_string(), PathBuf::from("/x/team-spaces/0a1b")),
+        ("Design".to_string(), PathBuf::from("/x/team-spaces/2c3d")),
+    ]);
     assert_eq!(me.role, TeamRole::Owner);
+    // A hosted Space carries its folder's id, which a rename keeps.
+    let with_id = |space: &str, id: &str| TeamSpaceAccess {
+        id: Some(id.to_string()),
+        ..access(space, TeamAccess::Write)
+    };
     assert_eq!(
         me.spaces,
-        vec![
-            access("Design", TeamAccess::Write),
-            access("Product", TeamAccess::Write)
-        ]
+        vec![with_id("Design", "2c3d"), with_id("Product", "0a1b")]
     );
 
     // A new owner link is the same owner with a new key; the old one stops.
@@ -242,6 +248,40 @@ fn a_space_that_stops_being_hosted_takes_its_access_with_it() {
     forget_space_access(&path, "Finance").unwrap();
     forget_space_access(&dir.path().join("none.json"), "Finance").unwrap();
     assert!(!dir.path().join("none.json").exists());
+}
+
+#[test]
+fn a_renamed_space_keeps_its_access_and_its_share() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(TEAM_FILE);
+    let (_, key) = add_member(&path, "Bob", &[access("Finance", TeamAccess::Read)]).unwrap();
+    set_everyone(&path, "Finance", Some(TeamAccess::Write)).unwrap();
+    rename_space_access(&path, "Finance", "Money").unwrap();
+    let found = authenticate(&path, &key).unwrap().unwrap();
+    assert_eq!(found.access("Money"), Some(TeamAccess::Read));
+    assert_eq!(found.access("Finance"), None, "the old name opens nothing");
+    assert_eq!(
+        read_team(&path).unwrap().everyone["Money"],
+        TeamAccess::Write
+    );
+
+    let settings = dir.path().join("shared-spaces.json");
+    let folder = new_hosted_folder(&settings);
+    let money = Scope::Space("Money".into());
+    shared_space::join_at(&settings, &money, &folder, "Server").unwrap();
+    assert!(shared_space::rename_share(&settings, "Money", "Cash").unwrap());
+    assert!(shared_space::share_settings_at(&settings, &money)
+        .unwrap()
+        .is_none());
+    let cash = shared_space::share_settings_at(&settings, &Scope::Space("Cash".into()))
+        .unwrap()
+        .unwrap();
+    assert_eq!(cash.folder, folder.to_string_lossy());
+    assert_eq!(hosted_space_id(&folder).unwrap().len(), 32);
+    // Not shared: nothing moves. Onto a share: refused.
+    assert!(!shared_space::rename_share(&settings, "Other", "Else").unwrap());
+    shared_space::join_at(&settings, &money, &folder, "Server").unwrap();
+    assert!(shared_space::rename_share(&settings, "Money", "Cash").is_err());
 }
 
 #[test]

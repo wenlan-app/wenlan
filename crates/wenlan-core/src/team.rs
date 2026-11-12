@@ -93,21 +93,32 @@ impl Member {
     }
 
     /// Who they are and every Space they can use, their own and everyone's
-    /// (the owner: every Space the server hosts, `hosted`).
-    pub fn me(&self, hosted: &[String]) -> TeamMe {
+    /// (the owner: every Space the server hosts, `hosted`, by name and
+    /// folder). A hosted Space carries its id, which a rename keeps.
+    pub fn me(&self, hosted: &[(String, PathBuf)]) -> TeamMe {
         let mut all = self.everyone.clone();
         all.extend(self.spaces.clone());
         if self.role == TeamRole::Owner {
-            for space in hosted {
+            for (space, _) in hosted {
                 all.insert(space.clone(), TeamAccess::Write);
             }
         }
+        let id_of = |space: &str| {
+            hosted
+                .iter()
+                .find(|(name, _)| name == space)
+                .and_then(|(_, folder)| hosted_space_id(folder))
+        };
         TeamMe {
             member_id: self.id.clone(),
             name: self.name.clone(),
             spaces: all
                 .into_iter()
-                .map(|(space, access)| TeamSpaceAccess { space, access })
+                .map(|(space, access)| TeamSpaceAccess {
+                    id: id_of(&space),
+                    space,
+                    access,
+                })
                 .collect(),
             team: self.team.clone(),
             role: self.role,
@@ -120,6 +131,7 @@ impl Member {
             .map(|(space, access)| TeamSpaceAccess {
                 space: space.clone(),
                 access: *access,
+                id: None,
             })
             .collect()
     }
@@ -405,6 +417,26 @@ pub fn forget_space_access(path: &Path, space: &str) -> Result<(), WenlanError> 
     })
 }
 
+/// Moves every access to the Space `from` (everyone's and each member's)
+/// to `to`: the Space was renamed. Does nothing without a team.
+pub fn rename_space_access(path: &Path, from: &str, to: &str) -> Result<(), WenlanError> {
+    let (from, to) = (from.trim(), to.trim());
+    if from.is_empty() || to.is_empty() || from == to || !path.exists() {
+        return Ok(());
+    }
+    change_team(path, |file| {
+        if let Some(access) = file.everyone.remove(from) {
+            file.everyone.insert(to.to_string(), access);
+        }
+        for member in &mut file.members {
+            if let Some(access) = member.spaces.remove(from) {
+                member.spaces.insert(to.to_string(), access);
+            }
+        }
+        Ok(())
+    })
+}
+
 /// Whether the team has an owner who manages it from another computer.
 pub fn has_owner(path: &Path) -> Result<bool, WenlanError> {
     Ok(read_team(path)?
@@ -587,6 +619,16 @@ pub fn hosted_folder(settings_path: &Path, space: &str) -> Result<Option<PathBuf
         .into_iter()
         .find(|(name, _)| name == space)
         .map(|(_, folder)| folder))
+}
+
+/// A hosted Space's id: its folder's name, made once when it was first
+/// hosted and kept when the Space is renamed.
+pub fn hosted_space_id(folder: &Path) -> Option<String> {
+    folder
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| version::is_safe_id(name))
+        .map(str::to_string)
 }
 
 /// A new folder for a Space this Wenlan starts hosting, beside the

@@ -201,6 +201,11 @@ pub struct HostLink {
     pub key: String,
     /// The Space's name on the server.
     pub space: String,
+    /// The Space's id on the server, which a rename there keeps: the Space
+    /// is followed by it when its name changes. Unknown until the server
+    /// first sends it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub space_id: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -394,6 +399,32 @@ pub fn leave_at(path: &Path, scope: &Scope) -> Result<bool, WenlanError> {
         }
         (removed.is_some(), removed.is_some())
     })
+}
+
+/// Moves what this Wenlan remembers of the Space `from` to `to`: the Space
+/// was renamed here, and it keeps its folder, member and team server.
+/// Returns whether it was shared. Refused when `to` is shared already.
+pub fn rename_share(path: &Path, from: &str, to: &str) -> Result<bool, WenlanError> {
+    if from == to {
+        return Ok(false);
+    }
+    change_settings(path, |store| {
+        if store.spaces.contains_key(to) {
+            return (
+                false,
+                Err(WenlanError::Validation(format!(
+                    "{to} is shared from here already"
+                ))),
+            );
+        }
+        match store.spaces.remove(from) {
+            Some(settings) => {
+                store.spaces.insert(to.to_string(), settings);
+                (true, Ok(true))
+            }
+            None => (false, Ok(false)),
+        }
+    })?
 }
 
 /// Forgets that this person left `space` on the server at `url`: they

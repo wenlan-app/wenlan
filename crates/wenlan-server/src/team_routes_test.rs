@@ -39,6 +39,7 @@ fn fixture() -> Fixture {
         vec![TeamSpaceAccess {
             space: "Design".into(),
             access,
+            id: None,
         }]
     };
     let writer = team::add_member(&team_path, "Amy", &access(TeamAccess::Write)).unwrap();
@@ -49,6 +50,7 @@ fn fixture() -> Fixture {
         &[TeamSpaceAccess {
             space: "Other".into(),
             access: TeamAccess::Write,
+            id: None,
         }],
     )
     .unwrap();
@@ -508,13 +510,13 @@ async fn the_owner_is_told_every_hosted_space_and_can_read_it() {
     assert_eq!(status, StatusCode::OK);
     let me: wenlan_types::team::TeamMe = serde_json::from_slice(&body).unwrap();
     assert_eq!(me.role, TeamRole::Owner);
+    assert_eq!(me.spaces.len(), 1);
     assert_eq!(
-        me.spaces,
-        vec![TeamSpaceAccess {
-            space: "Design".into(),
-            access: TeamAccess::Write
-        }]
+        (me.spaces[0].space.as_str(), me.spaces[0].access),
+        ("Design", TeamAccess::Write)
     );
+    // With its id, which members' computers follow it by when renamed.
+    assert!(me.spaces[0].id.is_some());
     let (status, _) = call(
         &f.state,
         Method::GET,

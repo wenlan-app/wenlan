@@ -146,24 +146,8 @@ pub async fn handle_update_space(
         s.db.clone().ok_or(ServerError::DbNotInitialized)?
     };
     let new_name = req.new_name.as_deref().unwrap_or(&name);
-    // A hosted Space's folder and its members' access are kept under its
-    // name, and members follow it by that name: renaming it would leave
-    // both behind, open to a later Space of the old name.
-    if new_name.trim() != name.trim() {
-        let scope = wenlan_core::shared_space::Scope::Space(name.clone());
-        let settings = wenlan_core::shared_space::settings_path();
-        if wenlan_core::shared_space::share_settings_at(&settings, &scope)?
-            .is_some_and(|share| share.hosted)
-        {
-            return Err(ServerError::ValidationError(format!(
-                "{name} is hosted for the team, so it keeps its name; stop hosting it to rename it"
-            )));
-        }
-    }
-    let space = db
-        .update_space(&name, new_name, req.description.as_deref())
-        .await
-        .map_err(ServerError::from)?;
+    let space =
+        crate::team_routes::rename_space(&db, &name, new_name, req.description.as_deref()).await?;
     Ok(Json(space))
 }
 
@@ -386,12 +370,13 @@ async fn host_sync(
         .filter(|space| !space.is_empty())
         .unwrap_or(name.trim())
         .to_string();
-    if !me.spaces.iter().any(|entry| entry.space == remote_space) {
+    let Some(remote_entry) = me.spaces.iter().find(|entry| entry.space == remote_space) else {
         return Err(ServerError::ValidationError(format!(
             "the team server does not let {} use {remote_space:?}",
             me.name
         )));
-    }
+    };
+    let space_id = remote_entry.id.clone();
     let space = match db
         .registered_space_or_none(Some(&name))
         .await
@@ -423,6 +408,7 @@ async fn host_sync(
                 url,
                 key,
                 space: remote_space,
+                space_id,
             }),
         },
     )

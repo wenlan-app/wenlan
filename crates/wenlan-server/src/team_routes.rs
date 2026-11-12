@@ -134,6 +134,86 @@ async fn on_server<T: serde::de::DeserializeOwned>(
         .map_err(|_| ServerError::Internal(format!("{url} answered something unexpected")))
 }
 
+/// Renames the Space `name` here (or only changes its description), and
+/// what it is shared through goes with it:
+/// - a Space synced from the team this person owns on another server is
+///   renamed there first, for the whole team;
+/// - a Space shared through a folder or a team keeps its folder and member;
+/// - a Space hosted here keeps its team access, and members' computers
+///   follow it by its id.
+pub(crate) async fn rename_space(
+    db: &wenlan_core::db::MemoryDB,
+    name: &str,
+    new_name: &str,
+    description: Option<&str>,
+) -> Result<wenlan_core::db::Space, ServerError> {
+    let new_name = new_name.trim();
+    let settings = shared_space::settings_path();
+    let share = shared_space::share_settings_at(&settings, &Scope::Space(name.to_string()))?;
+    let renaming = new_name != name;
+    if renaming && share.is_some() {
+        if shared_space::share_settings_at(&settings, &Scope::Space(new_name.to_string()))?
+            .is_some()
+        {
+            return Err(ServerError::ValidationError(format!(
+                "{new_name} is shared from here already"
+            )));
+        }
+        let owned = blocking({
+            let settings = settings.clone();
+            move || shared_space::owned_team(&settings)
+        })
+        .await?;
+        let host = share.as_ref().and_then(|share| share.host.as_ref());
+        if let (Some(owned), Some(host)) = (owned, host) {
+            if owned.0 == host.url {
+                let request = TeamHostSpaceRequest {
+                    space: host.space.clone(),
+                    everyone: None,
+                    rename_to: Some(new_name.to_string()),
+                };
+                let _: wenlan_types::shared_space::SharedSyncCounts =
+                    on_server(&owned, reqwest::Method::POST, "/spaces", json_of(&request)).await?;
+            }
+        }
+    }
+    let space = db
+        .update_space(name, new_name, description)
+        .await
+        .map_err(ServerError::from)?;
+    if renaming {
+        if let Some(share) = share {
+            let (from, to) = (name.to_string(), new_name.to_string());
+            blocking(move || {
+                shared_space::rename_share(&settings, &from, &to)?;
+                if share.hosted {
+                    team::rename_space_access(&team::team_path(), &from, &to)?;
+                }
+                // Renamed on the team server just now: this computer
+                // follows it under its new name there.
+                if let Some(host) = share.host.filter(|host| host.space == from) {
+                    let owner = shared_space::owned_team(&settings)?
+                        .is_some_and(|(url, _)| url == host.url);
+                    if owner {
+                        shared_space::update_share(
+                            &settings,
+                            &Scope::Space(to.clone()),
+                            |share| {
+                                if let Some(host) = share.host.as_mut() {
+                                    host.space = to.clone();
+                                }
+                            },
+                        )?;
+                    }
+                }
+                Ok(())
+            })
+            .await?;
+        }
+    }
+    Ok(space)
+}
+
 /// This computer's person's name, as their profile has it.
 async fn own_name(state: &SharedState) -> Option<String> {
     let db = { state.read().await.db.clone() }?;
@@ -209,6 +289,7 @@ pub async fn handle_team_status() -> Result<Json<TeamStatus>, ServerError> {
                 .map(|(space, access)| wenlan_types::team::TeamSpaceAccess {
                     space: space.clone(),
                     access: *access,
+                    id: None,
                 })
                 .collect(),
             spaces: spaces.into_iter().map(|(name, _)| name).collect(),
@@ -387,6 +468,15 @@ pub async fn handle_host_space(
         .await
         .map_err(|e| ServerError::Internal(e.to_string()))?
         .ok_or_else(|| ServerError::NotFound(format!("no Space named {:?}", req.space)))?;
+    if let Some(new_name) = req.rename_to.as_deref() {
+        let description = db
+            .get_space(&space)
+            .await
+            .map_err(|e| ServerError::Internal(e.to_string()))?
+            .and_then(|space| space.description);
+        rename_space(&db, &space, new_name, description.as_deref()).await?;
+        return Ok(Json(Default::default()));
+    }
     let settings = shared_space::settings_path();
     let scope = Scope::Space(space.clone());
     if let Some(everyone) = req.everyone {
@@ -899,10 +989,7 @@ async fn team_me(State(state): State<TeamState>, Extension(member): Extension<Me
     let settings = state.settings_path.clone();
     let hosted = tokio::task::spawn_blocking(move || team::hosted_spaces(&settings)).await;
     match hosted {
-        Ok(Ok(hosted)) => {
-            let names: Vec<String> = hosted.into_iter().map(|(name, _)| name).collect();
-            Json(member.me(&names)).into_response()
-        }
+        Ok(Ok(hosted)) => Json(member.me(&hosted)).into_response(),
         _ => (
             StatusCode::INTERNAL_SERVER_ERROR,
             "the Spaces cannot be read",
@@ -968,7 +1055,7 @@ async fn team_admin(
     // server has nobody at it to make one.
     if rest == "/spaces" {
         if let Ok(host) = serde_json::from_slice::<TeamHostSpaceRequest>(&body) {
-            if host.everyone.is_none() {
+            if host.everyone.is_none() && host.rename_to.is_none() {
                 let made = client
                     .post(format!("{}/api/spaces", state.daemon_url))
                     .json(&serde_json::json!({ "name": host.space.trim() }))

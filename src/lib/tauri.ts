@@ -1063,6 +1063,8 @@ export type TeamAccess = "write" | "read";
 export interface TeamSpaceAccess {
   space: string;
   access: TeamAccess;
+  /** A hosted Space's id on the server, kept when it is renamed; never shown. */
+  id?: string;
 }
 
 /** A person on the team server. `id` only tells people apart; never show it. */

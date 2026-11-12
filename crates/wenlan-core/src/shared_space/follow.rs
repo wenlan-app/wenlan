@@ -55,6 +55,9 @@ pub(super) async fn follow_teams(db: &MemoryDB, settings_path: &Path) {
         if let Err(error) = super::remember_membership(settings_path, &url, &key, &me) {
             log::warn!("[shared_space] team {url}: membership not kept: {error}");
         }
+        if let Err(error) = follow_renames(db, settings_path, &url, &me).await {
+            log::warn!("[shared_space] team {url}: a renamed Space not followed: {error}");
+        }
         match follow_host(db, settings_path, &url, &key, &me).await {
             Ok(added) => {
                 for space in added {
@@ -87,6 +90,7 @@ pub(super) async fn follow_host(
             url: url.to_string(),
             key: key.to_string(),
             space: remote_space.to_string(),
+            space_id: entry.id.clone(),
         };
         let folder = remote::mirror_folder(settings_path, url, remote_space)
             .to_string_lossy()
@@ -115,6 +119,76 @@ pub(super) async fn follow_host(
         }
     }
     Ok(added)
+}
+
+/// A Space renamed on the server keeps its id there: the share here
+/// follows it to the new name, and so does the Space here when it carried
+/// the server's name (`<old>` or `<old> (<team>)`; a name this person chose
+/// stays theirs, as does a name another Space here already has).
+pub(super) async fn follow_renames(
+    db: &MemoryDB,
+    settings_path: &Path,
+    url: &str,
+    me: &TeamMe,
+) -> Result<(), WenlanError> {
+    for entry in &me.spaces {
+        let Some(id) = entry.id.as_deref() else {
+            continue;
+        };
+        // Under the lock: which share here is this Space, and the name it
+        // had on the server. A share from before ids were sent learns its id.
+        let renamed = change_settings(settings_path, |store| {
+            let found = store.spaces.iter_mut().find(|(_, settings)| {
+                settings.host.as_ref().is_some_and(|host| {
+                    host.url == url
+                        && match host.space_id.as_deref() {
+                            Some(known) => known == id,
+                            None => host.space == entry.space,
+                        }
+                })
+            });
+            let Some((local, settings)) = found else {
+                return (false, None);
+            };
+            let Some(host) = settings.host.as_mut() else {
+                return (false, None);
+            };
+            let before = host.clone();
+            host.space_id = Some(id.to_string());
+            let old = std::mem::replace(&mut host.space, entry.space.clone());
+            let changed = *host != before;
+            (changed, (old != entry.space).then(|| (local.clone(), old)))
+        })?;
+        let Some((local, old)) = renamed else {
+            continue;
+        };
+        log::info!("[shared_space] team {url}: {old} is now {}", entry.space);
+        let new_local = if local == old {
+            entry.space.clone()
+        } else if let Some(suffix) = local
+            .strip_prefix(&old)
+            .filter(|rest| rest.starts_with(" ("))
+        {
+            format!("{}{suffix}", entry.space)
+        } else {
+            continue;
+        };
+        if db
+            .registered_space_or_none(Some(&new_local))
+            .await?
+            .is_some()
+        {
+            continue;
+        }
+        let description = db
+            .get_space(&local)
+            .await?
+            .and_then(|space| space.description);
+        db.update_space(&local, &new_local, description.as_deref())
+            .await?;
+        super::rename_share(settings_path, &local, &new_local)?;
+    }
+    Ok(())
 }
 
 fn followed(spaces: &BTreeMap<String, ShareSettings>, url: &str, remote_space: &str) -> bool {
@@ -177,7 +251,7 @@ mod tests {
 
     use super::*;
     use crate::events::NoopEmitter;
-    use crate::shared_space::Scope;
+    use crate::shared_space::{share_settings_at, Scope};
 
     const URL: &str = "https://team.example.com";
 
@@ -190,6 +264,7 @@ mod tests {
                 .map(|(space, access)| TeamSpaceAccess {
                     space: space.to_string(),
                     access: *access,
+                    id: None,
                 })
                 .collect(),
             team: None,
@@ -260,6 +335,89 @@ mod tests {
             .unwrap()
             .left
             .is_empty());
+    }
+
+    fn with_ids(me: TeamMe, ids: &[&str]) -> TeamMe {
+        let spaces = me
+            .spaces
+            .into_iter()
+            .zip(ids)
+            .map(|(entry, id)| TeamSpaceAccess {
+                id: Some(id.to_string()),
+                ..entry
+            })
+            .collect();
+        TeamMe { spaces, ..me }
+    }
+
+    #[tokio::test]
+    async fn a_space_renamed_on_the_server_is_followed_by_its_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let settings = dir.path().join(super::super::SETTINGS_FILE);
+        let db = MemoryDB::new(&dir.path().join("wenlan.db"), Arc::new(NoopEmitter))
+            .await
+            .unwrap();
+        // A personal Space named like the team's makes the team's suffixed.
+        db.create_space("Design", None, false).await.unwrap();
+        // Followed before the server sent ids.
+        let before = me(&[
+            ("Product", TeamAccess::Write),
+            ("Design", TeamAccess::Write),
+        ]);
+        follow_host(&db, &settings, URL, "wlt_k", &before)
+            .await
+            .unwrap();
+        db.update_space("Product", "Product", Some("kept"))
+            .await
+            .unwrap();
+        let host_of = |name: &str| {
+            share_settings_at(&settings, &Scope::Space(name.into()))
+                .unwrap()
+                .and_then(|share| share.host)
+        };
+
+        // The same names, now with ids: each share learns its id.
+        let ids = with_ids(before.clone(), &["s1", "s2"]);
+        follow_renames(&db, &settings, URL, &ids).await.unwrap();
+        assert_eq!(host_of("Product").unwrap().space_id.as_deref(), Some("s1"));
+
+        // Renamed on the server: the share and the Space here follow, and
+        // follow_host adds nothing new.
+        let renamed = with_ids(
+            me(&[
+                ("Roadmap", TeamAccess::Write),
+                ("Visual", TeamAccess::Write),
+            ]),
+            &["s1", "s2"],
+        );
+        follow_renames(&db, &settings, URL, &renamed).await.unwrap();
+        assert!(follow_host(&db, &settings, URL, "wlt_k", &renamed)
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(host_of("Product").is_none());
+        assert_eq!(host_of("Roadmap").unwrap().space, "Roadmap");
+        let roadmap = db.get_space("Roadmap").await.unwrap().unwrap();
+        assert_eq!(roadmap.description.as_deref(), Some("kept"));
+        assert!(db.get_space("Product").await.unwrap().is_none());
+        assert_eq!(
+            host_of("Visual (team.example.com)").unwrap().space,
+            "Visual"
+        );
+        assert!(
+            db.get_space("Design").await.unwrap().is_some(),
+            "personal stays"
+        );
+
+        // A name this person chose here stays theirs; the share follows.
+        db.update_space("Roadmap", "Our plans", None).await.unwrap();
+        super::super::rename_share(&settings, "Roadmap", "Our plans").unwrap();
+        let again = with_ids(
+            me(&[("Plans", TeamAccess::Write), ("Visual", TeamAccess::Write)]),
+            &["s1", "s2"],
+        );
+        follow_renames(&db, &settings, URL, &again).await.unwrap();
+        assert_eq!(host_of("Our plans").unwrap().space, "Plans");
     }
 
     #[tokio::test]
