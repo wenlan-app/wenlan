@@ -12,7 +12,8 @@ export function useShares() {
   return useQuery({
     queryKey: SHARES_KEY,
     queryFn: () => listShares(),
-    refetchInterval: 10_000,
+    // Every second while a pass reports how far it is, else every 10.
+    refetchInterval: (query) => (query.state.data?.some((share) => share.progress) ? 1_000 : 10_000),
     staleTime: 5_000,
   });
 }

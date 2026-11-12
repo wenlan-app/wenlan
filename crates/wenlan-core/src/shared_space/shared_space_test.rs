@@ -546,3 +546,51 @@ fn a_drive_copy_of_a_folder_is_read_as_the_folder() {
     assert_eq!(read.pages["page_1"].len(), 1);
     assert_eq!(read.skipped, 0);
 }
+
+#[test]
+fn the_library_goes_into_google_drive_by_itself() {
+    use super::library::{suggested_folder, CloudDrive, ENGINE_DIR};
+    let home = tempfile::tempdir().unwrap();
+    let home = home.path();
+    assert_eq!(suggested_folder(home, &[]), None);
+
+    // iCloud only: there.
+    let icloud = home.join("Library/Mobile Documents/com~apple~CloudDocs");
+    std::fs::create_dir_all(&icloud).unwrap();
+    assert_eq!(
+        suggested_folder(home, &[]),
+        Some((CloudDrive::ICloud, icloud.join("Wenlan")))
+    );
+
+    // Google Drive wins over iCloud, since a phone AI reads only it.
+    let drive = home.join("Library/CloudStorage/GoogleDrive-me@example.com/我的雲端硬碟");
+    std::fs::create_dir_all(&drive).unwrap();
+    assert_eq!(
+        suggested_folder(home, &[]),
+        Some((CloudDrive::GoogleDrive, drive.join("Wenlan")))
+    );
+
+    // The other computer's library there, under any name, is the one.
+    let theirs = drive.join("文瀾");
+    std::fs::create_dir_all(theirs.join(ENGINE_DIR)).unwrap();
+    std::fs::write(theirs.join(ENGINE_DIR).join(super::SPACE_FILE), "{}").unwrap();
+    assert_eq!(
+        suggested_folder(home, &[]),
+        Some((CloudDrive::GoogleDrive, theirs))
+    );
+}
+
+#[test]
+fn google_drive_for_desktop_on_windows_is_its_own_drive() {
+    use super::library::{suggested_folder, CloudDrive};
+    let home = tempfile::tempdir().unwrap();
+    let g = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(g.path().join("My Drive")).unwrap();
+    assert_eq!(
+        suggested_folder(home.path(), &[g.path().to_path_buf()]),
+        Some((
+            CloudDrive::GoogleDrive,
+            g.path().join("My Drive").join("Wenlan")
+        ))
+    );
+}

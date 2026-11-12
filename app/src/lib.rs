@@ -1740,6 +1740,7 @@ pub fn run() {
             search::stop_sharing_library,
             search::set_library_main_device,
             search::look_in_shared_folder,
+            search::suggest_library_folder,
             search::reveal_shared_folder,
             search::move_space,
             search::confirm_space,

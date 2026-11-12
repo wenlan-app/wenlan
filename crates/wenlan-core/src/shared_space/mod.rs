@@ -775,6 +775,43 @@ struct SpaceRun {
     /// Held through a pass: the route waits for it, the daemon's poll skips.
     lock: tokio::sync::Mutex<()>,
     last: std::sync::Mutex<Option<SharedSyncRun>>,
+    /// The pass running now: pages done of all it goes through.
+    progress: std::sync::Mutex<Option<wenlan_types::shared_space::SharedSyncProgress>>,
+}
+
+/// Keeps a running pass's progress where its status reads it, and clears
+/// it when the pass ends, however it ends.
+struct Progress(Arc<SpaceRun>);
+
+impl Progress {
+    fn start(settings_path: &Path, key: &str, total: usize) -> Self {
+        let progress = Progress(space_run(settings_path, key));
+        progress.set(0, total);
+        progress
+    }
+
+    fn set(&self, done: usize, total: usize) {
+        let clamp = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+        *self
+            .0
+            .progress
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+            Some(wenlan_types::shared_space::SharedSyncProgress {
+                done: clamp(done),
+                total: clamp(total),
+            });
+    }
+}
+
+impl Drop for Progress {
+    fn drop(&mut self) {
+        *self
+            .0
+            .progress
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+    }
 }
 
 /// One entry per shared Space or page of each Wenlan (its settings file).
@@ -901,11 +938,16 @@ fn status_of(
     settings: ShareSettings,
     team: Option<wenlan_types::team::TeamInfo>,
 ) -> SharedSyncStatus {
-    let last = space_run(settings_path, &scope.key())
+    let run = space_run(settings_path, &scope.key());
+    let last = run
         .last
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .clone();
+    let progress = *run
+        .progress
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let space_file = read_space_file(&folder_for(scope, &settings.folder))
         .ok()
         .flatten();
@@ -966,6 +1008,7 @@ fn status_of(
         } else {
             None
         },
+        progress,
     }
 }
 
@@ -1738,7 +1781,10 @@ async fn pass(
         // links to it.
         memories::sync(db, settings, &ctx.folder, &ctx.own_spaces, &mut counts).await?;
     }
-    for id in ids {
+    let total = ids.len();
+    let progress = Progress::start(settings_path, &key, total);
+    for (done, id) in ids.into_iter().enumerate() {
+        progress.set(done, total);
         if hold.contains(id) {
             counts.held_back += 1;
             continue;

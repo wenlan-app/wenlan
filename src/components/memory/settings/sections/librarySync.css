@@ -4,3 +4,12 @@
 .library-sync-what { margin:0;display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 16px;font-size:13px; }
 .library-sync-what dt { color:var(--mem-text-secondary);white-space:nowrap; }
 .library-sync-what dd { margin:0; }
+.library-sync-next { display:flex;gap:16px;align-items:flex-start;justify-content:space-between; }
+.library-sync-next-copy { min-width:0; }
+.library-sync-next-title { font-family:var(--mem-font-body);font-size:var(--mem-text-md);font-weight:500;color:var(--mem-text); }
+.library-sync-steps { list-style:none;margin:6px 0 0;padding:0;display:grid;grid-template-columns:auto auto minmax(0,1fr);gap:6px 10px;align-items:baseline;font-size:var(--mem-text-sm);color:var(--mem-text-secondary); }
+.library-sync-steps li { display:contents; }
+.library-sync-who { color:var(--mem-text);white-space:nowrap;padding-right:6px; }
+.library-sync-dot { flex:none;width:10px;height:10px;border-radius:50%;border:1.5px solid var(--mem-text-tertiary);transform:translateY(1px); }
+.library-sync-dot[data-done="true"] { border-color:var(--mem-status-success-text, var(--mem-accent));background:var(--mem-status-success-text, var(--mem-accent)); }
+.library-sync-howto { margin:0;padding-left:1.4em;list-style:decimal;display:flex;flex-direction:column;gap:6px; }

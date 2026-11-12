@@ -1051,6 +1051,8 @@ export interface SharedStatus {
   main_device?: string | null;
   this_device?: string | null;
   reading_copy_error?: string | null;
+  /** Pages a pass running now has gone through, of all it goes through. */
+  progress?: { done: number; total: number } | null;
 }
 
 /** What a folder shares, before joining it. */
@@ -1189,6 +1191,18 @@ export async function stopSharingLibrary(): Promise<void> {
 
 export async function setLibraryMainDevice(deviceId: string): Promise<SharedStatus> {
   return invoke("set_library_main_device", { deviceId });
+}
+
+/** Where syncing goes when the person turns it on: this computer's Google
+ *  Drive (else iCloud Drive), with a library already there taken first.
+ *  `folder` is null when the computer has neither. */
+export interface SuggestedLibraryFolder {
+  folder: string | null;
+  cloud: "google_drive" | "icloud" | null;
+}
+
+export async function suggestLibraryFolder(): Promise<SuggestedLibraryFolder> {
+  return invoke("suggest_library_folder");
 }
 
 export async function lookInSharedFolder(folder: string): Promise<SharedFolder | null> {

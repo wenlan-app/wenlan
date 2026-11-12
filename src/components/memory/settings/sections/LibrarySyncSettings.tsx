@@ -6,12 +6,15 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { open as openExternal } from "@tauri-apps/plugin-shell";
 import {
+  listShares,
   lookInSharedFolder,
   revealSharedFolder,
   setLibraryMainDevice,
   shareLibrary,
   stopSharingLibrary,
+  suggestLibraryFolder,
   type SharedFolder,
   type SharedStatus,
 } from "../../../../lib/tauri";
@@ -24,6 +27,9 @@ import { Button, Select, SettingRow } from "../primitives";
 import "../../sharing/sharing.css";
 import "./librarySync.css";
 
+/** Google Drive for desktop, for a computer that has no Google Drive yet. */
+const GOOGLE_DRIVE_DOWNLOAD = "https://www.google.com/drive/download/";
+
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -34,13 +40,16 @@ function libraryShare(shares: readonly SharedStatus[] | undefined): SharedStatus
 
 /** The line under the row's title once syncing is on. */
 function syncLine(share: SharedStatus, t: TFunction, locale: string): string {
+  const cloudLabel = cloudName(share.folder, t) ?? shortFolder(share.folder, t);
+  if (share.progress && share.progress.total > 0) {
+    return `${cloudLabel} · ${t("librarySync.progress", { done: share.progress.done, total: share.progress.total })}`;
+  }
   const last = share.last;
   if (!last) return t("sharing.syncing");
   if (last.paused) return t("sharing.paused");
   if (last.counts.skipped > 0) return t("sharing.waiting", { count: last.counts.skipped });
-  const cloud = cloudName(share.folder, t) ?? shortFolder(share.folder, t);
   const when = relativeMs(Date.parse(last.at), locale);
-  return `${cloud} · ${t("librarySync.synced", { when })}`;
+  return `${cloudLabel} · ${t("librarySync.synced", { when })}`;
 }
 
 export default function LibrarySyncSettings() {
@@ -94,6 +103,7 @@ export default function LibrarySyncSettings() {
         warning={warning}
         error={problem ? t("librarySync.failed", { message: problem }) : null}
       />
+      {share && <NextSteps share={share} t={t} />}
       {share && (
         <ComputersRow
           share={share}
@@ -130,6 +140,96 @@ export default function LibrarySyncSettings() {
         />
       )}
     </SettingsGroup>
+  );
+}
+
+const NEXT_DONE_KEY = "wenlan-sync-next-done";
+
+function readNextDone(): boolean {
+  try {
+    return localStorage.getItem(NEXT_DONE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** What is left to do once syncing is on: the other computer (ticked by
+ *  itself once it joins) and the phone's AI (Wenlan cannot see that one, so
+ *  the person closes the row). */
+function NextSteps({ share, t }: { readonly share: SharedStatus; readonly t: TFunction }) {
+  const [done, setDone] = useState(readNextDone);
+  const [howTo, setHowTo] = useState(false);
+  if (done) return null;
+  const other = (share.devices ?? []).find((device) => device.id !== share.this_device);
+  const phoneOk = cloudName(share.folder, t) === "Google Drive";
+  const folderName = share.folder.split(/[\\/]+/).filter(Boolean).pop() ?? share.folder;
+  const close = () => {
+    try {
+      localStorage.setItem(NEXT_DONE_KEY, "1");
+    } catch {
+      // Shown again next time; nothing is lost.
+    }
+    setDone(true);
+  };
+  return (
+    <div className="settings-row px-5 py-4">
+      <div className="library-sync-next">
+        <div className="library-sync-next-copy">
+          <div className="library-sync-next-title">{t("librarySync.next")}</div>
+          <ul className="library-sync-steps">
+            <li>
+              <span className="library-sync-dot" data-done={Boolean(other)} aria-hidden="true" />
+              <span className="library-sync-who">{t("librarySync.nextOther")}</span>
+              <span>{other ? t("librarySync.nextOtherDone", { name: other.name }) : t("librarySync.nextOtherTodo")}</span>
+            </li>
+            <li>
+              <span className="library-sync-dot" aria-hidden="true" />
+              <span className="library-sync-who">{t("librarySync.nextPhone")}</span>
+              {phoneOk ? (
+                <span>
+                  {t("librarySync.nextPhoneTodo")}
+                  {" · "}
+                  <button type="button" className="share-link" onClick={() => setHowTo(true)}>{t("librarySync.howTo")}</button>
+                </span>
+              ) : (
+                <span>{t("librarySync.phoneAiNeedsDrive")}</span>
+              )}
+            </li>
+          </ul>
+        </div>
+        <Button variant="secondary" size="sm" onClick={close}>{t("librarySync.nextDone")}</Button>
+      </div>
+      {howTo && <PhoneHowTo folder={folderName} t={t} onClose={() => setHowTo(false)} />}
+    </div>
+  );
+}
+
+function PhoneHowTo({ folder, t, onClose }: { readonly folder: string; readonly t: TFunction; readonly onClose: () => void }) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (dialog && !dialog.open) dialog.showModal();
+    return () => dialog?.close();
+  }, []);
+  return (
+    <dialog
+      ref={dialogRef}
+      className="share-dialog"
+      aria-labelledby="library-sync-phone-title"
+      onCancel={(event) => { event.preventDefault(); onClose(); }}
+    >
+      <form method="dialog" onSubmit={(event) => { event.preventDefault(); onClose(); }}>
+        <h2 id="library-sync-phone-title">{t("librarySync.phoneTitle")}</h2>
+        <ol className="library-sync-howto">
+          <li>{t("librarySync.phoneStep1")}</li>
+          <li>{t("librarySync.phoneStep2", { folder })}</li>
+        </ol>
+        <p className="share-hint">{t("librarySync.phoneInbox")}</p>
+        <div className="share-actions">
+          <button type="submit" className="share-primary">{t("librarySync.gotIt")}</button>
+        </div>
+      </form>
+    </dialog>
   );
 }
 
@@ -190,15 +290,17 @@ export function LibrarySyncDialog({ onClose }: { readonly onClose: () => void })
   const [found, setFound] = useState<SharedFolder | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Where the folder came from: found by itself in this computer's cloud
+  // drive, or none found (then the person is told how to get Google Drive).
+  const [picked, setPicked] = useState<"google_drive" | "icloud" | "none" | null>(null);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   useEffect(() => {
     const dialog = dialogRef.current;
     if (dialog && !dialog.open) dialog.showModal();
     return () => dialog?.close();
   }, []);
 
-  const choose = async () => {
-    const chosen = await openDialog({ directory: true, multiple: false });
-    if (typeof chosen !== "string") return;
+  const lookIn = async (chosen: string) => {
     setFolder(chosen);
     setFound(null);
     setError(null);
@@ -207,6 +309,47 @@ export function LibrarySyncDialog({ onClose }: { readonly onClose: () => void })
     } catch {
       // A folder that cannot be read is reported when syncing starts.
     }
+  };
+  const chosenByHand = useRef(false);
+  useEffect(() => {
+    let live = true;
+    suggestLibraryFolder()
+      .then(async (suggested) => {
+        if (!live || chosenByHand.current) return;
+        if (!suggested.folder || !suggested.cloud) {
+          setPicked("none");
+          return;
+        }
+        setPicked(suggested.cloud);
+        await lookIn(suggested.folder);
+      })
+      .catch(() => {
+        if (live && !chosenByHand.current) setPicked("none");
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+  // A first sync of a big library takes a while: show how far it is.
+  useEffect(() => {
+    if (!pending) {
+      setProgress(null);
+      return;
+    }
+    const timer = window.setInterval(() => {
+      listShares()
+        .then((shares) => setProgress(libraryShare(shares)?.progress ?? null))
+        .catch(() => undefined);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [pending]);
+
+  const choose = async () => {
+    const chosen = await openDialog({ directory: true, multiple: false });
+    if (typeof chosen !== "string") return;
+    chosenByHand.current = true;
+    setPicked(null);
+    await lookIn(chosen);
   };
   const merging = found?.kind === "library";
   // A Space or a page share keeps its folder to itself.
@@ -242,6 +385,7 @@ export function LibrarySyncDialog({ onClose }: { readonly onClose: () => void })
           <>
             <h2 id="library-sync-title">{t("librarySync.mergeTitle")}</h2>
             <p className="library-sync-text">{t("librarySync.mergeText")}</p>
+            {folder && <p className="share-hint">{shortFolder(folder, t)}</p>}
           </>
         ) : (
           <>
@@ -252,9 +396,17 @@ export function LibrarySyncDialog({ onClose }: { readonly onClose: () => void })
                   <FolderIcon />
                   <span>{folder ? shortFolder(folder, t) : t("sharing.noFolder")}</span>
                 </span>
-                <button type="button" className="share-secondary" onClick={() => void choose()} disabled={pending}>{t("sharing.choose")}</button>
+                <button type="button" className="share-secondary" onClick={() => void choose()} disabled={pending}>{t(folder ? "librarySync.chooseOther" : "sharing.choose")}</button>
               </div>
-              <p className="share-hint">{t("librarySync.folderHint")}</p>
+              {picked === "google_drive" && <p className="share-hint">{t("librarySync.picked")}</p>}
+              {picked === "icloud" && <p className="share-hint">{t("librarySync.pickedIcloud")}</p>}
+              {picked === "none" && folder === null && (
+                <p className="share-warning">
+                  {t("librarySync.noDrive")}{" "}
+                  <button type="button" className="share-link" onClick={() => { void Promise.resolve(openExternal(GOOGLE_DRIVE_DOWNLOAD)).catch(() => undefined); }}>{t("librarySync.getDrive")}</button>
+                </p>
+              )}
+              {picked === null && <p className="share-hint">{t("librarySync.folderHint")}</p>}
               {taken && <p className="share-warning" role="alert">{t("sharing.alreadyShared")}</p>}
               {!taken && outsideCloud && <p className="share-warning">{t("sharing.notCloud")}</p>}
             </div>
@@ -264,6 +416,9 @@ export function LibrarySyncDialog({ onClose }: { readonly onClose: () => void })
               <dt>{t("librarySync.wontSync")}</dt><dd>{t("librarySync.wontSyncValue")}</dd>
             </dl>
           </>
+        )}
+        {pending && progress && progress.total > 0 && (
+          <p className="share-hint" role="status">{t("librarySync.progress", { done: progress.done, total: progress.total })}</p>
         )}
         {error && <p className="share-warning" role="alert">{t("librarySync.failed", { message: error })}</p>}
         <div className="share-actions">

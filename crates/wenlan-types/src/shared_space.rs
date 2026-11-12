@@ -184,6 +184,16 @@ pub struct SharedSyncStatus {
     /// computer only). The sync itself is not affected.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reading_copy_error: Option<String>,
+    /// How far a pass that is running now has come; `None` between passes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress: Option<SharedSyncProgress>,
+}
+
+/// Pages a running pass has gone through, of all it goes through.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SharedSyncProgress {
+    pub done: u32,
+    pub total: u32,
 }
 
 /// One computer of a shared library.

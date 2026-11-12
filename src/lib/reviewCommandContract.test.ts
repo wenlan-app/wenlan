@@ -57,6 +57,7 @@ const OUTSIDE_THE_REVIEW_SURFACE: readonly string[] = [
   "stop_sharing_space",
   "stop_sharing_page",
   "look_in_shared_folder",
+  "suggest_library_folder",
   "reveal_shared_folder",
   "active_theme_image",
   "check_theme_draft",

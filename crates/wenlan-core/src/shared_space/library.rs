@@ -52,6 +52,91 @@ const INBOX_SETTLE: Duration = Duration::from_secs(10);
 /// The shortest text a memory is made of (the app's own capture rule).
 const CAPTURE_MIN_CHARS: usize = 10;
 
+/// The folder made for the library inside a cloud drive when the person has
+/// not chosen one.
+pub const LIBRARY_FOLDER_NAME: &str = "Wenlan";
+/// Google Drive's own folder, by the names it has in the person's language.
+const MY_DRIVE: [&str; 3] = ["My Drive", "我的雲端硬碟", "我的云端硬盘"];
+
+/// A cloud drive's folder on this computer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloudDrive {
+    GoogleDrive,
+    ICloud,
+}
+
+/// Where the library goes when the person turns syncing on: a library
+/// already in their Google Drive (their other computer's), else a new
+/// [`LIBRARY_FOLDER_NAME`] folder there; iCloud Drive when there is no
+/// Google Drive, since a phone AI reads only Google Drive. `None` when this
+/// computer has neither. `drive_roots` are Windows drive roots (`G:\`),
+/// where Google Drive for desktop keeps its own drive.
+pub fn suggested_folder(home: &Path, drive_roots: &[PathBuf]) -> Option<(CloudDrive, PathBuf)> {
+    let mut google: Vec<PathBuf> = Vec::new();
+    let mut accounts: Vec<PathBuf> = std::fs::read_dir(home.join("Library/CloudStorage"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("GoogleDrive-"))
+        })
+        .collect();
+    accounts.sort();
+    for parent in accounts
+        .iter()
+        .chain(drive_roots)
+        .chain(std::iter::once(&home.join("Google Drive")))
+    {
+        google.extend(MY_DRIVE.iter().map(|name| parent.join(name)));
+    }
+    // Backup and Sync, before Drive for desktop: the drive is the folder.
+    google.push(home.join("Google Drive"));
+    let icloud = [
+        home.join("Library/Mobile Documents/com~apple~CloudDocs"),
+        home.join("iCloudDrive"),
+    ];
+    let roots = google
+        .into_iter()
+        .map(|root| (CloudDrive::GoogleDrive, root))
+        .chain(icloud.into_iter().map(|root| (CloudDrive::ICloud, root)));
+    for (cloud, root) in roots {
+        if !root.is_dir() {
+            continue;
+        }
+        let mut libraries: Vec<PathBuf> = std::fs::read_dir(&root)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|folder| folder.join(ENGINE_DIR).join(SPACE_FILE).is_file())
+            .collect();
+        libraries.sort();
+        let folder = libraries
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| root.join(LIBRARY_FOLDER_NAME));
+        return Some((cloud, folder));
+    }
+    None
+}
+
+/// [`suggested_folder`] on this computer.
+pub fn suggested_folder_here() -> Option<(CloudDrive, PathBuf)> {
+    let home = dirs::home_dir()?;
+    let drive_roots: Vec<PathBuf> = if cfg!(windows) {
+        ('D'..='Z')
+            .map(|letter| PathBuf::from(format!("{letter}:\\")))
+            .filter(|root| root.is_dir())
+            .collect()
+    } else {
+        Vec::new()
+    };
+    suggested_folder(&home, &drive_roots)
+}
+
 /// The engine folder of the library the person put in `chosen`.
 pub fn engine_folder(chosen: &Path) -> PathBuf {
     let mut best: Option<(String, PathBuf)> = None;

@@ -3889,6 +3889,36 @@ pub async fn set_library_main_device(
         .await
 }
 
+/// The folder syncing goes to when the person turns it on: this
+/// computer's Google Drive (or iCloud Drive), found by itself.
+#[derive(serde::Serialize)]
+pub struct SuggestedLibraryFolder {
+    pub folder: Option<String>,
+    /// `google_drive` or `icloud`.
+    pub cloud: Option<&'static str>,
+}
+
+#[tauri::command]
+pub async fn suggest_library_folder() -> Result<SuggestedLibraryFolder, String> {
+    use wenlan_core::shared_space::library::{suggested_folder_here, CloudDrive};
+    let found = tokio::task::spawn_blocking(suggested_folder_here)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(match found {
+        Some((cloud, folder)) => SuggestedLibraryFolder {
+            folder: Some(folder.to_string_lossy().into_owned()),
+            cloud: Some(match cloud {
+                CloudDrive::GoogleDrive => "google_drive",
+                CloudDrive::ICloud => "icloud",
+            }),
+        },
+        None => SuggestedLibraryFolder {
+            folder: None,
+            cloud: None,
+        },
+    })
+}
+
 /// What a folder shares, before joining it.
 #[tauri::command]
 pub async fn look_in_shared_folder(
