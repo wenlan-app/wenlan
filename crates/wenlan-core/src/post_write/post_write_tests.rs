@@ -8116,6 +8116,87 @@ async fn machine_refresh_with_empty_sources_is_allowed_only_for_a_sourceless_pag
 }
 
 #[tokio::test]
+async fn a_person_may_clear_a_page_s_text_and_nothing_automatic_may() {
+    let (db, _dir) = test_db().await;
+    let req = CreateConceptRequest {
+        title: "Weekly notes".to_string(),
+        content: OWNERSHIP_SOURCE.to_string(),
+        summary: None,
+        entity_id: None,
+        space: (None).into(),
+        source_memory_ids: vec![],
+        creation_kind: Some("research".to_string()),
+        workspace: None,
+    };
+    let page_id = create_page(&db, req, "test", None).await.unwrap().id;
+    let write = |content: &'static str, edited_by: &'static str, version: i64| {
+        let db = &db;
+        let page_id = page_id.clone();
+        async move {
+            page_write(
+                db,
+                PageWrite::UpdatePreservingSources {
+                    page_id: &page_id,
+                    req: UpdatePageRequest {
+                        content: content.into(),
+                        source_memory_ids: vec![],
+                        expected_version: Some(version),
+                        caller_id: None,
+                        operation_id: None,
+                    },
+                    edited_by,
+                    knowledge_path: None,
+                    basis: crate::db::BasisWrite::default(),
+                },
+            )
+            .await
+        }
+    };
+    let clear = |edited_by: &'static str, version: i64| write("  \n", edited_by, version);
+    let before = db.get_page(&page_id).await.unwrap().unwrap();
+
+    // An automatic write that empties the page is refused.
+    let err = clear("fs_edit", before.version).await.unwrap_err();
+    assert!(
+        matches!(&err, WenlanError::Validation(m) if m.contains("must not be empty")),
+        "got {err:?}"
+    );
+    let err = clear("shared_ai:m2", before.version).await.unwrap_err();
+    assert!(matches!(&err, WenlanError::Validation(_)), "got {err:?}");
+    assert_eq!(
+        db.get_page(&page_id).await.unwrap().unwrap().content,
+        OWNERSHIP_SOURCE
+    );
+
+    // The person, here or on another computer, may.
+    let cleared = clear("manual_edit", before.version).await.unwrap();
+    assert!(cleared.wrote);
+    let after = db.get_page(&page_id).await.unwrap().unwrap();
+    assert!(after.content.trim().is_empty());
+    assert_eq!(after.title, "Weekly notes");
+    assert_eq!(after.version, before.version + 1);
+
+    // A teammate's cleared version, synced in, lands too.
+    assert!(
+        write("Written again", "manual_edit", after.version)
+            .await
+            .unwrap()
+            .wrote
+    );
+    let again = db.get_page(&page_id).await.unwrap().unwrap();
+    let synced = clear("shared_person:m2", again.version).await.unwrap();
+    assert!(synced.wrote);
+    assert!(db
+        .get_page(&page_id)
+        .await
+        .unwrap()
+        .unwrap()
+        .content
+        .trim()
+        .is_empty());
+}
+
+#[tokio::test]
 async fn set_page_review_required_round_trips_without_bumping_version() {
     let (db, _dir) = test_db().await;
     let before = ownership_page(&db, "page_lock_rt", "mem-lock-rt").await;
