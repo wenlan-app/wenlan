@@ -463,6 +463,7 @@ pub(super) async fn sync(
         own_spaces,
         unread: read.skipped,
     };
+    super::forget_held_of_other_folder(db, &held_key(), folder).await?;
     let mut held = read_held(db).await?;
     let empty = Vec::new();
 

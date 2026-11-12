@@ -2544,3 +2544,137 @@ async fn a_library_page_keeps_a_source_that_stays_on_one_computer() {
     let unpaged = a.db.list_unpaged_memory_rows(100).await.unwrap();
     assert!(!unpaged.iter().any(|row| row.source_id == "import_chat_1"));
 }
+
+// ===== Review of 11-11: old text must never win silently =====
+
+/// Removes the version file of the page whose text holds `text` (a file a
+/// drive client lost, or one pruned).
+fn remove_version_with(folder: &Path, text: &str) {
+    let mut removed = 0;
+    for (path, bytes) in folder_files(folder) {
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        if version::version_sha(&name).is_some() && String::from_utf8_lossy(&bytes).contains(text) {
+            std::fs::remove_file(&path).unwrap();
+            removed += 1;
+        }
+    }
+    assert_eq!(removed, 1, "one version holds {text:?}");
+}
+
+#[tokio::test]
+async fn a_version_taken_but_not_remembered_is_not_shared_back_as_an_edit() {
+    let chosen = tempfile::tempdir().unwrap();
+    let (a, b) = library_pair(chosen.path()).await;
+    let id = a.write("Menu", "Fish.", SPACE.to_string().into()).await;
+    lib_settle(&a, &b, chosen.path()).await;
+    let held = held_key(&library().key());
+    let before = b.db.get_app_metadata(&held).await.unwrap().unwrap();
+
+    a.edit(&id, "Fish and rice.").await;
+    a.lib_sync(chosen.path(), None).await.unwrap();
+    b.lib_sync(chosen.path(), Some(&a.library_member_id()))
+        .await
+        .unwrap();
+    assert_eq!(b.content(&id).await, "Fish and rice.");
+    // The pass stopped before what it took was kept (quit, crash).
+    b.db.set_app_metadata(&held, &before).await.unwrap();
+
+    a.edit(&id, "Fish, rice and cake.").await;
+    a.lib_sync(chosen.path(), None).await.unwrap();
+    let got = b
+        .lib_sync(chosen.path(), Some(&a.library_member_id()))
+        .await
+        .unwrap();
+    assert_eq!(got.exported, 0, "{got:?}");
+    lib_settle(&a, &b, chosen.path()).await;
+    assert_eq!(a.content(&id).await, "Fish, rice and cake.");
+    assert_eq!(b.content(&id).await, "Fish, rice and cake.");
+}
+
+#[tokio::test]
+async fn a_page_never_goes_back_when_its_newest_version_is_gone_from_the_folder() {
+    let chosen = tempfile::tempdir().unwrap();
+    let (a, b) = library_pair(chosen.path()).await;
+    let id = a
+        .write("Menu", "Version one.", SPACE.to_string().into())
+        .await;
+    lib_settle(&a, &b, chosen.path()).await;
+    a.edit(&id, "Version two.").await;
+    lib_settle(&a, &b, chosen.path()).await;
+    assert_eq!(b.content(&id).await, "Version two.");
+
+    remove_version_with(chosen.path(), "Version two.");
+    for _ in 0..2 {
+        a.lib_sync(chosen.path(), None).await.unwrap();
+        b.lib_sync(chosen.path(), Some(&a.library_member_id()))
+            .await
+            .unwrap();
+    }
+    assert_eq!(a.content(&id).await, "Version two.");
+    assert_eq!(b.content(&id).await, "Version two.");
+}
+
+#[tokio::test]
+async fn an_edit_over_a_version_gone_from_the_folder_is_a_conflict_not_an_overwrite() {
+    let chosen = tempfile::tempdir().unwrap();
+    let a = Member::new("Lucian").await;
+    let id = a
+        .write("Menu", "Version one.", SPACE.to_string().into())
+        .await;
+    a.lib_sync(chosen.path(), None).await.unwrap();
+    a.edit(&id, "Version two.").await;
+    a.lib_sync(chosen.path(), None).await.unwrap();
+    // B joins now: version two is all it ever had of the page.
+    let b = Member::new("h1646").await;
+    lib_settle(&a, &b, chosen.path()).await;
+    remove_version_with(chosen.path(), "Version two.");
+
+    a.edit(&id, "Version three, from A.").await;
+    a.lib_sync(chosen.path(), None).await.unwrap();
+    b.edit(&id, "Version two, edited on B.").await;
+    b.lib_sync(chosen.path(), Some(&a.library_member_id()))
+        .await
+        .unwrap();
+    let got = a.lib_sync(chosen.path(), None).await.unwrap();
+    // B's edit was made over version two, not over A's version three: the
+    // two are edits made at the same time, and A is told its edit lost.
+    assert_eq!(got.conflicts, 1, "{got:?}");
+    let history = a.db.list_page_history(&id, 20).await.unwrap();
+    assert!(
+        history
+            .iter()
+            .any(|row| row.content == "Version three, from A."),
+        "A's text stays in its history"
+    );
+}
+
+#[tokio::test]
+async fn a_space_renamed_on_one_computer_is_renamed_on_both() {
+    let chosen = tempfile::tempdir().unwrap();
+    let (a, b) = library_pair(chosen.path()).await;
+    let id = a.write("Menu", "Fish.", SPACE.to_string().into()).await;
+    lib_settle(&a, &b, chosen.path()).await;
+
+    a.db.update_space(SPACE, "Hochzeit", None).await.unwrap();
+    lib_settle(&a, &b, chosen.path()).await;
+    assert_eq!(a.space_of(&id).await.as_deref(), Some("Hochzeit"));
+    assert_eq!(b.space_of(&id).await.as_deref(), Some("Hochzeit"));
+}
+
+#[tokio::test]
+async fn sharing_the_library_through_another_folder_writes_every_page_there() {
+    let first = tempfile::tempdir().unwrap();
+    let second = tempfile::tempdir().unwrap();
+    let a = Member::new("Lucian").await;
+    let id = a.write("Menu", "Fish.", SPACE.to_string().into()).await;
+    a.lib_sync(first.path(), None).await.unwrap();
+    assert!(leave_at(&a.settings(), &library()).unwrap());
+
+    let got = a.lib_sync(second.path(), None).await.unwrap();
+    assert!(got.exported >= 1, "{got:?}");
+    let b = Member::new("h1646").await;
+    b.lib_sync(second.path(), Some(&a.library_member_id()))
+        .await
+        .unwrap();
+    assert_eq!(b.content(&id).await, "Fish.");
+}

@@ -649,10 +649,68 @@ struct Held {
     /// was written for the others.
     #[serde(default)]
     version: Option<i64>,
+    /// The library: the page's Space here at that point (`""` is Unfiled).
+    /// A Space renamed or deleted here moves its pages without a new page
+    /// version; this tells that move from one still to be taken.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    space: Option<String>,
 }
 
 fn held_key(key: &str) -> String {
     format!("shared_space.held:{key}")
+}
+
+/// What was held is of the folder it was held with: shared again through
+/// another folder (moved, or chosen again), this Wenlan starts over there,
+/// comparing by content as a first pass does. Without it every page here
+/// would read as in step with versions the new folder does not have, and
+/// nothing would be written there.
+pub(super) async fn forget_held_of_other_folder(
+    db: &MemoryDB,
+    held_key: &str,
+    folder: &Path,
+) -> Result<(), WenlanError> {
+    let marker = format!("{held_key}.folder");
+    let folder = folder.to_string_lossy().to_string();
+    match db.get_app_metadata(&marker).await? {
+        Some(known) if known == folder => return Ok(()),
+        Some(_) => {
+            log::info!("[shared_space] {held_key}: shared through another folder; starting over");
+            db.set_app_metadata(held_key, "{}").await?;
+        }
+        None => {}
+    }
+    db.set_app_metadata(&marker, &folder).await
+}
+
+/// The Space a library page is kept in here, as [`Held::space`] holds it.
+fn held_space(page: &Page) -> String {
+    named_space(page.space.as_deref()).unwrap_or("").to_string()
+}
+
+/// Whether `version` is `ancestor` or comes after it: `ancestor` is on its
+/// line of parents (or merged into it). A parent whose file cannot be read
+/// still names its sha, so a version can be known to come after one that is
+/// not in the folder this pass.
+fn comes_after(versions: &[PageVersion], version: &PageVersion, ancestor: &str) -> bool {
+    let mut seen = HashSet::new();
+    let mut todo = vec![version];
+    while let Some(at) = todo.pop() {
+        if at.sha == ancestor {
+            return true;
+        }
+        for parent in at.meta.parent.iter().chain(at.meta.merged.iter()) {
+            if parent == ancestor {
+                return true;
+            }
+            if seen.insert(parent.as_str()) {
+                if let Some(next) = versions.iter().find(|v| &v.sha == parent) {
+                    todo.push(next);
+                }
+            }
+        }
+    }
+    false
 }
 
 async fn read_held(db: &MemoryDB, key: &str) -> Result<BTreeMap<String, Held>, WenlanError> {
@@ -1490,6 +1548,7 @@ async fn pass(
         own_spaces,
         edit_settle,
     };
+    forget_held_of_other_folder(db, &held_key(&key), &ctx.folder).await?;
     let mut held = read_held(db, &key).await?;
 
     let ids: BTreeSet<&str> = local
@@ -1499,6 +1558,7 @@ async fn pass(
         .collect();
     let empty = Vec::new();
     let mut unsaved = false;
+    let mut failed: Option<WenlanError> = None;
     // Applying the folder must not archive most of the library at once (a
     // damaged database or an emptied folder on the other computer): then
     // none of those pages is archived this pass.
@@ -1546,11 +1606,22 @@ async fn pass(
         let now = match local.get(id) {
             Some(page) => {
                 ctx.sync_page(page, versions, before.as_ref(), &mut counts)
-                    .await?
+                    .await
             }
             None => {
                 ctx.sync_missing(id, versions, before.as_ref(), &mut counts)
-                    .await?
+                    .await
+            }
+        };
+        // One page that cannot be synced does not stop the others, and what
+        // the pages before it took is still kept below.
+        let now = match now {
+            Ok(now) => now,
+            Err(error) => {
+                log::warn!("[shared_space] {key}: page {id} not synced this pass: {error}");
+                counts.skipped += 1;
+                failed.get_or_insert(error);
+                None
             }
         };
         if let Some(now) = now.filter(|now| before.as_ref() != Some(now)) {
@@ -1568,7 +1639,10 @@ async fn pass(
     if unsaved {
         save_held(db, &key, &held).await?;
     }
-    Ok(counts)
+    match failed {
+        Some(error) => Err(error),
+        None => Ok(counts),
+    }
 }
 
 async fn save_held(
@@ -1672,19 +1746,54 @@ impl Pass<'_> {
         }
         let head = version::head(versions);
         let state = self.local_state(page);
+        let here_space = self.library.then(|| held_space(page));
+        // In step with what was held and untouched here since: no new page
+        // version, and (the library) the page still in the Space it was in.
+        // A Space renamed or deleted here moves its pages with no new page
+        // version, so that move counts as a change made here.
+        let untouched = |held: &Held| {
+            held.version == Some(page.version)
+                && !(self.library && held.space.is_some() && held.space != here_space)
+        };
         let recorded = held.and_then(|held| versions.iter().find(|v| v.sha == held.sha));
+        // A version written as an edit of a version that cannot be read: its
+        // parent named all the same, so an edit made elsewhere since is a
+        // second leaf (the conflict is kept), never written over.
+        let mut parent_sha = None;
         // The version this page was last in step with, and whether it was
         // changed here since.
         let (base, changed) = match (held, recorded) {
-            (Some(held), Some(version)) => (
-                Some(version),
-                held.version != Some(page.version) && self.version_state(version) != state,
-            ),
+            (Some(held), Some(version)) => {
+                let changed = !untouched(held) && self.version_state(version) != state;
+                // A later version taken here but not remembered (the pass
+                // stopped before what it held was kept): the page is that
+                // version, not an edit made here. Sharing it as one would
+                // win over whatever the others wrote since.
+                let later = versions
+                    .iter()
+                    .filter(|_| changed)
+                    .filter(|v| v.sha != version.sha && self.version_state(v) == state)
+                    .filter(|v| comes_after(versions, v, &version.sha))
+                    .max_by(|a, b| (&a.meta.ts, &a.sha).cmp(&(&b.meta.ts, &b.sha)));
+                match later {
+                    Some(later) => (Some(later), false),
+                    None => (Some(version), changed),
+                }
+            }
             // The version it was last in step with cannot be read this pass
-            // (a cloud file not downloaded yet, or one still arriving), but
-            // the page did not change here since: it is not an edit made
-            // here, whatever the folder holds.
-            (Some(held), None) if held.version == Some(page.version) => {
+            // (a cloud file not downloaded yet, one still arriving, or one
+            // gone), but the page did not change here since: it is not an
+            // edit made here. Only a head known to come after that version
+            // is taken; an older one never is, and the page waits.
+            (Some(held), None) if untouched(held) => {
+                if let Some(head) = head.as_ref() {
+                    if self.version_state(head.winner) != state
+                        && !comes_after(versions, head.winner, &held.sha)
+                    {
+                        counts.skipped += 1;
+                        return Ok(None);
+                    }
+                }
                 (self.newest_with(versions, &state), false)
             }
             // Changed here, over a version that cannot be read this pass:
@@ -1694,6 +1803,14 @@ impl Pass<'_> {
                 counts.skipped += 1;
                 return Ok(None);
             }
+            // Changed here, over a version that is not in the folder at all.
+            (Some(held), None) => match self.newest_with(versions, &state) {
+                Some(version) => (Some(version), false),
+                None => {
+                    parent_sha = Some(held.sha.as_str());
+                    (None, true)
+                }
+            },
             _ => match self.newest_with(versions, &state) {
                 Some(version) => (Some(version), false),
                 None => (None, true),
@@ -1702,6 +1819,7 @@ impl Pass<'_> {
         let at = |sha: &str| Held {
             sha: sha.to_string(),
             version: Some(page.version),
+            space: here_space.clone(),
         };
         if let Some(head) = head
             .as_ref()
@@ -1728,7 +1846,7 @@ impl Pass<'_> {
         }
         if changed {
             return match self
-                .export_page(page, versions, head.as_ref(), base)
+                .export_page(page, versions, head.as_ref(), base, parent_sha)
                 .await?
             {
                 Some(sha) => {
@@ -1780,9 +1898,13 @@ impl Pass<'_> {
         } else if !applied.complete {
             counts.skipped += 1;
         }
-        Ok((applied.wrote || applied.complete).then(|| Held {
+        if !(applied.wrote || applied.complete) {
+            return Ok(None);
+        }
+        Ok(Some(Held {
             sha: head.winner.sha.clone(),
             version: Some(applied.at),
+            space: self.held_space_of(&page.id).await?,
         }))
     }
 
@@ -1816,6 +1938,7 @@ impl Pass<'_> {
         let deleted = |sha: &str| Held {
             sha: sha.to_string(),
             version: None,
+            space: None,
         };
         match held {
             // The person deleted it here. It is not made again: the others
@@ -1839,9 +1962,9 @@ impl Pass<'_> {
             }
             // Deleted here earlier: only a member who restored it since
             // brings it back.
-            Some(Held { sha, version: None }) if sha == &winner.sha || winner.meta.archived => {
-                Ok(Some(deleted(&winner.sha)))
-            }
+            Some(Held {
+                sha, version: None, ..
+            }) if sha == &winner.sha || winner.meta.archived => Ok(Some(deleted(&winner.sha))),
             // Never here, or restored elsewhere since it was deleted here.
             // An archived page that was never here stays in the folder only
             // (the library makes it here, archived).
@@ -1862,6 +1985,7 @@ impl Pass<'_> {
                     Ok(Some(Held {
                         sha: winner.sha.clone(),
                         version: Some(at),
+                        space: self.held_space_of(id).await?,
                     }))
                 }
                 None => {
@@ -1914,6 +2038,14 @@ impl Pass<'_> {
         }
         log::info!("[shared_space] {id}: the title {wanted:?} is taken here; it is {candidate:?}");
         Ok(candidate)
+    }
+
+    /// The library: the Space page `id` is in here now, to hold with it.
+    async fn held_space_of(&self, id: &str) -> Result<Option<String>, WenlanError> {
+        if !self.library {
+            return Ok(None);
+        }
+        Ok(self.db.get_page(id).await?.as_ref().map(held_space))
     }
 
     async fn reload(&self, id: &str) -> Result<Page, WenlanError> {
@@ -2200,6 +2332,7 @@ impl Pass<'_> {
         versions: &[PageVersion],
         head: Option<&version::Head<'_>>,
         base: Option<&PageVersion>,
+        parent_sha: Option<&str>,
     ) -> Result<Option<String>, WenlanError> {
         let db = self.db;
         if !version::is_safe_id(&page.id) {
@@ -2215,7 +2348,12 @@ impl Pass<'_> {
             .iter()
             .map(|row| version::body_digest(&row.content))
             .collect();
-        let (parent, merged) = base_of(&history, versions, head, base);
+        // An edit of a version that is not in the folder names that version
+        // as its parent, whatever else the folder holds.
+        let (parent, merged) = match parent_sha {
+            Some(_) => (None, Vec::new()),
+            None => base_of(&history, versions, head, base),
+        };
         let (citations, basis) = local_sources(db, page).await?;
         let memory_ids: Vec<String> = citations
             .iter()
@@ -2272,7 +2410,9 @@ impl Pass<'_> {
         file.citations = citations;
         file.basis = basis;
         let meta = VersionMeta {
-            parent: parent.map(|parent| parent.sha.clone()),
+            parent: parent
+                .map(|parent| parent.sha.clone())
+                .or(parent_sha.map(str::to_string)),
             merged,
             body_digest: version::body_digest(&page.content),
             author: self.author_of(page).await?,
