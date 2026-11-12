@@ -81,7 +81,7 @@
 
 ### 1. 下載並開啟 Wenlan
 
-[下載桌面版](https://github.com/wenlan-app/wenlan/releases/latest)，支援 macOS 11 以上的 Apple Silicon 和 Windows x64。App 介面有英文、简体中文和繁體中文。
+[下載桌面版](https://github.com/wenlan-app/wenlan/releases/latest)，支援 macOS 11 以上的 Apple Silicon、Windows x64 和 Linux x64（AppImage 或 .deb）。App 介面有英文、简体中文和繁體中文。
 
 偏好終端機？在 Mac 上執行 `npx -y wenlan setup`，或執行 `brew install 7xuanlu/tap/wenlan` 再執行 `wenlan setup`。Linux 和 Windows 請看 [CLI 安裝說明](docs/setup-and-data.zh-Hant.md#installation)。
 

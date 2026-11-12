@@ -81,7 +81,7 @@ Empecé Wenlan porque mis notas, documentos y chats de IA estaban dispersos, y e
 
 ### 1. Descarga y abre Wenlan
 
-[Descarga la aplicación de escritorio](https://github.com/wenlan-app/wenlan/releases/latest) para macOS 11 o posterior en Apple Silicon, o Windows x64. La app está en inglés, chino simplificado y chino tradicional.
+[Descarga la aplicación de escritorio](https://github.com/wenlan-app/wenlan/releases/latest) para macOS 11 o posterior en Apple Silicon, Windows x64 o Linux x64 (AppImage o .deb). La app está en inglés, chino simplificado y chino tradicional.
 
 ¿Prefieres el terminal? En un Mac, ejecuta `npx -y wenlan setup`, o `brew install 7xuanlu/tap/wenlan` y después `wenlan setup`. Linux y Windows: [guía de instalación de la CLI](docs/setup-and-data.es-ES.md#installation).
 

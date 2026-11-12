@@ -29,6 +29,18 @@ directory of an install that predates the move when the in-app updater runs (tha
 path skips the old uninstaller and keeps the existing shortcuts); running the full
 installer moves it.
 
+The Linux desktop app ships for x86_64 as an AppImage and a `.deb`, built on
+`ubuntu-22.04` so the AppImage's glibc floor stays at 2.35 (Ubuntu 22.04, Debian 12
+and newer). The tauri updater picks `linux-x86_64-appimage` or `linux-x86_64-deb` by
+how the app was installed. `scripts/verify-linux-app-bundle.sh` is the proof: it
+checks both packages carry the three sidecars, then opens the AppImage under Xvfb
+and waits for the bundled daemon's `/api/health`. Two Linux-only traps it found:
+a hidden GTK window has no GDK surface until shown, so making the toast window
+click-through must realize it first (tao unwraps that surface and aborts the app at
+startup otherwise); and the dev-only `tauri-plugin-mcp` is not built on Linux,
+because its screen capture needs PipeWire headers. Run at Login is macOS-only, as on
+Windows. ARM64 Linux has the CLI archives but no desktop build yet.
+
 In sidecar mode (no service registration) a quit or SIGTERM asks the daemon to shut
 down over HTTP and kills it through the child handle if it has not released the port
 within 3 s. On Windows the sidecar is also bound to a kill-on-close job object, so an

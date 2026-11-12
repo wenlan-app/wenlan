@@ -79,7 +79,7 @@ I started Wenlan because my notes, documents, and AI chats were scattered, and k
 
 ### 1. Download and open Wenlan
 
-[Download the desktop app](https://github.com/wenlan-app/wenlan/releases/latest) for macOS 11 or later on Apple Silicon, or Windows x64. The app is in English, 简体中文, and 繁體中文.
+[Download the desktop app](https://github.com/wenlan-app/wenlan/releases/latest) for macOS 11 or later on Apple Silicon, Windows x64, or Linux x64 (AppImage or .deb). The app is in English, 简体中文, and 繁體中文.
 
 Prefer the terminal? On a Mac, run `npx -y wenlan setup`, or `brew install 7xuanlu/tap/wenlan` and then `wenlan setup`. Linux and Windows: [CLI install guide](docs/setup-and-data.md#installation).
 
