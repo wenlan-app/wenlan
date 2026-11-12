@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 import type { LookData } from "../../../../lib/tauri";
 import {
@@ -10,6 +11,8 @@ import {
   LOOK_CSP,
   LOOK_SANDBOX,
   parseLookMessage,
+  prepareLookHtml,
+  prepareLookScript,
   stripForbidden,
   INNER_GUARD_SCRIPT,
   INNER_HELPER_SCRIPT,
@@ -117,5 +120,51 @@ describe("UX-LOOK-4 what the app accepts from the frame", () => {
   it("cuts an error to 500 characters", () => {
     const message = parseLookMessage({ wenlanLook: { kind: "error", message: "x".repeat(900) } }, known);
     expect(message && message.kind === "error" && message.message.length).toBe(500);
+  });
+});
+
+describe("UX-LOOK-4 a look's errors reach the app with their cause", () => {
+  // Runs prepared scripts one after another in one global, like a page does.
+  const run = (...scripts: string[]) => {
+    const errors: string[] = [];
+    const context: Record<string, unknown> = {};
+    context.window = context;
+    context.__wenlanLookError = (error: Error, script: number) => errors.push(`${error.name}: ${error.message} @${script}`);
+    for (const [i, source] of scripts.entries()) runInNewContext(prepareLookScript(source, i + 1), context);
+    return { errors, context };
+  };
+
+  it("reports the real error of a script that throws", () => {
+    const { errors } = run("const w = 1;\nundefinedFn();");
+    expect(errors).toEqual(["ReferenceError: undefinedFn is not defined @1"]);
+  });
+
+  it("keeps top-level names shared between the look's scripts", () => {
+    const { errors, context } = run(
+      "const shared = 42; let { a, b: [c] } = { a: 1, b: [2] }; class Box { get v() { return shared; } } function f() { return a + c; }",
+      "var seen = [typeof shared, new Box().v, f(), typeof Box].join(',');",
+    );
+    expect(errors).toEqual([]);
+    expect(context.seen).toBe("number,42,3,function");
+  });
+
+  it("reports a script that does not parse instead of running it", () => {
+    const { errors } = run("const = ;");
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatch(/^SyntaxError: .+ @1$/);
+  });
+
+  it("leaves a strict script as it is", () => {
+    expect(prepareLookScript('"use strict";\nconst x = 1;', 1)).toBe('"use strict";\nconst x = 1;');
+  });
+
+  it("prepares inline classic scripts only, numbered in order", () => {
+    const out = prepareLookHtml(
+      '<script>a()</script><script type="application/json">{"x":1}</script><script type="module">b()</script><script>c()</script>',
+    );
+    expect(out).toContain("__wenlanLookError(error, 1)");
+    expect(out).toContain("__wenlanLookError(error, 2)");
+    expect(out).toContain('{"x":1}');
+    expect(out).toContain("<script type=\"module\">b()</script>");
   });
 });

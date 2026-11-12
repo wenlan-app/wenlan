@@ -15,6 +15,7 @@
 // parent's: with it nothing the look does can send a request. The outer frame
 // also relays the four messages the app accepts and nothing else.
 
+import { parse } from "acorn";
 import type { LookData } from "../../../../lib/tauri";
 
 /** Both frames' policy. It is the first element of each document. */
@@ -210,6 +211,67 @@ export const INNER_HELPER_SCRIPT = `(function () {
   data.onChange = function (fn) { if (typeof fn === "function") listeners.push(fn); };
   data.open = function (pageId) { send({ kind: "open", pageId: String(pageId) }); };
   window.wenlan = data;
+  // WebKit hides the cause of any error thrown in a sandboxed frame. So the
+  // look's own code runs inside catches that hold the real error: each of its
+  // scripts (see prepareLookScript) and every callback it hands the browser.
+  var describe = function (error) {
+    if (error && typeof error === "object" && error.message) {
+      return (error.name ? String(error.name) + ": " : "") + String(error.message);
+    }
+    return String(error);
+  };
+  window.__wenlanLookError = function (error, script) {
+    send({ kind: "error", message: describe(error) + (script ? " (look script " + script + ")" : "") });
+  };
+  var wrapped = new WeakMap();
+  var wrap = function (fn) {
+    if (typeof fn !== "function" && !(fn && typeof fn === "object" && typeof fn.handleEvent === "function")) return fn;
+    var known = wrapped.get(fn);
+    if (known) return known;
+    var callback = function () {
+      try {
+        return typeof fn === "function" ? fn.apply(this, arguments) : fn.handleEvent.apply(fn, arguments);
+      } catch (error) {
+        window.__wenlanLookError(error);
+      }
+    };
+    wrapped.set(fn, callback);
+    return callback;
+  };
+  ["setTimeout", "setInterval", "requestAnimationFrame", "queueMicrotask", "requestIdleCallback"].forEach(function (name) {
+    var original = window[name];
+    if (typeof original !== "function") return;
+    window[name] = function () {
+      var args = Array.prototype.slice.call(arguments);
+      args[0] = wrap(args[0]);
+      return original.apply(window, args);
+    };
+  });
+  try {
+    var addListener = EventTarget.prototype.addEventListener;
+    var removeListener = EventTarget.prototype.removeEventListener;
+    EventTarget.prototype.addEventListener = function (type, listener, options) {
+      return addListener.call(this, type, wrap(listener), options);
+    };
+    EventTarget.prototype.removeEventListener = function (type, listener, options) {
+      return removeListener.call(this, type, (listener && wrapped.get(listener)) || listener, options);
+    };
+  } catch (e) {}
+  [window, Window.prototype, Document.prototype, HTMLElement.prototype, SVGElement.prototype].forEach(function (target) {
+    Object.getOwnPropertyNames(target).forEach(function (name) {
+      if (name.slice(0, 2) !== "on" || name === "onerror" || name === "onunhandledrejection") return;
+      var descriptor = Object.getOwnPropertyDescriptor(target, name);
+      if (!descriptor || !descriptor.set || !descriptor.configurable) return;
+      try {
+        Object.defineProperty(target, name, {
+          configurable: true,
+          enumerable: descriptor.enumerable,
+          get: descriptor.get,
+          set: function (value) { descriptor.set.call(this, wrap(value)); },
+        });
+      } catch (e) {}
+    });
+  });
   window.onerror = function (message, source, line, column, error) {
     var text = error && error.message ? String(error.message) : String(message || "");
     // WebKit hides the cause of an error in a sandboxed frame. Say so, so the
@@ -315,6 +377,93 @@ export function stripForbidden(html: string): string {
   return doc.head.innerHTML + doc.body.innerHTML;
 }
 
+/** Scripts the browser runs as classic scripts, where a catch can be added. */
+const CLASSIC_SCRIPT_TYPES = ["", "text/javascript", "application/javascript", "text/ecmascript"];
+
+type Node_ = { type: string; start: number; end: number; [key: string]: unknown };
+
+function boundNames(pattern: Node_, out: string[]): void {
+  switch (pattern.type) {
+    case "Identifier": out.push(pattern.name as string); return;
+    case "ObjectPattern":
+      for (const property of pattern.properties as Node_[]) {
+        boundNames((property.type === "RestElement" ? property.argument : property.value) as Node_, out);
+      }
+      return;
+    case "ArrayPattern":
+      for (const element of pattern.elements as (Node_ | null)[]) if (element) boundNames(element, out);
+      return;
+    case "RestElement": boundNames(pattern.argument as Node_, out); return;
+    case "AssignmentPattern": boundNames(pattern.left as Node_, out); return;
+  }
+}
+
+/**
+ * One of the look's inline scripts, run inside a catch that reports the real
+ * error: WebKit tells a sandboxed frame only "Script error.". Top-level
+ * `let`, `const` and `class` names are declared before the `try`, so they
+ * stay shared with the look's other scripts and its `onclick` attributes.
+ * A script that does not parse is replaced by one that reports why; a strict
+ * script is left as it is, since a block would scope its functions.
+ */
+export function prepareLookScript(source: string, index: number): string {
+  let program: Node_;
+  try {
+    program = parse(source, { ecmaVersion: "latest", sourceType: "script", allowHashBang: true }) as unknown as Node_;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return `window.__wenlanLookError(${jsonForScript({ name: "SyntaxError", message })}, ${index});`;
+  }
+  const body = program.body as Node_[];
+  if (body.some((node) => node.type === "ExpressionStatement" && node.directive === "use strict")) return source;
+  const names: string[] = [];
+  const edits: { start: number; end: number; text: string }[] = [];
+  for (const node of body) {
+    if (node.type === "VariableDeclaration" && node.kind !== "var") {
+      const parts: string[] = [];
+      let pattern = false;
+      for (const declarator of node.declarations as Node_[]) {
+        const id = declarator.id as Node_;
+        boundNames(id, names);
+        if (id.type !== "Identifier") pattern = true;
+        const init = declarator.init as Node_ | null;
+        if (init) parts.push(`${source.slice(id.start, id.end)} = ${source.slice(init.start, init.end)}`);
+      }
+      const text = parts.length === 0 ? ";" : pattern ? `(${parts.join(", ")});` : `${parts.join(", ")};`;
+      edits.push({ start: node.start, end: node.end, text });
+    } else if (node.type === "ClassDeclaration" && node.id) {
+      const name = (node.id as Node_).name as string;
+      names.push(name);
+      edits.push({ start: node.start, end: node.end, text: `${name} = ${source.slice(node.start, node.end)};` });
+    }
+  }
+  let out = source;
+  for (const edit of edits.reverse()) out = out.slice(0, edit.start) + edit.text + out.slice(edit.end);
+  const declared = [...new Set(names)];
+  return (declared.length ? `let ${declared.join(", ")};\n` : "")
+    + `try {\n${out}\n} catch (error) { window.__wenlanLookError(error, ${index}); }`;
+}
+
+/**
+ * The look's HTML as it goes into its frame: without elements that reach out
+ * (see `stripForbidden`), and with each inline classic script run through
+ * `prepareLookScript`.
+ */
+export function prepareLookHtml(html: string): string {
+  if (typeof DOMParser === "undefined") return stripForbidden(html);
+  const doc = new DOMParser().parseFromString(`<!doctype html><html><head></head><body>${html}</body></html>`, "text/html");
+  doc.querySelectorAll(LOOK_FORBIDDEN_TAGS.join(",")).forEach((node) => node.remove());
+  let index = 0;
+  doc.querySelectorAll("script").forEach((script) => {
+    if (script.hasAttribute("src")) return;
+    const type = (script.getAttribute("type") ?? "").trim().toLowerCase();
+    if (!CLASSIC_SCRIPT_TYPES.includes(type)) return;
+    index += 1;
+    script.textContent = prepareLookScript(script.textContent ?? "", index);
+  });
+  return doc.head.innerHTML + doc.body.innerHTML;
+}
+
 /**
  * The look's own document: doctype, the CSP first, the theme variables, the
  * page's data as inline JSON, the helper script, then the look's HTML.
@@ -333,7 +482,7 @@ export function buildInnerDocument({ data, html, theme }: {
     `<script>${INNER_GUARD_SCRIPT}</script>`,
     `<script>${INNER_HELPER_SCRIPT}</script>`,
     "</head><body>",
-    stripForbidden(html),
+    prepareLookHtml(html),
     "</body></html>",
   ].join("\n");
 }
