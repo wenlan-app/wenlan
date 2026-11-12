@@ -62,11 +62,19 @@ export function LookFrame({ data, html, title, onReady, onError, onOpenPage }: {
 
   useEffect(() => {
     readyRef.current = false;
-    const timer = window.setTimeout(() => {
+    // The clock only runs while the app is on screen: a hidden window may
+    // hold the frame back, and that is not the look's fault.
+    let timer = 0;
+    const expire = () => {
       if (readyRef.current) return;
+      if (document.visibilityState === "hidden") {
+        timer = window.setTimeout(expire, LOOK_READY_TIMEOUT_MS);
+        return;
+      }
       readyRef.current = true;
       callbacks.current.onError?.("The look did not finish loading in three seconds.", true);
-    }, LOOK_READY_TIMEOUT_MS);
+    };
+    timer = window.setTimeout(expire, LOOK_READY_TIMEOUT_MS);
     const onMessage = (event: MessageEvent) => {
       // Only the frame this component mounted, never another window.
       if (!ref.current || event.source !== ref.current.contentWindow) return;

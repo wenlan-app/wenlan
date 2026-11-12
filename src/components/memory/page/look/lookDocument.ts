@@ -158,7 +158,9 @@ export const INNER_HELPER_SCRIPT = `(function () {
       observer.observe(document.documentElement);
       if (document.body) observer.observe(document.body);
     } catch (e) {}
-    requestAnimationFrame(function () { send({ kind: "ready" }); });
+    // Not requestAnimationFrame: a hidden or occluded window never paints,
+    // so a look that works would be reported as stuck.
+    setTimeout(function () { send({ kind: "ready" }); }, 0);
   });
 })();`;
 

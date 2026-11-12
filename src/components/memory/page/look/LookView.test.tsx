@@ -105,6 +105,20 @@ describe("UX-LOOK-4 the frame", () => {
     expect(onError.mock.calls[0][1]).toBe(true);
   });
 
+  it("does not blame the look while the app is hidden", () => {
+    vi.useFakeTimers();
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    const onError = vi.fn();
+    render(<LookFrame data={DATA} html="" title="A" onError={onError} />);
+    act(() => { vi.advanceTimersByTime(LOOK_READY_TIMEOUT_MS * 3); });
+    expect(onError).not.toHaveBeenCalled();
+    visibility.mockReturnValue("visible");
+    fromFrame(screen.getByTestId("page-look-frame") as HTMLIFrameElement, { kind: "ready" });
+    act(() => { vi.advanceTimersByTime(LOOK_READY_TIMEOUT_MS * 2); });
+    expect(onError).not.toHaveBeenCalled();
+    visibility.mockRestore();
+  });
+
   it("does not time out once ready", () => {
     vi.useFakeTimers();
     const onError = vi.fn();
