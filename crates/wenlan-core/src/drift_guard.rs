@@ -5269,7 +5269,7 @@ fn release_preflight_contract_violations(ci_workflow: &str, release_workflow: &s
     // the app one waits on the app builds, so a failed Windows bundle stops the
     // app assets alone instead of the whole release. Both halves are pinned
     // here: promote-assets must not name an app build at all, and
-    // promote-app-assets must name both.
+    // promote-app-assets must name all three.
     if job_needs(&release, "bind-release-tag") != ["resolve-promotion"]
         || job_needs(&release, "prepare-release") != ["resolve-promotion", "bind-release-tag"]
         || job_needs(&release, "promote-assets")
@@ -5281,6 +5281,7 @@ fn release_preflight_contract_violations(ci_workflow: &str, release_workflow: &s
                 "prepare-release",
                 "app-bundle",
                 "app-bundle-windows",
+                "app-bundle-linux",
             ]
     {
         violations.push("tag release artifact-promotion DAG bypasses receipt resolution".into());
@@ -6463,6 +6464,7 @@ fn release_promotion_contract_violations(
                 "prepare-release",
                 "app-bundle",
                 "app-bundle-windows",
+                "app-bundle-linux",
             ]
     {
         violations

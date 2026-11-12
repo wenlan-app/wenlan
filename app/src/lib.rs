@@ -399,6 +399,7 @@ fn validate_debug_runtime_isolation() -> Result<(), String> {
 }
 
 #[cfg(debug_assertions)]
+#[cfg_attr(target_os = "linux", allow(dead_code))]
 fn resolve_tauri_mcp_socket_path(override_path: Option<&std::ffi::OsStr>) -> std::path::PathBuf {
     override_path
         .map(std::path::PathBuf::from)
@@ -848,7 +849,8 @@ pub fn run() {
             reveal_main_window(app);
         }));
 
-    #[cfg(debug_assertions)]
+    // Not on Linux: see the tauri-plugin-mcp entry in app/Cargo.toml.
+    #[cfg(all(debug_assertions, not(target_os = "linux")))]
     let builder = {
         let socket_override = std::env::var_os("WENLAN_DEV_TAURI_MCP_SOCKET");
         let socket_path = resolve_tauri_mcp_socket_path(socket_override.as_deref());
@@ -892,8 +894,9 @@ pub fn run() {
             // wenlan-mcp is, and point ~/.wenlan/bin at those same binaries
             // when an older copy is what PATH and MCP configs still run.
             tauri::async_runtime::spawn_blocking(|| {
-                mcp_config::record_app_wenlan_mcp_path();
+                // Copy first: from an AppImage the recorded path is the copy.
                 home_bin::sync_bundled_home_bin();
+                mcp_config::record_app_wenlan_mcp_path();
             });
 
             // Keep the app LaunchServices-friendly: the UI process is a normal
@@ -1128,6 +1131,19 @@ pub fn run() {
                 .visible(false)
                 .build()?;
 
+                // GTK only gives a window its GDK surface when it is first
+                // shown, and tao unwraps that surface to make the window
+                // click-through. On a hidden window that unwrap panics inside
+                // the event loop and aborts the app at startup, so realize it
+                // first: that creates the surface without putting anything on
+                // screen.
+                #[cfg(target_os = "linux")]
+                {
+                    use gtk::prelude::WidgetExt;
+                    if let Ok(gtk_window) = toast_win.gtk_window() {
+                        gtk_window.realize();
+                    }
+                }
                 toast_win.set_ignore_cursor_events(true)?;
 
                 #[cfg(target_os = "macos")]

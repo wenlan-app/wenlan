@@ -12,7 +12,8 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 
 /// Type alias for the file system watcher.
-pub type FileWatcher = Debouncer<notify::RecommendedWatcher, notify_debouncer_full::FileIdMap>;
+pub type FileWatcher =
+    Debouncer<notify::RecommendedWatcher, notify_debouncer_full::RecommendedCache>;
 
 /// Request body for the daemon's `/api/ingest/text` endpoint.
 #[derive(Serialize)]

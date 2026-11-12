@@ -33,10 +33,6 @@ tauri-plugin-notification = "2"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 tauri-plugin-deep-link = "2"
 
-# Dev-only: gives Claude Code / MCP clients control over the running app
-# (screenshots, DOM, click/type). Excluded from release builds via debug_assertions.
-tauri-plugin-mcp = { git = "https://github.com/P3GLEG/tauri-plugin-mcp" }
-
 # Async
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = { version = "0.28", features = ["rustls-tls-native-roots"] }
@@ -91,6 +87,21 @@ zip = { version = "2.2", default-features = false, features = ["deflate"] }
 # wenlan-types, sysinfo, pdf-extract, and zip stopped existing off macOS and
 # left the app crate uncompilable on Windows (15 unresolved-import errors,
 # unnoticed because app-check only runs on macOS).
+
+# Dev-only: gives Claude Code / MCP clients control over the running app
+# (screenshots, DOM, click/type). Excluded from release builds via
+# debug_assertions. Not on Linux: its screen capture pulls in PipeWire and
+# X11 capture libraries the shipped app never uses, and a Linux build host
+# would need their development headers just to compile code it strips.
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+tauri-plugin-mcp = { git = "https://github.com/P3GLEG/tauri-plugin-mcp" }
+
+# Already in the tree through Tauri; named here so the app can realize a
+# hidden window's GDK surface before changing its input shape (see the toast
+# window in src/lib.rs).
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa = "0.26"
 objc = "0.2"
