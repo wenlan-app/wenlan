@@ -25,6 +25,8 @@ function renderSection() {
 }
 
 beforeEach(async () => {
+  HTMLDialogElement.prototype.showModal ??= function showModal(this: HTMLDialogElement) { this.setAttribute("open", ""); };
+  HTMLDialogElement.prototype.close ??= function close(this: HTMLDialogElement) { this.removeAttribute("open"); };
   await i18n.changeLanguage("en");
   vi.mocked(listShares).mockResolvedValue([]);
   localStorage.clear();
@@ -40,9 +42,38 @@ describe("TeamSection", () => {
     expect(screen.getByText("Start a team on this computer")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Start…" })).toBeInTheDocument();
     expect(screen.getByText("Run it on a server")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "See how" }));
-    expect(openExternal).toHaveBeenCalledWith("https://github.com/wenlan-app/wenlan/blob/main/docs/team-server.md");
+    expect(screen.getByRole("button", { name: "Show steps…" })).toBeInTheDocument();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+  });
+
+  it("walks through a server in the app: address, the command for it, then the owner's link", async () => {
+    vi.mocked(teamStatus).mockResolvedValue({ members: [], spaces: [], listening: null });
+    renderSection();
+    await userEvent.click(await screen.findByRole("button", { name: "Show steps…" }));
+    const copy = screen.getByRole("button", { name: "Copy" });
+    // Nothing to copy until the address is one a shell can take as is.
+    expect(copy).toBeDisabled();
+    await userEvent.type(screen.getByPlaceholderText("https://wenlan.example.com"), "https://wenlan.acme.com/");
+    expect(copy).toBeEnabled();
+    const command = screen.getByText(/docker run/).closest("pre") as HTMLElement;
+    expect(command.textContent).toContain("WENLAN_TEAM_URL=https://wenlan.acme.com ");
+    expect(command.textContent).toContain("-p 7879:7879 ");
+    expect(command.textContent).not.toContain("7878");
+    expect(command.textContent).toContain("docker logs wenlan");
+    await userEvent.click(screen.getByRole("button", { name: "More about servers" }));
+    expect(openExternal).toHaveBeenCalledWith("https://github.com/wenlan-app/wenlan/blob/main/docs/team-server.md");
+    await userEvent.click(screen.getByRole("button", { name: "Paste the owner's link…" }));
+    expect(screen.queryByText("Run this on the server")).not.toBeInTheDocument();
+    expect(await screen.findByLabelText("Invite link")).toBeInTheDocument();
+  });
+
+  it("refuses an address a shell would read differently", async () => {
+    const { usableServerUrl } = await import("../../team/ServerSetupDialog");
+    expect(usableServerUrl("http://100.64.0.3:7879")).toBe("http://100.64.0.3:7879");
+    expect(usableServerUrl("https://a.example.com/")).toBe("https://a.example.com");
+    expect(usableServerUrl("https://a.example.com; rm -rf /")).toBeNull();
+    expect(usableServerUrl("wenlan.example.com")).toBeNull();
+    expect(usableServerUrl("https://$(whoami).example.com")).toBeNull();
   });
 
   it("on the team's server: its name, that it is on, and no Spaces or people", async () => {

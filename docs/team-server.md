@@ -94,6 +94,16 @@ everyone, or to some people, from the line under its title.
    reverse proxy, or its Tailscale address such as `http://nas.tailnet.ts.net:7879`.
    Set it: inside a container Wenlan cannot see the box's own address.
 
+   Without the compose file, the same in one command (Settings › Team ›
+   *Run it on a server* fills in the address and copies it for you):
+
+   ```bash
+   docker run -d --name wenlan --restart unless-stopped -p 7879:7879 \
+     -e WENLAN_TEAM_ADDR=0.0.0.0:7879 -e WENLAN_TEAM_URL=https://wenlan.example.com \
+     -v wenlan-data:/data ghcr.io/wenlan-app/wenlan-server:latest
+   docker logs wenlan
+   ```
+
 2. The first start prints **the owner's invite link** once, in the logs. Open
    it in your own Wenlan (Settings › Team › Join with an invite link). You are
    the team's owner: from your own computer you name the team, invite people,

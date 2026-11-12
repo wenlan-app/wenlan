@@ -7,16 +7,16 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
-import { open as openExternal } from "@tauri-apps/plugin-shell";
 import { teamStop, type SharedStatus } from "../../../../lib/tauri";
 import { confirmAction } from "../../../../lib/confirmAction";
 import { Button, SettingRow, Input, Field } from "../primitives";
 import { SettingsGroup } from "../SettingsView";
-import { TEAM_DOCS_URL, TEAM_KEY, prefillTeamUrl, rememberTeamUrl, useTeamStatus } from "../../sharing/team";
+import { TEAM_KEY, prefillTeamUrl, rememberTeamUrl, useTeamStatus } from "../../sharing/team";
 import { SHARES_KEY, teamLabel, teamPausedText, useShares } from "../../sharing/sharing";
 import { teamGroups } from "../../team/TeamPage";
 import { JoinSharedDialog } from "../../sharing/JoinSharedDialog";
 import { StartTeamDialog } from "../../team/StartTeamDialog";
+import { ServerSetupDialog } from "../../team/ServerSetupDialog";
 import { useScope } from "../../team/scope";
 import "./teamSection.css";
 
@@ -27,6 +27,7 @@ export default function TeamSection() {
   const [address, setAddress] = useState<string | null>(null);
   const [joining, setJoining] = useState(false);
   const [starting, setStarting] = useState(false);
+  const [onServer, setOnServer] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const scope = useScope();
   const queryClient = useQueryClient();
@@ -81,7 +82,6 @@ export default function TeamSection() {
     }
   };
 
-  const openDocs = () => { void Promise.resolve(openExternal(TEAM_DOCS_URL)).catch(() => undefined); };
   const joinRow = (title: string) => (
     <SettingRow
       title={title}
@@ -106,11 +106,17 @@ export default function TeamSection() {
           <SettingRow
             title={t("team.settings.boxTitle")}
             description={t("team.settings.boxHint")}
-            control={<Button variant="ghost" onClick={openDocs}>{t("team.settings.boxAction")}</Button>}
+            control={<Button onClick={() => setOnServer(true)}>{t("team.settings.boxAction")}</Button>}
           />
         </SettingsGroup>
         {joinDialog}
         {startDialog}
+        {onServer && (
+          <ServerSetupDialog
+            onClose={() => setOnServer(false)}
+            onPaste={() => { setOnServer(false); setJoining(true); }}
+          />
+        )}
       </>
     );
   }
