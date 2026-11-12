@@ -48,7 +48,10 @@ function store(key: string) {
 
 export function useScopeState(): ScopeState {
   const shares = useShares();
-  const status = useTeamStatus();
+  // The shell asks on every window. The fixture-only Review build has no team
+  // server and its command contract refuses `team_status`, so it never asks:
+  // with no shares there, it is on no team.
+  const status = useTeamStatus({ enabled: !__WENLAN_REVIEW__ });
   const teams = useMemo(() => teamGroups(shares.data, status.data), [shares.data, status.data]);
   const [chosen, setChosen] = useState(readStored);
   const team = teams.find((group) => group.key === chosen) ?? null;
