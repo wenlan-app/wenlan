@@ -218,6 +218,77 @@ struct SettingsStore {
     /// server's url, as the server last said ([`follow::follow_teams`]).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     teams: BTreeMap<String, wenlan_types::team::TeamInfo>,
+    /// The teams this person is on, by the server's url, with their key:
+    /// kept from the invite link, so a team with no Space open to them yet
+    /// is still followed, and its owner can manage it from here.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    memberships: BTreeMap<String, Membership>,
+}
+
+/// This person on one team server ([`SettingsStore::memberships`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Membership {
+    /// This person's member key.
+    pub key: String,
+    pub member_id: String,
+    /// They own the team: they manage it from this computer.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub owner: bool,
+}
+
+/// Keeps that this person is on the team at `url` as `me` says, with
+/// `key`.
+pub fn remember_membership(
+    path: &Path,
+    url: &str,
+    key: &str,
+    me: &wenlan_types::team::TeamMe,
+) -> Result<(), WenlanError> {
+    let membership = Membership {
+        key: key.to_string(),
+        member_id: me.member_id.clone(),
+        owner: me.role == wenlan_types::team::TeamRole::Owner,
+    };
+    change_settings(path, |store| {
+        let mut changed = false;
+        if store.memberships.get(url) != Some(&membership) {
+            store.memberships.insert(url.to_string(), membership);
+            changed = true;
+        }
+        if let Some(team) = &me.team {
+            if store.teams.get(url) != Some(team) {
+                store.teams.insert(url.to_string(), team.clone());
+                changed = true;
+            }
+        }
+        (changed, ())
+    })
+}
+
+/// Forgets the team at `url` (this person left it).
+pub fn forget_membership(path: &Path, url: &str) -> Result<(), WenlanError> {
+    change_settings(path, |store| (store.memberships.remove(url).is_some(), ()))
+}
+
+/// Follows every team this Wenlan is on now, as a pass does: a Space the
+/// team just opened to this person is synced from now on.
+pub async fn follow_teams_now(db: &MemoryDB, settings_path: &Path) {
+    follow::follow_teams(db, settings_path).await;
+}
+
+/// The team servers this person is on, by url.
+pub fn memberships_at(path: &Path) -> Result<BTreeMap<String, Membership>, WenlanError> {
+    Ok(read_settings(path)?.memberships)
+}
+
+/// The team this person owns on another computer: its server's url and
+/// their key. `None` when they own none.
+pub fn owned_team(path: &Path) -> Result<Option<(String, String)>, WenlanError> {
+    Ok(read_settings(path)?
+        .memberships
+        .into_iter()
+        .find(|(_, membership)| membership.owner)
+        .map(|(url, membership)| (url, membership.key)))
 }
 
 /// One team Space on one server, as [`SettingsStore::left`] names it.

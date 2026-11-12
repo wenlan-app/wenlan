@@ -6,7 +6,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { sharePage, shareSpace, type SharedStatus } from "../../../lib/tauri";
-import { SHARES_KEY, teamLabel, withLine } from "./sharing";
+import { SHARES_KEY, teamLabel, teamPausedText, withLine } from "./sharing";
 import { useTeamStatus } from "./team";
 import { teamAccessText } from "./TeamMembers";
 import "./sharing.css";
@@ -15,6 +15,14 @@ export function SharedWithLine({ share, onOpen }: { readonly share: SharedStatus
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [pending, setPending] = useState(false);
+  // A team Space waits for its server, so there is no folder to choose.
+  if (share.last?.paused && share.host) {
+    return (
+      <p className="shared-with-line shared-with-paused" role="status">
+        <button type="button" className="shared-with-button" onClick={onOpen}><span>{teamPausedText(t, share)}</span></button>
+      </p>
+    );
+  }
   if (share.last?.paused) {
     const choose = async () => {
       const chosen = await openDialog({ directory: true, multiple: false, defaultPath: share.folder });

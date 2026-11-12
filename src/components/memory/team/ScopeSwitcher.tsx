@@ -54,7 +54,7 @@ export function ScopeSwitcher({ compact = false, onSwitched, onJoined }: {
   };
   const actions = !current ? [] : [
     { label: t("team.scope.people", { team: currentName }), onPick: () => setDialog("people") },
-    ...(current.hosted
+    ...(current.owner
       ? [
           { label: t("team.scope.invite"), onPick: () => setDialog("invite") },
           { label: t("team.scope.rename", { team: currentName }), onPick: () => setDialog("rename") },

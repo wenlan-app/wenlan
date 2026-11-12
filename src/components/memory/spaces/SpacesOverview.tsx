@@ -117,6 +117,18 @@ export function SpacesOverview(props: SpacesOverviewProps) {
 
   const execute = async (action: SpaceRowAction, key: string): Promise<boolean> => {
     try {
+      // The owner of a team whose server is elsewhere: the server makes the
+      // Space, and this computer follows it (made here under the server's
+      // name, never into a private Space of the same name).
+      if (action.kind === "create" && scope.team?.owner && !scope.team.hosted) {
+        await teamHostSpace(action.value.name);
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: TEAM_KEY }),
+          queryClient.invalidateQueries({ queryKey: SHARES_KEY }),
+        ]);
+        setCreating(false);
+        return true;
+      }
       await runAction(action);
       switch (action.kind) {
         case "create":
@@ -214,7 +226,7 @@ export function SpacesOverview(props: SpacesOverviewProps) {
               {t("sharing.joinEntry")}
             </button>
           )}
-          {(!scope.team || scope.team.hosted) && (
+          {(!scope.team || scope.team.owner) && (
             <button type="button" className="page-create-action spaces-new-action collection-control collection-control--primary" onClick={() => setCreating(true)}>
               {props.labels.newSpace}
             </button>

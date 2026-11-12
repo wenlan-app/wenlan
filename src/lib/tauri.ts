@@ -1072,6 +1072,9 @@ export interface TeamMember {
   spaces: TeamSpaceAccess[];
   added_at: string;
   removed_at?: string | null;
+  /** "owner" for the person who manages the team from their own computer
+   *  (a server nobody sits at); left out for everyone else. */
+  role?: TeamRole;
 }
 
 /** The team a server is for: the same id and name for everyone on it.
@@ -1093,6 +1096,13 @@ export interface TeamStatus {
   everyone?: TeamSpaceAccess[];
   /** Where the team listener listens; null when it is off. */
   listening?: string | null;
+  /** The address put in invite links. */
+  url?: string | null;
+  /** Addresses others can likely reach this computer at (Tailscale first). */
+  suggested_urls?: string[];
+  /** Set when this is the team server elsewhere that this person owns and
+   *  manages from here: that server's address. This computer hosts nothing. */
+  remote?: string | null;
 }
 
 /** A member and the key shown this once: show only `join_code`. */
@@ -1143,6 +1153,29 @@ export async function teamSetEveryone(space: string, everyone: TeamAccess | "nob
 
 export async function teamJoin(code: string, key?: string): Promise<TeamJoinResponse> {
   return invoke("team_join", { code, key: key ?? null });
+}
+
+/** Makes this computer the team's server: names the team and its owner
+ *  (the person here) and turns the team listener on, now and after every
+ *  restart. `url` is the address put in invite links. */
+export async function teamStart(name: string, person: string, url?: string): Promise<TeamStatus> {
+  return invoke("team_start", { name, person, url: url ?? null });
+}
+
+/** Turns the team listener off; the team, its people and Spaces stay. */
+export async function teamStop(): Promise<TeamStatus> {
+  return invoke("team_stop");
+}
+
+/** Keeps the team an invite link is for on this computer, even before any
+ *  Space is open to this person. */
+export async function teamRememberMembership(code: string): Promise<TeamJoinResponse["me"]> {
+  return invoke("team_remember_membership", { code });
+}
+
+/** Forgets the team whose server is at `url` (this person left it). */
+export async function teamForgetMembership(url: string): Promise<void> {
+  await invoke("team_forget_membership", { url });
 }
 
 /** Join one of the team server's Spaces into the local Space `localSpace`

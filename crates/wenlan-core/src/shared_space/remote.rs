@@ -171,6 +171,44 @@ pub async fn me(url: &str, key: &str) -> Result<TeamMe, String> {
         .map_err(|_| format!("{url} is not a Wenlan team server"))
 }
 
+/// A call to the team's management routes (`/team/v1/admin…`), made for
+/// its owner from their own computer. `path` is what follows `/admin`
+/// (`""`, `/members`, `/members/<id>/key?url=…`). The server's error text
+/// is passed on.
+pub async fn admin(
+    url: &str,
+    key: &str,
+    method: reqwest::Method,
+    path: &str,
+    body: Option<&serde_json::Value>,
+) -> Result<serde_json::Value, String> {
+    let url = check_url(url)?;
+    let mut request = client()?
+        .request(method, format!("{url}/team/v1/admin{path}"))
+        .bearer_auth(key);
+    if let Some(body) = body {
+        request = request.json(body);
+    }
+    let response = request
+        .send()
+        .await
+        .map_err(|error| unreachable(&url, error))?;
+    let status = response.status();
+    if !status.is_success() {
+        let text = response.text().await.unwrap_or_default();
+        return Err(match status.as_u16() {
+            401 => refused(&url, status),
+            403 => "only the team's owner can change the team".into(),
+            _ if !text.trim().is_empty() => text.trim().chars().take(400).collect(),
+            _ => refused(&url, status),
+        });
+    }
+    response
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|_| format!("{url} is not a Wenlan team server"))
+}
+
 /// Copies every file of the server's folder that `folder` does not have
 /// yet, and the server's `space.json`. Returns the server's file list.
 pub async fn pull(link: &HostLink, folder: &Path) -> Result<TeamFileList, String> {

@@ -70,6 +70,11 @@ impl Member {
         if !self.is_active() {
             return None;
         }
+        // The owner can edit every Space the server hosts. (Whether `space`
+        // is hosted at all is the caller's check, as for anyone.)
+        if self.role == TeamRole::Owner {
+            return Some(TeamAccess::Write);
+        }
         self.spaces
             .get(space)
             .or_else(|| self.everyone.get(space))
@@ -83,13 +88,20 @@ impl Member {
             spaces: self.space_list(),
             added_at: self.added_at.clone(),
             removed_at: self.removed_at.clone(),
+            role: self.role,
         }
     }
 
-    /// Who they are and every Space they can use, their own and everyone's.
-    pub fn me(&self) -> TeamMe {
+    /// Who they are and every Space they can use, their own and everyone's
+    /// (the owner: every Space the server hosts, `hosted`).
+    pub fn me(&self, hosted: &[String]) -> TeamMe {
         let mut all = self.everyone.clone();
         all.extend(self.spaces.clone());
+        if self.role == TeamRole::Owner {
+            for space in hosted {
+                all.insert(space.clone(), TeamAccess::Write);
+            }
+        }
         TeamMe {
             member_id: self.id.clone(),
             name: self.name.clone(),
@@ -130,6 +142,13 @@ pub struct TeamFile {
     /// handbook or wiki), by name.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub everyone: BTreeMap<String, TeamAccess>,
+    /// Where the team listener listens, set when the owner starts the team
+    /// from the app (`WENLAN_TEAM_ADDR` wins over it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub listen: Option<String>,
+    /// The address put in invite links.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
 }
 
 fn format_one() -> u32 {
@@ -144,6 +163,8 @@ impl Default for TeamFile {
             name: None,
             members: Vec::new(),
             everyone: BTreeMap::new(),
+            listen: None,
+            url: None,
         }
     }
 }
@@ -259,6 +280,87 @@ pub fn rename_team(path: &Path, name: &str) -> Result<TeamInfo, WenlanError> {
         Ok(file.info())
     })?
     .ok_or_else(|| WenlanError::Generic("the team has no id".into()))
+}
+
+/// Sets where the team listener listens (`None`: off) and, when given, the
+/// address put in invite links.
+pub fn set_listen(path: &Path, listen: Option<&str>, url: Option<&str>) -> Result<(), WenlanError> {
+    let listen = listen.map(str::trim).filter(|addr| !addr.is_empty());
+    if let Some(addr) = listen {
+        addr.parse::<std::net::SocketAddr>().map_err(|_| {
+            WenlanError::Validation(format!("{addr:?} is not an address to listen on"))
+        })?;
+    }
+    change_team(path, |file| {
+        file.listen = listen.map(str::to_string);
+        if let Some(url) = url.map(str::trim).filter(|url| !url.is_empty()) {
+            file.url = Some(url.trim_end_matches('/').to_string());
+        }
+        Ok(())
+    })
+}
+
+/// Sets the address put in invite links (`None`: none kept).
+pub fn set_url(path: &Path, url: Option<&str>) -> Result<(), WenlanError> {
+    let url = url
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+        .map(|url| url.trim_end_matches('/').to_string());
+    change_team(path, |file| {
+        file.url = url;
+        Ok(())
+    })
+}
+
+/// The owner's member record and a new key for it, made when the team has
+/// no owner yet: for a server nobody sits at (Docker), whose owner manages
+/// the team from their own computer. Any earlier owner key stops working.
+pub fn owner_key(path: &Path, name: &str) -> Result<(Member, String), WenlanError> {
+    let name = clean_name(name)?;
+    let key = new_key();
+    let member = change_team(path, |file| {
+        let info = file.info();
+        let everyone = file.everyone.clone();
+        let member = match file
+            .members
+            .iter_mut()
+            .find(|member| member.role == TeamRole::Owner && member.is_active())
+        {
+            Some(owner) => {
+                owner.key_sha256 = key_hash(&key);
+                owner.clone()
+            }
+            None => {
+                let owner = Member {
+                    id: uuid::Uuid::new_v4().simple().to_string(),
+                    name,
+                    key_sha256: key_hash(&key),
+                    spaces: BTreeMap::new(),
+                    added_at: now(),
+                    removed_at: None,
+                    role: TeamRole::Owner,
+                    everyone: BTreeMap::new(),
+                    team: None,
+                };
+                file.members.push(owner.clone());
+                owner
+            }
+        };
+        Ok(Member {
+            everyone,
+            team: info,
+            ..member
+        })
+    })?;
+    Ok((member, key))
+}
+
+/// Whether the team has an owner who manages it from another computer.
+pub fn has_owner(path: &Path) -> Result<bool, WenlanError> {
+    Ok(read_team(path)?
+        .members
+        .iter()
+        .any(|member| member.role == TeamRole::Owner && member.is_active()))
 }
 
 fn clean_name(name: &str) -> Result<String, WenlanError> {
@@ -377,6 +479,11 @@ pub fn new_member_key(path: &Path, id: &str) -> Result<(Member, String), WenlanE
 pub fn remove_member(path: &Path, id: &str) -> Result<Member, WenlanError> {
     change_team(path, |file| {
         let member = find_mut(file, id)?;
+        if member.role == TeamRole::Owner {
+            return Err(WenlanError::Validation(
+                "the team's owner cannot be removed".into(),
+            ));
+        }
         if member.removed_at.is_none() {
             member.removed_at = Some(now());
         }
