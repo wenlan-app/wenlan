@@ -26,7 +26,7 @@ type JoinSharedDialogProps = {
   readonly onClose: () => void;
   /** Called once it is added: the Space's name here, or the page's id; for
    *  a team joined from an invite link, "team" and the team's id. */
-  readonly onJoined?: (kind: SharedKind | "team", target: string) => void;
+  readonly onJoined?: (kind: Exclude<SharedKind, "library"> | "team", target: string) => void;
   /** Only one way in: a folder someone shared (from Spaces), or a team's
    *  invite link (from the switch or Settings › Team). Teams stay out of
    *  sight of someone who never joined one. */
