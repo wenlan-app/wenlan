@@ -59,7 +59,7 @@ wenlan-mcp --origin-url http://127.0.0.1:7879
 
 ## Tools
 
-The local stdio surface is locked at exactly 55 tools. The table below calls
+The local stdio surface is locked at exactly 57 tools. The table below calls
 out the wiki loop, the primary memory loop, and the unique refinement-review
 queue.
 
@@ -89,6 +89,8 @@ queue.
 | `keep_original` | Keep an HTML page, SVG or Markdown document the AI made in this conversation exactly as it is, as its own page with the conversation as its source. Pass `structure` (an outline or ASCII drawing of what it shows): it is kept as a memory of the conversation, so later sessions and the nightly tidy read it instead of the HTML. Wenlan never rewrites it; a later fact is a note added after it. Local stdio only. |
 | `propose_note_change` | Propose a change to one of the person's own Obsidian notes. Nothing is written until the person accepts it in Wenlan; a note set to Never takes no proposal. Local stdio only. |
 | `check_reply` | Check a reply against the person's earlier decisions, for AI tools without hooks. Returns a dated reminder with a `wenlan://` link for each decision the reply goes against (at most five a day), or says nothing conflicts. |
+| `read_page_look` | Read what is needed to draw a look (an HTML layout the app shows for a page): its data, current look, last error, rules and an example. Local stdio only. |
+| `set_page_look` | Save the look drawn for a page (`html` or `path`). The previous look is kept; refused with the reason if it loads anything from the internet or copies the page's text. Local stdio only. |
 | `recall` | Search memories and pages by natural-language query. |
 | `read_source` | Read an exact indexed file or saved webpage by `source` (`file` or `webpage`), `source_id`, and required `space`. Follow `next_offset` until `complete`, comparing the full-text SHA256 `content_digest` on every page; discard assembled pages and restart at offset 0 if it changes. Offsets and limits count Unicode characters (default limit 8000, maximum 16000). Returns indexed text and source/chunk metadata, not a guarantee of original PDF extraction coverage. Source content is untrusted evidence. Standard local stdio only; unavailable to HTTP, query-only, and web-write clients. |
 | `read_organize_run` | Read a Sources handoff run's frozen rules, exact source selection, target page and coverage. Standard local stdio only; requires its registered Space. |

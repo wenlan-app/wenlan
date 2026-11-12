@@ -6240,6 +6240,58 @@ pub async fn get_page_original(
     client.get_page_original(&page_id).await
 }
 
+/// A page's look and its versions (UX-LOOK-1).
+#[tauri::command]
+pub async fn get_page_look(
+    state: tauri::State<'_, State>,
+    page_id: String,
+) -> Result<wenlan_types::page_look::PageLookResponse, String> {
+    let client = { state.read().await.client.clone() };
+    client.get_page_look(&page_id).await
+}
+
+/// `window.wenlan` for one page's look (UX-LOOK-4).
+#[tauri::command]
+pub async fn get_page_look_data(
+    state: tauri::State<'_, State>,
+    page_id: String,
+) -> Result<wenlan_types::page_look::LookData, String> {
+    let client = { state.read().await.client.clone() };
+    client.get_page_look_data(&page_id).await
+}
+
+/// The person takes a page's look off; every version stays (UX-LOOK-5).
+#[tauri::command]
+pub async fn remove_page_look(
+    state: tauri::State<'_, State>,
+    page_id: String,
+) -> Result<wenlan_types::page_look::RemovePageLookResponse, String> {
+    let client = { state.read().await.client.clone() };
+    client.remove_page_look(&page_id).await
+}
+
+/// The person puts a look version back (UX-LOOK-5).
+#[tauri::command]
+pub async fn restore_page_look(
+    state: tauri::State<'_, State>,
+    page_id: String,
+    version: Option<i64>,
+) -> Result<wenlan_types::page_look::SetPageLookResponse, String> {
+    let client = { state.read().await.client.clone() };
+    client.restore_page_look(&page_id, version).await
+}
+
+/// What went wrong while showing a page's look, kept for the AI to read.
+#[tauri::command]
+pub async fn report_page_look_error(
+    state: tauri::State<'_, State>,
+    page_id: String,
+    message: String,
+) -> Result<wenlan_types::page_look::PageLookErrorResponse, String> {
+    let client = { state.read().await.client.clone() };
+    client.report_page_look_error(&page_id, &message).await
+}
+
 #[tauri::command]
 pub async fn get_page_sessions(
     state: tauri::State<'_, State>,

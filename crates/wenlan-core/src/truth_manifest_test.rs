@@ -321,12 +321,16 @@ fn manifest_counts_match_the_spec() {
     // Then 347 after GET/POST `/api/import/ai-memory` and POST `/undo`
     // (following AI tools' memory; a time and counts only), and 348 after
     // PUT `/api/team` (names the team; its id and name only).
+    // Then 354 after the six page look routes (GET/PUT/DELETE
+    // `/api/pages/{id}/look`, POST `/look/restore` and `/look/error`, and GET
+    // `/look/data`, the only page-bearing one) and 57 tools with
+    // `read_page_look` and `set_page_look`.
     assert_eq!(
         HTTP_READERS.len(),
-        348,
+        354,
         "registered (method, path, handler) triples"
     );
-    assert_eq!(MCP_READERS.len(), 55, "#[tool( declarations");
+    assert_eq!(MCP_READERS.len(), 57, "#[tool( declarations");
     // No hand-bumped CLI count here: `wenlan-cli`'s
     // `catalog_tests::truth_manifest_cli_rows_match_clap_subcommands` derives
     // the expected set from clap's `Commands` enum, which this crate cannot see.
@@ -334,7 +338,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        360,
+        366,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -342,7 +346,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        343,
+        349,
         "main builder entries"
     );
     assert_eq!(
@@ -361,8 +365,8 @@ fn manifest_counts_match_the_spec() {
     // +2: the in-chat check (two routes). +1: GET `/api/things/{id}` (the
     // titles of its conversations' pages). +1: GET `/api/trust/scan`. +1:
     // POST `/api/pages/{id}/space` (names the page it moves).
-    // +1: POST `/api/pages/{id}/restore-version`.
-    assert_eq!(bearing, 100, "page-bearing HTTP routes");
+    // +1: POST `/api/pages/{id}/restore-version`. +1: GET `/api/pages/{id}/look/data`.
+    assert_eq!(bearing, 101, "page-bearing HTTP routes");
 }
 
 #[test]
@@ -533,7 +537,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::None)
             .count(),
-        338 // Existing 273 plus 22 research workflow routes, 7 custom-theme routes, a memory's conversation lines, the nights undo, the memory restore, the two trust scan routes, keeping a session original, the 8 sharing routes, one tidy's undo, the three old-pass routes and the four linked-vault routes, the two set-aside routes, the plain Brief lines, the seven team routes and naming the team, and the three AI-memory routes, all with no page markers.
+        344 // Existing 273 plus 22 research workflow routes, 7 custom-theme routes, a memory's conversation lines, the nights undo, the memory restore, the two trust scan routes, keeping a session original, the 8 sharing routes, one tidy's undo, the three old-pass routes and the four linked-vault routes, the two set-aside routes, the plain Brief lines, the seven team routes and naming the team, the three AI-memory routes and the six page look routes, all with no page markers.
     );
 }
 

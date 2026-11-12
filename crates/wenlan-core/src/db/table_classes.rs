@@ -131,6 +131,9 @@ pub const TABLE_CLASSES: &[(&str, TableClass)] = {
         ("memory_enrichment_summary", Cache),
         ("conversation_labels", Cache),
         ("thing_lines", Cache),
+        // A page's looks (UX-LOOK-6): they stay on this computer and are not
+        // exported yet, so a rebuild from files starts without them.
+        ("page_looks", Cache),
         // The latest nightly trust scan; the next scan writes it again.
         ("trust_scan_reports", Cache),
         // Links, entities, relations, claims and checks.

@@ -455,6 +455,10 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     "/api/attachments/resolve",
     // Keeps one session original as its own page; returns its id and title only.
     "/api/originals",
+    // A page's look is saved, put back or given an error note by id; each
+    // answers with ids only, and the handler holds the page to the caller's
+    // Space and truth grant. The two reads are in the sensitive catalog.
+    "/api/pages/{id}/look/restore", "/api/pages/{id}/look/error",
     "/api/onboarding/milestones/{id}/acknowledge", "/api/onboarding/reset", "/ws/updates",
     "/api/palace/layout/revert", "/api/pages/{id}/map/layout", "/api/pages/{id}/map/nodes", "/api/pages/{id}/map/edges",
     "/api/pages/{id}/map/nodes/{node_id}", "/api/pages/{id}/map/edges/{edge_id}",
@@ -527,6 +531,9 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
 ];
 
 const NON_SENSITIVE_MIXED_ROUTES: &[(RegisteredMethod, &str)] = &[
+    // Saving or removing a page's look; its read is the catalog's GET row.
+    (RegisteredMethod::Put, "/api/pages/{id}/look"),
+    (RegisteredMethod::Delete, "/api/pages/{id}/look"),
     // The palace layout write; its read is the catalog's global row.
     (RegisteredMethod::Put, "/api/palace/layout"),
     (RegisteredMethod::Put, "/api/sources/{id}/ai-changes"),

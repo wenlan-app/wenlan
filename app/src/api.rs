@@ -2245,6 +2245,72 @@ impl WenlanClient {
         self.get_optional_json(&path).await
     }
 
+    /// `GET /api/pages/{id}/look`: the page's active look and its versions.
+    pub async fn get_page_look(
+        &self,
+        page_id: &str,
+    ) -> Result<wenlan_types::page_look::PageLookResponse, String> {
+        let path = format!("/api/pages/{}/look", percent_encode_path_segment(page_id));
+        self.get_json(&path).await
+    }
+
+    /// `GET /api/pages/{id}/look/data`: `window.wenlan` for the page.
+    pub async fn get_page_look_data(
+        &self,
+        page_id: &str,
+    ) -> Result<wenlan_types::page_look::LookData, String> {
+        let path = format!(
+            "/api/pages/{}/look/data",
+            percent_encode_path_segment(page_id)
+        );
+        self.get_json(&path).await
+    }
+
+    /// `DELETE /api/pages/{id}/look`: take the page's look off.
+    pub async fn remove_page_look(
+        &self,
+        page_id: &str,
+    ) -> Result<wenlan_types::page_look::RemovePageLookResponse, String> {
+        let path = format!("/api/pages/{}/look", percent_encode_path_segment(page_id));
+        self.delete_path(&path).await
+    }
+
+    /// `POST /api/pages/{id}/look/restore`: put a look version back.
+    pub async fn restore_page_look(
+        &self,
+        page_id: &str,
+        version: Option<i64>,
+    ) -> Result<wenlan_types::page_look::SetPageLookResponse, String> {
+        let path = format!(
+            "/api/pages/{}/look/restore",
+            percent_encode_path_segment(page_id)
+        );
+        self.post_json(
+            &path,
+            &wenlan_types::page_look::RestorePageLookRequest { id: version },
+        )
+        .await
+    }
+
+    /// `POST /api/pages/{id}/look/error`: what went wrong showing the look.
+    pub async fn report_page_look_error(
+        &self,
+        page_id: &str,
+        message: &str,
+    ) -> Result<wenlan_types::page_look::PageLookErrorResponse, String> {
+        let path = format!(
+            "/api/pages/{}/look/error",
+            percent_encode_path_segment(page_id)
+        );
+        self.post_json(
+            &path,
+            &wenlan_types::page_look::PageLookErrorRequest {
+                message: message.to_string(),
+            },
+        )
+        .await
+    }
+
     /// `GET /api/pages/{id}/sessions`.
     pub async fn get_page_sessions(
         &self,
@@ -5495,6 +5561,11 @@ mod tests {
         let _detail = WenlanClient::get_session_detail;
         let _page = WenlanClient::get_page_sessions;
         let _original = WenlanClient::get_page_original;
+        let _look = WenlanClient::get_page_look;
+        let _look_data = WenlanClient::get_page_look_data;
+        let _remove_look = WenlanClient::remove_page_look;
+        let _restore_look = WenlanClient::restore_page_look;
+        let _look_error = WenlanClient::report_page_look_error;
     }
 
     #[test]
