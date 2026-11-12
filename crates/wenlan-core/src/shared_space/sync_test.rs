@@ -127,6 +127,29 @@ impl Member {
         .id
     }
 
+    /// An edit by the person's AI tool.
+    async fn ai_edit(&self, id: &str, content: &str) {
+        let page = self.page(id).await.unwrap();
+        let result = crate::post_write::update_page(
+            &self.db,
+            id,
+            UpdatePageRequest {
+                content: content.to_string(),
+                source_memory_ids: Vec::new(),
+                expected_version: Some(page.version),
+                caller_id: None,
+                operation_id: None,
+            },
+            "agent_refresh",
+            false,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(result.wrote, "AI edit of {id} did not land");
+    }
+
     async fn edit(&self, id: &str, content: &str) {
         let result = crate::post_write::update_page_preserving_sources(
             &self.db,
@@ -183,6 +206,17 @@ impl Member {
     async fn history(&self, id: &str) -> Vec<crate::db::PageHistoryEntry> {
         self.db.list_page_history(id, 100).await.unwrap()
     }
+}
+
+/// The active page titled `title`.
+async fn titled(member: &Member, title: &str) -> Option<Page> {
+    member
+        .db
+        .list_pages_by_space("active", None, 1_000_000, 0)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|page| page.title == title)
 }
 
 fn space() -> Scope {
@@ -347,6 +381,73 @@ async fn a_page_reaches_the_other_member_and_three_edits_catch_up_in_one_sync() 
 }
 
 #[tokio::test]
+async fn two_peoples_edits_of_different_lines_come_together() {
+    let folder = tempfile::tempdir().unwrap();
+    let folder = folder.path().to_path_buf();
+    let a = Member::new("Qi-Xuan").await;
+    let b = Member::new("Ana").await;
+    let id = a
+        .write(
+            "Menu",
+            "Menu\n\nFish.\nRice.\nCake.",
+            SPACE.to_string().into(),
+        )
+        .await;
+    a.sync(&folder).await;
+    b.sync(&folder).await;
+
+    b.edit(&id, "Menu\n\nFish.\nRice.\nCake and tea.").await;
+    tick().await;
+    a.edit(&id, "Menu\n\nFish with lemon.\nRice.\nCake.").await;
+    b.sync(&folder).await;
+    a.sync(&folder).await;
+    // B's edit lost to A's later one, and the two are put together: no
+    // second page, nothing to be told.
+    let got = b.sync(&folder).await;
+    assert_eq!(got.conflicts, 0, "{got:?}");
+    let both = "Menu\n\nFish with lemon.\nRice.\nCake and tea.";
+    assert_eq!(b.content(&id).await, both);
+    assert!(!b
+        .db
+        .get_page_changelog(&id)
+        .await
+        .unwrap()
+        .contains("concurrent_with"));
+    // The page put together is the version after both.
+    assert_eq!(b.sync(&folder).await.exported, 1);
+    assert_eq!(a.sync(&folder).await.applied, 1);
+    assert_eq!(a.content(&id).await, both);
+    assert_eq!(a.sync(&folder).await, zero());
+    assert_eq!(b.sync(&folder).await, zero());
+    assert!(titled(&b, "Menu (Ana)").await.is_none());
+}
+
+#[tokio::test]
+async fn a_persons_edit_wins_over_an_ai_edit_made_later() {
+    let folder = tempfile::tempdir().unwrap();
+    let folder = folder.path().to_path_buf();
+    let a = Member::new("Qi-Xuan").await;
+    let b = Member::new("Ana").await;
+    let id = a
+        .write("Menu", "Fish or pasta.", SPACE.to_string().into())
+        .await;
+    a.sync(&folder).await;
+    b.sync(&folder).await;
+
+    b.edit(&id, "Fish or pasta, and a cake.").await;
+    tick().await;
+    a.ai_edit(&id, "Fish or pasta. Both are popular.").await;
+    b.sync(&folder).await;
+    a.sync(&folder).await;
+    // The AI tool's edit is later, but B's own edit wins on both.
+    a.sync(&folder).await;
+    assert_eq!(a.content(&id).await, "Fish or pasta, and a cake.");
+    assert_eq!(b.content(&id).await, "Fish or pasta, and a cake.");
+    // An AI tool's edit that lost makes no second page.
+    assert!(titled(&a, "Menu (Qi-Xuan)").await.is_none());
+}
+
+#[tokio::test]
 async fn edits_made_at_the_same_time_keep_both_versions_in_history() {
     let folder = tempfile::tempdir().unwrap();
     let folder = folder.path().to_path_buf();
@@ -358,13 +459,14 @@ async fn edits_made_at_the_same_time_keep_both_versions_in_history() {
     a.sync(&folder).await;
     b.sync(&folder).await;
 
-    // Both edit before either has the other's edit.
-    a.edit(&id, "Fish, pasta or risotto.").await;
+    // Both edit the same line before either has the other's edit.
     b.edit(&id, "Fish or pasta, and a cake.").await;
+    tick().await;
+    a.edit(&id, "Fish, pasta or risotto.").await;
     assert_eq!(b.sync(&folder).await.exported, 1);
     let b_edit = b.page(&id).await.unwrap().version;
-    tick().await;
-    // A's edit is later, so it wins everywhere; B's stays a version.
+    // A's edit is later, so it wins everywhere, though B shared first; B's
+    // stays a version.
     assert_eq!(a.sync(&folder).await.exported, 1);
     let got = b.sync(&folder).await;
     assert_eq!(got.applied, 1, "{got:?}");
@@ -406,6 +508,15 @@ async fn edits_made_at_the_same_time_keep_both_versions_in_history() {
         .map(|(_, bytes)| String::from_utf8(bytes).unwrap())
         .collect();
     assert!(all.contains("Fish or pasta, and a cake."));
+    // B's edit stays in sight as a second page, named after B, on both.
+    assert_eq!(b.sync(&folder).await.exported, 1);
+    assert_eq!(a.sync(&folder).await.applied, 1);
+    for member in [&a, &b] {
+        assert_eq!(
+            titled(member, "Menu (Ana)").await.map(|page| page.content),
+            Some("Fish or pasta, and a cake.".to_string())
+        );
+    }
     assert_eq!(a.sync(&folder).await, zero());
     assert_eq!(b.sync(&folder).await, zero());
 
@@ -2920,4 +3031,26 @@ async fn two_libraries_started_in_one_folder_come_together() {
         library::page_writing_allowed_at(&a.settings()),
         library::page_writing_allowed_at(&b.settings())
     );
+}
+
+#[tokio::test]
+async fn the_library_keeps_an_edit_it_cannot_put_together_as_a_second_page() {
+    let chosen = tempfile::tempdir().unwrap();
+    let (a, b) = library_pair(chosen.path()).await;
+    let id = a
+        .write("Menu", "Fish or pasta.", SPACE.to_string().into())
+        .await;
+    lib_settle(&a, &b, chosen.path()).await;
+
+    b.edit(&id, "Fish or pasta, and a cake.").await;
+    tick().await;
+    a.edit(&id, "Fish, pasta or risotto.").await;
+    lib_settle(&a, &b, chosen.path()).await;
+    let second = format!("Menu ({})", super::library::computer_name());
+    for computer in [&a, &b] {
+        assert_eq!(computer.content(&id).await, "Fish, pasta or risotto.");
+        let kept = titled(computer, &second).await.expect("the second page");
+        assert_eq!(kept.content, "Fish or pasta, and a cake.");
+        assert_eq!(kept.space.as_deref(), Some(SPACE));
+    }
 }

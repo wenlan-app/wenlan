@@ -398,6 +398,11 @@ pub trait Versioned {
     fn sha(&self) -> &str;
     fn parents(&self) -> Vec<&str>;
     fn ts(&self) -> &str;
+    /// A person made this version (not an AI tool). Between edits made at
+    /// the same time, a person's wins over an AI's.
+    fn by_person(&self) -> bool {
+        true
+    }
 }
 
 impl Versioned for PageVersion {
@@ -415,6 +420,9 @@ impl Versioned for PageVersion {
     fn ts(&self) -> &str {
         &self.meta.ts
     }
+    fn by_person(&self) -> bool {
+        self.meta.author.kind == AuthorKind::Person
+    }
 }
 
 pub(super) fn ts_key(ts: &str) -> Option<chrono::DateTime<chrono::Utc>> {
@@ -424,8 +432,9 @@ pub(super) fn ts_key(ts: &str) -> Option<chrono::DateTime<chrono::Utc>> {
 }
 
 /// The head of `versions` (one page's versions from every member). Two or
-/// more leaves are edits made at the same time: the later `ts` wins, and the
-/// larger sha when they tie, so every member picks the same one.
+/// more leaves are edits made at the same time: a person's wins over an AI
+/// tool's, then the later `ts`, then the larger sha, so every member picks
+/// the same one.
 pub fn head(versions: &[PageVersion]) -> Option<Head<'_>> {
     head_of(versions)
 }
@@ -445,8 +454,8 @@ pub fn head_of<T: Versioned>(versions: &[T]) -> Option<Head<'_, T>> {
         leaves = versions.iter().collect();
     }
     leaves.sort_by(|a, b| {
-        (ts_key(a.ts()), a.sha())
-            .cmp(&(ts_key(b.ts()), b.sha()))
+        (a.by_person(), ts_key(a.ts()), a.sha())
+            .cmp(&(b.by_person(), ts_key(b.ts()), b.sha()))
             .reverse()
     });
     Some(Head {

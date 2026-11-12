@@ -1369,8 +1369,8 @@ carrying the authority of agreement.
 | `core/repair_plan/deterministic.rs::resolve_current` | `pub(crate)` | yes | no | — | `core/repair_plan/deterministic.rs::resolve_duplicate_page_titles`, `core/repair_plan/deterministic.rs::resolve_orphan_links`, `core/repair_plan/deterministic.rs::resolve_source_pages` |
 | `core/repair_plan/deterministic.rs::target_still_actionable` | `pub(super)` | no | no | — | `core/repair_plan/deterministic.rs::renamed_page_title_still_actionable`, `core/repair_plan/deterministic.rs::resolve_orphan_links`, `core/repair_plan/deterministic.rs::resolve_source_pages` |
 | `core/shared_space/mod.rs::apply_create_untitled_body` | `private` | no | no | — | `core/db/page_drafts.rs::publish_page_draft` |
-| `core/shared_space/mod.rs::free_title` | `private` | no | no | — | `core/db.rs::list_pages_by_space` |
 | `core/shared_space/mod.rs::pass` | `private` | no | no | — | `core/db.rs::list_pages_by_space` |
+| `core/shared_space/mod.rs::taken_titles` | `private` | no | no | — | `core/db.rs::list_pages_by_space` |
 | `core/steep.rs::steep_work` | `private` | no | no | — | `core/db/steep.rs::list_steep_code_pages`, `core/db/steep.rs::list_steep_pages` |
 | `core/steep.rs::waiting_page_ids` | `pub` | no | **yes** | `server/steep_routes.rs::handle_steep_worklist` | `core/db/steep.rs::list_steep_code_pages`, `core/db/steep.rs::list_steep_pages` |
 | `core/steep_automatic.rs::rewrite_one_code_page` | `pub` | no | no | — | `core/db/steep.rs::list_steep_code_pages` |
@@ -1577,15 +1577,17 @@ carrying the authority of agreement.
 | `core/sentences.rs::recheck_sentence` | `pub` | no | **yes** | `server/sentence_routes.rs::handle_recheck_sentence` | `core/db/sentence_history.rs::set_page_citations_at_page_version` |
 | `core/sentences.rs::source_states` | `private` | no | no | — | `core/db/citation_sources.rs::citation_page_source` |
 | `core/shared_space/library.rs::write_copy` | `private` | no | no | — | `core/reading_copy.rs::pages_for_copy` |
-| `core/shared_space/mod.rs::apply_create` | `private` | no | no | — | `core/shared_space/mod.rs::apply_create_untitled_body`, `core/shared_space/mod.rs::free_title` |
+| `core/shared_space/mod.rs::apply_create` | `private` | no | no | — | `core/shared_space/mod.rs::apply_create_untitled_body` |
 | `core/shared_space/mod.rs::apply_sources` | `private` | no | no | — | `core/db.rs::set_page_citations` |
-| `core/shared_space/mod.rs::apply_version` | `private` | no | no | — | `core/shared_space/mod.rs::free_title` |
+| `core/shared_space/mod.rs::free_title` | `private` | no | no | — | `core/shared_space/mod.rs::taken_titles` |
 | `core/shared_space/mod.rs::held_space_of` | `private` | no | no | — | `core/db.rs::get_page` |
+| `core/shared_space/mod.rs::keep_as_second_page` | `private` | no | no | — | `core/shared_space/mod.rs::taken_titles` |
 | `core/shared_space/mod.rs::reload` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/shared_space/mod.rs::run_pass` | `private` | no | no | — | `core/shared_space/mod.rs::pass` |
 | `core/shared_space/mod.rs::stop_page_shares_in` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/shared_space/mod.rs::sync_missing` | `private` | yes | no | — | `core/db.rs::get_page` |
 | `core/shared_space/mod.rs::sync_space` | `pub` | no | **yes** | `server/spaces_routes.rs::host_sync`, `server/spaces_routes.rs::shared_sync`, `server/team_routes.rs::handle_host_space` | `core/db.rs::get_page` |
+| `core/shared_space/mod.rs::write_merged` | `private` | no | no | — | `core/db.rs::set_page_citations` |
 | `core/shared_space/review.rs::accepted` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/shared_space/review.rs::review` | `pub(super)` | no | no | — | `core/db.rs::get_page` |
 | `core/sources/page_watcher.rs::archive_deleted_pages` | `private` | no | no | — | `core/db.rs::get_page` |
@@ -1777,9 +1779,10 @@ carrying the authority of agreement.
 | `core/sentences.rs::revert_ai_write` | `pub` | no | **yes** | `server/sentence_routes.rs::handle_revert_sentences` | `core/sentences.rs::load_page` |
 | `core/sentences.rs::unit_citations` | `private` | no | no | — | `core/sentences.rs::source_states` |
 | `core/shared_space/library.rs::main_jobs` | `pub(super)` | no | no | — | `core/shared_space/library.rs::write_copy` |
+| `core/shared_space/mod.rs::apply_version` | `private` | no | no | — | `core/export/knowledge.rs::archive_page_if_still_archived`, `core/shared_space/mod.rs::apply_sources`, `core/shared_space/mod.rs::free_title`, `core/shared_space/mod.rs::reload` |
 | `core/shared_space/mod.rs::archive_here` | `private` | no | no | — | `core/export/knowledge.rs::archive_page_if_still_archived`, `core/shared_space/mod.rs::reload` |
 | `core/shared_space/mod.rs::move_to_space` | `private` | no | no | — | `core/shared_space/mod.rs::reload` |
-| `core/shared_space/mod.rs::sync_page` | `private` | no | no | — | `core/shared_space/mod.rs::apply_version`, `core/shared_space/mod.rs::held_space_of`, `core/shared_space/mod.rs::reload` |
+| `core/shared_space/mod.rs::sync_page` | `private` | no | no | — | `core/shared_space/mod.rs::held_space_of`, `core/shared_space/mod.rs::keep_as_second_page`, `core/shared_space/mod.rs::reload`, `core/shared_space/mod.rs::write_merged` |
 | `core/shared_space/mod.rs::sync_shared_spaces` | `pub` | no | **yes** | `server/scheduler.rs::spawn_scheduler` | `core/shared_space/mod.rs::run_pass` |
 | `core/sources/page_watcher.rs::adopt_note` | `private` | no | no | — | `core/sources/page_watcher.rs::create_adopted_page` |
 | `core/sources/page_watcher.rs::sync_pass` | `private` | no | no | — | `core/sources/page_watcher.rs::archive_deleted_pages`, `core/sources/page_watcher.rs::finish_pending_adoptions`, `core/sources/page_watcher.rs::sync_one_file` |

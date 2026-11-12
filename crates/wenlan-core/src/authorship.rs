@@ -320,7 +320,7 @@ fn push_gap(
     }
 }
 
-fn lcs_pairs(old: &[&str], new: &[&str]) -> Vec<(usize, usize)> {
+pub(crate) fn lcs_pairs(old: &[&str], new: &[&str]) -> Vec<(usize, usize)> {
     if old.is_empty() || new.is_empty() {
         return Vec::new();
     }

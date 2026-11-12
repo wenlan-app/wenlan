@@ -88,6 +88,7 @@
 mod follow;
 pub mod library;
 mod memories;
+mod merge;
 pub mod remote;
 mod review;
 pub mod rewrite;
@@ -2018,10 +2019,19 @@ impl Pass<'_> {
         // This page is an earlier version, or an edit made at the same time
         // as the head that lost to it: take the head. What it had stays in
         // this page's history.
-        let lost = head
+        let mine = head
             .leaves
             .iter()
-            .any(|leaf| leaf.sha != head.winner.sha && self.version_state(leaf) == state);
+            .copied()
+            .find(|leaf| leaf.sha != head.winner.sha && self.version_state(leaf) == state);
+        let lost = mine.is_some();
+        // Two edits a person made at the same time on two computers (or two
+        // members): put together when they changed different lines, else
+        // both kept, the one made here as a second page.
+        let together = match mine {
+            Some(mine) => together(versions, mine, head.winner),
+            None => Together::Notice,
+        };
         // Versions written while this Wenlan was away, between the one it
         // was in step with and the head: each goes into this page's history
         // too, so every computer lists the same edits.
@@ -2040,13 +2050,23 @@ impl Pass<'_> {
         if applied.wrote && applied.complete {
             counts.applied += 1;
             if lost {
-                counts.conflicts += 1;
-                // The person is told once, on this page, that their edit
-                // lost and where it is.
-                let now = self.reload(&page.id).await?;
-                self.db
-                    .mark_concurrent_edit(&page.id, now.version, page.version)
-                    .await?;
+                let merged = match (&together, mine) {
+                    (Together::Merged(merged), _) => self.write_merged(&page.id, merged).await?,
+                    (Together::Both, Some(mine)) => {
+                        self.keep_as_second_page(page, mine).await?;
+                        false
+                    }
+                    _ => false,
+                };
+                if !merged {
+                    counts.conflicts += 1;
+                    // The person is told once, on this page, that their edit
+                    // lost and where it is.
+                    let now = self.reload(&page.id).await?;
+                    self.db
+                        .mark_concurrent_edit(&page.id, now.version, page.version)
+                        .await?;
+                }
             }
         } else if !applied.complete {
             counts.skipped += 1;
@@ -2158,6 +2178,26 @@ impl Pass<'_> {
         wanted: &str,
         writer: &PageVersion,
     ) -> Result<String, WenlanError> {
+        let taken = self.taken_titles(id, writer).await?;
+        if !taken.contains(&MemoryDB::page_title_key(wanted)) {
+            return Ok(wanted.to_string());
+        }
+        let name = self
+            .names
+            .get(&writer.meta.author.member)
+            .map(String::as_str)
+            .unwrap_or("shared");
+        let candidate = free_name(&taken, wanted, name);
+        log::info!("[shared_space] {id}: the title {wanted:?} is taken here; it is {candidate:?}");
+        Ok(candidate)
+    }
+
+    /// The titles other pages hold in the Space `writer`'s page goes to.
+    async fn taken_titles(
+        &self,
+        id: &str,
+        writer: &PageVersion,
+    ) -> Result<HashSet<String>, WenlanError> {
         // The library keeps titles apart within the Space the page goes to.
         let space = self.target_space(writer);
         let taken: HashSet<String> = self
@@ -2175,22 +2215,136 @@ impl Pass<'_> {
             })
             .map(|page| MemoryDB::page_title_key(&page.title))
             .collect();
-        if !taken.contains(&MemoryDB::page_title_key(wanted)) {
-            return Ok(wanted.to_string());
+        Ok(taken)
+    }
+
+    /// Writes two edits put together onto the page, which holds the head
+    /// now. The next pass shares it as a version after both. `false` when
+    /// it could not be written: the person is told as for a lost edit.
+    async fn write_merged(&self, id: &str, merged: &Merged) -> Result<bool, WenlanError> {
+        let mut current = self.reload(id).await?;
+        if current.status != "active" {
+            return Ok(false);
         }
-        let name = self
-            .names
-            .get(&writer.meta.author.member)
-            .map(String::as_str)
-            .unwrap_or("shared");
-        let mut candidate = format!("{wanted} ({name})");
-        let mut n = 2;
-        while taken.contains(&MemoryDB::page_title_key(&candidate)) {
-            candidate = format!("{wanted} ({name} {n})");
-            n += 1;
+        if current.content != merged.body {
+            let write = crate::post_write::PageWrite::UpdatePreservingSources {
+                page_id: id,
+                req: wenlan_types::requests::UpdatePageRequest {
+                    content: merged.body.clone(),
+                    source_memory_ids: Vec::new(),
+                    expected_version: Some(current.version),
+                    caller_id: None,
+                    operation_id: None,
+                },
+                edited_by: OWN_DEVICE_PERSON,
+                knowledge_path: self.knowledge_path,
+                basis: crate::db::BasisWrite::default(),
+            };
+            match crate::post_write::page_write(self.db, write).await {
+                Ok(result) if result.wrote => {}
+                Ok(_) => return Ok(false),
+                Err(error) => {
+                    skipped_write(id, error)?;
+                    return Ok(false);
+                }
+            }
+            if self.library {
+                let mut file = PageFile::new(&merged.title, &merged.body);
+                file.citations = merged.citations.clone();
+                let quote =
+                    crate::store::format::page::Locator::Other(rewrite::QUOTE_LOCATOR.to_string());
+                file.citations.retain(|citation| citation.locator != quote);
+                let json = crate::store::rebuild::pages::citations_of(&file, id, &mut Vec::new());
+                self.db.set_page_citations(id, json.as_deref()).await?;
+            }
+            current = self.reload(id).await?;
         }
-        log::info!("[shared_space] {id}: the title {wanted:?} is taken here; it is {candidate:?}");
-        Ok(candidate)
+        if current.title != merged.title {
+            let renamed = self
+                .db
+                .rename_page(
+                    id,
+                    &merged.title,
+                    current.version,
+                    &ReadScope::Global,
+                    self.knowledge_path,
+                )
+                .await;
+            if let Err(error) = renamed {
+                // The text is together; the title waits for the next edit.
+                log::warn!("[shared_space] {id}: merged title not set: {error}");
+            }
+        }
+        log::info!("[shared_space] {id}: two edits made at the same time put together");
+        Ok(true)
+    }
+
+    /// Keeps `mine`, an edit made here that could not be put together with
+    /// the head, as a second page next to it, named after this computer (the
+    /// library) or this member.
+    async fn keep_as_second_page(
+        &self,
+        page: &Page,
+        mine: &PageVersion,
+    ) -> Result<(), WenlanError> {
+        let who = if self.library {
+            library::computer_name()
+        } else {
+            self.settings.member_name.clone()
+        };
+        let id = crate::pages::new_page_id();
+        let taken = self.taken_titles(&id, mine).await?;
+        let title = free_name(&taken, &mine.page.title, &who);
+        let space = match self.scope {
+            Scope::Space(space) => Some(space.clone()).into(),
+            Scope::Page(_) | Scope::Library => match named_space(page.space.as_deref()) {
+                Some(space) => {
+                    wenlan_types::space_context::WriteSpaceTarget::Named(space.to_string())
+                }
+                None => wenlan_types::space_context::WriteSpaceTarget::Uncategorized,
+            },
+        };
+        let distillation = crate::tuning::DistillationConfig::default();
+        let write = crate::post_write::PageWrite::Create {
+            page_id: Some(&id),
+            req: wenlan_types::requests::CreateConceptRequest {
+                title: title.clone(),
+                content: mine.page.body.clone(),
+                summary: None,
+                entity_id: None,
+                space,
+                source_memory_ids: Vec::new(),
+                creation_kind: Some("authored".to_string()),
+                workspace: None,
+            },
+            agent: OWN_DEVICE_PERSON,
+            knowledge_path: self.knowledge_path,
+            page_min_cluster_size: distillation.page_min_cluster_size,
+            page_match_threshold: distillation.page_match_threshold,
+            citations_json: None,
+            basis_marks: Vec::new(),
+            basis_space_guard: None,
+            skip_protected_title_match: false,
+            research_write: None,
+        };
+        match crate::post_write::page_write(self.db, write).await {
+            Ok(result) if result.wrote => {
+                self.apply_sources(&id, mine).await?;
+                let made = self.reload(&id).await?;
+                self.db
+                    .record_page_writer(&id, made.version, OWN_DEVICE_PERSON)
+                    .await?;
+                log::info!(
+                    "[shared_space] {}: an edit made at the same time kept as {title:?}",
+                    page.id
+                );
+            }
+            Ok(_) => {}
+            Err(error) => {
+                skipped_write(&page.id, error)?;
+            }
+        }
+        Ok(())
     }
 
     /// The library: the Space page `id` is in here now, to hold with it.
@@ -2640,7 +2794,7 @@ impl Pass<'_> {
                 },
                 None => self.author_of(page).await?,
             },
-            ts: now_ts(),
+            ts: edit_ts(&page.last_modified),
             archived: page.status == "archived",
             locked: page.review_required,
             proposal: false,
@@ -2779,6 +2933,18 @@ fn now_ts() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
+/// A version's `ts`: when the page was last changed here, so of two edits
+/// made apart the later edit wins even when the earlier computer was
+/// offline and writes its version last. Now when that time cannot be read
+/// or is ahead of this computer's clock.
+fn edit_ts(last_modified: &str) -> String {
+    let now = chrono::Utc::now();
+    match version::ts_key(last_modified) {
+        Some(at) if at <= now => at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        _ => now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+    }
+}
+
 /// The page's sources block as it is stored here, before the rewrite: one
 /// line per marker (its first occurrence) and one per live basis.
 async fn local_sources(
@@ -2896,6 +3062,117 @@ fn versions_between<'a>(
         at = version.meta.parent.as_deref();
     }
     Vec::new()
+}
+
+/// `wanted (who)`, or `wanted (who N)` when that is taken too.
+fn free_name(taken: &HashSet<String>, wanted: &str, who: &str) -> String {
+    let mut candidate = format!("{wanted} ({who})");
+    let mut n = 2;
+    while taken.contains(&MemoryDB::page_title_key(&candidate)) {
+        candidate = format!("{wanted} ({who} {n})");
+        n += 1;
+    }
+    candidate
+}
+
+/// What becomes of an edit made here at the same time as the head, which
+/// won over it.
+enum Together {
+    /// Not two people's edits of the text (an AI tool's, an archive, a
+    /// move): the head is taken and the person told.
+    Notice,
+    /// Both edits, put together.
+    Merged(Merged),
+    /// Both changed the same lines: the edit here stays as a second page.
+    Both,
+}
+
+struct Merged {
+    title: String,
+    body: String,
+    citations: Vec<crate::store::format::page::Citation>,
+}
+
+/// [`Together`] for `mine`, made here, and `winner`, the head.
+fn together(versions: &[PageVersion], mine: &PageVersion, winner: &PageVersion) -> Together {
+    use version::Versioned;
+    if !(mine.by_person() && winner.by_person())
+        || mine.meta.archived
+        || winner.meta.archived
+        || mine.space() != winner.space()
+    {
+        return Together::Notice;
+    }
+    let Some(base) = common_base(versions, mine, winner) else {
+        return Together::Both;
+    };
+    let title = match pick(&base.page.title, &mine.page.title, &winner.page.title) {
+        Some(title) => title.to_string(),
+        None => return Together::Both,
+    };
+    let Some(body) = merge::merge3(&base.page.body, &mine.page.body, &winner.page.body) else {
+        return Together::Both;
+    };
+    // The sources of both; a number each gave a different source cannot
+    // be told apart in the text.
+    let mut citations = winner.page.citations.clone();
+    for citation in &mine.page.citations {
+        match citations.iter().find(|kept| kept.marker == citation.marker) {
+            Some(kept) if kept.locator != citation.locator => return Together::Both,
+            Some(_) => {}
+            None => citations.push(citation.clone()),
+        }
+    }
+    citations.sort_by_key(|citation| citation.marker);
+    Together::Merged(Merged {
+        title,
+        body,
+        citations,
+    })
+}
+
+/// One value two edits of `base` may each have changed.
+fn pick<'a>(base: &str, ours: &'a str, theirs: &'a str) -> Option<&'a str> {
+    if ours == theirs || theirs == base {
+        Some(ours)
+    } else if ours == base {
+        Some(theirs)
+    } else {
+        None
+    }
+}
+
+/// The nearest version both `a` and `b` come from.
+fn common_base<'a>(
+    versions: &'a [PageVersion],
+    a: &'a PageVersion,
+    b: &'a PageVersion,
+) -> Option<&'a PageVersion> {
+    use version::Versioned;
+    let by_sha: HashMap<&str, &PageVersion> = versions
+        .iter()
+        .map(|version| (version.sha.as_str(), version))
+        .collect();
+    let ancestors = |from: &'a PageVersion| -> Vec<&'a str> {
+        let mut order: Vec<&'a str> = Vec::new();
+        let mut seen: HashSet<&'a str> = HashSet::new();
+        let mut queue: std::collections::VecDeque<&'a str> = from.parents().into();
+        while let Some(sha) = queue.pop_front() {
+            if !seen.insert(sha) {
+                continue;
+            }
+            order.push(sha);
+            if let Some(version) = by_sha.get(sha) {
+                queue.extend(version.parents());
+            }
+        }
+        order
+    };
+    let of_a: HashSet<&str> = ancestors(a).into_iter().collect();
+    ancestors(b)
+        .into_iter()
+        .find(|sha| of_a.contains(sha))
+        .and_then(|sha| by_sha.get(sha).copied())
 }
 
 fn base_of<'a>(
