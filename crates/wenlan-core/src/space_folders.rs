@@ -735,6 +735,20 @@ pub async fn arrange(
             match result {
                 Ok(_) => {
                     stats.moved += 1;
+                    // Moved because its Space changed (not a first move):
+                    // its file's `space:` line says the new Space too.
+                    if record.placed.contains_key(&id) {
+                        if let Ok(Some(page)) = db.get_page(&id).await {
+                            let projection =
+                                crate::export::knowledge::KnowledgeProjectionWrite::new(
+                                    root.to_path_buf(),
+                                    db,
+                                );
+                            if let Err(error) = projection.write_page_gated(db, &page).await {
+                                log::warn!("[space-folders] moved {id} but its file was not rewritten: {error}");
+                            }
+                        }
+                    }
                     let space_folder = layout
                         .values()
                         .filter(|f| under(&folder, f).is_some())

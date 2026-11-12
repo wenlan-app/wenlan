@@ -71,11 +71,13 @@ async fn pages_follow_their_space_and_their_folder_on_disk() {
                  ('p-b','計畫','s','B body','個人','[]',1,'active','2026-01-01T00:00:00Z',
                   '2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','個人','authored','confirmed'),
                  ('p-c','散頁','s','C body','00000000-0000-4000-8000-000000000001','[]',1,'active','2026-01-01T00:00:00Z',
-                  '2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','00000000-0000-4000-8000-000000000001','authored','confirmed');",
+                  '2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','00000000-0000-4000-8000-000000000001','authored','confirmed'),
+                 ('p-e','舊空間頁','s','E body','old-space','[]',1,'active','2026-01-01T00:00:00Z',
+                  '2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','old-space','authored','confirmed');",
         )
         .await
         .unwrap();
-    for id in ["p-a", "p-b", "p-c"] {
+    for id in ["p-a", "p-b", "p-c", "p-e"] {
         project(&db, root, id).await;
     }
     // The person's own folder, made before: its page keeps it, inside its Space.
@@ -95,8 +97,10 @@ async fn pages_follow_their_space_and_their_folder_on_disk() {
     // On: every page goes into its Space's folder.
     turn_on(root).unwrap();
     let stats = arrange(&db, root, &settings, &[]).await.unwrap();
-    assert_eq!(stats.moved, 2, "{:?}", md_files(root));
+    assert_eq!(stats.moved, 3, "{:?}", md_files(root));
     let files = md_files(root);
+    // A Space only named on its pages, never registered, still gets a folder.
+    assert!(files.contains("old-space/舊空間頁.md"), "{files:?}");
     assert!(files.contains("文瀾/定位.md"), "{files:?}");
     assert!(files.contains("個人/品牌/計畫.md"), "{files:?}");
     assert!(files.contains("散頁.md"), "{files:?}");
@@ -139,6 +143,9 @@ async fn pages_follow_their_space_and_their_folder_on_disk() {
         !root.join("文瀾").exists(),
         "the emptied old folder is gone"
     );
+    // The moved file says its new Space.
+    let text = std::fs::read_to_string(root.join("Wenlan/定位.md")).unwrap();
+    assert!(text.contains("Wenlan") && !text.contains("文瀾"), "{text}");
 
     // Moved to another Space in Wenlan: the file follows, with its folder.
     let page = db.get_page("p-b").await.unwrap().unwrap();

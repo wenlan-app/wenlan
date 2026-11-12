@@ -94,11 +94,19 @@ fn space_label(space: &str) -> String {
 }
 
 impl MemoryDB {
-    /// Every Space's name.
+    /// Every Space's name, with the Space names active pages carry that no
+    /// Space row has (older data), so their pages get a folder too.
     pub async fn space_names(&self) -> Result<Vec<String>, WenlanError> {
         let conn = self.conn.lock().await;
         let mut rows = conn
-            .query("SELECT name FROM spaces", ())
+            .query(
+                "SELECT name FROM spaces
+                 UNION
+                 SELECT DISTINCT space FROM pages
+                 WHERE status='active' AND space IS NOT NULL AND space<>''
+                   AND space<>?1 AND space<>'uncategorized'",
+                libsql::params![super::UNFILED_SPACE_ID],
+            )
             .await
             .map_err(|e| WenlanError::VectorDb(format!("space names: {e}")))?;
         let mut out = Vec::new();
