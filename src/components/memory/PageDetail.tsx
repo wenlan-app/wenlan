@@ -38,6 +38,8 @@ import {
   recordPageEditorDiagnostic,
   deletePage,
   clipboardWrite,
+  removePageLook,
+  restorePageLook,
   getPageSources,
   reviewPage,
   pageReviewSupported,
@@ -77,6 +79,10 @@ import RelatedPages from "./page/RelatedPages";
 import PageInfo from "./page/PageInfo";
 import { PageSessionSources } from "./sessions/SessionSourceSection";
 import { OriginalPageView } from "./page/original/OriginalPageView";
+import { LookView } from "./page/look/LookView";
+import { LookSwitch } from "./page/look/LookSwitch";
+import { usePageLook } from "./page/look/usePageLook";
+import { pageLooksEnabled } from "./page/look/lookFeature";
 import PageInfoDrawer from "./page/PageInfoDrawer";
 import { DetailInfoContent, DetailReadingFrame } from "./DetailLayout";
 import { InfoAction } from "./page/InfoAction";
@@ -570,6 +576,44 @@ export default function PageDetail({
     editing && editorPageRef.current?.id === pageId ? editorPageRef.current : null
   );
   const { cutoverLive } = useTruthStatus();
+  // A page's look (UX-LOOK): the switch appears only when it has one. A kept
+  // original, an archived page, a topic and the example wiki take none.
+  const lookSupported = !!page && page.status === "active" && page.creation_kind !== "original"
+    && !exampleWiki && (page as { kind?: string }).kind !== "entity";
+  const pageLook = usePageLook({
+    pageId,
+    supported: lookSupported,
+    version: page ? `${page.version}:${page.last_modified}` : "",
+  });
+  const askAiToDesignPage = async () => {
+    if (!page) return;
+    try {
+      await clipboardWrite(t("pageLook.askAiPrompt", { title: page.title }));
+      toast.success(t("pageLook.copied"));
+    } catch {
+      toast.error(t("pageLook.copyFailed"));
+    }
+  };
+  const removePageLookWithUndo = async () => {
+    if (!page) return;
+    const id = page.id;
+    try {
+      const removedId = await removePageLook(id);
+      await pageLook.refresh();
+      toast(t("pageLook.removed"), {
+        action: {
+          label: t("pageLook.undo"),
+          onClick: () => {
+            void restorePageLook(id, removedId)
+              .then(() => pageLook.refresh())
+              .catch(() => toast.error(t("pageLook.restoreFailed")));
+          },
+        },
+      });
+    } catch {
+      toast.error(t("pageLook.removeFailed"));
+    }
+  };
   // A heading clicked inside a linked page on the mind map: this page opens at it.
   const pageLoadedId = page?.id;
   useEffect(() => {
@@ -2720,6 +2764,12 @@ export default function PageDetail({
                   >
                     <button type="button" role="menuitem" disabled={storedActionPending || page.status !== "active" || !inventoryPageFilename(page) || editDirty || saveState.phase !== "idle" || editorStatus?.compositionActive} onClick={() => { closeActionMenu(); setMoveOpen(true); }}>{t("pages.folders.move")}</button>
                     <button type="button" role="menuitem" disabled={storedActionBlocked || editDirty || saveState.phase !== "idle"} onClick={() => { closeActionMenu(); setPageExportOpen(true); }}>{t("pageExport.menuAction")}</button>
+                    {pageLooksEnabled() && lookSupported ? (
+                      <button type="button" role="menuitem" disabled={storedActionBlocked} onClick={() => { closeActionMenu(); void askAiToDesignPage(); }}>{t("pageLook.askAi")}</button>
+                    ) : null}
+                    {pageLook.hasLook ? (
+                      <button type="button" role="menuitem" disabled={storedActionBlocked} onClick={() => { closeActionMenu(); void removePageLookWithUndo(); }}>{t("pageLook.remove")}</button>
+                    ) : null}
                     {/* A page of a shared Space is shared with it: the item opens
                         that Space's members rather than sharing the page alone. */}
                     {page.status === "active" && !exampleWiki ? (
@@ -2864,6 +2914,21 @@ export default function PageDetail({
             )}
             {documentTools}
           </div>
+        )}
+
+        {pageLook.hasLook && <LookSwitch showing={pageLook.shown ? "look" : "text"} onChange={pageLook.choose} />}
+        {pageLook.failed && !pageLook.shown && pageLook.mode === "look" && (
+          <p className="page-look-failed" role="status">{t("pageLook.failed")}</p>
+        )}
+        {pageLook.shown && pageLook.look && (
+          <LookView
+            pageId={page.id}
+            title={page.title}
+            look={pageLook.look}
+            version={`${page.version}:${page.last_modified}`}
+            onFailed={pageLook.markFailed}
+            onOpenPage={onPageClick}
+          />
         )}
 
 
@@ -3023,6 +3088,8 @@ export default function PageDetail({
           </div>
         )}
 
+        {/* The text stays mounted behind a look, so an edit in progress is kept. */}
+        <div className="page-look-text" hidden={pageLook.shown}>
         {editing ? (
           editGate.kind === "checking" ? (
             <div role="status" className="page-editor-notice">
@@ -3376,6 +3443,7 @@ export default function PageDetail({
             </ReferenceNavigationProvider>
           </div>
         )}
+        </div>
       </DetailReadingFrame>
 
       <div aria-hidden={!canvasWorkspaceExpanded} className="page-detail-canvas-workspace-host" ref={setCanvasWorkspaceHost} />

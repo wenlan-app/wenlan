@@ -127,6 +127,8 @@ export function baseResponse(command: string, args: unknown, context: BaseRespon
     case "get_session_detail": return null;
     // No fixture page keeps an original.
     case "get_page_original": return null;
+    // No fixture page has a look.
+    case "get_page_look": return { look: null, versions: [] };
     case "get_conversation_lines": throw new TauriMockArgumentError(command, "sessionId");
     // No memory in the fixture was saved in a conversation.
     case "get_memory_said": throw new TauriMockArgumentError(command, "sourceId");

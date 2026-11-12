@@ -352,6 +352,8 @@ export async function invoke(
       return { page_id: args?.pageId, version: 1, ai_edits: "propose", sentences: [], proposals: [] };
     case "get_page_original":
       return null;
+    case "get_page_look":
+      return { look: null, versions: [] };
     case "get_page_sessions":
       return { sessions: PAGE_SESSIONS[args?.pageId as string] ?? [] };
     case "get_session_detail":
