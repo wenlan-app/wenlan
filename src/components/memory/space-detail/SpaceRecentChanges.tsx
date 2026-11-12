@@ -22,7 +22,9 @@ import "./space-recent-changes.css";
 
 const SHOWN = 5;
 /** The person on this computer, or on another of their own computers. */
-const PERSON = new Set(["manual_edit", "fs_edit", "human", "own_device", "person_create", "revision_accept"]);
+// The same writers the core counts as a person (authorship.rs): a page started
+// in the app and published, or a version the person restored, is theirs.
+const PERSON = new Set(["manual_edit", "fs_edit", "human", "own_device", "person_create", "revision_accept", "publish", "restore"]);
 /** Wenlan's own background organizing, not anyone's AI tool. */
 const WENLAN = new Set(["distill", "re_distill", "page_growth", "refinery_merge", "citation_backfill", "link_rename"]);
 

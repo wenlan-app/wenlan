@@ -167,7 +167,7 @@ export function JoinSharedDialog({ onClose, onJoined, only }: JoinSharedDialogPr
       onCancel={(event) => { event.preventDefault(); if (!pending) onClose(); }}
     >
       <form onSubmit={join}>
-        <h2 id="join-dialog-title">{mode === "code" && checked ? t("team.join.title", { team: joiningTeam }) : t("sharing.joinTitle")}</h2>
+        <h2 id="join-dialog-title">{mode === "code" && checked ? t("team.join.title", { team: joiningTeam }) : only === "code" ? t("team.join.titleLink") : t("sharing.joinTitle")}</h2>
         {mode === "folder" && !only && (
           <button type="button" className="share-link share-back" onClick={() => { setMode("code"); setError(null); }}>{t("team.joinUseCode")}</button>
         )}
@@ -213,7 +213,12 @@ export function JoinSharedDialog({ onClose, onJoined, only }: JoinSharedDialogPr
                 placeholder={t("team.join.linkPlaceholder")}
                 spellCheck={false}
                 disabled={pending || checking}
-                onChange={(event) => setCode(event.target.value)}
+                onChange={(event) => {
+                  setCode(event.target.value);
+                  // A whole link typed or dropped in is checked at once, as a paste is.
+                  if (/wlt_[0-9a-f]{64}/.test(event.target.value)) void checkCode(event.target.value);
+                }}
+                onKeyDown={(event) => { if (event.key === "Enter") void checkCode(code); }}
                 onPaste={(event) => { const pasted = event.clipboardData.getData("text"); setCode(pasted); void checkCode(pasted); event.preventDefault(); }}
                 onBlur={(event) => void checkCode(event.target.value)}
               />

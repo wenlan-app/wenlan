@@ -277,7 +277,9 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
     return <li key={page.id} data-folder-path={pageFolderPath(page) ?? ""} data-page-id={page.id} data-page-status={page.status}><button type="button" className="notes-page-button notes-inventory-page" aria-label={t("pages.overview.openPage", { title })} aria-current={currentPageId === page.id ? "page" : undefined} data-active={currentPageId === page.id ? "true" : undefined} title={title} disabled={draft ? !onOpenDraft : !onOpenPage} onClick={() => draft ? onOpenDraft?.(page.id, pageSpaceContext(page) ?? null) : onOpenPage?.(page)}><PageIcon size={16}/><span className="notes-page-title">{title}</span>{sharedMark(page)}</button></li>;
   };
   // A small people mark on a page shared with people, alone or with its Space.
+  // On a team's side every page is the team's: no mark says so on each.
   const sharedMark = (page: Page) => {
+    if (scope.team) return null;
     const share = pageShare(shares.data, page.id) ?? (page.space ? spaceShare(shares.data, page.space) : undefined);
     if (!share) return null;
     const names = others(share).map((member) => member.name).join(", ");

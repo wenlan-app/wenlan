@@ -18,6 +18,7 @@ import {
   type Page,
 } from "../../../lib/tauri";
 import { PagesOverview } from "./PagesOverview";
+import { ScopeProvider, type ScopeState } from "../team/scope";
 import { setStartIntent, takeStartIntent } from "../../onboarding/startIntent";
 import { setDaemonStartupPhase } from "../../../lib/daemonStartup";
 import { DISTILL_REVIEW_SESSION_QUERY_KEY } from "./pageReviewSignals";
@@ -70,9 +71,9 @@ function renderOverview({
   onConnectTool = undefined as (() => void) | undefined,
   onReplayNight = vi.fn(),
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+  scope = undefined as ScopeState | undefined,
 } = {}) {
-  const overview = (
-    <QueryClientProvider client={queryClient}>
+  const home = (
       <PagesOverview
         inventoryScope={inventoryScope}
         onBrowseAll={onBrowseAll}
@@ -85,6 +86,10 @@ function renderOverview({
         onConnectTool={onConnectTool ?? (checklist ? vi.fn() : undefined)}
         onSeeExample={checklist ? vi.fn() : undefined}
       />
+  );
+  const overview = (
+    <QueryClientProvider client={queryClient}>
+      {scope ? <ScopeProvider value={scope}>{home}</ScopeProvider> : home}
     </QueryClientProvider>
   );
   return {
@@ -378,6 +383,22 @@ describe("PagesOverview reading workspace", () => {
       expect(screen.queryByTestId("home-spaces")).not.toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: "Hide getting started" }));
       expect(await screen.findByTestId("home-spaces")).toBeInTheDocument();
+      vi.mocked(listSpaces).mockResolvedValue([]);
+    });
+
+    it("is the same home on a team's side: that team's Spaces, and none of the person's own getting started", async () => {
+      const space = (id: string, name: string) => ({ id, name, description: null, suggested: false, starred: false, sort_order: 0, memory_count: 0, entity_count: 0, created_at: 1, updated_at: 1 });
+      vi.mocked(listSpaces).mockResolvedValue([space("s1", "Reading"), space("s2", "Product")]);
+      const group = { key: "team:t1", team: { id: "t1", name: "Acme" }, hosted: false, host: "https://team.example.com", shares: [] };
+      const scope: ScopeState = {
+        teams: [group], team: group, setScope: () => undefined, teamSpaces: new Set(["Product"]),
+        inScope: (name) => name === "Product", teamWritable: ["Product"],
+      };
+      renderOverview({ checklist: true, scope });
+      const spaces = await screen.findByTestId("home-spaces");
+      expect(spaces).toHaveTextContent("Product");
+      expect(spaces).not.toHaveTextContent("Reading");
+      expect(screen.queryByTestId("getting-started")).not.toBeInTheDocument();
       vi.mocked(listSpaces).mockResolvedValue([]);
     });
 

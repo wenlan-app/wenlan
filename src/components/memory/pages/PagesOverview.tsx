@@ -26,6 +26,8 @@ import { useQuery } from "@tanstack/react-query";
 import { ARCHIVED_PAGES_QUERY_KEY, EXPLICIT_BROWSE_QUERY_POLICY, isKnowledgePage, listAllArchivedPagesExplicitBrowse } from "./listAllPages";
 import "./archivedNotes.css";
 import { useShares } from "../sharing/sharing";
+import { useScope } from "../team/scope";
+import { TeamChanges, TeamWaiting } from "../team/TeamPage";
 
 interface PagesOverviewProps {
   readonly inventoryScope?: WikiInventoryScope;
@@ -71,6 +73,11 @@ export function PagesOverview({
 }: PagesOverviewProps) {
   const { t } = useTranslation();
   const { pages, empty } = useLibraryInventory();
+  // On a team's side home is this same home, laid out the same: that team's
+  // Spaces and pages, plus what waits for you and who changed what. Getting
+  // started, the night and vault questions are the person's own and stay on
+  // Private.
+  const team = useScope().team;
   const checklist = useGettingStartedState();
   const [adding, setAdding] = useState<false | "menu" | "folder" | "chats">(false);
   // What the user picked on the welcome screen happens here, once: the
@@ -101,7 +108,9 @@ export function PagesOverview({
   };
   const writePages = useWritePages(pages);
   // "What you're working on" is an experiment: off, home leads with Spaces.
-  const [thingsOn] = useExperiment("things");
+  const [thingsExperiment] = useExperiment("things");
+  // What you're working on is the person's own; a team's home leads with Spaces.
+  const thingsOn = thingsExperiment && !team;
   const shares = useShares();
   // "Use Search to find a page" is advice the workspace cannot honour until
   // the daemon answers; the sidebar says it is starting, so this stays quiet.
@@ -110,7 +119,7 @@ export function PagesOverview({
   // which holds the one action.
   const daemonPhase = useDaemonStartupPhase();
   const daemonReady = daemonPhase === "ready";
-  const gettingStarted = onConnectTool && onSeeExample ? (
+  const gettingStarted = !team && onConnectTool && onSeeExample ? (
     <GettingStarted
       onWriteNote={() => onCreatePage(null)}
       onConnectTool={onConnectTool}
@@ -130,9 +139,9 @@ export function PagesOverview({
     queryKey: ARCHIVED_PAGES_QUERY_KEY,
     queryFn: listAllArchivedPagesExplicitBrowse,
     ...EXPLICIT_BROWSE_QUERY_POLICY,
-    enabled: !!onBrowseArchived && !example && daemonReady,
+    enabled: !!onBrowseArchived && !example && !team && daemonReady,
   });
-  const hasArchived = !example && (archived.data ?? []).some(isKnowledgePage);
+  const hasArchived = !example && !team && (archived.data ?? []).some(isKnowledgePage);
   const everyday = !example && gettingStarted !== null && checklist.loaded && checklist.newLibrary && !checklist.visible && writePages.tool
     ? <EverydayUse tool={writePages.tool} />
     : null;
@@ -163,11 +172,11 @@ export function PagesOverview({
       data-home="true"
     >
       {/* A changed source shows on the pages that cite it, never on Home (UX-HOME-4). */}
-      {onOpenNoteSuggestion && <NoteSuggestionsSummary onOpen={onOpenNoteSuggestion} />}
+      {onOpenNoteSuggestion && !team && <NoteSuggestionsSummary onOpen={onOpenNoteSuggestion} />}
       {/* Asks once, the day after a vault is linked, whether the AI may change its notes. */}
-      {example ? null : <LinkedVaultAsk />}
+      {example || team ? null : <LinkedVaultAsk />}
       {/* The open checklist carries the same offer as a step; one place at a time. */}
-      {onboarding ? null : (
+      {onboarding || team ? null : (
         <WritePagesLine
           state={writePages}
           pages={pages}
@@ -175,7 +184,7 @@ export function PagesOverview({
           onUseLocalModel={onOpenIntelligence}
         />
       )}
-      {example ? null : <FirstPageMilestone pages={pages} onSelectPage={onSelectPage} />}
+      {example || team ? null : <FirstPageMilestone pages={pages} onSelectPage={onSelectPage} />}
       {daemonReady && (
         <div className="wiki-reading-start-panel">
           <PageIcon className="wiki-reading-start-icon" size={32} />
@@ -200,13 +209,16 @@ export function PagesOverview({
             opens home on its own line. "What you're working on" carries its
             own steeped line, so while it is on only the "not written yet"
             line shows here, above it (UX-HOME-7). */}
-        {example ? null : <HomeNightLines onReplayNight={onReplayNight} steeped={!thingsOn} />}
+        {example || team ? null : <HomeNightLines onReplayNight={onReplayNight} steeped={!thingsOn} />}
+        {/* A teammate's AI change waiting on you comes first: it needs a person. */}
+        {team ? <TeamWaiting group={team} onOpenPage={onSelectPage} /> : null}
         {/* While the getting-started card is open it is the screen: nothing
             is being worked on yet, so no Spaces lead above it. */}
         {example || onboarding ? null : thingsOn
           ? <WorkingOn onSelectSpace={onSelectSpace} onOpenThing={onOpenThing} onReplayNight={onReplayNight} />
           : <HomeSpaces pages={pages} onSelectSpace={onSelectSpace} onBrowseSpaces={onBrowseSpaces} />}
         {newPages}
+        {team ? <TeamChanges group={team} /> : null}
         {/* With no AI tool connected there is nothing to be working on yet:
             the pages lead, and one line says what connecting adds. Only
             while "what you're working on" is on: it is what the line names. */}

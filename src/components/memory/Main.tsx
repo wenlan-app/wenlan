@@ -59,7 +59,6 @@ import SettingsSidebar from "./settings/SettingsSidebar";
 import SpaceDetail from "./SpaceDetail";
 import { ThingDetail } from "./things/ThingDetail";
 import { SpacesOverview } from "./spaces";
-import { TeamPage } from "./team/TeamPage";
 import { ScopeProvider, useScopeState } from "./team/scope";
 import { ScopeSwitcher } from "./team/ScopeSwitcher";
 import { PagesOverview, WikiStart } from "./pages/PagesOverview";
@@ -886,7 +885,7 @@ export default function Main({
   const navigateSpaces = (create: boolean) => navigateTo(create
     ? { kind: "spaces", create: true } : { kind: "spaces" });
   const navigatePages = () => navigateTo({ kind: "pages" });
-  const navigateHome = () => navigateTo(teamSide ? { kind: "team" } : { kind: "home" });
+  const navigateHome = () => navigateTo({ kind: "home" });
   // Every import finish inside this window hands new material on through
   // these. Stable, so the cards under it do not re-render with the shell.
   const navigateToRef = useRef(navigateTo);
@@ -1075,13 +1074,7 @@ export default function Main({
     }
     setSidebarPreferences((current) => ({ ...current, visible: !current.visible }));
   };
-  // Home follows the side shown: a team's side opens the team's home.
-  useEffect(() => {
-    if (view.kind === "home" && teamSide) replaceView({ kind: "team" });
-    else if (view.kind === "team" && !teamSide) replaceView({ kind: "home" });
-  }, [view.kind, teamSide]); // eslint-disable-line react-hooks/exhaustive-deps
-  // A team's home is the team side's Home.
-  const activeNavigation = view.kind === "team" ? "home" : activeNavigationForView(view);
+  const activeNavigation = activeNavigationForView(view);
   const wikiInventoryScope = view.kind === "pages" || view.kind === "page" || view.kind === "page-draft"
     ? view.inventoryScope ?? "all"
     : "all";
@@ -1654,7 +1647,7 @@ export default function Main({
               <ScopeSwitcher
                 compact={compact}
                 onSwitched={() => navigateTo({ kind: "home" })}
-                onJoined={(teamKey) => { scope.setScope(teamKey); navigateTo({ kind: "team" }); }}
+                onJoined={(teamKey) => { scope.setScope(teamKey); navigateTo({ kind: "home" }); }}
               />
             )}
             onNavigateSettings={() => navigateTo({ kind: "settings", section: "general" })}
@@ -1781,12 +1774,6 @@ export default function Main({
                 : { kind: "page", pageId: target })}
               onSpaceDeleted={handleSpaceDeleted}
               onSpaceRenamed={handleSpaceRenamed}
-            />
-          ) : view.kind === "team" && teamSide ? (
-            <TeamPage
-              teamKey={teamSide.key}
-              onOpenSpace={(spaceName) => navigateTo({ kind: "space", spaceId: null, spaceName })}
-              onOpenPage={(pageId) => navigateTo({ kind: "page", pageId })}
             />
           ) : view.kind === "space" ? (
             <SpaceDetail

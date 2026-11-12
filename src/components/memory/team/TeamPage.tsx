@@ -1,21 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The team's own page, opened from the team's row in the left navigation.
-// One layout for everyone on the team, in this order: what waits for you,
-// the team's Spaces and who can use each, and what changed lately. Its
-// people sit behind a count beside the team's name, so the page keeps its
-// length however many there are. The owner (the person at the server's computer) also invites
-// people, adds Spaces and opens each one's access box; a member reads the
-// same page and can leave the team.
+// A team's parts of the app. Home on a team's side is the same home as on
+// Private (one home, one layout); it adds what waits for this person and who
+// changed what. The team's people, its name, inviting and leaving sit in the
+// switch at the top left, so no page grows with the number of people.
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import {
   getPage,
   listPendingRevisions,
-  listSpaces,
   stopSharingSpace,
   teamAddMember,
-  teamHostSpace,
   teamNewMemberKey,
   teamRemoveMember,
   teamRename,
@@ -28,8 +23,7 @@ import { confirmAction } from "../../../lib/confirmAction";
 import { SpaceRecentChanges } from "../space-detail/SpaceRecentChanges";
 import { SHARES_KEY, sharedWriter, teamKeyOf, teamLabel, useShares } from "../sharing/sharing";
 import { TEAM_KEY, activeMembers, prefillTeamUrl, rememberTeamUrl, sameName, useTeamStatus } from "../sharing/team";
-import { IssuedCode, MemberMenu, codeOf, errorText, teamAccessText } from "../sharing/TeamMembers";
-import { ShareDialog } from "../sharing/ShareDialog";
+import { IssuedCode, MemberMenu, codeOf, errorText } from "../sharing/TeamMembers";
 import "../sharing/sharing.css";
 import "../space-detail/space-brief.css";
 import "../space-detail/space-recent-changes.css";
@@ -81,30 +75,36 @@ export function useTeams(): TeamGroup[] {
   return teamGroups(shares.data, undefined);
 }
 
-interface TeamPageProps {
-  /** The team shown: the window's side, picked at the top left. */
-  readonly teamKey: string;
-  readonly onOpenSpace: (space: string) => void;
-  readonly onOpenPage: (pageId: string) => void;
-}
-
-/** A team's home: what waits for you, its Spaces, what changed lately. */
-export function TeamPage({ teamKey, onOpenSpace, onOpenPage }: TeamPageProps) {
+/** What waits for this person in the shown team: teammates' AI changes on
+ *  a locked page. Home shows it first, only when there is something. */
+export function TeamWaiting({ group, onOpenPage }: { readonly group: TeamGroup; readonly onOpenPage: (id: string) => void }) {
   const { t } = useTranslation();
   const shares = useShares();
-  const status = useTeamStatus();
-  const group = teamGroups(shares.data, status.data).find((candidate) => candidate.key === teamKey);
+  const waiting = useWaitingRows(shares.data, group.shares, onOpenPage);
+  if (!waiting) return null;
   return (
-    <div className="team-page">
-      {group
-        ? <Team group={group} status={group.hosted ? status.data : undefined} shares={shares.data} onOpenSpace={onOpenSpace} onOpenPage={onOpenPage} />
-        : shares.isPending ? null : <p className="team-page-empty">{t("team.page.none")}</p>}
-    </div>
+    <section className="space-recent-changes team-home-waiting" aria-label={t("team.page.waitingTitle")}>
+      <h2 className="space-brief-heading">{t("team.page.waitingTitle")}</h2>
+      <ul>{waiting}</ul>
+    </section>
   );
 }
 
+/** Who changed what lately in the shown team's Spaces. */
+export function TeamChanges({ group }: { readonly group: TeamGroup }) {
+  const shares = useShares();
+  const status = useTeamStatus();
+  const spaces = spacesOfTeam(group, group.hosted ? status.data?.spaces : undefined);
+  return <SpaceRecentChanges space={spaces} shares={shares.data} />;
+}
+
 /** The team's people, opened from the switch at the top left. */
-export function TeamPeopleDialog({ group, onClose }: { readonly group: TeamGroup; readonly onClose: () => void }) {
+export function TeamPeopleDialog({ group, inviteFirst = false, onClose }: {
+  readonly group: TeamGroup;
+  /** Opens on the invite form: the switch's 「邀請人…」. */
+  readonly inviteFirst?: boolean;
+  readonly onClose: () => void;
+}) {
   const { t } = useTranslation();
   const status = useTeamStatus();
   const [error, setError] = useState<string | null>(null);
@@ -117,7 +117,7 @@ export function TeamPeopleDialog({ group, onClose }: { readonly group: TeamGroup
       people={people}
       members={members}
       owner={group.hosted}
-      inviteFirst={false}
+      inviteFirst={inviteFirst}
       url={prefillTeamUrl(teamStatus?.listening)}
       run={run}
       error={error}
@@ -146,101 +146,9 @@ function useRun(setError: (message: string | null) => void): Run {
   };
 }
 
-/** One team, laid out the same for its owner and its members. */
-function Team({ group, status, shares, onOpenSpace, onOpenPage }: {
-  readonly group: TeamGroup;
-  /** The team server's own status, on the computer that hosts it. */
-  readonly status: TeamStatus | undefined;
-  readonly shares: readonly SharedStatus[] | undefined;
-  readonly onOpenSpace: (space: string) => void;
-  readonly onOpenPage: (id: string) => void;
-}) {
-  const { t } = useTranslation();
-  const [error, setError] = useState<string | null>(null);
-  const [renaming, setRenaming] = useState(false);
-  const run = useRun(setError);
-  const owner = group.hosted;
-  const name = teamLabel(t, group.team);
-  const named = Boolean(group.team?.name?.trim());
-  const spaces = owner ? (status?.spaces ?? group.shares.map((share) => share.target)) : group.shares.map((share) => share.target);
-  const waiting = useWaitingRows(shares, group.shares, onOpenPage);
-  const leave = async () => {
-    const ok = await confirmAction(t("team.page.leaveConfirm", { team: name }), { confirm: t("team.page.leaveTeam", { team: name }), cancel: t("sharing.cancel") });
-    if (!ok) return;
-    await run(async () => {
-      for (const share of group.shares) await stopSharingSpace(share.target);
-    });
-  };
-
-  return (
-    <section className="team-page-team" aria-label={name}>
-      <div className="team-page-head">
-        <h1 className="team-page-title">{name}</h1>
-        {(named || !owner) && (
-          <TeamMenu
-            label={t("team.page.moreTeam", { team: name })}
-            items={owner
-              ? [{ label: t("team.page.rename"), onPick: () => setRenaming(true) }]
-              : [{ label: t("team.page.leaveTeam", { team: name }), onPick: () => void leave(), danger: true }]}
-          />
-        )}
-        <TeamPeopleButton group={group} status={status} owner={owner} teamName={name} />
-      </div>
-      {owner && (!named || renaming) && (
-        <NameTeam initial={group.team?.name ?? ""} onDone={() => setRenaming(false)} canCancel={named} />
-      )}
-
-      {waiting && (
-        <section className="space-recent-changes team-page-waiting-block" aria-label={t("team.page.waitingTitle")}>
-          <h2 className="space-brief-heading">{t("team.page.waitingTitle")}</h2>
-          <ul>{waiting}</ul>
-        </section>
-      )}
-
-      <TeamSpaces group={group} status={status} shares={shares} spaces={spaces} owner={owner} teamName={name} run={run} onOpenSpace={onOpenSpace} />
-      {error && <p className="share-error team-page-error" role="alert">{error}</p>}
-      <SpaceRecentChanges space={spaces} shares={shares} />
-    </section>
-  );
-}
-
-/** A small "⋯" menu beside the team's name. */
-function TeamMenu({ label, items }: {
-  readonly label: string;
-  readonly items: readonly { label: string; onPick: () => void; danger?: boolean }[];
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const away = (event: MouseEvent) => { if (!ref.current?.contains(event.target as Node)) setOpen(false); };
-    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(false); };
-    document.addEventListener("mousedown", away);
-    document.addEventListener("keydown", escape);
-    return () => {
-      document.removeEventListener("mousedown", away);
-      document.removeEventListener("keydown", escape);
-    };
-  }, [open]);
-  return (
-    <div className="team-menu" ref={ref}>
-      <button type="button" className="team-menu-button" aria-haspopup="menu" aria-expanded={open} aria-label={label} onClick={() => setOpen(!open)}>⋯</button>
-      {open && (
-        <ul className="team-menu-list" role="menu">
-          {items.map((item) => (
-            <li key={item.label} role="none">
-              <button type="button" role="menuitem" data-danger={item.danger ? "true" : undefined} onClick={() => { setOpen(false); item.onPick(); }}>{item.label}</button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
 /** The owner names the team once, and may rename it; everyone on it sees
  *  the name. */
-function NameTeam({ initial, canCancel, onDone }: { readonly initial: string; readonly canCancel: boolean; readonly onDone: () => void }) {
+export function NameTeam({ initial, canCancel, onDone }: { readonly initial: string; readonly canCancel: boolean; readonly onDone: () => void }) {
   const { t } = useTranslation();
   const [name, setName] = useState(initial);
   const [error, setError] = useState<string | null>(null);
@@ -266,6 +174,48 @@ function NameTeam({ initial, canCancel, onDone }: { readonly initial: string; re
       {error && <p className="share-error team-page-error" role="alert">{error}</p>}
     </form>
   );
+}
+
+/** Naming or renaming the team, opened from the switch at the top left. */
+export function TeamNameDialog({ group, onClose }: { readonly group: TeamGroup; readonly onClose: () => void }) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (dialog && !dialog.open) dialog.showModal();
+    return () => dialog?.close();
+  }, []);
+  return (
+    <dialog ref={dialogRef} className="share-dialog team-name-box" aria-label={group.team?.name ?? undefined} onCancel={(event) => { event.preventDefault(); onClose(); }}>
+      <NameTeam initial={group.team?.name ?? ""} canCancel onDone={onClose} />
+    </dialog>
+  );
+}
+
+/** A member leaves the team: every Space it shares stops syncing here, and
+ *  the pages already here stay. Asks first. */
+export function useLeaveTeam(group: TeamGroup | null): () => Promise<boolean> {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  return async () => {
+    if (!group) return false;
+    const name = teamLabel(t, group.team);
+    const ok = await confirmAction(t("team.page.leaveConfirm", { team: name }), { confirm: t("team.page.leaveTeam", { team: name }), cancel: t("sharing.cancel") });
+    if (!ok) return false;
+    for (const share of group.shares) await stopSharingSpace(share.target);
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: TEAM_KEY }),
+      queryClient.invalidateQueries({ queryKey: SHARES_KEY }),
+    ]);
+    return true;
+  };
+}
+
+/** The Spaces one team holds: the hosted team's from its server's own list
+ *  too, since a Space just added may not have synced a first time yet. */
+export function spacesOfTeam(group: TeamGroup, hostedSpaces: readonly string[] | undefined): string[] {
+  const names = new Set(group.shares.map((share) => share.target));
+  if (group.hosted) for (const space of hostedSpaces ?? []) names.add(space);
+  return [...names];
 }
 
 /** AI changes from teammates that wait on a locked page of these Spaces:
@@ -304,77 +254,6 @@ function useWaitingRows(shares: readonly SharedStatus[] | undefined, teamShares:
   return rows.length > 0 ? <>{rows}</> : undefined;
 }
 
-function SectionHeading({ title, action }: { readonly title: string; readonly action?: React.ReactNode }) {
-  return (
-    <div className="team-page-heading">
-      <h2 className="space-brief-heading">{title}</h2>
-      {action}
-    </div>
-  );
-}
-
-function TeamSpaces({ group, status, shares, spaces, owner, teamName, run, onOpenSpace }: {
-  readonly group: TeamGroup;
-  readonly status: TeamStatus | undefined;
-  readonly shares: readonly SharedStatus[] | undefined;
-  readonly spaces: readonly string[];
-  readonly owner: boolean;
-  readonly teamName: string;
-  readonly run: Run;
-  readonly onOpenSpace: (space: string) => void;
-}) {
-  const { t } = useTranslation();
-  const [boxFor, setBoxFor] = useState<string | null>(null);
-  const [adding, setAdding] = useState(false);
-  const allSpaces = useQuery({ queryKey: ["spaces"], queryFn: listSpaces, enabled: owner });
-  // The owner's Private Spaces: not shared any way yet.
-  const addable = (allSpaces.data ?? [])
-    .map((space) => space.name)
-    .filter((name) => !(shares ?? []).some((share) => share.kind === "space" && share.target === name));
-  const add = async (space: string) => {
-    setAdding(false);
-    if (!space) return;
-    const ok = await confirmAction(t("team.page.addSpaceConfirm", { space, team: teamName }), { confirm: t("team.page.addSpaceAction"), cancel: t("sharing.cancel") });
-    if (ok) await run(async () => { await teamHostSpace(space); });
-  };
-
-  return (
-    <div className="team-page-block">
-      <SectionHeading title={t("team.page.spaces")} />
-      {spaces.length === 0 ? (
-        <p className="team-page-quiet">{t("team.noneHosted")}</p>
-      ) : (
-        <ul className="team-page-rows">
-          {spaces.map((space) => {
-            const share = group.shares.find((candidate) => candidate.target === space);
-            return (
-              <li key={space}>
-                <button type="button" className="team-page-name team-page-open" onClick={() => onOpenSpace(space)}>{space}</button>
-                {owner ? (
-                  <button type="button" className="team-page-meta team-page-access" aria-label={t("team.page.whoCanUse", { space })} onClick={() => setBoxFor(space)}>
-                    {teamAccessText(t, space, status)}
-                  </button>
-                ) : (
-                  <span className="team-page-meta">{t(share?.read_only ? "team.readOnly" : "team.canEdit")}</span>
-                )}
-              </li>
-            );
-          })}
-        </ul>
-      )}
-      {owner && addable.length > 0 && (adding ? (
-        <select className="share-input team-page-add-space" aria-label={t("team.page.addSpacePick")} value="" autoFocus onChange={(event) => void add(event.target.value)} onBlur={() => setAdding(false)}>
-          <option value="">{t("team.page.addSpacePick")}</option>
-          {addable.map((name) => <option key={name} value={name}>{name}</option>)}
-        </select>
-      ) : (
-        <div><button type="button" className="share-link team-page-add" onClick={() => setAdding(true)}>{t("team.page.addSpace")}</button></div>
-      ))}
-      {boxFor && <ShareDialog kind="space" target={boxFor} title={boxFor} onClose={() => setBoxFor(null)} />}
-    </div>
-  );
-}
-
 /** Everyone on the team, the owner first: what the page's "N people"
  *  button counts and the people box lists. */
 type Person = { readonly id: string; readonly name: string; readonly label: string; readonly member?: TeamMember };
@@ -397,46 +276,6 @@ function usePeople(group: TeamGroup, status: TeamStatus | undefined, owner: bool
   for (const share of group.shares) for (const member of share.members) joined.set(member.id, member.name);
   const people = [...joined].map(([id, name]) => ({ id, name, label: id === me?.member_id ? t("team.page.you", { name }) : name }));
   return { people, members: [] };
-}
-
-/** The people on the team, kept off the page so it stays the same length
- *  however many there are: a few initials and a count beside the team's
- *  name, which open the people box. The owner also invites from here. */
-function TeamPeopleButton({ group, status, owner, teamName }: {
-  readonly group: TeamGroup;
-  readonly status: TeamStatus | undefined;
-  readonly owner: boolean;
-  readonly teamName: string;
-}) {
-  const { t } = useTranslation();
-  const { people, members } = usePeople(group, status, owner);
-  const [open, setOpen] = useState<"list" | "invite" | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const boxRun = useRun(setError);
-  return (
-    <div className="team-page-people-bar">
-      <button type="button" className="team-page-people" aria-label={t("team.page.peopleTitle", { team: teamName })} onClick={() => setOpen("list")}>
-        <span className="team-page-faces" aria-hidden="true">
-          {people.slice(0, 4).map((person) => <span key={person.id} className="team-page-face">{initialOf(person.name)}</span>)}
-        </span>
-        <span>{t("team.page.peopleCount", { count: people.length })}</span>
-      </button>
-      {owner && <button type="button" className="share-secondary team-page-action" onClick={() => setOpen("invite")}>{t("team.page.invite")}</button>}
-      {open && (
-        <PeopleBox
-          teamName={teamName}
-          people={people}
-          members={members}
-          owner={owner}
-          inviteFirst={open === "invite"}
-          url={prefillTeamUrl(status?.listening)}
-          run={boxRun}
-          error={error}
-          onClose={() => { setOpen(null); setError(null); }}
-        />
-      )}
-    </div>
-  );
 }
 
 function initialOf(name: string): string {

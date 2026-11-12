@@ -12,7 +12,7 @@ vi.mock("../../../lib/tauri", async (original) => ({
 
 import { getPageRevisions, listRecentChanges, updatePage, type SharedStatus } from "../../../lib/tauri";
 import { i18n } from "../../../i18n";
-import { SpaceRecentChanges } from "./SpaceRecentChanges";
+import { SpaceRecentChanges, changeWho } from "./SpaceRecentChanges";
 
 const shares = [{
   kind: "space", target: "Product", folder: "", host: "https://team.example.com", read_only: false, hosted: false,
@@ -69,6 +69,13 @@ describe("recent changes on a shared Space", () => {
     fireEvent.click(await screen.findByText("Amy changed Roadmap"));
     fireEvent.click(await screen.findByRole("button", { name: "Put back the earlier text" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't put it back");
+  });
+
+  it("names a page the person started in the app and published, or restored, as theirs, never their AI tool", () => {
+    const t = i18n.getFixedT("en");
+    expect(changeWho("publish", [], t)).toBe("You");
+    expect(changeWho("restore", [], t)).toBe("You");
+    expect(changeWho("agent_create", [], t)).toBe("Your AI tool");
   });
 
   it("shows nothing when the Space has no changes yet", async () => {

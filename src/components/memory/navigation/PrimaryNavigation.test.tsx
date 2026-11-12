@@ -92,22 +92,4 @@ describe("PrimaryNavigation", () => {
     expect(railLabels()).toEqual(["Home", "Wiki", "Spaces"]);
     expect(container.querySelector(".notes-wiki-section")).toBeNull();
   });
-
-  it("shows Team after Spaces only on a computer that is part of a team", async () => {
-    const team = vi.fn();
-    render(<PrimaryNavigation
-      active="team"
-      labels={{ ...labels, team: "Team" }}
-      onNavigateSpaces={vi.fn()}
-      onNavigateTeam={team}
-    />);
-    expect(railLabels()).toEqual(["Spaces", "Team"]);
-    await userEvent.click(screen.getByRole("button", { name: "Team" }));
-    expect(team).toHaveBeenCalledTimes(1);
-  });
-
-  it("has no Team for a person on no team", () => {
-    renderNavigation();
-    expect(railLabels()).not.toContain("Team");
-  });
 });

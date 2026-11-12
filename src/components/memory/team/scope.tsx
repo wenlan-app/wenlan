@@ -9,7 +9,9 @@
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 import { useShares } from "../sharing/sharing";
 import { useTeamStatus } from "../sharing/team";
-import { teamGroups, type TeamGroup } from "./TeamPage";
+import { spacesOfTeam, teamGroups, type TeamGroup } from "./TeamPage";
+
+export { spacesOfTeam };
 
 const STORAGE_KEY = "wenlan-scope";
 const PRIVATE = "private";
@@ -42,14 +44,6 @@ function store(key: string) {
   } catch {
     // Remembering the side is a convenience; the window works without it.
   }
-}
-
-/** The Spaces one team holds: the hosted team's from its server's own list
- *  too, since a Space just added may not have synced a first time yet. */
-export function spacesOfTeam(group: TeamGroup, hostedSpaces: readonly string[] | undefined): string[] {
-  const names = new Set(group.shares.map((share) => share.target));
-  if (group.hosted) for (const space of hostedSpaces ?? []) names.add(space);
-  return [...names];
 }
 
 export function useScopeState(): ScopeState {

@@ -8,7 +8,7 @@ import { CaretUpDown, Check, LockSimple } from "@phosphor-icons/react";
 import { teamLabel } from "../sharing/sharing";
 import { JoinSharedDialog } from "../sharing/JoinSharedDialog";
 import { SCOPE_PRIVATE, useScope } from "./scope";
-import { TeamPeopleDialog } from "./TeamPage";
+import { TeamNameDialog, TeamPeopleDialog, useLeaveTeam } from "./TeamPage";
 import "./scope-switcher.css";
 
 function Mark({ name }: { readonly name: string | null }) {
@@ -29,7 +29,7 @@ export function ScopeSwitcher({ compact = false, onSwitched, onJoined }: {
   const { t } = useTranslation();
   const scope = useScope();
   const [open, setOpen] = useState(false);
-  const [dialog, setDialog] = useState<"people" | "join" | null>(null);
+  const [dialog, setDialog] = useState<"people" | "invite" | "rename" | "join" | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
@@ -42,6 +42,7 @@ export function ScopeSwitcher({ compact = false, onSwitched, onJoined }: {
       document.removeEventListener("keydown", escape);
     };
   }, [open]);
+  const leave = useLeaveTeam(scope.team);
   if (scope.teams.length === 0) return null;
 
   const current = scope.team;
@@ -51,6 +52,15 @@ export function ScopeSwitcher({ compact = false, onSwitched, onJoined }: {
     scope.setScope(key);
     onSwitched();
   };
+  const actions = !current ? [] : [
+    { label: t("team.scope.people", { team: currentName }), onPick: () => setDialog("people") },
+    ...(current.hosted
+      ? [
+          { label: t("team.scope.invite"), onPick: () => setDialog("invite") },
+          { label: t("team.scope.rename", { team: currentName }), onPick: () => setDialog("rename") },
+        ]
+      : [{ label: t("team.scope.leave", { team: currentName }), onPick: () => void leave().then((left) => { if (left) scope.setScope(SCOPE_PRIVATE); }) }]),
+  ];
   const sides = [
     { key: SCOPE_PRIVATE, name: t("team.scope.private"), mark: null as string | null },
     ...scope.teams.map((group) => {
@@ -88,13 +98,16 @@ export function ScopeSwitcher({ compact = false, onSwitched, onJoined }: {
               </li>
             );
           })}
-          {current && (
-            <li role="none" className="scope-switcher-gap">
-              <button type="button" role="menuitem" onClick={() => { setOpen(false); setDialog("people"); }}>
-                {t("team.scope.people", { team: currentName })}
+          {/* The shown team's own things: its people, inviting, its name,
+              leaving. They live here, not on a page, so home stays the same
+              home on every side. */}
+          {current && actions.map((action, index) => (
+            <li role="none" key={action.label} className={index === 0 ? "scope-switcher-gap" : undefined}>
+              <button type="button" role="menuitem" onClick={() => { setOpen(false); action.onPick(); }}>
+                {action.label}
               </button>
             </li>
-          )}
+          ))}
           <li role="none" className={current ? undefined : "scope-switcher-gap"}>
             <button type="button" role="menuitem" onClick={() => { setOpen(false); setDialog("join"); }}>
               {t("team.scope.join")}
@@ -102,7 +115,10 @@ export function ScopeSwitcher({ compact = false, onSwitched, onJoined }: {
           </li>
         </ul>
       )}
-      {dialog === "people" && current && <TeamPeopleDialog group={current} onClose={() => setDialog(null)} />}
+      {(dialog === "people" || dialog === "invite") && current && (
+        <TeamPeopleDialog group={current} inviteFirst={dialog === "invite"} onClose={() => setDialog(null)} />
+      )}
+      {dialog === "rename" && current && <TeamNameDialog group={current} onClose={() => setDialog(null)} />}
       {dialog === "join" && (
         <JoinSharedDialog
           only="code"
