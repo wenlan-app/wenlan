@@ -1205,6 +1205,33 @@ async fn run_pass(
     automatic: bool,
 ) -> Result<Result<SharedSyncCounts, String>, WenlanError> {
     let folder = folder_for(scope, &settings.folder);
+    if matches!(scope, Scope::Library) {
+        // Two computers that each started a library in the same folder
+        // (the second one before its cloud drive had downloaded the first
+        // one's) come together in one: the library of the smallest member
+        // id, which every computer picks alike. This one takes that id;
+        // its pages go into that library next, nothing is deleted.
+        let engine = folder.clone();
+        let one = tokio::task::spawn_blocking(move || read_space_file(&engine))
+            .await
+            .map_err(|error| WenlanError::Generic(format!("shared folder task: {error}")))?;
+        if let Ok(Some(file)) = one {
+            let ids: Vec<&str> = file.members.iter().map(|m| m.id.as_str()).collect();
+            if let Some(id) = ids
+                .iter()
+                .min()
+                .filter(|_| !ids.contains(&settings.member_id.as_str()))
+            {
+                log::info!("[shared_space] library: the folder holds another computer's library; joining it");
+                let id = id.to_string();
+                if let Some(now) = update_share(settings_path, scope, |settings| {
+                    settings.member_id = id.clone();
+                })? {
+                    settings = now;
+                }
+            }
+        }
+    }
     let listed = match settings.host.clone() {
         None => None,
         Some(host) => match remote::pull(&host, &folder).await {

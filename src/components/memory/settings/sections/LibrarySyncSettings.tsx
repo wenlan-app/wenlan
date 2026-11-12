@@ -191,44 +191,30 @@ export function LibrarySyncDialog({ onClose }: { readonly onClose: () => void })
   const [found, setFound] = useState<SharedFolder | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Whether this is the first computer: asked when the folder holds no
-  // library yet, so a second computer whose cloud drive is still
-  // downloading never starts a library of its own.
-  const [which, setWhich] = useState<"first" | "other" | null>(null);
-  const [looking, setLooking] = useState(false);
   useEffect(() => {
     const dialog = dialogRef.current;
     if (dialog && !dialog.open) dialog.showModal();
     return () => dialog?.close();
   }, []);
 
-  const look = async (chosen: string) => {
-    setLooking(true);
-    try {
-      setFound(await lookInSharedFolder(chosen));
-    } catch {
-      // A folder that cannot be read is reported when syncing starts.
-    } finally {
-      setLooking(false);
-    }
-  };
   const choose = async () => {
     const chosen = await openDialog({ directory: true, multiple: false });
     if (typeof chosen !== "string") return;
     setFolder(chosen);
     setFound(null);
     setError(null);
-    await look(chosen);
+    try {
+      setFound(await lookInSharedFolder(chosen));
+    } catch {
+      // A folder that cannot be read is reported when syncing starts.
+    }
   };
   const merging = found?.kind === "library";
   // A Space or a page share keeps its folder to itself.
   const taken = found !== null && !merging;
-  const asking = folder !== null && found === null;
-  const waiting = asking && which === "other";
-  const ready = folder !== null && !taken && (!asking || which === "first");
   const start = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!folder || !ready || pending) return;
+    if (!folder || taken || pending) return;
     setPending(true);
     setError(null);
     try {
@@ -273,31 +259,6 @@ export function LibrarySyncDialog({ onClose }: { readonly onClose: () => void })
               {taken && <p className="share-warning" role="alert">{t("sharing.alreadyShared")}</p>}
               {!taken && outsideCloud && <p className="share-warning">{t("sharing.notCloud")}</p>}
             </div>
-            {asking && (
-              <div className="library-sync-which" role="radiogroup" aria-label={t("librarySync.whichComputer")}>
-                <span>{t("librarySync.whichComputer")}</span>
-                {(["first", "other"] as const).map((option) => (
-                  <button
-                    key={option}
-                    type="button"
-                    role="radio"
-                    aria-checked={which === option}
-                    className="share-secondary"
-                    data-on={which === option}
-                    onClick={() => setWhich(option)}
-                    disabled={pending}
-                  >
-                    {t(option === "first" ? "librarySync.firstComputer" : "librarySync.otherComputer")}
-                  </button>
-                ))}
-              </div>
-            )}
-            {waiting && (
-              <div className="library-sync-wait">
-                <p className="share-hint">{t("librarySync.notArrived")}</p>
-                <button type="button" className="share-secondary" onClick={() => { if (folder) void look(folder); }} disabled={looking}>{t("librarySync.lookAgain")}</button>
-              </div>
-            )}
             <dl className="library-sync-what">
               <dt>{t("librarySync.willSync")}</dt><dd>{t("librarySync.willSyncValue")}</dd>
               <dt>{t("librarySync.phoneAi")}</dt><dd>{t(phoneNeedsDrive ? "librarySync.phoneAiNeedsDrive" : "librarySync.phoneAiValue")}</dd>
@@ -308,7 +269,7 @@ export function LibrarySyncDialog({ onClose }: { readonly onClose: () => void })
         {error && <p className="share-warning" role="alert">{t("librarySync.failed", { message: error })}</p>}
         <div className="share-actions">
           <button type="button" className="share-secondary" onClick={onClose} disabled={pending}>{t("sharing.cancel")}</button>
-          <button type="submit" className="share-primary" disabled={!ready || pending}>
+          <button type="submit" className="share-primary" disabled={!folder || taken || pending}>
             {merging
               ? t(pending ? "librarySync.merging" : "librarySync.merge")
               : t(pending ? "librarySync.starting" : "librarySync.start")}

@@ -66,29 +66,9 @@ describe("library sync row", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Sync to other computers and phone" }));
     expect(screen.getByText("Won't sync")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Choose…" }));
-    // An empty folder: asked which computer this is before anything starts.
-    await screen.findByRole("radio", { name: "The first one" });
-    expect(screen.getByRole("button", { name: "Start syncing" })).toBeDisabled();
-    await userEvent.click(screen.getByRole("radio", { name: "The first one" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Start syncing" })).toBeEnabled());
     await userEvent.click(screen.getByRole("button", { name: "Start syncing" }));
     await waitFor(() => expect(shareLibrary).toHaveBeenCalledWith(FOLDER, null));
-  });
-
-  it("never starts a second library while the other computer's files are still downloading", async () => {
-    vi.mocked(open).mockResolvedValue(FOLDER);
-    vi.mocked(lookInSharedFolder).mockResolvedValue(null);
-    renderRow();
-    await userEvent.click(await screen.findByRole("button", { name: "Sync to other computers and phone" }));
-    await userEvent.click(screen.getByRole("button", { name: "Choose…" }));
-    await userEvent.click(await screen.findByRole("radio", { name: "Another one" }));
-    expect(screen.getByText(/Nothing from your other computer yet/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Start syncing" })).toBeDisabled();
-    // The files arrive: checking again finds the library, and it merges.
-    vi.mocked(lookInSharedFolder).mockResolvedValue({ kind: "library", name: "Wenlan", page_id: null, members: [{ id: "m1", name: "Lucian" }] });
-    await userEvent.click(screen.getByRole("button", { name: "Check again" }));
-    await userEvent.click(await screen.findByRole("button", { name: "Merge" }));
-    await waitFor(() => expect(shareLibrary).toHaveBeenCalledWith(FOLDER, "m1"));
   });
 
   it("says phone AI needs Google Drive when the folder is in iCloud", async () => {

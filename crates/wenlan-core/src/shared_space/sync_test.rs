@@ -2887,3 +2887,37 @@ async fn a_member_who_may_only_read_is_shown_no_proposal() {
     b.sync(&folder).await;
     assert!(open_cards(&b).await.is_empty());
 }
+
+#[tokio::test]
+async fn two_libraries_started_in_one_folder_come_together() {
+    // The second computer started its own library before its cloud drive
+    // had downloaded the first one's; the drive kept both engine folders.
+    let chosen = tempfile::tempdir().unwrap();
+    let early = tempfile::tempdir().unwrap();
+    let a = Member::new("Lucian").await;
+    let b = Member::new("h1646").await;
+    let menu = a.write("Menu", "Fish.", SPACE.to_string().into()).await;
+    let trip = b
+        .write("Trip", "Lisbon in June.", "Travel".to_string().into())
+        .await;
+    a.lib_sync(chosen.path(), None).await.unwrap();
+    b.lib_sync(early.path(), None).await.unwrap();
+    std::fs::rename(
+        library::engine_folder(early.path()),
+        chosen.path().join(format!("{} (1)", library::ENGINE_DIR)),
+    )
+    .unwrap();
+    b.lib_sync(chosen.path(), None).await.unwrap();
+    for _ in 0..3 {
+        a.lib_sync(chosen.path(), None).await.unwrap();
+        b.lib_sync(chosen.path(), None).await.unwrap();
+    }
+    assert_eq!(a.library_member_id(), b.library_member_id());
+    assert_eq!(a.content(&trip).await, "Lisbon in June.");
+    assert_eq!(b.content(&menu).await, "Fish.");
+    // One main computer between them.
+    assert_ne!(
+        library::page_writing_allowed_at(&a.settings()),
+        library::page_writing_allowed_at(&b.settings())
+    );
+}

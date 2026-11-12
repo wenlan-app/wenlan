@@ -54,7 +54,43 @@ const CAPTURE_MIN_CHARS: usize = 10;
 
 /// The engine folder of the library the person put in `chosen`.
 pub fn engine_folder(chosen: &Path) -> PathBuf {
-    chosen.join(ENGINE_DIR)
+    let mut best: Option<(String, PathBuf)> = None;
+    if let Ok(entries) = std::fs::read_dir(chosen) {
+        for entry in entries.flatten() {
+            let Ok(name) = entry.file_name().into_string() else {
+                continue;
+            };
+            if !is_engine_name(&name) || !entry.path().is_dir() {
+                continue;
+            }
+            let Ok(Some(file)) = read_space_file(&entry.path()) else {
+                continue;
+            };
+            let Some(id) = file.members.iter().map(|m| m.id.clone()).min() else {
+                continue;
+            };
+            if file.library && best.as_ref().is_none_or(|(best, _)| &id < best) {
+                best = Some((id, entry.path()));
+            }
+        }
+    }
+    best.map(|(_, path)| path)
+        .unwrap_or_else(|| chosen.join(ENGINE_DIR))
+}
+
+/// [`ENGINE_DIR`], or the copy a cloud drive keeps when two computers made
+/// it before seeing each other's: `<name> (2)` (Google Drive) or `<name> 2`
+/// (iCloud Drive).
+fn is_engine_name(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix(ENGINE_DIR) else {
+        return false;
+    };
+    let number = rest
+        .strip_prefix(" (")
+        .and_then(|rest| rest.strip_suffix(')'))
+        .or_else(|| rest.strip_prefix(' '))
+        .unwrap_or(rest);
+    rest.is_empty() || (!number.is_empty() && number.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// The phone read copy's folder of the library in `chosen`.

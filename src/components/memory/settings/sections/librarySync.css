@@ -12,10 +12,3 @@
 .library-sync-what { margin:0;display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 16px;font-size:13px; }
 .library-sync-what dt { color:var(--mem-text-secondary);white-space:nowrap; }
 .library-sync-what dd { margin:0; }
-/* This computer is: the first one, or another one. */
-.library-sync-which { display:flex;align-items:center;gap:8px;font-size:13px;white-space:nowrap; }
-.library-sync-which > span { color:var(--mem-text-secondary);margin-right:4px; }
-.library-sync-which .share-secondary[data-on="true"] { border-color:var(--mem-text);font-weight:600; }
-.library-sync-wait { display:flex;align-items:center;gap:12px; }
-.library-sync-wait .share-hint { margin:0;flex:1; }
-.library-sync-wait .share-secondary { white-space:nowrap; }
