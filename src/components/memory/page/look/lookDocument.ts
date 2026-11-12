@@ -93,6 +93,103 @@ export function jsonForScript(value: unknown): string {
     .replace(/\u2029/g, "\\u2029");
 }
 
+/**
+ * Elements a look may never put in its page. Some engines (WebKit, seen on
+ * macOS) open a connection for `<link rel="preconnect">` even under
+ * `connect-src 'none'`, and a nested frame would bring fresh, unguarded
+ * built-ins. A look needs none of them: styles go in `<style>`, and nothing
+ * outside the page can load anyway.
+ */
+export const LOOK_FORBIDDEN_TAGS = ["link", "iframe", "frame", "frameset", "object", "embed", "portal", "fencedframe", "meta", "base"];
+
+/**
+ * Runs before anything else in the look's frame and cannot be undone by it:
+ * every way to put an element into the page drops the forbidden ones, every
+ * way to parse HTML into the page strips them first, and the replaced
+ * built-ins are locked (not writable, not configurable).
+ */
+export const INNER_GUARD_SCRIPT = `(function () {
+  var FORBIDDEN = ${JSON.stringify(LOOK_FORBIDDEN_TAGS)};
+  var SELECTOR = FORBIDDEN.join(",");
+  var isForbidden = function (node) {
+    return !!node && node.nodeType === 1 && FORBIDDEN.indexOf(String(node.localName).toLowerCase()) !== -1;
+  };
+  var scrub = function (node) {
+    if (!node || typeof node !== "object") return node;
+    if (isForbidden(node)) return document.createTextNode("");
+    if (node.querySelectorAll) {
+      var found = node.querySelectorAll(SELECTOR);
+      for (var i = 0; i < found.length; i++) found[i].remove();
+    }
+    return node;
+  };
+  var lock = function (target, name, value) {
+    try { Object.defineProperty(target, name, { value: value, writable: false, configurable: false }); } catch (e) {}
+  };
+  var lockAccessor = function (target, name, wrapSet) {
+    var d = Object.getOwnPropertyDescriptor(target, name);
+    if (!d || !d.set) return;
+    try {
+      Object.defineProperty(target, name, { get: d.get, set: wrapSet(d.set), configurable: false, enumerable: d.enumerable });
+    } catch (e) {}
+  };
+  var template = document.createElement("template");
+  var templateSet = Object.getOwnPropertyDescriptor(Element.prototype, "innerHTML") ||
+    Object.getOwnPropertyDescriptor(HTMLElement.prototype, "innerHTML");
+  var clean = function (html) {
+    var t = template.cloneNode(false);
+    templateSet.set.call(t, String(html));
+    scrub(t.content);
+    return templateSet.get.call(t);
+  };
+  var wrapNodes = function (proto, name) {
+    var original = proto && proto[name];
+    if (typeof original !== "function") return;
+    lock(proto, name, function () {
+      var args = Array.prototype.slice.call(arguments);
+      for (var i = 0; i < args.length; i++) args[i] = scrub(args[i]);
+      return original.apply(this, args);
+    });
+  };
+  [Node.prototype].forEach(function (p) { ["appendChild", "insertBefore", "replaceChild"].forEach(function (n) { wrapNodes(p, n); }); });
+  [Element.prototype, Document.prototype, DocumentFragment.prototype, CharacterData.prototype].forEach(function (p) {
+    ["append", "prepend", "before", "after", "replaceWith", "replaceChildren", "insertAdjacentElement"].forEach(function (n) { wrapNodes(p, n); });
+  });
+  if (window.Range) ["insertNode", "surroundContents"].forEach(function (n) { wrapNodes(Range.prototype, n); });
+  [Element.prototype, HTMLElement.prototype, window.ShadowRoot && ShadowRoot.prototype].forEach(function (p) {
+    if (!p) return;
+    ["innerHTML", "outerHTML"].forEach(function (n) {
+      lockAccessor(p, n, function (set) { return function (value) { return set.call(this, clean(value)); }; });
+    });
+  });
+  var wrapHtmlArg = function (proto, name, index) {
+    var original = proto && proto[name];
+    if (typeof original !== "function") return;
+    lock(proto, name, function () {
+      var args = Array.prototype.slice.call(arguments);
+      if (args.length > index) args[index] = clean(args[index]);
+      return original.apply(this, args);
+    });
+  };
+  wrapHtmlArg(Element.prototype, "insertAdjacentHTML", 1);
+  wrapHtmlArg(Element.prototype, "setHTMLUnsafe", 0);
+  if (window.ShadowRoot) wrapHtmlArg(ShadowRoot.prototype, "setHTMLUnsafe", 0);
+  if (window.Range) wrapHtmlArg(Range.prototype, "createContextualFragment", 0);
+  wrapHtmlArg(Document.prototype, "write", 0);
+  wrapHtmlArg(Document.prototype, "writeln", 0);
+  lock(Document.prototype, "execCommand", function () { return false; });
+  try {
+    new MutationObserver(function (records) {
+      for (var i = 0; i < records.length; i++) {
+        var added = records[i].addedNodes;
+        for (var j = 0; j < added.length; j++) {
+          if (isForbidden(added[j])) added[j].remove(); else scrub(added[j]);
+        }
+      }
+    }).observe(document, { childList: true, subtree: true });
+  } catch (e) {}
+})();`;
+
 /** Runs first inside the look's frame: defines `window.wenlan` and reports. */
 export const INNER_HELPER_SCRIPT = `(function () {
   var send = function (message) {
@@ -136,7 +233,7 @@ export const INNER_HELPER_SCRIPT = `(function () {
   };
   var openAnchor = function (event) {
     var target = event.target;
-    var anchor = target && target.closest ? target.closest("a") : null;
+    var anchor = target && target.closest ? target.closest("a, area") : null;
     if (!anchor) return false;
     event.preventDefault();
     var pageId = anchor.getAttribute("data-wenlan-page");
@@ -196,6 +293,23 @@ function themeStyle(theme: LookTheme): string {
 }
 
 /**
+ * The look's own markup with the forbidden elements taken out before it is
+ * parsed, so not even the first parse can open a connection. Uses the app's
+ * DOMParser (an inert document) where there is one.
+ */
+export function stripForbidden(html: string): string {
+  if (typeof DOMParser === "undefined") {
+    const names = LOOK_FORBIDDEN_TAGS.join("|");
+    return html
+      .replace(new RegExp(`<(${names})\\b[\\s\\S]*?<\\/\\1\\s*>`, "gi"), "")
+      .replace(new RegExp(`<\\/?(${names})\\b[^>]*>`, "gi"), "");
+  }
+  const doc = new DOMParser().parseFromString(`<!doctype html><html><head></head><body>${html}</body></html>`, "text/html");
+  doc.querySelectorAll(LOOK_FORBIDDEN_TAGS.join(",")).forEach((node) => node.remove());
+  return doc.head.innerHTML + doc.body.innerHTML;
+}
+
+/**
  * The look's own document: doctype, the CSP first, the theme variables, the
  * page's data as inline JSON, the helper script, then the look's HTML.
  */
@@ -210,9 +324,10 @@ export function buildInnerDocument({ data, html, theme }: {
     `<html><head><meta charset="utf-8">${CSP_META}`,
     themeStyle(theme),
     `<script type="application/json" id="wenlan-data">${jsonForScript(withTheme)}</script>`,
+    `<script>${INNER_GUARD_SCRIPT}</script>`,
     `<script>${INNER_HELPER_SCRIPT}</script>`,
     "</head><body>",
-    html,
+    stripForbidden(html),
     "</body></html>",
   ].join("\n");
 }

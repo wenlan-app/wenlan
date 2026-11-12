@@ -10,6 +10,9 @@ import {
   LOOK_CSP,
   LOOK_SANDBOX,
   parseLookMessage,
+  stripForbidden,
+  INNER_GUARD_SCRIPT,
+  INNER_HELPER_SCRIPT,
 } from "./lookDocument";
 
 const DATA: LookData = {
@@ -64,6 +67,27 @@ describe("UX-LOOK-4 the documents a look runs in", () => {
     const style = inner.match(/<style>:root \{([^}]*)\}/)![1];
     expect(style).not.toContain(";  body");
     expect(inner.match(/--look-bg: [^;]*;/)![0]).not.toMatch(/[{}]/);
+  });
+});
+
+describe("UX-LOOK-4 a look cannot add elements that reach out", () => {
+  it("takes link, frame, object, meta and base elements out of the look before it is parsed", () => {
+    const out = stripForbidden(
+      '<link rel="preconnect" href="https://x.test"><div id="keep">ok</div><iframe srcdoc="x"></iframe>'
+      + '<object data="x"></object><embed src="x"><meta http-equiv="refresh" content="0"><base href="https://x.test/">'
+      + '<script>var s = "<link>";</script>',
+    );
+    expect(out.replace(/<script>[\s\S]*?<\/script>/g, "")).not.toMatch(/<(link|iframe|object|embed|meta|base)\b/i);
+    expect(out).toContain('<div id="keep">ok</div>');
+    expect(out).toContain('var s = "<link>";');
+  });
+
+  it("runs the guard before the helper and before any of the look's own markup", () => {
+    const doc = buildInnerDocument({ data: DATA, html: "<p>look</p>", theme: THEME });
+    const guard = doc.indexOf(INNER_GUARD_SCRIPT);
+    expect(guard).toBeGreaterThan(doc.indexOf(LOOK_CSP));
+    expect(guard).toBeLessThan(doc.indexOf(INNER_HELPER_SCRIPT));
+    expect(doc.indexOf(INNER_HELPER_SCRIPT)).toBeLessThan(doc.indexOf("<p>look</p>"));
   });
 });
 
