@@ -151,7 +151,7 @@ You can also connect an Open Knowledge Format (OKF) folder as a source. Scanned 
 Your AI tool reads what you bring in and writes it into Markdown pages. It links related pages, cites where each sentence came from, and brings pages up to date when a source changes. You can open any page and write in it yourself.
 
 <p align="center">
-  <img src="./docs/assets/wenlan-updates-history.animated.svg" alt="Illustrative flow: AI chats, documents and folders (including Obsidian), code, and web content go into Steep, which updates pages (one automatically with a citation, one waiting for your OK), finds a new link, and flags a contradiction; next time you ask, your AI tool cites the updated page." width="100%">
+  <img src="./docs/assets/wenlan-updates-history.animated.svg" alt="Illustrative flow: AI chats, documents and folders (including Obsidian), code, and web content go into Steep. It writes a new page from several memories, merges duplicate pages, and updates a page with a citation it checks against the source; a page set to Ask me first waits for approval. It also finds a new link and resolves a contradiction by keeping the newer statement, with the older one restorable from history. Next time you ask, your AI tool cites the updated page." width="100%">
 </p>
 <p>Illustration based on current update behavior; not an App screenshot.</p>
 

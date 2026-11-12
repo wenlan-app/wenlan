@@ -28,7 +28,7 @@ The final consistency pass aligns the three explanatory titles (46px, semibold, 
 | `wenlan-personal-knowledge.png`, `-zh-Hant.png`, `-zh-Hans.png` | 6000 × 3600 | Actual App directory/header captures and a high-resolution render of the actual editor and memory-preview DOM/styles, combined with an editorial graph layout. All 33 graph nodes and 80 typed relationships retain their verified demo identities. Not a native three-column screen; App behavior is unchanged. |
 | `wenlan-personal-graph.png`, `-zh-Hant.png`, `-zh-Hans.png` | 3600 × 2062 | Actual graph capture; the original nodes and connections are preserved, with localized legend and text layers. Region names and boundaries are editorial annotations, not verified source-node identities or detected communities. |
 | `wenlan-knowledge-to-work.png`, `-zh-Hant.png`, `-zh-Hans.png`, `-es-ES.png` | 5400 × 3480 each | Fictional Claude conversations and FORMA homepage, using the film’s unchanged hero-image asset. Keyword, semantic, and graph paths point to the matching headline, primary action, and image. Concept illustration, not a measured comparison; Wenlan context complements Claude’s native capabilities. |
-| `wenlan-updates-history.png`, `-zh-Hant.png`, `-zh-Hans.png`; `.animated.svg` and `.svg` beside each | 4800 × 2430 | Native SVG explanatory illustration, redrawn 2026-11-11. AI chats, documents and folders (including Obsidian), code, and web content go into Steep, which updates pages (one set to Allowed, updated with a citation back to the source; one set to Ask me first, waiting for approval), finds a new link on the map, and flags a contradiction; the next answer in the AI tool cites the updated page. The README shows the `.animated.svg` (CSS keyframes, text as outlines; its un-animated state is the final picture). The PNGs are static renders of the same outlined SVG; the plain `.svg` keeps editable text. App logos are Simple Icons (CC0). Not an App screenshot. Generator: `/mnt/project-files/readme-2026-11/steep-v4/`. |
+| `wenlan-updates-history.png`, `-zh-Hant.png`, `-zh-Hans.png`; `.animated.svg` and `.svg` beside each | 4800 × 2310 | Native SVG explanatory illustration, redrawn 2026-11-12 (light canvas, book-cover indigo `#2C4A72`, vermilion seal for Steep). AI chats, documents and folders (including Obsidian), code, and web content go into Steep. Update knowledge cycles through three kinds: a new page written from several memories, two duplicate pages merged into one, and an existing page updated with a checked citation (one page set to Ask me first waits for approval). Steep also finds a new link and resolves a contradiction by keeping the newer statement, with the older one restorable; the next answer in the AI tool cites the updated page. The README shows the `.animated.svg` (CSS keyframes, text as outlines; its un-animated state is the final picture). The PNGs are static renders of the same outlined SVG; the plain `.svg` keeps editable text. App logos are Simple Icons (CC0). Not an App screenshot. Generator: `/mnt/project-files/readme-2026-11/steep-v5/`. |
 
 The personal graph omits its former in-image heading and subtitle because the README section already introduces it. Only that header and its reserved space were removed; the graph image, labels, nodes, connections, and geometry are unchanged. Editable sources and 900px proofs are retained in `graph-without-heading-20261017`. Spanish continues to use the English graph.
 
@@ -48,13 +48,13 @@ The older `wenlan-lifecycle*` and `wenlan-knowledge-network*` illustrations and 
 - `wenlan-knowledge-to-work-zh-Hans.png`: `b8aea4a7fcda8cb3e5e7230a010182d49cfe5e6d538e1c7ba71e2019e8100107`
 - `wenlan-knowledge-to-work.png`: `14e34fb772ce8f4ac6ce20516f136b9c1aead3fdef7304426445ebc3009307e6`
 - `wenlan-knowledge-to-work-es-ES.png`: `10b7886bedcfbac8b62d8efdb047d66831319664d7878b0193790cd5cd9e33fd`
-- `wenlan-updates-history-zh-Hant.png`: `88efa9beb44f9151dc48229a65ab6b636f22036d18292b39316b4bda37f36783`
+- `wenlan-updates-history-zh-Hant.png`: `d7ea3f24fa11e81763f0eab99354a6b82a8b7a147403b91811d18b6db9b2afb6`
 - `wenlan-personal-knowledge.png`: `6aa9bd21bb7e5b746ec1c1545570f0f5df9539fb81ffcf4dc1f915295b2de0e9`
 - `wenlan-personal-knowledge-zh-Hans.png`: `96736638a3611964a0b63888e41777f98d07f93e8f9db7b39c964df43dc4eeba`
 - `wenlan-personal-graph.png`: `17d65ff5749464c96f7a5b34ffa2e780a0b5d7fd81f90b45107d474b8242e5e0`
 - `wenlan-personal-graph-zh-Hans.png`: `e9936e86d7550404c4886c91e1a0cec9436c2252fa8c3be958188e0fa8c1fc11`
-- `wenlan-updates-history.png`: `b09a56354f85760fb8bd6e79b788f2af715b7bfd47bb98b4848776f8d7720613`
-- `wenlan-updates-history-zh-Hans.png`: `4a9af3fea3fce19af9275fc65f0aa9e42ec2a575f46cadac4ceb7d8aaa73c5b1`
+- `wenlan-updates-history.png`: `5aabcdbdb9a3224646e5a2661da99bdfdb25f34839c3ed91458d6ffa97050431`
+- `wenlan-updates-history-zh-Hans.png`: `405fefec34f1322c4147bc00d53f3e7957df1306c9220d577295cf6b24a0c2e3`
 
 ## Neutral background palette
 

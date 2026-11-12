@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=92282c0f0e22c4db652941ede00896957ef511ce1e8d76147d3ae3a04d05eb8b -->
+<!-- README_SYNC: source=README.md sha256=918370e86bbd883b14dd465d2a589f9e7ede8f0acc0e6fe65c1d17cd190e0849 -->
 
 <p align="center">
   <picture>
@@ -165,7 +165,7 @@
 你的 AI 工具会读你带进来的资料，写成 Markdown 笔记：把相关的笔记连起来，标出每句话的出处，来源变了就跟着更新。任何一篇笔记你都可以打开自己写。
 
 <p align="center">
-  <img src="./docs/assets/wenlan-updates-history-zh-Hans.animated.svg" alt="示意流程：AI 对话、文件与文件夹（含 Obsidian）、代码和网页内容进入沉淀，更新笔记（一篇自动更新并附引用，一篇等你点头）、找出新关联、提醒矛盾；下次再问，你的 AI 工具会引用更新后的笔记。" width="100%">
+  <img src="./docs/assets/wenlan-updates-history-zh-Hans.animated.svg" alt="示意流程：AI 对话、文件与文件夹（含 Obsidian）、代码和网页内容进入沉淀。它把几条记忆写成新页、合并重复的页，并更新旧页，引用会对照来源核查；设成“先问我”的页会等你点头。它也会找出新关联，处理矛盾时改用较新的说法，旧的留在记录可还原。下次再问，AI 工具会引用更新后的页面。" width="100%">
 </p>
 <p>示意图依据当前的更新行为绘制；并非 App 截图。</p>
 
