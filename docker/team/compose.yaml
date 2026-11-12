@@ -18,9 +18,11 @@ services:
     command: ["team"]
     restart: unless-stopped
     ports:
-      # The team listener only. The daemon's own port (7878) stays inside the
-      # container: it has no sign-in and must never be published.
-      - "7879:7879"
+      # The team listener only. The daemon's own port (7878) has no sign-in:
+      # `team` keeps it on the container's loopback, never published. With
+      # the `https` profile (WENLAN_DOMAIN set) 7879 is published on this
+      # box's loopback only, so nobody reaches it around Caddy's HTTPS.
+      - "${WENLAN_DOMAIN:+127.0.0.1:}7879:7879"
     environment:
       # The address people reach this box at, put in every invite link:
       # https://… behind a reverse proxy, or its Tailscale address. With the
@@ -29,9 +31,10 @@ services:
       # Uncomment for one start to make a new owner link (the old one stops).
       # WENLAN_TEAM_NEW_OWNER_LINK: "1"
     # To keep the data in a folder on this box instead (a NAS share), swap the
-    # volume line for the folder and uncomment `user`: the image's own user
-    # cannot write a folder that belongs to someone else on the host.
-    # user: "0:0"
+    # volume line for the folder and uncomment `user`, set to the folder
+    # owner's ids (`ls -n` shows them): the image's own user cannot write a
+    # folder that belongs to someone else on the host.
+    # user: "1000:1000"
     volumes:
       - wenlan-data:/data
       # - /volume1/docker/wenlan:/data

@@ -61,7 +61,9 @@ The team listener speaks plain HTTP. Do one of these:
   and invite links use `https://wenlan.example.com`.
 
 A member's Wenlan refuses a plain `http://` address unless it is inside a
-private network (this computer, a LAN address, `.local`, Tailscale).
+private network (this computer, a LAN address, `.local`, Tailscale). Put
+the team listener on the open internet only behind one of these: on its
+own it does not time out slow or idle connections.
 
 ## Set up the server
 
@@ -95,13 +97,13 @@ everyone, or to some people, from the line under its title.
    behind a reverse proxy, or its Tailscale address such as
    `http://nas.tailnet.ts.net:7879`. Inside a container Wenlan cannot see
    the box's own address, so give it. Only the team port (7879) is
-   published; the daemon's own port stays inside the container.
+   published; the daemon's own port listens only inside the container.
 
-   Easier: Settings › Team › *Run it on a server* makes the `docker run`
-   line for you, with your owner's invite link in place of the address
-   (`team "https://wenlan.example.com/join#wlt_…"`). Once the server is up,
-   that window joins it by itself, and step 2 is done. That line holds your
-   owner key: run it only on the server.
+   Easier: Settings › Team › *Run it on a server* makes the line for you,
+   ending in `--owner <SHA-256>`: your Wenlan makes the owner's key, keeps
+   it, and puts only its SHA-256 in the line, so the key is never on the
+   server's command line. Once the server is up, that window joins it by
+   itself, and step 2 is done.
 
 2. Started with just the address, the first start prints **the owner's
    invite link** once, in the logs. Open it in your own Wenlan (Settings ›
@@ -123,9 +125,10 @@ everyone, or to some people, from the line under its title.
   Caddy gets the certificate and renews it.
 - *Data in a folder on the box* (a NAS share) rather than Docker's own
   volume: swap the volume line in the compose file for the folder and
-  uncomment `user: "0:0"` (with `docker run`: `--user 0:0`). The image's own
-  user cannot write a folder that belongs to someone else on the host;
-  without it the server stops at start and says so.
+  uncomment `user:`, set to the folder owner's ids from `ls -n` (with
+  `docker run`: `--user <uid>:<gid>`). The image's own user cannot write a
+  folder that belongs to someone else on the host; without it the server
+  stops at start and says so.
 
 - *No internet on the box.* Bring the image over as a file: on a machine
   with internet, `docker pull ghcr.io/wenlan-app/wenlan-server` and

@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Settings › Team › "Run it on a server": the steps for a team server on a
 // machine nobody sits at, in the app rather than in a document. Type the
-// address people reach it at and copy the command for the server. The
-// command carries the owner's invite link this Wenlan made, so once the
-// server is up this window joins it by itself: nobody reads the server's
-// output or pastes anything back. From then on the owner runs the team
-// from their own computer.
+// address people reach it at and copy the command for the server. This
+// Wenlan makes the owner's key and keeps it; the command carries only the
+// key's SHA-256, so the key is never on the server's command line. Once
+// the server is up this window joins it by itself: nobody reads the
+// server's output or pastes anything back. From then on the owner runs the
+// team from their own computer.
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
@@ -16,7 +17,7 @@ import "./server-setup.css";
 
 export const SERVER_IMAGE = "ghcr.io/wenlan-app/wenlan-server";
 const EXAMPLE_URL = "https://wenlan.example.com";
-const EXAMPLE_KEY = `wlt_${"0".repeat(64)}`;
+const EXAMPLE_HASH = "0".repeat(64);
 /** How often the window asks whether the server is up yet. */
 export const SERVER_POLL_MS = 5000;
 // The owner's key this window made, kept until it has joined: closing the
@@ -53,16 +54,22 @@ export function forgetOwnerKeyDraft(): void {
   try { localStorage.removeItem(OWNER_KEY_DRAFT); } catch { /* nothing kept */ }
 }
 
-/** The owner's invite link, as `wenlan-server team` takes it. */
+/** The owner's invite link: what this window joins with. */
 export function ownerLink(url: string, key: string): string {
   return `${url}/join#${key}`;
 }
 
-/** The one line run on the server. Nothing needs reading from it after:
- *  this window joins by itself. The link is quoted: some shells read `#`
- *  on its own. */
-export function serverCommand(link: string): string {
-  return `docker run -d --name wenlan --restart unless-stopped -p 7879:7879 -v wenlan-data:/data ${SERVER_IMAGE} team "${link}"`;
+/** The SHA-256 the server keeps of a key, as lowercase hex. */
+export async function keySha256(key: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(key.trim()));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/** The one line run on the server: the address, and the owner's key by its
+ *  SHA-256 only. Nothing needs reading from it after: this window joins
+ *  by itself. */
+export function serverCommand(url: string, ownerHash: string): string {
+  return `docker run -d --name wenlan --restart unless-stopped -p 7879:7879 -v wenlan-data:/data ${SERVER_IMAGE} team ${url} --owner ${ownerHash}`;
 }
 
 export function ServerSetupDialog({ onClose, onPaste, onReady }: {
@@ -77,18 +84,25 @@ export function ServerSetupDialog({ onClose, onPaste, onReady }: {
   const [copied, setCopied] = useState(false);
   const [failed, setFailed] = useState(false);
   const [key] = useState(draftOwnerKey);
+  const [hash, setHash] = useState<string | null>(null);
+  useEffect(() => {
+    let current = true;
+    void keySha256(key).then((made) => { if (current) setHash(made); });
+    return () => { current = false; };
+  }, [key]);
   useEffect(() => {
     const dialog = dialogRef.current;
     if (dialog && !dialog.open) dialog.showModal();
     return () => dialog?.close();
   }, []);
   const url = usableServerUrl(address);
+  const ready = Boolean(url && hash);
   const link = url ? ownerLink(url, key) : null;
-  const command = serverCommand(link ?? ownerLink(EXAMPLE_URL, EXAMPLE_KEY));
+  const command = serverCommand(url ?? EXAMPLE_URL, (url && hash) || EXAMPLE_HASH);
   // Once the command is copied, ask the server every few seconds whether
   // it is up and knows this key; the first answer opens the join window.
-  const ready = useRef(onReady);
-  ready.current = onReady;
+  const joined = useRef(onReady);
+  joined.current = onReady;
   useEffect(() => {
     if (!copied || !link) return undefined;
     let stopped = false;
@@ -96,7 +110,7 @@ export function ServerSetupDialog({ onClose, onPaste, onReady }: {
     const ask = async () => {
       try {
         await teamJoin(link);
-        if (!stopped) ready.current(link);
+        if (!stopped) joined.current(link);
         return;
       } catch {
         // Not up yet, or not reachable from here yet: ask again.
@@ -107,7 +121,7 @@ export function ServerSetupDialog({ onClose, onPaste, onReady }: {
     return () => { stopped = true; clearTimeout(timer); };
   }, [copied, link]);
   const copy = async () => {
-    if (!url) return;
+    if (!ready) return;
     try {
       await navigator.clipboard.writeText(command);
       setCopied(true);
@@ -145,11 +159,11 @@ export function ServerSetupDialog({ onClose, onPaste, onReady }: {
         <li>
           <div className="server-setup-run-head">
             <span className="share-label">{t("team.server.run")}</span>
-            <button type="button" className="share-secondary" onClick={() => void copy()} disabled={!url}>
+            <button type="button" className="share-secondary" onClick={() => void copy()} disabled={!ready}>
               {t(copied ? "team.copied" : "team.copy")}
             </button>
           </div>
-          <pre className={`server-setup-command${url ? "" : " server-setup-command-example"}`}>
+          <pre className={`server-setup-command${ready ? "" : " server-setup-command-example"}`}>
             {command.split("\n").map((line) => <code key={line}>{line}</code>)}
           </pre>
           <span className="share-hint">{t("team.server.runHint")}</span>

@@ -51,10 +51,11 @@ pub const TEAM_URL_ENV: &str = "WENLAN_TEAM_URL";
 /// Set (to anything) on a server started with `WENLAN_TEAM_ADDR`: the
 /// owner's invite link is made again and logged; the old one stops.
 pub const NEW_OWNER_LINK_ENV: &str = "WENLAN_TEAM_NEW_OWNER_LINK";
-/// The owner's key, made by the owner's own Wenlan and put in the server's
-/// start command (`wenlan-server team <owner's invite link>`): the server
-/// takes it as the owner's on its first start instead of printing a new one.
-pub const OWNER_KEY_ENV: &str = "WENLAN_TEAM_OWNER_KEY";
+/// The SHA-256 of the owner's key, which the owner's own Wenlan made and
+/// keeps (`wenlan-server team <address> --owner <sha256>`): the server takes
+/// it as the owner's on its first start instead of printing a new link.
+/// Only the hash is ever on this machine, never the key.
+pub const OWNER_SHA256_ENV: &str = "WENLAN_TEAM_OWNER_SHA256";
 
 /// The name a server nobody sits at gives its owner until the owner's own
 /// Wenlan takes the owner link and says who they are.
@@ -409,7 +410,13 @@ pub async fn handle_host_space(
                 "{space} is shared through a folder or another team server already; stop sharing it first"
             )))
         }
-        None => team::new_hosted_folder(&settings),
+        None => {
+            // Newly hosted: access left over from an earlier Space of the
+            // same name must not open this one.
+            let forget = space.clone();
+            blocking(move || team::forget_space_access(&team::team_path(), &forget)).await?;
+            team::new_hosted_folder(&settings)
+        }
     };
     let name = server_name(&db).await?;
     // Marked hosted before the first pass, so the pass lists the members.
@@ -714,13 +721,13 @@ pub async fn serve_team_listener(shared: SharedState, shutdown: ShutdownHandle) 
 async fn owner_link_for_headless_server(state: &TeamState) {
     let path = state.team_path.clone();
     let renew = env_value(NEW_OWNER_LINK_ENV).is_some();
-    let given = env_value(OWNER_KEY_ENV);
+    let given = env_value(OWNER_SHA256_ENV);
     let made =
         tokio::task::spawn_blocking(move || -> Result<_, wenlan_core::error::WenlanError> {
-            if let Some(key) = given {
+            if let Some(hash) = given {
                 // The owner's Wenlan made this key and joins with it by
                 // itself; a restart with the same command changes nothing.
-                if team::is_owner_key(&path, &key)? {
+                if team::is_owner_hash(&path, &hash)? {
                     return Ok(None);
                 }
                 if team::has_owner(&path)? && !renew {
@@ -729,11 +736,11 @@ async fn owner_link_for_headless_server(state: &TeamState) {
                     );
                     return Ok(None);
                 }
-                team::set_owner_key(&path, OWNER_STAND_IN, &key)?;
+                team::set_owner_hash(&path, OWNER_STAND_IN, &hash)?;
                 println!(
-                    "\nWenlan team server is running. The owner joins with the invite link in the start command: the Wenlan that made it connects by itself.\n"
+                    "\nWenlan team server is running. The Wenlan that made the start command joins it by itself as the team's owner.\n"
                 );
-                tracing::info!("[team] the owner's key from the start command was taken");
+                tracing::info!("[team] the owner's key (its SHA-256) from the start command was taken");
                 return Ok(None);
             }
             if team::has_owner(&path)? && !renew {
@@ -790,6 +797,7 @@ fn team_router(state: TeamState) -> axum::Router {
         .route("/mcp", any(team_mcp))
         .route("/mcp/{*space}", any(team_mcp_in))
         .layer(middleware::from_fn(wenlan_mcp::serve::guard_initialization))
+        .layer(middleware::from_fn(capped_body))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             require_member,
@@ -800,6 +808,20 @@ fn team_router(state: TeamState) -> axum::Router {
         .merge(checked)
         .layer(DefaultBodyLimit::max(remote::MAX_VERSION_BYTES))
         .with_state(state)
+}
+
+/// Reads a member's request body up to the size of the largest version,
+/// whoever handles it next: MCP hands the raw request on, and nothing
+/// after it would otherwise stop a body of any size.
+async fn capped_body(req: Request, next: Next) -> Response {
+    let (parts, body) = req.into_parts();
+    match axum::body::to_bytes(body, remote::MAX_VERSION_BYTES).await {
+        Ok(bytes) => {
+            next.run(Request::from_parts(parts, Body::from(bytes)))
+                .await
+        }
+        Err(_) => (StatusCode::PAYLOAD_TOO_LARGE, "the request is too large").into_response(),
+    }
 }
 
 async fn team_health() -> impl IntoResponse {
@@ -915,16 +937,22 @@ async fn team_admin(
         .query()
         .map(|query| format!("?{query}"))
         .unwrap_or_default();
-    let allowed = matches!(
-        (
-            method.as_str(),
-            rest.split('/').collect::<Vec<_>>().as_slice(),
-        ),
-        ("GET" | "PUT", [""])
-            | ("POST", ["", "members" | "spaces"])
-            | ("PUT" | "DELETE", ["", "members", _])
-            | ("POST", ["", "members", _, "key"])
-    );
+    // Only plain segments: no `.`, `\`, `%` or anything else a URL parser
+    // further on could read as another path on the daemon's own API.
+    let plain = rest
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'_' | b'-'));
+    let allowed = plain
+        && matches!(
+            (
+                method.as_str(),
+                rest.split('/').collect::<Vec<_>>().as_slice(),
+            ),
+            ("GET" | "PUT", [""])
+                | ("POST", ["", "members" | "spaces"])
+                | ("PUT" | "DELETE", ["", "members", _])
+                | ("POST", ["", "members", _, "key"])
+        );
     if !allowed {
         return (StatusCode::NOT_FOUND, "no such team call").into_response();
     }

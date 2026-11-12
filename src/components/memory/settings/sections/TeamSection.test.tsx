@@ -54,11 +54,13 @@ describe("TeamSection", () => {
     // Nothing to copy until the address is one a shell can take as is.
     expect(copy).toBeDisabled();
     await userEvent.type(screen.getByPlaceholderText("https://wenlan.example.com"), "https://wenlan.acme.com/");
-    expect(copy).toBeEnabled();
+    await vi.waitFor(() => expect(copy).toBeEnabled());
     const command = screen.getByText(/docker run/).closest("pre") as HTMLElement;
-    // The owner's link this Wenlan made goes in the command, so nothing has
-    // to be read from the server and pasted back.
-    expect(command.textContent).toMatch(/wenlan-server team "https:\/\/wenlan\.acme\.com\/join#wlt_[0-9a-f]{64}"/);
+    // The key this Wenlan made goes in the command by its SHA-256 only:
+    // nothing to read back from the server, and no key on its command line.
+    await vi.waitFor(() => expect(command.textContent).toMatch(/wenlan-server team https:\/\/wenlan\.acme\.com --owner [0-9a-f]{64}$/));
+    expect(command.textContent).not.toContain("wlt_");
+    expect(command.textContent).not.toContain("#");
     expect(command.textContent).not.toContain("WENLAN_");
     expect(command.textContent).toContain("-p 7879:7879 ");
     expect(command.textContent).not.toContain("7878");
@@ -84,6 +86,8 @@ describe("TeamSection", () => {
       renderSection();
       await user.click(await screen.findByRole("button", { name: "Show steps…" }));
       await user.type(screen.getByPlaceholderText("https://wenlan.example.com"), "https://wenlan.acme.com");
+      await vi.waitFor(() => expect(screen.getByRole("button", { name: "Copy" })).toBeEnabled());
+      const shown = screen.getByText(/docker run/).textContent ?? "";
       await user.click(screen.getByRole("button", { name: "Copy" }));
       expect(await screen.findByText("Waiting for the server…")).toBeInTheDocument();
       expect(teamJoin).not.toHaveBeenCalled();
@@ -93,6 +97,9 @@ describe("TeamSection", () => {
       await vi.advanceTimersByTimeAsync(5000);
       const link = vi.mocked(teamJoin).mock.calls[1][0];
       expect(link).toMatch(/^https:\/\/wenlan\.acme\.com\/join#wlt_[0-9a-f]{64}$/);
+      // The command held the SHA-256 of exactly the key this window joins with.
+      const { keySha256 } = await import("../../team/ServerSetupDialog");
+      expect(shown).toContain(`--owner ${await keySha256(link.split("#")[1])}`);
       expect(await screen.findByRole("button", { name: "Join Acme" })).toBeInTheDocument();
       expect(screen.queryByText("Run this on the server")).not.toBeInTheDocument();
       // The same key is offered again if the window is opened again before

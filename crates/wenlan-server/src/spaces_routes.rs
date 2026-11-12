@@ -164,6 +164,15 @@ pub async fn handle_delete_space(
     db.delete_space(&name, "keep")
         .await
         .map_err(ServerError::from)?;
+    // A deleted Space this server hosted for its team stops being hosted.
+    let scope = wenlan_core::shared_space::Scope::Space(name.clone());
+    let settings = wenlan_core::shared_space::settings_path();
+    if wenlan_core::shared_space::share_settings_at(&settings, &scope)?
+        .is_some_and(|share| share.hosted)
+    {
+        wenlan_core::shared_space::leave_at(&settings, &scope)?;
+        forget_team_access(&scope)?;
+    }
     Ok(Json(serde_json::json!({"deleted": name})))
 }
 
@@ -436,10 +445,24 @@ fn shared_leave(
     scope: &wenlan_core::shared_space::Scope,
 ) -> Result<Json<wenlan_types::responses::SuccessResponse>, ServerError> {
     let settings = wenlan_core::shared_space::settings_path();
+    let hosted = wenlan_core::shared_space::share_settings_at(&settings, scope)?
+        .is_some_and(|share| share.hosted);
     if !wenlan_core::shared_space::leave_at(&settings, scope)? {
         return Err(ServerError::NotFound("not shared from here".into()));
     }
+    if hosted {
+        forget_team_access(scope)?;
+    }
     Ok(Json(wenlan_types::responses::SuccessResponse { ok: true }))
+}
+
+/// A Space this server stops hosting for its team takes the team's access
+/// to it along: a later Space of the same name starts open to nobody.
+fn forget_team_access(scope: &wenlan_core::shared_space::Scope) -> Result<(), ServerError> {
+    if let wenlan_core::shared_space::Scope::Space(name) = scope {
+        wenlan_core::team::forget_space_access(&wenlan_core::team::team_path(), name)?;
+    }
+    Ok(())
 }
 
 /// POST /api/spaces/{name}/shared/sync — one sync pass of the Space's pages

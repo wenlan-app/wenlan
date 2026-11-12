@@ -465,6 +465,22 @@ async fn only_the_owner_reaches_the_team_s_management_calls() {
         let (status, _) = call(&f.state, Method::GET, uri, Some(&owner_key), vec![]).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
     }
+    // A member id that a URL parser further on would read as another path
+    // (`\` as `/`, then `..`), dots, or escapes: never passed on.
+    for (method, uri) in [
+        (Method::DELETE, "/team/v1/admin/members/..\\..\\pages\\p1"),
+        (Method::PUT, "/team/v1/admin/members/..\\..\\config"),
+        (
+            Method::POST,
+            "/team/v1/admin/members/..\\..\\..\\anything/key",
+        ),
+        (Method::PUT, "/team/v1/admin/members/..%5C..%5Cconfig"),
+        (Method::PUT, "/team/v1/admin/members/.."),
+        (Method::PUT, "/team/v1/admin/members/a.b"),
+    ] {
+        let (status, _) = call(&f.state, method, uri, Some(&owner_key), vec![]).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
+    }
     // An allowed call goes to this Wenlan over loopback (not running here).
     let (status, _) = call(
         &f.state,

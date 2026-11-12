@@ -208,15 +208,40 @@ fn a_server_nobody_sits_at_has_one_owner_who_can_edit_every_hosted_space() {
     assert!(remove_member(&path, &owner.id).is_err());
     assert!(authenticate(&path, &second).unwrap().is_some());
 
-    // A key the owner's own Wenlan made (put in the server's start
-    // command) is the same owner's; the earlier key stops.
+    // A key the owner's own Wenlan made, given to the server by its SHA-256
+    // only, is the same owner's; the earlier key stops.
     let made_by_owner = format!("wlt_{}", "b2".repeat(32));
-    assert!(!is_owner_key(&path, &made_by_owner).unwrap());
-    let same = set_owner_key(&path, "Owner", &made_by_owner).unwrap();
+    let hash = key_sha256(&made_by_owner);
+    assert!(is_key_sha256(&hash));
+    assert!(!is_owner_hash(&path, &hash).unwrap());
+    let same = set_owner_hash(&path, "Owner", &hash).unwrap();
     assert_eq!(same.id, owner.id);
-    assert!(is_owner_key(&path, &made_by_owner).unwrap());
+    assert!(is_owner_hash(&path, &hash).unwrap());
+    assert!(authenticate(&path, &made_by_owner).unwrap().is_some());
     assert!(authenticate(&path, &second).unwrap().is_none());
-    assert!(set_owner_key(&path, "Owner", "wlt_short").is_err());
+    // The key itself, or anything but a hash, is refused.
+    assert!(set_owner_hash(&path, "Owner", &made_by_owner).is_err());
+    assert!(set_owner_hash(&path, "Owner", &hash.to_uppercase()).is_err());
+}
+
+#[test]
+fn a_space_that_stops_being_hosted_takes_its_access_with_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(TEAM_FILE);
+    let (bob, key) = add_member(&path, "Bob", &[access("Finance", TeamAccess::Read)]).unwrap();
+    set_everyone(&path, "Finance", Some(TeamAccess::Write)).unwrap();
+    let found = authenticate(&path, &key).unwrap().unwrap();
+    assert_eq!(found.access("Finance"), Some(TeamAccess::Read));
+
+    forget_space_access(&path, "Finance").unwrap();
+    // A new "Finance" later is not open to Bob because the old one was.
+    let found = authenticate(&path, &key).unwrap().unwrap();
+    assert_eq!(found.id, bob.id);
+    assert_eq!(found.access("Finance"), None);
+    // Nothing to forget, or no team file at all: nothing happens.
+    forget_space_access(&path, "Finance").unwrap();
+    forget_space_access(&dir.path().join("none.json"), "Finance").unwrap();
+    assert!(!dir.path().join("none.json").exists());
 }
 
 #[test]

@@ -317,19 +317,31 @@ pub fn set_url(path: &Path, url: Option<&str>) -> Result<(), WenlanError> {
 /// the team from their own computer. Any earlier owner key stops working.
 pub fn owner_key(path: &Path, name: &str) -> Result<(Member, String), WenlanError> {
     let key = new_key();
-    let member = set_owner_key(path, name, &key)?;
+    let member = set_owner_hash(path, name, &key_hash(&key))?;
     Ok((member, key))
 }
 
-/// The owner's member record with a key the owner made themselves: their
-/// Wenlan makes the owner's invite link and puts it in the server's start
-/// command, so it can join without anyone reading the server's output.
+/// The SHA-256 the server keeps of a member key (lowercase hex).
+pub fn key_sha256(key: &str) -> String {
+    key_hash(key)
+}
+
+/// Whether `hash` looks like a key's SHA-256: 64 lowercase hex digits.
+pub fn is_key_sha256(hash: &str) -> bool {
+    hash.len() == 64 && hash.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// The owner's member record for a key the owner made themselves, given by
+/// its SHA-256 only: their Wenlan keeps the key and puts just its hash in
+/// the server's start command, so the key is never on that machine's
+/// command line and the owner joins without reading the server's output.
 /// Any earlier owner key stops working.
-pub fn set_owner_key(path: &Path, name: &str, key: &str) -> Result<Member, WenlanError> {
+pub fn set_owner_hash(path: &Path, name: &str, hash: &str) -> Result<Member, WenlanError> {
     let name = clean_name(name)?;
-    if !wenlan_types::team::is_team_key(key.trim()) {
+    let hash = hash.trim();
+    if !is_key_sha256(hash) {
         return Err(WenlanError::Validation(
-            "an owner key looks like wlt_ and 64 hex digits".into(),
+            "an owner key's SHA-256 is 64 lowercase hex digits".into(),
         ));
     }
     change_team(path, |file| {
@@ -341,14 +353,14 @@ pub fn set_owner_key(path: &Path, name: &str, key: &str) -> Result<Member, Wenla
             .find(|member| member.role == TeamRole::Owner && member.is_active())
         {
             Some(owner) => {
-                owner.key_sha256 = key_hash(key);
+                owner.key_sha256 = hash.to_string();
                 owner.clone()
             }
             None => {
                 let owner = Member {
                     id: uuid::Uuid::new_v4().simple().to_string(),
                     name,
-                    key_sha256: key_hash(key),
+                    key_sha256: hash.to_string(),
                     spaces: BTreeMap::new(),
                     added_at: now(),
                     removed_at: None,
@@ -368,12 +380,29 @@ pub fn set_owner_key(path: &Path, name: &str, key: &str) -> Result<Member, Wenla
     })
 }
 
-/// Whether `key` is the key of the team's owner.
-pub fn is_owner_key(path: &Path, key: &str) -> Result<bool, WenlanError> {
-    let hash = key_hash(key);
+/// Whether `hash` is the SHA-256 of the team owner's key.
+pub fn is_owner_hash(path: &Path, hash: &str) -> Result<bool, WenlanError> {
+    let hash = hash.trim();
     Ok(read_team(path)?.members.iter().any(|member| {
         member.role == TeamRole::Owner && member.is_active() && member.key_sha256 == hash
     }))
+}
+
+/// Drops every member's access to `space`, and the team-wide access to it:
+/// for a Space that stops being hosted, so a later Space of the same name
+/// starts open to nobody but the owner.
+pub fn forget_space_access(path: &Path, space: &str) -> Result<(), WenlanError> {
+    let space = space.trim();
+    if space.is_empty() || !path.exists() {
+        return Ok(());
+    }
+    change_team(path, |file| {
+        file.everyone.remove(space);
+        for member in &mut file.members {
+            member.spaces.remove(space);
+        }
+        Ok(())
+    })
 }
 
 /// Whether the team has an owner who manages it from another computer.

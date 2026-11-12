@@ -118,8 +118,8 @@ fn folder_permission_hint(error: &std::io::Error, lock_path: &std::path::Path) -
     format!(
         ". This container cannot write {folder}, which is mounted from the host: \
          give the host folder to the user the image runs as \
-         (`chown -R 65532:65532 <host folder>`), or start the container as root \
-         (`--user 0:0`, or `user: \"0:0\"` in compose)"
+         (`chown -R 65532:65532 <host folder>`), or start the container as the \
+         folder's owner (`--user <uid>:<gid>`, from `ls -n`; `user:` in compose)"
     )
 }
 
@@ -637,20 +637,33 @@ struct Cli {
     repair_manifest_digest: Option<String>,
 }
 
-/// What `wenlan-server team <address>` was given: the address for invite
-/// links and, when it is the owner's invite link (`https://…/join#wlt_…`),
-/// the owner's key.
-fn team_address(given: Option<&str>) -> anyhow::Result<(Option<String>, Option<String>)> {
+/// The address `wenlan-server team <address>` was given, for invite links.
+/// An invite link (`…#wlt_…`) is refused: a key on a command line is seen by
+/// everyone on that machine, so the owner's goes in `--owner` as its SHA-256.
+fn team_address(given: Option<&str>) -> anyhow::Result<Option<String>> {
     let Some(given) = given.map(str::trim).filter(|given| !given.is_empty()) else {
-        return Ok((None, None));
+        return Ok(None);
     };
-    if !given.contains('#') {
-        return Ok((Some(given.trim_end_matches('/').to_string()), None));
+    if let Some((address, _key)) = given.split_once('#') {
+        // Never echo what follows `#`: it may be a real key.
+        anyhow::bail!(
+            "give the server's address only ({}), not an invite link: a key on the command line is seen by everyone on this machine",
+            address.trim_end_matches('/')
+        );
     }
-    let (url, key) = wenlan_types::team::split_join_code(given).ok_or_else(|| {
-        anyhow::anyhow!("{given} is not an owner's invite link: it looks like https://…/join#wlt_…")
-    })?;
-    Ok((Some(url), Some(key)))
+    Ok(Some(given.trim_end_matches('/').to_string()))
+}
+
+/// `--owner`: the SHA-256 of the owner's key, 64 lowercase hex digits.
+fn owner_sha256(given: Option<&str>) -> anyhow::Result<Option<String>> {
+    let Some(given) = given.map(str::trim).filter(|given| !given.is_empty()) else {
+        return Ok(None);
+    };
+    anyhow::ensure!(
+        wenlan_core::team::is_key_sha256(given),
+        "--owner takes the SHA-256 of the owner's key: 64 lowercase hex digits"
+    );
+    Ok(Some(given.to_string()))
 }
 
 #[derive(Subcommand)]
@@ -662,10 +675,12 @@ enum Command {
     Team {
         /// The address people reach this server at, put in every invite
         /// link: `https://wenlan.example.com`, or its Tailscale address.
-        /// The owner's invite link (`https://…/join#wlt_…`, as Settings ›
-        /// Team makes it) also sets the owner's key, so nothing needs to be
-        /// read from the server's output.
         url: Option<String>,
+        /// The SHA-256 of the owner's key, as Settings › Team › Run it on a
+        /// server puts it: that Wenlan keeps the key and joins by itself,
+        /// so no link is printed. Without it the first start prints one.
+        #[arg(long, value_name = "SHA256")]
+        owner: Option<String>,
         /// Where the team listener listens.
         #[arg(long, default_value = "0.0.0.0:7879")]
         listen: std::net::SocketAddr,
@@ -1063,19 +1078,29 @@ async fn main() -> anyhow::Result<()> {
     if let Some(port) = cli.port {
         std::env::set_var("WENLAN_PORT", port.to_string());
     }
-    if let Some(Command::Team { url, listen }) = &cli.command {
+    if let Some(Command::Team { url, owner, listen }) = &cli.command {
         if std::env::var_os(wenlan_server::team_routes::TEAM_ADDR_ENV).is_none() {
             std::env::set_var(
                 wenlan_server::team_routes::TEAM_ADDR_ENV,
                 listen.to_string(),
             );
         }
-        let (url, owner_key) = team_address(url.as_deref())?;
-        if let Some(url) = url {
+        if let Some(url) = team_address(url.as_deref())? {
             std::env::set_var(wenlan_server::team_routes::TEAM_URL_ENV, url);
         }
-        if let Some(key) = owner_key {
-            std::env::set_var(wenlan_server::team_routes::OWNER_KEY_ENV, key);
+        if let Some(hash) = owner_sha256(owner.as_deref())? {
+            std::env::set_var(wenlan_server::team_routes::OWNER_SHA256_ENV, hash);
+        }
+        // The daemon's own API has no sign-in: on a team server only this
+        // machine reaches it (the team listener does, at 127.0.0.1), never
+        // another container or the host's network, whatever the image says.
+        // (An explicit `--bind-addr` still wins.)
+        if cli.bind_addr.is_none() {
+            let port = std::env::var("WENLAN_PORT")
+                .ok()
+                .and_then(|port| port.trim().parse::<u16>().ok())
+                .unwrap_or(7878);
+            std::env::set_var("WENLAN_BIND_ADDR", format!("127.0.0.1:{port}"));
         }
     }
 
