@@ -10,7 +10,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
 import { teamStop, type SharedStatus } from "../../../../lib/tauri";
 import { confirmAction } from "../../../../lib/confirmAction";
-import { SettingRow, Input, Field } from "../primitives";
+import { Button, SettingRow, Input, Field } from "../primitives";
 import { SettingsGroup } from "../SettingsView";
 import { TEAM_DOCS_URL, TEAM_KEY, prefillTeamUrl, rememberTeamUrl, useTeamStatus } from "../../sharing/team";
 import { SHARES_KEY, teamLabel, teamPausedText, useShares } from "../../sharing/sharing";
@@ -42,7 +42,6 @@ export default function TeamSection() {
     const paused = shares.find((share) => share.last?.paused);
     return paused ? teamPausedText(t, paused) : null;
   };
-  const join = <button type="button" className="team-join-button" onClick={() => setJoining(true)}>{t("team.settings.joinWithLink")}</button>;
   // The dialogs sit outside the section's own text, whose link-like buttons
   // would otherwise style theirs.
   const joinDialog = joining && (
@@ -82,19 +81,34 @@ export default function TeamSection() {
     }
   };
 
+  const openDocs = () => { void Promise.resolve(openExternal(TEAM_DOCS_URL)).catch(() => undefined); };
+  const joinRow = (title: string) => (
+    <SettingRow
+      title={title}
+      description={t("team.settings.joinHint")}
+      control={<Button onClick={() => setJoining(true)}>{t("team.settings.joinAction")}</Button>}
+    />
+  );
+
   // The only way into teams for someone on none: nothing else in the app
-  // mentions them.
+  // mentions them. Three ways, one row each: join, start one here, or run
+  // one on a box nobody sits at.
   if (!hosting && joined.length === 0) {
     return (
       <>
-        <div className="team-off">
-          <p>{t("team.settings.none")}</p>
-          <p className="team-off-actions">
-            {join}
-            <button type="button" onClick={() => setStarting(true)}>{t("team.start.entry")}</button>
-            <button type="button" onClick={() => { void Promise.resolve(openExternal(TEAM_DOCS_URL)).catch(() => undefined); }}>{t("team.settings.howToStart")}</button>
-          </p>
-        </div>
+        <SettingsGroup className="mem-fade-up">
+          {joinRow(t("team.settings.joinTitle"))}
+          <SettingRow
+            title={t("team.start.title")}
+            description={t("team.settings.startHint")}
+            control={<Button onClick={() => setStarting(true)}>{t("team.settings.startAction")}</Button>}
+          />
+          <SettingRow
+            title={t("team.settings.boxTitle")}
+            description={t("team.settings.boxHint")}
+            control={<Button variant="ghost" onClick={openDocs}>{t("team.settings.boxAction")}</Button>}
+          />
+        </SettingsGroup>
         {joinDialog}
         {startDialog}
       </>
@@ -116,15 +130,15 @@ export default function TeamSection() {
           />
         </SettingsGroup>
       ))}
-      {!hosting && <p className="team-off-actions">{join}</p>}
+      {!hosting && <SettingsGroup className="mem-fade-up">{joinRow(t("team.settings.joinAnother"))}</SettingsGroup>}
       {hosting && (
         <SettingsGroup heading={teamLabel(t, here?.team)} className="mem-fade-up">
           <SettingRow
             title={t("team.settings.thisServer")}
             description={listening ? t("team.settings.on", { addr: here?.url || listening }) : t("team.settings.off")}
             control={listening
-              ? <button type="button" className="team-join-button" onClick={() => void stop()}>{t("team.start.stop")}</button>
-              : <button type="button" className="team-join-button" onClick={() => setStarting(true)}>{t("team.start.again")}</button>}
+              ? <Button onClick={() => void stop()}>{t("team.start.stop")}</Button>
+              : <Button onClick={() => setStarting(true)}>{t("team.start.again")}</Button>}
           />
           {listening && (
             <div className="team-address">

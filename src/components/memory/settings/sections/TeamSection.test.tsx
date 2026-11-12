@@ -32,11 +32,15 @@ beforeEach(async () => {
 afterEach(() => vi.clearAllMocks());
 
 describe("TeamSection", () => {
-  it("says this computer is in no team and how to start one", async () => {
+  it("offers the three ways into a team, one row each, when this computer is in none", async () => {
     vi.mocked(teamStatus).mockResolvedValue({ members: [], spaces: [], listening: null });
     renderSection();
-    expect(await screen.findByText(/Not in a team/)).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "How to start a team" }));
+    expect(await screen.findByText("Join a team")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Paste invite link…" })).toBeInTheDocument();
+    expect(screen.getByText("Start a team on this computer")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start…" })).toBeInTheDocument();
+    expect(screen.getByText("Run it on a NAS or a cloud machine")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "See how" }));
     expect(openExternal).toHaveBeenCalledWith("https://github.com/wenlan-app/wenlan/blob/main/docs/team-server.md");
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   });
