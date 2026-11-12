@@ -7,16 +7,23 @@
 #
 # <bundle-dir> is Tauri's output, e.g. target/x86_64-unknown-linux-gnu/release/bundle.
 # It checks, in order:
-#   1. exactly one .AppImage and one .deb were built, each with a non-empty
-#      updater signature beside it;
+#   1. exactly one .AppImage and one .deb were built, and each one's updater
+#      signature verifies (minisign) against the updater public key over the
+#      exact package bytes. A non-empty .sig made with the wrong key would
+#      otherwise ship, and every installed app would refuse the update;
 #   2. both packages carry the app and all three sidecars (wenlan-server,
-#      wenlan-mcp, wenlan) plus a desktop entry, so the app can start its
-#      daemon and the AI-tool setup can find the CLI and MCP server;
-#   3. the AppImage, unpacked, opens under a virtual display and the daemon it
-#      starts from inside the bundle answers /api/health. That is the one step that
-#      shows sidecar lookup works from a real Linux package. It runs against a
-#      scratch HOME, data dir and port, and stops both processes afterwards.
+#      wenlan-mcp, wenlan) plus a desktop entry, and each package's app binary
+#      carries its own Tauri bundle marker (AppImage vs deb). The updater picks
+#      which package to download and how to install it from that marker;
+#   3. the AppImage itself (through its runtime, extract-and-run, so no FUSE is
+#      needed) opens under a virtual display, and the daemon it starts answers
+#      /api/health. It runs as a fresh install would: a scratch HOME and no
+#      data-dir override, so the step that copies the sidecars into
+#      ~/.wenlan/bin and records the MCP path for the AI tools runs too, and is
+#      checked. It stops every process it started afterwards.
 #
+# The public key is WENLAN_UPDATER_PUBKEY (base64, the form tauri.conf.json
+# uses) or, unset, the one in app/tauri.conf.json.
 # Set WENLAN_LINUX_SMOKE=0 to skip step 3 (only for a machine with no Xvfb).
 set -euo pipefail
 
@@ -42,13 +49,7 @@ find_one() {
 
 appimage="$(find_one "$bundle_dir/appimage" '*.AppImage')"
 deb="$(find_one "$bundle_dir/deb" '*.deb')"
-for signed in "$appimage" "$deb"; do
-  if [[ ! -s "$signed.sig" ]]; then
-    echo "error: $signed.sig is missing or empty; the updater cannot trust this package" >&2
-    exit 1
-  fi
-done
-echo "PASS packages: $(basename "$appimage"), $(basename "$deb") (both signed)"
+command -v minisign >/dev/null || { echo "error: minisign is required to check the updater signatures" >&2; exit 1; }
 
 work="$(mktemp -d)"
 app_pid=""
@@ -87,6 +88,26 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# --- updater signatures --------------------------------------------------------
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+pubkey_b64="${WENLAN_UPDATER_PUBKEY:-}"
+if [[ -z "$pubkey_b64" ]]; then
+  pubkey_b64="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["plugins"]["updater"]["pubkey"])' "$repo_root/app/tauri.conf.json")"
+fi
+printf '%s' "$pubkey_b64" | base64 -d >"$work/updater.pub" || { echo "error: the updater public key is not base64" >&2; exit 1; }
+for signed in "$appimage" "$deb"; do
+  if [[ ! -s "$signed.sig" ]]; then
+    echo "error: $signed.sig is missing or empty; the updater cannot trust this package" >&2
+    exit 1
+  fi
+  base64 -d <"$signed.sig" >"$work/package.minisig" || { echo "error: $signed.sig is not base64" >&2; exit 1; }
+  if ! minisign -V -q -p "$work/updater.pub" -m "$signed" -x "$work/package.minisig"; then
+    echo "error: $signed.sig does not verify against the updater public key; installed apps would refuse this update" >&2
+    exit 1
+  fi
+done
+echo "PASS packages: $(basename "$appimage"), $(basename "$deb") (signatures verify against the updater key)"
+
 # --- deb payload -------------------------------------------------------------
 deb_listing="$(dpkg-deb -c "$deb")"
 failed=false
@@ -104,6 +125,21 @@ else
   echo "FAIL deb has no desktop entry"
   failed=true
 fi
+# Tauri patches a marker into each package's copy of the app; the updater reads
+# it to choose linux-x86_64-deb or -appimage and how to install the download.
+has_marker() {
+  local file="$1" marker="$2" count
+  count="$(grep -a -c -F "$marker" "$file" || true)"
+  [[ "${count:-0}" -gt 0 ]]
+}
+mkdir -p "$work/deb-root"
+dpkg-deb -x "$deb" "$work/deb-root"
+if has_marker "$work/deb-root/usr/bin/$main_bin" __TAURI_BUNDLE_TYPE_VAR_DEB; then
+  echo "PASS deb app is marked as a deb install"
+else
+  echo "FAIL deb app does not carry the deb bundle marker; the updater would fetch the wrong package"
+  failed=true
+fi
 
 # --- AppImage payload --------------------------------------------------------
 # Unpacking needs no FUSE, which a CI runner (and many containers) lacks.
@@ -119,6 +155,12 @@ for name in "$main_bin" "${sidecars[@]}"; do
     failed=true
   fi
 done
+if [[ -f "$appdir/usr/bin/$main_bin" ]] && has_marker "$appdir/usr/bin/$main_bin" __TAURI_BUNDLE_TYPE_VAR_APP; then
+  echo "PASS AppImage app is marked as an AppImage install"
+else
+  echo "FAIL AppImage app does not carry the AppImage bundle marker; the updater would fetch the wrong package"
+  failed=true
+fi
 if [[ "$failed" == "true" ]]; then
   echo "error: the Linux packages are missing files the app needs" >&2
   exit 1
@@ -156,17 +198,24 @@ if [[ ! -e "/tmp/.X11-unix/X$display_num" ]]; then
   cat "$work/xvfb.log" >&2
   exit 1
 fi
-# AppRun sets up the bundled library paths the same way a double-click does.
+# The AppImage runtime, not the unpacked AppRun: it sets APPIMAGE/APPDIR the
+# way a double-click does, which is what turns on the ~/.wenlan/bin copies.
+# Extract-and-run unpacks under TMPDIR, kept inside the scratch tree so the
+# cleanup finds every process. No WENLAN_DATA_DIR: an override switches off
+# the ~/.wenlan/bin step this checks; the scratch HOME holds the data instead.
+mkdir -p "$work/tmp"
 HOME="$home" \
   XDG_CONFIG_HOME="$home/.config" \
   XDG_DATA_HOME="$home/.local/share" \
   XDG_CACHE_HOME="$home/.cache" \
-  WENLAN_DATA_DIR="$home/wenlan-data" \
+  XDG_STATE_HOME="$home/.local/state" \
+  TMPDIR="$work/tmp" \
+  APPIMAGE_EXTRACT_AND_RUN=1 \
   WENLAN_PORT="$port" \
   WENLAN_NO_AUTOSTART=1 \
   NO_AT_BRIDGE=1 \
   DISPLAY=":$display_num" \
-  "$appdir/AppRun" >"$log" 2>&1 &
+  "$work/Wenlan.AppImage" >"$log" 2>&1 &
 app_pid=$!
 
 deadline=$((SECONDS + ${WENLAN_LINUX_SMOKE_TIMEOUT:-180}))
@@ -190,7 +239,8 @@ if [[ "$healthy" != "true" ]]; then
 fi
 server_pids=""
 for pid in $(scratch_pids); do
-  if [[ "$(readlink "/proc/$pid/exe" 2>/dev/null)" == "$appdir/usr/bin/wenlan-server" ]]; then
+  exe="$(readlink "/proc/$pid/exe" 2>/dev/null || true)"
+  if [[ "$exe" == "$work/tmp/"*/usr/bin/wenlan-server || "$exe" == "$home/.wenlan/bin/wenlan-server" ]]; then
     server_pids="$server_pids $pid"
   fi
 done
@@ -210,3 +260,25 @@ if ! kill -0 "$app_pid" 2>/dev/null; then
   exit 1
 fi
 echo "PASS the app is still running after the daemon came up"
+
+# The AppImage mount is gone once the app quits, so the CLI, the MCP server
+# and the path the AI tools read must be real files in ~/.wenlan/bin.
+bin_dir="$home/.wenlan/bin"
+for name in "${sidecars[@]}"; do
+  if [[ -f "$bin_dir/$name" && ! -L "$bin_dir/$name" && -x "$bin_dir/$name" ]] \
+    && cmp -s "$bin_dir/$name" "$appdir/usr/bin/$name"; then
+    echo "PASS ~/.wenlan/bin/$name is a lasting copy of the bundled binary"
+  else
+    echo "FAIL ~/.wenlan/bin/$name is not a lasting copy of the bundled binary:" >&2
+    ls -la "$bin_dir" >&2 2>/dev/null || true
+    cat "$log" >&2
+    exit 1
+  fi
+done
+recorded="$(cat "$bin_dir/wenlan-mcp.path" 2>/dev/null || true)"
+if [[ "$recorded" == "$bin_dir/wenlan-mcp" ]]; then
+  echo "PASS the AI tools are pointed at ~/.wenlan/bin/wenlan-mcp"
+else
+  echo "FAIL the recorded MCP path is '$recorded', expected $bin_dir/wenlan-mcp" >&2
+  exit 1
+fi

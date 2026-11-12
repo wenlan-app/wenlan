@@ -17,7 +17,7 @@
 
 - **macOS（Apple Silicon）：** 打開 `.dmg`，把 Wenlan 拖進「應用程式」。App 已簽署並通過公證。
 - **Windows x64：** 執行 `-setup.exe`。安裝包尚未簽署。如果 SmartScreen 顯示警告，請先確認檔案來自官方 Releases 頁面，再點選「其他資訊」→「仍要執行」。
-- **Linux x64：** 下載 `.AppImage`，設為可執行（`chmod +x Wenlan_*.AppImage`）後打開；或在 Debian、Ubuntu 上安裝 `.deb`（`sudo apt install ./Wenlan_*_amd64.deb`）。需要 Ubuntu 24.04、Debian 13、Fedora 40，或其他 glibc 2.39 以上且內含 WebKitGTK 4.1 的發行版。安裝檔沒有系統廠商簽章；之後會和其他平台一樣自動更新。ARM64 Linux 暫時沒有桌面版；可依照[設定指南](setup-with-ai.md#install-the-runtime)，不透過桌面 app，直接搭配 AI 工具使用。
+- **Linux x64（v0.22 起）：** 下載 `.AppImage`，設為可執行（`chmod +x Wenlan_*.AppImage`）後打開；或在 Debian、Ubuntu 上安裝 `.deb`（`sudo apt install ./Wenlan_*_amd64.deb`）。需要 Ubuntu 24.04、Debian 13、Fedora 40，或其他 glibc 2.39 以上且內含 WebKitGTK 4.1 的發行版。安裝檔沒有系統廠商簽章；之後會和其他平台一樣自動更新。ARM64 Linux 暫時沒有桌面版；可依照[設定指南](setup-with-ai.md#install-the-runtime)，不透過桌面 app，直接搭配 AI 工具使用。
 
 首次啟動會下載本地搜尋模型，設定完成前請保持連網。[下載與隱私說明](PRIVACY.md#when-wenlan-reaches-the-network)。
 

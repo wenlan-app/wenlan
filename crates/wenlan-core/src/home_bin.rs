@@ -935,6 +935,9 @@ fn replace(
     }) {
         Ok(installed) => {
             let backup = drop_backup_that_is_the_bundle(&backup, bundle_file);
+            if request.mode == LinkMode::CopyAll {
+                prune_older_backups(path, backup.as_deref());
+            }
             action_from_install(installed, path, bundle_file, backup)
         }
         Err((detail, original_kept)) => EntryAction::Failed {
@@ -1019,6 +1022,31 @@ fn commit_replacement(
             let restored = fs::rename(backup, entry).is_ok();
             Err((error.to_string(), restored))
         }
+    }
+}
+
+/// An AppImage copies all three binaries on every update, so each update
+/// would otherwise leave three more full-size backups behind for good. Keep
+/// only the one this refresh just made (one step of rollback) and remove this
+/// entry's older `<name>.bak.*` files. Only regular files with that exact
+/// prefix go; anything else in the directory is left alone.
+fn prune_older_backups(entry: &Path, keep: Option<&Path>) {
+    let (Some(dir), Some(name)) = (entry.parent(), entry.file_name()) else {
+        return;
+    };
+    let prefix = format!("{}.bak.", name.to_string_lossy());
+    let Ok(read) = fs::read_dir(dir) else {
+        return;
+    };
+    for item in read.flatten() {
+        let candidate = item.path();
+        if keep == Some(candidate.as_path())
+            || !item.file_name().to_string_lossy().starts_with(&prefix)
+            || !item.file_type().is_ok_and(|kind| kind.is_file())
+        {
+            continue;
+        }
+        let _ = fs::remove_file(&candidate);
     }
 }
 
@@ -1590,6 +1618,48 @@ mod tests {
             fs::read_to_string(bin.join("wenlan-mcp")).unwrap(),
             "0.20.7\n"
         );
+    }
+
+    #[test]
+    fn copy_all_mode_keeps_only_the_newest_backup_across_updates() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let host = DesktopHost::Linux;
+        let bin = home_bin_dir(&home);
+        let unrelated = bin.join("notes.txt");
+        let first = tmp.path().join("bundle-1");
+        fs::create_dir_all(&first).unwrap();
+        bundle(&first, host, "0.21.0\n");
+        sync_fixture(&home, &first, LinkMode::CopyAll, host);
+        fs::write(&unrelated, "mine").unwrap();
+        for (n, release) in ["0.22.0\n", "0.23.0\n", "0.24.0\n"].iter().enumerate() {
+            let next = tmp.path().join(format!("bundle-{}", n + 2));
+            fs::create_dir_all(&next).unwrap();
+            bundle(&next, host, release);
+            let stamp = format!("t{n}");
+            sync_home_bin(
+                &SyncRequest {
+                    home: &home,
+                    bundle_dir: &next,
+                    bundle_version: &version(release.trim()),
+                    host,
+                    mode: LinkMode::CopyAll,
+                    stamp: &stamp,
+                },
+                &mut text_version,
+            );
+        }
+        for name in ["wenlan", "wenlan-server", "wenlan-mcp"] {
+            let backups: Vec<String> = fs::read_dir(&bin)
+                .unwrap()
+                .flatten()
+                .map(|item| item.file_name().to_string_lossy().into_owned())
+                .filter(|file| file.starts_with(&format!("{name}.bak.")))
+                .collect();
+            assert_eq!(backups, vec![format!("{name}.bak.0.23.0.t2")], "{name}");
+            assert_eq!(fs::read_to_string(bin.join(name)).unwrap(), "0.24.0\n");
+        }
+        assert_eq!(fs::read_to_string(&unrelated).unwrap(), "mine");
     }
 
     #[test]

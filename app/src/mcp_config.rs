@@ -2001,6 +2001,24 @@ fn recorded_wenlan_mcp_line(bundled: &Path, host: HostKind) -> String {
     line.into_owned()
 }
 
+fn is_runnable_file(path: &Path) -> bool {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() || metadata.len() == 0 {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
 /// Record the bundled `wenlan-mcp` next to `exe_dir` in `home`'s recorded-path
 /// file. Writes nothing when there is no bundled binary (a bare `cargo run`)
 /// or the file already holds this path; returns whether it wrote.
@@ -2010,7 +2028,10 @@ fn record_app_wenlan_mcp_path_in(
     host: HostKind,
 ) -> std::io::Result<bool> {
     let bundled = with_exe_suffix(exe_dir.join("wenlan-mcp"), host);
-    if !bundled.is_file() {
+    // From an AppImage this is the ~/.wenlan/bin copy, which a refresh may
+    // have left as it was (an unreadable or non-program file); only a file
+    // that can actually run is worth pointing the AI tools at.
+    if !is_runnable_file(&bundled) {
         return Ok(false);
     }
     let line = recorded_wenlan_mcp_line(&bundled, host);
@@ -3878,6 +3899,22 @@ mod tests {
             recorded.trim_end(),
             recorded_wenlan_mcp_line(&installed_wenlan_mcp(&new_dir), host)
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_wenlan_mcp_that_cannot_run_is_not_recorded() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let exe_dir = tmp.path().join("home").join(".wenlan").join("bin");
+        std::fs::create_dir_all(&exe_dir).unwrap();
+        let bundled = installed_wenlan_mcp(&exe_dir);
+        write_binary_fixture(&bundled);
+        std::fs::set_permissions(&bundled, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        assert!(!record_app_wenlan_mcp_path_in(&home, &exe_dir, HostKind::current()).unwrap());
+        assert!(!home.join(RECORDED_WENLAN_MCP_PATH_FILE).exists());
     }
 
     #[test]

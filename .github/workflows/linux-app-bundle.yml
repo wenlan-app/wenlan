@@ -2,23 +2,31 @@ name: Linux app bundle
 
 # Proves the Linux desktop app still builds, packages and opens before a
 # release has to find out. Same recipe as release.yml's app-bundle-linux job,
-# but with a throwaway updater key, and nothing here publishes. Runs only when
-# something that job depends on changes, or by hand.
+# but with a throwaway updater key, and nothing here publishes. Runs when the
+# desktop app, the crates it bundles, the updater or the packaging changes,
+# or by hand. Docs-only and website-only changes skip it.
 on:
   pull_request:
     branches: [main]
     paths:
       - '.github/workflows/linux-app-bundle.yml'
       - '.github/workflows/release.yml'
-      - 'app/Cargo.toml'
-      - 'app/build.rs'
-      - 'app/tauri.conf.json'
-      - 'app/capabilities/**'
+      - 'app/**'
+      - '!app/eval/**'
+      - 'src/**'
+      - 'crates/**'
+      - 'vendor/**'
+      - 'index.html'
+      - 'vite.config.*'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
       - 'scripts/prepare-sidecars.sh'
       - 'scripts/prepare-tauri-build-sidecars.sh'
+      - 'scripts/resolve-backend-dir.sh'
       - 'scripts/setup-linux-app-deps.sh'
       - 'scripts/verify-linux-app-bundle.sh'
-      - 'Cargo.lock'
   workflow_dispatch:
 
 permissions:
@@ -67,6 +75,9 @@ jobs:
           {
             echo "TAURI_SIGNING_PRIVATE_KEY=$RUNNER_TEMP/ci-only.key"
             echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD="
+            # The verify step checks the signatures against this run's key;
+            # the release checks them against the key in tauri.conf.json.
+            echo "WENLAN_UPDATER_PUBKEY=$(cat "$RUNNER_TEMP/ci-only.key.pub")"
           } >> "$GITHUB_ENV"
       - name: Build Linux desktop app bundle
         run: pnpm tauri build --target x86_64-unknown-linux-gnu --bundles appimage,deb

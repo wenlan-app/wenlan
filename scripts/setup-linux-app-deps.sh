@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Installs what `pnpm tauri build` needs to compile and bundle the Linux desktop
 # app on an Ubuntu runner: the WebKitGTK 4.1 webview, the tray library, the
-# SVG/icon loader and the tools the AppImage bundler shells out to. xvfb is
-# for the launch smoke in scripts/verify-linux-app-bundle.sh.
+# SVG/icon loader and the tools the AppImage bundler shells out to. xvfb and
+# minisign are for scripts/verify-linux-app-bundle.sh (launch smoke, updater
+# signature check).
 #
 # The daemon sidecars need nothing from here: they build on a stock runner, as
 # the Linux CLI archives already do.
@@ -19,6 +20,7 @@ packages=(
   file
   xdg-utils
   xvfb
+  minisign
 )
 
 sudo_cmd=()
