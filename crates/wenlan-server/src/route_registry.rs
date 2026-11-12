@@ -421,6 +421,9 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     // The person runs the one-time pass over old memories, takes it back, or
     // reads whether it stands (UX-GRAPH-7); counts only.
     "/api/things/old-pass", "/api/things/old-pass/undo",
+    // The person brings in what Claude Code and Codex remember on this
+    // computer once, takes it back, or reads whether it stands; counts only.
+    "/api/import/ai-memory", "/api/import/ai-memory/undo",
     "/api/refinery/queue/{id}/reject", "/api/refinery/queue/{id}/accept", "/api/sources/{id}", "/api/sources/{id}/sync",
     "/api/config", "/api/config/routing", "/api/setup/status", "/api/setup/anthropic-key", "/api/on-device-model",
     "/api/on-device-model/download", "/api/outbox/drain", "/api/outbox/status", "/api/chunks/{id}/update", "/api/chunks/time-range", "/api/chunks/delete-bulk",

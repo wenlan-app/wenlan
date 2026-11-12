@@ -14,6 +14,8 @@ type SpaceIdentityActions = {
   readonly onDelete: () => void;
   readonly onKeep: () => void;
   readonly onReviewAll?: () => void;
+  /** Opens the big map on this Space alone, with its regions drawn. */
+  readonly onOpenGraph?: () => void;
   /** Opens the box that shares the Space with people (or lists its members). */
   readonly onShare?: () => void;
   readonly onSaveIdentity: (value: SpaceIdentityValue) => Promise<void> | void;
@@ -219,6 +221,12 @@ export function SpaceDossierHeader({
                       setMenuOpen(false);
                       actions.onReviewAll?.();
                     }}>{t("home.reviewPageChanges")}</button>
+                  )}
+                  {actions.onOpenGraph && (
+                    <button role="menuitem" type="button" onClick={() => {
+                      setMenuOpen(false);
+                      actions.onOpenGraph?.();
+                    }}>{t("pageCanvas.menuShowBigMap")}</button>
                   )}
                   {actions.onShare && (
                     <button role="menuitem" type="button" onClick={() => {

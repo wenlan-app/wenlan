@@ -15,6 +15,9 @@ const mocks = vi.hoisted(() => ({
   listSpaces: vi.fn(),
   detectObsidianVaults: vi.fn(),
   linkObsidianVault: vi.fn(),
+  getAiMemoryImport: vi.fn(),
+  startAiMemoryImport: vi.fn(),
+  stopAiMemoryImport: vi.fn(),
 }));
 
 vi.mock("../../../../lib/tauri", () => ({
@@ -28,6 +31,9 @@ vi.mock("../../../../lib/tauri", () => ({
   listSpaces: mocks.listSpaces,
   detectObsidianVaults: mocks.detectObsidianVaults,
   linkObsidianVault: mocks.linkObsidianVault,
+  getAiMemoryImport: mocks.getAiMemoryImport,
+  startAiMemoryImport: mocks.startAiMemoryImport,
+  stopAiMemoryImport: mocks.stopAiMemoryImport,
 }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: mocks.openDialog }));
 vi.mock("sonner", () => ({ toast: vi.fn() }));
@@ -74,26 +80,45 @@ describe("AddSourceMenu", () => {
     render(wrap(<AddSourceMenu onClose={() => {}} />));
     fireEvent.click(await screen.findByText("Past AI chats"));
     expect(await screen.findByRole("dialog", { name: "Past AI chats" })).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("source-chats-full"));
     expect(screen.getByTestId("chat-import-drop-zone")).toBeInTheDocument();
   });
 
-  it("puts the quick paste first, with the full export (which can take a day) as a link under it", async () => {
+  it("puts what AI remembers first, with the full export (which can take a day) as a link under it", async () => {
     render(wrap(<AddSourceMenu start="chats" onQuickChats={vi.fn()} onClose={() => {}} />));
     expect(await screen.findByRole("dialog", { name: "Past AI chats" })).toBeInTheDocument();
-    expect(screen.getByTestId("source-chats-quick")).toHaveTextContent("Paste what your AI remembers about you");
+    expect(screen.getByTestId("source-chats-quick")).toHaveTextContent("What AI remembers");
     expect(screen.queryByTestId("chat-import-drop-zone")).toBeNull();
     fireEvent.click(screen.getByTestId("source-chats-full"));
     expect(screen.getByTestId("chat-import-drop-zone")).toBeInTheDocument();
     expect(screen.queryByTestId("source-chats-quick")).toBeNull();
   });
 
-  it("hands the quick way to the paste-back import and closes", async () => {
+  it("puts what AI remembers in one place: tools here are followed, cloud ones pasted", async () => {
+    mocks.getAiMemoryImport.mockResolvedValue({ found: [{ tool: "claude-code", memories: 212 }, { tool: "codex", memories: 100 }], ready: true, import: null });
+    mocks.startAiMemoryImport.mockResolvedValue({ at: 1, last_at: 1, counts: {}, by_tool: [] });
     const onClose = vi.fn();
     const onQuickChats = vi.fn();
     render(wrap(<AddSourceMenu start="chats" onQuickChats={onQuickChats} onClose={onClose} />));
     fireEvent.click(await screen.findByTestId("source-chats-quick"));
+    const here = await screen.findByTestId("ai-memory-here");
+    await waitFor(() => expect(here).toHaveTextContent("Claude Code: 212, Codex: 100"));
+    fireEvent.click(screen.getByTestId("ai-memory-start"));
+    await waitFor(() => expect(mocks.startAiMemoryImport).toHaveBeenCalledTimes(1));
+    expect(onClose).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Paste it in" }));
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(onQuickChats).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers stopping once following is on", async () => {
+    mocks.getAiMemoryImport.mockResolvedValue({ found: [{ tool: "codex", memories: 3 }], ready: true, import: { at: 1, last_at: 1, counts: {}, by_tool: [] } });
+    mocks.stopAiMemoryImport.mockResolvedValue({ undone: null });
+    render(wrap(<AddSourceMenu start="chats" onQuickChats={() => {}} onClose={() => {}} />));
+    fireEvent.click(await screen.findByTestId("source-chats-quick"));
+    fireEvent.click(await screen.findByRole("button", { name: "Stop following" }));
+    await waitFor(() => expect(mocks.stopAiMemoryImport).toHaveBeenCalledTimes(1));
   });
 
   it("shows the update-daemon notice on an old daemon", async () => {

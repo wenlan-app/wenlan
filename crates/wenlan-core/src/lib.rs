@@ -9,6 +9,7 @@
 pub use wenlan_types;
 
 pub mod agent_cli_llm;
+pub mod ai_memory_import;
 pub mod attachments;
 pub mod authorship;
 pub mod brief_plain;

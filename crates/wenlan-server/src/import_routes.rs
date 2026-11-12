@@ -47,6 +47,14 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
             "/api/import/batches/{batch_id}/status",
             get(handle_import_batch_status),
         )
+        .route(
+            "/api/import/ai-memory",
+            get(crate::ai_memory_import::handle_status).post(crate::ai_memory_import::handle_run),
+        )
+        .route(
+            "/api/import/ai-memory/undo",
+            post(crate::ai_memory_import::handle_undo),
+        )
 }
 
 /// POST /api/import/memories

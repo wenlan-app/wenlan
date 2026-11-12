@@ -6,6 +6,7 @@
 //! limited to serde and serde_json -- no heavy runtime deps.
 
 pub mod activity;
+pub mod ai_memory_import;
 pub mod attachments;
 pub mod authorship;
 pub mod brand;
