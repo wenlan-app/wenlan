@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=42b83d79b43420afe05f0d58f85a792ea998b4add6239dde155bb8d23e8848fa -->
+<!-- README_SYNC: source=README.md sha256=918370e86bbd883b14dd465d2a589f9e7ede8f0acc0e6fe65c1d17cd190e0849 -->
 
 <p align="center">
   <picture>
@@ -9,8 +9,7 @@
 
 <p align="center">
   <strong>開源的 Obsidian 替代品，也能直接接上你現有的 vault。</strong><br>
-  想寫就自己寫，其他交給 AI 整理、更新，不用設 API key，也不用裝插件。<br>
-  個人和團隊都能用。筆記只會去你讓它去的地方。
+  你的 AI 工具幫你整理、更新，不用 API key、不用插件。個人和團隊都能用。
 </p>
 
 <p align="center">
@@ -41,26 +40,30 @@
 
 ## 為什麼用文瀾
 
-我做文瀾，是因為筆記、文件和 AI 對話散落各處，要讓筆記系統不荒廢得不停維護。文瀾是給每天用 AI 工具、又不想維護筆記系統的人。
+我做文瀾，是因為筆記、文件和 AI 對話散落各處，要讓筆記系統不荒廢得不停維護。後來我們也不斷聽到有人說 Obsidian 太麻煩：要找插件、裝插件，還要一直更新設定。文瀾是給每天用 AI 工具、又不想維護筆記系統的人。
 
-- **改了什麼都看得到：** 它改了什麼你都看得到，可以還原，也可以決定哪些不讓它改。每個引用都能點回原文，引用大多對不上來源的筆記不會存下。
-- **想寫就自己寫：** 隨時打開一頁就能寫。你寫的筆記設成「先問我」。
-- **其他交給 AI 整理：** 你平常用的 AI 工具把你的筆記、文件和 AI 對話寫成筆記、連起來，來源變了就跟著更新。文瀾不自帶 AI。
-- **一鍵連上：** 在設定裡按「全部連接」，就連好你電腦上的 AI 工具。不用自己找插件、裝插件、維護插件。
-- **跟團隊共用：** 把一個 Space 放進 Google Drive 或 iCloud 雲碟的資料夾共用，同事在自己的電腦上加入就能用。
-- **帶進現有資料：** 筆記、文件、連結、對話和 Obsidian vault 都能帶進來（[完整清單](#what-can-i-bring-in)），存成本地 Markdown 檔。
+**個人版**：下載桌面 App，自己就能用。
+
+**團隊版（下一版推出）**：團隊自己架一台文瀾伺服器，大家都連上去，每個人可以設成只能看或可以改。
+
+- **自己保持最新。** AI 工具會把你在對話裡的決定存成記憶，再整理進筆記；來源變了，用到它的筆記也會跟著更新。
+- **不用插件，不用設定。** 在設定裡按「全部連接」，一鍵連好你的 AI 工具。不用找插件、更新插件，也不用 API key。
+- **帶進現有資料。** Obsidian vault、筆記、文件和 AI 對話都能帶進來。[完整清單](#what-can-i-bring-in)。
+- **AI 能改什麼由你決定。** 改了什麼都看得到、能還原，也能指定哪些筆記要先問你。
+- **筆記都附出處。** 點引用就回到原文；引用大多對不上的筆記不會存下。
+- **共用一個 Space。** 透過 Google Drive 或 iCloud 雲碟的資料夾，跟同事共用，或在自己的幾台電腦間同步。
 
 <a id="how-it-compares"></a>
 
 ### 跟其他做法比
 
-| | Obsidian 加插件 | 讓 AI 工具直接改 Markdown 資料夾 | 文瀾 |
-|---|---|---|---|
-| 誰來整理 | 你自己，加上你找來、要維護的插件 | 你的 AI，每次都要你開口 | 你的 AI 工具邊做邊整理，來源變了會再更新 |
-| 設定 | 找插件、裝插件、更新插件 | 自己寫指示 | 在設定裡按「全部連接」，一鍵完成 |
-| 檢查 AI 寫的東西 | 看插件 | 每個改動都要自己看 | 每個引用都能點回原文；引用大多對不上的筆記不會存下 |
-| AI 能改什麼 | 看插件 | 資料夾裡什麼都能改 | 每篇筆記由你決定，也能還原到之前的版本 |
-| 你現有的 vault | 本來就是你的 vault | 讓 AI 指向它 | 直接接上；筆記留在原處 |
+| | Obsidian 加插件 | Notion | LLM wiki 應用 | 文瀾 |
+|---|---|---|---|---|
+| 誰來整理 | 你自己加插件 | 你自己，或 Notion 的 Agent | 你另外設定的 AI | 你的 AI 工具；來源變了會更新 |
+| 設定 | 找插件、更新插件 | 完整 AI 要 Business 方案 | 填模型 key 或排程 | 一鍵連接，不用 API key |
+| 檢查 AI 寫的東西 | 看插件 | 附出處，不檢查合不合 | 連到來源 | 引用對不上的筆記不會存下 |
+| AI 能改什麼 | 看插件 | 你開放給 Agent 的頁面 | 它的 wiki 資料夾 | 每篇由你決定，隨時可還原 |
+| 筆記存在哪 | 你的電腦 | Notion 雲端 | 你的電腦 | 你的電腦；能接現有 vault |
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
@@ -90,19 +93,11 @@
 
 在 App 的設定裡，「新增工具」會找出你電腦上的 AI 工具，按「全部連接」一次設好，不用另外裝東西或更新。接著開一個新的 AI 對話，問它：
 
-> /recall 我之前對這件事的筆記和決定，再幫我：……
+> /wenlan 我之前對這件事怎麼決定的？再幫我：……
 
-想自己手動設定，或看看會連上什麼：
+只要記得 `/wenlan`（Codex 裡是 `$wenlan`），後面直接說你要做什麼。
 
-| AI 工具 | 會設定什麼 | 說明 |
-|---|---|---|
-| Claude Code／Claude Desktop | 插件／MCP | [Claude 指南](docs/setup-with-ai.md#claude-code) |
-| ChatGPT Desktop（Codex）、Codex CLI | 插件 | [Codex 指南](docs/setup-with-ai.md#codex) |
-| Cursor、GitHub Copilot、VS Code、Gemini CLI、Antigravity、Windsurf、Kiro、OpenCode、Kimi Code | MCP 和技能 | [MCP 指南](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
-| Muse Code 和其他 MCP 工具 | MCP | [MCP 指南](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
-| Grok Bot | 本機 CLI，或 MCP | [Grok Bot 指南](docs/setup-with-ai.md#grok-bot) |
-
-Codex 中用 `$recall`；只用 MCP 的工具，直接請它先查文瀾。Grok Bot 在你的電腦上執行 `wenlan recall`，或在那裡開一段短暫的 `wenlan-mcp` 會話（[Grok Bot 指南](docs/setup-with-ai.md#grok-bot)）。
+支援 Claude Code、Claude Desktop、Codex、Cursor、GitHub Copilot、VS Code、Gemini CLI、Windsurf、Grok Bot 和其他 MCP 工具。[手動設定](docs/setup-with-ai.md)。
 
 匯入完成後，App 會提供「用（你的 AI 工具）寫頁面」，把資料寫成第一批帶引用的筆記，不用輸入指令。
 
@@ -113,14 +108,12 @@ Codex 中用 `$recall`；只用 MCP 的工具，直接請它先查文瀾。Grok 
 
 ## 能帶進什麼
 
-| 可以帶入什麼 | 匯入後怎麼用 |
-| --- | --- |
-| Markdown、文字檔、文字型 PDF、DOCX 或資料夾 | 搜尋、引用裡面的文字。資料夾可以只匯入一次，也可以持續同步檔案的變更。 |
-| Obsidian 儲存庫或 Logseq 圖譜 | 搜尋、引用既有筆記。選擇持續同步，在背景跟上變更；或只匯入一次。你寫的筆記預設是「先問我」：AI 的修改會變成建議，由你接受或不要；每篇筆記都可以改這個設定。 |
-| 網頁連結 | 在筆記裡貼上連結，就會存成來源。YouTube、X、Threads、Instagram 和小紅書的連結會顯示成卡片、可播放的影片或原始貼文。 |
-| Gmail、Notion、Google Drive、Slack、GitHub | 你的 AI 工具用它自己的連接器讀取，把重要的內容存進文瀾，並附上原文連結。 |
-| 你的 AI 對話 | 你的 AI 工具會把每次對話裡的決定、發現和進度存成記憶，不會存完整對話紀錄。ChatGPT 或 Claude 匯出的 ZIP 可以帶進先前的對話，保留匯入當時的內容。 |
-| 程式碼儲存庫 | `/wenlan wiki` 寫出對應到程式碼行數的筆記。[程式碼 wiki](#code-repository-wiki)。 |
+- **檔案和資料夾：** Markdown、文字檔、文字型 PDF、DOCX。可以只匯入一次，也可以讓資料夾持續同步。
+- **Obsidian vault 和 Logseq 圖譜：** 持續同步或只匯入一次。你自己寫的筆記預設是「先問我」。
+- **網頁連結：** 在筆記裡貼上連結就會存成來源。YouTube、X、Threads、Instagram 和小紅書會顯示成卡片或影片。
+- **Gmail、Notion、Google Drive、Slack、GitHub：** 你的 AI 工具用自己的連接器讀取，把重要的內容存進來，附上原文連結。
+- **AI 對話：** 決定和發現會存成記憶，不存完整對話紀錄。ChatGPT 和 Claude 匯出的 ZIP 也能帶進來。
+- **程式碼儲存庫：** `/wenlan wiki` 寫出對應到程式碼的筆記。[程式碼 wiki](#code-repository-wiki)。
 
 也可以把 Open Knowledge Format（OKF）資料夾連接成來源。掃描版 PDF 須先擷取文字；對話附件不會匯入。[匯入教學](docs/import-guide.zh-Hant.md)。
 
@@ -172,7 +165,7 @@ Codex 中用 `$recall`；只用 MCP 的工具，直接請它先查文瀾。Grok 
 你的 AI 工具會讀你帶進來的資料，寫成 Markdown 筆記：把相關的筆記連起來，標出每句話的出處，來源變了就跟著更新。任何一篇筆記你都可以打開自己寫。
 
 <p align="center">
-  <img src="./docs/assets/wenlan-updates-history-zh-Hant.png" alt="示意流程：文件來源中的發現將記憶由 V1 更新為 V2，再影響自動更新或待審修訂的筆記。" width="100%">
+  <img src="./docs/assets/wenlan-updates-history-zh-Hant.animated.svg" alt="示意流程：AI 對話、文件與資料夾（含 Obsidian）、程式碼和網頁內容進入沉澱。它把幾則記憶寫成新頁、整併重複的頁，並更新舊頁，引用會對照來源查核；設成「先問我」的頁會等你點頭。它也會找出新關聯，處理矛盾時改用較新的說法，舊的留在紀錄可還原。下次再問，AI 工具會引用更新後的頁面。" width="100%">
 </p>
 <p>示意圖依據目前的更新行為繪製；並非 App 截圖。</p>
 
@@ -180,7 +173,7 @@ Codex 中用 `$recall`；只用 MCP 的工具，直接請它先查文瀾。Grok 
 - **跟著來源更新：** 來源、記憶或引用的程式碼變了，依據它們的筆記會被標出來等待更新。不需要任何模型，文瀾也會建議合併近似重複的筆記，並列出還沒有對應筆記的 `[[連結]]`。
 - **AI 能改什麼由你決定：** 你寫的筆記預設是「先問我」，AI 的修改會先等你點頭。每篇筆記都可以設成「直接改」或「先問我」，看得到改了什麼，也能還原到之前的版本。
 - **兩種方式：** 「隨叫」是預設，由你的 AI 工具在工作時順手寫，不用另外設定 API key。「自動」則由文瀾用你選的模型在背景處理，模型可以在你的電腦上，也可以在雲端。[沉澱指南](docs/steep.zh-Hant.md)。
-- **在你的 AI 工具裡：** `/recall` 找回先前的筆記和決定，`/capture` 存下一個決定或心得，`/handoff` 記下做到哪裡，`/brief` 下次接著做。[插件指令](plugin/skills/README.md)。
+- **在你的 AI 工具裡：** 打 `/wenlan`，後面說你要做什麼：找回先前的決定、存下一個心得，或接著上次做到的地方。捷徑：`/recall`、`/capture`、`/handoff`、`/brief`。[插件指令](plugin/skills/README.md)。
 - **在 App 裡：** 不連 AI 也能加資料、寫筆記、改筆記、查回引用、審核修改建議。筆記可以包含 Mermaid 圖表，由 App 畫出來。
 
 已經用 Claude Code 或 Codex 管一個筆記資料夾？繼續用就好。文瀾接上同一個工具，補上資料夾自己做不到的事：檢查引用、來源變了會標記，而且每篇筆記 AI 能不能改由你決定。
@@ -245,7 +238,10 @@ Codex 中用 `$recall`；只用 MCP 的工具，直接請它先查文瀾。Grok 
 
 ## 資料與隱私
 
-筆記是你電腦上的 Markdown 檔，符合條件的筆記可以匯出為 Open Knowledge Format（OKF）知識庫。雲端 AI 工具可能會把找回的內容傳給它的服務商，雲端模型也會收到它處理的內容，所以本地儲存不代表這些互動都留在本機。使用統計預設關閉。
+- 筆記是你電腦上的 Markdown 檔，只會去你讓它去的地方。
+- 符合條件的筆記可以匯出為 Open Knowledge Format（OKF）知識庫。
+- 雲端 AI 工具可能會把找回的內容傳給它的服務商，雲端模型也會收到它處理的內容，所以本地儲存不代表這些互動都留在本機。
+- 使用統計預設關閉。
 
 **網頁存取（實驗中）：** 在「設定」中開啟「網頁存取」，就能讓 Claude、ChatGPT 或 Muse 等網頁 AI 用戶端，在你的電腦保持連線時搜尋整個資料庫或指定空間。允許應用程式時可以選「只能搜尋」或「搜尋和寫入」；可以寫入的應用程式還能新增、修改和刪除內容，AI 應用程式可以在每次改動前先問你。查詢與結果會經過中繼服務，詳見[隱私界限](docs/PRIVACY.md#pre-release-standalone-wenlan-relay-connector)。
 
