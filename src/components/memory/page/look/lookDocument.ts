@@ -541,18 +541,20 @@ export function buildInnerDocument({ data, html, theme, sites = [] }: {
     // Last, so it wins: the look sits in the page's own column, which already
     // has its margins. Outer padding of the look's own would shift it off the
     // text it replaces.
-    "<style>html, body { margin: 0 !important; padding: 0 !important; max-width: none !important; }</style>",
+    "<style>html, body { margin: 0 !important; padding: 0 !important; max-width: none !important; background: transparent !important; }</style>",
     "</body></html>",
   ].join("\n");
 }
 
 /** The frame the app mounts: the CSP first, the look's frame, the relay. */
-export function buildOuterDocument(innerDocument: string, sites: readonly string[] = []): string {
+export function buildOuterDocument(innerDocument: string, sites: readonly string[] = [], mode: LookTheme["mode"] = "dark"): string {
   // The look's frame also keeps this frame's policy, so both name the sites.
+  // Each frame's color scheme matches the one around it: a mismatch makes the
+  // browser paint the frame an opaque default background.
   return [
     "<!doctype html>",
     `<html><head><meta charset="utf-8">${cspMeta(sites)}`,
-    "<style>html, body { height: 100%; margin: 0; background: transparent; } iframe { display: block; width: 100%; height: 100%; border: 0; }</style>",
+    `<style>:root { color-scheme: ${mode === "light" ? "light" : "dark"}; } html, body { height: 100%; margin: 0; background: transparent; } iframe { display: block; width: 100%; height: 100%; border: 0; color-scheme: inherit; }</style>`,
     "</head><body>",
     `<iframe id="look" sandbox="${LOOK_SANDBOX}" srcdoc="${escapeAttribute(innerDocument)}"></iframe>`,
     `<script>${OUTER_RELAY_SCRIPT}</script>`,
@@ -562,7 +564,7 @@ export function buildOuterDocument(innerDocument: string, sites: readonly string
 
 /** Both documents for one look. */
 export function buildLookDocument(args: { data: LookData; html: string; theme: LookTheme; sites?: readonly string[] }): string {
-  return buildOuterDocument(buildInnerDocument(args), args.sites);
+  return buildOuterDocument(buildInnerDocument(args), args.sites, args.theme.mode);
 }
 
 /**

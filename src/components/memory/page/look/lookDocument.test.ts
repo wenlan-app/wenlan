@@ -61,6 +61,11 @@ describe("UX-LOOK-4 the documents a look runs in", () => {
     expect(last).toBeGreaterThan(inner.indexOf("body{padding:28px"));
     expect(inner.slice(last)).toContain("padding: 0 !important");
     expect(inner.slice(last)).toContain("max-width: none !important");
+    expect(inner.slice(last)).toContain("background: transparent !important");
+    // Each frame's color scheme matches the app's, so neither paints an opaque default.
+    const outer = buildLookDocument({ data: DATA, html: "", theme: THEME });
+    expect(outer).toContain(":root { color-scheme: dark; }");
+    expect(buildLookDocument({ data: DATA, html: "", theme: { mode: "light", vars: DEFAULT_LOOK_THEMES.light } })).toContain(":root { color-scheme: light; }");
   });
 
   it("fills in the app's theme mode and colors", () => {

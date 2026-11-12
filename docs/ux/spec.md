@@ -460,7 +460,8 @@ and wait for evidence that people need them.
 
 - **UX-LOOK-1** `shipped` A page can have a look an AI tool drew. It shows the
   page's current text; changing the text never needs the AI. The page opens on
-  its look every time. Only a page that has a look has the pencil (UX-LOOK-2);
+  its look every time, and the look draws the page's title itself, in the
+  place the text's title takes. Only a page that has a look has the pencil (UX-LOOK-2);
   a page without one is unchanged.
   原文：跟你的 AI 說「把這頁做成 OO 的樣子」，AI 畫一份「樣子」；文瀾打開這頁時把最新內容填進去。改字不用叫 AI，換長相才叫。（2026-11-12）「只有做了樣子的頁才有 `樣子｜文字` 切換」；上下排（樣子+文字）被否決：同一內容出現兩次、不符 UI/UX（2026-11-12 01:43Z）
 - **UX-LOOK-2** `shipped` The text is one click away: a pencil in the page's

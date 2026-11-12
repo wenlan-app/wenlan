@@ -135,7 +135,9 @@ export function LookFrame({ data, html, title, sites = NO_SITES, onReady, onErro
       sandbox={LOOK_SANDBOX}
       referrerPolicy="no-referrer"
       srcDoc={document_}
-      style={{ height }}
+      // The frame's color scheme matches the app's, or the browser paints the
+      // look's background an opaque default grey.
+      style={{ height, colorScheme: theme.mode }}
     />
   );
 }

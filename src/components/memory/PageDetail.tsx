@@ -2891,7 +2891,11 @@ export default function PageDetail({
           <p>{t("pages.archive.readOnly")}</p>
           {!exampleWiki && <button type="button" onClick={() => setRestoreOpen(true)}>{t("pages.archive.restore")}</button>}
         </div>}
-        {!hideOuterTitleWhileEditing && (
+        {/* A design draws the page's title itself (UX-LOOK-1); the app's own
+            title stays for screen readers, so the design starts where it would. */}
+        {pageLook.shown && <h1 className="sr-only">{page.title}</h1>}
+        {pageLook.shown && !documentToolsHost && <div className="page-document-title-row">{documentTools}</div>}
+        {!pageLook.shown && !hideOuterTitleWhileEditing && (
           <div className="page-document-title-row">
             {renaming ? (
               <form

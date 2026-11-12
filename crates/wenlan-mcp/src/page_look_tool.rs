@@ -61,7 +61,7 @@ Rules for a look (window.wenlan, api 1):
 6. wenlan.open(pageId) opens a Wenlan page. It is the only way out. An <a data-wenlan-page=\"id\"> inside page.html already works. Web links do not open.
 7. The look reads the page; the only change it can make is wenlan.check(item, done), which ticks or unticks one checklist item from wenlan.page.sections[].items (done not null) as the person's own undoable edit. Use it for checkboxes. No localStorage, cookies, forms or popups: the person edits everything else in the page's text.
 8. Colors arrive as CSS variables: --look-bg, --look-surface, --look-text, --look-muted, --look-border, --look-accent, --look-radius, --look-font, --look-mono. Use them so the look reads in light and dark. wenlan.theme.mode is \"light\" or \"dark\".
-9. The look fills the page's column, which already has its margins: put no padding, margin or max-width on html or body, and start content at the left edge. Make it work from 320px wide, handle a page with no sections, tables or items, and keep the look to what the page says.
+9. The look fills the page's column, which already has its margins: put no padding, margin, max-width or background on html or body, and start content at the left edge. The app shows no title above the look, so show wenlan.page.title at its top. Make it work from 320px wide, handle a page with no sections, tables or items, and keep the look to what the page says.
 10. Saving replaces the look and keeps the one before it, which the person can put back. Only change a look when asked.";
 
 const EXAMPLE: &str = r#"Example: a dashboard that counts done items and shows each table as cards.

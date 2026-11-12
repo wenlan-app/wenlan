@@ -156,6 +156,8 @@ describe("PageDetail looks", () => {
     expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
     const text = document.querySelector(".page-look-text") as HTMLElement;
     expect(text.hidden).toBe(true);
+    // The design draws the title; the app's stays for screen readers only.
+    expect(screen.getByRole("heading", { level: 1, name: "Focus Test Page" }).className).toBe("sr-only");
     const pencil = screen.getByRole("button", { name: i18n.t("pageLook.editPage") });
     expect(pencil.getAttribute("aria-pressed")).toBe("false");
     // The pencil lives with the page's other tools, not in a row above the design.
@@ -163,6 +165,7 @@ describe("PageDetail looks", () => {
     fireEvent.click(pencil);
     expect(screen.queryByTestId("page-look-frame")).toBeNull();
     expect(text.hidden).toBe(false);
+    expect(document.querySelector("h1.sr-only")).toBeNull();
     expect(screen.getByRole("button", { name: i18n.t("pageLook.editPage") }).getAttribute("aria-pressed")).toBe("true");
     fireEvent.click(screen.getByRole("button", { name: i18n.t("pageLook.editPage") }));
     await screen.findByTestId("page-look-frame");
