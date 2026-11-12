@@ -20,7 +20,7 @@ import { relativeMs } from "../../page/format";
 import { FolderIcon } from "../../sharing/ShareDialog";
 import { SHARES_KEY, cloudName, shortFolder, useShares } from "../../sharing/sharing";
 import { SettingsGroup } from "../SettingsView";
-import { Select, SettingRow } from "../primitives";
+import { Button, Select, SettingRow } from "../primitives";
 import "../../sharing/sharing.css";
 import "./librarySync.css";
 
@@ -93,17 +93,33 @@ export default function LibrarySyncSettings() {
         }}
         warning={warning}
         error={problem ? t("librarySync.failed", { message: problem }) : null}
-        statusLine={share ? (
-          <Facts
-            share={share}
-            t={t}
-            pickingMain={pickingMain}
-            onPickMain={() => setPickingMain(true)}
-            onChooseMain={(id) => void chooseMain(id)}
-            onChangeFolder={() => setDialog(true)}
-          />
-        ) : null}
       />
+      {share && (
+        <ComputersRow
+          share={share}
+          t={t}
+          pickingMain={pickingMain}
+          onPickMain={() => setPickingMain(true)}
+          onChooseMain={(id) => void chooseMain(id)}
+        />
+      )}
+      {share && (
+        <SettingRow
+          title={t("librarySync.folder")}
+          description={shortFolder(share.folder, t)}
+          controlLayout="inline"
+          control={(
+            <div className="library-sync-buttons">
+              <Button variant="secondary" size="sm" onClick={() => void revealSharedFolder(share.folder).catch(() => undefined)}>
+                {t("librarySync.open")}
+              </Button>
+              <Button variant="secondary" size="sm" onClick={() => setDialog(true)}>
+                {t("librarySync.change")}
+              </Button>
+            </div>
+          )}
+        />
+      )}
       {dialog && <LibrarySyncDialog onClose={() => setDialog(false)} />}
       {confirmingStop && (
         <ConfirmDialog
@@ -117,67 +133,50 @@ export default function LibrarySyncSettings() {
   );
 }
 
-function Facts({ share, t, pickingMain, onPickMain, onChooseMain, onChangeFolder }: {
+/** One row for the computers: which ones sync, which is this one, and the
+ *  main one, with the way to choose another main computer. */
+function ComputersRow({ share, t, pickingMain, onPickMain, onChooseMain }: {
   readonly share: SharedStatus;
   readonly t: TFunction;
   readonly pickingMain: boolean;
   readonly onPickMain: () => void;
   readonly onChooseMain: (deviceId: string) => void;
-  readonly onChangeFolder: () => void;
 }) {
   const devices = share.devices ?? [];
+  if (devices.length === 0) return null;
   const main = devices.find((device) => device.id === share.main_device);
-  const computers = devices
-    .map((device) => (device.id === share.this_device ? t("librarySync.thisOne", { name: device.name }) : device.name))
-    .join(t("librarySync.listJoin"));
+  const label = (device: (typeof devices)[number]) => {
+    const here = device.id === share.this_device;
+    const isMain = device.id === main?.id;
+    if (here && isMain) return t("librarySync.thisMain", { name: device.name });
+    if (here) return t("librarySync.thisOne", { name: device.name });
+    if (isMain) return t("librarySync.mainMark", { name: device.name });
+    return device.name;
+  };
+  const control = main && devices.length > 1 ? (
+    pickingMain ? (
+      <Select
+        size="sm"
+        aria-label={t("librarySync.chooseMain")}
+        value={main.id}
+        onChange={(event) => onChooseMain(event.currentTarget.value)}
+      >
+        {devices.map((device) => <option key={device.id} value={device.id}>{device.name}</option>)}
+      </Select>
+    ) : (
+      <Button variant="secondary" size="sm" className="whitespace-nowrap" onClick={onPickMain}>
+        {t("librarySync.changeMain")}
+      </Button>
+    )
+  ) : null;
   return (
-    <dl className="library-sync-facts">
-      {devices.length > 0 && (
-        <div>
-          <dt>{t("librarySync.computers")}</dt>
-          <dd>{computers}</dd>
-        </div>
-      )}
-      {main && (
-        <div>
-          <dt>{t("librarySync.main")}</dt>
-          <dd>
-            <span className="library-sync-stack">
-              <span className="library-sync-line">
-                {pickingMain ? (
-                  <Select
-                    size="sm"
-                    aria-label={t("librarySync.chooseMain")}
-                    value={main.id}
-                    onChange={(event) => onChooseMain(event.currentTarget.value)}
-                  >
-                    {devices.map((device) => <option key={device.id} value={device.id}>{device.name}</option>)}
-                  </Select>
-                ) : (
-                  <>
-                    <span>{main.name}</span>
-                    {devices.length > 1 && (
-                      <button type="button" className="share-link" onClick={onPickMain}>{t("librarySync.change")}</button>
-                    )}
-                  </>
-                )}
-              </span>
-              <span className="library-sync-hint">{t("librarySync.mainHint")}</span>
-            </span>
-          </dd>
-        </div>
-      )}
-      <div>
-        <dt>{t("librarySync.folder")}</dt>
-        <dd>
-          <span className="library-sync-line">
-            <span className="library-sync-folder">{shortFolder(share.folder, t)}</span>
-            <button type="button" className="share-link" onClick={() => void revealSharedFolder(share.folder).catch(() => undefined)}>{t("librarySync.open")}</button>
-            <button type="button" className="share-link" onClick={onChangeFolder}>{t("librarySync.change")}</button>
-          </span>
-        </dd>
-      </div>
-    </dl>
+    <SettingRow
+      title={t("librarySync.computers")}
+      description={devices.map(label).join(t("librarySync.listJoin"))}
+      details={main ? t("librarySync.mainHint") : undefined}
+      controlLayout="inline"
+      control={control}
+    />
   );
 }
 

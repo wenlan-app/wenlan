@@ -102,15 +102,16 @@ describe("library sync row", () => {
     expect(screen.getByRole("button", { name: "Start syncing" })).toBeDisabled();
   });
 
-  it("lists the computers and changes the main one", async () => {
+  it("lists the computers on one line and changes the main one", async () => {
     vi.mocked(listShares).mockResolvedValue([on]);
     renderRow();
     expect(await screen.findByText("Google Drive · synced 2 min. ago")).toBeInTheDocument();
-    expect(screen.getByText("MacBook (this one), Windows PC")).toBeInTheDocument();
-    expect(screen.getByText("Runs AI organizing and phone pages")).toBeInTheDocument();
+    expect(screen.getByText("MacBook (this one, main), Windows PC")).toBeInTheDocument();
+    expect(screen.queryByText("Main computer")).not.toBeInTheDocument();
     expect(screen.getByText("Google Drive › Wenlan")).toBeInTheDocument();
-    const changes = screen.getAllByRole("button", { name: "Change" });
-    await userEvent.click(changes[0]);
+    expect(screen.getByRole("button", { name: "Open" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Change" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Change main" }));
     await userEvent.selectOptions(screen.getByRole("combobox", { name: "Choose the main computer" }), "d2");
     await waitFor(() => expect(setLibraryMainDevice).toHaveBeenCalledWith("d2"));
   });

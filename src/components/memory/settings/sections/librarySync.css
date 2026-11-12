@@ -1,13 +1,5 @@
-/* Other computers: the facts under the sync row and the dialog's what-syncs
-   lines. No divider lines; strings stay on one line. */
-.library-sync-facts { margin:0;display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px 16px;font-size:var(--mem-text-sm);color:var(--mem-text); }
-.library-sync-facts > div { display:contents; }
-.library-sync-facts dt { color:var(--mem-text-secondary);white-space:nowrap; }
-.library-sync-facts dd { margin:0;min-width:0; }
-.library-sync-stack { display:flex;flex-direction:column;gap:2px; }
-.library-sync-line { display:flex;gap:12px;align-items:baseline;min-width:0;white-space:nowrap; }
-.library-sync-folder { overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
-.library-sync-hint { color:var(--mem-text-secondary); }
+/* Sync: the folder row's buttons and the dialog's what-syncs lines. No divider lines; strings stay on one line. */
+.library-sync-buttons { display:flex;gap:8px;white-space:nowrap; }
 .library-sync-text { margin:0; }
 .library-sync-what { margin:0;display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 16px;font-size:13px; }
 .library-sync-what dt { color:var(--mem-text-secondary);white-space:nowrap; }
