@@ -88,8 +88,9 @@ impl DaemonDataLock {
             .open(&lock_path)
             .map_err(|error| {
                 anyhow::anyhow!(
-                    "open Wenlan data-root lock {}: {error}",
-                    lock_path.display()
+                    "open Wenlan data-root lock {}: {error}{}",
+                    lock_path.display(),
+                    folder_permission_hint(&error, &lock_path)
                 )
             })?;
         fs2::FileExt::try_lock_exclusive(&file).map_err(|error| {
@@ -100,6 +101,26 @@ impl DaemonDataLock {
         })?;
         Ok(Self { _file: file })
     }
+}
+
+/// In a container, a data folder mounted from the host (as NAS setups do)
+/// often belongs to a user the image does not run as. Say how to fix it.
+fn folder_permission_hint(error: &std::io::Error, lock_path: &std::path::Path) -> String {
+    let in_container = std::path::Path::new("/.dockerenv").exists()
+        || std::path::Path::new("/run/.containerenv").exists();
+    if error.kind() != std::io::ErrorKind::PermissionDenied || !in_container {
+        return String::new();
+    }
+    let folder = lock_path
+        .parent()
+        .map(|parent| parent.display().to_string())
+        .unwrap_or_default();
+    format!(
+        ". This container cannot write {folder}, which is mounted from the host: \
+         give the host folder to the user the image runs as \
+         (`chown -R 65532:65532 <host folder>`), or start the container as root \
+         (`--user 0:0`, or `user: \"0:0\"` in compose)"
+    )
 }
 
 /// Resolve the bind address. Honors the `WENLAN_BIND_ADDR` env var when set

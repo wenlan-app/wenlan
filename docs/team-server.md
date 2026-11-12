@@ -56,7 +56,11 @@ The team listener speaks plain HTTP. Do one of these:
   tailnet and use `http://<server>.<tailnet>.ts.net:7879` or its `100.x`
   address. Traffic is encrypted by Tailscale.
 - **HTTPS**: put a reverse proxy (Caddy, nginx, Cloudflare Tunnel) in front
-  and use `https://wenlan.example.com`.
+  and use `https://wenlan.example.com`. The Docker setup below has one built
+  in: point a domain at the box, open ports 80 and 443, and start it with
+  `WENLAN_DOMAIN=wenlan.example.com docker compose --profile https up -d`.
+  Caddy gets the certificate and renews it, and invite links use
+  `https://wenlan.example.com`.
 
 A member's Wenlan refuses a plain `http://` address unless it is inside a
 private network (this computer, a LAN address, `.local`, Tailscale).
@@ -111,6 +115,12 @@ everyone, or to some people, from the line under its title.
    Space and your Wenlan syncs it like everyone else's. A new Space is only
    yours until you open it to everyone, or to some people, from the line
    under its title. The team sees you by the name in your Wenlan profile.
+
+   Data in a folder on the box (a NAS share) rather than Docker's own
+   volume: swap the volume line in the compose file for the folder and
+   uncomment `user: "0:0"` there (with `docker run`: `--user 0:0`). The
+   image's own user cannot write a folder that belongs to someone else on
+   the host; without it the server stops at start and says so.
 
    Lost the link? Start the container once with
    `WENLAN_TEAM_NEW_OWNER_LINK=1`: a new one is printed and the old one stops
