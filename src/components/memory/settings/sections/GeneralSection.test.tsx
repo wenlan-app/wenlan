@@ -139,11 +139,11 @@ async function clickRunAtLoginOnce(): Promise<HTMLElement> {
 }
 
 // S6: run-at-login, theme, and language used to be three separate
-// `Card padding="rows"` blocks. They now share one. `data-card-rows` is set
-// only for padding="rows", so counting it proves the merge
+// `Card padding="rows"` blocks. They now share one. `.divide-y` is the class
+// `Card` only applies for padding="rows", so counting it proves the merge
 // instead of just trusting the JSX shape. ProfileSettingsBlock also renders
 // a `rows` Card (Photo + Display name), so scope to the card that contains
-// "Language" — unique to the App section — rather than every rows card.
+// "Language" — unique to the App section — rather than every `.divide-y`.
 describe("GeneralSection app card merge", () => {
   // The theme picker moved to Settings > Appearance with custom themes.
   it("renders run-at-login and language inside a single rows Card", async () => {
@@ -151,7 +151,7 @@ describe("GeneralSection app card merge", () => {
 
     await screen.findByLabelText("Language");
 
-    const rowsCards = Array.from(document.querySelectorAll("[data-card-rows]")).filter((el) =>
+    const rowsCards = Array.from(document.querySelectorAll(".divide-y")).filter((el) =>
       el.textContent?.includes("Language"),
     );
     expect(rowsCards).toHaveLength(1);
