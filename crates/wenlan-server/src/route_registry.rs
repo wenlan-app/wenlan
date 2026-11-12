@@ -510,6 +510,9 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     // The same for one page shared alone; the sync pass takes or writes
     // that page only and returns counts.
     "/api/pages/{id}/shared/sync", "/api/pages/{id}/shared",
+    // The same for the whole library, between one person's own computers:
+    // counts and status only, no page text.
+    "/api/library/shared/sync", "/api/library/shared/main", "/api/library/shared",
     // Everything shared from here (folders, member names, last passes) and
     // what a folder shares before joining it (a name and member names).
     // No page text.

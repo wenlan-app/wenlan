@@ -108,6 +108,7 @@ fn version_text(page: &str, member: &str, body: &str) -> String {
             locked: false,
             proposal: false,
             decides: None,
+            device: None,
         },
     )
 }
@@ -349,6 +350,7 @@ async fn a_writers_proposals_and_decisions_land_in_their_own_folders() {
             locked: true,
             proposal: false,
             decides: None,
+            device: None,
         };
         meta_change(&mut meta);
         version::render(&file, &meta)

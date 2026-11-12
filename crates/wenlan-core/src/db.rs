@@ -58,6 +58,7 @@ mod maintenance_duplicate_reads;
 mod maintenance_queue;
 mod maintenance_retro_scan;
 mod memory_point_reads;
+mod memory_sync;
 mod metadata_json;
 mod migration_backups;
 mod migrations_v004_v009;

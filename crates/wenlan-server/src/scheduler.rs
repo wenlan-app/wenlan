@@ -1688,8 +1688,20 @@ pub fn spawn_scheduler(
                     )
                 })
                 .flatten();
+            // The library's main computer alone writes page text in the
+            // background (see `wenlan_core::shared_space::library`). The
+            // page writer pin carries the steep new-page and synthesis work,
+            // the import window and the page-writer arrival; page growth is
+            // gated at `AmbientAvailability::with_page_writing`.
+            let page_writing_allowed = tokio::task::spawn_blocking(|| {
+                wenlan_core::shared_space::library::page_writing_allowed_at(
+                    &wenlan_core::shared_space::settings_path(),
+                )
+            })
+            .await
+            .unwrap_or(true);
             let synthesis_pin = automatic_synthesis_pin(
-                background_ai_enabled,
+                background_ai_enabled && page_writing_allowed,
                 runtime_config.synthesis_source.as_deref(),
             );
             if crate::lifecycle::shutdown_requested(&shutdown) {
@@ -1830,13 +1842,19 @@ pub fn spawn_scheduler(
                 let person_name = wenlan_core::shared_space::person_name(&db)
                     .await
                     .unwrap_or_default();
-                wenlan_core::shared_space::sync_shared_spaces(
+                let runs = wenlan_core::shared_space::sync_shared_spaces(
                     &db,
                     &wenlan_core::shared_space::settings_path(),
                     Some(knowledge_path.as_path()),
                     person_name.as_deref(),
                 )
                 .await;
+                // Memories taken from another computer wait for a vector.
+                crate::spaces_routes::wake_embedding_for_memories(
+                    runs.iter()
+                        .map(|(_, run)| run.counts.memories_applied)
+                        .sum(),
+                );
             }
             if crate::lifecycle::shutdown_requested(&shutdown) {
                 break;
@@ -2767,7 +2785,8 @@ pub fn spawn_scheduler(
                         )
                         .is_some();
                         let availability =
-                            AmbientAvailability::for_provider(ambient_provider_available);
+                            AmbientAvailability::for_provider(ambient_provider_available)
+                                .with_page_writing(page_writing_allowed);
                         // Post-lap thermal accounting: the cooldown must
                         // reflect the FULL lap's wall time, not just the last
                         // job run. `note_thermal_work_completion` used to be
