@@ -2051,6 +2051,9 @@ pub(crate) fn record_app_wenlan_mcp_path() {
         log::warn!("[mcp] no home directory; wenlan-mcp path not recorded");
         return;
     };
+    // From an AppImage, record the copy in ~/.wenlan/bin rather than the
+    // mount, which is gone once the app quits; the copy is made first.
+    let exe_dir = crate::home_bin::lasting_bin_dir(&exe_dir, &home);
     match record_app_wenlan_mcp_path_in(&home, &exe_dir, HostKind::current()) {
         Ok(true) => {
             log::info!("[mcp] recorded the bundled wenlan-mcp path for the AI tool plugins")
@@ -2250,11 +2253,17 @@ pub(crate) struct ResolverInputs {
 impl ResolverInputs {
     /// Read the real environment.
     fn from_env() -> Self {
-        Self::from_reads(
+        let mut inputs = Self::from_reads(
             resolver_home_dir(),
             std::env::var("WENLAN_MCP_DEV_BIN"),
             std::env::current_exe(),
-        )
+        );
+        // An AppImage's own directory is a mount that disappears when the app
+        // quits; an AI tool's config must name the `installed` copy instead.
+        if crate::home_bin::running_from_appimage() {
+            inputs.exe_dir = RootInput::NotSet;
+        }
+        inputs
     }
 
     /// The classification, split from the reads so a test can hand it a

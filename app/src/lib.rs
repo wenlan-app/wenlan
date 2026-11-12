@@ -894,8 +894,9 @@ pub fn run() {
             // wenlan-mcp is, and point ~/.wenlan/bin at those same binaries
             // when an older copy is what PATH and MCP configs still run.
             tauri::async_runtime::spawn_blocking(|| {
-                mcp_config::record_app_wenlan_mcp_path();
+                // Copy first: from an AppImage the recorded path is the copy.
                 home_bin::sync_bundled_home_bin();
+                mcp_config::record_app_wenlan_mcp_path();
             });
 
             // Keep the app LaunchServices-friendly: the UI process is a normal

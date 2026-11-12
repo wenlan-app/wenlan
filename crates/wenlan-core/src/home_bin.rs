@@ -59,6 +59,10 @@ pub enum LinkMode {
     /// Symlink, and fall back to a copy only when replacing a file that is
     /// already there. A failed symlink does not seed a fresh copy.
     SymlinkOrCopy,
+    /// Write regular copies, including where nothing is there yet. For an app
+    /// whose own directory does not outlive the run (a Linux AppImage mounts
+    /// itself fresh on every launch), so a link would dangle once it quits.
+    CopyAll,
 }
 
 pub fn link_mode_for(host: DesktopHost) -> LinkMode {
@@ -980,7 +984,7 @@ fn install_at(
             create_symlink(&target, dest)?;
             Ok(InstalledAs::Link)
         }
-        LinkMode::Copy => {
+        LinkMode::Copy | LinkMode::CopyAll => {
             copy_exe(bundle_file, dest)?;
             Ok(InstalledAs::Copy)
         }
@@ -1551,6 +1555,37 @@ mod tests {
             actions[2],
             EntryAction::Skipped { exists: true, .. }
         ));
+        assert_eq!(
+            fs::read_to_string(bin.join("wenlan-mcp")).unwrap(),
+            "0.20.7\n"
+        );
+    }
+
+    #[test]
+    fn copy_all_mode_seeds_missing_entries_as_regular_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let bundle_dir = tmp.path().join("bundle");
+        fs::create_dir_all(&bundle_dir).unwrap();
+        let host = DesktopHost::Linux;
+        bundle(&bundle_dir, host, "0.20.7\n");
+        let bin = home_bin_dir(&home);
+        write_runnable(&bin.join("wenlan"), "0.18.10\n");
+        let actions = sync_fixture(&home, &bundle_dir, LinkMode::CopyAll, host);
+        assert!(matches!(
+            actions[0],
+            EntryAction::Copied {
+                backup: Some(_),
+                ..
+            }
+        ));
+        for name in ["wenlan", "wenlan-server", "wenlan-mcp"] {
+            let meta = fs::symlink_metadata(bin.join(name)).unwrap();
+            assert!(meta.file_type().is_file(), "{name} must be a regular file");
+            assert_eq!(fs::read_to_string(bin.join(name)).unwrap(), "0.20.7\n");
+        }
+        // The bundle going away (the AppImage quit) leaves the copies working.
+        fs::remove_dir_all(&bundle_dir).unwrap();
         assert_eq!(
             fs::read_to_string(bin.join("wenlan-mcp")).unwrap(),
             "0.20.7\n"
