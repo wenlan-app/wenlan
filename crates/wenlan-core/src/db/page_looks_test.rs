@@ -195,3 +195,52 @@ async fn deleting_a_page_deletes_its_looks() {
     db.delete_page("pg1").await.unwrap();
     assert_eq!(scalar(&db, "SELECT COUNT(*) FROM page_looks").await, 0);
 }
+
+/// UX-LOOK-6 (and the byte-for-byte promise): a look is its own row on this
+/// computer. Setting one leaves the page as it was, and the table is not one
+/// the file migration moves into the vault.
+#[tokio::test]
+async fn ux_look_6_a_look_is_its_own_local_row_and_leaves_the_page_untouched() {
+    use crate::db::table_classes::{table_class, TableClass};
+    let (db, _dir) = test_db().await;
+    db.insert_page_with_kind(
+        "pg1",
+        "Trip",
+        None,
+        "Body.",
+        None,
+        Some("sp"),
+        &[],
+        "2026-01-01T00:00:00Z",
+        "authored",
+        "confirmed",
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let before = db.get_page("pg1").await.unwrap().unwrap();
+    db.set_page_look("pg1", "<p>one</p>", 1, None)
+        .await
+        .unwrap();
+    db.set_page_look("pg1", "<p>two</p>", 1, None)
+        .await
+        .unwrap();
+    db.remove_page_look("pg1").await.unwrap();
+    let after = db.get_page("pg1").await.unwrap().unwrap();
+    assert_eq!(
+        (
+            &after.content,
+            after.version,
+            &after.last_modified,
+            &after.summary
+        ),
+        (
+            &before.content,
+            before.version,
+            &before.last_modified,
+            &before.summary
+        )
+    );
+    assert_eq!(table_class("page_looks"), Some(TableClass::Cache));
+}

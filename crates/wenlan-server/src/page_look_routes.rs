@@ -329,7 +329,7 @@ mod tests {
     /// data, replaced with the old one kept, refused with a reason when it
     /// reaches for the internet, taken off and put back.
     #[tokio::test]
-    async fn ux_look_routes_save_read_refuse_remove_and_restore() {
+    async fn ux_look_5_routes_save_read_refuse_remove_and_restore() {
         let _lock = crate::TEST_DATA_DIR_LOCK
             .get_or_init(|| tokio::sync::Mutex::new(()))
             .lock()
