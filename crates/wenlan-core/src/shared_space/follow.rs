@@ -98,6 +98,7 @@ pub(super) async fn follow_host(
             host: Some(host),
             read_only: entry.access == wenlan_types::team::TeamAccess::Read,
             hosted: false,
+            device_id: String::new(),
         };
         let joined = change_settings(settings_path, |store| {
             // Checked again under the lock: a join by hand may have won.

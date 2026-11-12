@@ -160,7 +160,7 @@ pub async fn export_memories(
 }
 
 /// The memory file for one memory's rows, with what someone stated.
-fn memory_file(
+pub(crate) fn memory_file(
     id: &str,
     head: &ExportMemoryRow,
     chunks: &[&ExportMemoryRow],
@@ -283,7 +283,7 @@ fn memory_file(
 
 /// A memory file comes back as one row (its chunk boundaries are cache):
 /// it keeps the first chunk's row id and summary only.
-fn one_row(file: &mut MemoryFile) {
+pub(crate) fn one_row(file: &mut MemoryFile) {
     for (key, default) in [
         ("rows", Some(format!("{}#0", file.id))),
         ("summaries", None),
@@ -445,6 +445,17 @@ pub(crate) fn gets_a_file(
         class_by(source, origin_class, source_agent),
         Class::Memory | Class::Original | Class::Document
     )
+}
+
+/// Whether the memory with this first row is written as a memory file
+/// (so a person's own computers share it), not as an original (an imported
+/// chat, a saved page, a document read from a folder) or left to the
+/// rebuild (derived rows).
+pub(crate) fn is_memory_file(head: &ExportMemoryRow) -> bool {
+    matches!(class_of(head), Class::Memory)
+        && imported_chat(&head.source_id).is_none()
+        && head.source != WEB_SOURCE
+        && head.source != FILE_SOURCE
 }
 
 fn class_by(source: &str, origin_class: Option<&str>, source_agent: Option<&str>) -> Class {

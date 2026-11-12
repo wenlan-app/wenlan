@@ -4957,6 +4957,33 @@ fn on_demand_has_no_page_writer_and_never_arms_a_late_writer_window() {
     }
 }
 
+/// The gate of `page_writing_allowed_at` (tested in `wenlan-core`, where the
+/// library's main computer is decided) reaches both page-writing paths: the
+/// page writer pin (steep new pages, synthesis, import window, late writer)
+/// and the ambient page-growth lane; capture, indexing and classification stay.
+#[test]
+fn a_computer_that_is_not_the_librarys_main_writes_no_page_text_in_the_background() {
+    let background_ai = true;
+    for allowed in [true, false] {
+        let pin = automatic_synthesis_pin(background_ai && allowed, Some("on_device"));
+        assert_eq!(pin.is_some(), allowed, "page writer pin, allowed={allowed}");
+        let availability = AmbientAvailability::for_provider(true).with_page_writing(allowed);
+        assert_eq!(availability.supports(AmbientJob::PageGrowth), allowed);
+        if !allowed {
+            assert!(!availability.supports(AmbientJob::CodeBasisRecheck));
+        }
+        for kept in [
+            AmbientJob::Document,
+            AmbientJob::Classification,
+            AmbientJob::StructuredExtract,
+            AmbientJob::Title,
+            AmbientJob::EntityIdleArchive,
+        ] {
+            assert!(availability.supports(kept), "{kept:?} keeps running");
+        }
+    }
+}
+
 #[test]
 fn ux_quiet_1_import_page_writing_skips_idle_and_cpu_but_not_heat_or_memory() {
     let busy_cpu_person_typing = ResourceStatus {
