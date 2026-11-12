@@ -13,13 +13,14 @@ import {
   sharePage,
   shareSpace,
   teamJoin,
+  teamRememberMembership,
   type SharedFolder,
   type TeamJoinResponse,
   type SharedKind,
 } from "../../../lib/tauri";
 import { FolderIcon } from "./ShareDialog";
 import { SHARES_KEY, shortFolder, teamLabel, useShares } from "./sharing";
-import { hostName } from "./team";
+import { TEAM_KEY, hostName } from "./team";
 import "./sharing.css";
 
 type JoinSharedDialogProps = {
@@ -97,6 +98,7 @@ export function JoinSharedDialog({ onClose, onJoined, only }: JoinSharedDialogPr
   const takenHere = (serverSpace: string) => spaceNames.has(serverSpace.trim().toLocaleLowerCase());
   const refreshAfterJoin = () => Promise.all([
     queryClient.invalidateQueries({ queryKey: SHARES_KEY }),
+    queryClient.invalidateQueries({ queryKey: TEAM_KEY }),
     queryClient.invalidateQueries({ queryKey: ["spaces"] }),
     queryClient.invalidateQueries({ queryKey: ["pages"] }),
     queryClient.invalidateQueries({ queryKey: ["recent-pages"] }),
@@ -113,6 +115,9 @@ export function JoinSharedDialog({ onClose, onJoined, only }: JoinSharedDialogPr
     setError(null);
     const joined: string[] = [];
     try {
+      // Kept even when nothing is open yet: Spaces follow as the team opens
+      // them, and the team's owner manages it from here.
+      await teamRememberMembership(checked.code);
       for (const entry of checked.response.me.spaces) {
         const local = teamLocalName(entry.space);
         await joinTeamSpace(local, checked.code, entry.space);

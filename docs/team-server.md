@@ -34,6 +34,7 @@ It serves only:
 | `GET /health` | `{"status":"ok"}`, no key needed |
 | `GET /join` | where an invite link opens in a browser: the team's name and what to do with the link, no key needed |
 | `GET /team/v1/me` | who the key belongs to and their Spaces |
+| `/team/v1/admin…` | the owner only (403 for anyone else): the team's people, name, invites and new Spaces, for an owner who manages a server nobody sits at from their own computer |
 | `GET /team/v1/spaces/{space}/files`, `…/file?path=` | the Space's page versions |
 | `PUT /team/v1/spaces/{space}/versions/{page}/{sha}.wlv` | the member's own new version |
 | `/mcp`, `/mcp/{space}` | MCP for AI tools, pinned to that Space |
@@ -62,34 +63,99 @@ private network (this computer, a LAN address, `.local`, Tailscale).
 
 ## Set up the server
 
-1. Run Wenlan on the server with the team listener on:
+There are two ways. Both end the same way: people open an invite link.
+
+### A computer that stays on, with the Wenlan app (Mac mini, office PC)
+
+In Settings › Team, choose **Start a team on this computer…**, then type the
+team's name, your own name (everyone sees it beside what you write) and the
+address others reach this computer at. Wenlan suggests one: the computer's
+Tailscale address first, else its address on the local network. Choose
+**Start**.
+
+The team listener is on from then on, after restarts too, on port 7879. Turn
+it off (and on again) in the same place; the team, its people and Spaces
+stay. Invite people from the switch at the top left (**Invite someone…**),
+and make team Spaces with **+ New** on the team's side; open each one to
+everyone, or to some people, from the line under its title.
+
+### A box nobody sits at (Docker on a NAS or a small cloud machine)
+
+1. Start it with [`docker/team/compose.yaml`](../docker/team/compose.yaml):
 
    ```bash
-   docker run -d --name wenlan \
-     -p 127.0.0.1:7878:7878 -p 7879:7879 \
-     -e WENLAN_TEAM_ADDR=0.0.0.0:7879 \
-     -v wenlan-data:/data wenlan-server
+   WENLAN_TEAM_URL=https://wenlan.example.com docker compose -f docker/team/compose.yaml up -d
+   docker compose -f docker/team/compose.yaml logs wenlan
    ```
 
-   Keep the daemon's own port (7878) on loopback, as the Docker notes say.
-   Only 7879 is for the team. On a desktop install, set `WENLAN_TEAM_ADDR`
-   for the background service instead.
+   Only the team listener (7879) is published. The daemon's own port (7878)
+   stays inside the container, as the Docker notes say. `WENLAN_TEAM_URL` is
+   the address put in every invite link: the box's `https://` address behind a
+   reverse proxy, or its Tailscale address such as `http://nas.tailnet.ts.net:7879`.
+   Set it: inside a container Wenlan cannot see the box's own address.
 
-2. Name the team, host a Space and add people (on the server):
+   Without the compose file, the same in one command (Settings › Team ›
+   *Run it on a server* fills in the address and copies it for you):
 
    ```bash
-   wenlan team rename "Acme"
-   wenlan team host "Product"
-   wenlan team add "Amy" --access Product --url https://wenlan.example.com
-   wenlan team add "Bo"  --access Product:read --url https://wenlan.example.com
+   docker run -d --name wenlan --restart unless-stopped -p 7879:7879 \
+     -e WENLAN_TEAM_ADDR=0.0.0.0:7879 -e WENLAN_TEAM_URL=https://wenlan.example.com \
+     -v wenlan-data:/data ghcr.io/wenlan-app/wenlan-server:latest
+   docker logs wenlan
    ```
 
-   Each `add` prints an invite link once, such as
-   `https://wenlan.example.com/join#wlt_…`. Send it to that person
-   privately. The key stays after `#`, so a browser opening the link never
-   sends it to the server. Older links without `/join` still work.
-   `wenlan team status` lists members; `wenlan team remove <id>` removes one;
-   `wenlan team new-key <id>` replaces a lost key.
+2. The first start prints **the owner's invite link** once, in the logs. Open
+   it in your own Wenlan (Settings › Team › Join with an invite link). You are
+   the team's owner: from your own computer you name the team, invite people,
+   and make team Spaces (**+ New** on the team's side). The server makes the
+   Space and your Wenlan syncs it like everyone else's. A new Space is only
+   yours until you open it to everyone, or to some people, from the line
+   under its title. The team sees you by the name in your Wenlan profile.
+
+   Lost the link? Start the container once with
+   `WENLAN_TEAM_NEW_OWNER_LINK=1`: a new one is printed and the old one stops
+   working.
+
+### Keep it running
+
+A restart of the box brings the server back by itself (`--restart unless-stopped`).
+Two things still need a person:
+
+- **Updates.** The server does not update itself. When a new Wenlan is out:
+
+  ```bash
+  # with the compose file
+  docker compose -f docker/team/compose.yaml pull
+  docker compose -f docker/team/compose.yaml up -d
+  # or, started with docker run
+  docker pull ghcr.io/wenlan-app/wenlan-server:latest
+  docker rm -f wenlan
+  # then the same docker run line as before
+  ```
+
+  The team, its people and pages live in the `wenlan-data` volume and stay.
+- **Backups.** Everything is in the `wenlan-data` volume on that box. Back it
+  up with the host's own snapshots, or copy the volume. Each member's
+  computer also keeps a full copy of the Spaces open to them.
+
+### From a terminal
+
+On the server itself, the same can be done with commands:
+
+```bash
+wenlan team rename "Acme"
+wenlan team host "Product"
+wenlan team add "Amy" --access Product --url https://wenlan.example.com
+wenlan team add "Bo"  --access Product:read --url https://wenlan.example.com
+```
+
+Each `add` prints an invite link once, such as
+`https://wenlan.example.com/join#wlt_…`. Send it to that person privately.
+The key stays after `#`, so a browser opening the link never sends it to the
+server. Older links without `/join` still work. `wenlan team status` lists
+members; `wenlan team remove <id>` removes one; `wenlan team new-key <id>`
+replaces a lost key. A desktop install can also set `WENLAN_TEAM_ADDR` for
+the background service instead of starting the team in Settings.
 
 ## Join
 

@@ -7,6 +7,8 @@ import { i18n } from "../../../i18n";
 import { JoinSharedDialog } from "./JoinSharedDialog";
 import { ShareDialog } from "./ShareDialog";
 import { groupTeamSpaces } from "./sharing";
+import { teamGroups } from "../team/TeamPage";
+import { StartTeamDialog } from "../team/StartTeamDialog";
 import {
   joinTeamSpace,
   listShares,
@@ -14,7 +16,10 @@ import {
   teamAddMember,
   teamHostSpace,
   teamJoin,
+  teamRememberMembership,
   teamSetEveryone,
+  teamStart,
+  getProfile,
   teamStatus,
   teamUpdateMember,
   type SharedStatus,
@@ -29,6 +34,9 @@ vi.mock("../../../lib/tauri", async () => {
     listShares: vi.fn(),
     listSpaces: vi.fn(),
     teamJoin: vi.fn(),
+    teamRememberMembership: vi.fn(),
+    teamStart: vi.fn(),
+    getProfile: vi.fn(),
     teamStatus: vi.fn(),
     teamAddMember: vi.fn(),
     teamUpdateMember: vi.fn(),
@@ -112,6 +120,8 @@ describe("JoinSharedDialog code mode", () => {
     await waitFor(() => expect(joinTeamSpace).toHaveBeenCalledWith("Research", link, "Research"));
     expect(joinTeamSpace).toHaveBeenCalledWith("Product", link, "Product");
     expect(onJoined).toHaveBeenCalledWith("team", "t1");
+    // The team is kept even if nothing were open yet.
+    expect(teamRememberMembership).toHaveBeenCalledWith(link);
   });
 
   it("puts a team Space beside a personal one of the same name, never into it", async () => {
@@ -150,6 +160,14 @@ describe("ShareDialog team Space", () => {
     expect(screen.getByText("Paused · the server no longer accepts your join code")).toBeInTheDocument();
     expect(screen.queryByText(/Show in|Open folder/)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Stop sharing|Take off/ })).not.toBeInTheDocument();
+  });
+
+  it("says the server cannot be reached when it is only off, not that the key stopped", async () => {
+    const off = { ...teamShare.last!, paused: "the team server at http://100.80.1.2:7879 cannot be reached" };
+    vi.mocked(listShares).mockResolvedValue([{ ...teamShare, team: { id: "t1", name: "Acme" }, last: off }]);
+    wrap(<ShareDialog kind="space" target="Product" title="Product" onClose={() => undefined} />);
+    expect(await screen.findByText("Paused · can't reach the team's server right now")).toBeInTheDocument();
+    expect(screen.queryByText(/no longer accepts/)).not.toBeInTheDocument();
   });
 
   it("lists the people added to a Space that is only for some people", async () => {
@@ -195,6 +213,18 @@ describe("ShareDialog team Space", () => {
     wrap(<ShareDialog kind="space" target="Product" title="Product" onClose={() => undefined} />);
     await userEvent.click(await screen.findByRole("radio", { name: "Everyone on the team" }));
     await waitFor(() => expect(teamSetEveryone).toHaveBeenCalledWith("Product", "write"));
+  });
+
+  it("lets the owner of a server elsewhere open its Space to everyone from here", async () => {
+    const team = { id: "t1", name: "Acme" };
+    vi.mocked(listShares).mockResolvedValue([{ ...teamShare, read_only: false, team, last: { ...teamShare.last!, paused: undefined } }]);
+    vi.mocked(teamStatus).mockResolvedValue({ ...hostedStatus, team, remote: "https://team.example.com" });
+    vi.mocked(teamSetEveryone).mockResolvedValue();
+    wrap(<ShareDialog kind="space" target="Product" title="Product" onClose={() => undefined} />);
+    await userEvent.click(await screen.findByRole("radio", { name: "Everyone on the team" }));
+    await waitFor(() => expect(teamSetEveryone).toHaveBeenCalledWith("Product", "write"));
+    // Taking a Space off the team stays on the server itself.
+    expect(screen.queryByRole("button", { name: /take .* off/i })).toBeNull();
   });
 });
 
@@ -251,5 +281,45 @@ describe("groupTeamSpaces", () => {
     ];
     const { groups } = groupTeamSpaces(spaces, shares);
     expect(groups).toEqual([{ key: "team:t1", team: acme, spaces: [{ name: "Product" }, { name: "Sales" }] }]);
+  });
+});
+
+describe("teamGroups, the owner", () => {
+  const joinedShare: SharedStatus = { ...teamShare, team: { id: "t1", name: "Acme" }, last: { at: "2026-11-11T00:00:00Z", counts: { exported: 0, applied: 0, conflicts: 0, skipped: 0 } } };
+
+  it("a team started here is there before it has people or Spaces", () => {
+    const groups = teamGroups([], { members: [], spaces: [], listening: "0.0.0.0:7879", team: { id: "h", name: "Home" } });
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({ key: "hosted", hosted: true, owner: true });
+  });
+
+  it("the owner of a server elsewhere manages that team from here, even with no Space yet", () => {
+    const remote: TeamStatus = { members: [], spaces: ["Product"], remote: "https://team.example.com", team: { id: "t1", name: "Acme" } };
+    // Not a team hosted here: the server's own Spaces are not this computer's.
+    const none = teamGroups([], remote);
+    expect(none).toEqual([{ key: "team:t1", team: { id: "t1", name: "Acme" }, hosted: false, owner: true, host: "https://team.example.com", shares: [] }]);
+    const joined = teamGroups([joinedShare], remote);
+    expect(joined).toHaveLength(1);
+    expect(joined[0]).toMatchObject({ key: "team:t1", hosted: false, owner: true });
+    // Anyone else on the team is no owner.
+    expect(teamGroups([joinedShare], { members: [], spaces: [] })[0]).toMatchObject({ owner: false });
+  });
+});
+
+describe("StartTeamDialog", () => {
+  it("starts a team here with its name, the owner's name and a found address", async () => {
+    vi.mocked(getProfile).mockResolvedValue({ id: "p", name: "lucian", display_name: "Lucian" } as Awaited<ReturnType<typeof getProfile>>);
+    vi.mocked(teamStart).mockResolvedValue({ members: [], spaces: [], listening: "0.0.0.0:7879" });
+    const onStarted = vi.fn();
+    wrap(<StartTeamDialog status={{ members: [], spaces: [], suggested_urls: ["http://100.70.1.2:7879", "http://192.168.1.5:7879"] }} onClose={() => undefined} onStarted={onStarted} />);
+    expect(screen.getByRole("heading", { name: "Start a team on this computer" })).toBeInTheDocument();
+    expect(await screen.findByDisplayValue("Lucian")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("http://100.70.1.2:7879")).toBeInTheDocument();
+    const start = screen.getByRole("button", { name: "Start" });
+    expect(start).toBeDisabled();
+    await userEvent.type(screen.getByLabelText("Team name"), "Acme");
+    await userEvent.click(start);
+    await waitFor(() => expect(teamStart).toHaveBeenCalledWith("Acme", "Lucian", "http://100.70.1.2:7879"));
+    expect(onStarted).toHaveBeenCalled();
   });
 });

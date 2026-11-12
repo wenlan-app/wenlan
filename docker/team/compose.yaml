@@ -1,0 +1,29 @@
+# A Wenlan team server in Docker: a box nobody sits at (a NAS, a small
+# cloud machine). See docs/team-server.md.
+#
+#   WENLAN_TEAM_URL=https://wenlan.example.com docker compose up -d
+#   docker compose logs wenlan      # the owner's invite link, printed once
+#
+# Open that link in your own Wenlan (Settings › Team › Join with an invite
+# link). You are the team's owner: invite people, rename the team and add
+# Spaces from your own computer. Nobody needs to touch this box again.
+services:
+  wenlan:
+    image: ghcr.io/wenlan-app/wenlan-server:latest
+    restart: unless-stopped
+    ports:
+      # The team listener only. The daemon's own port (7878) stays inside the
+      # container: it has no sign-in and must never be published.
+      - "7879:7879"
+    environment:
+      WENLAN_TEAM_ADDR: 0.0.0.0:7879
+      # The address people reach this box at, put in every invite link:
+      # https://… behind a reverse proxy, or its Tailscale address.
+      WENLAN_TEAM_URL: ${WENLAN_TEAM_URL:-}
+      # Uncomment for one start to make a new owner link (the old one stops).
+      # WENLAN_TEAM_NEW_OWNER_LINK: "1"
+    volumes:
+      - wenlan-data:/data
+
+volumes:
+  wenlan-data:

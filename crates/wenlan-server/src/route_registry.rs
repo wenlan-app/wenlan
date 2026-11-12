@@ -517,9 +517,11 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     // The team server's member list (names, Spaces, never a key except
     // the one just made, shown once to the person on this computer),
     // hosting a Space for the team, and reading a join code on a member's
-    // computer. No page text.
+    // computer; starting or stopping a team here and keeping or forgetting
+    // a team joined. No page text.
     "/api/team", "/api/team/members", "/api/team/members/{id}",
     "/api/team/members/{id}/key", "/api/team/spaces", "/api/team/join",
+    "/api/team/start", "/api/team/stop", "/api/team/membership",
     // Setting up a daily update on GitHub: which settings the repository
     // has, as booleans, and the last run's links. A token goes to GitHub
     // and is never returned.

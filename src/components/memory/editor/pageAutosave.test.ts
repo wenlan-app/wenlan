@@ -231,15 +231,11 @@ describe("PageAutosave", () => {
     saver.dispose();
   });
 
-  it("does not repeatedly schedule an empty draft", async () => {
-    vi.useFakeTimers();
-    const { saver, write, changed } = setup();
+  it("saves a page whose text the person cleared", async () => {
+    const { saver, write } = setup();
     saver.setSource("");
-    expect(await saver.flush()).toBe(false);
-    const count = changed.mock.calls.length;
-    await vi.advanceTimersByTimeAsync(5000);
-    expect(changed).toHaveBeenCalledTimes(count);
-    expect(write).not.toHaveBeenCalled();
+    expect(await saver.flush()).toBe(true);
+    expect(write).toHaveBeenCalledWith(expect.objectContaining({ content: "" }));
     saver.dispose();
   });
 

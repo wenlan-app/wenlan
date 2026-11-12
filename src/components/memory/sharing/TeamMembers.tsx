@@ -143,7 +143,8 @@ export function TeamSpaceAccess({ space, team, onError }: { readonly space: stri
   const queryClient = useQueryClient();
   const status = useTeamStatus();
   const [pending, setPending] = useState(false);
-  const people = activeMembers(status.data?.members ?? []);
+  // The owner has every Space already, so is never added to one.
+  const people = activeMembers(status.data?.members ?? []).filter((member) => member.role !== "owner");
   const open = everyoneOf(status.data?.everyone, space);
   const added = people.filter((member) => member.spaces.some((entry) => entry.space === space));
   const others = people.filter((member) => !added.includes(member));

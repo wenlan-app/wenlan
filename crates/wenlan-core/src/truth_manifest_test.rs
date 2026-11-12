@@ -320,10 +320,12 @@ fn manifest_counts_match_the_spec() {
     // list, keys shown once, hosting a Space and joining one; no page text).
     // Then 347 after GET/POST `/api/import/ai-memory` and POST `/undo`
     // (following AI tools' memory; a time and counts only), and 348 after
-    // PUT `/api/team` (names the team; its id and name only).
+    // PUT `/api/team` (names the team; its id and name only). Then 352
+    // after starting and stopping a team here and keeping or forgetting a
+    // team joined (statuses and receipts only).
     assert_eq!(
         HTTP_READERS.len(),
-        348,
+        352,
         "registered (method, path, handler) triples"
     );
     assert_eq!(MCP_READERS.len(), 55, "#[tool( declarations");
@@ -334,7 +336,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        360,
+        364,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -342,7 +344,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        343,
+        347,
         "main builder entries"
     );
     assert_eq!(
@@ -533,7 +535,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::None)
             .count(),
-        338 // Existing 273 plus 22 research workflow routes, 7 custom-theme routes, a memory's conversation lines, the nights undo, the memory restore, the two trust scan routes, keeping a session original, the 8 sharing routes, one tidy's undo, the three old-pass routes and the four linked-vault routes, the two set-aside routes, the plain Brief lines, the seven team routes and naming the team, and the three AI-memory routes, all with no page markers.
+        342 // Existing 273 plus 22 research workflow routes, 7 custom-theme routes, a memory's conversation lines, the nights undo, the memory restore, the two trust scan routes, keeping a session original, the 8 sharing routes, one tidy's undo, the three old-pass routes and the four linked-vault routes, the two set-aside routes, the plain Brief lines, the seven team routes and naming the team, the three AI-memory routes and the four team start/stop/membership routes, all with no page markers.
     );
 }
 
