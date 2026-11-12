@@ -9706,6 +9706,7 @@ const FLAG_ALLOWLIST: &[&str] = &[
     "WENLAN_DATA_LOCK_CHILD_RELEASE",     // test-only child-process release signal
     "WENLAN_TEST_STARTUP_SIGNAL_BARRIER", // test-only startup signal synchronization
     "WENLAN_TEST_NO_COMPUTER_NAME",       // test-only: pretend the computer has no account name
+    "WENLAN_TEST_COMPUTER_NAME",          // test-only: the computer name a library test uses
     "WENLAN_RB01_PROFILE",                // test-only target-Mac profiler opt-in
     "WENLAN_RB01_LANE",                   // test-only target-Mac profiler lane
     "WENLAN_UPDATE_CLI_REFERENCE",        // test-only CLI README regeneration opt-in

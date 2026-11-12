@@ -341,6 +341,7 @@ impl Pass<'_> {
             locked: true,
             proposal: true,
             decides: None,
+            device: None,
         };
         let text = version::render(&file, &meta);
         let name = version::version_file_name(&version::sha256_hex(text.as_bytes()));
@@ -421,6 +422,7 @@ impl Pass<'_> {
                 proposal: sha.to_string(),
                 accepted,
             }),
+            device: None,
         };
         let text = version::render(&file, &meta);
         let member = self.settings.member_id.clone();

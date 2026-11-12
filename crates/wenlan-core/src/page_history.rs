@@ -29,7 +29,7 @@ pub const SAVE_RUN_SECS: i64 = 10 * 60;
 
 /// Writers whose saves are folded into one change: the editor and an edit of
 /// the page's file. Both save on every pause.
-fn folds(edited_by: Option<&str>) -> bool {
+pub(crate) fn folds(edited_by: Option<&str>) -> bool {
     matches!(edited_by, Some("manual_edit" | "fs_edit"))
 }
 

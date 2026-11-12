@@ -22,9 +22,13 @@
 //!     agent: <AI tool, when kind is ai and it is known>
 //!   ts: <when it was written; for display, and to pick between two
 //!        versions written at the same time>
+//!   device: <the library: the computer that wrote it>
 //!   archived: true   (only on a version that archives the page)
 //! ---
 //! ```
+//!
+//! A version of the whole library (`Scope::Library`) also carries the page's
+//! Space in a `space` key beside `shared`, left out for an Unfiled page.
 //!
 //! A version's content is its title (the page's own `title` key), its body
 //! and whether it archives the page ([`State`]): a rename is a new version
@@ -47,9 +51,14 @@ use crate::store::format::page::{self, PageFile};
 /// The frontmatter key that holds a version's sharing facts.
 const SHARED_KEY: &str = "shared";
 
+/// The frontmatter key of a library version's Space (see `Scope::Library`).
+pub const SPACE_KEY: &str = "space";
+
 /// `members/<member_id>/pages/<page_id>/<sha256>.md`.
 pub const MEMBERS_DIR: &str = "members";
 pub const PAGES_DIR: &str = "pages";
+/// `members/<member_id>/memories/<memory_id>/<sha256>.wlv` (the library only).
+pub const MEMORIES_DIR: &str = "memories";
 /// `members/<member_id>/proposals/<page_id>/<sha256>.wlv`: an AI tool's change
 /// to a locked page, waiting for a member to take it. A version file with
 /// `proposal: true`; it never takes part in picking a page's head.
@@ -117,6 +126,9 @@ pub struct VersionMeta {
     pub proposal: bool,
     /// The file is a decision on a proposal (see [`DECISIONS_DIR`]).
     pub decides: Option<Decides>,
+    /// The library: the computer that wrote the version (its id in
+    /// `space.json`). Older versions have none.
+    pub device: Option<String>,
 }
 
 /// What two versions, or a version and the page here, are compared by.
@@ -125,6 +137,9 @@ pub struct State {
     pub title: String,
     pub body_digest: String,
     pub archived: bool,
+    /// The page's Space, for the library only: [`PageVersion::state`] and a
+    /// Space or page share leave it `None`.
+    pub space: Option<String>,
     pub locked: bool,
 }
 
@@ -145,6 +160,16 @@ impl PageVersion {
             body_digest: self.meta.body_digest.clone(),
             archived: self.meta.archived,
             locked: self.meta.locked,
+            space: None,
+        }
+    }
+
+    /// The Space a library version names (its frontmatter `space`; none for
+    /// a page that was Unfiled).
+    pub fn space(&self) -> Option<&str> {
+        match self.page.other.get(SPACE_KEY) {
+            Some(serde_yaml::Value::String(space)) => Some(space.as_str()),
+            _ => None,
         }
     }
 }
@@ -239,6 +264,9 @@ pub fn render(page: &PageFile, meta: &VersionMeta) -> String {
     shared.insert(key("body_digest"), text(&meta.body_digest));
     shared.insert(key("author"), serde_yaml::Value::Mapping(author));
     shared.insert(key("ts"), text(&meta.ts));
+    if let Some(device) = &meta.device {
+        shared.insert(key("device"), text(device));
+    }
     if meta.archived {
         shared.insert(key("archived"), serde_yaml::Value::Bool(true));
     }
@@ -267,7 +295,7 @@ pub fn render(page: &PageFile, meta: &VersionMeta) -> String {
     page::render(&page)
 }
 
-fn invalid(why: impl Into<String>) -> WenlanError {
+pub(super) fn invalid(why: impl Into<String>) -> WenlanError {
     WenlanError::Validation(why.into())
 }
 
@@ -321,6 +349,7 @@ pub fn parse(name: &str, bytes: &[u8]) -> Result<PageVersion, WenlanError> {
             .ok_or_else(|| invalid(format!("{name}: no body_digest")))?,
         author,
         ts: scalar(&shared, "ts").unwrap_or_default(),
+        device: scalar(&shared, "device"),
         archived: match shared.get("archived") {
             None => false,
             Some(serde_yaml::Value::Bool(archived)) => *archived,
@@ -366,43 +395,73 @@ pub fn parse(name: &str, bytes: &[u8]) -> Result<PageVersion, WenlanError> {
 /// other version was written over), and the one every member picks among
 /// them.
 #[derive(Debug)]
-pub struct Head<'a> {
-    pub winner: &'a PageVersion,
-    pub leaves: Vec<&'a PageVersion>,
+pub struct Head<'a, T = PageVersion> {
+    pub winner: &'a T,
+    pub leaves: Vec<&'a T>,
 }
 
-fn ts_key(ts: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+/// What [`head_of`] needs of a version: a page version, or a memory
+/// version (`memories`), which share the parent graph and the pick.
+pub trait Versioned {
+    fn sha(&self) -> &str;
+    fn parents(&self) -> Vec<&str>;
+    fn ts(&self) -> &str;
+    /// A person made this version (not an AI tool). Between edits made at
+    /// the same time, a person's wins over an AI's.
+    fn by_person(&self) -> bool;
+}
+
+impl Versioned for PageVersion {
+    fn sha(&self) -> &str {
+        &self.sha
+    }
+    fn parents(&self) -> Vec<&str> {
+        self.meta
+            .parent
+            .iter()
+            .chain(self.meta.merged.iter())
+            .map(String::as_str)
+            .collect()
+    }
+    fn ts(&self) -> &str {
+        &self.meta.ts
+    }
+    fn by_person(&self) -> bool {
+        self.meta.author.kind == AuthorKind::Person
+    }
+}
+
+pub(super) fn ts_key(ts: &str) -> Option<chrono::DateTime<chrono::Utc>> {
     chrono::DateTime::parse_from_rfc3339(ts)
         .ok()
         .map(|at| at.with_timezone(&chrono::Utc))
 }
 
 /// The head of `versions` (one page's versions from every member). Two or
-/// more leaves are edits made at the same time: the later `ts` wins, and the
-/// larger sha when they tie, so every member picks the same one.
+/// more leaves are edits made at the same time: a person's wins over an AI
+/// tool's, then the later `ts`, then the larger sha, so every member picks
+/// the same one.
 pub fn head(versions: &[PageVersion]) -> Option<Head<'_>> {
+    head_of(versions)
+}
+
+/// [`head`] for any kind of version.
+pub fn head_of<T: Versioned>(versions: &[T]) -> Option<Head<'_, T>> {
     let replaced: HashSet<&str> = versions
         .iter()
-        .flat_map(|version| {
-            version
-                .meta
-                .parent
-                .iter()
-                .chain(version.meta.merged.iter())
-                .map(String::as_str)
-        })
+        .flat_map(|version| version.parents())
         .collect();
-    let mut leaves: Vec<&PageVersion> = versions
+    let mut leaves: Vec<&T> = versions
         .iter()
-        .filter(|version| !replaced.contains(version.sha.as_str()))
+        .filter(|version| !replaced.contains(version.sha()))
         .collect();
     if leaves.is_empty() {
         // Only a forged cycle has no leaf; still pick one the same way.
         leaves = versions.iter().collect();
     }
     leaves.sort_by(|a, b| {
-        (ts_key(&a.meta.ts), &a.sha)
-            .cmp(&(ts_key(&b.meta.ts), &b.sha))
+        (a.by_person(), ts_key(a.ts()), a.sha())
+            .cmp(&(b.by_person(), ts_key(b.ts()), b.sha()))
             .reverse()
     });
     Some(Head {
@@ -434,7 +493,7 @@ fn drive_copy_of(name: &str) -> Option<&str> {
     (!number.is_empty() && number.bytes().all(|b| b.is_ascii_digit())).then_some(base)
 }
 
-fn sub_dirs(dir: &Path) -> Vec<(String, PathBuf)> {
+pub(super) fn sub_dirs(dir: &Path) -> Vec<(String, PathBuf)> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
@@ -550,29 +609,37 @@ pub fn write_version(
     write_file(folder, member, PAGES_DIR, page_id, text)
 }
 
-/// [`write_version`] into `kind` (one of [`KIND_DIRS`]).
+/// [`write_version`] for the versions of `kind` (`pages`, `memories`).
+pub(super) fn write_version_under(
+    folder: &Path,
+    kind: &str,
+    member: &str,
+    id: &str,
+    text: &str,
+) -> Result<(String, bool), WenlanError> {
+    write_file(folder, member, kind, id, text)
+}
+
+/// [`write_version`] into `kind` (one of [`KIND_DIRS`], or the library's
+/// [`MEMORIES_DIR`]).
 pub fn write_file(
     folder: &Path,
     member: &str,
     kind: &str,
-    page_id: &str,
+    id: &str,
     text: &str,
 ) -> Result<(String, bool), WenlanError> {
     use std::io::Write;
-    if !KIND_DIRS.contains(&kind) {
+    if !KIND_DIRS.contains(&kind) && kind != MEMORIES_DIR {
         return Err(invalid(format!("{kind} is not a shared folder kind")));
     }
-    if !is_safe_id(member) || !is_safe_id(page_id) {
+    if !is_safe_id(member) || !is_safe_id(id) {
         return Err(invalid(format!(
-            "{member}/{page_id} is not a folder name a version can go in"
+            "{member}/{id} is not a folder name a version can go in"
         )));
     }
     let sha = sha256_hex(text.as_bytes());
-    let dir = folder
-        .join(MEMBERS_DIR)
-        .join(member)
-        .join(kind)
-        .join(page_id);
+    let dir = folder.join(MEMBERS_DIR).join(member).join(kind).join(id);
     std::fs::create_dir_all(&dir)?;
     let path = dir.join(version_file_name(&sha));
     if version_file_exists(&path) {

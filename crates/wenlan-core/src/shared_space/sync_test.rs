@@ -127,6 +127,29 @@ impl Member {
         .id
     }
 
+    /// An edit by the person's AI tool.
+    async fn ai_edit(&self, id: &str, content: &str) {
+        let page = self.page(id).await.unwrap();
+        let result = crate::post_write::update_page(
+            &self.db,
+            id,
+            UpdatePageRequest {
+                content: content.to_string(),
+                source_memory_ids: Vec::new(),
+                expected_version: Some(page.version),
+                caller_id: None,
+                operation_id: None,
+            },
+            "agent_refresh",
+            false,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(result.wrote, "AI edit of {id} did not land");
+    }
+
     async fn edit(&self, id: &str, content: &str) {
         let result = crate::post_write::update_page_preserving_sources(
             &self.db,
@@ -183,6 +206,17 @@ impl Member {
     async fn history(&self, id: &str) -> Vec<crate::db::PageHistoryEntry> {
         self.db.list_page_history(id, 100).await.unwrap()
     }
+}
+
+/// The active page titled `title`.
+async fn titled(member: &Member, title: &str) -> Option<Page> {
+    member
+        .db
+        .list_pages_by_space("active", None, 1_000_000, 0)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|page| page.title == title)
 }
 
 fn space() -> Scope {
@@ -276,6 +310,21 @@ async fn a_page_reaches_the_other_member_and_three_edits_catch_up_in_one_sync() 
     let got = b.sync(&folder).await;
     assert_eq!(got.applied, 1, "{got:?}");
     assert_eq!(b.content(&id).await, "Table 1: Ana, Cleo, Dev.");
+    // The two edits in between are in B's history too, as on A.
+    let texts: Vec<String> = b
+        .history(&id)
+        .await
+        .into_iter()
+        .map(|row| row.content)
+        .collect();
+    assert_eq!(
+        texts[..3],
+        [
+            "Table 1: Ana, Cleo, Dev.",
+            "Table 1: Ana, Cleo.",
+            "Table 1: Ana."
+        ]
+    );
     assert_eq!(a.sync(&folder).await, zero());
     assert_eq!(b.sync(&folder).await, zero());
 
@@ -332,6 +381,73 @@ async fn a_page_reaches_the_other_member_and_three_edits_catch_up_in_one_sync() 
 }
 
 #[tokio::test]
+async fn two_peoples_edits_of_different_lines_come_together() {
+    let folder = tempfile::tempdir().unwrap();
+    let folder = folder.path().to_path_buf();
+    let a = Member::new("Qi-Xuan").await;
+    let b = Member::new("Ana").await;
+    let id = a
+        .write(
+            "Menu",
+            "Menu\n\nFish.\nRice.\nCake.",
+            SPACE.to_string().into(),
+        )
+        .await;
+    a.sync(&folder).await;
+    b.sync(&folder).await;
+
+    b.edit(&id, "Menu\n\nFish.\nRice.\nCake and tea.").await;
+    tick().await;
+    a.edit(&id, "Menu\n\nFish with lemon.\nRice.\nCake.").await;
+    b.sync(&folder).await;
+    a.sync(&folder).await;
+    // B's edit lost to A's later one, and the two are put together: no
+    // second page, nothing to be told.
+    let got = b.sync(&folder).await;
+    assert_eq!(got.conflicts, 0, "{got:?}");
+    let both = "Menu\n\nFish with lemon.\nRice.\nCake and tea.";
+    assert_eq!(b.content(&id).await, both);
+    assert!(!b
+        .db
+        .get_page_changelog(&id)
+        .await
+        .unwrap()
+        .contains("concurrent_with"));
+    // The page put together is the version after both.
+    assert_eq!(b.sync(&folder).await.exported, 1);
+    assert_eq!(a.sync(&folder).await.applied, 1);
+    assert_eq!(a.content(&id).await, both);
+    assert_eq!(a.sync(&folder).await, zero());
+    assert_eq!(b.sync(&folder).await, zero());
+    assert!(titled(&b, "Menu (Ana)").await.is_none());
+}
+
+#[tokio::test]
+async fn a_persons_edit_wins_over_an_ai_edit_made_later() {
+    let folder = tempfile::tempdir().unwrap();
+    let folder = folder.path().to_path_buf();
+    let a = Member::new("Qi-Xuan").await;
+    let b = Member::new("Ana").await;
+    let id = a
+        .write("Menu", "Fish or pasta.", SPACE.to_string().into())
+        .await;
+    a.sync(&folder).await;
+    b.sync(&folder).await;
+
+    b.edit(&id, "Fish or pasta, and a cake.").await;
+    tick().await;
+    a.ai_edit(&id, "Fish or pasta. Both are popular.").await;
+    b.sync(&folder).await;
+    a.sync(&folder).await;
+    // The AI tool's edit is later, but B's own edit wins on both.
+    a.sync(&folder).await;
+    assert_eq!(a.content(&id).await, "Fish or pasta, and a cake.");
+    assert_eq!(b.content(&id).await, "Fish or pasta, and a cake.");
+    // An AI tool's edit that lost makes no second page.
+    assert!(titled(&a, "Menu (Qi-Xuan)").await.is_none());
+}
+
+#[tokio::test]
 async fn edits_made_at_the_same_time_keep_both_versions_in_history() {
     let folder = tempfile::tempdir().unwrap();
     let folder = folder.path().to_path_buf();
@@ -343,13 +459,14 @@ async fn edits_made_at_the_same_time_keep_both_versions_in_history() {
     a.sync(&folder).await;
     b.sync(&folder).await;
 
-    // Both edit before either has the other's edit.
-    a.edit(&id, "Fish, pasta or risotto.").await;
+    // Both edit the same line before either has the other's edit.
     b.edit(&id, "Fish or pasta, and a cake.").await;
+    tick().await;
+    a.edit(&id, "Fish, pasta or risotto.").await;
     assert_eq!(b.sync(&folder).await.exported, 1);
     let b_edit = b.page(&id).await.unwrap().version;
-    tick().await;
-    // A's edit is later, so it wins everywhere; B's stays a version.
+    // A's edit is later, so it wins everywhere, though B shared first; B's
+    // stays a version.
     assert_eq!(a.sync(&folder).await.exported, 1);
     let got = b.sync(&folder).await;
     assert_eq!(got.applied, 1, "{got:?}");
@@ -391,6 +508,15 @@ async fn edits_made_at_the_same_time_keep_both_versions_in_history() {
         .map(|(_, bytes)| String::from_utf8(bytes).unwrap())
         .collect();
     assert!(all.contains("Fish or pasta, and a cake."));
+    // B's edit stays in sight as a second page, named after B, on both.
+    assert_eq!(b.sync(&folder).await.exported, 1);
+    assert_eq!(a.sync(&folder).await.applied, 1);
+    for member in [&a, &b] {
+        assert_eq!(
+            titled(member, "Menu (Ana)").await.map(|page| page.content),
+            Some("Fish or pasta, and a cake.".to_string())
+        );
+    }
     assert_eq!(a.sync(&folder).await, zero());
     assert_eq!(b.sync(&folder).await, zero());
 
@@ -965,6 +1091,35 @@ async fn a_page_deleted_here_is_not_made_again_and_is_archived_for_the_others() 
 }
 
 #[tokio::test]
+async fn an_edit_made_elsewhere_after_the_copy_deleted_here_brings_the_page_back() {
+    let folder = tempfile::tempdir().unwrap();
+    let folder = folder.path().to_path_buf();
+    let a = Member::new("Qi-Xuan").await;
+    let b = Member::new("Ana").await;
+    let id = a
+        .write("Band", "The Swing Trio.", SPACE.to_string().into())
+        .await;
+    a.sync(&folder).await;
+    b.sync(&folder).await;
+
+    // B deletes its copy while away; A edits meanwhile and shares it.
+    b.db.delete_page(&id).await.unwrap();
+    a.edit(&id, "The Swing Trio, and a singer.").await;
+    a.sync(&folder).await;
+
+    b.sync(&folder).await;
+    let page = b.page(&id).await.expect("back on B");
+    assert_eq!(page.status, "active");
+    assert_eq!(page.content, "The Swing Trio, and a singer.");
+    a.sync(&folder).await;
+    assert_eq!(
+        a.page(&id).await.unwrap().status,
+        "active",
+        "never archived on A"
+    );
+}
+
+#[tokio::test]
 async fn one_page_is_shared_alone_and_lands_with_no_space() {
     let folder = tempfile::tempdir().unwrap();
     let folder = folder.path().join("Venue (shared)");
@@ -1304,6 +1459,1464 @@ async fn a_member_who_may_only_read_takes_the_shared_version_over_their_edit() {
     assert_eq!(read.pages[&id].len(), 1);
 }
 
+// ===== The whole library, between one person's own computers =====
+
+fn library() -> Scope {
+    Scope::Library
+}
+
+impl Member {
+    async fn lib_sync(
+        &self,
+        folder: &Path,
+        member_id: Option<&str>,
+    ) -> Result<SharedSyncCounts, WenlanError> {
+        sync_space(
+            &self.db,
+            SyncTarget {
+                scope: &library(),
+                folder,
+                member_name: self.name,
+                settings_path: &self.settings(),
+                knowledge_path: None,
+                member_id,
+                host: None,
+            },
+        )
+        .await
+    }
+
+    fn library_member_id(&self) -> String {
+        share_settings_at(&self.settings(), &library())
+            .unwrap()
+            .unwrap()
+            .member_id
+    }
+
+    async fn space_of(&self, id: &str) -> Option<String> {
+        self.page(id).await.unwrap().space
+    }
+
+    async fn move_to(&self, id: &str, space: Option<&str>) {
+        let page = self.page(id).await.unwrap();
+        self.db
+            .set_page_space(id, space, page.version, &ReadScope::Global)
+            .await
+            .unwrap();
+    }
+
+    async fn archive(&self, id: &str) {
+        let page = self.page(id).await.unwrap();
+        self.db
+            .archive_page_at_version(id, page.version)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+}
+
+/// A's library, then B joined as the same person.
+async fn library_pair(folder: &Path) -> (Member, Member) {
+    let a = Member::new("Lucian").await;
+    let b = Member::new("h1646").await;
+    a.lib_sync(folder, None).await.unwrap();
+    let me = a.library_member_id();
+    b.lib_sync(folder, Some(&me)).await.unwrap();
+    (a, b)
+}
+
+async fn lib_settle(a: &Member, b: &Member, folder: &Path) {
+    let me = a.library_member_id();
+    for _ in 0..5 {
+        let got_a = a.lib_sync(folder, None).await.unwrap();
+        let got_b = b.lib_sync(folder, Some(&me)).await.unwrap();
+        if got_a == zero() && got_b == zero() {
+            return;
+        }
+    }
+    panic!("the two computers did not settle");
+}
+
+#[tokio::test]
+async fn the_library_reaches_the_other_computer_in_the_same_spaces_with_unfiled_and_archived() {
+    let folder = tempfile::tempdir().unwrap();
+    let a = Member::new("Lucian").await;
+    let b = Member::new("h1646").await;
+    a.db.create_space("Travel", None, false).await.unwrap();
+    let plan = a
+        .write("Plan", "We marry in May.", SPACE.to_string().into())
+        .await;
+    let trip = a
+        .write("Trip", "Lisbon in June.", "Travel".to_string().into())
+        .await;
+    let loose = a
+        .write("Loose", "No Space yet.", WriteSpaceTarget::Uncategorized)
+        .await;
+    let old = a
+        .write("Old", "Gone but kept.", "Private".to_string().into())
+        .await;
+    a.archive(&old).await;
+
+    // The first computer makes the folder and mints the person's id.
+    let counts = a.lib_sync(folder.path(), None).await.unwrap();
+    assert_eq!(counts.exported, 4, "archived pages go too");
+    let file = read_space_file(&library::engine_folder(folder.path()))
+        .unwrap()
+        .unwrap();
+    assert!(file.library);
+    assert_eq!(file.page, None);
+    assert_eq!(file.members.len(), 1);
+    assert_eq!(file.members[0].id, a.library_member_id());
+    let peek = peek_folder(folder.path()).unwrap().unwrap();
+    assert_eq!(peek.kind, wenlan_types::shared_space::SharedKind::Library);
+
+    // The second computer joins with that id and takes everything.
+    assert!(b.db.get_space("Travel").await.unwrap().is_none());
+    let counts = b
+        .lib_sync(folder.path(), Some(&a.library_member_id()))
+        .await
+        .unwrap();
+    assert_eq!(counts.applied, 4);
+    assert_eq!(b.library_member_id(), a.library_member_id());
+    assert!(
+        b.db.get_space("Travel").await.unwrap().is_some(),
+        "the Space is made on the other computer"
+    );
+    assert_eq!(b.space_of(&plan).await.as_deref(), Some(SPACE));
+    assert_eq!(b.space_of(&trip).await.as_deref(), Some("Travel"));
+    assert_eq!(b.space_of(&loose).await, None);
+    assert_eq!(b.page(&loose).await.unwrap().status, "active");
+    let old_here = b.page(&old).await.unwrap();
+    assert_eq!(old_here.status, "archived");
+    assert_eq!(old_here.space.as_deref(), Some("Private"));
+    assert_eq!(b.content(&trip).await, "Lisbon in June.");
+    // One person is one member.
+    let file = read_space_file(&library::engine_folder(folder.path()))
+        .unwrap()
+        .unwrap();
+    assert_eq!(file.members.len(), 1);
+
+    lib_settle(&a, &b, folder.path()).await;
+    // The Unfiled page carries no Space; the others do.
+    let text = walk(&library::engine_folder(folder.path()));
+    assert_eq!(text.matches("\nspace: Travel\n").count(), 1);
+    assert_eq!(text.matches("\nspace: Wedding\n").count(), 1);
+}
+
+#[tokio::test]
+async fn an_edit_on_the_other_computer_arrives_as_the_persons_own_writing() {
+    let folder = tempfile::tempdir().unwrap();
+    let (a, b) = library_pair(folder.path()).await;
+    let id = a
+        .write("Plan", "We marry in May.", SPACE.to_string().into())
+        .await;
+    lib_settle(&a, &b, folder.path()).await;
+    assert_eq!(b.content(&id).await, "We marry in May.");
+    let rows = b.db.list_page_history(&id, 1).await.unwrap();
+    assert_eq!(rows[0].edited_by, OWN_DEVICE_PERSON);
+
+    b.edit(&id, "We marry in June.").await;
+    tick().await;
+    lib_settle(&a, &b, folder.path()).await;
+    assert_eq!(a.content(&id).await, "We marry in June.");
+    let rows = a.db.list_page_history(&id, 1).await.unwrap();
+    assert_eq!(rows[0].edited_by, OWN_DEVICE_PERSON, "not another person");
+    assert_eq!(
+        crate::authorship::version_author(&rows[0].edited_by, "authored"),
+        crate::authorship::VersionAuthor::Person
+    );
+    // Still one member, and nobody's writing is filed under another id.
+    let file = read_space_file(&library::engine_folder(folder.path()))
+        .unwrap()
+        .unwrap();
+    assert_eq!(file.members.len(), 1);
+    assert!(a
+        .history(&id)
+        .await
+        .iter()
+        .all(|row| shared_writer(&row.edited_by).is_none()));
+}
+
+#[tokio::test]
+async fn moving_a_page_to_another_space_or_making_a_space_follows_to_the_other_computer() {
+    let folder = tempfile::tempdir().unwrap();
+    let (a, b) = library_pair(folder.path()).await;
+    let plan = a
+        .write("Plan", "We marry in May.", SPACE.to_string().into())
+        .await;
+    let notes = a
+        .write("Notes", "Some notes.", "Private".to_string().into())
+        .await;
+    lib_settle(&a, &b, folder.path()).await;
+    assert_eq!(b.space_of(&plan).await.as_deref(), Some(SPACE));
+
+    // A move to another Space that is there on both.
+    a.move_to(&plan, Some("Private")).await;
+    let counts = a.lib_sync(folder.path(), None).await.unwrap();
+    assert_eq!(counts.exported, 1, "a move is a change");
+    let counts = b
+        .lib_sync(folder.path(), Some(&a.library_member_id()))
+        .await
+        .unwrap();
+    assert_eq!(counts.applied, 1);
+    assert_eq!(counts.conflicts, 0);
+    assert_eq!(b.space_of(&plan).await.as_deref(), Some("Private"));
+    assert_eq!(b.content(&plan).await, "We marry in May.");
+
+    // A new Space on A, with a page moved into it.
+    a.db.create_space("Garden", None, false).await.unwrap();
+    a.move_to(&notes, Some("Garden")).await;
+    lib_settle(&a, &b, folder.path()).await;
+    assert!(b.db.get_space("Garden").await.unwrap().is_some());
+    assert_eq!(b.space_of(&notes).await.as_deref(), Some("Garden"));
+
+    // Out of every Space, then moved on the other computer.
+    a.move_to(&notes, None).await;
+    lib_settle(&a, &b, folder.path()).await;
+    assert_eq!(b.space_of(&notes).await, None);
+    b.move_to(&notes, Some(SPACE)).await;
+    tick().await;
+    lib_settle(&a, &b, folder.path()).await;
+    assert_eq!(a.space_of(&notes).await.as_deref(), Some(SPACE));
+    // Settled: nothing written when nothing changed.
+    assert_eq!(
+        a.lib_sync(folder.path(), None).await.unwrap(),
+        zero(),
+        "idle passes write nothing"
+    );
+}
+
+#[tokio::test]
+async fn pages_with_their_own_share_keep_their_own_folder() {
+    let library_folder = tempfile::tempdir().unwrap();
+    let wedding_folder = tempfile::tempdir().unwrap();
+    let page_folder = tempfile::tempdir().unwrap();
+    let a = Member::new("Lucian").await;
+    let plan = a
+        .write("Plan", "We marry in May.", SPACE.to_string().into())
+        .await;
+    let notes = a
+        .write("Notes", "Some notes.", "Private".to_string().into())
+        .await;
+    let alone = a
+        .write("Alone", "Shared by itself.", "Private".to_string().into())
+        .await;
+    a.share(&space(), wedding_folder.path()).await.unwrap();
+    a.share(&Scope::Page(alone.clone()), page_folder.path())
+        .await
+        .unwrap();
+
+    let counts = a.lib_sync(library_folder.path(), None).await.unwrap();
+    assert_eq!(counts.exported, 1, "only Notes is in the library");
+    let text = walk(&library::engine_folder(library_folder.path()));
+    assert!(text.contains("Some notes."));
+    assert!(
+        !text.contains("We marry in May."),
+        "a shared Space stays out"
+    );
+    assert!(
+        !text.contains("Shared by itself."),
+        "a shared page stays out"
+    );
+    assert_eq!(version_count(wedding_folder.path()), 1);
+    assert_eq!(version_count(page_folder.path()), 1);
+
+    // The daemon's pass runs it with the others.
+    let keys: Vec<String> = a
+        .auto_all(None)
+        .await
+        .into_iter()
+        .map(|(key, _)| key)
+        .collect();
+    assert_eq!(
+        keys,
+        [
+            SPACE.to_string(),
+            format!("page:{alone}"),
+            "library:".to_string()
+        ]
+    );
+    let shares = shares_at(&a.settings()).unwrap();
+    assert!(shares.iter().any(|(scope, _)| *scope == Scope::Library));
+    assert_eq!(
+        share_status_at(&a.settings(), &library())
+            .unwrap()
+            .unwrap()
+            .kind,
+        wenlan_types::shared_space::SharedKind::Library
+    );
+
+    // The other computer does not get them through the library either, and
+    // a page here that the folder never names is left alone.
+    let b = Member::new("h1646").await;
+    let counts = b
+        .lib_sync(library_folder.path(), Some(&a.library_member_id()))
+        .await
+        .unwrap();
+    assert_eq!(counts.applied, 1);
+    assert!(b.page(&notes).await.is_some());
+    assert!(b.page(&plan).await.is_none());
+    assert!(b.page(&alone).await.is_none());
+
+    // A page that gets its own share later leaves the library: nothing of
+    // it is written there again, and it is not touched.
+    a.edit(&notes, "Some more notes.").await;
+    a.share(&Scope::Page(notes.clone()), page_folder.path())
+        .await
+        .unwrap_err(); // that folder shares another page
+    let other = tempfile::tempdir().unwrap();
+    a.share(&Scope::Page(notes.clone()), other.path())
+        .await
+        .unwrap();
+    assert_eq!(
+        a.lib_sync(library_folder.path(), None).await.unwrap(),
+        zero()
+    );
+    assert_eq!(
+        version_count(&library::engine_folder(library_folder.path())),
+        1
+    );
+
+    // Stopping leaves the pages and the folder as they are.
+    assert!(leave_at(&a.settings(), &library()).unwrap());
+    assert!(share_status_at(&a.settings(), &library())
+        .unwrap()
+        .is_none());
+    assert!(library::engine_folder(library_folder.path())
+        .join(SPACE_FILE)
+        .exists());
+    assert!(a.page(&notes).await.is_some());
+    let raw = std::fs::read_to_string(a.settings()).unwrap();
+    assert!(!raw.contains("\"library\""), "left out when not shared");
+}
+
+#[tokio::test]
+async fn a_library_folder_is_not_a_space_folder_and_titles_clash_only_within_a_space() {
+    let folder = tempfile::tempdir().unwrap();
+    let a = Member::new("Lucian").await;
+    a.lib_sync(folder.path(), None).await.unwrap();
+    // Neither kind of folder is used for the other.
+    assert!(a
+        .share(&space(), &library::engine_folder(folder.path()))
+        .await
+        .is_err());
+    let space_folder = tempfile::tempdir().unwrap();
+    a.share(&space(), space_folder.path()).await.unwrap();
+    // A library keeps its files in a subfolder of the chosen one, so the
+    // chosen folder may hold a Space's `space.json` beside it.
+    let page_folder = tempfile::tempdir().unwrap();
+    let id = a
+        .write("Alone", "By itself.", WriteSpaceTarget::Uncategorized)
+        .await;
+    a.share(&Scope::Page(id.clone()), page_folder.path())
+        .await
+        .unwrap();
+    assert!(a
+        .share(&Scope::Page(id), &library::engine_folder(folder.path()))
+        .await
+        .is_err());
+
+    // The same title in another Space is no clash; in the same Space it is.
+    let a_plan_wedding = a
+        .write("Plan", "Wedding plan.", "Private".to_string().into())
+        .await;
+    let a_plan_private = a
+        .write("Budget", "Private budget.", "Private".to_string().into())
+        .await;
+    let b = Member::new("h1646").await;
+    let b_plan_other = b
+        .write("Plan", "Own plan, other Space.", SPACE.to_string().into())
+        .await;
+    let b_budget_same = b
+        .write("Budget", "Own budget.", "Private".to_string().into())
+        .await;
+    a.lib_sync(folder.path(), None).await.unwrap();
+    b.lib_sync(folder.path(), Some(&a.library_member_id()))
+        .await
+        .unwrap();
+    assert_eq!(b.page(&a_plan_wedding).await.unwrap().title, "Plan");
+    assert_eq!(b.page(&b_plan_other).await.unwrap().title, "Plan");
+    assert_eq!(
+        b.page(&a_plan_private).await.unwrap().title,
+        "Budget (Lucian)"
+    );
+    assert_eq!(b.page(&b_budget_same).await.unwrap().title, "Budget");
+}
+
+// ===== Layout, computers, the main computer and its jobs =====
+
+fn engine(chosen: &Path) -> PathBuf {
+    library::engine_folder(chosen)
+}
+
+fn copy_marker(chosen: &Path) -> PathBuf {
+    library::read_folder(chosen).join(crate::reading_copy::INSTRUCTIONS_FILE)
+}
+
+fn this_device(member: &Member) -> String {
+    share_settings_at(&member.settings(), &library())
+        .unwrap()
+        .unwrap()
+        .device_id
+}
+
+fn age(path: &Path, seconds: u64) {
+    let file = std::fs::File::options().write(true).open(path).unwrap();
+    file.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(seconds))
+        .unwrap();
+}
+
+#[tokio::test]
+async fn the_engine_lives_in_a_subfolder_of_the_chosen_folder_and_peek_finds_it() {
+    let chosen = tempfile::tempdir().unwrap();
+    let a = Member::new("Lucian").await;
+    a.lib_sync(chosen.path(), None).await.unwrap();
+    assert!(!chosen.path().join(SPACE_FILE).exists());
+    assert!(engine(chosen.path()).join(SPACE_FILE).exists());
+    assert_eq!(
+        library::ENGINE_DIR,
+        "同步資料（請勿打開）",
+        "the folder name is a constant of the format"
+    );
+    // Settings keep the folder the person chose.
+    let settings = share_settings_at(&a.settings(), &library())
+        .unwrap()
+        .unwrap();
+    assert_eq!(Path::new(&settings.folder), chosen.path());
+    let peek = peek_folder(chosen.path()).unwrap().unwrap();
+    assert_eq!(peek.kind, wenlan_types::shared_space::SharedKind::Library);
+    // A folder with no engine subfolder shares nothing.
+    let empty = tempfile::tempdir().unwrap();
+    assert!(peek_folder(empty.path()).unwrap().is_none());
+    // The status reads the members from the engine subfolder.
+    let status = share_status_at(&a.settings(), &library()).unwrap().unwrap();
+    assert_eq!(status.members.len(), 1);
+    assert_eq!(status.folder, chosen.path().to_string_lossy());
+}
+
+#[tokio::test]
+async fn computers_are_added_once_and_the_first_is_main_and_can_be_changed() {
+    let chosen = tempfile::tempdir().unwrap();
+    let (a, b) = library_pair(chosen.path()).await;
+    let (id_a, id_b) = (this_device(&a), this_device(&b));
+    assert_ne!(id_a, id_b);
+    let file = read_space_file(&engine(chosen.path())).unwrap().unwrap();
+    assert_eq!(file.devices.len(), 2);
+    assert_eq!(file.main_device, id_a, "the first to share is main");
+    lib_settle(&a, &b, chosen.path()).await;
+
+    // Later passes never rewrite space.json.
+    let path = engine(chosen.path()).join(SPACE_FILE);
+    let before = (
+        std::fs::read(&path).unwrap(),
+        std::fs::metadata(&path).unwrap().modified().unwrap(),
+    );
+    tick().await;
+    for _ in 0..3 {
+        a.lib_sync(chosen.path(), None).await.unwrap();
+        b.lib_sync(chosen.path(), Some(&id_a_member(&a)))
+            .await
+            .unwrap();
+    }
+    a.auto_all(None).await;
+    let after = (
+        std::fs::read(&path).unwrap(),
+        std::fs::metadata(&path).unwrap().modified().unwrap(),
+    );
+    assert_eq!(before.0, after.0.clone());
+    assert_eq!(before.1, after.1, "the file was not written again");
+    // The device id is kept across passes.
+    assert_eq!(this_device(&a), id_a);
+
+    let status = share_status_at(&b.settings(), &library()).unwrap().unwrap();
+    assert_eq!(status.devices.len(), 2);
+    assert_eq!(status.main_device.as_deref(), Some(id_a.as_str()));
+    assert_eq!(status.this_device.as_deref(), Some(id_b.as_str()));
+    // A Space's status carries none of it.
+    a.share(&space(), tempfile::tempdir().unwrap().path())
+        .await
+        .unwrap();
+    let space_status = share_status_at(&a.settings(), &space()).unwrap().unwrap();
+    assert!(space_status.devices.is_empty());
+    assert!(space_status.main_device.is_none() && space_status.this_device.is_none());
+
+    // The person picks another main computer; only a listed one will do.
+    assert!(library::set_main_device(chosen.path(), "nobody").is_err());
+    library::set_main_device(chosen.path(), &id_b).unwrap();
+    let status = share_status_at(&a.settings(), &library()).unwrap().unwrap();
+    assert_eq!(status.main_device.as_deref(), Some(id_b.as_str()));
+}
+
+fn id_a_member(a: &Member) -> String {
+    a.library_member_id()
+}
+
+#[tokio::test]
+async fn the_read_copy_is_written_only_by_the_main_computer() {
+    let chosen = tempfile::tempdir().unwrap();
+    let (a, b) = library_pair(chosen.path()).await;
+    let plan = a
+        .write("Plan", "We marry in May.", SPACE.to_string().into())
+        .await;
+    lib_settle(&a, &b, chosen.path()).await;
+    let copy = library::read_folder(chosen.path());
+    assert!(copy_marker(chosen.path()).exists());
+    assert!(
+        walk(&copy).contains("We marry in May."),
+        "the main computer wrote the page"
+    );
+    assert!(a
+        .db
+        .get_app_metadata(library::COPY_STATE_KEY)
+        .await
+        .unwrap()
+        .is_some());
+    assert!(b
+        .db
+        .get_app_metadata(library::COPY_STATE_KEY)
+        .await
+        .unwrap()
+        .is_none());
+
+    // Not the main computer: it writes nothing there.
+    std::fs::remove_dir_all(&copy).unwrap();
+    b.edit(&plan, "We marry in June.").await;
+    b.lib_sync(chosen.path(), Some(&a.library_member_id()))
+        .await
+        .unwrap();
+    assert!(!copy.exists(), "a computer that is not main writes no copy");
+
+    // Once the person makes it main, it does.
+    library::set_main_device(chosen.path(), &this_device(&b)).unwrap();
+    b.lib_sync(chosen.path(), Some(&a.library_member_id()))
+        .await
+        .unwrap();
+    assert!(walk(&copy).contains("We marry in June."));
+    let status = share_status_at(&b.settings(), &library()).unwrap().unwrap();
+    assert_eq!(status.reading_copy_error, None);
+}
+
+#[tokio::test]
+async fn an_unwritable_read_copy_is_shown_in_the_status_and_never_fails_the_sync() {
+    let chosen = tempfile::tempdir().unwrap();
+    let a = Member::new("Lucian").await;
+    a.lib_sync(chosen.path(), None).await.unwrap();
+    // A file where the folder should be.
+    std::fs::remove_dir_all(library::read_folder(chosen.path())).unwrap();
+    std::fs::write(library::read_folder(chosen.path()), "in the way").unwrap();
+    a.write("Plan", "We marry in May.", SPACE.to_string().into())
+        .await;
+    let counts = a.lib_sync(chosen.path(), None).await.unwrap();
+    assert_eq!(counts.exported, 1);
+    let status = share_status_at(&a.settings(), &library()).unwrap().unwrap();
+    assert!(status.reading_copy_error.is_some());
+    assert!(status.last.unwrap().error.is_none());
+}
+
+#[tokio::test]
+async fn the_inbox_is_taken_only_by_the_main_computer_and_files_are_moved_not_deleted() {
+    let chosen = tempfile::tempdir().unwrap();
+    let (a, b) = library_pair(chosen.path()).await;
+    let inbox = library::inbox_folder(chosen.path());
+    std::fs::create_dir_all(inbox.join("sub")).unwrap();
+    let ready = inbox.join("Trip idea.md");
+    std::fs::write(&ready, "Lisbon in June, book the flights early.").unwrap();
+    age(&ready, 60);
+    let text = inbox.join("Note.TXT");
+    std::fs::write(&text, "A plain text note from my phone.").unwrap();
+    age(&text, 60);
+    let fresh = inbox.join("Fresh.md");
+    std::fs::write(&fresh, "Still arriving from the cloud drive.").unwrap();
+    let hidden = inbox.join(".hidden.md");
+    std::fs::write(&hidden, "A dotfile is never taken.").unwrap();
+    age(&hidden, 60);
+    let other = inbox.join("Photo.png");
+    std::fs::write(&other, "not text").unwrap();
+    age(&other, 60);
+    let nested = inbox.join("sub/Nested.md");
+    std::fs::write(&nested, "Only the top level is taken.").unwrap();
+    age(&nested, 60);
+    let short = inbox.join("Short.md");
+    std::fs::write(&short, "hi").unwrap();
+    age(&short, 60);
+
+    // B is not main: nothing is taken.
+    b.lib_sync(chosen.path(), Some(&a.library_member_id()))
+        .await
+        .unwrap();
+    assert!(ready.exists() && text.exists());
+    assert!(b
+        .db
+        .list_memories(None, None, None, None, 50)
+        .await
+        .unwrap()
+        .is_empty());
+
+    // A is.
+    a.lib_sync(chosen.path(), None).await.unwrap();
+    assert!(!ready.exists() && !text.exists());
+    let taken = inbox.join(library::TAKEN_DIR);
+    assert_eq!(
+        std::fs::read_to_string(taken.join("Trip idea.md")).unwrap(),
+        "Lisbon in June, book the flights early."
+    );
+    assert!(taken.join("Note.TXT").exists());
+    for left in [&fresh, &hidden, &other, &nested, &short] {
+        assert!(left.exists(), "{} stays", left.display());
+    }
+    let memories =
+        a.db.list_memories(None, None, None, None, 50)
+            .await
+            .unwrap();
+    assert_eq!(memories.len(), 2);
+    let trip = memories.iter().find(|m| m.title == "Trip idea").unwrap();
+    assert!(trip.source_id.starts_with("manual_"));
+    assert!(trip.content.contains("Lisbon in June"));
+    assert_eq!(trip.space, None);
+
+    // Taken once: another pass takes nothing, and a name clash is numbered.
+    a.lib_sync(chosen.path(), None).await.unwrap();
+    assert_eq!(
+        a.db.list_memories(None, None, None, None, 50)
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+    std::fs::write(&ready, "A second idea with the same file name.").unwrap();
+    age(&ready, 60);
+    a.lib_sync(chosen.path(), None).await.unwrap();
+    assert!(taken.join("Trip idea.md").exists() && taken.join("Trip idea (2).md").exists());
+    assert_eq!(
+        a.db.list_memories(None, None, None, None, 50)
+            .await
+            .unwrap()
+            .len(),
+        3
+    );
+}
+
+#[tokio::test]
+async fn only_the_main_computer_lets_ai_write_pages() {
+    let chosen = tempfile::tempdir().unwrap();
+    let a = Member::new("Lucian").await;
+    // Sharing nothing: no gate.
+    assert!(library::page_writing_allowed_at(&a.settings()));
+    let (a, b) = library_pair(chosen.path()).await;
+    assert!(library::page_writing_allowed_at(&a.settings()), "main");
+    assert!(
+        !library::page_writing_allowed_at(&b.settings()),
+        "the other computer waits for the main one"
+    );
+    library::set_main_device(chosen.path(), &this_device(&b)).unwrap();
+    assert!(library::page_writing_allowed_at(&b.settings()));
+    assert!(!library::page_writing_allowed_at(&a.settings()));
+    // The folder cannot be read now: the last answer stands.
+    std::fs::rename(engine(chosen.path()), chosen.path().join("away")).unwrap();
+    assert!(library::page_writing_allowed_at(&b.settings()));
+    assert!(!library::page_writing_allowed_at(&a.settings()));
+}
+
+#[tokio::test]
+async fn a_pass_that_would_archive_most_of_the_library_archives_none() {
+    let chosen = tempfile::tempdir().unwrap();
+    let (a, b) = library_pair(chosen.path()).await;
+    let mut ids = Vec::new();
+    for n in 0..25 {
+        ids.push(
+            a.write(
+                &format!("Page {n}"),
+                &format!("Body {n}."),
+                SPACE.to_string().into(),
+            )
+            .await,
+        );
+    }
+    lib_settle(&a, &b, chosen.path()).await;
+    // A few archives are applied as always.
+    for id in &ids[..3] {
+        a.archive(id).await;
+    }
+    lib_settle(&a, &b, chosen.path()).await;
+    assert_eq!(b.page(&ids[0]).await.unwrap().status, "archived");
+
+    // Then the rest at once: more than 20, and most of the library.
+    for id in &ids[3..] {
+        a.archive(id).await;
+    }
+    a.lib_sync(chosen.path(), None).await.unwrap();
+    let counts = b
+        .lib_sync(chosen.path(), Some(&a.library_member_id()))
+        .await
+        .unwrap();
+    assert_eq!(counts.applied, 0);
+    assert_eq!(counts.held_back, 22);
+    for id in &ids[3..] {
+        assert_eq!(b.page(id).await.unwrap().status, "active");
+    }
+    let last = share_status_at(&b.settings(), &library())
+        .unwrap()
+        .unwrap()
+        .last
+        .unwrap();
+    assert!(last.held_back.is_some(), "the status says why");
+    // Still held on the next pass; nothing is lost.
+    let counts = b
+        .lib_sync(chosen.path(), Some(&a.library_member_id()))
+        .await
+        .unwrap();
+    assert_eq!(counts.held_back, 22);
+}
+
+#[tokio::test]
+async fn pages_archived_long_ago_do_not_hide_a_pass_that_archives_most_pages_in_use() {
+    let chosen = tempfile::tempdir().unwrap();
+    let (a, b) = library_pair(chosen.path()).await;
+    let mut ids = Vec::new();
+    for n in 0..50 {
+        ids.push(
+            a.write(
+                &format!("Page {n}"),
+                &format!("Body {n}."),
+                SPACE.to_string().into(),
+            )
+            .await,
+        );
+    }
+    lib_settle(&a, &b, chosen.path()).await;
+    // Half the library was put away earlier: exactly half, so it is applied.
+    for id in &ids[25..] {
+        a.archive(id).await;
+    }
+    lib_settle(&a, &b, chosen.path()).await;
+    assert_eq!(b.page(&ids[49]).await.unwrap().status, "archived");
+
+    // Then 22 of the 25 pages still in use at once.
+    for id in &ids[..22] {
+        a.archive(id).await;
+    }
+    a.lib_sync(chosen.path(), None).await.unwrap();
+    let counts = b
+        .lib_sync(chosen.path(), Some(&a.library_member_id()))
+        .await
+        .unwrap();
+    assert_eq!(counts.held_back, 22);
+    assert_eq!(b.page(&ids[0]).await.unwrap().status, "active");
+}
+
+// ===== The library's memories =====
+
+impl Member {
+    /// A memory saved the way a capture is stored.
+    async fn save_memory(&self, id: &str, text: &str, space: Option<&str>) {
+        self.db
+            .upsert_documents(vec![crate::sources::RawDocument {
+                source: "memory".to_string(),
+                source_id: id.to_string(),
+                title: text.chars().take(30).collect(),
+                content: text.to_string(),
+                last_modified: chrono::Utc::now().timestamp(),
+                memory_type: Some("fact".to_string()),
+                space: space.map(str::to_string),
+                source_agent: Some("claude-code".to_string()),
+                ..Default::default()
+            }])
+            .await
+            .unwrap();
+    }
+
+    async fn memory_text(&self, id: &str) -> Option<String> {
+        self.db
+            .get_memory_detail(id)
+            .await
+            .unwrap()
+            .map(|memory| memory.content)
+    }
+
+    /// Rows of the memory here, and whether they are forgotten.
+    async fn memory_rows(&self, id: &str) -> (usize, bool) {
+        let rows: Vec<_> = self
+            .db
+            .export_memory_rows()
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|row| row.source_id == id)
+            .collect();
+        let forgotten = rows
+            .iter()
+            .all(|row| row.supersede_mode.as_deref() == Some("evicted"));
+        (rows.len(), !rows.is_empty() && forgotten)
+    }
+}
+
+fn memory_files(folder: &Path) -> Vec<PathBuf> {
+    folder_files(folder)
+        .into_iter()
+        .map(|(path, _)| path)
+        .filter(|path| path.to_string_lossy().contains("/memories/"))
+        .collect()
+}
+
+#[tokio::test]
+async fn a_memory_reaches_the_other_computer_with_its_id_and_is_queued_to_be_found() {
+    let chosen = tempfile::tempdir().unwrap();
+    let (a, b) = library_pair(chosen.path()).await;
+    let engine = library::engine_folder(chosen.path());
+    a.save_memory(
+        "mem_otters",
+        "The harbour survey counted nine otters near the old pier.",
+        Some(SPACE),
+    )
+    .await;
+
+    let got = a.lib_sync(chosen.path(), None).await.unwrap();
+    assert_eq!(got.memories_exported, 1);
+    let files = memory_files(&engine);
+    assert_eq!(files.len(), 1);
+    assert!(files[0].to_string_lossy().ends_with(".wlv"));
+    assert!(files[0]
+        .to_string_lossy()
+        .contains(&format!("{}/memories/mem_otters/", a.library_member_id())));
+
+    let got = b
+        .lib_sync(chosen.path(), Some(&a.library_member_id()))
+        .await
+        .unwrap();
+    assert_eq!(got.memories_applied, 1);
+    assert_eq!(got.memories_exported, 0, "taken, not written back");
+    assert_eq!(
+        b.memory_text("mem_otters").await.as_deref(),
+        Some("The harbour survey counted nine otters near the old pier.")
+    );
+    assert_eq!(
+        b.db.get_memory_detail("mem_otters")
+            .await
+            .unwrap()
+            .unwrap()
+            .space
+            .as_deref(),
+        Some(SPACE)
+    );
+
+    // Queued like a new capture: no vector yet, no enrichment receipt, so
+    // the catch-up and the ambient classification lane take it.
+    assert_eq!(b.db.count_null_memory_embeddings().await.unwrap(), 1);
+    assert!(b
+        .db
+        .get_enrichment_steps("mem_otters")
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(b
+        .db
+        .get_classification_candidate_for("mem_otters", crate::post_ingest::ENRICHMENT_MAX_ATTEMPTS)
+        .await
+        .unwrap()
+        .is_some());
+    // The catch-up embeds it, and B finds it.
+    b.db.recover_null_memory_embeddings(&NoopEmitter)
+        .await
+        .unwrap();
+    assert_eq!(b.db.count_null_memory_embeddings().await.unwrap(), 0);
+    let found =
+        b.db.search_memory(
+            "otters near the pier",
+            5,
+            None,
+            &ReadScope::Global,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(
+        found.iter().any(|hit| hit.source_id == "mem_otters"),
+        "B finds the memory A saved"
+    );
+
+    // Nothing more to do, and no churn from enrichment on either side.
+    lib_settle(&a, &b, chosen.path()).await;
+    assert_eq!(memory_files(&engine).len(), 1);
+}
+
+#[tokio::test]
+async fn an_edit_on_the_other_computer_and_a_delete_reach_back() {
+    let chosen = tempfile::tempdir().unwrap();
+    let (a, b) = library_pair(chosen.path()).await;
+    a.save_memory("mem_tea", "Mara drinks green tea in the morning.", None)
+        .await;
+    lib_settle(&a, &b, chosen.path()).await;
+    assert!(b.memory_text("mem_tea").await.is_some());
+
+    // B edits it (the same id, new text, as a replace).
+    tick().await;
+    b.save_memory("mem_tea", "Mara now drinks black tea in the morning.", None)
+        .await;
+    lib_settle(&a, &b, chosen.path()).await;
+    assert_eq!(
+        a.memory_text("mem_tea").await.as_deref(),
+        Some("Mara now drinks black tea in the morning.")
+    );
+    assert!(!a.memory_rows("mem_tea").await.1);
+
+    // A forgets it; B forgets it too (restorable), and it is not made again.
+    tick().await;
+    a.db.forget_memory("mem_tea", "person", "test")
+        .await
+        .unwrap();
+    lib_settle(&a, &b, chosen.path()).await;
+    assert_eq!(b.memory_rows("mem_tea").await, (1, true));
+    // A restore on A brings it back on B.
+    tick().await;
+    assert!(a
+        .db
+        .restore_forgotten_memory("mem_tea", "person")
+        .await
+        .unwrap());
+    lib_settle(&a, &b, chosen.path()).await;
+    assert_eq!(b.memory_rows("mem_tea").await, (1, false));
+
+    // A permanent delete on A is forgotten for the others too.
+    tick().await;
+    a.db.delete_by_source_id("memory", "mem_tea").await.unwrap();
+    lib_settle(&a, &b, chosen.path()).await;
+    assert_eq!(b.memory_rows("mem_tea").await, (1, true));
+    assert_eq!(a.memory_rows("mem_tea").await.0, 0, "not made again on A");
+}
+
+#[tokio::test]
+async fn a_rebuilt_database_takes_the_memories_by_content_and_writes_nothing() {
+    let chosen = tempfile::tempdir().unwrap();
+    let (a, mut b) = library_pair(chosen.path()).await;
+    for n in 0..3 {
+        a.save_memory(
+            &format!("mem_{n}"),
+            &format!("Memory number {n} about the lighthouse keeper."),
+            None,
+        )
+        .await;
+    }
+    lib_settle(&a, &b, chosen.path()).await;
+    let engine = library::engine_folder(chosen.path());
+    let files = memory_files(&engine).len();
+    assert_eq!(files, 3);
+
+    // B's database is rebuilt from the same folder: it takes them again by
+    // content, writes no version, and a database that had the memories
+    // already (a restore) writes none either.
+    b.db = Member::open(b.dir.path(), "rebuilt.db").await;
+    let got = b
+        .lib_sync(chosen.path(), Some(&a.library_member_id()))
+        .await
+        .unwrap();
+    assert_eq!(got.memories_applied, 3);
+    assert_eq!(got.memories_exported, 0);
+    assert_eq!(memory_files(&engine).len(), files);
+    lib_settle(&a, &b, chosen.path()).await;
+    assert_eq!(memory_files(&engine).len(), files);
+
+    // A rebuilt A that already has them (same ids, same text) is in step.
+    let mut a = a;
+    let held =
+        a.db.get_app_metadata(&format!("shared_space.held_memories:{LIBRARY_KEY}"))
+            .await
+            .unwrap();
+    assert!(held.is_some());
+    a.db = Member::open(a.dir.path(), "rebuilt.db").await;
+    for n in 0..3 {
+        a.save_memory(
+            &format!("mem_{n}"),
+            &format!("Memory number {n} about the lighthouse keeper."),
+            None,
+        )
+        .await;
+    }
+    let got = a.lib_sync(chosen.path(), None).await.unwrap();
+    assert_eq!(got.memories_exported, 0, "{got:?}");
+    assert_eq!(got.memories_applied, 0, "{got:?}");
+    assert_eq!(memory_files(&engine).len(), files);
+}
+
+#[tokio::test]
+async fn documents_originals_and_memories_of_a_shared_space_stay_out() {
+    let chosen = tempfile::tempdir().unwrap();
+    let wedding = tempfile::tempdir().unwrap();
+    let a = Member::new("Lucian").await;
+    a.share(&space(), wedding.path()).await.unwrap();
+    a.save_memory(
+        "mem_shared_space",
+        "The caterer needs a head count by May.",
+        Some(SPACE),
+    )
+    .await;
+    a.save_memory(
+        "mem_kept",
+        "A plain memory about a garden gate.",
+        Some("Private"),
+    )
+    .await;
+    // A document read from a folder, a saved web page, an imported chat.
+    for (source, id) in [
+        ("local_files", "doc::notes.md"),
+        ("webpage", "https://example.com/post"),
+        ("memory", "import_claude_conv1"),
+        ("file", "zotero::paper"),
+    ] {
+        a.db.upsert_documents(vec![crate::sources::RawDocument {
+            source: source.to_string(),
+            source_id: id.to_string(),
+            title: "Source material".to_string(),
+            content: "Long source material that is not a memory the person saved.".to_string(),
+            last_modified: chrono::Utc::now().timestamp(),
+            ..Default::default()
+        }])
+        .await
+        .unwrap();
+    }
+    let got = a.lib_sync(chosen.path(), None).await.unwrap();
+    assert_eq!(got.memories_exported, 1);
+    let engine = library::engine_folder(chosen.path());
+    let files = memory_files(&engine);
+    assert_eq!(files.len(), 1);
+    let text = walk(&engine);
+    assert!(text.contains("garden gate"));
+    assert!(
+        !text.contains("caterer"),
+        "a Space with its own share stays out"
+    );
+    assert!(
+        !text.contains("source material"),
+        "originals are not written"
+    );
+
+    // The Space share carries pages only: no memory folder in it.
+    a.share(&space(), wedding.path()).await.unwrap();
+    assert!(memory_files(wedding.path()).is_empty());
+    assert!(!walk(wedding.path()).contains("caterer"));
+
+    // And the other computer does not get the Space's memory.
+    let b = Member::new("h1646").await;
+    b.lib_sync(chosen.path(), Some(&a.library_member_id()))
+        .await
+        .unwrap();
+    assert!(b.memory_text("mem_kept").await.is_some());
+    assert!(b.memory_text("mem_shared_space").await.is_none());
+    assert!(b.memory_text("import_claude_conv1").await.is_none());
+}
+
+#[tokio::test]
+async fn a_pass_that_would_forget_most_memories_forgets_none() {
+    let chosen = tempfile::tempdir().unwrap();
+    let (a, b) = library_pair(chosen.path()).await;
+    for n in 0..25 {
+        a.save_memory(
+            &format!("mem_{n}"),
+            &format!("Note {n} about the weekly market stall."),
+            None,
+        )
+        .await;
+    }
+    lib_settle(&a, &b, chosen.path()).await;
+    for n in 0..25 {
+        a.db.forget_memory(&format!("mem_{n}"), "person", "test")
+            .await
+            .unwrap();
+    }
+    a.lib_sync(chosen.path(), None).await.unwrap();
+    let got = b
+        .lib_sync(chosen.path(), Some(&a.library_member_id()))
+        .await
+        .unwrap();
+    assert_eq!(got.memories_applied, 0);
+    assert_eq!(got.memories_held_back, 25);
+    assert_eq!(b.memory_rows("mem_0").await, (1, false));
+}
+
+#[tokio::test]
+async fn a_second_pass_does_not_read_a_version_file_again() {
+    let chosen = tempfile::tempdir().unwrap();
+    let a = Member::new("Lucian").await;
+    a.lib_sync(chosen.path(), None).await.unwrap();
+    a.save_memory("mem_once", "A memory read once, however many passes.", None)
+        .await;
+    a.lib_sync(chosen.path(), None).await.unwrap();
+    let engine = library::engine_folder(chosen.path());
+    let first = memories::read_folder(&engine);
+    assert_eq!(first.memories.len(), 1);
+    // Break the file's bytes: the name no longer matches. A pass that read it
+    // again would skip it; one that knows its sha does not look.
+    let file = memory_files(&engine).remove(0);
+    let version = first.memories["mem_once"][0].clone();
+    std::fs::write(&file, b"changed").unwrap();
+    let second = memories::read_folder(&engine);
+    assert!(Arc::ptr_eq(&version, &second.memories["mem_once"][0]));
+}
+
+#[test]
+fn an_automatic_pass_waits_for_typing_to_stop() {
+    let row = |by: &str, at: i64| crate::db::PageHistoryEntry {
+        version: 3,
+        title: None,
+        content: String::new(),
+        source_memory_ids: vec![],
+        edited_by: by.into(),
+        created_at: at,
+    };
+    let base = Some(900); // last in step 100 s ago
+                          // The editor saved 30 s ago: still typing.
+    assert!(still_typing(
+        Some(&row("manual_edit", 970)),
+        base,
+        1_000,
+        120
+    ));
+    // Two minutes since the last save: written now.
+    assert!(!still_typing(
+        Some(&row("manual_edit", 880)),
+        base,
+        1_000,
+        120
+    ));
+    // Typing on, but the last version is ten minutes old: written now.
+    assert!(!still_typing(
+        Some(&row("manual_edit", 990)),
+        Some(400),
+        1_000,
+        120
+    ));
+    // A new page (no version yet) is written at once.
+    assert!(!still_typing(
+        Some(&row("manual_edit", 990)),
+        None,
+        1_000,
+        120
+    ));
+    // An AI edit, or a sync the person asked for, is written at once.
+    assert!(!still_typing(
+        Some(&row("agent_refresh", 990)),
+        base,
+        1_000,
+        120
+    ));
+    assert!(!still_typing(Some(&row("fs_edit", 990)), base, 1_000, 0));
+    assert!(still_typing(Some(&row("fs_edit", 990)), base, 1_000, 120));
+    assert!(!still_typing(None, base, 1_000, 120));
+}
+
+#[tokio::test]
+async fn a_library_page_keeps_its_sources_on_the_other_computer() {
+    let chosen = tempfile::tempdir().unwrap();
+    let (a, b) = library_pair(chosen.path()).await;
+    a.save_memory("mem_fish", "We said fish is fine for Grandma.", Some(SPACE))
+        .await;
+    let menu = a
+        .write("Menu", "Fish is fine [1].", SPACE.to_string().into())
+        .await;
+    let citations = serde_json::json!([
+        {"occurrence": 1, "marker": 1, "source_kind": "memory", "locator": "mem_fish",
+         "score": 1.0, "status": "verified", "cited_version": 1},
+    ]);
+    a.db.set_page_citations_for_test(&menu, &citations.to_string())
+        .await
+        .unwrap();
+
+    a.lib_sync(chosen.path(), None).await.unwrap();
+    b.lib_sync(chosen.path(), Some(&a.library_member_id()))
+        .await
+        .unwrap();
+
+    // The page links back to the memory, which came along too.
+    let page = b.page(&menu).await.expect("B has the page");
+    assert_eq!(page.content, "Fish is fine [1].");
+    assert!(
+        page.citations
+            .iter()
+            .any(|c| c.locator == "mem_fish" && !c.historical),
+        "{:?}",
+        page.citations
+    );
+    assert!(b.memory_text("mem_fish").await.is_some());
+    // So B counts the memory as written into a page: a nightly organize
+    // there would not write it again.
+    let unpaged = b.db.list_unpaged_memory_rows(100).await.unwrap();
+    assert!(!unpaged.iter().any(|row| row.source_id == "mem_fish"));
+    // And taking the sources writes no new version back.
+    let again = b
+        .lib_sync(chosen.path(), Some(&a.library_member_id()))
+        .await
+        .unwrap();
+    assert_eq!(again.exported, 0, "{again:?}");
+}
+
+#[tokio::test]
+async fn a_library_page_keeps_a_source_that_stays_on_one_computer() {
+    let chosen = tempfile::tempdir().unwrap();
+    let (a, b) = library_pair(chosen.path()).await;
+    // An imported chat stays on the computer it was imported on.
+    a.save_memory("import_chat_1", "Grandma said fish is fine.", Some(SPACE))
+        .await;
+    let menu = a
+        .write(
+            "Menu",
+            "Fish is fine [1]. See the recipe [2].",
+            SPACE.to_string().into(),
+        )
+        .await;
+    let citations = serde_json::json!([
+        {"occurrence": 1, "marker": 1, "source_kind": "memory", "locator": "import_chat_1",
+         "score": 1.0, "status": "verified", "cited_version": 1},
+        {"occurrence": 2, "marker": 2, "source_kind": "external_url",
+         "locator": "https://example.com/fish", "score": 1.0, "status": "verified"},
+    ]);
+    a.db.set_page_citations_for_test(&menu, &citations.to_string())
+        .await
+        .unwrap();
+
+    a.lib_sync(chosen.path(), None).await.unwrap();
+    b.lib_sync(chosen.path(), Some(&a.library_member_id()))
+        .await
+        .unwrap();
+    assert!(b.memory_text("import_chat_1").await.is_none());
+    // The other computer keeps the web link as it is.
+    let there = b.page(&menu).await.unwrap();
+    assert!(
+        there
+            .citations
+            .iter()
+            .any(|c| c.source_kind == "external_url" && c.locator == "https://example.com/fish"),
+        "{:?}",
+        there.citations
+    );
+    b.edit(&menu, "Fish is fine [1]. See the recipe [2]. Rice too.")
+        .await;
+    b.lib_sync(chosen.path(), Some(&a.library_member_id()))
+        .await
+        .unwrap();
+    a.lib_sync(chosen.path(), None).await.unwrap();
+
+    // Back on the computer that has the chat, the sentence still links to it.
+    let page = a.page(&menu).await.unwrap();
+    assert_eq!(
+        page.content,
+        "Fish is fine [1]. See the recipe [2]. Rice too."
+    );
+    assert!(
+        page.citations
+            .iter()
+            .any(|c| c.locator == "import_chat_1" && !c.historical),
+        "{:?}",
+        page.citations
+    );
+    assert!(
+        page.citations
+            .iter()
+            .any(|c| c.source_kind == "external_url" && c.locator == "https://example.com/fish"),
+        "{:?}",
+        page.citations
+    );
+    let unpaged = a.db.list_unpaged_memory_rows(100).await.unwrap();
+    assert!(!unpaged.iter().any(|row| row.source_id == "import_chat_1"));
+}
+
+// ===== Review of 11-11: old text must never win silently =====
+
+/// Removes the version file of the page whose text holds `text` (a file a
+/// drive client lost, or one pruned).
+fn remove_version_with(folder: &Path, text: &str) {
+    let mut removed = 0;
+    for (path, bytes) in folder_files(folder) {
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        if version::version_sha(&name).is_some() && String::from_utf8_lossy(&bytes).contains(text) {
+            std::fs::remove_file(&path).unwrap();
+            removed += 1;
+        }
+    }
+    assert_eq!(removed, 1, "one version holds {text:?}");
+}
+
+#[tokio::test]
+async fn a_version_taken_but_not_remembered_is_not_shared_back_as_an_edit() {
+    let chosen = tempfile::tempdir().unwrap();
+    let (a, b) = library_pair(chosen.path()).await;
+    let id = a.write("Menu", "Fish.", SPACE.to_string().into()).await;
+    lib_settle(&a, &b, chosen.path()).await;
+    let held = held_key(&library().key());
+    let before = b.db.get_app_metadata(&held).await.unwrap().unwrap();
+
+    a.edit(&id, "Fish and rice.").await;
+    a.lib_sync(chosen.path(), None).await.unwrap();
+    b.lib_sync(chosen.path(), Some(&a.library_member_id()))
+        .await
+        .unwrap();
+    assert_eq!(b.content(&id).await, "Fish and rice.");
+    // The pass stopped before what it took was kept (quit, crash).
+    b.db.set_app_metadata(&held, &before).await.unwrap();
+
+    a.edit(&id, "Fish, rice and cake.").await;
+    a.lib_sync(chosen.path(), None).await.unwrap();
+    let got = b
+        .lib_sync(chosen.path(), Some(&a.library_member_id()))
+        .await
+        .unwrap();
+    assert_eq!(got.exported, 0, "{got:?}");
+    lib_settle(&a, &b, chosen.path()).await;
+    assert_eq!(a.content(&id).await, "Fish, rice and cake.");
+    assert_eq!(b.content(&id).await, "Fish, rice and cake.");
+}
+
+#[tokio::test]
+async fn a_page_never_goes_back_when_its_newest_version_is_gone_from_the_folder() {
+    let chosen = tempfile::tempdir().unwrap();
+    let (a, b) = library_pair(chosen.path()).await;
+    let id = a
+        .write("Menu", "Version one.", SPACE.to_string().into())
+        .await;
+    lib_settle(&a, &b, chosen.path()).await;
+    a.edit(&id, "Version two.").await;
+    lib_settle(&a, &b, chosen.path()).await;
+    assert_eq!(b.content(&id).await, "Version two.");
+
+    remove_version_with(chosen.path(), "Version two.");
+    for _ in 0..2 {
+        a.lib_sync(chosen.path(), None).await.unwrap();
+        b.lib_sync(chosen.path(), Some(&a.library_member_id()))
+            .await
+            .unwrap();
+    }
+    assert_eq!(a.content(&id).await, "Version two.");
+    assert_eq!(b.content(&id).await, "Version two.");
+}
+
+#[tokio::test]
+async fn an_edit_over_a_version_gone_from_the_folder_is_a_conflict_not_an_overwrite() {
+    let chosen = tempfile::tempdir().unwrap();
+    let a = Member::new("Lucian").await;
+    let id = a
+        .write("Menu", "Version one.", SPACE.to_string().into())
+        .await;
+    a.lib_sync(chosen.path(), None).await.unwrap();
+    a.edit(&id, "Version two.").await;
+    a.lib_sync(chosen.path(), None).await.unwrap();
+    // B joins now: version two is all it ever had of the page.
+    let b = Member::new("h1646").await;
+    lib_settle(&a, &b, chosen.path()).await;
+    remove_version_with(chosen.path(), "Version two.");
+
+    a.edit(&id, "Version three, from A.").await;
+    a.lib_sync(chosen.path(), None).await.unwrap();
+    b.edit(&id, "Version two, edited on B.").await;
+    b.lib_sync(chosen.path(), Some(&a.library_member_id()))
+        .await
+        .unwrap();
+    let got = a.lib_sync(chosen.path(), None).await.unwrap();
+    // B's edit was made over version two, not over A's version three: the
+    // two are edits made at the same time, and A is told its edit lost.
+    assert_eq!(got.conflicts, 1, "{got:?}");
+    let history = a.db.list_page_history(&id, 20).await.unwrap();
+    assert!(
+        history
+            .iter()
+            .any(|row| row.content == "Version three, from A."),
+        "A's text stays in its history"
+    );
+}
+
+#[tokio::test]
+async fn a_space_renamed_on_one_computer_is_renamed_on_both() {
+    let chosen = tempfile::tempdir().unwrap();
+    let (a, b) = library_pair(chosen.path()).await;
+    let id = a.write("Menu", "Fish.", SPACE.to_string().into()).await;
+    lib_settle(&a, &b, chosen.path()).await;
+
+    a.db.update_space(SPACE, "Hochzeit", None).await.unwrap();
+    lib_settle(&a, &b, chosen.path()).await;
+    assert_eq!(a.space_of(&id).await.as_deref(), Some("Hochzeit"));
+    assert_eq!(b.space_of(&id).await.as_deref(), Some("Hochzeit"));
+}
+
+#[tokio::test]
+async fn sharing_the_library_through_another_folder_writes_every_page_there() {
+    let first = tempfile::tempdir().unwrap();
+    let second = tempfile::tempdir().unwrap();
+    let a = Member::new("Lucian").await;
+    let id = a.write("Menu", "Fish.", SPACE.to_string().into()).await;
+    a.lib_sync(first.path(), None).await.unwrap();
+    assert!(leave_at(&a.settings(), &library()).unwrap());
+
+    let got = a.lib_sync(second.path(), None).await.unwrap();
+    assert!(got.exported >= 1, "{got:?}");
+    let b = Member::new("h1646").await;
+    b.lib_sync(second.path(), Some(&a.library_member_id()))
+        .await
+        .unwrap();
+    assert_eq!(b.content(&id).await, "Fish.");
+}
+
+#[tokio::test]
+async fn a_page_with_a_title_and_no_text_reaches_the_other_computer() {
+    let chosen = tempfile::tempdir().unwrap();
+    let (a, b) = library_pair(chosen.path()).await;
+    let draft =
+        a.db.create_page_draft("Ideas", "", Some(SPACE), None)
+            .await
+            .unwrap();
+    let id = draft.id.clone();
+    a.db.publish_page_draft(&id, draft.version).await.unwrap();
+    lib_settle(&a, &b, chosen.path()).await;
+    let there = b.page(&id).await.expect("B has the empty page");
+    assert_eq!(there.title, "Ideas");
+    assert_eq!(there.status, "active");
+
+    a.edit(&id, "First idea.").await;
+    lib_settle(&a, &b, chosen.path()).await;
+    assert_eq!(b.content(&id).await, "First idea.");
+}
+
+#[tokio::test]
+async fn an_inbox_file_that_cannot_be_moved_is_still_kept_once() {
+    let chosen = tempfile::tempdir().unwrap();
+    let (a, _b) = library_pair(chosen.path()).await;
+    let inbox = library::inbox_folder(chosen.path());
+    std::fs::create_dir_all(&inbox).unwrap();
+    // `已收` cannot be made: a file has its name.
+    std::fs::write(inbox.join(library::TAKEN_DIR), "in the way").unwrap();
+    let idea = inbox.join("Idea.md");
+    std::fs::write(&idea, "Book the flights to Lisbon early.").unwrap();
+    age(&idea, 60);
+    for _ in 0..3 {
+        a.lib_sync(chosen.path(), None).await.unwrap();
+    }
+    assert!(idea.exists());
+    let kept =
+        a.db.list_memories(None, None, None, None, 50)
+            .await
+            .unwrap();
+    assert_eq!(kept.len(), 1, "{kept:?}");
+}
+
+#[tokio::test]
+async fn the_main_computer_stays_main_when_it_shares_the_library_again() {
+    let chosen = tempfile::tempdir().unwrap();
+    let (a, b) = library_pair(chosen.path()).await;
+    assert!(library::page_writing_allowed_at(&a.settings()));
+    assert!(leave_at(&a.settings(), &library()).unwrap());
+    a.lib_sync(chosen.path(), Some(&a_member(&b)))
+        .await
+        .unwrap();
+    assert!(
+        library::page_writing_allowed_at(&a.settings()),
+        "still main"
+    );
+    assert!(!library::page_writing_allowed_at(&b.settings()));
+}
+
+fn a_member(b: &Member) -> String {
+    b.library_member_id()
+}
+
 #[tokio::test]
 async fn a_lock_set_on_one_side_reaches_the_other_and_so_does_the_unlock() {
     let folder = tempfile::tempdir().unwrap();
@@ -1449,4 +3062,104 @@ async fn a_member_who_may_only_read_is_shown_no_proposal() {
     a.sync(&folder).await;
     b.sync(&folder).await;
     assert!(open_cards(&b).await.is_empty());
+}
+
+#[tokio::test]
+async fn two_libraries_started_in_one_folder_come_together() {
+    // The second computer started its own library before its cloud drive
+    // had downloaded the first one's; the drive kept both engine folders.
+    let chosen = tempfile::tempdir().unwrap();
+    let early = tempfile::tempdir().unwrap();
+    let a = Member::new("Lucian").await;
+    let b = Member::new("h1646").await;
+    let menu = a.write("Menu", "Fish.", SPACE.to_string().into()).await;
+    let trip = b
+        .write("Trip", "Lisbon in June.", "Travel".to_string().into())
+        .await;
+    a.lib_sync(chosen.path(), None).await.unwrap();
+    b.lib_sync(early.path(), None).await.unwrap();
+    std::fs::rename(
+        library::engine_folder(early.path()),
+        chosen.path().join(format!("{} (1)", library::ENGINE_DIR)),
+    )
+    .unwrap();
+    b.lib_sync(chosen.path(), None).await.unwrap();
+    for _ in 0..3 {
+        a.lib_sync(chosen.path(), None).await.unwrap();
+        b.lib_sync(chosen.path(), None).await.unwrap();
+    }
+    assert_eq!(a.library_member_id(), b.library_member_id());
+    assert_eq!(a.content(&trip).await, "Lisbon in June.");
+    assert_eq!(b.content(&menu).await, "Fish.");
+    // One main computer between them.
+    assert_ne!(
+        library::page_writing_allowed_at(&a.settings()),
+        library::page_writing_allowed_at(&b.settings())
+    );
+}
+
+#[tokio::test]
+async fn the_library_keeps_an_edit_it_cannot_put_together_as_a_second_page() {
+    let chosen = tempfile::tempdir().unwrap();
+    let (a, b) = library_pair(chosen.path()).await;
+    let id = a
+        .write("Menu", "Fish or pasta.", SPACE.to_string().into())
+        .await;
+    lib_settle(&a, &b, chosen.path()).await;
+
+    b.edit(&id, "Fish or pasta, and a cake.").await;
+    tick().await;
+    a.edit(&id, "Fish, pasta or risotto.").await;
+    lib_settle(&a, &b, chosen.path()).await;
+    let second = format!("Menu ({})", super::library::computer_name());
+    for computer in [&a, &b] {
+        assert_eq!(computer.content(&id).await, "Fish, pasta or risotto.");
+        let kept = titled(computer, &second).await.expect("the second page");
+        assert_eq!(kept.content, "Fish or pasta, and a cake.");
+        assert_eq!(kept.space.as_deref(), Some(SPACE));
+    }
+}
+
+#[tokio::test]
+async fn an_edit_that_lost_is_kept_once_even_when_a_third_computer_had_it() {
+    let chosen = tempfile::tempdir().unwrap();
+    let folder = chosen.path();
+    let (a, b) = library_pair(folder).await;
+    let me = a.library_member_id();
+    let c = Member::new("Third").await;
+    c.lib_sync(folder, Some(&me)).await.unwrap();
+    let id = a
+        .write("Menu", "Fish or pasta.", SPACE.to_string().into())
+        .await;
+    for _ in 0..3 {
+        a.lib_sync(folder, None).await.unwrap();
+        b.lib_sync(folder, Some(&me)).await.unwrap();
+        c.lib_sync(folder, Some(&me)).await.unwrap();
+    }
+
+    // B's edit reaches C first; A's, made later, wins.
+    b.edit(&id, "Fish or pasta, and a cake.").await;
+    b.lib_sync(folder, Some(&me)).await.unwrap();
+    c.lib_sync(folder, Some(&me)).await.unwrap();
+    assert_eq!(c.content(&id).await, "Fish or pasta, and a cake.");
+    tick().await;
+    a.edit(&id, "Fish, pasta or risotto.").await;
+    for _ in 0..4 {
+        a.lib_sync(folder, None).await.unwrap();
+        c.lib_sync(folder, Some(&me)).await.unwrap();
+        b.lib_sync(folder, Some(&me)).await.unwrap();
+    }
+    for computer in [&a, &b, &c] {
+        assert_eq!(computer.content(&id).await, "Fish, pasta or risotto.");
+        let kept: Vec<Page> = computer
+            .db
+            .list_pages_by_space("active", None, 1_000_000, 0)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|page| page.title.starts_with("Menu ("))
+            .collect();
+        assert_eq!(kept.len(), 1, "one second page, not one per computer");
+        assert_eq!(kept[0].content, "Fish or pasta, and a cake.");
+    }
 }

@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.21.6](https://github.com/wenlan-app/wenlan/compare/v0.21.5...v0.21.6) (2026-11-12)
+
+
+### Features
+
+* **app:** open the big map on one Space from its page ([#1269](https://github.com/wenlan-app/wenlan/issues/1269)) ([d2dfbe6](https://github.com/wenlan-app/wenlan/commit/d2dfbe602f0c209b46c4f4e81ea024f662ce3d5a))
+* **import:** follow Claude Code and Codex memory one way ([#1261](https://github.com/wenlan-app/wenlan/issues/1261)) ([be46ae8](https://github.com/wenlan-app/wenlan/commit/be46ae8feb32f6bb10941896a7230d5c18ff7b1e))
+* **mind-map:** open linked pages in place on a page's map ([#1265](https://github.com/wenlan-app/wenlan/issues/1265)) ([ee215a7](https://github.com/wenlan-app/wenlan/commit/ee215a7e12f3220f2cc9619dc477dcb078dd9f6a))
+* **team:** a named team, a Private / team switch, invite links, and reviewing AI changes together ([#1268](https://github.com/wenlan-app/wenlan/issues/1268)) ([e139907](https://github.com/wenlan-app/wenlan/commit/e139907111e3bffcbea4848cc222705f7d962841))
+* **team:** host Spaces for a team on one Wenlan server ([#1263](https://github.com/wenlan-app/wenlan/issues/1263)) ([b5da013](https://github.com/wenlan-app/wenlan/commit/b5da013245ca13ace633ea34b787b5521e214ac6))
+* **team:** start a team from Settings, or run one in Docker and manage it from your own computer ([#1270](https://github.com/wenlan-app/wenlan/issues/1270)) ([e794526](https://github.com/wenlan-app/wenlan/commit/e794526a45b820310ea509717b0d88546f1a3748))
+
 ## [0.21.5](https://github.com/wenlan-app/wenlan/compare/v0.21.4...v0.21.5) (2026-11-11)
 
 
