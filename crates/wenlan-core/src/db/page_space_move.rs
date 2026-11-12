@@ -94,6 +94,27 @@ fn space_label(space: &str) -> String {
 }
 
 impl MemoryDB {
+    /// Every Space's name.
+    pub async fn space_names(&self) -> Result<Vec<String>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query("SELECT name FROM spaces", ())
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("space names: {e}")))?;
+        let mut out = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("space names row: {e}")))?
+        {
+            out.push(
+                row.get::<String>(0)
+                    .map_err(|e| WenlanError::VectorDb(format!("space name: {e}")))?,
+            );
+        }
+        Ok(out)
+    }
+
     /// Every active page's Space by page id (`None` for none), for keeping
     /// each Space's pages in its folder (`space_folders`).
     pub async fn active_page_spaces(

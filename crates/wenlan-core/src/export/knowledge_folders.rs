@@ -209,7 +209,7 @@ pub(super) fn ensure_case_available(
     Ok(())
 }
 
-pub(super) fn collision_key(name: &str) -> String {
+pub fn collision_key(name: &str) -> String {
     name.nfc().flat_map(char::to_uppercase).collect()
 }
 

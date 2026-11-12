@@ -263,9 +263,9 @@ async fn sync_pass(
     // A file deleted in the folder archives its page, which a restore brings
     // back. Only a full pass decides, since a targeted one did not look.
     if only.is_none() {
-        // Each Space's pages in its folder: a file moved here follows its
-        // page's Space, and a page the person moved to another Space's
-        // folder takes that Space. Off until the person agrees.
+        // Each Space's pages in its folder (`space_folders`): a page whose
+        // Space changed has its file moved; a file the person moved is left
+        // where they put it. Off until the person agrees.
         let config = crate::config::load_config();
         if config.space_folders == Some(true) && !crate::space_folders::is_on(knowledge_path) {
             if let Err(error) = crate::space_folders::turn_on(knowledge_path) {
@@ -291,7 +291,7 @@ async fn sync_pass(
             )
             .await
             {
-                Ok(stats) if stats.moved + stats.respaced + stats.failed > 0 => {
+                Ok(stats) if stats.moved + stats.failed + stats.waiting > 0 => {
                     log::info!("[space-folders] {stats:?}")
                 }
                 Ok(_) => {}

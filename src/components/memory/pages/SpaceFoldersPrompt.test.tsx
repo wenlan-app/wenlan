@@ -37,10 +37,12 @@ describe("SpaceFoldersPrompt", () => {
     await waitFor(() => expect(setSpaceFolders).toHaveBeenCalledWith(false));
   });
 
-  it("turns on without asking for a library with no pages yet", async () => {
+  it("never turns itself on, even when the list in view is empty", async () => {
     getSpaceFolders.mockResolvedValue(null);
     renderPrompt(0);
-    await waitFor(() => expect(setSpaceFolders).toHaveBeenCalledWith(true));
+    await waitFor(() => expect(getSpaceFolders).toHaveBeenCalled());
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(setSpaceFolders).not.toHaveBeenCalled();
     expect(screen.queryByRole("group")).toBeNull();
   });
 

@@ -157,27 +157,19 @@ async fn pages_follow_their_space_and_their_folder_on_disk() {
         md_files(root)
     );
 
-    // The person drags a file into another Space's folder: the page moves Space.
+    // A file the person moved elsewhere stays there, and keeps its Space.
     std::fs::rename(root.join("Wenlan/定位.md"), root.join("個人/定位.md")).unwrap();
     crate::export::knowledge::follow_external_moves(root).unwrap();
-    let stats = arrange(&db, root, &settings, &[]).await.unwrap();
-    assert_eq!(stats.respaced, 1);
-    assert_eq!(page_space(&db, "p-a").await.as_deref(), Some("個人"));
-    assert!(
-        md_files(root).contains("個人/定位.md"),
-        "{:?}",
-        md_files(root)
+    assert_eq!(
+        arrange(&db, root, &settings, &[]).await.unwrap(),
+        PassStats::default()
     );
-    let text = std::fs::read_to_string(root.join("個人/定位.md")).unwrap();
-    assert!(text.contains("個人"), "{text}");
+    assert_eq!(page_space(&db, "p-a").await.as_deref(), Some("Wenlan"));
+    assert!(md_files(root).contains("個人/定位.md"));
 
-    // ... and out of every Space's folder: the page is in no Space.
-    std::fs::rename(root.join("個人/定位.md"), root.join("定位.md")).unwrap();
-    crate::export::knowledge::follow_external_moves(root).unwrap();
-    arrange(&db, root, &settings, &[]).await.unwrap();
-    assert_eq!(page_space(&db, "p-a").await, None);
-    assert!(md_files(root).contains("定位.md"));
-    // Nothing more moves after that.
+    // Off, then on again: nothing nests, nothing moves back.
+    crate::space_folders::turn_off(root).unwrap();
+    crate::space_folders::turn_on(root).unwrap();
     assert_eq!(
         arrange(&db, root, &settings, &[]).await.unwrap(),
         PassStats::default()

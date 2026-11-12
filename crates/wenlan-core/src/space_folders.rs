@@ -8,23 +8,25 @@
 //! <pages>/沒分空間.md              a page in no Space stays at the top
 //! ```
 //!
-//! The folder a page's file sits in and the page's Space say the same thing:
+//! Wenlan puts each page's file where its Space says (one way):
 //!
-//! - A page that Wenlan moved to another Space (or whose Space was renamed,
-//!   or joined a team) has its file moved to the new Space's folder. The
+//! - A page moved to another Space in Wenlan, a renamed Space, or a Space
+//!   that joined a team has its file moved to the new Space's folder. The
 //!   folders the person made inside the old Space come along.
-//! - A file the person moved into another Space's folder (in Finder or
-//!   Obsidian) moves its page to that Space; moved out of every Space's
-//!   folder, the page is in no Space.
+//! - A file the person moved somewhere else in Finder or Obsidian is left
+//!   where they put it, and its page keeps its Space. Following such moves
+//!   (a file dragged into another Space's folder changes the page's Space)
+//!   is later work: a renamed Space folder or a drag into a team's folder
+//!   must not unfile or publish pages unasked.
 //!
-//! The two are told apart by where Wenlan last put each page
-//! ([`Record::placed`]): a file still under that folder was not moved by the
-//! person, so a difference means the page's Space changed.
+//! Which is which is told by where Wenlan last put each page
+//! ([`Record::placed`]): only a file still under that folder is moved.
 //!
-//! This is off until the person agrees (or the pages folder starts empty):
-//! the record file in `<pages>/.wenlan/` is both the switch and the record.
-//! The first pass moves every existing page into its Space's folder,
-//! keeping the folders the person made.
+//! Off until the person agrees: the record file in `<pages>/.wenlan/` is
+//! both the switch and the record. The first pass moves every existing page
+//! into its Space's folder, keeping the folders the person made. Notes the
+//! person put in the folder themselves (adopted notes, such as an Obsidian
+//! vault's) and linked vault folders are never moved.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -85,6 +87,10 @@ pub fn turn_on(root: &Path) -> Result<(), WenlanError> {
     if is_on(root) {
         return Ok(());
     }
+    if off_path(root).is_file() {
+        std::fs::rename(off_path(root), record_path(root))?;
+        return Ok(());
+    }
     save_record(
         root,
         &Record {
@@ -94,9 +100,14 @@ pub fn turn_on(root: &Path) -> Result<(), WenlanError> {
     )
 }
 
-/// Turns it off: pages stay where they are, nothing more is moved.
+fn off_path(root: &Path) -> PathBuf {
+    root.join(".wenlan").join("space-folders.off.json")
+}
+
+/// Turns it off: pages stay where they are, nothing more is moved. The
+/// record is kept aside, so turning it on again knows where pages were put.
 pub fn turn_off(root: &Path) -> Result<(), WenlanError> {
-    match std::fs::remove_file(record_path(root)) {
+    match std::fs::rename(record_path(root), off_path(root)) {
         Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error.into()),
         _ => Ok(()),
     }
@@ -131,45 +142,90 @@ pub fn folder_name(name: &str) -> String {
         || ((upper.starts_with("COM") || upper.starts_with("LPT"))
             && upper.len() == 4
             && upper.as_bytes()[3].is_ascii_digit());
-    if out.is_empty() || windows_reserved || RESERVED.iter().any(|r| out.eq_ignore_ascii_case(r)) {
+    if out.is_empty()
+        || windows_reserved
+        || RESERVED.iter().any(|r| out.eq_ignore_ascii_case(r))
+        || crate::export::knowledge::validate_knowledge_folder_path(&out).is_err()
+    {
         out = format!("{out} (Space)").trim().to_string();
     }
     out
 }
 
-/// The folder a Space's pages are kept in: `<Space>` or `<team>/<Space>`;
-/// `""` (the top) for no Space.
-pub fn space_folder(space: Option<&str>, team: Option<&str>) -> String {
-    match space {
-        None => String::new(),
-        Some(space) => match team {
-            Some(team) => format!("{}/{}", folder_name(team), folder_name(space)),
-            None => folder_name(space),
-        },
-    }
+fn key(name: &str) -> String {
+    crate::export::knowledge::collision_key(name)
 }
 
-/// Every Space's folder, by Space name, with the team folders kept apart
-/// from personal Space folders of the same name.
-pub fn layout(spaces: &[String], teams: &BTreeMap<String, String>) -> BTreeMap<String, String> {
-    let personal: BTreeSet<String> = spaces
+/// `name`, or `name 2`, `name 3`… whichever is not in `taken`.
+fn unique(name: String, taken: &BTreeSet<String>) -> String {
+    if !taken.contains(&key(&name)) {
+        return name;
+    }
+    (2..)
+        .map(|n| format!("{name} {n}"))
+        .find(|candidate| !taken.contains(&key(candidate)))
+        .unwrap_or(name)
+}
+
+/// What decides each Space's folder.
+#[derive(Debug, Default, Clone)]
+pub struct LayoutInput {
+    /// Every Space here, by name.
+    pub spaces: Vec<String>,
+    /// Team Spaces: the team's name, or `None` while the team has no name
+    /// yet (its pages are left where they are until it has one).
+    pub teams: BTreeMap<String, Option<String>>,
+    /// The folders at the top of the pages folder now, as spelled on disk.
+    pub top_folders: Vec<String>,
+    /// Folders never used for a Space (linked vaults).
+    pub skip: Vec<String>,
+}
+
+/// Every Space's folder, by Space name. No two Spaces share a folder (in
+/// any letter case or Unicode form); a folder already on disk keeps its
+/// spelling; a team's folder never takes a personal Space's or a linked
+/// vault's folder.
+pub fn layout(input: &LayoutInput) -> BTreeMap<String, String> {
+    let on_disk: BTreeMap<String, String> = input
+        .top_folders
         .iter()
-        .filter(|space| !teams.contains_key(*space))
-        .map(|space| folder_name(space).to_lowercase())
+        .map(|folder| (key(folder), folder.clone()))
         .collect();
-    spaces
+    let spelled = |name: String| on_disk.get(&key(&name)).cloned().unwrap_or(name);
+    let mut taken: BTreeSet<String> = input.skip.iter().map(|folder| key(folder)).collect();
+    let mut spaces = input.spaces.clone();
+    spaces.sort();
+    let mut out = BTreeMap::new();
+    // Personal Spaces first, so a team never takes their folders.
+    for space in spaces
         .iter()
-        .map(|space| {
-            let team = teams.get(space).map(|team| {
-                if personal.contains(&folder_name(team).to_lowercase()) {
-                    format!("{team} (team)")
-                } else {
-                    team.clone()
-                }
-            });
-            (space.clone(), space_folder(Some(space), team.as_deref()))
-        })
-        .collect()
+        .filter(|space| !input.teams.contains_key(*space))
+    {
+        let folder = spelled(unique(folder_name(space), &taken));
+        taken.insert(key(&folder));
+        out.insert(space.clone(), folder);
+    }
+    let mut team_folders: BTreeMap<String, String> = BTreeMap::new();
+    let mut inside: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for space in &spaces {
+        let Some(Some(team)) = input.teams.get(space) else {
+            continue;
+        };
+        let team_folder = match team_folders.get(&key(team)) {
+            Some(folder) => folder.clone(),
+            None => {
+                let folder = spelled(unique(folder_name(team), &taken));
+                taken.insert(key(&folder));
+                team_folders.insert(key(team), folder.clone());
+                folder
+            }
+        };
+        let used = inside.entry(team_folder.clone()).or_default();
+        let name = unique(folder_name(space), used);
+        used.insert(key(&name));
+        out.insert(space.clone(), format!("{team_folder}/{name}"));
+    }
+    out
 }
 
 /// One page as a pass sees it.
@@ -191,8 +247,6 @@ pub enum Step {
         from: String,
         folder: String,
     },
-    /// The person moved the file: put the page in this Space (`None` = none).
-    SetSpace { id: String, space: Option<String> },
     /// Already where it belongs; remember it there.
     Keep { id: String, folder: String },
 }
@@ -201,28 +255,36 @@ fn dir_of(file: &str) -> &str {
     file.rsplit_once('/').map_or("", |(dir, _)| dir)
 }
 
+/// The rest of `dir` inside `folder`, comparing names as the file system
+/// does (any letter case, any Unicode form); `None` when not inside.
 fn under<'a>(dir: &'a str, folder: &str) -> Option<&'a str> {
     if folder.is_empty() {
         return Some(dir);
     }
-    if dir.eq_ignore_ascii_case(folder) {
-        return Some("");
+    let depth = folder.split('/').count();
+    let parts: Vec<&str> = dir.split('/').collect();
+    if dir.is_empty() || parts.len() < depth {
+        return None;
     }
-    let lower = dir.to_ascii_lowercase();
-    let prefix = format!("{}/", folder.to_ascii_lowercase());
-    lower
-        .starts_with(&prefix)
-        .then(|| &dir[dir.len() - (lower.len() - prefix.len())..])
+    if parts[..depth]
+        .iter()
+        .zip(folder.split('/'))
+        .any(|(have, want)| key(have) != key(want))
+    {
+        return None;
+    }
+    let skip: usize = parts[..depth].iter().map(|part| part.len() + 1).sum();
+    Some(dir.get(skip.min(dir.len())..).unwrap_or_default())
 }
 
-/// The Space whose folder holds `dir` (the deepest one), with the rest of
-/// the path inside it.
-fn owner<'a>(dir: &'a str, layout: &BTreeMap<String, String>) -> Option<(String, &'a str)> {
+/// The rest of `dir` once the Space folder holding it (the deepest one) is
+/// taken off; all of `dir` when no Space folder holds it.
+fn outside_spaces<'a>(dir: &'a str, layout: &BTreeMap<String, String>) -> &'a str {
     layout
-        .iter()
-        .filter_map(|(space, folder)| under(dir, folder).map(|rest| (space, folder.len(), rest)))
-        .max_by_key(|(_, len, _)| *len)
-        .map(|(space, _, rest)| (space.clone(), rest))
+        .values()
+        .filter_map(|folder| under(dir, folder).map(|rest| (folder.len(), rest)))
+        .max_by_key(|(len, _)| *len)
+        .map_or(dir, |(_, rest)| rest)
 }
 
 fn join(folder: &str, rest: &str) -> String {
@@ -233,8 +295,8 @@ fn join(folder: &str, rest: &str) -> String {
     }
 }
 
-/// What a pass does, page by page. `skip` folders (linked vaults, Wenlan's
-/// own) are left alone.
+/// What a pass does, page by page. Pages under a `skip` folder (linked
+/// vaults) or in Wenlan's own folders are left alone.
 pub fn plan(
     pages: &[Placement],
     layout: &BTreeMap<String, String>,
@@ -245,33 +307,51 @@ pub fn plan(
     for page in pages {
         let dir = dir_of(&page.file);
         let first = dir.split('/').next().unwrap_or_default();
-        if RESERVED.iter().any(|r| first.eq_ignore_ascii_case(r))
+        if RESERVED.iter().any(|r| key(first) == key(r))
             || first.starts_with('.')
             || skip
                 .iter()
-                .any(|folder| under(dir, folder).is_some() && !folder.is_empty())
+                .any(|folder| !folder.is_empty() && under(dir, folder).is_some())
         {
             continue;
         }
-        let want = page
-            .space
-            .as_ref()
-            .and_then(|space| layout.get(space))
-            .cloned()
-            .unwrap_or_default();
-        if page.space.is_some() && want.is_empty() {
-            // A Space this pass does not know yet: leave the file alone.
-            continue;
-        }
+        let want = match &page.space {
+            None => String::new(),
+            Some(space) => match layout.get(space) {
+                Some(folder) => folder.clone(),
+                // A Space this pass cannot place yet: leave the file alone.
+                None => continue,
+            },
+        };
+        let keep = || Step::Keep {
+            id: page.id.clone(),
+            folder: want.clone(),
+        };
         let step = match record.placed.get(&page.id) {
             // Still under the folder Wenlan put it in: the Space is what changed.
-            Some(placed) if !placed.is_empty() && under(dir, placed).is_some() => {
-                let rest = under(dir, placed).unwrap_or_default();
-                if placed.eq_ignore_ascii_case(&want) {
-                    Step::Keep {
-                        id: page.id.clone(),
-                        folder: want,
-                    }
+            Some(placed) if !placed.is_empty() => match under(dir, placed) {
+                Some(_) if key(placed) == key(&want) => keep(),
+                Some(rest) => Step::Move {
+                    id: page.id.clone(),
+                    from: page.file.clone(),
+                    folder: join(&want, rest),
+                },
+                // The person moved it elsewhere: theirs to keep there.
+                None => continue,
+            },
+            // Put at the top (no Space then), or never put anywhere: into
+            // its Space's folder, keeping the person's own folders. A file
+            // in some other Space's folder takes only the folders inside it.
+            placed => {
+                let at_top = placed.is_some();
+                let rest = outside_spaces(dir, layout);
+                let inside_want = !want.is_empty() && under(dir, &want).is_some();
+                if inside_want || (want.is_empty() && (at_top || rest == dir)) {
+                    keep()
+                } else if want.is_empty() {
+                    // No Space, but in some Space's folder (put there by
+                    // hand before): leave it where it is.
+                    continue;
                 } else {
                     Step::Move {
                         id: page.id.clone(),
@@ -280,51 +360,6 @@ pub fn plan(
                     }
                 }
             }
-            Some(placed) if placed.is_empty() && owner(dir, layout).is_none() => {
-                if want.is_empty() {
-                    Step::Keep {
-                        id: page.id.clone(),
-                        folder: want,
-                    }
-                } else {
-                    Step::Move {
-                        id: page.id.clone(),
-                        from: page.file.clone(),
-                        folder: join(&want, dir),
-                    }
-                }
-            }
-            // The person moved it: the folder it is in says its Space.
-            Some(_) => {
-                let now = owner(dir, layout).map(|(space, _)| space);
-                if now == page.space {
-                    Step::Keep {
-                        id: page.id.clone(),
-                        folder: want,
-                    }
-                } else {
-                    Step::SetSpace {
-                        id: page.id.clone(),
-                        space: now,
-                    }
-                }
-            }
-            // First pass: into its Space's folder, keeping the person's folders.
-            None => match owner(dir, layout) {
-                Some((space, _)) if Some(&space) == page.space.as_ref() => Step::Keep {
-                    id: page.id.clone(),
-                    folder: want,
-                },
-                _ if want.is_empty() => Step::Keep {
-                    id: page.id.clone(),
-                    folder: want,
-                },
-                _ => Step::Move {
-                    id: page.id.clone(),
-                    from: page.file.clone(),
-                    folder: join(&want, dir),
-                },
-            },
         };
         steps.push(step);
     }
@@ -352,9 +387,41 @@ fn remove_emptied(root: &Path, dir: &str) {
     }
 }
 
-/// The team name each team Space here is synced with, by Space name.
-pub fn team_spaces(settings_path: &Path) -> BTreeMap<String, String> {
-    crate::shared_space::team_names_by_space(settings_path).unwrap_or_default()
+/// Linked vault folders, never used for a Space and never moved.
+fn vault_folders() -> Vec<String> {
+    crate::config::load_config()
+        .linked_vaults
+        .into_iter()
+        .map(|vault| vault.folder)
+        .collect()
+}
+
+/// Everything [`layout`] needs, read now. An unreadable team settings file
+/// is an error: guessing would move team Spaces out and back.
+async fn layout_input(
+    db: &MemoryDB,
+    root: &Path,
+    settings_path: &Path,
+    skip: &[String],
+) -> Result<LayoutInput, WenlanError> {
+    let spaces = db.space_names().await?;
+    let teams = crate::shared_space::team_names_by_space(settings_path)?;
+    let root_owned = root.to_path_buf();
+    let top_folders = tokio::task::spawn_blocking(move || {
+        crate::export::knowledge::list_knowledge_folders(&root_owned)
+    })
+    .await
+    .map_err(|e| WenlanError::Io(std::io::Error::other(e.to_string())))??
+    .into_iter()
+    .filter(|folder| folder.parent_path.is_empty())
+    .map(|folder| folder.name)
+    .collect();
+    Ok(LayoutInput {
+        spaces,
+        teams,
+        top_folders,
+        skip: skip.to_vec(),
+    })
 }
 
 /// Where a new page goes when nothing else says: its Space's folder, made
@@ -373,33 +440,78 @@ pub async fn new_page_folder(
         .space
         .as_deref()
         .filter(|s| *s != UNFILED_SPACE_ID && *s != "uncategorized")?;
-    let spaces: Vec<String> = db
-        .list_spaces()
-        .await
-        .ok()?
-        .into_iter()
-        .map(|s| s.name)
-        .collect();
-    let folder = layout(&spaces, &team_spaces(&crate::shared_space::settings_path()))
-        .get(space)?
-        .clone();
+    let input = layout_input(
+        db,
+        root,
+        &crate::shared_space::settings_path(),
+        &vault_folders(),
+    )
+    .await
+    .ok()?;
+    let folder = layout(&input).get(space)?.clone();
     make_folders(root, &folder)
         .map_err(|error| log::warn!("[space-folders] could not make {folder}: {error}"))
         .ok()?;
     Some(folder)
 }
 
-/// Every active page with a file, its file and its Space.
-async fn placements(db: &MemoryDB, root: &Path) -> Result<Vec<Placement>, WenlanError> {
-    let files = {
-        let root = root.to_path_buf();
-        tokio::task::spawn_blocking(move || crate::export::knowledge::knowledge_edit_targets(&root))
-            .await
-            .map_err(|e| WenlanError::Io(std::io::Error::other(e.to_string())))??
+/// Most moves one pass makes: each move reads the folder's notes once, and
+/// the page watcher waits for the pass. The rest go in the next passes.
+pub const MOVES_PER_PASS: usize = 40;
+
+/// How long a page whose move failed is left before it is tried again.
+const RETRY_AFTER: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+/// Pages whose move failed, and when, so a pass does not retry (and warn)
+/// every 30 seconds.
+static FAILED: std::sync::Mutex<BTreeMap<String, std::time::Instant>> =
+    std::sync::Mutex::new(BTreeMap::new());
+
+fn failed_recently(id: &str) -> bool {
+    FAILED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(id)
+        .is_some_and(|at| at.elapsed() < RETRY_AFTER)
+}
+
+/// What one pass did.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct PassStats {
+    pub moved: usize,
+    pub failed: usize,
+    /// Moves left for the next passes.
+    pub waiting: usize,
+}
+
+/// One pass: moves the files whose page's Space changed (or that were
+/// never put in their Space's folder). Does nothing while it is off.
+pub async fn arrange(
+    db: &MemoryDB,
+    root: &Path,
+    settings_path: &Path,
+    skip: &[String],
+) -> Result<PassStats, WenlanError> {
+    let Some(record) = read_record(root)? else {
+        return Ok(PassStats::default());
     };
+    let mut next = record.clone();
+    let layout = layout(&layout_input(db, root, settings_path, skip).await?);
     let spaces = db.active_page_spaces().await?;
-    Ok(files
+    let root_owned = root.to_path_buf();
+    let (files, person) = tokio::task::spawn_blocking(move || {
+        Ok::<_, WenlanError>((
+            crate::export::knowledge::knowledge_edit_targets(&root_owned)?,
+            crate::export::knowledge::person_page_files(&root_owned)?,
+        ))
+    })
+    .await
+    .map_err(|e| WenlanError::Io(std::io::Error::other(e.to_string())))??;
+    let pages: Vec<Placement> = files
         .into_iter()
+        // A note the person put in the folder is theirs: never moved (its
+        // images and links would break).
+        .filter(|(id, _)| !person.contains_key(id))
         .filter_map(|(id, file)| {
             let space = spaces.get(&id)?.clone();
             Some(Placement {
@@ -408,98 +520,28 @@ async fn placements(db: &MemoryDB, root: &Path) -> Result<Vec<Placement>, Wenlan
                 space: space.filter(|s| s != UNFILED_SPACE_ID && s != "uncategorized"),
             })
         })
-        .collect())
-}
-
-/// What one pass did.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct PassStats {
-    pub moved: usize,
-    pub respaced: usize,
-    pub failed: usize,
-}
-
-/// One pass: moves files whose Space changed and moves pages whose file the
-/// person moved. Does nothing while it is off.
-pub async fn arrange(
-    db: &MemoryDB,
-    root: &Path,
-    settings_path: &Path,
-    skip: &[String],
-) -> Result<PassStats, WenlanError> {
-    let Some(mut record) = read_record(root)? else {
-        return Ok(PassStats::default());
-    };
-    let spaces: Vec<String> = db
-        .list_spaces()
-        .await?
-        .into_iter()
-        .map(|s| s.name)
         .collect();
-    let layout = layout(&spaces, &team_spaces(settings_path));
-    let pages = placements(db, root).await?;
-    let steps = plan(&pages, &layout, &record, skip);
     let mut stats = PassStats::default();
     let mut moves = Vec::new();
-    for step in steps {
+    for step in plan(&pages, &layout, &record, skip) {
         match step {
             Step::Keep { id, folder } => {
-                record.placed.insert(id, folder);
+                next.placed.insert(id, folder);
             }
-            Step::SetSpace { id, space } => {
-                let Some(page) = db.get_page(&id).await? else {
-                    continue;
-                };
-                match db
-                    .set_page_space(
-                        &id,
-                        space.as_deref(),
-                        page.version,
-                        &crate::read_scope::ReadScope::Global,
-                    )
-                    .await
-                {
-                    Ok(_) => {
-                        stats.respaced += 1;
-                        // Its file's `space:` line says the new Space too.
-                        if let Ok(Some(page)) = db.get_page(&id).await {
-                            let projection =
-                                crate::export::knowledge::KnowledgeProjectionWrite::new(
-                                    root.to_path_buf(),
-                                    db,
-                                );
-                            if let Err(error) = projection.write_page_gated(db, &page).await {
-                                log::warn!("[space-folders] {id} moved Space but its file was not rewritten: {error}");
-                            }
-                        }
-                        let folder = space
-                            .as_ref()
-                            .and_then(|space| layout.get(space))
-                            .cloned()
-                            .unwrap_or_default();
-                        record.placed.insert(id, folder);
-                    }
-                    Err(error) => {
-                        stats.failed += 1;
-                        log::warn!(
-                            "[space-folders] could not move {id} to its folder's Space: {error:?}"
-                        );
-                    }
-                }
-            }
+            Step::Move { .. } if moves.len() >= MOVES_PER_PASS => stats.waiting += 1,
+            Step::Move { id, .. } if failed_recently(&id) => {}
             Step::Move { id, from, folder } => moves.push((id, from, folder)),
         }
     }
     if !moves.is_empty() {
         let _projection_write = db.begin_page_projection_write();
         let root_owned = root.to_path_buf();
-        let placed: Vec<(String, String, Result<String, WenlanError>)> =
+        let done: Vec<(String, String, Result<String, WenlanError>)> =
             tokio::task::spawn_blocking(move || {
                 moves
                     .into_iter()
                     .map(|(id, from, folder)| {
-                        let result = (|| {
-                            make_folders(&root_owned, &folder)?;
+                        let result = make_folders(&root_owned, &folder).and_then(|()| {
                             crate::export::knowledge::move_projected_page(
                                 &root_owned,
                                 &id,
@@ -507,7 +549,7 @@ pub async fn arrange(
                                 &folder,
                                 &format!("space-folder-{id}"),
                             )
-                        })();
+                        });
                         if result.is_ok() {
                             remove_emptied(&root_owned, dir_of(&from));
                         }
@@ -517,7 +559,7 @@ pub async fn arrange(
             })
             .await
             .map_err(|e| WenlanError::Io(std::io::Error::other(e.to_string())))?;
-        for (id, folder, result) in placed {
+        for (id, folder, result) in done {
             match result {
                 Ok(_) => {
                     stats.moved += 1;
@@ -527,18 +569,26 @@ pub async fn arrange(
                         .max_by_key(|f| f.len())
                         .cloned()
                         .unwrap_or_default();
-                    record.placed.insert(id, space_folder);
+                    next.placed.insert(id, space_folder);
                 }
                 Err(error) => {
                     stats.failed += 1;
-                    log::warn!("[space-folders] could not move {id} into {folder}: {error}");
+                    log::warn!(
+                        "[space-folders] could not move {id} into {folder} (tried again in 15 min): {error}"
+                    );
+                    FAILED
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .insert(id, std::time::Instant::now());
                 }
             }
         }
     }
-    let live: BTreeSet<&String> = pages.iter().map(|p| &p.id).collect();
-    record.placed.retain(|id, _| live.contains(id));
-    save_record(root, &record)?;
+    // Forget only pages that are gone, not ones missing from one scan.
+    next.placed.retain(|id, _| spaces.contains_key(id));
+    if next != record {
+        save_record(root, &next)?;
+    }
     Ok(stats)
 }
 
