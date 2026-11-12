@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=42b83d79b43420afe05f0d58f85a792ea998b4add6239dde155bb8d23e8848fa -->
+<!-- README_SYNC: source=README.md sha256=918370e86bbd883b14dd465d2a589f9e7ede8f0acc0e6fe65c1d17cd190e0849 -->
 
 <p align="center">
   <picture>
@@ -9,8 +9,7 @@
 
 <p align="center">
   <strong>开源的 Obsidian 替代品，也能直接接上你现有的仓库。</strong><br>
-  想写就自己写，其他交给 AI 整理、更新，不用设 API key，也不用装插件。<br>
-  个人和团队都能用。笔记只会去你让它去的地方。
+  你的 AI 工具帮你整理、更新，不用 API key、不用插件。个人和团队都能用。
 </p>
 
 <p align="center">
@@ -41,26 +40,30 @@
 
 ## 为什么用文澜
 
-我做文澜，是因为笔记、文档和 AI 对话散落各处，要让笔记系统不荒废得不停维护。文澜是给每天用 AI 工具、又不想维护笔记系统的人。
+我做文澜，是因为笔记、文档和 AI 对话散落各处，要让笔记系统不荒废得不停维护。后来我们也不断听到有人说 Obsidian 太麻烦：要找插件、装插件，还要一直更新设置。文澜是给每天用 AI 工具、又不想维护笔记系统的人。
 
-- **改了什么都看得到：** 它改了什么你都看得到，可以还原，也可以决定哪些不让它改。每个引用都能点回原文，引用大多对不上来源的笔记不会保存。
-- **想写就自己写：** 随时打开一页就能写。你写的笔记设成“先问我”。
-- **其他交给 AI 整理：** 你平常用的 AI 工具把你的笔记、文档和 AI 对话写成笔记、连起来，来源变了就跟着更新。文澜不自带 AI。
-- **一键连上：** 在设置里点“全部连接”，就连好你电脑上的 AI 工具。不用自己找插件、装插件、维护插件。
-- **跟团队共用：** 把一个 Space 放进 Google Drive 或 iCloud 云盘的文件夹共用，同事在自己的电脑上加入就能用。
-- **带进现有资料：** 笔记、文档、链接、对话和 Obsidian 仓库都能带进来（[完整清单](#what-can-i-bring-in)），存成本地 Markdown 文件。
+**个人版**：下载桌面 App，自己就能用。
+
+**团队版（下一版推出）**：团队自己架一台文澜服务器，大家都连上去，每个人可以设成只能看或可以改。
+
+- **自己保持最新。** AI 工具会把你在对话里的决定存成记忆，再整理进笔记；来源变了，用到它的笔记也会跟着更新。
+- **不用插件，不用设置。** 在设置里点“全部连接”，一键连好你的 AI 工具。不用找插件、更新插件，也不用 API key。
+- **带进现有资料。** Obsidian 仓库、笔记、文档和 AI 对话都能带进来。[完整清单](#what-can-i-bring-in)。
+- **AI 能改什么由你决定。** 改了什么都看得到、能还原，也能指定哪些笔记要先问你。
+- **笔记都附出处。** 点引用就回到原文；引用大多对不上的笔记不会保存。
+- **共用一个 Space。** 通过 Google Drive 或 iCloud 云盘的文件夹，跟同事共用，或在自己的几台电脑间同步。
 
 <a id="how-it-compares"></a>
 
 ### 跟其他做法比
 
-| | Obsidian 加插件 | 让 AI 工具直接改 Markdown 文件夹 | 文澜 |
-|---|---|---|---|
-| 谁来整理 | 你自己，加上你找来、要维护的插件 | 你的 AI，每次都要你开口 | 你的 AI 工具边做边整理，来源变了会再更新 |
-| 设置 | 找插件、装插件、更新插件 | 自己写指示 | 在设置里点“全部连接”，一键完成 |
-| 检查 AI 写的东西 | 看插件 | 每个改动都要自己看 | 每个引用都能点回原文；引用大多对不上的笔记不会保存 |
-| AI 能改什么 | 看插件 | 文件夹里什么都能改 | 每篇笔记由你决定，也能还原到之前的版本 |
-| 你现有的仓库 | 本来就是你的仓库 | 让 AI 指向它 | 直接接上；笔记留在原处 |
+| | Obsidian 加插件 | Notion | LLM wiki 应用 | 文澜 |
+|---|---|---|---|---|
+| 谁来整理 | 你自己加插件 | 你自己，或 Notion 的 Agent | 你另外设置的 AI | 你的 AI 工具；来源变了会更新 |
+| 设置 | 找插件、更新插件 | 完整 AI 要 Business 方案 | 填模型 key 或排程 | 一键连接，不用 API key |
+| 检查 AI 写的东西 | 看插件 | 附出处，不检查合不合 | 链接到来源 | 引用对不上的笔记不会保存 |
+| AI 能改什么 | 看插件 | 你开放给 Agent 的页面 | 它的 wiki 文件夹 | 每篇由你决定，随时可还原 |
+| 笔记存在哪 | 你的电脑 | Notion 云端 | 你的电脑 | 你的电脑；能接现有仓库 |
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
@@ -90,19 +93,11 @@
 
 在 App 的设置里，“添加工具”会找出你电脑上的 AI 工具，点“全部连接”一次设好，不用另外装东西或更新。接着开一个新的 AI 会话，问它：
 
-> /recall 我之前对这件事的笔记和决定，再帮我：……
+> /wenlan 我之前对这件事怎么决定的？再帮我：……
 
-想自己手动设置，或看看会连上什么：
+只要记得 `/wenlan`（Codex 里是 `$wenlan`），后面直接说你要做什么。
 
-| AI 工具 | 会设置什么 | 说明 |
-|---|---|---|
-| Claude Code / Claude Desktop | 插件 / MCP | [Claude 指南](docs/setup-with-ai.md#claude-code) |
-| ChatGPT Desktop（Codex）、Codex CLI | 插件 | [Codex 指南](docs/setup-with-ai.md#codex) |
-| Cursor、GitHub Copilot、VS Code、Gemini CLI、Antigravity、Windsurf、Kiro、OpenCode、Kimi Code | MCP 和技能 | [MCP 指南](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
-| Muse Code 和其他 MCP 工具 | MCP | [MCP 指南](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
-| Grok Bot | 本机 CLI，或 MCP | [Grok Bot 指南](docs/setup-with-ai.md#grok-bot) |
-
-Codex 中用 `$recall`；只用 MCP 的工具，直接请它先查文澜。Grok Bot 在你的电脑上运行 `wenlan recall`，或在那里开一段短暂的 `wenlan-mcp` 会话（[Grok Bot 指南](docs/setup-with-ai.md#grok-bot)）。
+支持 Claude Code、Claude Desktop、Codex、Cursor、GitHub Copilot、VS Code、Gemini CLI、Windsurf、Grok Bot 和其他 MCP 工具。[手动设置](docs/setup-with-ai.md)。
 
 导入完成后，App 会提供“用（你的 AI 工具）写页面”，把资料写成第一批带引用的笔记，不用输入指令。
 
@@ -113,14 +108,12 @@ Codex 中用 `$recall`；只用 MCP 的工具，直接请它先查文澜。Grok 
 
 ## 能带进什么
 
-| 可以带入什么 | 导入后怎么用 |
-| --- | --- |
-| Markdown、文本文件、文本型 PDF、DOCX 或文件夹 | 搜索、引用里面的文字。文件夹可以只导入一次，也可以持续同步文件的变化。 |
-| Obsidian 仓库或 Logseq 图谱 | 搜索和引用现有笔记。选择持续同步，在后台跟上变化；或只导入一次。你写的笔记默认是“先问我”：AI 的修改会变成建议，由你接受或不要；每篇笔记都可以改这个设置。 |
-| 网页链接 | 在笔记里粘贴链接，就会保存为来源。YouTube、X、Threads、Instagram 和小红书的链接会显示成卡片、可播放的视频或原始帖子。 |
-| Gmail、Notion、Google Drive、Slack、GitHub | 你的 AI 工具用它自己的连接器读取，把重要的内容存进文澜，并附上原文链接。 |
-| 你的 AI 对话 | 你的 AI 工具会把每次对话里的决定、发现和进度存成记忆，不会存完整对话记录。ChatGPT 或 Claude 导出的 ZIP 可以带入之前的对话，保留导入当时的内容。 |
-| 代码仓库 | `/wenlan wiki` 写出对应到代码行的笔记。[代码 wiki](#code-repository-wiki)。 |
+- **文件和文件夹：** Markdown、文本文件、文本型 PDF、DOCX。可以只导入一次，也可以让文件夹持续同步。
+- **Obsidian 仓库和 Logseq 图谱：** 持续同步或只导入一次。你自己写的笔记默认是“先问我”。
+- **网页链接：** 在笔记里粘贴链接就会保存为来源。YouTube、X、Threads、Instagram 和小红书会显示成卡片或视频。
+- **Gmail、Notion、Google Drive、Slack、GitHub：** 你的 AI 工具用自己的连接器读取，把重要的内容存进来，附上原文链接。
+- **AI 对话：** 决定和发现会存成记忆，不存完整对话记录。ChatGPT 和 Claude 导出的 ZIP 也能带进来。
+- **代码仓库：** `/wenlan wiki` 写出对应到代码的笔记。[代码 wiki](#code-repository-wiki)。
 
 也可以把 Open Knowledge Format（OKF）文件夹连接为来源。扫描版 PDF 需要先提取文字；对话附件不会导入。[导入指南](docs/import-guide.md)。
 
@@ -172,7 +165,7 @@ Codex 中用 `$recall`；只用 MCP 的工具，直接请它先查文澜。Grok 
 你的 AI 工具会读你带进来的资料，写成 Markdown 笔记：把相关的笔记连起来，标出每句话的出处，来源变了就跟着更新。任何一篇笔记你都可以打开自己写。
 
 <p align="center">
-  <img src="./docs/assets/wenlan-updates-history-zh-Hans.png" alt="示意流程：文件来源中的发现将记忆由 V1 更新为 V2，再影响自动更新或待审修订的笔记。" width="100%">
+  <img src="./docs/assets/wenlan-updates-history-zh-Hans.animated.svg" alt="示意流程：AI 对话、文件与文件夹（含 Obsidian）、代码和网页内容进入沉淀。它把几条记忆写成新页、合并重复的页，并更新旧页，引用会对照来源核查；设成“先问我”的页会等你点头。它也会找出新关联，处理矛盾时改用较新的说法，旧的留在记录可还原。下次再问，AI 工具会引用更新后的页面。" width="100%">
 </p>
 <p>示意图依据当前的更新行为绘制；并非 App 截图。</p>
 
@@ -180,7 +173,7 @@ Codex 中用 `$recall`；只用 MCP 的工具，直接请它先查文澜。Grok 
 - **跟着来源更新：** 来源、记忆或引用的代码变了，依据它们的笔记会被标出来等待更新。不需要任何模型，文澜也会建议合并近似重复的笔记，并列出还没有对应笔记的 `[[链接]]`。
 - **AI 能改什么由你决定：** 你写的笔记默认是“先问我”，AI 的修改会先等你点头。每篇笔记都可以设成“直接改”或“先问我”，看得到改了什么，也能还原到之前的版本。
 - **两种方式：** “随叫”是默认，由你的 AI 工具在工作时顺手写，不用另外设置 API key。“自动”则由文澜用你选的模型在后台处理，模型可以在你的电脑上，也可以在云端。[沉淀指南](docs/steep.md)。
-- **在你的 AI 工具里：** `/recall` 找回之前的笔记和决定，`/capture` 存下一个决定或心得，`/handoff` 记下做到哪里，`/brief` 下次接着做。[插件指令](plugin/skills/README.md)。
+- **在你的 AI 工具里：** 打 `/wenlan`，后面说你要做什么：找回之前的决定、存下一个心得，或接着上次做到的地方。快捷方式：`/recall`、`/capture`、`/handoff`、`/brief`。[插件指令](plugin/skills/README.md)。
 - **在 App 里：** 不连 AI 也能加资料、写笔记、改笔记、查回引用、审核修改建议。笔记可以包含 Mermaid 图表，由 App 画出来。
 
 已经用 Claude Code 或 Codex 管一个笔记文件夹？继续用就好。文澜接上同一个工具，补上文件夹自己做不到的事：检查引用、来源变了会标记，而且每篇笔记 AI 能不能改由你决定。
@@ -245,7 +238,10 @@ Codex 中用 `$recall`；只用 MCP 的工具，直接请它先查文澜。Grok 
 
 ## 数据与隐私
 
-笔记是你电脑上的 Markdown 文件，符合条件的笔记可以导出为 Open Knowledge Format（OKF）知识库。云端 AI 工具可能会把找回的内容传给它的服务商，云端模型也会收到它处理的内容，所以本地存储不代表这些交互都留在本机。使用统计默认关闭。
+- 笔记是你电脑上的 Markdown 文件，只会去你让它去的地方。
+- 符合条件的笔记可以导出为 Open Knowledge Format（OKF）知识库。
+- 云端 AI 工具可能会把找回的内容传给它的服务商，云端模型也会收到它处理的内容，所以本地存储不代表这些交互都留在本机。
+- 使用统计默认关闭。
 
 **网页访问（实验中）：** 在“设置”中开启“网页访问”，就能让 Claude、ChatGPT 或 Muse 等网页 AI 客户端，在你的电脑保持在线时搜索整个资料库或指定空间。允许应用时可以选“只能搜索”或“搜索和写入”；可以写入的应用还能新增、修改和删除内容，AI 应用可以在每次改动前先问你。查询与结果会经过中继服务，详见[隐私边界](docs/PRIVACY.md#pre-release-standalone-wenlan-relay-connector)。
 

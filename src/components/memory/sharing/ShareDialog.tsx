@@ -22,7 +22,7 @@ import type { SettingsSection } from "../settings/SettingsSidebar";
 import { TEAM_KEY, useTeamStatus } from "./team";
 import { TeamSpaceAccess } from "./TeamMembers";
 import { relativeMs } from "../page/format";
-import { SHARES_KEY, cloudName, others, pageShare, revealFolderLabel, shortFolder, spaceShare, teamLabel, useShares } from "./sharing";
+import { SHARES_KEY, cloudName, others, pageShare, revealFolderLabel, shortFolder, spaceShare, teamLabel, teamPausedText, useShares } from "./sharing";
 import "./sharing.css";
 
 export type ShareTarget = {
@@ -189,7 +189,7 @@ function ShareBox({ kind, target, title, onClose }: ShareTarget & { readonly onC
 function syncLine(share: SharedStatus, t: TFunction, locale: string): string {
   const last = share.last;
   if (!last) return t("sharing.syncing");
-  if (last.paused) return share.host ? t("team.pausedRemoved") : t("sharing.paused");
+  if (last.paused) return share.host ? teamPausedText(t, share) : t("sharing.paused");
   const when = relativeMs(Date.parse(last.at), locale);
   if (last.counts.skipped > 0) return t("sharing.waiting", { count: last.counts.skipped });
   return t("sharing.upToDate", { when });
@@ -207,7 +207,11 @@ function TeamSpaceBox({ share, shares, onClose }: {
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
   const [confirmingStop, setConfirmingStop] = useState(false);
+  const status = useTeamStatus();
   const team = teamLabel(t, share.team ?? shares.find((other) => other.hosted && other.team)?.team);
+  // The team's owner decides who has a Space, on its server or from their own
+  // computer when the server is somewhere nobody sits.
+  const owns = share.hosted || (Boolean(status.data?.remote) && Boolean(share.team) && share.team?.id === status.data?.team?.id);
   const me = share.members.find((member) => member.id === share.member_id) ?? { id: share.member_id, name: share.member_name };
   const rest = others(share);
   const broken = share.last?.paused || share.last?.error;
@@ -228,7 +232,7 @@ function TeamSpaceBox({ share, shares, onClose }: {
   return (
     <div className="share-members">
       <h2 id="share-dialog-title">{t("team.access.title", { space: share.target, team })}</h2>
-      {share.hosted ? (
+      {owns ? (
         <TeamSpaceAccess space={share.target} team={team} onError={setError} />
       ) : (
         <ul className="share-member-list">
@@ -236,7 +240,7 @@ function TeamSpaceBox({ share, shares, onClose }: {
           {rest.map((member) => <li key={member.id}><span>{member.name}</span></li>)}
         </ul>
       )}
-      {broken && <p className="share-warning" role="status">{share.last?.paused ? t("team.pausedRemoved") : share.last?.error}</p>}
+      {broken && <p className="share-warning" role="status">{share.last?.paused ? teamPausedText(t, share) : share.last?.error}</p>}
       {error && <p className="share-warning" role="alert">{t("sharing.failed", { message: error })}</p>}
       <div className={share.hosted ? "share-actions share-actions-split" : "share-actions"}>
         {share.hosted && <button type="button" className="share-link" onClick={() => setConfirmingStop(true)}>{t("team.access.takeOff")}</button>}

@@ -1114,6 +1114,16 @@ async fn project_latest_page(db: &MemoryDB, page_id: &str, path: &Path) {
     }
 }
 
+/// Whether `edited_by` is a person whose save may leave a page with no text:
+/// an edit in the app, or a person's version from another computer.
+fn person_may_clear(edited_by: &str) -> bool {
+    edited_by == "manual_edit"
+        || edited_by == crate::shared_space::OWN_DEVICE_PERSON
+        || edited_by
+            .strip_prefix(crate::shared_space::SHARED_PERSON)
+            .is_some_and(|rest| rest.starts_with(':'))
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn update_page_db_impl(
     db: &MemoryDB,
@@ -1132,7 +1142,11 @@ async fn update_page_db_impl(
     basis: &BasisWrite,
 ) -> Result<WriteResult, WenlanError> {
     // ── Pre-write validation ────────────────────────────────────────────────
-    if req.content.trim().is_empty() {
+    // A person may clear a page's text (it keeps its title, and the old text
+    // stays in its history), in the app or on another computer the page
+    // syncs from. Nothing automatic may: an empty body from a pipeline or an
+    // AI tool is a fault, not an intent.
+    if req.content.trim().is_empty() && !person_may_clear(edited_by) {
         return Err(WenlanError::Validation(
             "page content must not be empty".into(),
         ));

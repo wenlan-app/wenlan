@@ -1,0 +1,12 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+.share-dialog.server-setup { width:min(560px,calc(100vw - 32px)); }
+.server-setup-steps { list-style:decimal;margin:16px 0 0;padding:0 0 0 20px;display:flex;flex-direction:column;gap:18px; }
+.server-setup-steps > li { padding-left:4px; }
+.server-setup-steps > li > * { display:flex; }
+.server-setup-steps > li > * + * { margin-top:6px; }
+.server-setup-steps > li::marker { color:var(--mem-text-secondary);font-size:13px; }
+.server-setup-run-head { display:flex;align-items:center;justify-content:space-between;gap:12px; }
+.server-setup-command { margin:0;background:var(--mem-surface);border-radius:var(--mem-r-5);padding:10px 12px;font:12px/1.6 var(--mem-font-mono);color:var(--mem-text);white-space:pre-wrap;overflow-wrap:anywhere;display:flex;flex-direction:column;gap:10px; }
+.server-setup-command code { font:inherit; }
+.server-setup-command-example { color:var(--mem-text-secondary); }
+.server-setup-actions { justify-content:space-between;align-items:center;margin-top:20px; }

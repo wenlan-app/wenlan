@@ -1,17 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Settings › Team: membership and the server's plumbing only. Which team this
-// computer is on and as whom; on the team's server, that it is on and the
-// address put in invite links. Spaces and people live on the team's page.
+// computer is on and as whom; starting a team on this computer; on the team's
+// server, that it is on (and turning it off) and the address put in invite
+// links. Spaces and people live in the switch at the top left.
 // This is the only screen that says "server" or shows an address.
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { open as openExternal } from "@tauri-apps/plugin-shell";
-import { SettingRow, Input, Field } from "../primitives";
+import { useQueryClient } from "@tanstack/react-query";
+import { teamStop, type SharedStatus } from "../../../../lib/tauri";
+import { confirmAction } from "../../../../lib/confirmAction";
+import { Button, SettingRow, Input, Field } from "../primitives";
 import { SettingsGroup } from "../SettingsView";
-import { TEAM_DOCS_URL, prefillTeamUrl, rememberTeamUrl, useTeamStatus } from "../../sharing/team";
-import { teamLabel, useShares } from "../../sharing/sharing";
+import { TEAM_KEY, prefillTeamUrl, rememberTeamUrl, useTeamStatus } from "../../sharing/team";
+import { SHARES_KEY, teamLabel, teamPausedText, useShares } from "../../sharing/sharing";
 import { teamGroups } from "../../team/TeamPage";
 import { JoinSharedDialog } from "../../sharing/JoinSharedDialog";
+import { StartTeamDialog } from "../../team/StartTeamDialog";
+import { ServerSetupDialog } from "../../team/ServerSetupDialog";
 import { useScope } from "../../team/scope";
 import "./teamSection.css";
 
@@ -21,61 +26,125 @@ export default function TeamSection() {
   const shares = useShares();
   const [address, setAddress] = useState<string | null>(null);
   const [joining, setJoining] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [onServer, setOnServer] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const scope = useScope();
+  const queryClient = useQueryClient();
 
   if (status.isPending || shares.isPending) return <p className="team-off" role="status">{t("team.loading")}</p>;
-  const listening = status.data?.listening ?? null;
-  const joined = teamGroups(shares.data, undefined).filter((group) => !group.hosted);
-  const hosting = Boolean(listening) || (status.data?.spaces.length ?? 0) > 0;
-  const join = (
-    <>
-      <button type="button" className="team-join-button" onClick={() => setJoining(true)}>{t("team.settings.joinWithLink")}</button>
-      {joining && (
-        <JoinSharedDialog
-          only="code"
-          onClose={() => setJoining(false)}
-          onJoined={(kind, target) => {
-            setJoining(false);
-            // The new team is shown at once: the switch appears at the top left.
-            if (kind === "team") scope.setScope(`team:${target}`);
-          }}
-        />
-      )}
-    </>
+  // A team whose server is elsewhere and that this person owns: its status
+  // is read from that server, and this computer hosts nothing.
+  const here = status.data?.remote ? undefined : status.data;
+  const listening = here?.listening ?? null;
+  const joined = teamGroups(shares.data, status.data).filter((group) => !group.hosted);
+  const hosting = Boolean(listening) || (here?.spaces.length ?? 0) > 0 || (here?.members.length ?? 0) > 0;
+  const pausedOf = (shares: readonly SharedStatus[]) => {
+    const paused = shares.find((share) => share.last?.paused);
+    return paused ? teamPausedText(t, paused) : null;
+  };
+  // The dialogs sit outside the section's own text, whose link-like buttons
+  // would otherwise style theirs.
+  const joinDialog = joining && (
+    <JoinSharedDialog
+      only="code"
+      onClose={() => setJoining(false)}
+      onJoined={(kind, target) => {
+        setJoining(false);
+        // The new team is shown at once: the switch appears at the top left.
+        if (kind === "team") scope.setScope(`team:${target}`);
+      }}
+    />
   );
+  const startDialog = starting && (
+    <StartTeamDialog
+      status={here}
+      onClose={() => setStarting(false)}
+      onStarted={() => {
+        setStarting(false);
+        scope.setScope("hosted");
+      }}
+    />
+  );
+  const stop = async () => {
+    const name = teamLabel(t, here?.team);
+    const ok = await confirmAction(t("team.start.stopConfirm", { team: name }), { confirm: t("team.start.stop"), cancel: t("sharing.cancel") });
+    if (!ok) return;
+    setError(null);
+    try {
+      await teamStop();
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: TEAM_KEY }),
+        queryClient.invalidateQueries({ queryKey: SHARES_KEY }),
+      ]);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
+  };
+
+  const joinRow = (title: string) => (
+    <SettingRow
+      title={title}
+      description={t("team.settings.joinHint")}
+      control={<Button onClick={() => setJoining(true)}>{t("team.settings.joinAction")}</Button>}
+    />
+  );
+
   // The only way into teams for someone on none: nothing else in the app
-  // mentions them.
+  // mentions them. Three ways, one row each: join, start one here, or run
+  // one on a box nobody sits at.
   if (!hosting && joined.length === 0) {
     return (
-      <div className="team-off">
-        <p>{t("team.settings.none")}</p>
-        <p className="team-off-actions">
-          {join}
-          <button type="button" onClick={() => { void Promise.resolve(openExternal(TEAM_DOCS_URL)).catch(() => undefined); }}>{t("team.settings.howToStart")}</button>
-        </p>
-      </div>
+      <>
+        <SettingsGroup className="mem-fade-up">
+          {joinRow(t("team.settings.joinTitle"))}
+          <SettingRow
+            title={t("team.start.title")}
+            description={t("team.settings.startHint")}
+            control={<Button onClick={() => setStarting(true)}>{t("team.settings.startAction")}</Button>}
+          />
+          <SettingRow
+            title={t("team.settings.boxTitle")}
+            description={t("team.settings.boxHint")}
+            control={<Button onClick={() => setOnServer(true)}>{t("team.settings.boxAction")}</Button>}
+          />
+        </SettingsGroup>
+        {joinDialog}
+        {startDialog}
+        {onServer && (
+          <ServerSetupDialog
+            onClose={() => setOnServer(false)}
+            onPaste={() => { setOnServer(false); setJoining(true); }}
+          />
+        )}
+      </>
     );
   }
 
-  const url = address ?? prefillTeamUrl(listening);
+  const url = address ?? (prefillTeamUrl(listening) || here?.url || "");
   return (
     <>
+      {error && <p className="team-error" role="alert">{error}</p>}
       {joined.map((group) => (
         <SettingsGroup key={group.key} heading={teamLabel(t, group.team)} className="mem-fade-up">
           <SettingRow
-            title={t("team.settings.joinedAs", { name: group.shares[0]?.member_name ?? "" })}
-            description={group.shares.some((share) => share.last?.paused) ? t("team.pausedRemoved") : t("team.settings.connected")}
+            title={group.owner
+              ? t("team.settings.ownerElsewhere")
+              : t("team.settings.joinedAs", { name: group.shares[0]?.member_name ?? "" })}
+            description={pausedOf(group.shares) ?? t("team.settings.connected")}
             control={null}
           />
         </SettingsGroup>
       ))}
-      {!hosting && <p className="team-off-actions">{join}</p>}
+      {!hosting && <SettingsGroup className="mem-fade-up">{joinRow(t("team.settings.joinAnother"))}</SettingsGroup>}
       {hosting && (
-        <SettingsGroup heading={teamLabel(t, status.data?.team)} className="mem-fade-up">
+        <SettingsGroup heading={teamLabel(t, here?.team)} className="mem-fade-up">
           <SettingRow
             title={t("team.settings.thisServer")}
-            description={listening ? t("team.settings.on", { addr: listening }) : t("team.settings.off")}
-            control={null}
+            description={listening ? t("team.settings.on", { addr: here?.url || listening }) : t("team.settings.off")}
+            control={listening
+              ? <Button onClick={() => void stop()}>{t("team.start.stop")}</Button>
+              : <Button onClick={() => setStarting(true)}>{t("team.start.again")}</Button>}
           />
           {listening && (
             <div className="team-address">
@@ -92,6 +161,8 @@ export default function TeamSection() {
           )}
         </SettingsGroup>
       )}
+      {joinDialog}
+      {startDialog}
     </>
   );
 }

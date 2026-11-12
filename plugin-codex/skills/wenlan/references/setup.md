@@ -73,7 +73,7 @@ command -v wenlan >/dev/null 2>&1 && echo present || echo absent
 If absent, install and configure local memory:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/wenlan-app/wenlan/v0.21.5/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/wenlan-app/wenlan/v0.21.6/install.sh | bash
 export PATH="$HOME/.wenlan/bin:$PATH"
 wenlan setup --basic
 wenlan background on

@@ -440,3 +440,72 @@ fn join_codes_need_a_key_and_a_safe_address() {
         "http://100.70.1.2:7879"
     );
 }
+
+#[tokio::test]
+async fn only_the_owner_reaches_the_team_s_management_calls() {
+    let f = fixture();
+    for (method, uri) in [
+        (Method::GET, "/team/v1/admin"),
+        (Method::POST, "/team/v1/admin/members"),
+        (Method::DELETE, "/team/v1/admin/members/x"),
+    ] {
+        let (status, _) = call(&f.state, method, uri, Some(&f.writer.1), vec![]).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{uri}");
+    }
+    let (status, _) = call(&f.state, Method::GET, "/team/v1/admin", None, vec![]).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    let (_, owner_key) = team::owner_key(&f.state.team_path, "Owner").unwrap();
+    // Nothing but the team's own calls is passed on to this Wenlan.
+    for uri in [
+        "/team/v1/admin/../pages",
+        "/team/v1/admin/join",
+        "/team/v1/admin/members/x/y",
+    ] {
+        let (status, _) = call(&f.state, Method::GET, uri, Some(&owner_key), vec![]).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
+    }
+    // An allowed call goes to this Wenlan over loopback (not running here).
+    let (status, _) = call(
+        &f.state,
+        Method::GET,
+        "/team/v1/admin",
+        Some(&owner_key),
+        vec![],
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+}
+
+#[tokio::test]
+async fn the_owner_is_told_every_hosted_space_and_can_read_it() {
+    let f = fixture();
+    let (_, owner_key) = team::owner_key(&f.state.team_path, "Owner").unwrap();
+    let (status, body) = call(
+        &f.state,
+        Method::GET,
+        "/team/v1/me",
+        Some(&owner_key),
+        vec![],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let me: wenlan_types::team::TeamMe = serde_json::from_slice(&body).unwrap();
+    assert_eq!(me.role, TeamRole::Owner);
+    assert_eq!(
+        me.spaces,
+        vec![TeamSpaceAccess {
+            space: "Design".into(),
+            access: TeamAccess::Write
+        }]
+    );
+    let (status, _) = call(
+        &f.state,
+        Method::GET,
+        "/team/v1/spaces/Design/files",
+        Some(&owner_key),
+        vec![],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+}
