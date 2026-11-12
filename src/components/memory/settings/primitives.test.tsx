@@ -6,6 +6,7 @@ import userEvent from "@testing-library/user-event";
 import { i18n } from "../../../i18n";
 import {
   Button,
+  Card,
   Field,
   Input,
   Select,
@@ -416,5 +417,19 @@ describe("StatusChip unknown state", () => {
     render(<StatusChip state={{ kind: "unknown", detail: "pid identity was lost" }} label="Last stop" />);
     expect(screen.getByText("Last stop · pid identity was lost")).toBeInTheDocument();
     expect(screen.queryByText(/Not verified yet/)).toBeNull();
+  });
+});
+
+describe("Card", () => {
+  it("keeps rows apart by space, never by lines between them", () => {
+    const { container } = render(
+      <Card padding="rows">
+        <SettingRow title="One" description="First" control={null} />
+        <SettingRow title="Two" description="Second" control={null} />
+      </Card>,
+    );
+    const card = container.querySelector("[data-card-rows]") as HTMLElement;
+    expect(card).not.toBeNull();
+    expect(card.className).not.toMatch(/divide-/);
   });
 });

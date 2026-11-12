@@ -517,13 +517,14 @@ export function Card({
   interactive = false,
   children,
 }: CardProps) {
+  // Rows sit apart by their own padding, never by lines between them.
   return (
     <div
+      data-card-rows={padding === "rows" ? "" : undefined}
       className={[
         "bg-[var(--mem-surface)] border rounded-[var(--mem-radius-lg)] overflow-hidden",
         CARD_TONE_BORDER[tone],
         padding === "card" ? "p-[var(--mem-space-5)]" : "",
-        padding === "rows" ? "divide-y divide-[var(--mem-border)]" : "",
         interactive
           ? "cursor-pointer transition-[background-color,box-shadow] duration-[var(--mem-dur-fast)] hover:bg-[var(--mem-hover)] hover:shadow-[var(--mem-shadow-raised)]"
           : "",

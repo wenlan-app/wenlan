@@ -39,7 +39,7 @@ describe("TeamSection", () => {
     expect(screen.getByRole("button", { name: "Paste invite link…" })).toBeInTheDocument();
     expect(screen.getByText("Start a team on this computer")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Start…" })).toBeInTheDocument();
-    expect(screen.getByText("Run it on a NAS or a cloud machine")).toBeInTheDocument();
+    expect(screen.getByText("Run it on a server")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "See how" }));
     expect(openExternal).toHaveBeenCalledWith("https://github.com/wenlan-app/wenlan/blob/main/docs/team-server.md");
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
