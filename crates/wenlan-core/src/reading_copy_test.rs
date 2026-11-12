@@ -273,7 +273,7 @@ fn history_file_holds_earlier_versions_newest_first() {
             version("2026-11-09T10:00:00Z", true, "v1"),
         ],
     );
-    let r = run(tmp.path(), &[p.clone()], &mut st);
+    let r = run(tmp.path(), std::slice::from_ref(&p), &mut st);
     assert_eq!(r.written, 2);
     let h = read(tmp.path(), "歷史/Work/Alpha.md");
     assert!(h.contains("earlier_versions: true"));
