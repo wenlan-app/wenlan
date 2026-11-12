@@ -46,3 +46,26 @@
 /* The text stays mounted behind a look, so an edit in progress is kept. */
 .page-look-text { display: contents; }
 .page-look-text[hidden] { display: none; }
+/* Home's HTML view (UX-LOOK-10): the pencil sits at home's top right, out of
+   the column's flow so home keeps its spacing. */
+.home-columns:has(> .home-look-bar) { position: relative; }
+.home-look-bar {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.home-look-remove {
+  padding: 3px 8px;
+  border: 0;
+  border-radius: var(--mem-r-2);
+  background: transparent;
+  color: var(--mem-text-secondary);
+  font: 400 13px/1.5 var(--mem-font-body);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.home-look-remove:hover { color: var(--mem-text); background: var(--mem-hover); }

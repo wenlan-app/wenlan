@@ -4,6 +4,9 @@
 
 export const enPageLook = {
   editPage: "Edit page",
+  homeName: "Home",
+  usualHome: "Show the usual home",
+  homeFailed: "This HTML view can't be shown, so here's the usual home.",
   failed: "This HTML view can't be shown, so here's the text.",
   frameTitle: "HTML view of {{title}}",
   askAi: "Ask your AI to make an HTML view…",
@@ -25,6 +28,9 @@ export const enPageLook = {
 
 export const hantPageLook = {
   editPage: "編輯這頁",
+  homeName: "首頁",
+  usualHome: "顯示原本的首頁",
+  homeFailed: "這個 HTML 檢視顯示不出來，先給你看原本的首頁。",
   failed: "這個 HTML 檢視顯示不出來，先給你看文字。",
   frameTitle: "{{title}}的 HTML 檢視",
   askAi: "請你的 AI 為這頁做 HTML 檢視…",
@@ -46,6 +52,9 @@ export const hantPageLook = {
 
 export const hansPageLook = {
   editPage: "编辑这页",
+  homeName: "首页",
+  usualHome: "显示原本的首页",
+  homeFailed: "这个 HTML 视图显示不出来，先给你看原本的首页。",
   failed: "这个 HTML 视图显示不出来，先给你看文字。",
   frameTitle: "{{title}}的 HTML 视图",
   askAi: "请你的 AI 为这页做 HTML 视图…",

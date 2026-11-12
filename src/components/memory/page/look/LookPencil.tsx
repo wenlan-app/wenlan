@@ -9,9 +9,11 @@ import "./look.css";
  * design comes back with the edits in it. After the design failed to show,
  * pressing it tries the design again.
  */
-export function LookPencil({ editing, onChange }: {
+export function LookPencil({ editing, onChange, label }: {
   /** The text is showing instead of the design. */
   editing: boolean;
+  /** Defaults to "Edit page"; home says what it shows instead. */
+  label?: string;
   onChange: (mode: "look" | "text") => void;
 }) {
   const { t } = useTranslation();
@@ -20,8 +22,8 @@ export function LookPencil({ editing, onChange }: {
       type="button"
       className="mem-icon-action workspace-panel-toggle page-look-pencil"
       data-testid="page-look-pencil"
-      aria-label={t("pageLook.editPage")}
-      title={t("pageLook.editPage")}
+      aria-label={label ?? t("pageLook.editPage")}
+      title={label ?? t("pageLook.editPage")}
       aria-pressed={editing}
       onClick={(event) => {
         // WebKit pointer clicks do not focus buttons; keep a stable return target.
