@@ -1,28 +1,30 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copy for a page's look (UX-LOOK-1..6). Keyed as `pageLook` in
-// i18n/resources.ts. The switch labels must not wrap.
+// i18n/resources.ts. Labels must not wrap.
 
 export const enPageLook = {
-  look: "Look",
-  text: "Text",
-  switchLabel: "How to show this page",
-  failed: "This look can't be shown, so here's the text.",
-  frameTitle: "Look of {{title}}",
+  editPage: "Edit page",
+  failed: "This design can't be shown, so here's the text.",
+  frameTitle: "Design of {{title}}",
   askAi: "Ask your AI to design this page…",
-  askAiPrompt: "Use Wenlan's read_page_look on \"{{title}}\", then design a look for it with set_page_look.",
+  askAiPrompt: "Use Wenlan's read_page_look on \"{{title}}\", then design it with set_page_look.",
   copied: "Copied",
   copyFailed: "Couldn't copy. Try again.",
-  remove: "Remove look",
-  removed: "Look removed.",
+  remove: "Remove design",
+  removed: "Design removed.",
   undo: "Undo",
-  removeFailed: "Couldn't remove the look. Try again.",
-  restoreFailed: "Couldn't put the look back. Try again.",
+  checked: "Ticked.",
+  unchecked: "Unticked.",
+  checkFailed: "Couldn't save that tick. Try again in the text.",
+  removeFailed: "Couldn't remove the design. Try again.",
+  restoreFailed: "Couldn't put the design back. Try again.",
+  sitesAsk: "This design wants to reach {{sites}}. It could send what this page says there.",
+  sitesAllow: "Allow",
+  sitesNotNow: "Not now",
 };
 
 export const hantPageLook = {
-  look: "樣子",
-  text: "文字",
-  switchLabel: "這一頁怎麼顯示",
+  editPage: "編輯這頁",
   failed: "這個樣子顯示不出來，先給你看文字。",
   frameTitle: "{{title}}的樣子",
   askAi: "請你的 AI 設計這一頁…",
@@ -32,14 +34,18 @@ export const hantPageLook = {
   remove: "拿掉樣子",
   removed: "已拿掉樣子。",
   undo: "復原",
+  checked: "已勾選。",
+  unchecked: "已取消勾選。",
+  checkFailed: "沒存到這個勾選，請到文字裡再試一次。",
   removeFailed: "拿不掉樣子，請再試一次。",
   restoreFailed: "放不回樣子，請再試一次。",
+  sitesAsk: "這個樣子想連到 {{sites}}，這頁的內容可能會傳過去。",
+  sitesAllow: "允許",
+  sitesNotNow: "先不要",
 };
 
 export const hansPageLook = {
-  look: "样子",
-  text: "文字",
-  switchLabel: "这一页怎么显示",
+  editPage: "编辑这页",
   failed: "这个样子显示不出来，先给你看文字。",
   frameTitle: "{{title}}的样子",
   askAi: "请你的 AI 设计这一页…",
@@ -49,6 +55,12 @@ export const hansPageLook = {
   remove: "拿掉样子",
   removed: "已拿掉样子。",
   undo: "撤销",
+  checked: "已勾选。",
+  unchecked: "已取消勾选。",
+  checkFailed: "没存到这个勾选，请到文字里再试一次。",
   removeFailed: "拿不掉样子，请再试一次。",
   restoreFailed: "放不回样子，请再试一次。",
+  sitesAsk: "这个样子想连到 {{sites}}，这页的内容可能会传过去。",
+  sitesAllow: "允许",
+  sitesNotNow: "先不要",
 };

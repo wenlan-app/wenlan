@@ -14,8 +14,10 @@
 //! reason an AI tool can act on.
 //!
 //! Rules held by tests:
-//! - Raw HTML in the body is dropped; links and images are reduced to their
-//!   text. A `[[link]]` to a page becomes `<a data-wenlan-page="id">`.
+//! - Raw HTML in the body is dropped; links are reduced to their text. A
+//!   `[[link]]` to a page becomes `<a data-wenlan-page="id">`. A picture in
+//!   the pages folder becomes `<img data-wenlan-image="n">` listed in
+//!   `page.images`; a picture on the web keeps its alt text.
 //! - Arrays are never null; the JSON shape is pinned by a golden fixture.
 
 use std::collections::{HashMap, HashSet};
@@ -24,8 +26,8 @@ use std::sync::LazyLock;
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use regex::Regex;
 use wenlan_types::page_look::{
-    LookData, LookItem, LookLink, LookPageData, LookSection, LookSpaceData, LookSpacePage,
-    LookTable, LookTheme, LOOK_API, LOOK_SPACE_PAGES_MAX,
+    LookData, LookImage, LookItem, LookLink, LookPageData, LookSection, LookSpaceData,
+    LookSpacePage, LookTable, LookTheme, LOOK_API, LOOK_SPACE_PAGES_MAX,
 };
 use wenlan_types::pages::Page;
 
@@ -91,7 +93,10 @@ pub fn look_data(
         .join("")
         .trim()
         .to_string();
-    let html = render_html(&text, targets);
+    // The whole text first, so every picture has its place before a section
+    // names it.
+    let mut images: Vec<LookImage> = Vec::new();
+    let html = render_html(&text, targets, &mut images);
 
     let sections = kept
         .iter()
@@ -103,7 +108,7 @@ pub fn look_data(
                 heading: s.heading.clone(),
                 level: s.level,
                 text: body.to_string(),
-                html: render_html(body, targets),
+                html: render_html(body, targets, &mut images),
                 items,
                 tables,
             }
@@ -131,6 +136,7 @@ pub fn look_data(
             html,
             sections,
             links,
+            images,
         },
         space: LookSpaceData {
             name: space_name.to_string(),
@@ -401,7 +407,7 @@ fn escape(text: &str, out: &mut String) {
 
 /// Markdown to HTML for a look. Raw HTML is dropped; links and images are
 /// reduced to their text; a `[[link]]` becomes an anchor naming the page.
-fn render_html(md: &str, targets: &LinkTargets) -> String {
+fn render_html(md: &str, targets: &LinkTargets, images: &mut Vec<LookImage>) -> String {
     // Adjacent text events are one run, so a `[[link]]` pulldown split at its
     // brackets is found whole.
     let mut events: Vec<Event> = Vec::new();
@@ -432,8 +438,30 @@ fn render_html(md: &str, targets: &LinkTargets) -> String {
     let mut in_code = false;
     let mut in_head = false;
     let mut body_open = false;
+    // A picture in the pages folder being read: its source and alt so far.
+    let mut picture: Option<(String, String)> = None;
     for event in events {
+        if let Some((_, alt)) = picture.as_mut() {
+            match &event {
+                Event::Text(t) | Event::Code(t) => {
+                    alt.push_str(t);
+                    continue;
+                }
+                Event::End(TagEnd::Image) => {
+                    let (src, alt) = picture.take().unwrap_or_default();
+                    push_image(&src, alt.trim(), images, &mut out);
+                    continue;
+                }
+                _ => continue,
+            }
+        }
         match event {
+            Event::Start(Tag::Image { dest_url, .. }) if is_folder_picture(&dest_url) => {
+                picture = Some((
+                    dest_url.trim().trim_matches(['<', '>']).to_string(),
+                    String::new(),
+                ));
+            }
             Event::Start(tag) => match tag {
                 Tag::Paragraph => out.push_str("<p>"),
                 Tag::Heading { level, .. } => {
@@ -467,7 +495,7 @@ fn render_html(md: &str, targets: &LinkTargets) -> String {
                     out.push_str("<tr>");
                 }
                 Tag::TableCell => out.push_str(if in_head { "<th>" } else { "<td>" }),
-                // Links and images keep only their text.
+                // Links and pictures on the web keep only their text.
                 _ => {}
             },
             Event::End(tag) => match tag {
@@ -504,7 +532,7 @@ fn render_html(md: &str, targets: &LinkTargets) -> String {
                 if in_code {
                     escape(&t, &mut out);
                 } else {
-                    push_text_with_links(&t, targets, &mut out);
+                    push_text_with_links(&t, targets, images, &mut out);
                 }
             }
             Event::Code(t) => {
@@ -530,14 +558,30 @@ fn render_html(md: &str, targets: &LinkTargets) -> String {
     out.trim_end().to_string()
 }
 
-fn push_text_with_links(text: &str, targets: &LinkTargets, out: &mut String) {
+fn push_text_with_links(
+    text: &str,
+    targets: &LinkTargets,
+    images: &mut Vec<LookImage>,
+    out: &mut String,
+) {
     let mut last = 0;
     for cap in WIKILINK_RE.captures_iter(text) {
         let whole = cap.get(0).unwrap();
         escape(&text[last..whole.start()], out);
         last = whole.end();
         if &cap[1] == "!" {
-            escape(whole.as_str(), out);
+            let name = cap[2].trim();
+            if is_picture_name(name) {
+                // `![[shot.png|240]]` sets a width, any other `|text` is the alt.
+                let alt = cap
+                    .get(4)
+                    .map(|m| m.as_str().trim())
+                    .filter(|o| !o.chars().all(|c| c.is_ascii_digit() || c == 'x'))
+                    .unwrap_or_else(|| name.rsplit('/').next().unwrap_or(name));
+                push_image(name, alt, images, out);
+            } else {
+                escape(whole.as_str(), out);
+            }
             continue;
         }
         let display = link_display(&cap).trim();
@@ -553,6 +597,39 @@ fn push_text_with_links(text: &str, targets: &LinkTargets, out: &mut String) {
         }
     }
     escape(&text[last..], out);
+}
+
+const PICTURE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "svg", "avif", "heic"];
+
+/// Whether a file name is a picture a look can show.
+fn is_picture_name(name: &str) -> bool {
+    let file = name.rsplit(['/', '\\']).next().unwrap_or(name);
+    file.rsplit_once('.').is_some_and(|(stem, ext)| {
+        !stem.is_empty() && PICTURE_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str())
+    })
+}
+
+/// Whether `![alt](dest)` names a picture in the pages folder, not the web.
+fn is_folder_picture(dest: &str) -> bool {
+    let dest = dest.trim().trim_matches(['<', '>']);
+    !dest.is_empty() && !is_external(dest) && !dest.contains(':') && is_picture_name(dest)
+}
+
+/// `<img data-wenlan-image="n">` for the picture at `src`, listing it once.
+fn push_image(src: &str, alt: &str, images: &mut Vec<LookImage>, out: &mut String) {
+    let index = match images.iter().position(|image| image.src == src) {
+        Some(index) => index,
+        None => {
+            images.push(LookImage {
+                src: src.to_string(),
+                alt: alt.to_string(),
+            });
+            images.len() - 1
+        }
+    };
+    out.push_str(&format!("<img data-wenlan-image=\"{index}\" alt=\""));
+    escape(alt, out);
+    out.push_str("\">");
 }
 
 /// Plain text of Markdown: words only, one block per line.

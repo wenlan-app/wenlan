@@ -17,8 +17,9 @@
 
 import { parse } from "acorn";
 import type { LookData } from "../../../../lib/tauri";
+import { normalizeSite } from "./lookSites";
 
-/** Both frames' policy. It is the first element of each document. */
+/** Both frames' policy with no sites allowed. It is the first element of each document. */
 export const LOOK_CSP = [
   "default-src 'none'",
   "script-src 'unsafe-inline'",
@@ -73,9 +74,24 @@ export type LookEvent =
   | { kind: "ready" }
   | { kind: "error"; message: string }
   | { kind: "height"; value: number }
-  | { kind: "open"; pageId: string };
+  | { kind: "open"; pageId: string }
+  | { kind: "check"; text: string; occurrence: number; done: boolean };
 
-const CSP_META = `<meta http-equiv="Content-Security-Policy" content="${LOOK_CSP}">`;
+/**
+ * The policy for a look the person let reach `sites` (UX-LOOK-9): those
+ * hosts over https only, for requests and pictures, nothing else. A site that
+ * is not a plain public host name is dropped here too.
+ */
+export function lookCsp(sites: readonly string[] = []): string {
+  const allowed = sites.map(normalizeSite).filter((site): site is string => site !== null).map((site) => `https://${site}`);
+  if (allowed.length === 0) return LOOK_CSP;
+  const list = allowed.join(" ");
+  return LOOK_CSP
+    .replace("img-src data: blob:", `img-src data: blob: ${list}`)
+    .replace("connect-src 'none'", `connect-src ${list}`);
+}
+
+const cspMeta = (sites: readonly string[]) => `<meta http-equiv="Content-Security-Policy" content="${lookCsp(sites)}">`;
 
 /** `&` and `"` made safe for a double-quoted HTML attribute. */
 export function escapeAttribute(text: string): string {
@@ -207,9 +223,42 @@ export const INNER_HELPER_SCRIPT = `(function () {
   } catch (e) {
     send({ kind: "error", message: "The page data could not be read." });
   }
+  // The page's pictures (UX-LOOK-8) come in as data: URLs; put each in its
+  // place in the page's html so a look that shows the html shows them.
+  var pictures = data.page && data.page.images ? data.page.images : [];
+  var PICTURE = /^data:image\\/[a-z0-9.+-]+;base64,[A-Za-z0-9+\\/=]*$/;
+  var placePictures = function (html) {
+    if (typeof html !== "string") return html;
+    return html.replace(/<img data-wenlan-image="(\\d+)"/g, function (whole, n) {
+      var picture = pictures[Number(n)];
+      if (!picture || typeof picture.url !== "string" || !PICTURE.test(picture.url)) return whole;
+      return '<img src="' + picture.url + '" data-wenlan-image="' + n + '"';
+    });
+  };
+  if (data.page) {
+    data.page.html = placePictures(data.page.html);
+    (data.page.sections || []).forEach(function (section) { section.html = placePictures(section.html); });
+  }
   var listeners = [];
   data.onChange = function (fn) { if (typeof fn === "function") listeners.push(fn); };
   data.open = function (pageId) { send({ kind: "open", pageId: String(pageId) }); };
+  // wenlan.check(item, done) ticks a checklist item of this page. The app
+  // finds it by its text and which same-text item it is.
+  data.check = function (item, done) {
+    if (!item || typeof item.text !== "string") return;
+    var sections = data.page && data.page.sections ? data.page.sections : [];
+    var occurrence = 0;
+    for (var s = 0; s < sections.length; s++) {
+      var items = sections[s].items || [];
+      for (var i = 0; i < items.length; i++) {
+        if (items[i] === item) {
+          send({ kind: "check", text: item.text, occurrence: occurrence, done: !!done });
+          return;
+        }
+        if (items[i].done !== null && items[i].text === item.text) occurrence++;
+      }
+    }
+  };
   window.wenlan = data;
   // WebKit hides the cause of any error thrown in a sandboxed frame. So the
   // look's own code runs inside catches that hold the real error: each of its
@@ -332,7 +381,7 @@ export const INNER_HELPER_SCRIPT = `(function () {
 /** Runs in the outer frame: relays the four messages, checked, and no others. */
 export const OUTER_RELAY_SCRIPT = `(function () {
   var inner = document.getElementById("look");
-  var kinds = ["ready", "error", "height", "open"];
+  var kinds = ["ready", "error", "height", "open", "check"];
   window.addEventListener("message", function (event) {
     if (event.source !== inner.contentWindow) return;
     var message = event.data && event.data.wenlanLook;
@@ -346,6 +395,10 @@ export const OUTER_RELAY_SCRIPT = `(function () {
       out.value = Math.max(0, Math.min(100000, Math.ceil(value)));
     } else if (message.kind === "open") {
       out.pageId = String(message.pageId == null ? "" : message.pageId).slice(0, 200);
+    } else if (message.kind === "check") {
+      out.text = String(message.text == null ? "" : message.text).slice(0, 2000);
+      out.occurrence = Number(message.occurrence);
+      out.done = message.done === true;
     }
     parent.postMessage({ wenlanLook: out }, "*");
   });
@@ -468,30 +521,37 @@ export function prepareLookHtml(html: string): string {
  * The look's own document: doctype, the CSP first, the theme variables, the
  * page's data as inline JSON, the helper script, then the look's HTML.
  */
-export function buildInnerDocument({ data, html, theme }: {
+export function buildInnerDocument({ data, html, theme, sites = [] }: {
   data: LookData;
   html: string;
   theme: LookTheme;
+  /** Sites the person let this look reach (UX-LOOK-9); none by default. */
+  sites?: readonly string[];
 }): string {
   const withTheme: LookData = { ...data, theme: { mode: theme.mode } };
   return [
     "<!doctype html>",
-    `<html><head><meta charset="utf-8">${CSP_META}`,
+    `<html><head><meta charset="utf-8">${cspMeta(sites)}`,
     themeStyle(theme),
     `<script type="application/json" id="wenlan-data">${jsonForScript(withTheme)}</script>`,
     `<script>${INNER_GUARD_SCRIPT}</script>`,
     `<script>${INNER_HELPER_SCRIPT}</script>`,
     "</head><body>",
     prepareLookHtml(html),
+    // Last, so it wins: the look sits in the page's own column, which already
+    // has its margins. Outer padding of the look's own would shift it off the
+    // text it replaces.
+    "<style>html, body { margin: 0 !important; padding: 0 !important; max-width: none !important; }</style>",
     "</body></html>",
   ].join("\n");
 }
 
 /** The frame the app mounts: the CSP first, the look's frame, the relay. */
-export function buildOuterDocument(innerDocument: string): string {
+export function buildOuterDocument(innerDocument: string, sites: readonly string[] = []): string {
+  // The look's frame also keeps this frame's policy, so both name the sites.
   return [
     "<!doctype html>",
-    `<html><head><meta charset="utf-8">${CSP_META}`,
+    `<html><head><meta charset="utf-8">${cspMeta(sites)}`,
     "<style>html, body { height: 100%; margin: 0; background: transparent; } iframe { display: block; width: 100%; height: 100%; border: 0; }</style>",
     "</head><body>",
     `<iframe id="look" sandbox="${LOOK_SANDBOX}" srcdoc="${escapeAttribute(innerDocument)}"></iframe>`,
@@ -501,15 +561,19 @@ export function buildOuterDocument(innerDocument: string): string {
 }
 
 /** Both documents for one look. */
-export function buildLookDocument(args: { data: LookData; html: string; theme: LookTheme }): string {
-  return buildOuterDocument(buildInnerDocument(args));
+export function buildLookDocument(args: { data: LookData; html: string; theme: LookTheme; sites?: readonly string[] }): string {
+  return buildOuterDocument(buildInnerDocument(args), args.sites);
 }
 
 /**
  * What the app accepts from its outer frame, or null for anything else.
  * `open` is honored only for a page named in the data the look was given.
  */
-export function parseLookMessage(raw: unknown, knownPageIds: ReadonlySet<string>): LookEvent | null {
+export function parseLookMessage(
+  raw: unknown,
+  knownPageIds: ReadonlySet<string>,
+  taskTexts: ReadonlySet<string> = new Set(),
+): LookEvent | null {
   if (typeof raw !== "object" || raw === null) return null;
   const body = (raw as { wenlanLook?: unknown }).wenlanLook;
   if (typeof body !== "object" || body === null) return null;
@@ -529,6 +593,13 @@ export function parseLookMessage(raw: unknown, knownPageIds: ReadonlySet<string>
       if (typeof pageId !== "string" || !knownPageIds.has(pageId)) return null;
       return { kind: "open", pageId };
     }
+    case "check": {
+      const { text, occurrence, done } = message;
+      if (typeof text !== "string" || !taskTexts.has(text)) return null;
+      if (typeof occurrence !== "number" || !Number.isInteger(occurrence) || occurrence < 0 || occurrence > 10_000) return null;
+      if (typeof done !== "boolean") return null;
+      return { kind: "check", text, occurrence, done };
+    }
     default:
       return null;
   }
@@ -540,6 +611,13 @@ export function knownPageIds(data: LookData): Set<string> {
   for (const page of data.space.pages) ids.add(page.id);
   for (const link of data.page.links) if (link.id) ids.add(link.id);
   return ids;
+}
+
+/** The text of every checklist item a look may tick. */
+export function taskTexts(data: LookData): Set<string> {
+  const texts = new Set<string>();
+  for (const section of data.page.sections) for (const item of section.items) if (item.done !== null) texts.add(item.text);
+  return texts;
 }
 
 /** The app's colors for a look, read from the tokens on `root`. */

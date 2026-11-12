@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getPageLook, type PageLook } from "../../../../lib/tauri";
 import { pageLooksEnabled } from "./lookFeature";
 
 export type LookMode = "look" | "text";
 
-export const modeKey = (pageId: string) => `wenlan-look-mode:${pageId}`;
 /** Set while a look is loading; found at the next open only if the app died mid-load. */
 export const loadingKey = (pageId: string) => `wenlan-look-loading:${pageId}`;
 /** Names this run of the app, so a mark this run made is not mistaken for a dead one's. */
@@ -16,9 +15,6 @@ export const loadingValue = (lookId: number) => `${lookId}:${RUN}`;
 function storageGet(key: string): string | null {
   try { return window.localStorage.getItem(key); } catch { return null; }
 }
-function storageSet(key: string, value: string): void {
-  try { window.localStorage.setItem(key, value); } catch { /* remembered only when storage works */ }
-}
 function storageRemove(key: string): void {
   try { window.localStorage.removeItem(key); } catch { /* nothing to clear */ }
 }
@@ -26,8 +22,9 @@ function storageRemove(key: string): void {
 export const lookQueryKey = (pageId: string) => ["page-look", pageId] as const;
 
 /**
- * A page's look and how it is shown: the Look | Text choice remembered per
- * page, and a fallback to Text when the look cannot be shown. A failure lasts
+ * A page's look and how it is shown: a page with a look opens on it every
+ * time, "Edit text" shows the text until "Done", and the text shows when the
+ * look cannot be shown. A failure lasts
  * for that look and that version of the page; a new look or a changed page
  * tries again, and so does choosing Look.
  */
@@ -50,10 +47,7 @@ export function usePageLook({ pageId, supported, version }: {
   const look: PageLook | null = enabled ? (query.data?.look ?? null) : null;
 
   const [chosen, setChosen] = useState<{ pageId: string; mode: LookMode } | null>(null);
-  const mode: LookMode = useMemo(() => {
-    if (chosen?.pageId === pageId) return chosen.mode;
-    return storageGet(modeKey(pageId)) === "text" ? "text" : "look";
-  }, [chosen, pageId]);
+  const mode: LookMode = chosen?.pageId === pageId ? chosen.mode : "look";
 
   const failureKey = look ? `${pageId}:${look.id}:${version}` : null;
   const [failedKey, setFailedKey] = useState<string | null>(null);
@@ -77,7 +71,6 @@ export function usePageLook({ pageId, supported, version }: {
 
   const choose = useCallback((next: LookMode) => {
     setChosen({ pageId, mode: next });
-    storageSet(modeKey(pageId), next);
     if (next === "look") setFailedKey(null);
   }, [pageId]);
 

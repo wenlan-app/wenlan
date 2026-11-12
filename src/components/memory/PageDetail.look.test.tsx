@@ -139,7 +139,7 @@ describe("PageDetail looks", () => {
     renderPage();
     await screen.findByRole("heading", { name: "Focus Test Page" });
     await waitFor(() => expect(tauriMocks.getPageLook).toHaveBeenCalledWith("page-1"));
-    expect(screen.queryByTestId("page-look-switch")).toBeNull();
+    expect(screen.queryByTestId("page-look-pencil")).toBeNull();
     expect(screen.queryByTestId("page-look-frame")).toBeNull();
     const menu = await openMenu(user);
     expect(menu.querySelector('[role="menuitem"]:not([disabled])')).not.toBeNull();
@@ -149,17 +149,23 @@ describe("PageDetail looks", () => {
     await waitFor(() => expect(tauriMocks.clipboardWrite).toHaveBeenCalledWith(i18n.t("pageLook.askAiPrompt", { title: "Focus Test Page" })));
   });
 
-  it("UX-LOOK-1 and UX-LOOK-2 shows the look in place of the text, keeps the text behind it, and remembers Text", async () => {
+  it("UX-LOOK-1 and UX-LOOK-2 shows the look in place of the text, keeps the text behind it, and the pencil toggles between them", async () => {
     tauriMocks.getPageLook.mockResolvedValue({ look: LOOK, versions: [] });
     renderPage();
     const frame = await screen.findByTestId("page-look-frame");
     expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
     const text = document.querySelector(".page-look-text") as HTMLElement;
     expect(text.hidden).toBe(true);
-    fireEvent.click(screen.getByRole("button", { name: i18n.t("pageLook.text") }));
+    const pencil = screen.getByRole("button", { name: i18n.t("pageLook.editPage") });
+    expect(pencil.getAttribute("aria-pressed")).toBe("false");
+    // The pencil lives with the page's other tools, not in a row above the design.
+    expect(pencil.closest(".page-document-tools")).not.toBeNull();
+    fireEvent.click(pencil);
     expect(screen.queryByTestId("page-look-frame")).toBeNull();
     expect(text.hidden).toBe(false);
-    expect(window.localStorage.getItem("wenlan-look-mode:page-1")).toBe("text");
+    expect(screen.getByRole("button", { name: i18n.t("pageLook.editPage") }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("pageLook.editPage") }));
+    await screen.findByTestId("page-look-frame");
   });
 
   it("UX-LOOK-5 takes the look off and puts it back with Undo", async () => {
@@ -175,7 +181,7 @@ describe("PageDetail looks", () => {
     await user.click(screen.getByRole("menuitem", { name: i18n.t("pageLook.remove") }));
     await waitFor(() => expect(tauriMocks.removePageLook).toHaveBeenCalledWith("page-1"));
     await waitFor(() => expect(screen.queryByTestId("page-look-frame")).toBeNull());
-    expect(screen.queryByTestId("page-look-switch")).toBeNull();
+    expect(screen.queryByTestId("page-look-pencil")).toBeNull();
     await waitFor(() => expect(toasts.calls.length).toBe(1));
     expect(toasts.calls[0].message).toBe(i18n.t("pageLook.removed"));
     expect(toasts.calls[0].options?.action?.label).toBe(i18n.t("pageLook.undo"));
@@ -192,7 +198,7 @@ describe("PageDetail looks", () => {
     const view = renderPage();
     await screen.findByRole("heading", { name: "Focus Test Page" });
     expect(tauriMocks.getPageLook).not.toHaveBeenCalled();
-    expect(screen.queryByTestId("page-look-switch")).toBeNull();
+    expect(screen.queryByTestId("page-look-pencil")).toBeNull();
     await openMenu(user);
     expect(screen.queryByRole("menuitem", { name: i18n.t("pageLook.askAi") })).toBeNull();
     view.unmount();

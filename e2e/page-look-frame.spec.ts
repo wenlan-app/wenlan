@@ -86,8 +86,8 @@ setTimeout(() => {
 
 interface Seen { fromOuter: boolean; data: unknown }
 
-async function mountLook(page: Page, html: string, data: LookData = DATA) {
-  const outer = buildLookDocument({ data, html, theme: { mode: "dark", vars: DEFAULT_LOOK_THEMES.dark } });
+async function mountLook(page: Page, html: string, data: LookData = DATA, sites: string[] = []) {
+  const outer = buildLookDocument({ data, html, theme: { mode: "dark", vars: DEFAULT_LOOK_THEMES.dark }, sites });
   await page.setContent(`<!doctype html><body><iframe id="host" sandbox="allow-scripts" srcdoc="${escapeAttribute(outer)}"></iframe>
 <script>
 window.__seen = [];
@@ -197,4 +197,39 @@ test("a link to a page asks the app to open it and goes nowhere itself", async (
 test("a look that throws before it is ready says so", async ({ page }) => {
   await mountLook(page, "<script>throw new Error('boom')</script>");
   await expect.poll(async () => JSON.stringify(await seen(page))).toContain("boom");
+});
+
+// UX-LOOK-9: a site the person allowed is the only one a look reaches, over
+// https on its usual port; everything the hostile probe tries stays blocked.
+test("a look allowed one site reaches only that site", async ({ page }) => {
+  const web: string[] = [];
+  await page.context().route(/^https?:\/\/[^/]*wenlan-test\.dev/, (route) => {
+    web.push(route.request().url());
+    return route.fulfill({ status: 200, body: "{}", headers: { "access-control-allow-origin": "*", "content-type": "application/json" } });
+  });
+  const html = probeLook("none") + `<script>
+for (const url of ["https://api.wenlan-test.dev/ok", "https://other.wenlan-test.dev/no", "http://api.wenlan-test.dev/http", "https://api.wenlan-test.dev:8443/port"]) {
+  fetch(url).catch(() => {});
+}
+const picture = new Image(); picture.src = "https://api.wenlan-test.dev/picture"; document.body.append(picture);
+</script>`;
+  await mountLook(page, html, DATA, ["api.wenlan-test.dev"]);
+  await waitForReady(page);
+  await page.waitForTimeout(1200);
+  expect([...new Set(web)].sort()).toEqual(["https://api.wenlan-test.dev/ok", "https://api.wenlan-test.dev/picture"]);
+  expect(hits, "a request reached this computer").toEqual([]);
+});
+
+// UX-LOOK-8: the page's pictures come in as data: URLs and show in place.
+test("a page's pictures show in their places inside the look", async ({ page }) => {
+  const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+  const data: LookData = {
+    ...DATA,
+    page: { ...DATA.page, html: '<p><img data-wenlan-image="0" alt="Map"></p>', images: [{ src: "_attachments/map.png", alt: "Map", url: png }] },
+  };
+  await mountLook(page, '<div id="out"></div><script>document.getElementById("out").innerHTML = wenlan.page.html;</script>', data);
+  await waitForReady(page);
+  const inner = innerFrame(page);
+  await expect.poll(() => inner.evaluate(() => (document.querySelector("#out img") as HTMLImageElement | null)?.naturalWidth ?? 0)).toBe(1);
+  expect(hits).toEqual([]);
 });

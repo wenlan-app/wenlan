@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Page looks: an HTML layout an AI tool drew for one page (UX-LOOK-1..6).
+//! Page looks: an HTML layout an AI tool drew for one page (UX-LOOK-1..8).
 //!
 //! A look is stored beside the page, never inside it. The app shows it in a
 //! frame that holds the page's live data as `window.wenlan`. [`LookData`] is
@@ -114,12 +114,25 @@ pub struct LookPageData {
     pub modified: String,
     /// The part for people, as Markdown.
     pub text: String,
-    /// The same, rendered. Raw HTML is dropped and links and images are
-    /// reduced to their text; a `[[link]]` to a page is
-    /// `<a data-wenlan-page="id">`.
+    /// The same, rendered. Raw HTML is dropped and links are reduced to
+    /// their text; a `[[link]]` to a page is `<a data-wenlan-page="id">`. A
+    /// picture kept in the pages folder is `<img data-wenlan-image="n">`,
+    /// `n` its place in `images`; a picture on the web keeps its alt text.
     pub html: String,
     pub sections: Vec<LookSection>,
     pub links: Vec<LookLink>,
+    /// The page's pictures kept in the pages folder, in order, each once.
+    /// The app adds each one's `url` (a `data:` URL) when it shows the look.
+    #[serde(default)]
+    pub images: Vec<LookImage>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LookImage {
+    /// The file as the page names it: `_attachments/x.png` or an embed's
+    /// `x.png`.
+    pub src: String,
+    pub alt: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

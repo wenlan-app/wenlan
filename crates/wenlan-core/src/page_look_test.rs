@@ -314,3 +314,69 @@ fn empty_and_huge_looks_are_refused() {
     let huge = "a".repeat(LOOK_MAX_BYTES + 1);
     assert!(check_look(&huge, "x").unwrap_err().contains("limit"));
 }
+
+#[test]
+fn ux_look_8_pictures_in_the_pages_folder_are_listed_once_and_placed() {
+    let content = "\
+Intro ![The view](_attachments/view.png) here.
+
+## Day one
+
+![[shot.png|240]] and ![[map.jpg|Old town map]] and ![[notes.pdf]].
+
+![The view again](_attachments/view.png)
+
+![Logo](https://example.com/logo.png) ![](data:image/png;base64,AAAA)
+";
+    let data = look_data(
+        &page("pg_pics", "Pictures", content),
+        &LinkTargets::new(),
+        "",
+        &[],
+        false,
+    );
+    assert_eq!(
+        data.page.images,
+        vec![
+            LookImage {
+                src: "_attachments/view.png".into(),
+                alt: "The view".into()
+            },
+            LookImage {
+                src: "shot.png".into(),
+                alt: "shot.png".into()
+            },
+            LookImage {
+                src: "map.jpg".into(),
+                alt: "Old town map".into()
+            },
+        ]
+    );
+    let html = &data.page.html;
+    assert!(html.contains("Intro <img data-wenlan-image=\"0\" alt=\"The view\"> here."));
+    assert!(html.contains("<img data-wenlan-image=\"1\" alt=\"shot.png\"> and <img data-wenlan-image=\"2\" alt=\"Old town map\">"));
+    assert!(
+        html.contains("![[notes.pdf]]"),
+        "a file that is not a picture stays as written"
+    );
+    assert!(
+        html.contains("<img data-wenlan-image=\"0\" alt=\"The view again\">"),
+        "the same file keeps its place"
+    );
+    assert!(
+        html.contains("Logo"),
+        "a picture on the web keeps its alt text"
+    );
+    assert!(!html.contains("example.com"));
+    assert!(!html.contains("data:image"));
+    let day = data
+        .page
+        .sections
+        .iter()
+        .find(|s| s.heading == "Day one")
+        .unwrap();
+    assert!(
+        day.html.contains("<img data-wenlan-image=\"1\""),
+        "a section names the page's places"
+    );
+}

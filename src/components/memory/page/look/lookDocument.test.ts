@@ -14,6 +14,7 @@ import {
   prepareLookHtml,
   prepareLookScript,
   stripForbidden,
+  taskTexts,
   INNER_GUARD_SCRIPT,
   INNER_HELPER_SCRIPT,
 } from "./lookDocument";
@@ -52,6 +53,14 @@ describe("UX-LOOK-4 the documents a look runs in", () => {
     expect(block![1]).not.toContain("<");
     expect(JSON.parse(block![1]).page.title).toBe(DATA.page.title);
     expect(jsonForScript({ a: " <!--" })).toBe('{"a":"\\u2028\\u003c!--"}');
+  });
+
+  it("lets the look fill the page's column: no outer margin or padding of its own", () => {
+    const inner = buildInnerDocument({ data: DATA, html: "<style>body{padding:28px;max-width:640px}</style><p>x</p>", theme: THEME });
+    const last = inner.lastIndexOf("<style>");
+    expect(last).toBeGreaterThan(inner.indexOf("body{padding:28px"));
+    expect(inner.slice(last)).toContain("padding: 0 !important");
+    expect(inner.slice(last)).toContain("max-width: none !important");
   });
 
   it("fills in the app's theme mode and colors", () => {
@@ -115,6 +124,27 @@ describe("UX-LOOK-4 what the app accepts from the frame", () => {
     ]) {
       expect(parseLookMessage(bad, known), JSON.stringify(bad)).toBeNull();
     }
+  });
+
+  it("UX-LOOK-7 accepts a tick only for a checklist item the page has", () => {
+    const withTasks: LookData = { ...DATA, page: { ...DATA.page, sections: [{ heading: "", level: 0, text: "", html: "", tables: [], items: [
+      { text: "Pack", done: false }, { text: "Plain bullet", done: null },
+    ] }] } };
+    const tasks = taskTexts(withTasks);
+    expect([...tasks]).toEqual(["Pack"]);
+    expect(parseLookMessage({ wenlanLook: { kind: "check", text: "Pack", occurrence: 0, done: true } }, known, tasks))
+      .toEqual({ kind: "check", text: "Pack", occurrence: 0, done: true });
+    for (const bad of [
+      { kind: "check", text: "Plain bullet", occurrence: 0, done: true },
+      { kind: "check", text: "Pack", occurrence: 0 },
+      { kind: "check", text: "Pack", occurrence: 0, done: "yes" },
+      { kind: "check", text: "Pack", occurrence: -1, done: true },
+      { kind: "check", text: "Pack", occurrence: 0.5, done: true },
+      { kind: "check", text: 3, occurrence: 0, done: true },
+    ]) {
+      expect(parseLookMessage({ wenlanLook: bad }, known, tasks), JSON.stringify(bad)).toBeNull();
+    }
+    expect(parseLookMessage({ wenlanLook: { kind: "check", text: "Pack", occurrence: 0, done: true } }, known)).toBeNull();
   });
 
   it("cuts an error to 500 characters", () => {

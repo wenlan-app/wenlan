@@ -8,6 +8,7 @@ import {
   LOOK_SANDBOX,
   parseLookMessage,
   readLookTheme,
+  taskTexts,
   type LookTheme,
 } from "./lookDocument";
 import "./look.css";
@@ -32,6 +33,8 @@ function useAppTheme(): LookTheme {
   return theme;
 }
 
+const NO_SITES: readonly string[] = [];
+
 /**
  * A page's look, in a frame that cannot reach the app (UX-LOOK-4): two nested
  * sandboxed frames with no same-origin flag and a policy that lets nothing
@@ -42,23 +45,30 @@ function useAppTheme(): LookTheme {
  * ready, or no ready within three seconds, is `beforeReady`; the caller then
  * shows the text instead.
  */
-export function LookFrame({ data, html, title, onReady, onError, onOpenPage }: {
+export function LookFrame({ data, html, title, sites = NO_SITES, onReady, onError, onOpenPage, onCheck }: {
   data: LookData;
   html: string;
   title: string;
+  /** Sites the person let this look reach (UX-LOOK-9). */
+  sites?: readonly string[];
   onReady?: () => void;
   onError?: (message: string, beforeReady: boolean) => void;
   onOpenPage?: (pageId: string) => void;
+  /** The look ticked or unticked a checklist item of this page (UX-LOOK-7). */
+  onCheck?: (text: string, occurrence: number, done: boolean) => void;
 }) {
   const { t } = useTranslation();
   const ref = useRef<HTMLIFrameElement>(null);
   const theme = useAppTheme();
   const [height, setHeight] = useState(480);
   const readyRef = useRef(false);
-  const callbacks = useRef({ onReady, onError, onOpenPage });
-  callbacks.current = { onReady, onError, onOpenPage };
-  const document_ = useMemo(() => buildLookDocument({ data, html, theme }), [data, html, theme]);
+  const callbacks = useRef({ onReady, onError, onOpenPage, onCheck });
+  callbacks.current = { onReady, onError, onOpenPage, onCheck };
+  const sitesKey = sites.join(" ");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const document_ = useMemo(() => buildLookDocument({ data, html, theme, sites }), [data, html, theme, sitesKey]);
   const known = useMemo(() => knownPageIds(data), [data]);
+  const tasks = useMemo(() => taskTexts(data), [data]);
 
   // A layout effect: the listener is in place before the frame can load and
   // speak, so its first messages are never missed.
@@ -80,7 +90,7 @@ export function LookFrame({ data, html, title, onReady, onError, onOpenPage }: {
     const onMessage = (event: MessageEvent) => {
       // Only the frame this component mounted, never another window.
       if (!ref.current || event.source !== ref.current.contentWindow) return;
-      const message = parseLookMessage(event.data, known);
+      const message = parseLookMessage(event.data, known, tasks);
       if (!message) return;
       switch (message.kind) {
         case "ready":
@@ -104,6 +114,9 @@ export function LookFrame({ data, html, title, onReady, onError, onOpenPage }: {
         case "open":
           callbacks.current.onOpenPage?.(message.pageId);
           return;
+        case "check":
+          callbacks.current.onCheck?.(message.text, message.occurrence, message.done);
+          return;
       }
     };
     window.addEventListener("message", onMessage);
@@ -111,7 +124,7 @@ export function LookFrame({ data, html, title, onReady, onError, onOpenPage }: {
       window.clearTimeout(timer);
       window.removeEventListener("message", onMessage);
     };
-  }, [document_, known]);
+  }, [document_, known, tasks]);
 
   return (
     <iframe

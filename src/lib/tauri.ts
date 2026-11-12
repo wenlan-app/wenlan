@@ -3748,6 +3748,8 @@ export interface LookData {
     html: string;
     sections: LookSection[];
     links: { title: string; id: string | null }[];
+    /** Pictures in the pages folder; `url` is filled in by the app (UX-LOOK-8). */
+    images?: { src: string; alt: string; url?: string }[];
   };
   space: {
     name: string;

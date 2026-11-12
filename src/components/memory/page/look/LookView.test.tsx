@@ -19,8 +19,8 @@ vi.mock("../../../../lib/tauri", async (importOriginal) => ({
 
 import { LookFrame, LOOK_READY_TIMEOUT_MS } from "./LookFrame";
 import { LookView } from "./LookView";
-import { LookSwitch } from "./LookSwitch";
-import { loadingKey, loadingValue, modeKey, usePageLook } from "./usePageLook";
+import { LookPencil } from "./LookPencil";
+import { loadingKey, loadingValue, usePageLook } from "./usePageLook";
 
 const DATA: LookData = {
   api: 1,
@@ -195,26 +195,17 @@ describe("UX-LOOK-2 one switch, remembered per page", () => {
     expect(state().has).toBe(false);
   });
 
-  it("opens on the look, remembers Text per page, and survives broken storage", async () => {
+  it("opens on the look every time, even after the text was shown", async () => {
     mocks.getPageLook.mockResolvedValue({ look: LOOK, versions: [] });
     const view = render(<Probe />, { wrapper: wrapper() });
     await waitFor(() => expect(state().has).toBe(true));
     expect(state()).toMatchObject({ mode: "look", shown: true });
     fireEvent.click(screen.getByText("text"));
     expect(state()).toMatchObject({ mode: "text", shown: false });
-    expect(window.localStorage.getItem(modeKey("pg_a"))).toBe("text");
     view.unmount();
     render(<Probe />, { wrapper: wrapper() });
     await waitFor(() => expect(state().has).toBe(true));
-    expect(state().mode).toBe("text");
-
-    const getItem = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("blocked"); });
-    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("blocked"); });
-    const again = render(<Probe />, { wrapper: wrapper() });
-    await waitFor(() => expect([...again.getAllByTestId("state")].pop()?.textContent).toContain('"has":true'));
-    fireEvent.click([...again.getAllByText("look")].pop()!);
-    getItem.mockRestore();
-    setItem.mockRestore();
+    expect(state()).toMatchObject({ mode: "look", shown: true });
   });
 
   it("falls back to Text on a failure, and choosing Look tries again", async () => {
@@ -257,12 +248,50 @@ describe("UX-LOOK-2 one switch, remembered per page", () => {
   });
 });
 
-describe("the switch", () => {
-  it("names both words and marks the one showing", () => {
+describe("the pencil", () => {
+  it("UX-LOOK-2 is one pencil: pressed shows the text, pressed again brings the design back", () => {
     const onChange = vi.fn();
-    render(<LookSwitch showing="look" onChange={onChange} />);
-    expect(screen.getByRole("button", { name: "Look" }).getAttribute("aria-pressed")).toBe("true");
-    fireEvent.click(screen.getByRole("button", { name: "Text" }));
-    expect(onChange).toHaveBeenCalledWith("text");
+    const view = render(<LookPencil editing={false} onChange={onChange} />);
+    const pencil = screen.getByRole("button", { name: "Edit page" });
+    expect(pencil.getAttribute("aria-pressed")).toBe("false");
+    expect(pencil.textContent).toBe("");
+    fireEvent.click(pencil);
+    expect(onChange).toHaveBeenLastCalledWith("text");
+    view.rerender(<LookPencil editing onChange={onChange} />);
+    expect(screen.getByRole("button", { name: "Edit page" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "Edit page" }));
+    expect(onChange).toHaveBeenLastCalledWith("look");
+  });
+});
+
+describe("UX-LOOK-9 a look that names sites", () => {
+  const SITES_LOOK: PageLook = {
+    ...LOOK,
+    html: '<p>weather</p><script type="application/json" id="wenlan-sites">["api.open-meteo.com"]</script>',
+  };
+
+  it("runs offline and asks once; Allow lets only that site in, and is remembered for the page", async () => {
+    const view = render(<LookView pageId="pg_a" title="A" look={SITES_LOOK} version={1} onFailed={vi.fn()} />, { wrapper: wrapper() });
+    const frame = await screen.findByTestId("page-look-frame");
+    expect(frame.getAttribute("srcdoc")).toContain("connect-src 'none'");
+    expect(frame.getAttribute("srcdoc")).not.toContain("https://api.open-meteo.com");
+    expect(screen.getByRole("status").textContent).toContain("api.open-meteo.com");
+    fireEvent.click(screen.getByRole("button", { name: "Allow" }));
+    await waitFor(() => expect(screen.getByTestId("page-look-frame").getAttribute("srcdoc")).toContain("connect-src https://api.open-meteo.com"));
+    expect(screen.queryByRole("status")).toBeNull();
+    view.unmount();
+
+    render(<LookView pageId="pg_a" title="A" look={SITES_LOOK} version={1} onFailed={vi.fn()} />, { wrapper: wrapper() });
+    expect((await screen.findByTestId("page-look-frame")).getAttribute("srcdoc")).toContain("connect-src https://api.open-meteo.com");
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("Not now keeps it offline and stops asking for now", async () => {
+    render(<LookView pageId="pg_c" title="C" look={SITES_LOOK} version={1} onFailed={vi.fn()} />, { wrapper: wrapper() });
+    await screen.findByTestId("page-look-frame");
+    fireEvent.click(screen.getByRole("button", { name: "Not now" }));
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.getByTestId("page-look-frame").getAttribute("srcdoc")).not.toContain("https://api.open-meteo.com");
+    expect(window.localStorage.getItem("wenlan-look-sites:pg_c")).toBeNull();
   });
 });

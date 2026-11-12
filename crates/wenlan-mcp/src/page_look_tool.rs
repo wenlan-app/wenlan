@@ -53,22 +53,22 @@ const SPACE_PAGES_SHOWN: usize = 12;
 
 const RULES: &str = "\
 Rules for a look (window.wenlan, api 1):
-1. A look is one self-contained HTML document with inline <style> and <script>. It runs in a sandbox with no network.
-2. Nothing may load from the internet: no http(s) URLs, no remote fonts, images, scripts or CSS. Draw pictures as inline SVG or data: URLs.
+1. A look is one self-contained HTML document with inline <style> and <script>. It runs in a sandbox with no network (see rule 2 for the one way out).
+2. Nothing may load from the internet: no http(s) URLs, no remote fonts, images, scripts or CSS. Draw pictures as inline SVG or data: URLs. Only when the page truly needs live data from a web service (weather, a map), name its hosts in <script type=\"application/json\" id=\"wenlan-sites\">[\"api.example.com\"]</script> (at most five public https hosts) and call them with fetch() from script; the person is asked once, and until they allow it fetch fails, so show the page's own data then.
 3. Read everything from window.wenlan when the page loads and fill the elements from script. Never copy the page's text into the HTML: a look that does is refused, and it would go stale when the page changes.
-4. wenlan.page has title, text (Markdown), html (rendered), sections[{heading, level, text, html, items[{text, done}], tables[{columns, rows}]}] and links[{title, id}]. Use items and tables instead of parsing text. Arrays are never null; done is true, false or null.
+4. wenlan.page has title, text (Markdown), html (rendered), sections[{heading, level, text, html, items[{text, done}], tables[{columns, rows}]}], links[{title, id}] and images[{src, alt, url}]. Use items and tables instead of parsing text. Arrays are never null; done is true, false or null. The page's pictures already sit in html as <img data-wenlan-image=\"n\">; to place one yourself use images[n].url, a data: URL the app fills in when it shows the look (empty when the picture cannot be shown, so show alt then).
 5. wenlan.space.name is the Space's name and is empty for a page in no Space, so show nothing for it then. wenlan.space.pages lists the pages of the same Space, newest first, at most 200: {id, title, created, modified, summary}. wenlan.space.more says there are more. Use it for home pages and lists.
 6. wenlan.open(pageId) opens a Wenlan page. It is the only way out. An <a data-wenlan-page=\"id\"> inside page.html already works. Web links do not open.
-7. The look is read only. No localStorage, cookies, fetch, forms, popups or editing: the person edits the text in Wenlan's Text view.
+7. The look reads the page; the only change it can make is wenlan.check(item, done), which ticks or unticks one checklist item from wenlan.page.sections[].items (done not null) as the person's own undoable edit. Use it for checkboxes. No localStorage, cookies, forms or popups: the person edits everything else in the page's text.
 8. Colors arrive as CSS variables: --look-bg, --look-surface, --look-text, --look-muted, --look-border, --look-accent, --look-radius, --look-font, --look-mono. Use them so the look reads in light and dark. wenlan.theme.mode is \"light\" or \"dark\".
-9. Make it work from 320px wide, handle a page with no sections, tables or items, and keep the look to what the page says.
+9. The look fills the page's column, which already has its margins: put no padding, margin or max-width on html or body, and start content at the left edge. Make it work from 320px wide, handle a page with no sections, tables or items, and keep the look to what the page says.
 10. Saving replaces the look and keeps the one before it, which the person can put back. Only change a look when asked.";
 
 const EXAMPLE: &str = r#"Example: a dashboard that counts done items and shows each table as cards.
 
 <!doctype html>
 <html><head><meta charset="utf-8"><style>
-  body { margin: 0; padding: 24px; background: var(--look-bg); color: var(--look-text); font-family: var(--look-font); }
+  body { margin: 0; background: var(--look-bg); color: var(--look-text); font-family: var(--look-font); }
   h1 { margin: 0 0 4px; }
   .bar { height: 8px; border-radius: 4px; background: var(--look-border); overflow: hidden; }
   .bar > i { display: block; height: 100%; background: var(--look-accent); }

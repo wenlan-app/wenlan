@@ -4,6 +4,7 @@
     "created": "2026-11-01T08:00:00Z",
     "html": "<p>Two weeks in Japan, early spring.</p>\n<h2>Plan</h2>\n<ul>\n<li><input type=\"checkbox\" disabled checked> Book flights</li>\n<li><input type=\"checkbox\" disabled> Book the ryokan in Kyoto</li>\n<li>Pack light</li>\n</ul>\n<table>\n<thead><tr><th>City</th><th>Nights</th></tr></thead>\n<tbody>\n<tr><td>Tokyo</td><td>5</td></tr>\n<tr><td>Kyoto</td><td>4</td></tr>\n</tbody>\n</table>\n<p>See <a data-wenlan-page=\"pg_kyoto\">Kyoto notes</a> and a page not written yet, or docs.</p>\n<h2>Budget</h2>\n<p>Flights cost 900 dollars.</p>",
     "id": "pg_trip",
+    "images": [],
     "links": [
       {
         "id": "pg_kyoto",
