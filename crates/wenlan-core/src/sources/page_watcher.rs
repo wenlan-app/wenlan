@@ -291,7 +291,7 @@ async fn sync_pass(
             )
             .await
             {
-                Ok(stats) if stats.moved + stats.failed + stats.waiting > 0 => {
+                Ok(stats) if stats != crate::space_folders::PassStats::default() => {
                     log::info!("[space-folders] {stats:?}")
                 }
                 Ok(_) => {}

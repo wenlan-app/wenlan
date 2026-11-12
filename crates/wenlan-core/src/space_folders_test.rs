@@ -73,7 +73,14 @@ fn a_team_with_no_name_yet_is_left_out() {
     let layout = layout(&layout_input);
     assert!(!layout.contains_key("產品"));
     let pages = [page("a", "產品/x.md", Some("產品"))];
-    assert!(plan(&pages, &layout, &record(&[("a", "產品")]), &[]).is_empty());
+    assert!(plan(
+        &pages,
+        &layout,
+        &BTreeSet::new(),
+        &record(&[("a", "產品")]),
+        &[]
+    )
+    .is_empty());
 }
 
 #[test]
@@ -106,7 +113,7 @@ fn first_pass_moves_pages_into_their_space_keeping_the_persons_folders() {
         page("g", "個人/x/錯的.md", Some("文瀾")),
         page("h", "個人/無.md", None),
     ];
-    let steps = plan(&pages, &layout, &Record::default(), &[]);
+    let steps = plan(&pages, &layout, &BTreeSet::new(), &Record::default(), &[]);
     assert_eq!(
         steps,
         vec![
@@ -124,7 +131,13 @@ fn first_pass_moves_pages_into_their_space_keeping_the_persons_folders() {
 fn a_page_moved_to_another_space_in_wenlan_moves_its_file() {
     let layout = layout(&input(&["文瀾", "個人"]));
     let pages = [page("a", "文瀾/發布/清單.md", Some("個人"))];
-    let steps = plan(&pages, &layout, &record(&[("a", "文瀾")]), &[]);
+    let steps = plan(
+        &pages,
+        &layout,
+        &BTreeSet::new(),
+        &record(&[("a", "文瀾")]),
+        &[],
+    );
     assert_eq!(steps, vec![mv("a", "文瀾/發布/清單.md", "個人/發布")]);
 }
 
@@ -132,7 +145,13 @@ fn a_page_moved_to_another_space_in_wenlan_moves_its_file() {
 fn a_page_given_a_space_moves_out_of_the_top() {
     let layout = layout(&input(&["文瀾"]));
     let pages = [page("a", "my/x.md", Some("文瀾"))];
-    let steps = plan(&pages, &layout, &record(&[("a", "")]), &[]);
+    let steps = plan(
+        &pages,
+        &layout,
+        &BTreeSet::new(),
+        &record(&[("a", "")]),
+        &[],
+    );
     assert_eq!(steps, vec![mv("a", "my/x.md", "文瀾/my")]);
 }
 
@@ -140,20 +159,97 @@ fn a_page_given_a_space_moves_out_of_the_top() {
 fn a_renamed_space_moves_its_pages_to_the_new_folder() {
     let layout = layout(&input(&["新名"]));
     let pages = [page("a", "舊名/x.md", Some("新名"))];
-    let steps = plan(&pages, &layout, &record(&[("a", "舊名")]), &[]);
+    let steps = plan(
+        &pages,
+        &layout,
+        &BTreeSet::new(),
+        &record(&[("a", "舊名")]),
+        &[],
+    );
     assert_eq!(steps, vec![mv("a", "舊名/x.md", "新名")]);
 }
 
 #[test]
-fn a_file_the_person_moved_elsewhere_is_left_where_they_put_it() {
+fn a_file_dragged_into_another_personal_space_folder_moves_the_page() {
     let layout = layout(&input(&["文瀾", "個人"]));
     let pages = [
-        page("a", "個人/x.md", Some("文瀾")),
+        page("a", "個人/sub/x.md", Some("文瀾")),
         page("b", "y.md", Some("文瀾")),
-        page("c", "文瀾2/z.md", Some("文瀾")),
+        page("c", "其他/z.md", Some("文瀾")),
+        page("d", "文瀾/w.md", None),
+        page("e", "個人/v.md", Some("個人")),
     ];
-    let placed = record(&[("a", "文瀾"), ("b", "文瀾"), ("c", "文瀾")]);
-    assert!(plan(&pages, &layout, &placed, &[]).is_empty());
+    let placed = record(&[
+        ("a", "文瀾"),
+        ("b", "文瀾"),
+        ("c", "文瀾"),
+        ("d", ""),
+        ("e", ""),
+    ]);
+    assert_eq!(
+        plan(&pages, &layout, &BTreeSet::new(), &placed, &[]),
+        vec![
+            Step::SetSpace {
+                id: "a".into(),
+                space: "個人".into()
+            },
+            // b and c, out of every Space's folder: left there, keep their Space.
+            Step::SetSpace {
+                id: "d".into(),
+                space: "文瀾".into()
+            },
+            keep("e", "個人"),
+        ]
+    );
+}
+
+#[test]
+fn team_spaces_never_change_from_the_folder() {
+    let mut layout_input = input(&["文瀾", "產品"]);
+    layout_input.teams = BTreeMap::from([("產品".to_string(), Some("Acme".to_string()))]);
+    let layout = layout(&layout_input);
+    let teams = BTreeSet::from(["產品".to_string()]);
+    let pages = [
+        // Dragged into the team's folder: not shared by that.
+        page("a", "Acme/產品/x.md", Some("文瀾")),
+        page("b", "Acme/產品/y.md", None),
+        // Dragged out of the team's folder: not taken off the team.
+        page("c", "文瀾/z.md", Some("產品")),
+    ];
+    let placed = record(&[("a", "文瀾"), ("b", ""), ("c", "Acme/產品")]);
+    assert!(plan(&pages, &layout, &teams, &placed, &[]).is_empty());
+}
+
+#[test]
+fn a_renamed_space_folder_renames_the_space() {
+    let mut layout_input = input(&["文瀾", "個人"]);
+    layout_input.top_folders = vec!["Wenlan".into(), "個人".into(), "其他".into()];
+    let layout = layout(&layout_input);
+    let pages = [
+        page("a", "Wenlan/x.md", Some("文瀾")),
+        page("b", "Wenlan/sub/y.md", Some("文瀾")),
+        page("c", "個人/z.md", Some("個人")),
+    ];
+    let placed = record(&[("a", "文瀾"), ("b", "文瀾"), ("c", "個人")]);
+    assert_eq!(
+        folder_renames(&pages, &layout, &BTreeSet::new(), &layout_input, &placed),
+        vec![("文瀾".to_string(), "Wenlan".to_string())]
+    );
+    // Its pages spread over two folders, or one that is already a Space's: no rename.
+    let spread = [
+        page("a", "Wenlan/x.md", Some("文瀾")),
+        page("b", "其他/y.md", Some("文瀾")),
+    ];
+    assert!(folder_renames(&spread, &layout, &BTreeSet::new(), &layout_input, &placed).is_empty());
+    let into_other = [page("a", "個人/x.md", Some("文瀾"))];
+    assert!(folder_renames(
+        &into_other,
+        &layout,
+        &BTreeSet::new(),
+        &layout_input,
+        &placed
+    )
+    .is_empty());
 }
 
 #[test]
@@ -163,7 +259,7 @@ fn turned_on_again_or_with_a_lost_record_nothing_nests() {
         page("a", "A/sub/x.md", Some("B")),
         page("b", "B/y.md", Some("B")),
     ];
-    let steps = plan(&pages, &layout, &Record::default(), &[]);
+    let steps = plan(&pages, &layout, &BTreeSet::new(), &Record::default(), &[]);
     assert_eq!(steps, vec![mv("a", "A/sub/x.md", "B/sub"), keep("b", "B")]);
 }
 
@@ -178,6 +274,7 @@ fn folder_names_match_in_any_case_or_unicode_form() {
     let steps = plan(
         &pages,
         &layout,
+        &BTreeSet::new(),
         &record(&[("a", "Café"), ("b", "Café")]),
         &[],
     );
@@ -190,7 +287,13 @@ fn joining_a_team_moves_the_space_under_the_team_folder() {
     layout_input.teams = BTreeMap::from([("產品".to_string(), Some("Acme".to_string()))]);
     let layout = layout(&layout_input);
     let pages = [page("a", "產品/x.md", Some("產品"))];
-    let steps = plan(&pages, &layout, &record(&[("a", "產品")]), &[]);
+    let steps = plan(
+        &pages,
+        &layout,
+        &BTreeSet::new(),
+        &record(&[("a", "產品")]),
+        &[],
+    );
     assert_eq!(steps, vec![mv("a", "產品/x.md", "Acme/產品")]);
 }
 
@@ -198,7 +301,14 @@ fn joining_a_team_moves_the_space_under_the_team_folder() {
 fn linked_vault_folders_are_left_alone() {
     let layout = layout(&input(&["文瀾"]));
     let pages = [page("a", "My Vault/x.md", Some("文瀾"))];
-    assert!(plan(&pages, &layout, &Record::default(), &["My Vault".into()]).is_empty());
+    assert!(plan(
+        &pages,
+        &layout,
+        &BTreeSet::new(),
+        &Record::default(),
+        &["My Vault".into()]
+    )
+    .is_empty());
 }
 
 #[test]

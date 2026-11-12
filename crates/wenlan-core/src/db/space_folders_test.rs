@@ -157,15 +157,45 @@ async fn pages_follow_their_space_and_their_folder_on_disk() {
         md_files(root)
     );
 
-    // A file the person moved elsewhere stays there, and keeps its Space.
+    // Dragged in Finder into another Space's folder: the page moves Space.
     std::fs::rename(root.join("Wenlan/定位.md"), root.join("個人/定位.md")).unwrap();
+    crate::export::knowledge::follow_external_moves(root).unwrap();
+    let stats = arrange(&db, root, &settings, &[]).await.unwrap();
+    assert_eq!(stats.respaced, 1, "{stats:?}");
+    assert_eq!(page_space(&db, "p-a").await.as_deref(), Some("個人"));
+    assert!(md_files(root).contains("個人/定位.md"));
+    let text = std::fs::read_to_string(root.join("個人/定位.md")).unwrap();
+    assert!(text.contains("個人"), "{text}");
+    assert_eq!(
+        arrange(&db, root, &settings, &[]).await.unwrap(),
+        PassStats::default()
+    );
+
+    // Dragged out of every Space's folder: left there, keeps its Space.
+    std::fs::rename(root.join("個人/定位.md"), root.join("定位.md")).unwrap();
     crate::export::knowledge::follow_external_moves(root).unwrap();
     assert_eq!(
         arrange(&db, root, &settings, &[]).await.unwrap(),
         PassStats::default()
     );
-    assert_eq!(page_space(&db, "p-a").await.as_deref(), Some("Wenlan"));
-    assert!(md_files(root).contains("個人/定位.md"));
+    assert_eq!(page_space(&db, "p-a").await.as_deref(), Some("個人"));
+    assert!(md_files(root).contains("定位.md"));
+
+    // The person renames a Space's folder in Finder: the Space is renamed.
+    std::fs::rename(root.join("Wenlan"), root.join("工作")).unwrap();
+    crate::export::knowledge::follow_external_moves(root).unwrap();
+    let stats = arrange(&db, root, &settings, &[]).await.unwrap();
+    assert_eq!(stats.renamed, 1, "{stats:?}");
+    assert_eq!(page_space(&db, "p-b").await.as_deref(), Some("工作"));
+    // Next pass: everything is where it belongs, nothing moves.
+    let stats = arrange(&db, root, &settings, &[]).await.unwrap();
+    assert_eq!(stats.moved, 0, "{stats:?}");
+    assert!(
+        md_files(root).contains("工作/品牌/計畫.md"),
+        "{:?}",
+        md_files(root)
+    );
+    assert!(!root.join("Wenlan").exists());
 
     // Off, then on again: nothing nests, nothing moves back.
     crate::space_folders::turn_off(root).unwrap();
