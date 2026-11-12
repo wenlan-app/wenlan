@@ -35,8 +35,8 @@ const INVOKE_LITERAL = /invoke[A-Za-z]*(?:<[^>]*>)?\(\s*"([a-z0-9_]+)"/g;
  * Adding to it is a deliberate act, and reviewable as one.
  */
 const OUTSIDE_THE_REVIEW_SURFACE: readonly string[] = [
-  // The Space-folders question asks the daemon; the fixture cannot answer, so it never shows.
-  "get_space_folders",
+  // The fixture answers the Space-folders question as already answered no,
+  // so the prompt that sets it never shows.
   "set_space_folders",
   // The fixture sets nothing aside, so home never offers "Try again".
   "release_set_aside_material",

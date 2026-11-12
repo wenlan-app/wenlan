@@ -88,6 +88,9 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     // Isolated in-memory folders; these never touch a native knowledge root.
     "knowledge_folders_list",
     "knowledge_folder_create",
+    // The one-time "a folder per Space" question; the fixture says it was
+    // already answered no, so nothing moves and no question shows.
+    "get_space_folders",
     "page_move",
     "list_pages",
     "get_page",
