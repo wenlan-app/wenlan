@@ -82,7 +82,7 @@ describe("library sync row", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Sync to other computers and phone" }));
     await userEvent.click(screen.getByRole("button", { name: "Choose…" }));
     await userEvent.click(await screen.findByRole("radio", { name: "Another one" }));
-    expect(screen.getByText(/aren't here yet/)).toBeInTheDocument();
+    expect(screen.getByText(/Nothing from your other computer yet/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Start syncing" })).toBeDisabled();
     // The files arrive: checking again finds the library, and it merges.
     vi.mocked(lookInSharedFolder).mockResolvedValue({ kind: "library", name: "Wenlan", page_id: null, members: [{ id: "m1", name: "Lucian" }] });
