@@ -223,9 +223,15 @@ pub async fn handle_rename_team(
     Json(req): Json<TeamRenameRequest>,
 ) -> Result<Json<wenlan_types::team::TeamInfo>, ServerError> {
     if let Some(owned) = managed_elsewhere().await? {
-        return Ok(Json(
-            on_server(&owned, reqwest::Method::PUT, "", json_of(&req)).await?,
-        ));
+        let info: wenlan_types::team::TeamInfo =
+            on_server(&owned, reqwest::Method::PUT, "", json_of(&req)).await?;
+        // The new name shows here at once, not after the next sync pass.
+        let (url, remembered) = (owned.0.clone(), info.clone());
+        blocking(move || {
+            shared_space::remember_team(&shared_space::settings_path(), &url, &remembered)
+        })
+        .await?;
+        return Ok(Json(info));
     }
     let info = blocking(move || team::rename_team(&team::team_path(), &req.name)).await?;
     Ok(Json(info))

@@ -837,7 +837,7 @@ pub fn share_statuses_at(settings_path: &Path) -> Result<Vec<SharedSyncStatus>, 
 }
 
 /// Remembers which team the server at `url` is for, as it just said.
-fn remember_team(
+pub fn remember_team(
     path: &Path,
     url: &str,
     team: &wenlan_types::team::TeamInfo,
