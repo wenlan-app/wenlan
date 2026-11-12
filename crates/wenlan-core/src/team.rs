@@ -316,9 +316,23 @@ pub fn set_url(path: &Path, url: Option<&str>) -> Result<(), WenlanError> {
 /// no owner yet: for a server nobody sits at (Docker), whose owner manages
 /// the team from their own computer. Any earlier owner key stops working.
 pub fn owner_key(path: &Path, name: &str) -> Result<(Member, String), WenlanError> {
-    let name = clean_name(name)?;
     let key = new_key();
-    let member = change_team(path, |file| {
+    let member = set_owner_key(path, name, &key)?;
+    Ok((member, key))
+}
+
+/// The owner's member record with a key the owner made themselves: their
+/// Wenlan makes the owner's invite link and puts it in the server's start
+/// command, so it can join without anyone reading the server's output.
+/// Any earlier owner key stops working.
+pub fn set_owner_key(path: &Path, name: &str, key: &str) -> Result<Member, WenlanError> {
+    let name = clean_name(name)?;
+    if !wenlan_types::team::is_team_key(key.trim()) {
+        return Err(WenlanError::Validation(
+            "an owner key looks like wlt_ and 64 hex digits".into(),
+        ));
+    }
+    change_team(path, |file| {
         let info = file.info();
         let everyone = file.everyone.clone();
         let member = match file
@@ -327,14 +341,14 @@ pub fn owner_key(path: &Path, name: &str) -> Result<(Member, String), WenlanErro
             .find(|member| member.role == TeamRole::Owner && member.is_active())
         {
             Some(owner) => {
-                owner.key_sha256 = key_hash(&key);
+                owner.key_sha256 = key_hash(key);
                 owner.clone()
             }
             None => {
                 let owner = Member {
                     id: uuid::Uuid::new_v4().simple().to_string(),
                     name,
-                    key_sha256: key_hash(&key),
+                    key_sha256: key_hash(key),
                     spaces: BTreeMap::new(),
                     added_at: now(),
                     removed_at: None,
@@ -351,8 +365,15 @@ pub fn owner_key(path: &Path, name: &str) -> Result<(Member, String), WenlanErro
             team: info,
             ..member
         })
-    })?;
-    Ok((member, key))
+    })
+}
+
+/// Whether `key` is the key of the team's owner.
+pub fn is_owner_key(path: &Path, key: &str) -> Result<bool, WenlanError> {
+    let hash = key_hash(key);
+    Ok(read_team(path)?.members.iter().any(|member| {
+        member.role == TeamRole::Owner && member.is_active() && member.key_sha256 == hash
+    }))
 }
 
 /// Whether the team has an owner who manages it from another computer.

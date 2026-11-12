@@ -529,6 +529,19 @@ fn team_runs_the_daemon_as_a_team_server_with_its_address() {
         }
         _ => panic!("`team` is the team-server command"),
     }
+    assert_eq!(
+        team_address(Some("https://wenlan.example.com/")).unwrap(),
+        (Some("https://wenlan.example.com".to_string()), None)
+    );
+    // The owner's invite link, as Settings › Team puts it in the command:
+    // the address and the owner's key.
+    let key = format!("wlt_{}", "a1".repeat(32));
+    assert_eq!(
+        team_address(Some(&format!("https://wenlan.example.com/join#{key}"))).unwrap(),
+        (Some("https://wenlan.example.com".to_string()), Some(key))
+    );
+    assert!(team_address(Some("https://wenlan.example.com/join#wlt_short")).is_err());
+    assert_eq!(team_address(None).unwrap(), (None, None));
     let bare = Cli::try_parse_from(["wenlan-server", "team"]).unwrap();
     assert!(matches!(
         bare.command,

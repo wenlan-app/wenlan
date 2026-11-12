@@ -32,20 +32,23 @@ type JoinSharedDialogProps = {
    *  invite link (from the switch or Settings › Team). Teams stay out of
    *  sight of someone who never joined one. */
   readonly only?: "folder" | "code";
+  /** An invite link already in hand (the owner's, made when setting up a
+   *  server): filled in and checked at once. */
+  readonly code?: string;
 };
 
 function namesOf(folder: SharedFolder): string {
   return folder.members.map((member) => member.name).join(", ");
 }
 
-export function JoinSharedDialog({ onClose, onJoined, only }: JoinSharedDialogProps) {
+export function JoinSharedDialog({ onClose, onJoined, only, code: given }: JoinSharedDialogProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const shares = useShares();
   const spaces = useQuery({ queryKey: ["spaces"], queryFn: listSpaces });
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [mode, setMode] = useState<"folder" | "code">(only ?? "code");
-  const [code, setCode] = useState("");
+  const [code, setCode] = useState(given ?? "");
   const [checked, setChecked] = useState<{ code: string; response: TeamJoinResponse } | null>(null);
   const [checking, setChecking] = useState(false);
   const [folder, setFolder] = useState<string | null>(null);
@@ -90,6 +93,15 @@ export function JoinSharedDialog({ onClose, onJoined, only }: JoinSharedDialogPr
       setChecking(false);
     }
   };
+
+  // A link handed in (the owner's, from setting up a server) is checked at
+  // once: the person sees "Join <team>" without pasting anything.
+  const givenChecked = useRef(false);
+  useEffect(() => {
+    if (!given || givenChecked.current) return;
+    givenChecked.current = true;
+    void checkCode(given);
+  });
 
   const spaceNames = new Set((spaces.data ?? []).map((space) => space.name.trim().toLocaleLowerCase()));
   const nameTaken = found?.kind === "space" && spaceNames.has((found?.name ?? "").trim().toLocaleLowerCase());

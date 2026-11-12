@@ -51,6 +51,10 @@ pub const TEAM_URL_ENV: &str = "WENLAN_TEAM_URL";
 /// Set (to anything) on a server started with `WENLAN_TEAM_ADDR`: the
 /// owner's invite link is made again and logged; the old one stops.
 pub const NEW_OWNER_LINK_ENV: &str = "WENLAN_TEAM_NEW_OWNER_LINK";
+/// The owner's key, made by the owner's own Wenlan and put in the server's
+/// start command (`wenlan-server team <owner's invite link>`): the server
+/// takes it as the owner's on its first start instead of printing a new one.
+pub const OWNER_KEY_ENV: &str = "WENLAN_TEAM_OWNER_KEY";
 
 /// The name a server nobody sits at gives its owner until the owner's own
 /// Wenlan takes the owner link and says who they are.
@@ -710,8 +714,28 @@ pub async fn serve_team_listener(shared: SharedState, shutdown: ShutdownHandle) 
 async fn owner_link_for_headless_server(state: &TeamState) {
     let path = state.team_path.clone();
     let renew = env_value(NEW_OWNER_LINK_ENV).is_some();
+    let given = env_value(OWNER_KEY_ENV);
     let made =
         tokio::task::spawn_blocking(move || -> Result<_, wenlan_core::error::WenlanError> {
+            if let Some(key) = given {
+                // The owner's Wenlan made this key and joins with it by
+                // itself; a restart with the same command changes nothing.
+                if team::is_owner_key(&path, &key)? {
+                    return Ok(None);
+                }
+                if team::has_owner(&path)? && !renew {
+                    tracing::warn!(
+                        "[team] the team already has an owner, so the owner's key in the start command is not used. To make it the owner's, start the server once with {NEW_OWNER_LINK_ENV}=1."
+                    );
+                    return Ok(None);
+                }
+                team::set_owner_key(&path, OWNER_STAND_IN, &key)?;
+                println!(
+                    "\nWenlan team server is running. The owner joins with the invite link in the start command: the Wenlan that made it connects by itself.\n"
+                );
+                tracing::info!("[team] the owner's key from the start command was taken");
+                return Ok(None);
+            }
             if team::has_owner(&path)? && !renew {
                 return Ok(None);
             }

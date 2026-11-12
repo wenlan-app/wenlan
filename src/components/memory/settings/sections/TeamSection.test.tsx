@@ -6,11 +6,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
 import { i18n } from "../../../../i18n";
 import TeamSection from "./TeamSection";
-import { listShares, teamStatus, type TeamStatus } from "../../../../lib/tauri";
+import { listShares, teamJoin, teamStatus, type TeamJoinResponse, type TeamStatus } from "../../../../lib/tauri";
 
 vi.mock("../../../../lib/tauri", async () => {
   const actual = await vi.importActual<typeof import("../../../../lib/tauri")>("../../../../lib/tauri");
-  return { ...actual, teamStatus: vi.fn(), listShares: vi.fn() };
+  return { ...actual, teamStatus: vi.fn(), listShares: vi.fn(), teamJoin: vi.fn() };
 });
 
 const on: TeamStatus = {
@@ -56,16 +56,51 @@ describe("TeamSection", () => {
     await userEvent.type(screen.getByPlaceholderText("https://wenlan.example.com"), "https://wenlan.acme.com/");
     expect(copy).toBeEnabled();
     const command = screen.getByText(/docker run/).closest("pre") as HTMLElement;
-    expect(command.textContent).toContain("wenlan-server team https://wenlan.acme.com");
+    // The owner's link this Wenlan made goes in the command, so nothing has
+    // to be read from the server and pasted back.
+    expect(command.textContent).toMatch(/wenlan-server team "https:\/\/wenlan\.acme\.com\/join#wlt_[0-9a-f]{64}"/);
     expect(command.textContent).not.toContain("WENLAN_");
     expect(command.textContent).toContain("-p 7879:7879 ");
     expect(command.textContent).not.toContain("7878");
-    expect(command.textContent).toContain("docker logs wenlan");
+    // One line: nothing has to be read from the server's output.
+    expect(command.textContent).not.toContain("docker logs");
     await userEvent.click(screen.getByRole("button", { name: "More about servers" }));
     expect(openExternal).toHaveBeenCalledWith("https://github.com/wenlan-app/wenlan/blob/main/docs/team-server.md");
-    await userEvent.click(screen.getByRole("button", { name: "Paste the owner's link…" }));
+    await userEvent.click(screen.getByRole("button", { name: "Paste the owner's link instead…" }));
     expect(screen.queryByText("Run this on the server")).not.toBeInTheDocument();
     expect(await screen.findByLabelText("Invite link")).toBeInTheDocument();
+  });
+
+  it("joins the new server by itself once it is up, with the owner's link it made", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      vi.mocked(teamStatus).mockResolvedValue({ members: [], spaces: [], listening: null });
+      const answer = {
+        url: "https://wenlan.acme.com",
+        me: { member_id: "o1", name: "Qi", role: "owner", spaces: [], team: { id: "t1", name: "Acme" } },
+      } as unknown as TeamJoinResponse;
+      vi.mocked(teamJoin).mockRejectedValueOnce(new Error("connection refused")).mockResolvedValue(answer);
+      renderSection();
+      await user.click(await screen.findByRole("button", { name: "Show steps…" }));
+      await user.type(screen.getByPlaceholderText("https://wenlan.example.com"), "https://wenlan.acme.com");
+      await user.click(screen.getByRole("button", { name: "Copy" }));
+      expect(await screen.findByText("Waiting for the server…")).toBeInTheDocument();
+      expect(teamJoin).not.toHaveBeenCalled();
+      // Not up yet: asked again a little later.
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(teamJoin).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(5000);
+      const link = vi.mocked(teamJoin).mock.calls[1][0];
+      expect(link).toMatch(/^https:\/\/wenlan\.acme\.com\/join#wlt_[0-9a-f]{64}$/);
+      expect(await screen.findByRole("button", { name: "Join Acme" })).toBeInTheDocument();
+      expect(screen.queryByText("Run this on the server")).not.toBeInTheDocument();
+      // The same key is offered again if the window is opened again before
+      // joining: the server already has it.
+      expect(localStorage.getItem("wenlan-team-owner-key")).toBe(link.split("#")[1]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("refuses an address a shell would read differently", async () => {

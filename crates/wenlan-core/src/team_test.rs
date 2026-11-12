@@ -207,6 +207,16 @@ fn a_server_nobody_sits_at_has_one_owner_who_can_edit_every_hosted_space() {
     // The owner is never removed.
     assert!(remove_member(&path, &owner.id).is_err());
     assert!(authenticate(&path, &second).unwrap().is_some());
+
+    // A key the owner's own Wenlan made (put in the server's start
+    // command) is the same owner's; the earlier key stops.
+    let made_by_owner = format!("wlt_{}", "b2".repeat(32));
+    assert!(!is_owner_key(&path, &made_by_owner).unwrap());
+    let same = set_owner_key(&path, "Owner", &made_by_owner).unwrap();
+    assert_eq!(same.id, owner.id);
+    assert!(is_owner_key(&path, &made_by_owner).unwrap());
+    assert!(authenticate(&path, &second).unwrap().is_none());
+    assert!(set_owner_key(&path, "Owner", "wlt_short").is_err());
 }
 
 #[test]

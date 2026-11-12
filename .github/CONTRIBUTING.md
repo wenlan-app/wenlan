@@ -19,6 +19,7 @@ everything it starts apart, and a debug app started without it refuses to run.
 |---|---|
 | `pnpm dev:all` | Desktop app plus its own daemon |
 | `pnpm dev:daemon` | Only the daemon, on its own port and data (`pnpm clean:dev` stops it) |
+| `pnpm dev:team` | A team server, as Docker runs one, with scratch data; it prints the owner's invite link to join from `pnpm dev:all` |
 | `pnpm test` | Frontend tests |
 | `pnpm test:rust` | Daemon, CLI and MCP tests |
 | `pnpm check` | Formatting, lint and type checks, as CI runs them |

@@ -91,24 +91,30 @@ everyone, or to some people, from the line under its title.
    docker logs wenlan
    ```
 
-   Settings › Team › *Run it on a server* fills in the address and copies
-   these two lines for you. The address goes in every invite link: the box's
-   `https://` address behind a reverse proxy, or its Tailscale address such
-   as `http://nas.tailnet.ts.net:7879`. Inside a container Wenlan cannot see
-   the box's own address, so give it. Only the team port (7879) is published;
-   the daemon's own port stays inside the container.
+   The address goes in every invite link: the box's `https://` address
+   behind a reverse proxy, or its Tailscale address such as
+   `http://nas.tailnet.ts.net:7879`. Inside a container Wenlan cannot see
+   the box's own address, so give it. Only the team port (7879) is
+   published; the daemon's own port stays inside the container.
 
-2. The first start prints **the owner's invite link** once, in the logs. Open
-   it in your own Wenlan (Settings › Team › Join with an invite link). You are
-   the team's owner: from your own computer you name the team, invite people,
+   Easier: Settings › Team › *Run it on a server* makes the `docker run`
+   line for you, with your owner's invite link in place of the address
+   (`team "https://wenlan.example.com/join#wlt_…"`). Once the server is up,
+   that window joins it by itself, and step 2 is done. That line holds your
+   owner key: run it only on the server.
+
+2. Started with just the address, the first start prints **the owner's
+   invite link** once, in the logs. Open it in your own Wenlan (Settings ›
+   Team › Join with an invite link). You are the team's owner: from your
+   own computer you name the team, invite people,
    and make team Spaces (**+ New** on the team's side). The server makes the
    Space and your Wenlan syncs it like everyone else's. A new Space is only
    yours until you open it to everyone, or to some people, from the line
    under its title. The team sees you by the name in your Wenlan profile.
 
    Lost the link? Start the container once with
-   `-e WENLAN_TEAM_NEW_OWNER_LINK=1`: a new one is printed and the old one
-   stops working.
+   `-e WENLAN_TEAM_NEW_OWNER_LINK=1` and just the address: a new one is
+   printed and the old one stops working.
 
 **More options** with [`docker/team/compose.yaml`](../docker/team/compose.yaml):
 
@@ -120,6 +126,18 @@ everyone, or to some people, from the line under its title.
   uncomment `user: "0:0"` (with `docker run`: `--user 0:0`). The image's own
   user cannot write a folder that belongs to someone else on the host;
   without it the server stops at start and says so.
+
+- *No internet on the box.* Bring the image over as a file: on a machine
+  with internet, `docker pull ghcr.io/wenlan-app/wenlan-server` and
+  `docker save ghcr.io/wenlan-app/wenlan-server -o wenlan-server.tar`; on
+  the box, `docker load -i wenlan-server.tar`, then the same `docker run`.
+  The server works without the internet from then on. Its search model
+  (about 210 MB) is downloaded on first use; until it is there, search is
+  by keywords only. To bring it over too, copy the `fastembed_cache` folder
+  of any Wenlan that has it (`~/.local/share/wenlan/memorydb/` on Linux,
+  `%LOCALAPPDATA%\wenlan\memorydb\` on Windows) into the container and
+  restart it:
+  `docker cp fastembed_cache wenlan:/data/wenlan/memorydb/ && docker restart wenlan`.
 
 ### Keep it running
 

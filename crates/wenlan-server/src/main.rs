@@ -637,6 +637,22 @@ struct Cli {
     repair_manifest_digest: Option<String>,
 }
 
+/// What `wenlan-server team <address>` was given: the address for invite
+/// links and, when it is the owner's invite link (`https://…/join#wlt_…`),
+/// the owner's key.
+fn team_address(given: Option<&str>) -> anyhow::Result<(Option<String>, Option<String>)> {
+    let Some(given) = given.map(str::trim).filter(|given| !given.is_empty()) else {
+        return Ok((None, None));
+    };
+    if !given.contains('#') {
+        return Ok((Some(given.trim_end_matches('/').to_string()), None));
+    }
+    let (url, key) = wenlan_types::team::split_join_code(given).ok_or_else(|| {
+        anyhow::anyhow!("{given} is not an owner's invite link: it looks like https://…/join#wlt_…")
+    })?;
+    Ok((Some(url), Some(key)))
+}
+
 #[derive(Subcommand)]
 enum Command {
     /// Run as a team server on a machine nobody sits at (Docker, a small
@@ -646,6 +662,9 @@ enum Command {
     Team {
         /// The address people reach this server at, put in every invite
         /// link: `https://wenlan.example.com`, or its Tailscale address.
+        /// The owner's invite link (`https://…/join#wlt_…`, as Settings ›
+        /// Team makes it) also sets the owner's key, so nothing needs to be
+        /// read from the server's output.
         url: Option<String>,
         /// Where the team listener listens.
         #[arg(long, default_value = "0.0.0.0:7879")]
@@ -1051,8 +1070,12 @@ async fn main() -> anyhow::Result<()> {
                 listen.to_string(),
             );
         }
-        if let Some(url) = url.as_deref().map(str::trim).filter(|url| !url.is_empty()) {
+        let (url, owner_key) = team_address(url.as_deref())?;
+        if let Some(url) = url {
             std::env::set_var(wenlan_server::team_routes::TEAM_URL_ENV, url);
+        }
+        if let Some(key) = owner_key {
+            std::env::set_var(wenlan_server::team_routes::OWNER_KEY_ENV, key);
         }
     }
 

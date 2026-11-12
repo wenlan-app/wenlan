@@ -9,6 +9,7 @@
     "dev": "vite",
     "dev:daemon": "node scripts/run-bash.mjs scripts/dev-runtime.sh start",
     "dev:all": "node scripts/run-bash.mjs scripts/dev-all.sh",
+    "dev:team": "node scripts/dev-team.mjs",
     "build": "tsc -b && vite build",
     "dev:review:web": "vite --mode review --config tooling/vite.review.config.ts",
     "dev:live:web": "vite --config tooling/vite.dev-live.config.ts",
