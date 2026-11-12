@@ -639,6 +639,9 @@ jobs:
               - 'crates/wenlan-core/src/export/vault_fs.rs'
               - 'crates/wenlan-core/src/presence.rs'
               - 'crates/wenlan-core/src/presence_test.rs'
+              # The library folder suggestion looks for Google Drive on the
+              # D: to Z: drive roots only on Windows.
+              - 'crates/wenlan-core/src/shared_space/library.rs'
               - 'crates/wenlan-core/src/repair.rs'
               - 'crates/wenlan-core/src/repair/**'
               - 'crates/wenlan-core/src/repair_plan/**'
