@@ -58,7 +58,7 @@ describe("TeamSection", () => {
     const command = screen.getByText(/docker run/).closest("pre") as HTMLElement;
     // The key this Wenlan made goes in the command by its SHA-256 only:
     // nothing to read back from the server, and no key on its command line.
-    await vi.waitFor(() => expect(command.textContent).toMatch(/wenlan-server team https:\/\/wenlan\.acme\.com --owner [0-9a-f]{64}$/));
+    await vi.waitFor(() => expect(command.textContent).toMatch(/wenlan-server team "https:\/\/wenlan\.acme\.com" --owner [0-9a-f]{64}$/));
     expect(command.textContent).not.toContain("wlt_");
     expect(command.textContent).not.toContain("#");
     expect(command.textContent).not.toContain("WENLAN_");

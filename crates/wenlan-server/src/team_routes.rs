@@ -410,13 +410,10 @@ pub async fn handle_host_space(
                 "{space} is shared through a folder or another team server already; stop sharing it first"
             )))
         }
-        None => {
-            // Newly hosted: access left over from an earlier Space of the
-            // same name must not open this one.
-            let forget = space.clone();
-            blocking(move || team::forget_space_access(&team::team_path(), &forget)).await?;
-            team::new_hosted_folder(&settings)
-        }
+        // Newly hosted. Access given to it beforehand stays: whatever
+        // ended an earlier hosting of this name (stop hosting, delete) took
+        // that one's access with it, and a hosted Space cannot be renamed.
+        None => team::new_hosted_folder(&settings),
     };
     let name = server_name(&db).await?;
     // Marked hosted before the first pass, so the pass lists the members.

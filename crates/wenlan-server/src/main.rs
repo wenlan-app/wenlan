@@ -1091,17 +1091,20 @@ async fn main() -> anyhow::Result<()> {
         if let Some(hash) = owner_sha256(owner.as_deref())? {
             std::env::set_var(wenlan_server::team_routes::OWNER_SHA256_ENV, hash);
         }
-        // The daemon's own API has no sign-in: on a team server only this
-        // machine reaches it (the team listener does, at 127.0.0.1), never
-        // another container or the host's network, whatever the image says.
-        // (An explicit `--bind-addr` still wins.)
-        if cli.bind_addr.is_none() {
-            let port = std::env::var("WENLAN_PORT")
-                .ok()
-                .and_then(|port| port.trim().parse::<u16>().ok())
-                .unwrap_or(7878);
-            std::env::set_var("WENLAN_BIND_ADDR", format!("127.0.0.1:{port}"));
-        }
+    }
+    // The daemon's own API has no sign-in: on a team server, however it was
+    // started (`team`, or `WENLAN_TEAM_ADDR` alone), only this machine
+    // reaches it (the team listener does, at 127.0.0.1), never another
+    // container or the host's network, whatever the image says. (An explicit
+    // `--bind-addr` still wins.)
+    let team_server = std::env::var(wenlan_server::team_routes::TEAM_ADDR_ENV)
+        .is_ok_and(|addr| !addr.trim().is_empty());
+    if team_server && cli.bind_addr.is_none() {
+        let port = std::env::var("WENLAN_PORT")
+            .ok()
+            .and_then(|port| port.trim().parse::<u16>().ok())
+            .unwrap_or(7878);
+        std::env::set_var("WENLAN_BIND_ADDR", format!("127.0.0.1:{port}"));
     }
 
     // Resolving the path is read-only. Before rotating tracing is available,

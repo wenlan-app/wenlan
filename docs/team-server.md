@@ -176,7 +176,8 @@ wenlan team add "Bo"  --access Product:read --url https://wenlan.example.com
 Each `add` prints an invite link once, such as
 `https://wenlan.example.com/join#wlt_…`. Send it to that person privately.
 The key stays after `#`, so a browser opening the link never sends it to the
-server. Older links without `/join` still work. `wenlan team status` lists
+server. Older links without `/join` still work. A hosted Space keeps its
+name: members follow it by that name, so rename it before hosting it. `wenlan team status` lists
 members; `wenlan team remove <id>` removes one; `wenlan team new-key <id>`
 replaces a lost key. A desktop install can also set `WENLAN_TEAM_ADDR` for
 the background service instead of starting the team in Settings.

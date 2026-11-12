@@ -69,7 +69,7 @@ export async function keySha256(key: string): Promise<string> {
  *  SHA-256 only. Nothing needs reading from it after: this window joins
  *  by itself. */
 export function serverCommand(url: string, ownerHash: string): string {
-  return `docker run -d --name wenlan --restart unless-stopped -p 7879:7879 -v wenlan-data:/data ${SERVER_IMAGE} team ${url} --owner ${ownerHash}`;
+  return `docker run -d --name wenlan --restart unless-stopped -p 7879:7879 -v wenlan-data:/data ${SERVER_IMAGE} team "${url}" --owner ${ownerHash}`;
 }
 
 export function ServerSetupDialog({ onClose, onPaste, onReady }: {

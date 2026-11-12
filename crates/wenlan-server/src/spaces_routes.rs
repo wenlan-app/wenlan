@@ -146,6 +146,20 @@ pub async fn handle_update_space(
         s.db.clone().ok_or(ServerError::DbNotInitialized)?
     };
     let new_name = req.new_name.as_deref().unwrap_or(&name);
+    // A hosted Space's folder and its members' access are kept under its
+    // name, and members follow it by that name: renaming it would leave
+    // both behind, open to a later Space of the old name.
+    if new_name.trim() != name.trim() {
+        let scope = wenlan_core::shared_space::Scope::Space(name.clone());
+        let settings = wenlan_core::shared_space::settings_path();
+        if wenlan_core::shared_space::share_settings_at(&settings, &scope)?
+            .is_some_and(|share| share.hosted)
+        {
+            return Err(ServerError::ValidationError(format!(
+                "{name} is hosted for the team, so it keeps its name; stop hosting it to rename it"
+            )));
+        }
+    }
     let space = db
         .update_space(&name, new_name, req.description.as_deref())
         .await
