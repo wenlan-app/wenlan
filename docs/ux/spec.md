@@ -163,8 +163,9 @@ and wait for evidence that people need them.
 - **UX-VIEW-1** `shipped` Short text and mind map are two views of the same
   thing. Switching does not change pages, and the last view you used is
   remembered. There is no third view for now: an HTML page an AI tool draws in
-  chat is saved as its own page (UX-ART-1 to 3). Add a third view only once
-  people save such pages for their things often.
+  chat is saved as its own page (UX-ART-1 to 3). A page can also have a look
+  an AI tool drew for it, with its own Look | Text switch (UX-LOOK-1 to 6);
+  that is a way to show one page, not a third view of a thing.
   原文：短文、心智圖、你要的其他樣子是同一件事的三個看法，切換不換頁，記得你上次用哪個。「因为我们还没有很明确的用户需求，这样的情境下做的选择会是哪一个就选哪一个」→ 先不做第三種（2026-10-31 19:10）
 - **UX-VIEW-2** `shipped` While reading you can pick short or full text. It is
   one page, not two copies: short is the page's first paragraph, never a
@@ -454,6 +455,30 @@ and wait for evidence that people need them.
   conversation that kept a diagram always goes into a thing, so the diagram
   shows under it.
   原文：有用的图自己存：画出计划、流程、架构，或你接着用的图，AI 自己存；随手小草图不存。eli5 的 ASCII 图也算。（2026-11-08 22:26）
+
+## A page's look
+
+- **UX-LOOK-1** `shipped` A page can have a look an AI tool drew. It shows the
+  page's current text; changing the text never needs the AI. Only a page that
+  has a look has the Look | Text switch; a page without one is unchanged.
+  原文：跟你的 AI 說「把這頁做成 OO 的樣子」，AI 畫一份「樣子」；文瀾打開這頁時把最新內容填進去。改字不用叫 AI，換長相才叫。（2026-11-12）「只有做了樣子的頁才有 `樣子｜文字` 切換」；上下排（樣子+文字）被否決：同一內容出現兩次、不符 UI/UX（2026-11-12 01:43Z）
+- **UX-LOOK-2** `shipped` Look or Text is one switch on that page (樣子｜文字,
+  样子｜文字), remembered per page; Text is always one click away and is where
+  you edit.
+  原文：有樣子的頁，頁首一個切換：`樣子｜文字`，每頁記住上次。文字=現在的頁面，在這裡改。
+- **UX-LOOK-3** `shipped` A look that cannot be shown gives you the text and
+  says so in one line.
+  原文：樣子顯示不出來 / 卡住 → 自動回到文字，一行小字說明。
+- **UX-LOOK-4** `shipped` A look can read this page and the list of pages in
+  its Space. It cannot change anything, reach the internet, or open anything
+  but a Wenlan page.
+  原文：樣子只能讀這頁和同 Space 的頁面清單；不能改、不能連網、只能打開文瀾的頁。
+- **UX-LOOK-5** `shipped` The AI changes a look only when asked; the one before
+  is kept and can be put back.
+  原文：AI 只在你要求時改樣子；前一版保留可還原。頁面選單多一項「請你的 AI 設計這一頁…」，和「拿掉樣子」（可復原）。
+- **UX-LOOK-6** `shipped` A look stays on this computer; it is not shared with
+  a shared Space.
+  原文：樣子只存在這台電腦，不隨共享 Space 分享。不寫 frontmatter，vault 和頁面檔案一個位元組都不變。
 
 ## A Space's page
 
