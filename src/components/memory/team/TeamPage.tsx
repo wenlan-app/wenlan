@@ -11,6 +11,7 @@ import {
   listPendingRevisions,
   stopSharingSpace,
   teamAddMember,
+  teamForgetMembership,
   teamNewMemberKey,
   teamRemoveMember,
   teamRename,
@@ -37,13 +38,19 @@ export type TeamGroup = {
   readonly team: TeamInfo | null;
   /** This computer is the team's server: its owner is here. */
   readonly hosted: boolean;
+  /** This person owns the team and manages it from here: on its server
+   *  (hosted), or from their own computer for a server nobody sits at. */
+  readonly owner: boolean;
   /** The team server's address, for a team joined from here. Never shown. */
   readonly host: string | null;
   readonly shares: SharedStatus[];
 };
 
 /** The teams in `shares`, the hosted one first, each known by its team id.
- *  A computer that hosts a team with people but no Space yet still has it. */
+ *  A computer that hosts a team with people but no Space yet still has it,
+ *  and so does one just started here. A team whose server is elsewhere and
+ *  that this person owns (`status.remote`) is theirs to manage from here,
+ *  even before it has a Space. */
 export function teamGroups(shares: readonly SharedStatus[] | undefined, status: TeamStatus | undefined): TeamGroup[] {
   const hosted: SharedStatus[] = [];
   const joined = new Map<string, { team: TeamInfo | null; host: string; shares: SharedStatus[] }>();
@@ -60,10 +67,15 @@ export function teamGroups(shares: readonly SharedStatus[] | undefined, status: 
     joined.set(key, group);
   }
   const groups: TeamGroup[] = [];
-  if (hosted.length > 0 || (status?.members?.length ?? 0) > 0 || (status?.spaces?.length ?? 0) > 0) {
-    groups.push({ key: "hosted", team: status?.team ?? hosted[0]?.team ?? null, hosted: true, host: null, shares: hosted });
+  const here = status && !status.remote ? status : undefined;
+  if (hosted.length > 0 || (here?.members?.length ?? 0) > 0 || (here?.spaces?.length ?? 0) > 0 || Boolean(here?.listening)) {
+    groups.push({ key: "hosted", team: here?.team ?? hosted[0]?.team ?? null, hosted: true, owner: true, host: null, shares: hosted });
   }
-  for (const [key, group] of joined) groups.push({ key, team: group.team, hosted: false, host: group.host, shares: group.shares });
+  const owned = status?.remote && status.team?.id ? `team:${status.team.id}` : null;
+  for (const [key, group] of joined) groups.push({ key, team: group.team, hosted: false, owner: key === owned, host: group.host, shares: group.shares });
+  if (owned && status?.remote && !joined.has(owned)) {
+    groups.push({ key: owned, team: status.team ?? null, hosted: false, owner: true, host: status.remote, shares: [] });
+  }
   return groups;
 }
 
@@ -109,16 +121,16 @@ export function TeamPeopleDialog({ group, inviteFirst = false, onClose }: {
   const status = useTeamStatus();
   const [error, setError] = useState<string | null>(null);
   const run = useRun(setError);
-  const teamStatus = group.hosted ? status.data : undefined;
-  const { people, members } = usePeople(group, teamStatus, group.hosted);
+  const teamStatus = group.owner ? status.data : undefined;
+  const { people, members } = usePeople(group, teamStatus, group.owner);
   return (
     <PeopleBox
       teamName={teamLabel(t, group.team)}
       people={people}
       members={members}
-      owner={group.hosted}
+      owner={group.owner}
       inviteFirst={inviteFirst}
-      url={prefillTeamUrl(teamStatus?.listening)}
+      url={group.hosted ? prefillTeamUrl(teamStatus?.listening) || teamStatus?.url || "" : teamStatus?.url ?? ""}
       run={run}
       error={error}
       onClose={onClose}
@@ -202,6 +214,7 @@ export function useLeaveTeam(group: TeamGroup | null): () => Promise<boolean> {
     const ok = await confirmAction(t("team.page.leaveConfirm", { team: name }), { confirm: t("team.page.leaveTeam", { team: name }), cancel: t("sharing.cancel") });
     if (!ok) return false;
     for (const share of group.shares) await stopSharingSpace(share.target);
+    if (group.host) await teamForgetMembership(group.host);
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: TEAM_KEY }),
       queryClient.invalidateQueries({ queryKey: SHARES_KEY }),
@@ -214,6 +227,8 @@ export function useLeaveTeam(group: TeamGroup | null): () => Promise<boolean> {
  *  too, since a Space just added may not have synced a first time yet. */
 export function spacesOfTeam(group: TeamGroup, hostedSpaces: readonly string[] | undefined): string[] {
   const names = new Set(group.shares.map((share) => share.target));
+  // Only this computer's own list: a server elsewhere names its Spaces as it
+  // calls them, and one here may be a private Space of the same name.
   if (group.hosted) for (const space of hostedSpaces ?? []) names.add(space);
   return [...names];
 }
@@ -262,11 +277,15 @@ function usePeople(group: TeamGroup, status: TeamStatus | undefined, owner: bool
   const { t } = useTranslation();
   const me = group.shares[0];
   if (owner) {
-    const members = activeMembers(status?.members ?? []);
-    // The owner's own name: what the team sees for edits made on the server.
-    const ownerName = me?.member_name;
+    const all = activeMembers(status?.members ?? []);
+    // The owner manages a server nobody sits at from here: their own
+    // record, never removed. On the server itself, the owner is the person
+    // at it, named as the team sees edits made there.
+    const ownerRecord = all.find((member) => member.role === "owner");
+    const members = all.filter((member) => member.role !== "owner");
+    const ownerName = ownerRecord?.name ?? me?.member_name;
     const people: Person[] = [
-      ...(ownerName ? [{ id: "owner", name: ownerName, label: t("team.page.youOwner", { name: ownerName }) }] : []),
+      ...(ownerName ? [{ id: ownerRecord?.id ?? "owner", name: ownerName, label: t("team.page.youOwner", { name: ownerName }) }] : []),
       ...members.map((member) => ({ id: member.id, name: member.name, label: member.name, member })),
     ];
     return { people, members };

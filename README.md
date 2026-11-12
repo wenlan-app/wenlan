@@ -7,8 +7,7 @@
 
 <p align="center">
   <strong>Open-source Obsidian alternative that works with your existing vault.</strong><br>
-  Write when you want; your AI tools keep it organized and up to date, with no API keys or plugins to set up.<br>
-  For you and your team. Your notes go only where you send them.
+  Your AI tools keep it organized and up to date, with no API keys or plugins. For you and your team.
 </p>
 
 <p align="center">
@@ -39,26 +38,30 @@
 
 ## Why Wenlan
 
-I started Wenlan because my notes, documents, and AI chats were scattered, and keeping a note system from rotting took constant upkeep. Wenlan is for people who use AI tools every day and don't want to maintain a note system.
+I started Wenlan because my notes, documents, and AI chats were scattered, and keeping a note system from rotting took constant upkeep. Since then we keep hearing the same about Obsidian: too much setup, with plugins to find, install, and keep updated. Wenlan is for people who use AI tools every day and don't want to maintain a note system.
 
-- **See and undo what it changed:** You see everything your AI changed, can restore an earlier version, and decide which pages it may not change. Each citation opens the original, and a page is refused when most of its citations don't match the source.
-- **Write when you want:** Open a page and write, any time. Pages you wrote are set to **Ask me first**.
-- **Your AI keeps it organized:** The AI tool you already use turns your notes, files, and AI chats into pages, links them, and brings them up to date when a source changes. Wenlan doesn't bring an AI of its own.
-- **One click to connect:** **Connect all** in Settings sets up the AI tools on your computer. No plugins to find, install, or maintain.
-- **Share it with your team:** Share a Space through a Google Drive or iCloud Drive folder, and teammates add it on their own computers.
-- **Bring what you have:** Notes, documents, links, chats, and Obsidian vaults come in ([full list](#what-can-i-bring-in)) as local Markdown files.
+**Personal:** download the desktop app and use it on your own.
+
+**Teams (in the next release):** a self-hosted Wenlan server everyone connects to, with view-only or edit access for each person.
+
+- **Keeps itself up to date.** Your AI tools save what you decide in chats as memories and fold them into pages. When a source changes, the pages that rely on it get updated.
+- **No plugins, no setup.** **Connect all** in Settings connects your AI tools in one click. No plugins to find or update, and no API keys.
+- **Bring what you have.** Obsidian vaults, notes, documents, and AI chats. [Full list](#what-can-i-bring-in).
+- **You decide what AI changes.** See every change, undo it, and choose which pages wait for your OK.
+- **Pages cite their sources.** A citation opens the original; a page whose citations mostly don't match isn't saved.
+- **Share a Space.** With a colleague, or across your own computers, through a Google Drive or iCloud Drive folder.
 
 <a id="how-it-compares"></a>
 
 ### How it compares
 
-| | Obsidian with plugins | An AI tool on a Markdown folder | Wenlan |
-|---|---|---|---|
-| Who keeps it organized | You, with plugins you find and update | Your AI, each time you ask | Your AI tools as they work, and again when a source changes |
-| Setup | Find, install, and update plugins | Write your own instructions | **Connect all** in Settings, one click |
-| Checking the AI's work | Depends on the plugin | Read every diff yourself | Each citation opens the original; a page whose citations mostly don't match is refused |
-| What the AI may change | Depends on the plugin | Anything in the folder | You choose per page, and can restore an earlier version |
-| Your existing vault | It is your vault | Point the AI at it | Link it in; notes stay where they are |
+| | Obsidian + plugins | Notion | LLM wiki apps | Wenlan |
+|---|---|---|---|---|
+| Who organizes | You, with plugins | You, or Notion's agents | An AI you set up | Your AI tools; updates when a source changes |
+| Setup | Find and update plugins | Full AI on the Business plan | Model key or scheduled routine | One click, no API key |
+| Checks the AI's work | Depends on the plugin | Cites sources; no match check | Links to sources | Refuses pages whose citations don't match |
+| What AI may change | Depends on the plugin | Pages you give an agent | Its wiki folder | You choose per page; restore anytime |
+| Where notes live | Your computer | Notion's cloud | Your computer | Your computer; works with your vault |
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
@@ -88,19 +91,11 @@ Create a page, or bring in an Obsidian vault, a Logseq graph, a folder, or earli
 
 In the App's Settings, **Add a tool** finds the AI tools on your computer and **Connect all** sets them up in one press. There is nothing else to install or keep updated. Then start a new AI session and ask:
 
-> /recall my earlier pages and decisions on this, then help me: …
+> /wenlan what did I decide about this before? Then help me: …
 
-To set up a tool by hand, or to see what gets connected:
+`/wenlan` (`$wenlan` in Codex) is the one command to remember: say what you want after it.
 
-| AI tool | What gets set up | Guide |
-|---|---|---|
-| Claude Code / Claude Desktop | Plugin / MCP | [Claude guide](docs/setup-with-ai.md#claude-code) |
-| ChatGPT Desktop (Codex), Codex CLI | Plugin | [Codex guide](docs/setup-with-ai.md#codex) |
-| Cursor, GitHub Copilot, VS Code, Gemini CLI, Antigravity, Windsurf, Kiro, OpenCode, Kimi Code | MCP and skills | [MCP guide](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
-| Muse Code and other MCP clients | MCP | [MCP guide](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
-| Grok Bot | CLI on your computer, or MCP | [Grok Bot guide](docs/setup-with-ai.md#grok-bot) |
-
-Use `$recall` in Codex; with an MCP-only tool, just ask it to check Wenlan first. Grok Bot runs `wenlan recall` on your computer, or a short `wenlan-mcp` session there ([Grok Bot guide](docs/setup-with-ai.md#grok-bot)).
+Works with Claude Code, Claude Desktop, Codex, Cursor, GitHub Copilot, VS Code, Gemini CLI, Windsurf, Grok Bot, and other MCP tools. [Set one up by hand](docs/setup-with-ai.md).
 
 When an import finishes, the app offers **Write pages with** your AI tool to turn it into your first cited pages. No command needed.
 
@@ -111,14 +106,12 @@ When an import finishes, the app offers **Write pages with** your AI tool to tur
 
 ## What you can bring in
 
-| Bring in | How you can use it |
-| --- | --- |
-| Markdown, text, text-based PDFs, DOCX, or a folder | Search and cite the text. Import a folder once, or keep it in sync as its files change. |
-| An Obsidian vault or a Logseq graph | Search and cite existing notes. Keep it in sync to follow changes in the background, or import it once. Notes you wrote start on **Ask me first**: AI changes to them come as suggestions you accept or decline, and you can change that per page. |
-| Web links | Paste a link into a page and it is saved as a source. YouTube, X, Threads, Instagram, and RedNote links show as a card, a playable video, or the original post. |
-| Gmail, Notion, Google Drive, Slack, GitHub | Your AI tool reads them with its own connectors and saves what matters to Wenlan with a link to the original. |
-| Your AI chats | Your AI tools save the decisions, findings, and progress from each conversation as memories, not full transcripts. ChatGPT or Claude export ZIPs bring in earlier conversations as snapshots. |
-| A code repository | `/wenlan wiki` writes pages tied to the code lines they rely on. [Code wiki](#code-repository-wiki). |
+- **Files and folders:** Markdown, text, text-based PDFs, and DOCX. Import once, or keep a folder in sync.
+- **Obsidian vaults and Logseq graphs:** keep them in sync, or import once. Notes you wrote start on **Ask me first**.
+- **Web links:** paste a link into a page and it becomes a source. YouTube, X, Threads, Instagram, and RedNote links show as a card or video.
+- **Gmail, Notion, Google Drive, Slack, GitHub:** your AI tool reads them with its own connectors and saves what matters, with a link to the original.
+- **AI chats:** decisions and findings are saved as memories, not full transcripts. ChatGPT and Claude export ZIPs work too.
+- **A code repository:** `/wenlan wiki` writes pages tied to the code. [Code wiki](#code-repository-wiki).
 
 You can also connect an Open Knowledge Format (OKF) folder as a source. Scanned PDFs need text extraction first; chat attachments are not imported. [Import guide](docs/import-guide.md).
 
@@ -158,7 +151,7 @@ You can also connect an Open Knowledge Format (OKF) folder as a source. Scanned 
 Your AI tool reads what you bring in and writes it into Markdown pages. It links related pages, cites where each sentence came from, and brings pages up to date when a source changes. You can open any page and write in it yourself.
 
 <p align="center">
-  <img src="./docs/assets/wenlan-updates-history.png" alt="Illustrative flow: a finding in a source document updates memory from V1 to V2, then informs a page that is either updated automatically or sent for review." width="100%">
+  <img src="./docs/assets/wenlan-updates-history.animated.svg" alt="Illustrative flow: AI chats, documents and folders (including Obsidian), code, and web content go into Steep. It writes a new page from several memories, merges duplicate pages, and updates a page with a citation it checks against the source; a page set to Ask me first waits for approval. It also finds a new link and resolves a contradiction by keeping the newer statement, with the older one restorable from history. Next time you ask, your AI tool cites the updated page." width="100%">
 </p>
 <p>Illustration based on current update behavior; not an App screenshot.</p>
 
@@ -166,7 +159,7 @@ Your AI tool reads what you bring in and writes it into Markdown pages. It links
 - **Kept current:** When a source, memory, or cited code changes, the pages that rely on it are flagged for an update. Without any model, Wenlan also suggests merging near-duplicate pages and lists `[[links]]` that point to no page yet.
 - **You decide what AI may change:** Pages you wrote start on **Ask me first**, so AI changes wait for your OK. Set any page to **Allowed** or **Ask me first**, see what changed, and restore an earlier version.
 - **Two ways to run it:** In **On demand**, the default, your AI tool does the writing while it works, so there is no API key to set up. In **Automatic**, Wenlan does it in the background with a model you choose, on your computer or in the cloud. [Steep guide](docs/steep.md).
-- **In your AI tool:** `/recall` brings back earlier pages and decisions, `/capture` saves a decision or lesson, `/handoff` saves where you stopped, and `/brief` picks it up next time. [Plugin commands](plugin/skills/README.md).
+- **In your AI tool:** type `/wenlan` and say what you want: look up earlier decisions, save a lesson, or pick up where you stopped. Shortcuts: `/recall`, `/capture`, `/handoff`, `/brief`. [Plugin commands](plugin/skills/README.md).
 - **In the app:** Add material, write and edit pages, follow citations, and review proposed changes without connecting an AI. Pages can include Mermaid diagrams, which the app draws.
 
 Already using Claude Code or Codex on a folder of notes? Keep doing that. Wenlan connects to the same tool and adds what a folder can't do alone: citation checks, flags when sources change, and per-page control over what AI may change.
@@ -231,7 +224,10 @@ Importing a 10,000-note Obsidian vault in 0.20.2 (invented notes, M2 Pro Mac wit
 
 ## Data and privacy
 
-Pages are Markdown files on your computer. Export eligible pages as an Open Knowledge Format (OKF) wiki. A cloud AI tool may send what it retrieves to its provider, and a cloud model receives the material it processes, so local storage does not keep those interactions local. Usage statistics are off by default.
+- Pages are Markdown files on your computer, and they go only where you send them.
+- Export eligible pages as an Open Knowledge Format (OKF) wiki.
+- A cloud AI tool may send what it retrieves to its provider, and a cloud model receives the material it processes, so local storage does not keep those interactions local.
+- Usage statistics are off by default.
 
 **Web access (experimental):** Turn on **Web access** in Settings to let web AI clients such as Claude, ChatGPT, or Muse search your library or a chosen Space while your computer is online. When you allow an app, choose search only or search and write; a write app can also add, edit and delete, and AI apps can ask you before each change. Queries and results pass through a relay. See the [privacy limits](docs/PRIVACY.md#pre-release-standalone-wenlan-relay-connector).
 

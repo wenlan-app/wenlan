@@ -83,9 +83,8 @@ export function beginPageSave(
   if (state.phase === "pending") {
     return { kind: "blocked_pending", state };
   }
-  if (!content.trim()) {
-    return { kind: "invalid", reason: "empty", state };
-  }
+  // An empty page is a person's choice: they may clear its text, and the old
+  // text stays in its history.
   if (content === baseline.content) {
     return { kind: "unchanged", state };
   }

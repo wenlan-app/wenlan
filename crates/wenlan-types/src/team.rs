@@ -70,6 +70,8 @@ pub struct TeamMember {
     /// stay listed so the history keeps their name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub removed_at: Option<String>,
+    #[serde(default, skip_serializing_if = "TeamRole::is_member")]
+    pub role: TeamRole,
 }
 
 /// `GET /api/team`: the member list and the Spaces this server hosts.
@@ -87,6 +89,45 @@ pub struct TeamStatus {
     /// Where the team listener listens, when it is on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub listening: Option<String>,
+    /// The address put in invite links, as the owner set it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// Addresses this computer can likely be reached at by others (a
+    /// Tailscale address first, then the local network), for the owner to
+    /// pick one when starting a team here.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub suggested_urls: Vec<String>,
+    /// Set when this status is a team server's elsewhere, read for its
+    /// owner on this computer: that server's address. Its owner manages it
+    /// from here; this computer hosts nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote: Option<String>,
+}
+
+/// Body of `POST /api/team/start`: makes this computer a team's server.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamStartRequest {
+    /// The team's name, which every member sees.
+    pub name: String,
+    /// The owner's own name: how the team sees what they write here.
+    pub person: String,
+    /// The address put in invite links. Left out: the first suggested one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// The port the team listener listens on, on every network of this
+    /// computer. Left out: [`DEFAULT_TEAM_PORT`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+}
+
+/// The team listener's port when none is given.
+pub const DEFAULT_TEAM_PORT: u16 = 7879;
+
+/// Body of `POST /api/team/membership`: this computer is on the team an
+/// invite link is for, even before any Space is open to it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamMembershipRequest {
+    pub code: String,
 }
 
 /// Body of `POST /api/team/members`.

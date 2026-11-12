@@ -86,15 +86,11 @@ describe("page save coordinator", () => {
         createOperationId,
       ),
     ).toEqual({ kind: "unchanged", state: { phase: "idle" } });
-    expect(
-      beginPageSave(
-        { phase: "idle" },
-        baseline,
-        " \n\t ",
-        createOperationId,
-      ),
-    ).toEqual({ kind: "invalid", reason: "empty", state: { phase: "idle" } });
     expect(createOperationId).not.toHaveBeenCalled();
+    // A person may clear the text: an empty page is saved like any other.
+    expect(
+      beginPageSave({ phase: "idle" }, baseline, "", createOperationId).kind,
+    ).not.toBe("invalid");
   });
 
   it("reuses an operation ID for an unchanged retryable snapshot", () => {

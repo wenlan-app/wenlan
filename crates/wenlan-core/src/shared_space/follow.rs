@@ -25,11 +25,19 @@ pub(super) async fn follow_teams(db: &MemoryDB, settings_path: &Path) {
         Ok(shares) => shares,
         Err(_) => return,
     };
-    let hosts: BTreeSet<(String, String)> = shares
+    let mut hosts: BTreeSet<(String, String)> = shares
         .iter()
         .filter_map(|(_, settings)| settings.host.as_ref())
         .map(|host| (host.url.clone(), host.key.clone()))
         .collect();
+    // A team joined before any Space was open to this person.
+    if let Ok(memberships) = super::memberships_at(settings_path) {
+        hosts.extend(
+            memberships
+                .into_iter()
+                .map(|(url, membership)| (url, membership.key)),
+        );
+    }
     for (url, key) in hosts {
         let me = match remote::me(&url, &key).await {
             Ok(me) => me,
@@ -42,6 +50,10 @@ pub(super) async fn follow_teams(db: &MemoryDB, settings_path: &Path) {
             if let Err(error) = remember_team(settings_path, &url, team) {
                 log::warn!("[shared_space] team {url}: name not kept: {error}");
             }
+        }
+        // Who they are on it, the owner or not, as the server says now.
+        if let Err(error) = super::remember_membership(settings_path, &url, &key, &me) {
+            log::warn!("[shared_space] team {url}: membership not kept: {error}");
         }
         match follow_host(db, settings_path, &url, &key, &me).await {
             Ok(added) => {
@@ -283,5 +295,35 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(status.team, Some(acme));
+    }
+
+    #[test]
+    fn a_team_is_kept_from_its_invite_link_and_its_owner_is_known() {
+        let dir = tempfile::tempdir().unwrap();
+        let settings = dir.path().join(super::super::SETTINGS_FILE);
+        assert_eq!(super::super::owned_team(&settings).unwrap(), None);
+
+        // Joined with nothing open yet: the team is still kept.
+        let member = me(&[]);
+        super::super::remember_membership(&settings, URL, "wlt_k", &member).unwrap();
+        let kept = super::super::memberships_at(&settings).unwrap();
+        assert_eq!(kept[URL].member_id, "m_amy");
+        assert!(!kept[URL].owner);
+        assert_eq!(super::super::owned_team(&settings).unwrap(), None);
+
+        // The server says this person owns it now.
+        let owner = TeamMe {
+            role: wenlan_types::team::TeamRole::Owner,
+            ..me(&[])
+        };
+        super::super::remember_membership(&settings, URL, "wlt_k", &owner).unwrap();
+        assert_eq!(
+            super::super::owned_team(&settings).unwrap(),
+            Some((URL.to_string(), "wlt_k".to_string()))
+        );
+
+        super::super::forget_membership(&settings, URL).unwrap();
+        assert!(super::super::memberships_at(&settings).unwrap().is_empty());
+        assert_eq!(super::super::owned_team(&settings).unwrap(), None);
     }
 }

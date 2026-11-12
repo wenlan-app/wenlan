@@ -120,7 +120,7 @@ fn a_space_for_everyone_reaches_every_member_now_and_later() {
 
     let amy = authenticate(&path, &amy_key).unwrap().unwrap();
     assert_eq!(amy.access("Handbook"), Some(TeamAccess::Read));
-    assert_eq!(amy.me().spaces.len(), 2);
+    assert_eq!(amy.me(&[]).spaces.len(), 2);
     // A member's own entry wins over everyone's.
     let bo = authenticate(&path, &bo_key).unwrap().unwrap();
     assert_eq!(bo.access("Handbook"), Some(TeamAccess::Write));
@@ -171,7 +171,62 @@ fn the_team_has_one_id_and_the_name_its_owner_gave_it() {
 
     // Every member's Wenlan learns the team from who they are.
     let (_, key) = add_member(&path, "Amy", &[]).unwrap();
-    let me = authenticate(&path, &key).unwrap().unwrap().me();
+    let me = authenticate(&path, &key).unwrap().unwrap().me(&[]);
     assert_eq!(me.team, Some(named));
     assert_eq!(me.role, TeamRole::Member);
+}
+
+#[test]
+fn a_server_nobody_sits_at_has_one_owner_who_can_edit_every_hosted_space() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(TEAM_FILE);
+    assert!(!has_owner(&path).unwrap());
+    let (owner, first) = owner_key(&path, "Owner").unwrap();
+    assert_eq!(owner.role, TeamRole::Owner);
+    assert!(has_owner(&path).unwrap());
+
+    let found = authenticate(&path, &first).unwrap().unwrap();
+    assert_eq!(found.access("Product"), Some(TeamAccess::Write));
+    let me = found.me(&["Product".to_string(), "Design".to_string()]);
+    assert_eq!(me.role, TeamRole::Owner);
+    assert_eq!(
+        me.spaces,
+        vec![
+            access("Design", TeamAccess::Write),
+            access("Product", TeamAccess::Write)
+        ]
+    );
+
+    // A new owner link is the same owner with a new key; the old one stops.
+    let (again, second) = owner_key(&path, "Someone else").unwrap();
+    assert_eq!(again.id, owner.id);
+    assert_eq!(read_team(&path).unwrap().members.len(), 1);
+    assert!(authenticate(&path, &first).unwrap().is_none());
+    assert!(authenticate(&path, &second).unwrap().is_some());
+
+    // The owner is never removed.
+    assert!(remove_member(&path, &owner.id).is_err());
+    assert!(authenticate(&path, &second).unwrap().is_some());
+}
+
+#[test]
+fn the_listener_address_and_invite_address_are_kept_until_turned_off() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(TEAM_FILE);
+    set_listen(&path, Some("0.0.0.0:7879"), Some("http://100.80.1.2:7879/")).unwrap();
+    let file = read_team(&path).unwrap();
+    assert_eq!(file.listen.as_deref(), Some("0.0.0.0:7879"));
+    assert_eq!(file.url.as_deref(), Some("http://100.80.1.2:7879"));
+    assert!(set_listen(&path, Some("not an address"), None).is_err());
+
+    // Off: the invite address stays for when it is on again.
+    set_listen(&path, None, None).unwrap();
+    let file = read_team(&path).unwrap();
+    assert_eq!(file.listen, None);
+    assert_eq!(file.url.as_deref(), Some("http://100.80.1.2:7879"));
+    set_url(&path, Some("https://wiki.acme.com")).unwrap();
+    assert_eq!(
+        read_team(&path).unwrap().url.as_deref(),
+        Some("https://wiki.acme.com")
+    );
 }

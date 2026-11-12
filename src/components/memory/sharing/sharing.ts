@@ -139,6 +139,13 @@ export function teamLabel(t: TFunction, team: TeamInfo | null | undefined): stri
   return team?.name?.trim() || t("team.unnamed");
 }
 
+/** Why a team Space stopped syncing: this person's key no longer works, or
+ *  the team's server cannot be reached for now (turned off, or offline).
+ *  The second picks up again by itself. */
+export function teamPausedText(t: TFunction, share: Pick<SharedStatus, "last">): string {
+  return share.last?.paused?.includes("member key") ? t("team.pausedRemoved") : t("team.pausedOff");
+}
+
 export type TeamSpaceGroup<T> = {
   readonly key: string;
   /** The team, once its server has said; `null` before. */

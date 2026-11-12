@@ -4048,6 +4048,66 @@ pub async fn team_join(
         .await
 }
 
+/// Makes this computer the team's server: names the team and its owner,
+/// and turns the team listener on (kept across restarts).
+#[tauri::command]
+pub async fn team_start(
+    state: tauri::State<'_, State>,
+    name: String,
+    person: String,
+    url: Option<String>,
+) -> Result<team::TeamStatus, String> {
+    let client = daemon_client(&state).await;
+    client
+        .post_json(
+            "/api/team/start",
+            &team::TeamStartRequest {
+                name,
+                person,
+                url,
+                port: None,
+            },
+        )
+        .await
+}
+
+/// Turns the team listener off; the team and its Spaces stay.
+#[tauri::command]
+pub async fn team_stop(state: tauri::State<'_, State>) -> Result<team::TeamStatus, String> {
+    let client = daemon_client(&state).await;
+    client.post_empty("/api/team/stop").await
+}
+
+/// Keeps the team an invite link is for, even before a Space is open.
+#[tauri::command]
+pub async fn team_remember_membership(
+    state: tauri::State<'_, State>,
+    code: String,
+) -> Result<team::TeamMe, String> {
+    let client = daemon_client(&state).await;
+    client
+        .post_json(
+            "/api/team/membership",
+            &team::TeamMembershipRequest { code },
+        )
+        .await
+}
+
+/// Forgets the team at `url` on this computer (this person left it).
+#[tauri::command]
+pub async fn team_forget_membership(
+    state: tauri::State<'_, State>,
+    url: String,
+) -> Result<serde_json::Value, String> {
+    let client = daemon_client(&state).await;
+    client
+        .delete_path(&format!(
+            "/api/team/membership?url={}",
+            percent_encode_path_segment(&url)
+        ))
+        .await
+}
+
 /// Joins one of the server's Spaces into the local Space `local_space`.
 #[tauri::command]
 pub async fn join_team_space(

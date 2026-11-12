@@ -389,7 +389,7 @@ describe("PagesOverview reading workspace", () => {
     it("is the same home on a team's side: that team's Spaces, and none of the person's own getting started", async () => {
       const space = (id: string, name: string) => ({ id, name, description: null, suggested: false, starred: false, sort_order: 0, memory_count: 0, entity_count: 0, created_at: 1, updated_at: 1 });
       vi.mocked(listSpaces).mockResolvedValue([space("s1", "Reading"), space("s2", "Product")]);
-      const group = { key: "team:t1", team: { id: "t1", name: "Acme" }, hosted: false, host: "https://team.example.com", shares: [] };
+      const group = { key: "team:t1", team: { id: "t1", name: "Acme" }, hosted: false, owner: false, host: "https://team.example.com", shares: [] };
       const scope: ScopeState = {
         teams: [group], team: group, setScope: () => undefined, teamSpaces: new Set(["Product"]),
         inScope: (name) => name === "Product", teamWritable: ["Product"],

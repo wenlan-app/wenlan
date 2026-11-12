@@ -100,7 +100,8 @@ function makeSimpleBanner(viewport, locale) {
   // With a tagline the three lines stay centred on the logo, and the tagline sits above the
   // ring's lower edge: the dark tile blends into the background, so the ring is what reads.
   // The Wenlan name and the title stay close in size, which reads as one heading.
-  // A two-line title (English, Spanish) moves everything up so the tagline still fits.
+  // A two-line title (English, Spanish) moves everything up so the tagline still fits,
+  // and its ring grows to the height of the text so no line reaches above or below it.
   const twoLines = copy.title.length > 1 && tagline;
   const content = twoLines
     ? mobile
@@ -109,7 +110,7 @@ function makeSimpleBanner(viewport, locale) {
   ${text(360, 158, copy.title[0], 28, BANNER.white, 500, "middle")}
   ${text(360, 192, copy.title[1], 28, BANNER.white, 500, "middle")}
   ${text(360, 230, tagline, 18, BANNER.secondary, 400, "middle")}`
-      : `${logoMarkup({ x: 81.28, y: 84.28, size: 181.44, prefix })}
+      : `${logoMarkup({ x: 62, y: 70, size: 212, prefix })}
   ${brand(300, 123, 40, "start")}
   ${text(300, 170, copy.title[0], 36, BANNER.white, 500, "start")}
   ${text(300, 212, copy.title[1], 36, BANNER.white, 500, "start")}
