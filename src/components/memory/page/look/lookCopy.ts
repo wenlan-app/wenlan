@@ -1,0 +1,66 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copy for a page's look (UX-LOOK-1..6). Keyed as `pageLook` in
+// i18n/resources.ts. Labels must not wrap.
+
+export const enPageLook = {
+  editPage: "Edit page",
+  failed: "This HTML view can't be shown, so here's the text.",
+  frameTitle: "HTML view of {{title}}",
+  askAi: "Ask your AI to make an HTML view…",
+  askAiPrompt: "Use Wenlan's read_page_look on \"{{title}}\", then make an HTML view of it with set_page_look.",
+  copied: "Copied",
+  copyFailed: "Couldn't copy. Try again.",
+  remove: "Remove HTML view",
+  removed: "HTML view removed.",
+  undo: "Undo",
+  checked: "Ticked.",
+  unchecked: "Unticked.",
+  checkFailed: "Couldn't save that tick. Try again in the text.",
+  removeFailed: "Couldn't remove the HTML view. Try again.",
+  restoreFailed: "Couldn't put the HTML view back. Try again.",
+  sitesAsk: "This HTML view wants to reach {{sites}}. It could send what this page says there.",
+  sitesAllow: "Allow",
+  sitesNotNow: "Not now",
+};
+
+export const hantPageLook = {
+  editPage: "編輯這頁",
+  failed: "這個 HTML 檢視顯示不出來，先給你看文字。",
+  frameTitle: "{{title}}的 HTML 檢視",
+  askAi: "請你的 AI 為這頁做 HTML 檢視…",
+  askAiPrompt: "請用文瀾的 read_page_look 讀「{{title}}」，再用 set_page_look 為它做一個 HTML 檢視。",
+  copied: "已複製",
+  copyFailed: "複製失敗，請再試一次。",
+  remove: "拿掉 HTML 檢視",
+  removed: "已拿掉 HTML 檢視。",
+  undo: "復原",
+  checked: "已勾選。",
+  unchecked: "已取消勾選。",
+  checkFailed: "沒存到這個勾選，請到文字裡再試一次。",
+  removeFailed: "拿不掉 HTML 檢視，請再試一次。",
+  restoreFailed: "放不回 HTML 檢視，請再試一次。",
+  sitesAsk: "這個 HTML 檢視想連到 {{sites}}，這頁的內容可能會傳過去。",
+  sitesAllow: "允許",
+  sitesNotNow: "先不要",
+};
+
+export const hansPageLook = {
+  editPage: "编辑这页",
+  failed: "这个 HTML 视图显示不出来，先给你看文字。",
+  frameTitle: "{{title}}的 HTML 视图",
+  askAi: "请你的 AI 为这页做 HTML 视图…",
+  askAiPrompt: "请用文澜的 read_page_look 读「{{title}}」，再用 set_page_look 为它做一个 HTML 视图。",
+  copied: "已复制",
+  copyFailed: "复制失败，请再试一次。",
+  remove: "拿掉 HTML 视图",
+  removed: "已拿掉 HTML 视图。",
+  undo: "撤销",
+  checked: "已勾选。",
+  unchecked: "已取消勾选。",
+  checkFailed: "没存到这个勾选，请到文字里再试一次。",
+  removeFailed: "拿不掉 HTML 视图，请再试一次。",
+  restoreFailed: "放不回 HTML 视图，请再试一次。",
+  sitesAsk: "这个 HTML 视图想连到 {{sites}}，这页的内容可能会传过去。",
+  sitesAllow: "允许",
+  sitesNotNow: "先不要",
+};

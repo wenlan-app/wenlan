@@ -66,6 +66,7 @@ pub mod onboarding;
 pub mod origin;
 pub mod page_body;
 pub mod page_history;
+pub mod page_look;
 pub mod page_map_improve;
 pub mod page_markdown;
 pub mod page_outline;

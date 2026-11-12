@@ -132,6 +132,8 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     "get_session_detail",
     // Fixtures keep no originals: no page names one.
     "get_page_original",
+    // Fixtures give no page a look.
+    "get_page_look",
     // Fixtures have no things: the list is empty and no id resolves.
     "list_things",
     // Home's "not written yet" line: the fixture sets nothing aside.

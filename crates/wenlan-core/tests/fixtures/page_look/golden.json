@@ -1,0 +1,109 @@
+{
+  "api": 1,
+  "page": {
+    "created": "2026-11-01T08:00:00Z",
+    "html": "<p>Two weeks in Japan, early spring.</p>\n<h2>Plan</h2>\n<ul>\n<li><input type=\"checkbox\" disabled checked> Book flights</li>\n<li><input type=\"checkbox\" disabled> Book the ryokan in Kyoto</li>\n<li>Pack light</li>\n</ul>\n<table>\n<thead><tr><th>City</th><th>Nights</th></tr></thead>\n<tbody>\n<tr><td>Tokyo</td><td>5</td></tr>\n<tr><td>Kyoto</td><td>4</td></tr>\n</tbody>\n</table>\n<p>See <a data-wenlan-page=\"pg_kyoto\">Kyoto notes</a> and a page not written yet, or docs.</p>\n<h2>Budget</h2>\n<p>Flights cost 900 dollars.</p>",
+    "id": "pg_trip",
+    "images": [],
+    "links": [
+      {
+        "id": "pg_kyoto",
+        "title": "Kyoto notes"
+      },
+      {
+        "id": null,
+        "title": "Missing page"
+      }
+    ],
+    "modified": "2026-11-02T09:30:00Z",
+    "sections": [
+      {
+        "heading": "",
+        "html": "<p>Two weeks in Japan, early spring.</p>",
+        "items": [],
+        "level": 0,
+        "tables": [],
+        "text": "Two weeks in Japan, early spring."
+      },
+      {
+        "heading": "Plan",
+        "html": "<ul>\n<li><input type=\"checkbox\" disabled checked> Book flights</li>\n<li><input type=\"checkbox\" disabled> Book the ryokan in Kyoto</li>\n<li>Pack light</li>\n</ul>\n<table>\n<thead><tr><th>City</th><th>Nights</th></tr></thead>\n<tbody>\n<tr><td>Tokyo</td><td>5</td></tr>\n<tr><td>Kyoto</td><td>4</td></tr>\n</tbody>\n</table>\n<p>See <a data-wenlan-page=\"pg_kyoto\">Kyoto notes</a> and a page not written yet, or docs.</p>",
+        "items": [
+          {
+            "done": true,
+            "text": "Book flights"
+          },
+          {
+            "done": false,
+            "text": "Book the ryokan in Kyoto"
+          },
+          {
+            "done": null,
+            "text": "Pack light"
+          }
+        ],
+        "level": 2,
+        "tables": [
+          {
+            "columns": [
+              "City",
+              "Nights"
+            ],
+            "rows": [
+              [
+                "Tokyo",
+                "5"
+              ],
+              [
+                "Kyoto",
+                "4"
+              ]
+            ]
+          }
+        ],
+        "text": "- [x] Book flights\n- [ ] Book the ryokan in Kyoto\n- Pack light\n\n| City | Nights |\n| --- | --- |\n| Tokyo | 5 |\n| Kyoto | 4 |\n\nSee [[Kyoto notes]] and [[Missing page|a page not written yet]], or [docs](https://example.com/x).\n\n<script>alert(1)</script>"
+      },
+      {
+        "heading": "Budget",
+        "html": "<p>Flights cost 900 dollars.</p>",
+        "items": [],
+        "level": 2,
+        "tables": [],
+        "text": "Flights cost 900 dollars."
+      }
+    ],
+    "space": "Travel",
+    "text": "Two weeks in Japan, early spring.\n\n## Plan\n\n- [x] Book flights\n- [ ] Book the ryokan in Kyoto\n- Pack light\n\n| City | Nights |\n| --- | --- |\n| Tokyo | 5 |\n| Kyoto | 4 |\n\nSee [[Kyoto notes]] and [[Missing page|a page not written yet]], or [docs](https://example.com/x).\n\n<script>alert(1)</script>\n\n## Budget\n\nFlights cost 900 dollars.",
+    "title": "Japan trip"
+  },
+  "space": {
+    "more": false,
+    "name": "Travel",
+    "pages": [
+      {
+        "created": "2026-11-01T08:00:00Z",
+        "id": "pg_trip",
+        "modified": "2026-11-02T09:30:00Z",
+        "summary": "Two weeks in Japan, early spring.",
+        "title": "Japan trip"
+      },
+      {
+        "created": "2026-11-01T09:00:00Z",
+        "id": "pg_kyoto",
+        "modified": "2026-11-02T09:30:00Z",
+        "summary": "Temples and tea houses.",
+        "title": "Kyoto notes"
+      },
+      {
+        "created": "2026-11-01T08:00:00Z",
+        "id": "pg_budget",
+        "modified": "2026-11-02T09:30:00Z",
+        "summary": "What the trip costs, by week.",
+        "title": "Budget sheet"
+      }
+    ]
+  },
+  "theme": {
+    "mode": "dark"
+  }
+}

@@ -1,0 +1,48 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* A page's design, its pencil and its failed line (UX-LOOK-1, UX-LOOK-2). */
+.page-look-frame {
+  display: block;
+  width: 100%;
+  min-height: 120px;
+  border: 0;
+  background: transparent;
+}
+/* Pressed, the pencil lights up while the text shows instead of the design. */
+.mem-icon-action.page-look-pencil[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--mem-accent-page) 22%, transparent);
+  color: var(--mem-text);
+}
+.page-look-failed {
+  margin: 0 0 12px;
+  color: var(--mem-text-secondary);
+  font: 400 13px/1.5 var(--mem-font-body);
+}
+/* The one-time question before a look may reach a site (UX-LOOK-9). */
+.page-look-sites {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 0 0 16px;
+  color: var(--mem-text-secondary);
+  font: 400 13px/1.5 var(--mem-font-body);
+}
+.page-look-sites p { margin: 0; flex: 1 1 260px; }
+.page-look-sites button {
+  white-space: nowrap;
+  padding: 3px 10px;
+  border: 1px solid var(--mem-border);
+  border-radius: var(--mem-r-2);
+  background: transparent;
+  color: var(--mem-text);
+  font: 500 13px/1.5 var(--mem-font-body);
+  cursor: pointer;
+}
+.page-look-sites button.page-look-sites-allow {
+  border-color: var(--mem-accent-page);
+  background: var(--mem-accent-page);
+  color: var(--mem-bg);
+}
+/* The text stays mounted behind a look, so an edit in progress is kept. */
+.page-look-text { display: contents; }
+.page-look-text[hidden] { display: none; }

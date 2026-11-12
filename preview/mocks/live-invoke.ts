@@ -883,6 +883,14 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
     if (error instanceof HttpError && error.status === 404) return null;
     throw error;
   }),
+  get_page_look: (a) => get(`/api/pages/${enc(a.pageId)}/look`).catch((error) => {
+    if (error instanceof HttpError && error.status === 404) return { look: null, versions: [] };
+    throw error;
+  }),
+  get_page_look_data: (a) => get(`/api/pages/${enc(a.pageId)}/look/data`),
+  remove_page_look: (a) => del(`/api/pages/${enc(a.pageId)}/look`),
+  restore_page_look: (a) => post(`/api/pages/${enc(a.pageId)}/look/restore`, { id: a.version ?? null }),
+  report_page_look_error: (a) => post(`/api/pages/${enc(a.pageId)}/look/error`, { message: a.message }),
   get_session_detail: (a) => get(`/api/sessions/${enc(a.sessionId)}`),
   set_page_review_required: (a) =>
     put(`/api/pages/${enc(a.pageId)}/review-required`, { required: a.required }),

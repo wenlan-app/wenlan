@@ -688,6 +688,12 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/pages/{id}/basis/{basis_id}/confirm` | main | yes | automatic | `none` | `handle_confirm_basis` | BasisRef.title: visible_ids under the mutation grant |
 | `DELETE` | `/api/pages/{id}/basis/{basis_id}` | main | no | not_applicable | `none` | — | receipt only: removed flag, no prose |
 | `GET` | `/api/pages/{id}/original` | main | no | not_applicable | `none` | — | provenance only: vendor, conversation id and URL, artifact id, kind and title, kept file path; no page prose; visible_ids under the truth view before the read |
+| `GET` | `/api/pages/{id}/look` | main | no | not_applicable | `none` | — | the AI-drawn HTML and its version list only; saving refuses HTML that copies the page's text; visible_ids under the truth view before the read |
+| `PUT` | `/api/pages/{id}/look` | main | no | not_applicable | `none` | — | receipt only: page id, look id and whether it was new; a refusal names a rule, never page text |
+| `DELETE` | `/api/pages/{id}/look` | main | no | not_applicable | `none` | — | receipt only: page id and the removed look id |
+| `POST` | `/api/pages/{id}/look/restore` | main | no | not_applicable | `none` | — | receipt only: page id and look id |
+| `POST` | `/api/pages/{id}/look/error` | main | no | not_applicable | `none` | — | receipt only: whether the error was recorded |
+| `GET` | `/api/pages/{id}/look/data` | main | yes | automatic | `none` | handle_get_page_look_data | LookData page text, sections and html, and the Space's page titles and summaries: visible_ids under the truth view before any read, links and Space pages filtered the same way |
 | `POST` | `/api/originals` | main | no | not_applicable | `none` | — | keeps one session original; returns its page id and title only, no page prose |
 | `GET` | `/api/pages/{id}/sentences` | main | yes | automatic | `none` | `handle_get_page_sentences` | PageSentence.text, SentenceProposal.before, SentenceProposal.after: require_visible_page under the truth view before any read |
 | `POST` | `/api/pages/{id}/sentences/propose` | main | yes | automatic | `none` | `handle_propose_sentence` | SentenceProposal.before, SentenceProposal.after: require_visible_page under the mutation grant |
@@ -956,11 +962,13 @@ must be demoted individually with a recorded reason. **Every MCP tool is
 | `page_code_basis` | yes | automatic | `none` | tool handler |
 | `propose_note_change` | no | not_applicable | `none` | — |
 | `read_page` | yes | automatic | `none` | tool handler |
+| `read_page_look` | yes | automatic | `none` | tool handler |
 | `recall` | yes | automatic | `none` | tool handler |
 | `reject_refinement` | yes | automatic | `none` | tool handler |
 | `rename_page` | yes | automatic | `none` | tool handler |
 | `restore_page_version` | yes | automatic | `none` | tool handler |
 | `save_source` | yes | automatic | `none` | tool handler |
+| `set_page_look` | yes | automatic | `none` | tool handler |
 | `set_page_space` | yes | automatic | `none` | tool handler |
 | `steep` | yes | automatic | `none` | tool handler |
 | `theme` | no | not_applicable | `none` | — |
@@ -1150,7 +1158,7 @@ carrying the authority of agreement.
 | `core/db.rs::legacy_overview_placeholder_candidates` | `private` | no | no | — | — |
 | `core/db.rs::list_active_page_titles_scoped` | `pub` | no | no | — | — |
 | `core/db.rs::list_entities` | `pub` | yes | no | — | — |
-| `core/db.rs::list_pages_by_space` | `pub` | no | no | — | — |
+| `core/db.rs::list_pages_by_space` | `pub` | no | **yes** | `server/page_look_routes.rs::handle_get_page_look_data` | — |
 | `core/db.rs::list_pages_inner` | `private` | no | no | — | — |
 | `core/db.rs::list_pages_stale` | `pub` | no | no | — | — |
 | `core/db.rs::list_pending_revisions` | `pub` | yes | no | — | — |
@@ -1221,7 +1229,7 @@ carrying the authority of agreement.
 | `core/db/scoped_entities.rs::list_entities_scoped` | `pub` | no | **yes** | `server/entity_graph_routes.rs::handle_list_entities` | — |
 | `core/db/scoped_entities.rs::query_entities_scoped` | `pub` | no | **yes** | `server/entity_graph_routes.rs::handle_query_entities` | — |
 | `core/db/scoped_entities.rs::search_entities_by_vector_scoped` | `pub` | no | **yes** | `server/entity_graph_routes.rs::handle_search_entities` | — |
-| `core/db/scoped_pages.rs::get_page_outbound_links_scoped` | `pub` | no | **yes** | `server/page_map_routes.rs::resolve_outline_links`, `server/page_routes.rs::handle_get_page_links` | — |
+| `core/db/scoped_pages.rs::get_page_outbound_links_scoped` | `pub` | no | **yes** | `server/page_look_routes.rs::handle_get_page_look_data`, `server/page_map_routes.rs::resolve_outline_links`, `server/page_routes.rs::handle_get_page_links` | — |
 | `core/db/scoped_pages.rs::list_recent_changes_scoped` | `pub` | no | **yes** | `server/routes.rs::handle_recent_page_changes` | — |
 | `core/db/scoped_pages.rs::pages_containing_text` | `pub` | no | **yes** | `server/page_routes.rs::handle_search_pages` | — |
 | `core/db/sentence_history.rs::cited_source_state_on` | `pub(super)` | no | no | — | — |
@@ -1406,6 +1414,7 @@ carrying the authority of agreement.
 | `server/main/startup.rs::prepare_startup_state` | `pub(super)` | no | no | `server/main.rs::run_daemon` | `core/db/page_summary_backfill.rs::backfill_page_summaries` |
 | `server/memory_revision_routes.rs::handle_list_pending_revisions` | `pub` | no | no | — | `core/db.rs::list_pending_revisions_scoped` |
 | `server/memory_routes.rs::plan_capture_entity` | `private` | no | no | `server/memory_routes.rs::handle_store_memory_inner` | `core/db.rs::entity_name_candidates` |
+| `server/page_look_routes.rs::handle_get_page_look_data` | `pub` | no | no | — | `core/db.rs::list_pages_by_space`, `core/db/scoped_pages.rs::get_page_outbound_links_scoped` |
 | `server/page_map_routes.rs::compute_ref_state` | `private` | no | no | `server/page_map_routes.rs::wire_node` | `core/db.rs::get_entity_name_type` |
 | `server/page_map_routes.rs::resolve_outline_links` | `private` | no | no | `server/page_map_routes.rs::handle_get_page_map` | `core/db/scoped_pages.rs::get_page_outbound_links_scoped` |
 | `server/page_routes.rs::handle_get_page` | `pub` | no | **yes** | `server/repair_read_routes.rs::handle_get_repair_page` | `core/db/page_basis.rs::linked_changed` |
@@ -1643,7 +1652,7 @@ carrying the authority of agreement.
 | `server/page_export_routes.rs::versions` | `private` | no | no | — | `core/db/page_export.rs::page_export_versions` |
 | `server/page_map_routes.rs::ensure_page_is_active` | `private` | no | no | `server/page_map_routes.rs::handle_create_map_edge`, `server/page_map_routes.rs::handle_create_map_node`, `server/page_map_routes.rs::handle_delete_map_edge`, `server/page_map_routes.rs::handle_delete_map_node`, `server/page_map_routes.rs::handle_improve_page_map`, `server/page_map_routes.rs::handle_patch_map_edge`, `server/page_map_routes.rs::handle_patch_map_node`, `server/page_map_routes.rs::handle_put_page_map_layout`, `server/page_map_routes.rs::handle_reset_page_map` | `core/db.rs::get_page` |
 | `server/page_map_routes.rs::handle_get_page_map` | `pub` | no | no | — | `server/page_map_routes.rs::resolve_outline_links` |
-| `server/page_map_routes.rs::visible_page` | `private` | no | no | `server/page_map_routes.rs::compute_ref_state`, `server/page_map_routes.rs::handle_get_page_map`, `server/page_map_routes.rs::resolve_outline_links` | `core/db.rs::get_page` |
+| `server/page_map_routes.rs::visible_page` | `private` | yes | no | — | `core/db.rs::get_page` |
 | `server/page_map_routes.rs::wire_node` | `private` | no | no | `server/page_map_routes.rs::build_map_response`, `server/page_map_routes.rs::handle_create_map_node`, `server/page_map_routes.rs::handle_delete_map_node`, `server/page_map_routes.rs::handle_patch_map_node` | `server/page_map_routes.rs::compute_ref_state` |
 | `server/page_routes.rs::archive_page_for` | `private` | no | no | `server/page_routes.rs::handle_archive_page`, `server/page_routes.rs::handle_delete_page` | `core/db.rs::get_page` |
 | `server/page_routes.rs::handle_create_page_inner` | `private` | no | no | `server/page_routes.rs::handle_create_page` | `core/db.rs::get_page`, `core/db/page_basis.rs::check_basis_candidates` |
@@ -1720,7 +1729,7 @@ carrying the authority of agreement.
 | `core/db/page_basis.rs::retarget_page_identity` | `pub(super)` | no | no | — | `core/db/page_basis.rs::refresh_basis_state` |
 | `core/db/repair_verification.rs::record_repair_verification_atomic` | `pub(crate)` | no | no | — | `core/repair.rs::projection_page_row_on_connection` |
 | `core/db/scoped_pages.rs::get_page_scoped` | `pub` | no | **yes** | `server/page_routes.rs::handle_export_page`, `server/page_routes.rs::handle_move_page`, `server/page_routes.rs::handle_restore_page`, `server/page_routes.rs::handle_set_page_space`, `server/source_annotation_routes.rs::handle_update_source_annotation`, `server/source_annotation_routes.rs::hydrate_pages` | `core/db/scoped_pages.rs::get_page_scoped_inner` |
-| `core/db/scoped_pages.rs::get_page_scoped_browse` | `pub` | no | **yes** | `server/page_basis_routes.rs::visible_ids`, `server/page_routes.rs::handle_get_page`, `server/page_routes.rs::handle_get_page_revisions`, `server/session_routes.rs::handle_get_page_sessions` | `core/db/scoped_pages.rs::get_page_scoped_inner` |
+| `core/db/scoped_pages.rs::get_page_scoped_browse` | `pub` | no | **yes** | `server/page_basis_routes.rs::visible_ids`, `server/page_look_routes.rs::visible_page`, `server/page_routes.rs::handle_get_page`, `server/page_routes.rs::handle_get_page_revisions`, `server/session_routes.rs::handle_get_page_sessions` | `core/db/scoped_pages.rs::get_page_scoped_inner` |
 | `core/db/scoped_pages.rs::list_pages_scoped` | `pub` | no | **yes** | `server/knowledge_routes.rs::handle_list_knowledge_folders`, `server/page_routes.rs::handle_export_pages`, `server/repo_wiki_routes.rs::exportable_pages` | `core/db/scoped_pages.rs::list_pages_scoped_inner` |
 | `core/db/scoped_pages.rs::list_pages_scoped_browse` | `pub` | no | **yes** | `server/page_routes.rs::list_visible_browse_pages` | `core/db/scoped_pages.rs::list_pages_scoped_inner` |
 | `core/document_enrichment.rs::refresh_okf_linkers` | `private` | no | no | — | `core/db/okf_concepts.rs::refresh_okf_concept_linkers` |

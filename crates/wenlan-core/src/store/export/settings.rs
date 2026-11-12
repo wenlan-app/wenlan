@@ -8,6 +8,7 @@
 //! | `agents.json`     | `agent_connections`                             |
 //! | `profile.json`    | `profiles`                                      |
 //! | `onboarding.json` | `onboarding_milestones`                         |
+//! | `looks.json`      | `page_looks` (every version of every page's look) |
 //! | `metadata.json`   | `app_metadata`                                  |
 //!
 //! Each table is copied whole, every column and row as stored, so a column a
@@ -42,6 +43,7 @@ pub const SETTINGS_FILES: &[(&str, &[&str])] = &[
     ("agents", &["agent_connections"]),
     ("profile", &["profiles"]),
     ("onboarding", &["onboarding_milestones"]),
+    ("looks", &["page_looks"]),
     ("metadata", &["app_metadata"]),
 ];
 

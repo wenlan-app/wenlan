@@ -77,6 +77,7 @@ pub const FILE_TABLE_HOMES: &[(&str, &str)] = &[
     ("profiles", "settings"),
     ("agent_connections", "settings"),
     ("onboarding_milestones", "settings"),
+    ("page_looks", "settings"),
     ("app_metadata", "settings"),
     ("source_annotations", "records"),
     ("okf_concepts", "records"),
