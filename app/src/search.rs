@@ -3870,6 +3870,18 @@ pub async fn team_status(state: tauri::State<'_, State>) -> Result<team::TeamSta
     client.get_json("/api/team").await
 }
 
+/// Names the team; every member sees the name.
+#[tauri::command]
+pub async fn team_rename(
+    state: tauri::State<'_, State>,
+    name: String,
+) -> Result<team::TeamInfo, String> {
+    let client = daemon_client(&state).await;
+    client
+        .put_json("/api/team", &team::TeamRenameRequest { name })
+        .await
+}
+
 /// Adds a person; the answer holds their one-time join code.
 #[tauri::command]
 pub async fn team_add_member(
@@ -3939,10 +3951,14 @@ pub async fn team_new_member_key(
 pub async fn team_host_space(
     state: tauri::State<'_, State>,
     space: String,
+    everyone: Option<team::TeamEveryone>,
 ) -> Result<shared_space::SharedSyncCounts, String> {
     let client = daemon_client(&state).await;
     client
-        .post_json("/api/team/spaces", &team::TeamHostSpaceRequest { space })
+        .post_json(
+            "/api/team/spaces",
+            &team::TeamHostSpaceRequest { space, everyone },
+        )
         .await
 }
 
@@ -7777,12 +7793,15 @@ pub async fn list_recent_retrievals(
 pub async fn list_recent_changes(
     state: tauri::State<'_, State>,
     limit: Option<i64>,
+    space: Option<String>,
 ) -> Result<Vec<wenlan_types::PageChange>, String> {
     let client = {
         let s = state.read().await;
         s.client.clone()
     };
-    client.list_recent_changes(limit.unwrap_or(10)).await
+    client
+        .list_recent_changes(limit.unwrap_or(10), space.as_deref())
+        .await
 }
 
 #[tauri::command]

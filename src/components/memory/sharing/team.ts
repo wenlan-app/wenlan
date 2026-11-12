@@ -49,8 +49,8 @@ export const TEAM_KEY = ["team"] as const;
 
 /** The team server's people and hosted Spaces. Only a computer that runs a
  *  team server answers; elsewhere it reads as "off". */
-export function useTeamStatus() {
-  return useQuery({ queryKey: TEAM_KEY, queryFn: teamStatus, retry: false });
+export function useTeamStatus({ enabled = true }: { readonly enabled?: boolean } = {}) {
+  return useQuery({ queryKey: TEAM_KEY, queryFn: teamStatus, retry: false, enabled });
 }
 
 /** Whether `name` is the same person as `member`: trimmed, any letter case. */

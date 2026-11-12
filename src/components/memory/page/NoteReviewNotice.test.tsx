@@ -8,9 +8,10 @@ vi.mock("../../../lib/tauri", () => ({
   listPendingRevisions: vi.fn(),
   listRefinements: vi.fn(),
   getResolvedRouting: vi.fn().mockResolvedValue(null),
+  listShares: vi.fn().mockResolvedValue([]),
 }));
 
-import { listPendingRevisions, listRefinements } from "../../../lib/tauri";
+import { listPendingRevisions, listRefinements, listShares, type SharedStatus } from "../../../lib/tauri";
 import NoteReviewNotice from "./NoteReviewNotice";
 
 const basePage: Page = {
@@ -52,6 +53,19 @@ afterEach(() => {
 });
 
 describe("NoteReviewNotice", () => {
+  it("names the teammate whose AI tool wants to change a shared page", async () => {
+    vi.mocked(listShares).mockResolvedValue([{
+      kind: "space", target: "Product", folder: "", host: null, read_only: false, hosted: false,
+      member_id: "me", member_name: "Amy", members: [{ id: "me", name: "Amy" }, { id: "bo", name: "Bo" }],
+    }] as unknown as SharedStatus[]);
+    vi.mocked(listPendingRevisions).mockResolvedValue([{ ...revision("page-1", "page"), edited_by: "shared_ai:bo" }]);
+    vi.mocked(listRefinements).mockResolvedValue({ proposals: [] });
+    renderNotice();
+    expect(await screen.findByText(
+      "Bo's AI tool wants to change this page. Anyone in this Space can accept or reject it.",
+    )).toBeInTheDocument();
+  });
+
   it("matches exact page and linked source targets and opens the first relevant review item", async () => {
     vi.mocked(listPendingRevisions).mockResolvedValue([
       revision("page-1", "page"), revision("memory-1"), revision("memory-elsewhere"),

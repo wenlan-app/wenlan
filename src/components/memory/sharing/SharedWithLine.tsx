@@ -6,7 +6,9 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { sharePage, shareSpace, type SharedStatus } from "../../../lib/tauri";
-import { SHARES_KEY, withLine } from "./sharing";
+import { SHARES_KEY, teamLabel, withLine } from "./sharing";
+import { useTeamStatus } from "./team";
+import { teamAccessText } from "./TeamMembers";
 import "./sharing.css";
 
 export function SharedWithLine({ share, onOpen }: { readonly share: SharedStatus; readonly onOpen: () => void }) {
@@ -39,10 +41,19 @@ export function SharedWithLine({ share, onOpen }: { readonly share: SharedStatus
     <p className="shared-with-line">
       <button type="button" className="shared-with-button" onClick={onOpen}>
         <PeopleIcon />
-        <span>{withLine(share, t)}</span>
+        {share.hosted && share.kind === "space"
+          ? <HostedTeamLine share={share} />
+          : <span>{share.host ? `${teamLabel(t, share.team)} · ${t(share.read_only ? "team.readOnly" : "team.canEdit")}` : withLine(share, t)}</span>}
       </button>
     </p>
   );
+}
+
+/** A Space this computer hosts for its team: the team and who can use it. */
+function HostedTeamLine({ share }: { readonly share: SharedStatus }) {
+  const { t } = useTranslation();
+  const status = useTeamStatus();
+  return <span>{`${teamLabel(t, share.team ?? status.data?.team)} · ${teamAccessText(t, share.target, status.data)}`}</span>;
 }
 
 export function PeopleIcon({ className = "shared-people-icon" }: { readonly className?: string }) {

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import {
   acceptPendingRevision,
   acceptRefinement,
@@ -28,6 +29,7 @@ import { acceptClassification, type ClassificationChange, type ClassificationPay
 import type { ResearchDisputePayload } from "../../lib/disputeApi";
 import { BASIS_PENDING_QUERY_KEY } from "./page/useBasisActions";
 import { CODE_BASIS_PENDING_QUERY_KEY } from "./page/useCodeBasisActions";
+import { sharedWriter, useShares } from "./sharing/sharing";
 import { SteepNeedsAiToolError } from "../../lib/steepMode";
 
 export type ReviewItem =
@@ -162,6 +164,9 @@ export function useReviewQueue(enabled: boolean = true, scope: "default" | "note
   const revisionsKey = scope === "note-context" ? [...REVISIONS_KEY, scope] : REVISIONS_KEY;
   const refinementsKey = scope === "note-context" ? [...REFINEMENTS_KEY, scope] : REFINEMENTS_KEY;
   const queryClient = useQueryClient();
+  const { t } = useTranslation();
+  // A card another member's AI tool made in a shared Space names that member.
+  const shares = useShares();
 
   const revisions = useQuery({
     queryKey: revisionsKey,
@@ -192,7 +197,7 @@ export function useReviewQueue(enabled: boolean = true, scope: "default" | "note
           targetKind: item.target_kind,
           revisionSourceId: item.revision_source_id,
           content: item.revision_content,
-          agent: agentDisplayName(item.source_agent),
+          agent: sharedWriter(item.edited_by, shares.data, t) ?? agentDisplayName(item.source_agent),
           reviewReason: item.review_reason ?? null,
           timestampMs: item.last_modified ? item.last_modified * 1000 : null,
         }),

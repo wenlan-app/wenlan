@@ -7,6 +7,7 @@ import {
   deleteSpace,
   listSpaces,
   reorderSpace,
+  teamHostSpace,
   toggleSpaceStarred,
   updateSpace,
   type Space,
@@ -16,8 +17,10 @@ import { listAllActivePages } from "../pages/listAllPages";
 import { Funnel } from "@phosphor-icons/react";
 import { AssetLensToggle } from "../assets/AssetLensToggle";
 import { JoinSharedDialog } from "../sharing/JoinSharedDialog";
+import { useScope } from "../team/scope";
 import { PeopleIcon } from "../sharing/SharedWithLine";
-import { groupTeamSpaces, useShares } from "../sharing/sharing";
+import { SHARES_KEY, groupTeamSpaces, teamLabel, useShares } from "../sharing/sharing";
+import { TEAM_KEY } from "../sharing/team";
 import { ConfirmedSpaces } from "./ConfirmedSpaces";
 import { SpaceEditor } from "./SpaceEditor";
 import { SuggestedSpaces } from "./SuggestedSpaces";
@@ -86,6 +89,7 @@ export function SpacesOverview(props: SpacesOverviewProps) {
   const pendingRef = useRef(new Set<string>());
   const query = useQuery({ queryKey: ["spaces"], queryFn: listSpaces });
   const shares = useShares();
+  const scope = useScope();
   const pagesQuery = useQuery({
     queryKey: ["spaces-page-counts"],
     queryFn: listAllActivePages,
@@ -116,6 +120,15 @@ export function SpacesOverview(props: SpacesOverviewProps) {
       await runAction(action);
       switch (action.kind) {
         case "create":
+          // Made on a team's side, by the team's owner: the new Space is the
+          // team's at once, as a page started there is.
+          if (scope.team?.hosted) {
+            await teamHostSpace(action.value.name);
+            await Promise.all([
+              queryClient.invalidateQueries({ queryKey: TEAM_KEY }),
+              queryClient.invalidateQueries({ queryKey: SHARES_KEY }),
+            ]);
+          }
           setCreating(false);
           break;
         case "delete":
@@ -157,9 +170,12 @@ export function SpacesOverview(props: SpacesOverviewProps) {
   };
 
   const allSpaces = query.data ?? lastGood ?? [];
-  const suggested = filterSpaces(sortSuggestedSpaces(allSpaces), filter);
-  const confirmed = filterSpaces(sortConfirmedSpaces(allSpaces), filter);
-  const { own: ownConfirmed, groups: teamGroups } = groupTeamSpaces(confirmed, shares.data);
+  // Only the side the window shows: Private or one team, never both.
+  const suggested = filterSpaces(sortSuggestedSpaces(allSpaces), filter).filter((space) => scope.inScope(space.name));
+  const confirmed = filterSpaces(sortConfirmedSpaces(allSpaces), filter).filter((space) => scope.inScope(space.name));
+  const { own: ownConfirmed, groups: teamGroups } = scope.teams.length > 0
+    ? { own: confirmed, groups: [] }
+    : groupTeamSpaces(confirmed, shares.data);
   const hasFilter = filter.trim().length > 0;
   const noResults = hasFilter && suggested.length === 0 && confirmed.length === 0;
   const pendingCreate = pendingIds.includes("create");
@@ -189,17 +205,25 @@ export function SpacesOverview(props: SpacesOverviewProps) {
             onKeep={(space) => submit({ kind: "confirm", space })}
             onDiscard={(space) => submit({ kind: "delete", space })}
           />
-          <button type="button" className="spaces-join-action collection-control" onClick={() => setJoining(true)}>
-            <PeopleIcon className="spaces-join-icon" />
-            {t("sharing.joinEntry")}
-          </button>
-          <button type="button" className="page-create-action spaces-new-action collection-control collection-control--primary" onClick={() => setCreating(true)}>
-            {props.labels.newSpace}
-          </button>
+          {/* Joining a shared folder is Private's. New makes a Space on the
+              side shown: a team's comes from its server, so only the team's
+              owner makes one there. */}
+          {!scope.team && (
+            <button type="button" className="spaces-join-action collection-control" onClick={() => setJoining(true)}>
+              <PeopleIcon className="spaces-join-icon" />
+              {t("sharing.joinEntry")}
+            </button>
+          )}
+          {(!scope.team || scope.team.hosted) && (
+            <button type="button" className="page-create-action spaces-new-action collection-control collection-control--primary" onClick={() => setCreating(true)}>
+              {props.labels.newSpace}
+            </button>
+          )}
         </div>
       </header>
       {joining ? (
         <JoinSharedDialog
+          only="folder"
           onClose={() => setJoining(false)}
           onJoined={(kind, target) => {
             setJoining(false);
@@ -249,8 +273,8 @@ export function SpacesOverview(props: SpacesOverviewProps) {
           </div>
           ) : null}
           {teamGroups.map((group) => (
-            <div key={group.host ?? "hosted"} className="spaces-team-group">
-              <h2 className="spaces-group-title">{group.host ? t("team.groupTeam", { host: group.host }) : t("team.groupHosted")}</h2>
+            <div key={group.key} className="spaces-team-group">
+              <h2 className="spaces-group-title">{teamLabel(t, group.team)}</h2>
           <ConfirmedSpaces
             spaces={group.spaces}
             allSpaces={allSpaces}
@@ -269,10 +293,12 @@ export function SpacesOverview(props: SpacesOverviewProps) {
             </div>
           ))}
           {/* A narrow window has no room for it in the header row. */}
-          <button type="button" className="spaces-join-row spaces-quiet-action" onClick={() => setJoining(true)}>
-            <PeopleIcon className="spaces-join-icon" />
-            {t("sharing.joinEntry")}
-          </button>
+          {!scope.team && (
+            <button type="button" className="spaces-join-row spaces-quiet-action" onClick={() => setJoining(true)}>
+              <PeopleIcon className="spaces-join-icon" />
+              {t("sharing.joinEntry")}
+            </button>
+          )}
         </>
       )}
     </div>

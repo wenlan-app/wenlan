@@ -6,11 +6,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
 import { i18n } from "../../../../i18n";
 import TeamSection from "./TeamSection";
-import { teamStatus, type TeamStatus } from "../../../../lib/tauri";
+import { listShares, teamStatus, type TeamStatus } from "../../../../lib/tauri";
 
 vi.mock("../../../../lib/tauri", async () => {
   const actual = await vi.importActual<typeof import("../../../../lib/tauri")>("../../../../lib/tauri");
-  return { ...actual, teamStatus: vi.fn() };
+  return { ...actual, teamStatus: vi.fn(), listShares: vi.fn() };
 });
 
 const on: TeamStatus = {
@@ -26,35 +26,47 @@ function renderSection() {
 
 beforeEach(async () => {
   await i18n.changeLanguage("en");
+  vi.mocked(listShares).mockResolvedValue([]);
   localStorage.clear();
 });
 afterEach(() => vi.clearAllMocks());
 
 describe("TeamSection", () => {
-  it("says this computer is not a team server and shows nothing else", async () => {
+  it("says this computer is in no team and how to start one", async () => {
     vi.mocked(teamStatus).mockResolvedValue({ members: [], spaces: [], listening: null });
     renderSection();
-    expect(await screen.findByText(/not a team server yet/)).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "How to set one up" }));
+    expect(await screen.findByText(/Not in a team/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "How to start a team" }));
     expect(openExternal).toHaveBeenCalledWith("https://github.com/wenlan-app/wenlan/blob/main/docs/team-server.md");
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   });
 
-  it("shows the server, the shared Spaces and where to add people, but no member list", async () => {
-    vi.mocked(teamStatus).mockResolvedValue(on);
+  it("on the team's server: its name, that it is on, and no Spaces or people", async () => {
+    vi.mocked(teamStatus).mockResolvedValue({ ...on, team: { id: "t1", name: "Acme" } });
     renderSection();
-    expect(await screen.findByText("Team server · on · 0.0.0.0:7879")).toBeInTheDocument();
-    expect(screen.getByText("Product")).toBeInTheDocument();
-    expect(screen.getByText("Roadmap")).toBeInTheDocument();
-    expect(screen.getByText("Add people in each Space's members window.")).toBeInTheDocument();
+    expect(await screen.findByText("Acme")).toBeInTheDocument();
+    expect(screen.getByText("This computer is the team's server")).toBeInTheDocument();
+    expect(screen.getByText("On · 0.0.0.0:7879")).toBeInTheDocument();
+    expect(screen.queryByText("Product")).not.toBeInTheDocument();
     expect(screen.queryByText("Amy")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Add person/ })).not.toBeInTheDocument();
   });
 
-  it("remembers the address people reach the server at", async () => {
+  it("on a member's computer: the team and who they joined as", async () => {
+    vi.mocked(teamStatus).mockRejectedValue(new Error("not a server"));
+    vi.mocked(listShares).mockResolvedValue([{
+      kind: "space", target: "Product", folder: "", host: "https://team.example.com", team: { id: "t1", name: "Acme" },
+      member_id: "me", member_name: "Dee", members: [], last: null,
+    }]);
+    renderSection();
+    expect(await screen.findByText("Acme")).toBeInTheDocument();
+    expect(screen.getByText("Joined as Dee")).toBeInTheDocument();
+    expect(screen.queryByText(/team\.example\.com/)).not.toBeInTheDocument();
+  });
+
+  it("remembers the address put in invite links", async () => {
     vi.mocked(teamStatus).mockResolvedValue(on);
     renderSection();
-    const field = await screen.findByLabelText("Address members use to reach this server");
+    const field = await screen.findByLabelText("Address in invite links");
     expect(field).toHaveValue("");
     await userEvent.type(field, "https://team.example.com");
     expect(localStorage.getItem("wenlan-team-url")).toBe("https://team.example.com");

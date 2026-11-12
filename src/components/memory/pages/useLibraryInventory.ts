@@ -6,6 +6,7 @@ import {
   listAllDraftPagesExplicitBrowse,
 } from "./listAllPages";
 import { collectPageInventory } from "./pageInventory";
+import { useScope } from "../team/scope";
 
 /**
  * The library's notes as the Wiki counts them: active pages plus drafts.
@@ -27,7 +28,11 @@ export function useLibraryInventory() {
     queryFn: listAllDraftPagesExplicitBrowse,
     ...EXPLICIT_BROWSE_QUERY_POLICY,
   });
-  const pages = collectPageInventory(activePagesQuery.data ?? [], draftPagesQuery.data ?? []);
+  const all = collectPageInventory(activePagesQuery.data ?? [], draftPagesQuery.data ?? []);
   const ready = activePagesQuery.isSuccess && draftPagesQuery.isSuccess;
-  return { pages, ready, empty: ready && pages.length === 0 };
+  // The side the window shows (Private or one team). Whether the library is
+  // new is about all of it: a person whose pages are all a team's is not new.
+  const { inScope } = useScope();
+  const pages = all.filter((page) => inScope(page.space));
+  return { pages, ready, empty: ready && all.length === 0 };
 }

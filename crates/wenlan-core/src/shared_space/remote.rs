@@ -358,13 +358,19 @@ pub async fn push(
 /// This member's version files in the copy: (path as the server lists it,
 /// page id, file).
 fn own_versions(folder: &Path, member: &str) -> Vec<(String, String, PathBuf)> {
-    let pages = folder
-        .join(version::MEMBERS_DIR)
-        .join(member)
-        .join(version::PAGES_DIR);
     let mut out = Vec::new();
+    for kind in version::KIND_DIRS {
+        own_files(folder, member, kind, &mut out);
+    }
+    out.sort();
+    out
+}
+
+/// [`own_versions`] of one folder kind.
+fn own_files(folder: &Path, member: &str, kind: &str, out: &mut Vec<(String, String, PathBuf)>) {
+    let pages = folder.join(version::MEMBERS_DIR).join(member).join(kind);
     let Ok(entries) = std::fs::read_dir(&pages) else {
-        return out;
+        return;
     };
     for page in entries.flatten() {
         let Ok(page_id) = page.file_name().into_string() else {
@@ -382,19 +388,13 @@ fn own_versions(folder: &Path, member: &str) -> Vec<(String, String, PathBuf)> {
             };
             if version::version_sha(&name).is_some() {
                 out.push((
-                    format!(
-                        "{}/{member}/{}/{page_id}/{name}",
-                        version::MEMBERS_DIR,
-                        version::PAGES_DIR
-                    ),
+                    format!("{}/{member}/{kind}/{page_id}/{name}", version::MEMBERS_DIR),
                     page_id.clone(),
                     file.path(),
                 ));
             }
         }
     }
-    out.sort();
-    out
 }
 
 /// Turns a refusal to read or write into an error for a route.

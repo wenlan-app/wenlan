@@ -468,6 +468,7 @@ impl MemoryDB {
             WenlanError::VectorDb(format!("list_recent_changes_scoped: {error}"))
         })?;
         let mut changes = Vec::new();
+        let mut versions = Vec::new();
         while let Some(row) = rows
             .next()
             .await
@@ -488,8 +489,14 @@ impl MemoryDB {
                 changed_at_ms: chrono::DateTime::parse_from_rfc3339(&last_modified)
                     .map(|dt| dt.timestamp_millis())
                     .unwrap_or(0),
+                edited_by: None,
+                changed_sentences: None,
             });
+            versions.push(version);
         }
+        drop(rows);
+        drop(conn);
+        self.annotate_page_changes(&mut changes, &versions).await;
         Ok(changes)
     }
 

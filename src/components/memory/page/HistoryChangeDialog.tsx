@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useEffect, useId, useMemo, useRef } from "react";
+import { useEffect, useId, useMemo, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -17,6 +17,8 @@ interface HistoryChangeDialogProps {
   onClose: () => void;
   /** Names the member behind a change taken from a shared folder. */
   shares?: readonly SharedStatus[];
+  /** Shown beside Close, such as a way back to the text before the change. */
+  action?: ReactNode;
 }
 
 function sameItem(a: PageHistoryItem, b: PageHistoryItem): boolean {
@@ -51,7 +53,7 @@ export function historyTexts(
 }
 
 /** What one entry of the page's history changed (docs/ux/spec.md, UX-HIST-2). */
-export function HistoryChangeDialog({ pageId, item, onClose, shares }: HistoryChangeDialogProps) {
+export function HistoryChangeDialog({ pageId, item, onClose, shares, action }: HistoryChangeDialogProps) {
   const { t, i18n } = useTranslation();
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
@@ -132,6 +134,7 @@ export function HistoryChangeDialog({ pageId, item, onClose, shares }: HistoryCh
         )}
         {body}
         <div className="basis-diff__actions">
+          {action}
           <Button variant="secondary" onClick={onClose}>{t("pageHistory.close")}</Button>
         </div>
       </div>

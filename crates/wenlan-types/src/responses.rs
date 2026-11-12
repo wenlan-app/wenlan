@@ -2185,6 +2185,11 @@ pub struct PendingRevisionItem {
     /// memory-target revisions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub review_reason: Option<String>,
+    /// The member of a shared Space whose change this card is
+    /// (`shared_ai:<member>` or `shared_person:<member>`), so the card can
+    /// name them. None for every card made on this computer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edited_by: Option<String>,
 }
 
 /// Response returned by `POST /api/memory/revision/{id}/accept`.
@@ -2549,6 +2554,7 @@ mod tests {
             target_kind: RevisionTargetKind::Memory,
             grounded_in: None,
             review_reason: None,
+            edited_by: None,
         };
         let json = serde_json::to_value(&item).unwrap();
         assert_eq!(json["target_source_id"], "mem_target");
@@ -2573,6 +2579,7 @@ mod tests {
             target_kind: RevisionTargetKind::Page,
             grounded_in: None,
             review_reason: None,
+            edited_by: None,
         };
         let json = serde_json::to_value(&page_item).unwrap();
         assert_eq!(json["target_kind"], "page");

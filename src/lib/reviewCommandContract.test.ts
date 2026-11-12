@@ -42,6 +42,7 @@ const OUTSIDE_THE_REVIEW_SURFACE: readonly string[] = [
   "share_space",
   // Team server commands need a real team server; the fixture has none.
   "team_status",
+  "team_rename",
   "team_add_member",
   "team_update_member",
   "team_remove_member",

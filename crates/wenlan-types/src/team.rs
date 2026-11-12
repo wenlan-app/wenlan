@@ -31,6 +31,32 @@ pub struct TeamSpaceAccess {
     pub access: TeamAccess,
 }
 
+/// The team a server is for: one id that never changes, and the name its
+/// owner gave it, the same for everyone on the team. Teams are told apart
+/// by `id`, never by the server's address, which may change.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamInfo {
+    pub id: String,
+    /// `None` until the owner names the team.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+/// What a person is on a team: the owner sets it up and brings people in.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TeamRole {
+    Owner,
+    #[default]
+    Member,
+}
+
+impl TeamRole {
+    pub fn is_member(&self) -> bool {
+        *self == TeamRole::Member
+    }
+}
+
 /// A member as the server lists them. The key itself is never in it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TeamMember {
@@ -49,9 +75,15 @@ pub struct TeamMember {
 /// `GET /api/team`: the member list and the Spaces this server hosts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TeamStatus {
+    /// The team this server is for. Left out by an older server.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team: Option<TeamInfo>,
     pub members: Vec<TeamMember>,
     /// Spaces this server hosts for the team, by name.
     pub spaces: Vec<String>,
+    /// Hosted Spaces every member has, now and when added later.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub everyone: Vec<TeamSpaceAccess>,
     /// Where the team listener listens, when it is on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub listening: Option<String>,
@@ -82,6 +114,12 @@ pub struct TeamMemberKey {
     pub join_code: Option<String>,
 }
 
+/// Body of `PUT /api/team`: the team's name, which every member sees.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamRenameRequest {
+    pub name: String,
+}
+
 /// Body of `PUT /api/team/members/{id}`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TeamUpdateMemberRequest {
@@ -91,10 +129,26 @@ pub struct TeamUpdateMemberRequest {
     pub spaces: Option<Vec<TeamSpaceAccess>>,
 }
 
-/// Body of `POST /api/team/spaces`: host a Space of this Wenlan.
+/// Who on the team has a hosted Space without being added to it one by one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TeamEveryone {
+    /// Only the members added to it.
+    Nobody,
+    /// Every member, now and later, may read it.
+    Read,
+    /// Every member, now and later, may change it.
+    Write,
+}
+
+/// Body of `POST /api/team/spaces`: host a Space of this Wenlan. With
+/// `everyone`, the Space must be hosted already, and only who has it
+/// changes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TeamHostSpaceRequest {
     pub space: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub everyone: Option<TeamEveryone>,
 }
 
 /// `GET /team/v1/me`: who a key belongs to and what they can use.
@@ -103,6 +157,11 @@ pub struct TeamMe {
     pub member_id: String,
     pub name: String,
     pub spaces: Vec<TeamSpaceAccess>,
+    /// The team. Left out by an older server.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team: Option<TeamInfo>,
+    #[serde(default, skip_serializing_if = "TeamRole::is_member")]
+    pub role: TeamRole,
 }
 
 /// `GET /team/v1/spaces/{space}/files`: every file of the Space's shared
@@ -156,18 +215,30 @@ pub fn split_team_agent(agent: &str) -> Option<(&str, &str)> {
     (safe && !tool.is_empty()).then_some((tool, member))
 }
 
-/// Splits a join code (`<url>#<key>`) into the server's url (no trailing
-/// slash, no path) and the key. `None` when it is not one.
+/// The path an invite link opens on the team server: `<url>/join#<key>`.
+pub const JOIN_PATH: &str = "/join";
+
+/// The invite link for a member: `<url>/join#<key>`. The key stays after
+/// `#`, so a browser never sends it to the server.
+pub fn invite_link(url: &str, key: &str) -> String {
+    format!("{}{JOIN_PATH}#{key}", url.trim().trim_end_matches('/'))
+}
+
+/// Splits an invite link (`<url>/join#<key>`, or the older `<url>#<key>`)
+/// into the server's url (no trailing slash, no `/join`) and the key.
+/// `None` when it is not one.
 pub fn split_join_code(code: &str) -> Option<(String, String)> {
     let (url, key) = code.trim().split_once('#')?;
     let key = key.trim();
     if !is_team_key(key) {
         return None;
     }
-    Some((
-        url.trim().trim_end_matches('/').to_string(),
-        key.to_string(),
-    ))
+    let url = url.trim().trim_end_matches('/');
+    let url = url
+        .strip_suffix(JOIN_PATH)
+        .unwrap_or(url)
+        .trim_end_matches('/');
+    Some((url.to_string(), key.to_string()))
 }
 
 /// The shape of a member key: `wlt_` and 64 hex digits.
@@ -196,6 +267,14 @@ mod tests {
         assert_eq!(
             split_join_code(&format!("https://wenlan.example.com/#{key}")),
             Some(("https://wenlan.example.com".into(), key.clone()))
+        );
+        assert_eq!(
+            split_join_code(&invite_link("https://wenlan.example.com/", &key)),
+            Some(("https://wenlan.example.com".into(), key.clone()))
+        );
+        assert_eq!(
+            invite_link("https://wenlan.example.com", &key),
+            format!("https://wenlan.example.com/join#{key}")
         );
         assert_eq!(split_join_code("https://wenlan.example.com"), None);
         assert_eq!(split_join_code("https://x#wlt_short"), None);
