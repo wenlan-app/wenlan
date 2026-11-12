@@ -592,9 +592,21 @@ Show the members, the Spaces this computer hosts for the team, and whether the t
 wenlan team status [OPTIONS]
 ```
 
+#### `wenlan team rename`
+
+Name the team; every member's Wenlan shows the name.
+
+```text
+wenlan team rename [OPTIONS] <NAME>
+```
+
+Arguments:
+
+- `<NAME>`: The team's name, such as the company's.
+
 #### `wenlan team add`
 
-Add a member and print their join code (or key) once.
+Add a member and print their invite link (or key) once.
 
 ```text
 wenlan team add [OPTIONS] <NAME>
@@ -607,7 +619,7 @@ Arguments:
 Options:
 
 - `--access <SPACE[:read]>`: A Space the member can use, `Space` for read and write or `Space:read` for read only. Repeat for more Spaces.
-- `--url <URL>`: The address the member's computer reaches this server at, put in the join code. Left out, only the key is printed.
+- `--url <URL>`: The address the member's computer reaches this server at, put in the invite link. Left out, only the key is printed.
 
 #### `wenlan team update`
 
@@ -652,7 +664,7 @@ Arguments:
 
 Options:
 
-- `--url <URL>`: The address the member's computer reaches this server at, put in the join code.
+- `--url <URL>`: The address the member's computer reaches this server at, put in the invite link.
 
 #### `wenlan team host`
 
@@ -668,7 +680,7 @@ Arguments:
 
 #### `wenlan team join`
 
-Join a team server with a join code: list the Spaces you can use, or sync one of them with --server-space.
+Join a team server with a invite link: list the Spaces you can use, or sync one of them with --server-space.
 
 ```text
 wenlan team join [OPTIONS] <CODE>
@@ -676,7 +688,7 @@ wenlan team join [OPTIONS] <CODE>
 
 Arguments:
 
-- `<CODE>`: The join code you were sent (`https://…#wlt_…`).
+- `<CODE>`: The invite link you were sent (`https://…/join#wlt_…`).
 
 Options:
 

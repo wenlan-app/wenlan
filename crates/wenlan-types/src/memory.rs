@@ -454,6 +454,16 @@ pub struct PageChange {
     pub title: String,
     pub change_kind: PageChangeKind,
     pub changed_at_ms: i64,
+    /// Who wrote the version that made this change (`page_history.edited_by`:
+    /// `human`, an agent name, `shared_person:<member>`, ...). Absent when the
+    /// page keeps no history row for its current version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edited_by: Option<String>,
+    /// How many sentences that version changed against the one before it: the
+    /// larger of sentences added and sentences removed. Absent for a new page
+    /// or when either version is missing from history.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changed_sentences: Option<u32>,
 }
 
 /// The kind of item in a recent-activity feed entry.

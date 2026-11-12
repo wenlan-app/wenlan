@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { listSpaces, setUiLanguage, type Page, type Space } from "../../../lib/tauri";
+import { useScope } from "../team/scope";
 
 /** The lead Space plus two rows of three under it. */
 const SPACES_LISTED = 7;
@@ -51,7 +52,8 @@ export function HomeSpaces({
   useEffect(() => {
     if (language) void setUiLanguage(language).catch(() => {});
   }, [language]);
-  const ordered = homeSpaceOrder(spaces.data ?? [], pages);
+  const scope = useScope();
+  const ordered = homeSpaceOrder((spaces.data ?? []).filter((space) => scope.inScope(space.name)), pages);
   const listed = ordered.slice(0, SPACES_LISTED);
   if (listed.length === 0) return null;
   const [lead, ...rest] = listed;

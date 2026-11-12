@@ -1,0 +1,61 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* "Recent changes" on a shared Space: flat rows under a small gray title,
+   like the rest of the Space page (no card, no icons). */
+.space-recent-changes {
+  display: grid;
+  gap: 8px;
+  margin: 28px 0 4px;
+}
+
+.space-recent-changes ul {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.space-recent-changes button {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  margin: 0 -8px;
+  border: 0;
+  border-radius: var(--mem-r-6);
+  background: transparent;
+  color: var(--mem-text);
+  font: 400 14px/1.5 var(--mem-font-body);
+  text-align: left;
+  cursor: pointer;
+}
+
+.space-recent-changes button:hover {
+  background: var(--mem-hover);
+}
+
+.space-recent-changes button:focus-visible {
+  outline: 2px solid var(--mem-accent-page);
+  outline-offset: 1px;
+}
+
+.space-recent-changes-what {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.space-recent-changes-meta {
+  flex: none;
+  color: var(--mem-text-tertiary);
+  font-size: 12px;
+}
+
+.space-recent-changes-error {
+  margin: 0 auto 0 0;
+  color: var(--mem-danger, #b42318);
+  font: 400 12px/1.4 var(--mem-font-body);
+}

@@ -24,7 +24,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use wenlan_types::team::{TeamAccess, TeamMe, TeamMember, TeamSpaceAccess};
+use wenlan_types::team::{TeamAccess, TeamInfo, TeamMe, TeamMember, TeamRole, TeamSpaceAccess};
 
 use crate::error::WenlanError;
 use crate::shared_space::{self, version, Scope, SpaceMember};
@@ -46,6 +46,17 @@ pub struct Member {
     pub added_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub removed_at: Option<String>,
+    /// What they are on the team. Members added by the owner are members;
+    /// the owner is the person at the server's own computer.
+    #[serde(default, skip_serializing_if = "TeamRole::is_member")]
+    pub role: TeamRole,
+    /// The Spaces everyone on the team has ([`TeamFile::everyone`]), filled
+    /// in when the list is read. Their own entry for a Space wins.
+    #[serde(skip)]
+    pub everyone: BTreeMap<String, TeamAccess>,
+    /// The team ([`TeamFile::info`]), filled in when the list is read.
+    #[serde(skip)]
+    pub team: Option<TeamInfo>,
 }
 
 impl Member {
@@ -59,7 +70,10 @@ impl Member {
         if !self.is_active() {
             return None;
         }
-        self.spaces.get(space).copied()
+        self.spaces
+            .get(space)
+            .or_else(|| self.everyone.get(space))
+            .copied()
     }
 
     pub fn to_wire(&self) -> TeamMember {
@@ -72,11 +86,19 @@ impl Member {
         }
     }
 
+    /// Who they are and every Space they can use, their own and everyone's.
     pub fn me(&self) -> TeamMe {
+        let mut all = self.everyone.clone();
+        all.extend(self.spaces.clone());
         TeamMe {
             member_id: self.id.clone(),
             name: self.name.clone(),
-            spaces: self.space_list(),
+            spaces: all
+                .into_iter()
+                .map(|(space, access)| TeamSpaceAccess { space, access })
+                .collect(),
+            team: self.team.clone(),
+            role: self.role,
         }
     }
 
@@ -95,8 +117,19 @@ impl Member {
 pub struct TeamFile {
     #[serde(default = "format_one")]
     pub format: u32,
+    /// The team's id, made the first time the list is written; it never
+    /// changes, so members' computers know the team wherever it moves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// The name the owner gave the team; every member sees it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     #[serde(default)]
     pub members: Vec<Member>,
+    /// Spaces every member has, now and when added later (a team's
+    /// handbook or wiki), by name.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub everyone: BTreeMap<String, TeamAccess>,
 }
 
 fn format_one() -> u32 {
@@ -107,8 +140,21 @@ impl Default for TeamFile {
     fn default() -> Self {
         Self {
             format: FORMAT,
+            id: None,
+            name: None,
             members: Vec::new(),
+            everyone: BTreeMap::new(),
         }
+    }
+}
+
+impl TeamFile {
+    /// The team's id and name; `None` before the list was first written.
+    pub fn info(&self) -> Option<TeamInfo> {
+        self.id.as_ref().map(|id| TeamInfo {
+            id: id.clone(),
+            name: self.name.clone(),
+        })
     }
 }
 
@@ -118,7 +164,7 @@ pub fn team_path() -> PathBuf {
 }
 
 pub fn read_team(path: &Path) -> Result<TeamFile, WenlanError> {
-    let file: TeamFile = match std::fs::read(path) {
+    let mut file: TeamFile = match std::fs::read(path) {
         Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| {
             WenlanError::Validation(format!("{} cannot be read: {error}", path.display()))
         })?,
@@ -131,6 +177,11 @@ pub fn read_team(path: &Path) -> Result<TeamFile, WenlanError> {
             path.display(),
             file.format
         )));
+    }
+    let info = file.info();
+    for member in &mut file.members {
+        member.everyone = file.everyone.clone();
+        member.team = info.clone();
     }
     Ok(file)
 }
@@ -154,6 +205,9 @@ fn change_team<T>(
         .open(path.with_extension("lock"))?;
     fs2::FileExt::lock_exclusive(&lock)?;
     let mut file = read_team(path)?;
+    if file.id.is_none() {
+        file.id = Some(uuid::Uuid::new_v4().simple().to_string());
+    }
     let out = change(&mut file)?;
     let mut tmp = tempfile::NamedTempFile::new_in(parent)?;
     tmp.write_all(serde_json::to_string_pretty(&file)?.as_bytes())?;
@@ -182,6 +236,31 @@ fn now() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
 
+/// The team's id and name, making the id when the team has none yet.
+pub fn team_info(path: &Path) -> Result<TeamInfo, WenlanError> {
+    if let Some(info) = read_team(path)?.info() {
+        return Ok(info);
+    }
+    change_team(path, |file| Ok(file.info()))?
+        .ok_or_else(|| WenlanError::Generic("the team has no id".into()))
+}
+
+/// Names the team. Every member's Wenlan shows the new name on its next
+/// sync pass.
+pub fn rename_team(path: &Path, name: &str) -> Result<TeamInfo, WenlanError> {
+    let name = name.trim();
+    if name.is_empty() || name.chars().count() > 60 {
+        return Err(WenlanError::Validation(
+            "a team needs a name of 1 to 60 characters".into(),
+        ));
+    }
+    change_team(path, |file| {
+        file.name = Some(name.to_string());
+        Ok(file.info())
+    })?
+    .ok_or_else(|| WenlanError::Generic("the team has no id".into()))
+}
+
 fn clean_name(name: &str) -> Result<String, WenlanError> {
     let name = name.trim();
     if name.is_empty() || name.chars().count() > 80 {
@@ -208,15 +287,20 @@ pub fn add_member(
 ) -> Result<(Member, String), WenlanError> {
     let name = clean_name(name)?;
     let key = new_key();
-    let member = Member {
+    let mut member = Member {
         id: uuid::Uuid::new_v4().simple().to_string(),
         name,
         key_sha256: key_hash(&key),
         spaces: access_map(spaces),
         added_at: now(),
         removed_at: None,
+        role: TeamRole::Member,
+        everyone: BTreeMap::new(),
+        team: None,
     };
     change_team(path, |file| {
+        member.everyone = file.everyone.clone();
+        member.team = file.info();
         file.members.push(member.clone());
         Ok(())
     })?;
@@ -250,6 +334,26 @@ pub fn update_member(
             member.spaces = access_map(spaces);
         }
         Ok(member.clone())
+    })
+}
+
+/// Gives every member `access` to `space`, now and when added later, or
+/// (`None`) stops doing so. Members' own entries for it are kept.
+pub fn set_everyone(
+    path: &Path,
+    space: &str,
+    access: Option<TeamAccess>,
+) -> Result<(), WenlanError> {
+    let space = space.trim();
+    if space.is_empty() {
+        return Err(WenlanError::Validation("no Space named".into()));
+    }
+    change_team(path, |file| {
+        match access {
+            Some(access) => file.everyone.insert(space.to_string(), access),
+            None => file.everyone.remove(space),
+        };
+        Ok(())
     })
 }
 
@@ -359,12 +463,14 @@ pub fn list_members_in_space_file(
 
 /// Everything the team listener needs to check a version a member sends:
 /// it is whole, it is theirs, and it is filed under its page.
+/// Returns the folder kind the file goes in (a version, a proposal or a
+/// decision; see [`version::KIND_DIRS`]).
 pub fn check_member_version(
     member: &str,
     page_id: &str,
     name: &str,
     bytes: &[u8],
-) -> Result<(), WenlanError> {
+) -> Result<&'static str, WenlanError> {
     if !version::is_safe_id(page_id) {
         return Err(WenlanError::Validation(format!(
             "{page_id} is not a page id"
@@ -381,7 +487,7 @@ pub fn check_member_version(
             "{name} was written by another member"
         )));
     }
-    Ok(())
+    Ok(version::file_kind(&read.meta))
 }
 
 /// Paths of every file in a hosted Space's folder, as the team listener
@@ -405,8 +511,11 @@ pub fn list_folder_files(folder: &Path) -> Vec<String> {
         out
     };
     let members_dir = folder.join(version::MEMBERS_DIR);
-    for member in dirs(&members_dir) {
-        let pages_dir = members_dir.join(&member).join(version::PAGES_DIR);
+    for (member, kind) in dirs(&members_dir)
+        .into_iter()
+        .flat_map(|member| version::KIND_DIRS.map(|kind| (member.clone(), kind)))
+    {
+        let pages_dir = members_dir.join(&member).join(kind);
         for page in dirs(&pages_dir) {
             let Ok(entries) = std::fs::read_dir(pages_dir.join(&page)) else {
                 continue;
@@ -419,9 +528,8 @@ pub fn list_folder_files(folder: &Path) -> Vec<String> {
             names.sort();
             for name in names {
                 files.push(format!(
-                    "{}/{member}/{}/{page}/{name}",
-                    version::MEMBERS_DIR,
-                    version::PAGES_DIR
+                    "{}/{member}/{kind}/{page}/{name}",
+                    version::MEMBERS_DIR
                 ));
             }
         }
@@ -439,7 +547,7 @@ pub fn served_path(folder: &Path, path: &str) -> Option<PathBuf> {
     match parts.as_slice() {
         [members, member, pages, page, name]
             if *members == version::MEMBERS_DIR
-                && *pages == version::PAGES_DIR
+                && version::KIND_DIRS.contains(pages)
                 && version::is_safe_id(member)
                 && version::is_safe_id(page)
                 && version::version_sha(name).is_some() =>

@@ -1036,6 +1036,8 @@ export interface SharedStatus {
   /** The team server this Space syncs through (its address), or null for a
    *  cloud-folder share. */
   host?: string | null;
+  /** The team the Space belongs to, once its server has said. */
+  team?: TeamInfo | null;
   /** This person may read the Space but not change it on the server. */
   read_only?: boolean;
   /** This computer hosts the Space for a team. */
@@ -1086,10 +1088,23 @@ export interface TeamMember {
   removed_at?: string | null;
 }
 
+/** The team a server is for: the same id and name for everyone on it.
+ *  `name` is missing until the owner names the team. */
+export interface TeamInfo {
+  id: string;
+  name?: string | null;
+}
+
+export type TeamRole = "owner" | "member";
+
 export interface TeamStatus {
+  /** The team this computer hosts; missing before it hosts anything. */
+  team?: TeamInfo | null;
   members: TeamMember[];
   /** Spaces this computer hosts for the team. */
   spaces: string[];
+  /** Hosted Spaces every member has, now and when added later. */
+  everyone?: TeamSpaceAccess[];
   /** Where the team listener listens; null when it is off. */
   listening?: string | null;
 }
@@ -1103,11 +1118,15 @@ export interface TeamMemberKey {
 
 export interface TeamJoinResponse {
   url: string;
-  me: { member_id: string; name: string; spaces: TeamSpaceAccess[] };
+  me: { member_id: string; name: string; spaces: TeamSpaceAccess[]; team?: TeamInfo | null; role?: TeamRole };
 }
 
 export async function teamStatus(): Promise<TeamStatus> {
   return invoke("team_status");
+}
+
+export async function teamRename(name: string): Promise<TeamInfo> {
+  return invoke("team_rename", { name });
 }
 
 export async function teamAddMember(name: string, spaces: TeamSpaceAccess[], url?: string): Promise<TeamMemberKey> {
@@ -1127,7 +1146,13 @@ export async function teamNewMemberKey(id: string, url?: string): Promise<TeamMe
 }
 
 export async function teamHostSpace(space: string): Promise<SharedSyncCounts> {
-  return invoke("team_host_space", { space });
+  return invoke("team_host_space", { space, everyone: null });
+}
+
+/** Who has a hosted Space without being added one by one: every member
+ *  ("read" or "write"), or only those added ("nobody"). */
+export async function teamSetEveryone(space: string, everyone: TeamAccess | "nobody"): Promise<void> {
+  await invoke("team_host_space", { space, everyone });
 }
 
 export async function teamJoin(code: string, key?: string): Promise<TeamJoinResponse> {
@@ -1505,6 +1530,52 @@ export async function getOldMemoryPass(): Promise<OldMemoryPass | null> {
 /** Take the whole pass over old memories back. */
 export async function undoOldMemoryPass(): Promise<OldMemoryPass | null> {
   return invoke("undo_old_memory_pass");
+}
+
+/** Where one pass over AI tools' memory put each memory it read. */
+export interface AiMemoryCounts {
+  read: number;
+  sensitive: number;
+  not_knowledge: number;
+  already: number;
+  added: number;
+  conflicts: number;
+  undecided: number;
+  updated: number;
+  removed: number;
+  waiting: number;
+}
+
+/** Following AI tools' memory, while it is on. */
+export interface AiMemoryFollow {
+  /** When the person turned it on, unix seconds. */
+  at: number;
+  last_at: number;
+  counts: AiMemoryCounts;
+  by_tool: { tool: string; memories: number }[];
+}
+
+export interface AiMemoryStatus {
+  /** Memories each AI tool keeps on this computer. */
+  found: { tool: string; memories: number }[];
+  /** A model to read them with is set up. */
+  ready: boolean;
+  import: AiMemoryFollow | null;
+}
+
+/** What AI tools remember on this computer, and following, if it is on. */
+export async function getAiMemoryImport(): Promise<AiMemoryStatus> {
+  return invoke("get_ai_memory_import");
+}
+
+/** Turn following AI tools' memory on; a pass runs now. */
+export async function startAiMemoryImport(): Promise<AiMemoryFollow> {
+  return invoke("start_ai_memory_import");
+}
+
+/** Turn following off: what it brought in and nobody edited is taken back. */
+export async function stopAiMemoryImport(): Promise<{ undone: AiMemoryFollow | null }> {
+  return invoke("stop_ai_memory_import");
 }
 
 /** Take back the whole night on the big map (UX-GRAPH-5): every thing whose
@@ -1891,6 +1962,9 @@ export interface PendingRevisionItem {
   /** Why a page revision card needs review: "authored", "locked",
    * "background" or "owned". Absent when the daemon cannot say (memory revisions, old cards). */
   review_reason?: string | null;
+  /** The shared Space member whose change this card is ("shared_ai:<id>" or
+   * "shared_person:<id>"). Absent for cards made on this computer. */
+  edited_by?: string | null;
 }
 
 export interface RevisionAcceptResponse {
@@ -4119,6 +4193,10 @@ export interface PageChange {
   title: string;
   change_kind: PageChangeKind;
   changed_at_ms: number;
+  /** Who wrote the change: `human`, an agent, `shared_person:<member>`, ... */
+  edited_by?: string | null;
+  /** Sentences that change added, changed or removed. Absent for a new page. */
+  changed_sentences?: number | null;
 }
 
 /** @deprecated Use {@link PageChange} instead. */
@@ -4128,8 +4206,9 @@ export async function listRecentRetrievals(limit?: number): Promise<RetrievalEve
   return invoke<RetrievalEvent[]>("list_recent_retrievals", { limit: limit ?? 10 });
 }
 
-export async function listRecentChanges(limit?: number): Promise<PageChange[]> {
-  return invoke<PageChange[]>("list_recent_changes", { limit: limit ?? 10 });
+/** The newest page changes, newest first. With `space`, only that Space's pages. */
+export async function listRecentChanges(limit?: number, space?: string): Promise<PageChange[]> {
+  return invoke<PageChange[]>("list_recent_changes", { limit: limit ?? 10, space: space ?? null });
 }
 
 export type ActivityKind = "concept" | "memory";

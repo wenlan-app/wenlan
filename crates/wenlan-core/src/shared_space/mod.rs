@@ -85,9 +85,11 @@
 //! are kept in `shared-spaces.json` under the data root, outside the
 //! database, so a rebuilt database stays the same member.
 
+mod follow;
 pub mod library;
 mod memories;
 pub mod remote;
+mod review;
 pub mod rewrite;
 pub mod version;
 
@@ -243,6 +245,19 @@ struct SettingsStore {
     /// The whole library, shared between this person's own computers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     library: Option<ShareSettings>,
+    /// Team Spaces this person stopped syncing here ([`left_key`]): they
+    /// are not followed again until joined by hand.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    left: BTreeSet<String>,
+    /// The team each server this Wenlan syncs through is for, by the
+    /// server's url, as the server last said ([`follow::follow_teams`]).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    teams: BTreeMap<String, wenlan_types::team::TeamInfo>,
+}
+
+/// One team Space on one server, as [`SettingsStore::left`] names it.
+fn left_key(url: &str, space: &str) -> String {
+    format!("{url}\n{space}")
 }
 
 impl SettingsStore {
@@ -385,9 +400,18 @@ fn this_computer_id(settings_path: &Path) -> String {
 /// they are. Returns whether it was shared.
 pub fn leave_at(path: &Path, scope: &Scope) -> Result<bool, WenlanError> {
     change_settings(path, |store| {
-        let removed = store.remove(scope).is_some();
-        (removed, removed)
+        let removed = store.remove(scope);
+        if let Some(host) = removed.as_ref().and_then(|settings| settings.host.as_ref()) {
+            store.left.insert(left_key(&host.url, &host.space));
+        }
+        (removed.is_some(), removed.is_some())
     })
+}
+
+/// Forgets that this person left `space` on the server at `url`: they
+/// joined it again.
+fn rejoined(path: &Path, url: &str, space: &str) -> Result<(), WenlanError> {
+    change_settings(path, |store| (store.left.remove(&left_key(url, space)), ()))
 }
 
 /// Records that this Wenlan shares `scope` through `folder` as
@@ -843,13 +867,39 @@ pub fn share_status_at(
     settings_path: &Path,
     scope: &Scope,
 ) -> Result<Option<SharedSyncStatus>, WenlanError> {
-    let Some(settings) = share_settings_at(settings_path, scope)? else {
+    let mut store = read_settings(settings_path)?;
+    let teams = std::mem::take(&mut store.teams);
+    let Some(settings) = store.remove(scope) else {
         return Ok(None);
     };
-    Ok(Some(status_of(settings_path, scope, settings)))
+    let team = team_of(settings_path, &teams, &settings);
+    Ok(Some(status_of(settings_path, scope, settings, team)))
 }
 
-fn status_of(settings_path: &Path, scope: &Scope, settings: ShareSettings) -> SharedSyncStatus {
+/// The team a share belongs to: the one its server last named, or the team
+/// this Wenlan hosts (its member list beside the settings).
+fn team_of(
+    settings_path: &Path,
+    teams: &BTreeMap<String, wenlan_types::team::TeamInfo>,
+    settings: &ShareSettings,
+) -> Option<wenlan_types::team::TeamInfo> {
+    match &settings.host {
+        Some(host) => teams.get(&host.url).cloned(),
+        None if settings.hosted => settings_path
+            .parent()
+            .map(|root| root.join(crate::team::TEAM_FILE))
+            .and_then(|path| crate::team::read_team(&path).ok())
+            .and_then(|file| file.info()),
+        None => None,
+    }
+}
+
+fn status_of(
+    settings_path: &Path,
+    scope: &Scope,
+    settings: ShareSettings,
+    team: Option<wenlan_types::team::TeamInfo>,
+) -> SharedSyncStatus {
     let last = space_run(settings_path, &scope.key())
         .last
         .lock()
@@ -893,6 +943,7 @@ fn status_of(settings_path: &Path, scope: &Scope, settings: ShareSettings) -> Sh
         },
         folder: settings.folder,
         host: settings.host.map(|host| host.url),
+        team,
         read_only: settings.read_only,
         hosted: settings.hosted,
         member_id: settings.member_id,
@@ -919,10 +970,31 @@ fn status_of(settings_path: &Path, scope: &Scope, settings: ShareSettings) -> Sh
 
 /// Everything this Wenlan shares, with each one's members and last pass.
 pub fn share_statuses_at(settings_path: &Path) -> Result<Vec<SharedSyncStatus>, WenlanError> {
-    Ok(shares_at(settings_path)?
+    let mut store = read_settings(settings_path)?;
+    let teams = std::mem::take(&mut store.teams);
+    Ok(store
+        .all()
         .into_iter()
-        .map(|(scope, settings)| status_of(settings_path, &scope, settings))
+        .map(|(scope, settings)| {
+            let team = team_of(settings_path, &teams, &settings);
+            status_of(settings_path, &scope, settings, team)
+        })
         .collect())
+}
+
+/// Remembers which team the server at `url` is for, as it just said.
+fn remember_team(
+    path: &Path,
+    url: &str,
+    team: &wenlan_types::team::TeamInfo,
+) -> Result<(), WenlanError> {
+    change_settings(path, |store| {
+        if store.teams.get(url) == Some(team) {
+            return (false, ());
+        }
+        store.teams.insert(url.to_string(), team.clone());
+        (true, ())
+    })
 }
 
 /// What a folder shares, for joining it: `None` when it shares nothing yet.
@@ -1083,6 +1155,7 @@ pub async fn sync_space(
             target.member_id,
         )?;
         if let Some(host) = target.host.clone() {
+            rejoined(target.settings_path, &host.url, &host.space)?;
             settings = update_share(target.settings_path, &scope, |settings| {
                 settings.host = Some(host);
             })?
@@ -1238,6 +1311,7 @@ pub async fn sync_shared_spaces(
     knowledge_path: Option<&Path>,
     person_name: Option<&str>,
 ) -> Vec<(String, SharedSyncRun)> {
+    follow::follow_teams(db, settings_path).await;
     let shares = match shares_at(settings_path) {
         Ok(shares) => shares,
         Err(error) => {
@@ -1374,6 +1448,26 @@ pub(crate) fn folder_for(scope: &Scope, folder: &str) -> PathBuf {
 /// A library pass that would archive more than this many pages here, and
 /// more than half of the library's, archives none of them.
 const MASS_ARCHIVE_MIN: usize = 20;
+/// The page here, as its versions are compared.
+fn local_state(page: &Page) -> version::State {
+    version::State {
+        title: page.title.clone(),
+        body_digest: version::body_digest(&page.content),
+        archived: page.status == "archived",
+        locked: page.review_required,
+        space: None,
+    }
+}
+
+/// `page` differs from `version` in its lock only.
+fn lock_only(version: &PageVersion, page: &Page) -> bool {
+    let state = local_state(page);
+    version.meta.locked != state.locked
+        && version::State {
+            locked: state.locked,
+            ..version.state()
+        } == state
+}
 
 /// What one pass reads once and every page uses.
 struct Pass<'a> {
@@ -1534,6 +1628,8 @@ async fn pass(
         // A page folder holds that page only; anything else in it is not
         // taken.
         read.pages.retain(|page, _| page == id);
+        read.proposals.retain(|page, _| page == id);
+        read.decisions.retain(|page, _| page == id);
     }
     if matches!(scope, Scope::Library) {
         // These keep their own folder: another person's sentences on them
@@ -1658,6 +1754,12 @@ async fn pass(
     if unsaved {
         save_held(db, &key, &held).await?;
     }
+    let heads: HashMap<String, String> = held
+        .iter()
+        .filter(|(_, held)| held.version.is_some())
+        .map(|(id, held)| (id.clone(), held.sha.clone()))
+        .collect();
+    ctx.review(&read.proposals, &read.decisions, &heads).await?;
     match failed {
         Some(error) => Err(error),
         None => Ok(counts),
@@ -1693,6 +1795,7 @@ impl Pass<'_> {
             title: page.title.clone(),
             body_digest: version::body_digest(&page.content),
             archived: page.status == "archived",
+            locked: page.review_required,
             space: if self.library {
                 named_space(page.space.as_deref()).map(str::to_string)
             } else {
@@ -1782,8 +1885,12 @@ impl Pass<'_> {
         // The version this page was last in step with, and whether it was
         // changed here since.
         let (base, changed) = match (held, recorded) {
+            // Locking or unlocking a page keeps its version, so a lock that
+            // differs from the version it was last in step with was changed
+            // here (an apply sets the lock to the version's).
             (Some(held), Some(version)) => {
-                let changed = !untouched(held) && self.version_state(version) != state;
+                let changed = (!untouched(held) && self.version_state(version) != state)
+                    || version.meta.locked != page.review_required;
                 // A later version taken here but not remembered (the pass
                 // stopped before what it held was kept): the page is that
                 // version, not an edit made here. Sharing it as one would
@@ -2185,6 +2292,12 @@ impl Pass<'_> {
                 }
             }
         }
+        if current.review_required != head.meta.locked {
+            self.db
+                .set_page_review_required(id, head.meta.locked)
+                .await?;
+            wrote = true;
+        }
         Ok(Applied {
             wrote,
             complete: true,
@@ -2339,6 +2452,9 @@ impl Pass<'_> {
         // A create keeps no changelog; record the member so the page's rows
         // say who wrote it.
         self.db.record_page_writer(id, page.version, &agent).await?;
+        if head.meta.locked {
+            self.db.set_page_review_required(id, true).await?;
+        }
         Ok(Some(if title == head.page.title {
             page.version
         } else {
@@ -2488,9 +2604,20 @@ impl Pass<'_> {
                 .or(parent_sha.map(str::to_string)),
             merged,
             body_digest: version::body_digest(&page.content),
-            author: self.author_of(page).await?,
+            author: match parent.filter(|parent| lock_only(parent, page)) {
+                // Only the lock changed: the person here did that.
+                Some(_) => Author {
+                    member: self.settings.member_id.clone(),
+                    kind: AuthorKind::Person,
+                    agent: None,
+                },
+                None => self.author_of(page).await?,
+            },
             ts: now_ts(),
             archived: page.status == "archived",
+            locked: page.review_required,
+            proposal: false,
+            decides: None,
         };
         let member = meta.author.member.clone();
         let text = version::render(&file, &meta);
@@ -2576,6 +2703,9 @@ impl Pass<'_> {
             },
             ts: now_ts(),
             archived: true,
+            locked: winner.meta.locked,
+            proposal: false,
+            decides: None,
         };
         let text = version::render(&winner.page, &meta);
         self.write(&id, text).await.map(Some)
@@ -2594,11 +2724,23 @@ impl Pass<'_> {
         page_id: &str,
         text: String,
     ) -> Result<String, WenlanError> {
+        self.write_kind(member, version::PAGES_DIR, page_id, text)
+            .await
+    }
+
+    /// [`Self::write_as`] into `kind` (one of [`version::KIND_DIRS`]).
+    async fn write_kind(
+        &self,
+        member: &str,
+        kind: &'static str,
+        page_id: &str,
+        text: String,
+    ) -> Result<String, WenlanError> {
         let folder = self.folder.clone();
         let member = member.to_string();
         let page_id = page_id.to_string();
         let (sha, _) = tokio::task::spawn_blocking(move || {
-            version::write_version(&folder, &member, &page_id, &text)
+            version::write_file(&folder, &member, kind, &page_id, &text)
         })
         .await
         .map_err(|error| WenlanError::Generic(format!("shared folder task: {error}")))??;

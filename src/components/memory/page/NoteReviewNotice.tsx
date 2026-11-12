@@ -9,6 +9,7 @@ import {
   type RefinementProposalSummary,
 } from "../../../lib/tauri";
 import { isActionableReviewItem } from "../reviewDisposition";
+import { sharedWriter, useShares } from "../sharing/sharing";
 import type { ReviewItem } from "../useReviewQueue";
 import { CodeBasisLines, type NoteCodeBasisHandlers } from "./CodeBasisLines";
 import { NoteBasisLines, basisNeedingAttention, type NoteBasisHandlers } from "./NoteBasisLines";
@@ -131,7 +132,12 @@ export function NoteReviewNotice({ page, onReview, onShowSources, disabled = fal
     retry: false,
   });
 
+  const shares = useShares();
   const pendingItems = getPendingItems(page, revisions.data ?? [], refinements.data?.proposals ?? []);
+  // In a shared Space, a teammate's AI change waits here for anyone to decide.
+  const sharedRevision = (revisions.data ?? []).find((revision) =>
+    revision.target_kind === "page" && revision.target_source_id === page.id && revision.edited_by);
+  const sharedWho = sharedWriter(sharedRevision?.edited_by, shares.data, t);
   const categoryCounts = pendingItems.reduce<Record<PendingItem["category"], number>>((counts, item) => {
     counts[item.category] += 1;
     return counts;
@@ -176,6 +182,7 @@ export function NoteReviewNotice({ page, onReview, onShowSources, disabled = fal
           })}
         </span>
       </div>}
+      {sharedWho && <p className="note-review-notice__message">{t("noteReview.sharedRevision", { who: sharedWho })}</p>}
       {staleMessage && <p className="note-review-notice__message">{t(`noteReview.${staleMessage}`)}</p>}
       {queryFailed && <p className="note-review-notice__message">{t("noteReview.checkFailed")}</p>}
       {capped && <p className="note-review-notice__message">{t("noteReview.incomplete")}</p>}

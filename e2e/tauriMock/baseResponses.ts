@@ -135,6 +135,9 @@ export function baseResponse(command: string, args: unknown, context: BaseRespon
     case "undo_nights": return { things: 0, points: 0 };
     // The fixture never ran the pass over old memories.
     case "get_old_memory_pass": case "undo_old_memory_pass": return null;
+    case "get_ai_memory_import": return { found: [], ready: false, import: null };
+    case "start_ai_memory_import": return { at: 0, last_at: 0, counts: { read: 0, sensitive: 0, not_knowledge: 0, already: 0, added: 0, conflicts: 0, undecided: 0, updated: 0, removed: 0, waiting: 0 }, by_tool: [] };
+    case "stop_ai_memory_import": return { undone: null };
     case "move_session_thing": throw new TauriMockArgumentError(command, "fromThingId");
     case "list_communities": return { schema_version: COMMUNITY_READ_SCHEMA_VERSION, communities: [], next_cursor: null };
     case "list_community_members": return { schema_version: COMMUNITY_READ_SCHEMA_VERSION, members: [], next_cursor: null };

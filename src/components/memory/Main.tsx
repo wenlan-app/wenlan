@@ -59,6 +59,8 @@ import SettingsSidebar from "./settings/SettingsSidebar";
 import SpaceDetail from "./SpaceDetail";
 import { ThingDetail } from "./things/ThingDetail";
 import { SpacesOverview } from "./spaces";
+import { ScopeProvider, useScopeState } from "./team/scope";
+import { ScopeSwitcher } from "./team/ScopeSwitcher";
 import { PagesOverview, WikiStart } from "./pages/PagesOverview";
 import { openPageMapOnVisit } from "./page/usePageInspectorSession";
 import { WikiWorkspace } from "./pages/WikiWorkspace";
@@ -119,7 +121,7 @@ interface MainProps {
 function scrollDestinationKey(view: View): string {
   switch (view.kind) {
     case "graph":
-      return `graph:${view.focusPageId ?? (view.focusThingId ? `thing:${view.focusThingId}` : view.replay ? `replay:${view.replay}` : "all")}`;
+      return `graph:${view.focusPageId ?? (view.focusThingId ? `thing:${view.focusThingId}` : view.focusSpace ? `space:${view.focusSpace}` : view.replay ? `replay:${view.replay}` : "all")}`;
     case "source-document":
       return JSON.stringify(["source-document", view.file.source, view.file.source_id, view.file.space ?? null]);
     case "entity":
@@ -151,7 +153,7 @@ function sameDestination(current: View, next: View): boolean {
   switch (current.kind) {
     case "page": return next.kind === "page" && current.pageId === next.pageId
       && (current.mode ?? "edit") === (next.mode ?? "edit");
-    case "graph": return next.kind === "graph" && current.focusPageId === next.focusPageId && current.focusThingId === next.focusThingId && current.replay === next.replay;
+    case "graph": return next.kind === "graph" && current.focusPageId === next.focusPageId && current.focusThingId === next.focusThingId && current.focusSpace === next.focusSpace && current.replay === next.replay;
     case "source-document": return next.kind === "source-document" && current.file.source === next.file.source && current.file.source_id === next.file.source_id && (current.file.space ?? null) === (next.file.space ?? null);
     case "memory": return next.kind === "memory" && current.sourceId === next.sourceId;
     case "entity": return next.kind === "entity" && current.entityId === next.entityId;
@@ -713,7 +715,22 @@ export default function Main({
   }, [initialMemoryId, activeTab, pageSavePending, movingNote]);
 
   // New destinations branch from the current entry only after saving succeeds.
-  const navigateTo = (next: View, onRefused?: () => void) => {
+  // Private or one team, picked at the top left; none of it shows for
+  // someone on no team.
+  const scope = useScopeState();
+  const teamSide = scope.team;
+  // A page started on a team's side belongs to that team: it goes in the
+  // Space being looked at, else the team's first Space the person can edit.
+  // Never in Private, where the team's side would lose it.
+  const onSide = (next: View): View => {
+    if (next.kind !== "page-draft" || next.space || next.draftId || !teamSide) return next;
+    const current = viewRef.current;
+    const here = current.kind === "space" ? current.spaceName : null;
+    const space = here && scope.teamWritable.includes(here) ? here : scope.teamWritable[0];
+    return space ? { ...next, space } : next;
+  };
+  const navigateTo = (requested: View, onRefused?: () => void) => {
+    let next = onSide(requested);
     if (movingNoteRef.current) return;
     if (exampleWikiActive() && next.kind === "page-draft") { showExampleWikiReadOnly(); onRefused?.(); return; }
     if (isNoteView(next) && secondaryGroupRef.current?.contains(next)) {
@@ -986,7 +1003,12 @@ export default function Main({
   const displayedSearchQuery = pendingDraftSearchQuery ?? query;
   // Memories are the AI's notes, not what was said: search shows the
   // conversation's own words instead (UX-FIND-1), and source passages with them.
-  const sourceResults = results.filter((result) => searchResultTarget(result).kind === "file");
+  const { empty: libraryEmpty, pages: pagesOnSide } = useLibraryInventory();
+  // Search follows the side shown. A team's side finds only the team's
+  // pages: conversations, sources, topics and things are the person's own.
+  const split = scope.teams.length > 0;
+  const onTeamSide = Boolean(teamSide);
+  const sourceResults = onTeamSide ? [] : results.filter((result) => searchResultTarget(result).kind === "file");
 
   useEffect(() => {
     if (view.kind !== "page-draft" && view.kind !== "page") setPendingDraftSearchQuery(null);
@@ -1018,7 +1040,7 @@ export default function Main({
     queryFn: listThings,
     enabled: thingsOn && debouncedQuery.trim().length > 0,
   });
-  const thingResults = thingsOn ? matchingThings(allThings, debouncedQuery) : [];
+  const thingResults = thingsOn && !onTeamSide ? matchingThings(allThings, debouncedQuery) : [];
   // Archived pages are out of the folder tree (as in Obsidian), so search is
   // where you find one: matched by title, opened read only with Restore.
   const { data: archivedPages = [] } = useQuery({
@@ -1028,8 +1050,13 @@ export default function Main({
     enabled: debouncedQuery.trim().length > 0,
   });
   const archivedResults = archivedPages
-    .filter(page => isKnowledgePage(page) && matchesAllWords(page.title, debouncedQuery))
+    .filter(page => isKnowledgePage(page) && scope.inScope(page.space) && matchesAllWords(page.title, debouncedQuery))
     .slice(0, 3);
+  const pageResultsOnSide = conceptResults.filter((page) => scope.inScope(page.space));
+  const pageIdsOnSide = new Set(pagesOnSide.map((page) => page.id));
+  const recentOnSide = split
+    ? recentSearchItems.filter((item) => item.kind === "space" ? scope.inScope(item.title) : pageIdsOnSide.has(item.id))
+    : recentSearchItems;
 
   const searchLoading = !!displayedSearchQuery.trim() && (
     displayedSearchQuery !== debouncedQuery || memorySearchLoading || entitySearchLoading || conceptSearchLoading
@@ -1093,7 +1120,6 @@ export default function Main({
   // The directory has nothing to say to a brand-new library, and it reads as a
   // second sidebar next to the open getting-started checklist, so both give the
   // Wiki a single column; see WikiWorkspace `directoryHidden`.
-  const { empty: libraryEmpty } = useLibraryInventory();
   const gettingStarted = useGettingStartedState();
   const exampleWikiSwitch = useExampleWikiSwitch();
   // Opening or leaving the example changes which wiki every read answers
@@ -1502,6 +1528,7 @@ export default function Main({
   );
 
   return (
+    <ScopeProvider value={scope}>
     <ReferenceNavigationProvider
       onOpenPage={(pageId) => navigateTo({ kind: "page", pageId })}
       onOpenMemory={(sourceId) => navigateTo({ kind: "memory", sourceId })}
@@ -1611,9 +1638,18 @@ export default function Main({
             onConnectTool={() => navigateTo({ kind: "connect-agent" })}
             onNavigateHome={navigateHome}
             onNavigatePages={navigateNotes}
-            onNavigateEntities={() => navigateTo({ kind: "entities" })}
-            onNavigateGraph={() => navigateTo({ kind: "graph" })}
+            // The graph and topics read the whole library, so a team's side
+            // leaves them out.
+            onNavigateEntities={teamSide ? undefined : () => navigateTo({ kind: "entities" })}
+            onNavigateGraph={teamSide ? undefined : () => navigateTo({ kind: "graph" })}
             onNavigateSpaces={navigateSpaces}
+            switcher={(compact) => (
+              <ScopeSwitcher
+                compact={compact}
+                onSwitched={() => navigateTo({ kind: "home" })}
+                onJoined={(teamKey) => { scope.setScope(teamKey); navigateTo({ kind: "home" }); }}
+              />
+            )}
             onNavigateSettings={() => navigateTo({ kind: "settings", section: "general" })}
             onOpenSearch={openSearch}
             onOpenAbout={() => setAboutOpen(true)}
@@ -1627,7 +1663,7 @@ export default function Main({
         )}
 
         {/* Main content */}
-        <main ref={mainContentRef} className={`flex-1 ${view.kind === "graph" || view.kind === "sources" || view.kind === "connect-agent" ? "min-w-0 overflow-hidden p-0" : isWikiWorkspaceView ? "memory-main-content memory-main-content--wiki overflow-hidden" : `memory-main-content overflow-y-auto${view.kind === "memory" || view.kind === "source-document" || view.kind === "entity" || view.kind === "thing" ? " memory-main-content--page" : ["spaces", "entities", "stream"].includes(view.kind) ? " memory-main-content--collection" : ""}`}`}>
+        <main ref={mainContentRef} className={`flex-1 ${view.kind === "graph" || view.kind === "sources" || view.kind === "connect-agent" ? "min-w-0 overflow-hidden p-0" : isWikiWorkspaceView ? "memory-main-content memory-main-content--wiki overflow-hidden" : `memory-main-content overflow-y-auto${view.kind === "memory" || view.kind === "source-document" || view.kind === "entity" || view.kind === "thing" ? " memory-main-content--page" : ["spaces", "entities", "stream", "team"].includes(view.kind) ? " memory-main-content--collection" : ""}`}`}>
           <TabIntro tab={INTRO_TABS[view.kind] ?? null} newUser={gettingStarted.newLibrary} areaRef={mainContentRef} />
           {view.kind === "import" ? (
             <ImportView
@@ -1731,7 +1767,9 @@ export default function Main({
               labels={spacesOverviewLabels}
               onCreateIntentHandled={() => replaceView({ kind: "spaces" })}
               onSelectSpace={(spaceName) => navigateTo({ kind: "space", spaceId: null, spaceName })}
-              onSharedJoined={(kind, target) => navigateTo(kind === "space"
+              onSharedJoined={(kind, target) => navigateTo(kind === "team"
+                ? { kind: "home" }
+                : kind === "space"
                 ? { kind: "space", spaceId: null, spaceName: target }
                 : { kind: "page", pageId: target })}
               onSpaceDeleted={handleSpaceDeleted}
@@ -1744,6 +1782,7 @@ export default function Main({
               onBack={leaveSpaceToParent}
               onCreatePage={(space) => navigateTo({ kind: "page-draft", space })}
               onReviewAll={() => navigateTo({ kind: "distill-review" })}
+              onOpenGraph={(space) => navigateTo({ kind: "graph", focusSpace: space })}
               onSelectPage={(id) => navigateTo({ kind: "page", pageId: id })}
               onSpaceDeleted={(spaceId) => {
                 handleSpaceDeleted(spaceId);
@@ -1943,8 +1982,9 @@ export default function Main({
           ) : view.kind === "graph" ? (
             <div style={{ position: "relative", width: "100%", height: "100%" }}>
               <AtlasView
-                key={view.focusPageId ?? (view.focusThingId ? `thing:${view.focusThingId}` : view.replay ? `replay:${view.replay}` : "all")}
+                key={view.focusPageId ?? (view.focusThingId ? `thing:${view.focusThingId}` : view.focusSpace ? `space:${view.focusSpace}` : view.replay ? `replay:${view.replay}` : "all")}
                 focusPageId={view.focusPageId}
+                focusSpace={view.focusSpace}
                 focusThingId={view.focusThingId}
                 replay={view.replay}
                 onNodeClick={(target) =>
@@ -2031,7 +2071,7 @@ export default function Main({
       >
         <RecentlyOpened
           query={displayedSearchQuery}
-          items={recentSearchItems}
+          items={recentOnSide}
           onSelect={(item) => {
             dismissSearch();
             navigateTo(item.kind === "page"
@@ -2042,12 +2082,12 @@ export default function Main({
         <SearchResults
           query={displayedSearchQuery}
           thingResults={thingResults}
-          conceptResults={conceptResults}
+          conceptResults={pageResultsOnSide}
           archivedResults={archivedResults}
-          conversationHits={conversationHits}
+          conversationHits={onTeamSide ? [] : conversationHits}
           conversationsLoading={conversationSearchLoading}
           sourceResults={sourceResults}
-          entityResults={entityResults}
+          entityResults={onTeamSide ? [] : entityResults}
           loading={searchLoading}
           error={searchError}
           ready={!searchLoading && !searchError}
@@ -2067,5 +2107,6 @@ export default function Main({
     </WorkspaceReadingHostContext.Provider>
     </WorkspaceNavigationProvider>
     </ReferenceNavigationProvider>
+    </ScopeProvider>
   );
 }

@@ -4,6 +4,7 @@ import { CheckCircle } from "@phosphor-icons/react";
 import type { Page, SharedStatus } from "../../../lib/tauri";
 import { PeopleIcon } from "../sharing/SharedWithLine";
 import { others, pageShare, spaceShare } from "../sharing/sharing";
+import { useScope } from "../team/scope";
 import { PageIcon } from "../assets/PageIcon";
 import { askablePages } from "../../onboarding/useGettingStartedState";
 import { addedWhen } from "./WorkingOn";
@@ -97,6 +98,7 @@ export function NewPagesList({
   readonly shares?: readonly SharedStatus[];
 }) {
   const { t, i18n } = useTranslation();
+  const scope = useScope();
   const rows = recentPages(pages);
   if (rows.length === 0) return null;
   return (
@@ -113,7 +115,8 @@ export function NewPagesList({
         {rows.map(({ page, byAi, at }) => {
           const fresh = justWritten?.has(page.id) === true;
           const preview = pagePreview(page);
-          const share = pageShare(shares, page.id) ?? (page.space ? spaceShare(shares, page.space) : undefined);
+          // On a team's side every page is the team's: no mark says so on each.
+          const share = scope.team ? undefined : pageShare(shares, page.id) ?? (page.space ? spaceShare(shares, page.space) : undefined);
           const sharedWith = share ? others(share).map((member) => member.name).join(", ") : "";
           return (
             <li key={page.id}>

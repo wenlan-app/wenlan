@@ -1935,9 +1935,29 @@ impl WenlanClient {
     pub async fn list_recent_changes(
         &self,
         limit: i64,
+        space: Option<&str>,
     ) -> Result<Vec<wenlan_types::PageChange>, String> {
         let path = format!("/api/pages/recent-changes?limit={}", limit);
-        self.get_json(&path).await
+        let Some(space) = space.map(str::trim).filter(|space| !space.is_empty()) else {
+            return self.get_json(&path).await;
+        };
+        // The route reads its Space from the Space header, like the rest of
+        // the page reads.
+        let resp = self
+            .client
+            .get(self.url(&path))
+            .header("x-wenlan-space", space)
+            .send()
+            .await
+            .map_err(|e| format!("HTTP GET {}: {}", path, e))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(format!("HTTP GET {} returned {}: {}", path, status, body));
+        }
+        resp.json()
+            .await
+            .map_err(|e| format!("Parse {}: {}", path, e))
     }
 
     pub async fn list_recent_memories(
@@ -2161,6 +2181,30 @@ impl WenlanClient {
         &self,
     ) -> Result<wenlan_types::OldMemoryPassResponse, String> {
         self.post_empty("/api/things/old-pass/undo").await
+    }
+
+    /// `GET /api/import/ai-memory`: what AI tools remember on this computer,
+    /// and following, if it is on. Counts only.
+    pub async fn get_ai_memory_import(
+        &self,
+    ) -> Result<wenlan_types::ai_memory_import::AiMemoryImportStatus, String> {
+        self.get_json("/api/import/ai-memory").await
+    }
+
+    /// `POST /api/import/ai-memory`: the person turns following AI tools'
+    /// memory on, and a pass runs now.
+    pub async fn start_ai_memory_import(
+        &self,
+    ) -> Result<wenlan_types::ai_memory_import::AiMemoryImportSummary, String> {
+        self.post_json_as_person("/api/import/ai-memory", &()).await
+    }
+
+    /// `POST /api/import/ai-memory/undo`: the person turns following off.
+    pub async fn stop_ai_memory_import(
+        &self,
+    ) -> Result<wenlan_types::ai_memory_import::AiMemoryImportUndo, String> {
+        self.post_json_as_person("/api/import/ai-memory/undo", &())
+            .await
     }
 
     /// `POST /api/things/nights/undo`: the person takes back the whole night

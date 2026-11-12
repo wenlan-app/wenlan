@@ -107,3 +107,71 @@ fn members_of_a_space_are_listed_in_its_space_file() {
     assert_eq!(file.members[1].id, amy.id);
     assert_eq!(list_folder_files(&folder), ["space.json"]);
 }
+
+#[test]
+fn a_space_for_everyone_reaches_every_member_now_and_later() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(TEAM_FILE);
+    let (_, amy_key) = add_member(&path, "Amy", &[access("Design", TeamAccess::Write)]).unwrap();
+    let (_, bo_key) = add_member(&path, "Bo", &[access("Handbook", TeamAccess::Write)]).unwrap();
+    set_everyone(&path, "Handbook", Some(TeamAccess::Read)).unwrap();
+    let (cy, cy_key) = add_member(&path, "Cy", &[]).unwrap();
+    assert_eq!(cy.access("Handbook"), Some(TeamAccess::Read));
+
+    let amy = authenticate(&path, &amy_key).unwrap().unwrap();
+    assert_eq!(amy.access("Handbook"), Some(TeamAccess::Read));
+    assert_eq!(amy.me().spaces.len(), 2);
+    // A member's own entry wins over everyone's.
+    let bo = authenticate(&path, &bo_key).unwrap().unwrap();
+    assert_eq!(bo.access("Handbook"), Some(TeamAccess::Write));
+    // Only their own Spaces are written as theirs.
+    assert!(amy
+        .to_wire()
+        .spaces
+        .iter()
+        .all(|entry| entry.space == "Design"));
+    assert_eq!(
+        authenticate(&path, &cy_key)
+            .unwrap()
+            .unwrap()
+            .access("Handbook"),
+        Some(TeamAccess::Read)
+    );
+
+    set_everyone(&path, "Handbook", None).unwrap();
+    assert_eq!(
+        authenticate(&path, &amy_key)
+            .unwrap()
+            .unwrap()
+            .access("Handbook"),
+        None
+    );
+    assert_eq!(
+        authenticate(&path, &bo_key)
+            .unwrap()
+            .unwrap()
+            .access("Handbook"),
+        Some(TeamAccess::Write)
+    );
+}
+
+#[test]
+fn the_team_has_one_id_and_the_name_its_owner_gave_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(TEAM_FILE);
+    assert_eq!(read_team(&path).unwrap().info(), None);
+    let info = team_info(&path).unwrap();
+    assert_eq!(info.name, None);
+    // The id is kept: asked again, or after the team is named, it is the same.
+    assert_eq!(team_info(&path).unwrap().id, info.id);
+    let named = rename_team(&path, "  Acme ").unwrap();
+    assert_eq!(named.id, info.id);
+    assert_eq!(named.name.as_deref(), Some("Acme"));
+    assert!(rename_team(&path, " ").is_err());
+
+    // Every member's Wenlan learns the team from who they are.
+    let (_, key) = add_member(&path, "Amy", &[]).unwrap();
+    let me = authenticate(&path, &key).unwrap().unwrap().me();
+    assert_eq!(me.team, Some(named));
+    assert_eq!(me.role, TeamRole::Member);
+}

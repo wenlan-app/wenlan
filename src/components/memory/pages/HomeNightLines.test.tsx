@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n } from "../../../i18n";
 import {
   clipboardWrite,
+  getAiMemoryImport,
+  stopAiMemoryImport,
   listAgents,
   listSetAsideMaterial,
   listThings,
@@ -25,6 +27,8 @@ vi.mock("../../../lib/tauri", async (importOriginal) => ({
   openToolWithPrompt: vi.fn(),
   clipboardWrite: vi.fn(),
   setUiLanguage: vi.fn(() => Promise.resolve()),
+  getAiMemoryImport: vi.fn(() => Promise.resolve({ found: [], ready: false, import: null })),
+  stopAiMemoryImport: vi.fn(() => Promise.resolve({ undone: null })),
 }));
 
 const now = Math.floor(Date.now() / 1000);
@@ -153,5 +157,39 @@ describe("HomeNightLines: not written yet", () => {
     await waitFor(() => expect(releaseSetAsideMaterial).toHaveBeenCalledWith(["itm_1", "itm_2", "itm_3"]));
     await waitFor(() => expect(screen.queryByTestId("home-unwritten")).toBeNull());
     expect(openToolWithPrompt).not.toHaveBeenCalled();
+  });
+});
+
+describe("HomeNightLines: following AI tools' memory", () => {
+  beforeEach(() => {
+    vi.mocked(listThings).mockResolvedValue([]);
+    vi.mocked(listSetAsideMaterial).mockResolvedValue({ groups: [] });
+    vi.mocked(listAgents).mockResolvedValue([]);
+    localStorage.clear();
+  });
+
+  it("UX-HOME-2 says once, with no count, that following is on, and Stop turns it off", async () => {
+    vi.mocked(getAiMemoryImport).mockResolvedValue({
+      found: [{ tool: "codex", memories: 4 }],
+      ready: true,
+      import: { at: now - 60, last_at: now - 60, counts: {} as never, by_tool: [] },
+    });
+    renderLines();
+    const line = await screen.findByTestId("home-ai-memory");
+    expect(line.textContent).not.toMatch(/\d/);
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("pages.overview.aiMemoryStop") }));
+    await waitFor(() => expect(stopAiMemoryImport).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.queryByTestId("home-ai-memory")).toBeNull());
+  });
+
+  it("says nothing a day after following was turned on", async () => {
+    vi.mocked(getAiMemoryImport).mockResolvedValue({
+      found: [],
+      ready: true,
+      import: { at: now - 2 * 24 * 60 * 60, last_at: now, counts: {} as never, by_tool: [] },
+    });
+    renderLines();
+    await waitFor(() => expect(getAiMemoryImport).toHaveBeenCalled());
+    expect(screen.queryByTestId("home-ai-memory")).toBeNull();
   });
 });

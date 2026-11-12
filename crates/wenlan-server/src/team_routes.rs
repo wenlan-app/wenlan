@@ -33,7 +33,8 @@ use wenlan_core::shared_space::{self, remote, Scope};
 use wenlan_core::team::{self, Member};
 use wenlan_types::team::{
     TeamAccess, TeamAddMemberRequest, TeamFileList, TeamHostSpaceRequest, TeamJoinRequest,
-    TeamJoinResponse, TeamMember, TeamMemberKey, TeamStatus, TeamUpdateMemberRequest,
+    TeamJoinResponse, TeamMember, TeamMemberKey, TeamRenameRequest, TeamStatus,
+    TeamUpdateMemberRequest,
 };
 
 use crate::error::ServerError;
@@ -56,7 +57,7 @@ fn listening() -> Option<String> {
 
 pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<SharedState> {
     router
-        .route("/api/team", get(handle_team_status))
+        .route("/api/team", get(handle_team_status).put(handle_rename_team))
         .route("/api/team/members", post(handle_add_member))
         .route(
             "/api/team/members/{id}",
@@ -80,16 +81,42 @@ async fn blocking<T: Send + 'static>(
 /// Wenlan hosts for the team.
 pub async fn handle_team_status() -> Result<Json<TeamStatus>, ServerError> {
     let status = blocking(|| {
-        let members = team::read_team(&team::team_path())?.members;
+        let path = team::team_path();
+        let file = team::read_team(&path)?;
         let spaces = team::hosted_spaces(&shared_space::settings_path())?;
+        // A Wenlan that hosts nothing and has no members is on no team of
+        // its own: no team.json is made for it.
+        let info = if spaces.is_empty() && file.members.is_empty() {
+            file.info()
+        } else {
+            Some(team::team_info(&path)?)
+        };
         Ok(TeamStatus {
-            members: members.iter().map(Member::to_wire).collect(),
+            team: info,
+            members: file.members.iter().map(Member::to_wire).collect(),
+            everyone: file
+                .everyone
+                .iter()
+                .map(|(space, access)| wenlan_types::team::TeamSpaceAccess {
+                    space: space.clone(),
+                    access: *access,
+                })
+                .collect(),
             spaces: spaces.into_iter().map(|(name, _)| name).collect(),
             listening: listening(),
         })
     })
     .await?;
     Ok(Json(status))
+}
+
+/// PUT /api/team — names the team; members' Wenlans show the name on their
+/// next sync pass.
+pub async fn handle_rename_team(
+    Json(req): Json<TeamRenameRequest>,
+) -> Result<Json<wenlan_types::team::TeamInfo>, ServerError> {
+    let info = blocking(move || team::rename_team(&team::team_path(), &req.name)).await?;
+    Ok(Json(info))
 }
 
 fn member_key(
@@ -100,7 +127,7 @@ fn member_key(
     let join_code = match url.map(str::trim).filter(|url| !url.is_empty()) {
         Some(url) => {
             let url = remote::check_url(url).map_err(ServerError::ValidationError)?;
-            Some(format!("{url}#{key}"))
+            Some(wenlan_types::team::invite_link(&url, &key))
         }
         None => None,
     };
@@ -188,6 +215,20 @@ pub async fn handle_host_space(
         .ok_or_else(|| ServerError::NotFound(format!("no Space named {:?}", req.space)))?;
     let settings = shared_space::settings_path();
     let scope = Scope::Space(space.clone());
+    if let Some(everyone) = req.everyone {
+        if !shared_space::share_settings_at(&settings, &scope)?.is_some_and(|share| share.hosted) {
+            return Err(ServerError::ValidationError(format!(
+                "{space} is not hosted for the team"
+            )));
+        }
+        let access = match everyone {
+            wenlan_types::team::TeamEveryone::Nobody => None,
+            wenlan_types::team::TeamEveryone::Read => Some(wenlan_types::team::TeamAccess::Read),
+            wenlan_types::team::TeamEveryone::Write => Some(wenlan_types::team::TeamAccess::Write),
+        };
+        blocking(move || team::set_everyone(&team::team_path(), &space, access)).await?;
+        return Ok(Json(Default::default()));
+    }
     let folder = match shared_space::share_settings_at(&settings, &scope)? {
         Some(existing) if existing.hosted => PathBuf::from(existing.folder),
         Some(_) => {
@@ -243,7 +284,7 @@ pub(crate) fn join_parts(code: &str, key: Option<&str>) -> Result<(String, Strin
         Some(key) => (code.trim().to_string(), key.to_string()),
         None => wenlan_types::team::split_join_code(code).ok_or_else(|| {
             ServerError::ValidationError(
-                "this is not a join code: it looks like https://…#wlt_…".into(),
+                "this is not an invite link: it looks like https://…/join#wlt_…".into(),
             )
         })?,
     };
@@ -329,6 +370,7 @@ fn team_router(state: TeamState) -> axum::Router {
         ));
     axum::Router::new()
         .route("/health", get(team_health))
+        .route(wenlan_types::team::JOIN_PATH, get(team_join_page))
         .merge(checked)
         .layer(DefaultBodyLimit::max(remote::MAX_VERSION_BYTES))
         .with_state(state)
@@ -336,6 +378,38 @@ fn team_router(state: TeamState) -> axum::Router {
 
 async fn team_health() -> impl IntoResponse {
     Json(serde_json::json!({ "status": "ok", "server": "wenlan-team" }))
+}
+
+/// GET /join — where an invite link opens in a browser. The key after `#`
+/// never reaches the server; the page only says what to do with the link.
+/// It shows the team's name and nothing else of the team.
+async fn team_join_page(State(state): State<TeamState>) -> impl IntoResponse {
+    let name = team::read_team(&state.team_path)
+        .ok()
+        .and_then(|file| file.name)
+        .unwrap_or_else(|| "a team".to_string());
+    let name = name
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;");
+    let page = format!(
+        "<!doctype html><html lang=\"en\"><meta charset=\"utf-8\">\
+<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
+<title>Join {name} on Wenlan</title>\
+<style>body{{font:16px/1.6 system-ui,sans-serif;max-width:32rem;margin:15vh auto;padding:0 16px;color:#1c1d22}}\
+@media(prefers-color-scheme:dark){{body{{background:#16171b;color:#ececf1}}a{{color:#a29dff}}}}</style>\
+<h1>Join {name} on Wenlan</h1>\
+<p>Copy this page's address. In Wenlan, open Settings, then Team, choose Join with an invite link, and paste it.</p>\
+<p>Don't have Wenlan yet? <a href=\"https://wenlan.app\">Download it</a>, then come back to this link.</p>"
+    );
+    (
+        [
+            (axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8"),
+            (axum::http::header::CACHE_CONTROL, "no-store"),
+        ],
+        page,
+    )
 }
 
 /// Origins of web AI apps whose connectors may call `/mcp` from a browser.
@@ -472,10 +546,11 @@ async fn team_put_version(
     }
     let id = member.id.clone();
     let stored = tokio::task::spawn_blocking(move || {
-        team::check_member_version(&id, &page, &name, &body)?;
+        let kind = team::check_member_version(&id, &page, &name, &body)?;
         let text = std::str::from_utf8(&body)
             .map_err(|_| wenlan_core::error::WenlanError::Validation("not text".into()))?;
-        shared_space::version::write_version(&folder, &id, &page, text)
+        // A version, a proposal or a decision, each in its own folder.
+        shared_space::version::write_file(&folder, &id, kind, &page, text)
     })
     .await;
     match stored {

@@ -3,7 +3,7 @@
 // query, and how a folder and its members are named on screen.
 import { useQuery } from "@tanstack/react-query";
 import type { TFunction } from "i18next";
-import { listShares, type SharedMember, type SharedStatus } from "../../../lib/tauri";
+import { listShares, type SharedMember, type SharedStatus, type TeamInfo } from "../../../lib/tauri";
 
 export const SHARES_KEY = ["shares"] as const;
 
@@ -122,31 +122,48 @@ export function shareOfSpace(shares: readonly SharedStatus[] | undefined, name: 
   return shares?.find((share) => share.kind === "space" && share.target.trim().toLocaleLowerCase() === key);
 }
 
+/** Which team a shared Space belongs to: its team's id once the server has
+ *  said, else its server; `null` for a Space on no team. The address is
+ *  only a fallback key, never shown. */
+export function teamKeyOf(share: SharedStatus | undefined): string | null {
+  if (!share || share.kind !== "space") return null;
+  if (share.team?.id) return `team:${share.team.id}`;
+  if (share.host) return `host:${share.host.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").replace(/\/+$/, "")}`;
+  return share.hosted ? "hosted" : null;
+}
+
+/** A team as people read it: the name its owner gave it, the same for
+ *  everyone, or plain "Team" until it has one. */
+export function teamLabel(t: TFunction, team: TeamInfo | null | undefined): string {
+  return team?.name?.trim() || t("team.unnamed");
+}
+
 export type TeamSpaceGroup<T> = {
-  /** The server's address as people read it, or `null` for Spaces this
-   *  computer hosts. */
-  readonly host: string | null;
+  readonly key: string;
+  /** The team, once its server has said; `null` before. */
+  readonly team: TeamInfo | null;
   readonly spaces: T[];
 };
 
-/** Splits Spaces into the person's own and one group per team server (then
- *  the Spaces this computer hosts). Order inside each is kept. */
+/** Splits Spaces into the person's own (Private) and one group per team.
+ *  Order inside each is kept. */
 export function groupTeamSpaces<T extends { name: string }>(
   spaces: readonly T[],
   shares: readonly SharedStatus[] | undefined,
 ): { own: T[]; groups: TeamSpaceGroup<T>[] } {
   const own: T[] = [];
-  const byHost = new Map<string, T[]>();
-  const hosted: T[] = [];
+  const byTeam = new Map<string, { team: TeamInfo | null; spaces: T[] }>();
   for (const space of spaces) {
     const share = shareOfSpace(shares, space.name);
-    if (share?.host) {
-      const host = share.host.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").replace(/\/+$/, "");
-      byHost.set(host, [...(byHost.get(host) ?? []), space]);
-    } else if (share?.hosted) hosted.push(space);
-    else own.push(space);
+    const key = teamKeyOf(share);
+    if (!key) {
+      own.push(space);
+      continue;
+    }
+    const group = byTeam.get(key) ?? { team: share?.team ?? null, spaces: [] };
+    group.spaces.push(space);
+    byTeam.set(key, group);
   }
-  const groups: TeamSpaceGroup<T>[] = [...byHost].map(([host, list]) => ({ host, spaces: list }));
-  if (hosted.length > 0) groups.push({ host: null, spaces: hosted });
+  const groups = [...byTeam].map(([key, group]) => ({ key, team: group.team, spaces: group.spaces }));
   return { own, groups };
 }

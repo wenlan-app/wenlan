@@ -709,6 +709,7 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `GET` | `/api/steep/new/set-aside` | main | no | not_applicable | `none` | — | SteepSetAsideItem.title: the same uncited, reviewed memory rows as /api/steep/new, filtered to the caller's scope; group name: the topic Automatic's writer named; no page prose |
 | `POST` | `/api/steep/new/set-aside/release` | main | no | not_applicable | `none` | — | receipt only: how many set-aside items in the caller's scope were given back |
 | `GET` | `/api/team` | main | no | not_applicable | `none` | — | status only: team member names, their Spaces and access, the hosted Space names and the team listener address; no key, no page text |
+| `PUT` | `/api/team` | main | no | not_applicable | `none` | — | receipt only: the team's id and the name its owner gave it; no page text |
 | `POST` | `/api/team/members` | main | no | not_applicable | `none` | — | receipt only: the member just added and their new key, shown once; no page text |
 | `PUT` | `/api/team/members/{id}` | main | no | not_applicable | `none` | — | receipt only: the member's name and Spaces; no page text |
 | `DELETE` | `/api/team/members/{id}` | main | no | not_applicable | `none` | — | receipt only: the removed member's name and Spaces; no page text |
@@ -742,6 +743,9 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `GET` | `/api/things/old-pass` | main | no | not_applicable | `none` | — | OldMemoryPassResponse: a time and counts only, no page prose |
 | `POST` | `/api/things/old-pass` | main | no | not_applicable | `none` | — | OldMemoryPass: a time and counts only, no page prose |
 | `POST` | `/api/things/old-pass/undo` | main | no | not_applicable | `none` | — | OldMemoryPassResponse: a time and counts only, no page prose |
+| `GET` | `/api/import/ai-memory` | main | no | not_applicable | `none` | — | AiMemoryImportStatus: counts and a time only, no memory or page text |
+| `POST` | `/api/import/ai-memory` | main | no | not_applicable | `none` | — | AiMemoryImportSummary: counts and a time only, no memory or page text |
+| `POST` | `/api/import/ai-memory/undo` | main | no | not_applicable | `none` | — | AiMemoryImportUndo: counts and a time only, no memory or page text |
 | `GET` | `/api/pages/{id}/sessions` | main | yes | automatic | `none` | `handle_get_page_sessions` | names the page; AgentSession carries no page prose |
 | `POST` | `/api/pages/{id}/archive` | main | yes | automatic | `none` | `handle_archive_page` | opaque response type — fail-closed |
 | `POST` | `/api/pages/{id}/rename` | main | yes | automatic | `none` | `handle_rename_page` | title metadata — core page_write_permit before mutation |
@@ -1293,7 +1297,7 @@ carrying the authority of agreement.
 | `core/db.rs::retire_empty_overview` | `private` | no | no | — | `core/db.rs::legacy_overview_placeholder_candidates` |
 | `core/db.rs::run_migrations` | `pub` | no | no | — | `core/db.rs::run_migrations_up_to` |
 | `core/db.rs::search_entities_by_vector` | `pub` | no | no | — | `core/db.rs::search_entities_by_embedding` |
-| `core/db.rs::search_memory` | `pub` | no | **yes** | `server/brief_routes.rs::handle_read_brief`, `server/memory_routes.rs::handle_search_memory_inner`, `server/routes.rs::handle_search_inner` | `core/db.rs::search_memory_with_cue` |
+| `core/db.rs::search_memory` | `pub` | no | **yes** | `server/ai_memory_import.rs::candidates`, `server/brief_routes.rs::handle_read_brief`, `server/memory_routes.rs::handle_search_memory_inner`, `server/routes.rs::handle_search_inner` | `core/db.rs::search_memory_with_cue` |
 | `core/db.rs::search_memory_cross_rerank_cued` | `pub` | no | no | — | `core/db.rs::search_memory_with_cue` |
 | `core/db.rs::search_memory_expanded` | `pub` | no | no | — | `core/db.rs::search_memory_with_cue` |
 | `core/db.rs::search_memory_temporal` | `pub` | no | no | — | `core/db.rs::search_memory_with_cue` |
@@ -1486,7 +1490,7 @@ carrying the authority of agreement.
 | `core/db/repair_page_rename.rs::recover_rename_page_title_apply_receipt` | `pub(crate)` | no | no | — | `core/db/repair_page_rename.rs::rename_page_projection_matches_post` |
 | `core/db/scoped_pages.rs::get_page_scoped_inner` | `private` | no | no | — | `core/db.rs::get_page`, `core/db.rs::get_page_browse` |
 | `core/db/scoped_pages.rs::list_pages_scoped_inner` | `private` | no | no | — | `core/db.rs::entity_row_browse_fence`, `core/db.rs::list_pages`, `core/db.rs::list_pages_browse` |
-| `core/db/scoped_pages.rs::search_pages_scoped` | `pub` | no | **yes** | `server/memory_routes.rs::handle_search_memory_inner`, `server/routes.rs::handle_search_inner` | `core/db/scoped_pages.rs::search_pages_scoped_inner` |
+| `core/db/scoped_pages.rs::search_pages_scoped` | `pub` | no | **yes** | `server/ai_memory_import.rs::candidates`, `server/memory_routes.rs::handle_search_memory_inner`, `server/routes.rs::handle_search_inner` | `core/db/scoped_pages.rs::search_pages_scoped_inner` |
 | `core/db/scoped_pages.rs::search_pages_scoped_browse` | `pub` | no | **yes** | `server/page_routes.rs::handle_search_pages` | `core/db/scoped_pages.rs::search_pages_scoped_inner` |
 | `core/db/truth_exposure.rs::page_visibility` | `pub` | no | no | — | `core/db/truth_exposure.rs::page_truth_states` |
 | `core/document_enrichment.rs::run_document_enrichment_with_request_budget` | `private` | no | no | — | `core/db.rs::get_page` |
@@ -1582,6 +1586,8 @@ carrying the authority of agreement.
 | `core/shared_space/mod.rs::stop_page_shares_in` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/shared_space/mod.rs::sync_missing` | `private` | yes | no | — | `core/db.rs::get_page` |
 | `core/shared_space/mod.rs::sync_space` | `pub` | no | **yes** | `server/spaces_routes.rs::host_sync`, `server/spaces_routes.rs::shared_sync`, `server/team_routes.rs::handle_host_space` | `core/db.rs::get_page` |
+| `core/shared_space/review.rs::accepted` | `private` | no | no | — | `core/db.rs::get_page` |
+| `core/shared_space/review.rs::review` | `pub(super)` | no | no | — | `core/db.rs::get_page` |
 | `core/sources/page_watcher.rs::archive_deleted_pages` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/sources/page_watcher.rs::bring_back_archived_page` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/sources/page_watcher.rs::create_adopted_page` | `private` | no | no | — | `core/db.rs::get_page` |
@@ -1614,6 +1620,7 @@ carrying the authority of agreement.
 | `core/trust_scan.rs::in_person_sentences` | `private` | no | no | — | `core/db.rs::get_page_browse` |
 | `core/trust_scan.rs::run_and_store` | `pub` | no | **yes** | `server/scheduler.rs::spawn_scheduler` | `core/trust_scan.rs::run_trust_scan` |
 | `core/truth_adapter.rs::verdicts` | `private` | no | no | — | `core/db/truth_exposure.rs::page_truth_states` |
+| `server/ai_memory_import.rs::candidates` | `private` | yes | no | — | `core/db.rs::search_memory` |
 | `server/brief_routes.rs::handle_read_brief` | `pub` | no | **yes** | `server/routes.rs::handle_context` | `core/db.rs::search_memory` |
 | `server/entity_graph_routes.rs::handle_add_entity_alias` | `pub` | no | no | — | `core/db.rs::add_entity_alias_in_scope` |
 | `server/knowledge_routes.rs::handle_resolve_embed` | `pub` | no | no | — | `core/db.rs::get_page` |

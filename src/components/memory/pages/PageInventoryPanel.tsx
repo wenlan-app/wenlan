@@ -18,7 +18,27 @@ import { pageSpaceContext } from "./pagePresentation";
 import { collectPageInventory, filterPageInventory, folderScope, inventoryFolderPath, pageFolderPath, pageMatchesInventoryScope, type WikiInventoryScope } from "./pageInventory";
 import { KNOWLEDGE_FOLDERS_QUERY_KEY, useKnowledgeFolders } from "./useKnowledgeFolders";
 import { useWikiFolderCreation } from "./WikiFolderCreationContext";
+import { useScope } from "../team/scope";
 import "./pageInventory.css";
+
+/** Which folders the tree shows on one side of a split library. With no
+ *  team every folder shows. A folder with pages under it shows when one of
+ *  them is on this side; an empty one shows on the Private side only. */
+export function scopedFolders(all: readonly Page[], shown: readonly Page[], split: boolean, teamSide: boolean): (path: string) => boolean {
+  if (!split) return () => true;
+  const under = (pages: readonly Page[]) => {
+    const paths: string[] = [];
+    for (const page of pages) {
+      const folder = pageFolderPath(page);
+      if (folder) paths.push(folder);
+    }
+    return paths;
+  };
+  const holds = (paths: readonly string[], folder: string) => paths.some(path => path === folder || path.startsWith(`${folder}/`));
+  const anyPaths = under(all);
+  const shownPaths = under(shown);
+  return (path: string) => holds(shownPaths, path) || (!teamSide && !holds(anyPaths, path));
+}
 
 type PageInventoryPanelProps = {
   readonly currentPageId?: string | null;
@@ -76,7 +96,12 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
   const active = useQuery({ queryKey: explicitBrowse ? ["pages", "active"] : ["pages", "inventory", "passive", "active"], queryFn: explicitBrowse ? listAllActivePagesExplicitBrowse : listAllActivePages, ...(explicitBrowse ? EXPLICIT_BROWSE_QUERY_POLICY : { staleTime: 30_000 }) });
   const drafts = useQuery({ queryKey: explicitBrowse ? ["pages", "draft"] : ["pages", "inventory", "passive", "draft"], queryFn: explicitBrowse ? listAllDraftPagesExplicitBrowse : listAllDraftPages, ...(explicitBrowse ? EXPLICIT_BROWSE_QUERY_POLICY : { staleTime: 30_000 }) });
   const folders = useKnowledgeFolders();
-  const pages = useMemo(() => collectPageInventory(active.data ?? [], drafts.data ?? []), [active.data, drafts.data]);
+  const scope = useScope();
+  const allPages = useMemo(() => collectPageInventory(active.data ?? [], drafts.data ?? []), [active.data, drafts.data]);
+  const pages = useMemo(() => allPages.filter(page => scope.inScope(page.space)), [allPages, scope]);
+  // A folder holding only the other side's pages stays out of sight; on a
+  // team's side, so does any folder with none of its pages.
+  const folderShown = useMemo(() => scopedFolders(allPages, pages, scope.teams.length > 0, Boolean(scope.team)), [allPages, pages, scope.teams.length, scope.team]);
   const noteCount = fileTree && active.isSuccess && drafts.isSuccess ? pages.length : null;
   useEffect(() => { onNoteCountChange?.(noteCount); }, [noteCount, onNoteCountChange]);
   const selectedPage = pages.find(page => page.id === currentPageId);
@@ -252,7 +277,9 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
     return <li key={page.id} data-folder-path={pageFolderPath(page) ?? ""} data-page-id={page.id} data-page-status={page.status}><button type="button" className="notes-page-button notes-inventory-page" aria-label={t("pages.overview.openPage", { title })} aria-current={currentPageId === page.id ? "page" : undefined} data-active={currentPageId === page.id ? "true" : undefined} title={title} disabled={draft ? !onOpenDraft : !onOpenPage} onClick={() => draft ? onOpenDraft?.(page.id, pageSpaceContext(page) ?? null) : onOpenPage?.(page)}><PageIcon size={16}/><span className="notes-page-title">{title}</span>{sharedMark(page)}</button></li>;
   };
   // A small people mark on a page shared with people, alone or with its Space.
+  // On a team's side every page is the team's: no mark says so on each.
   const sharedMark = (page: Page) => {
+    if (scope.team) return null;
     const share = pageShare(shares.data, page.id) ?? (page.space ? spaceShare(shares.data, page.space) : undefined);
     if (!share) return null;
     const names = others(share).map((member) => member.name).join(", ");
@@ -260,7 +287,7 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
     return <span className="notes-page-shared" role="img" aria-label={label} title={label}><PeopleIcon className="notes-page-shared-icon" /></span>;
   };
   const renderFolder = (folder: KnowledgeFolder, depth: number): React.ReactNode => {
-    const children = (folders.data?.folders ?? []).filter(item => item.path !== folder.path && item.parent_path === folder.path);
+    const children = (folders.data?.folders ?? []).filter(item => item.path !== folder.path && item.parent_path === folder.path && folderShown(item.path));
     const noteChildren = (fileTree || !browsing) ? pages.filter(page => pageMatchesInventoryScope(page, folderScope(folder.path))) : [];
     const canExpand = children.length > 0 || noteChildren.length > 0;
     const open = canExpand && expanded.has(folder.path);
@@ -314,7 +341,7 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
         {hasFilter ? <><p className="notes-folder-parent">{t("pages.folders.searchAll")}</p><ul className="notes-page-list">{filterPageInventory(pages, filter, i18n.language).map(renderPage)}</ul>{!filterPageInventory(pages, filter, i18n.language).length && <p className="notes-list-state">{t("pages.overview.noMatches")}</p>}</> : <>
           {fileTree && folders.data && !folders.data.truncated && folders.data.folders.length === 0 && pages.length === 0 && <p className="notes-list-state wiki-empty-directory">{t("pages.folders.emptyDirectory")}</p>}
           {folders.data && !folders.data.truncated && (fileTree ? <ul className="notes-inventory-collections">
-            {folders.data.folders.filter(folder => folder.parent_path === "").map(folder => renderFolder(folder, 0))}
+            {folders.data.folders.filter(folder => folder.parent_path === "" && folderShown(folder.path)).map(folder => renderFolder(folder, 0))}
           </ul> : <ul className="notes-inventory-collections">{renderFolder({ path: "", parent_path: "", name: t("pages.folders.root") }, 0)}</ul>)}
           {fileTree && <ul className="notes-page-list notes-inventory-root-pages">{pages.filter(page => {
             const path = pageFolderPath(page);

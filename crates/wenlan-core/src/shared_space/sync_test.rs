@@ -2740,3 +2740,150 @@ async fn the_main_computer_stays_main_when_it_shares_the_library_again() {
 fn a_member(b: &Member) -> String {
     b.library_member_id()
 }
+
+#[tokio::test]
+async fn a_lock_set_on_one_side_reaches_the_other_and_so_does_the_unlock() {
+    let folder = tempfile::tempdir().unwrap();
+    let folder = folder.path().to_path_buf();
+    let a = Member::new("Qi-Xuan").await;
+    let b = Member::new("Ana").await;
+    let id = a
+        .write("Menu", "Fish or pasta.", SPACE.to_string().into())
+        .await;
+    a.sync(&folder).await;
+    b.sync(&folder).await;
+    assert!(!b.page(&id).await.unwrap().review_required);
+
+    a.db.set_page_review_required(&id, true).await.unwrap();
+    assert_eq!(a.sync(&folder).await, counts(1, 0));
+    assert_eq!(b.sync(&folder).await, counts(0, 1));
+    assert!(b.page(&id).await.unwrap().review_required);
+    assert_eq!(b.content(&id).await, "Fish or pasta.");
+    // The lock alone is the person's doing, whoever wrote the text.
+    let locked = walk(&folder);
+    assert!(locked.contains("locked: true"), "{locked}");
+    assert_eq!(a.sync(&folder).await, zero());
+    assert_eq!(b.sync(&folder).await, zero());
+
+    b.db.set_page_review_required(&id, false).await.unwrap();
+    assert_eq!(b.sync(&folder).await, counts(1, 0));
+    assert_eq!(a.sync(&folder).await, counts(0, 1));
+    assert!(!a.page(&id).await.unwrap().review_required);
+    settle(&a, &b, &folder).await;
+
+    // An edit keeps the lock it was made under.
+    a.db.set_page_review_required(&id, true).await.unwrap();
+    settle(&a, &b, &folder).await;
+    b.edit(&id, "Fish, pasta or soup.").await;
+    settle(&a, &b, &folder).await;
+    assert_eq!(a.content(&id).await, "Fish, pasta or soup.");
+    assert!(a.page(&id).await.unwrap().review_required);
+}
+
+/// The open page cards here, as (card id, writer, AI tool).
+async fn open_cards(member: &Member) -> Vec<(String, String, Option<String>)> {
+    member
+        .db
+        .open_page_cards()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|card| (card.card_id, card.edited_by, card.proposer))
+        .collect()
+}
+
+/// `member`'s AI tool asks to change locked page `id`: a card waits.
+async fn ai_proposes(member: &Member, id: &str, content: &str) -> String {
+    let page = member.page(id).await.unwrap();
+    let revision = member.db.get_page_source_revision(id).await.unwrap();
+    crate::post_write::stage_page_revision_card_proposed_by(
+        &member.db,
+        &page,
+        content,
+        &[],
+        revision,
+        "agent_refresh",
+        Some("claude-code"),
+        None,
+        &[],
+        None,
+    )
+    .await
+    .unwrap()
+    .revision_card_id
+    .unwrap()
+}
+
+#[tokio::test]
+async fn an_ai_change_on_a_locked_page_waits_for_every_member_and_one_decision_closes_it() {
+    let folder = tempfile::tempdir().unwrap();
+    let folder = folder.path().to_path_buf();
+    let a = Member::new("Qi-Xuan").await;
+    let b = Member::new("Ana").await;
+    let id = a
+        .write("Menu", "Fish or pasta.", SPACE.to_string().into())
+        .await;
+    a.db.set_page_review_required(&id, true).await.unwrap();
+    settle(&a, &b, &folder).await;
+    let a_id = a.member_id();
+
+    // Qi-Xuan's AI tool proposes; Ana sees it as that tool's card.
+    let card = ai_proposes(&a, &id, "Fish, pasta or soup.").await;
+    a.sync(&folder).await;
+    assert!(walk(&folder).contains("proposal: true"));
+    b.sync(&folder).await;
+    let cards = open_cards(&b).await;
+    assert_eq!(cards.len(), 1, "{cards:?}");
+    assert_eq!(cards[0].1, format!("shared_ai:{a_id}"));
+    assert_eq!(cards[0].2.as_deref(), Some("claude-code"));
+    // Passes with nothing new change nothing.
+    b.sync(&folder).await;
+    assert_eq!(open_cards(&b).await, cards);
+
+    // Ana accepts: the page changes for both and both cards are gone.
+    crate::post_write::accept_pending_revision(&b.db, &cards[0].0, "wenlan-app")
+        .await
+        .unwrap();
+    settle(&a, &b, &folder).await;
+    assert_eq!(a.content(&id).await, "Fish, pasta or soup.");
+    assert_eq!(b.content(&id).await, "Fish, pasta or soup.");
+    assert!(open_cards(&a).await.is_empty(), "{card} still open");
+    assert!(open_cards(&b).await.is_empty());
+    assert!(walk(&folder).contains("decision: accepted"));
+    assert!(a.page(&id).await.unwrap().review_required);
+
+    // The AI tool proposes again; Qi-Xuan rejects it here, and Ana's card
+    // goes away with the page as it was.
+    let card = ai_proposes(&a, &id, "Only soup.").await;
+    a.sync(&folder).await;
+    b.sync(&folder).await;
+    assert_eq!(open_cards(&b).await.len(), 1);
+    crate::post_write::dismiss_pending_revision(&a.db, &card, "wenlan-app")
+        .await
+        .unwrap();
+    settle(&a, &b, &folder).await;
+    assert!(open_cards(&b).await.is_empty());
+    assert!(walk(&folder).contains("decision: rejected"));
+    assert_eq!(b.content(&id).await, "Fish, pasta or soup.");
+}
+
+#[tokio::test]
+async fn a_member_who_may_only_read_is_shown_no_proposal() {
+    let folder = tempfile::tempdir().unwrap();
+    let folder = folder.path().to_path_buf();
+    let a = Member::new("Qi-Xuan").await;
+    let b = Member::new("Ana").await;
+    let id = a
+        .write("Menu", "Fish or pasta.", SPACE.to_string().into())
+        .await;
+    a.db.set_page_review_required(&id, true).await.unwrap();
+    settle(&a, &b, &folder).await;
+    update_share(&b.settings(), &space(), |settings| {
+        settings.read_only = true
+    })
+    .unwrap();
+    ai_proposes(&a, &id, "Fish, pasta or soup.").await;
+    a.sync(&folder).await;
+    b.sync(&folder).await;
+    assert!(open_cards(&b).await.is_empty());
+}

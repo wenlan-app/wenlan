@@ -21,6 +21,7 @@ import {
 import { useUnobstructedContentWidth } from "./useUnobstructedContentWidth";
 import { ShareDialog } from "./sharing/ShareDialog";
 import { SharedWithLine } from "./sharing/SharedWithLine";
+import { SpaceRecentChanges } from "./space-detail/SpaceRecentChanges";
 import { spaceShare, useShares } from "./sharing/sharing";
 import "./space-detail/space-detail-header.css";
 import "./space-detail/space-detail.css";
@@ -33,6 +34,8 @@ export type SpaceDetailProps = {
   readonly onSpaceLoaded?: (space: Space) => void;
   readonly onSpaceRenamed?: (space: Pick<Space, "id" | "name">) => void;
   readonly onReviewAll?: () => void;
+  /** Opens the big map on this Space alone, with its regions drawn. */
+  readonly onOpenGraph?: (space: string) => void;
   readonly onCreatePage?: (space: string) => void;
   readonly onSelectPage: (pageId: string) => void;
   readonly onRegisterFlush?: (flush: (() => Promise<boolean>) | null) => void;
@@ -53,6 +56,7 @@ export default function SpaceDetail({
   onSpaceLoaded,
   onSpaceRenamed,
   onReviewAll,
+  onOpenGraph,
   onCreatePage,
   onSelectPage,
   onRegisterFlush,
@@ -163,6 +167,7 @@ export default function SpaceDetail({
           },
           onKeep: () => confirmMutation.mutate(),
           onReviewAll,
+          onOpenGraph: onOpenGraph ? () => onOpenGraph(space.name) : undefined,
           onShare: () => setSharing(true),
           onCreatePage: () => onCreatePage?.(space.name),
           onSaveIdentity: async ({ name, description }) => {
@@ -175,6 +180,7 @@ export default function SpaceDetail({
       />
 
       <SpaceBrief spaceName={space.name} />
+      {share && <SpaceRecentChanges space={space.name} shares={shares.data} />}
       <SpaceProjectContent
         key={`${space.id}:${space.name}`}
         copy={copy}

@@ -120,6 +120,7 @@ type PageSpaceWriteContext<'a> = (
         &'a str,
     )>,
 );
+pub mod ai_memory_import;
 pub mod citation_provenance;
 pub mod night_backlog;
 pub mod night_tidy;
@@ -47446,6 +47447,12 @@ impl MemoryDB {
                     .map(str::to_string)
             });
             let review_reason = revision_review_reason(structured_fields.as_ref());
+            let edited_by = structured_fields
+                .as_ref()
+                .and_then(|v| v.get("edited_by"))
+                .and_then(|v| v.as_str())
+                .filter(|edited_by| crate::shared_space::shared_writer(edited_by).is_some())
+                .map(str::to_string);
             let targets_a_page = row.get::<i64>(6).unwrap_or(0) != 0;
             let chunk = row
                 .get::<String>(2)
@@ -47487,6 +47494,7 @@ impl MemoryDB {
                 target_kind: revision_target_kind(row.get::<i64>(6).unwrap_or(0)),
                 grounded_in,
                 review_reason,
+                edited_by,
             });
         }
         Ok(out)
@@ -47622,6 +47630,12 @@ impl MemoryDB {
                     .map(str::to_string)
             });
             let review_reason = revision_review_reason(structured_fields.as_ref());
+            let edited_by = structured_fields
+                .as_ref()
+                .and_then(|v| v.get("edited_by"))
+                .and_then(|v| v.as_str())
+                .filter(|edited_by| crate::shared_space::shared_writer(edited_by).is_some())
+                .map(str::to_string);
             let targets_a_page = row.get::<i64>(6).unwrap_or(0) != 0;
             let chunk = row
                 .get::<String>(2)
@@ -47663,6 +47677,7 @@ impl MemoryDB {
                 target_kind: revision_target_kind(row.get::<i64>(6).unwrap_or(0)),
                 grounded_in,
                 review_reason,
+                edited_by,
             });
         }
         Ok(out)
@@ -52524,6 +52539,7 @@ impl MemoryDB {
             .map_err(|e| WenlanError::VectorDb(format!("list_recent_changes scan: {e}")))?;
 
         let mut out = Vec::new();
+        let mut versions = Vec::new();
         while let Some(row) = rows
             .next()
             .await
@@ -52552,9 +52568,44 @@ impl MemoryDB {
                 title,
                 change_kind,
                 changed_at_ms,
+                edited_by: None,
+                changed_sentences: None,
             });
+            versions.push(version);
         }
+        drop(rows);
+        drop(conn);
+        self.annotate_page_changes(&mut out, &versions).await;
         Ok(out)
+    }
+
+    /// Fill in who wrote each change and how many sentences it changed, from
+    /// `page_history`. `versions[i]` is the current version of `changes[i]`.
+    /// A missing history row leaves the fields empty rather than failing the
+    /// feed.
+    pub(crate) async fn annotate_page_changes(
+        &self,
+        changes: &mut [wenlan_types::PageChange],
+        versions: &[i64],
+    ) {
+        for (change, &version) in changes.iter_mut().zip(versions) {
+            let Ok(Some(current)) = self.get_page_history_at(&change.page_id, version).await else {
+                continue;
+            };
+            if !current.edited_by.is_empty() {
+                change.edited_by = Some(current.edited_by.clone());
+            }
+            if version <= 1 {
+                continue;
+            }
+            if let Ok(Some(previous)) = self.get_page_history_at(&change.page_id, version - 1).await
+            {
+                change.changed_sentences = Some(crate::authorship::changed_sentence_count(
+                    &previous.content,
+                    &current.content,
+                ));
+            }
+        }
     }
 
     /// Return up to `limit` most-recently-modified memories, ordered newest first.
@@ -55930,8 +55981,10 @@ impl MemoryDB {
             // Review lock (PR A): a machine writer never lands on a locked
             // page. The gate above already staged a card for a lock it saw;
             // this predicate catches a lock set after that read. Human writers
-            // (the editor, the vault watcher, accepting a revision card) pass.
-            if !matches!(link_reason, "manual_edit" | "fs_edit" | "revision_accept") {
+            // (the editor, the vault watcher, accepting a revision card) pass,
+            // and so does another member's version of a shared page, which
+            // lands as that member saved it.
+            if !lock_passes(link_reason) {
                 sql.push_str(" AND COALESCE(review_required, 0) = 0");
             }
             let update_result = match (expected_version, expected_source_revision) {
@@ -56101,8 +56154,10 @@ impl MemoryDB {
             // Review lock (PR A): a machine writer never lands on a locked
             // page. The gate above already staged a card for a lock it saw;
             // this predicate catches a lock set after that read. Human writers
-            // (the editor, the vault watcher, accepting a revision card) pass.
-            if !matches!(link_reason, "manual_edit" | "fs_edit" | "revision_accept") {
+            // (the editor, the vault watcher, accepting a revision card) pass,
+            // and so does another member's version of a shared page, which
+            // lands as that member saved it.
+            if !lock_passes(link_reason) {
                 sql.push_str(" AND COALESCE(review_required, 0) = 0");
             }
             let update_result = match (expected_version, expected_source_revision) {
@@ -64477,6 +64532,19 @@ const ARCHIVED_TOPIC_SQL: &str = "EXISTS (SELECT 1 FROM entity_page_map epm_a
 pub(crate) const HUB_MIN_LINKS: i64 = 200;
 /// Share of all linked memories (percent) a hub topic is linked to.
 pub(crate) const HUB_MIN_SHARE_PERCENT: i64 = 10;
+
+/// A writer the review lock never holds back: the person here (the editor,
+/// the vault watcher, accepting a revision card), another member's saved
+/// version of a shared page, or the person's own other computer. The same
+/// writers the write gate treats as a person (`post_write::Writer::classify`).
+fn lock_passes(edited_by: &str) -> bool {
+    matches!(edited_by, "manual_edit" | "fs_edit" | "revision_accept")
+        || crate::shared_space::shared_writer(edited_by).is_some()
+        || matches!(
+            edited_by,
+            crate::shared_space::OWN_DEVICE_PERSON | crate::shared_space::OWN_DEVICE_AI
+        )
+}
 
 /// True when a topic with `links` linked memories, out of `total` memories
 /// that have any topic, is a hub: too common to tell memories apart.

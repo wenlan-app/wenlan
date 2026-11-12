@@ -23,6 +23,7 @@ main|post|/api/check|wenlan_server::check_routes::handle_check
 main|post|/api/check/context|wenlan_server::check_routes::handle_check_context
 main|get|/api/health|wenlan_server::routes::handle_health
 main|get|/api/home-stats|wenlan_server::memory_routes::handle_get_home_stats
+main|get|/api/import/ai-memory|wenlan_server::ai_memory_import::handle_status
 main|get|/api/import/batches/active|wenlan_server::import_routes::handle_active_import_batches
 main|get|/api/import/batches/{batch_id}/status|wenlan_server::import_routes::handle_import_batch_status
 main|get|/api/import/state|wenlan_server::import_routes::handle_list_pending_imports
@@ -128,6 +129,8 @@ main|post|/api/distill|wenlan_server::routes::handle_distill
 main|post|/api/distill/{page_id}|wenlan_server::routes::handle_redistill
 main|post|/api/documents/{source_id}/space|wenlan_server::spaces_routes::handle_set_document_space
 main|post|/api/documents/{source_id}/tags|wenlan_server::activity_tag_routes::handle_patch_document_tag
+main|post|/api/import/ai-memory|wenlan_server::ai_memory_import::handle_run
+main|post|/api/import/ai-memory/undo|wenlan_server::ai_memory_import::handle_undo
 main|post|/api/import/chat-export|wenlan_server::import_routes::handle_chat_export_import
 main|post|/api/import/memories|wenlan_server::import_routes::handle_import_memories
 main|post|/api/ingest/memory|wenlan_server::ingest_routes::handle_ingest_memory
@@ -353,6 +356,7 @@ main|post|/api/library/shared/main|wenlan_server::spaces_routes::handle_library_
 main|get|/api/library/shared|wenlan_server::spaces_routes::handle_library_shared_status
 main|delete|/api/library/shared|wenlan_server::spaces_routes::handle_library_shared_leave
 main|get|/api/team|wenlan_server::team_routes::handle_team_status
+main|put|/api/team|wenlan_server::team_routes::handle_rename_team
 main|post|/api/team/members|wenlan_server::team_routes::handle_add_member
 main|put|/api/team/members/{id}|wenlan_server::team_routes::handle_update_member
 main|delete|/api/team/members/{id}|wenlan_server::team_routes::handle_remove_member

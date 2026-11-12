@@ -229,6 +229,30 @@ describe("SpaceDossierHeader identity editing", () => {
     expect(screen.getByRole("button", { name: "Confirm delete space" })).toBeInTheDocument();
   });
 
+  it("offers Show on the big map in the overflow menu and hands this Space off", async () => {
+    const user = userEvent.setup();
+    const onOpenGraph = vi.fn();
+    render(
+      <SpaceDossierHeader
+        actions={{ onBack: vi.fn(), onCreatePage: vi.fn(), onDelete: vi.fn(), onKeep: vi.fn(), onSaveIdentity: vi.fn(), onOpenGraph }}
+        copy={SPACE_DETAIL_TEST_COPY}
+        mutationError={false}
+        space={space}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Actions for Wenlan" }));
+    await user.click(screen.getByRole("menuitem", { name: "Show on the big map" }));
+    expect(onOpenGraph).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  });
+
+  it("leaves Show on the big map out when there is nowhere to hand off", async () => {
+    const user = userEvent.setup();
+    renderHeader();
+    await user.click(screen.getByRole("button", { name: "Actions for Wenlan" }));
+    expect(screen.queryByRole("menuitem", { name: "Show on the big map" })).not.toBeInTheDocument();
+  });
+
   it("closes the overflow when clicking outside", async () => {
     const user = userEvent.setup();
     renderHeader();

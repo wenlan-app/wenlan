@@ -69,6 +69,30 @@ const OPEN_CARD_SQL: &str = "pending_revision = 1
        AND supersedes IS NOT NULL
        AND EXISTS (SELECT 1 FROM pages page WHERE page.id = memories.supersedes)";
 
+/// An open whole-page card, as a shared Space's review step reads it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenPageCard {
+    pub card_id: String,
+    pub page_id: String,
+    pub edited_by: String,
+    /// The AI tool the card names.
+    pub proposer: Option<String>,
+    /// The page's version the card was staged over.
+    pub page_version: Option<i64>,
+    /// Bound to a research write, or a link card: it stays on this computer.
+    pub local_only: bool,
+}
+
+/// Where a page card stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PageCardState {
+    Open,
+    /// A newer proposal for the page took its place; the row is kept.
+    Replaced,
+    /// Accepted or dismissed (the row is gone or no longer waits).
+    Closed,
+}
+
 impl MemoryDB {
     /// The newest open whole-page card of `page_id` a new proposal replaces,
     /// if any. A card bound to a research write is left alone: its id is
@@ -308,6 +332,67 @@ impl MemoryDB {
                 .get::<String>(1)
                 .map_err(db_err("replaced card successor"))?,
         }))
+    }
+
+    /// Every open whole-page card, oldest first.
+    pub async fn open_page_cards(&self) -> Result<Vec<OpenPageCard>, WenlanError> {
+        let sql = format!(
+            "SELECT source_id, supersedes,
+                    COALESCE(json_extract(structured_fields, '$.edited_by'), ''),
+                    source_agent,
+                    json_extract(structured_fields, '$.page_version'),
+                    json_extract(structured_fields, '$.research_write') IS NOT NULL
+             FROM memories
+             WHERE {OPEN_CARD_SQL}
+               AND json_extract(structured_fields, '$.revision_kind') = ?1
+             ORDER BY last_modified, source_id"
+        );
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(&sql, libsql::params![PAGE_WRITE_CARD_KIND])
+            .await
+            .map_err(db_err("open page cards"))?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await.map_err(db_err("open page cards row"))? {
+            let edited_by: String = row.get(2).map_err(db_err("open page card writer"))?;
+            out.push(OpenPageCard {
+                card_id: row.get(0).map_err(db_err("open page card id"))?,
+                page_id: row.get(1).map_err(db_err("open page card page"))?,
+                local_only: row.get::<i64>(5).unwrap_or(0) != 0
+                    || edited_by == crate::post_write::LINK_RENAME_WRITER,
+                edited_by,
+                proposer: row.get::<Option<String>>(3).ok().flatten(),
+                page_version: row.get::<Option<i64>>(4).ok().flatten(),
+            });
+        }
+        Ok(out)
+    }
+
+    /// Whether page card `card_id` still waits, was replaced by a newer
+    /// proposal, or was accepted or dismissed.
+    pub async fn page_card_state(&self, card_id: &str) -> Result<PageCardState, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT pending_revision,
+                        json_extract(structured_fields, '$.replaced_by') IS NOT NULL
+                   FROM memories
+                  WHERE source = 'memory' AND source_id = ?1 AND chunk_index = 0
+                  LIMIT 1",
+                libsql::params![card_id],
+            )
+            .await
+            .map_err(db_err("page card state"))?;
+        let Some(row) = rows.next().await.map_err(db_err("page card state row"))? else {
+            return Ok(PageCardState::Closed);
+        };
+        let pending = row.get::<i64>(0).unwrap_or(0) != 0;
+        let replaced = row.get::<i64>(1).unwrap_or(0) != 0;
+        Ok(match (pending, replaced) {
+            (true, _) => PageCardState::Open,
+            (false, true) => PageCardState::Replaced,
+            (false, false) => PageCardState::Closed,
+        })
     }
 
     /// Read-only: every page with more than one open card of the same kind,
