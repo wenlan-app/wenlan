@@ -835,6 +835,7 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `DELETE` | `/api/sources/{id}` | main | no | not_applicable | `none` | — | no prose fields |
 | `PATCH` | `/api/sources/{id}` | main | no | not_applicable | `none` | — | no prose fields |
 | `POST` | `/api/sources/{id}/sync` | main | no | not_applicable | `none` | — | no prose fields |
+| `GET` | `/api/sources/{id}/unreadable-files` | main | no | not_applicable | `none` | — | file paths and a skip reason; no prose |
 | `GET` | `/api/sources/{id}/ai-changes` | main | no | not_applicable | `none` | — | one note setting; no prose |
 | `PUT` | `/api/sources/{id}/ai-changes` | main | no | not_applicable | `none` | — | sets one note setting; no prose |
 | `GET` | `/api/notes/proposals` | main | no | not_applicable | `none` | — | the person's note text, not page prose |

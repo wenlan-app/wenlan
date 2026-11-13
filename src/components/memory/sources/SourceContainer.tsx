@@ -8,6 +8,7 @@ import type { TFunction } from "i18next";
 import {
   listIndexedFiles,
   listRegisteredSources,
+  listUnreadableFiles,
   openFile,
   readSourceDir,
   readSourceText,
@@ -133,6 +134,15 @@ export default function SourceContainer({ location, search, filter, lens, onSear
     queryFn: () => readSourceDir(location.path),
     enabled: !!source,
   });
+  // Files Wenlan tried and could not read (a scan with no text, a corrupt
+  // Word file) say so, instead of looking like they are still being indexed.
+  const unreadableQuery = useQuery({
+    queryKey: ["unreadableFiles", location.sourceId],
+    queryFn: () => listUnreadableFiles(location.sourceId),
+    enabled: !!source,
+    refetchInterval: 10_000,
+  });
+  const unreadable = useMemo(() => new Set((unreadableQuery.data ?? []).map(normalized)), [unreadableQuery.data]);
   const infoState = useDetailInfoOpen(`source-container:${location.sourceId}`);
   const pagesFolder = usePagesFolder(source?.source_type === "obsidian");
   const infoToggleRef = useRef<HTMLButtonElement>(null);
@@ -183,7 +193,8 @@ export default function SourceContainer({ location, search, filter, lens, onSear
     return {
       id: path,
       title: entry.name,
-      metadata: entry.isDirectory ? t("sourceLibrary.folder") : presentation.format,
+      metadata: entry.isDirectory ? t("sourceLibrary.folder")
+        : !indexed && unreadable.has(normalized(path)) ? t("sourceAccess.unreadable") : presentation.format,
       kind,
       onSelect: () => {
         if (entry.isDirectory) {
@@ -249,7 +260,7 @@ export default function SourceContainer({ location, search, filter, lens, onSear
     </div>} infoContent={<><section>
       <h3 className="note-info-section-heading">{t("sourceAccess.index")}</h3>
       <dl className="source-info-metadata">
-        <div><dt>{t("sourceAccess.status")}</dt><dd>{selectedIndexed ? t("sourceAccess.inLibrary") : t("sourceAccess.indexing")}</dd></div>
+        <div><dt>{t("sourceAccess.status")}</dt><dd>{selectedIndexed ? t("sourceAccess.inLibrary") : unreadable.has(normalized(selectedPath)) ? t("sourceAccess.unreadable") : t("sourceAccess.indexing")}</dd></div>
         {selectedIndexed && <div><dt>{t("sourceAccess.indexedAs")}</dt><dd>{t(selectedIndexed.chunk_count === 1 ? "sourceAccess.onePassage" : "sourceAccess.passages", { count: selectedIndexed.chunk_count })}</dd></div>}
         <div><dt>{t("sourceAccess.localFile")}</dt><dd className="source-container-path">{selectedPath}</dd></div>
       </dl>

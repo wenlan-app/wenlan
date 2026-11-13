@@ -9232,6 +9232,7 @@ name = "wenlan-mcp"
 version = "0.21.6"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum",
  "base64 0.22.1",
  "clap",

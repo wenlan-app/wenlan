@@ -125,7 +125,11 @@ fn directory_path_is_allowed(root: &Path, candidate: &Path, is_directory: bool) 
         let Component::Normal(name) = component else {
             return false;
         };
-        if name.to_string_lossy().starts_with('.')
+        // `~$name.docx` is the lock file Word keeps beside a document that is
+        // open: a few bytes, never a document, and rewritten on every open.
+        let shown = name.to_string_lossy();
+        if shown.starts_with('.')
+            || shown.starts_with("~$")
             || ((index + 1 < components.len() || is_directory)
                 && name
                     .to_str()
@@ -1050,6 +1054,18 @@ pub(crate) mod tests {
         let results = scan_directory(tmp.path());
         assert_eq!(results.len(), 1);
         assert!(results[0].file_name().unwrap().to_str().unwrap() == "visible.md");
+    }
+
+    #[test]
+    fn test_scan_skips_word_lock_files() {
+        let tmp = TempDir::new().unwrap();
+        create_file(tmp.path(), "report.docx", b"not really a docx");
+        create_file(tmp.path(), "~$report.docx", b"owner");
+        let results = scan_directory(tmp.path());
+        assert!(
+            results.iter().all(|p| !p.to_string_lossy().contains("~$")),
+            "{results:?}"
+        );
     }
 
     #[test]

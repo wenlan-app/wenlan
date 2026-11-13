@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { getKnowledgePath, getKnowledgePathInfo, getNoteAiChanges, listIndexedFiles, listNoteProposals, listRegisteredSources, readSourceDir, readSourceText, setSourceFollowChanges, syncRegisteredSource, type RegisteredSource } from "../../../lib/tauri";
+import { getKnowledgePath, getKnowledgePathInfo, getNoteAiChanges, listIndexedFiles, listNoteProposals, listRegisteredSources, listUnreadableFiles, readSourceDir, readSourceText, setSourceFollowChanges, syncRegisteredSource, type RegisteredSource } from "../../../lib/tauri";
 import SourceLibrary, { type SourceLibraryState } from "./SourceLibrary";
 import { useState } from "react";
 
@@ -12,6 +12,7 @@ vi.mock("../../../lib/tauri", () => ({
   getActiveImportBatches: vi.fn().mockResolvedValue({ batches: [] }),
   listIndexedFiles: vi.fn(),
   listRegisteredSources: vi.fn(),
+  listUnreadableFiles: vi.fn(),
   readSourceDir: vi.fn(),
   readSourceText: vi.fn(),
   syncRegisteredSource: vi.fn(),
@@ -50,6 +51,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(listRegisteredSources).mockResolvedValue([source]);
   vi.mocked(listIndexedFiles).mockResolvedValue([]);
+  vi.mocked(listUnreadableFiles).mockResolvedValue([]);
   vi.mocked(getKnowledgePathInfo).mockResolvedValue({ path: "/home/me/.wenlan/pages" });
   vi.mocked(readSourceDir).mockResolvedValue([]);
   vi.mocked(readSourceText).mockResolvedValue("");
@@ -147,6 +149,24 @@ describe("Sources containers", () => {
     expect(document.querySelector(".reading-document-frame")).toBeInTheDocument();
     expect(await screen.findByText("In your library")).toBeInTheDocument();
     expect(screen.getByText("3 passages")).toBeInTheDocument();
+  });
+
+  it("says a file Wenlan could not read is unreadable instead of still indexing", async () => {
+    vi.mocked(readSourceDir).mockResolvedValue([{ name: "scan.pdf", isDirectory: false }, { name: "blank.txt", isDirectory: false }, { name: "waiting.txt", isDirectory: false }]);
+    vi.mocked(listUnreadableFiles).mockResolvedValue(["/notes/Vault/scan.pdf", "/notes/Vault/blank.txt"]);
+    renderLibrary();
+
+    fireEvent.click(await screen.findByRole("button", { name: /Vault|vault-1/i }));
+    expect(await screen.findByRole("button", { name: /scan\.pdf/ })).toHaveTextContent("Couldn’t read this file");
+    expect(listUnreadableFiles).toHaveBeenCalledWith("vault-1");
+
+    fireEvent.click(screen.getByRole("button", { name: /blank\.txt/ }));
+    expect(await screen.findByText("Couldn’t read this file")).toBeInTheDocument();
+    expect(screen.queryByText("Indexing…")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Back to folder|backToFolder/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /waiting\.txt/ }));
+    expect(await screen.findByText("Indexing…")).toBeInTheDocument();
   });
 
   it("opens straight to a note when the home points at one", async () => {

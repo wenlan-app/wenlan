@@ -169,6 +169,7 @@ const OUTSIDE_THE_REVIEW_SURFACE: readonly string[] = [
   "list_pending_imports",
   "list_pinned_memories",
   "list_sources",
+  "list_unreadable_files",
   "list_watch_paths",
   "move_space",
   "on_device_model_download_bytes",

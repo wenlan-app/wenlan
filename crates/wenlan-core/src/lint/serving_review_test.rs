@@ -70,6 +70,7 @@ fn route_catalog_freezes_exact_global_and_scoped_keys() {
         (Method::Get, "/api/zotero/items"),
         (Method::Get, "/api/zotero/sources/{id}/disconnect-preview"),
         (Method::Get, "/api/sources/{id}/ai-changes"),
+        (Method::Get, "/api/sources/{id}/unreadable-files"),
         (Method::Get, "/api/notes/proposals"),
         (Method::Get, "/api/notes/proposals/{id}"),
         (Method::Get, "/api/profile/narrative"),

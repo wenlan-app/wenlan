@@ -1624,6 +1624,8 @@ export const DEFAULTS: Record<string, unknown> = {
   uploads_folder: "",
   delete_uploaded_file: null,
   disconnect_client: null,
+  // Preview sources have no files Wenlan failed to read.
+  list_unreadable_files: [],
   should_show_wizard: false,
   local_setup_completed: false,
   // Preview has no native LaunchAgent preflight. Its local app startup is

@@ -310,6 +310,11 @@ export async function syncRegisteredSource(id: string): Promise<SyncStats> {
   return invoke("sync_registered_source", { id });
 }
 
+/** Files in a source that Wenlan could not read (no text, corrupt), by full path. */
+export async function listUnreadableFiles(id: string): Promise<string[]> {
+  return invoke("list_unreadable_files", { id });
+}
+
 export interface ZoteroCollection {
   key: string;
   name: string;

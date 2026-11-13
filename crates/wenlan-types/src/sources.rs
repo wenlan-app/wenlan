@@ -371,6 +371,15 @@ pub enum AiChangesFrom {
     Pdf,
 }
 
+/// A file in a folder source that Wenlan will never read (a scan with no
+/// text, a corrupt or empty document), with the reason the reader gave.
+/// `GET /api/sources/{id}/unreadable-files` answers with a list of these.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnreadableFile {
+    pub path: String,
+    pub reason: String,
+}
+
 /// The effective setting for one path in a vault.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NoteAiChanges {

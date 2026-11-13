@@ -11,7 +11,9 @@ use axum::routing::get;
 use axum::Router;
 use rmcp::model::{ClientJsonRpcMessage, ClientRequest};
 use rmcp::transport::streamable_http_server::{
-    session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
+    session::local::LocalSessionManager,
+    session::{SessionState, SessionStore, SessionStoreError},
+    StreamableHttpServerConfig, StreamableHttpService,
 };
 use tower_http::cors::CorsLayer;
 
@@ -157,6 +159,7 @@ pub async fn run_serve_with_profile(
     // Authenticated tunnels forward a public hostname in Host, so only that
     // mode disables Host filtering; the outer bearer gate still protects it.
     let mut mcp_config = StreamableHttpServerConfig::default();
+    mcp_config.session_store = Some(Arc::new(IdleSessionResume::default()));
     if token.is_some() {
         mcp_config = mcp_config.disable_allowed_hosts();
     }
@@ -273,9 +276,10 @@ pub fn team_member_service(
     space: String,
     tool_profile: ToolProfile,
 ) -> StreamableHttpService<WenlanMcpServer, LocalSessionManager> {
-    let config = StreamableHttpServerConfig::default()
+    let mut config = StreamableHttpServerConfig::default()
         .disable_allowed_hosts()
         .with_sse_keep_alive(Some(Duration::from_secs(15)));
+    config.session_store = Some(Arc::new(IdleSessionResume::default()));
     StreamableHttpService::new(
         move || {
             let identity =
@@ -292,6 +296,57 @@ pub fn team_member_service(
         Arc::new(LocalSessionManager::default()),
         config,
     )
+}
+
+/// Most recent connections whose opening handshake is kept for picking back up.
+const RESUMABLE_SESSIONS: usize = 512;
+
+/// Keeps each connection's opening handshake so a connection that sat idle
+/// past the SDK's five-minute cleanup is picked back up on its next call,
+/// instead of answering "session not found". ChatGPT does not open a new
+/// connection on that answer, so a chat that paused for five minutes could no
+/// longer save or search. Held in memory only, for the newest
+/// `RESUMABLE_SESSIONS` connections; the bearer gate in front still decides
+/// who may call at all.
+#[derive(Default)]
+pub(crate) struct IdleSessionResume {
+    sessions: tokio::sync::Mutex<(
+        std::collections::HashMap<String, SessionState>,
+        std::collections::VecDeque<String>,
+    )>,
+}
+
+#[async_trait::async_trait]
+impl SessionStore for IdleSessionResume {
+    async fn load(&self, session_id: &str) -> Result<Option<SessionState>, SessionStoreError> {
+        Ok(self.sessions.lock().await.0.get(session_id).cloned())
+    }
+
+    async fn store(&self, session_id: &str, state: &SessionState) -> Result<(), SessionStoreError> {
+        let mut guard = self.sessions.lock().await;
+        let (states, order) = &mut *guard;
+        if states
+            .insert(session_id.to_owned(), state.clone())
+            .is_none()
+        {
+            order.push_back(session_id.to_owned());
+        }
+        while order.len() > RESUMABLE_SESSIONS {
+            if let Some(oldest) = order.pop_front() {
+                states.remove(&oldest);
+            }
+        }
+        Ok(())
+    }
+
+    async fn delete(&self, session_id: &str) -> Result<(), SessionStoreError> {
+        let mut guard = self.sessions.lock().await;
+        let (states, order) = &mut *guard;
+        if states.remove(session_id).is_some() {
+            order.retain(|id| id != session_id);
+        }
+        Ok(())
+    }
 }
 
 /// The first-message guard every HTTP profile runs, for a caller that

@@ -1672,6 +1672,7 @@ pub fn run() {
             search::read_zotero_pdf,
             search::add_zotero_source,
             search::sync_registered_source,
+            search::list_unreadable_files,
             search::set_source_follow_changes,
             search::daemon_version,
             problem_report::problem_report,

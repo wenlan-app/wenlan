@@ -156,3 +156,101 @@ fn query_only_scope_requires_exactly_one_scope() {
         assert_eq!(error.to_string(), expected);
     }
 }
+
+/// ChatGPT keeps using a connection after a pause. Once the SDK drops an idle
+/// connection (five minutes in production), the next call must still work
+/// instead of answering "session not found".
+#[tokio::test]
+async fn a_connection_idle_past_cleanup_keeps_working() {
+    let mut manager = LocalSessionManager::default();
+    manager.session_config.keep_alive = Some(Duration::from_millis(300));
+    let manager = Arc::new(manager);
+    let mut config = StreamableHttpServerConfig::default();
+    config.session_store = Some(Arc::new(IdleSessionResume::default()));
+    let service = StreamableHttpService::new(
+        || {
+            Ok(WenlanMcpServer::new(
+                WenlanClient::new("http://127.0.0.1:1".into()),
+                TransportMode::Http,
+                "synthetic-idle-test".into(),
+                None,
+            ))
+        },
+        manager.clone(),
+        config,
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}/mcp", listener.local_addr().unwrap());
+    let router = Router::new()
+        .nest_service("/mcp", service)
+        .layer(middleware::from_fn(validate_initialization));
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let result = tokio::spawn(async move {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .unwrap();
+        let post = |session: Option<&str>, body: serde_json::Value| {
+            let mut request = client
+                .post(&endpoint)
+                .header("Accept", "application/json, text/event-stream")
+                .header("Mcp-Protocol-Version", "2025-06-18")
+                .json(&body);
+            if let Some(id) = session {
+                request = request.header("Mcp-Session-Id", id);
+            }
+            request.send()
+        };
+        let opened = post(
+            None,
+            serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18", "capabilities": {},
+                    "clientInfo": { "name": "chatgpt-like", "version": "1" }
+                }
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(opened.status(), 200);
+        let id = opened.headers()["mcp-session-id"]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        opened.text().await.unwrap();
+        let initialized = post(
+            Some(&id),
+            serde_json::json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(initialized.status(), 202);
+
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while !manager.sessions.read().await.is_empty() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the idle connection is cleaned up first");
+
+        let listed = post(
+            Some(&id),
+            serde_json::json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            listed.status(),
+            200,
+            "an idle connection must not answer 404"
+        );
+        let body = listed.text().await.unwrap();
+        assert!(body.contains("\"tools\""), "tools/list answered: {body}");
+    })
+    .await;
+    server.abort();
+    let _ = server.await;
+    result.unwrap();
+}

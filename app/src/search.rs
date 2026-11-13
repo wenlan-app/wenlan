@@ -7507,6 +7507,22 @@ pub async fn sync_registered_source(
     sync_registered_source_for_state(&state, &id).await
 }
 
+/// Paths in a source that Wenlan could not read, so the folder view says so
+/// instead of showing them as still being indexed. Only the paths go to the
+/// UI; the daemon's reason stays in the log.
+#[tauri::command]
+pub async fn list_unreadable_files(
+    state: tauri::State<'_, State>,
+    id: String,
+) -> Result<Vec<String>, String> {
+    let client = {
+        let s = state.read().await;
+        s.client.clone()
+    };
+    let files = client.list_unreadable_files(&id).await?;
+    Ok(files.into_iter().map(|file| file.path).collect())
+}
+
 /// The whole body of `sync_registered_source`, kept apart from the Tauri
 /// wrapper so a test drives the command path with a Directory source
 /// registered in local config. It must not branch on the local source type.

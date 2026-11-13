@@ -62570,8 +62570,67 @@ impl MemoryDB {
             mtime_ns,
             content_hash,
             "done",
+            None,
         )
         .await
+    }
+
+    /// Finish a document that can never be read (a scan with no text, a
+    /// corrupt file): it is done, with a receipt so the next sync skips it,
+    /// and `reason` is kept so the app can say the file could not be read
+    /// instead of showing it as still being indexed.
+    pub async fn complete_unreadable_document(
+        &self,
+        source_id: &str,
+        file_path: &str,
+        mtime_ns: i64,
+        content_hash: &str,
+        reason: &str,
+    ) -> Result<(), WenlanError> {
+        self.finish_document_enrichment_with_receipt(
+            source_id,
+            file_path,
+            mtime_ns,
+            content_hash,
+            "done",
+            Some(reason),
+        )
+        .await
+    }
+
+    /// A source's files that will never be read, with why: finished as
+    /// unreadable, or paused past the retry cap. Ordered by path.
+    pub async fn list_unreadable_documents_for_source(
+        &self,
+        source_id: &str,
+    ) -> Result<Vec<(String, String)>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT file_path, COALESCE(error_detail, '') FROM document_enrichment_queue
+                 WHERE source_id = ?1
+                   AND ((status = 'done' AND error_detail IS NOT NULL)
+                        OR (status = 'paused' AND attempt_count >= ?2))
+                 ORDER BY file_path",
+                libsql::params![source_id, Self::DOC_ENRICHMENT_MAX_ATTEMPTS],
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("list_unreadable_documents: {e}")))?;
+        let mut out = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("list_unreadable_documents row: {e}")))?
+        {
+            let path: String = row.get(0).map_err(|e| {
+                WenlanError::VectorDb(format!("list_unreadable_documents col: {e}"))
+            })?;
+            let detail: String = row.get(1).map_err(|e| {
+                WenlanError::VectorDb(format!("list_unreadable_documents col: {e}"))
+            })?;
+            out.push((path, detail));
+        }
+        Ok(out)
     }
 
     /// Publish the searchable sync receipt but keep model-derived enrichment
@@ -62589,6 +62648,7 @@ impl MemoryDB {
             mtime_ns,
             content_hash,
             "waiting_for_provider",
+            None,
         )
         .await
     }
@@ -62600,6 +62660,7 @@ impl MemoryDB {
         mtime_ns: i64,
         content_hash: &str,
         next_status: &str,
+        error_detail: Option<&str>,
     ) -> Result<(), WenlanError> {
         let conn = self.conn.lock().await;
         let now = chrono::Utc::now().timestamp();
@@ -62611,10 +62672,17 @@ impl MemoryDB {
                 .execute(
                     "UPDATE document_enrichment_queue
                      SET status = ?5, next_retry_at = NULL,
-                         error_detail = NULL, updated_at = ?3
+                         error_detail = ?6, updated_at = ?3
                      WHERE source_id = ?1 AND file_path = ?2
                        AND status = 'in_progress' AND content_hash IS ?4",
-                    libsql::params![source_id, file_path, now, content_hash, next_status],
+                    libsql::params![
+                        source_id,
+                        file_path,
+                        now,
+                        content_hash,
+                        next_status,
+                        error_detail
+                    ],
                 )
                 .await
                 .map_err(|e| WenlanError::VectorDb(format!("complete enrichment queue: {e}")))?;

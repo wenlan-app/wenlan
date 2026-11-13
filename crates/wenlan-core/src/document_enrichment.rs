@@ -257,7 +257,7 @@ async fn run_document_enrichment_with_request_budget(
                 // Still record sync_state so the next sync skips it instead of
                 // re-parsing it every tick.
                 log::warn!("[doc-enrich] {file_path}: not ingestable ({reason}); marking done");
-                if !complete_with_sync_receipt(db, entry, false).await {
+                if !complete_with_sync_receipt(db, entry, false, Some(&reason)).await {
                     return DocumentEnrichmentOutcome::paused_no_page(doc_source_id);
                 }
                 return DocumentEnrichmentOutcome::terminal_no_page(doc_source_id);
@@ -408,7 +408,7 @@ async fn run_document_enrichment_with_request_budget(
 
     if chunks.is_empty() {
         log::warn!("[doc-enrich] {file_path}: no chunks after upsert; marking done");
-        if !complete_with_sync_receipt(db, entry, false).await {
+        if !complete_with_sync_receipt(db, entry, false, None).await {
             return DocumentEnrichmentOutcome::paused_no_page(doc_source_id);
         }
         return DocumentEnrichmentOutcome::terminal_no_page(doc_source_id);
@@ -592,7 +592,7 @@ async fn run_document_enrichment_with_request_budget(
         }
         // The deterministic preparation is searchable, but model-derived
         // enrichment remains parked until the user authorizes a provider.
-        if !complete_with_sync_receipt(db, entry, true).await {
+        if !complete_with_sync_receipt(db, entry, true, None).await {
             return DocumentEnrichmentOutcome {
                 doc_source_id,
                 page_id,
@@ -677,7 +677,7 @@ async fn run_document_enrichment_with_request_budget(
         };
     }
 
-    if !complete_with_sync_receipt(db, entry, false).await {
+    if !complete_with_sync_receipt(db, entry, false, None).await {
         return DocumentEnrichmentOutcome {
             doc_source_id,
             page_id,
@@ -801,6 +801,7 @@ async fn complete_with_sync_receipt(
     db: &MemoryDB,
     entry: &DocEnrichmentQueueEntry,
     wait_for_provider: bool,
+    unreadable: Option<&str>,
 ) -> bool {
     let path = PathBuf::from(&entry.file_path);
     let stat = tokio::task::spawn_blocking(move || {
@@ -837,6 +838,9 @@ async fn complete_with_sync_receipt(
             &hash,
         )
         .await
+    } else if let Some(reason) = unreadable {
+        db.complete_unreadable_document(&entry.source_id, &entry.file_path, mtime_ns, &hash, reason)
+            .await
     } else {
         db.complete_document_enrichment(&entry.source_id, &entry.file_path, mtime_ns, &hash)
             .await
