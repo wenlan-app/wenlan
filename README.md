@@ -6,8 +6,9 @@
 </p>
 
 <p align="center">
-  <strong>Open-source Obsidian alternative that works with your existing vault.</strong><br>
-  Your AI tools keep it organized and up to date, with no API keys or plugins. For you and your team.
+  What you work out in AI chats gets lost, and notes need constant upkeep.<br>
+  <strong>Set up once. Your AI tools save what matters and keep your pages organized; you see every change and can undo it.</strong><br>
+  Open-source Obsidian alternative that works with your existing vault.
 </p>
 
 <p align="center">
@@ -44,11 +45,13 @@ I started Wenlan because my notes, documents, and AI chats were scattered, and k
 
 **Teams (in the next release):** a self-hosted Wenlan server everyone connects to, with view-only or edit access for each person.
 
-- **Keeps itself up to date.** Your AI tools save what you decide in chats as memories and fold them into pages. When a source changes, the pages that rely on it get updated.
-- **No plugins, no setup.** **Connect all** in Settings connects your AI tools in one click. No plugins to find or update, and no API keys.
+- **Keeps itself up to date.** Your AI tools save what you decide in chats and fold it into pages. When a source changes, the pages that rely on it get updated.
+- **Set up once, no plugins.** **Connect all** in Settings connects your AI tools in one click. No plugins to install or maintain.
+- **You decide what AI changes.** Every page cites its sources, and a citation opens the original. See every change, undo it, and choose which pages wait for your OK.
 - **Bring what you have.** Obsidian vaults, notes, documents, and AI chats. [Full list](#what-can-i-bring-in).
-- **You decide what AI changes.** See every change, undo it, and choose which pages wait for your OK.
-- **Pages cite their sources.** A citation opens the original; a page whose citations mostly don't match isn't saved.
+
+### Also
+
 - **A page can be text or HTML.** Ask your AI to make an HTML view of any page, or keep the HTML it made as an HTML page of its own. An HTML view shows the page's live text, so you never redo it.
 - **Share a Space.** With a colleague, or across your own computers, through a Google Drive or iCloud Drive folder.
 
@@ -59,7 +62,7 @@ I started Wenlan because my notes, documents, and AI chats were scattered, and k
 | | Obsidian + plugins | Notion | LLM wiki apps | Wenlan |
 |---|---|---|---|---|
 | Who organizes | You, with plugins | You, or Notion's agents | An AI you set up | Your AI tools; updates when a source changes |
-| Setup | Find and update plugins | Full AI on the Business plan | Model key or scheduled routine | One click, no API key |
+| Setup | Find and update plugins | Full AI on the Business plan | Model key or scheduled routine | Set up once; no plugins to install or maintain |
 | Checks the AI's work | Depends on the plugin | Cites sources; no match check | Links to sources | Refuses pages whose citations don't match |
 | What AI may change | Depends on the plugin | Pages you give an agent | Its wiki folder | You choose per page; restore anytime |
 | Where notes live | Your computer | Notion's cloud | Your computer | Your computer; works with your vault |
@@ -78,11 +81,11 @@ I started Wenlan because my notes, documents, and AI chats were scattered, and k
 
 ## Get started
 
-### 1. Download and open Wenlan
+### 1. Start from your AI tool or the app
 
-[Download the desktop app](https://github.com/wenlan-app/wenlan/releases/latest) for macOS 11 or later on Apple Silicon, Windows x64, or Linux x64 (AppImage or .deb, from v0.22). The app is in English, 简体中文, and 繁體中文.
-
-Prefer the terminal? On a Mac, run `npx -y wenlan setup`, or `brew install 7xuanlu/tap/wenlan` and then `wenlan setup`. Linux and Windows: [CLI install guide](docs/setup-and-data.md#installation).
+| **Connect from your AI tool** | **Download the desktop app** |
+|---|---|
+| On a Mac, run `npx -y wenlan setup` (needs Node.js), or `brew install 7xuanlu/tap/wenlan` and then `wenlan setup`. In Claude Code, add the [plugin](docs/setup-with-ai.md). Linux and Windows: [CLI install guide](docs/setup-and-data.md#installation). | [The full experience](https://github.com/wenlan-app/wenlan/releases/latest): pages, imports, and one-click connections. macOS 11 or later on Apple Silicon, Windows x64, or Linux x64 (AppImage or .deb, from v0.22). In English, 简体中文, and 繁體中文. |
 
 ### 2. Bring in your material
 

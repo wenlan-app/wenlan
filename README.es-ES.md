@@ -8,8 +8,9 @@
 </p>
 
 <p align="center">
-  <strong>Alternativa de código abierto a Obsidian que funciona con tu bóveda actual.</strong><br>
-  Tus herramientas de IA la mantienen organizada y al día, sin claves de API ni plugins. Para ti y tu equipo.
+  Lo que resuelves en los chats de IA se pierde, y las notas exigen mantenimiento constante.<br>
+  <strong>Configúralo una vez. Tus herramientas de IA guardan lo importante y mantienen tus páginas organizadas; ves cada cambio y puedes deshacerlo.</strong><br>
+  Alternativa de código abierto a Obsidian que funciona con tu bóveda actual.
 </p>
 
 <p align="center">
@@ -46,11 +47,13 @@ Empecé Wenlan porque mis notas, documentos y chats de IA estaban dispersos, y e
 
 **Equipos (en la próxima versión):** un servidor de Wenlan autoalojado al que todos se conectan, con acceso de solo lectura o de edición para cada persona.
 
-- **Se mantiene al día sola.** Tus herramientas de IA guardan lo que decides en los chats como memorias y lo integran en páginas. Cuando cambia una fuente, las páginas que dependen de ella se actualizan.
-- **Sin plugins ni configuración.** **Connect all** en los ajustes conecta tus herramientas de IA con un clic. Sin plugins que buscar o actualizar, y sin claves de API.
+- **Se mantiene al día sola.** Tus herramientas de IA guardan lo que decides en los chats y lo integran en páginas. Cuando cambia una fuente, las páginas que dependen de ella se actualizan.
+- **Configúralo una vez, sin plugins.** **Connect all** en los ajustes conecta tus herramientas de IA con un clic. Sin plugins que instalar ni mantener.
+- **Tú decides qué cambia la IA.** Cada página cita sus fuentes, y una cita abre el original. Ves cada cambio, lo deshaces y eliges qué páginas esperan tu visto bueno.
 - **Trae lo que ya tienes.** Bóvedas de Obsidian, notas, documentos y chats de IA. [Lista completa](#what-can-i-bring-in).
-- **Tú decides qué cambia la IA.** Ves cada cambio, lo deshaces y eliges qué páginas esperan tu visto bueno.
-- **Las páginas citan sus fuentes.** Una cita abre el original; una página cuyas citas casi no coinciden no se guarda.
+
+### Además
+
 - **Una página puede ser texto o HTML.** Pide a tu IA una vista HTML de cualquier página, o guarda el HTML que hizo como una página HTML propia. La vista HTML muestra el texto actual de la página, así que nunca la rehaces.
 - **Comparte un Space.** Con un compañero, o entre tus propios ordenadores, a través de una carpeta de Google Drive o iCloud Drive.
 
@@ -61,7 +64,7 @@ Empecé Wenlan porque mis notas, documentos y chats de IA estaban dispersos, y e
 | | Obsidian + plugins | Notion | Apps de LLM wiki | Wenlan |
 |---|---|---|---|---|
 | Quién organiza | Tú, con plugins | Tú, o los agentes de Notion | Una IA que configuras | Tus herramientas de IA; actualiza cuando cambia una fuente |
-| Configuración | Buscar y actualizar plugins | IA completa en el plan Business | Clave de modelo o rutina programada | Un clic, sin clave de API |
+| Configuración | Buscar y actualizar plugins | IA completa en el plan Business | Clave de modelo o rutina programada | Una vez; sin plugins que instalar ni mantener |
 | Revisa a la IA | Depende del plugin | Cita fuentes; no comprueba | Enlaza a fuentes | Rechaza páginas cuyas citas no coinciden |
 | Qué puede cambiar la IA | Depende del plugin | Páginas que das a un agente | Su carpeta de wiki | Tú eliges por página; restaura cuando quieras |
 | Dónde viven tus notas | Tu ordenador | La nube de Notion | Tu ordenador | Tu ordenador; funciona con tu bóveda |
@@ -80,11 +83,11 @@ Empecé Wenlan porque mis notas, documentos y chats de IA estaban dispersos, y e
 
 ## Primeros pasos
 
-### 1. Descarga y abre Wenlan
+### 1. Empieza desde tu herramienta de IA o desde la app
 
-[Descarga la aplicación de escritorio](https://github.com/wenlan-app/wenlan/releases/latest) para macOS 11 o posterior en Apple Silicon, Windows x64 o Linux x64 (AppImage o .deb, desde v0.22). La app está en inglés, chino simplificado y chino tradicional.
-
-¿Prefieres el terminal? En un Mac, ejecuta `npx -y wenlan setup`, o `brew install 7xuanlu/tap/wenlan` y después `wenlan setup`. Linux y Windows: [guía de instalación de la CLI](docs/setup-and-data.es-ES.md#installation).
+| **Conecta desde tu herramienta de IA** | **Descarga la app de escritorio** |
+|---|---|
+| En un Mac, ejecuta `npx -y wenlan setup` (requiere Node.js), o `brew install 7xuanlu/tap/wenlan` y después `wenlan setup`. En Claude Code, añade el [plugin](docs/setup-with-ai.md). Linux y Windows: [guía de instalación de la CLI](docs/setup-and-data.es-ES.md#installation). | [La experiencia completa](https://github.com/wenlan-app/wenlan/releases/latest): páginas, importaciones y conexiones con un clic. macOS 11 o posterior en Apple Silicon, Windows x64 o Linux x64 (AppImage o .deb, desde v0.22). En inglés, chino simplificado y chino tradicional. |
 
 ### 2. Trae tu material
 

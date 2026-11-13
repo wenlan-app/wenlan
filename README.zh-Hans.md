@@ -8,8 +8,9 @@
 </p>
 
 <p align="center">
-  <strong>开源的 Obsidian 替代品，也能直接接上你现有的仓库。</strong><br>
-  你的 AI 工具帮你整理、更新，不用 API key、不用插件。个人和团队都能用。
+  在 AI 对话里想通的事会丢掉，笔记又得一直维护。<br>
+  <strong>设置一次就好。你的 AI 工具会存下重要的内容、把笔记整理好；改了什么都看得到，也能还原。</strong><br>
+  开源的 Obsidian 替代品，也能直接接上你现有的仓库。
 </p>
 
 <p align="center">
@@ -46,11 +47,13 @@
 
 **团队版（下一版推出）**：团队自己架一台文澜服务器，大家都连上去，每个人可以设成只能看或可以改。
 
-- **自己保持最新。** AI 工具会把你在对话里的决定存成记忆，再整理进笔记；来源变了，用到它的笔记也会跟着更新。
-- **不用插件，不用设置。** 在设置里点“全部连接”，一键连好你的 AI 工具。不用找插件、更新插件，也不用 API key。
+- **自己保持最新。** AI 工具会把你在对话里的决定存下来，再整理进笔记；来源变了，用到它的笔记也会跟着更新。
+- **设置一次，不用插件。** 在设置里点“全部连接”，一键连好你的 AI 工具。不用安装或维护插件。
+- **AI 能改什么由你决定。** 每篇笔记都附出处，点引用就回到原文。改了什么都看得到、能还原，也能指定哪些笔记要先问你。
 - **带进现有资料。** Obsidian 仓库、笔记、文档和 AI 对话都能带进来。[完整清单](#what-can-i-bring-in)。
-- **AI 能改什么由你决定。** 改了什么都看得到、能还原，也能指定哪些笔记要先问你。
-- **笔记都附出处。** 点引用就回到原文；引用大多对不上的笔记不会保存。
+
+### 还有
+
 - **页面可以是文字，也可以是 HTML。** 请 AI 帮任何一页做 HTML 视图，或把它做好的 HTML 直接存成一个 HTML 页面。HTML 视图显示的是这页当下的文字，改字不用重做。
 - **共用一个 Space。** 通过 Google Drive 或 iCloud 云盘的文件夹，跟同事共用，或在自己的几台电脑间同步。
 
@@ -61,7 +64,7 @@
 | | Obsidian 加插件 | Notion | LLM wiki 应用 | 文澜 |
 |---|---|---|---|---|
 | 谁来整理 | 你自己加插件 | 你自己，或 Notion 的 Agent | 你另外设置的 AI | 你的 AI 工具；来源变了会更新 |
-| 设置 | 找插件、更新插件 | 完整 AI 要 Business 方案 | 填模型 key 或排程 | 一键连接，不用 API key |
+| 设置 | 找插件、更新插件 | 完整 AI 要 Business 方案 | 填模型 key 或排程 | 设置一次，不用装或维护插件 |
 | 检查 AI 写的东西 | 看插件 | 附出处，不检查合不合 | 链接到来源 | 引用对不上的笔记不会保存 |
 | AI 能改什么 | 看插件 | 你开放给 Agent 的页面 | 它的 wiki 文件夹 | 每篇由你决定，随时可还原 |
 | 笔记存在哪 | 你的电脑 | Notion 云端 | 你的电脑 | 你的电脑；能接现有仓库 |
@@ -80,11 +83,11 @@
 
 ## 开始使用
 
-### 1. 下载并打开 Wenlan
+### 1. 从 AI 工具开始，或下载 App
 
-[下载桌面版](https://github.com/wenlan-app/wenlan/releases/latest)，支持 macOS 11 以上的 Apple Silicon、Windows x64 和 Linux x64（AppImage 或 .deb，v0.22 起）。App 界面有英文、简体中文和繁體中文。
-
-更喜欢终端？在 Mac 上运行 `npx -y wenlan setup`，或运行 `brew install 7xuanlu/tap/wenlan` 再运行 `wenlan setup`。Linux 和 Windows 请看 [CLI 安装说明](docs/setup-and-data.zh-Hans.md#installation)。
+| **从你的 AI 工具连接** | **下载桌面 App** |
+|---|---|
+| 在 Mac 上运行 `npx -y wenlan setup`（需要 Node.js），或运行 `brew install 7xuanlu/tap/wenlan` 再运行 `wenlan setup`。Claude Code 可以装[插件](docs/setup-with-ai.md)。Linux 和 Windows 请看 [CLI 安装说明](docs/setup-and-data.zh-Hans.md#installation)。 | [完整体验](https://github.com/wenlan-app/wenlan/releases/latest)：笔记、导入和一键连接。支持 macOS 11 以上的 Apple Silicon、Windows x64 和 Linux x64（AppImage 或 .deb，v0.22 起）。界面有英文、简体中文和繁體中文。 |
 
 ### 2. 带入你的资料
 
