@@ -38,6 +38,12 @@ const OUTSIDE_THE_REVIEW_SURFACE: readonly string[] = [
   // The fixture answers the Space-folders question as already answered no,
   // so the prompt that sets it never shows.
   "set_space_folders",
+  // No fixture page has a look, so nothing reads its data, takes it off, puts
+  // it back or reports an error from it; only the quiet `get_page_look` is answered.
+  "get_page_look_data",
+  "remove_page_look",
+  "restore_page_look",
+  "report_page_look_error",
   // The fixture sets nothing aside, so home never offers "Try again".
   "release_set_aside_material",
   // Sharing needs a real cloud folder and a second Wenlan; the fixture lists

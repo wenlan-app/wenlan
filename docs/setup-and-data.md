@@ -17,7 +17,7 @@ Contents: [Installation](#installation) · [Models and privacy](#models) · [Bac
 
 - **macOS (Apple Silicon):** open the `.dmg` and drag Wenlan to Applications. The app is signed and notarized.
 - **Windows x64:** run the `-setup.exe`. It is not signed yet. If SmartScreen warns you, confirm you downloaded it from the official Releases page before choosing "More info" → "Run anyway".
-- **Linux:** no desktop build yet; follow the [setup guide](setup-with-ai.md#install-the-runtime) to use Wenlan with your AI tools without the app.
+- **Linux x64 (from v0.22):** download the `.AppImage`, make it executable (`chmod +x Wenlan_*.AppImage`) and open it, or install the `.deb` on Debian and Ubuntu (`sudo apt install ./Wenlan_*_amd64.deb`). Needs Ubuntu 24.04, Debian 13, Fedora 40 or another distribution with glibc 2.39 or newer and WebKitGTK 4.1. The app is not signed by an OS vendor; it updates itself like the other platforms. ARM64 Linux has no desktop build yet; follow the [setup guide](setup-with-ai.md#install-the-runtime) to use Wenlan with your AI tools without the app.
 
 First launch downloads a model for local search, so keep an internet connection until setup finishes. [Download and privacy details](PRIVACY.md#when-wenlan-reaches-the-network).
 

@@ -38,6 +38,8 @@ import {
   recordPageEditorDiagnostic,
   deletePage,
   clipboardWrite,
+  removePageLook,
+  restorePageLook,
   getPageSources,
   reviewPage,
   pageReviewSupported,
@@ -77,6 +79,11 @@ import RelatedPages from "./page/RelatedPages";
 import PageInfo from "./page/PageInfo";
 import { PageSessionSources } from "./sessions/SessionSourceSection";
 import { OriginalPageView } from "./page/original/OriginalPageView";
+import { LookView } from "./page/look/LookView";
+import { LookPencil } from "./page/look/LookPencil";
+import { usePageLook } from "./page/look/usePageLook";
+import { setTaskDone } from "./page/look/lookCheck";
+import { pageLooksEnabled } from "./page/look/lookFeature";
 import PageInfoDrawer from "./page/PageInfoDrawer";
 import { DetailInfoContent, DetailReadingFrame } from "./DetailLayout";
 import { InfoAction } from "./page/InfoAction";
@@ -570,6 +577,87 @@ export default function PageDetail({
     editing && editorPageRef.current?.id === pageId ? editorPageRef.current : null
   );
   const { cutoverLive } = useTruthStatus();
+  // A page's look (UX-LOOK): the switch appears only when it has one. A kept
+  // original, an archived page, a topic and the example wiki take none.
+  const lookSupported = !!page && page.status === "active" && page.creation_kind !== "original"
+    && !exampleWiki && (page as { kind?: string }).kind !== "entity";
+  const pageLook = usePageLook({
+    pageId,
+    supported: lookSupported,
+    version: page ? `${page.version}:${page.last_modified}` : "",
+  });
+  const askAiToDesignPage = async () => {
+    if (!page) return;
+    try {
+      await clipboardWrite(t("pageLook.askAiPrompt", { title: page.title }));
+      toast.success(t("pageLook.copied"));
+    } catch {
+      toast.error(t("pageLook.copyFailed"));
+    }
+  };
+  // A look ticked a checklist item (UX-LOOK-7): the page's own text changes,
+  // saved as the person's edit, with Undo. Never over unsaved typing.
+  const checkFromLook = async (text: string, occurrence: number, done: boolean) => {
+    if (!page) return;
+    if (editDirtyRef.current) {
+      toast.error(t("pageLook.checkFailed"));
+      return;
+    }
+    const latest = queryClient.getQueryData<Page | null>(["page", page.id]) ?? page;
+    const content = setTaskDone(latest.content, text, occurrence, done);
+    if (content === null) {
+      // Already so is fine; an item the text no longer has is not.
+      if (setTaskDone(latest.content, text, occurrence, !done) === null) toast.error(t("pageLook.checkFailed"));
+      return;
+    }
+    const save = (next: string, expectedVersion: number) => updatePage({
+      id: latest.id, content: next, expectedVersion, callerId: "wenlan-app", operationId: createPageOperationId(),
+    });
+    const outcome = await save(content, latest.version).catch(() => null);
+    if (outcome?.outcome !== "saved") {
+      toast.error(t("pageLook.checkFailed"));
+      return;
+    }
+    const saved = await getPage(latest.id, "explicit").catch(() => null);
+    if (saved) queryClient.setQueryData(["page", saved.id], saved);
+    toast(t(done ? "pageLook.checked" : "pageLook.unchecked"), {
+      action: {
+        label: t("pageLook.undo"),
+        onClick: () => {
+          const current = queryClient.getQueryData<Page | null>(["page", latest.id]);
+          const back = current ? setTaskDone(current.content, text, occurrence, !done) : null;
+          if (!current || back === null) return;
+          void save(back, current.version)
+            .then((undone) => {
+              if (undone.outcome !== "saved") throw new Error("not saved");
+              return getPage(latest.id, "explicit");
+            })
+            .then((page_) => { if (page_) queryClient.setQueryData(["page", page_.id], page_); })
+            .catch(() => toast.error(t("pageLook.checkFailed")));
+        },
+      },
+    });
+  };
+  const removePageLookWithUndo = async () => {
+    if (!page) return;
+    const id = page.id;
+    try {
+      const removedId = await removePageLook(id);
+      await pageLook.refresh();
+      toast(t("pageLook.removed"), {
+        action: {
+          label: t("pageLook.undo"),
+          onClick: () => {
+            void restorePageLook(id, removedId)
+              .then(() => pageLook.refresh())
+              .catch(() => toast.error(t("pageLook.restoreFailed")));
+          },
+        },
+      });
+    } catch {
+      toast.error(t("pageLook.removeFailed"));
+    }
+  };
   // A heading clicked inside a linked page on the mind map: this page opens at it.
   const pageLoadedId = page?.id;
   useEffect(() => {
@@ -2720,6 +2808,12 @@ export default function PageDetail({
                   >
                     <button type="button" role="menuitem" disabled={storedActionPending || page.status !== "active" || !inventoryPageFilename(page) || editDirty || saveState.phase !== "idle" || editorStatus?.compositionActive} onClick={() => { closeActionMenu(); setMoveOpen(true); }}>{t("pages.folders.move")}</button>
                     <button type="button" role="menuitem" disabled={storedActionBlocked || editDirty || saveState.phase !== "idle"} onClick={() => { closeActionMenu(); setPageExportOpen(true); }}>{t("pageExport.menuAction")}</button>
+                    {pageLooksEnabled() && lookSupported ? (
+                      <button type="button" role="menuitem" disabled={storedActionBlocked} onClick={() => { closeActionMenu(); void askAiToDesignPage(); }}>{t("pageLook.askAi")}</button>
+                    ) : null}
+                    {pageLook.hasLook ? (
+                      <button type="button" role="menuitem" disabled={storedActionBlocked} onClick={() => { closeActionMenu(); void removePageLookWithUndo(); }}>{t("pageLook.remove")}</button>
+                    ) : null}
                     {/* A page of a shared Space is shared with it: the item opens
                         that Space's members rather than sharing the page alone. */}
                     {page.status === "active" && !exampleWiki ? (
@@ -2766,6 +2860,18 @@ export default function PageDetail({
     if (globalThis.getSelection?.()?.toString()) return;
     void beginEditing();
   };
+  // The pencil sits beside the page's actions only on a page with a design
+  // (UX-LOOK-2), so the design starts where the text's title does.
+  const lookPencil = pageLook.hasLook
+    ? <LookPencil
+        editing={!pageLook.shown}
+        onChange={(next) => {
+          // Back to the design: save what was just typed so the design shows it.
+          if (next === "look") void flushEditor();
+          pageLook.choose(next);
+        }}
+      />
+    : null;
   const documentTools = (
     <div className="page-document-tools">
       {!documentToolsHost && inspectorToggle}
@@ -2777,6 +2883,7 @@ export default function PageDetail({
         >
           <ArrowLeft aria-hidden="true" size={16} />
         </WorkspaceBackButton>
+      {!documentToolsHost && lookPencil}
       {!documentToolsHost && actionsMenu}
     </div>
   );
@@ -2784,14 +2891,18 @@ export default function PageDetail({
 
   return (
     <div className={`page-detail document-context-host${inspectorOpen ? " document-context-open" : ""}${showCanvas ? " page-document-map-open" : ""}${canvasWorkspaceExpanded && inspectorOpen ? " page-detail--workspace-expanded" : ""}`} onKeyDown={handlePageDetailKeyDown} ref={setPageDetailRootRef}>
-      {documentToolsHost && createPortal(<>{actionsMenu}{inspectorToggle}</>, documentToolsHost)}
+      {documentToolsHost && createPortal(<>{lookPencil}{actionsMenu}{inspectorToggle}</>, documentToolsHost)}
       {restoreOpen && <RestorePageDialog page={page} onClose={() => setRestoreOpen(false)} onRestored={onRestored} />}
       <DetailReadingFrame className="page-detail-document">
         {page.status === "archived" && <div className="wiki-archive-notice" role="status">
           <p>{t("pages.archive.readOnly")}</p>
           {!exampleWiki && <button type="button" onClick={() => setRestoreOpen(true)}>{t("pages.archive.restore")}</button>}
         </div>}
-        {!hideOuterTitleWhileEditing && (
+        {/* A design draws the page's title itself (UX-LOOK-1); the app's own
+            title stays for screen readers, so the design starts where it would. */}
+        {pageLook.shown && <h1 className="sr-only">{page.title}</h1>}
+        {pageLook.shown && !documentToolsHost && <div className="page-document-title-row">{documentTools}</div>}
+        {!pageLook.shown && !hideOuterTitleWhileEditing && (
           <div className="page-document-title-row">
             {renaming ? (
               <form
@@ -2864,6 +2975,21 @@ export default function PageDetail({
             )}
             {documentTools}
           </div>
+        )}
+
+        {pageLook.failed && !pageLook.shown && pageLook.mode === "look" && (
+          <p className="page-look-failed" role="status">{t("pageLook.failed")}</p>
+        )}
+        {pageLook.shown && pageLook.look && (
+          <LookView
+            pageId={page.id}
+            title={page.title}
+            look={pageLook.look}
+            version={`${page.version}:${page.last_modified}`}
+            onFailed={pageLook.markFailed}
+            onOpenPage={onPageClick}
+            onCheck={(text, occurrence, done) => { void checkFromLook(text, occurrence, done); }}
+          />
         )}
 
 
@@ -3023,6 +3149,8 @@ export default function PageDetail({
           </div>
         )}
 
+        {/* The text stays mounted behind a look, so an edit in progress is kept. */}
+        <div className="page-look-text" hidden={pageLook.shown}>
         {editing ? (
           editGate.kind === "checking" ? (
             <div role="status" className="page-editor-notice">
@@ -3376,6 +3504,7 @@ export default function PageDetail({
             </ReferenceNavigationProvider>
           </div>
         )}
+        </div>
       </DetailReadingFrame>
 
       <div aria-hidden={!canvasWorkspaceExpanded} className="page-detail-canvas-workspace-host" ref={setCanvasWorkspaceHost} />

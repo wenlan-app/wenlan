@@ -131,6 +131,7 @@ describe("component color literal guard", () => {
     "src/components/memory/MermaidDiagram.tsx", // fallbacks for unset tokens
     "src/lib/graph/cartography.ts", // builds rgba() from token channels
     "src/lib/graph/atlas.ts", // canvas default when sigma passes no color
+    "src/components/memory/page/look/lookDocument.ts", // fallbacks for unset tokens in a look frame, which cannot read the app's CSS
   ]);
 
   it("components take colors from index.css tokens", () => {

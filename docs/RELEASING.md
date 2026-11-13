@@ -1,6 +1,6 @@
 # Releasing Wenlan (daemon side)
 
-This document covers releases of the local runtime: `wenlan` CLI, `wenlan-server` daemon, `wenlan-mcp` connector, and shared crates (`wenlan-types`, `wenlan-core`). The desktop app (`app/` crate, AGPL-3.0-only) was folded into this monorepo on 2026-07-20; its bundle build is the `app-bundle` job in `.github/workflows/release.yml`, alongside the daemon release. Developer ID signing and notarization are configured separately from the Tauri updater signature; see [code signing](code-signing.md). A local ad-hoc candidate is not evidence of the published bundle's signing status.
+This document covers releases of the local runtime: `wenlan` CLI, `wenlan-server` daemon, `wenlan-mcp` connector, and shared crates (`wenlan-types`, `wenlan-core`). The desktop app (`app/` crate, AGPL-3.0-only) was folded into this monorepo on 2026-07-20; its bundle builds are the `app-bundle` (macOS), `app-bundle-windows` and `app-bundle-linux` jobs in `.github/workflows/release.yml`, alongside the daemon release. Developer ID signing and notarization are configured separately from the Tauri updater signature; see [code signing](code-signing.md). A local ad-hoc candidate is not evidence of the published bundle's signing status.
 
 ## How release-please works
 

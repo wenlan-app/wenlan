@@ -917,6 +917,7 @@ impl WenlanClient {
         let body = serde_json::to_value(&wenlan_types::team::TeamHostSpaceRequest {
             space: space.to_string(),
             everyone: None,
+            rename_to: None,
         })?;
         self.team_call(reqwest::Method::POST, url, Some(body)).await
     }

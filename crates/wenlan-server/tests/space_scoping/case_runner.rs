@@ -415,8 +415,9 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
     // into a Space adds one PageWorkspace-scoped single-id route.
     // Restoring an earlier page version adds one PageWorkspace-scoped
     // single-id route. The list of note groups Automatic set aside adds one
-    // more scoped reader. A Space's plain Brief lines add one more.
-    assert_eq!(rows.len(), 137);
+    // more scoped reader. A Space's plain Brief lines add one more. A page's
+    // look and the data it is drawn from add two more scoped readers.
+    assert_eq!(rows.len(), 139);
     assert_eq!(
         rows.iter()
             .filter(|row| row.scope_binding == ScopeBinding::Global)
@@ -427,7 +428,7 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
         rows.iter()
             .filter(|row| row.scope_binding != ScopeBinding::Global)
             .count(),
-        110
+        112
     );
     assert_eq!(
         rows.iter()

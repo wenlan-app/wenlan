@@ -4,8 +4,40 @@
 
 use wenlan_core::home_bin::{
     backup_stamp_now, link_mode_for, may_rewrite_user_home_bin, read_binary_version, sync_home_bin,
-    DesktopHost, EntryAction, SyncRequest, Version,
+    DesktopHost, EntryAction, LinkMode, SyncRequest, Version,
 };
+
+/// Whether this process runs from a mounted AppImage. The mount
+/// (`/tmp/.mount_*`, or a `/tmp/appimage_extracted_*` copy without FUSE) is
+/// made fresh on every launch and goes away when the app quits, so nothing
+/// that must outlive the app (the `~/.wenlan/bin` entries, the path the AI
+/// tool plugins read, an AI tool's MCP config) may point into it.
+pub(crate) fn running_from_appimage() -> bool {
+    if !cfg!(target_os = "linux") || std::env::var_os("APPIMAGE").is_none() {
+        return false;
+    }
+    match (std::env::var_os("APPDIR"), std::env::current_exe()) {
+        (Some(appdir), Ok(exe)) => exe_inside_appdir(&exe, std::path::Path::new(&appdir)),
+        _ => false,
+    }
+}
+
+fn exe_inside_appdir(exe: &std::path::Path, appdir: &std::path::Path) -> bool {
+    !appdir.as_os_str().is_empty() && exe.starts_with(appdir)
+}
+
+/// The directory whose binaries outlive this launch: the app's own directory,
+/// or `~/.wenlan/bin` when the app runs from an AppImage mount.
+pub(crate) fn lasting_bin_dir(
+    exe_dir: &std::path::Path,
+    home: &std::path::Path,
+) -> std::path::PathBuf {
+    if running_from_appimage() {
+        wenlan_core::home_bin::home_bin_dir(home)
+    } else {
+        exe_dir.to_path_buf()
+    }
+}
 
 pub fn sync_bundled_home_bin() {
     if !may_rewrite_user_home_bin(
@@ -36,7 +68,13 @@ pub fn sync_bundled_home_bin() {
             bundle_dir: &exe_dir,
             bundle_version: &version,
             host,
-            mode: link_mode_for(host),
+            // A link into an AppImage mount dangles once the app quits, so
+            // an AppImage copies the binaries out instead.
+            mode: if running_from_appimage() {
+                LinkMode::CopyAll
+            } else {
+                link_mode_for(host)
+            },
             stamp: &backup_stamp_now(),
         },
         &mut read_binary_version,
@@ -48,5 +86,29 @@ pub fn sync_bundled_home_bin() {
                 _ => log::info!("[home-bin] {}", action.summary()),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::exe_inside_appdir;
+    use std::path::Path;
+
+    #[test]
+    fn an_exe_counts_as_inside_the_appimage_only_under_its_appdir() {
+        let appdir = Path::new("/tmp/.mount_WenlanAbc");
+        assert!(exe_inside_appdir(
+            Path::new("/tmp/.mount_WenlanAbc/usr/bin/wenlan-app"),
+            appdir
+        ));
+        assert!(!exe_inside_appdir(Path::new("/usr/bin/wenlan-app"), appdir));
+        assert!(!exe_inside_appdir(
+            Path::new("/tmp/.mount_WenlanAbcd/usr/bin/wenlan-app"),
+            appdir
+        ));
+        assert!(!exe_inside_appdir(
+            Path::new("/usr/bin/wenlan-app"),
+            Path::new("")
+        ));
     }
 }

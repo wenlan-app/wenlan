@@ -234,6 +234,11 @@ pub struct HostLink {
     pub key: String,
     /// The Space's name on the server.
     pub space: String,
+    /// The Space's id on the server, which a rename there keeps: the Space
+    /// is followed by it when its name changes. Unknown until the server
+    /// first sends it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub space_id: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -355,6 +360,19 @@ pub fn owned_team(path: &Path) -> Result<Option<(String, String)>, WenlanError> 
 /// One team Space on one server, as [`SettingsStore::left`] names it.
 fn left_key(url: &str, space: &str) -> String {
     format!("{url}\n{space}")
+}
+
+/// The same Space by its id on the server, which a rename there keeps.
+fn left_id_key(url: &str, id: &str) -> String {
+    format!("{url}\n\n{id}")
+}
+
+/// Whether this person stopped syncing the team Space `space` (with the
+/// server's `id` for it, when known) here: by its name, or by its id under
+/// any name it had.
+fn was_left(left: &BTreeSet<String>, url: &str, space: &str, id: Option<&str>) -> bool {
+    left.contains(&left_key(url, space))
+        || id.is_some_and(|id| left.contains(&left_id_key(url, id)))
 }
 
 impl SettingsStore {
@@ -500,15 +518,51 @@ pub fn leave_at(path: &Path, scope: &Scope) -> Result<bool, WenlanError> {
         let removed = store.remove(scope);
         if let Some(host) = removed.as_ref().and_then(|settings| settings.host.as_ref()) {
             store.left.insert(left_key(&host.url, &host.space));
+            if let Some(id) = &host.space_id {
+                store.left.insert(left_id_key(&host.url, id));
+            }
         }
         (removed.is_some(), removed.is_some())
     })
 }
 
+/// Moves what this Wenlan remembers of the Space `from` to `to`: the Space
+/// was renamed here, and it keeps its folder, member and team server.
+/// Returns whether it was shared. Refused when `to` is shared already.
+pub fn rename_share(path: &Path, from: &str, to: &str) -> Result<bool, WenlanError> {
+    if from == to {
+        return Ok(false);
+    }
+    change_settings(path, |store| {
+        if store.spaces.contains_key(to) {
+            return (
+                false,
+                Err(WenlanError::Validation(format!(
+                    "{to} is shared from here already"
+                ))),
+            );
+        }
+        match store.spaces.remove(from) {
+            Some(settings) => {
+                store.spaces.insert(to.to_string(), settings);
+                (true, Ok(true))
+            }
+            None => (false, Ok(false)),
+        }
+    })?
+}
+
 /// Forgets that this person left `space` on the server at `url`: they
 /// joined it again.
-fn rejoined(path: &Path, url: &str, space: &str) -> Result<(), WenlanError> {
-    change_settings(path, |store| (store.left.remove(&left_key(url, space)), ()))
+fn rejoined(path: &Path, host: &HostLink) -> Result<(), WenlanError> {
+    change_settings(path, |store| {
+        let by_name = store.left.remove(&left_key(&host.url, &host.space));
+        let by_id = host
+            .space_id
+            .as_deref()
+            .is_some_and(|id| store.left.remove(&left_id_key(&host.url, id)));
+        (by_name || by_id, ())
+    })
 }
 
 /// Records that this Wenlan shares `scope` through `folder` as
@@ -1295,7 +1349,7 @@ pub async fn sync_space(
             target.member_id,
         )?;
         if let Some(host) = target.host.clone() {
-            rejoined(target.settings_path, &host.url, &host.space)?;
+            rejoined(target.settings_path, &host)?;
             settings = update_share(target.settings_path, &scope, |settings| {
                 settings.host = Some(host);
             })?

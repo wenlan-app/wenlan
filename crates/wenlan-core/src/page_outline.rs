@@ -186,7 +186,7 @@ pub fn page_outline(body: &str, title: &str) -> Vec<OutlineNode> {
     out
 }
 
-fn strip_frontmatter(body: &str) -> &str {
+pub(crate) fn strip_frontmatter(body: &str) -> &str {
     let Some(rest) = body
         .strip_prefix("---\n")
         .or_else(|| body.strip_prefix("---\r\n"))

@@ -43,6 +43,7 @@ pub mod outbox;
 pub mod outbox_routes;
 pub mod page_basis_routes;
 pub mod page_export_routes;
+pub mod page_look_routes;
 pub mod page_map_routes;
 pub mod page_routes;
 pub mod palace_routes;

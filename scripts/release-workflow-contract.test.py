@@ -484,6 +484,9 @@ def contract_violations(
         # replace/re-sign/stage/verify, and 20 of margin. Raise the action's
         # wait and this moves with it.
         "app-bundle-windows": 165,
+        # A cold compile of the app and its three sidecars, both packages and
+        # the launch smoke, with room for a slow runner; no human wait in it.
+        "app-bundle-linux": 90,
     }.items():
         if not re.search(
             rf"^    timeout-minutes: {timeout}\s*$",
@@ -499,6 +502,7 @@ def contract_violations(
         "prepare-release",
         "app-bundle",
         "app-bundle-windows",
+        "app-bundle-linux",
         "promote-assets",
         "promote-app-assets",
         "docker",
@@ -511,6 +515,8 @@ def contract_violations(
         violations.append("release preparation can start before receipt-derived tag binding")
     if "    needs: [resolve-promotion, bind-release-tag]" not in job_body(release, "app-bundle-windows"):
         violations.append("Windows app bundling can start before receipt-derived tag binding")
+    if "    needs: [resolve-promotion, bind-release-tag]" not in job_body(release, "app-bundle-linux"):
+        violations.append("Linux app bundling can start before receipt-derived tag binding")
     # The CLI wrappers and the desktop app are promoted by two jobs on
     # purpose. Only the app job waits on the desktop builds, so a failed
     # Windows bundle no longer skips Docker, npm, crates and Homebrew with it.
@@ -525,12 +531,12 @@ def contract_violations(
             "CLI asset publication waits on a desktop app build again; a failed "
             "Windows bundle would take the whole release down with it"
         )
-    if "    needs: [resolve-promotion, bind-release-tag, prepare-release, app-bundle, app-bundle-windows]" not in job_body(
+    if "    needs: [resolve-promotion, bind-release-tag, prepare-release, app-bundle, app-bundle-windows, app-bundle-linux]" not in job_body(
         release, "promote-app-assets"
     ):
         violations.append(
             "desktop app promotion bypasses receipt resolution, tag binding, "
-            "the prerelease gate, or one of the two app bundles"
+            "the prerelease gate, or one of the three app bundles"
         )
     resolve = job_body(release, "resolve-promotion")
     for marker in [
@@ -553,6 +559,7 @@ def contract_violations(
         "bind-release-tag",
         "app-bundle",
         "app-bundle-windows",
+        "app-bundle-linux",
         "promote-assets",
         "promote-app-assets",
         "docker",
@@ -618,11 +625,13 @@ def contract_violations(
 
     app_bundle = job_body(release, "app-bundle")
     app_bundle_windows = job_body(release, "app-bundle-windows")
+    app_bundle_linux = job_body(release, "app-bundle-linux")
     if "tauri-action" in release:
         violations.append("app bundling must build directly, never via tauri-action")
     for job_name, job in [
         ("app-bundle", app_bundle),
         ("app-bundle-windows", app_bundle_windows),
+        ("app-bundle-linux", app_bundle_linux),
     ]:
         if "contents: read" not in job:
             violations.append(
@@ -630,12 +639,14 @@ def contract_violations(
             )
         if "TAURI_SIGNING_PRIVATE_KEY" not in job:
             violations.append(f"{job_name} job omits the Tauri updater signing key")
-    # The signing key belongs to the two jobs that build a signed bundle and
+    # The signing key belongs to the three jobs that build a signed bundle and
     # nowhere else. Counting occurrences catches a leak into a job that has no
     # business holding it, which a containment check on one job would miss.
     if release.count("TAURI_SIGNING_PRIVATE_KEY") != app_bundle.count(
         "TAURI_SIGNING_PRIVATE_KEY"
-    ) + app_bundle_windows.count("TAURI_SIGNING_PRIVATE_KEY"):
+    ) + app_bundle_windows.count("TAURI_SIGNING_PRIVATE_KEY") + app_bundle_linux.count(
+        "TAURI_SIGNING_PRIVATE_KEY"
+    ):
         violations.append("Tauri signing key leaks outside the app bundling jobs")
     # An installer that omits what the daemon dynamically loads installs fine
     # and then fails on first use, so the release path proves the payload
@@ -649,14 +660,32 @@ def contract_violations(
             violations.append(
                 f"Windows app bundling does not prove its installer payload: {marker!r}"
             )
+    # Same for Linux: both packages must carry the sidecars and the AppImage
+    # must actually open and start its daemon before anything is staged.
+    verify_idx = app_bundle_linux.find("scripts/verify-linux-app-bundle.sh")
+    stage_idx = app_bundle_linux.find("Stage Linux app bundle assets and checksums")
+    if verify_idx == -1 or stage_idx == -1 or verify_idx > stage_idx:
+        violations.append(
+            "Linux app bundling does not prove its packages open and start the daemon before staging"
+        )
     promote_app = job_body(release, "promote-app-assets")
-    for marker in ["latest.json", "darwin-aarch64-app", "windows-x86_64"]:
+    for marker in [
+        "latest.json",
+        "darwin-aarch64-app",
+        "windows-x86_64",
+        "linux-x86_64-appimage",
+        "linux-x86_64-deb",
+    ]:
         if marker not in promote_app:
             violations.append(f"desktop app promotion omits updater manifest {marker!r}")
     for marker in [
         "needs.app-bundle.outputs.dmg_sha256",
         "needs.app-bundle-windows.outputs.setup_sha256",
         "needs.app-bundle-windows.outputs.sig_sha256",
+        "needs.app-bundle-linux.outputs.appimage_sha256",
+        "needs.app-bundle-linux.outputs.appimage_sig_sha256",
+        "needs.app-bundle-linux.outputs.deb_sha256",
+        "needs.app-bundle-linux.outputs.deb_sig_sha256",
     ]:
         if marker not in promote_app:
             violations.append(

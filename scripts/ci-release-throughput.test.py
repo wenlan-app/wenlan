@@ -37,6 +37,7 @@ class ReleaseThroughputTests(unittest.TestCase):
         for job_name, step_name, target in [
             ("app-bundle", "Build macOS desktop app bundle", "aarch64-apple-darwin"),
             ("app-bundle-windows", "Build Windows desktop app bundle", "x86_64-pc-windows-msvc"),
+            ("app-bundle-linux", "Build Linux desktop app bundle", "x86_64-unknown-linux-gnu"),
         ]:
             step = CONTRACT.named_step_body(CONTRACT.job_body(release, job_name), step_name)
             self.assertIn(f"TARGET_TRIPLE: {target}", step)

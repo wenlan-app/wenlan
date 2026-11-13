@@ -157,9 +157,9 @@ const WEB_WRITE_LIFTED_TOOL_NAMES: &[&str] = &["forget", "rename_page", "delete_
 /// then by the length of `check_reply`'s, then by the length of
 /// `thing_map`'s, then by the four folder and link tool descriptions, then by
 /// `list_entities` and `read_entity`, then the exact-source read description, then by `theme`'s,
-/// then by `keep_original`'s, then by `set_page_space`'s, then by `restore_page_version`'s (347).
+/// then by `keep_original`'s, then by `set_page_space`'s, then by `restore_page_version`'s (347), then by the two page-look tools.
 #[cfg(test)]
-const DESCRIPTION_BUDGET_CHARS: usize = 20_941;
+const DESCRIPTION_BUDGET_CHARS: usize = 21_262;
 const QUERY_ONLY_REFUSAL_MESSAGE: &str =
     "This tool is not available in the query-only profile. Allowed tools: brief, recall, get_page_sources.";
 const WEB_WRITE_REFUSAL_MESSAGE: &str =
@@ -6311,6 +6311,10 @@ pub use research_tools::{
 mod read_source_tool;
 pub use read_source_tool::{ReadSourceKind, ReadSourceParams};
 
+#[path = "page_look_tool.rs"]
+mod page_look_tool;
+pub use page_look_tool::{ReadPageLookParams, SetPageLookParams};
+
 #[path = "thing_map_tool.rs"]
 mod thing_map_tool;
 pub use thing_map_tool::{ThingMapAction, ThingMapOpParam, ThingMapParams, ThingMapStateParam};
@@ -6465,6 +6469,40 @@ impl WenlanMcpServer {
         Parameters(params): Parameters<KeepOriginalParams>,
     ) -> Result<CallToolResult, McpError> {
         self.keep_original_impl(params).await
+    }
+
+    #[tool(
+        description = "Read what you need to draw a look (an HTML layout the app shows for a page): its data, current look, last error, rules and an example. Local only.",
+        annotations(
+            title = "Read Page Look",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn read_page_look(
+        &self,
+        Parameters(params): Parameters<ReadPageLookParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.read_page_look_impl(params).await
+    }
+
+    #[tool(
+        description = "Save the look you drew for a page (html or path). The previous look is kept. Refused with the reason if it loads anything from the internet or copies the page's text. Local only.",
+        annotations(
+            title = "Set Page Look",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn set_page_look(
+        &self,
+        Parameters(params): Parameters<SetPageLookParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.set_page_look_impl(params).await
     }
 
     #[tool(
@@ -7377,6 +7415,8 @@ const LOCAL_ONLY_TOOL_NAMES: &[&str] = &[
     "read_source",
     "attach_file",
     "keep_original",
+    "read_page_look",
+    "set_page_look",
     "lint_repair_prepare",
     "lint_repair_apply",
     "lint_repair_verify",
@@ -15200,6 +15240,8 @@ mod tests {
             ("accept_revision", (false, true, false)),
             ("attach_file", (false, false, false)),
             ("keep_original", (false, false, false)),
+            ("read_page_look", (true, false, false)),
+            ("set_page_look", (false, false, false)),
             ("brief", (true, false, false)),
             ("capture", (false, true, false)),
             ("create_folder", (false, false, false)),
@@ -15618,6 +15660,8 @@ mod tests {
             "accept_revision",
             "attach_file",
             "keep_original",
+            "read_page_look",
+            "set_page_look",
             "capture",
             "check_reply",
             "confirm_memory",

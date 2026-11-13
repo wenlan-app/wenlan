@@ -9,6 +9,7 @@
     "dev": "vite",
     "dev:daemon": "node scripts/run-bash.mjs scripts/dev-runtime.sh start",
     "dev:all": "node scripts/run-bash.mjs scripts/dev-all.sh",
+    "dev:team": "node scripts/dev-team.mjs",
     "build": "tsc -b && vite build",
     "dev:review:web": "vite --mode review --config tooling/vite.review.config.ts",
     "dev:live:web": "vite --config tooling/vite.dev-live.config.ts",
@@ -40,6 +41,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:all": "pnpm test && cd app && cargo test",
+    "test:rust": "cargo test --workspace --exclude wenlan-app",
+    "check": "cargo fmt --check --all && cargo clippy --workspace --exclude wenlan-app --all-targets -- -D warnings && tsc -b",
     "test:coverage:all": "pnpm test:coverage && cd app && cargo llvm-cov --html"
   },
   "dependencies": {
@@ -59,6 +62,7 @@
     "@tauri-apps/plugin-notification": "^2.3.3",
     "@tauri-apps/plugin-shell": "^2.0.0",
     "@xyflow/react": "12.11.2",
+    "acorn": "8.17.0",
     "d3-force": "3.0.0",
     "d3-hierarchy": "3.1.2",
     "graphology": "0.26.0",

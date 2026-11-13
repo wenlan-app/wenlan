@@ -68,6 +68,7 @@ pub mod originals;
 mod page_basis;
 mod page_drafts;
 pub mod page_export;
+pub mod page_looks;
 pub mod page_map;
 pub mod page_map_independent;
 mod page_rename;
@@ -239,6 +240,8 @@ mod page_drafts_test;
 mod page_history_title_test;
 #[cfg(test)]
 mod page_link_rename_test;
+#[cfg(test)]
+mod page_looks_test;
 #[cfg(test)]
 mod page_rename_test;
 #[cfg(test)]
@@ -1625,7 +1628,7 @@ pub const EMBEDDING_DIM: usize = 768;
 /// `entities` table, skip every `version < N` branch, and quietly operate
 /// against a schema it cannot see. Refusing to open is recoverable; writing is
 /// not.
-pub const SCHEMA_VERSION: u32 = 163;
+pub const SCHEMA_VERSION: u32 = 164;
 
 /// The text a `source = 'memory'` row is embedded from: `[space] ` when the
 /// row has a space, its retrieval cue on its own line when it has one, then
@@ -10964,6 +10967,15 @@ impl MemoryDB {
             }
             if version < 163 {
                 self.migrate_163_kept_said(version).await?;
+            }
+
+            // Migration 164: the looks an AI tool drew for a page. See
+            // db/page_looks.rs.
+            if ceiling < 164 {
+                return Ok(());
+            }
+            if version < 164 {
+                self.migrate_164_page_looks(version).await?;
             }
         }
 
@@ -58117,6 +58129,13 @@ impl MemoryDB {
             .await
             .map_err(|e| WenlanError::VectorDb(format!("delete_page map: {e}")))?;
             page_export::purge_on(&conn, id).await?;
+            // The looks drawn for the page go with it.
+            conn.execute(
+                "DELETE FROM page_looks WHERE page_id = ?1",
+                libsql::params![id],
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("delete_page looks: {e}")))?;
             conn.execute("DELETE FROM pages WHERE id = ?1", libsql::params![id])
                 .await
                 .map_err(|e| WenlanError::VectorDb(format!("delete_page row: {e}")))?;

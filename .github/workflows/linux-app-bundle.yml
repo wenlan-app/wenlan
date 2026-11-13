@@ -1,0 +1,95 @@
+name: Linux app bundle
+
+# Proves the Linux desktop app still builds, packages and opens before a
+# release has to find out. Same recipe as release.yml's app-bundle-linux job,
+# but with a throwaway updater key, and nothing here publishes. Runs when the
+# desktop app, the crates it bundles, the updater or the packaging changes,
+# or by hand. Docs-only and website-only changes skip it.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/linux-app-bundle.yml'
+      - '.github/workflows/release.yml'
+      - 'app/**'
+      - '!app/eval/**'
+      - 'src/**'
+      - 'crates/**'
+      - 'vendor/**'
+      - 'index.html'
+      - 'vite.config.*'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'scripts/prepare-sidecars.sh'
+      - 'scripts/prepare-tauri-build-sidecars.sh'
+      - 'scripts/resolve-backend-dir.sh'
+      - 'scripts/setup-linux-app-deps.sh'
+      - 'scripts/verify-linux-app-bundle.sh'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  app-linux-bundle:
+    name: app-linux-bundle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      TARGET_TRIPLE: x86_64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Install Linux desktop build dependencies
+        run: bash scripts/setup-linux-app-deps.sh
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master 2026-05-13
+        with:
+          toolchain: 1.95.0
+          targets: x86_64-unknown-linux-gnu
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+      # tauri.conf.json carries an updater pubkey, so `tauri build` refuses to
+      # bundle without a private key. Nothing built here is published, so a
+      # per-run throwaway key stands in for the release secret.
+      - name: Mint a throwaway updater signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm exec tauri signer generate -w "$RUNNER_TEMP/ci-only.key" --password "" --ci
+          {
+            echo "TAURI_SIGNING_PRIVATE_KEY=$RUNNER_TEMP/ci-only.key"
+            echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD="
+            # The verify step checks the signatures against this run's key;
+            # the release checks them against the key in tauri.conf.json.
+            echo "WENLAN_UPDATER_PUBKEY=$(cat "$RUNNER_TEMP/ci-only.key.pub")"
+          } >> "$GITHUB_ENV"
+      - name: Build Linux desktop app bundle
+        run: pnpm tauri build --target x86_64-unknown-linux-gnu --bundles appimage,deb
+      - name: Verify the Linux packages open and start their daemon
+        run: bash scripts/verify-linux-app-bundle.sh target/x86_64-unknown-linux-gnu/release/bundle
+      - name: Upload the packages for a hand test
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: wenlan-linux-app-${{ github.run_id }}
+          path: |
+            target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage
+            target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error

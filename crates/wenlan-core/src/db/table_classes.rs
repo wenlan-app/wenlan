@@ -53,6 +53,9 @@ pub const TABLE_CLASSES: &[(&str, TableClass)] = {
         ("profiles", File),
         ("agent_connections", File),
         ("onboarding_milestones", File),
+        // A page's looks, every version (UX-LOOK-6): kept in
+        // `backstage/settings/looks.json`, never in the pages folder or a vault.
+        ("page_looks", File),
         ("app_metadata", File),
         ("entity_page_map", File),
         ("page_evidence", File),

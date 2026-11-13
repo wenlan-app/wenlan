@@ -29,6 +29,11 @@ pub enum TeamAccess {
 pub struct TeamSpaceAccess {
     pub space: String,
     pub access: TeamAccess,
+    /// The hosted Space's id on the server, the same after it is renamed:
+    /// members' computers follow a renamed Space by it. Absent for a Space
+    /// the server does not host and from servers before it was sent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
 }
 
 /// The team a server is for: one id that never changes, and the name its
@@ -190,6 +195,10 @@ pub struct TeamHostSpaceRequest {
     pub space: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub everyone: Option<TeamEveryone>,
+    /// Renames the hosted Space `space` to this, for the whole team: its
+    /// access and folder go with it, and members' copies follow.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rename_to: Option<String>,
 }
 
 /// `GET /team/v1/me`: who a key belongs to and what they can use.

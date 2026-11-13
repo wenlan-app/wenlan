@@ -1088,6 +1088,8 @@ export type TeamAccess = "write" | "read";
 export interface TeamSpaceAccess {
   space: string;
   access: TeamAccess;
+  /** A hosted Space's id on the server, kept when it is renamed; never shown. */
+  id?: string;
 }
 
 /** A person on the team server. `id` only tells people apart; never show it. */
@@ -3792,6 +3794,88 @@ export interface OriginalVersion {
 /** Null for a page that does not keep an original. */
 export async function getPageOriginal(pageId: string): Promise<PageOriginal | null> {
   return (await invoke<PageOriginal | null>("get_page_original", { pageId })) ?? null;
+}
+
+/** A page's look: an HTML layout an AI tool drew for it (UX-LOOK-1..6). */
+export interface PageLook {
+  id: number;
+  html: string;
+  api: number;
+  /** Unix seconds. */
+  kept_at: number;
+  session?: string;
+  /** The last error the app saw showing it, so the AI can fix it. */
+  last_error?: string;
+}
+
+export interface PageLookVersion {
+  id: number;
+  kept_at: number;
+  session?: string;
+  active: boolean;
+  bytes: number;
+}
+
+export interface PageLookResponse {
+  look: PageLook | null;
+  versions: PageLookVersion[];
+}
+
+/** `window.wenlan` for a look, without its two functions. */
+export interface LookData {
+  api: number;
+  page: {
+    id: string;
+    title: string;
+    space: string;
+    created: string;
+    modified: string;
+    text: string;
+    html: string;
+    sections: LookSection[];
+    links: { title: string; id: string | null }[];
+    /** Pictures in the pages folder; `url` is filled in by the app (UX-LOOK-8). */
+    images?: { src: string; alt: string; url?: string }[];
+  };
+  space: {
+    name: string;
+    pages: { id: string; title: string; created: string; modified: string; summary: string }[];
+    more: boolean;
+  };
+  theme: { mode: string };
+}
+
+export interface LookSection {
+  heading: string;
+  level: number;
+  text: string;
+  html: string;
+  items: { text: string; done: boolean | null }[];
+  tables: { columns: string[]; rows: string[][] }[];
+}
+
+export async function getPageLook(pageId: string): Promise<PageLookResponse> {
+  return (await invoke<PageLookResponse | null>("get_page_look", { pageId })) ?? { look: null, versions: [] };
+}
+
+export async function getPageLookData(pageId: string): Promise<LookData> {
+  return invoke("get_page_look_data", { pageId });
+}
+
+/** Takes the look off; every version stays. Resolves to the version that was active. */
+export async function removePageLook(pageId: string): Promise<number | null> {
+  const response = await invoke<{ removed_id?: number | null }>("remove_page_look", { pageId });
+  return response?.removed_id ?? null;
+}
+
+/** Puts a version back; without `version`, the newest one that is not active. */
+export async function restorePageLook(pageId: string, version?: number | null): Promise<void> {
+  await invoke("restore_page_look", { pageId, version: version ?? null });
+}
+
+/** Tells the AI-facing record what went wrong while showing the look. */
+export async function reportPageLookError(pageId: string, message: string): Promise<void> {
+  await invoke("report_page_look_error", { pageId, message });
 }
 
 export async function getPageSessions(pageId: string): Promise<PageSessionEntry[]> {

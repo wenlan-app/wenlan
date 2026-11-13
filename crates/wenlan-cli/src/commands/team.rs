@@ -97,6 +97,7 @@ fn parse_space_access(raw: &str) -> Result<TeamSpaceAccess, String> {
     Ok(TeamSpaceAccess {
         space: space.to_string(),
         access,
+        id: None,
     })
 }
 

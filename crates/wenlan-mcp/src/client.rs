@@ -601,6 +601,7 @@ fn parse_api_error_reason(bytes: &[u8]) -> Option<String> {
             | "page_space_not_movable"
             | "page_space_unknown"
             | "page_space_needs_global_scope"
+            | "look_refused"
     );
     if !safe {
         return None;
@@ -632,6 +633,7 @@ fn parse_api_error_reason(bytes: &[u8]) -> Option<String> {
         || code == "citations_unsupported"
         || code == "note_change_needs_proposal"
         || code == "doc_fix_refused"
+        || code == "look_refused"
     {
         if let Some((_, detail)) = reason.split_once(':') {
             let detail: String = detail
@@ -669,8 +671,8 @@ fn source_read_detail(detail: &str) -> Option<String> {
     Some(format!("positions={} target={target}", positions.join(",")))
 }
 
-/// Longest `code_basis_invalid`, steep or `citations_unsupported`
-/// explanation kept for the agent.
+/// Longest `code_basis_invalid`, steep, `citations_unsupported` or
+/// `look_refused` explanation kept for the agent.
 const DETAIL_MAX_CHARS: usize = 500;
 
 #[cfg(test)]

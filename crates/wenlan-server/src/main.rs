@@ -88,8 +88,9 @@ impl DaemonDataLock {
             .open(&lock_path)
             .map_err(|error| {
                 anyhow::anyhow!(
-                    "open Wenlan data-root lock {}: {error}",
-                    lock_path.display()
+                    "open Wenlan data-root lock {}: {error}{}",
+                    lock_path.display(),
+                    folder_permission_hint(&error, &lock_path)
                 )
             })?;
         fs2::FileExt::try_lock_exclusive(&file).map_err(|error| {
@@ -100,6 +101,26 @@ impl DaemonDataLock {
         })?;
         Ok(Self { _file: file })
     }
+}
+
+/// In a container, a data folder mounted from the host (as NAS setups do)
+/// often belongs to a user the image does not run as. Say how to fix it.
+fn folder_permission_hint(error: &std::io::Error, lock_path: &std::path::Path) -> String {
+    let in_container = std::path::Path::new("/.dockerenv").exists()
+        || std::path::Path::new("/run/.containerenv").exists();
+    if error.kind() != std::io::ErrorKind::PermissionDenied || !in_container {
+        return String::new();
+    }
+    let folder = lock_path
+        .parent()
+        .map(|parent| parent.display().to_string())
+        .unwrap_or_default();
+    format!(
+        ". This container cannot write {folder}, which is mounted from the host: \
+         give the host folder to the user the image runs as \
+         (`chown -R 65532:65532 <host folder>`), or start the container as the \
+         folder's owner (`--user <uid>:<gid>`, from `ls -n`; `user:` in compose)"
+    )
 }
 
 /// Resolve the bind address. Honors the `WENLAN_BIND_ADDR` env var when set
@@ -616,8 +637,54 @@ struct Cli {
     repair_manifest_digest: Option<String>,
 }
 
+/// The address `wenlan-server team <address>` was given, for invite links.
+/// An invite link (`…#wlt_…`) is refused: a key on a command line is seen by
+/// everyone on that machine, so the owner's goes in `--owner` as its SHA-256.
+fn team_address(given: Option<&str>) -> anyhow::Result<Option<String>> {
+    let Some(given) = given.map(str::trim).filter(|given| !given.is_empty()) else {
+        return Ok(None);
+    };
+    if let Some((address, _key)) = given.split_once('#') {
+        // Never echo what follows `#`: it may be a real key.
+        anyhow::bail!(
+            "give the server's address only ({}), not an invite link: a key on the command line is seen by everyone on this machine",
+            address.trim_end_matches('/')
+        );
+    }
+    Ok(Some(given.trim_end_matches('/').to_string()))
+}
+
+/// `--owner`: the SHA-256 of the owner's key, 64 lowercase hex digits.
+fn owner_sha256(given: Option<&str>) -> anyhow::Result<Option<String>> {
+    let Some(given) = given.map(str::trim).filter(|given| !given.is_empty()) else {
+        return Ok(None);
+    };
+    anyhow::ensure!(
+        wenlan_core::team::is_key_sha256(given),
+        "--owner takes the SHA-256 of the owner's key: 64 lowercase hex digits"
+    );
+    Ok(Some(given.to_string()))
+}
+
 #[derive(Subcommand)]
 enum Command {
+    /// Run as a team server on a machine nobody sits at (Docker, a small
+    /// cloud machine): the team listener on every network, and on first
+    /// start the owner's invite link in the output. Same as setting
+    /// `WENLAN_TEAM_ADDR` (and `WENLAN_TEAM_URL`).
+    Team {
+        /// The address people reach this server at, put in every invite
+        /// link: `https://wenlan.example.com`, or its Tailscale address.
+        url: Option<String>,
+        /// The SHA-256 of the owner's key, as Settings › Team › Run it on a
+        /// server puts it: that Wenlan keeps the key and joins by itself,
+        /// so no link is printed. Without it the first start prints one.
+        #[arg(long, value_name = "SHA256")]
+        owner: Option<String>,
+        /// Where the team listener listens.
+        #[arg(long, default_value = "0.0.0.0:7879")]
+        listen: std::net::SocketAddr,
+    },
     /// Internal maintenance: delete archived stale pages. Daemon must be stopped first.
     #[command(name = "backfill-stale-pages", hide = true)]
     BackfillStalePages {
@@ -1011,6 +1078,34 @@ async fn main() -> anyhow::Result<()> {
     if let Some(port) = cli.port {
         std::env::set_var("WENLAN_PORT", port.to_string());
     }
+    if let Some(Command::Team { url, owner, listen }) = &cli.command {
+        if std::env::var_os(wenlan_server::team_routes::TEAM_ADDR_ENV).is_none() {
+            std::env::set_var(
+                wenlan_server::team_routes::TEAM_ADDR_ENV,
+                listen.to_string(),
+            );
+        }
+        if let Some(url) = team_address(url.as_deref())? {
+            std::env::set_var(wenlan_server::team_routes::TEAM_URL_ENV, url);
+        }
+        if let Some(hash) = owner_sha256(owner.as_deref())? {
+            std::env::set_var(wenlan_server::team_routes::OWNER_SHA256_ENV, hash);
+        }
+    }
+    // The daemon's own API has no sign-in: on a team server, however it was
+    // started (`team`, or `WENLAN_TEAM_ADDR` alone), only this machine
+    // reaches it (the team listener does, at 127.0.0.1), never another
+    // container or the host's network, whatever the image says. (An explicit
+    // `--bind-addr` still wins.)
+    let team_server = std::env::var(wenlan_server::team_routes::TEAM_ADDR_ENV)
+        .is_ok_and(|addr| !addr.trim().is_empty());
+    if team_server && cli.bind_addr.is_none() {
+        let port = std::env::var("WENLAN_PORT")
+            .ok()
+            .and_then(|port| port.trim().parse::<u16>().ok())
+            .unwrap_or(7878);
+        std::env::set_var("WENLAN_BIND_ADDR", format!("127.0.0.1:{port}"));
+    }
 
     // Resolving the path is read-only. Before rotating tracing is available,
     // a bounded bootstrap file keeps launchd failures and panics observable;
@@ -1025,7 +1120,8 @@ async fn main() -> anyhow::Result<()> {
             cli.repair_manifest_digest.clone(),
         )?;
 
-        if cli.command.is_some() && startup_repair_claim.is_some() {
+        let daemon = matches!(cli.command, None | Some(Command::Team { .. }));
+        if !daemon && startup_repair_claim.is_some() {
             anyhow::bail!("startup repair claim is only valid when running the daemon");
         }
 
@@ -1051,7 +1147,7 @@ async fn main() -> anyhow::Result<()> {
                 refresh,
             }) => cmd_export::run(out, pages, refresh).await,
             Some(Command::RebuildCheck { export, work }) => cmd_export::check(export, work).await,
-            None => run_daemon(startup_repair_claim).await,
+            None | Some(Command::Team { .. }) => run_daemon(startup_repair_claim).await,
         }
     }
     .await;
