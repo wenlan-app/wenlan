@@ -2814,6 +2814,21 @@ impl WenlanClient {
         Ok(())
     }
 
+    /// Each Space's pages in a folder of its own: `None` = not asked yet.
+    pub async fn space_folders(&self) -> Result<Option<bool>, String> {
+        Ok(self.get_config().await?.space_folders)
+    }
+
+    pub async fn set_space_folders(&self, on: bool) -> Result<(), String> {
+        let mut req = empty_update();
+        req.space_folders = Some(on);
+        let updated = self.update_config(req).await?;
+        if updated.space_folders != Some(on) {
+            return Err("The daemon does not support Space folders yet".into());
+        }
+        Ok(())
+    }
+
     /// Tell the daemon the app's language; titles it writes about
     /// conversations follow it.
     pub async fn set_ui_language(&self, language: &str) -> Result<(), String> {
@@ -3041,6 +3056,7 @@ fn empty_update() -> wenlan_types::requests::UpdateConfigRequest {
         ui_language: None,
         page_map_auto_suggest: None,
         chat_check_enabled: None,
+        space_folders: None,
         only_if_unset: None,
         // Tri-state (Option<Option<_>>): outer None = omit from JSON =
         // preserve the stored key. Note sparse_update_config strips nulls,

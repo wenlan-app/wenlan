@@ -94,6 +94,61 @@ fn space_label(space: &str) -> String {
 }
 
 impl MemoryDB {
+    /// Every Space's name, with the Space names active pages carry that no
+    /// Space row has (older data), so their pages get a folder too.
+    pub async fn space_names(&self) -> Result<Vec<String>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT name FROM spaces
+                 UNION
+                 SELECT DISTINCT space FROM pages
+                 WHERE status='active' AND space IS NOT NULL AND space<>''
+                   AND space<>?1 AND space<>'uncategorized'",
+                libsql::params![super::UNFILED_SPACE_ID],
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("space names: {e}")))?;
+        let mut out = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("space names row: {e}")))?
+        {
+            out.push(
+                row.get::<String>(0)
+                    .map_err(|e| WenlanError::VectorDb(format!("space name: {e}")))?,
+            );
+        }
+        Ok(out)
+    }
+
+    /// Every active page's Space by page id (`None` for none), for keeping
+    /// each Space's pages in its folder (`space_folders`).
+    pub async fn active_page_spaces(
+        &self,
+    ) -> Result<std::collections::HashMap<String, Option<String>>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query("SELECT id, space FROM pages WHERE status='active'", ())
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("page spaces: {e}")))?;
+        let mut out = std::collections::HashMap::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("page spaces row: {e}")))?
+        {
+            let id: String = row
+                .get(0)
+                .map_err(|e| WenlanError::VectorDb(format!("page id: {e}")))?;
+            let space: Option<String> = row
+                .get(1)
+                .map_err(|e| WenlanError::VectorDb(format!("page space: {e}")))?;
+            out.insert(id, space.filter(|s| !s.is_empty()));
+        }
+        Ok(out)
+    }
     /// Move one active ordinary page (kind `concept` or `authored`) into the
     /// registered Space `target`, or into no Space when `target` is `None` or
     /// empty. Only an unlocked caller (`ReadScope::Global`) may move a page

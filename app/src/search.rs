@@ -265,6 +265,19 @@ pub async fn set_background_ai_enabled(
     client.set_background_ai_enabled(enabled).await
 }
 
+/// Each Space's pages in a folder of its own: `None` = not asked yet.
+#[tauri::command]
+pub async fn get_space_folders(state: tauri::State<'_, State>) -> Result<Option<bool>, String> {
+    let client = { state.read().await.client.clone() };
+    client.space_folders().await
+}
+
+#[tauri::command]
+pub async fn set_space_folders(state: tauri::State<'_, State>, on: bool) -> Result<(), String> {
+    let client = { state.read().await.client.clone() };
+    client.set_space_folders(on).await
+}
+
 /// The app's language, so what Wenlan writes about conversations follows it.
 #[tauri::command]
 pub async fn set_ui_language(

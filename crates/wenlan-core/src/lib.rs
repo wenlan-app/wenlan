@@ -101,6 +101,7 @@ pub mod sentences;
 pub mod shared_space;
 pub mod sources;
 pub mod space_context;
+pub mod space_folders;
 pub mod steep;
 pub mod steep_new;
 pub mod steep_organize;

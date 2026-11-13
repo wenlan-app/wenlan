@@ -8,6 +8,7 @@ import { ArchivedNotesPanel } from "./ArchivedNotesPanel";
 import { PageInventoryPanel } from "./PageInventoryPanel";
 import { WikiFolderCreationContext } from "./WikiFolderCreationContext";
 import type { WikiInventoryScope } from "./pageInventory";
+import { SpaceFoldersPrompt } from "./SpaceFoldersPrompt";
 
 /** The id of the one directory the shell renders (see Main). */
 export const WIKI_DIRECTORY_ID = "wiki-directory";
@@ -150,6 +151,7 @@ export function WikiDirectory({
           />
         )}
       </div>
+      {inventoryMode === "folders" && !exampleWiki && <SpaceFoldersPrompt noteCount={noteCount} />}
       {inventoryMode === "archived" ? (
         <ArchivedNotesPanel currentPageId={currentPageId} onOpenPage={closeForNavigation(onOpenPage)} onRestored={onRestorePage} />
       ) : (

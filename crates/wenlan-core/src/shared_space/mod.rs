@@ -322,6 +322,31 @@ pub fn memberships_at(path: &Path) -> Result<BTreeMap<String, Membership>, Wenla
     Ok(read_settings(path)?.memberships)
 }
 
+/// The team each team Space here belongs to, by Space name: Spaces synced
+/// with a team server, and Spaces this computer hosts for its own team.
+/// `None` for a team whose name this computer does not know yet.
+pub fn team_names_by_space(path: &Path) -> Result<BTreeMap<String, Option<String>>, WenlanError> {
+    let store = read_settings(path)?;
+    let own_team = || -> Result<Option<String>, WenlanError> {
+        Ok(crate::team::read_team(&crate::team::team_path())?
+            .info()
+            .and_then(|info| info.name))
+    };
+    let mut out = BTreeMap::new();
+    for (space, settings) in &store.spaces {
+        let name = match (&settings.host, settings.hosted) {
+            (Some(link), _) => store
+                .teams
+                .get(&link.url)
+                .and_then(|team| team.name.clone()),
+            (None, true) => own_team()?,
+            (None, false) => continue,
+        };
+        out.insert(space.clone(), name.filter(|name| !name.trim().is_empty()));
+    }
+    Ok(out)
+}
+
 /// The team this person owns on another computer: its server's url and
 /// their key. `None` when they own none.
 pub fn owned_team(path: &Path) -> Result<Option<(String, String)>, WenlanError> {

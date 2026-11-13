@@ -1608,6 +1608,7 @@ carrying the authority of agreement.
 | `core/sources/page_watcher.rs::create_adopted_page` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/sources/page_watcher.rs::finish_pending_adoptions` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/sources/page_watcher.rs::sync_one_file` | `private` | no | no | — | `core/db.rs::get_page` |
+| `core/space_folders.rs::arrange` | `pub` | no | no | — | `core/db.rs::get_page` |
 | `core/steep.rs::claim_as` | `private` | yes | no | — | `core/db.rs::get_page` |
 | `core/steep.rs::commit` | `pub` | yes | no | — | `core/db.rs::get_page` |
 | `core/steep.rs::list_work` | `pub` | no | **yes** | `server/steep_routes.rs::handle_steep_worklist` | `core/steep.rs::steep_work` |
@@ -1798,9 +1799,9 @@ carrying the authority of agreement.
 | `core/shared_space/mod.rs::sync_page` | `private` | no | no | — | `core/shared_space/mod.rs::held_space_of`, `core/shared_space/mod.rs::keep_as_second_page`, `core/shared_space/mod.rs::reload`, `core/shared_space/mod.rs::write_merged` |
 | `core/shared_space/mod.rs::sync_shared_spaces` | `pub` | no | **yes** | `server/scheduler.rs::spawn_scheduler` | `core/shared_space/mod.rs::run_pass` |
 | `core/sources/page_watcher.rs::adopt_note` | `private` | no | no | — | `core/sources/page_watcher.rs::create_adopted_page` |
-| `core/sources/page_watcher.rs::sync_pass` | `private` | no | no | — | `core/sources/page_watcher.rs::archive_deleted_pages`, `core/sources/page_watcher.rs::finish_pending_adoptions`, `core/sources/page_watcher.rs::sync_one_file` |
+| `core/sources/page_watcher.rs::sync_pass` | `private` | no | no | — | `core/sources/page_watcher.rs::archive_deleted_pages`, `core/sources/page_watcher.rs::finish_pending_adoptions`, `core/sources/page_watcher.rs::sync_one_file`, `core/space_folders.rs::arrange` |
 | `core/steep_new.rs::claim_new` | `pub` | no | no | — | `core/steep_new.rs::claim_new_on` |
-| `core/steep_organize.rs::plan` | `pub` | no | no | — | `core/db.rs::entity_enrichment_for_claim` |
+| `core/steep_organize.rs::plan` | `pub` | yes | no | — | `core/db.rs::entity_enrichment_for_claim` |
 | `core/store/export/run.rs::export_lossless` | `pub` | no | **yes** | `server/cmd_export.rs::run` | `core/store/export/run.rs::export_into` |
 | `core/store/export/run.rs::refresh_lossless` | `pub` | no | **yes** | `server/cmd_export.rs::run` | `core/store/export/run.rs::export_into` |
 | `core/store/mirror.rs::run_once` | `pub` | yes | no | — | `core/db.rs::new_with_shared_embedder_and_recovery` |

@@ -19,13 +19,13 @@ use wenlan_types::CodeBasisLocator;
 #[path = "knowledge_folders.rs"]
 mod folders;
 pub use folders::{
-    adoption_frontmatter, create_knowledge_folder, drop_pending_adoption, follow_external_moves,
-    has_origin_version, knowledge_edit_targets, knowledge_markdown_paths, list_knowledge_folders,
-    move_projected_page, note_missing_pages, note_person_file, origin_id_line,
-    page_file_still_gone, pending_adoptions, person_page_files, read_knowledge_markdown,
-    reclaim_returned_page, record_person_note, restamp_person_note, stamp_person_note,
-    unstamp_person_note, validate_knowledge_folder_path, wenlan_page_digests, KnowledgeFolderEntry,
-    MissingPages, PersonPageFile, MASS_MISSING_FLOOR, MISSING_SETTLE_SECS,
+    adoption_frontmatter, collision_key, create_knowledge_folder, drop_pending_adoption,
+    follow_external_moves, has_origin_version, knowledge_edit_targets, knowledge_markdown_paths,
+    list_knowledge_folders, move_projected_page, note_missing_pages, note_person_file,
+    origin_id_line, page_file_still_gone, pending_adoptions, person_page_files,
+    read_knowledge_markdown, reclaim_returned_page, record_person_note, restamp_person_note,
+    stamp_person_note, unstamp_person_note, validate_knowledge_folder_path, wenlan_page_digests,
+    KnowledgeFolderEntry, MissingPages, PersonPageFile, MASS_MISSING_FLOOR, MISSING_SETTLE_SECS,
 };
 
 const KNOWLEDGE_STATE_SCHEMA_V2: u32 = 2;
@@ -2545,7 +2545,14 @@ impl KnowledgeProjectionWriteRef<'_> {
             );
             return Ok(None);
         };
-        let folder = database.page_initial_folder_path(&page.id).await?;
+        let mut folder = database.page_initial_folder_path(&page.id).await?;
+        if folder.is_empty() {
+            if let Some(space_folder) =
+                crate::space_folders::new_page_folder(database, &self.writer.path, page).await
+            {
+                folder = space_folder;
+            }
+        }
         check_permit(&permit, page)?;
         skip_if_archived_since_read(
             page,
@@ -6048,7 +6055,14 @@ impl KnowledgeProjectionWrite {
             );
             return Ok(None);
         };
-        let folder = database.page_initial_folder_path(&page.id).await?;
+        let mut folder = database.page_initial_folder_path(&page.id).await?;
+        if folder.is_empty() {
+            if let Some(space_folder) =
+                crate::space_folders::new_page_folder(database, &self.writer.path, page).await
+            {
+                folder = space_folder;
+            }
+        }
         check_permit(&permit, page)?;
         skip_if_archived_since_read(
             page,

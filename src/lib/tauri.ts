@@ -701,6 +701,15 @@ export async function setBackgroundAiEnabled(enabled: boolean): Promise<void> {
   return invoke("set_background_ai_enabled", { enabled });
 }
 
+/** Each Space's pages in a folder of its own. `null` = not asked yet. */
+export async function getSpaceFolders(): Promise<boolean | null> {
+  return invoke("get_space_folders");
+}
+
+export async function setSpaceFolders(on: boolean): Promise<void> {
+  return invoke("set_space_folders", { on });
+}
+
 /** The app's language; what Wenlan writes about conversations follows it. */
 export async function setUiLanguage(language: string): Promise<void> {
   return invoke("set_ui_language", { language });

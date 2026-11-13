@@ -115,6 +115,10 @@ pub struct Config {
     /// installs alike, and any screen offering it labels it Beta.
     #[serde(default)]
     pub chat_check_enabled: bool,
+    /// Each Space's pages in a folder of its own (`space_folders`). `None`:
+    /// not asked yet; `Some(false)`: the person said no.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub space_folders: Option<bool>,
     /// A pages folder the person picked, moved into at the next daemon start
     /// by `pages_folder::apply_pending_move`, which then sets
     /// `knowledge_path` and clears this.
