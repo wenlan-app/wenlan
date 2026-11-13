@@ -566,3 +566,23 @@
   top: 8px;
   bottom: auto;
 }
+
+/* Home's HTML view (UX-LOOK-10): switched and taken off here, never on home. */
+.appearance-home {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mem-space-3);
+}
+
+.appearance-home-row {
+  display: flex;
+  align-items: center;
+  gap: var(--mem-space-3);
+  flex-wrap: wrap;
+}
+
+.appearance-home-ask {
+  margin: 0;
+  font-size: var(--mem-text-sm);
+  color: var(--mem-text-secondary);
+}

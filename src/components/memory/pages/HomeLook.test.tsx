@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   removePageLook: vi.fn(),
   restorePageLook: vi.fn(),
   reportPageLookError: vi.fn(),
+  clipboardWrite: vi.fn(),
 }));
 
 vi.mock("../../../lib/tauri", async (importOriginal) => ({
@@ -17,7 +18,8 @@ vi.mock("../../../lib/tauri", async (importOriginal) => ({
   ...mocks,
 }));
 
-import { HOME_LOOK_ID, HomeLookBar, HomeLookView, homeLookVersion, useHomeLook } from "./HomeLook";
+import { HOME_LOOK_ID, HomeLookView, homeLookVersion, useHomeLook } from "./HomeLook";
+import HomeLookSetting from "../settings/sections/HomeLookSetting";
 
 const LOOK: PageLook = { id: 3, html: "<main id=home></main>", api: 1, kept_at: 1 };
 const DATA: LookData = {
@@ -43,7 +45,6 @@ function Home({ supported = true, onOpenPage = () => {} }: { supported?: boolean
   const homeLook = useHomeLook({ supported, pages: [] });
   return (
     <div className="home-columns">
-      <HomeLookBar homeLook={homeLook} />
       <HomeLookView homeLook={homeLook} inScope={(space) => space !== "Acme roadmap"} onOpenPage={onOpenPage} />
       {homeLook.shown ? null : <p>usual home</p>}
     </div>
@@ -55,6 +56,11 @@ function renderHome(props: Parameters<typeof Home>[0] = {}) {
   return render(<QueryClientProvider client={client}><Home {...props} /></QueryClientProvider>);
 }
 
+function renderSetting() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(<QueryClientProvider client={client}><HomeLookSetting /></QueryClientProvider>);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   window.localStorage.clear();
@@ -63,6 +69,7 @@ beforeEach(() => {
   mocks.removePageLook.mockResolvedValue(3);
   mocks.restorePageLook.mockResolvedValue(undefined);
   mocks.reportPageLookError.mockResolvedValue(undefined);
+  mocks.clipboardWrite.mockResolvedValue(undefined);
 });
 
 describe("UX-LOOK-10 home's HTML view", () => {
@@ -77,40 +84,45 @@ describe("UX-LOOK-10 home's HTML view", () => {
     expect(doc).not.toContain("Acme launch plan");
     expect(doc).not.toContain("Acme roadmap");
     expect(screen.queryByText("usual home")).toBeNull();
-    expect(screen.queryByRole("menuitem", { name: "Remove HTML view" })).toBeNull();
-    expect(screen.queryByText("Remove HTML view")).toBeNull();
+    expect(screen.queryAllByRole("button")).toHaveLength(0);
   });
 
-  it("the pencil shows the usual home, lights up, and brings the view back", async () => {
+  it("Settings › Appearance › Home switches to the usual home, and home remembers it", async () => {
+    const setting = renderSetting();
+    fireEvent.click(await screen.findByRole("button", { name: "Usual" }));
+    setting.unmount();
+
     renderHome();
-    await screen.findByTestId("page-look-frame");
-    const pencil = screen.getByRole("button", { name: "Show the usual home" });
-    expect(pencil.getAttribute("aria-pressed")).toBe("false");
-    fireEvent.click(pencil);
-    expect(screen.getByText("usual home")).toBeTruthy();
+    await waitFor(() => expect(mocks.getPageLook).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByText("usual home")).toBeTruthy());
     expect(screen.queryByTestId("page-look-frame")).toBeNull();
-    expect(pencil.getAttribute("aria-pressed")).toBe("true");
-    fireEvent.click(pencil);
+  });
+
+  it("a new view from an AI opens on home again even after the usual home was chosen", async () => {
+    const setting = renderSetting();
+    fireEvent.click(await screen.findByRole("button", { name: "Usual" }));
+    setting.unmount();
+
+    mocks.getPageLook.mockResolvedValue({ look: { ...LOOK, id: 4 }, versions: [] });
+    renderHome();
     expect(await screen.findByTestId("page-look-frame")).toBeTruthy();
   });
 
-  it("takes the view off from the ⋯ menu, keeping every version", async () => {
-    renderHome();
-    await screen.findByTestId("page-look-frame");
-    fireEvent.click(screen.getByRole("button", { name: "Show the usual home" }));
+  it("Settings takes the view off with Undo, and without one says how to ask for it", async () => {
+    renderSetting();
+    fireEvent.click(await screen.findByRole("button", { name: "Remove HTML view" }));
     mocks.getPageLook.mockResolvedValue({ look: null, versions: [] });
-    fireEvent.click(screen.getByRole("button", { name: "Home actions" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Remove HTML view" }));
     await waitFor(() => expect(mocks.removePageLook).toHaveBeenCalledWith(HOME_LOOK_ID));
-    await waitFor(() => expect(screen.queryByTestId("home-look-bar")).toBeNull());
-    expect(screen.getByText("usual home")).toBeTruthy();
+    expect(await screen.findByText("Ask your AI to make your home an HTML view.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Copy request" }));
+    await waitFor(() => expect(mocks.clipboardWrite).toHaveBeenCalledWith(expect.stringContaining("@home")));
   });
 
   it("shows nothing new when home has no view, or on a team's home", async () => {
     mocks.getPageLook.mockResolvedValue({ look: null, versions: [] });
     renderHome();
     await waitFor(() => expect(mocks.getPageLook).toHaveBeenCalled());
-    expect(screen.queryByTestId("home-look-bar")).toBeNull();
+    expect(screen.queryAllByRole("button")).toHaveLength(0);
     expect(screen.getByText("usual home")).toBeTruthy();
 
     mocks.getPageLook.mockClear();

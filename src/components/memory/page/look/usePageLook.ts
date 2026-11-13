@@ -28,11 +28,13 @@ export const lookQueryKey = (pageId: string) => ["page-look", pageId] as const;
  * for that look and that version of the page; a new look or a changed page
  * tries again, and so does choosing Look.
  */
-export function usePageLook({ pageId, supported, version }: {
+export function usePageLook({ pageId, supported, version, startMode = "look" }: {
   pageId: string;
   supported: boolean;
   /** Changes when the page's text does. */
   version: number | string;
+  /** What shows before anything is chosen; home asks Settings, per look (UX-LOOK-10). */
+  startMode?: LookMode | ((lookId: number) => LookMode);
 }) {
   const enabled = pageLooksEnabled() && supported;
   const queryClient = useQueryClient();
@@ -47,7 +49,8 @@ export function usePageLook({ pageId, supported, version }: {
   const look: PageLook | null = enabled ? (query.data?.look ?? null) : null;
 
   const [chosen, setChosen] = useState<{ pageId: string; mode: LookMode } | null>(null);
-  const mode: LookMode = chosen?.pageId === pageId ? chosen.mode : "look";
+  const mode: LookMode = chosen?.pageId === pageId ? chosen.mode
+    : typeof startMode === "function" ? (look ? startMode(look.id) : "look") : startMode;
 
   const failureKey = look ? `${pageId}:${look.id}:${version}` : null;
   const [failedKey, setFailedKey] = useState<string | null>(null);
