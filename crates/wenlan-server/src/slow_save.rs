@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! A log line for a save that took long enough for an AI tool to give up.
 //!
 //! The line is written when the guard drops, so a save the caller stopped
