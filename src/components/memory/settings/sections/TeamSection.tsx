@@ -179,7 +179,7 @@ export default function TeamSection() {
               title={t("team.firewall.blockedTitle")}
               description={declined
                 ? t("team.firewall.declined")
-                : wall.public_network ? `${t("team.firewall.blockedHint")} ${t("team.firewall.publicHint")}` : t("team.firewall.blockedHint")}
+                : wall.public_network ? t("team.firewall.blockedHintPublic") : t("team.firewall.blockedHint")}
               control={<Button onClick={() => void allow()} disabled={allowing}>{allowing ? t("team.firewall.allowing") : t("team.firewall.allow")}</Button>}
             />
           )}
