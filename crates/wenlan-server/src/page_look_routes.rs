@@ -18,8 +18,10 @@
 //! see in its Space and under its truth grant; any other page reads as absent.
 //!
 //! The id `home` ([`HOME_LOOK_ID`]) names the home screen's look (UX-LOOK-10)
-//! on the same routes. Its data lists the pages the caller may see, filtered
-//! the same way, and the Spaces they are in.
+//! on the same routes. It is part of the theme in use, kept as `home.html` in
+//! the theme's folder (`wenlan_core::theme::home`), not in the looks table, so
+//! it switches with the theme. Its data lists the pages the caller may see,
+//! filtered the same way, and the Spaces they are in.
 
 use std::sync::Arc;
 
@@ -35,6 +37,8 @@ use wenlan_types::page_look::{
     HOME_LOOK_ID, LOOK_API, LOOK_HOME_PAGES_MAX, LOOK_SPACE_PAGES_MAX,
 };
 use wenlan_types::pages::Page;
+
+use wenlan_core::theme::{self, home};
 
 use crate::error::ServerError;
 use crate::route_registry::{get, post, TrackedRouter};
@@ -63,6 +67,16 @@ async fn open_db(state: &Arc<RwLock<ServerState>>) -> Result<Arc<MemoryDB>, Serv
         .db
         .clone()
         .ok_or(ServerError::DbNotInitialized)
+}
+
+/// Run `work` on the themes folder off the async runtime: home's view is a
+/// file of the theme in use.
+async fn theme_home<T: Send + 'static>(
+    work: impl FnOnce(&std::path::Path) -> T + Send + 'static,
+) -> Result<T, ServerError> {
+    tokio::task::spawn_blocking(move || work(&theme::themes_dir()))
+        .await
+        .map_err(|_| ServerError::Internal("home view task failed".into()))
 }
 
 /// The page, when the caller may see it in full; absent otherwise.
@@ -122,10 +136,15 @@ pub async fn handle_get_page_look(
     view: crate::truth_guard::TruthView,
     Path(id): Path<String>,
 ) -> Result<Json<PageLookResponse>, ServerError> {
-    let db = open_db(&state).await?;
-    if id != HOME_LOOK_ID {
-        visible_page(&db, &view, header_space.as_deref(), &id).await?;
+    if id == HOME_LOOK_ID {
+        let look = theme_home(home::read_home).await?;
+        return Ok(Json(PageLookResponse {
+            look,
+            versions: Vec::new(),
+        }));
     }
+    let db = open_db(&state).await?;
+    visible_page(&db, &view, header_space.as_deref(), &id).await?;
     Ok(Json(PageLookResponse {
         look: db.get_active_page_look(&id).await?,
         versions: db.list_page_look_versions(&id).await?,
@@ -141,15 +160,24 @@ pub async fn handle_set_page_look(
     Path(id): Path<String>,
     Json(req): Json<SetPageLookRequest>,
 ) -> Result<Json<SetPageLookResponse>, ServerError> {
-    let db = open_db(&state).await?;
-    // The home screen has no text of its own to copy.
-    let content = if id == HOME_LOOK_ID {
-        String::new()
-    } else {
-        lookable_page(&db, &view, header_space.as_deref(), &id)
+    if id == HOME_LOOK_ID {
+        // The home screen has no text of its own to copy.
+        wenlan_core::page_look::check_look(&req.html, "")
+            .map_err(|reason| ServerError::ValidationError(format!("look_refused: {reason}")))?;
+        let html = req.html;
+        let (look_id, created) = theme_home(move |root| home::write_home(root, &html))
             .await?
-            .content
-    };
+            .map_err(|e| ServerError::Internal(format!("could not save the home view: {e}")))?;
+        return Ok(Json(SetPageLookResponse {
+            page_id: id,
+            look_id,
+            created,
+        }));
+    }
+    let db = open_db(&state).await?;
+    let content = lookable_page(&db, &view, header_space.as_deref(), &id)
+        .await?
+        .content;
     wenlan_core::page_look::check_look(&req.html, &content)
         .map_err(|reason| ServerError::ValidationError(format!("look_refused: {reason}")))?;
     let session = crate::session_routes::extract_session_ref(&headers).map(|s| s.to_string());
@@ -170,10 +198,17 @@ pub async fn handle_remove_page_look(
     view: crate::truth_guard::TruthView,
     Path(id): Path<String>,
 ) -> Result<Json<RemovePageLookResponse>, ServerError> {
-    let db = open_db(&state).await?;
-    if id != HOME_LOOK_ID {
-        visible_page(&db, &view, header_space.as_deref(), &id).await?;
+    if id == HOME_LOOK_ID {
+        let removed_id = theme_home(home::remove_home)
+            .await?
+            .map_err(|e| ServerError::Internal(format!("could not take the home view off: {e}")))?;
+        return Ok(Json(RemovePageLookResponse {
+            page_id: id,
+            removed_id,
+        }));
     }
+    let db = open_db(&state).await?;
+    visible_page(&db, &view, header_space.as_deref(), &id).await?;
     let removed_id = db.remove_page_look(&id).await?;
     Ok(Json(RemovePageLookResponse {
         page_id: id,
@@ -189,10 +224,20 @@ pub async fn handle_restore_page_look(
     Path(id): Path<String>,
     Json(req): Json<RestorePageLookRequest>,
 ) -> Result<Json<SetPageLookResponse>, ServerError> {
-    let db = open_db(&state).await?;
-    if id != HOME_LOOK_ID {
-        lookable_page(&db, &view, header_space.as_deref(), &id).await?;
+    if id == HOME_LOOK_ID {
+        // Only the view Remove just took off can come back.
+        let look_id = theme_home(home::restore_home)
+            .await?
+            .map_err(|e| ServerError::Internal(format!("could not put the home view back: {e}")))?
+            .ok_or_else(|| ServerError::NotFound("home has no earlier view to restore".into()))?;
+        return Ok(Json(SetPageLookResponse {
+            page_id: id,
+            look_id,
+            created: false,
+        }));
     }
+    let db = open_db(&state).await?;
+    lookable_page(&db, &view, header_space.as_deref(), &id).await?;
     let look_id = db.restore_page_look(&id, req.id).await?.ok_or_else(|| {
         ServerError::NotFound(format!("page {id} has no earlier look to restore"))
     })?;
@@ -211,11 +256,14 @@ pub async fn handle_page_look_error(
     Path(id): Path<String>,
     Json(req): Json<PageLookErrorRequest>,
 ) -> Result<Json<PageLookErrorResponse>, ServerError> {
-    let db = open_db(&state).await?;
-    if id != HOME_LOOK_ID {
-        visible_page(&db, &view, header_space.as_deref(), &id).await?;
-    }
     let message: String = req.message.trim().chars().take(2000).collect();
+    if id == HOME_LOOK_ID {
+        let recorded = !message.is_empty()
+            && theme_home(move |root| home::record_home_error(root, &message)).await?;
+        return Ok(Json(PageLookErrorResponse { recorded }));
+    }
+    let db = open_db(&state).await?;
+    visible_page(&db, &view, header_space.as_deref(), &id).await?;
     let recorded = !message.is_empty() && db.record_page_look_error(&id, &message).await?;
     Ok(Json(PageLookErrorResponse { recorded }))
 }
@@ -550,5 +598,19 @@ mod tests {
         assert!(removed["removed_id"].is_number());
         let (_, off) = send(&app, "GET", home, None).await;
         assert!(off["look"].is_null());
+        // It is a file of the theme in use, and Undo puts the same one back.
+        assert!(wenlan_core::theme::themes_dir()
+            .join(format!("{}.off", wenlan_core::theme::home::HOME_FILE))
+            .is_file());
+        let (status, back) = send(
+            &app,
+            "POST",
+            &format!("{home}/restore"),
+            Some(json!({ "id": removed["removed_id"] })),
+        )
+        .await;
+        assert_eq!(status, 200, "{back}");
+        let (_, again) = send(&app, "GET", home, None).await;
+        assert_eq!(again["look"]["html"], first);
     }
 }

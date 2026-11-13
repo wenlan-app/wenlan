@@ -779,6 +779,8 @@ pub fn active_theme(root: &Path) -> ActiveThemeResponse {
     }
 }
 
+pub mod home;
+
 #[cfg(test)]
 mod tests;
 

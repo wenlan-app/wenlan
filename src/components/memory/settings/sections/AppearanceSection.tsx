@@ -32,6 +32,7 @@ import {
   type ThemeSummary,
 } from "../../../../lib/tauri";
 import { Button, SegmentedControl, Select } from "../primitives";
+import HomeLookSetting from "./HomeLookSetting";
 import "./appearance.css";
 
 const EDITOR_SLOTS = ["background", "surface", "text", "accent", "accentWarm", "border"] as const;
@@ -316,6 +317,8 @@ export default function AppearanceSection() {
         </button>
       </div>
 
+      <HomeLookSetting />
+
       {editingId && draft && (
         <div className="appearance-editor">
           <div className="appearance-form">
@@ -514,6 +517,7 @@ export default function AppearanceSection() {
           </figure>
         </div>
       )}
+
     </div>
   );
 }
