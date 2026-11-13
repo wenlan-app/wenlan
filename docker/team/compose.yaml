@@ -4,26 +4,54 @@
 #   WENLAN_TEAM_URL=https://wenlan.example.com docker compose up -d
 #   docker compose logs wenlan      # the owner's invite link, printed once
 #
+# With automatic HTTPS: point a domain at this box, open ports 80 and 443,
+# and start the `https` profile. Caddy gets the certificate and renews it.
+#
+#   WENLAN_DOMAIN=wenlan.example.com docker compose --profile https up -d
+#
 # Open that link in your own Wenlan (Settings › Team › Join with an invite
 # link). You are the team's owner: invite people, rename the team and add
 # Spaces from your own computer. Nobody needs to touch this box again.
 services:
   wenlan:
-    image: ghcr.io/wenlan-app/wenlan-server:latest
+    image: ghcr.io/wenlan-app/wenlan-server
+    command: ["team"]
     restart: unless-stopped
     ports:
-      # The team listener only. The daemon's own port (7878) stays inside the
-      # container: it has no sign-in and must never be published.
-      - "7879:7879"
+      # The team listener only. The daemon's own port (7878) has no sign-in:
+      # `team` keeps it on the container's loopback, never published. With
+      # the `https` profile (WENLAN_DOMAIN set) 7879 is published on this
+      # box's loopback only, so nobody reaches it around Caddy's HTTPS.
+      - "${WENLAN_DOMAIN:+127.0.0.1:}7879:7879"
     environment:
-      WENLAN_TEAM_ADDR: 0.0.0.0:7879
       # The address people reach this box at, put in every invite link:
-      # https://… behind a reverse proxy, or its Tailscale address.
-      WENLAN_TEAM_URL: ${WENLAN_TEAM_URL:-}
+      # https://… behind a reverse proxy, or its Tailscale address. With the
+      # `https` profile it is https://$WENLAN_DOMAIN unless set here.
+      WENLAN_TEAM_URL: ${WENLAN_TEAM_URL:-${WENLAN_DOMAIN:+https://${WENLAN_DOMAIN}}}
       # Uncomment for one start to make a new owner link (the old one stops).
       # WENLAN_TEAM_NEW_OWNER_LINK: "1"
+    # To keep the data in a folder on this box instead (a NAS share), swap the
+    # volume line for the folder and uncomment `user`, set to the folder
+    # owner's ids (`ls -n` shows them): the image's own user cannot write a
+    # folder that belongs to someone else on the host.
+    # user: "1000:1000"
     volumes:
       - wenlan-data:/data
+      # - /volume1/docker/wenlan:/data
+
+  # Automatic HTTPS in front of the team listener (optional, see the top).
+  https:
+    image: caddy:2.10.2
+    profiles: ["https"]
+    restart: unless-stopped
+    depends_on: [wenlan]
+    ports:
+      - "80:80"
+      - "443:443"
+    command: caddy reverse-proxy --from ${WENLAN_DOMAIN:-} --to wenlan:7879
+    volumes:
+      - caddy-data:/data
 
 volumes:
   wenlan-data:
+  caddy-data:

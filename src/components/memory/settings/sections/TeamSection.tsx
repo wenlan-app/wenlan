@@ -16,7 +16,7 @@ import { SHARES_KEY, teamLabel, teamPausedText, useShares } from "../../sharing/
 import { teamGroups } from "../../team/TeamPage";
 import { JoinSharedDialog } from "../../sharing/JoinSharedDialog";
 import { StartTeamDialog } from "../../team/StartTeamDialog";
-import { ServerSetupDialog } from "../../team/ServerSetupDialog";
+import { ServerSetupDialog, forgetOwnerKeyDraft } from "../../team/ServerSetupDialog";
 import { useScope } from "../../team/scope";
 import "./teamSection.css";
 
@@ -28,6 +28,9 @@ export default function TeamSection() {
   const [joining, setJoining] = useState(false);
   const [starting, setStarting] = useState(false);
   const [onServer, setOnServer] = useState(false);
+  // The owner's link of a server set up from "Run it on a server", once
+  // that server answers: the join window opens with it filled in.
+  const [ownerLink, setOwnerLink] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const scope = useScope();
   const queryClient = useQueryClient();
@@ -48,9 +51,12 @@ export default function TeamSection() {
   const joinDialog = joining && (
     <JoinSharedDialog
       only="code"
-      onClose={() => setJoining(false)}
+      code={ownerLink ?? undefined}
+      onClose={() => { setJoining(false); setOwnerLink(null); }}
       onJoined={(kind, target) => {
         setJoining(false);
+        if (ownerLink) forgetOwnerKeyDraft();
+        setOwnerLink(null);
         // The new team is shown at once: the switch appears at the top left.
         if (kind === "team") scope.setScope(`team:${target}`);
       }}
@@ -115,6 +121,7 @@ export default function TeamSection() {
           <ServerSetupDialog
             onClose={() => setOnServer(false)}
             onPaste={() => { setOnServer(false); setJoining(true); }}
+            onReady={(link) => { setOnServer(false); setOwnerLink(link); setJoining(true); }}
           />
         )}
       </>

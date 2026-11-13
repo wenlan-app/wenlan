@@ -518,3 +518,52 @@ fn smoke_common_sed_strips_the_database_suffix_the_daemon_logs() {
         scratch_root.to_str().unwrap()
     );
 }
+
+#[test]
+fn team_runs_the_daemon_as_a_team_server_with_its_address() {
+    let cli = Cli::try_parse_from(["wenlan-server", "team", "https://wenlan.example.com"]).unwrap();
+    match cli.command {
+        Some(Command::Team { url, listen, .. }) => {
+            assert_eq!(url.as_deref(), Some("https://wenlan.example.com"));
+            assert_eq!(listen.to_string(), "0.0.0.0:7879");
+        }
+        _ => panic!("`team` is the team-server command"),
+    }
+    assert_eq!(
+        team_address(Some("https://wenlan.example.com/")).unwrap(),
+        Some("https://wenlan.example.com".to_string())
+    );
+    assert_eq!(team_address(None).unwrap(), None);
+    // An invite link is refused, and the key in it is never echoed back.
+    let key = format!("wlt_{}", "a1".repeat(32));
+    let refused = team_address(Some(&format!("https://wenlan.example.com/join#{key}")))
+        .unwrap_err()
+        .to_string();
+    assert!(!refused.contains(&key[4..]), "{refused}");
+    assert!(
+        refused.contains("https://wenlan.example.com/join"),
+        "{refused}"
+    );
+    // The owner's key comes as its SHA-256 only.
+    let hash = "ab".repeat(32);
+    let owned = Cli::try_parse_from([
+        "wenlan-server",
+        "team",
+        "https://wenlan.example.com",
+        "--owner",
+        &hash,
+    ])
+    .unwrap();
+    match owned.command {
+        Some(Command::Team { owner, .. }) => assert_eq!(owner.as_deref(), Some(hash.as_str())),
+        _ => panic!("`team` is the team-server command"),
+    }
+    assert_eq!(owner_sha256(Some(&hash)).unwrap(), Some(hash.clone()));
+    assert!(owner_sha256(Some(&key)).is_err());
+    assert!(owner_sha256(Some(&hash.to_uppercase())).is_err());
+    let bare = Cli::try_parse_from(["wenlan-server", "team"]).unwrap();
+    assert!(matches!(
+        bare.command,
+        Some(Command::Team { url: None, .. })
+    ));
+}

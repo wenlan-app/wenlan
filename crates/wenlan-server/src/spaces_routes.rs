@@ -146,10 +146,8 @@ pub async fn handle_update_space(
         s.db.clone().ok_or(ServerError::DbNotInitialized)?
     };
     let new_name = req.new_name.as_deref().unwrap_or(&name);
-    let space = db
-        .update_space(&name, new_name, req.description.as_deref())
-        .await
-        .map_err(ServerError::from)?;
+    let space =
+        crate::team_routes::rename_space(&db, &name, new_name, req.description.as_deref()).await?;
     Ok(Json(space))
 }
 
@@ -164,6 +162,15 @@ pub async fn handle_delete_space(
     db.delete_space(&name, "keep")
         .await
         .map_err(ServerError::from)?;
+    // A deleted Space this server hosted for its team stops being hosted.
+    let scope = wenlan_core::shared_space::Scope::Space(name.clone());
+    let settings = wenlan_core::shared_space::settings_path();
+    if wenlan_core::shared_space::share_settings_at(&settings, &scope)?
+        .is_some_and(|share| share.hosted)
+    {
+        wenlan_core::shared_space::leave_at(&settings, &scope)?;
+        forget_team_access(&scope)?;
+    }
     Ok(Json(serde_json::json!({"deleted": name})))
 }
 
@@ -378,12 +385,13 @@ async fn host_sync(
         .filter(|space| !space.is_empty())
         .unwrap_or(name.trim())
         .to_string();
-    if !me.spaces.iter().any(|entry| entry.space == remote_space) {
+    let Some(remote_entry) = me.spaces.iter().find(|entry| entry.space == remote_space) else {
         return Err(ServerError::ValidationError(format!(
             "the team server does not let {} use {remote_space:?}",
             me.name
         )));
-    }
+    };
+    let space_id = remote_entry.id.clone();
     let space = match db
         .registered_space_or_none(Some(&name))
         .await
@@ -415,6 +423,7 @@ async fn host_sync(
                 url,
                 key,
                 space: remote_space,
+                space_id,
             }),
         },
     )
@@ -451,10 +460,24 @@ fn shared_leave(
     scope: &wenlan_core::shared_space::Scope,
 ) -> Result<Json<wenlan_types::responses::SuccessResponse>, ServerError> {
     let settings = wenlan_core::shared_space::settings_path();
+    let hosted = wenlan_core::shared_space::share_settings_at(&settings, scope)?
+        .is_some_and(|share| share.hosted);
     if !wenlan_core::shared_space::leave_at(&settings, scope)? {
         return Err(ServerError::NotFound("not shared from here".into()));
     }
+    if hosted {
+        forget_team_access(scope)?;
+    }
     Ok(Json(wenlan_types::responses::SuccessResponse { ok: true }))
+}
+
+/// A Space this server stops hosting for its team takes the team's access
+/// to it along: a later Space of the same name starts open to nobody.
+fn forget_team_access(scope: &wenlan_core::shared_space::Scope) -> Result<(), ServerError> {
+    if let wenlan_core::shared_space::Scope::Space(name) = scope {
+        wenlan_core::team::forget_space_access(&wenlan_core::team::team_path(), name)?;
+    }
+    Ok(())
 }
 
 /// POST /api/spaces/{name}/shared/sync — one sync pass of the Space's pages

@@ -10,3 +10,4 @@
 .server-setup-command code { font:inherit; }
 .server-setup-command-example { color:var(--mem-text-secondary); }
 .server-setup-actions { justify-content:space-between;align-items:center;margin-top:20px; }
+.server-setup-waiting { font-size:13px;color:var(--mem-text-secondary); }

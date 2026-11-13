@@ -4,65 +4,62 @@ Wenlan is an open-source knowledge base you don't have to maintain: your AI tool
 
 This repo holds the daemon (`wenlan-server`), the CLI (`wenlan`), the MCP server (`wenlan-mcp`), the shared types/core (`wenlan-types`, `wenlan-core`), and the Tauri desktop app (`wenlan-app`, in `app/`). Bug reports for the local runtime, CLI, MCP server, desktop app, and plugin are welcome here.
 
-## Development Setup
-
-**Requirements:** macOS arm64, Linux (x86_64 + arm64; glibc), or Windows x86_64; platform build tools ([Xcode Command Line Tools](https://developer.apple.com/xcode/resources/) on macOS, MSVC Build Tools on Windows, gcc + make on Linux); [Rust](https://rustup.rs/) (stable).
-
-Building the **desktop app** additionally needs [Node.js](https://nodejs.org/) with [pnpm](https://pnpm.io/), and [`cloudflared`](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) on `PATH` (or `CLOUDFLARED_BIN` pointing at it). Wenlan ships `cloudflared` as a Tauri `externalBin` for Remote Access, so `pnpm dev:all`, `pnpm build:all`, and `pnpm tauri build` all fail without it. The daemon, CLI, and MCP crates build without either.
-
-macOS Intel is not currently a supported stock build target because the pinned ONNX Runtime dependency has no prebuilt x86_64 macOS binary. See the [platform note](../crates/wenlan-cli/README.md#macos-intel).
+## Quick start
 
 ```bash
-git clone https://github.com/wenlan-app/wenlan.git
-cd wenlan
-cargo build -p wenlan-server
+git clone https://github.com/wenlan-app/wenlan.git && cd wenlan
+pnpm install      # once
+pnpm dev:all      # the desktop app, with its own daemon, port and data
 ```
 
-Run the daemon directly:
+Your installed Wenlan and its pages are never touched: `pnpm dev:all` keeps
+everything it starts apart, and a debug app started without it refuses to run.
+
+| Command | What it does |
+|---|---|
+| `pnpm dev:all` | Desktop app plus its own daemon |
+| `pnpm dev:daemon` | Only the daemon, on its own port and data (`pnpm clean:dev` stops it) |
+| `pnpm dev:team` | A team server, as Docker runs one, with scratch data; it prints the owner's invite link to join from `pnpm dev:all` |
+| `pnpm test` | Frontend tests |
+| `pnpm test:rust` | Daemon, CLI and MCP tests |
+| `pnpm check` | Formatting, lint and type checks, as CI runs them |
+
+The other scripts in `package.json` are for releases, review builds and
+tooling; you do not need them to make a change.
+
+## What you need
+
+macOS arm64, Linux (x86_64 + arm64; glibc), or Windows x86_64, with:
+
+- the platform's build tools ([Xcode Command Line Tools](https://developer.apple.com/xcode/resources/) on macOS, MSVC Build Tools on Windows, gcc + make on Linux);
+- [Rust](https://rustup.rs/) (stable), [Node.js](https://nodejs.org/) and [pnpm](https://pnpm.io/);
+- for the desktop app, [`cloudflared`](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) on `PATH` (or `CLOUDFLARED_BIN` pointing at it). Wenlan ships it for Remote Access, so `pnpm dev:all`, `pnpm build:all` and `pnpm tauri build` fail without it.
+
+The first build takes several minutes while `llama.cpp` compiles.
+macOS Intel is not a supported stock build target: the pinned ONNX Runtime
+has no prebuilt x86_64 macOS binary. See the
+[platform note](../crates/wenlan-cli/README.md#macos-intel).
+
+### Without Node
+
+The daemon, CLI and MCP server build with Cargo alone:
 
 ```bash
-cargo run -p wenlan-server
+cargo build -p wenlan-server -p wenlan
+cargo test --workspace --exclude wenlan-app
 ```
 
-Or register it as the per-user background service:
+`cargo run -p wenlan-server` uses the same port and data folder as an
+installed Wenlan. Stop the installed one first, or use `pnpm dev:daemon`.
+To install your build as the per-user background service:
 
 ```bash
 cargo build --release -p wenlan -p wenlan-server
 ./target/release/wenlan setup --basic
 ./target/release/wenlan background on
-./target/release/wenlan status
 ```
 
-> First build can take several minutes while `llama.cpp` compiles for Metal.
-
-Run the desktop app:
-
-```bash
-pnpm install
-pnpm dev:all
-```
-
-`pnpm dev:all` is the supported development entry point for the desktop app. It keeps development ports, data, process ownership, app identity, MCP sockets, and Remote Access state separate from the installed production runtime; a debug app started without that isolation refuses to run. See [app/AGENTS.md](../app/AGENTS.md) for the complete workflow.
-
-### Running Tests
-
-```bash
-# Workspace tests (excludes wenlan-app; see Architecture Overview)
-cargo test --workspace --exclude wenlan-app
-
-# Per-crate
-cargo test -p wenlan-types
-cargo test -p wenlan-core --lib
-cargo test -p wenlan-server
-cargo test -p wenlan
-```
-
-### Linting
-
-```bash
-cargo fmt --check --all
-cargo clippy --workspace --exclude wenlan-app --all-targets -- -D warnings
-```
+See [app/AGENTS.md](../app/AGENTS.md) for the desktop app's full workflow.
 
 ## Architecture Overview
 

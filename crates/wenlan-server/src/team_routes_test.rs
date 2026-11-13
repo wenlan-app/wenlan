@@ -39,6 +39,7 @@ fn fixture() -> Fixture {
         vec![TeamSpaceAccess {
             space: "Design".into(),
             access,
+            id: None,
         }]
     };
     let writer = team::add_member(&team_path, "Amy", &access(TeamAccess::Write)).unwrap();
@@ -49,6 +50,7 @@ fn fixture() -> Fixture {
         &[TeamSpaceAccess {
             space: "Other".into(),
             access: TeamAccess::Write,
+            id: None,
         }],
     )
     .unwrap();
@@ -467,6 +469,22 @@ async fn only_the_owner_reaches_the_team_s_management_calls() {
         let (status, _) = call(&f.state, Method::GET, uri, Some(&owner_key), vec![]).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
     }
+    // A member id that a URL parser further on would read as another path
+    // (`\` as `/`, then `..`), dots, or escapes: never passed on.
+    for (method, uri) in [
+        (Method::DELETE, "/team/v1/admin/members/..\\..\\pages\\p1"),
+        (Method::PUT, "/team/v1/admin/members/..\\..\\config"),
+        (
+            Method::POST,
+            "/team/v1/admin/members/..\\..\\..\\anything/key",
+        ),
+        (Method::PUT, "/team/v1/admin/members/..%5C..%5Cconfig"),
+        (Method::PUT, "/team/v1/admin/members/.."),
+        (Method::PUT, "/team/v1/admin/members/a.b"),
+    ] {
+        let (status, _) = call(&f.state, method, uri, Some(&owner_key), vec![]).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
+    }
     // An allowed call goes to this Wenlan over loopback (not running here).
     let (status, _) = call(
         &f.state,
@@ -494,13 +512,13 @@ async fn the_owner_is_told_every_hosted_space_and_can_read_it() {
     assert_eq!(status, StatusCode::OK);
     let me: wenlan_types::team::TeamMe = serde_json::from_slice(&body).unwrap();
     assert_eq!(me.role, TeamRole::Owner);
+    assert_eq!(me.spaces.len(), 1);
     assert_eq!(
-        me.spaces,
-        vec![TeamSpaceAccess {
-            space: "Design".into(),
-            access: TeamAccess::Write
-        }]
+        (me.spaces[0].space.as_str(), me.spaces[0].access),
+        ("Design", TeamAccess::Write)
     );
+    // With its id, which members' computers follow it by when renamed.
+    assert!(me.spaces[0].id.is_some());
     let (status, _) = call(
         &f.state,
         Method::GET,

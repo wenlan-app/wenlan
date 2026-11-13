@@ -93,21 +93,32 @@ impl Member {
     }
 
     /// Who they are and every Space they can use, their own and everyone's
-    /// (the owner: every Space the server hosts, `hosted`).
-    pub fn me(&self, hosted: &[String]) -> TeamMe {
+    /// (the owner: every Space the server hosts, `hosted`, by name and
+    /// folder). A hosted Space carries its id, which a rename keeps.
+    pub fn me(&self, hosted: &[(String, PathBuf)]) -> TeamMe {
         let mut all = self.everyone.clone();
         all.extend(self.spaces.clone());
         if self.role == TeamRole::Owner {
-            for space in hosted {
+            for (space, _) in hosted {
                 all.insert(space.clone(), TeamAccess::Write);
             }
         }
+        let id_of = |space: &str| {
+            hosted
+                .iter()
+                .find(|(name, _)| name == space)
+                .and_then(|(_, folder)| hosted_space_id(folder))
+        };
         TeamMe {
             member_id: self.id.clone(),
             name: self.name.clone(),
             spaces: all
                 .into_iter()
-                .map(|(space, access)| TeamSpaceAccess { space, access })
+                .map(|(space, access)| TeamSpaceAccess {
+                    id: id_of(&space),
+                    space,
+                    access,
+                })
                 .collect(),
             team: self.team.clone(),
             role: self.role,
@@ -120,6 +131,7 @@ impl Member {
             .map(|(space, access)| TeamSpaceAccess {
                 space: space.clone(),
                 access: *access,
+                id: None,
             })
             .collect()
     }
@@ -316,9 +328,35 @@ pub fn set_url(path: &Path, url: Option<&str>) -> Result<(), WenlanError> {
 /// no owner yet: for a server nobody sits at (Docker), whose owner manages
 /// the team from their own computer. Any earlier owner key stops working.
 pub fn owner_key(path: &Path, name: &str) -> Result<(Member, String), WenlanError> {
-    let name = clean_name(name)?;
     let key = new_key();
-    let member = change_team(path, |file| {
+    let member = set_owner_hash(path, name, &key_hash(&key))?;
+    Ok((member, key))
+}
+
+/// The SHA-256 the server keeps of a member key (lowercase hex).
+pub fn key_sha256(key: &str) -> String {
+    key_hash(key)
+}
+
+/// Whether `hash` looks like a key's SHA-256: 64 lowercase hex digits.
+pub fn is_key_sha256(hash: &str) -> bool {
+    hash.len() == 64 && hash.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// The owner's member record for a key the owner made themselves, given by
+/// its SHA-256 only: their Wenlan keeps the key and puts just its hash in
+/// the server's start command, so the key is never on that machine's
+/// command line and the owner joins without reading the server's output.
+/// Any earlier owner key stops working.
+pub fn set_owner_hash(path: &Path, name: &str, hash: &str) -> Result<Member, WenlanError> {
+    let name = clean_name(name)?;
+    let hash = hash.trim();
+    if !is_key_sha256(hash) {
+        return Err(WenlanError::Validation(
+            "an owner key's SHA-256 is 64 lowercase hex digits".into(),
+        ));
+    }
+    change_team(path, |file| {
         let info = file.info();
         let everyone = file.everyone.clone();
         let member = match file
@@ -327,14 +365,14 @@ pub fn owner_key(path: &Path, name: &str) -> Result<(Member, String), WenlanErro
             .find(|member| member.role == TeamRole::Owner && member.is_active())
         {
             Some(owner) => {
-                owner.key_sha256 = key_hash(&key);
+                owner.key_sha256 = hash.to_string();
                 owner.clone()
             }
             None => {
                 let owner = Member {
                     id: uuid::Uuid::new_v4().simple().to_string(),
                     name,
-                    key_sha256: key_hash(&key),
+                    key_sha256: hash.to_string(),
                     spaces: BTreeMap::new(),
                     added_at: now(),
                     removed_at: None,
@@ -351,8 +389,52 @@ pub fn owner_key(path: &Path, name: &str) -> Result<(Member, String), WenlanErro
             team: info,
             ..member
         })
-    })?;
-    Ok((member, key))
+    })
+}
+
+/// Whether `hash` is the SHA-256 of the team owner's key.
+pub fn is_owner_hash(path: &Path, hash: &str) -> Result<bool, WenlanError> {
+    let hash = hash.trim();
+    Ok(read_team(path)?.members.iter().any(|member| {
+        member.role == TeamRole::Owner && member.is_active() && member.key_sha256 == hash
+    }))
+}
+
+/// Drops every member's access to `space`, and the team-wide access to it:
+/// for a Space that stops being hosted, so a later Space of the same name
+/// starts open to nobody but the owner.
+pub fn forget_space_access(path: &Path, space: &str) -> Result<(), WenlanError> {
+    let space = space.trim();
+    if space.is_empty() || !path.exists() {
+        return Ok(());
+    }
+    change_team(path, |file| {
+        file.everyone.remove(space);
+        for member in &mut file.members {
+            member.spaces.remove(space);
+        }
+        Ok(())
+    })
+}
+
+/// Moves every access to the Space `from` (everyone's and each member's)
+/// to `to`: the Space was renamed. Does nothing without a team.
+pub fn rename_space_access(path: &Path, from: &str, to: &str) -> Result<(), WenlanError> {
+    let (from, to) = (from.trim(), to.trim());
+    if from.is_empty() || to.is_empty() || from == to || !path.exists() {
+        return Ok(());
+    }
+    change_team(path, |file| {
+        if let Some(access) = file.everyone.remove(from) {
+            file.everyone.insert(to.to_string(), access);
+        }
+        for member in &mut file.members {
+            if let Some(access) = member.spaces.remove(from) {
+                member.spaces.insert(to.to_string(), access);
+            }
+        }
+        Ok(())
+    })
 }
 
 /// Whether the team has an owner who manages it from another computer.
@@ -537,6 +619,16 @@ pub fn hosted_folder(settings_path: &Path, space: &str) -> Result<Option<PathBuf
         .into_iter()
         .find(|(name, _)| name == space)
         .map(|(_, folder)| folder))
+}
+
+/// A hosted Space's id: its folder's name, made once when it was first
+/// hosted and kept when the Space is renamed.
+pub fn hosted_space_id(folder: &Path) -> Option<String> {
+    folder
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| version::is_safe_id(name))
+        .map(str::to_string)
 }
 
 /// A new folder for a Space this Wenlan starts hosting, beside the

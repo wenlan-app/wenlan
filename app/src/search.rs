@@ -4030,7 +4030,11 @@ pub async fn team_host_space(
     client
         .post_json(
             "/api/team/spaces",
-            &team::TeamHostSpaceRequest { space, everyone },
+            &team::TeamHostSpaceRequest {
+                space,
+                everyone,
+                rename_to: None,
+            },
         )
         .await
 }
