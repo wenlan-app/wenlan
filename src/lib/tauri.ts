@@ -4973,6 +4973,12 @@ export async function writeMcpConfig(clientType: string): Promise<UndeterminedIn
  *  config file — the Diagnostics fix for a double registration (a plugin plus
  *  a raw entry). Leaves sibling servers and unrelated config intact. Rejects
  *  with a plain error if the file is missing or has no such entry. */
+/** Turns Wenlan off for one AI tool: a plugin tool loses its plugin, any
+ *  tool loses a raw entry it has; something already off is not an error. */
+export async function disconnectClient(clientType: string): Promise<void> {
+  return invoke("disconnect_client", { clientType });
+}
+
 export async function removeRawMcpEntry(clientType: string): Promise<void> {
   return invoke("remove_raw_mcp_entry", { clientType });
 }

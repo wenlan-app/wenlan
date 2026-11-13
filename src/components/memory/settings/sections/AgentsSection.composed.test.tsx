@@ -19,7 +19,7 @@ vi.mock("../../../../lib/tauri", () => ({
   writeMcpConfig: vi.fn().mockResolvedValue([]),
   installClientPlugin: vi.fn().mockResolvedValue(undefined),
   installClientSkills: vi.fn().mockResolvedValue("/home/u/.config/opencode/skills"),
-  removeRawMcpEntry: vi.fn().mockResolvedValue(undefined),
+  disconnectClient: vi.fn().mockResolvedValue(undefined),
   clipboardWrite: vi.fn().mockResolvedValue(undefined),
   getRemoteAccessProfile: vi.fn().mockResolvedValue(null),
   configureRemoteAccess: vi.fn(),

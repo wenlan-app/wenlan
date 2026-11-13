@@ -436,6 +436,30 @@ pub async fn remove_raw_mcp_entry(client_type: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Turns Wenlan off for one AI tool from its row in Settings. A plugin tool
+/// (Claude Code, Codex and the ChatGPT app's Codex) loses the plugin; every
+/// tool loses a raw `wenlan` entry if it has one. Something already off is
+/// not an error: before, turning off Codex/ChatGPT failed with "No Wenlan MCP
+/// entry found to remove" because the plugin, not a raw entry, connected it.
+#[tauri::command]
+pub async fn disconnect_client(client_type: String) -> Result<(), String> {
+    let plugin_client = matches!(client_type.as_str(), "claude_code" | "codex_cli");
+    if plugin_client {
+        let ct = client_type.clone();
+        tokio::task::spawn_blocking(move || crate::plugin_install::uninstall_client_plugin(&ct))
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?;
+    }
+    match remove_raw_mcp_entry(client_type).await {
+        Ok(()) => Ok(()),
+        Err(message) if message.contains("No Wenlan MCP entry found") => Ok(()),
+        // A plugin tool with no config file at all has no raw entry either.
+        Err(_) if plugin_client => Ok(()),
+        Err(message) => Err(message),
+    }
+}
+
 /// Removes ONLY the legacy `origin` MCP entry from `client_type`'s config,
 /// keeping the live `wenlan` entry — the fix Diagnostics offers for a raw+raw
 /// duplicate (both `wenlan` and `origin` in one config, on a no-plugin client

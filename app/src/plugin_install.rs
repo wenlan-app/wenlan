@@ -597,6 +597,140 @@ fn run_step(
     )
 }
 
+/// How many times `marketplace add` is tried. It is a `git clone`, and on a
+/// slow or flaky connection GitHub's transfer can break off midway
+/// (`curl 18`, `early EOF`). A fresh try usually gets through.
+const MARKETPLACE_ADD_ATTEMPTS: u32 = 3;
+
+/// The only folders each CLI needs from the repository: its marketplace
+/// manifest and the plugin. Fetching just these (`--sparse`) brings about
+/// 8 MB instead of the whole ~300 MB monorepo, so the setup row is done in
+/// seconds and a flaky connection has far less to break on. Measured with
+/// codex-cli 0.168.0 and Claude Code on 2026-11-13.
+const CLAUDE_SPARSE_PATHS: &[&str] = &[".claude-plugin", "plugin"];
+const CODEX_SPARSE_PATHS: &[&str] = &[".agents/plugins", "plugin-codex"];
+
+/// Whether a failed step broke off in the network rather than failing for a
+/// reason that trying again cannot fix.
+fn is_interrupted_download(message: &str) -> bool {
+    let message = message.to_lowercase();
+    [
+        "rpc failed",
+        "early eof",
+        "unexpected disconnect",
+        "transferred a partial file",
+        "curl 18",
+        "curl 16",
+        "curl 56",
+        "curl 92",
+        "invalid index-pack output",
+        "connection reset",
+        "connection timed out",
+        "operation timed out",
+        "could not resolve host",
+        "the remote end hung up unexpectedly",
+    ]
+    .iter()
+    .any(|needle| message.contains(needle))
+}
+
+/// Whether the CLI refused `--sparse` itself (a version older than the
+/// option), so the add is run again without it.
+fn is_unknown_option(message: &str) -> bool {
+    let message = message.to_lowercase();
+    message.contains("--sparse")
+        && [
+            "unexpected argument",
+            "unknown option",
+            "unrecognized",
+            "found argument",
+        ]
+        .iter()
+        .any(|needle| message.contains(needle))
+}
+
+/// The `marketplace add` arguments, with each sparse folder as its own
+/// `--sparse` (the form both CLIs accept).
+fn marketplace_add_args(sparse: &[&'static str]) -> Vec<&'static str> {
+    let mut args = vec!["plugin", "marketplace", "add", WENLAN_REPO];
+    for path in sparse {
+        args.extend(["--sparse", path]);
+    }
+    args
+}
+
+/// `marketplace add` fetching only the plugin's folders, with retries for a
+/// transfer that broke off. From the second try on, git is asked to use
+/// HTTP/1.1, which avoids the HTTP/2 stream resets behind most of these
+/// breaks (only when the person has not set git config through the
+/// environment themselves). A CLI too old for `--sparse` gets the plain add.
+fn run_marketplace_add(
+    bin: &Path,
+    codex_home: Option<&Path>,
+    sparse: &[&'static str],
+) -> Result<(), PluginInstallError> {
+    let mut sparse = sparse.to_vec();
+    run_with_retries(
+        MARKETPLACE_ADD_ATTEMPTS,
+        |attempt| {
+            let run = |args: &[&str]| {
+                let mut command = match codex_home {
+                    Some(codex_home) => codex_command(bin, codex_home),
+                    None => client_command(bin),
+                };
+                if attempt > 1 && std::env::var_os("GIT_CONFIG_COUNT").is_none() {
+                    command
+                        .env("GIT_CONFIG_COUNT", "1")
+                        .env("GIT_CONFIG_KEY_0", "http.version")
+                        .env("GIT_CONFIG_VALUE_0", "HTTP/1.1");
+                }
+                let output = command
+                    .args(args)
+                    .output()
+                    .map_err(|e| PluginInstallError::StepFailed(format!("marketplace add: {e}")))?;
+                classify_step(
+                    "marketplace add",
+                    output.status.code(),
+                    &String::from_utf8_lossy(&output.stdout),
+                    &String::from_utf8_lossy(&output.stderr),
+                )
+            };
+            match run(&marketplace_add_args(&sparse)) {
+                Err(PluginInstallError::StepFailed(message))
+                    if !sparse.is_empty() && is_unknown_option(&message) =>
+                {
+                    sparse.clear();
+                    run(&marketplace_add_args(&sparse))
+                }
+                result => result,
+            }
+        },
+        |attempt| std::thread::sleep(Duration::from_secs(2 * u64::from(attempt))),
+    )
+}
+
+/// Runs `step` up to `attempts` times while it fails with an interrupted
+/// download, waiting between tries. Any other failure returns at once.
+fn run_with_retries(
+    attempts: u32,
+    mut step: impl FnMut(u32) -> Result<(), PluginInstallError>,
+    mut wait: impl FnMut(u32),
+) -> Result<(), PluginInstallError> {
+    let mut attempt = 1;
+    loop {
+        match step(attempt) {
+            Err(PluginInstallError::StepFailed(message))
+                if attempt < attempts && is_interrupted_download(&message) =>
+            {
+                log::warn!("[plugin-install] try {attempt} broke off, trying again: {message}");
+                wait(attempt);
+                attempt += 1;
+            }
+            result => return result,
+        }
+    }
+}
+
 fn prepare_codex_home(codex_home: Option<PathBuf>) -> Result<PathBuf, PluginInstallError> {
     let codex_home = codex_home.ok_or_else(|| {
         PluginInstallError::StepFailed(
@@ -615,16 +749,11 @@ fn prepare_codex_home(codex_home: Option<PathBuf>) -> Result<PathBuf, PluginInst
 // ── Public install entry points ─────────────────────────────────────────
 
 /// Installs the Wenlan Claude Code plugin: `claude plugin marketplace add
-/// wenlan-app/wenlan`, then `claude plugin install wenlan@<resolved>`.
+/// wenlan-app/wenlan --sparse …` (only the plugin's folders), then `claude plugin install wenlan@<resolved>`.
 /// Idempotent — succeeds if the marketplace or plugin is already present.
 pub fn install_claude_code_plugin() -> Result<(), PluginInstallError> {
     let bin = resolve_binary("claude").ok_or(PluginInstallError::CliNotFound("Claude Code"))?;
-    run_step(
-        &bin,
-        None,
-        "marketplace add",
-        &["plugin", "marketplace", "add", WENLAN_REPO],
-    )?;
+    run_marketplace_add(&bin, None, CLAUDE_SPARSE_PATHS)?;
     let selector = resolve_selector(
         &bin,
         None,
@@ -641,18 +770,13 @@ pub fn install_claude_code_plugin() -> Result<(), PluginInstallError> {
 }
 
 /// Installs the Wenlan Codex plugin: `codex plugin marketplace add
-/// wenlan-app/wenlan`, then `codex plugin add wenlan@<resolved>` (note: `add`,
+/// wenlan-app/wenlan --sparse …` (only the plugin's folders), then `codex plugin add wenlan@<resolved>` (note: `add`,
 /// not `install` — Codex's subcommand name differs from Claude Code's).
 /// Idempotent — succeeds if the marketplace or plugin is already present.
 pub fn install_codex_plugin() -> Result<(), PluginInstallError> {
     let bin = resolve_binary("codex").ok_or(PluginInstallError::CliNotFound("Codex"))?;
     let codex_home = prepare_codex_home(crate::identity_paths::codex_home_dir())?;
-    run_step(
-        &bin,
-        Some(&codex_home),
-        "marketplace add",
-        &["plugin", "marketplace", "add", WENLAN_REPO],
-    )?;
+    run_marketplace_add(&bin, Some(&codex_home), CODEX_SPARSE_PATHS)?;
     let selector = resolve_selector(
         &bin,
         Some(&codex_home),
@@ -666,6 +790,66 @@ pub fn install_codex_plugin() -> Result<(), PluginInstallError> {
         &["plugin", "add", &selector],
     )?;
     Ok(())
+}
+
+/// Turns Wenlan off in a plugin client: uninstalls the plugin (`claude plugin
+/// uninstall` / `codex plugin remove`) and keeps the marketplace, so turning
+/// it on again is a quick `plugin add`. A plugin that is already gone counts
+/// as off, never as an error.
+pub fn uninstall_client_plugin(client_type: &str) -> Result<(), PluginInstallError> {
+    let (bin, codex_home, selector, subcommand) = match client_type {
+        "claude_code" => {
+            let bin =
+                resolve_binary("claude").ok_or(PluginInstallError::CliNotFound("Claude Code"))?;
+            let selector = resolve_selector(
+                &bin,
+                None,
+                find_marketplace_name_claude,
+                FALLBACK_MARKETPLACE_CLAUDE,
+            );
+            (bin, None, selector, "uninstall")
+        }
+        "codex_cli" => {
+            let bin = resolve_binary("codex").ok_or(PluginInstallError::CliNotFound("Codex"))?;
+            let codex_home = prepare_codex_home(crate::identity_paths::codex_home_dir())?;
+            let selector = resolve_selector(
+                &bin,
+                Some(&codex_home),
+                find_marketplace_name_codex,
+                FALLBACK_MARKETPLACE_CODEX,
+            );
+            (bin, Some(codex_home), selector, "remove")
+        }
+        other => return Err(PluginInstallError::UnknownClient(other.to_string())),
+    };
+    let mut command = match codex_home.as_deref() {
+        Some(codex_home) => codex_command(&bin, codex_home),
+        None => client_command(&bin),
+    };
+    let output = command
+        .args(["plugin", subcommand, &selector])
+        .output()
+        .map_err(|e| PluginInstallError::StepFailed(format!("plugin {subcommand}: {e}")))?;
+    classify_removal(
+        output.status.code(),
+        &String::from_utf8_lossy(&output.stdout),
+        &String::from_utf8_lossy(&output.stderr),
+    )
+}
+
+/// A removal that found nothing to remove has done its job.
+fn classify_removal(
+    exit_code: Option<i32>,
+    stdout: &str,
+    stderr: &str,
+) -> Result<(), PluginInstallError> {
+    let combined = format!("{stdout} {stderr}").to_lowercase();
+    if exit_code != Some(0)
+        && (combined.contains("not found") || combined.contains("not installed"))
+    {
+        return Ok(());
+    }
+    classify_step("plugin remove", exit_code, stdout, stderr)
 }
 
 /// Installs the Wenlan plugin for `client_type` (`"claude_code"` /
@@ -1513,5 +1697,130 @@ mod tests {
             install_client_plugin("cursor"),
             Err(PluginInstallError::UnknownClient("cursor".to_string()))
         );
+    }
+
+    #[test]
+    fn a_clone_that_broke_off_is_tried_again_and_other_failures_are_not() {
+        // The error a tester's Codex install hit on 2026-11-13.
+        let broke_off = "marketplace add: Error: git clone https://github.com/wenlan-app/wenlan.git failed with status exit status: 128\nerror: RPC failed; curl 18 Transferred a partial file\nfatal: early EOF";
+        assert!(is_interrupted_download(broke_off));
+        assert!(!is_interrupted_download(
+            "marketplace add: error: unknown subcommand 'marketplace'"
+        ));
+
+        let mut tries = Vec::new();
+        let mut waits = 0;
+        let result = run_with_retries(
+            3,
+            |attempt| {
+                tries.push(attempt);
+                if attempt < 3 {
+                    Err(PluginInstallError::StepFailed(broke_off.to_string()))
+                } else {
+                    Ok(())
+                }
+            },
+            |_| waits += 1,
+        );
+        assert_eq!(result, Ok(()));
+        assert_eq!(tries, vec![1, 2, 3]);
+        assert_eq!(waits, 2);
+
+        let mut tries = 0;
+        let result = run_with_retries(
+            3,
+            |_| {
+                tries += 1;
+                Err(PluginInstallError::StepFailed(broke_off.to_string()))
+            },
+            |_| {},
+        );
+        assert!(result.is_err(), "gives up after the last try");
+        assert_eq!(tries, 3);
+
+        let mut tries = 0;
+        let result = run_with_retries(
+            3,
+            |_| {
+                tries += 1;
+                Err(PluginInstallError::StepFailed(
+                    "plugin add: not found".to_string(),
+                ))
+            },
+            |_| {},
+        );
+        assert!(result.is_err());
+        assert_eq!(tries, 1, "a failure retrying cannot fix is not retried");
+    }
+
+    #[test]
+    fn marketplace_add_fetches_only_the_plugin_folders_each_manifest_points_at() {
+        assert_eq!(
+            marketplace_add_args(CODEX_SPARSE_PATHS),
+            vec![
+                "plugin",
+                "marketplace",
+                "add",
+                WENLAN_REPO,
+                "--sparse",
+                ".agents/plugins",
+                "--sparse",
+                "plugin-codex"
+            ]
+        );
+        assert_eq!(
+            marketplace_add_args(&[]),
+            vec!["plugin", "marketplace", "add", WENLAN_REPO]
+        );
+        // The sparse folders must hold each manifest and the plugin it names,
+        // or the CLI would register an empty marketplace.
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        assert!(repo.join(".agents/plugins/marketplace.json").is_file());
+        assert!(repo.join(".claude-plugin/marketplace.json").is_file());
+        let codex: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(repo.join(".agents/plugins/marketplace.json")).unwrap(),
+        )
+        .unwrap();
+        let codex_plugin = codex["plugins"][0]["source"]["path"]
+            .as_str()
+            .unwrap()
+            .trim_start_matches("./");
+        assert!(CODEX_SPARSE_PATHS.contains(&codex_plugin), "{codex_plugin}");
+        let claude: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(repo.join(".claude-plugin/marketplace.json")).unwrap(),
+        )
+        .unwrap();
+        let claude_plugin = claude["plugins"][0]["source"]["path"].as_str().unwrap();
+        assert!(
+            CLAUDE_SPARSE_PATHS.contains(&claude_plugin),
+            "{claude_plugin}"
+        );
+    }
+
+    #[test]
+    fn an_older_cli_that_refuses_sparse_is_recognised() {
+        assert!(is_unknown_option(
+            "marketplace add: error: unexpected argument '--sparse' found"
+        ));
+        assert!(is_unknown_option(
+            "marketplace add: error: unknown option '--sparse'"
+        ));
+        assert!(!is_unknown_option(
+            "marketplace add: Error: git clone failed: early EOF"
+        ));
+    }
+
+    #[test]
+    fn removing_a_plugin_that_is_already_gone_counts_as_off() {
+        // Claude Code's answer when the plugin was already uninstalled.
+        assert_eq!(
+            classify_removal(Some(1), "", "× Failed to uninstall plugin \"wenlan@7xuanlu-wenlan\": Plugin \"wenlan@7xuanlu-wenlan\" not found in installed plugins"),
+            Ok(())
+        );
+        assert_eq!(
+            classify_removal(Some(0), "Removed plugin `wenlan`", ""),
+            Ok(())
+        );
+        assert!(classify_removal(Some(1), "", "permission denied").is_err());
     }
 }

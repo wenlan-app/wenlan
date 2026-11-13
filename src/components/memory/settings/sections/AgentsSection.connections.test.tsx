@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => ({
   writeMcpConfig: vi.fn(),
   installClientPlugin: vi.fn(),
   installClientSkills: vi.fn(),
-  removeRawMcpEntry: vi.fn(),
+  disconnectClient: vi.fn(),
   clipboardWrite: vi.fn(),
 }));
 
@@ -81,7 +81,7 @@ describe("Connections settings layout", () => {
     mocks.writeMcpConfig.mockResolvedValue([]);
     mocks.installClientPlugin.mockResolvedValue(undefined);
     mocks.installClientSkills.mockResolvedValue("/skills");
-    mocks.removeRawMcpEntry.mockResolvedValue(undefined);
+    mocks.disconnectClient.mockResolvedValue(undefined);
     mocks.clipboardWrite.mockResolvedValue(undefined);
   });
   afterEach(() => {
@@ -116,7 +116,7 @@ describe("Connections settings layout", () => {
     renderSection();
 
     await userEvent.click(await screen.findByRole("button", { name: "Disconnect Cursor" }));
-    expect(mocks.removeRawMcpEntry).toHaveBeenCalledWith("cursor");
+    expect(mocks.disconnectClient).toHaveBeenCalledWith("cursor");
     await waitFor(() => expect(within(section("available")).getByText("Cursor")).toBeInTheDocument());
     expect(within(section("connected")).queryByText("Cursor")).not.toBeInTheDocument();
   });

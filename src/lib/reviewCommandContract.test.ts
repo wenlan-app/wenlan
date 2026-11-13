@@ -244,6 +244,7 @@ const OUTSIDE_THE_REVIEW_SURFACE: readonly string[] = [
   "update_chunk",
   "update_profile",
   "delete_uploaded_file",
+  "disconnect_client",
   "upload_source_files",
   "uploads_folder",
   "wire_state",

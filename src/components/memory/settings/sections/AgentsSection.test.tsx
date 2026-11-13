@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({
   updateAgent: vi.fn(),
   deleteAgent: vi.fn(),
   detectMcpClients: vi.fn(),
-  removeRawMcpEntry: vi.fn(),
+  disconnectClient: vi.fn(),
   writeMcpConfig: vi.fn(),
   installClientPlugin: vi.fn(),
   installClientSkills: vi.fn(),
@@ -73,7 +73,7 @@ describe("AgentsSection connected details", () => {
     mocks.detectMcpClients.mockResolvedValue([client("codex_cli", "ChatGPT / Codex")]);
     mocks.updateAgent.mockResolvedValue(null);
     mocks.deleteAgent.mockResolvedValue(null);
-    mocks.removeRawMcpEntry.mockResolvedValue(undefined);
+    mocks.disconnectClient.mockResolvedValue(undefined);
     mocks.writeMcpConfig.mockResolvedValue([]);
     mocks.installClientPlugin.mockResolvedValue(undefined);
     mocks.installClientSkills.mockResolvedValue("/skills");
@@ -126,7 +126,7 @@ describe("AgentsSection connected details", () => {
     renderSection();
 
     await userEvent.click(await screen.findByRole("button", { name: "Disconnect Cursor" }));
-    expect(mocks.removeRawMcpEntry).toHaveBeenCalledWith("cursor");
+    expect(mocks.disconnectClient).toHaveBeenCalledWith("cursor");
     await waitFor(() => expect(screen.queryByText("Cursor")).not.toBeInTheDocument());
   });
 
