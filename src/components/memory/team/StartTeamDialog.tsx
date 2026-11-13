@@ -4,12 +4,15 @@
 // owner's own name (how the team sees what they write here) and the address
 // the others reach this computer at. The team listener then stays on, after
 // restarts too, until it is turned off in the same place.
+// On Windows, Windows Firewall blocks other computers from a new listener on
+// its own, without asking, on a network it calls public. So before the
+// listener starts, Windows asks its administrator once to let teammates in.
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { getProfile, teamStart, type TeamStatus } from "../../../lib/tauri";
+import { getProfile, teamFirewall, teamFirewallAllow, teamStart, type TeamStatus } from "../../../lib/tauri";
 import { SHARES_KEY } from "../sharing/sharing";
-import { TEAM_KEY } from "../sharing/team";
+import { TEAM_FIREWALL_KEY, TEAM_KEY } from "../sharing/team";
 import "../sharing/sharing.css";
 
 export function StartTeamDialog({ status, onClose, onStarted }: {
@@ -26,6 +29,7 @@ export function StartTeamDialog({ status, onClose, onStarted }: {
   const [person, setPerson] = useState<string | null>(null);
   const [address, setAddress] = useState(status?.url || suggested[0] || "");
   const [pending, setPending] = useState(false);
+  const [askingWindows, setAskingWindows] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -41,17 +45,27 @@ export function StartTeamDialog({ status, onClose, onStarted }: {
     setPending(true);
     setError(null);
     try {
+      // Saying no here does not stop the team: Settings › Team then says
+      // other computers can't connect, with the same button.
+      const wall = await teamFirewall().catch(() => null);
+      if (wall && !wall.open) {
+        setAskingWindows(true);
+        await teamFirewallAllow(wall).catch(() => undefined);
+        setAskingWindows(false);
+      }
       await teamStart(name.trim(), yourName.trim(), address.trim());
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: TEAM_KEY }),
         queryClient.invalidateQueries({ queryKey: SHARES_KEY }),
         queryClient.invalidateQueries({ queryKey: ["profile"] }),
+        queryClient.invalidateQueries({ queryKey: TEAM_FIREWALL_KEY }),
       ]);
       onStarted();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
       setPending(false);
+      setAskingWindows(false);
     }
   };
 
@@ -87,7 +101,7 @@ export function StartTeamDialog({ status, onClose, onStarted }: {
         {error && <p className="share-warning" role="alert">{error}</p>}
         <div className="share-actions">
           <button type="button" className="share-secondary" onClick={onClose} disabled={pending}>{t("sharing.cancel")}</button>
-          <button type="submit" className="share-primary" disabled={!ready}>{pending ? t("team.start.starting") : t("team.start.action")}</button>
+          <button type="submit" className="share-primary" disabled={!ready}>{askingWindows ? t("team.start.askingWindows") : pending ? t("team.start.starting") : t("team.start.action")}</button>
         </div>
       </form>
     </dialog>

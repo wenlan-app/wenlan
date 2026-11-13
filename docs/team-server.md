@@ -83,6 +83,16 @@ stay. Invite people from the switch at the top left (**Invite someone…**),
 and make team Spaces with **+ New** on the team's side; open each one to
 everyone, or to some people, from the line under its title.
 
+On Windows, Windows Firewall keeps other computers out of a new listener,
+and on a network Windows calls public it does so without asking. So before
+the team starts, Windows asks once (the administrator prompt) to let
+teammates in: Wenlan removes the block rules Windows made for
+`wenlan-server.exe` and adds one inbound rule, **Wenlan team**, for that
+program on TCP. If you say no, the team still starts, and Settings › Team
+says other computers can't connect yet, with an **Allow** button that asks
+again. The rule covers private and domain networks, and public ones only
+when the computer is on one.
+
 ### A box nobody sits at (Docker on a NAS or a small cloud machine)
 
 1. On the box, start it with the address people reach it at:

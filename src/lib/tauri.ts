@@ -1180,6 +1180,24 @@ export async function teamStart(name: string, person: string, url?: string): Pro
   return invoke("team_start", { name, person, url: url ?? null });
 }
 
+/** On Windows, whether other computers get through Windows Firewall to
+ *  this computer's team listener; `null` elsewhere (nothing in the way). */
+export interface TeamFirewall {
+  program: string;
+  open: boolean;
+  public_network: boolean;
+}
+
+export async function teamFirewall(): Promise<TeamFirewall | null> {
+  return invoke("team_firewall");
+}
+
+/** Lets teammates through Windows Firewall: Windows asks its administrator
+ *  once. Rejects with "declined" when the person says no. */
+export async function teamFirewallAllow(wall: TeamFirewall): Promise<void> {
+  await invoke("team_firewall_allow", { program: wall.program, publicNetwork: wall.public_network });
+}
+
 /** Turns the team listener off; the team, its people and Spaces stay. */
 export async function teamStop(): Promise<TeamStatus> {
   return invoke("team_stop");
