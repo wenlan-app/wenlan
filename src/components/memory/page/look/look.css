@@ -58,14 +58,25 @@
   align-items: center;
   gap: 8px;
 }
-.home-look-remove {
-  padding: 3px 8px;
+.home-look-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 160px;
+  padding: 4px;
+}
+.home-look-menu button {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
   border: 0;
   border-radius: var(--mem-r-2);
   background: transparent;
-  color: var(--mem-text-secondary);
+  color: var(--mem-text);
   font: 400 13px/1.5 var(--mem-font-body);
+  text-align: left;
   white-space: nowrap;
   cursor: pointer;
 }
-.home-look-remove:hover { color: var(--mem-text); background: var(--mem-hover); }
+.home-look-menu button:hover,
+.home-look-menu button:focus-visible { background: var(--mem-hover); outline: none; }

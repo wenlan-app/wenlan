@@ -502,7 +502,8 @@ and wait for evidence that people need them.
   from your Spaces and pages (newest first, never their text), and Private
   home opens on it. The night line stays above it. The pencil at home's top
   right shows the usual home and lights up; pressed again, the view is back.
-  While the usual home shows, one quiet button takes the view off, with Undo.
+  A ⋯ beside the pencil holds "Remove HTML view", with Undo; no text button
+  sits on home (Qi-Xuan: 「Remove html view 實在是太醜了」).
   A team's home and the example keep the usual home; a view that can't show
   falls back to the usual home with one line.
   原文：「要不把首頁也放進來」→「現在就做，趕 0.22」（2026-11-12）。

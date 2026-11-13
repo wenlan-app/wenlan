@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useCallback } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { DotsThree } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { removePageLook, restorePageLook, type LookData, type Page } from "../../../lib/tauri";
@@ -34,11 +35,27 @@ export function useHomeLook({ supported, pages }: { supported: boolean; pages: r
 
 export type HomeLookState = ReturnType<typeof useHomeLook>;
 
-/** The pencil, and while the usual home shows, the way to take the view off. */
+/** The pencil, and a ⋯ menu holding the way to take the view off. */
 export function HomeLookBar({ homeLook }: { homeLook: HomeLookState }) {
   const { t } = useTranslation();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const barRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const close = (event: PointerEvent) => {
+      if (!barRef.current?.contains(event.target as Node)) setMenuOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") setMenuOpen(false); };
+    document.addEventListener("pointerdown", close);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("pointerdown", close);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [menuOpen]);
   if (!homeLook.hasLook) return null;
   const remove = async () => {
+    setMenuOpen(false);
     try {
       const removedId = await removePageLook(HOME_LOOK_ID);
       await homeLook.refresh();
@@ -57,17 +74,30 @@ export function HomeLookBar({ homeLook }: { homeLook: HomeLookState }) {
     }
   };
   return (
-    <div className="home-look-bar" data-testid="home-look-bar">
-      {homeLook.shown ? null : (
-        <button type="button" className="home-look-remove" onClick={() => { void remove(); }}>
-          {t("pageLook.remove")}
-        </button>
-      )}
+    <div className="home-look-bar" data-testid="home-look-bar" ref={barRef}>
       <LookPencil
         editing={!homeLook.shown}
         label={t("pageLook.usualHome")}
         onChange={(next) => homeLook.choose(next)}
       />
+      <button
+        type="button"
+        className="mem-icon-action"
+        aria-label={t("pageLook.homeActions")}
+        title={t("pageLook.homeActions")}
+        aria-haspopup="menu"
+        aria-expanded={menuOpen}
+        onClick={() => setMenuOpen((open) => !open)}
+      >
+        <DotsThree aria-hidden="true" size={20} />
+      </button>
+      {menuOpen ? (
+        <div className="mem-popover-surface home-look-menu" role="menu" aria-label={t("pageLook.homeActions")}>
+          <button type="button" role="menuitem" onClick={() => { void remove(); }}>
+            {t("pageLook.remove")}
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

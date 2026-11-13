@@ -77,7 +77,8 @@ describe("UX-LOOK-10 home's HTML view", () => {
     expect(doc).not.toContain("Acme launch plan");
     expect(doc).not.toContain("Acme roadmap");
     expect(screen.queryByText("usual home")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Remove HTML view" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Remove HTML view" })).toBeNull();
+    expect(screen.queryByText("Remove HTML view")).toBeNull();
   });
 
   it("the pencil shows the usual home, lights up, and brings the view back", async () => {
@@ -93,12 +94,13 @@ describe("UX-LOOK-10 home's HTML view", () => {
     expect(await screen.findByTestId("page-look-frame")).toBeTruthy();
   });
 
-  it("takes the view off from the usual home, keeping every version", async () => {
+  it("takes the view off from the ⋯ menu, keeping every version", async () => {
     renderHome();
     await screen.findByTestId("page-look-frame");
     fireEvent.click(screen.getByRole("button", { name: "Show the usual home" }));
     mocks.getPageLook.mockResolvedValue({ look: null, versions: [] });
-    fireEvent.click(screen.getByRole("button", { name: "Remove HTML view" }));
+    fireEvent.click(screen.getByRole("button", { name: "Home actions" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Remove HTML view" }));
     await waitFor(() => expect(mocks.removePageLook).toHaveBeenCalledWith(HOME_LOOK_ID));
     await waitFor(() => expect(screen.queryByTestId("home-look-bar")).toBeNull());
     expect(screen.getByText("usual home")).toBeTruthy();
