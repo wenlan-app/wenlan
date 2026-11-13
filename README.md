@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  What you work out in AI chats gets lost, and notes need constant upkeep.<br>
+  Notes need constant upkeep, plugins break, and every new AI chat starts from zero.<br>
   <strong>Set up once. Your AI tools save what matters, keep your pages organized, and bring it back in your next chat; you see every change and can undo it.</strong><br>
   Open-source Obsidian alternative that works with your existing vault.
 </p>

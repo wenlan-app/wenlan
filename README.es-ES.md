@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=8c440ef85f8c04825c2160388b8c13688d575403262f80a35bd9bfe5b9620cba -->
+<!-- README_SYNC: source=README.md sha256=9f094ffed80b3f1ace444f71c374825e2bf74c138ffa70b8ff3b3d90b4a77fc1 -->
 
 <p align="center">
   <picture>
@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  Lo que resuelves en los chats de IA se pierde, y las notas exigen mantenimiento constante.<br>
+  Las notas exigen mantenimiento constante, los plugins se rompen y cada chat nuevo con la IA empieza de cero.<br>
   <strong>Configúralo una vez. Tus herramientas de IA guardan lo importante, mantienen tus páginas organizadas y te lo traen de vuelta en tu próximo chat; ves cada cambio y puedes deshacerlo.</strong><br>
   Alternativa de código abierto a Obsidian que funciona con tu bóveda actual.
 </p>

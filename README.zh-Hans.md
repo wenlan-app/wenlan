@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=8c440ef85f8c04825c2160388b8c13688d575403262f80a35bd9bfe5b9620cba -->
+<!-- README_SYNC: source=README.md sha256=9f094ffed80b3f1ace444f71c374825e2bf74c138ffa70b8ff3b3d90b4a77fc1 -->
 
 <p align="center">
   <picture>
@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  在 AI 对话里想通的事会丢掉，笔记又得一直维护。<br>
+  笔记要一直整理，插件会坏，每次开新对话又要从头解释。<br>
   <strong>设置一次就好。你的 AI 工具会存下重要的内容、把笔记整理好，下次对话再带回来；改了什么都看得到，也能还原。</strong><br>
   开源的 Obsidian 替代品，也能直接接上你现有的仓库。
 </p>
