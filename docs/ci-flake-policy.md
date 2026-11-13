@@ -31,15 +31,17 @@ sqlite3) also retry with a time limit; that is not a test retry.
    deterministic problem and should be debugged without more reruns.
 3. **Two matching occurrences require an owner and a fix.** Two independent
    occurrences of the same test and symptom, on any branches or runners, are
-   enough to open a tracking issue and prioritize deflaking. Prefer event-driven
+   enough to prioritize deflaking. Record both occurrences in the fixing PR (or,
+   if no one is fixing it yet, in the task's handoff); agents do not open a
+   tracking issue unless the maintainer asks. Prefer event-driven
    waits (`wait_until_reached`, as used in
    `crates/wenlan-core/src/lint/runner.rs`) or poll-with-deadline (as
    used in `crates/wenlan-cli/src/commands/service.rs`). Do not use bare sleeps
    or single-shot assertions on asynchronous or process state.
 4. **Quarantine must fail closed.** Do not add `#[ignore]` or exclude a test from
    its owning plan unless the same PR first wires that exact test into an
-   explicit, visible, non-blocking main-push or scheduled job. Link a tracking
-   issue with an owner, removal condition, and deadline. Without that replacement
+   explicit, visible, non-blocking main-push or scheduled job. Ask the maintainer
+   for a tracking issue with an owner, removal condition, and deadline. Without that replacement
    execution path, fix the test or leave the required check red; never disable
    or reroute an entire owning CI lane to hide one flaky test. The existing
    [`main-canary.yml`](../.github/workflows/main-canary.yml) runs selected eval
