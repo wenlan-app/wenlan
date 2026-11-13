@@ -183,11 +183,9 @@ describe("TeamSection", () => {
     expect(teamFirewall).not.toHaveBeenCalled();
   });
 
-  it("asks Windows to let teammates in before the team starts, and starts it either way", async () => {
+  it("starts the team without a prompt of its own: Windows asks itself, and Settings follows up", async () => {
     vi.mocked(teamStatus).mockResolvedValue({ members: [], spaces: [], listening: null, suggested_urls: ["http://192.168.1.20:7879"] });
     vi.mocked(getProfile).mockResolvedValue({ display_name: "Amy" } as Awaited<ReturnType<typeof getProfile>>);
-    vi.mocked(teamFirewall).mockResolvedValue(blocked);
-    vi.mocked(teamFirewallAllow).mockRejectedValue(new Error("declined"));
     vi.mocked(teamStart).mockResolvedValue({ members: [], spaces: [], listening: "0.0.0.0:7879" });
     renderSection();
     await userEvent.click(await screen.findByRole("button", { name: "Start…" }));
@@ -195,7 +193,6 @@ describe("TeamSection", () => {
     await vi.waitFor(() => expect(screen.getByLabelText(/^Your name/)).toHaveValue("Amy"));
     await userEvent.click(screen.getByRole("button", { name: "Start" }));
     await vi.waitFor(() => expect(teamStart).toHaveBeenCalledWith("Acme", "Amy", "http://192.168.1.20:7879"));
-    expect(teamFirewallAllow).toHaveBeenCalledWith(blocked);
-    expect(vi.mocked(teamFirewallAllow).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(teamStart).mock.invocationCallOrder[0]);
+    expect(teamFirewallAllow).not.toHaveBeenCalled();
   });
 });

@@ -56,11 +56,12 @@ export function useTeamStatus({ enabled = true }: { readonly enabled?: boolean }
 export const TEAM_FIREWALL_KEY = ["team-firewall"] as const;
 
 /** On Windows, whether teammates get through Windows Firewall to this
- *  computer's team; `null` elsewhere. Asking takes Windows a second or two,
+ *  computer's team; `null` elsewhere. Asking takes Windows a few seconds,
  *  so it is asked only while the team is on, and again when the window
- *  comes back to the front (the network may have changed). */
+ *  comes back to the front: after Windows' own alert is answered, or on
+ *  another network. */
 export function useTeamFirewall(enabled: boolean) {
-  return useQuery({ queryKey: TEAM_FIREWALL_KEY, queryFn: teamFirewall, retry: false, enabled, staleTime: 30_000, refetchOnWindowFocus: true });
+  return useQuery({ queryKey: TEAM_FIREWALL_KEY, queryFn: teamFirewall, retry: false, enabled, staleTime: 5_000, refetchOnWindowFocus: true });
 }
 
 /** Whether `name` is the same person as `member`: trimmed, any letter case. */
