@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.21.7](https://github.com/wenlan-app/wenlan/compare/v0.21.6...v0.21.7) (2026-11-13)
+
+
+### Features
+
+* **app:** ship the desktop app on Linux as an AppImage and a .deb ([#1274](https://github.com/wenlan-app/wenlan/issues/1274)) ([9838d94](https://github.com/wenlan-app/wenlan/commit/9838d94eda080314473bec98af017581765f5c30))
+* **looks:** home can have an HTML view too ([#1277](https://github.com/wenlan-app/wenlan/issues/1277)) ([3fcd350](https://github.com/wenlan-app/wenlan/commit/3fcd3509a5e46636b937432f6dd64830ed49d80b))
+* **looks:** home's HTML view is part of the theme, managed in Settings › Appearance ([#1279](https://github.com/wenlan-app/wenlan/issues/1279)) ([5b8cf56](https://github.com/wenlan-app/wenlan/commit/5b8cf56ecd14bd6182123f6e60502add8fa745cf))
+* **looks:** your AI tool can design a page, filled with the page's live content ([#1271](https://github.com/wenlan-app/wenlan/issues/1271)) ([220febd](https://github.com/wenlan-app/wenlan/commit/220febd3268c9d476ed84414041fdd8131577bb3))
+* **pages:** keep each Space's pages in a folder of its own ([#1276](https://github.com/wenlan-app/wenlan/issues/1276)) ([dd22754](https://github.com/wenlan-app/wenlan/commit/dd22754ea6344c067b9446fe8516794c1cfb17bb))
+* **sync:** one switch syncs the whole library to your other computers and phone AI ([#1272](https://github.com/wenlan-app/wenlan/issues/1272)) ([af6411d](https://github.com/wenlan-app/wenlan/commit/af6411da6c4666d2c9c01419ec98ad75ddb7cb8b))
+* **team:** one-line Docker team server the app joins by itself, renamable team Spaces, HTTPS, NAS, offline ([#1273](https://github.com/wenlan-app/wenlan/issues/1273)) ([24c679b](https://github.com/wenlan-app/wenlan/commit/24c679be1ca26f9bd9f6321332d812af63c6b874))
+
+
+### Bug Fixes
+
+* **team:** say when Windows Firewall keeps teammates out, and let them in from Settings ([#1278](https://github.com/wenlan-app/wenlan/issues/1278)) ([1467e36](https://github.com/wenlan-app/wenlan/commit/1467e3663432f71d160f0c64ab26e42629da20a1))
+* tester hotfix: import several files/Word/zip, plugin setup over slow networks, one-click off, unreadable folder files, ChatGPT saves ([#1280](https://github.com/wenlan-app/wenlan/issues/1280)) ([5807d70](https://github.com/wenlan-app/wenlan/commit/5807d70a686ef4a8992ffe6ebb9249e52805dbf8))
+
 ## [0.21.6](https://github.com/wenlan-app/wenlan/compare/v0.21.5...v0.21.6) (2026-11-12)
 
 
