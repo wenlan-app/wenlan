@@ -1292,7 +1292,7 @@ carrying the authority of agreement.
 | `core/db.rs::find_matching_page_scoped` | `pub` | no | no | — | `core/db.rs::find_matching_page_with_policy` |
 | `core/db.rs::find_page_to_grow_scoped` | `pub(crate)` | no | no | — | `core/db.rs::find_matching_page_with_policy` |
 | `core/db.rs::folded_title_owners_by_scope` | `pub(crate)` | no | no | — | `core/db.rs::folded_title_owners_by_scope_on_conn` |
-| `core/db.rs::get_page` | `pub` | no | **yes** | `server/knowledge_routes.rs::handle_resolve_embed`, `server/original_routes.rs::handle_keep_original`, `server/page_map_routes.rs::ensure_page_is_active`, `server/page_map_routes.rs::visible_page`, `server/page_routes.rs::archive_page_for`, `server/page_routes.rs::handle_create_page_inner`, `server/page_routes.rs::handle_delete_page`, `server/page_routes.rs::handle_get_page_sources`, `server/page_routes.rs::handle_refresh_page`, `server/page_routes.rs::handle_refresh_page_inner`, `server/page_routes.rs::handle_restore_page_version`, `server/page_routes.rs::handle_update_page`, `server/page_routes.rs::space_locked_write_error`, `server/sentence_routes.rs::require_visible_page`, `server/steep_new_routes.rs::handle_steep_new_commit`, `server/steep_routes.rs::handle_steep_commit` | `core/db.rs::get_page_inner` |
+| `core/db.rs::get_page` | `pub` | no | **yes** | `server/knowledge_routes.rs::handle_resolve_embed`, `server/original_routes.rs::handle_keep_original`, `server/page_map_routes.rs::ensure_page_is_active`, `server/page_map_routes.rs::visible_page`, `server/page_routes.rs::archive_page_for`, `server/page_routes.rs::handle_create_page_inner`, `server/page_routes.rs::handle_delete_page`, `server/page_routes.rs::handle_get_page_sources`, `server/page_routes.rs::handle_refresh_page`, `server/page_routes.rs::handle_refresh_page_inner`, `server/page_routes.rs::handle_restore_page_version`, `server/page_routes.rs::handle_update_page`, `server/page_routes.rs::space_locked_write_error`, `server/sentence_routes.rs::require_visible_page`, `server/steep_new_routes.rs::handle_steep_new_commit_inner`, `server/steep_routes.rs::handle_steep_commit` | `core/db.rs::get_page_inner` |
 | `core/db.rs::get_page_browse` | `pub` | no | no | — | `core/db.rs::get_page_inner` |
 | `core/db.rs::insert_document_source_page_at_hash` | `pub(crate)` | no | no | — | `core/db.rs::insert_page_with_kind_inner` |
 | `core/db.rs::insert_page_with_basis` | `pub(crate)` | no | no | — | `core/db.rs::insert_page_with_kind_inner` |
@@ -1368,7 +1368,7 @@ carrying the authority of agreement.
 | `core/lint/kg/query.rs::load` | `pub(super)` | yes | no | — | `core/lint/kg/query.rs::entity_integrity`, `core/lint/kg/query.rs::observation_integrity`, `core/lint/kg/query/aggregate.rs::advisory_metrics` |
 | `core/lint/semantic_candidates.rs::load` | `pub(super)` | yes | no | — | `core/lint/semantic_candidates.rs::load_entities` |
 | `core/maintenance.rs::run_maintenance_stage_slice` | `pub` | no | **yes** | `server/scheduler.rs::fire_maintenance_stage_safe` | `core/db.rs::get_stale_page_after`, `core/db/maintenance_duplicate_reads.rs::scan_near_duplicate_slice`, `core/db/maintenance_retro_scan.rs::scan_automatic_retro_stub_slice` |
-| `core/onboarding.rs::check_first_page` | `pub` | no | **yes** | `server/steep_new_routes.rs::handle_steep_new_commit` | `core/db.rs::oldest_active_page` |
+| `core/onboarding.rs::check_first_page` | `pub` | no | **yes** | `server/steep_new_routes.rs::handle_steep_new_commit_inner` | `core/db.rs::oldest_active_page` |
 | `core/page_map_improve.rs::source_suggestions` | `private` | no | no | — | `core/db.rs::find_active_page_id_by_title` |
 | `core/page_titles.rs::strict_same_title_note` | `pub` | no | no | — | `core/db/steep_new.rs::notes_titled`, `core/db/steep_new.rs::recent_notes` |
 | `core/post_ingest.rs::run_post_ingest_enrichment` | `pub` | no | no | — | `core/db.rs::get_entity_detail` |
@@ -1388,7 +1388,7 @@ carrying the authority of agreement.
 | `core/steep.rs::steep_work` | `private` | no | no | — | `core/db/steep.rs::list_steep_code_pages`, `core/db/steep.rs::list_steep_pages` |
 | `core/steep.rs::waiting_page_ids` | `pub` | no | **yes** | `server/steep_routes.rs::handle_steep_worklist` | `core/db/steep.rs::list_steep_code_pages`, `core/db/steep.rs::list_steep_pages` |
 | `core/steep_automatic.rs::rewrite_one_code_page` | `pub` | no | no | — | `core/db/steep.rs::list_steep_code_pages` |
-| `core/steep_new.rs::commit_new` | `pub` | no | **yes** | `server/steep_new_routes.rs::handle_steep_new_commit` | `core/db/steep_new.rs::entity_page_titles` |
+| `core/steep_new.rs::commit_new` | `pub` | no | **yes** | `server/steep_new_routes.rs::handle_steep_new_commit_inner` | `core/db/steep_new.rs::entity_page_titles` |
 | `core/steep_new.rs::existing_page` | `private` | no | no | — | `core/db/steep_new.rs::entity_page_titles`, `core/db/steep_new.rs::notes_about_entity`, `core/db/steep_new.rs::notes_titled`, `core/db/steep_new.rs::recent_notes` |
 | `core/steep_new.rs::link_targets` | `private` | no | no | — | `core/db/steep_new.rs::notes_sharing_entities`, `core/db/steep_new.rs::recent_notes` |
 | `core/steep_new.rs::list_new` | `pub` | no | **yes** | `server/steep_new_routes.rs::handle_steep_new_list` | `core/db/steep_new.rs::recent_notes` |
@@ -1614,7 +1614,7 @@ carrying the authority of agreement.
 | `core/steep.rs::claim_as` | `private` | yes | no | — | `core/db.rs::get_page` |
 | `core/steep.rs::commit` | `pub` | yes | no | — | `core/db.rs::get_page` |
 | `core/steep.rs::list_work` | `pub` | no | **yes** | `server/steep_routes.rs::handle_steep_worklist` | `core/steep.rs::steep_work` |
-| `core/steep_new.rs::attach_new` | `pub` | no | **yes** | `server/steep_new_routes.rs::handle_steep_new_commit` | `core/steep_new.rs::existing_page` |
+| `core/steep_new.rs::attach_new` | `pub` | no | **yes** | `server/steep_new_routes.rs::handle_steep_new_commit_inner` | `core/steep_new.rs::existing_page` |
 | `core/steep_new.rs::attach_sources` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/steep_new.rs::claim_new_on` | `pub` | no | **yes** | `server/steep_new_routes.rs::handle_steep_new_claim` | `core/steep_new.rs::existing_page`, `core/steep_new.rs::link_targets` |
 | `core/steep_new.rs::links_new` | `pub` | no | **yes** | `server/steep_new_routes.rs::handle_steep_new_links` | `core/steep_new.rs::existing_page`, `core/steep_new.rs::link_targets` |
@@ -1676,7 +1676,7 @@ carrying the authority of agreement.
 | `server/scheduler.rs::fire_maintenance_stage_safe` | `private` | no | no | `server/scheduler.rs::spawn_scheduler` | `core/maintenance.rs::run_maintenance_stage_slice` |
 | `server/sentence_routes.rs::require_visible_page` | `private` | no | no | `server/sentence_routes.rs::handle_accept_sentence_proposal`, `server/sentence_routes.rs::handle_flag_sentence`, `server/sentence_routes.rs::handle_get_page_sentences`, `server/sentence_routes.rs::handle_propose_sentence`, `server/sentence_routes.rs::handle_recheck_sentence`, `server/sentence_routes.rs::handle_reject_sentence_proposal`, `server/sentence_routes.rs::handle_revert_sentences` | `core/db.rs::get_page` |
 | `server/source_lifecycle_routes.rs::read` | `private` | yes | no | — | `core/db/citation_provenance.rs::source_lifecycle` |
-| `server/steep_new_routes.rs::handle_steep_new_commit` | `pub` | no | no | — | `core/db.rs::get_page`, `core/onboarding.rs::check_first_page`, `core/steep_new.rs::commit_new` |
+| `server/steep_new_routes.rs::handle_steep_new_commit_inner` | `private` | no | no | `server/steep_new_routes.rs::handle_steep_new_commit` | `core/db.rs::get_page`, `core/onboarding.rs::check_first_page`, `core/steep_new.rs::commit_new` |
 | `server/steep_new_routes.rs::handle_steep_new_list` | `pub` | no | no | — | `core/steep_new.rs::list_new` |
 | `server/steep_routes.rs::handle_steep_commit` | `pub` | no | no | — | `core/db.rs::get_page` |
 | `server/steep_routes.rs::handle_steep_worklist` | `pub` | no | no | — | `core/steep.rs::waiting_page_ids` |
@@ -1860,6 +1860,7 @@ carrying the authority of agreement.
 | `server/spaces_routes.rs::host_sync` | `private` | no | no | `server/spaces_routes.rs::shared_sync` | `core/shared_space/mod.rs::sync_space` |
 | `server/spaces_routes.rs::shared_sync` | `private` | yes | no | — | `core/shared_space/mod.rs::sync_space` |
 | `server/steep_new_routes.rs::handle_steep_new_claim` | `pub` | no | no | — | `core/steep_new.rs::claim_new_on` |
+| `server/steep_new_routes.rs::handle_steep_new_commit` | `pub` | no | no | — | `server/steep_new_routes.rs::handle_steep_new_commit_inner` |
 | `server/steep_new_routes.rs::handle_steep_new_links` | `pub` | no | no | — | `core/steep_new.rs::links_new` |
 | `server/steep_new_routes.rs::handle_steep_new_organize` | `pub` | no | no | — | `core/steep_new.rs::organize_new` |
 | `server/team_routes.rs::handle_host_space` | `pub` | no | no | — | `core/shared_space/mod.rs::sync_space` |
