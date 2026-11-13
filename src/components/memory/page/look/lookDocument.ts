@@ -612,6 +612,7 @@ export function knownPageIds(data: LookData): Set<string> {
   const ids = new Set<string>([data.page.id]);
   for (const page of data.space.pages) ids.add(page.id);
   for (const link of data.page.links) if (link.id) ids.add(link.id);
+  for (const page of data.home?.pages ?? []) ids.add(page.id);
   return ids;
 }
 

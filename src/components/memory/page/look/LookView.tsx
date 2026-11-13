@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
-import { getPageLookData, reportPageLookError, type PageLook } from "../../../../lib/tauri";
+import { getPageLookData, reportPageLookError, type LookData, type PageLook } from "../../../../lib/tauri";
 import { withLookImages } from "./lookImages";
 import { LookFrame } from "./LookFrame";
 import { allowedSites, allowSites, declaredSites } from "./lookSites";
@@ -20,12 +20,14 @@ function mark(pageId: string, lookId: number | null) {
  * be read, or the look errors or stalls before it is ready, it calls
  * `onFailed` and the page shows its text (UX-LOOK-3).
  */
-export function LookView({ pageId, title, look, version, onFailed, onOpenPage, onCheck }: {
+export function LookView({ pageId, title, look, version, adjust, onFailed, onOpenPage, onCheck }: {
   pageId: string;
   title: string;
   look: PageLook;
   /** Changes when the page's text does, so the data is read again. */
   version: number | string;
+  /** Narrows the data before the look gets it, e.g. home's to one side. Keep it stable. */
+  adjust?: (data: LookData) => LookData;
   onFailed: () => void;
   onOpenPage?: (pageId: string) => void;
   onCheck?: (text: string, occurrence: number, done: boolean) => void;
@@ -61,7 +63,8 @@ export function LookView({ pageId, title, look, version, onFailed, onOpenPage, o
   const asking = declared.filter((site) => !allowedHere.includes(site));
   const askKey = `${pageId}:${asking.join(" ")}`;
 
-  if (!query.data) return null;
+  const data = useMemo(() => (query.data && adjust ? adjust(query.data) : query.data), [query.data, adjust]);
+  if (!data) return null;
   const report = (message: string) => {
     void reportPageLookError(pageId, message).catch(() => undefined);
   };
@@ -78,7 +81,7 @@ export function LookView({ pageId, title, look, version, onFailed, onOpenPage, o
       </div>
     )}
     <LookFrame
-      data={query.data}
+      data={data}
       html={look.html}
       title={title}
       sites={sites}

@@ -28,6 +28,7 @@ import "./archivedNotes.css";
 import { useShares } from "../sharing/sharing";
 import { useScope } from "../team/scope";
 import { TeamChanges, TeamWaiting } from "../team/TeamPage";
+import { HomeLookBar, HomeLookView, useHomeLook } from "./HomeLook";
 
 interface PagesOverviewProps {
   readonly inventoryScope?: WikiInventoryScope;
@@ -77,7 +78,8 @@ export function PagesOverview({
   // Spaces and pages, plus what waits for you and who changed what. Getting
   // started, the night and vault questions are the person's own and stay on
   // Private.
-  const team = useScope().team;
+  const scope = useScope();
+  const team = scope.team;
   const checklist = useGettingStartedState();
   const [adding, setAdding] = useState<false | "menu" | "folder" | "chats">(false);
   // What the user picked on the welcome screen happens here, once: the
@@ -160,8 +162,13 @@ export function PagesOverview({
         shares={shares.data}
       />
     );
+  // An AI-made HTML view of home (UX-LOOK-10), on Private home only. It
+  // stands in for the Spaces and pages; the night line and anything that
+  // needs the person stay where they are.
+  const homeLook = useHomeLook({ supported: !team && !example && !onboarding && daemonReady, pages });
+  const lookShown = homeLook.shown;
   // With pages to list, "open a page" has nothing to add.
-  const listsPages = newPages !== null && recentPages(pages).length > 0;
+  const listsPages = lookShown || (newPages !== null && recentPages(pages).length > 0);
 
   return (
     <section
@@ -205,6 +212,7 @@ export function PagesOverview({
           under it as one row of cards that scrolls sideways, so neither pushes
           the other down. */}
       <div className={`home-columns${thingsOn ? "" : " home-columns--spaces"}`}>
+        <HomeLookBar homeLook={homeLook} />
         {/* What last night steeped spans every Space and the Wiki, so it
             opens home on its own line. "What you're working on" carries its
             own steeped line, so while it is on only the "not written yet"
@@ -214,10 +222,11 @@ export function PagesOverview({
         {team ? <TeamWaiting group={team} onOpenPage={onSelectPage} /> : null}
         {/* While the getting-started card is open it is the screen: nothing
             is being worked on yet, so no Spaces lead above it. */}
-        {example || onboarding ? null : thingsOn
+        <HomeLookView homeLook={homeLook} inScope={scope.inScope} onOpenPage={onSelectPage} />
+        {example || onboarding || lookShown ? null : thingsOn
           ? <WorkingOn onSelectSpace={onSelectSpace} onOpenThing={onOpenThing} onReplayNight={onReplayNight} />
           : <HomeSpaces pages={pages} onSelectSpace={onSelectSpace} onBrowseSpaces={onBrowseSpaces} />}
-        {newPages}
+        {lookShown ? null : newPages}
         {team ? <TeamChanges group={team} /> : null}
         {/* With no AI tool connected there is nothing to be working on yet:
             the pages lead, and one line says what connecting adds. Only

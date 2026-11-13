@@ -3843,6 +3843,15 @@ export interface LookData {
     more: boolean;
   };
   theme: { mode: string };
+  /** Only in the home screen's look (UX-LOOK-10). */
+  home?: LookHomeData;
+}
+
+/** `window.wenlan.home`: the person's Spaces and pages, changed last first. */
+export interface LookHomeData {
+  spaces: { name: string; description: string; starred: boolean; modified: string }[];
+  pages: { id: string; title: string; space: string; created: string; modified: string; summary: string }[];
+  more: boolean;
 }
 
 export interface LookSection {

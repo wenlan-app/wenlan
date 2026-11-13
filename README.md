@@ -49,6 +49,7 @@ I started Wenlan because my notes, documents, and AI chats were scattered, and k
 - **Bring what you have.** Obsidian vaults, notes, documents, and AI chats. [Full list](#what-can-i-bring-in).
 - **You decide what AI changes.** See every change, undo it, and choose which pages wait for your OK.
 - **Pages cite their sources.** A citation opens the original; a page whose citations mostly don't match isn't saved.
+- **A page can be text or HTML.** Ask your AI to make an HTML view of any page, or keep the HTML it made as an HTML page of its own. An HTML view shows the page's live text, so you never redo it.
 - **Share a Space.** With a colleague, or across your own computers, through a Google Drive or iCloud Drive folder.
 
 <a id="how-it-compares"></a>

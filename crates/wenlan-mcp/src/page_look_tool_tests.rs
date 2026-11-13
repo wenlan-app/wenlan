@@ -190,7 +190,7 @@ async fn setting_a_look_puts_the_html_and_says_what_the_person_sees() {
         .await
         .unwrap();
     assert_ne!(result.is_error, Some(true));
-    assert!(text_of(&result).contains("Look | Text"));
+    assert!(text_of(&result).contains("pencil in the page's top bar"));
 }
 
 #[tokio::test]
@@ -315,4 +315,80 @@ fn the_look_tools_stay_local_and_out_of_the_remote_profiles() {
         .collect();
     assert!(names.contains(&"read_page_look".to_string()));
     assert!(names.contains(&"set_page_look".to_string()));
+}
+
+/// UX-LOOK-10: `@home` names the home screen; the AI reads its pages and
+/// Spaces and the home rules, and saving says where the person sees it. No
+/// page lookup runs, so a page titled "@home" or "Home" is never hit.
+#[tokio::test]
+async fn at_home_reads_and_sets_the_home_screen_look() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/pages/home/look"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({"look": null, "versions": []})),
+        )
+        .mount(&mock)
+        .await;
+    let mut data = look_data_json();
+    data["page"] = serde_json::json!({
+        "id": "home", "title": "", "space": "", "created": "", "modified": "",
+        "text": "", "html": "", "sections": [], "links": []
+    });
+    data["space"] = serde_json::json!({"name": "", "pages": [], "more": false});
+    data["home"] = serde_json::json!({
+        "spaces": [{"name": "Travel", "description": "", "starred": true, "modified": "2026-11-02T09:30:00Z"}],
+        "pages": [{"id": "pg_trip", "title": "Japan trip", "space": "Travel",
+                   "created": "2026-11-01T08:00:00Z", "modified": "2026-11-02T09:30:00Z",
+                   "summary": "Two weeks in Japan."}],
+        "more": false
+    });
+    Mock::given(method("GET"))
+        .and(path("/api/pages/home/look/data"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(data))
+        .mount(&mock)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path("/api/pages/home/look"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({"page_id": "home", "look_id": 9, "created": true}),
+            ),
+        )
+        .expect(1)
+        .mount(&mock)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/pages/search"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(0)
+        .mount(&mock)
+        .await;
+
+    let read = text_of(
+        &server(mock.uri())
+            .read_page_look_impl(ReadPageLookParams {
+                page: "@Home".into(),
+                session: None,
+            })
+            .await
+            .unwrap(),
+    );
+    assert!(read.contains("The home screen has no look yet."), "{read}");
+    assert!(read.contains("wenlan.home.pages"), "{read}");
+    assert!(read.contains("\"title\": \"Japan trip\""), "{read}");
+    assert!(read.contains("page @home"), "{read}");
+
+    let saved = server(mock.uri())
+        .set_page_look_impl(SetPageLookParams {
+            page: "@home".into(),
+            html: Some("<h1 id=t></h1>".into()),
+            path: None,
+            session: None,
+        })
+        .await
+        .unwrap();
+    assert_ne!(saved.is_error, Some(true));
+    assert!(text_of(&saved).contains("home screen now shows this look"));
 }

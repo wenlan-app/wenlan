@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=72d278b794c1e4babe147aa4a71351d99d01cb2aa3354eea95e71957580a2f44 -->
+<!-- README_SYNC: source=README.md sha256=bf55db53db55222f4caa3e3f886c5301c570fb53ae498c065ff57849680640f4 -->
 
 <p align="center">
   <picture>
@@ -51,6 +51,7 @@ Empecé Wenlan porque mis notas, documentos y chats de IA estaban dispersos, y e
 - **Trae lo que ya tienes.** Bóvedas de Obsidian, notas, documentos y chats de IA. [Lista completa](#what-can-i-bring-in).
 - **Tú decides qué cambia la IA.** Ves cada cambio, lo deshaces y eliges qué páginas esperan tu visto bueno.
 - **Las páginas citan sus fuentes.** Una cita abre el original; una página cuyas citas casi no coinciden no se guarda.
+- **Una página puede ser texto o HTML.** Pide a tu IA una vista HTML de cualquier página, o guarda el HTML que hizo como una página HTML propia. La vista HTML muestra el texto actual de la página, así que nunca la rehaces.
 - **Comparte un Space.** Con un compañero, o entre tus propios ordenadores, a través de una carpeta de Google Drive o iCloud Drive.
 
 <a id="how-it-compares"></a>

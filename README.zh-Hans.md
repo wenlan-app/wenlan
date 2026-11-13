@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=72d278b794c1e4babe147aa4a71351d99d01cb2aa3354eea95e71957580a2f44 -->
+<!-- README_SYNC: source=README.md sha256=bf55db53db55222f4caa3e3f886c5301c570fb53ae498c065ff57849680640f4 -->
 
 <p align="center">
   <picture>
@@ -51,6 +51,7 @@
 - **带进现有资料。** Obsidian 仓库、笔记、文档和 AI 对话都能带进来。[完整清单](#what-can-i-bring-in)。
 - **AI 能改什么由你决定。** 改了什么都看得到、能还原，也能指定哪些笔记要先问你。
 - **笔记都附出处。** 点引用就回到原文；引用大多对不上的笔记不会保存。
+- **页面可以是文字，也可以是 HTML。** 请 AI 帮任何一页做 HTML 视图，或把它做好的 HTML 直接存成一个 HTML 页面。HTML 视图显示的是这页当下的文字，改字不用重做。
 - **共用一个 Space。** 通过 Google Drive 或 iCloud 云盘的文件夹，跟同事共用，或在自己的几台电脑间同步。
 
 <a id="how-it-compares"></a>
