@@ -206,7 +206,7 @@ fn token_word_count(token: &str) -> usize {
 /// `pub(crate)` so `sources::directory`'s own min-text heuristic can share
 /// this CJK-aware count instead of keeping a second, CJK-blind word counter
 /// that disagrees with the quality gate on the same content.
-pub(crate) fn meaningful_word_count(text: &str) -> usize {
+pub fn meaningful_word_count(text: &str) -> usize {
     text.split_whitespace().map(token_word_count).sum()
 }
 

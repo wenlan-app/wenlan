@@ -7645,20 +7645,58 @@ pub async fn daemon_version(state: tauri::State<'_, State>) -> Result<String, St
     Ok(client.health().await?.version)
 }
 
-/// Stage a loose file into the managed uploads dir, then ensure that dir is
-/// registered with the daemon as a `directory` source (§2, §6).
+/// Stage everything picked in one go (documents and zips), then register the
+/// uploads folder with the daemon once. The outcome lets the app say what
+/// happened in a single notice.
 #[tauri::command]
-pub async fn upload_source_file(
+pub async fn upload_source_files(
+    state: tauri::State<'_, State>,
+    paths: Vec<String>,
+) -> Result<crate::sources::uploads::UploadOutcome, String> {
+    let picked: Vec<std::path::PathBuf> = paths.iter().map(std::path::PathBuf::from).collect();
+    let dir = crate::sources::uploads::sources_dir();
+    let staging_dir = dir.clone();
+    let outcome = tokio::task::spawn_blocking(move || {
+        crate::sources::uploads::stage_uploads(&staging_dir, &picked)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    if !outcome.added.is_empty() || !outcome.already.is_empty() {
+        register_directory_source_with_daemon(&state, &dir, None).await?;
+    }
+    Ok(outcome)
+}
+
+/// Where files added with "Add your material" are kept, so the app can offer
+/// to delete exactly those (and never a file in one of the person's folders).
+#[tauri::command]
+pub fn uploads_folder() -> String {
+    crate::sources::uploads::sources_dir()
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// Delete one uploaded file, then sync the uploads source so its text leaves
+/// the library too (the daemon reaps a file that vanished from a live folder).
+#[tauri::command]
+pub async fn delete_uploaded_file(
     state: tauri::State<'_, State>,
     path: String,
-) -> Result<crate::sources::Source, String> {
-    let src = std::path::PathBuf::from(&path);
-    if !src.is_file() {
-        return Err(format!("Not a file: {}", path));
-    }
+) -> Result<(), String> {
     let dir = crate::sources::uploads::sources_dir();
-    crate::sources::uploads::place_upload_file(&dir, &src).map_err(|e| e.to_string())?;
-    register_directory_source_with_daemon(&state, &dir, None).await
+    // The daemon names a file under its knowledge home relative to it
+    // (`sources/paper.pdf`); the uploads folder sits in that home.
+    let given = std::path::PathBuf::from(&path);
+    let file = if given.is_absolute() {
+        given
+    } else {
+        dir.parent().map(|home| home.join(&given)).unwrap_or(given)
+    };
+    crate::sources::uploads::remove_upload(&dir, &file).map_err(|e| e.to_string())?;
+    let source = register_directory_source_with_daemon(&state, &dir, None).await?;
+    sync_registered_source_for_state(&state, &source.id).await?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

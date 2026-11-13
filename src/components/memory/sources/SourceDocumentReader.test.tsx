@@ -3,11 +3,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import { getChunks, openSearchResult, type IndexedFileInfo } from "../../../lib/tauri";
+import { deleteUploadedFile, getChunks, openSearchResult, uploadsFolder, type IndexedFileInfo } from "../../../lib/tauri";
+import { confirmAction } from "../../../lib/confirmAction";
 import { i18n } from "../../../i18n";
 import { SourceDocumentLayout, SourceDocumentPage, SourceDocumentReader } from "./SourceDocumentReader";
 
-vi.mock("../../../lib/tauri", () => ({ getChunks: vi.fn(), openSearchResult: vi.fn() }));
+vi.mock("../../../lib/tauri", () => ({ getChunks: vi.fn(), openSearchResult: vi.fn(), uploadsFolder: vi.fn().mockResolvedValue("/Users/me/.wenlan/sources"), deleteUploadedFile: vi.fn() }));
+vi.mock("../../../lib/confirmAction", () => ({ confirmAction: vi.fn() }));
 vi.mock("./SourceAnnotations", () => ({
   default: ({ renderRelatedPages }: { renderRelatedPages?: (content: ReactNode) => ReactNode }) => <>
     <section aria-label="Source description">My description.</section>
@@ -112,5 +114,28 @@ describe("full local source layout", () => {
     expect(reading).not.toHaveTextContent("File metadata.");
     expect(screen.getByRole("complementary", { name: "Info" })).toHaveTextContent("File metadata.");
     expect(getChunks).not.toHaveBeenCalled();
+  });
+});
+
+describe("deleting an uploaded file", () => {
+  it("offers delete only for a file added with Add your material, and leaves after deleting it", async () => {
+    vi.mocked(uploadsFolder).mockResolvedValue("/Users/me/.wenlan/sources");
+    vi.mocked(confirmAction).mockResolvedValue(true);
+    vi.mocked(deleteUploadedFile).mockResolvedValue(undefined);
+    const onDeleted = vi.fn();
+    const uploaded: IndexedFileInfo = { source: "directory", source_id: "dir-1::sources/scan-copy.pdf", title: "scan-copy", chunk_count: 2, last_modified: 0 };
+    wrap(<SourceDocumentLayout file={uploaded} content={<p>Body.</p>} onDeleted={onDeleted} />);
+    fireEvent.click(await screen.findByTestId("source-delete-upload"));
+    await vi.waitFor(() => expect(deleteUploadedFile).toHaveBeenCalledWith("sources/scan-copy.pdf"));
+    expect(confirmAction).toHaveBeenCalledWith("Delete scan-copy.pdf from Wenlan?", expect.anything());
+    await vi.waitFor(() => expect(onDeleted).toHaveBeenCalled());
+  });
+
+  it("never offers to delete a document from the person's own folder", async () => {
+    vi.mocked(uploadsFolder).mockResolvedValue("/Users/me/.wenlan/sources");
+    const mine: IndexedFileInfo = { source: "directory", source_id: "dir-2::/Users/me/Documents/paper.pdf", title: "paper", chunk_count: 2, last_modified: 0 };
+    wrap(<SourceDocumentLayout file={mine} content={<p>Body.</p>} />);
+    await vi.waitFor(() => expect(uploadsFolder).toHaveBeenCalled());
+    expect(screen.queryByTestId("source-delete-upload")).toBeNull();
   });
 });

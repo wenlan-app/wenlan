@@ -7,6 +7,8 @@ import SourceLibrary, { type SourceLibraryState } from "./SourceLibrary";
 import { useState } from "react";
 
 vi.mock("../../../lib/tauri", () => ({
+  uploadsFolder: vi.fn().mockResolvedValue("/Users/me/.wenlan/sources"),
+  deleteUploadedFile: vi.fn(),
   getActiveImportBatches: vi.fn().mockResolvedValue({ batches: [] }),
   listIndexedFiles: vi.fn(),
   listRegisteredSources: vi.fn(),

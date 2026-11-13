@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { getChunks, openSearchResult, type IndexedFileInfo, type PageCitation } from "../../../lib/tauri";
+import { deleteUploadedFile, getChunks, openSearchResult, uploadsFolder, type IndexedFileInfo, type PageCitation } from "../../../lib/tauri";
+import { uploadedFilePath } from "./uploadedFile";
+import { confirmAction } from "../../../lib/confirmAction";
 import { DetailInfoContent, DetailReadingFrame } from "../DetailLayout";
 import PageInfoDrawer from "../page/PageInfoDrawer";
 import { InfoToggle } from "../page/InfoToggle";
@@ -89,8 +91,42 @@ export function SourceDocumentReader({ file, space, onReady, onRegisterFlush, fr
   </div>;
 }
 
+/** A file the person added with "Add your material" can be deleted from its
+ *  details; a document from one of their own folders cannot (Wenlan never
+ *  deletes their files). */
+function DeleteUploadedFile({ file, onDeleted }: { file: IndexedFileInfo; onDeleted?: () => void }) {
+  const { t } = useTranslation();
+  const qc = useQueryClient();
+  const { data: folder } = useQuery({ queryKey: ["uploadsFolder"], queryFn: uploadsFolder, staleTime: Infinity });
+  const path = uploadedFilePath(file.source_id, folder);
+  const name = path?.split("/").pop() ?? file.title;
+  const remove = useMutation({
+    mutationFn: async () => {
+      if (!path) return false;
+      const ok = await confirmAction(t("sourceAccess.deleteUploadConfirm", { name }), { confirm: t("sourceAccess.deleteUpload"), cancel: t("common.cancel") });
+      if (!ok) return false;
+      await deleteUploadedFile(path);
+      return true;
+    },
+    onSuccess: (deleted) => {
+      if (!deleted) return;
+      void qc.invalidateQueries({ queryKey: ["indexedFiles"] });
+      void qc.invalidateQueries({ queryKey: ["registeredSources"] });
+      void qc.invalidateQueries({ queryKey: ["sourceDir"] });
+      toast(t("sourceAccess.deleteUploadDone", { name }));
+      onDeleted?.();
+    },
+    onError: () => toast(t("sourceAccess.deleteUploadFailed")),
+  });
+  if (!path) return null;
+  return <section className="source-upload-delete">
+    <button type="button" className="page-editor-action" data-testid="source-delete-upload" disabled={remove.isPending} onClick={() => remove.mutate()}>{t("sourceAccess.deleteUpload")}</button>
+    <p>{t("sourceAccess.deleteUploadHint")}</p>
+  </section>;
+}
+
 /** Shared source document shell for indexed sources and full local-file reads. */
-export function SourceDocumentLayout({ file, space, onReady, onRegisterFlush, content, infoContent, breadcrumbs, onOpenPage }: {
+export function SourceDocumentLayout({ file, space, onReady, onRegisterFlush, content, infoContent, breadcrumbs, onOpenPage, onDeleted }: {
   file: IndexedFileInfo;
   space?: string;
   onReady?: () => void;
@@ -100,6 +136,8 @@ export function SourceDocumentLayout({ file, space, onReady, onRegisterFlush, co
   breadcrumbs?: ReactNode;
   /** Shows which pages cite this source, each opening that page. */
   onOpenPage?: (pageId: string) => void;
+  /** After an uploaded file is deleted from its details: leave the reader. */
+  onDeleted?: () => void;
 }) {
   const { t, i18n } = useTranslation();
   const { open, setOpen, toggle } = useDetailInfoOpen(JSON.stringify([file.source, file.source_id, space ?? null]));
@@ -123,6 +161,7 @@ export function SourceDocumentLayout({ file, space, onReady, onRegisterFlush, co
         </dl>
       </section>
       {infoContent}
+      <DeleteUploadedFile file={file} {...(onDeleted === undefined ? {} : { onDeleted })} />
     </DetailInfoContent>
   </PageInfoDrawer>;
   return <article className={`page-detail source-document-page document-context-host${open ? " document-context-open" : ""}`}>
@@ -138,7 +177,7 @@ export function SourceDocumentLayout({ file, space, onReady, onRegisterFlush, co
   </article>;
 }
 
-export function SourceDocumentPage({ file, space, onReady, onRegisterFlush, onOpenPage }: { file: IndexedFileInfo; space?: string; onReady?: () => void; onRegisterFlush?: (flush: (() => Promise<boolean>) | null) => void; onOpenPage?: (pageId: string) => void }) {
+export function SourceDocumentPage({ file, space, onReady, onRegisterFlush, onOpenPage, onDeleted }: { file: IndexedFileInfo; space?: string; onReady?: () => void; onRegisterFlush?: (flush: (() => Promise<boolean>) | null) => void; onOpenPage?: (pageId: string) => void; onDeleted?: () => void }) {
   const scope = space ?? file.space ?? undefined;
-  return <SourceDocumentLayout file={file} {...(scope === undefined ? {} : { space: scope })} {...(onReady === undefined ? {} : { onReady })} {...(onRegisterFlush === undefined ? {} : { onRegisterFlush })} {...(onOpenPage === undefined ? {} : { onOpenPage })} />;
+  return <SourceDocumentLayout file={file} {...(scope === undefined ? {} : { space: scope })} {...(onReady === undefined ? {} : { onReady })} {...(onRegisterFlush === undefined ? {} : { onRegisterFlush })} {...(onOpenPage === undefined ? {} : { onOpenPage })} {...(onDeleted === undefined ? {} : { onDeleted })} />;
 }

@@ -243,7 +243,9 @@ const OUTSIDE_THE_REVIEW_SURFACE: readonly string[] = [
   "update_agent",
   "update_chunk",
   "update_profile",
-  "upload_source_file",
+  "delete_uploaded_file",
+  "upload_source_files",
+  "uploads_folder",
   "wire_state",
   "write_mcp_config",
 ];

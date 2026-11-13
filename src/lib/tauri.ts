@@ -390,9 +390,29 @@ export async function restartDaemon(): Promise<string> {
   return invoke("restart_daemon");
 }
 
-/** Stage a loose file into the managed dir and ensure it is a daemon source. */
-export async function uploadSourceFile(path: string): Promise<RegisteredSource> {
-  return invoke("upload_source_file", { path });
+export type UploadSkipReason = "format" | "tooBig" | "noText";
+export interface UploadOutcome {
+  added: string[];
+  already: string[];
+  skipped: { name: string; reason: UploadSkipReason }[];
+  chatExports: string[];
+}
+
+/** Stage every picked file (documents and zips) and register the uploads
+ *  folder once; the outcome says what came in and what did not, and why. */
+export async function uploadSourceFiles(paths: string[]): Promise<UploadOutcome> {
+  return invoke("upload_source_files", { paths });
+}
+
+/** The folder that files added with "Add your material" are copied into. */
+export async function uploadsFolder(): Promise<string> {
+  return invoke("uploads_folder");
+}
+
+/** Delete one uploaded file and let its text leave the library. Refused for
+ *  any file outside the uploads folder. */
+export async function deleteUploadedFile(path: string): Promise<void> {
+  return invoke("delete_uploaded_file", { path });
 }
 
 export interface IndexedFileInfo {

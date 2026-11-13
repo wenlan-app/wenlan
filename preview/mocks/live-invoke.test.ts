@@ -1441,7 +1441,6 @@ const UNSTUBBED_DEBT = new Set([
   "update_chunk",
   "update_observation_cmd",
   "update_profile",
-  "upload_source_file",
   "write_mcp_config",
 ]);
 

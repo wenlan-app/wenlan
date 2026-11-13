@@ -237,7 +237,7 @@ export default function SourceContainer({ location, search, filter, lens, onSear
   if (!source) return <section className="source-container-workspace"><div role="alert">{t("sourceLibrary.folderError")} <button type="button" onClick={() => onNavigate(null)}>{t("sourceContainer.root")}</button></div></section>;
 
   if (selectedFile && localFile) return <div className="source-container-workspace source-container-reader">
-    <SourceDocumentLayout file={localFile} breadcrumbs={<SourceCollectionBreadcrumbs>
+    <SourceDocumentLayout file={localFile} onDeleted={() => setSelectedFile(null)} breadcrumbs={<SourceCollectionBreadcrumbs>
       <button className="source-container-back" type="button" onClick={() => setSelectedFile(null)}><ArrowLeft size={14} aria-hidden="true" />{t("sourceContainer.backToFolder")}</button>
     </SourceCollectionBreadcrumbs>} content={<div className="source-container-file-content">
       {isNote && <NoteProposalNotice source={source} path={selectedPath} />}

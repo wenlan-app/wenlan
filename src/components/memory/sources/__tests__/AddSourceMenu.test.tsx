@@ -5,7 +5,7 @@ import AddSourceMenu from "../AddSourceMenu";
 
 const mocks = vi.hoisted(() => ({
   getDaemonVersion: vi.fn(),
-  uploadSourceFile: vi.fn(),
+  uploadSourceFiles: vi.fn(),
   openFile: vi.fn(),
   openDialog: vi.fn(),
   addSource: vi.fn(),
@@ -23,7 +23,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../../../../lib/tauri", () => ({
   getDaemonVersion: mocks.getDaemonVersion,
   daemonMeetsFloor: (v: string) => v.split(".").map(Number)[1] >= 10,
-  uploadSourceFile: mocks.uploadSourceFile,
+  uploadSourceFiles: mocks.uploadSourceFiles,
   openFile: mocks.openFile,
   addSource: mocks.addSource,
   syncRegisteredSource: mocks.syncRegisteredSource,
@@ -127,14 +127,35 @@ describe("AddSourceMenu", () => {
     await screen.findByText("Your daemon needs an update to index files.");
   });
 
-  it("picking Add files stages the chosen file", async () => {
+  it("picks several files at once, Word and zip included, and says it once", async () => {
+    const { toast } = await import("sonner");
+    const onClose = vi.fn();
     mocks.getDaemonVersion.mockResolvedValue("0.11.0");
-    mocks.openDialog.mockResolvedValue("/Users/me/paper.pdf");
-    mocks.uploadSourceFile.mockResolvedValue({ id: "directory-sources" });
-    render(wrap(<AddSourceMenu onClose={() => {}} />));
+    mocks.openDialog.mockResolvedValue(["/Users/me/a.pdf", "/Users/me/b.docx", "/Users/me/notes.zip"]);
+    mocks.uploadSourceFiles.mockResolvedValue({ added: ["a.pdf", "b.docx", "notes.zip/x.md"], already: [], skipped: [], chatExports: [] });
+    render(wrap(<AddSourceMenu onClose={onClose} />));
     fireEvent.click(await screen.findByText("Files"));
-    await waitFor(() => expect(mocks.uploadSourceFile).toHaveBeenCalledWith("/Users/me/paper.pdf"));
+    await waitFor(() => expect(mocks.uploadSourceFiles).toHaveBeenCalledWith(["/Users/me/a.pdf", "/Users/me/b.docx", "/Users/me/notes.zip"]));
+    expect(mocks.openDialog).toHaveBeenCalledWith(expect.objectContaining({ multiple: true, filters: [expect.objectContaining({ extensions: ["pdf", "docx", "md", "txt", "zip"] })] }));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(toast).toHaveBeenCalledTimes(1);
+    expect(toast).toHaveBeenCalledWith("Added 3 files", expect.anything());
   });
+
+  it("names each file that did not come in, and why, instead of losing it", async () => {
+    const onClose = vi.fn();
+    mocks.getDaemonVersion.mockResolvedValue("0.11.0");
+    mocks.openDialog.mockResolvedValue(["/Users/me/a.pdf", "/Users/me/scan.pdf", "/Users/me/huge.pdf"]);
+    mocks.uploadSourceFiles.mockResolvedValue({ added: ["a.pdf"], already: [], skipped: [{ name: "scan.pdf", reason: "noText" }, { name: "huge.pdf", reason: "tooBig" }], chatExports: [] });
+    render(wrap(<AddSourceMenu onClose={onClose} />));
+    fireEvent.click(await screen.findByText("Files"));
+    const report = await screen.findByTestId("source-upload-report");
+    expect(report).toHaveTextContent("2 files not added:");
+    expect(report).toHaveTextContent("scan.pdf · no text to read; it may be a scan");
+    expect(report).toHaveTextContent("huge.pdf · too big");
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it("opened from the welcome's folder row, goes straight to the folder picker once", async () => {
     mocks.openDialog.mockResolvedValue("/Users/me/vault");
     render(wrap(<AddSourceMenu start="folder" onClose={() => {}} />));

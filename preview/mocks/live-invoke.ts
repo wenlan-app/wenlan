@@ -1618,6 +1618,11 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
 // App-local commands (no daemon route) → static defaults that route the UI
 // to the main screen and render panels empty rather than crashing.
 export const DEFAULTS: Record<string, unknown> = {
+  // Adding files copies them into the app's uploads folder; preview has none,
+  // so a pick adds nothing and no document offers to delete its file.
+  upload_source_files: { added: [], already: [], skipped: [], chatExports: [] },
+  uploads_folder: "",
+  delete_uploaded_file: null,
   should_show_wizard: false,
   local_setup_completed: false,
   // Preview has no native LaunchAgent preflight. Its local app startup is

@@ -193,3 +193,5 @@
 .source-cited-by li { border-radius: var(--mem-r-6); padding: 6px 8px; }
 .source-cited-by li:hover { background: var(--mem-hover); }
 .page-info-source-button.source-cited-by-page { align-items: center; color: var(--mem-text); display: flex; font-family: var(--mem-font-body); font-size: 13px; gap: 8px; }
+.source-upload-delete { margin-top:20px; }
+.source-upload-delete p { margin:6px 0 0; font-size:12px; line-height:1.5; color:var(--mem-text-secondary); }

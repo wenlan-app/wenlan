@@ -1970,7 +1970,7 @@ export default function Main({
               onOpenIntelligence={() => navigateTo({ kind: "settings", section: "intelligence" })}
             />
           ) : view.kind === "source-document" ? (
-            <SourceDocumentPage key={JSON.stringify([view.file.source, view.file.source_id, view.file.space ?? null])} file={view.file} onReady={() => setReadySourceView(view)} onRegisterFlush={registerSourceDescriptionFlush} onOpenPage={(pageId) => navigateTo({ kind: "page", pageId })} />
+            <SourceDocumentPage key={JSON.stringify([view.file.source, view.file.source_id, view.file.space ?? null])} file={view.file} onReady={() => setReadySourceView(view)} onRegisterFlush={registerSourceDescriptionFlush} onOpenPage={(pageId) => navigateTo({ kind: "page", pageId })} onDeleted={navigateBack} />
           ) : view.kind === "sources" ? (
             <SourcesView
               libraryState={sourceLibraryState}
