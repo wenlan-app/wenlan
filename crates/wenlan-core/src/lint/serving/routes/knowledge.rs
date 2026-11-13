@@ -30,6 +30,7 @@ pub(super) const ROUTES: &[SensitiveReadRoute] = &[
     row!(Get,"/api/zotero/sources/{id}/disconnect-preview","zotero_disconnect_impact",NoSelector,UnauthenticatedLocal,Global,NoGate,NotApplicable,GlobalRead),
     row!(Get,"/api/zotero/items","zotero_items",NoSelector,UnauthenticatedLocal,Global,NoGate,NotApplicable,GlobalRead),
     row!(Get,"/api/sources/{id}/ai-changes","note_ai_changes",NoSelector,UnauthenticatedLocal,Global,NoGate,NotApplicable,GlobalRead),
+    row!(Get,"/api/sources/{id}/unreadable-files","source_unreadable_files",NoSelector,UnauthenticatedLocal,Global,NoGate,NotApplicable,GlobalRead),
     row!(Get,"/api/notes/proposals","note_proposals",NoSelector,UnauthenticatedLocal,Global,NoGate,NotApplicable,GlobalRead),
     row!(Get,"/api/notes/proposals/{id}","note_proposal_detail",NoSelector,UnauthenticatedLocal,Global,NoGate,NotApplicable,GlobalRead),
     row!(Get,"/api/profile/narrative","profile_narrative",NoSelector,UnauthenticatedLocal,Global,NoGate,NotApplicable,GlobalRead),

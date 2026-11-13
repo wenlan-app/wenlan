@@ -169,6 +169,10 @@ const WEB_WRITE_SPACE_REFUSAL_MESSAGE: &str =
 const WEB_WRITE_BAD_ID_MESSAGE: &str =
     "Invalid id. Use the item's opaque identifier, not a URL or file path.";
 
+/// Longest a save waits for the optional lines after it (pages waiting to be
+/// organized, which conversation it was saved in). The save has already
+/// landed; a slow count must not hold its answer until the AI tool gives up.
+const OPTIONAL_LINE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
 const LINT_AGENT_WORK_CACHE_CAPACITY: usize = 4;
 const LINT_REPORT_CACHE_CAPACITY: usize = 4;
 
@@ -2688,6 +2692,11 @@ fn tool_error(e: WenlanError, verb: &str) -> CallToolResult {
         WenlanError::ResponseTooLarge => format!(
             "The daemon response exceeded Wenlan MCP's size limit. The {verb} was not completed."
         ),
+        WenlanError::Busy => format!(
+            "Wenlan is busy and did not finish the {verb} within {} minutes. It may still \
+             finish: check whether it was saved before trying again.",
+            crate::client::SAVE_DEADLINE.as_secs() / 60
+        ),
     };
     CallToolResult::error(vec![ContentBlock::text(msg)])
 }
@@ -3028,7 +3037,12 @@ impl WenlanMcpServer {
         space: Option<&str>,
         mut output: String,
     ) -> String {
-        if let Some(line) = self.steep_waiting_line(client, space).await {
+        if let Ok(Some(line)) = tokio::time::timeout(
+            OPTIONAL_LINE_DEADLINE,
+            self.steep_waiting_line(client, space),
+        )
+        .await
+        {
             output.push_str("\n\n");
             output.push_str(&line);
         }
@@ -3086,7 +3100,9 @@ impl WenlanMcpServer {
         mut output: String,
         page: Option<(&str, Option<&str>, wenlan_types::SavedPageChange)>,
     ) -> String {
-        if let Some(line) = self.saved_in_line(client, page).await {
+        if let Ok(Some(line)) =
+            tokio::time::timeout(OPTIONAL_LINE_DEADLINE, self.saved_in_line(client, page)).await
+        {
             output.push_str("\n\n");
             output.push_str(&line);
         }
@@ -3139,7 +3155,7 @@ impl WenlanMcpServer {
         };
 
         let resp: StoreMemoryResponse =
-            try_call!(client.post("/api/memory/store", &req), "memory store");
+            try_call!(client.post_save("/api/memory/store", &req), "memory store");
 
         // A capture that replaces a memory can leave notes waiting for steep.
         let output = self
@@ -4342,7 +4358,7 @@ impl WenlanMcpServer {
                 // deserialize instead of silently returning the no-op "Refreshed"
                 // line. Same discipline as the other typed page responses.
                 let resp: wenlan_types::responses::PageWriteResponse = match client
-                    .put(&path, &req)
+                    .put_save(&path, &req)
                     .await
                 {
                     Ok(resp) => resp,
@@ -4431,7 +4447,7 @@ impl WenlanMcpServer {
                     basis: params.basis.into_iter().map(Into::into).collect(),
                     code_basis: params.code_basis.into_iter().map(Into::into).collect(),
                 };
-                let resp: CreatePageResponse = match client.post("/api/pages", &req).await {
+                let resp: CreatePageResponse = match client.post_save("/api/pages", &req).await {
                     Ok(resp) => resp,
                     Err(e) if is_code_basis_refusal(&e, sent_code_basis) => {
                         return Ok(page_write_code_basis_refused_result(&e));
@@ -4770,7 +4786,7 @@ impl WenlanMcpServer {
                 }
                 self.session_client(params.session.as_deref())
                     .await
-                    .post::<_, wenlan_types::SteepNewCommitResponse>(
+                    .post_save::<_, wenlan_types::SteepNewCommitResponse>(
                         "/api/steep/new/commit",
                         &wenlan_types::SteepNewCommitRequest {
                             token,
@@ -7849,6 +7865,19 @@ mod tests {
             rmcp::model::ContentBlock::Text(text) => {
                 assert!(text.text.contains("HTTP 409"));
                 assert!(text.text.contains("repair_background_writer_busy"));
+            }
+            other => panic!("unexpected tool error content: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_save_past_the_deadline_says_it_may_still_land() {
+        let result = tool_error(WenlanError::Busy, "page write");
+        assert_eq!(result.is_error, Some(true));
+        match &result.content[0] {
+            rmcp::model::ContentBlock::Text(text) => {
+                assert!(text.text.contains("within 4 minutes"), "{}", text.text);
+                assert!(text.text.contains("check whether it was saved"));
             }
             other => panic!("unexpected tool error content: {other:?}"),
         }

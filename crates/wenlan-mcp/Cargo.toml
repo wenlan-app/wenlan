@@ -20,6 +20,7 @@ name = "wenlan-mcp"
 path = "src/main.rs"
 
 [dependencies]
+async-trait = { workspace = true }
 rmcp = { version = "~2.1", features = ["server", "transport-io", "transport-streamable-http-server"] }
 # rmcp permits newer compatible rmcp-macros releases, so an unlocked `cargo install`
 # resolves the newest macros crate, whose `#[tool]` expansion calls helpers the

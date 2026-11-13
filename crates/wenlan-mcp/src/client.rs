@@ -374,6 +374,30 @@ impl WenlanClient {
         Self::parse_response(&bytes)
     }
 
+    /// [`Self::post`] for a save, with [`SAVE_DEADLINE`]: an AI tool gives
+    /// up on a call after a few minutes with a bare error, so the save says
+    /// first that Wenlan is still busy and the save may still land.
+    pub async fn post_save<B: Serialize, R: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<R, WenlanError> {
+        tokio::time::timeout(SAVE_DEADLINE, self.post(path, body))
+            .await
+            .unwrap_or(Err(WenlanError::Busy))
+    }
+
+    /// [`Self::put`] for a save, with [`SAVE_DEADLINE`].
+    pub async fn put_save<B: Serialize, R: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<R, WenlanError> {
+        tokio::time::timeout(SAVE_DEADLINE, self.put(path, body))
+            .await
+            .unwrap_or(Err(WenlanError::Busy))
+    }
+
     pub async fn post_with_query<Q: Serialize, B: Serialize, R: DeserializeOwned>(
         &self,
         path: &str,
@@ -512,6 +536,10 @@ fn handshake_message(mcp_version: &str, daemon_version: &str) -> Option<String> 
     }
 }
 
+/// Longest a save waits for the daemon. ChatGPT gives up on a tool call at
+/// about five minutes; answering first lets the save say what happened.
+pub const SAVE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(240);
+
 #[derive(Debug, thiserror::Error)]
 pub enum WenlanError {
     #[error("Wenlan is not reachable: {0}")]
@@ -528,6 +556,10 @@ pub enum WenlanError {
 
     #[error("Wenlan response exceeds the size limit")]
     ResponseTooLarge,
+
+    /// A save got no answer within [`SAVE_DEADLINE`]. It may still land.
+    #[error("Wenlan did not answer the save in time")]
+    Busy,
 }
 
 fn parse_api_error_reason(bytes: &[u8]) -> Option<String> {

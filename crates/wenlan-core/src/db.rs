@@ -2016,6 +2016,202 @@ pub const NULL_EMBEDDING_RECOVERY_BATCH: usize = 128;
 /// 1.24x faster than per note on real vault chunks (M2 Pro).
 const RECOVERY_EMBED_PASS: usize = 32;
 
+/// Most texts one call embeds while holding the shared model. A call with
+/// more texts than this (a long document) embeds in passes and lets a short
+/// call (a page an AI tool is saving) go first between them.
+const EMBED_PASS: usize = 32;
+
+/// A call with at most this many texts is a short call: a page save, a
+/// capture, a search. Recovery passes of [`RECOVERY_EMBED_PASS`] texts are
+/// neither short nor long, so a document never steps aside for them.
+const SHORT_EMBED_TEXTS: usize = 4;
+
+/// Longest a long call steps aside before one pass. One short call takes
+/// well under a second, so this only caps a steady stream of them.
+const EMBED_YIELD_LIMIT: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// A wait for the model, or a long call, slower than this is logged, so a
+/// slow save can be traced to the model from the log.
+const EMBED_SLOW: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Short calls waiting for the model right now. One model serves every
+/// writer behind one lock with no queue order, so a long call checks this
+/// before each pass and lets them in first.
+static SHORT_EMBED_WAITERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Embed `texts` with the shared `model`, at most [`EMBED_PASS`] texts per
+/// lock. A long call waits before each pass while short calls are waiting
+/// (up to [`EMBED_YIELD_LIMIT`]); a short call counts itself in `waiters`
+/// while it waits for the lock.
+fn embed_in_passes<M>(
+    model: &std::sync::Mutex<M>,
+    waiters: &std::sync::atomic::AtomicUsize,
+    texts: &[String],
+    mut embed: impl FnMut(&mut M, Vec<&str>) -> Result<Vec<Vec<f32>>, WenlanError>,
+) -> Result<Vec<Vec<f32>>, WenlanError> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    struct Waiting<'a>(&'a AtomicUsize);
+    impl Drop for Waiting<'_> {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, Ordering::AcqRel);
+        }
+    }
+    let long = texts.len() > EMBED_PASS;
+    let short = texts.len() <= SHORT_EMBED_TEXTS;
+    let started = std::time::Instant::now();
+    let mut stepped_aside = std::time::Duration::ZERO;
+    let mut out = Vec::with_capacity(texts.len());
+    for pass in texts.chunks(EMBED_PASS) {
+        if long {
+            let yielding = std::time::Instant::now();
+            while waiters.load(Ordering::Acquire) > 0 && yielding.elapsed() < EMBED_YIELD_LIMIT {
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            stepped_aside += yielding.elapsed();
+        }
+        let asked = std::time::Instant::now();
+        let _waiting = short.then(|| {
+            waiters.fetch_add(1, Ordering::AcqRel);
+            Waiting(waiters)
+        });
+        let mut guard = model
+            .lock()
+            .map_err(|_| WenlanError::Embedding("embedder mutex poisoned".to_string()))?;
+        drop(_waiting);
+        let waited = asked.elapsed();
+        if short && waited >= EMBED_SLOW {
+            log::warn!(
+                "[embed] a short call ({} texts) waited {:.1}s for the model",
+                texts.len(),
+                waited.as_secs_f64()
+            );
+        }
+        let refs: Vec<&str> = pass.iter().map(|s| s.as_str()).collect();
+        out.extend(embed(&mut guard, refs)?);
+    }
+    let took = started.elapsed();
+    if !short && took >= EMBED_SLOW {
+        log::warn!(
+            "[embed] embedded {} texts in {:.1}s ({:.1}s stepping aside for short calls)",
+            texts.len(),
+            took.as_secs_f64(),
+            stepped_aside.as_secs_f64()
+        );
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod embed_in_passes_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{mpsc, Mutex};
+
+    fn texts(n: usize) -> Vec<String> {
+        (0..n).map(|i| format!("text {i}")).collect()
+    }
+
+    /// The long call's first pass holds the model until the short call is
+    /// waiting for it, so the order is decided by the code, not by timing.
+    #[test]
+    fn a_short_call_goes_before_the_rest_of_a_long_one() {
+        let model = Arc::new(Mutex::new(()));
+        let waiters = Arc::new(AtomicUsize::new(0));
+        let long_passes_done = Arc::new(AtomicUsize::new(0));
+        let (started_tx, started_rx) = mpsc::channel();
+
+        let long = {
+            let (model, waiters, done) = (
+                Arc::clone(&model),
+                Arc::clone(&waiters),
+                Arc::clone(&long_passes_done),
+            );
+            std::thread::spawn(move || {
+                let mut started_tx = Some(started_tx);
+                embed_in_passes(&model, &waiters, &texts(EMBED_PASS * 20), |_, refs| {
+                    if let Some(tx) = started_tx.take() {
+                        tx.send(()).unwrap();
+                        while waiters.load(Ordering::Acquire) == 0 {
+                            std::thread::yield_now();
+                        }
+                    }
+                    done.fetch_add(1, Ordering::SeqCst);
+                    Ok(refs.iter().map(|_| vec![0.0]).collect())
+                })
+            })
+        };
+
+        started_rx.recv().unwrap();
+        // Read while the short call holds the model, so the long call cannot
+        // move on before it is read.
+        let mut passes_before_short = usize::MAX;
+        let short = embed_in_passes(&model, &waiters, &texts(1), |_, refs| {
+            passes_before_short = long_passes_done.load(Ordering::SeqCst);
+            Ok(refs.iter().map(|_| vec![1.0]).collect())
+        })
+        .unwrap();
+
+        assert_eq!(short, vec![vec![1.0]]);
+        assert_eq!(
+            passes_before_short, 1,
+            "the short call goes right after the pass that was running"
+        );
+        assert_eq!(
+            waiters.load(Ordering::SeqCst),
+            0,
+            "no waiter is left counted"
+        );
+        let long = long.join().unwrap().unwrap();
+        assert_eq!(
+            long.len(),
+            EMBED_PASS * 20,
+            "every long text is still embedded"
+        );
+    }
+
+    #[test]
+    fn a_long_call_keeps_every_text_in_order() {
+        let model = Mutex::new(());
+        let waiters = AtomicUsize::new(0);
+        let all = texts(EMBED_PASS * 2 + 3);
+        let out = embed_in_passes(&model, &waiters, &all, |_, refs| {
+            Ok(refs
+                .iter()
+                .map(|t| vec![t.trim_start_matches("text ").parse::<f32>().unwrap()])
+                .collect())
+        })
+        .unwrap();
+        let expected: Vec<Vec<f32>> = (0..all.len()).map(|i| vec![i as f32]).collect();
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn a_long_call_steps_aside_at_most_the_limit_per_pass() {
+        let model = Mutex::new(());
+        let waiters = AtomicUsize::new(1); // a short call that never comes
+        let started = std::time::Instant::now();
+        embed_in_passes(&model, &waiters, &texts(EMBED_PASS + 1), |_, refs| {
+            Ok(refs.iter().map(|_| vec![0.0]).collect())
+        })
+        .unwrap();
+        assert!(started.elapsed() < EMBED_YIELD_LIMIT * 3);
+    }
+
+    #[test]
+    fn a_waiter_is_uncounted_when_the_model_is_poisoned() {
+        let model = Arc::new(Mutex::new(()));
+        let poison = Arc::clone(&model);
+        let _ = std::thread::spawn(move || {
+            let _guard = poison.lock().unwrap();
+            panic!("poison the model lock");
+        })
+        .join();
+        let waiters = AtomicUsize::new(0);
+        assert!(embed_in_passes(&model, &waiters, &texts(1), |_, _| Ok(vec![])).is_err());
+        assert_eq!(waiters.load(Ordering::SeqCst), 0);
+    }
+}
+
 /// What one bounded recovery batch did.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct NullEmbeddingBatch {
@@ -26408,15 +26604,17 @@ impl MemoryDB {
         if texts.is_empty() {
             return Ok(vec![]);
         }
-        let text_refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
         let embedder = self
             .embedder
             .get()
             .ok_or_else(embedding_model_unavailable)?;
-        let mut embedder = embedder.lock().unwrap();
-        embedder
-            .embed(text_refs, None)
-            .map_err(|e| WenlanError::Embedding(e.to_string()))
+        // One model is shared by every writer: a long document is embedded
+        // in passes and a page being saved goes first between them.
+        embed_in_passes(embedder, &SHORT_EMBED_WAITERS, texts, |model, refs| {
+            model
+                .embed(refs, None)
+                .map_err(|e| WenlanError::Embedding(e.to_string()))
+        })
     }
 
     /// [`Self::generate_embeddings`] on the blocking pool, for async callers.
@@ -26436,13 +26634,11 @@ impl MemoryDB {
             .cloned()
             .ok_or_else(embedding_model_unavailable)?;
         tokio::task::spawn_blocking(move || {
-            let text_refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
-            let mut embedder = embedder
-                .lock()
-                .map_err(|_| WenlanError::Embedding("embedder mutex poisoned".to_string()))?;
-            embedder
-                .embed(text_refs, None)
-                .map_err(|e| WenlanError::Embedding(e.to_string()))
+            embed_in_passes(&embedder, &SHORT_EMBED_WAITERS, &texts, |model, refs| {
+                model
+                    .embed(refs, None)
+                    .map_err(|e| WenlanError::Embedding(e.to_string()))
+            })
         })
         .await
         .map_err(|e| WenlanError::Embedding(format!("embedding task failed: {e}")))?
@@ -62570,8 +62766,67 @@ impl MemoryDB {
             mtime_ns,
             content_hash,
             "done",
+            None,
         )
         .await
+    }
+
+    /// Finish a document that can never be read (a scan with no text, a
+    /// corrupt file): it is done, with a receipt so the next sync skips it,
+    /// and `reason` is kept so the app can say the file could not be read
+    /// instead of showing it as still being indexed.
+    pub async fn complete_unreadable_document(
+        &self,
+        source_id: &str,
+        file_path: &str,
+        mtime_ns: i64,
+        content_hash: &str,
+        reason: &str,
+    ) -> Result<(), WenlanError> {
+        self.finish_document_enrichment_with_receipt(
+            source_id,
+            file_path,
+            mtime_ns,
+            content_hash,
+            "done",
+            Some(reason),
+        )
+        .await
+    }
+
+    /// A source's files that will never be read, with why: finished as
+    /// unreadable, or paused past the retry cap. Ordered by path.
+    pub async fn list_unreadable_documents_for_source(
+        &self,
+        source_id: &str,
+    ) -> Result<Vec<(String, String)>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT file_path, COALESCE(error_detail, '') FROM document_enrichment_queue
+                 WHERE source_id = ?1
+                   AND ((status = 'done' AND error_detail IS NOT NULL)
+                        OR (status = 'paused' AND attempt_count >= ?2))
+                 ORDER BY file_path",
+                libsql::params![source_id, Self::DOC_ENRICHMENT_MAX_ATTEMPTS],
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("list_unreadable_documents: {e}")))?;
+        let mut out = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("list_unreadable_documents row: {e}")))?
+        {
+            let path: String = row.get(0).map_err(|e| {
+                WenlanError::VectorDb(format!("list_unreadable_documents col: {e}"))
+            })?;
+            let detail: String = row.get(1).map_err(|e| {
+                WenlanError::VectorDb(format!("list_unreadable_documents col: {e}"))
+            })?;
+            out.push((path, detail));
+        }
+        Ok(out)
     }
 
     /// Publish the searchable sync receipt but keep model-derived enrichment
@@ -62589,6 +62844,7 @@ impl MemoryDB {
             mtime_ns,
             content_hash,
             "waiting_for_provider",
+            None,
         )
         .await
     }
@@ -62600,6 +62856,7 @@ impl MemoryDB {
         mtime_ns: i64,
         content_hash: &str,
         next_status: &str,
+        error_detail: Option<&str>,
     ) -> Result<(), WenlanError> {
         let conn = self.conn.lock().await;
         let now = chrono::Utc::now().timestamp();
@@ -62611,10 +62868,17 @@ impl MemoryDB {
                 .execute(
                     "UPDATE document_enrichment_queue
                      SET status = ?5, next_retry_at = NULL,
-                         error_detail = NULL, updated_at = ?3
+                         error_detail = ?6, updated_at = ?3
                      WHERE source_id = ?1 AND file_path = ?2
                        AND status = 'in_progress' AND content_hash IS ?4",
-                    libsql::params![source_id, file_path, now, content_hash, next_status],
+                    libsql::params![
+                        source_id,
+                        file_path,
+                        now,
+                        content_hash,
+                        next_status,
+                        error_detail
+                    ],
                 )
                 .await
                 .map_err(|e| WenlanError::VectorDb(format!("complete enrichment queue: {e}")))?;

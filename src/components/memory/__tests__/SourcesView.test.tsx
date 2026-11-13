@@ -17,6 +17,8 @@ import {
 } from "../../../lib/tauri";
 
 vi.mock("../../../lib/tauri", () => ({
+  uploadsFolder: vi.fn().mockResolvedValue("/Users/me/.wenlan/sources"),
+  deleteUploadedFile: vi.fn(),
   getChunks: vi.fn(),
   listRegisteredSources: vi.fn(),
   syncRegisteredSource: vi.fn(),

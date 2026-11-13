@@ -87,6 +87,7 @@ fn canonical_matrix_freezes_exact_global_and_scoped_keys() {
         (Method::Get, "/api/zotero/items"),
         (Method::Get, "/api/zotero/sources/{id}/disconnect-preview"),
         (Method::Get, "/api/sources/{id}/ai-changes"),
+        (Method::Get, "/api/sources/{id}/unreadable-files"),
         (Method::Get, "/api/notes/proposals"),
         (Method::Get, "/api/notes/proposals/{id}"),
         (Method::Get, "/api/profile/narrative"),
@@ -240,8 +241,8 @@ fn canonical_matrix_freezes_exact_global_and_scoped_keys() {
         .map(|row| (row.method, row.path))
         .collect::<BTreeSet<_>>();
 
-    assert_eq!(rows.len(), 139);
-    assert_eq!(keys.len(), 139, "duplicate sensitive route key");
+    assert_eq!(rows.len(), 140);
+    assert_eq!(keys.len(), 140, "duplicate sensitive route key");
     assert_eq!(global, GLOBAL.iter().copied().collect());
     assert_eq!(scoped, SCOPED.iter().copied().collect());
     assert_eq!(

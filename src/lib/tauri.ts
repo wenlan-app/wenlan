@@ -310,6 +310,11 @@ export async function syncRegisteredSource(id: string): Promise<SyncStats> {
   return invoke("sync_registered_source", { id });
 }
 
+/** Files in a source that Wenlan could not read (no text, corrupt), by full path. */
+export async function listUnreadableFiles(id: string): Promise<string[]> {
+  return invoke("list_unreadable_files", { id });
+}
+
 export interface ZoteroCollection {
   key: string;
   name: string;
@@ -390,9 +395,29 @@ export async function restartDaemon(): Promise<string> {
   return invoke("restart_daemon");
 }
 
-/** Stage a loose file into the managed dir and ensure it is a daemon source. */
-export async function uploadSourceFile(path: string): Promise<RegisteredSource> {
-  return invoke("upload_source_file", { path });
+export type UploadSkipReason = "format" | "tooBig" | "noText";
+export interface UploadOutcome {
+  added: string[];
+  already: string[];
+  skipped: { name: string; reason: UploadSkipReason }[];
+  chatExports: string[];
+}
+
+/** Stage every picked file (documents and zips) and register the uploads
+ *  folder once; the outcome says what came in and what did not, and why. */
+export async function uploadSourceFiles(paths: string[]): Promise<UploadOutcome> {
+  return invoke("upload_source_files", { paths });
+}
+
+/** The folder that files added with "Add your material" are copied into. */
+export async function uploadsFolder(): Promise<string> {
+  return invoke("uploads_folder");
+}
+
+/** Delete one uploaded file and let its text leave the library. Refused for
+ *  any file outside the uploads folder. */
+export async function deleteUploadedFile(path: string): Promise<void> {
+  return invoke("delete_uploaded_file", { path });
 }
 
 export interface IndexedFileInfo {
@@ -4971,6 +4996,12 @@ export async function writeMcpConfig(clientType: string): Promise<UndeterminedIn
  *  config file — the Diagnostics fix for a double registration (a plugin plus
  *  a raw entry). Leaves sibling servers and unrelated config intact. Rejects
  *  with a plain error if the file is missing or has no such entry. */
+/** Turns Wenlan off for one AI tool: a plugin tool loses its plugin, any
+ *  tool loses a raw entry it has; something already off is not an error. */
+export async function disconnectClient(clientType: string): Promise<void> {
+  return invoke("disconnect_client", { clientType });
+}
+
 export async function removeRawMcpEntry(clientType: string): Promise<void> {
   return invoke("remove_raw_mcp_entry", { clientType });
 }

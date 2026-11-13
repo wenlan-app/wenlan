@@ -468,6 +468,7 @@ pub async fn handle_store_memory(
     Json(req): Json<StoreMemoryRequest>,
 ) -> Result<Json<StoreMemoryResponse>, ServerError> {
     let telemetry = { state.read().await.telemetry.clone() };
+    let mut slow = crate::slow_save::SlowSaveLog::start("saving a memory");
     let result = handle_store_memory_inner(
         State(state),
         headers,
@@ -475,6 +476,7 @@ pub async fn handle_store_memory(
         Json(req),
     )
     .await;
+    slow.finish(&result);
     telemetry.record(if result.is_ok() {
         TelemetryEvent::SaveSuccess
     } else {

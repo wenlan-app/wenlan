@@ -436,6 +436,30 @@ pub async fn remove_raw_mcp_entry(client_type: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Turns Wenlan off for one AI tool from its row in Settings. A plugin tool
+/// (Claude Code, Codex and the ChatGPT app's Codex) loses the plugin; every
+/// tool loses a raw `wenlan` entry if it has one. Something already off is
+/// not an error: before, turning off Codex/ChatGPT failed with "No Wenlan MCP
+/// entry found to remove" because the plugin, not a raw entry, connected it.
+#[tauri::command]
+pub async fn disconnect_client(client_type: String) -> Result<(), String> {
+    let plugin_client = matches!(client_type.as_str(), "claude_code" | "codex_cli");
+    if plugin_client {
+        let ct = client_type.clone();
+        tokio::task::spawn_blocking(move || crate::plugin_install::uninstall_client_plugin(&ct))
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?;
+    }
+    match remove_raw_mcp_entry(client_type).await {
+        Ok(()) => Ok(()),
+        Err(message) if message.contains("No Wenlan MCP entry found") => Ok(()),
+        // A plugin tool with no config file at all has no raw entry either.
+        Err(_) if plugin_client => Ok(()),
+        Err(message) => Err(message),
+    }
+}
+
 /// Removes ONLY the legacy `origin` MCP entry from `client_type`'s config,
 /// keeping the live `wenlan` entry — the fix Diagnostics offers for a raw+raw
 /// duplicate (both `wenlan` and `origin` in one config, on a no-plugin client
@@ -7500,6 +7524,22 @@ pub async fn sync_registered_source(
     sync_registered_source_for_state(&state, &id).await
 }
 
+/// Paths in a source that Wenlan could not read, so the folder view says so
+/// instead of showing them as still being indexed. Only the paths go to the
+/// UI; the daemon's reason stays in the log.
+#[tauri::command]
+pub async fn list_unreadable_files(
+    state: tauri::State<'_, State>,
+    id: String,
+) -> Result<Vec<String>, String> {
+    let client = {
+        let s = state.read().await;
+        s.client.clone()
+    };
+    let files = client.list_unreadable_files(&id).await?;
+    Ok(files.into_iter().map(|file| file.path).collect())
+}
+
 /// The whole body of `sync_registered_source`, kept apart from the Tauri
 /// wrapper so a test drives the command path with a Directory source
 /// registered in local config. It must not branch on the local source type.
@@ -7662,20 +7702,58 @@ pub async fn daemon_version(state: tauri::State<'_, State>) -> Result<String, St
     Ok(client.health().await?.version)
 }
 
-/// Stage a loose file into the managed uploads dir, then ensure that dir is
-/// registered with the daemon as a `directory` source (§2, §6).
+/// Stage everything picked in one go (documents and zips), then register the
+/// uploads folder with the daemon once. The outcome lets the app say what
+/// happened in a single notice.
 #[tauri::command]
-pub async fn upload_source_file(
+pub async fn upload_source_files(
+    state: tauri::State<'_, State>,
+    paths: Vec<String>,
+) -> Result<crate::sources::uploads::UploadOutcome, String> {
+    let picked: Vec<std::path::PathBuf> = paths.iter().map(std::path::PathBuf::from).collect();
+    let dir = crate::sources::uploads::sources_dir();
+    let staging_dir = dir.clone();
+    let outcome = tokio::task::spawn_blocking(move || {
+        crate::sources::uploads::stage_uploads(&staging_dir, &picked)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    if !outcome.added.is_empty() || !outcome.already.is_empty() {
+        register_directory_source_with_daemon(&state, &dir, None).await?;
+    }
+    Ok(outcome)
+}
+
+/// Where files added with "Add your material" are kept, so the app can offer
+/// to delete exactly those (and never a file in one of the person's folders).
+#[tauri::command]
+pub fn uploads_folder() -> String {
+    crate::sources::uploads::sources_dir()
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// Delete one uploaded file, then sync the uploads source so its text leaves
+/// the library too (the daemon reaps a file that vanished from a live folder).
+#[tauri::command]
+pub async fn delete_uploaded_file(
     state: tauri::State<'_, State>,
     path: String,
-) -> Result<crate::sources::Source, String> {
-    let src = std::path::PathBuf::from(&path);
-    if !src.is_file() {
-        return Err(format!("Not a file: {}", path));
-    }
+) -> Result<(), String> {
     let dir = crate::sources::uploads::sources_dir();
-    crate::sources::uploads::place_upload_file(&dir, &src).map_err(|e| e.to_string())?;
-    register_directory_source_with_daemon(&state, &dir, None).await
+    // The daemon names a file under its knowledge home relative to it
+    // (`sources/paper.pdf`); the uploads folder sits in that home.
+    let given = std::path::PathBuf::from(&path);
+    let file = if given.is_absolute() {
+        given
+    } else {
+        dir.parent().map(|home| home.join(&given)).unwrap_or(given)
+    };
+    crate::sources::uploads::remove_upload(&dir, &file).map_err(|e| e.to_string())?;
+    let source = register_directory_source_with_daemon(&state, &dir, None).await?;
+    sync_registered_source_for_state(&state, &source.id).await?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

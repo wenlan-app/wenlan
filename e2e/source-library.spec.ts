@@ -37,6 +37,10 @@ async function setup(page: Page, empty = false, dark = false) {
   const nativeDialogCalls: unknown[] = [];
   let unavailable = false;
   let concurrentCreate = false;
+  let dialogPick: unknown = null;
+  let uploadResult = { added: [] as string[], already: [] as string[], skipped: [] as { name: string; reason: string }[], chatExports: [] as string[] };
+  const uploads: string[][] = [];
+  const deleted: string[] = [];
   await page.exposeBinding("__sourceFixtureInvoke", async (_source, command: string, args: Record<string, unknown> = {}) => {
     if (command === "list_registered_sources") return [];
     if (command === "list_indexed_files") {
@@ -57,7 +61,19 @@ async function setup(page: Page, empty = false, dark = false) {
       return { source: "webpage", source_id: req.source_id, ...next, updated_at: 2, pages: [] };
     }
     if (command === "list_pages") return [];
-    if (command === "plugin:dialog|open") { nativeDialogCalls.push(args); return null; }
+    if (command === "plugin:dialog|open") { nativeDialogCalls.push(args); return dialogPick; }
+    if (command === "uploads_folder") return "/Users/me/.wenlan/sources";
+    if (command === "upload_source_files") {
+      uploads.push(args.paths as string[]);
+      files = [...files, ...uploadResult.added.map((name, i) => ({ source: "directory", source_id: `uploads::sources/${name}`, title: name, chunk_count: 1, last_modified: 1_794_500_000 + i * 60 }))];
+      for (const name of uploadResult.added) documents.set(`uploads::sources/${name}`, `這是 ${name} 的已保存內容。`);
+      return uploadResult;
+    }
+    if (command === "delete_uploaded_file") {
+      deleted.push(String(args.path));
+      files = files.filter(file => file.source_id !== `uploads::${String(args.path)}`);
+      return null;
+    }
     if (command === "ingest_webpage") {
       const req = args.req as { url: string; title: string; content: string; create_only?: boolean };
       if (req.create_only && concurrentCreate) {
@@ -81,7 +97,7 @@ async function setup(page: Page, empty = false, dark = false) {
     const bridge = window.__TAURI_INTERNALS__!;
     const original = bridge.invoke;
     bridge.invoke = (command, args) => {
-      if (["list_registered_sources", "list_indexed_files", "get_chunks", "get_source_annotation", "update_source_annotation", "list_pages", "ingest_webpage", "open_search_result", "plugin:dialog|open"].includes(command)) {
+      if (["list_registered_sources", "list_indexed_files", "get_chunks", "get_source_annotation", "update_source_annotation", "list_pages", "ingest_webpage", "open_search_result", "plugin:dialog|open", "uploads_folder", "upload_source_files", "delete_uploaded_file"].includes(command)) {
         return (window as unknown as { __sourceFixtureInvoke: (name: string, args?: unknown) => Promise<unknown> }).__sourceFixtureInvoke(command, args) as ReturnType<typeof original>;
       }
       return original(command, args);
@@ -89,7 +105,8 @@ async function setup(page: Page, empty = false, dark = false) {
   });
   await openSourceLibrary(page, HANT_SOURCE_LIBRARY);
   await expect(page.getByRole("heading", { name: "來源", exact: true })).toBeVisible();
-  return { errors, writes, opens, nativeDialogCalls, fail: () => { unavailable = true; }, raceNextCreate: () => { concurrentCreate = true; }, savedText: (url: string) => documents.get(url) };
+  const pickFiles = (paths: string[], result: typeof uploadResult) => { dialogPick = paths; uploadResult = result; };
+  return { errors, writes, opens, nativeDialogCalls, uploads, deleted, pickFiles, fail: () => { unavailable = true; }, raceNextCreate: () => { concurrentCreate = true; }, savedText: (url: string) => documents.get(url) };
 }
 
 const HANT_SOURCE_LIBRARY = sourceLibraryLabels("zh-Hant");
@@ -308,5 +325,41 @@ test("the Pages entry reopens a newly saved draft after browsing sources", async
   await page.getByRole("button", { name: "Wiki", exact: true }).click();
   await expect(page.getByRole("heading", { name: "A page to return to", exact: true })).toBeVisible();
   await expect(page.locator(".cm-content[contenteditable=true]")).toContainText("Keep this draft when I look at sources.");
+  expect(state.errors.pageErrors).toEqual([]); expect(state.errors.consoleErrors).toEqual([]);
+});
+
+test("several PDFs, a Word file and a zip come in from one pick; one that cannot be read is named, and an uploaded file can be deleted", async ({ page }) => {
+  const state = await setup(page, true);
+  state.pickFiles(["/Users/me/a.pdf", "/Users/me/b.pdf", "/Users/me/掃描.pdf", "/Users/me/報告.docx", "/Users/me/課堂筆記.zip"], {
+    added: ["a.pdf", "b.pdf", "報告.docx", "課堂筆記/第一週.md"],
+    already: [],
+    skipped: [{ name: "掃描.pdf", reason: "noText" }],
+    chatExports: [],
+  });
+  await page.getByRole("button", { name: "新增", exact: true }).first().click();
+  const menu = page.getByRole("dialog", { name: "加入你的資料", exact: true });
+  await expect(menu.getByRole("button", { name: /^檔案/ })).toContainText("Word");
+  await capture(page, "upload-menu.png");
+  await menu.getByRole("button", { name: /^檔案/ }).click();
+  const report = menu.getByTestId("source-upload-report");
+  await expect(report).toContainText("這 1 個沒收：");
+  await expect(report).toContainText("掃描.pdf · 讀不到文字，可能是掃描檔");
+  expect(state.uploads).toEqual([["/Users/me/a.pdf", "/Users/me/b.pdf", "/Users/me/掃描.pdf", "/Users/me/報告.docx", "/Users/me/課堂筆記.zip"]]);
+  expect(state.nativeDialogCalls).toEqual([expect.objectContaining({ options: expect.objectContaining({ multiple: true }) })]);
+  await capture(page, "upload-report.png");
+  await page.keyboard.press("Escape");
+
+  const library = page.getByRole("list", { name: "來源庫" });
+  await expect(library.getByRole("button", { name: /b\.pdf/ })).toBeVisible();
+  await capture(page, "upload-library.png");
+  await library.getByRole("button", { name: /b\.pdf/ }).click();
+  const remove = page.getByTestId("source-delete-upload");
+  await expect(remove).toHaveText("刪除這個檔案");
+  await capture(page, "upload-delete-offer.png");
+  await remove.click();
+  await capture(page, "upload-delete-confirm.png");
+  await page.getByRole("alertdialog").getByRole("button", { name: "刪除這個檔案" }).click();
+  await expect.poll(() => state.deleted).toEqual(["sources/b.pdf"]);
+  await capture(page, "upload-after-delete.png");
   expect(state.errors.pageErrors).toEqual([]); expect(state.errors.consoleErrors).toEqual([]);
 });

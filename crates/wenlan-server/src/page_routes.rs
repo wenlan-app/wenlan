@@ -1041,6 +1041,7 @@ pub async fn handle_create_page(
         &req.source_memory_ids,
         page_min_cluster_size,
     ) == "distilled";
+    let mut slow = crate::slow_save::SlowSaveLog::start("saving a page");
     let result = handle_create_page_inner(
         State(state),
         headers,
@@ -1048,6 +1049,7 @@ pub async fn handle_create_page(
         Json(wire),
     )
     .await;
+    slow.finish(&result);
     if is_distilled {
         match &result {
             Ok(Json(response)) if response.write_outcome == Some(WriteOutcome::Created) => {
@@ -1059,6 +1061,9 @@ pub async fn handle_create_page(
     }
     result
 }
+
+/// A wait for the shared write lock longer than this is logged.
+const SLOW_SPACE_LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 
 async fn handle_create_page_inner(
     State(state): State<Arc<RwLock<ServerState>>>,
@@ -1091,7 +1096,14 @@ async fn handle_create_page_inner(
     crate::agent_presence::note_page_writer(&db, Some(&agent)).await?;
 
     let write_started_at = chrono::Utc::now().timestamp();
+    let asked = std::time::Instant::now();
     let _space_write_guard = db.lock_space_writes().await;
+    if asked.elapsed() >= SLOW_SPACE_LOCK_WAIT {
+        tracing::warn!(
+            "[pages] a page save waited {:.1}s for another write to finish",
+            asked.elapsed().as_secs_f64()
+        );
+    }
     let target = normalize_page_write_target(&req.space, req.workspace.as_deref())?;
     let resolved = db
         .resolve_write_space(&target, header_space.as_deref())

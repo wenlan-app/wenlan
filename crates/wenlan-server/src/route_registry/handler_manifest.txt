@@ -242,6 +242,7 @@ main|post|/api/shutdown|wenlan_server::routes::handle_shutdown
 main|post|/api/snapshots/{id}/delete|wenlan_server::snapshot_routes::handle_delete_snapshot
 main|post|/api/sources|wenlan_server::source_routes::handle_add_source
 main|post|/api/sources/{id}/sync|wenlan_server::source_routes::handle_sync_source
+main|get|/api/sources/{id}/unreadable-files|wenlan_server::source_routes::handle_unreadable_files
 main|get|/api/sources/{id}/ai-changes|wenlan_server::note_routes::handle_get_note_ai_changes
 main|put|/api/sources/{id}/ai-changes|wenlan_server::note_routes::handle_set_note_ai_changes
 main|get|/api/notes/proposals|wenlan_server::note_routes::handle_list_note_proposals

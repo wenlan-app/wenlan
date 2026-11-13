@@ -60315,3 +60315,49 @@ async fn recent_changes_name_the_writer_and_count_changed_sentences() {
     assert_eq!(scoped[0].edited_by.as_deref(), Some("shared_person:amy"));
     assert_eq!(scoped[0].changed_sentences, Some(2));
 }
+
+#[tokio::test]
+async fn an_unreadable_document_is_finished_with_its_reason_and_listed() {
+    let (db, _dir) = test_db().await;
+    db.enqueue_document("folder-notes", "/notes/scan.pdf", Some("scan-hash"))
+        .await
+        .unwrap();
+    db.enqueue_document("folder-notes", "/notes/fine.md", Some("fine-hash"))
+        .await
+        .unwrap();
+    let first = db.claim_next_pending().await.unwrap().unwrap();
+    let second = db.claim_next_pending().await.unwrap().unwrap();
+    for entry in [first, second] {
+        if entry.file_path == "/notes/scan.pdf" {
+            db.complete_unreadable_document(
+                "folder-notes",
+                "/notes/scan.pdf",
+                1,
+                "scan-hash",
+                "pdf parse failed: no text",
+            )
+            .await
+            .unwrap();
+        } else {
+            db.complete_document_enrichment("folder-notes", "/notes/fine.md", 1, "fine-hash")
+                .await
+                .unwrap();
+        }
+    }
+    assert_eq!(
+        db.list_unreadable_documents_for_source("folder-notes")
+            .await
+            .unwrap(),
+        vec![(
+            "/notes/scan.pdf".to_string(),
+            "pdf parse failed: no text".to_string()
+        )]
+    );
+    // It is done, so nothing waits on it.
+    assert_eq!(
+        db.count_unprepared_documents_for_source("folder-notes")
+            .await
+            .unwrap(),
+        0
+    );
+}

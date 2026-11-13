@@ -324,6 +324,17 @@ pub async fn handle_steep_new_tasks(
 ///
 /// Write the note a claim was for, or give the items back.
 pub async fn handle_steep_new_commit(
+    state: State<Arc<RwLock<ServerState>>>,
+    headers: axum::http::HeaderMap,
+    req: Json<SteepNewCommitRequest>,
+) -> Result<Json<SteepNewCommitResponse>, ServerError> {
+    let mut slow = crate::slow_save::SlowSaveLog::start("saving an organized page");
+    let result = handle_steep_new_commit_inner(state, headers, req).await;
+    slow.finish(&result);
+    result
+}
+
+async fn handle_steep_new_commit_inner(
     State(state): State<Arc<RwLock<ServerState>>>,
     headers: axum::http::HeaderMap,
     Json(req): Json<SteepNewCommitRequest>,

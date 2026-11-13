@@ -5,7 +5,8 @@ import { Books, ChatsCircle, Lightbulb } from "@phosphor-icons/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
-  uploadSourceFile,
+  uploadSourceFiles,
+  type UploadOutcome,
   getDaemonVersion,
   daemonMeetsFloor,
   openFile,
@@ -23,6 +24,8 @@ import AiMemoryDialog from "./AiMemoryDialog";
 import { SourceTypeIcon } from "./SourceTypeIcon";
 import { rememberAddedFolder } from "./FolderImportOrganize";
 import { useTranslation } from "react-i18next";
+
+const SKIP_REASON_KEY = { format: "sourceAccess.reasonFormat", tooBig: "sourceAccess.reasonTooBig", noText: "sourceAccess.reasonNoText" } as const;
 
 type ConnectKind = "obsidian" | "logseq" | "folder";
 type PickedFolder = { kind: ConnectKind; sourceType: SourceTypeStr; path: string };
@@ -64,21 +67,35 @@ export default function AddSourceMenu({ onClose, start = "menu", onQuickChats, t
     void qc.invalidateQueries({ queryKey: ["indexedFiles"] });
   }
 
+  // What the last pick left out (and any AI chat export picked here), shown
+  // in the dialog so a file that did not come in is never lost silently.
+  const [uploadReport, setUploadReport] = useState<UploadOutcome | null>(null);
   const upload = useMutation({
-    onMutate: () => setFailure(null),
+    onMutate: () => { setFailure(null); setUploadReport(null); },
     mutationFn: async () => {
       const picked = await openDialog({
-        title: t("sourceAccess.files"), directory: false, multiple: false,
-        filters: [{ name: t("sourceAccess.pickerFilter"), extensions: ["pdf", "md", "txt"] }],
+        title: t("sourceAccess.files"), directory: false, multiple: true,
+        filters: [{ name: t("sourceAccess.pickerFilter"), extensions: ["pdf", "docx", "md", "txt", "zip"] }],
       });
-      if (!picked || typeof picked !== "string") return null;
-      await uploadSourceFile(picked);
-      return picked.replace(/\\/g, "/").split("/").pop() ?? picked;
+      if (!picked) return null;
+      const paths = Array.isArray(picked) ? picked : [picked];
+      if (paths.length === 0) return null;
+      return uploadSourceFiles(paths);
     },
-    onSuccess: (name) => {
-      if (!name) return;
-      refreshSources();
-      toast(t("sourceAccess.added"), { description: t("sourceAccess.addedBody", { name }) });
+    onSuccess: (outcome) => {
+      if (!outcome) return;
+      const { added, already, skipped, chatExports } = outcome;
+      if (added.length > 0 || already.length > 0) refreshSources();
+      // One notice for the whole pick, however many files it held.
+      if (added.length > 0) {
+        toast(t("sourceAccess.addedCount", { count: added.length }), { description: t("sourceAccess.addedSoon", { count: added.length }) });
+      } else if (already.length > 0) {
+        toast(t("sourceAccess.alreadyIn"), { description: t("sourceAccess.alreadyBody", { count: already.length, name: already[0] }) });
+      }
+      if (skipped.length > 0 || chatExports.length > 0) {
+        setUploadReport(outcome);
+        return;
+      }
       onClose();
     },
     onError: fail,
@@ -223,5 +240,15 @@ export default function AddSourceMenu({ onClose, start = "menu", onQuickChats, t
     </p>
     {connect.isPending && <p role="status">{t("sourceAccess.connecting")}</p>}
     {failure && <div role="alert" className="source-dialog-error">{t("sourceAccess.addFailed")}<p>{failure}</p></div>}
+    {uploadReport && <div role="status" className="source-upload-report" data-testid="source-upload-report">
+      {uploadReport.added.length === 0 && uploadReport.already.length === 0 && <strong>{t("sourceAccess.nothingAdded")}</strong>}
+      {uploadReport.skipped.length > 0 && <>
+        <p>{t("sourceAccess.notAdded", { count: uploadReport.skipped.length })}</p>
+        <ul className="source-upload-skipped">
+          {uploadReport.skipped.map((file) => <li key={file.name}><span>{file.name}</span> · {t(SKIP_REASON_KEY[file.reason])}</li>)}
+        </ul>
+      </>}
+      {uploadReport.chatExports.map((name) => <p key={name}>{t("sourceAccess.chatExport", { name })} <button type="button" className="source-add-more-link" onClick={() => { setShowChats(true); setShowFullChats(true); }}>{t("sourceAccess.chatExportOpen")}</button></p>)}
+    </div>}
   </SourceDialog>;
 }

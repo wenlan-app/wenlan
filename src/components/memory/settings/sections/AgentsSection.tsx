@@ -6,7 +6,7 @@ import {
   clipboardWrite,
   deleteAgent,
   detectMcpClients,
-  removeRawMcpEntry,
+  disconnectClient,
   updateAgent,
   type AgentConnection,
   type McpClient,
@@ -207,7 +207,7 @@ export default function AgentsSection({
     setBusyFamily(row.family);
     setRowErrors((previous) => ({ ...previous, [row.family]: null }));
     try {
-      await removeRawMcpEntry(row.client.client_type);
+      await disconnectClient(row.client.client_type);
       setDisconnectedClientTypes((previous) => new Set(previous).add(row.client!.client_type));
       void queryClient.invalidateQueries({ queryKey: ["mcp-clients"] });
     } catch (error) {

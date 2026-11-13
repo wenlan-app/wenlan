@@ -1879,6 +1879,18 @@ impl WenlanClient {
         self.post_empty(&path).await
     }
 
+    /// The source's files Wenlan could not read (no text, corrupt), with why.
+    pub async fn list_unreadable_files(
+        &self,
+        id: &str,
+    ) -> Result<Vec<wenlan_types::sources::UnreadableFile>, String> {
+        let path = format!(
+            "/api/sources/{}/unreadable-files",
+            percent_encode_path_segment(id)
+        );
+        self.get_json(&path).await
+    }
+
     // ── Onboarding milestones ──────────────────────────────────────
 
     pub async fn list_onboarding_milestones(

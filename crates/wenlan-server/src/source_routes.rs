@@ -38,6 +38,10 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
         )
         .route("/api/sources/{id}/sync", post(handle_sync_source))
         .route(
+            "/api/sources/{id}/unreadable-files",
+            get(handle_unreadable_files),
+        )
+        .route(
             "/api/zotero/collections",
             get(zotero_sync::handle_list_collections),
         )
@@ -1147,6 +1151,25 @@ pub(crate) async fn sync_directory_source(
 /// Directory and OKF sources queue changed files for document enrichment;
 /// an Obsidian vault or Logseq graph upserts changed notes through the quality gate
 /// (`obsidian_sync`). The background scheduler runs the same routines.
+/// The source's files Wenlan will never read, with why, so the app can say
+/// "couldn't read this file" instead of showing it as still being indexed.
+pub async fn handle_unreadable_files(
+    State(state): State<Arc<RwLock<ServerState>>>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<wenlan_types::sources::UnreadableFile>>, ServerError> {
+    let db = {
+        let s = state.read().await;
+        s.db.clone().ok_or(ServerError::DbNotInitialized)?
+    };
+    let files = db
+        .list_unreadable_documents_for_source(&id)
+        .await?
+        .into_iter()
+        .map(|(path, reason)| wenlan_types::sources::UnreadableFile { path, reason })
+        .collect();
+    Ok(Json(files))
+}
+
 pub async fn handle_sync_source(
     State(state): State<Arc<RwLock<ServerState>>>,
     Path(id): Path<String>,

@@ -23,7 +23,6 @@ import { useRemoteAccess } from "./useRemoteAccess";
 const EXPIRY_WARNING_MS = 14 * 24 * 60 * 60 * 1000;
 
 type Confirming =
-  | { kind: "off" }
   | { kind: "renew" }
   | { kind: "choose" }
   | { kind: "change"; scope: RemoteScope };
@@ -263,8 +262,9 @@ export function RemoteAccessPanel({ currentSpace }: { currentSpace?: string }) {
   const loading = nativeLoading || (!isOn && !ready && !nativeReadFailed && !spacesFailed);
   const cannotTurnOn = nativeReadFailed || (!isOn && (pendingDisconnect || stuck));
   const onToggle = () => {
+    // Off is one click: a switch that asks again is a switch that feels stuck.
     if (isOn) {
-      setConfirming({ kind: "off" });
+      turnOff();
     } else if (choosing) {
       setChoosing(false);
     } else if (spacesFailed) {
@@ -276,12 +276,8 @@ export function RemoteAccessPanel({ currentSpace }: { currentSpace?: string }) {
     }
   };
   const showCodeEntry = !nativeLoading && !nativeReadFailed && !pendingDisconnect && !stuck && !ended;
-  const offConfirm = confirming?.kind === "off" && isOn && !nativeReadFailed
-    ? <InlineConfirm message={t("remoteAccess.offConfirm")} confirmLabel={t("remoteAccess.turnOff")} busy={busy}
-        onConfirm={turnOff} onCancel={() => setConfirming(null)} />
-    : null;
   const actionError = action.error ? <RemoteErrorMessage error={action.error} /> : null;
-  const hasContent = Boolean(body || offConfirm || actionError || showCodeEntry);
+  const hasContent = Boolean(body || actionError || showCodeEntry);
 
   return (
     <div className="min-w-0 space-y-4" style={{ fontFamily: "var(--mem-font-body)", color: "var(--mem-text)" }}>
@@ -298,7 +294,6 @@ export function RemoteAccessPanel({ currentSpace }: { currentSpace?: string }) {
         />
         {hasContent && (
           <div className="min-w-0 px-5 py-4 space-y-6">
-            {offConfirm}
             {body}
             {actionError}
             {showCodeEntry && <CodeEntry />}

@@ -249,7 +249,6 @@ describe("turning on", () => {
     mocks.listSpaces.mockRejectedValue(new Error("Daemon offline"));
     await connectedPanel();
     fireEvent.click(button(TOGGLE));
-    fireEvent.click(within(await screen.findByRole("group")).getByRole("button", { name: "Turn off" }));
     await waitFor(() => expect(mocks.toggleRemoteAccess).toHaveBeenCalledWith(false));
   });
 });
@@ -466,21 +465,13 @@ describe("a connection that is on", () => {
   });
 });
 
-describe("asking before it ends connections", () => {
-  it("turn off asks first, Escape cancels, then it turns off", async () => {
+describe("turning off and changing what web apps reach", () => {
+  it("the switch turns it off in one click, with no question first", async () => {
     await connectedPanel();
     expect(button(TOGGLE)).toHaveAttribute("aria-pressed", "true");
-    expect(screen.queryByRole("button", { name: "Turn off" })).not.toBeInTheDocument();
     fireEvent.click(button(TOGGLE));
-    const ask = await screen.findByRole("group");
-    expect(ask).toHaveTextContent("Turn off Web access? Connected web apps lose access right away.");
-    expect(mocks.toggleRemoteAccess).not.toHaveBeenCalled();
-    fireEvent.keyDown(ask, { key: "Escape" });
-    expect(screen.queryByRole("group")).not.toBeInTheDocument();
-    expect(mocks.toggleRemoteAccess).not.toHaveBeenCalled();
-    fireEvent.click(button(TOGGLE));
-    fireEvent.click(within(await screen.findByRole("group")).getByRole("button", { name: "Turn off" }));
     await waitFor(() => expect(mocks.toggleRemoteAccess).toHaveBeenCalledWith(false));
+    expect(screen.queryByText(/Turn off Web access\?/)).not.toBeInTheDocument();
   });
 
   it("changing to another Space turns off, saves it, and turns on again, after a confirm", async () => {
@@ -753,13 +744,12 @@ describe("when the key is running out or has run out", () => {
     await waitFor(() => expect(mocks.toggleRemoteAccess.mock.calls).toEqual([[false]]));
   });
 
-  it("an ended key's switch also asks before turning off", async () => {
+  it("an ended key's switch also turns it off in one click", async () => {
     mocks.getRemoteAccessProfile.mockResolvedValue({ ...profile, credential_expires_at: Date.now() - DAY });
     mocks.getRemoteAccessStatus.mockResolvedValue({ status: "off" });
     panel();
     fireEvent.click(await findToggle());
-    expect(await screen.findByRole("group")).toHaveTextContent("Turn off Web access?");
-    expect(mocks.toggleRemoteAccess).not.toHaveBeenCalled();
+    await waitFor(() => expect(mocks.toggleRemoteAccess).toHaveBeenCalledWith(false));
   });
 });
 
