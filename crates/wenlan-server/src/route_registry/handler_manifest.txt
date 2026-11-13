@@ -371,5 +371,6 @@ main|post|/api/team/spaces|wenlan_server::team_routes::handle_host_space
 main|post|/api/team/join|wenlan_server::team_routes::handle_join
 main|post|/api/team/start|wenlan_server::team_routes::handle_start_team
 main|post|/api/team/stop|wenlan_server::team_routes::handle_stop_team
+main|get|/api/team/firewall|wenlan_server::team_routes::handle_firewall
 main|post|/api/team/membership|wenlan_server::team_routes::handle_remember_membership
 main|delete|/api/team/membership|wenlan_server::team_routes::handle_forget_membership

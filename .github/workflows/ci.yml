@@ -611,6 +611,8 @@ jobs:
               # `cfg(unix)` symlink case; Windows proves the other side.
               - 'crates/wenlan-server/src/source_routes/okf_registration_tests.rs'
               - 'crates/wenlan-server/src/telemetry.rs'
+              # The team's Windows Firewall probe runs PowerShell only on Windows.
+              - 'crates/wenlan-server/src/team_firewall.rs'
               - 'crates/wenlan-server/tests/graceful_shutdown.rs'
               - 'crates/wenlan-mcp/npm/install.js'
               - 'crates/wenlan-core/src/config.rs'

@@ -4,12 +4,15 @@
 // owner's own name (how the team sees what they write here) and the address
 // the others reach this computer at. The team listener then stays on, after
 // restarts too, until it is turned off in the same place.
+// On Windows, Windows asks itself (its security alert, naming wenlan-server)
+// once the listener starts. Missed or cancelled, Windows blocks teammates;
+// Settings › Team then says so, with a button that lets them in.
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { getProfile, teamStart, type TeamStatus } from "../../../lib/tauri";
 import { SHARES_KEY } from "../sharing/sharing";
-import { TEAM_KEY } from "../sharing/team";
+import { TEAM_FIREWALL_KEY, TEAM_KEY } from "../sharing/team";
 import "../sharing/sharing.css";
 
 export function StartTeamDialog({ status, onClose, onStarted }: {
@@ -46,6 +49,7 @@ export function StartTeamDialog({ status, onClose, onStarted }: {
         queryClient.invalidateQueries({ queryKey: TEAM_KEY }),
         queryClient.invalidateQueries({ queryKey: SHARES_KEY }),
         queryClient.invalidateQueries({ queryKey: ["profile"] }),
+        queryClient.invalidateQueries({ queryKey: TEAM_FIREWALL_KEY }),
       ]);
       onStarted();
     } catch (caught) {

@@ -587,6 +587,9 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   team_join: (a) => post("/api/team/join", { code: String(a.code), key: a.key ?? undefined }),
   team_start: (a) => post("/api/team/start", { name: String(a.name), person: String(a.person), url: a.url ?? undefined }),
   team_stop: () => post("/api/team/stop", {}),
+  team_firewall: () => get("/api/team/firewall"),
+  // Windows' administrator prompt has no browser stand-in.
+  team_firewall_allow: () => Promise.reject(new Error("declined")),
   team_remember_membership: (a) => post("/api/team/membership", { code: String(a.code) }),
   team_forget_membership: (a) => del(`/api/team/membership?url=${encodeURIComponent(String(a.url))}`),
   join_team_space: (a) => post(`/api/spaces/${enc(String(a.localSpace))}/shared/sync`, { folder: "", member_name: null, member_id: null, host: { code: String(a.code), key: null, space: String(a.serverSpace) } }),

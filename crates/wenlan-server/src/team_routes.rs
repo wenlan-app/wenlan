@@ -99,10 +99,18 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
         .route("/api/team/join", post(handle_join))
         .route("/api/team/start", post(handle_start_team))
         .route("/api/team/stop", post(handle_stop_team))
+        .route("/api/team/firewall", get(handle_firewall))
         .route(
             "/api/team/membership",
             post(handle_remember_membership).delete(handle_forget_membership),
         )
+}
+
+/// GET /api/team/firewall — on Windows, whether other computers get
+/// through Windows Firewall to this computer's team listener; `null`
+/// elsewhere, or when the rules cannot be read.
+pub async fn handle_firewall() -> Json<Option<wenlan_types::team::TeamFirewall>> {
+    Json(crate::team_firewall::check().await)
 }
 
 /// When this computer is no team's server but its person owns a team

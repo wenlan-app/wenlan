@@ -2,7 +2,7 @@
 // Team server helpers shared by the members dialog, the share box, the join
 // box and Settings › Team.
 import { useQuery } from "@tanstack/react-query";
-import { teamStatus, type TeamMember } from "../../../lib/tauri";
+import { teamFirewall, teamStatus, type TeamMember } from "../../../lib/tauri";
 
 export const TEAM_DOCS_URL = "https://github.com/wenlan-app/wenlan/blob/main/docs/team-server.md";
 const TEAM_URL_KEY = "wenlan-team-url";
@@ -51,6 +51,17 @@ export const TEAM_KEY = ["team"] as const;
  *  team server answers; elsewhere it reads as "off". */
 export function useTeamStatus({ enabled = true }: { readonly enabled?: boolean } = {}) {
   return useQuery({ queryKey: TEAM_KEY, queryFn: teamStatus, retry: false, enabled });
+}
+
+export const TEAM_FIREWALL_KEY = ["team-firewall"] as const;
+
+/** On Windows, whether teammates get through Windows Firewall to this
+ *  computer's team; `null` elsewhere. Asking takes Windows a few seconds,
+ *  so it is asked only while the team is on, and again when the window
+ *  comes back to the front: after Windows' own alert is answered, or on
+ *  another network. */
+export function useTeamFirewall(enabled: boolean) {
+  return useQuery({ queryKey: TEAM_FIREWALL_KEY, queryFn: teamFirewall, retry: false, enabled, staleTime: 5_000, refetchOnWindowFocus: true });
 }
 
 /** Whether `name` is the same person as `member`: trimmed, any letter case. */

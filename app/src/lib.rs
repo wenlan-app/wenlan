@@ -62,6 +62,7 @@ pub mod telemetry;
 mod test_env;
 pub mod themes;
 // Public surface consumed by tray_menu (Task 15); suppress dead_code until then.
+mod team_firewall;
 #[allow(dead_code)]
 pub(crate) mod tray_health;
 #[cfg(not(feature = "review-fixtures"))]
@@ -1751,6 +1752,8 @@ pub fn run() {
             search::team_join,
             search::team_start,
             search::team_stop,
+            search::team_firewall,
+            search::team_firewall_allow,
             search::team_remember_membership,
             search::team_forget_membership,
             search::join_team_space,

@@ -529,6 +529,7 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     "/api/team", "/api/team/members", "/api/team/members/{id}",
     "/api/team/members/{id}/key", "/api/team/spaces", "/api/team/join",
     "/api/team/start", "/api/team/stop", "/api/team/membership",
+    "/api/team/firewall",
     // Setting up a daily update on GitHub: which settings the repository
     // has, as booleans, and the last run's links. A token goes to GitHub
     // and is never returned.

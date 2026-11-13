@@ -7,11 +7,11 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
-import { teamStop, type SharedStatus } from "../../../../lib/tauri";
+import { teamFirewallAllow, teamStop, type SharedStatus } from "../../../../lib/tauri";
 import { confirmAction } from "../../../../lib/confirmAction";
 import { Button, SettingRow, Input, Field } from "../primitives";
 import { SettingsGroup } from "../SettingsView";
-import { TEAM_KEY, prefillTeamUrl, rememberTeamUrl, useTeamStatus } from "../../sharing/team";
+import { TEAM_FIREWALL_KEY, TEAM_KEY, prefillTeamUrl, rememberTeamUrl, useTeamFirewall, useTeamStatus } from "../../sharing/team";
 import { SHARES_KEY, teamLabel, teamPausedText, useShares } from "../../sharing/sharing";
 import { teamGroups } from "../../team/TeamPage";
 import { JoinSharedDialog } from "../../sharing/JoinSharedDialog";
@@ -32,8 +32,11 @@ export default function TeamSection() {
   // that server answers: the join window opens with it filled in.
   const [ownerLink, setOwnerLink] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [allowing, setAllowing] = useState(false);
+  const [declined, setDeclined] = useState(false);
   const scope = useScope();
   const queryClient = useQueryClient();
+  const firewall = useTeamFirewall(Boolean(!status.data?.remote && status.data?.listening));
 
   if (status.isPending || shares.isPending) return <p className="team-off" role="status">{t("team.loading")}</p>;
   // A team whose server is elsewhere and that this person owns: its status
@@ -85,6 +88,24 @@ export default function TeamSection() {
       ]);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
+    }
+  };
+
+  // Windows Firewall keeps teammates out of a team on this computer until
+  // Windows' administrator lets them in. Only Windows answers; elsewhere the
+  // row never shows.
+  const wall = listening ? firewall.data : null;
+  const allow = async () => {
+    if (!wall) return;
+    setAllowing(true);
+    setDeclined(false);
+    try {
+      await teamFirewallAllow(wall);
+    } catch {
+      setDeclined(true);
+    } finally {
+      setAllowing(false);
+      await queryClient.invalidateQueries({ queryKey: TEAM_FIREWALL_KEY });
     }
   };
 
@@ -153,6 +174,15 @@ export default function TeamSection() {
               ? <Button onClick={() => void stop()}>{t("team.start.stop")}</Button>
               : <Button onClick={() => setStarting(true)}>{t("team.start.again")}</Button>}
           />
+          {wall && !wall.open && (
+            <SettingRow
+              title={t("team.firewall.blockedTitle")}
+              description={declined
+                ? t("team.firewall.declined")
+                : wall.public_network ? t("team.firewall.blockedHintPublic") : t("team.firewall.blockedHint")}
+              control={<Button onClick={() => void allow()} disabled={allowing}>{allowing ? t("team.firewall.allowing") : t("team.firewall.allow")}</Button>}
+            />
+          )}
           {listening && (
             <div className="team-address">
               <Field label={t("team.settings.linkAddress")} htmlFor="team-address" description={t("team.urlHint")}>
