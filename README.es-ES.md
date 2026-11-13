@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=9f094ffed80b3f1ace444f71c374825e2bf74c138ffa70b8ff3b3d90b4a77fc1 -->
+<!-- README_SYNC: source=README.md sha256=0f6c9f5ee4e4c30ed8826aa6cd78494b1b08c1029b380fed75849734d6a2abb6 -->
 
 <p align="center">
   <picture>
@@ -49,7 +49,7 @@ Empecé Wenlan porque mis notas, documentos y chats de IA estaban dispersos, y e
 
 - **Se mantiene al día sola.** Tus herramientas de IA guardan lo que decides en los chats y lo integran en páginas. Cuando cambia una fuente, las páginas que dependen de ella se actualizan.
 - **Configúralo una vez, sin plugins.** **Connect all** en los ajustes conecta tus herramientas de IA con un clic. Sin plugins que instalar ni mantener.
-- **Tú decides qué cambia la IA.** Cada página cita sus fuentes, y una cita abre el original. Ves cada cambio, lo deshaces y eliges qué páginas esperan tu visto bueno.
+- **Comprueba la fuente antes de guardar.** Las notas que una IA escribe en una carpeta suelen quedar sin revisar. Wenlan comprueba que cada fuente citada respalda la frase en la que se cita y no guarda una página cuyas citas casi no coinciden; una cita abre el original. Ves cada cambio, puedes deshacerlo y las páginas que bloqueas te preguntan primero.
 - **Trae lo que ya tienes.** Bóvedas de Obsidian, notas, documentos y chats de IA. [Lista completa](#what-can-i-bring-in).
 
 ### Además
@@ -64,10 +64,10 @@ Empecé Wenlan porque mis notas, documentos y chats de IA estaban dispersos, y e
 | | Obsidian + plugins | Claude Code + una carpeta | Apps de LLM wiki | Wenlan |
 |---|---|---|---|---|
 | Quién organiza | Tú, con plugins | Tú, pidiéndoselo cada vez | Una IA que configuras | Tus herramientas de IA; actualiza cuando cambia una fuente |
-| Configuración | Buscar y actualizar plugins | Escribir y mantener tus propias instrucciones y comandos | Clave de modelo o rutina programada | Una vez; sin plugins que instalar ni mantener |
-| Revisa a la IA | Depende del plugin | Tú, revisando el git diff | Enlaza a fuentes | Rechaza páginas cuyas citas no coinciden |
-| Qué puede cambiar la IA | Depende del plugin | Lo que apruebes o permitas en sus ajustes | Su carpeta de wiki | Tú eliges por página; restaura cuando quieras |
-| Dónde viven tus notas | Tu ordenador | Tu ordenador | Tu ordenador | Tu ordenador; funciona con tu bóveda |
+| Configuración | Buscar y actualizar plugins | Tus propias instrucciones, más un archivo de decisiones que pegas en cada sesión | Clave de modelo o rutina programada | Una vez; sin plugins que instalar ni mantener |
+| Revisa a la IA | Depende del plugin | Revisas tú lo que guarda; duplicados y notas viejas esperan una limpieza | Enlaza a fuentes | Comprueba que cada fuente citada respalda su frase antes de guardar; conserva la versión anterior |
+| Qué puede cambiar la IA | Depende del plugin | Lo que apruebes o permitas en sus ajustes | Su carpeta de wiki | Tú eliges por página; las bloqueadas preguntan primero; deshaz cuando quieras |
+| Dónde viven tus notas | Tu ordenador | Archivos de texto en tu ordenador; gratis, y suficiente para mucha gente | Tu ordenador | Tus archivos, Markdown plano; funciona con tu bóveda |
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>

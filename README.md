@@ -47,7 +47,7 @@ I started Wenlan because my notes, documents, and AI chats were scattered, and k
 
 - **Keeps itself up to date.** Your AI tools save what you decide in chats and fold it into pages. When a source changes, the pages that rely on it get updated.
 - **Set up once, no plugins.** **Connect all** in Settings connects your AI tools in one click. No plugins to install or maintain.
-- **You decide what AI changes.** Every page cites its sources, and a citation opens the original. See every change, undo it, and choose which pages wait for your OK.
+- **Checks the source before saving.** Notes an AI writes into a folder usually go unchecked. Wenlan checks that each cited source supports the sentence it is cited for, and won't save a page whose citations mostly don't match; a citation opens the original. You see every change, can undo it, and pages you lock ask you first.
 - **Bring what you have.** Obsidian vaults, notes, documents, and AI chats. [Full list](#what-can-i-bring-in).
 
 ### Also
@@ -62,10 +62,10 @@ I started Wenlan because my notes, documents, and AI chats were scattered, and k
 | | Obsidian + plugins | Claude Code + a folder | LLM wiki apps | Wenlan |
 |---|---|---|---|---|
 | Who organizes | You, with plugins | You, by asking each time | An AI you set up | Your AI tools; updates when a source changes |
-| Setup | Find and update plugins | Write and maintain your own instructions and commands | Model key or scheduled routine | Set up once; no plugins to install or maintain |
-| Checks the AI's work | Depends on the plugin | You, by reading the git diff | Links to sources | Refuses pages whose citations don't match |
-| What AI may change | Depends on the plugin | What you approve, or allow in its settings | Its wiki folder | You choose per page; restore anytime |
-| Where notes live | Your computer | Your computer | Your computer | Your computer; works with your vault |
+| Setup | Find and update plugins | Your own instructions, plus a decisions file you paste in each session | Model key or scheduled routine | Set up once; no plugins to install or maintain |
+| Checks the AI's work | Depends on the plugin | You review what it files; duplicates and stale notes wait for a cleanup | Links to sources | Checks each cited source supports its sentence before saving; keeps the old version |
+| What AI may change | Depends on the plugin | What you approve, or allow in its settings | Its wiki folder | You choose per page; locked pages ask first; undo anytime |
+| Where notes live | Your computer | Plain files on your computer; free, and enough for many people | Your computer | Your files, plain Markdown; works with your vault |
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
