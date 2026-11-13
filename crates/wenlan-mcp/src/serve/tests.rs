@@ -254,3 +254,119 @@ async fn a_connection_idle_past_cleanup_keeps_working() {
     let _ = server.await;
     result.unwrap();
 }
+
+/// One call whose daemon answer is slow, against a connection whose idle limit
+/// is `idle`. Returns the HTTP status and body of the call.
+async fn slow_call_with_idle_limit(idle: Duration) -> (u16, String) {
+    // A daemon that takes 800 ms to answer anything.
+    let daemon = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let daemon_url = format!("http://{}", daemon.local_addr().unwrap());
+    let daemon_task = tokio::spawn(async move {
+        let slow = Router::new().fallback(|| async {
+            tokio::time::sleep(Duration::from_millis(800)).await;
+            axum::Json(serde_json::json!({"pages": [], "total": 0}))
+        });
+        axum::serve(daemon, slow).await.unwrap()
+    });
+
+    let mut manager = LocalSessionManager::default();
+    manager.session_config.keep_alive = Some(idle);
+    let service = StreamableHttpService::new(
+        move || {
+            Ok(WenlanMcpServer::new(
+                WenlanClient::new(daemon_url.clone()),
+                TransportMode::Http,
+                "synthetic-slow-test".into(),
+                None,
+            ))
+        },
+        Arc::new(manager),
+        StreamableHttpServerConfig::default(),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}/mcp", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        axum::serve(listener, Router::new().nest_service("/mcp", service))
+            .await
+            .unwrap()
+    });
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap();
+    let post = |session: Option<String>, body: serde_json::Value| {
+        let mut request = client
+            .post(&endpoint)
+            .header("Accept", "application/json, text/event-stream")
+            .header("Mcp-Protocol-Version", "2025-06-18")
+            .json(&body);
+        if let Some(id) = session {
+            request = request.header("Mcp-Session-Id", id);
+        }
+        request.send()
+    };
+    let opened = post(
+        None,
+        serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18", "capabilities": {},
+                "clientInfo": { "name": "slow-call", "version": "1" }
+            }
+        }),
+    )
+    .await
+    .unwrap();
+    let id = opened.headers()["mcp-session-id"]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    opened.text().await.unwrap();
+    post(
+        Some(id.clone()),
+        serde_json::json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+    )
+    .await
+    .unwrap();
+    let outcome = match post(
+        Some(id),
+        serde_json::json!({
+            "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+            "params": { "name": "list_pages", "arguments": {} }
+        }),
+    )
+    .await
+    {
+        Ok(response) => {
+            let status = response.status().as_u16();
+            (status, response.text().await.unwrap_or_default())
+        }
+        Err(error) => (0, error.to_string()),
+    };
+    server.abort();
+    daemon_task.abort();
+    outcome
+}
+
+/// A save that took longer than the idle limit failed at that mark: the
+/// SDK only restarts the timer on a new message, not while a call runs.
+#[tokio::test]
+async fn a_call_slower_than_the_idle_limit_is_cut_off_and_a_longer_limit_keeps_it() {
+    let (_, cut) = slow_call_with_idle_limit(Duration::from_millis(300)).await;
+    assert!(
+        !cut.contains("\"id\":2"),
+        "a call outliving the idle limit should lose its answer: {cut}"
+    );
+    let (status, kept) = slow_call_with_idle_limit(Duration::from_secs(3)).await;
+    assert_eq!(status, 200);
+    assert!(kept.contains("\"id\":2"), "the slow call's answer: {kept}");
+}
+
+#[test]
+fn production_connections_allow_slow_calls_up_to_an_hour() {
+    assert_eq!(
+        session_manager().session_config.keep_alive,
+        Some(SESSION_IDLE_LIMIT)
+    );
+    assert!(SESSION_IDLE_LIMIT >= Duration::from_secs(30 * 60));
+}

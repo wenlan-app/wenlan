@@ -180,7 +180,7 @@ pub async fn run_serve_with_profile(
             )
             .with_tool_profile(tool_profile))
         },
-        Arc::new(LocalSessionManager::default()),
+        Arc::new(session_manager()),
         mcp_config,
     );
 
@@ -293,9 +293,22 @@ pub fn team_member_service(
             .with_tool_profile(tool_profile)
             .with_space_pin(space.clone()))
         },
-        Arc::new(LocalSessionManager::default()),
+        Arc::new(session_manager()),
         config,
     )
+}
+
+/// How long a connection may go without a message before the SDK drops it.
+/// The SDK's own five minutes also ends a connection while one slow call is
+/// still running (the timer only restarts on a new message), so a save that
+/// took longer than that failed at the five-minute mark. A connection dropped
+/// for being idle is picked back up by `IdleSessionResume`.
+pub(crate) const SESSION_IDLE_LIMIT: Duration = Duration::from_secs(60 * 60);
+
+pub(crate) fn session_manager() -> LocalSessionManager {
+    let mut manager = LocalSessionManager::default();
+    manager.session_config.keep_alive = Some(SESSION_IDLE_LIMIT);
+    manager
 }
 
 /// Most recent connections whose opening handshake is kept for picking back up.

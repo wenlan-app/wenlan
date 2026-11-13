@@ -14,7 +14,7 @@ async fn idle_and_abandoned_http_sessions_are_removed_by_the_pinned_sdk() {
     assert_eq!(
         manager.session_config.keep_alive,
         Some(Duration::from_secs(300)),
-        "production uses this SDK default; dependency changes need reassessment",
+        "the SDK default; production raises it (serve::SESSION_IDLE_LIMIT) so a slow call is not cut off",
     );
     // Exercise the real timeout/cleanup path without a five-minute wall-clock test.
     manager.session_config.keep_alive = Some(Duration::from_millis(500));
