@@ -60,6 +60,8 @@ const OUTSIDE_THE_REVIEW_SURFACE: readonly string[] = [
   "team_join",
   "team_start",
   "team_stop",
+  "team_firewall",
+  "team_firewall_allow",
   "team_remember_membership",
   "team_forget_membership",
   "join_team_space",

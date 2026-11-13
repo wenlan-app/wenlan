@@ -28,7 +28,7 @@ import "./archivedNotes.css";
 import { useShares } from "../sharing/sharing";
 import { useScope } from "../team/scope";
 import { TeamChanges, TeamWaiting } from "../team/TeamPage";
-import { HomeLookBar, HomeLookView, useHomeLook } from "./HomeLook";
+import { HomeLookView, useHomeLook } from "./HomeLook";
 
 interface PagesOverviewProps {
   readonly inventoryScope?: WikiInventoryScope;
@@ -212,7 +212,6 @@ export function PagesOverview({
           under it as one row of cards that scrolls sideways, so neither pushes
           the other down. */}
       <div className={`home-columns${thingsOn ? "" : " home-columns--spaces"}`}>
-        <HomeLookBar homeLook={homeLook} />
         {/* What last night steeped spans every Space and the Wiki, so it
             opens home on its own line. "What you're working on" carries its
             own steeped line, so while it is on only the "not written yet"

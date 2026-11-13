@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { LookData, Page, PageLook } from "../../../lib/tauri";
+import type { ActiveTheme, LookData, Page, PageLook } from "../../../lib/tauri";
 
 const mocks = vi.hoisted(() => ({
   getPageLook: vi.fn(),
@@ -10,14 +10,25 @@ const mocks = vi.hoisted(() => ({
   removePageLook: vi.fn(),
   restorePageLook: vi.fn(),
   reportPageLookError: vi.fn(),
+  clipboardWrite: vi.fn(),
 }));
+
+vi.mock("@tauri-apps/api/event", () => ({
+  emit: vi.fn(() => Promise.resolve()),
+  listen: vi.fn(() => Promise.resolve(() => {})),
+}));
+
+vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), { success: vi.fn(), error: vi.fn() }) }));
 
 vi.mock("../../../lib/tauri", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../lib/tauri")>()),
   ...mocks,
 }));
 
-import { HOME_LOOK_ID, HomeLookBar, HomeLookView, homeLookVersion, useHomeLook } from "./HomeLook";
+import { toast } from "sonner";
+import { refreshCustomTheme, __resetCustomThemeForTests } from "../../../lib/customTheme";
+import { HOME_LOOK_ID, HomeLookView, homeLookVersion, useHomeLook } from "./HomeLook";
+import HomeLookSetting from "../settings/sections/HomeLookSetting";
 
 const LOOK: PageLook = { id: 3, html: "<main id=home></main>", api: 1, kept_at: 1 };
 const DATA: LookData = {
@@ -43,7 +54,6 @@ function Home({ supported = true, onOpenPage = () => {} }: { supported?: boolean
   const homeLook = useHomeLook({ supported, pages: [] });
   return (
     <div className="home-columns">
-      <HomeLookBar homeLook={homeLook} />
       <HomeLookView homeLook={homeLook} inScope={(space) => space !== "Acme roadmap"} onOpenPage={onOpenPage} />
       {homeLook.shown ? null : <p>usual home</p>}
     </div>
@@ -55,14 +65,21 @@ function renderHome(props: Parameters<typeof Home>[0] = {}) {
   return render(<QueryClientProvider client={client}><Home {...props} /></QueryClientProvider>);
 }
 
+function renderSetting() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(<QueryClientProvider client={client}><HomeLookSetting /></QueryClientProvider>);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   window.localStorage.clear();
+  __resetCustomThemeForTests();
   mocks.getPageLook.mockResolvedValue({ look: LOOK, versions: [] });
   mocks.getPageLookData.mockResolvedValue(DATA);
   mocks.removePageLook.mockResolvedValue(3);
   mocks.restorePageLook.mockResolvedValue(undefined);
   mocks.reportPageLookError.mockResolvedValue(undefined);
+  mocks.clipboardWrite.mockResolvedValue(undefined);
 });
 
 describe("UX-LOOK-10 home's HTML view", () => {
@@ -77,40 +94,43 @@ describe("UX-LOOK-10 home's HTML view", () => {
     expect(doc).not.toContain("Acme launch plan");
     expect(doc).not.toContain("Acme roadmap");
     expect(screen.queryByText("usual home")).toBeNull();
-    expect(screen.queryByRole("menuitem", { name: "Remove HTML view" })).toBeNull();
-    expect(screen.queryByText("Remove HTML view")).toBeNull();
+    expect(screen.queryAllByRole("button")).toHaveLength(0);
   });
 
-  it("the pencil shows the usual home, lights up, and brings the view back", async () => {
+  it("is part of the theme in use: switching themes reads home's view again", async () => {
     renderHome();
-    await screen.findByTestId("page-look-frame");
-    const pencil = screen.getByRole("button", { name: "Show the usual home" });
-    expect(pencil.getAttribute("aria-pressed")).toBe("false");
-    fireEvent.click(pencil);
-    expect(screen.getByText("usual home")).toBeTruthy();
-    expect(screen.queryByTestId("page-look-frame")).toBeNull();
-    expect(pencil.getAttribute("aria-pressed")).toBe("true");
-    fireEvent.click(pencil);
     expect(await screen.findByTestId("page-look-frame")).toBeTruthy();
+
+    // The new theme has no home view of its own, so the usual home shows.
+    mocks.getPageLook.mockResolvedValue({ look: null, versions: [] });
+    await act(() => refreshCustomTheme({
+      id: "night", name: "Night", base: "dark", revision: "r1", tokens: {}, problems: [],
+    } as ActiveTheme));
+    expect(await screen.findByText("usual home")).toBeTruthy();
+    expect(screen.queryByTestId("page-look-frame")).toBeNull();
   });
 
-  it("takes the view off from the ⋯ menu, keeping every version", async () => {
-    renderHome();
-    await screen.findByTestId("page-look-frame");
-    fireEvent.click(screen.getByRole("button", { name: "Show the usual home" }));
+  it("Settings takes the view off with Undo, and without one says how to ask for it", async () => {
+    renderSetting();
+    expect(await screen.findByText("Home in this theme")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Usual" })).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: "Remove" }));
     mocks.getPageLook.mockResolvedValue({ look: null, versions: [] });
-    fireEvent.click(screen.getByRole("button", { name: "Home actions" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Remove HTML view" }));
     await waitFor(() => expect(mocks.removePageLook).toHaveBeenCalledWith(HOME_LOOK_ID));
-    await waitFor(() => expect(screen.queryByTestId("home-look-bar")).toBeNull());
-    expect(screen.getByText("usual home")).toBeTruthy();
+    expect(await screen.findByText("Ask your AI to make this theme's home an HTML view.")).toBeTruthy();
+    const calls = vi.mocked(toast).mock.calls;
+    const undo = calls[calls.length - 1]?.[1]?.action as { onClick: () => void } | undefined;
+    undo?.onClick();
+    await waitFor(() => expect(mocks.restorePageLook).toHaveBeenCalledWith(HOME_LOOK_ID, 3));
+    fireEvent.click(screen.getByRole("button", { name: "Copy request" }));
+    await waitFor(() => expect(mocks.clipboardWrite).toHaveBeenCalledWith(expect.stringContaining("@home")));
   });
 
   it("shows nothing new when home has no view, or on a team's home", async () => {
     mocks.getPageLook.mockResolvedValue({ look: null, versions: [] });
     renderHome();
     await waitFor(() => expect(mocks.getPageLook).toHaveBeenCalled());
-    expect(screen.queryByTestId("home-look-bar")).toBeNull();
+    expect(screen.queryAllByRole("button")).toHaveLength(0);
     expect(screen.getByText("usual home")).toBeTruthy();
 
     mocks.getPageLook.mockClear();

@@ -4112,6 +4112,23 @@ pub async fn team_start(
         .await
 }
 
+/// On Windows, whether other computers get through Windows Firewall to this
+/// computer's team listener; `None` elsewhere.
+#[tauri::command]
+pub async fn team_firewall(
+    state: tauri::State<'_, State>,
+) -> Result<Option<team::TeamFirewall>, String> {
+    let client = daemon_client(&state).await;
+    client.get_json("/api/team/firewall").await
+}
+
+/// Lets teammates through Windows Firewall to this computer's team, with
+/// one Windows administrator prompt (see `team_firewall.rs`).
+#[tauri::command]
+pub async fn team_firewall_allow(program: String, public_network: bool) -> Result<(), String> {
+    crate::team_firewall::allow(&program, public_network).await
+}
+
 /// Turns the team listener off; the team and its Spaces stay.
 #[tauri::command]
 pub async fn team_stop(state: tauri::State<'_, State>) -> Result<team::TeamStatus, String> {

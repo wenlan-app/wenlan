@@ -6,11 +6,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
 import { i18n } from "../../../../i18n";
 import TeamSection from "./TeamSection";
-import { listShares, teamJoin, teamStatus, type TeamJoinResponse, type TeamStatus } from "../../../../lib/tauri";
+import { getProfile, listShares, teamFirewall, teamFirewallAllow, teamJoin, teamStart, teamStatus, type TeamJoinResponse, type TeamStatus } from "../../../../lib/tauri";
 
 vi.mock("../../../../lib/tauri", async () => {
   const actual = await vi.importActual<typeof import("../../../../lib/tauri")>("../../../../lib/tauri");
-  return { ...actual, teamStatus: vi.fn(), listShares: vi.fn(), teamJoin: vi.fn() };
+  return { ...actual, teamStatus: vi.fn(), listShares: vi.fn(), teamJoin: vi.fn(), teamFirewall: vi.fn(), teamFirewallAllow: vi.fn(), teamStart: vi.fn(), getProfile: vi.fn() };
 });
 
 const on: TeamStatus = {
@@ -29,6 +29,8 @@ beforeEach(async () => {
   HTMLDialogElement.prototype.close ??= function close(this: HTMLDialogElement) { this.removeAttribute("open"); };
   await i18n.changeLanguage("en");
   vi.mocked(listShares).mockResolvedValue([]);
+  // Not on Windows: nothing in the way.
+  vi.mocked(teamFirewall).mockResolvedValue(null);
   localStorage.clear();
 });
 afterEach(() => vi.clearAllMocks());
@@ -148,5 +150,49 @@ describe("TeamSection", () => {
     expect(field).toHaveValue("");
     await userEvent.type(field, "https://team.example.com");
     expect(localStorage.getItem("wenlan-team-url")).toBe("https://team.example.com");
+  });
+
+  const blocked = { program: "C:\\Users\\amy\\AppData\\Local\\Wenlan\\wenlan-server.exe", open: false, public_network: true };
+
+  it("says Windows Firewall keeps teammates out, and lets them in when Windows allows it", async () => {
+    vi.mocked(teamStatus).mockResolvedValue(on);
+    vi.mocked(teamFirewall).mockResolvedValueOnce(blocked).mockResolvedValue({ ...blocked, open: true });
+    vi.mocked(teamFirewallAllow).mockResolvedValue();
+    renderSection();
+    expect(await screen.findByText("Other computers can't connect yet")).toBeInTheDocument();
+    expect(screen.getByText(/Windows Firewall is blocking the team on this computer\. .*public networks/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Allow" }));
+    expect(teamFirewallAllow).toHaveBeenCalledWith(blocked);
+    await vi.waitFor(() => expect(screen.queryByText("Other computers can't connect yet")).not.toBeInTheDocument());
+  });
+
+  it("asks again when Windows was told no", async () => {
+    vi.mocked(teamStatus).mockResolvedValue(on);
+    vi.mocked(teamFirewall).mockResolvedValue({ ...blocked, public_network: false });
+    vi.mocked(teamFirewallAllow).mockRejectedValue(new Error("declined"));
+    renderSection();
+    await userEvent.click(await screen.findByRole("button", { name: "Allow" }));
+    expect(await screen.findByText("Windows didn't allow it. Press Allow again and choose Yes.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Allow" })).toBeEnabled();
+  });
+
+  it("does not ask Windows while the team is off", async () => {
+    vi.mocked(teamStatus).mockResolvedValue({ ...on, listening: null });
+    renderSection();
+    expect(await screen.findByText("Off")).toBeInTheDocument();
+    expect(teamFirewall).not.toHaveBeenCalled();
+  });
+
+  it("starts the team without a prompt of its own: Windows asks itself, and Settings follows up", async () => {
+    vi.mocked(teamStatus).mockResolvedValue({ members: [], spaces: [], listening: null, suggested_urls: ["http://192.168.1.20:7879"] });
+    vi.mocked(getProfile).mockResolvedValue({ display_name: "Amy" } as Awaited<ReturnType<typeof getProfile>>);
+    vi.mocked(teamStart).mockResolvedValue({ members: [], spaces: [], listening: "0.0.0.0:7879" });
+    renderSection();
+    await userEvent.click(await screen.findByRole("button", { name: "Start…" }));
+    await userEvent.type(screen.getByLabelText(/^Team name/), "Acme");
+    await vi.waitFor(() => expect(screen.getByLabelText(/^Your name/)).toHaveValue("Amy"));
+    await userEvent.click(screen.getByRole("button", { name: "Start" }));
+    await vi.waitFor(() => expect(teamStart).toHaveBeenCalledWith("Acme", "Amy", "http://192.168.1.20:7879"));
+    expect(teamFirewallAllow).not.toHaveBeenCalled();
   });
 });

@@ -109,6 +109,21 @@ pub struct TeamStatus {
     pub remote: Option<String>,
 }
 
+/// `GET /api/team/firewall` on Windows: whether other computers can get
+/// through Windows Firewall to this computer's team listener. Off Windows
+/// the answer is `null`: nothing here stands in the way.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamFirewall {
+    /// The program the rules are for: this Wenlan's server.
+    pub program: String,
+    /// Other computers can get through on every network this computer is
+    /// on now.
+    pub open: bool,
+    /// A network this computer is on is set to Public, where Windows blocks
+    /// a new program without asking.
+    pub public_network: bool,
+}
+
 /// Body of `POST /api/team/start`: makes this computer a team's server.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TeamStartRequest {
