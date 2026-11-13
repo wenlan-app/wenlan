@@ -210,6 +210,10 @@ pub async fn global_routes_enforce_scope_contracts() {
             "/api/sources/missing-source/ai-changes?path=Plan.md",
             "/api/sources/{id}/ai-changes",
         ),
+        (
+            "/api/sources/missing-source/unreadable-files",
+            "/api/sources/{id}/unreadable-files",
+        ),
         ("/api/notes/proposals", "/api/notes/proposals"),
         (
             "/api/notes/proposals/missing-proposal",

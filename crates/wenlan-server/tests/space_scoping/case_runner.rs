@@ -466,7 +466,7 @@ pub fn assert_global_executed_keys(executed: impl IntoIterator<Item = (Method, &
     let executed = executed.into_iter().collect::<Vec<_>>();
     let unique = executed.iter().copied().collect::<BTreeSet<_>>();
 
-    assert_eq!(expected.len(), 27, "Global route catalog count drifted");
+    assert_eq!(expected.len(), 28, "Global route catalog count drifted");
     assert_eq!(
         unique.len(),
         executed.len(),
