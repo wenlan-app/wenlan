@@ -1295,7 +1295,7 @@ carrying the authority of agreement.
 | `core/db.rs::insert_document_source_page_at_hash` | `pub(crate)` | no | no | — | `core/db.rs::insert_page_with_kind_inner` |
 | `core/db.rs::insert_page_with_basis` | `pub(crate)` | no | no | — | `core/db.rs::insert_page_with_kind_inner` |
 | `core/db.rs::list_active_page_titles` | `pub` | no | no | — | `core/db.rs::list_active_page_titles_scoped` |
-| `core/db.rs::list_pages` | `pub` | no | **yes** | `server/main/startup.rs::prepare_startup_state` | `core/db.rs::list_pages_inner` |
+| `core/db.rs::list_pages` | `pub` | no | **yes** | `server/main/startup.rs::prepare_startup_state`, `server/page_look_routes.rs::home_look_data` | `core/db.rs::list_pages_inner` |
 | `core/db.rs::list_pages_browse` | `pub` | no | no | — | `core/db.rs::list_pages_inner` |
 | `core/db.rs::list_stale_pages` | `pub` | no | no | — | `core/db.rs::list_stale_pages_scoped` |
 | `core/db.rs::merge_entities` | `pub` | no | no | — | `core/db.rs::merge_entities_in_scope` |
@@ -1650,6 +1650,7 @@ carrying the authority of agreement.
 | `server/page_export_routes.rs::bundle` | `private` | no | no | — | `core/db/page_export.rs::page_export_bundle` |
 | `server/page_export_routes.rs::capture` | `private` | yes | no | — | `core/db/page_export.rs::capture_page_export` |
 | `server/page_export_routes.rs::versions` | `private` | no | no | — | `core/db/page_export.rs::page_export_versions` |
+| `server/page_look_routes.rs::home_look_data` | `private` | yes | no | — | `core/db.rs::list_pages` |
 | `server/page_map_routes.rs::ensure_page_is_active` | `private` | no | no | `server/page_map_routes.rs::handle_create_map_edge`, `server/page_map_routes.rs::handle_create_map_node`, `server/page_map_routes.rs::handle_delete_map_edge`, `server/page_map_routes.rs::handle_delete_map_node`, `server/page_map_routes.rs::handle_improve_page_map`, `server/page_map_routes.rs::handle_patch_map_edge`, `server/page_map_routes.rs::handle_patch_map_node`, `server/page_map_routes.rs::handle_put_page_map_layout`, `server/page_map_routes.rs::handle_reset_page_map` | `core/db.rs::get_page` |
 | `server/page_map_routes.rs::handle_get_page_map` | `pub` | no | no | — | `server/page_map_routes.rs::resolve_outline_links` |
 | `server/page_map_routes.rs::visible_page` | `private` | yes | no | — | `core/db.rs::get_page` |
