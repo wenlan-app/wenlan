@@ -92,7 +92,7 @@ describe("pageCreatedMs", () => {
 describe("listParts", () => {
   it("joins Chinese with 、 and English with a conjunction", () => {
     expect(listParts(["4 份檔案", "3 條記憶"], "zh-Hant")).toBe("4 份檔案、3 條記憶");
-    expect(listParts(["4 files", "3 saved memories"], "en")).toBe("4 files and 3 saved memories");
+    expect(listParts(["4 files", "3 memories"], "en")).toBe("4 files and 3 memories");
   });
 });
 
@@ -271,6 +271,14 @@ describe("WritePagesLine", () => {
     wrap(<Line pages={[page("a", "2026-10-22T10:01:00Z")]} />);
     const line = await screen.findByTestId("write-pages-line");
     expect(line).toHaveTextContent("2 notes, 4 chats, and 4 files saved. Claude Code turns them into pages the next time you use it.");
+  });
+
+  it("does not say saved twice for pasted memories", async () => {
+    vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
+    vi.mocked(listNewMaterial).mockResolvedValue(material(4, { kinds: { capture: 4 } }));
+    wrap(<Line pages={[page("a", "2026-10-22T10:01:00Z")]} />);
+    const line = await screen.findByTestId("write-pages-line");
+    expect(line).toHaveTextContent("4 memories saved. Claude Code turns them into pages the next time you use it.");
   });
 
   it("groups the digits of a big count", async () => {
