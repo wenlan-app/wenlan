@@ -317,6 +317,8 @@ export default function AppearanceSection() {
         </button>
       </div>
 
+      <HomeLookSetting />
+
       {editingId && draft && (
         <div className="appearance-editor">
           <div className="appearance-form">
@@ -516,7 +518,6 @@ export default function AppearanceSection() {
         </div>
       )}
 
-      <HomeLookSetting />
     </div>
   );
 }

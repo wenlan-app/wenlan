@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { LookData, Page, PageLook } from "../../../lib/tauri";
+import type { ActiveTheme, LookData, Page, PageLook } from "../../../lib/tauri";
 
 const mocks = vi.hoisted(() => ({
   getPageLook: vi.fn(),
@@ -13,11 +13,20 @@ const mocks = vi.hoisted(() => ({
   clipboardWrite: vi.fn(),
 }));
 
+vi.mock("@tauri-apps/api/event", () => ({
+  emit: vi.fn(() => Promise.resolve()),
+  listen: vi.fn(() => Promise.resolve(() => {})),
+}));
+
+vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), { success: vi.fn(), error: vi.fn() }) }));
+
 vi.mock("../../../lib/tauri", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../lib/tauri")>()),
   ...mocks,
 }));
 
+import { toast } from "sonner";
+import { refreshCustomTheme, __resetCustomThemeForTests } from "../../../lib/customTheme";
 import { HOME_LOOK_ID, HomeLookView, homeLookVersion, useHomeLook } from "./HomeLook";
 import HomeLookSetting from "../settings/sections/HomeLookSetting";
 
@@ -64,6 +73,7 @@ function renderSetting() {
 beforeEach(() => {
   vi.clearAllMocks();
   window.localStorage.clear();
+  __resetCustomThemeForTests();
   mocks.getPageLook.mockResolvedValue({ look: LOOK, versions: [] });
   mocks.getPageLookData.mockResolvedValue(DATA);
   mocks.removePageLook.mockResolvedValue(3);
@@ -87,33 +97,31 @@ describe("UX-LOOK-10 home's HTML view", () => {
     expect(screen.queryAllByRole("button")).toHaveLength(0);
   });
 
-  it("Settings › Appearance › Home switches to the usual home, and home remembers it", async () => {
-    const setting = renderSetting();
-    fireEvent.click(await screen.findByRole("button", { name: "Usual" }));
-    setting.unmount();
-
-    renderHome();
-    await waitFor(() => expect(mocks.getPageLook).toHaveBeenCalled());
-    await waitFor(() => expect(screen.getByText("usual home")).toBeTruthy());
-    expect(screen.queryByTestId("page-look-frame")).toBeNull();
-  });
-
-  it("a new view from an AI opens on home again even after the usual home was chosen", async () => {
-    const setting = renderSetting();
-    fireEvent.click(await screen.findByRole("button", { name: "Usual" }));
-    setting.unmount();
-
-    mocks.getPageLook.mockResolvedValue({ look: { ...LOOK, id: 4 }, versions: [] });
+  it("is part of the theme in use: switching themes reads home's view again", async () => {
     renderHome();
     expect(await screen.findByTestId("page-look-frame")).toBeTruthy();
+
+    // The new theme has no home view of its own, so the usual home shows.
+    mocks.getPageLook.mockResolvedValue({ look: null, versions: [] });
+    await act(() => refreshCustomTheme({
+      id: "night", name: "Night", base: "dark", revision: "r1", tokens: {}, problems: [],
+    } as ActiveTheme));
+    expect(await screen.findByText("usual home")).toBeTruthy();
+    expect(screen.queryByTestId("page-look-frame")).toBeNull();
   });
 
   it("Settings takes the view off with Undo, and without one says how to ask for it", async () => {
     renderSetting();
-    fireEvent.click(await screen.findByRole("button", { name: "Remove HTML view" }));
+    expect(await screen.findByText("Home in this theme")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Usual" })).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: "Remove" }));
     mocks.getPageLook.mockResolvedValue({ look: null, versions: [] });
     await waitFor(() => expect(mocks.removePageLook).toHaveBeenCalledWith(HOME_LOOK_ID));
-    expect(await screen.findByText("Ask your AI to make your home an HTML view.")).toBeTruthy();
+    expect(await screen.findByText("Ask your AI to make this theme's home an HTML view.")).toBeTruthy();
+    const calls = vi.mocked(toast).mock.calls;
+    const undo = calls[calls.length - 1]?.[1]?.action as { onClick: () => void } | undefined;
+    undo?.onClick();
+    await waitFor(() => expect(mocks.restorePageLook).toHaveBeenCalledWith(HOME_LOOK_ID, 3));
     fireEvent.click(screen.getByRole("button", { name: "Copy request" }));
     await waitFor(() => expect(mocks.clipboardWrite).toHaveBeenCalledWith(expect.stringContaining("@home")));
   });

@@ -72,7 +72,7 @@ Rules for a look (window.wenlan, api 1):
 10. Saving replaces the look and keeps the one before it, which the person can put back. Only change a look when asked.";
 
 const HOME_RULES: &str = "\
-This is the home screen's look, not a page's (it replaces Wenlan's home while it is set; Settings › Appearance › Home switches back to the usual home):
+This is the home screen's look, not a page's (it is part of the theme in use and replaces Wenlan's home while that theme is on; Settings › Appearance takes it off):
 - wenlan.page has no text: page.title is empty, sections, links and images are empty, and wenlan.space is empty. Read wenlan.home instead.
 - wenlan.home.spaces lists the person's Spaces, the one with the page changed last first: {name, description, starred, modified}. modified is empty for a Space with no listed page.
 - wenlan.home.pages lists pages across every Space, changed last first, at most 200: {id, title, space, created, modified, summary}. space is empty for a page in no Space. wenlan.home.more says there are more.
@@ -326,7 +326,7 @@ impl WenlanMcpServer {
             Err(error) => return Ok(tool_error(error, "set page look")),
         };
         let text = if saved.created && page_id == HOME_LOOK_ID {
-            "Saved. Wenlan's home screen now shows this look, filled with the person's current pages and Spaces. Settings › Appearance › Home switches back to the usual home or takes this look off. The earlier look, if any, is kept and the person can put it back. Tell the person to open Home in Wenlan."
+            "Saved into the theme in use. Wenlan's home screen now shows this look, filled with the person's current pages and Spaces, while that theme is on. Settings › Appearance takes it off. Tell the person to open Home in Wenlan."
         } else if saved.created {
             "Saved. Wenlan now opens this page on the look, filled with the page's current text. The pencil in the page's top bar shows the text for editing. The earlier look, if any, is kept and the person can put it back. Tell the person to open the page in Wenlan."
         } else {
