@@ -7,7 +7,7 @@
 
 <p align="center">
   What you work out in AI chats gets lost, and notes need constant upkeep.<br>
-  <strong>Set up once. Your AI tools save what matters and keep your pages organized; you see every change and can undo it.</strong><br>
+  <strong>Set up once. Your AI tools save what matters, keep your pages organized, and bring it back in your next chat; you see every change and can undo it.</strong><br>
   Open-source Obsidian alternative that works with your existing vault.
 </p>
 
@@ -59,13 +59,13 @@ I started Wenlan because my notes, documents, and AI chats were scattered, and k
 
 ### How it compares
 
-| | Obsidian + plugins | Notion | LLM wiki apps | Wenlan |
+| | Obsidian + plugins | Claude Code + a folder | LLM wiki apps | Wenlan |
 |---|---|---|---|---|
-| Who organizes | You, with plugins | You, or Notion's agents | An AI you set up | Your AI tools; updates when a source changes |
-| Setup | Find and update plugins | Full AI on the Business plan | Model key or scheduled routine | Set up once; no plugins to install or maintain |
-| Checks the AI's work | Depends on the plugin | Cites sources; no match check | Links to sources | Refuses pages whose citations don't match |
-| What AI may change | Depends on the plugin | Pages you give an agent | Its wiki folder | You choose per page; restore anytime |
-| Where notes live | Your computer | Notion's cloud | Your computer | Your computer; works with your vault |
+| Who organizes | You, with plugins | You, by asking each time | An AI you set up | Your AI tools; updates when a source changes |
+| Setup | Find and update plugins | Write and maintain your own instructions and commands | Model key or scheduled routine | Set up once; no plugins to install or maintain |
+| Checks the AI's work | Depends on the plugin | You, by reading the git diff | Links to sources | Refuses pages whose citations don't match |
+| What AI may change | Depends on the plugin | What you approve, or allow in its settings | Its wiki folder | You choose per page; restore anytime |
+| Where notes live | Your computer | Your computer | Your computer | Your computer; works with your vault |
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>

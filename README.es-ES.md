@@ -9,7 +9,7 @@
 
 <p align="center">
   Lo que resuelves en los chats de IA se pierde, y las notas exigen mantenimiento constante.<br>
-  <strong>Configúralo una vez. Tus herramientas de IA guardan lo importante y mantienen tus páginas organizadas; ves cada cambio y puedes deshacerlo.</strong><br>
+  <strong>Configúralo una vez. Tus herramientas de IA guardan lo importante, mantienen tus páginas organizadas y te lo traen de vuelta en tu próximo chat; ves cada cambio y puedes deshacerlo.</strong><br>
   Alternativa de código abierto a Obsidian que funciona con tu bóveda actual.
 </p>
 
@@ -61,13 +61,13 @@ Empecé Wenlan porque mis notas, documentos y chats de IA estaban dispersos, y e
 
 ### Cómo se compara
 
-| | Obsidian + plugins | Notion | Apps de LLM wiki | Wenlan |
+| | Obsidian + plugins | Claude Code + una carpeta | Apps de LLM wiki | Wenlan |
 |---|---|---|---|---|
-| Quién organiza | Tú, con plugins | Tú, o los agentes de Notion | Una IA que configuras | Tus herramientas de IA; actualiza cuando cambia una fuente |
-| Configuración | Buscar y actualizar plugins | IA completa en el plan Business | Clave de modelo o rutina programada | Una vez; sin plugins que instalar ni mantener |
-| Revisa a la IA | Depende del plugin | Cita fuentes; no comprueba | Enlaza a fuentes | Rechaza páginas cuyas citas no coinciden |
-| Qué puede cambiar la IA | Depende del plugin | Páginas que das a un agente | Su carpeta de wiki | Tú eliges por página; restaura cuando quieras |
-| Dónde viven tus notas | Tu ordenador | La nube de Notion | Tu ordenador | Tu ordenador; funciona con tu bóveda |
+| Quién organiza | Tú, con plugins | Tú, pidiéndoselo cada vez | Una IA que configuras | Tus herramientas de IA; actualiza cuando cambia una fuente |
+| Configuración | Buscar y actualizar plugins | Escribir y mantener tus propias instrucciones y comandos | Clave de modelo o rutina programada | Una vez; sin plugins que instalar ni mantener |
+| Revisa a la IA | Depende del plugin | Tú, revisando el git diff | Enlaza a fuentes | Rechaza páginas cuyas citas no coinciden |
+| Qué puede cambiar la IA | Depende del plugin | Lo que apruebes o permitas en sus ajustes | Su carpeta de wiki | Tú eliges por página; restaura cuando quieras |
+| Dónde viven tus notas | Tu ordenador | Tu ordenador | Tu ordenador | Tu ordenador; funciona con tu bóveda |
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
