@@ -81,17 +81,19 @@ I started Wenlan because my notes, documents, and AI chats were scattered, and k
 
 ## Get started
 
-### 1. Start from your AI tool or the app
+### 1. Start with the app or from your AI tool
 
-| **Connect from your AI tool** | **Download the desktop app** |
+| **Download the desktop app** | **Connect from your AI tool** |
 |---|---|
-| On a Mac, run `npx -y wenlan setup` (needs Node.js), or `brew install 7xuanlu/tap/wenlan` and then `wenlan setup`. In Claude Code, add the [plugin](docs/setup-with-ai.md). Linux and Windows: [CLI install guide](docs/setup-and-data.md#installation). | [The full experience](https://github.com/wenlan-app/wenlan/releases/latest): pages, imports, and one-click connections. macOS 11 or later on Apple Silicon, Windows x64, or Linux x64 (AppImage or .deb, from v0.22). In English, 简体中文, and 繁體中文. |
+| [The full experience](https://github.com/wenlan-app/wenlan/releases/latest): pages, imports, and one-click connections. macOS 11 or later on Apple Silicon, Windows x64, or Linux x64 (AppImage or .deb, from v0.22). In English, 简体中文, and 繁體中文. | On a Mac, run `npx -y wenlan setup` (needs Node.js), or `brew install 7xuanlu/tap/wenlan` and then `wenlan setup`. In Claude Code, add the [plugin](docs/setup-with-ai.md). Linux and Windows: [CLI install guide](docs/setup-and-data.md#installation). |
 
 ### 2. Bring in your material
 
 Create a page, or bring in an Obsidian vault, a Logseq graph, a folder, or earlier AI chats. [Import guide](docs/import-guide.md).
 
 ### 3. Connect your AI tool
+
+If you started from your AI tool, it is already connected, so go straight to asking it below.
 
 In the App's Settings, **Add a tool** finds the AI tools on your computer and **Connect all** sets them up in one press. There is nothing else to install or keep updated. Then start a new AI session and ask:
 

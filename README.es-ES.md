@@ -83,17 +83,19 @@ Empecé Wenlan porque mis notas, documentos y chats de IA estaban dispersos, y e
 
 ## Primeros pasos
 
-### 1. Empieza desde tu herramienta de IA o desde la app
+### 1. Empieza con la app o desde tu herramienta de IA
 
-| **Conecta desde tu herramienta de IA** | **Descarga la app de escritorio** |
+| **Descarga la app de escritorio** | **Conecta desde tu herramienta de IA** |
 |---|---|
-| En un Mac, ejecuta `npx -y wenlan setup` (requiere Node.js), o `brew install 7xuanlu/tap/wenlan` y después `wenlan setup`. En Claude Code, añade el [plugin](docs/setup-with-ai.md). Linux y Windows: [guía de instalación de la CLI](docs/setup-and-data.es-ES.md#installation). | [La experiencia completa](https://github.com/wenlan-app/wenlan/releases/latest): páginas, importaciones y conexiones con un clic. macOS 11 o posterior en Apple Silicon, Windows x64 o Linux x64 (AppImage o .deb, desde v0.22). En inglés, chino simplificado y chino tradicional. |
+| [La experiencia completa](https://github.com/wenlan-app/wenlan/releases/latest): páginas, importaciones y conexiones con un clic. macOS 11 o posterior en Apple Silicon, Windows x64 o Linux x64 (AppImage o .deb, desde v0.22). En inglés, chino simplificado y chino tradicional. | En un Mac, ejecuta `npx -y wenlan setup` (requiere Node.js), o `brew install 7xuanlu/tap/wenlan` y después `wenlan setup`. En Claude Code, añade el [plugin](docs/setup-with-ai.md). Linux y Windows: [guía de instalación de la CLI](docs/setup-and-data.es-ES.md#installation). |
 
 ### 2. Trae tu material
 
 Crea una página o trae una bóveda de Obsidian, un grafo de Logseq, una carpeta o chats de IA anteriores. [Guía de importación](docs/import-guide.md).
 
 ### 3. Conecta tu herramienta de IA
+
+Si empezaste desde tu herramienta de IA, ya está conectada: pasa directamente a pedirle lo de abajo.
 
 En los ajustes de la aplicación, **Add a tool** encuentra las herramientas de IA de tu ordenador y **Connect all** las configura con un solo clic. No hay nada más que instalar ni mantener al día. Después, inicia una nueva sesión de IA y pide:
 

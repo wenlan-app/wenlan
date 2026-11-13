@@ -83,17 +83,19 @@
 
 ## 開始使用
 
-### 1. 從 AI 工具開始，或下載 App
+### 1. 下載 App，或從 AI 工具開始
 
-| **從你的 AI 工具連接** | **下載桌面 App** |
+| **下載桌面 App** | **從你的 AI 工具連接** |
 |---|---|
-| 在 Mac 上執行 `npx -y wenlan setup`（需要 Node.js），或執行 `brew install 7xuanlu/tap/wenlan` 再執行 `wenlan setup`。Claude Code 可以裝[插件](docs/setup-with-ai.md)。Linux 和 Windows 請看 [CLI 安裝說明](docs/setup-and-data.zh-Hant.md#installation)。 | [完整體驗](https://github.com/wenlan-app/wenlan/releases/latest)：筆記、匯入和一鍵連接。支援 macOS 11 以上的 Apple Silicon、Windows x64 和 Linux x64（AppImage 或 .deb，v0.22 起）。介面有英文、简体中文和繁體中文。 |
+| [完整體驗](https://github.com/wenlan-app/wenlan/releases/latest)：筆記、匯入和一鍵連接。支援 macOS 11 以上的 Apple Silicon、Windows x64 和 Linux x64（AppImage 或 .deb，v0.22 起）。介面有英文、简体中文和繁體中文。 | 在 Mac 上執行 `npx -y wenlan setup`（需要 Node.js），或執行 `brew install 7xuanlu/tap/wenlan` 再執行 `wenlan setup`。Claude Code 可以裝[插件](docs/setup-with-ai.md)。Linux 和 Windows 請看 [CLI 安裝說明](docs/setup-and-data.zh-Hant.md#installation)。 |
 
 ### 2. 帶進你的資料
 
 建立一篇筆記，或帶進 Obsidian vault、Logseq 圖譜、資料夾或之前的 AI 對話。[匯入教學](docs/import-guide.zh-Hant.md)。
 
 ### 3. 連接你的 AI 工具
+
+如果你是從 AI 工具開始的，它已經連好了，直接照下面問它就好。
 
 在 App 的設定裡，「新增工具」會找出你電腦上的 AI 工具，按「全部連接」一次設好，不用另外裝東西或更新。接著開一個新的 AI 對話，問它：
 
