@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=0f6c9f5ee4e4c30ed8826aa6cd78494b1b08c1029b380fed75849734d6a2abb6 -->
+<!-- README_SYNC: source=README.md sha256=e4c1a6b0cbfc7e85d02be367388f425b08ddb4f0910f5e93ec97a9f2a31181cc -->
 
 <p align="center">
   <picture>
@@ -87,7 +87,7 @@ Empecé Wenlan porque mis notas, documentos y chats de IA estaban dispersos, y e
 
 | **Descarga la app de escritorio** | **Conecta desde tu herramienta de IA** |
 |---|---|
-| [La experiencia completa](https://github.com/wenlan-app/wenlan/releases/latest): páginas, importaciones y conexiones con un clic. macOS 11 o posterior en Apple Silicon, Windows x64 o Linux x64 (AppImage o .deb, desde v0.22). En inglés, chino simplificado y chino tradicional. | En un Mac, ejecuta `npx -y wenlan setup` (requiere Node.js), o `brew install 7xuanlu/tap/wenlan` y después `wenlan setup`. En Claude Code, añade el [plugin](docs/setup-with-ai.md). Linux y Windows: [guía de instalación de la CLI](docs/setup-and-data.es-ES.md#installation). |
+| [La experiencia completa](https://github.com/wenlan-app/wenlan/releases/latest): páginas, importaciones y conexiones con un clic. macOS 11 o posterior en Apple Silicon, Windows x64 o Linux x64 (AppImage o .deb, desde v0.22). En inglés, chino simplificado y chino tradicional. | Una sola memoria para Claude Code, Codex, Cursor y tus otras herramientas de IA, guardada en páginas que puedes leer y corregir: lo que decides en una herramienta está en la siguiente. En un Mac, ejecuta `npx -y wenlan setup` (requiere Node.js), o `brew install 7xuanlu/tap/wenlan` y después `wenlan setup`. En Claude Code, añade el [plugin](docs/setup-with-ai.md). Linux y Windows: [guía de instalación de la CLI](docs/setup-and-data.es-ES.md#installation). |
 
 ### 2. Trae tu material
 
