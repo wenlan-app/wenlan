@@ -3068,6 +3068,7 @@ fn empty_update() -> wenlan_types::requests::UpdateConfigRequest {
         ui_language: None,
         page_map_auto_suggest: None,
         chat_check_enabled: None,
+        skills_from_library: None,
         space_folders: None,
         only_if_unset: None,
         // Tri-state (Option<Option<_>>): outer None = omit from JSON =

@@ -56,6 +56,7 @@ fn config_to_response(cfg: &config::Config) -> ConfigResponse {
         ui_language: cfg.ui_language.clone(),
         page_map_auto_suggest: cfg.page_map_auto_suggest,
         chat_check_enabled: cfg.chat_check_enabled,
+        skills_from_library: cfg.skills_from_library,
         space_folders: cfg.space_folders,
     }
 }
@@ -160,6 +161,9 @@ pub async fn handle_update_config(
         }
         if let Some(v) = req.chat_check_enabled {
             cfg.chat_check_enabled = v;
+        }
+        if let Some(v) = req.skills_from_library {
+            cfg.skills_from_library = v;
         }
         if let Some(v) = req.space_folders {
             // Once on, pages have moved; turning it off only stops moving more.

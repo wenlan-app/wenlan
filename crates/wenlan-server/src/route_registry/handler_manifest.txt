@@ -375,3 +375,11 @@ main|post|/api/team/stop|wenlan_server::team_routes::handle_stop_team
 main|get|/api/team/firewall|wenlan_server::team_routes::handle_firewall
 main|post|/api/team/membership|wenlan_server::team_routes::handle_remember_membership
 main|delete|/api/team/membership|wenlan_server::team_routes::handle_forget_membership
+main|post|/api/skills/refresh|wenlan_server::skill_grow::handle_refresh
+main|post|/api/skills/stop|wenlan_server::skill_grow::handle_stop
+main|get|/api/skills/suggestions|wenlan_server::skill_grow::handle_suggestions
+main|post|/api/skills/suggestions/{id}/apply|wenlan_server::skill_grow::handle_apply_suggestion
+main|post|/api/skills/suggestions/{id}/dismiss|wenlan_server::skill_grow::handle_dismiss_suggestion
+main|post|/api/skills/suggestions/{id}/undo|wenlan_server::skill_grow::handle_undo_suggestion
+main|get|/api/skills/record|wenlan_server::skill_grow::handle_record
+main|post|/api/skills/record|wenlan_server::skill_grow::handle_self_report

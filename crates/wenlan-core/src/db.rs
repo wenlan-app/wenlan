@@ -129,6 +129,7 @@ pub mod research_disputes;
 pub mod research_runs;
 pub mod research_write;
 pub mod sessions;
+pub mod skill_grow;
 pub mod source_annotations;
 mod source_sync;
 mod space_context;

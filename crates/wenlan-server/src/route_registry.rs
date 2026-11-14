@@ -378,6 +378,9 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     "/api/repairs/prepare-operation", "/api/repairs/prepare-operation/status", "/api/repairs/prepare-operation/cancel",
     "/api/health", "/api/status", "/api/lint", "/api/repairs/plan", "/api/repairs/plan-current", "/api/repairs/plan/entries", "/api/repairs/prepare", "/api/repairs/prepare-current", "/api/repairs/recovery/{review_id}", "/api/repairs/apply", "/api/repairs/verify", "/api/llm/test", "/api/shutdown", "/api/telemetry", "/api/themes", "/api/themes/active", "/api/themes/check", "/api/themes/{id}",
     "/api/ambient/status", "/api/ambient/sweep",
+    // Opt-in personal skill maintenance. Refresh/stop answer with counts and
+    // state only; prose-returning suggestion routes stay in the read catalog.
+    "/api/skills/refresh", "/api/skills/stop",
     "/api/steep", "/api/distill", "/api/distill/{page_id}",
     "/api/ingest/text", "/api/ingest/webpage", "/api/ingest/webpage/create", "/api/ingest/memory", "/api/documents/{source}/{source_id}",
     // Fetches external public text, never reads the user's source store.
@@ -542,6 +545,9 @@ const NON_SENSITIVE_MIXED_ROUTES: &[(RegisteredMethod, &str)] = &[
     (RegisteredMethod::Delete, "/api/pages/{id}/look"),
     // The palace layout write; its read is the catalog's global row.
     (RegisteredMethod::Put, "/api/palace/layout"),
+    // GET returns the page-title borrowing record; POST only acknowledges an
+    // AI self-report and returns no library text.
+    (RegisteredMethod::Post, "/api/skills/record"),
     (RegisteredMethod::Put, "/api/sources/{id}/ai-changes"),
     (RegisteredMethod::Post, "/api/notes/proposals"),
     (RegisteredMethod::Delete, "/api/notes/proposals/{id}"),

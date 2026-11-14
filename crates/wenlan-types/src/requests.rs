@@ -817,6 +817,10 @@ pub struct UpdateConfigRequest {
     /// The in-chat check (opt-in). Omitted = preserve; present = set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chat_check_enabled: Option<bool>,
+    /// Grow personal AI-tool skills from lasting library decisions. Omitted =
+    /// preserve; present = set. Defaults off in the daemon config.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skills_from_library: Option<bool>,
     /// Keep each Space's pages in a folder of its own. Omitted = preserve.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub space_folders: Option<bool>,

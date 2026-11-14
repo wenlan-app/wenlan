@@ -115,6 +115,10 @@ pub struct Config {
     /// installs alike, and any screen offering it labels it Beta.
     #[serde(default)]
     pub chat_check_enabled: bool,
+    /// Grow personal AI-tool skills from lasting library decisions. This is
+    /// an explicit opt-in experiment and is off for old and new installs.
+    #[serde(default)]
+    pub skills_from_library: bool,
     /// Each Space's pages in a folder of its own (`space_folders`). `None`:
     /// not asked yet; `Some(false)`: the person said no.
     #[serde(default, skip_serializing_if = "Option::is_none")]

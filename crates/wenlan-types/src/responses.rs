@@ -1049,6 +1049,9 @@ pub struct ConfigResponse {
     /// reads false.
     #[serde(default)]
     pub chat_check_enabled: bool,
+    /// Whether the opt-in library-grown skills experiment is enabled.
+    #[serde(default)]
+    pub skills_from_library: bool,
     /// Each Space's pages in a folder of its own: `None` = not asked yet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub space_folders: Option<bool>,
