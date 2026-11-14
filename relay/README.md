@@ -711,17 +711,21 @@ OAuth provider records live in the central authority's SQLite `oauth_kv` table,
 through a KV-compatible adapter for the pinned provider. Expired rows disappear
 from reads and lists immediately. The store caps values plus migration markers
 at 50,000 rows, sweeps expired data before refusing a new write, and surfaces
-capacity failures as sanitized HTTP 503 responses. At the hard cap, a new
-migration tombstone can also be refused; cleanup stays pending and retries
+capacity failures as sanitized HTTP 503 responses. A one-row `oauth_meta` counter
+tracks values and markers without recounting the tables on each write. At the
+hard cap, a new migration tombstone can also be refused; cleanup stays pending and retries
 while the Wenlan receipt continues denying the grant. The alarm deletes at most
 256 expired OAuth values per pass and stays scheduled while OAuth expirations
 or migration markers remain. No new binding or DO migration tag is required.
 
 Until 2026-12-16 00:00 UTC, a SQL miss can read the legacy `OAUTH_KV` binding
-once and copy it into SQL. Imported records retain their `expiresAt` (or client
-`registrationExpiresAt`); records without an expiry receive a 30-day cap.
-Touched keys and deleted token prefixes have migration markers so old KV data
-cannot resurrect deleted or expired SQL credentials. Markers are reclaimed in
+and copy an existing record into SQL. Missing legacy keys are cached only in
+memory (up to 1,000 entries for ten minutes). Imported records retain their
+`expiresAt` (or client `registrationExpiresAt`); records without an expiry receive a 30-day cap.
+Imported rows retain a legacy flag across overwrites. Deleting or sweeping
+these rows writes migration markers, as do explicit deletions of absent keys
+and token prefixes, so legacy credentials cannot resurrect. Fresh puts and
+legacy misses write no migration markers. Markers are reclaimed in
 bounded alarm passes after cutoff. The legacy binding remains for this fallback;
 no operation lists, writes, or deletes legacy KV. Remove fallback code in a later
 change after the migration window.

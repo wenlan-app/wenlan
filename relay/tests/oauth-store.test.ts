@@ -86,12 +86,12 @@ test('legacy read once, own expiration copied, missing and expired records never
 test('tombstones block resurrection and grant cleanup removes SQL tokens and unread legacy tokens', async () => {
   const grant = 'grant:s:g', prefix = 'token:s:g:';
   const f = fixture(100, { [grant]: '{}', [prefix + 'unread']: '{}' });
-  await f.store.put(grant, '{}'); await f.store.put(prefix + 'a', '{}'); await f.store.put('token:s:other:a', '{}');
+  await f.store.get(grant); await f.store.put(prefix + 'a', '{}'); await f.store.put('token:s:other:a', '{}');
   await deleteProviderGrant(f.store, 'g', 's');
   assert.equal(await f.store.get(grant), null); assert.equal(await f.store.get(prefix + 'unread'), null);
   assert.deepEqual((await f.store.list({ prefix })).keys, []); assert.equal(await f.store.get('token:s:other:a'), '{}');
   await f.store.delete('never-read'); assert.equal(await f.store.get('never-read'), null);
-  assert.deepEqual(f.reads, []);
+  assert.deepEqual(f.reads, [grant]);
 });
 
 test('concurrent legacy reads cannot undo a put or delete', async () => {
@@ -133,10 +133,134 @@ test('simultaneous legacy misses share one read and persisted markers survive re
 test('migration markers count toward capacity and no legacy read occurs at cutoff', async () => {
   const f = fixture(2, { legacy: 'old' });
   await f.store.put('a', 'value');
+  await f.store.delete('unread');
   await assert.rejects(f.store.put('b', 'new'), /capacity/);
   await f.store.put('a', 'updated');
   f.advance(86400);
   assert.equal(await f.store.get('legacy'), null); assert.deepEqual(f.reads, []);
   await f.store.put('b', 'new'); // admission reclaims migration markers after cutoff
   assert.equal(await f.store.get('b'), 'new');
+});
+
+function assertCount(f: ReturnType<typeof fixture>, expected?: number) {
+  const actual = Number(f.db.prepare('SELECT (SELECT count(*) FROM oauth_kv) + (SELECT count(*) FROM oauth_migrated) AS n').get()!.n);
+  assert.equal(f.db.prepare('SELECT rows FROM oauth_meta WHERE id = 1').get()!.rows, actual);
+  if (expected !== undefined) assert.equal(actual, expected);
+}
+
+test('counter tracks inserts, overwrites, deletions, prefix deletions, expiry and marker cleanup', async () => {
+  const f = fixture();
+  assertCount(f, 0);
+  await f.store.put('a', 'one'); assertCount(f, 1);
+  await f.store.put('a', 'two'); assertCount(f, 1);
+  await f.store.put('p:one', '1'); await f.store.put('p:two', '2'); assertCount(f, 3);
+  await f.store.delete('a'); assertCount(f, 2);
+  await f.store.delete('absent'); assertCount(f, 3);
+  await f.store.delete('absent'); assertCount(f, 3);
+  await f.store.deletePrefix('p:'); assertCount(f, 2);
+  await f.store.put('expired', 'x', { expirationTtl: 1 }); assertCount(f, 3);
+  f.advance(1); f.store.sweep(); assertCount(f, 2);
+  f.advance(86400); f.store.sweep(); assertCount(f, 0);
+  await f.store.delete('absent'); await f.store.deletePrefix('p:'); assertCount(f, 0);
+});
+
+test('meta initializes once from existing rows and survives store recreation', async () => {
+  const f = fixture();
+  await f.store.put('a', 'x'); await f.store.delete('absent');
+  f.db.exec('DROP TABLE oauth_meta');
+  oauthStore(f.sql, f.legacy, f.now); assertCount(f, 2);
+  const statements: string[] = [];
+  const sql = { exec(query: string, ...args: any[]) { statements.push(query); return f.sql.exec(query, ...args); } } as SqlStorage;
+  const restored = oauthStore(sql, f.legacy, f.now);
+  await restored.put('b', 'x'); await restored.delete('a'); await restored.get('missing');
+  assertCount(f, 2);
+  assert(!statements.some(query => /count\(\*\)/i.test(query)), 'steady-state operations never recount tables');
+});
+
+test('misses write no SQL rows, expire in ten minutes, and evict beyond 1000 entries', async () => {
+  const f = fixture();
+  const before = f.db.prepare('SELECT total_changes() AS n').get()!.n;
+  for (let i = 0; i < 1001; i++) assert.equal(await f.store.get(`missing:${i}`), null);
+  assert.equal(f.db.prepare('SELECT total_changes() AS n').get()!.n, before);
+  assertCount(f, 0);
+  await f.store.get('missing:1000'); assert.equal(f.reads.length, 1001);
+  await f.store.get('missing:0'); assert.equal(f.reads.length, 1002);
+  f.advance(600); await f.store.get('missing:1000'); assert.equal(f.reads.length, 1003);
+});
+
+test('fresh puts and overwrites create no markers and fill the full value capacity', async () => {
+  const f = fixture(3);
+  for (const key of ['a', 'b', 'c']) { await f.store.put(key, 'x'); await f.store.put(key, 'y'); }
+  assert.equal(f.db.prepare('SELECT count(*) AS n FROM oauth_migrated').get()!.n, 0);
+  assert.equal(f.db.prepare('SELECT sum(legacy) AS n FROM oauth_kv').get()!.n, 0);
+  assertCount(f, 3);
+  await assert.rejects(f.store.put('d', 'x'), /capacity/);
+  await f.store.delete('a'); assertCount(f, 2);
+});
+
+test('prefix ranges include the exact key and ASCII suffixes but exclude adjacent prefixes', async () => {
+  const f = fixture();
+  const keys = ['token:s:g', 'token:s:g:', 'token:s:g:!', 'token:s:g:~', 'token:s:g0:a', 'token:s:h:a'];
+  for (const key of keys) await f.store.put(key, 'x');
+  assert.deepEqual((await f.store.list({ prefix: 'token:s:g:' })).keys.map(k => k.name), keys.slice(1, 4));
+  await f.store.deletePrefix('token:s:g:');
+  assert.deepEqual((await f.store.list()).keys.map(k => k.name), [keys[0], ...keys.slice(4)]);
+  assertCount(f, 4);
+});
+
+test('legacy flag survives overwrite; delete, prefix delete and sweep prevent resurrection after recreation', async () => {
+  for (const operation of ['delete', 'prefix', 'generic-prefix', 'sweep', 'admission']) {
+    const key = operation === 'generic-prefix' ? 'client:old' : 'token:s:g:old';
+    const f = fixture(3, { [key]: 'old' });
+    assert.equal(await f.store.get(key), 'old');
+    await f.store.put(key, 'new', { expirationTtl: 1 });
+    assert.equal(f.db.prepare('SELECT legacy FROM oauth_kv WHERE key = ?').get(key)!.legacy, 1);
+    if (operation === 'delete') await f.store.delete(key);
+    else if (operation.includes('prefix')) await f.store.deletePrefix(operation === 'prefix' ? 'token:s:g:' : 'client:');
+    else {
+      f.advance(1);
+      if (operation === 'sweep') f.store.sweep();
+      else {
+        await f.store.put('a', 'x'); await f.store.put('b', 'x');
+        await assert.rejects(f.store.put('c', 'x'), /capacity/);
+      }
+    }
+    assertCount(f);
+    const restored = oauthStore(f.sql, f.legacy, f.now);
+    assert.equal(await restored.get(key), null, operation);
+    assert.deepEqual(f.reads, [key], operation);
+  }
+});
+
+test('a put followed by deletion also cancels an in-flight legacy read without fresh-key markers', async () => {
+  for (const prefix of [false, true]) {
+    const f = fixture(); let complete!: (value: string) => void;
+    const store = oauthStore(f.sql, { get: () => new Promise(r => { complete = r; }) } as unknown as KVNamespace, f.now);
+    const pending = store.get('token:s:g:id');
+    await store.put('token:s:g:id', 'new');
+    if (prefix) await store.deletePrefix('token:s:g:'); else await store.delete('token:s:g:id');
+    complete('old'); assert.equal(await pending, null);
+    assertCount(f, prefix ? 1 : 0);
+  }
+});
+
+
+test('bounded sweeps replace legacy values with counted markers even at capacity', async () => {
+  const legacy = Object.fromEntries(Array.from({ length: 300 }, (_, i) => [`old:${i}`, '{"expiresAt":1}']));
+  const f = fixture(300, legacy);
+  for (const key of Object.keys(legacy)) await f.store.get(key);
+  assertCount(f, 300);
+  assert.equal(f.store.sweep(), true);
+  assert.equal(f.db.prepare('SELECT count(*) AS n FROM oauth_kv').get()!.n, 44);
+  assert.equal(f.db.prepare('SELECT count(*) AS n FROM oauth_migrated').get()!.n, 256);
+  assertCount(f, 300);
+  f.advance(86400);
+  assert.equal(f.store.sweep(), false); assertCount(f, 0);
+  assert.equal(f.store.sweep(), false);
+});
+
+test('unsafe legacy expirations remain rejected without inserting SQL rows', async () => {
+  const f = fixture(100, { bad: '{"expiresAt":1e100}' });
+  await assert.rejects(f.store.get('bad'), /Invalid OAuth expiration/);
+  assertCount(f, 0);
 });

@@ -6,11 +6,11 @@ const THIRTY_DAYS = 30 * 86400;
 const unsupported = () => { throw new Error('Unsupported OAuth storage operation'); };
 
 type PutOptions = { expiration?: number; expirationTtl?: number; metadata?: unknown };
-type Row = { key: string; value: string; metadata: string | null; expires: number | null };
+type Row = { key: string; value: string; metadata: string | null; expires: number | null; legacy: number };
 
 /** Only the operations used by workers-oauth-provider@1.2.1 are supported.
  * All SQL mutations are synchronous; a legacy read rechecks SQL after awaiting.
- * Markers remember touched keys until cutoff, including misses and deletes.
+ * Markers protect deleted legacy keys until cutoff; misses stay in memory.
  */
 export class OAuthStore {
   private sql: SqlStorage;
@@ -18,43 +18,81 @@ export class OAuthStore {
   private clock: () => number;
   private cap: number;
   private pending = new Map<string, Promise<void>>();
+  private cancelled = new Set<string>();
+  private misses = new Map<string, number>();
   constructor(sql: SqlStorage, legacy?: KVNamespace,
     clock = () => Date.now() / 1000, cap = OAUTH_ROW_LIMIT) {
     this.sql = sql; this.legacy = legacy; this.clock = clock; this.cap = cap;
-    sql.exec('CREATE TABLE IF NOT EXISTS oauth_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL, metadata TEXT, expires INTEGER)');
+    sql.exec('CREATE TABLE IF NOT EXISTS oauth_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL, metadata TEXT, expires INTEGER, legacy INTEGER NOT NULL DEFAULT 0)');
     sql.exec('CREATE INDEX IF NOT EXISTS oauth_expiry ON oauth_kv(expires)');
     sql.exec('CREATE TABLE IF NOT EXISTS oauth_migrated (key TEXT PRIMARY KEY, prefix INTEGER NOT NULL)');
+    sql.exec('CREATE TABLE IF NOT EXISTS oauth_meta (id INTEGER PRIMARY KEY CHECK (id = 1), rows INTEGER NOT NULL)');
+    if (!sql.exec('SELECT rows FROM oauth_meta WHERE id = 1').toArray().length) {
+      sql.exec('INSERT INTO oauth_meta(id, rows) SELECT 1, (SELECT count(*) FROM oauth_kv) + (SELECT count(*) FROM oauth_migrated)');
+    }
   }
 
   private row(key: string) { return this.sql.exec<Row>('SELECT * FROM oauth_kv WHERE key = ?', key).toArray()[0]; }
   private migrating() { return this.clock() < OAUTH_MIGRATION_CUTOFF; }
   private marked(key: string) {
-    return this.sql.exec('SELECT key FROM oauth_migrated WHERE (prefix = 0 AND key = ?) OR (prefix = 1 AND substr(?, 1, length(key)) = key) LIMIT 1', key, key).toArray().length > 0;
+    if (this.sql.exec('SELECT key FROM oauth_migrated WHERE key = ?', key).toArray().length) return true;
+    const token = /^token:([^:]+):([^:]+):[^:]+$/.exec(key);
+    return !!token && this.sql.exec('SELECT key FROM oauth_migrated WHERE key = ? AND prefix = 1',
+      `token:${token[1]}:${token[2]}:`).toArray().length > 0;
   }
-  private room(key: string, marker: boolean, value: boolean) {
-    const additional = (value && !this.row(key) ? 1 : 0) + (marker && !this.sql.exec('SELECT key FROM oauth_migrated WHERE key = ?', key).toArray().length ? 1 : 0);
-    const count = () => this.sql.exec<{ n: number }>('SELECT (SELECT count(*) FROM oauth_kv) + (SELECT count(*) FROM oauth_migrated) AS n').one().n;
-    if (count() + additional <= this.cap) return;
+  private mutate(query: string, ...bindings: (string | number)[]) {
+    this.sql.exec(query, ...bindings);
+    // changes() counts table rows, excluding index maintenance writes.
+    return this.sql.exec<{ n: number }>('SELECT changes() AS n').one().n;
+  }
+  private adjust(delta: number) {
+    if (delta) this.sql.exec('UPDATE oauth_meta SET rows = rows + ? WHERE id = 1', delta);
+  }
+  private room(additional: () => number) {
+    const count = () => this.sql.exec<{ rows: number }>('SELECT rows FROM oauth_meta WHERE id = 1').one().rows;
+    if (count() + additional() <= this.cap) return;
     // Admission sweep is exhaustive only at capacity. Alarm cleanup is bounded.
-    this.sql.exec('DELETE FROM oauth_kv WHERE expires <= ?', this.clock());
-    if (!this.migrating()) this.sql.exec('DELETE FROM oauth_migrated');
-    const needed = (value && !this.row(key) ? 1 : 0) + (marker && !this.sql.exec('SELECT key FROM oauth_migrated WHERE key = ?', key).toArray().length ? 1 : 0);
-    if (count() + needed > this.cap) throw new Error('OAuth storage capacity reached');
+    this.expire();
+    if (!this.migrating()) this.adjust(-this.mutate('DELETE FROM oauth_migrated'));
+    if (count() + additional() > this.cap) throw new Error('OAuth storage capacity reached');
   }
   private mark(key: string, prefix = false) {
+    const exists = () => this.sql.exec('SELECT key FROM oauth_migrated WHERE key = ?', key).toArray().length > 0;
+    this.room(() => exists() ? 0 : 1);
+    const present = exists();
     this.sql.exec('INSERT INTO oauth_migrated(key, prefix) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET prefix = max(prefix, excluded.prefix)', key, prefix ? 1 : 0);
+    if (!present) this.adjust(1);
+  }
+  private expire(limit = -1) {
+    const bindings = [this.clock(), limit];
+    // Replacing legacy rows with markers preserves capacity, even at the cap.
+    if (this.migrating()) this.adjust(this.mutate(`INSERT OR IGNORE INTO oauth_migrated(key, prefix)
+      SELECT key, 0 FROM oauth_kv WHERE key IN
+      (SELECT key FROM oauth_kv WHERE expires <= ? LIMIT ?) AND legacy = 1`, ...bindings));
+    this.adjust(-this.mutate('DELETE FROM oauth_kv WHERE key IN (SELECT key FROM oauth_kv WHERE expires <= ? LIMIT ?)', ...bindings));
+  }
+  private missed(key: string) {
+    const until = this.misses.get(key);
+    if (until === undefined) return false;
+    if (until > this.clock()) return true;
+    this.misses.delete(key);
+    return false;
+  }
+  private cancel(key: string) {
+    if (this.pending.has(key)) this.cancelled.add(key);
+    this.misses.delete(key);
   }
 
   async get(key: string, options?: 'json' | { type?: 'json' | 'text' }): Promise<any> {
     const type = typeof options === 'string' ? options : options?.type;
     if (type !== undefined && type !== 'text' && type !== 'json') return unsupported();
-    if (!this.row(key) && this.migrating() && this.legacy && !this.marked(key)) {
+    if (!this.row(key) && this.migrating() && this.legacy && !this.missed(key) && !this.marked(key)) {
       let pending = this.pending.get(key);
       if (!pending) {
         pending = this.migrate(key);
         this.pending.set(key, pending);
       }
-      try { await pending; } finally { if (this.pending.get(key) === pending) this.pending.delete(key); }
+      try { await pending; } finally { if (this.pending.get(key) === pending) { this.pending.delete(key); this.cancelled.delete(key); } }
     }
     const row = this.row(key);
     if (!row || (row.expires !== null && row.expires <= this.clock())) return null;
@@ -64,8 +102,12 @@ export class OAuthStore {
   private async migrate(key: string): Promise<void> {
     const value = await this.legacy!.get(key);
     // A concurrent put/delete wins over the legacy read.
-    if (this.row(key) || this.marked(key) || !this.migrating()) return;
-    if (value === null) { this.room(key, true, false); this.mark(key); return; }
+    if (this.cancelled.has(key) || this.row(key) || this.marked(key) || !this.migrating()) return;
+    if (value === null) {
+      if (this.misses.size >= 1000) this.misses.delete(this.misses.keys().next().value!);
+      this.misses.set(key, this.clock() + 600);
+      return;
+    }
     let expires = this.clock() + THIRTY_DAYS;
     try {
       const record = JSON.parse(value);
@@ -73,29 +115,41 @@ export class OAuthStore {
       const ownExpiry = record?.expiresAt ?? record?.registrationExpiresAt;
       if (typeof ownExpiry === 'number' && Number.isFinite(ownExpiry)) expires = ownExpiry;
     } catch { /* JTI markers and other text receive the migration cap. */ }
-    await this.put(key, value, { expiration: Math.max(0, Math.floor(expires)) });
+    this.write(key, value, null, Math.max(0, Math.floor(expires)), true);
   }
 
   async put(key: string, value: string, options: PutOptions = {}): Promise<void> {
     if (typeof value !== 'string') return unsupported();
     const expires = options.expiration ?? (options.expirationTtl === undefined ? null : Math.floor(this.clock() + options.expirationTtl));
-    if (expires !== null && (!Number.isSafeInteger(expires) || expires < 0)) throw new Error('Invalid OAuth expiration');
     const metadata = options.metadata === undefined ? null : JSON.stringify(options.metadata);
-    const migrating = this.migrating();
-    this.room(key, migrating, true);
-    if (migrating) this.mark(key);
-    this.sql.exec('INSERT INTO oauth_kv(key, value, metadata, expires) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, metadata = excluded.metadata, expires = excluded.expires', key, value, metadata, expires);
+    this.write(key, value, metadata, expires);
+  }
+
+  private write(key: string, value: string, metadata: string | null, expires: number | null, legacy = false) {
+    if (expires !== null && (!Number.isSafeInteger(expires) || expires < 0)) throw new Error('Invalid OAuth expiration');
+    this.room(() => this.row(key) ? 0 : 1);
+    const previous = this.row(key);
+    this.cancel(key);
+    this.sql.exec('INSERT INTO oauth_kv(key, value, metadata, expires, legacy) VALUES (?, ?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, metadata = excluded.metadata, expires = excluded.expires', key, value, metadata, expires, legacy || previous?.legacy ? 1 : 0);
+    if (!previous) this.adjust(1);
   }
 
   async delete(key: string): Promise<void> {
-    if (this.migrating()) { this.room(key, true, false); this.mark(key); }
-    this.sql.exec('DELETE FROM oauth_kv WHERE key = ?', key);
+    const previous = this.row(key);
+    this.cancel(key);
+    this.adjust(-this.mutate('DELETE FROM oauth_kv WHERE key = ?', key));
+    if (this.migrating() && (!previous || previous.legacy)) this.mark(key);
   }
 
   /** Also blocks migration of legacy tokens that have never been read. */
   async deletePrefix(prefix: string): Promise<void> {
-    if (this.migrating()) { this.room(prefix, true, false); this.mark(prefix, true); }
-    this.sql.exec('DELETE FROM oauth_kv WHERE substr(key, 1, length(?)) = ?', prefix, prefix);
+    for (const key of this.pending.keys()) if (key >= prefix && key < prefix + '\uffff') this.cancel(key);
+    if (this.migrating() && !/^token:[^:]+:[^:]+:$/.test(prefix)) {
+      this.adjust(this.mutate('INSERT OR IGNORE INTO oauth_migrated(key, prefix) SELECT key, 0 FROM oauth_kv WHERE key >= ? AND key < ? AND legacy = 1', prefix, prefix + '\uffff'));
+    }
+    this.adjust(-this.mutate('DELETE FROM oauth_kv WHERE key >= ? AND key < ?', prefix, prefix + '\uffff'));
+    // The prefix itself is an explicit deletion, including unread legacy tokens.
+    if (this.migrating()) this.mark(prefix, true);
   }
 
   async list(options: { prefix?: string; limit?: number; cursor?: string } = {}) {
@@ -109,7 +163,7 @@ export class OAuthStore {
         after = decoded[1];
       } catch { throw new Error('Invalid OAuth list cursor'); }
     }
-    const rows = this.sql.exec<Row>('SELECT * FROM oauth_kv WHERE substr(key, 1, length(?)) = ? AND (? IS NULL OR key > ?) AND (expires IS NULL OR expires > ?) ORDER BY key LIMIT ?', prefix, prefix, after, after, this.clock(), limit + 1).toArray();
+    const rows = this.sql.exec<Row>('SELECT * FROM oauth_kv WHERE key >= ? AND key < ? AND (? IS NULL OR key > ?) AND (expires IS NULL OR expires > ?) ORDER BY key LIMIT ?', prefix, prefix + '\uffff', after, after, this.clock(), limit + 1).toArray();
     const complete = rows.length <= limit;
     const page = rows.slice(0, limit);
     return { keys: page.map(row => ({ name: row.key, ...(row.expires === null ? {} : { expiration: row.expires }),
@@ -119,8 +173,8 @@ export class OAuthStore {
 
   /** Return whether retention work remains, including future expirations. */
   sweep(limit = 256): boolean {
-    this.sql.exec('DELETE FROM oauth_kv WHERE key IN (SELECT key FROM oauth_kv WHERE expires <= ? LIMIT ?)', this.clock(), limit);
-    if (!this.migrating()) this.sql.exec('DELETE FROM oauth_migrated WHERE key IN (SELECT key FROM oauth_migrated LIMIT ?)', limit);
+    this.expire(limit);
+    if (!this.migrating()) this.adjust(-this.mutate('DELETE FROM oauth_migrated WHERE key IN (SELECT key FROM oauth_migrated LIMIT ?)', limit));
     return this.sql.exec('SELECT key FROM oauth_kv WHERE expires IS NOT NULL LIMIT 1').toArray().length > 0
       || this.sql.exec('SELECT key FROM oauth_migrated LIMIT 1').toArray().length > 0;
   }
