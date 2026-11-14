@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=bf55db53db55222f4caa3e3f886c5301c570fb53ae498c065ff57849680640f4 -->
+<!-- README_SYNC: source=README.md sha256=0f6c9f5ee4e4c30ed8826aa6cd78494b1b08c1029b380fed75849734d6a2abb6 -->
 
 <p align="center">
   <picture>
@@ -8,8 +8,9 @@
 </p>
 
 <p align="center">
-  <strong>开源的 Obsidian 替代品，也能直接接上你现有的仓库。</strong><br>
-  你的 AI 工具帮你整理、更新，不用 API key、不用插件。个人和团队都能用。
+  笔记要一直整理，插件会坏，每次开新对话又要从头解释。<br>
+  <strong>设置一次就好。你的 AI 工具会存下重要的内容、把笔记整理好，下次对话再带回来；改了什么都看得到，也能还原。</strong><br>
+  开源的 Obsidian 替代品，也能直接接上你现有的仓库。
 </p>
 
 <p align="center">
@@ -46,11 +47,13 @@
 
 **团队版（下一版推出）**：团队自己架一台文澜服务器，大家都连上去，每个人可以设成只能看或可以改。
 
-- **自己保持最新。** AI 工具会把你在对话里的决定存成记忆，再整理进笔记；来源变了，用到它的笔记也会跟着更新。
-- **不用插件，不用设置。** 在设置里点“全部连接”，一键连好你的 AI 工具。不用找插件、更新插件，也不用 API key。
+- **自己保持最新。** AI 工具会把你在对话里的决定存下来，再整理进笔记；来源变了，用到它的笔记也会跟着更新。
+- **设置一次，不用插件。** 在设置里点“全部连接”，一键连好你的 AI 工具。不用安装或维护插件。
+- **保存前先对过出处。** AI 写进文件夹的笔记通常没人检查。文澜会确认每个引用的来源真的支持那一句，引用大多对不上的笔记不会保存；点引用就回到原文。改了什么都看得到、能还原，锁定的笔记会先问你。
 - **带进现有资料。** Obsidian 仓库、笔记、文档和 AI 对话都能带进来。[完整清单](#what-can-i-bring-in)。
-- **AI 能改什么由你决定。** 改了什么都看得到、能还原，也能指定哪些笔记要先问你。
-- **笔记都附出处。** 点引用就回到原文；引用大多对不上的笔记不会保存。
+
+### 还有
+
 - **页面可以是文字，也可以是 HTML。** 请 AI 帮任何一页做 HTML 视图，或把它做好的 HTML 直接存成一个 HTML 页面。HTML 视图显示的是这页当下的文字，改字不用重做。
 - **共用一个 Space。** 通过 Google Drive 或 iCloud 云盘的文件夹，跟同事共用，或在自己的几台电脑间同步。
 
@@ -58,13 +61,13 @@
 
 ### 跟其他做法比
 
-| | Obsidian 加插件 | Notion | LLM wiki 应用 | 文澜 |
+| | Obsidian 加插件 | Claude Code 加一个文件夹 | LLM wiki 应用 | 文澜 |
 |---|---|---|---|---|
-| 谁来整理 | 你自己加插件 | 你自己，或 Notion 的 Agent | 你另外设置的 AI | 你的 AI 工具；来源变了会更新 |
-| 设置 | 找插件、更新插件 | 完整 AI 要 Business 方案 | 填模型 key 或排程 | 一键连接，不用 API key |
-| 检查 AI 写的东西 | 看插件 | 附出处，不检查合不合 | 链接到来源 | 引用对不上的笔记不会保存 |
-| AI 能改什么 | 看插件 | 你开放给 Agent 的页面 | 它的 wiki 文件夹 | 每篇由你决定，随时可还原 |
-| 笔记存在哪 | 你的电脑 | Notion 云端 | 你的电脑 | 你的电脑；能接现有仓库 |
+| 谁来整理 | 你自己加插件 | 你自己，每次交代 | 你另外设置的 AI | 你的 AI 工具；来源变了会更新 |
+| 设置 | 找插件、更新插件 | 自己写指示，每次对话还要贴一份决定清单 | 填模型 key 或排程 | 设置一次，不用装或维护插件 |
+| 检查 AI 写的东西 | 看插件 | 你自己看它存了什么；重复和过时的笔记要定期清 | 链接到来源 | 保存前确认每个引用的来源支持那一句；旧版本留着 |
+| AI 能改什么 | 看插件 | 你批准的，或在设置里允许的 | 它的 wiki 文件夹 | 每篇由你决定，锁定的先问你，随时可还原 |
+| 笔记存在哪 | 你的电脑 | 你电脑上的纯文本文件；免费，很多人这样就够 | 你的电脑 | 你的文件，纯 Markdown；能接现有仓库 |
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
@@ -80,17 +83,19 @@
 
 ## 开始使用
 
-### 1. 下载并打开 Wenlan
+### 1. 下载 App，或从 AI 工具开始
 
-[下载桌面版](https://github.com/wenlan-app/wenlan/releases/latest)，支持 macOS 11 以上的 Apple Silicon、Windows x64 和 Linux x64（AppImage 或 .deb，v0.22 起）。App 界面有英文、简体中文和繁體中文。
-
-更喜欢终端？在 Mac 上运行 `npx -y wenlan setup`，或运行 `brew install 7xuanlu/tap/wenlan` 再运行 `wenlan setup`。Linux 和 Windows 请看 [CLI 安装说明](docs/setup-and-data.zh-Hans.md#installation)。
+| **下载桌面 App** | **从你的 AI 工具连接** |
+|---|---|
+| [完整体验](https://github.com/wenlan-app/wenlan/releases/latest)：笔记、导入和一键连接。支持 macOS 11 以上的 Apple Silicon、Windows x64 和 Linux x64（AppImage 或 .deb，v0.22 起）。界面有英文、简体中文和繁體中文。 | 在 Mac 上运行 `npx -y wenlan setup`（需要 Node.js），或运行 `brew install 7xuanlu/tap/wenlan` 再运行 `wenlan setup`。Claude Code 可以装[插件](docs/setup-with-ai.md)。Linux 和 Windows 请看 [CLI 安装说明](docs/setup-and-data.zh-Hans.md#installation)。 |
 
 ### 2. 带入你的资料
 
 新建一篇笔记，或带入 Obsidian 仓库、Logseq 图谱、文件夹或之前的 AI 对话。[导入指南](docs/import-guide.md)。
 
 ### 3. 连接你的 AI 工具
+
+如果你是从 AI 工具开始的，它已经连好了，直接照下面问它就好。
 
 在 App 的设置里，“添加工具”会找出你电脑上的 AI 工具，点“全部连接”一次设好，不用另外装东西或更新。接着开一个新的 AI 会话，问它：
 

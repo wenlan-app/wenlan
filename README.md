@@ -6,8 +6,9 @@
 </p>
 
 <p align="center">
-  <strong>Open-source Obsidian alternative that works with your existing vault.</strong><br>
-  Your AI tools keep it organized and up to date, with no API keys or plugins. For you and your team.
+  Notes need constant upkeep, plugins break, and every new AI chat starts from zero.<br>
+  <strong>Set up once. Your AI tools save what matters, keep your pages organized, and bring it back in your next chat; you see every change and can undo it.</strong><br>
+  Open-source Obsidian alternative that works with your existing vault.
 </p>
 
 <p align="center">
@@ -44,11 +45,13 @@ I started Wenlan because my notes, documents, and AI chats were scattered, and k
 
 **Teams (in the next release):** a self-hosted Wenlan server everyone connects to, with view-only or edit access for each person.
 
-- **Keeps itself up to date.** Your AI tools save what you decide in chats as memories and fold them into pages. When a source changes, the pages that rely on it get updated.
-- **No plugins, no setup.** **Connect all** in Settings connects your AI tools in one click. No plugins to find or update, and no API keys.
+- **Keeps itself up to date.** Your AI tools save what you decide in chats and fold it into pages. When a source changes, the pages that rely on it get updated.
+- **Set up once, no plugins.** **Connect all** in Settings connects your AI tools in one click. No plugins to install or maintain.
+- **Checks the source before saving.** Notes an AI writes into a folder usually go unchecked. Wenlan checks that each cited source supports the sentence it is cited for, and won't save a page whose citations mostly don't match; a citation opens the original. You see every change, can undo it, and pages you lock ask you first.
 - **Bring what you have.** Obsidian vaults, notes, documents, and AI chats. [Full list](#what-can-i-bring-in).
-- **You decide what AI changes.** See every change, undo it, and choose which pages wait for your OK.
-- **Pages cite their sources.** A citation opens the original; a page whose citations mostly don't match isn't saved.
+
+### Also
+
 - **A page can be text or HTML.** Ask your AI to make an HTML view of any page, or keep the HTML it made as an HTML page of its own. An HTML view shows the page's live text, so you never redo it.
 - **Share a Space.** With a colleague, or across your own computers, through a Google Drive or iCloud Drive folder.
 
@@ -56,13 +59,13 @@ I started Wenlan because my notes, documents, and AI chats were scattered, and k
 
 ### How it compares
 
-| | Obsidian + plugins | Notion | LLM wiki apps | Wenlan |
+| | Obsidian + plugins | Claude Code + a folder | LLM wiki apps | Wenlan |
 |---|---|---|---|---|
-| Who organizes | You, with plugins | You, or Notion's agents | An AI you set up | Your AI tools; updates when a source changes |
-| Setup | Find and update plugins | Full AI on the Business plan | Model key or scheduled routine | One click, no API key |
-| Checks the AI's work | Depends on the plugin | Cites sources; no match check | Links to sources | Refuses pages whose citations don't match |
-| What AI may change | Depends on the plugin | Pages you give an agent | Its wiki folder | You choose per page; restore anytime |
-| Where notes live | Your computer | Notion's cloud | Your computer | Your computer; works with your vault |
+| Who organizes | You, with plugins | You, by asking each time | An AI you set up | Your AI tools; updates when a source changes |
+| Setup | Find and update plugins | Your own instructions, plus a decisions file you paste in each session | Model key or scheduled routine | Set up once; no plugins to install or maintain |
+| Checks the AI's work | Depends on the plugin | You review what it files; duplicates and stale notes wait for a cleanup | Links to sources | Checks each cited source supports its sentence before saving; keeps the old version |
+| What AI may change | Depends on the plugin | What you approve, or allow in its settings | Its wiki folder | You choose per page; locked pages ask first; undo anytime |
+| Where notes live | Your computer | Plain files on your computer; free, and enough for many people | Your computer | Your files, plain Markdown; works with your vault |
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
@@ -78,17 +81,19 @@ I started Wenlan because my notes, documents, and AI chats were scattered, and k
 
 ## Get started
 
-### 1. Download and open Wenlan
+### 1. Start with the app or from your AI tool
 
-[Download the desktop app](https://github.com/wenlan-app/wenlan/releases/latest) for macOS 11 or later on Apple Silicon, Windows x64, or Linux x64 (AppImage or .deb, from v0.22). The app is in English, 简体中文, and 繁體中文.
-
-Prefer the terminal? On a Mac, run `npx -y wenlan setup`, or `brew install 7xuanlu/tap/wenlan` and then `wenlan setup`. Linux and Windows: [CLI install guide](docs/setup-and-data.md#installation).
+| **Download the desktop app** | **Connect from your AI tool** |
+|---|---|
+| [The full experience](https://github.com/wenlan-app/wenlan/releases/latest): pages, imports, and one-click connections. macOS 11 or later on Apple Silicon, Windows x64, or Linux x64 (AppImage or .deb, from v0.22). In English, 简体中文, and 繁體中文. | On a Mac, run `npx -y wenlan setup` (needs Node.js), or `brew install 7xuanlu/tap/wenlan` and then `wenlan setup`. In Claude Code, add the [plugin](docs/setup-with-ai.md). Linux and Windows: [CLI install guide](docs/setup-and-data.md#installation). |
 
 ### 2. Bring in your material
 
 Create a page, or bring in an Obsidian vault, a Logseq graph, a folder, or earlier AI chats. [Import guide](docs/import-guide.md).
 
 ### 3. Connect your AI tool
+
+If you started from your AI tool, it is already connected, so go straight to asking it below.
 
 In the App's Settings, **Add a tool** finds the AI tools on your computer and **Connect all** sets them up in one press. There is nothing else to install or keep updated. Then start a new AI session and ask:
 

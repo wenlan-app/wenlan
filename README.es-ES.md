@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=bf55db53db55222f4caa3e3f886c5301c570fb53ae498c065ff57849680640f4 -->
+<!-- README_SYNC: source=README.md sha256=0f6c9f5ee4e4c30ed8826aa6cd78494b1b08c1029b380fed75849734d6a2abb6 -->
 
 <p align="center">
   <picture>
@@ -8,8 +8,9 @@
 </p>
 
 <p align="center">
-  <strong>Alternativa de código abierto a Obsidian que funciona con tu bóveda actual.</strong><br>
-  Tus herramientas de IA la mantienen organizada y al día, sin claves de API ni plugins. Para ti y tu equipo.
+  Las notas exigen mantenimiento constante, los plugins se rompen y cada chat nuevo con la IA empieza de cero.<br>
+  <strong>Configúralo una vez. Tus herramientas de IA guardan lo importante, mantienen tus páginas organizadas y te lo traen de vuelta en tu próximo chat; ves cada cambio y puedes deshacerlo.</strong><br>
+  Alternativa de código abierto a Obsidian que funciona con tu bóveda actual.
 </p>
 
 <p align="center">
@@ -46,11 +47,13 @@ Empecé Wenlan porque mis notas, documentos y chats de IA estaban dispersos, y e
 
 **Equipos (en la próxima versión):** un servidor de Wenlan autoalojado al que todos se conectan, con acceso de solo lectura o de edición para cada persona.
 
-- **Se mantiene al día sola.** Tus herramientas de IA guardan lo que decides en los chats como memorias y lo integran en páginas. Cuando cambia una fuente, las páginas que dependen de ella se actualizan.
-- **Sin plugins ni configuración.** **Connect all** en los ajustes conecta tus herramientas de IA con un clic. Sin plugins que buscar o actualizar, y sin claves de API.
+- **Se mantiene al día sola.** Tus herramientas de IA guardan lo que decides en los chats y lo integran en páginas. Cuando cambia una fuente, las páginas que dependen de ella se actualizan.
+- **Configúralo una vez, sin plugins.** **Connect all** en los ajustes conecta tus herramientas de IA con un clic. Sin plugins que instalar ni mantener.
+- **Comprueba la fuente antes de guardar.** Las notas que una IA escribe en una carpeta suelen quedar sin revisar. Wenlan comprueba que cada fuente citada respalda la frase en la que se cita y no guarda una página cuyas citas casi no coinciden; una cita abre el original. Ves cada cambio, puedes deshacerlo y las páginas que bloqueas te preguntan primero.
 - **Trae lo que ya tienes.** Bóvedas de Obsidian, notas, documentos y chats de IA. [Lista completa](#what-can-i-bring-in).
-- **Tú decides qué cambia la IA.** Ves cada cambio, lo deshaces y eliges qué páginas esperan tu visto bueno.
-- **Las páginas citan sus fuentes.** Una cita abre el original; una página cuyas citas casi no coinciden no se guarda.
+
+### Además
+
 - **Una página puede ser texto o HTML.** Pide a tu IA una vista HTML de cualquier página, o guarda el HTML que hizo como una página HTML propia. La vista HTML muestra el texto actual de la página, así que nunca la rehaces.
 - **Comparte un Space.** Con un compañero, o entre tus propios ordenadores, a través de una carpeta de Google Drive o iCloud Drive.
 
@@ -58,13 +61,13 @@ Empecé Wenlan porque mis notas, documentos y chats de IA estaban dispersos, y e
 
 ### Cómo se compara
 
-| | Obsidian + plugins | Notion | Apps de LLM wiki | Wenlan |
+| | Obsidian + plugins | Claude Code + una carpeta | Apps de LLM wiki | Wenlan |
 |---|---|---|---|---|
-| Quién organiza | Tú, con plugins | Tú, o los agentes de Notion | Una IA que configuras | Tus herramientas de IA; actualiza cuando cambia una fuente |
-| Configuración | Buscar y actualizar plugins | IA completa en el plan Business | Clave de modelo o rutina programada | Un clic, sin clave de API |
-| Revisa a la IA | Depende del plugin | Cita fuentes; no comprueba | Enlaza a fuentes | Rechaza páginas cuyas citas no coinciden |
-| Qué puede cambiar la IA | Depende del plugin | Páginas que das a un agente | Su carpeta de wiki | Tú eliges por página; restaura cuando quieras |
-| Dónde viven tus notas | Tu ordenador | La nube de Notion | Tu ordenador | Tu ordenador; funciona con tu bóveda |
+| Quién organiza | Tú, con plugins | Tú, pidiéndoselo cada vez | Una IA que configuras | Tus herramientas de IA; actualiza cuando cambia una fuente |
+| Configuración | Buscar y actualizar plugins | Tus propias instrucciones, más un archivo de decisiones que pegas en cada sesión | Clave de modelo o rutina programada | Una vez; sin plugins que instalar ni mantener |
+| Revisa a la IA | Depende del plugin | Revisas tú lo que guarda; duplicados y notas viejas esperan una limpieza | Enlaza a fuentes | Comprueba que cada fuente citada respalda su frase antes de guardar; conserva la versión anterior |
+| Qué puede cambiar la IA | Depende del plugin | Lo que apruebes o permitas en sus ajustes | Su carpeta de wiki | Tú eliges por página; las bloqueadas preguntan primero; deshaz cuando quieras |
+| Dónde viven tus notas | Tu ordenador | Archivos de texto en tu ordenador; gratis, y suficiente para mucha gente | Tu ordenador | Tus archivos, Markdown plano; funciona con tu bóveda |
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
@@ -80,17 +83,19 @@ Empecé Wenlan porque mis notas, documentos y chats de IA estaban dispersos, y e
 
 ## Primeros pasos
 
-### 1. Descarga y abre Wenlan
+### 1. Empieza con la app o desde tu herramienta de IA
 
-[Descarga la aplicación de escritorio](https://github.com/wenlan-app/wenlan/releases/latest) para macOS 11 o posterior en Apple Silicon, Windows x64 o Linux x64 (AppImage o .deb, desde v0.22). La app está en inglés, chino simplificado y chino tradicional.
-
-¿Prefieres el terminal? En un Mac, ejecuta `npx -y wenlan setup`, o `brew install 7xuanlu/tap/wenlan` y después `wenlan setup`. Linux y Windows: [guía de instalación de la CLI](docs/setup-and-data.es-ES.md#installation).
+| **Descarga la app de escritorio** | **Conecta desde tu herramienta de IA** |
+|---|---|
+| [La experiencia completa](https://github.com/wenlan-app/wenlan/releases/latest): páginas, importaciones y conexiones con un clic. macOS 11 o posterior en Apple Silicon, Windows x64 o Linux x64 (AppImage o .deb, desde v0.22). En inglés, chino simplificado y chino tradicional. | En un Mac, ejecuta `npx -y wenlan setup` (requiere Node.js), o `brew install 7xuanlu/tap/wenlan` y después `wenlan setup`. En Claude Code, añade el [plugin](docs/setup-with-ai.md). Linux y Windows: [guía de instalación de la CLI](docs/setup-and-data.es-ES.md#installation). |
 
 ### 2. Trae tu material
 
 Crea una página o trae una bóveda de Obsidian, un grafo de Logseq, una carpeta o chats de IA anteriores. [Guía de importación](docs/import-guide.md).
 
 ### 3. Conecta tu herramienta de IA
+
+Si empezaste desde tu herramienta de IA, ya está conectada: pasa directamente a pedirle lo de abajo.
 
 En los ajustes de la aplicación, **Add a tool** encuentra las herramientas de IA de tu ordenador y **Connect all** las configura con un solo clic. No hay nada más que instalar ni mantener al día. Después, inicia una nueva sesión de IA y pide:
 
