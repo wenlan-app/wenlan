@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { oauthKV } from './fixtures/oauth-storage.mjs';
 import { createRequire } from 'node:module';
 import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,7 +16,7 @@ const resource = `${origin}/mcp`;
 const candidate = { tunnelOrigin: 'https://synthetic.trycloudflare.com', backendToken: 'b'.repeat(43), space: 'review' };
 
 test('actual Worker supports device-scoped per-client disconnection', { timeout: 60_000 }, async t => {
-  const bundle = await build({ entryPoints: [fileURLToPath(new URL('../src/worker.ts', import.meta.url))],
+  const bundle = await build({ entryPoints: [fileURLToPath(new URL('./fixtures/oauth-storage-worker.ts', import.meta.url))],
     bundle: true, write: false, format: 'esm', platform: 'browser', target: 'es2022',
     external: ['cloudflare:workers'], loader: { '.png': 'binary' } });
   let backendCalls = 0;
@@ -176,8 +177,8 @@ test('actual Worker supports device-scoped per-client disconnection', { timeout:
       await survivor.text();
       assert.equal((await post(`/grants/${firstGrant}/revoke`, {}, native(device))).status, 200);
     });
-    await t.test('reauthorization rejects old credentials even if KV data reappears after revocation', async () => {
-      const kv = await runtime.getKVNamespace('OAUTH_KV');
+    await t.test('reauthorization rejects old credentials even if provider data reappears after revocation', async () => {
+      const kv = await oauthKV(runtime);
       const [subject, grantId] = second.tokens.access_token.split(':');
       const oldGrantKey = `grant:${subject}:${grantId}`;
       const oldGrant = await kv.get(oldGrantKey);
