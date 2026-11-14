@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { deleteProviderGrant } from '../src/cleanup-kv.ts';
 
-test('grant cleanup is one KV delete and never lists (free plan: 1,000 lists a day)', async () => {
+test('grant cleanup retains delete-only compatibility with a legacy KV-shaped test double', async () => {
   const calls: string[] = [];
   const kv = new Proxy({}, {
     get: (_target, property) => async (key?: string) => { calls.push(`${String(property)}:${key ?? ''}`); },

@@ -499,7 +499,7 @@ another 90 days. Registrations made before the 1.x library carry no renewal
 stamp and keep their original schedule. Once a registration expires, the old client must re-register and obtain fresh desktop
 consent before it can authorize or refresh, even when its authorization grant is
 still retained. The runtime test models expiry by removing the exact synthetic
-client KV key; it does not establish a 90-day wall-clock expiry receipt. Existing
+client SQL key; it does not establish a 90-day wall-clock expiry receipt. Existing
 non-expiring deployed clients require a separately approved inventory and
 migration, and are not claimed to be fixed here. DCR is the tested registration
 path; CIMD is deliberately not advertised until its required runtime flag and
@@ -519,21 +519,21 @@ The library revokes a grant and its tokens whenever this check answers
 
 `src/grants.ts` adds atomic authorization-code claims after the library verifies
 PKCE, client and resource. A regression exposed two successful simultaneous
-exchanges through the provider's KV read/modify/write path. Only one durable
+exchanges through the provider's read/modify/write path. Only one durable
 claim may now succeed, and another valid claim revokes the receipt. Queries,
 stream chunks and refresh check that receipt. An issuance failure after claim
 requires fresh pairing, not reuse of the consumed code. The provider's normal
 token revocation/replacement is additionally rechecked through `unwrapToken`;
-its distributed KV visibility remains a deployed verification gate.
+its active records now share the strongly consistent SQL authority.
 
 Reauthorization replaces the current consent record for that device/client
 before the provider issues another code. Queries, refresh and streams require
-the receipt to refer to that current consent. Restoring old synthetic KV records
+the receipt to refer to that current consent. Restoring old synthetic provider records
 after reauthorization cannot restore access. If issuance fails after replacement,
 the user must pair again; the previous connection is not silently restored.
 
 The actual Worker prevents concurrent token exchanges and pairing completions
-from entering the provider's KV mutation flow. A busy token endpoint returns
+from entering the provider's mutation flow. A busy token endpoint returns
 OAuth `temporarily_unavailable` (503) with `Retry-After: 1`, not a cached token
 response or an unbounded queue. MCP queries and device revocation remain
 independent. This is a single-authority v1 throughput tradeoff; actual client
@@ -544,7 +544,7 @@ WENLAN_RELAY_TOOLCHAIN=/path/to/existing-wrangler-project \
   node --test relay/tests/oauth-runtime.test.mjs
 ```
 
-This executes the real OAuth library against local KV and a SQLite Durable
+This executes the real OAuth library against the SQL adapter in a local Durable
 Object, including enrollment and the pairing state machine. It tests discovery,
 redirect/resource/PKCE rejection, replay and concurrent code exchange, refresh,
 expired token rejection and device revocation. The fixture uses synthetic
@@ -552,11 +552,10 @@ connector responses and returns a browser secret as JSON for the test driver;
 that fixture is NOT a deployable/public HTTP flow. Production must use a
 Secure/HttpOnly cookie, CSRF defenses, bounded bodies and abuse controls.
 
-The provider currently expects a dedicated `OAUTH_KV` namespace in addition to
-the strongly consistent device/pairing authority. No cloud namespace has been
-provisioned by these tests. Local KV does not prove distributed cache/revocation
-timing; measure that on the deployed candidate. The strong replay receipt
-does not establish production consistency or physical deletion deadlines.
+The provider receives the SQL adapter as `OAUTH_KV`; the dedicated legacy KV
+binding remains read-only during migration (see Retention and cleanup). No cloud
+namespace has been provisioned by these tests. Local tests do not establish
+production capacity or physical deletion deadlines.
 
 Native `GET /grants` lists only the authenticated device's grants, in bounded
 25-item pages with an opaque grant-ID cursor. `POST /grants/{id}/revoke` commits
@@ -666,7 +665,7 @@ The standalone authority uses `src/bounded-store.ts` for every application
 transaction, including cleanup: at most 8192 application records, with a 32 KiB
 UTF-8 JSON limit on inserted/updated values. The capacity counter and cleanup
 cursor are reserved control records outside that count; rate-limit SQL rows
-and provider OAuth KV have separate limits. This is an initial engineering
+and provider OAuth SQL storage have separate limits. This is an initial engineering
 capacity boundary, not an OpenAI requirement, pricing guarantee or launch SLA.
 
 Record accounting commits or rolls back with the underlying serializable
@@ -708,26 +707,44 @@ these local results do not establish a fixed production deletion deadline.
   successful token deletion. Expired tombstones are deleted only after cleanup
   succeeds and their consent is no longer issuable.
 
-At most one provider cleanup runs per scan, and it never lists KV: the free
-Workers plan allows 1,000 KV list operations a day per account, and the pinned
-provider's `revokeGrant` helper lists the grant's token records on every call.
-Cleanup instead deletes only the provider's `grant:` record (one KV delete). The
-grant's access-token records are not deleted: the Wenlan receipt already denies
-them before any backend call (a rate-limited request from a revoked grant gets
-the re-authorization challenge, not 429), and they expire on their own after
-the 15-minute access-token TTL. The outer wait fails closed after two seconds.
-Storage failures back off from one minute up to one hour, with durable pending
-state and no stored raw exception. Alarms need no preceding OAuth HTTP request.
+OAuth provider records live in the central authority's SQLite `oauth_kv` table,
+through a KV-compatible adapter for the pinned provider. Expired rows disappear
+from reads and lists immediately. The store caps values plus migration markers
+at 50,000 rows, sweeps expired data before refusing a new write, and surfaces
+capacity failures as sanitized HTTP 503 responses. A one-row `oauth_meta` counter
+tracks values and markers without recounting the tables on each write. At the
+hard cap, a new migration tombstone can also be refused; cleanup stays pending and retries
+while the Wenlan receipt continues denying the grant. The alarm deletes at most
+256 expired OAuth values per pass and stays scheduled while OAuth expirations
+or migration markers remain. No new binding or DO migration tag is required.
 
-This covers authority records and explicit/device-invalidated grant cleanup,
-not a universal provider-KV purge. DCR registrations use the 90-day TTL
-described above; the pinned provider writes unexchanged code grants with a
-600-second KV TTL and access-token records with their token TTL. Each refresh
-moves the refresh grant's KV expiry to 30 days later, never past the Wenlan
-grant end, so an unused grant expires on its own. These configured expirations are not measured production deletion receipts.
-Legacy client migration, the provider's internal replacement cleanup,
-eventual-KV reappearance, quota/backlog alerts and deployed retention
-measurements remain review gates.
+Until 2026-12-16 00:00 UTC, a SQL miss can read the legacy `OAUTH_KV` binding
+and copy an existing record into SQL. Missing legacy keys are cached only in
+memory (up to 1,000 entries for ten minutes). Imported records retain their
+`expiresAt` (or client `registrationExpiresAt`); records without an expiry receive a 30-day cap.
+Imported rows retain a legacy flag across overwrites. Deleting or sweeping
+these rows writes migration markers, as do explicit deletions of absent keys
+and token prefixes, so legacy credentials cannot resurrect. Fresh puts and
+legacy misses write no migration markers. Markers are reclaimed in
+bounded alarm passes after cutoff. The legacy binding remains for this fallback;
+no operation lists, writes, or deletes legacy KV. Remove fallback code in a later
+change after the migration window.
+
+At most one provider grant cleanup runs per application scan. Cleanup deletes
+its SQL `grant:` row and all matching `token:<subject>:<grant>:` rows in a
+single token-delete statement, without KV lists. The Wenlan receipt denies
+invalidated access before any backend call, including during cleanup failures.
+The outer wait fails closed after two seconds. Storage failures back off from
+one minute up to one hour, with durable pending state and no raw exceptions.
+Alarms need no preceding OAuth HTTP request. A refresh that passed its receipt
+check before a concurrent revocation can finish writing after cleanup; its
+credentials remain denied by the receipt, and those rows retain their TTLs.
+
+DCR registrations retain their 90-day TTL; unexchanged code grants have a
+600-second TTL and access-token rows use their token TTL. Each refresh moves
+the refresh grant's SQL expiry to 30 days later, capped by the Wenlan grant end.
+These are configured expirations, not measured production deletion receipts.
+Quota/backlog alerts and deployed retention measurements remain review gates.
 Do not promise finite wall-clock physical deletion during a storage outage.
 
 ```sh
@@ -737,8 +754,8 @@ WENLAN_RELAY_TOOLCHAIN=/path/to/existing-wrangler-project \
 ```
 
 The runtime test delivers a real workerd alarm, persists its SQLite cursor and
-alarm across restart, and checks that cleanup removes the grant record while
-leaving 25 synthetic KV token records to their TTL. Its privileged seed/inspection controls are test-only.
+alarm across restart, and checks that cleanup removes the grant and all 25
+synthetic SQL token records. Its privileged seed/inspection controls are test-only.
 
 ## Integration gates
 
@@ -865,8 +882,7 @@ remain separate gates.
 
 This is **not** a submission-ready deployed endpoint. Still required: reviewed
 production provisioning/configuration; desktop pairing UI and storage platform validation;
-desktop per-grant disconnect controls; full provider-KV retention and cleanup capacity;
-distributed OAuth KV consistency measurements; production capacity/abuse policy;
+desktop per-grant disconnect controls; deployed OAuth retention and cleanup capacity; production capacity/abuse policy;
 real MCP/daemon and public domain/metadata verification; reviewer hosting;
 policy/demo assets; independent integrated review and actual ChatGPT/Codex flows.
 Passing local tests is not evidence of public availability or complete isolation.

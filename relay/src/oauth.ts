@@ -233,7 +233,7 @@ export function createOAuthProvider<Env extends OAuthEnv>(
   return {
     fetch: (request: Request, env: Env, ctx: ExecutionContext) => provider.fetch(request, env, ctx),
     // Alarms after eviction have no prior fetch to populate env.OAUTH_PROVIDER.
-    // Never lists KV: see deleteProviderGrant.
+    // SQL cleanup never lists legacy KV: see deleteProviderGrant.
     revokeStoredGrant: (env: Env, grantId: string, subject: string) => deleteProviderGrant(env.OAUTH_KV, grantId, subject),
   };
 }

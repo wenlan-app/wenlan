@@ -7,6 +7,9 @@ import { enrollDevice, authenticateDevice, revokeDevice } from '../../src/device
 import { approvePairing, connectorKey } from '../../src/pairing.ts';
 import type { ConnectorRoute } from '../../src/proxy.ts';
 
+import { oauthStore } from '../../src/oauth-store.ts';
+import { inspectOAuth, readOnlyLegacy } from './oauth-storage.ts';
+
 const origin = 'https://wenlan-relay.example';
 const candidate = { tunnelOrigin: 'https://synthetic.trycloudflare.com',
   backendToken: 'b'.repeat(43), space: 'review' };
@@ -15,6 +18,7 @@ interface Env extends OAuthEnv { AUTHORITY: DurableObjectNamespace }
 export class FixtureOAuthAuthority {
   provider;
   constructor(private state: DurableObjectState, private env: Env) {
+    this.env = { ...env, OAUTH_KV: oauthStore(state.storage.sql, readOnlyLegacy(env.OAUTH_KV)) };
     // Models a transient storage failure in the token exchange's route lookup.
     let failRouteLoads = false;
     this.provider = createOAuthProvider<Env>(origin, {
@@ -70,7 +74,9 @@ export class FixtureOAuthAuthority {
       return await state.storage.get<ConnectorRoute>(connectorKey(id)) ?? null;
     }, state.storage);
   }
-  fetch(request: Request) {
+  async fetch(request: Request) {
+    const inspected = await inspectOAuth(request, this.state);
+    if (inspected) return inspected;
     const ctx = { waitUntil: (promise: Promise<unknown>) => this.state.waitUntil(promise),
       passThroughOnException() {}, props: {} } as ExecutionContext;
     return this.provider.fetch(request, this.env, ctx);

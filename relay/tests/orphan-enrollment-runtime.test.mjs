@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { oauthKV } from './fixtures/oauth-storage.mjs';
 import { createRequire } from 'node:module';
 import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -116,7 +117,7 @@ test('lost enrollment response leaves no accessible grant and expires through re
       assert.deepEqual(state[`device:${device.id}`], device);
       assert.deepEqual(state[`connector:${device.id}`], route);
       assert.equal(Object.keys(state).some(key => key.startsWith('oauth-grant:')), false);
-      const kv = await runtime.getKVNamespace('OAUTH_KV');
+      const kv = await oauthKV(runtime);
       assert.equal((await kv.list({ prefix: 'grant:' })).keys.length, 0);
       assert.equal((await kv.list({ prefix: 'token:' })).keys.length, 0);
     });
@@ -147,10 +148,10 @@ test('lost enrollment response leaves no accessible grant and expires through re
       assert.equal(final[`connector:${device.id}`], undefined);
       assert.equal(Object.keys(final).some(key => key.startsWith('oauth-client:')), false,
         'no device/client consent was approved');
-      const kv = await runtime.getKVNamespace('OAUTH_KV');
+      const kv = await oauthKV(runtime);
       const clients = await kv.list({ prefix: 'client:' });
       const registered = clients.keys.find(key => key.name === `client:${client.client_id}`);
-      assert(registered, 'DCR has a separate retention lifetime in provider KV');
+      assert(registered, 'DCR has a separate retention lifetime in provider SQL');
       assert(registered.expiration > Math.floor(Date.now() / 1000) + 89 * 24 * 60 * 60);
       assert.equal(backendCalls, 2);
     });

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { oauthKV } from './fixtures/oauth-storage.mjs';
 import { createRequire } from 'node:module';
 import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -39,7 +40,7 @@ test('actual authority alarm persists cursor, deletes the OAuth grant without li
   const grantKey = `grant:${subject}:${id}`;
   const tokenPrefix = `token:${subject}:${id}:`;
   try {
-    const initialKV = await runtime.getKVNamespace('OAUTH_KV');
+    const initialKV = await oauthKV(runtime);
     // Synthetic provider records. Token validity after revocation is covered
     // by the OAuth tests; this checks what physical cleanup touches.
     await initialKV.put(grantKey, JSON.stringify({ id, userId: subject }));
@@ -61,12 +62,11 @@ test('actual authority alarm persists cursor, deletes the OAuth grant without li
     assert(first.alarm > Date.now(), 'must reschedule without any rate buckets or new traffic');
     assert(first.records['maintenance:cursor'].after);
     assert(first.records['pairing:064'], 'one alarm cannot scan unbounded rows');
-    // One KV delete removes the provider grant; access-token records are left to
-    // their own 15-minute TTL so cleanup never spends the daily KV list quota.
+    // SQL cleanup removes both the grant and every token without KV lists.
     assert.equal(first.records[receiptKey].cleanupPending, false);
     assert.equal(first.records[receiptKey].active, false);
     assert.equal(await initialKV.get(grantKey), null);
-    assert.equal((await initialKV.list({ prefix: tokenPrefix })).keys.length, 25);
+    assert.equal((await initialKV.list({ prefix: tokenPrefix })).keys.length, 0);
     await runtime.dispose();
     runtime = new Miniflare(options);
     const restored = await fixture('inspect');
@@ -79,11 +79,29 @@ test('actual authority alarm persists cursor, deletes the OAuth grant without li
     const final = await fixture('inspect');
     assert.equal(final.records[receiptKey].cleanupPending, false);
     assert.equal(final.records[receiptKey].active, false);
-    const kv = await runtime.getKVNamespace('OAUTH_KV');
+    const kv = await oauthKV(runtime);
     assert.equal(await kv.get(grantKey), null);
     assert(final.alarm, 'live replay tombstone still needs eventual retention cleanup');
     await fixture('clear');
     assert.equal((await fixture('alarm')).alarm, null);
+    await fixture('oauth-expired');
+    const swept = await fixture('alarm');
+    assert.equal(swept.oauthRows, 44, 'one alarm deletes at most 256 expired OAuth rows');
+    assert(swept.alarm, 'remaining OAuth expirations must keep maintenance scheduled');
+    const drained = await fixture('alarm');
+    assert.equal(drained.oauthRows, 0);
+    assert.equal(drained.alarm, null);
+    await fixture('oauth-full');
+    const refused = await runtime.dispatchFetch(`${origin}/oauth/register`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ redirect_uris: ['https://client.example/callback'],
+        grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'], token_endpoint_auth_method: 'none' }),
+    });
+    assert.equal(refused.status, 503, 'OAuth capacity failures reach the sanitized HTTP handler');
+    const errorBody = await refused.text();
+    assert(!errorBody.includes('capacity') && !errorBody.includes('oauth_kv') && !errorBody.includes('SQL'));
+    assert.equal((await fixture('inspect')).oauthRows, 50000);
+
   } finally {
     await runtime.dispose();
     await rm(dir, { recursive: true, force: true });
