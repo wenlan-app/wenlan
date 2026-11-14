@@ -708,14 +708,16 @@ these local results do not establish a fixed production deletion deadline.
   successful token deletion. Expired tombstones are deleted only after cleanup
   succeeds and their consent is no longer issuable.
 
-At most one provider cleanup batch runs per scan. The pinned provider's public
-`revokeGrant` helper gets a restricted KV view: at most 12 KV operations per
-invocation, four keys per list, and no new operations after 1.5 seconds. The
-outer wait fails closed after two seconds. This does not cancel an already
-issued KV operation. Partial batches retry on the next eligible scan; storage
-failures back off from one minute up to one hour, with durable pending state and
-no stored raw exception. Alarms construct provider helpers directly, without
-requiring a preceding OAuth HTTP request.
+At most one provider cleanup runs per scan, and it never lists KV: the free
+Workers plan allows 1,000 KV list operations a day per account, and the pinned
+provider's `revokeGrant` helper lists the grant's token records on every call.
+Cleanup instead deletes only the provider's `grant:` record (one KV delete). The
+grant's access-token records are not deleted: the Wenlan receipt already denies
+them before any backend call (a rate-limited request from a revoked grant gets
+the re-authorization challenge, not 429), and they expire on their own after
+the 15-minute access-token TTL. The outer wait fails closed after two seconds.
+Storage failures back off from one minute up to one hour, with durable pending
+state and no stored raw exception. Alarms need no preceding OAuth HTTP request.
 
 This covers authority records and explicit/device-invalidated grant cleanup,
 not a universal provider-KV purge. DCR registrations use the 90-day TTL
@@ -735,8 +737,8 @@ WENLAN_RELAY_TOOLCHAIN=/path/to/existing-wrangler-project \
 ```
 
 The runtime test delivers a real workerd alarm, persists its SQLite cursor and
-alarm across restart, and exercises the actual pinned OAuth library against 25
-synthetic KV token records. Its privileged seed/inspection controls are test-only.
+alarm across restart, and checks that cleanup removes the grant record while
+leaving 25 synthetic KV token records to their TTL. Its privileged seed/inspection controls are test-only.
 
 ## Integration gates
 

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-import { OAuthProvider, OAuthError, authorizationErrorRedirect, getOAuthApi, type AuthRequest, type OAuthHelpers, type OAuthProviderOptions } from '@cloudflare/workers-oauth-provider';
-import { cleanupKV } from './cleanup-kv.ts';
+import { OAuthProvider, OAuthError, authorizationErrorRedirect, type AuthRequest, type OAuthHelpers, type OAuthProviderOptions } from '@cloudflare/workers-oauth-provider';
+import { deleteProviderGrant } from './cleanup-kv.ts';
 import { beginPairing, cancelPairingRequest, consumePairing, type PairingStore } from './pairing.ts';
 import { authorizationChallenge, isWriteGrant, isWriteToolCall, QUERY_SCOPE, readQueryBody, WRITE_SCOPE, type ConnectorRoute, type QueryGrant, type ProxyOptions } from './proxy.ts';
 import { forwardSessionQuery } from './sessions.ts';
@@ -131,9 +131,14 @@ export async function forwardOAuthQuery(
     generation: bound.generation!, scopes: token.scope, expiresAt: token.expiresAt * 1000,
   };
   const identity = { grantId: token.grantId, clientId: token.grant.clientId };
+  // Revocation no longer deletes access-token records (they expire on their own
+  // TTL), so a revoked grant can reach the limits below. It must be told to
+  // re-authorize rather than to wait.
+  const revoked = async () => !await authorizationGrantActive(store, identity, queryGrant).catch(() => true);
   if (limits.limitGrant) {
     const retryAfter = await limits.limitGrant(token.grantId);
     if (retryAfter > 0) {
+      if (await revoked()) return challenge(origin);
       return Response.json({ error: 'Request limit reached' }, { status: 429,
         headers: { 'cache-control': 'no-store', 'retry-after': String(retryAfter) } });
     }
@@ -145,6 +150,7 @@ export async function forwardOAuthQuery(
     && isWriteToolCall(await readQueryBody(request.clone()).catch(() => new Uint8Array()))) {
     const retryAfter = await limits.limitWrite(token.grantId);
     if (retryAfter > 0) {
+      if (await revoked()) return challenge(origin);
       return Response.json({ error: 'Request limit reached' }, { status: 429,
         headers: { 'cache-control': 'no-store', 'retry-after': String(retryAfter), [LIMIT_HEADER]: 'grant-write-hour' } });
     }
@@ -227,7 +233,7 @@ export function createOAuthProvider<Env extends OAuthEnv>(
   return {
     fetch: (request: Request, env: Env, ctx: ExecutionContext) => provider.fetch(request, env, ctx),
     // Alarms after eviction have no prior fetch to populate env.OAUTH_PROVIDER.
-    revokeStoredGrant: (env: Env, grantId: string, subject: string) => getOAuthApi(options,
-      { ...env, OAUTH_KV: cleanupKV(env.OAUTH_KV) }).revokeGrant(grantId, subject),
+    // Never lists KV: see deleteProviderGrant.
+    revokeStoredGrant: (env: Env, grantId: string, subject: string) => deleteProviderGrant(env.OAUTH_KV, grantId, subject),
   };
 }
