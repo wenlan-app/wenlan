@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=e4c1a6b0cbfc7e85d02be367388f425b08ddb4f0910f5e93ec97a9f2a31181cc -->
+<!-- README_SYNC: source=README.md sha256=0f6c9f5ee4e4c30ed8826aa6cd78494b1b08c1029b380fed75849734d6a2abb6 -->
 
 <p align="center">
   <picture>
@@ -87,7 +87,7 @@
 
 | **下載桌面 App** | **從你的 AI 工具連接** |
 |---|---|
-| [完整體驗](https://github.com/wenlan-app/wenlan/releases/latest)：筆記、匯入和一鍵連接。支援 macOS 11 以上的 Apple Silicon、Windows x64 和 Linux x64（AppImage 或 .deb，v0.22 起）。介面有英文、简体中文和繁體中文。 | Claude Code、Codex、Cursor 等 AI 工具共用一份記憶，存成你看得懂、改得了的筆記：在一個工具裡定下的事，換到下一個工具還在。在 Mac 上執行 `npx -y wenlan setup`（需要 Node.js），或執行 `brew install 7xuanlu/tap/wenlan` 再執行 `wenlan setup`。Claude Code 可以裝[插件](docs/setup-with-ai.md)。Linux 和 Windows 請看 [CLI 安裝說明](docs/setup-and-data.zh-Hant.md#installation)。 |
+| [完整體驗](https://github.com/wenlan-app/wenlan/releases/latest)：筆記、匯入和一鍵連接。支援 macOS 11 以上的 Apple Silicon、Windows x64 和 Linux x64（AppImage 或 .deb，v0.22 起）。介面有英文、简体中文和繁體中文。 | 在 Mac 上執行 `npx -y wenlan setup`（需要 Node.js），或執行 `brew install 7xuanlu/tap/wenlan` 再執行 `wenlan setup`。Claude Code 可以裝[插件](docs/setup-with-ai.md)。Linux 和 Windows 請看 [CLI 安裝說明](docs/setup-and-data.zh-Hant.md#installation)。 |
 
 ### 2. 帶進你的資料
 
