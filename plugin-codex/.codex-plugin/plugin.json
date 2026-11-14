@@ -1,6 +1,6 @@
 {
   "name": "wenlan",
-  "version": "0.21.7+codex",
+  "version": "0.21.8+codex",
   "description": "The knowledge base you don't have to maintain. Your AI tools keep it organized, and each page links to its sources. Open-source Obsidian alternative that works with your existing vault.",
   "author": {
     "name": "Qi-Xuan Lu",
