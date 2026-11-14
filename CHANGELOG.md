@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.21.8](https://github.com/wenlan-app/wenlan/compare/v0.21.7...v0.21.8) (2026-11-14)
+
+
+### Features
+
+* **relay:** keep OAuth storage in the authority Durable Object ([#1286](https://github.com/wenlan-app/wenlan/issues/1286)) ([45888d1](https://github.com/wenlan-app/wenlan/commit/45888d18e548ee496275f07206c0003408c7aa03))
+
+
+### Bug Fixes
+
+* **relay:** stop grant cleanup from spending the KV list quota ([#1284](https://github.com/wenlan-app/wenlan/issues/1284)) ([78831d6](https://github.com/wenlan-app/wenlan/commit/78831d604f5d4f6d524ca2abd65be9529447e85f))
+
 ## [0.21.7](https://github.com/wenlan-app/wenlan/compare/v0.21.6...v0.21.7) (2026-11-13)
 
 

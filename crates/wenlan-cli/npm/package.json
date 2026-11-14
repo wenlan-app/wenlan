@@ -1,6 +1,6 @@
 {
   "name": "wenlan",
-  "version": "0.21.7",
+  "version": "0.21.8",
   "description": "Wenlan CLI and daemon: the knowledge base you don't have to maintain. Your AI tools keep it organized.",
   "keywords": [
     "ai-memory",
