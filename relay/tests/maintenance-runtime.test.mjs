@@ -13,7 +13,7 @@ const { Miniflare } = requireTool('miniflare');
 const { build } = requireTool('esbuild');
 const origin = 'https://wenlan-relay.example';
 
-test('actual authority alarm persists cursor, retries bounded OAuth deletion after restart, and stops when empty', { timeout: 60_000 }, async () => {
+test('actual authority alarm persists cursor, deletes the OAuth grant without listing KV, and stops when empty', { timeout: 60_000 }, async () => {
   const bundle = await build({ entryPoints: [fileURLToPath(new URL('./fixtures/maintenance-worker.ts', import.meta.url))],
     bundle: true, write: false, format: 'esm', platform: 'browser', target: 'es2022',
     external: ['cloudflare:workers'], loader: { '.png': 'binary' } });
@@ -40,8 +40,8 @@ test('actual authority alarm persists cursor, retries bounded OAuth deletion aft
   const tokenPrefix = `token:${subject}:${id}:`;
   try {
     const initialKV = await runtime.getKVNamespace('OAUTH_KV');
-    // These synthetic records test the pinned library's actual storage cleanup,
-    // not token validity. Full issued-token behavior lives in the OAuth tests.
+    // Synthetic provider records. Token validity after revocation is covered
+    // by the OAuth tests; this checks what physical cleanup touches.
     await initialKV.put(grantKey, JSON.stringify({ id, userId: subject }));
     for (let n = 0; n < 25; n++) await initialKV.put(`${tokenPrefix}${String(n).padStart(3, '0')}`, '{}');
     const receipt = { id, subject, connectorId: subject, clientId: 'synthetic', space: 'review', generation: 0,
@@ -57,13 +57,16 @@ test('actual authority alarm persists cursor, retries bounded OAuth deletion aft
       if (first.records[receiptKey].cleanupFailures !== undefined) break;
       await new Promise(resolve => setTimeout(resolve, 25));
     }
-    assert.equal(first.records[receiptKey].cleanupFailures, 0, 'native scheduled alarm did not finish its partial batch');
+    assert.equal(first.records[receiptKey].cleanupFailures, 0, 'native scheduled alarm did not finish its cleanup');
     assert(first.alarm > Date.now(), 'must reschedule without any rate buckets or new traffic');
     assert(first.records['maintenance:cursor'].after);
     assert(first.records['pairing:064'], 'one alarm cannot scan unbounded rows');
-    assert.equal(first.records[receiptKey].cleanupPending, true);
+    // One KV delete removes the provider grant; access-token records are left to
+    // their own 15-minute TTL so cleanup never spends the daily KV list quota.
+    assert.equal(first.records[receiptKey].cleanupPending, false);
     assert.equal(first.records[receiptKey].active, false);
-    assert((await initialKV.list({ prefix: tokenPrefix })).keys.length > 0, 'large token sets must require another bounded batch');
+    assert.equal(await initialKV.get(grantKey), null);
+    assert.equal((await initialKV.list({ prefix: tokenPrefix })).keys.length, 25);
     await runtime.dispose();
     runtime = new Miniflare(options);
     const restored = await fixture('inspect');
@@ -73,20 +76,10 @@ test('actual authority alarm persists cursor, retries bounded OAuth deletion aft
     assert.notDeepEqual(second.records['maintenance:cursor'], first.records['maintenance:cursor']);
     for (let i = 0; i < 3; i++) await fixture('alarm');
     assert(!(await fixture('inspect')).records['pairing:064']);
-    // Simulate retry time elapsing without waiting a minute or replacing the
-    // authority implementation. No request has initialized OAuth helpers.
-    for (let i = 0; i < 6; i++) {
-      const state = await fixture('inspect');
-      const current = state.records[receiptKey];
-      if (!current.cleanupPending) break;
-      await fixture('seed', { [receiptKey]: { ...current, cleanupAfter: 0 } });
-      await fixture('alarm');
-    }
     const final = await fixture('inspect');
     assert.equal(final.records[receiptKey].cleanupPending, false);
     assert.equal(final.records[receiptKey].active, false);
     const kv = await runtime.getKVNamespace('OAUTH_KV');
-    assert.equal((await kv.list({ prefix: tokenPrefix })).keys.length, 0);
     assert.equal(await kv.get(grantKey), null);
     assert(final.alarm, 'live replay tombstone still needs eventual retention cleanup');
     await fixture('clear');
