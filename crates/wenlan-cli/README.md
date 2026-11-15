@@ -837,6 +837,14 @@ Options:
 - `--anthropic-api-key-env <ENV_VAR>`: Read an Anthropic key from this environment variable.
 - `-y, --yes`: Skip confirmation prompts where possible.
 
+### `wenlan open`
+
+Open Wenlan's personal browser UI.
+
+```text
+wenlan open [OPTIONS]
+```
+
 ### `wenlan status`
 
 Check whether Wenlan is running.

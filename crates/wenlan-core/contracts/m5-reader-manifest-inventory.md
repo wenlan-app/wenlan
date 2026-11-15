@@ -980,9 +980,9 @@ must be demoted individually with a recorded reason. **Every MCP tool is
 | `write_page` | yes | automatic | `none` | tool handler |
 | `read_source` | no | not_applicable | `none` | exact file or webpage text; rejects page sources |
 
-## CLI — all 26 `Commands` variants
+## CLI — all 27 `Commands` variants
 
-From `crates/wenlan-cli/src/main.rs:45`. The count is 24, not 20: `Connect` and
+From `crates/wenlan-cli/src/main.rs:45`. The count is 27, not 20: `Connect` and
 `Brief` are tuple variants, easy to miss when scanning for brace-shaped
 variants, `Outbox` is the last brace variant before `Entities`, and `Sweep`
 follows `Entities`. The CLI
@@ -992,6 +992,7 @@ the projection-directory reader.
 | Subcommand | Page-bearing | Class | Marker-shape | Adapter |
 |---|---|---|---|---|
 | `wenlan status` | yes | automatic | `none` | subcommand renderer |
+| `wenlan open` | yes | automatic | `none` | opens embedded browser UI |
 | `wenlan setup` | yes | automatic | `none` | subcommand renderer |
 | `wenlan start` | yes | automatic | `none` | subcommand renderer |
 | `wenlan stop` | yes | automatic | `none` | subcommand renderer |
