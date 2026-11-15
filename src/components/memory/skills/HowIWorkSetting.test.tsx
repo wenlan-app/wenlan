@@ -31,21 +31,21 @@ describe("How-I-work setting", () => {
 
   it("UX-SKILL-1 one Settings switch turns it off and back on", async () => {
     renderSetting();
-    const toggle = await screen.findByRole("button", { name: "Let AI tools follow how you work" });
+    const toggle = await screen.findByRole("button", { name: "Turn your pages into working rules" });
     expect(toggle).toHaveAttribute("aria-pressed", "true");
     fireEvent.click(toggle);
-    await waitFor(() => expect(screen.getByRole("button", { name: "Let AI tools follow how you work" })).toHaveAttribute("aria-pressed", "false"));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Turn your pages into working rules" })).toHaveAttribute("aria-pressed", "false"));
     expect(api.set).toHaveBeenLastCalledWith(false);
-    fireEvent.click(screen.getByRole("button", { name: "Let AI tools follow how you work" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Let AI tools follow how you work" })).toHaveAttribute("aria-pressed", "true"));
+    fireEvent.click(screen.getByRole("button", { name: "Turn your pages into working rules" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Turn your pages into working rules" })).toHaveAttribute("aria-pressed", "true"));
     expect(api.set).toHaveBeenLastCalledWith(true);
   });
 
   it("UX-SKILL-1 keeps the old position and says so when saving fails", async () => {
     api.set.mockRejectedValue(new Error("no"));
     renderSetting();
-    fireEvent.click(await screen.findByRole("button", { name: "Let AI tools follow how you work" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Turn your pages into working rules" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Couldn’t change this. Try again.");
-    expect(screen.getByRole("button", { name: "Let AI tools follow how you work" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Turn your pages into working rules" })).toHaveAttribute("aria-pressed", "true");
   });
 });

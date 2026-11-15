@@ -810,7 +810,8 @@ const en = {
       failed: "Couldn’t save your choice. Try again.",
     },
     setting: {
-      title: "Let AI tools follow how you work",
+      title: "Turn your pages into working rules",
+      detail: "Each night, rules, decisions and pitfalls are picked from your pages. AI tools read them before working.",
       failed: "Couldn’t change this. Try again.",
     },
     page: {
@@ -4240,7 +4241,8 @@ const zhHans = {
       failed: "没能保存你的选择，请再试一次。",
     },
     setting: {
-      title: "让 AI 工具照你的做事方式做",
+      title: "从页面整理做事规则",
+      detail: "每晚从你的页面找出规则、决定和踩过的坑，AI 工具做事前会先读。",
       failed: "没能改好，请再试一次。",
     },
     page: {
@@ -7625,7 +7627,8 @@ const zhHant = {
       failed: "沒能儲存你的選擇，請再試一次。",
     },
     setting: {
-      title: "讓 AI 工具照你的做事方式做",
+      title: "從頁面整理做事規則",
+      detail: "每晚從你的頁面找出規則、決定和踩過的坑，AI 工具做事前會先讀。",
       failed: "沒能改好，請再試一次。",
     },
     page: {

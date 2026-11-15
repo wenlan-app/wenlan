@@ -11,6 +11,7 @@ import { HOW_I_WORK_QUERY_KEYS } from "./howIWorkModel";
 export function HowIWorkSetting() {
   const { t } = useTranslation();
   const titleId = useId();
+  const detailId = useId();
   const queryClient = useQueryClient();
   const enabled = useQuery({
     queryKey: HOW_I_WORK_QUERY_KEYS.enabled,
@@ -40,11 +41,16 @@ export function HowIWorkSetting() {
     <section className="mem-fade-up" data-testid="how-i-work-setting">
       <Card padding="none">
         <div className="settings-row flex items-center justify-between gap-4 px-5 py-4">
-          <div
-            id={titleId}
-            style={{ fontFamily: "var(--mem-font-body)", fontSize: "var(--mem-text-md)", fontWeight: 500, color: "var(--mem-text)" }}
-          >
-            {t("howIWork.setting.title")}
+          <div className="min-w-0">
+            <div
+              id={titleId}
+              style={{ fontFamily: "var(--mem-font-body)", fontSize: "var(--mem-text-md)", fontWeight: 500, color: "var(--mem-text)" }}
+            >
+              {t("howIWork.setting.title")}
+            </div>
+            <p id={detailId} className="mt-0.5 text-[length:var(--mem-text-xs)] text-[var(--mem-text-tertiary)]">
+              {t("howIWork.setting.detail")}
+            </p>
           </div>
           <Toggle
             enabled={value === true}
@@ -52,6 +58,7 @@ export function HowIWorkSetting() {
             unknownState={saving ? "saving" : enabled.isPending ? "loading" : "unavailable"}
             onToggle={() => void toggle()}
             aria-label={t("howIWork.setting.title")}
+            aria-describedby={detailId}
           />
         </div>
         {failed ? (
