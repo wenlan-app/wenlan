@@ -34,8 +34,11 @@ fn line(kind: SkillLineKind, id: &str, text: &str, quote: &str) -> SkillLine {
 }
 
 #[test]
-fn feature_setting_defaults_off() {
-    assert!(!crate::config::Config::default().skills_from_library);
+fn feature_setting_defaults_on_for_new_and_existing_installs() {
+    assert!(crate::config::new_install_config().skills_from_library);
+    let existing: crate::config::Config = serde_json::from_str("{}").unwrap();
+    assert!(existing.skills_from_library);
+    assert!(!existing.skills_answered);
 }
 
 #[test]

@@ -116,8 +116,9 @@ pub struct Config {
     #[serde(default)]
     pub chat_check_enabled: bool,
     /// Suggest and maintain approved Space working rules, and suggest edits to
-    /// the person's existing skills. Explicit opt-in; off for every install.
-    #[serde(default)]
+    /// the person's existing skills. On by default (Qi-Xuan 2026-11-15, after
+    /// one real night); nothing is accepted until the one library-wide ask.
+    #[serde(default = "default_true")]
     pub skills_from_library: bool,
     /// The person answered the one library-wide "let AI tools follow how you
     /// work?" ask (UX-SKILL-1). After a yes, every non-private Space is
@@ -454,9 +455,10 @@ pub fn load_config() -> Config {
     config
 }
 
-fn new_install_config() -> Config {
+pub(crate) fn new_install_config() -> Config {
     Config {
         background_ai_enabled: Some(false),
+        skills_from_library: true,
         ..Config::default()
     }
 }
