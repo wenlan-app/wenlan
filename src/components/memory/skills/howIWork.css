@@ -230,8 +230,7 @@
   gap: 9px;
 }
 
-.how-i-work-borrowed h2,
-.how-i-work-suggestions h2 {
+.how-i-work-borrowed h2 {
   margin: 0;
   color: var(--mem-text-tertiary);
   font: 500 13px/1.4 var(--mem-font-body);

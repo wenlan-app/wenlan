@@ -67,7 +67,7 @@ export function SpaceRulesAsk({ space, onOpenPage }: Props) {
       <p className="space-rules-ask-crumb">{t("howIWork.ask.crumb", { space: space.name })}</p>
       <h2 id={`space-rules-ask-${space.id}`}>{t("howIWork.ask.title", { space: space.name })}</h2>
       <p className="space-rules-ask-subtitle">{t("howIWork.ask.subtitle")}</p>
-      <HowIWorkLines lines={suggestion.lines} onOpenPage={onOpenPage} />
+      <HowIWorkLines lines={suggestion.lines} onOpenPage={onOpenPage} showEdited={false} />
       <div className="how-i-work-actions">
         <button className="how-i-work-primary" disabled={busy} onClick={() => accept.mutate()} type="button">
           {t("howIWork.ask.accept")}

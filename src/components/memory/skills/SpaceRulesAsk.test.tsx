@@ -71,6 +71,13 @@ describe("Space how-I-work ask", () => {
     expect(onOpenPage).toHaveBeenCalledExactlyOnceWith("page-source");
   });
 
+  it("UX-SKILL-1 always names the source in the ask, never an edit mark", async () => {
+    api.list.mockResolvedValue([{ space_id: space.id, space_name: space.name, lines: [{ ...line, person_edited: true }] }]);
+    renderAsk();
+    expect(await screen.findByRole("button", { name: "Working style" })).toBeInTheDocument();
+    expect(screen.queryByText("You changed this")).not.toBeInTheDocument();
+  });
+
   it("UX-SKILL-1 remembers decline so the ask never returns", async () => {
     let pending = true;
     api.list.mockImplementation(async () => pending ? [{ space_id: space.id, space_name: space.name, lines: [line] }] : []);

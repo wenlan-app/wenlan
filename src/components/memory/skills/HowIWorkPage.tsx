@@ -196,8 +196,7 @@ export function HowIWorkPage({ page, onOpenPage }: Props) {
       <p className="how-i-work-stop-note">{t(stopped ? "howIWork.page.stoppedNote" : "howIWork.page.stopNote")}</p>
 
       {matchingSuggestions.length > 0 ? (
-        <section className="how-i-work-suggestions" aria-labelledby="how-i-work-suggestions-title">
-          <h2 id="how-i-work-suggestions-title">{t("howIWork.suggestion.sectionTitle")}</h2>
+        <section className="how-i-work-suggestions" aria-label={t("howIWork.suggestion.sectionTitle")}>
           {matchingSuggestions.map((suggestion) => {
             const source = lines.find((line) => line.id === suggestion.source_rule_id);
             const sourceTitle = visibleSourceTitle(suggestion.source_page, t);

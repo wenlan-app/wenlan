@@ -8,9 +8,11 @@ type Props = {
   readonly lines: readonly SkillLine[];
   readonly onOpenPage: (pageId: string) => void;
   readonly onEditLine?: (line: SkillLine, text: string) => Promise<boolean>;
+  /** The one-time ask lists candidates, which nobody has edited yet: always show the source. */
+  readonly showEdited?: boolean;
 };
 
-export function HowIWorkLines({ lines, onOpenPage, onEditLine }: Props) {
+export function HowIWorkLines({ lines, onOpenPage, onEditLine, showEdited = true }: Props) {
   const { t } = useTranslation();
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -66,7 +68,7 @@ export function HowIWorkLines({ lines, onOpenPage, onEditLine }: Props) {
               ) : (
                 <p className="how-i-work-line-text">{line.text}</p>
               )}
-              {line.person_edited ? (
+              {showEdited && line.person_edited ? (
                 <p className="how-i-work-line-source">{t("howIWork.page.youChanged")}</p>
               ) : (
                 <p className="how-i-work-line-source">
