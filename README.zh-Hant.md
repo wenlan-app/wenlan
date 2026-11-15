@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=0f6c9f5ee4e4c30ed8826aa6cd78494b1b08c1029b380fed75849734d6a2abb6 -->
+<!-- README_SYNC: source=README.md sha256=b1403c143567553ed61afb6bef756712eab97f18fc2d814b47c37b5b4941c955 -->
 
 <p align="center">
   <picture>
@@ -10,7 +10,7 @@
 <p align="center">
   筆記要一直整理，插件會壞，每次開新對話又要從頭解釋。<br>
   <strong>設定一次就好。你的 AI 工具會存下重要的內容、把筆記整理好，下次對話再帶回來；改了什麼都看得到，也能還原。</strong><br>
-  開源的 Obsidian 替代品，也能直接接上你現有的 vault。
+  開源，能直接接上你現有的 Obsidian vault。
 </p>
 
 <p align="center">

@@ -15,7 +15,7 @@
         "url": "https://github.com/wenlan-app/wenlan.git",
         "path": "plugin"
       },
-      "description": "The knowledge base you don't have to maintain. Your AI tools keep it organized, and each page links to its sources. Open-source Obsidian alternative that works with your existing vault.",
+      "description": "The knowledge base you don't have to maintain. Your AI tools keep it organized, and each page links to its sources. Open source, and works with your existing Obsidian vault.",
       "category": "productivity",
       "keywords": [
         "claude-code",

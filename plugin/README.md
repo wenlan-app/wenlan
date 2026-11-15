@@ -1,6 +1,6 @@
 # Wenlan
 
-The knowledge base you don't have to maintain. Your AI tools keep it organized, and each page links to its sources. Open-source Obsidian alternative that works with your existing vault.
+The knowledge base you don't have to maintain. Your AI tools keep it organized, and each page links to its sources. Open source, and works with your existing Obsidian vault.
 
 Wenlan is local-first. Memories, pages, and session notes live on your machine under `~/.wenlan`, served by a small local daemon. Nothing in this plugin is stored by Anthropic or by the plugin itself.
 
