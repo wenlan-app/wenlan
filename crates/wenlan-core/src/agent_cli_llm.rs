@@ -20,21 +20,32 @@ const ANSWER_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 pub struct AgentCliProvider {
     agent: RepoWikiAgent,
     program: PathBuf,
+    /// The other tool, when both are installed: asked once when the first
+    /// fails (for example a signed-out Claude Code), so one expired sign-in
+    /// does not end the night's work.
+    fallback: Option<(RepoWikiAgent, PathBuf)>,
 }
 
 impl AgentCliProvider {
-    /// The first of Claude Code and Codex installed on this computer.
+    /// The first of Claude Code and Codex installed on this computer, with
+    /// the other as its fallback.
     pub fn find() -> Option<Self> {
-        [RepoWikiAgent::Claude, RepoWikiAgent::Codex]
+        let mut found = [RepoWikiAgent::Claude, RepoWikiAgent::Codex]
             .into_iter()
-            .find_map(|agent| {
-                crate::repo_wiki::find_agent(agent).map(|program| Self { agent, program })
-            })
+            .filter_map(|agent| {
+                crate::repo_wiki::find_agent(agent).map(|program| (agent, program))
+            });
+        let (agent, program) = found.next()?;
+        Some(Self {
+            agent,
+            program,
+            fallback: found.next(),
+        })
     }
 
     /// The program's arguments; the prompt goes on standard input.
-    fn args(&self, answer_file: &std::path::Path) -> Vec<String> {
-        match self.agent {
+    fn args(agent: RepoWikiAgent, answer_file: &std::path::Path) -> Vec<String> {
+        match agent {
             // Codex has no way to turn its tools off; the read-only sandbox
             // keeps it from changing anything.
             RepoWikiAgent::Codex => vec![
@@ -68,50 +79,15 @@ impl AgentCliProvider {
 #[async_trait]
 impl LlmProvider for AgentCliProvider {
     async fn generate(&self, request: LlmRequest) -> Result<String, LlmError> {
-        let dir = tempfile::tempdir()
-            .map_err(|e| LlmError::InferenceFailed(format!("agent temp dir: {e}")))?;
-        let answer_file = dir.path().join("answer.txt");
-        let prompt = match &request.system_prompt {
-            Some(system) => format!("{system}\n\n{}", request.user_prompt),
-            None => request.user_prompt.clone(),
-        };
-        let mut child = tokio::process::Command::new(&self.program)
-            .args(self.args(&answer_file))
-            .current_dir(dir.path())
-            .env("WENLAN_NO_AUTOSTART", "1")
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()
-            .map_err(|e| LlmError::InferenceFailed(format!("{:?} spawn: {e}", self.agent)))?;
-        if let Some(mut stdin) = child.stdin.take() {
-            stdin
-                .write_all(prompt.as_bytes())
-                .await
-                .map_err(|e| LlmError::InferenceFailed(format!("{:?} stdin: {e}", self.agent)))?;
+        match run_agent(self.agent, &self.program, &request).await {
+            Err(LlmError::InferenceFailed(first)) => match &self.fallback {
+                Some((agent, program)) => run_agent(*agent, program, &request)
+                    .await
+                    .map_err(|second| LlmError::InferenceFailed(format!("{first}; then {second}"))),
+                None => Err(LlmError::InferenceFailed(first)),
+            },
+            other => other,
         }
-        let output = tokio::time::timeout(ANSWER_TIMEOUT, child.wait_with_output())
-            .await
-            .map_err(|_| LlmError::Timeout)?
-            .map_err(|e| LlmError::InferenceFailed(format!("{:?} wait: {e}", self.agent)))?;
-        if !output.status.success() {
-            return Err(LlmError::InferenceFailed(format!(
-                "{:?} exited {}: {}",
-                self.agent,
-                output.status,
-                String::from_utf8_lossy(&output.stderr)
-                    .chars()
-                    .take(500)
-                    .collect::<String>()
-            )));
-        }
-        let answer = match self.agent {
-            RepoWikiAgent::Codex => std::fs::read_to_string(&answer_file)
-                .map_err(|e| LlmError::InferenceFailed(format!("codex answer: {e}")))?,
-            _ => String::from_utf8_lossy(&output.stdout).into_owned(),
-        };
-        Ok(answer.trim().to_string())
     }
 
     fn is_available(&self) -> bool {
@@ -127,5 +103,79 @@ impl LlmProvider for AgentCliProvider {
 
     fn backend(&self) -> LlmBackend {
         LlmBackend::Api
+    }
+}
+
+/// One answer from one tool.
+async fn run_agent(
+    agent: RepoWikiAgent,
+    program: &std::path::Path,
+    request: &LlmRequest,
+) -> Result<String, LlmError> {
+    let dir = tempfile::tempdir()
+        .map_err(|e| LlmError::InferenceFailed(format!("agent temp dir: {e}")))?;
+    let answer_file = dir.path().join("answer.txt");
+    let prompt = match &request.system_prompt {
+        Some(system) => format!("{system}\n\n{}", request.user_prompt),
+        None => request.user_prompt.clone(),
+    };
+    let mut child = tokio::process::Command::new(program)
+        .args(AgentCliProvider::args(agent, &answer_file))
+        .current_dir(dir.path())
+        .env("WENLAN_NO_AUTOSTART", "1")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|e| LlmError::InferenceFailed(format!("{:?} spawn: {e}", agent)))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(prompt.as_bytes())
+            .await
+            .map_err(|e| LlmError::InferenceFailed(format!("{:?} stdin: {e}", agent)))?;
+    }
+    let output = tokio::time::timeout(ANSWER_TIMEOUT, child.wait_with_output())
+        .await
+        .map_err(|_| LlmError::Timeout)?
+        .map_err(|e| LlmError::InferenceFailed(format!("{:?} wait: {e}", agent)))?;
+    if !output.status.success() {
+        return Err(LlmError::InferenceFailed(format!(
+            "{:?} exited {}: {}",
+            agent,
+            output.status,
+            failure_text(&output.stderr, &output.stdout)
+        )));
+    }
+    let answer = match agent {
+        RepoWikiAgent::Codex => std::fs::read_to_string(&answer_file)
+            .map_err(|e| LlmError::InferenceFailed(format!("codex answer: {e}")))?,
+        _ => String::from_utf8_lossy(&output.stdout).into_owned(),
+    };
+    Ok(answer.trim().to_string())
+}
+
+/// Why a tool failed. Claude Code prints a sign-in failure on standard
+/// output, not standard error, so fall back to it when standard error is
+/// empty.
+fn failure_text(stderr: &[u8], stdout: &[u8]) -> String {
+    let stderr = String::from_utf8_lossy(stderr);
+    let text = if stderr.trim().is_empty() {
+        String::from_utf8_lossy(stdout)
+    } else {
+        stderr
+    };
+    text.trim().chars().take(500).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::failure_text;
+
+    #[test]
+    fn a_sign_in_failure_printed_on_stdout_is_reported() {
+        let text = failure_text(b"", b"Invalid API key \xc2\xb7 Please run /login\n");
+        assert!(text.contains("Please run /login"), "{text}");
+        assert_eq!(failure_text(b"boom", b"ignored"), "boom");
     }
 }
