@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=170dddca182aefe11e87c6c01281ee8c9d9c16fb17cf1db81eedc4e2867e662b -->
+<!-- README_SYNC: source=README.md sha256=059e2faa23bbe07dbac0d44b6e6ba2a125b201d7414e646e5fad0e10a5ebc460 -->
 
 <p align="center">
   <picture>
@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  頁面、技能和規則，由你的 AI 工具填起來、保持更新、拿來做事，樣子你說、AI 來畫。個人和團隊都能用。
+  有出處的頁面、技能和規則，由你的 AI 工具保持更新、拿來做事，樣子你說、AI 來畫。個人和團隊都能用。
 </p>
 
 <p align="center">

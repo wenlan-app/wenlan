@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  Pages, skills and rules your AI tools fill, keep live, and work from, drawn any way you ask. For you and your team.
+  Pages with sources, skills and rules your AI tools keep up to date and work from, drawn any way you ask. For you and your team.
 </p>
 
 <p align="center">

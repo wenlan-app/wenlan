@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=170dddca182aefe11e87c6c01281ee8c9d9c16fb17cf1db81eedc4e2867e662b -->
+<!-- README_SYNC: source=README.md sha256=059e2faa23bbe07dbac0d44b6e6ba2a125b201d7414e646e5fad0e10a5ebc460 -->
 
 <p align="center">
   <picture>
@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  Páginas, skills y reglas que tus herramientas de IA llenan, mantienen al día y usan para trabajar, dibujadas como pidas. Para ti y tu equipo.
+  Páginas con fuentes, skills y reglas que tus herramientas de IA mantienen al día y usan para trabajar, dibujadas como pidas. Para ti y tu equipo.
 </p>
 
 <p align="center">
