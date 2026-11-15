@@ -1175,7 +1175,7 @@ carrying the authority of agreement.
 | `core/db.rs::legacy_overview_placeholder_candidates` | `private` | no | no | — | — |
 | `core/db.rs::list_active_page_titles_scoped` | `pub` | no | no | — | — |
 | `core/db.rs::list_entities` | `pub` | yes | no | — | — |
-| `core/db.rs::list_pages_by_space` | `pub` | no | **yes** | `server/page_look_routes.rs::handle_get_page_look_data`, `server/skill_grow.rs::handle_accept_space_rules`, `server/skill_grow.rs::pages_for_space` | — |
+| `core/db.rs::list_pages_by_space` | `pub` | no | **yes** | `server/page_look_routes.rs::handle_get_page_look_data`, `server/skill_grow.rs::accept_space`, `server/skill_grow.rs::pages_for_space` | — |
 | `core/db.rs::list_pages_inner` | `private` | no | no | — | — |
 | `core/db.rs::list_pages_stale` | `pub` | no | no | — | — |
 | `core/db.rs::list_pending_revisions` | `pub` | yes | no | — | — |
@@ -1443,7 +1443,7 @@ carrying the authority of agreement.
 | `server/routes.rs::handle_recent_page_changes` | `pub` | no | no | — | `core/db/scoped_pages.rs::list_recent_changes_scoped` |
 | `server/routes.rs::handle_recent_retrievals` | `pub` | no | no | — | `core/db.rs::list_recent_retrievals_scoped` |
 | `server/session_routes.rs::handle_get_session` | `pub` | no | no | — | `core/db/sessions.rs::get_session_detail` |
-| `server/skill_grow.rs::handle_accept_space_rules` | `pub` | no | no | — | `core/db.rs::list_pages_by_space` |
+| `server/skill_grow.rs::accept_space` | `private` | no | no | `server/skill_grow.rs::handle_accept_space_rules`, `server/skill_grow.rs::process_space` | `core/db.rs::list_pages_by_space` |
 | `server/skill_grow.rs::pages_for_space` | `private` | no | no | `server/skill_grow.rs::refresh_unlocked` | `core/db.rs::list_pages_by_space` |
 
 ### Depth 2 — consumers
@@ -1692,7 +1692,9 @@ carrying the authority of agreement.
 | `server/routes.rs::handle_search_inner` | `private` | no | no | `server/routes.rs::handle_search` | `core/db.rs::search_memory` |
 | `server/scheduler.rs::fire_maintenance_stage_safe` | `private` | no | no | `server/scheduler.rs::spawn_scheduler` | `core/maintenance.rs::run_maintenance_stage_slice` |
 | `server/sentence_routes.rs::require_visible_page` | `private` | no | no | `server/sentence_routes.rs::handle_accept_sentence_proposal`, `server/sentence_routes.rs::handle_flag_sentence`, `server/sentence_routes.rs::handle_get_page_sentences`, `server/sentence_routes.rs::handle_propose_sentence`, `server/sentence_routes.rs::handle_recheck_sentence`, `server/sentence_routes.rs::handle_reject_sentence_proposal`, `server/sentence_routes.rs::handle_revert_sentences` | `core/db.rs::get_page` |
+| `server/skill_grow.rs::handle_accept_space_rules` | `pub` | no | no | — | `server/skill_grow.rs::accept_space` |
 | `server/skill_grow.rs::handle_undo_space_rules` | `pub` | no | no | — | `core/db.rs::get_page` |
+| `server/skill_grow.rs::process_space` | `private` | no | no | `server/skill_grow.rs::refresh_unlocked` | `server/skill_grow.rs::accept_space` |
 | `server/skill_grow.rs::read_rules_for_space` | `private` | no | no | `server/skill_grow.rs::approved_rule`, `server/skill_grow.rs::handle_read_rules`, `server/skill_grow.rs::handle_self_report` | `core/db.rs::get_page` |
 | `server/skill_grow.rs::refresh_unlocked` | `private` | no | no | `server/skill_grow.rs::refresh_with` | `server/skill_grow.rs::pages_for_space` |
 | `server/skill_grow.rs::source_line_is_eligible` | `private` | no | no | `server/skill_grow.rs::eligible_lines` | `core/db.rs::get_page` |
@@ -1877,10 +1879,9 @@ carrying the authority of agreement.
 | `server/sentence_routes.rs::handle_reject_sentence_proposal` | `pub` | no | no | — | `server/sentence_routes.rs::require_visible_page` |
 | `server/sentence_routes.rs::handle_revert_sentences` | `pub` | no | no | — | `server/sentence_routes.rs::require_visible_page` |
 | `server/skill_grow.rs::approved_rule` | `private` | no | no | `server/skill_grow.rs::handle_apply_suggestion`, `server/skill_grow.rs::handle_suggestions` | `server/skill_grow.rs::read_rules_for_space` |
-| `server/skill_grow.rs::eligible_lines` | `private` | no | no | `server/skill_grow.rs::handle_accept_space_rules`, `server/skill_grow.rs::handle_space_suggestions`, `server/skill_grow.rs::process_space`, `server/skill_grow.rs::read_rules_for_space` | `server/skill_grow.rs::source_line_is_eligible` |
+| `server/skill_grow.rs::eligible_lines` | `private` | no | no | `server/skill_grow.rs::accept_space`, `server/skill_grow.rs::handle_space_suggestions`, `server/skill_grow.rs::process_space`, `server/skill_grow.rs::read_rules_for_space` | `server/skill_grow.rs::source_line_is_eligible` |
 | `server/skill_grow.rs::handle_read_rules` | `pub` | no | no | — | `server/skill_grow.rs::read_rules_for_space` |
 | `server/skill_grow.rs::handle_self_report` | `pub` | no | no | — | `server/skill_grow.rs::read_rules_for_space` |
-| `server/skill_grow.rs::process_space` | `private` | no | no | `server/skill_grow.rs::refresh_unlocked` | `server/skill_grow.rs::write_maintained_rules_page` |
 | `server/skill_grow.rs::refresh_with` | `private` | no | no | `server/skill_grow.rs::handle_refresh`, `server/skill_grow.rs::run_nightly_if_due` | `server/skill_grow.rs::refresh_unlocked` |
 | `server/source_lifecycle_routes.rs::write` | `private` | yes | no | — | `core/db/citation_provenance.rs::set_source_lifecycle` |
 | `server/source_routes.rs::sync_directory_source` | `pub(crate)` | no | no | `server/scheduler.rs::sync_directory_sources_in_scope`, `server/source_routes.rs::handle_sync_source` | `core/db.rs::rebind_source_id_with_source_page` |
