@@ -5998,3 +5998,102 @@ export interface ResearchDisputeDecisionEvent { decision: ResearchDisputeDecisio
 export interface ResearchDisputeView { space: string; id: string; status: string; dispute: ResearchDispute; payload_digest: string; source_states: ResearchDisputeSourceState[]; decisions: ResearchDisputeDecisionEvent[] }
 export async function getResearchDispute(space: string,id: string): Promise<ResearchDisputeView> { return invoke("get_research_dispute",{space,id}); }
 export async function decideResearchDispute(space: string,id: string,expectedPayloadDigest: string,decision: ResearchDisputeDecision,reason: string): Promise<ResearchDisputeView> { return invoke("decide_research_dispute",{space,id,expectedPayloadDigest,decision,reason}); }
+
+// ── Skills from skills.sh ───────────────────────────────────────────────
+// Search, safety checks and installs of other people's skills
+// (`app/src/skill_registry_commands.rs`). Failing skills never come back.
+
+export type SkillVerdict = "pass" | "warn" | "fail";
+export type SkillScope = { kind: "all" } | { kind: "space"; name: string };
+
+export interface SkillSearchRow {
+  source: string;
+  skillId: string;
+  name: string;
+  installs: number;
+  verdict: SkillVerdict;
+}
+
+export interface SkillSearchResponse {
+  via: "skills.sh" | "wenlan.app";
+  rows: SkillSearchRow[];
+}
+
+export interface SkillAuditLine {
+  provider: string;
+  status: string;
+  summary: string;
+}
+
+export interface SkillPreview {
+  source: string;
+  skillId: string;
+  commit: string;
+  repoPath: string;
+  name: string | null;
+  description: string | null;
+  files: { path: string; text: string | null }[];
+  runnable: string[];
+  safety: { verdict: SkillVerdict; audits: SkillAuditLine[] };
+  sourceUrl: string;
+  skillsShUrl: string;
+  installedAs: string | null;
+}
+
+export interface InstalledSkill {
+  name: string;
+  source: string;
+  skillId: string;
+  repoPath: string;
+  commit: string;
+  hash: string;
+  verdict: SkillVerdict;
+  scope: SkillScope;
+  description: string | null;
+  installedAt: number;
+  updatedAt: number;
+  additions: string;
+}
+
+export interface SkillInstallResult {
+  skill: Omit<InstalledSkill, "additions">;
+  tools: string[];
+  skipped: string[];
+}
+
+export interface SkillUpdateOutcome {
+  name: string;
+  outcome: "updated" | "needs_look" | "unchanged";
+}
+
+export async function searchSkillRegistry(query: string): Promise<SkillSearchResponse> {
+  return invoke("skills_search", { query });
+}
+
+export async function previewSkill(source: string, skillId: string): Promise<SkillPreview> {
+  return invoke("skills_preview", { source, skillId });
+}
+
+export async function installSkill(preview: Pick<SkillPreview, "source" | "skillId" | "commit" | "repoPath">, scope: SkillScope): Promise<SkillInstallResult> {
+  return invoke("skills_install", { source: preview.source, skillId: preview.skillId, commit: preview.commit, repoPath: preview.repoPath, scope });
+}
+
+export async function listInstalledSkills(): Promise<InstalledSkill[]> {
+  return invoke("skills_installed");
+}
+
+export async function setSkillAdditions(name: string, text: string): Promise<SkillInstallResult> {
+  return invoke("skills_set_additions", { name, text });
+}
+
+export async function setSkillScope(name: string, scope: SkillScope): Promise<SkillInstallResult> {
+  return invoke("skills_set_scope", { name, scope });
+}
+
+export async function removeSkill(name: string): Promise<void> {
+  return invoke("skills_remove", { name });
+}
+
+export async function refreshInstalledSkills(): Promise<SkillUpdateOutcome[]> {
+  return invoke("skills_refresh");
+}

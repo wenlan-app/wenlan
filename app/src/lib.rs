@@ -52,6 +52,7 @@ mod repo_wiki;
 mod research;
 mod research_disputes;
 mod search;
+mod skill_registry_commands;
 mod skills_install;
 mod source_lifecycle;
 pub mod sources;
@@ -1883,6 +1884,14 @@ pub fn run() {
             search::get_wenlan_mcp_entry,
             search::install_client_plugin,
             search::install_client_skills,
+            skill_registry_commands::skills_search,
+            skill_registry_commands::skills_preview,
+            skill_registry_commands::skills_install,
+            skill_registry_commands::skills_installed,
+            skill_registry_commands::skills_set_additions,
+            skill_registry_commands::skills_set_scope,
+            skill_registry_commands::skills_remove,
+            skill_registry_commands::skills_refresh,
             search::register_connected_agent,
             search::wire_state,
             // Remote access commands
