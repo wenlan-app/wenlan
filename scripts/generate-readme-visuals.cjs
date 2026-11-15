@@ -39,12 +39,12 @@ const BANNER_COPY = {
     font: BANNER.latin,
   },
   "zh-Hant": {
-    title: ["你和 AI 一起想、一起學、", "一起做的工作室"],
+    title: ["你和 AI 一起想、一起學、", "一起做的地方"],
     tagline: "免費・開源・個人和團隊都能用",
     font: '"PingFang TC", "Noto Sans TC", -apple-system, BlinkMacSystemFont, sans-serif',
   },
   "zh-Hans": {
-    title: ["你和 AI 一起想、一起学、", "一起做的工作室"],
+    title: ["你和 AI 一起想、一起学、", "一起做的地方"],
     tagline: "免费・开源・个人和团队都能用",
     font: '"PingFang SC", "Noto Sans SC", -apple-system, BlinkMacSystemFont, sans-serif',
   },

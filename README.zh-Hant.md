@@ -3,7 +3,7 @@
 <p align="center">
   <picture>
     <source media="(max-width: 600px)" srcset="./docs/assets/readme-banner-zh-Hant-mobile.png">
-    <img src="./docs/assets/readme-banner-zh-Hant.png" alt="文瀾：你和 AI 一起想、一起學、一起做的工作室。免費、開源，個人和團隊都能用。" width="100%">
+    <img src="./docs/assets/readme-banner-zh-Hant.png" alt="文瀾：你和 AI 一起想、一起學、一起做的地方。免費、開源，個人和團隊都能用。" width="100%">
   </picture>
 </p>
 
