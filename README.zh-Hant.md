@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=78fe49d77bbda39c33542c2c4e193b0bb33431fcd5aca4e2fb52e34c8fa57105 -->
+<!-- README_SYNC: source=README.md sha256=79b612aca81236cce2782b7b08b900d9348f99ffecc4f285f6625e46c67438bf -->
 
 <p align="center">
   <picture>
@@ -48,7 +48,7 @@
 - **記憶。** 你在一個 AI 工具裡定下的事會存下來，換到下一個工具還在，開新對話不用從頭解釋。
 - **知識。** 記憶、筆記和文件會整理成有出處的頁面。存下前文瀾會確認每個引用的來源真的支持那一句，引用大多對不上的頁面不會存下。改了什麼都看得到、能還原，鎖定的頁面會先問你。
 - **技能和規則。** 你習慣怎麼做事，寫一次，每個連上的 AI 工具都照著用。
-- **樣子你說，AI 來畫。** 一頁可以是文字，也可以是 AI 幫它畫的網頁；畫面顯示的是這頁當下的內容，改字不用重畫。
+- **樣子你說，AI 來畫。** 任何一頁、連首頁，都可以是文字，或是 AI 幫它畫的網頁；畫面顯示的是當下的內容，改字不用重畫。
 - **帶進現有資料。** Obsidian vault、筆記、文件和 AI 對話都能帶進來。[完整清單](#what-can-i-bring-in)。
 
 <a id="how-it-compares"></a>
@@ -83,7 +83,7 @@
 |---|---|
 | [頁面存成你電腦上的檔案](https://github.com/wenlan-app/wenlan/releases/latest)，可以匯入資料、一鍵連接 AI 工具。支援 macOS 11 以上的 Apple Silicon、Windows x64 和 Linux x64（AppImage 或 .deb，v0.22 起）。介面有英文、简体中文和繁體中文。 | 在 Mac 上執行 `npx -y wenlan setup`（需要 Node.js），或執行 `brew install 7xuanlu/tap/wenlan` 再執行 `wenlan setup`。Claude Code 可以裝[插件](docs/setup-with-ai.md)。Linux 和 Windows 請看 [CLI 安裝說明](docs/setup-and-data.zh-Hant.md#installation)。 |
 
-要加入團隊？打開架團隊伺服器的人給你的邀請連結就好。[團隊伺服器說明](docs/team-server.md)。
+要加入團隊？打開架團隊伺服器的人給你的邀請連結，上面會教你怎麼連上自己的 AI 工具，不用裝 App。[團隊伺服器說明](docs/team-server.md)。
 
 ### 2. 帶進你的資料
 

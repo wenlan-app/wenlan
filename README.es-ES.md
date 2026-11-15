@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=78fe49d77bbda39c33542c2c4e193b0bb33431fcd5aca4e2fb52e34c8fa57105 -->
+<!-- README_SYNC: source=README.md sha256=79b612aca81236cce2782b7b08b900d9348f99ffecc4f285f6625e46c67438bf -->
 
 <p align="center">
   <picture>
@@ -48,7 +48,7 @@ Empecé Wenlan porque lo que resolvía con herramientas de IA quedaba disperso e
 - **Memoria.** Lo que decides en una herramienta de IA se guarda y está en la siguiente, así que un chat nuevo no empieza de cero.
 - **Conocimiento.** Memorias, notas y documentos se convierten en páginas con fuentes. Wenlan comprueba que cada fuente citada respalda la frase en la que se cita y no guarda una página cuyas citas casi no coinciden. Ves cada cambio, puedes deshacerlo y las páginas que bloqueas te preguntan primero.
 - **Skills y reglas.** Cómo te gusta hacer las cosas, escrito una vez y usado por cada herramienta de IA que conectes.
-- **El aspecto que pidas.** Una página puede ser texto o una página web que tu IA dibuja para ella. El dibujo muestra el texto actual de la página, así que nunca lo rehaces.
+- **El aspecto que pidas.** Cualquier página, y tu inicio, puede ser texto o una página web que tu IA dibuja. El dibujo muestra el contenido actual, así que nunca lo rehaces.
 - **Trae lo que ya tienes.** Bóvedas de Obsidian, notas, documentos y chats de IA. [Lista completa](#what-can-i-bring-in).
 
 <a id="how-it-compares"></a>
@@ -83,7 +83,7 @@ Empecé Wenlan porque lo que resolvía con herramientas de IA quedaba disperso e
 |---|---|
 | [Guarda tus páginas como archivos en tu ordenador](https://github.com/wenlan-app/wenlan/releases/latest), con importaciones y conexiones con un clic. macOS 11 o posterior en Apple Silicon, Windows x64 o Linux x64 (AppImage o .deb, desde v0.22). En inglés, chino simplificado y chino tradicional. | En un Mac, ejecuta `npx -y wenlan setup` (requiere Node.js), o `brew install 7xuanlu/tap/wenlan` y después `wenlan setup`. En Claude Code, añade el [plugin](docs/setup-with-ai.md). Linux y Windows: [guía de instalación de la CLI](docs/setup-and-data.es-ES.md#installation). |
 
-¿Te unes a un equipo? Abre el enlace de invitación de quien gestiona el servidor de tu equipo. [Guía del servidor de equipo](docs/team-server.md).
+¿Te unes a un equipo? Abre el enlace de invitación de quien gestiona el servidor de tu equipo: explica cómo conectar tu propia herramienta de IA, sin instalar la app. [Guía del servidor de equipo](docs/team-server.md).
 
 ### 2. Trae tu material
 

@@ -46,7 +46,7 @@ I started Wenlan because what I worked out with AI tools was scattered across ch
 - **Memory.** What you settle in one AI tool is saved and is there in the next, so a new chat does not start from zero.
 - **Knowledge.** Memories, notes, and documents become pages with sources. Wenlan checks that each cited source supports the sentence it is cited for, and won't save a page whose citations mostly don't match. You see every change, can undo it, and pages you lock ask you first.
 - **Skills and rules.** How you like things done, written once and used by every AI tool you connect.
-- **Any look you ask for.** A page can be text, or a web page your AI draws for it. The drawing shows the page's live text, so you never redo it.
+- **Any look you ask for.** Any page, and your home, can be text or a web page your AI draws for it. The drawing shows the live content, so you never redo it.
 - **Bring what you have.** Obsidian vaults, notes, documents, and AI chats. [Full list](#what-can-i-bring-in).
 
 <a id="how-it-compares"></a>
@@ -81,7 +81,7 @@ I started Wenlan because what I worked out with AI tools was scattered across ch
 |---|---|
 | [Keep your pages as files on your computer](https://github.com/wenlan-app/wenlan/releases/latest), with imports and one-click connections. macOS 11 or later on Apple Silicon, Windows x64, or Linux x64 (AppImage or .deb, from v0.22). In English, 简体中文, and 繁體中文. | On a Mac, run `npx -y wenlan setup` (needs Node.js), or `brew install 7xuanlu/tap/wenlan` and then `wenlan setup`. In Claude Code, add the [plugin](docs/setup-with-ai.md). Linux and Windows: [CLI install guide](docs/setup-and-data.md#installation). |
 
-Joining a team? Open the invite link from whoever runs your team's server. [Team server guide](docs/team-server.md).
+Joining a team? Open the invite link from whoever runs your team's server: it shows how to connect your own AI tool, with no app needed. [Team server guide](docs/team-server.md).
 
 ### 2. Bring in your material
 
