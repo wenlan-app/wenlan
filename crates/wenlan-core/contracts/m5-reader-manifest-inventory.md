@@ -740,6 +740,14 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `GET` | `/api/things/{id}/map` | main | no | not_applicable | `none` | — | ThingMapResponse: point labels written for the map and conversation ids, no page prose |
 | `GET` | `/api/conversations/search` | main | no | not_applicable | `none` | — | ConversationSearchResponse: sentences from AI tool transcripts with conversation and thing titles, no page prose |
 | `GET` | `/api/sessions/{id}/lines` | main | no | not_applicable | `none` | — | ConversationLinesResponse: one AI tool transcript's lines with its conversation and thing titles, no page prose |
+| `POST` | `/api/skills/refresh` | main | no | not_applicable | `none` | — | SkillsRefreshResponse contains counts only |
+| `POST` | `/api/skills/stop` | main | no | not_applicable | `none` | — | stop receipt contains removed count and enabled state only |
+| `GET` | `/api/skills/suggestions` | main | yes | automatic | `none` | `handle_suggestions` | SkillSuggestion carries a library-derived line and its generated source Page title |
+| `POST` | `/api/skills/suggestions/{id}/apply` | main | yes | automatic | `none` | `handle_apply_suggestion` | SkillSuggestionActionResponse returns the library-derived suggestion and source Page title |
+| `POST` | `/api/skills/suggestions/{id}/dismiss` | main | yes | automatic | `none` | `handle_dismiss_suggestion` | SkillSuggestionActionResponse returns the library-derived suggestion and source Page title |
+| `POST` | `/api/skills/suggestions/{id}/undo` | main | yes | automatic | `none` | `handle_undo_suggestion` | SkillSuggestionActionResponse returns the library-derived suggestion and source Page title |
+| `GET` | `/api/skills/record` | main | yes | automatic | `none` | `handle_record` | SkillBorrowRecord carries the generated source Page title and optional AI plan report |
+| `POST` | `/api/skills/record` | main | no | not_applicable | `none` | — | self-report receipt contains a boolean and fixed label only |
 | `GET` | `/api/memories/{source_id}/said` | main | no | not_applicable | `none` | — | MemorySaidResponse: the transcript lines one memory came from with its conversation and thing titles, no page prose |
 | `POST` | `/api/things/{id}/map/ops` | main | no | not_applicable | `none` | — | ThingMapOpsResponse: point labels written for the map and conversation ids, no page prose |
 | `PATCH` | `/api/things/{id}` | main | no | not_applicable | `none` | — | ThingSummary: thing title, Brief status line and Space names, no page prose |
