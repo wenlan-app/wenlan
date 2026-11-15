@@ -245,7 +245,7 @@ test("navigation destinations keep one primary workspace and restore page contex
   await page.getByRole("searchbox", { name: "篩選來源", exact: true }).fill("知識");
   await capture(page, "navigation-sources-light.png");
 
-  await page.getByRole("button", { name: "Library", exact: true }).click();
+  await page.getByRole("navigation", { name: "主要導覽", exact: true }).getByRole("button", { name: "檔案", exact: true }).click();
   await openWikiNote(page, "History semantics");
   const editor = page.locator(".cm-content[contenteditable=true]");
   await expect(editor).toBeVisible();
@@ -262,7 +262,7 @@ test("navigation destinations keep one primary workspace and restore page contex
   await expect(page.getByRole("button", { name: "連結", exact: true })).toHaveAttribute("aria-pressed", "true");
   await expect(sidebar).toHaveCSS("width", "240px");
 
-  await page.getByRole("button", { name: "Library", exact: true }).click();
+  await page.getByRole("navigation", { name: "主要導覽", exact: true }).getByRole("button", { name: "檔案", exact: true }).click();
   await expect(editor).toBeVisible();
   await expect.poll(() => editor.evaluate(element => {
     const selection = (element as any).cmTile.root.view.state.selection.main;
@@ -281,7 +281,7 @@ test("navigation destinations keep one primary workspace and restore page contex
   await page.locator("[data-sidebar-toggle]").click();
   await expect(sidebar).toHaveCSS("width", "0px");
   await page.locator("[data-sidebar-toggle]").click();
-  await page.getByRole("button", { name: "Library", exact: true }).click();
+  await page.getByRole("navigation", { name: "主要導覽", exact: true }).getByRole("button", { name: "檔案", exact: true }).click();
   await expect(editor).toBeVisible();
   expect(state.errors.pageErrors).toEqual([]); expect(state.errors.consoleErrors).toEqual([]);
 });
@@ -307,7 +307,7 @@ test("the graph sits on the left of a narrow dark workspace, with no More, Topic
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.setViewportSize({ width: 1280, height: 800 });
   await expect(page.locator(".notes-workspace-sidebar")).toHaveCSS("width", "240px");
-  await expect(nav.getByRole("button", { name: "Library", exact: true })).toBeVisible();
+  await expect(nav.getByRole("button", { name: "檔案", exact: true })).toBeVisible();
   await capture(page, "people-topics-dark.png");
   expect(state.errors.pageErrors).toEqual([]); expect(state.errors.consoleErrors).toEqual([]);
 });
@@ -315,14 +315,14 @@ test("the graph sits on the left of a narrow dark workspace, with no More, Topic
 
 test("the Pages entry reopens a newly saved draft after browsing sources", async ({ page }) => {
   const state = await setup(page);
-  await page.getByRole("button", { name: "Library", exact: true }).click();
+  await page.getByRole("navigation", { name: "主要導覽", exact: true }).getByRole("button", { name: "檔案", exact: true }).click();
   await page.locator(".note-tab-create").click();
   await page.locator(".page-draft-title").fill("A page to return to");
   await page.locator(".page-draft-content").getByRole("textbox").fill("Keep this draft when I look at sources.");
   // Leave before the debounce: navigation must flush and remember the assigned id.
   await openSourceLibrary(page, HANT_SOURCE_LIBRARY);
   await expect(page.getByRole("heading", { name: "來源", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Library", exact: true }).click();
+  await page.getByRole("navigation", { name: "主要導覽", exact: true }).getByRole("button", { name: "檔案", exact: true }).click();
   await expect(page.getByRole("heading", { name: "A page to return to", exact: true })).toBeVisible();
   await expect(page.locator(".cm-content[contenteditable=true]")).toContainText("Keep this draft when I look at sources.");
   expect(state.errors.pageErrors).toEqual([]); expect(state.errors.consoleErrors).toEqual([]);
