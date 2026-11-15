@@ -113,7 +113,7 @@ test("Archive from the folder tree, without deleting anything", async ({ page })
   // Folder tree: right-click a page that is not on screen.
   await directory.locator(".notes-inventory-page").getByText("Weekly fixture recap", { exact: true }).click({ button: "right" });
   const treeMenu = page.getByRole("menu");
-  await expect(treeMenu.getByRole("menuitem")).toHaveText(["Open", "Archive page", "Delete page"]);
+  await expect(treeMenu.getByRole("menuitem")).toHaveText(["Open", "Pin", "Archive page", "Delete page"]);
   await treeMenu.getByRole("menuitem", { name: "Archive page" }).click();
   await confirm(page, "Archive page");
   await expect(directory.locator(".notes-inventory-page").getByText("Weekly fixture recap", { exact: true })).toHaveCount(0);
