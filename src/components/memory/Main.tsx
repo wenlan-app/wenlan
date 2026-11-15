@@ -1638,6 +1638,8 @@ export default function Main({
             onConnectTool={() => navigateTo({ kind: "connect-agent" })}
             onNavigateHome={navigateHome}
             onNavigatePages={navigateNotes}
+            onOpenPinnedPage={teamSide ? undefined : (pageId) => navigateTo({ kind: "page", pageId })}
+            activePageId={view.kind === "page" ? view.pageId : null}
             // The graph and topics read the whole library, so a team's side
             // leaves them out.
             onNavigateEntities={teamSide ? undefined : () => navigateTo({ kind: "entities" })}

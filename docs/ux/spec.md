@@ -439,6 +439,16 @@ and wait for evidence that people need them.
   read, does not come along. The AI tool reads the rest of a page when it
   needs it.
   原文：「自己 get page links 區別在哪」「可以做些量測，能確認方向對就行」（2026-11-09 03:48）「以上三點都同意」「為什麼不現在做？」（2026-11-09 03:55）
+- **UX-FIND-6** `shipped` Any page of your own can be pinned to the left
+  side from its More menu ("Pin to the left", 釘到左側, 固定到左侧). Pinned
+  pages sit under the graph and above the Library, with a gap and no heading,
+  and open in one click; with the left side shrunk to icons each shows its
+  first letter. Hovering one shows a small x to unpin it, the page's menu
+  unpins it too, and dragging changes the order. Unpinning never touches the
+  page. With nothing pinned the left side is exactly as UX-FIND-4 describes.
+  Pins stay on this computer, like a page's look (UX-LOOK-6). A team's side
+  and the example show none.
+  原文：「甚至在想導覽頁也能讓他們自由產生」「現在說的客製化還延伸到新的導覽，比如說要搞 skills hub or agents 等等 自由發揮」（2026-11-15 08:24–08:27）「可以」「是指 `我的` 用詞不好」（2026-11-15 13:20，草圖）「不放也行」（2026-11-15 13:21，那一段不放標題）
 
 ## What AI tools made (HTML, images)
 

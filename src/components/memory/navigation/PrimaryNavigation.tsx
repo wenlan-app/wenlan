@@ -1,8 +1,10 @@
-import { House, Stack } from "@phosphor-icons/react";
+import { useState } from "react";
+import { FileText, House, Stack, X } from "@phosphor-icons/react";
 import { TopicIcon } from "../entities/TopicIcon";
 import type { GlobalNavigation } from "./viewState";
 import { SpaceMark } from "./SpaceMark";
 import { NAVIGATION_DESTINATION_ORDER } from "./navigationPreferences";
+import type { PinnedPage } from "./pinnedPages";
 
 type PrimaryNavigationLabels = {
   readonly entities: string;
@@ -11,6 +13,10 @@ type PrimaryNavigationLabels = {
   readonly navigation: string;
   readonly pages: string;
   readonly spaces: string;
+  /** Names the group of pinned pages for assistive tech; nothing is shown. */
+  readonly pinned?: string;
+  /** "Unpin {{title}}", with the title already filled in by the caller. */
+  readonly unpin?: (title: string) => string;
 };
 
 type PrimaryNavigationProps = {
@@ -25,6 +31,12 @@ type PrimaryNavigationProps = {
   /** With labels, the Wiki is a section at the end of the list: the shell
    *  renders its heading and every page into this host (see Main). */
   readonly onWikiSectionHost?: (host: HTMLDivElement | null) => void;
+  /** Pages the person pinned, in their order (UX-FIND-6). */
+  readonly pinnedPages?: readonly PinnedPage[];
+  readonly activePinnedPageId?: string | null;
+  readonly onOpenPinnedPage?: (id: string) => void;
+  readonly onUnpinPage?: (id: string) => void;
+  readonly onMovePinnedPage?: (id: string, beforeId: string | null) => void;
 };
 
 type NavButtonProps = {
@@ -69,7 +81,13 @@ export function PrimaryNavigation({
   onNavigatePages,
   onNavigateSpaces,
   onWikiSectionHost,
+  pinnedPages = [],
+  activePinnedPageId = null,
+  onOpenPinnedPage,
+  onUnpinPage,
+  onMovePinnedPage,
 }: PrimaryNavigationProps) {
+  const [draggedPin, setDraggedPin] = useState<string | null>(null);
   const options = {
     home: { icon: homeIcon, onClick: onNavigateHome },
     pages: { icon: pageIcon, onClick: onNavigatePages },
@@ -91,6 +109,54 @@ export function PrimaryNavigation({
       {destinations.map((destination) => (
         <NavButton active={active === destination.key} compact={compact} icon={destination.icon} key={destination.key} label={destination.label} onClick={destination.onClick} />
       ))}
+      {onOpenPinnedPage && pinnedPages.length > 0 && (
+        <div aria-label={labels.pinned} className="notes-pinned-pages" role="group">
+          {pinnedPages.map((page) => (
+            <div
+              className="notes-pinned-page"
+              data-dragging={draggedPin === page.id ? "true" : undefined}
+              draggable={!compact && !!onMovePinnedPage}
+              key={page.id}
+              onDragEnd={() => setDraggedPin(null)}
+              onDragOver={(event) => { if (draggedPin && draggedPin !== page.id) event.preventDefault(); }}
+              onDragStart={(event) => { setDraggedPin(page.id); event.dataTransfer.effectAllowed = "move"; }}
+              onDrop={(event) => {
+                event.preventDefault();
+                if (draggedPin) onMovePinnedPage?.(draggedPin, page.id);
+                setDraggedPin(null);
+              }}
+            >
+              <button
+                aria-current={activePinnedPageId === page.id ? "page" : undefined}
+                aria-label={page.title}
+                className={compact ? "notes-rail-button" : "notes-primary-link"}
+                data-active={activePinnedPageId === page.id ? "true" : undefined}
+                onClick={() => onOpenPinnedPage(page.id)}
+                title={compact ? page.title : undefined}
+                type="button"
+              >
+                <span aria-hidden="true" className="notes-navigation-glyph">
+                  {compact
+                    ? <span className="notes-pinned-page-initial">{[...page.title.trim()][0] ?? ""}</span>
+                    : <FileText aria-hidden="true" focusable="false" size={16} style={iconStyle} weight="regular" />}
+                </span>
+                {!compact && <span className="notes-pinned-page-title">{page.title}</span>}
+              </button>
+              {!compact && onUnpinPage && labels.unpin && (
+                <button
+                  aria-label={labels.unpin(page.title)}
+                  className="notes-pinned-page-unpin"
+                  onClick={() => onUnpinPage(page.id)}
+                  title={labels.unpin(page.title)}
+                  type="button"
+                >
+                  <X aria-hidden="true" size={12} />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
       {wikiSection && <div className="notes-wiki-section" ref={onWikiSectionHost} />}
     </nav>
   );
