@@ -31,7 +31,7 @@ On Linux without Node.js:
 curl -fsSL https://raw.githubusercontent.com/wenlan-app/wenlan/main/install.sh | bash
 export PATH="$HOME/.wenlan/bin:$PATH"
 wenlan setup --basic
-wenlan background on
+wenlan start
 wenlan status
 ```
 
@@ -39,7 +39,7 @@ On Windows without Node.js, extract the archive as a unit into a user-owned dire
 
 ```bash
 wenlan setup --basic
-wenlan background on
+wenlan start
 wenlan status
 ```
 

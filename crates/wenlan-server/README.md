@@ -41,12 +41,12 @@ The libSQL store lives under the platform data directory (`dirs::data_local_dir(
 ## Service Commands
 
 ```bash
-wenlan background on   # register with the host service manager (launchd / systemd-user / schtasks)
-wenlan background off  # stop the current daemon while preserving its registration
+wenlan start   # register with the host service manager (launchd / systemd-user / schtasks)
+wenlan stop  # stop the current daemon while preserving its registration
 wenlan status           # service + runtime status
 ```
 
-`background off` is a reversible runtime stop, not an uninstall. Run `wenlan background on` to start the registered daemon again.
+`background off` is a reversible runtime stop, not an uninstall. Run `wenlan start` to start the registered daemon again.
 
 On Windows the install path uses `schtasks.exe` to register a per-user `WenlanServer` ONLOGON task and triggers it immediately. `background off` ends the running task without deleting that registration. wenlan-server stays a plain console app — no Windows Service Control Protocol dispatcher is needed.
 
@@ -64,7 +64,7 @@ Or build a release binary and register it with the host service manager:
 ```bash
 cargo build --release -p wenlan -p wenlan-server
 ./target/release/wenlan setup --basic
-./target/release/wenlan background on
+./target/release/wenlan start
 ./target/release/wenlan status
 ```
 

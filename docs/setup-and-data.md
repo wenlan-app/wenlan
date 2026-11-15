@@ -99,7 +99,7 @@ If you upgraded from Origin, also check `~/.origin/` and the sibling `origin` pl
 
 Turn off *Run Wenlan in background at login* in Settings, quit the app, then delete `Wenlan.app` or run the Windows uninstaller. Your knowledge folders remain; delete them only if you no longer want the data and have any backup you need.
 
-`wenlan background off` stops the daemon and disables autostart, but does not remove the service registration. CLI-only uninstall, leftover AI-client settings, credentials, and other stored files are covered in the [removal details](PRIVACY.md#data-deletion).
+`wenlan stop` stops the daemon and disables autostart, but does not remove the service registration. CLI-only uninstall, leftover AI-client settings, credentials, and other stored files are covered in the [removal details](PRIVACY.md#data-deletion).
 
 <a id="offline-queue"></a>
 

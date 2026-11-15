@@ -22,7 +22,7 @@ Without Node.js on macOS or Linux:
 curl -fsSL https://raw.githubusercontent.com/wenlan-app/wenlan/main/install.sh | bash
 export PATH="$HOME/.wenlan/bin:$PATH"
 wenlan setup --basic
-wenlan background on
+wenlan start
 wenlan status
 ```
 
@@ -181,11 +181,11 @@ wenlan setup --anthropic-api-key-env ANTHROPIC_API_KEY
 
 **`wenlan background <on|off>` and `wenlan restart`**
 
-Start or stop the per-user background runtime. `wenlan background off` stops the current daemon while preserving its login registration and writes `<data root>/autostart.off`, so recovery will not start it again. Run `wenlan background on` to remove the marker and start it again; it waits up to 10 s for the daemon to answer before saying "started" and, on macOS, reports an error the daemon logged during this start (never one left over from an earlier run). Most users run `wenlan background on` once after setup and `wenlan restart` after upgrades installed outside `wenlan setup`.
+Start or stop the per-user background runtime. `wenlan stop` stops the current daemon while preserving its login registration and writes `<data root>/autostart.off`, so recovery will not start it again. Run `wenlan start` to remove the marker and start it again; it waits up to 10 s for the daemon to answer before saying "started" and, on macOS, reports an error the daemon logged during this start (never one left over from an earlier run). Most users run `wenlan start` once after setup and `wenlan restart` after upgrades installed outside `wenlan setup`.
 
 ```bash
-wenlan background on
-wenlan background off
+wenlan start
+wenlan stop
 wenlan restart
 ```
 
@@ -857,28 +857,20 @@ Options:
 
 - `--repair`: Point older ~/.wenlan/bin copies at the app bundle. The previous file is renamed aside, not deleted.
 
-### `wenlan background`
-
-Control whether Wenlan keeps running in the background.
-
-```text
-wenlan background [OPTIONS] <COMMAND>
-```
-
-#### `wenlan background on`
+### `wenlan start`
 
 Start Wenlan now and keep it running in the background after login.
 
 ```text
-wenlan background on [OPTIONS]
+wenlan start [OPTIONS]
 ```
 
-#### `wenlan background off`
+### `wenlan stop`
 
-Stop Wenlan now while keeping its background registration.
+Stop Wenlan. It stays off until `wenlan start`.
 
 ```text
-wenlan background off [OPTIONS]
+wenlan stop [OPTIONS]
 ```
 
 ### `wenlan restart`

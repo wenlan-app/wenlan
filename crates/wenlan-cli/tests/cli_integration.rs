@@ -758,6 +758,8 @@ fn each_subcommand_has_help() {
         "memories",
         "agents",
         "setup",
+        "start",
+        "stop",
         "background",
         "restart",
         "doctor",
@@ -1562,7 +1564,7 @@ fn autostart_honours_background_off_marker_without_starting_it() {
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "Wenlan was switched off with `wenlan background off` — run `wenlan background on` to turn it back on",
+            "Wenlan was switched off with `wenlan stop` — run `wenlan start` to turn it back on",
         ))
         .stderr(predicate::str::contains("starting it in the background").not());
 }

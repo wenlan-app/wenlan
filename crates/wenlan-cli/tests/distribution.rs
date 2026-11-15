@@ -142,16 +142,18 @@ fn plugin_runners_prefer_the_bundled_mcp_binary_to_the_home_install() {
 
 #[test]
 fn npm_package_allowlists_match_release_generated_files() {
-    // The wenlan CLI wrapper currently ships a macOS-arm64-only
-    // `run.js`. Linux/Windows users install via the Docker image, the tar/zip
-    // release archives, or `cargo install`, so the npm allowlist stays narrow
-    // on purpose.
+    // `run.js` downloads the release archive for the computer it runs on:
+    // macOS arm64, Linux x64/arm64, Windows x64. It ships no binaries itself,
+    // so the file allowlist stays narrow.
     let setup_pkg = read_json("crates/wenlan-cli/npm/package.json");
     assert_eq!(json_string(&setup_pkg, "name"), "wenlan");
     assert_eq!(setup_pkg["bin"]["wenlan"], "run.js");
     assert_eq!(setup_pkg["license"], "Apache-2.0");
-    assert_eq!(setup_pkg["os"], serde_json::json!(["darwin"]));
-    assert_eq!(setup_pkg["cpu"], serde_json::json!(["arm64"]));
+    assert_eq!(
+        setup_pkg["os"],
+        serde_json::json!(["darwin", "linux", "win32"])
+    );
+    assert_eq!(setup_pkg["cpu"], serde_json::json!(["arm64", "x64"]));
     assert_eq!(
         setup_pkg["files"],
         serde_json::json!(["run.js", "README.md", "LICENSE"])
