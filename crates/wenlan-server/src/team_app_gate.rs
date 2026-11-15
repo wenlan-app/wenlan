@@ -235,6 +235,7 @@ const PRIVATE_KEYS: &[&str] = &[
     "key",
     "key_sha256",
     "invite_link",
+    "repo_root",
 ];
 
 /// The row of `method` and `path` (a daemon path), with the page id it
@@ -521,11 +522,12 @@ pub(super) async fn handle(
         Ok(spaces) => spaces,
         Err(response) => return response,
     };
-    // Only the query parameters the row names go on.
+    // Only the query parameters the row names go on, each number held to
+    // a size the daemon can answer cheaply.
     let query: Vec<(String, String)> = given
         .iter()
         .filter(|(key, _)| call.query.contains(&key.as_str()))
-        .cloned()
+        .filter_map(|(key, value)| bounded(key, value).map(|value| (key.clone(), value)))
         .collect();
     let mut object: Option<Map<String, Value>> = if body.is_empty() {
         None
@@ -535,6 +537,20 @@ pub(super) async fn handle(
             _ => return refused(StatusCode::BAD_REQUEST, "the request is not a JSON object"),
         }
     };
+    if let Some(map) = object.as_mut() {
+        for key in ["limit", "offset"] {
+            let Some(given) = map.get(key) else { continue };
+            let text = match given {
+                Value::Number(n) => n.to_string(),
+                Value::String(s) => s.clone(),
+                _ => String::new(),
+            };
+            match bounded(key, &text).and_then(|v| v.parse::<i64>().ok()) {
+                Some(n) => map.insert(key.into(), Value::from(n)),
+                None => map.remove(key),
+            };
+        }
+    }
 
     // Which Spaces the call runs in: one, or each of the member's.
     let targets: Vec<Option<String>> = match call.space {
@@ -704,6 +720,26 @@ pub(super) async fn handle(
         Strip::Private => strip_private(&mut value),
     }
     json(StatusCode::OK, &value)
+}
+
+/// The most rows one call may ask for: the app's largest page list.
+pub(crate) const MAX_LIMIT: i64 = 1_000;
+/// The furthest a member may page into a list.
+pub(crate) const MAX_OFFSET: i64 = 100_000;
+
+/// A number a member sends, held to what the daemon answers cheaply: a
+/// `limit` of 1 to [`MAX_LIMIT`], an `offset` of 0 to [`MAX_OFFSET`], a time
+/// of 0 or later. Anything that is not a whole number is dropped, so the
+/// daemon's own default applies.
+pub(crate) fn bounded(key: &str, value: &str) -> Option<String> {
+    let range = match key {
+        "limit" => 1..=MAX_LIMIT,
+        "offset" => 0..=MAX_OFFSET,
+        "since_ms" => 0..=i64::MAX,
+        _ => return Some(value.to_string()),
+    };
+    let n = value.trim().parse::<i64>().ok()?;
+    Some(n.clamp(*range.start(), *range.end()).to_string())
 }
 
 /// The answers of a call made in several Spaces, as one.

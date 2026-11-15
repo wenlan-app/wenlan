@@ -88,7 +88,13 @@ async fn stand_in(log: Log, req: Request) -> Response {
             let id = path.trim_start_matches("/api/pages/");
             match space_of(id) {
                 Some(space) if pinned.is_none() || pinned.as_deref() == Some(space) => {
-                    json!({"page": {"id": id, "space": space, "storage_path": "/srv/x.md"}})
+                    if id == "acode" {
+                        json!({"page": {"id": id, "space": space, "code_basis": [
+                            {"repo_root": "/Users/server/src/repo", "file": "src/a.rs", "state": "ok"},
+                        ]}})
+                    } else {
+                        json!({"page": {"id": id, "space": space, "storage_path": "/srv/x.md"}})
+                    }
                 }
                 _ => return StatusCode::NOT_FOUND.into_response(),
             }
@@ -870,4 +876,106 @@ async fn only_the_team_servers_own_origin_calls_the_gate() {
     )
     .await;
     assert_eq!(got, StatusCode::FORBIDDEN);
+}
+
+/// A member's numbers reach the daemon held to a size it answers cheaply:
+/// no allocation sized by a huge `limit`, no SQLite `LIMIT -1`.
+#[tokio::test]
+async fn a_members_limits_reach_the_daemon_bounded() {
+    let f = fixture().await;
+    let key = &f.alpha_writer.1;
+    let seen_uri = |f: &Fixture| f.seen().last().unwrap().uri.clone();
+
+    let (status, _) = call(
+        &f.state,
+        "GET",
+        &format!("{PREFIX}/api/pages?space=Alpha&limit=1000000000000&offset=-5"),
+        key,
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let uri = seen_uri(&f);
+    assert!(uri.contains("limit=1000"), "{uri}");
+    assert!(!uri.contains("limit=1000000000000"), "{uri}");
+    assert!(uri.contains("offset=0"), "{uri}");
+
+    f.forget();
+    let (status, _) = call(
+        &f.state,
+        "GET",
+        &format!("{PREFIX}/api/pages/recent?limit=-1&since_ms=-9"),
+        key,
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let uri = seen_uri(&f);
+    assert!(
+        uri.contains("limit=1") && !uri.contains("limit=-1"),
+        "{uri}"
+    );
+    assert!(uri.contains("since_ms=0"), "{uri}");
+
+    f.forget();
+    let (status, _) = call(
+        &f.state,
+        "GET",
+        &format!("{PREFIX}/api/pages?space=Alpha&limit=99999999999999999999999&offset=x"),
+        key,
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let uri = seen_uri(&f);
+    assert!(!uri.contains("limit") && !uri.contains("offset"), "{uri}");
+
+    f.forget();
+    let (status, _) = call(
+        &f.state,
+        "POST",
+        &format!("{PREFIX}/api/pages/search"),
+        key,
+        Some(json!({"query": "bridges", "space": "Alpha", "limit": 1_000_000_000_000_i64, "offset": -3})),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let body = f.seen().last().unwrap().body.clone();
+    assert_eq!(body["limit"], json!(1000));
+    assert_eq!(body["offset"], json!(0));
+}
+
+#[test]
+fn bounded_numbers() {
+    assert_eq!(bounded("limit", "0").as_deref(), Some("1"));
+    assert_eq!(bounded("limit", "25").as_deref(), Some("25"));
+    assert_eq!(bounded("limit", "5000").as_deref(), Some("1000"));
+    assert_eq!(bounded("offset", "200000").as_deref(), Some("100000"));
+    assert_eq!(bounded("since_ms", "-1").as_deref(), Some("0"));
+    assert_eq!(bounded("limit", "ten"), None);
+    assert_eq!(bounded("status", "active").as_deref(), Some("active"));
+}
+
+/// Where a note's code lives on the server's disk is not a member's.
+#[tokio::test]
+async fn a_code_basis_repo_root_is_not_sent_to_a_member() {
+    let f = fixture().await;
+    let (status, page) = call(
+        &f.state,
+        "GET",
+        &format!("{PREFIX}/api/pages/acode"),
+        &f.alpha_reader.1,
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let basis = &page["page"]["code_basis"][0];
+    assert_eq!(basis["file"], json!("src/a.rs"));
+    assert!(basis.get("repo_root").is_none(), "{page}");
+    assert!(!page.to_string().contains("/Users/server"), "{page}");
 }

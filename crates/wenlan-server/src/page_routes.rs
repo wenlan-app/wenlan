@@ -1460,6 +1460,17 @@ async fn member_page_in_pinned_space(
     }
 }
 
+/// The Space a team member's write must still find its page in.
+pub(crate) fn member_space_guard(
+    member: bool,
+    pinned: Option<&str>,
+) -> Option<wenlan_core::read_scope::ReadScope> {
+    member.then(|| match pinned {
+        Some(space) => wenlan_core::read_scope::ReadScope::Space(space.to_string()),
+        None => wenlan_core::read_scope::ReadScope::Uncategorized,
+    })
+}
+
 /// POST /api/pages/drafts
 ///
 /// First durable snapshot of a human-authored Page draft. An omitted `space`
@@ -1493,6 +1504,14 @@ pub async fn handle_create_page_draft(
         )
         .await
         .map_err(page_draft_error)?;
+    // A repeated create answers with the draft as it is now, which the owner
+    // may since have moved: a member sees it only while it is still in the
+    // Space the team gate checked.
+    if actor.is_some()
+        && !crate::team_actor::in_pinned_space(page.space.as_deref(), space.as_deref())
+    {
+        return Err(draft_not_found());
+    }
     let page = filter_draft_echo(&db, &view, page).await?;
     Ok(Json(draft_response(&db, page).await?))
 }
@@ -2167,7 +2186,10 @@ pub async fn handle_update_page(
                 confirm_snapshot: Vec::new(),
                 card_marks: Vec::new(),
                 code_basis: Vec::new(),
-                space_guard: None,
+                // A member's save lands only while the page is still in the
+                // Space the team gate checked, checked again in the write's
+                // own transaction: a move in between is not seen above.
+                space_guard: member_space_guard(actor.is_some(), header_space.as_deref()),
                 person_asked: None,
                 restored_from: None,
             },

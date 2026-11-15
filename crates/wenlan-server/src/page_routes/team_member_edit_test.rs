@@ -219,3 +219,118 @@ async fn publishing_names_the_member_and_stays_in_the_pinned_space() {
     .unwrap();
     assert_eq!(last_writer(&db, other).await, "publish");
 }
+
+async fn create_draft(
+    state: &Arc<RwLock<ServerState>>,
+    space: Option<&str>,
+    who: TeamActor,
+    id: &str,
+) -> Result<Json<PageDraftResponse>, ServerError> {
+    let req = serde_json::from_value(serde_json::json!({
+        "draft_id": id,
+        "title": "Trail plan",
+        "content": "Shared first lines",
+    }))
+    .unwrap();
+    handle_create_page_draft(
+        State(state.clone()),
+        SpaceHeader(space.map(str::to_string)),
+        who,
+        TruthView::automatic(),
+        Json(req),
+    )
+    .await
+}
+
+/// A repeated create answers with the draft as it is now. Once the owner
+/// moves it to a Space the member is not in, the replay is not found and
+/// carries none of what the owner wrote there.
+#[tokio::test]
+async fn a_replayed_draft_create_does_not_show_a_draft_moved_away() {
+    let (_tmp, db, state) = server().await;
+    let amy = actor(team_actor::secret(), "m-amy");
+    let id = "page_00000000-0000-4000-8000-00000000a003";
+    let first = create_draft(&state, Some("Alpha"), amy.clone(), id)
+        .await
+        .unwrap();
+    // The same request again is still answered while the draft stays put.
+    let _ = create_draft(&state, Some("Alpha"), amy.clone(), id)
+        .await
+        .unwrap();
+    let moved = db
+        .update_page_draft_in_registered_space(
+            id,
+            first.0.page.version,
+            "Trail plan",
+            "Shared first lines",
+            Some("Beta"),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        moved,
+        wenlan_core::pages::PageDraftUpdateOutcome::Updated(_)
+    ));
+    let replay = create_draft(&state, Some("Alpha"), amy, id).await;
+    let Err(refused) = replay else {
+        panic!("a draft moved to Beta must not be echoed")
+    };
+    let response = axum::response::IntoResponse::into_response(refused);
+    assert_eq!(response.status(), axum::http::StatusCode::NOT_FOUND);
+    let page = db.get_page(id).await.unwrap().unwrap();
+    assert_eq!(page.space.as_deref(), Some("Beta"));
+}
+
+#[test]
+fn only_a_member_write_carries_the_pinned_space_guard() {
+    use wenlan_core::read_scope::ReadScope;
+    assert_eq!(
+        member_space_guard(true, Some("Alpha")),
+        Some(ReadScope::Space("Alpha".into()))
+    );
+    assert_eq!(member_space_guard(false, Some("Alpha")), None);
+    assert_eq!(member_space_guard(false, None), None);
+}
+
+/// The member's save is checked against the pinned Space again inside the
+/// write: a page the owner moved after the route's check (so it now sits in
+/// Beta) gets nothing, the same as a page never in the Space.
+#[tokio::test]
+async fn a_member_save_guarded_to_a_space_the_page_left_writes_nothing() {
+    let (_tmp, db, _state) = server().await;
+    let version = page_in(&db, PAGE, "Beta").await;
+    let result = wenlan_core::post_write::page_write(
+        &db,
+        wenlan_core::post_write::PageWrite::UpdatePreservingSources {
+            page_id: PAGE,
+            req: wenlan_types::requests::UpdatePageRequest {
+                content: "Attacker replacement".into(),
+                source_memory_ids: vec![],
+                expected_version: Some(version),
+                caller_id: None,
+                operation_id: Some("op-race".into()),
+            },
+            edited_by: "shared_person:m-amy",
+            knowledge_path: None,
+            basis: wenlan_core::db::BasisWrite {
+                research_write: None,
+                citation_snapshots: Vec::new(),
+                minor: false,
+                actor: "human".to_string(),
+                marks: Vec::new(),
+                confirm: None,
+                confirm_snapshot: Vec::new(),
+                card_marks: Vec::new(),
+                code_basis: Vec::new(),
+                space_guard: member_space_guard(true, Some("Alpha")),
+                person_asked: None,
+                restored_from: None,
+            },
+        },
+    )
+    .await;
+    assert!(result.is_err(), "{:?}", result.map(|r| r.outcome));
+    let page = db.get_page(PAGE).await.unwrap().unwrap();
+    assert_eq!(page.content, "Body");
+    assert_eq!(page.version, version);
+}
