@@ -11,9 +11,12 @@ Most users should install the runtime through the root README (`npx -y wenlan se
 ```bash
 wenlan connect codex              # or: claude-code, cursor, claude-desktop, vscode, gemini
 wenlan connect cursor --dry-run   # preview before editing JSON config
+wenlan connect cursor --all-tools # list every tool, not only the everyday ones
 ```
 
-MCP-only setup gives agents the whole tool surface: capture and recall, reading and writing wiki pages, the Space-owned Brief with `update_brief` for handoff, and the internal `distill` tool for page synthesis. It does not install the Claude Code slash skills (`/wenlan`, `/brief`, `/handoff`), which wrap the tools in a guided flow; install the Wenlan plugin if you want them. Steep is that guided, on-demand knowledge-maintenance workflow. The connected AI reads its relevant Skill procedure and uses MCP; it may delegate a bounded enrichment or judgment step to a small AI helper. The daemon owns queues, claim tokens, guarded writes, and the single-writer path. Automatic Steep instead runs eligible background jobs with their configured models, not with arbitrary connected AI tools.
+`wenlan connect` lists the 17 everyday tools (`--tool-profile daily`): a client loads every listed tool's definition into each conversation, and the full list of 57 is more than twice the size. The tools left out (health checks and repairs, review queues, entities, folders, version history) still answer when called by name, and `wenlan tool list` and `wenlan tool call` reach them from a terminal. `--all-tools`, the plugins, and a bare `wenlan-mcp` list everything.
+
+MCP-only setup with `--all-tools` gives agents the whole tool surface: capture and recall, reading and writing wiki pages, the Space-owned Brief with `update_brief` for handoff, and the internal `distill` tool for page synthesis. It does not install the Claude Code slash skills (`/wenlan`, `/brief`, `/handoff`), which wrap the tools in a guided flow; install the Wenlan plugin if you want them. Steep is that guided, on-demand knowledge-maintenance workflow. The connected AI reads its relevant Skill procedure and uses MCP; it may delegate a bounded enrichment or judgment step to a small AI helper. The daemon owns queues, claim tokens, guarded writes, and the single-writer path. Automatic Steep instead runs eligible background jobs with their configured models, not with arbitrary connected AI tools.
 
 If you only need the raw MCP connector config, add this to your MCP client:
 

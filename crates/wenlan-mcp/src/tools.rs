@@ -106,6 +106,11 @@ pub enum ToolProfile {
     /// Expose the normal Wenlan MCP tool surface.
     #[default]
     Standard,
+    /// List only the everyday tools ([`DAILY_TOOL_NAMES`]), so a tool that
+    /// loads every definition into each conversation carries a third of
+    /// them. This is a shorter list, not a boundary: every other tool still
+    /// answers when called by name, exactly as under `Standard`.
+    Daily,
     /// Expose only tools needed to read existing knowledge.
     QueryOnly,
     /// Query-only reads plus the writes a user allowed a web AI app to make:
@@ -118,6 +123,7 @@ impl ToolProfile {
     pub fn wire_name(self) -> &'static str {
         match self {
             Self::Standard => "standard",
+            Self::Daily => "daily",
             Self::QueryOnly => "query-only",
             Self::WebWrite => "web-write",
         }
@@ -131,6 +137,36 @@ impl ToolProfile {
 }
 
 const QUERY_ONLY_TOOL_NAMES: &[&str] = &["brief", "recall", "get_page_sources"];
+/// What the `daily` profile lists: reading, saving, writing and reshaping
+/// pages, and writing pages on demand. Left out are the review queues, health
+/// checks and repairs, entities, folders, version history, reliance tracking
+/// and the organize and research runs; a person reaches those with
+/// `wenlan connect <client> --all-tools` or `wenlan tool call` in a terminal.
+pub const DAILY_TOOL_NAMES: &[&str] = &[
+    "brief",
+    "recall",
+    "list_pages",
+    "read_page",
+    "get_page_sources",
+    "capture",
+    "save_source",
+    "keep_original",
+    "update_brief",
+    "write_page",
+    "rename_page",
+    "delete_page",
+    "forget",
+    "read_page_look",
+    "set_page_look",
+    "steep",
+    "distill",
+];
+/// Added to the standard instructions under the `daily` profile, so the AI
+/// tool knows the list it sees is not all of Wenlan.
+const DAILY_INSTRUCTIONS_NOTE: &str = "\n\nThis connection lists Wenlan's everyday tools. \
+     Wenlan has more: health checks and repairs, review queues, entities, folders, version \
+     history. With a terminal, `wenlan tool list` shows them and `wenlan tool call <name>` runs \
+     one; the person can list them all here with `wenlan connect <client> --all-tools`.";
 const WEB_WRITE_TOOL_NAMES: &[&str] = &[
     "brief",
     "recall",
@@ -7471,6 +7507,9 @@ impl WenlanMcpServer {
         }
         match self.tool_profile {
             ToolProfile::Standard => {}
+            ToolProfile::Daily => {
+                tools.retain(|tool| DAILY_TOOL_NAMES.contains(&tool.name.as_ref()));
+            }
             ToolProfile::QueryOnly => {
                 tools.retain(|tool| QUERY_ONLY_TOOL_NAMES.contains(&tool.name.as_ref()));
                 for tool in &mut tools {
@@ -7669,7 +7708,7 @@ impl ServerHandler for WenlanMcpServer {
                 );
         }
 
-        InitializeResult::new(
+        let mut info = InitializeResult::new(
             ServerCapabilities::builder()
                 .enable_tools()
                 .build(),
@@ -7696,7 +7735,13 @@ impl ServerHandler for WenlanMcpServer {
              the backend also scores quality, adds tags, and deduplicates in the background; when it runs on \
              demand, distill hands you clusters and steep hands you out of date pages. Either way, focus on what only you know: the \
              conversational context, why something matters, and what the user actually cares about."
-        )
+        );
+        if self.tool_profile == ToolProfile::Daily {
+            if let Some(instructions) = info.instructions.as_mut() {
+                instructions.push_str(DAILY_INSTRUCTIONS_NOTE);
+            }
+        }
+        info
     }
 }
 
@@ -7707,6 +7752,51 @@ mod tests {
     use crate::types::{
         SearchMemoryRequest, SearchResult, StoreMemoryRequest, StoreMemoryResponse,
     };
+
+    #[test]
+    fn the_daily_profile_lists_exactly_the_everyday_tools() {
+        let all: Vec<String> =
+            make_server_with_profile(TransportMode::Stdio, "agent", None, ToolProfile::Standard)
+                .visible_tools()
+                .into_iter()
+                .map(|tool| tool.name.to_string())
+                .collect();
+        for name in DAILY_TOOL_NAMES {
+            assert!(all.iter().any(|tool| tool == name), "{name} is not a tool");
+        }
+        let daily =
+            make_server_with_profile(TransportMode::Stdio, "agent", None, ToolProfile::Daily);
+        let mut listed: Vec<String> = daily
+            .visible_tools()
+            .into_iter()
+            .map(|tool| tool.name.to_string())
+            .collect();
+        listed.sort();
+        let mut expected: Vec<String> = DAILY_TOOL_NAMES.iter().map(|n| (*n).to_string()).collect();
+        expected.sort();
+        assert_eq!(listed, expected);
+        // A shorter list, not a boundary: nothing refuses the tools left out.
+        assert!(daily.query_only_refusal("lint").is_none());
+        assert!(daily.web_write_refusal("lint").is_none());
+        assert!(daily.local_only_refusal("lint").is_none());
+    }
+
+    #[test]
+    fn the_daily_profile_tells_the_ai_tool_there_is_more() {
+        let daily =
+            make_server_with_profile(TransportMode::Stdio, "agent", None, ToolProfile::Daily)
+                .get_info();
+        let instructions = daily.instructions.expect("instructions");
+        assert!(instructions.starts_with("Wenlan is the user's personal wiki"));
+        assert!(instructions.contains("wenlan tool list"));
+        let standard =
+            make_server_with_profile(TransportMode::Stdio, "agent", None, ToolProfile::Standard)
+                .get_info();
+        assert!(!standard
+            .instructions
+            .expect("instructions")
+            .contains("wenlan tool list"));
+    }
 
     fn make_server(
         transport: TransportMode,

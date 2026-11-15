@@ -165,7 +165,12 @@ impl WenlanMcpServer {
         params: ReadSourceParams,
     ) -> Result<CallToolResult, McpError> {
         // Guard direct/internal dispatch as well as the public catalog/router.
-        if self.transport != TransportMode::Stdio || self.tool_profile != ToolProfile::Standard {
+        if self.transport != TransportMode::Stdio
+            || !matches!(
+                self.tool_profile,
+                ToolProfile::Standard | ToolProfile::Daily
+            )
+        {
             return Ok(refuse(
                 "read_source is available only in the standard local stdio profile.",
             ));

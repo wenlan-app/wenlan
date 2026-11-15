@@ -279,7 +279,10 @@ Configure Wenlan MCP for a supported client. This is the MCP-only path for Claud
 wenlan connect claude-code
 wenlan connect codex
 wenlan connect cursor --dry-run
+wenlan connect cursor --all-tools
 ```
+
+The client is given the 17 everyday tools: reading and searching, saving, writing and reshaping pages, and writing pages on demand. A client loads every listed tool into each conversation, and the full list of 57 is more than twice the size. `--all-tools` lists them all (health checks and repairs, review queues, entities, folders, version history); without it they are still one `wenlan tool call <name>` away in a terminal.
 
 Supported clients: `claude-code`, `codex`, `gemini`, `cursor`, `claude-desktop`, `vscode`.
 
@@ -717,6 +720,7 @@ Arguments:
 Options:
 
 - `--dry-run`: Print the command or file edit without changing anything.
+- `--all-tools`: List every Wenlan tool in the client, not only the everyday ones. Health checks, review queues, entities, folders and version history then load into each conversation too.
 
 ### `wenlan status`
 
