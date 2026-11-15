@@ -509,6 +509,110 @@ pub fn page_is_not_for_ai_tools(content: &str) -> bool {
     })
 }
 
+/// First line of every rules file Wenlan writes under its own folder. A file
+/// without it is the person's own and is never overwritten or removed.
+pub const RULES_FILE_MARK: &str =
+    "<!-- wenlan-managed: Wenlan writes this file from your pages. Change the pages, not this file. -->";
+pub const RULES_MAIN_FILE: &str = "AGENTS.md";
+/// The appendix files a layer may have, read only when the work needs them.
+pub const RULES_APPENDIX_FILES: [&str; 3] = ["more-rules.md", "decisions.md", "pitfalls.md"];
+/// The always-read file stays short; the rest moves to `more-rules.md`.
+pub const RULES_MAIN_FILE_MAX: usize = 30;
+
+fn rules_file_item(line: &SkillLine) -> String {
+    let text = line.text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let title = line
+        .source_page_title
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!("- {text} (from \"{title}\")\n")
+}
+
+fn rules_appendix(heading: &str, lines: &[&SkillLine]) -> String {
+    let mut out = format!("{RULES_FILE_MARK}\n# {heading}\n\n");
+    for line in lines {
+        out.push_str(&rules_file_item(line));
+    }
+    out
+}
+
+/// One layer of rules as files in the common `AGENTS.md` shape: a short main
+/// file every tool reads, and appendix files it names for when the work needs
+/// them. `space` is `None` for the general layer. No lines, no files.
+pub fn rules_layer_files(space: Option<&str>, lines: &[SkillLine]) -> Vec<(&'static str, String)> {
+    if lines.is_empty() {
+        return Vec::new();
+    }
+    let of_kind = |kind: SkillLineKind| {
+        lines
+            .iter()
+            .filter(|line| line.kind == kind)
+            .collect::<Vec<_>>()
+    };
+    let rules = of_kind(SkillLineKind::Rule);
+    let decisions = of_kind(SkillLineKind::Decision);
+    let pitfalls = of_kind(SkillLineKind::Pitfall);
+    let (main_rules, more_rules) = rules.split_at(rules.len().min(RULES_MAIN_FILE_MAX));
+
+    let mut main = format!("{RULES_FILE_MARK}\n");
+    match space {
+        Some(space) => {
+            main.push_str(&format!("# How I work — {space}\n\n"));
+            main.push_str(
+                "Rules for work in this Space, each with the page it comes from. \
+                 General rules are in ../../AGENTS.md; where the two disagree, this file wins.\n",
+            );
+        }
+        None => {
+            main.push_str("# How I work\n\n");
+            main.push_str(
+                "Rules that hold in any project, each with the page it comes from. \
+                 A Space's own rules are in spaces/<Space>/AGENTS.md and win over these.\n",
+            );
+        }
+    }
+    if !main_rules.is_empty() {
+        main.push_str("\n## Rules\n\n");
+        for line in main_rules {
+            main.push_str(&rules_file_item(line));
+        }
+    }
+    let mut files = Vec::new();
+    let mut pointers = String::new();
+    let mut appendix = |name: &'static str, heading: &str, when: &str, lines: &[&SkillLine]| {
+        if lines.is_empty() {
+            return;
+        }
+        pointers.push_str(&format!("- {name}: {when} ({})\n", lines.len()));
+        files.push((name, rules_appendix(heading, lines)));
+    };
+    appendix(
+        "more-rules.md",
+        "More rules",
+        "the rest of the rules",
+        more_rules,
+    );
+    appendix(
+        "decisions.md",
+        "Decisions",
+        "what was decided earlier, before you change a plan",
+        &decisions,
+    );
+    appendix(
+        "pitfalls.md",
+        "Pitfalls",
+        "mistakes made before, before you try something risky",
+        &pitfalls,
+    );
+    if !pointers.is_empty() {
+        main.push_str("\n## Read when needed\n\n");
+        main.push_str(&pointers);
+    }
+    files.insert(0, (RULES_MAIN_FILE, main));
+    files
+}
+
 #[cfg(test)]
 #[path = "skill_grow_test.rs"]
 mod tests;

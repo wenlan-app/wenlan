@@ -576,6 +576,22 @@ and wait for evidence that people need them.
   It stays on, and is checked against, its own Space's page, and
   a report that it changed the plan is recorded there.
   原文：選擇卡「加全局一份」（2026-11-15 21:24Z，問：「要不要加一份全局的「我的做事方式」？」）；「還有我們有全局跟空間範圍的 skill」（2026-11-15 21:24Z）。
+- **UX-SKILL-6** `shipped` The rules AI tools may read are also kept as files
+  in Wenlan's own folder, in the `AGENTS.md` shape other tools already read:
+  one layer for the lines used in every Space and one per Space, each a short
+  main file plus appendix files it names for when the work needs them. Every
+  line names the page it comes from. The files say what the AI tools would be
+  told right then, so Stop, the setting turned off, a deleted line and Undo
+  take them away the same way. Wenlan never changes or removes a file there
+  that it did not write.
+  原文：「現在只想要把這層整合好再 .wenlan」（2026-11-15 22:20Z）；「AGENTS 檔案可以分層 不論是個人還是空間/專案/repo」（2026-11-15 22:39Z）。
+- **UX-SKILL-7** `shipped` For a Space connected to a repository, the wiki
+  pull request also puts that Space's own rules in Wenlan's part of the
+  repository's `AGENTS.md`, without the names of the pages they come from, and
+  says so in its description. Lines used in every Space are the person's
+  habits and never go into a repository. Nothing reaches the repository until
+  the person merges.
+  原文：「空間如果是 repo，那就直接對應上了」（2026-11-15 22:26Z）；「原本說就會寫 wiki folders 這點也要看要不要一起修改？」（2026-11-15 22:51Z）。
 
 ## Adding to Wenlan
 

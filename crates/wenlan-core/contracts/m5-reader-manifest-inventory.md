@@ -1695,7 +1695,7 @@ carrying the authority of agreement.
 | `server/skill_grow.rs::handle_accept_space_rules` | `pub` | no | no | — | `server/skill_grow.rs::accept_space` |
 | `server/skill_grow.rs::handle_undo_space_rules` | `pub` | no | no | — | `core/db.rs::get_page` |
 | `server/skill_grow.rs::process_space` | `private` | no | no | `server/skill_grow.rs::refresh_unlocked` | `server/skill_grow.rs::accept_space` |
-| `server/skill_grow.rs::read_rules_for_space` | `private` | no | no | `server/skill_grow.rs::approved_rule`, `server/skill_grow.rs::general_lines`, `server/skill_grow.rs::handle_read_rules`, `server/skill_grow.rs::handle_self_report` | `core/db.rs::get_page` |
+| `server/skill_grow.rs::read_rules_for_space` | `private` | no | no | `server/skill_grow.rs::approved_rule`, `server/skill_grow.rs::general_lines`, `server/skill_grow.rs::handle_read_rules`, `server/skill_grow.rs::handle_self_report`, `server/skill_grow.rs::project_rules`, `server/skill_grow.rs::sync_rules_files` | `core/db.rs::get_page` |
 | `server/skill_grow.rs::refresh_unlocked` | `private` | no | no | `server/skill_grow.rs::refresh_with` | `server/skill_grow.rs::pages_for_space` |
 | `server/skill_grow.rs::source_line_is_eligible` | `private` | no | no | `server/skill_grow.rs::eligible_lines` | `core/db.rs::get_page` |
 | `server/skill_grow.rs::write_maintained_rules_page` | `private` | no | no | `server/skill_grow.rs::process_space` | `core/db.rs::get_page` |
@@ -1883,7 +1883,9 @@ carrying the authority of agreement.
 | `server/skill_grow.rs::general_lines` | `private` | no | no | `server/skill_grow.rs::handle_read_rules`, `server/skill_grow.rs::handle_self_report` | `server/skill_grow.rs::read_rules_for_space` |
 | `server/skill_grow.rs::handle_read_rules` | `pub` | no | no | — | `server/skill_grow.rs::read_rules_for_space` |
 | `server/skill_grow.rs::handle_self_report` | `pub` | no | no | — | `server/skill_grow.rs::read_rules_for_space` |
+| `server/skill_grow.rs::project_rules` | `pub(crate)` | no | no | `server/repo_wiki_routes.rs::publish_space` | `server/skill_grow.rs::read_rules_for_space` |
 | `server/skill_grow.rs::refresh_with` | `private` | no | no | `server/skill_grow.rs::handle_refresh`, `server/skill_grow.rs::run_nightly_if_due` | `server/skill_grow.rs::refresh_unlocked` |
+| `server/skill_grow.rs::sync_rules_files` | `private` | no | no | `server/skill_grow.rs::sync_rules_files_locked`, `server/skill_grow.rs::sync_rules_files_quietly` | `server/skill_grow.rs::read_rules_for_space` |
 | `server/source_lifecycle_routes.rs::write` | `private` | yes | no | — | `core/db/citation_provenance.rs::set_source_lifecycle` |
 | `server/source_routes.rs::sync_directory_source` | `pub(crate)` | no | no | `server/scheduler.rs::sync_directory_sources_in_scope`, `server/source_routes.rs::handle_sync_source` | `core/db.rs::rebind_source_id_with_source_page` |
 | `server/source_routes/okf_sync.rs::sync_okf_source_in_batches` | `pub(super)` | no | no | `server/source_routes/okf_sync.rs::sync_okf_source` | `core/db.rs::rebind_source_id_with_source_page`, `core/db/okf_concepts.rs::refresh_okf_concept_linkers` |

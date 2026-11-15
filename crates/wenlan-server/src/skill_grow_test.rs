@@ -1256,3 +1256,102 @@ async fn ux_skill_5_general_rules_are_read_in_every_space_and_with_no_space() {
         .iter()
         .any(|r| r.self_report == Some(wenlan_types::SkillReportKind::ChangedPlan)));
 }
+
+#[tokio::test]
+async fn ux_skill_6_approved_rules_are_written_as_layered_files_and_follow_the_setting() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(true).await;
+    let habits = scratch
+        .db
+        .create_space("Habits", None, false)
+        .await
+        .unwrap();
+    let project = scratch
+        .db
+        .create_space("Project", None, false)
+        .await
+        .unwrap();
+    create_person_page(
+        &scratch.db,
+        &scratch.pages,
+        "Habits",
+        "Habits",
+        GENERAL_QUOTE,
+    )
+    .await;
+    create_person_page(
+        &scratch.db,
+        &scratch.pages,
+        "Project",
+        "Rules",
+        SOURCE_QUOTE,
+    )
+    .await;
+    let model = GrowModel {
+        general_in: Some("Habits".into()),
+        ..GrowModel::new()
+    };
+    assert_eq!(refresh(&scratch, &model).await.suggestions, 2);
+
+    let general_file = scratch.data.join("AGENTS.md");
+    let project_dir = scratch.data.join("spaces").join("Project");
+    let project_file = project_dir.join("AGENTS.md");
+    assert!(
+        !general_file.exists() && !project_file.exists(),
+        "a suggestion nobody accepted writes no file"
+    );
+    // The person's own file in a layer folder is never Wenlan's to change.
+    std::fs::create_dir_all(&project_dir).unwrap();
+    let own = project_dir.join("decisions.md");
+    std::fs::write(&own, "my own notes\n").unwrap();
+
+    for space in [&habits, &project] {
+        let _ = handle_accept_space_rules(
+            axum::extract::State(scratch.shared.clone()),
+            person_headers(),
+            AxumPath(space.id.clone()),
+            Query(SpaceAnswerScope::default()),
+        )
+        .await
+        .unwrap();
+    }
+    let general = std::fs::read_to_string(&general_file).unwrap();
+    assert!(general.starts_with(skill_grow::RULES_FILE_MARK));
+    assert!(general.contains(GENERAL_QUOTE) && !general.contains(SOURCE_QUOTE));
+    let own_rules = std::fs::read_to_string(&project_file).unwrap();
+    assert!(own_rules.contains("# How I work — Project"));
+    assert!(own_rules.contains(RULE_TEXT) && own_rules.contains("(from \"Rules\")"));
+    assert!(
+        !own_rules.contains(GENERAL_QUOTE),
+        "a general rule is written once, in the general layer"
+    );
+    assert!(
+        !scratch.data.join("spaces").join("Habits").exists(),
+        "a Space with only general rules has no layer of its own"
+    );
+    assert_eq!(std::fs::read_to_string(&own).unwrap(), "my own notes\n");
+
+    // Turning the setting off removes what Wenlan wrote and nothing else.
+    wenlan_core::config::update_config(|cfg| {
+        cfg.skills_from_library = false;
+        Ok(())
+    })
+    .unwrap();
+    sync_rules_files_quietly(&scratch.db).await;
+    assert!(!general_file.exists() && !project_file.exists());
+    assert_eq!(std::fs::read_to_string(&own).unwrap(), "my own notes\n");
+
+    // A file of the person's own at a name Wenlan uses is left as it is.
+    std::fs::write(&general_file, "# mine\n").unwrap();
+    wenlan_core::config::update_config(|cfg| {
+        cfg.skills_from_library = true;
+        Ok(())
+    })
+    .unwrap();
+    sync_rules_files_quietly(&scratch.db).await;
+    assert_eq!(std::fs::read_to_string(&general_file).unwrap(), "# mine\n");
+    assert!(project_file.exists());
+}

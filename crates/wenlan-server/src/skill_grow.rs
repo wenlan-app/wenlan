@@ -664,6 +664,140 @@ async fn record_general_reads(
     Ok(())
 }
 
+/// Whether Wenlan wrote the file at `path`: a regular file that opens with
+/// the managed mark. Anything else is the person's own.
+fn is_wenlan_rules_file(path: &Path) -> bool {
+    read_regular_nofollow(path).is_ok_and(|text| text.starts_with(skill_grow::RULES_FILE_MARK))
+}
+
+/// Bring one layer's folder in line with `files`: write what changed, remove
+/// the files Wenlan wrote earlier that the layer no longer has. A file Wenlan
+/// did not write, and any path through a link, is left exactly as it is.
+fn sync_rules_layer(home: &Path, folder: &Path, files: &[(&'static str, String)]) {
+    let names =
+        std::iter::once(skill_grow::RULES_MAIN_FILE).chain(skill_grow::RULES_APPENDIX_FILES);
+    for name in names {
+        let path = folder.join(name);
+        if has_symlink_below(home, &path) {
+            continue;
+        }
+        let exists = std::fs::symlink_metadata(&path).is_ok();
+        if exists && !is_wenlan_rules_file(&path) {
+            continue;
+        }
+        let wanted = files
+            .iter()
+            .find(|(file, _)| *file == name)
+            .map(|(_, body)| body);
+        let result = match wanted {
+            Some(body) => {
+                if exists && read_regular_nofollow(&path).is_ok_and(|now| &now == body) {
+                    continue;
+                }
+                std::fs::create_dir_all(folder)
+                    .map_err(|e| ServerError::Internal(e.to_string()))
+                    .and_then(|()| staged_file(&path, body))
+                    .and_then(|staged| {
+                        std::fs::rename(&staged, &path).map_err(|e| {
+                            let _ = std::fs::remove_file(&staged);
+                            ServerError::Internal(e.to_string())
+                        })
+                    })
+            }
+            None if exists => {
+                std::fs::remove_file(&path).map_err(|e| ServerError::Internal(e.to_string()))
+            }
+            None => continue,
+        };
+        if let Err(error) = result {
+            tracing::warn!(path = %path.display(), %error, "[skills] rules file not updated");
+        }
+    }
+}
+
+/// Write the rules AI tools may read as layered files in Wenlan's own folder:
+/// `AGENTS.md` for the lines that hold in every project and
+/// `spaces/<Space>/AGENTS.md` for each Space's own, each a short main file
+/// plus appendix files. The files always say what `read_space_rules` would
+/// answer right now, so a Stop, the setting turned off, a deleted line or an
+/// Undo empties them the same way.
+async fn sync_rules_files(db: &MemoryDB) -> Result<(), ServerError> {
+    let home = wenlan_core::config::wenlan_home();
+    let mut general = Vec::new();
+    let mut seen = HashSet::new();
+    let mut layers: HashMap<String, (String, Vec<SkillLine>)> = HashMap::new();
+    for space in db.list_spaces().await? {
+        let folder = wenlan_core::space_folders::folder_name(&space.name);
+        let own = &mut layers
+            .entry(folder)
+            .or_insert_with(|| (space.name.clone(), Vec::new()))
+            .1;
+        for line in read_rules_for_space(db, &space).await?.lines {
+            if !line.general {
+                own.push(line);
+            } else if seen.insert(line.text.trim().to_lowercase()) {
+                general.push(line);
+            }
+        }
+    }
+    sync_rules_layer(&home, &home, &skill_grow::rules_layer_files(None, &general));
+    let spaces = home.join("spaces");
+    // Folders of Spaces that no longer exist still lose the files Wenlan wrote.
+    if !has_symlink_below(&home, &spaces) {
+        for entry in std::fs::read_dir(&spaces).into_iter().flatten().flatten() {
+            if let Some(name) = entry.file_name().to_str() {
+                layers.entry(name.to_string()).or_default();
+            }
+        }
+    }
+    for (folder, (name, lines)) in layers {
+        let files = skill_grow::rules_layer_files(Some(&name), &lines);
+        let folder = spaces.join(folder);
+        sync_rules_layer(&home, &folder, &files);
+        if files.is_empty() && !has_symlink_below(&home, &folder) {
+            // Only an empty folder goes; anything else in it stays.
+            let _ = std::fs::remove_dir(&folder);
+        }
+    }
+    Ok(())
+}
+
+/// The Space's own approved lines as plain sentences, rules first, for the
+/// repository copy. General lines are the person's habits and stay out.
+pub(crate) async fn project_rules(db: &MemoryDB, space: &str) -> Vec<String> {
+    let lines = match db.get_space(space).await {
+        Ok(Some(space)) => read_rules_for_space(db, &space)
+            .await
+            .map(|rules| rules.lines),
+        Ok(None) => return Vec::new(),
+        Err(error) => Err(error.into()),
+    };
+    let mut lines = match lines {
+        Ok(lines) => lines,
+        Err(error) => {
+            tracing::warn!(%error, "[skills] project rules not read for the repository");
+            return Vec::new();
+        }
+    };
+    lines.retain(|line| !line.general);
+    lines.sort_by_key(|line| line.kind != wenlan_types::SkillLineKind::Rule);
+    lines.into_iter().map(|line| line.text).collect()
+}
+
+/// Same, for callers that must not fail because a file could not be written.
+pub(crate) async fn sync_rules_files_quietly(db: &MemoryDB) {
+    let _serial = SKILLS_MUTATION_LOCK.lock().await;
+    if let Err(error) = sync_rules_files(db).await {
+        tracing::warn!(%error, "[skills] rules files not updated");
+    }
+}
+
+async fn sync_rules_files_locked(db: &MemoryDB) {
+    if let Err(error) = sync_rules_files(db).await {
+        tracing::warn!(%error, "[skills] rules files not updated");
+    }
+}
+
 async fn process_space(
     db: &MemoryDB,
     page_root: Option<&Path>,
@@ -1131,6 +1265,7 @@ async fn refresh_unlocked(
         refresh_existing_skill_suggestions(&db, model, &dirs, &approved, &mut budget).await?;
     report.suggestions += suggestions;
     report.model_calls += calls;
+    sync_rules_files_locked(&db).await;
     Ok(report)
 }
 
@@ -1277,6 +1412,7 @@ pub async fn handle_accept_space_rules(
     if !scope.this_space_only {
         record_library_answer(true)?;
     }
+    sync_rules_files_locked(&db).await;
     Ok(Json(SpaceRulesActionResponse {
         space_id: id,
         status: "accepted".into(),
@@ -1389,6 +1525,7 @@ pub async fn handle_decline_space_rules(
         db.set_space_rules_state(&rules).await?;
         record_library_answer(false)?;
     }
+    sync_rules_files_locked(&db).await;
     Ok(Json(SpaceRulesActionResponse {
         space_id: id,
         status: "declined".into(),
@@ -1451,6 +1588,7 @@ pub async fn handle_undo_space_rules(
     rules.deleted_fingerprints = undo.before_deleted_fingerprints;
     rules.undo = None;
     db.set_space_rules_state(&rules).await?;
+    sync_rules_files_locked(&db).await;
     Ok(Json(SpaceRulesActionResponse {
         space_id: id,
         status: "undone".into(),

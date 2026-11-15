@@ -72,6 +72,7 @@ pub async fn handle_update_config(
     State(state): State<SharedState>,
     Json(req): Json<UpdateConfigRequest>,
 ) -> Result<Json<ConfigResponse>, ServerError> {
+    let rules_setting_touched = req.skills_from_library.is_some();
     let external_touched = req.external_llm_endpoint.is_some()
         || req.external_llm_model.is_some()
         || req.external_llm_api_key.is_some();
@@ -182,6 +183,13 @@ pub async fn handle_update_config(
     if external_touched {
         let mut s = state.write().await;
         apply_external_provider(&mut s, &cfg);
+    }
+    if rules_setting_touched {
+        // Off removes the rules files Wenlan wrote; on writes them again.
+        let db = state.read().await.db.clone();
+        if let Some(db) = db {
+            crate::skill_grow::sync_rules_files_quietly(&db).await;
+        }
     }
     Ok(Json(config_to_response(&cfg)))
 }

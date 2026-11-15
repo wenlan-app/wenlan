@@ -326,6 +326,16 @@ pub fn default_pages_root() -> PathBuf {
     }
 }
 
+/// Wenlan's own folder: `~/.wenlan`, or the data root of an isolated run. It
+/// stays put when the pages folder is moved elsewhere.
+pub fn wenlan_home() -> PathBuf {
+    isolated_data_root().unwrap_or_else(|| {
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".wenlan")
+    })
+}
+
 fn home_pages_root() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))

@@ -431,3 +431,37 @@ fn the_model_marks_lines_that_hold_for_any_project_as_general() {
     );
     assert!(grow_prompt("Habits", &pages).contains("general"));
 }
+
+#[test]
+fn ux_skill_6_rules_layer_files_keep_the_main_file_short_and_point_to_the_rest() {
+    assert!(rules_layer_files(Some("Wenlan"), &[]).is_empty());
+
+    let mut lines = (0..RULES_MAIN_FILE_MAX + 2)
+        .map(|n| {
+            line(
+                SkillLineKind::Rule,
+                &format!("r{n}"),
+                &format!("Rule {n}."),
+                "q",
+            )
+        })
+        .collect::<Vec<_>>();
+    lines.push(line(SkillLineKind::Decision, "d", "We chose\nlibSQL.", "q"));
+    let files = rules_layer_files(Some("Wenlan"), &lines);
+    let names = files.iter().map(|(name, _)| *name).collect::<Vec<_>>();
+    assert_eq!(names, ["AGENTS.md", "more-rules.md", "decisions.md"]);
+    for (_, body) in &files {
+        assert!(body.starts_with(RULES_FILE_MARK));
+    }
+    let main = &files[0].1;
+    assert!(main.contains("# How I work — Wenlan"));
+    assert_eq!(main.matches("- Rule ").count(), RULES_MAIN_FILE_MAX);
+    assert!(main.contains("- more-rules.md: the rest of the rules (2)"));
+    assert!(main.contains("- decisions.md:"));
+    assert!(!main.contains("pitfalls.md"));
+    assert!(files[2].1.contains("- We chose libSQL. (from \""));
+
+    let general = rules_layer_files(None, &lines[..1]);
+    assert_eq!(general.len(), 1);
+    assert!(general[0].1.contains("# How I work\n"));
+}
