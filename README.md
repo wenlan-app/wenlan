@@ -43,15 +43,11 @@ I started Wenlan because my notes, documents, and AI chats were scattered, and k
 
 **Teams (in the next release):** a self-hosted Wenlan server everyone connects to, with view-only or edit access for each person.
 
-- **Keeps itself up to date.** Your AI tools save what you decide in chats and fold it into pages. When a source changes, the pages that rely on it get updated.
-- **Set up once, no plugins.** **Connect all** in Settings connects your AI tools in one click. No plugins to install or maintain.
-- **Checks the source before saving.** Notes an AI writes into a folder usually go unchecked. Wenlan checks that each cited source supports the sentence it is cited for, and won't save a page whose citations mostly don't match; a citation opens the original. You see every change, can undo it, and pages you lock ask you first.
+- **Memory.** What you settle in one AI tool is saved and is there in the next, so a new chat does not start from zero.
+- **Knowledge.** Memories, notes, and documents become pages with sources. Wenlan checks that each cited source supports the sentence it is cited for, and won't save a page whose citations mostly don't match. You see every change, can undo it, and pages you lock ask you first.
+- **Skills and rules.** How you like things done, written once and used by every AI tool you connect.
+- **Any look you ask for.** A page can be text, or a web page your AI draws for it. The drawing shows the page's live text, so you never redo it.
 - **Bring what you have.** Obsidian vaults, notes, documents, and AI chats. [Full list](#what-can-i-bring-in).
-
-### Also
-
-- **A page can be text or HTML.** Ask your AI to make an HTML view of any page, or keep the HTML it made as an HTML page of its own. An HTML view shows the page's live text, so you never redo it.
-- **Share a Space.** With a colleague, or across your own computers, through a Google Drive or iCloud Drive folder.
 
 <a id="how-it-compares"></a>
 

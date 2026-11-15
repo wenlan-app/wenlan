@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=059e2faa23bbe07dbac0d44b6e6ba2a125b201d7414e646e5fad0e10a5ebc460 -->
+<!-- README_SYNC: source=README.md sha256=2eefe43558d46788603965910555b7e4e7d6a940ede349cbbb6473f819ac30b0 -->
 
 <p align="center">
   <picture>
@@ -45,15 +45,11 @@ Empecé Wenlan porque mis notas, documentos y chats de IA estaban dispersos, y e
 
 **Equipos (en la próxima versión):** un servidor de Wenlan autoalojado al que todos se conectan, con acceso de solo lectura o de edición para cada persona.
 
-- **Se mantiene al día sola.** Tus herramientas de IA guardan lo que decides en los chats y lo integran en páginas. Cuando cambia una fuente, las páginas que dependen de ella se actualizan.
-- **Configúralo una vez, sin plugins.** **Connect all** en los ajustes conecta tus herramientas de IA con un clic. Sin plugins que instalar ni mantener.
-- **Comprueba la fuente antes de guardar.** Las notas que una IA escribe en una carpeta suelen quedar sin revisar. Wenlan comprueba que cada fuente citada respalda la frase en la que se cita y no guarda una página cuyas citas casi no coinciden; una cita abre el original. Ves cada cambio, puedes deshacerlo y las páginas que bloqueas te preguntan primero.
+- **Memoria.** Lo que decides en una herramienta de IA se guarda y está en la siguiente, así que un chat nuevo no empieza de cero.
+- **Conocimiento.** Memorias, notas y documentos se convierten en páginas con fuentes. Wenlan comprueba que cada fuente citada respalda la frase en la que se cita y no guarda una página cuyas citas casi no coinciden. Ves cada cambio, puedes deshacerlo y las páginas que bloqueas te preguntan primero.
+- **Skills y reglas.** Cómo te gusta hacer las cosas, escrito una vez y usado por cada herramienta de IA que conectes.
+- **El aspecto que pidas.** Una página puede ser texto o una página web que tu IA dibuja para ella. El dibujo muestra el texto actual de la página, así que nunca lo rehaces.
 - **Trae lo que ya tienes.** Bóvedas de Obsidian, notas, documentos y chats de IA. [Lista completa](#what-can-i-bring-in).
-
-### Además
-
-- **Una página puede ser texto o HTML.** Pide a tu IA una vista HTML de cualquier página, o guarda el HTML que hizo como una página HTML propia. La vista HTML muestra el texto actual de la página, así que nunca la rehaces.
-- **Comparte un Space.** Con un compañero, o entre tus propios ordenadores, a través de una carpeta de Google Drive o iCloud Drive.
 
 <a id="how-it-compares"></a>
 
