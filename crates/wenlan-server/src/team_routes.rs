@@ -102,7 +102,9 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
         .route("/api/team/firewall", get(handle_firewall))
         .route(
             "/api/team/membership",
-            post(handle_remember_membership).delete(handle_forget_membership),
+            get(handle_list_memberships)
+                .post(handle_remember_membership)
+                .delete(handle_forget_membership),
         )
 }
 
@@ -568,7 +570,12 @@ pub async fn handle_start_team(
     State(state): State<SharedState>,
     Json(req): Json<TeamStartRequest>,
 ) -> Result<Json<TeamStatus>, ServerError> {
-    let person = req.person.trim().to_string();
+    // Left out (a terminal's `wenlan team start` without `--as`): the name
+    // this person already has here.
+    let person = match req.person.trim() {
+        "" => own_name(&state).await.unwrap_or_default(),
+        given => given.to_string(),
+    };
     if person.is_empty() || person.chars().count() > 80 {
         return Err(ServerError::ValidationError(
             "your name needs 1 to 80 characters".into(),
@@ -651,6 +658,16 @@ pub async fn handle_remember_membership(
         .await?;
     }
     Ok(Json(me))
+}
+
+/// GET /api/team/membership — the teams this computer has joined: each
+/// server's address, the team's name and whether this person owns it. Never
+/// a key.
+pub async fn handle_list_memberships(
+) -> Result<Json<Vec<wenlan_types::team::TeamMembershipInfo>>, ServerError> {
+    Ok(Json(
+        blocking(|| shared_space::membership_infos_at(&shared_space::settings_path())).await?,
+    ))
 }
 
 #[derive(Debug, Default, Deserialize)]

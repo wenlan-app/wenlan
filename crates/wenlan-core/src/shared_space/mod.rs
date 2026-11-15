@@ -322,6 +322,23 @@ pub fn memberships_at(path: &Path) -> Result<BTreeMap<String, Membership>, Wenla
     Ok(read_settings(path)?.memberships)
 }
 
+/// The teams this person is on, for showing: each server's address, the
+/// team as the server last said, and whether they own it. Never a key.
+pub fn membership_infos_at(
+    path: &Path,
+) -> Result<Vec<wenlan_types::team::TeamMembershipInfo>, WenlanError> {
+    let store = read_settings(path)?;
+    Ok(store
+        .memberships
+        .iter()
+        .map(|(url, membership)| wenlan_types::team::TeamMembershipInfo {
+            url: url.clone(),
+            team: store.teams.get(url).cloned(),
+            owner: membership.owner,
+        })
+        .collect())
+}
+
 /// The team each team Space here belongs to, by Space name: Spaces synced
 /// with a team server, and Spaces this computer hosts for its own team.
 /// `None` for a team whose name this computer does not know yet.

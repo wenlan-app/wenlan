@@ -150,6 +150,20 @@ pub struct TeamMembershipRequest {
     pub code: String,
 }
 
+/// `GET /api/team/membership`: one team this computer has joined. The key
+/// is never in it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamMembershipInfo {
+    /// The team server's address.
+    pub url: String,
+    /// The team, as the server last said. `None` until it has.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team: Option<TeamInfo>,
+    /// This person owns the team and manages it from this computer.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub owner: bool,
+}
+
 /// Body of `POST /api/team/members`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TeamAddMemberRequest {

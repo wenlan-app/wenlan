@@ -478,7 +478,7 @@ fn print_list(shown: &[(String, usize)], total_titles: usize, total_pages: usize
     if total_pages == 0 {
         println!("(no pages in {})", dir.display());
         println!(
-            "  Pages come from the distill tool (/distill in the Claude Code or Codex plugin, or any MCP client) once a few related memories exist, or from the page editor in the Wenlan app."
+            "  Ask your AI tool to write pages from what you saved (/wenlan steep in Claude Code, $wenlan steep in Codex), or write one in the Wenlan app."
         );
         return;
     }

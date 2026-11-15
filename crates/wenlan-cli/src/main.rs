@@ -14,7 +14,7 @@ use wenlan_types::lint::LintProfile;
 #[command(
     name = "wenlan",
     version,
-    about = "Wenlan: a personal wiki your AI tools keep up to date. Capture, recall, and hand off across sessions."
+    about = "Wenlan: a studio for everything you think, learn, and build with AI. Capture, recall, and hand off across sessions."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -182,7 +182,7 @@ enum Commands {
         #[command(subcommand)]
         cmd: commands::space::SpaceCmd,
     },
-    /// Run or join a team server: add members, host Spaces, join with a code (status, add, update, remove, new-key, host, join).
+    /// Work with a team: start one here, invite people, or join with an invite link (start, invite, join, status, leave, host, update, remove, new-key, stop).
     Team {
         #[command(subcommand)]
         cmd: commands::team::TeamCmd,

@@ -728,7 +728,7 @@ fn top_level_help() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "a personal wiki your AI tools keep up to date",
+            "a studio for everything you think, learn, and build with AI",
         ))
         .stdout(predicate::str::contains("\nDaily:\n"))
         .stdout(predicate::str::contains("\nSetup:\n"))
@@ -966,8 +966,10 @@ fn connect_claude_code_dry_run_explains_tools_only() {
         .stdout(predicate::str::contains("MCP tools only"))
         .stdout(predicate::str::contains("/brief"))
         .stdout(predicate::str::contains("/handoff"))
-        .stdout(predicate::str::contains("/distill"))
-        .stdout(predicate::str::contains("/setup"));
+        .stdout(predicate::str::contains("/wenlan"))
+        // `/distill` was folded into `/wenlan steep`; the note names no
+        // command that no longer exists.
+        .stdout(predicate::str::contains("/distill").not());
 }
 
 /// Each native client gets `wenlan` added with its own `--agent-name`, and

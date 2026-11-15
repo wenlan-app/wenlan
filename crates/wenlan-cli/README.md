@@ -1,6 +1,6 @@
 # wenlan-cli
 
-Wenlan's command line. Wenlan is a personal wiki your AI tools keep up to date; the CLI is how you capture, recall, hand off, and keep the pages healthy from a terminal, plus set up and check the local runtime.
+Wenlan's command line. Wenlan is a studio for everything you think, learn, and build with AI; the CLI is how you capture, recall, hand off, and keep the pages healthy from a terminal, plus set up and check the local runtime.
 
 License: Apache-2.0.
 
@@ -578,15 +578,41 @@ Options:
 
 ### `wenlan team`
 
-Run or join a team server: add members, host Spaces, join with a code (status, add, update, remove, new-key, host, join).
+Work with a team: start one here, invite people, or join with an invite link (start, invite, join, status, leave, host, update, remove, new-key, stop).
 
 ```text
 wenlan team [OPTIONS] <COMMAND>
 ```
 
+#### `wenlan team start`
+
+Start a team on this computer: others reach it with an invite link.
+
+```text
+wenlan team start [OPTIONS] <NAME>
+```
+
+Arguments:
+
+- `<NAME>`: The team's name, such as the company's. Everyone on it sees it.
+
+Options:
+
+- `--as <YOUR NAME>`: Your own name, as the team sees what you write. Left out, the name you already have in Wenlan.
+- `--url <URL>`: The address others reach this computer at, put in every invite link. Left out, Wenlan picks one: its Tailscale address first, else its address on the local network.
+- `--port <PORT>`: The port the team listens on. Left out, 7879.
+
+#### `wenlan team stop`
+
+Stop letting the team reach this computer. The team, its people and Spaces stay; `wenlan team start` turns it on again.
+
+```text
+wenlan team stop [OPTIONS]
+```
+
 #### `wenlan team status`
 
-Show the members, the Spaces this computer hosts for the team, and whether the team listener is on.
+Show the team this computer runs (its people and Spaces) and the teams it has joined.
 
 ```text
 wenlan team status [OPTIONS]
@@ -604,34 +630,34 @@ Arguments:
 
 - `<NAME>`: The team's name, such as the company's.
 
-#### `wenlan team add`
+#### `wenlan team invite`
 
-Add a member and print their invite link (or key) once.
+Invite someone: add them and print their invite link once.
 
 ```text
-wenlan team add [OPTIONS] <NAME>
+wenlan team invite [OPTIONS] <NAME>
 ```
 
 Arguments:
 
-- `<NAME>`: The member's name.
+- `<NAME>`: The person's name.
 
 Options:
 
-- `--access <SPACE[:read]>`: A Space the member can use, `Space` for read and write or `Space:read` for read only. Repeat for more Spaces.
-- `--url <URL>`: The address the member's computer reaches this server at, put in the invite link. Left out, only the key is printed.
+- `--access <SPACE[:read]>`: A Space they can use, `Space` for read and write or `Space:read` for read only. Repeat for more Spaces. Left out, they get the Spaces open to everyone on the team.
+- `--url <URL>`: The address their computer reaches this one at, put in the invite link. Left out, the address the team was started with.
 
 #### `wenlan team update`
 
 Rename a member or replace the Spaces they can use.
 
 ```text
-wenlan team update [OPTIONS] <MEMBER_ID>
+wenlan team update [OPTIONS] <MEMBER>
 ```
 
 Arguments:
 
-- `<MEMBER_ID>`: The member's id (see `wenlan team status`).
+- `<MEMBER>`: The member's name, or their id from `wenlan team status --format json`.
 
 Options:
 
@@ -643,28 +669,28 @@ Options:
 Remove a member: their key stops working at once.
 
 ```text
-wenlan team remove [OPTIONS] <MEMBER_ID>
+wenlan team remove [OPTIONS] <MEMBER>
 ```
 
 Arguments:
 
-- `<MEMBER_ID>`: The member's id (see `wenlan team status`).
+- `<MEMBER>`: The member's name, or their id from `wenlan team status --format json`.
 
 #### `wenlan team new-key`
 
-Give a member a new key; the old one stops working.
+Give a member a new invite link; the old one stops working.
 
 ```text
-wenlan team new-key [OPTIONS] <MEMBER_ID>
+wenlan team new-key [OPTIONS] <MEMBER>
 ```
 
 Arguments:
 
-- `<MEMBER_ID>`: The member's id (see `wenlan team status`).
+- `<MEMBER>`: The member's name, or their id from `wenlan team status --format json`.
 
 Options:
 
-- `--url <URL>`: The address the member's computer reaches this server at, put in the invite link.
+- `--url <URL>`: The address the member's computer reaches this one at, put in the invite link. Left out, the address the team was started with.
 
 #### `wenlan team host`
 
@@ -678,22 +704,39 @@ Arguments:
 
 - `<SPACE>`: Space name.
 
+Options:
+
+- `--everyone <ACCESS>`: Open it to everyone on the team, now and when invited later: `--everyone` to read and write, `--everyone read` to read only, `--everyone nobody` to take that back. Left out, only the people given it with `--access` can use it.
+
 #### `wenlan team join`
 
-Join a team server with a invite link: list the Spaces you can use, or sync one of them with --server-space.
+Join a team with an invite link: every Space open to you is synced to this computer, and Spaces opened to you later follow.
 
 ```text
-wenlan team join [OPTIONS] <CODE>
+wenlan team join [OPTIONS] <INVITE LINK>
 ```
 
 Arguments:
 
-- `<CODE>`: The invite link you were sent (`https://…/join#wlt_…`).
+- `<INVITE LINK>`: The invite link you were sent (`https://…/join#wlt_…`).
 
 Options:
 
-- `--server-space <SERVER_SPACE>`: Sync this Space of the server (not `--space`, which picks a Space on this computer). Left out, the Spaces you can use are listed.
-- `--as <LOCAL_SPACE>`: The Space's name on this computer. Left out, the server's name.
+- `--server-space <SERVER_SPACE>`: Take only this Space of the team (not `--space`, which picks a Space on this computer).
+- `--as <LOCAL_SPACE>`: The Space's name on this computer. Left out, the team's name for it.
+- `--list`: Only show the Spaces the link opens; join nothing.
+
+#### `wenlan team leave`
+
+Leave a team you joined: its Spaces stop syncing here. The pages already on this computer stay.
+
+```text
+wenlan team leave [OPTIONS] [TEAM]
+```
+
+Arguments:
+
+- `[TEAM]`: The team's name or its server's address. Not needed when this computer is on one team.
 
 ### `wenlan wiki`
 
