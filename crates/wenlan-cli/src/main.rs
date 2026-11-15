@@ -235,8 +235,7 @@ const HELP_GROUPS: &[(&str, &[&str])] = &[
         "Setup",
         &[
             "setup", "open", "status", "doctor", "start", "stop", "restart", "connect", "models",
-            "keys",
-            "steep",
+            "keys", "steep",
         ],
     ),
     ("Maintenance", &["sources", "outbox", "export", "entities"]),
