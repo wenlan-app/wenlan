@@ -110,6 +110,7 @@ import { ReferenceNavigationProvider } from "./links/ReferenceNavigationContext"
 import "./navigation/navigation-shell.css";
 import "./assets/collectionToolbar.css";
 import { inventoryFolderPath } from "./pages/pageInventory";
+import { FindSkillsView } from "./skills/FindSkillsView";
 
 interface MainProps {
   initialView?: View;
@@ -1517,6 +1518,7 @@ export default function Main({
       onFilterChange={setPageInventoryFilter}
       onBrowse={(scope) => navigateTo({ kind: "pages", inventoryScope: scope })}
       onCreatePage={(folderPath) => navigateTo({ kind: "page-draft", space: null, folderPath, inventoryScope: retainWikiScope ? view.inventoryScope : undefined })}
+      onFindSkills={() => navigateTo({ kind: "skills" })}
       onOpenDraft={openWikiDraft}
       onOpenPage={openWikiPage}
       onDeletePage={handleDirectoryNoteDeleted}
@@ -1971,6 +1973,8 @@ export default function Main({
             />
           ) : view.kind === "source-document" ? (
             <SourceDocumentPage key={JSON.stringify([view.file.source, view.file.source_id, view.file.space ?? null])} file={view.file} onReady={() => setReadySourceView(view)} onRegisterFlush={registerSourceDescriptionFlush} onOpenPage={(pageId) => navigateTo({ kind: "page", pageId })} onDeleted={navigateBack} />
+          ) : view.kind === "skills" ? (
+            <FindSkillsView />
           ) : view.kind === "sources" ? (
             <SourcesView
               libraryState={sourceLibraryState}
