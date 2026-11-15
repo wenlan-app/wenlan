@@ -215,7 +215,8 @@ async fn write_source_page(
                     page_root.to_path_buf(),
                     db,
                 )
-                .write_page(&page)?;
+                .write_page_gated(db, &page)
+                .await?;
             }
         }
     }

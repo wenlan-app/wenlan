@@ -215,13 +215,14 @@ async fn refresh_isolated_home_writes_source_skill_and_borrowing_records() {
     assert!(skill.contains("Source: Working agreements"));
     println!("--- scratch generated SKILL.md ---\n{skill}--- end SKILL.md ---");
 
-    let prompts = model.prompts.lock().unwrap();
-    assert_eq!(prompts.len(), 1);
-    assert!(prompts[0].contains("Working agreements"));
-    assert!(!prompts[0].contains("Private detail"));
-    assert!(!prompts[0].contains("Explicitly excluded"));
-    assert!(!prompts[0].contains("Locked instructions"));
-    drop(prompts);
+    {
+        let prompts = model.prompts.lock().unwrap();
+        assert_eq!(prompts.len(), 1);
+        assert!(prompts[0].contains("Working agreements"));
+        assert!(!prompts[0].contains("Private detail"));
+        assert!(!prompts[0].contains("Explicitly excluded"));
+        assert!(!prompts[0].contains("Locked instructions"));
+    }
 
     let source = db
         .skill_page_states()
@@ -436,8 +437,10 @@ async fn suggestion_apply_keeps_one_backup_and_supports_one_undo_or_dismissal() 
     })
     .await
     .unwrap();
-    let mut server = crate::state::ServerState::default();
-    server.db = Some(db.clone());
+    let server = crate::state::ServerState {
+        db: Some(db.clone()),
+        ..Default::default()
+    };
     let state = Arc::new(RwLock::new(server));
 
     let applied = handle_apply_suggestion(

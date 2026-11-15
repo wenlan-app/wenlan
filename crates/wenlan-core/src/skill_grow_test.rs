@@ -239,7 +239,7 @@ fn source_page_preserves_person_edits_and_tombstones_deletions() {
     let paraphrase_attempt = reconcile_source_page(
         "App",
         "How I work in App",
-        &[paraphrased.clone()],
+        std::slice::from_ref(&paraphrased),
         &again.generated,
         &again.deleted,
         Some(&again.body),
