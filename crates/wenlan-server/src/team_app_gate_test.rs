@@ -979,3 +979,62 @@ async fn a_code_basis_repo_root_is_not_sent_to_a_member() {
     assert!(basis.get("repo_root").is_none(), "{page}");
     assert!(!page.to_string().contains("/Users/server"), "{page}");
 }
+
+/// Every route the daemon's router binds (the handler manifest, not only
+/// the page readers) is closed to a member unless it is a row, whatever its
+/// method: a route added later is closed until someone writes its row.
+#[tokio::test]
+async fn every_bound_daemon_route_without_a_row_is_not_found() {
+    const MANIFEST: &str = include_str!("route_registry/handler_manifest.txt");
+    let f = fixture().await;
+    let key = &f.alpha_writer.1;
+    let routes: Vec<(String, &str)> = MANIFEST
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split('|');
+            (parts.next()? == "main")
+                .then(|| Some((parts.next()?.to_ascii_uppercase(), parts.next()?)))
+                .flatten()
+        })
+        .collect();
+    for wanted in ["GET", "POST", "DELETE"] {
+        assert!(
+            routes
+                .iter()
+                .any(|(m, p)| m == wanted && *p == "/api/team/membership"),
+            "{wanted} /api/team/membership is in the manifest"
+        );
+    }
+    let mut checked = 0;
+    let mut allowed = 0;
+    for (method, path) in &routes {
+        if CALLS
+            .iter()
+            .any(|call| call.method == method && call.path == *path)
+        {
+            allowed += 1;
+            continue;
+        }
+        let concrete: String = path
+            .split('/')
+            .map(|s| if s.starts_with('{') { "a1" } else { s })
+            .collect::<Vec<_>>()
+            .join("/");
+        f.forget();
+        let body = (method != "GET").then(|| json!({}));
+        let (status, _) = call(
+            &f.state,
+            method,
+            &format!("{PREFIX}{concrete}"),
+            key,
+            body,
+            &[],
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{method} {path}");
+        assert!(f.seen().is_empty(), "{method} {path} reached the daemon");
+        checked += 1;
+    }
+    assert_eq!(allowed, CALLS.len(), "every row is a bound daemon route");
+    assert!(checked > 300, "the daemon's routes were read ({checked})");
+}
