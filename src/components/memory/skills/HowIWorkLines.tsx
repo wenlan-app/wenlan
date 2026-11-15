@@ -71,13 +71,13 @@ export function HowIWorkLines({ lines, onOpenPage, onEditLine, showEdited = true
               {showEdited && line.person_edited ? (
                 <p className="how-i-work-line-source">
                   {t("howIWork.page.youChanged")}
-                  {line.general ? <span className="how-i-work-line-general"> · {t("howIWork.general")}</span> : null}
+                  {line.general ? <span className="how-i-work-line-general"><span aria-hidden="true">·</span>{t("howIWork.general")}</span> : null}
                 </p>
               ) : (
                 <p className="how-i-work-line-source">
                   {t("howIWork.sourcePrefix")}{" "}
                   <button type="button" onClick={() => onOpenPage(line.source_page_id)}>{source}</button>
-                  {line.general ? <span className="how-i-work-line-general"> · {t("howIWork.general")}</span> : null}
+                  {line.general ? <span className="how-i-work-line-general"><span aria-hidden="true">·</span>{t("howIWork.general")}</span> : null}
                 </p>
               )}
             </div>

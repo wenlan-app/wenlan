@@ -397,3 +397,7 @@
     margin-left: 78px;
   }
 }
+
+.how-i-work-line-general > span {
+  margin: 0 6px;
+}

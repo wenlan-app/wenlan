@@ -135,7 +135,7 @@ const HOME_THINGS = [
 ];
 
 const HOW_I_WORK_LINES = [
-  { id: "rule-preview-1", kind: "rule", text: "先討論再動手寫程式", source_page_id: "page-working-style", source_page_title: "工作方式", source_revision: 3, source_revision_at: 1_794_211_200, source_quote: "先討論再動手寫程式", person_edited: false },
+  { id: "rule-preview-1", kind: "rule", text: "先討論再動手寫程式", source_page_id: "page-working-style", source_page_title: "工作方式", source_revision: 3, source_revision_at: 1_794_211_200, source_quote: "先討論再動手寫程式", person_edited: false, general: true },
   { id: "rule-preview-2", kind: "decision", text: "PR 只走合併佇列，不直接推上 main", source_page_id: "page-release-flow", source_page_title: "發版流程", source_revision: 8, source_revision_at: 1_794_211_200, source_quote: "完成後直接推上 main", person_edited: true },
   { id: "rule-preview-3", kind: "rule", text: "回覆用繁體中文，先講結論", source_page_id: "page-communication", source_page_title: "溝通偏好", source_revision: 2, source_revision_at: 1_794_038_400, source_quote: "回覆用繁體中文，先講結論", person_edited: false },
   { id: "rule-preview-4", kind: "pitfall", text: "測試要用獨立資料夾，別碰真的圖書館", source_page_id: "page-test-isolation", source_page_title: "測試隔離", source_revision: 5, source_revision_at: 1_793_952_000, source_quote: "測試要用獨立資料夾，別碰真的圖書館", person_edited: false },
