@@ -1688,3 +1688,41 @@ async fn migration_132_reopens_after_interrupted_alter_preserving_ledger_intent(
         "Retained/Chosen"
     );
 }
+
+#[tokio::test]
+async fn a_member_publish_names_the_member_as_a_person_edit() {
+    let (db, _tmp) = test_db().await;
+    let member = "shared_person:eb479148ad0d437b936d11fbd001c8e4";
+    let draft = db
+        .create_page_draft("Trail log", "Body text", None, None)
+        .await
+        .unwrap();
+    let published = match db
+        .publish_page_draft_by(&draft.id, 1, member)
+        .await
+        .unwrap()
+    {
+        PageDraftPublishOutcome::Published(page) => page,
+        other => panic!("expected Published, got {other:?}"),
+    };
+    assert_eq!(published.last_edited_by.as_deref(), Some(member));
+    assert!(
+        published.human_edited_at.is_some(),
+        "a member's publish is a person's edit"
+    );
+    let reread = db.get_page(&draft.id).await.unwrap().unwrap();
+    assert_eq!(reread.last_edited_by.as_deref(), Some(member));
+    assert_eq!(reread.human_edited_at, published.human_edited_at);
+
+    // The person here keeps the plain publish, with no changelog entry.
+    let own = db
+        .create_page_draft("Own log", "Body text", None, None)
+        .await
+        .unwrap();
+    let own = match db.publish_page_draft(&own.id, 1).await.unwrap() {
+        PageDraftPublishOutcome::Published(page) => page,
+        other => panic!("expected Published, got {other:?}"),
+    };
+    assert_eq!(own.last_edited_by, None);
+    assert_eq!(own.human_edited_at, None);
+}

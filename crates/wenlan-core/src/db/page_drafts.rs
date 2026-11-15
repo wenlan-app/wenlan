@@ -759,12 +759,35 @@ impl MemoryDB {
         }
 
         let kind = crate::pages::page_kind_for(&title, &current.creation_kind, "active");
+        // A person who publishes (a team member, `shared_person:<member>`) is
+        // named in the changelog too, so the page reads as their edit, not
+        // the AI's. The person here keeps the plain "publish" history row.
+        let changelog = current
+            .changelog
+            .clone()
+            .unwrap_or_else(|| "[]".to_string());
+        let changelog = if crate::page_history::kind_of_edit(edited_by)
+            == wenlan_types::responses::PageHistoryKind::PersonEdit
+        {
+            super::append_changelog_entry(
+                &changelog,
+                serde_json::json!({
+                    "version": current.version + 1,
+                    "at": chrono::Utc::now().timestamp(),
+                    "edited_by": edited_by,
+                }),
+                20,
+            )?
+        } else {
+            changelog
+        };
         let publish = match &embedding_sql {
             Some(emb) => {
                 tx.execute(
                     "UPDATE pages
                      SET title=?1, status='active', kind=?2, version=version+1,
-                         last_compiled=?3, last_modified=?3, embedding=vector32(?4)
+                         last_compiled=?3, last_modified=?3, embedding=vector32(?4),
+                         changelog=?7
                      WHERE id=?5 AND status='draft' AND version=?6",
                     libsql::params![
                         title.as_str(),
@@ -772,7 +795,8 @@ impl MemoryDB {
                         now.as_str(),
                         emb.as_str(),
                         id,
-                        expected_version
+                        expected_version,
+                        changelog.as_str()
                     ],
                 )
                 .await
@@ -781,9 +805,16 @@ impl MemoryDB {
                 tx.execute(
                     "UPDATE pages
                      SET title=?1, status='active', kind=?2, version=version+1,
-                         last_compiled=?3, last_modified=?3
+                         last_compiled=?3, last_modified=?3, changelog=?6
                      WHERE id=?4 AND status='draft' AND version=?5",
-                    libsql::params![title.as_str(), kind, now.as_str(), id, expected_version],
+                    libsql::params![
+                        title.as_str(),
+                        kind,
+                        now.as_str(),
+                        id,
+                        expected_version,
+                        changelog.as_str()
+                    ],
                 )
                 .await
             }
