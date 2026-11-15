@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=2eefe43558d46788603965910555b7e4e7d6a940ede349cbbb6473f819ac30b0 -->
+<!-- README_SYNC: source=README.md sha256=3066f3ed5076a71a58e1473669cdfb1dd427643830782c092917ea53b6de5f1f -->
 
 <p align="center">
   <picture>
@@ -39,11 +39,11 @@
 
 ## Por qué Wenlan
 
-Empecé Wenlan porque mis notas, documentos y chats de IA estaban dispersos, y evitar que un sistema de notas se echara a perder exigía un mantenimiento constante. Desde entonces no dejamos de oír lo mismo sobre Obsidian: demasiada configuración, con plugins que buscar, instalar y mantener al día. Wenlan es para quienes usan herramientas de IA a diario y no quieren mantener un sistema de notas.
+Empecé Wenlan porque lo que resolvía con herramientas de IA quedaba disperso entre chats, notas y documentos, y cada chat nuevo empezaba de cero. Wenlan es el lugar donde tú y tus herramientas de IA piensan, aprenden y construyen: cada herramienta que conectas trabaja con las mismas páginas, skills y reglas, y tú puedes leerlo y cambiarlo todo.
 
-**Personal:** descarga la app de escritorio y úsala por tu cuenta.
+**Personal:** descarga la app de escritorio o conéctate desde tu herramienta de IA.
 
-**Equipos (en la próxima versión):** un servidor de Wenlan autoalojado al que todos se conectan, con acceso de solo lectura o de edición para cada persona.
+**Equipos:** un servidor de Wenlan al que todos se conectan, con acceso de solo lectura o de edición para cada persona. [Guía del servidor de equipo](docs/team-server.md).
 
 - **Memoria.** Lo que decides en una herramienta de IA se guarda y está en la siguiente, así que un chat nuevo no empieza de cero.
 - **Conocimiento.** Memorias, notas y documentos se convierten en páginas con fuentes. Wenlan comprueba que cada fuente citada respalda la frase en la que se cita y no guarda una página cuyas citas casi no coinciden. Ves cada cambio, puedes deshacerlo y las páginas que bloqueas te preguntan primero.

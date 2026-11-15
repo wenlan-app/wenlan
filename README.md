@@ -37,11 +37,11 @@
 
 ## Why Wenlan
 
-I started Wenlan because my notes, documents, and AI chats were scattered, and keeping a note system from rotting took constant upkeep. Since then we keep hearing the same about Obsidian: too much setup, with plugins to find, install, and keep updated. Wenlan is for people who use AI tools every day and don't want to maintain a note system.
+I started Wenlan because what I worked out with AI tools was scattered across chats, notes, and documents, and every new chat started from zero. Wenlan is the one place where you and your AI tools think, learn, and build: every tool you connect works from the same pages, skills, and rules, and you can read and change all of it.
 
-**Personal:** download the desktop app and use it on your own.
+**Personal:** download the desktop app, or connect from your AI tool.
 
-**Teams (in the next release):** a self-hosted Wenlan server everyone connects to, with view-only or edit access for each person.
+**Teams:** run one Wenlan server everyone connects to, with view-only or edit access for each person. [Team server guide](docs/team-server.md).
 
 - **Memory.** What you settle in one AI tool is saved and is there in the next, so a new chat does not start from zero.
 - **Knowledge.** Memories, notes, and documents become pages with sources. Wenlan checks that each cited source supports the sentence it is cited for, and won't save a page whose citations mostly don't match. You see every change, can undo it, and pages you lock ask you first.
