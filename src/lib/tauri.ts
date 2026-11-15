@@ -1103,12 +1103,14 @@ export async function listSpaceRulesSuggestions(): Promise<SpaceRulesSuggestion[
   return invoke("list_space_rules_suggestions");
 }
 
-export async function acceptSpaceRules(spaceId: string): Promise<SpaceRulesActionResponse> {
-  return invoke("accept_space_rules", { spaceId });
+/** `thisSpaceOnly` = the "other Spaces too" box was cleared (UX-SKILL-1). */
+export async function acceptSpaceRules(spaceId: string, thisSpaceOnly = false): Promise<SpaceRulesActionResponse> {
+  return invoke("accept_space_rules", { spaceId, thisSpaceOnly });
 }
 
-export async function declineSpaceRules(spaceId: string): Promise<SpaceRulesActionResponse> {
-  return invoke("decline_space_rules", { spaceId });
+/** `thisSpaceOnly` = the "other Spaces too" box was cleared (UX-SKILL-1). */
+export async function declineSpaceRules(spaceId: string, thisSpaceOnly = false): Promise<SpaceRulesActionResponse> {
+  return invoke("decline_space_rules", { spaceId, thisSpaceOnly });
 }
 
 export async function refreshSkills(): Promise<SkillsRefreshResponse> {

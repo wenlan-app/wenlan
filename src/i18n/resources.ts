@@ -804,7 +804,8 @@ const en = {
     ask: {
       crumb: "Space · {{space}}",
       title: "Let AI tools follow how you work?",
-      subtitle: "Found these in “{{space}}” first. If yes, every Space is kept up to date and AI tools read it before working.",
+      subtitle: "Found these in “{{space}}” first. If yes, AI tools read them before working.",
+      allSpaces: "Do the same for other Spaces from now on",
       accept: "Yes, do it",
       decline: "No thanks",
       failed: "Couldn’t save your choice. Try again.",
@@ -4235,7 +4236,8 @@ const zhHans = {
     ask: {
       crumb: "空间 · {{space}}",
       title: "要让 AI 工具照你的做事方式做吗？",
-      subtitle: "先从「{{space}}」找到这几条。好的话，每个空间都会自动整理，AI 做事前会先读。",
+      subtitle: "先从「{{space}}」找到这几条。好的话，AI 做事前会先读。",
+      allSpaces: "以后其他空间也自动照这样做",
       accept: "好，做",
       decline: "不用",
       failed: "没能保存你的选择，请再试一次。",
@@ -7621,7 +7623,8 @@ const zhHant = {
     ask: {
       crumb: "空間 · {{space}}",
       title: "要讓 AI 工具照你的做事方式做嗎？",
-      subtitle: "先從「{{space}}」找到這幾條。好的話，每個空間都會自動整理，AI 做事前會先讀。",
+      subtitle: "先從「{{space}}」找到這幾條。好的話，AI 做事前會先讀。",
+      allSpaces: "以後其他空間也自動照這樣做",
       accept: "好，做",
       decline: "不用",
       failed: "沒能儲存你的選擇，請再試一次。",

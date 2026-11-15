@@ -341,6 +341,7 @@ async fn suggests_then_person_accepts_and_reads_one_space_scoped_rules_page() {
         axum::extract::State(scratch.shared.clone()),
         HeaderMap::new(),
         AxumPath(research.id.clone()),
+        Query(SpaceAnswerScope::default()),
     )
     .await
     .is_err());
@@ -348,6 +349,7 @@ async fn suggests_then_person_accepts_and_reads_one_space_scoped_rules_page() {
         axum::extract::State(scratch.shared.clone()),
         person_headers(),
         AxumPath(research.id.clone()),
+        Query(SpaceAnswerScope::default()),
     )
     .await
     .unwrap()
@@ -1020,6 +1022,7 @@ async fn ux_skill_1_one_no_stops_asking_and_model_calls_everywhere() {
         axum::extract::State(scratch.shared.clone()),
         person_headers(),
         AxumPath(first.id.clone()),
+        Query(SpaceAnswerScope::default()),
     )
     .await
     .unwrap()
@@ -1044,4 +1047,84 @@ async fn ux_skill_1_one_no_stops_asking_and_model_calls_everywhere() {
         .await
         .is_err());
     assert_eq!(model.call_count(), calls, "a no still spent model calls");
+}
+
+#[tokio::test]
+async fn ux_skill_1_an_answer_with_the_box_cleared_covers_only_that_space() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(true).await;
+    let first = scratch.db.create_space("First", None, false).await.unwrap();
+    let second = scratch
+        .db
+        .create_space("Second", None, false)
+        .await
+        .unwrap();
+    let third = scratch.db.create_space("Third", None, false).await.unwrap();
+    for name in ["First", "Second", "Third"] {
+        create_person_page(&scratch.db, &scratch.pages, name, "Rules", SOURCE_QUOTE).await;
+    }
+    let model = GrowModel::new();
+    assert_eq!(refresh(&scratch, &model).await.suggestions, 3);
+    let only_this = || {
+        Query(SpaceAnswerScope {
+            this_space_only: true,
+        })
+    };
+
+    let accepted = handle_accept_space_rules(
+        axum::extract::State(scratch.shared.clone()),
+        person_headers(),
+        AxumPath(first.id.clone()),
+        only_this(),
+    )
+    .await
+    .unwrap()
+    .0;
+    assert_eq!(accepted.status, "accepted");
+    let declined = handle_decline_space_rules(
+        axum::extract::State(scratch.shared.clone()),
+        person_headers(),
+        AxumPath(second.id.clone()),
+        only_this(),
+    )
+    .await
+    .unwrap()
+    .0;
+    assert_eq!(declined.status, "declined");
+
+    let config = wenlan_core::config::load_config();
+    assert!(
+        !config.skills_answered,
+        "a one-Space answer is not the library answer"
+    );
+    assert!(
+        config.skills_from_library,
+        "a one-Space no must not turn it off"
+    );
+    let still_asking = handle_space_suggestions(
+        axum::extract::State(scratch.shared.clone()),
+        person_headers(),
+    )
+    .await
+    .unwrap()
+    .0;
+    assert_eq!(
+        still_asking
+            .iter()
+            .map(|s| s.space_id.clone())
+            .collect::<Vec<_>>(),
+        vec![third.id.clone()],
+        "only the unanswered Space still asks"
+    );
+    refresh(&scratch, &model).await;
+    let second_state = scratch
+        .db
+        .space_rules_state(&second.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(second_state.status, SpaceRulesStatus::Declined);
 }

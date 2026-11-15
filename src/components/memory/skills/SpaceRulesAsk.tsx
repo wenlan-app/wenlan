@@ -23,6 +23,7 @@ export function SpaceRulesAsk({ space, onOpenPage }: Props) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [hidden, setHidden] = useState(false);
+  const [allSpaces, setAllSpaces] = useState(true);
   const enabled = useQuery({
     queryKey: HOW_I_WORK_QUERY_KEYS.enabled,
     queryFn: skillsFromLibraryEnabled,
@@ -37,15 +38,18 @@ export function SpaceRulesAsk({ space, onOpenPage }: Props) {
   });
   const suggestion = suggestions.data?.find((item) => item.space_id === space.id);
 
-  // One answer covers the whole library (UX-SKILL-1), so the ask leaves
-  // every Space's page at once, not only this one.
+  // With the box ticked, one answer covers the whole library (UX-SKILL-1), so
+  // the ask leaves every Space's page at once; cleared, only this Space's.
   const removeFromAsk = () => {
-    queryClient.setQueryData<SpaceRulesSuggestion[]>(HOW_I_WORK_QUERY_KEYS.spaceSuggestions, []);
-    void queryClient.invalidateQueries({ queryKey: HOW_I_WORK_QUERY_KEYS.enabled });
+    queryClient.setQueryData<SpaceRulesSuggestion[]>(
+      HOW_I_WORK_QUERY_KEYS.spaceSuggestions,
+      (current) => allSpaces ? [] : current?.filter((item) => item.space_id !== space.id) ?? [],
+    );
+    if (allSpaces) void queryClient.invalidateQueries({ queryKey: HOW_I_WORK_QUERY_KEYS.enabled });
     setHidden(true);
   };
   const accept = useMutation({
-    mutationFn: () => acceptSpaceRules(space.id),
+    mutationFn: () => acceptSpaceRules(space.id, !allSpaces),
     onSuccess: (response) => {
       removeFromAsk();
       void queryClient.invalidateQueries({ queryKey: ["space-pages", space.name] });
@@ -54,7 +58,7 @@ export function SpaceRulesAsk({ space, onOpenPage }: Props) {
     },
   });
   const decline = useMutation({
-    mutationFn: () => declineSpaceRules(space.id),
+    mutationFn: () => declineSpaceRules(space.id, !allSpaces),
     onSuccess: removeFromAsk,
   });
 
@@ -68,6 +72,10 @@ export function SpaceRulesAsk({ space, onOpenPage }: Props) {
       <h2 id={`space-rules-ask-${space.id}`}>{t("howIWork.ask.title", { space: space.name })}</h2>
       <p className="space-rules-ask-subtitle">{t("howIWork.ask.subtitle", { space: space.name })}</p>
       <HowIWorkLines lines={suggestion.lines} onOpenPage={onOpenPage} showEdited={false} />
+      <label className="space-rules-ask-all">
+        <input type="checkbox" checked={allSpaces} disabled={busy} onChange={(event) => setAllSpaces(event.target.checked)} />
+        <span>{t("howIWork.ask.allSpaces")}</span>
+      </label>
       <div className="how-i-work-actions">
         <button className="how-i-work-primary" disabled={busy} onClick={() => accept.mutate()} type="button">
           {t("howIWork.ask.accept")}

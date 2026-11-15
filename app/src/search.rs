@@ -4270,12 +4270,14 @@ pub async fn list_space_rules_suggestions(
 pub async fn accept_space_rules(
     state: tauri::State<'_, State>,
     space_id: String,
+    this_space_only: Option<bool>,
 ) -> Result<SpaceRulesActionResponse, String> {
     let client = daemon_client(&state).await;
     client
         .post_empty_as_person(&format!(
-            "/api/skills/spaces/{}/accept",
-            crate::api::percent_encode_path_segment(&space_id)
+            "/api/skills/spaces/{}/accept{}",
+            crate::api::percent_encode_path_segment(&space_id),
+            if this_space_only == Some(true) { "?this_space_only=true" } else { "" }
         ))
         .await
 }
@@ -4284,12 +4286,14 @@ pub async fn accept_space_rules(
 pub async fn decline_space_rules(
     state: tauri::State<'_, State>,
     space_id: String,
+    this_space_only: Option<bool>,
 ) -> Result<SpaceRulesActionResponse, String> {
     let client = daemon_client(&state).await;
     client
         .post_empty_as_person(&format!(
-            "/api/skills/spaces/{}/decline",
-            crate::api::percent_encode_path_segment(&space_id)
+            "/api/skills/spaces/{}/decline{}",
+            crate::api::percent_encode_path_segment(&space_id),
+            if this_space_only == Some(true) { "?this_space_only=true" } else { "" }
         ))
         .await
 }

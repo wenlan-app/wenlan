@@ -1308,11 +1308,11 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
     get("/api/skills/spaces/suggestions", AS_PERSON),
   accept_space_rules: (a) => {
     requireSourcePreview();
-    return http("POST", `/api/skills/spaces/${enc(String(a.spaceId))}/accept`, undefined, AS_PERSON);
+    return http("POST", `/api/skills/spaces/${enc(String(a.spaceId))}/accept${a.thisSpaceOnly === true ? "?this_space_only=true" : ""}`, undefined, AS_PERSON);
   },
   decline_space_rules: (a) => {
     requireSourcePreview();
-    return http("POST", `/api/skills/spaces/${enc(String(a.spaceId))}/decline`, undefined, AS_PERSON);
+    return http("POST", `/api/skills/spaces/${enc(String(a.spaceId))}/decline${a.thisSpaceOnly === true ? "?this_space_only=true" : ""}`, undefined, AS_PERSON);
   },
   refresh_skills: () => {
     requireSourcePreview();

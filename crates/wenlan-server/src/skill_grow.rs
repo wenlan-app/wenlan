@@ -1157,10 +1157,19 @@ async fn state_and_space(
     Ok((state, space))
 }
 
+/// Whether an answer on one Space's ask covers the whole library (the
+/// default, checkbox ticked) or only that Space (checkbox cleared).
+#[derive(Debug, Default, serde::Deserialize)]
+pub struct SpaceAnswerScope {
+    #[serde(default)]
+    pub this_space_only: bool,
+}
+
 pub async fn handle_accept_space_rules(
     State(state): State<SharedState>,
     headers: HeaderMap,
     AxumPath(id): AxumPath<String>,
+    Query(scope): Query<SpaceAnswerScope>,
 ) -> Result<Json<SpaceRulesActionResponse>, ServerError> {
     crate::memory_routes::require_person_to_accept(&headers)?;
     if !feature_enabled() {
@@ -1185,7 +1194,9 @@ pub async fn handle_accept_space_rules(
         ));
     }
     let page_id = accept_space(&db, page_root.as_deref(), &mut rules, space).await?;
-    record_library_answer(true)?;
+    if !scope.this_space_only {
+        record_library_answer(true)?;
+    }
     Ok(Json(SpaceRulesActionResponse {
         space_id: id,
         status: "accepted".into(),
@@ -1269,6 +1280,7 @@ pub async fn handle_decline_space_rules(
     State(state): State<SharedState>,
     headers: HeaderMap,
     AxumPath(id): AxumPath<String>,
+    Query(scope): Query<SpaceAnswerScope>,
 ) -> Result<Json<SpaceRulesActionResponse>, ServerError> {
     crate::memory_routes::require_person_to_accept(&headers)?;
     let _serial = SKILLS_MUTATION_LOCK.lock().await;
@@ -1284,12 +1296,19 @@ pub async fn handle_decline_space_rules(
             "Space rules suggestion is not pending".into(),
         ));
     }
-    // One answer for the whole library: a no turns the feature off and is
-    // never asked again. The Space stays unanswered, so turning the setting
-    // back on later lets the night pass accept it like every other Space.
     rules.lines.clear();
-    db.set_space_rules_state(&rules).await?;
-    record_library_answer(false)?;
+    if scope.this_space_only {
+        // Only this Space: it is never asked again; other Spaces still ask.
+        rules.status = SpaceRulesStatus::Declined;
+        db.set_space_rules_state(&rules).await?;
+    } else {
+        // One answer for the whole library: a no turns the feature off and is
+        // never asked again. The Space stays unanswered, so turning the
+        // setting back on later lets the night pass accept it like every
+        // other Space.
+        db.set_space_rules_state(&rules).await?;
+        record_library_answer(false)?;
+    }
     Ok(Json(SpaceRulesActionResponse {
         space_id: id,
         status: "declined".into(),
