@@ -572,7 +572,8 @@ and wait for evidence that people need them.
 - **UX-SKILL-5** `shipped` A line that holds for any project, not only its
   own Space's, is marked "Used in every Space" on its Space's ask and page. AI
   tools read it in every Space, and with no Space at all, where they read only
-  these lines. It stays on, and is checked against, its own Space's page, and
+  these lines; where it and a Space's own line disagree, the Space's line wins.
+  It stays on, and is checked against, its own Space's page, and
   a report that it changed the plan is recorded there.
   原文：選擇卡「加全局一份」（2026-11-15 21:24Z，問：「要不要加一份全局的「我的做事方式」？」）；「還有我們有全局跟空間範圍的 skill」（2026-11-15 21:24Z）。
 

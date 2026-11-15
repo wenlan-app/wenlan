@@ -14,7 +14,8 @@ user-invocable: true
 At the start of work in a resolved Wenlan Space, and again before choosing an
 approach, call the read-only `read_space_rules` tool for that Space. Use only
 the rules returned for that Space: its own rules plus the person's general
-rules, which hold in every Space. The tool returns nothing when
+rules, which hold in every Space. When a general rule and this Space's own
+rule disagree, follow the Space's rule. The tool returns nothing when
 `skills_from_library` is off or nothing has been accepted; in that case,
 continue normally without guessing or searching other Spaces.
 

@@ -381,6 +381,7 @@ test("the fixed how-i-work skill reads approved rules and reports only changed p
   assert.match(skill, /at the start of work[\s\S]*before choosing an\s+approach/i);
   assert.match(skill, /skills_from_library` is off or nothing has been accepted/);
   assert.match(skill, /without a Space: it returns only the general rules/);
+  assert.match(skill, /disagree, follow the Space's rule/);
   assert.match(skill, /Never\s+read another Space's own rules/);
   assert.match(skill, /report_space_rule_use/);
   assert.match(skill, /`changed_plan`/);
