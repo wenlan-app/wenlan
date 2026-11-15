@@ -319,10 +319,14 @@ async fn member_spaces(
     let settings = state.settings_path.clone();
     let hosted = tokio::task::spawn_blocking(move || team::hosted_spaces(&settings)).await;
     match hosted {
+        // Only Spaces this server hosts for the team: a member's entry for
+        // a name that is not hosted (not hosted yet, or no longer) must not
+        // open a Space of the same name that is the owner's own.
         Ok(Ok(hosted)) => Ok(member
             .me(&hosted)
             .spaces
             .into_iter()
+            .filter(|space| hosted.iter().any(|(name, _)| *name == space.space))
             .map(|space| (space.space, space.access))
             .collect()),
         _ => Err(StatusCode::SERVICE_UNAVAILABLE.into_response()),

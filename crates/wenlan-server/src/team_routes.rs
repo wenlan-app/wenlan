@@ -1458,6 +1458,7 @@ async fn require_member(State(state): State<TeamState>, mut req: Request, next: 
                 .starts_with(&format!("{}/", app_gate::PREFIX));
         let allowed = if on_gate {
             own_origin(&state).await.as_deref() == Some(origin)
+                || same_site_as_host(origin, req.headers())
         } else {
             ALLOWED_ORIGINS.contains(&origin)
         };
@@ -1483,6 +1484,26 @@ async fn own_origin(state: &TeamState) -> Option<String> {
     }?;
     let origin = url::Url::parse(url.trim()).ok()?.origin();
     origin.is_tuple().then(|| origin.ascii_serialization())
+}
+
+/// Whether `origin` is the very address this request was sent to (its
+/// `Host`): the page was served by this server, whatever name or address
+/// the member reached it at (a LAN address, or a name the team has not
+/// saved as its address). Another site's page always carries its own
+/// origin against this server's Host, so it never matches.
+fn same_site_as_host(origin: &str, headers: &HeaderMap) -> bool {
+    let Some(host) = headers
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|host| !host.is_empty())
+    else {
+        return false;
+    };
+    ["http://", "https://"]
+        .iter()
+        .filter_map(|scheme| origin.strip_prefix(scheme))
+        .any(|authority| authority.eq_ignore_ascii_case(host))
 }
 
 async fn team_me(State(state): State<TeamState>, Extension(member): Extension<Member>) -> Response {

@@ -662,6 +662,54 @@ async fn a_member_reaches_only_their_own_spaces() {
     }
 }
 
+/// A member's entry for a Space the server does not host for the team
+/// opens nothing, even when the daemon has a Space of that name (the
+/// owner's own `Private`).
+#[tokio::test]
+async fn a_space_that_is_not_hosted_is_not_opened() {
+    let f = fixture().await;
+    let (_, key) = team::add_member(
+        &f.state.team_path,
+        "Dee",
+        &[TeamSpaceAccess {
+            space: "Private".into(),
+            access: TeamAccess::Write,
+            id: None,
+        }],
+    )
+    .unwrap();
+    for (method, uri, body) in [
+        ("GET", "/team/v1/app/api/pages?space=Private", None),
+        ("GET", "/team/v1/app/api/pages", None),
+        ("GET", "/team/v1/app/api/pages/recent", None),
+        (
+            "POST",
+            "/team/v1/app/api/pages/search",
+            Some(json!({"query": "x", "space": "Private"})),
+        ),
+        (
+            "POST",
+            "/team/v1/app/api/pages/drafts",
+            Some(json!({"space": "Private", "title": "t", "content": "c"})),
+        ),
+    ] {
+        f.forget();
+        let (status, answer) = call(&f.state, method, uri, &key, body, &[]).await;
+        assert!(
+            f.seen().iter().all(|seen| seen.space() != Some("Private")),
+            "{method} {uri}: {status} {answer}"
+        );
+        assert!(
+            !answer.to_string().contains("Private"),
+            "{method} {uri}: {answer}"
+        );
+    }
+    f.forget();
+    let (status, answer) = call(&f.state, "GET", "/team/v1/app/api/spaces", &key, None, &[]).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(answer, json!([]));
+}
+
 #[tokio::test]
 async fn answers_keep_only_the_members_spaces() {
     let f = fixture().await;
@@ -832,6 +880,39 @@ async fn only_the_team_servers_own_origin_calls_the_gate() {
     ] {
         let (got, _) = call(&f.state, "GET", &gate, key, None, &origin(value)).await;
         assert_eq!(got, status, "gate from {value}");
+    }
+    // Reached at an address the team has not saved (a LAN address): the
+    // page's origin is the address the request was sent to, so it works;
+    // another site's page against the same Host does not.
+    for (value, host, status) in [
+        (
+            "http://192.168.1.20:7879",
+            "192.168.1.20:7879",
+            StatusCode::OK,
+        ),
+        (
+            "http://192.168.1.20:7879",
+            "192.168.1.20:7880",
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            "https://evil.example",
+            "192.168.1.20:7879",
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            "http://evil.example",
+            "team.example.com",
+            StatusCode::FORBIDDEN,
+        ),
+        ("null", "null", StatusCode::FORBIDDEN),
+    ] {
+        let extra = [
+            (header::ORIGIN.as_str(), value),
+            (header::HOST.as_str(), host),
+        ];
+        let (got, _) = call(&f.state, "GET", &gate, key, None, &extra).await;
+        assert_eq!(got, status, "gate from {value} to {host}");
     }
     // No key: refused before the origin is read, as everywhere.
     let (got, _) = call(
