@@ -7,6 +7,7 @@
 import { useEffect, useState } from "react";
 import { startCustomThemeSync, useCustomTheme } from "../lib/customTheme";
 import { getActiveThemeImage } from "../lib/tauri";
+import { isWebBuild } from "../web/runtime";
 
 const BG_IMAGE = "--wenlan-theme-bg-image";
 const BG_OPACITY = "--wenlan-theme-bg-opacity";
@@ -28,6 +29,11 @@ export default function ThemeDecor() {
   const wantsSticker = Boolean(theme?.sticker);
   useEffect(() => {
     let cancelled = false;
+    if (isWebBuild()) {
+      setBackground(null);
+      setSticker(null);
+      return;
+    }
     const load = (kind: "background" | "sticker", wanted: boolean, set: (v: string | null) => void) => {
       if (!wanted) {
         set(null);

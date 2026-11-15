@@ -18,6 +18,19 @@
 
 ARG RUST_VERSION=1
 
+FROM node:24-trixie-slim AS web
+WORKDIR /src
+RUN corepack enable && corepack prepare pnpm@10.28.2 --activate
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+COPY index.html tsconfig*.json vite.config.ts ./
+COPY tooling ./tooling
+COPY src ./src
+COPY public ./public
+COPY preview ./preview
+COPY e2e ./e2e
+RUN pnpm build:web
+
 # wenlan-server links the GNU OpenMP runtime for its CPU inference path, so it
 # needs libgomp.so.1. distroless/cc ships only glibc, libgcc, and libstdc++, so
 # the loader would otherwise find no libgomp and the daemon would exit before
@@ -53,6 +66,7 @@ FROM chef AS builder
 COPY --from=planner /src/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json -p wenlan-server
 COPY . .
+COPY --from=web /src/dist/web ./dist/web
 RUN cargo build --release -p wenlan-server
 RUN strip target/release/wenlan-server
 # Skeleton dir copied into runtime so /data exists in the image with the

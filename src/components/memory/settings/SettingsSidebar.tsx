@@ -11,6 +11,7 @@ import { useTranslation } from "react-i18next";
 import { ArrowLeft, ArrowSquareOut, ShieldCheck } from "@phosphor-icons/react";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
 import { ICONS_SIDEBAR_WIDTH, type SidebarMode } from "../navigation/navigationPreferences";
+import { isWebBuild } from "../../../web/runtime";
 
 export type SettingsSection =
   | "sources"
@@ -193,6 +194,7 @@ export default function SettingsSidebar({
   onNavigateHome,
   navigationDisabled = false,
 }: SettingsSidebarProps) {
+  const web = isWebBuild();
   const { t } = useTranslation();
   const [appVersion, setAppVersion] = useState<string>("");
   const [linkFailed, setLinkFailed] = useState(false);
@@ -203,8 +205,9 @@ export default function SettingsSidebar({
   const contentInert = !sidebarVisible;
 
   useEffect(() => {
+    if (web) return;
     getVersion().then(setAppVersion).catch(() => setAppVersion(""));
-  }, []);
+  }, [web]);
   useEffect(() => {
     if (!overlay || !open) return;
     const first = asideRef.current?.querySelector<HTMLElement>(
@@ -288,7 +291,7 @@ export default function SettingsSidebar({
         {/* Group list */}
         <div className="notes-icon-rail">
           <nav aria-label={t("settings.title")} className={`notes-rail-nav${compact ? " notes-rail-nav--icons" : " notes-rail-nav--labels"}`}>
-            {SETTINGS_GROUPS.map((group) => {
+            {SETTINGS_GROUPS.filter((group) => !web || group.id === "general" || group.id === "appearance").map((group) => {
               const isActive = group.id === active;
               return (
                 <button
@@ -319,10 +322,13 @@ export default function SettingsSidebar({
             className={`settings-sidebar-privacy${compact ? " settings-sidebar-privacy--compact" : ""}`}
             href="https://github.com/wenlan-app/wenlan/blob/main/docs/PRIVACY.md"
             onClick={(event) => {
+              if (web) return;
               event.preventDefault();
               setLinkFailed(false);
               void openExternal(event.currentTarget.href).catch(() => setLinkFailed(true));
             }}
+            rel={web ? "noreferrer" : undefined}
+            target={web ? "_blank" : undefined}
             title={compact ? t("settings.privacyPolicyLabel") : undefined}
           >
             {compact ? <ShieldCheck aria-hidden="true" size={22} weight="regular" /> : <span>{t("settings.privacyPolicyLabel")}</span>}

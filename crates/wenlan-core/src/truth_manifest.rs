@@ -605,10 +605,11 @@ pub const MCP_READERS: &[McpReader] = &[
     McpReader { tool: "write_page", page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "tool handler" },
 ];
 
-/// All 24 top-level `Commands` variants in `crates/wenlan-cli/src/main.rs`.
+/// All 27 top-level `Commands` variants in `crates/wenlan-cli/src/main.rs`.
 #[rustfmt::skip]
 pub const CLI_READERS: &[CliReader] = &[
     CliReader { subcommand: "wenlan status", page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "subcommand renderer" },
+    CliReader { subcommand: "wenlan open", page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "opens embedded browser UI" },
     CliReader { subcommand: "wenlan setup", page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "subcommand renderer" },
     CliReader { subcommand: "wenlan start", page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "subcommand renderer" },
     CliReader { subcommand: "wenlan stop", page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "subcommand renderer" },

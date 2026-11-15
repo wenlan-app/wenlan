@@ -13,7 +13,7 @@
 //   ?remoteScope=     whole (the scenario's profile and apps share the whole library)
 //   ?remoteSpaces=    none (a library with no Spaces yet)
 import type { RemoteAccessProfile, RemoteAccessStatus, RemoteGrant, RemotePairing } from "../../src/lib/tauri";
-import { emit } from "./tauri-stubs";
+import { emit } from "../../src/web/tauri-stubs";
 
 const DAY = 86_400_000;
 const MINUTE = 60_000;

@@ -153,6 +153,9 @@ async fn only_health_and_the_join_page_answer_without_a_member_key() {
         // The daemon's own routes are not served here at all.
         "/api/memory/search",
         "/api/shutdown",
+        // The embedded personal UI is never mounted on the team listener.
+        "/",
+        "/assets/index-deadbeef.js",
     ] {
         let (status, _) = call(&f.state, Method::GET, uri, None, vec![]).await;
         assert!(

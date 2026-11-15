@@ -334,6 +334,16 @@ impl<S> FinalizedRouter<S>
 where
     S: Clone + Send + Sync + 'static,
 {
+    pub(crate) fn fallback<H, T>(self, handler: H) -> Self
+    where
+        H: Handler<T, S>,
+        T: 'static,
+    {
+        Self {
+            inner: self.inner.fallback(handler),
+        }
+    }
+
     pub(crate) fn layer<L>(self, layer: L) -> Self
     where
         L: Layer<Route> + Clone + Send + Sync + 'static,

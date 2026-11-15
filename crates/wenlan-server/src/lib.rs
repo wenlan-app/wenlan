@@ -91,6 +91,7 @@ pub mod trust_scan_routes;
 pub mod truth_guard;
 mod web_fetch;
 pub mod web_fetch_routes;
+mod web_static;
 pub mod websocket;
 
 #[cfg(test)]

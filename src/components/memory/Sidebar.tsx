@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { forwardRef, useEffect, useRef } from "react";
-import { SidebarSimple } from "@phosphor-icons/react";
+import { GearSix, SidebarSimple } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 import IdentityCard from "./IdentityCard";
 import { PrimaryNavigation } from "./navigation/PrimaryNavigation";
@@ -13,6 +13,7 @@ import type { GlobalNavigation } from "./navigation/viewState";
 import { movePinnedPage, unpinPage, usePinnedPages } from "./navigation/pinnedPages";
 import { ICONS_SIDEBAR_WIDTH, type SidebarMode } from "./navigation/navigationPreferences";
 import "./navigation/notes-sidebar.css";
+import { isWebBuild } from "../../web/runtime";
 
 interface SidebarProps {
   readonly activeNavigation?: GlobalNavigation | null;
@@ -93,6 +94,7 @@ export default function Sidebar({
   onOpenPinnedPage,
   activePageId = null,
 }: SidebarProps) {
+  const web = isWebBuild();
   const { t } = useTranslation();
   const pinnedPages = usePinnedPages();
   const asideRef = useRef<HTMLElement>(null);
@@ -158,7 +160,7 @@ export default function Sidebar({
           zIndex: overlay ? 40 : 2,
         }}
       >
-        {switcher?.(compact)}
+        {!web && switcher?.(compact)}
         {onOpenSearch && (
           <div className={`notes-sidebar-search${compact ? " notes-sidebar-search--compact" : ""}`}>
             <SearchEntry compact={compact} disabled={searchDisabled} expanded={searchOpen} onOpen={onOpenSearch} />
@@ -193,7 +195,7 @@ export default function Sidebar({
         </div>
         <div className={`notes-rail-utilities${compact ? " notes-rail-utilities--icons" : ""}`}>
           {/* The service speaks in Activity's place, so the footer keeps its rows. */}
-          {sidebarVisible && (
+          {sidebarVisible && !web && (
             <ServiceStatus compact={compact}>
               {onNavigateActivity && (
                 <ActivityStatus
@@ -206,13 +208,25 @@ export default function Sidebar({
             </ServiceStatus>
           )}
           <ReviewEnvironmentBadge compact />
-          <IdentityCard
+          {web && onNavigateSettings && (
+            <button
+              aria-label={t("identityCard.settings")}
+              className={compact ? "notes-rail-button" : "notes-primary-link"}
+              onClick={closeAfterNavigation(onNavigateSettings, closeOverlay)}
+              title={compact ? t("identityCard.settings") : undefined}
+              type="button"
+            >
+              <span aria-hidden="true" className="notes-navigation-glyph"><GearSix /></span>
+              {!compact && <span>{t("identityCard.settings")}</span>}
+            </button>
+          )}
+          {!web && <IdentityCard
             compact={compact}
             onOpenDetail={closeAfterNavigation(onEntityClick, closeOverlay)}
             onOpenSettings={closeAfterNavigation(onNavigateSettings, closeOverlay)}
             onOpenAbout={closeAfterNavigation(onOpenAbout, closeOverlay)}
             onConnectTool={closeAfterNavigation(onConnectTool, closeOverlay)}
-          />
+          />}
         </div>
       </aside>
     </>

@@ -60,7 +60,7 @@ const projectSourceText = new Map([
   ["/preview/sources/讀書會資料/閱讀札記.txt", "讀書會・閱讀札記\n\n這是虛構的文字檔範例。每次討論後，記下最有啟發的一句話，以及它讓我們想到的問題。\n\n本週摘錄：先記錄自己的理解，再回頭核對原文。"],
   ["/preview/sources/讀書會資料/每週摘錄.md", "# 每週摘錄\n\n## 本週問題\n哪一段內容改變了我們原先的想法？\n\n## 討論後記\n保留不同觀點，並連回各自引用的段落。"],
 ]);
-import { liveInvoke } from "./live-invoke";
+import { liveInvoke } from "../../src/web/live-invoke";
 
 /** The preview's pass over old memories was taken back. */
 let oldPassUndone = false;

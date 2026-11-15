@@ -50,6 +50,8 @@ struct Cli {
 enum Commands {
     /// Check whether Wenlan is running.
     Status,
+    /// Open Wenlan's personal browser UI.
+    Open,
     /// Guided setup: get Wenlan running, optionally with a local model or an Anthropic key.
     Setup {
         /// Set up without a model or API key.
@@ -232,7 +234,8 @@ const HELP_GROUPS: &[(&str, &[&str])] = &[
     (
         "Setup",
         &[
-            "setup", "status", "doctor", "start", "stop", "restart", "connect", "models", "keys",
+            "setup", "open", "status", "doctor", "start", "stop", "restart", "connect", "models",
+            "keys",
             "steep",
         ],
     ),
@@ -311,6 +314,7 @@ async fn main() -> anyhow::Result<ExitCode> {
         Commands::Status
             | Commands::Start
             | Commands::Stop
+            | Commands::Open
             | Commands::Background { .. }
             | Commands::Restart
             | Commands::Connect(_)
@@ -453,6 +457,7 @@ async fn main() -> anyhow::Result<ExitCode> {
     let format = cli.format.resolve();
     match cli.command {
         Commands::Status => commands::status::run(&client, format, cli.quiet).await?,
+        Commands::Open => commands::web::run(&client)?,
         Commands::Setup {
             basic,
             model,

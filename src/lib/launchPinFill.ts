@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { fillUnsetPinsWithRetry, type PinFill } from "./routingPins";
 import { shouldShowWizard } from "./tauri";
+import { isWebBuild } from "../web/runtime";
 
 /** True once this launch has started a fill, so a remount does not start another. */
 let launchFillStarted = false;
@@ -37,6 +38,9 @@ export function resetLaunchPinFillForTest(): void {
  * Failures are logged, never surfaced: the user did not ask for this write.
  */
 export async function fillUnsetPinsAtLaunch(): Promise<PinFill | null> {
+  // This repairs desktop setup state. The browser bundle has no setup wizard
+  // and must not probe its native-only completion command during startup.
+  if (isWebBuild()) return null;
   if (launchFillStarted) return null;
   // Latched before the first await so two mounts in the same tick (React's
   // development double-effect) cannot both get through.

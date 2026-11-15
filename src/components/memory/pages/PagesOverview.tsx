@@ -29,6 +29,7 @@ import { useShares } from "../sharing/sharing";
 import { useScope } from "../team/scope";
 import { TeamChanges, TeamWaiting } from "../team/TeamPage";
 import { HomeLookView, useHomeLook } from "./HomeLook";
+import { isWebBuild } from "../../../web/runtime";
 
 interface PagesOverviewProps {
   readonly inventoryScope?: WikiInventoryScope;
@@ -72,6 +73,7 @@ export function PagesOverview({
   onOpenIntelligence,
   onOpenNoteSuggestion,
 }: PagesOverviewProps) {
+  const web = isWebBuild();
   const { t } = useTranslation();
   const { pages, empty } = useLibraryInventory();
   // On a team's side home is this same home, laid out the same: that team's
@@ -165,7 +167,7 @@ export function PagesOverview({
   // An AI-made HTML view of home (UX-LOOK-10), on Private home only. It
   // stands in for the Spaces and pages; the night line and anything that
   // needs the person stay where they are.
-  const homeLook = useHomeLook({ supported: !team && !example && !onboarding && daemonReady, pages });
+  const homeLook = useHomeLook({ supported: !web && !team && !example && !onboarding && daemonReady, pages });
   const lookShown = homeLook.shown;
   // With pages to list, "open a page" has nothing to add.
   const listsPages = lookShown || (newPages !== null && recentPages(pages).length > 0);
@@ -181,9 +183,9 @@ export function PagesOverview({
       {/* A changed source shows on the pages that cite it, never on Home (UX-HOME-4). */}
       {onOpenNoteSuggestion && !team && <NoteSuggestionsSummary onOpen={onOpenNoteSuggestion} />}
       {/* Asks once, the day after a vault is linked, whether the AI may change its notes. */}
-      {example || team ? null : <LinkedVaultAsk />}
+      {web || example || team ? null : <LinkedVaultAsk />}
       {/* The open checklist carries the same offer as a step; one place at a time. */}
-      {onboarding || team ? null : (
+      {web || onboarding || team ? null : (
         <WritePagesLine
           state={writePages}
           pages={pages}
@@ -245,7 +247,7 @@ export function PagesOverview({
           {t("pages.archive.title")}
         </button>
       )}
-      {adding ? <AddSourceMenu start={adding} onQuickChats={onImportChatsQuick} onClose={closeAdding} /> : null}
+      {!web && adding ? <AddSourceMenu start={adding} onQuickChats={onImportChatsQuick} onClose={closeAdding} /> : null}
     </section>
   );
 }

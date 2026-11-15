@@ -8,6 +8,9 @@
  */
 export const PAGE_LOOKS_ENABLED = true;
 
+import { isWebBuild } from "../../../../web/runtime";
+
 export function pageLooksEnabled(): boolean {
+  if (isWebBuild()) return false;
   return PAGE_LOOKS_ENABLED;
 }

@@ -13,6 +13,7 @@ import SyncSection from "./settings/sections/SyncSection";
 import TeamSection from "./settings/sections/TeamSection";
 import ExperimentsSection from "./settings/sections/ExperimentsSection";
 import { SettingsView } from "./settings/SettingsView";
+import { isWebBuild } from "../../web/runtime";
 import "./settings/settingsControls.css";
 
 interface SettingsPageProps {
@@ -45,19 +46,22 @@ export default function SettingsPage({
   currentSpace,
 }: SettingsPageProps) {
   const { t } = useTranslation();
+  const effectiveSection = isWebBuild() && section !== "general" && section !== "appearance"
+    ? "general"
+    : section;
 
-  const activeGroup = SETTINGS_GROUPS.find((g) => g.id === section);
+  const activeGroup = SETTINGS_GROUPS.find((g) => g.id === effectiveSection);
   const content = (
     <>
-      {section === "general" && <GeneralSection />}
-      {section === "appearance" && <AppearanceSection />}
-      {section === "sources" && <SourcesSection onImport={onImport} onOpenLibrary={onOpenLibrary} />}
-      {section === "agents" && <AgentsSection onSetupAgent={onSetupAgent} currentSpace={currentSpace} />}
-      {section === "sync" && <SyncSection />}
-      {section === "intelligence" && <IntelligenceSection delay={0} />}
-      {section === "team" && <TeamSection />}
-      {section === "experiments" && <ExperimentsSection />}
-      {section === "diagnostics" && (
+      {effectiveSection === "general" && <GeneralSection />}
+      {effectiveSection === "appearance" && <AppearanceSection />}
+      {effectiveSection === "sources" && <SourcesSection onImport={onImport} onOpenLibrary={onOpenLibrary} />}
+      {effectiveSection === "agents" && <AgentsSection onSetupAgent={onSetupAgent} currentSpace={currentSpace} />}
+      {effectiveSection === "sync" && <SyncSection />}
+      {effectiveSection === "intelligence" && <IntelligenceSection delay={0} />}
+      {effectiveSection === "team" && <TeamSection />}
+      {effectiveSection === "experiments" && <ExperimentsSection />}
+      {effectiveSection === "diagnostics" && (
         <DiagnosticsSection
           onSetupAgent={onSetupAgent}
           onOpenConnections={onOpenConnections}
@@ -77,7 +81,7 @@ export default function SettingsPage({
     <SettingsView
       title={activeGroup ? t(activeGroup.labelKey) : t("settings.title")}
       backButton={backButton}
-      wide={section === "appearance"}
+      wide={effectiveSection === "appearance"}
     >
       {content}
     </SettingsView>

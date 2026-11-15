@@ -103,6 +103,7 @@ import { PageTour } from "../onboarding/PageTour";
 import { ReferencePreview } from "./links/ReferencePreview";
 import { ReferenceNavigationProvider } from "./links/ReferenceNavigationContext";
 import type { ReferencePreviewRequest, ReferenceTarget } from "./links/referenceTypes";
+import { isWebBuild } from "../../web/runtime";
 import PageCanvas from "./PageCanvas";
 import {
   prepareMarkdownSource,
@@ -342,6 +343,7 @@ export default function PageDetail({
   pageTour = false,
   onOpenSettings,
 }: PageDetailProps) {
+  const web = isWebBuild();
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
   const [wikiLinkPreview, setWikiLinkPreview] = useState<ReferencePreviewRequest | null>(null);
@@ -682,6 +684,7 @@ export default function PageDetail({
     queryFn: pageReviewSupported,
     staleTime: 60_000,
     retry: 1,
+    enabled: !web,
   });
   const reviewSupported = reviewAvailability === "ready";
   const reviewUnavailableReason =
@@ -2792,8 +2795,8 @@ export default function PageDetail({
                   </svg>
                 </button>
                 {moveOpen && <MovePageDialog page={page} onClose={() => setMoveOpen(false)} />}
-                {pageExportOpen && <PageExportDialog pageId={page.id} onClose={() => setPageExportOpen(false)} />}
-                {sharingOpen && (spaceOfPageShare
+                {!web && pageExportOpen && <PageExportDialog pageId={page.id} onClose={() => setPageExportOpen(false)} />}
+                {!web && sharingOpen && (spaceOfPageShare
                   ? <ShareDialog kind="space" target={spaceOfPageShare.target} title={spaceOfPageShare.target} onClose={() => setSharingOpen(false)} onOpenSettings={onOpenSettings} />
                   : <ShareDialog kind="page" target={page.id} title={page.title} onClose={() => setSharingOpen(false)} onOpenSettings={onOpenSettings} />)}
                 {actionMenuOpen ? (
@@ -2816,7 +2819,7 @@ export default function PageDetail({
                     tabIndex={-1}
                   >
                     <button type="button" role="menuitem" disabled={storedActionPending || page.status !== "active" || !inventoryPageFilename(page) || editDirty || saveState.phase !== "idle" || editorStatus?.compositionActive} onClick={() => { closeActionMenu(); setMoveOpen(true); }}>{t("pages.folders.move")}</button>
-                    <button type="button" role="menuitem" disabled={storedActionBlocked || editDirty || saveState.phase !== "idle"} onClick={() => { closeActionMenu(); setPageExportOpen(true); }}>{t("pageExport.menuAction")}</button>
+                    {!web && <button type="button" role="menuitem" disabled={storedActionBlocked || editDirty || saveState.phase !== "idle"} onClick={() => { closeActionMenu(); setPageExportOpen(true); }}>{t("pageExport.menuAction")}</button>}
                     {page.status === "active" && !exampleWiki && !teamScope.team ? (
                       <button type="button" role="menuitem" disabled={storedActionBlocked} onClick={() => { closeActionMenu(); if (pagePinned) unpinPage(page.id); else pinPage({ id: page.id, title: page.title }); }}>
                         {t(pagePinned ? "sidebar.unpinPage" : "sidebar.pinPage")}
@@ -2830,7 +2833,7 @@ export default function PageDetail({
                     ) : null}
                     {/* A page of a shared Space is shared with it: the item opens
                         that Space's members rather than sharing the page alone. */}
-                    {page.status === "active" && !exampleWiki ? (
+                    {!web && page.status === "active" && !exampleWiki ? (
                       <button type="button" role="menuitem" disabled={storedActionBlocked} onClick={() => { closeActionMenu(); setSharingOpen(true); }}>
                         {t(spaceOfPageShare || ownPageShare ? "sharing.menuMembers" : "sharing.menuShare")}
                       </button>
@@ -3554,14 +3557,14 @@ export default function PageDetail({
             on={pageLength === "short"}
             onChange={(on) => choosePageLength(on ? "short" : "full")}
           />}
-          <InfoAction
+          {!web && <InfoAction
             label={t("pageDetail.markPageReviewed")}
             description={reviewSupported ? t("infoActions.reviewPageHint") : reviewUnavailableReason}
             active={cutoverLive && Boolean(page.truth?.human_reviewed)}
             disabled={storedActionBlocked || !reviewSupported}
             pending={reviewMutation.isPending}
             onClick={() => { void requestStoredPageAction("review"); }}
-          />
+          />}
           <div className="note-info-summary">
           <h3 className="note-info-section-heading">{t("detailInfo.details")}</h3>
           <p className="document-kind-label">{t("knowledgeContext.noteKind")}</p>

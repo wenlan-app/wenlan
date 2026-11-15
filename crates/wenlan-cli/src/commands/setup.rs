@@ -140,6 +140,7 @@ pub async fn run_setup(args: SetupArgs) -> anyhow::Result<()> {
         println!("Wenlan is set up for local memory.");
         println!("Storage, search, recall, and MCP memory work without a local model or API key.");
         println!("Steep (background upkeep) is off.");
+        print_browser_address();
         return Ok(());
     }
 
@@ -147,6 +148,7 @@ pub async fn run_setup(args: SetupArgs) -> anyhow::Result<()> {
         install_model(&model_id, args.yes).await?;
         mark_setup_completed()?;
         print_enrichment_opt_in("on-device");
+        print_browser_address();
         return Ok(());
     }
 
@@ -156,10 +158,21 @@ pub async fn run_setup(args: SetupArgs) -> anyhow::Result<()> {
         set_anthropic_key(key).await?;
         mark_setup_completed()?;
         print_enrichment_opt_in("Anthropic");
+        print_browser_address();
         return Ok(());
     }
 
-    interactive_setup().await
+    interactive_setup().await?;
+    print_browser_address();
+    Ok(())
+}
+
+fn print_browser_address() {
+    println!(
+        "Open Wenlan in your browser: {}",
+        super::web::browser_url(&origin_host_from_env())
+    );
+    println!("Or run `wenlan open`.");
 }
 
 pub async fn run_model(command: ModelCommand) -> anyhow::Result<()> {

@@ -45,6 +45,8 @@ npx -y wenlan setup
 
 This downloads the prebuilt CLI, daemon, and MCP connector, starts the local runtime, and verifies it. No Rust toolchain or Cargo is required. macOS Intel currently has [no supported complete-runtime install](../crates/wenlan-cli/README.md#macos-intel).
 
+Once the runtime is running, open [http://127.0.0.1:7878/](http://127.0.0.1:7878/) to read and edit your Wenlan pages in a browser. `wenlan open` prints the configured local address and opens it in your default browser.
+
 **What is installed and how to update**
 
 The desktop app bundles the daemon, CLI, and MCP connector. It starts the daemon on launch and offers to connect detected AI clients through the Claude Code or Codex plugin, or an MCP entry for other supported clients. The headless install runs the same daemon without a window; either way, your AI tools use the same local knowledge base.

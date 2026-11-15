@@ -2,9 +2,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { PAGES, PRISTINE, REVIEW_STATE } from "../fixtures";
 import { invoke } from "./core";
-import { liveInvoke } from "./live-invoke";
+import { liveInvoke } from "../../src/web/live-invoke";
 
-vi.mock("./live-invoke", () => ({
+vi.mock("../../src/web/live-invoke", () => ({
   liveInvoke: vi.fn(async () => ({ deleted: true })),
 }));
 

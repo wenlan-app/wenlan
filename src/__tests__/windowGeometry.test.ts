@@ -50,6 +50,9 @@ const GEOMETRY_CALLS = [
  */
 const GEOMETRY_ALLOWLIST = new Set(["src/components/ToastOverlay.tsx"]);
 
+// This browser-only module defines inert Tauri API stubs; it cannot move a native window.
+const GEOMETRY_SCAN_EXEMPTIONS = new Set(["src/web/tauri-stubs.ts"]);
+
 type TauriWindow = {
   label?: string;
   width?: number;
@@ -109,7 +112,12 @@ describe("main window geometry", () => {
         file: repoRelativePath(file, ROOT),
         calls: GEOMETRY_CALLS.filter((call) => readSourceText(file).includes(call)),
       }))
-      .filter(({ file, calls }) => calls.length > 0 && !GEOMETRY_ALLOWLIST.has(file))
+      .filter(
+        ({ file, calls }) =>
+          calls.length > 0 &&
+          !GEOMETRY_ALLOWLIST.has(file) &&
+          !GEOMETRY_SCAN_EXEMPTIONS.has(file),
+      )
       .map(({ file, calls }) => `${file}: ${calls.join(", ")}`);
 
     expect(offenders).toEqual([]);
