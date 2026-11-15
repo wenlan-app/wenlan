@@ -417,13 +417,15 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
     // single-id route. The list of note groups Automatic set aside adds one
     // more scoped reader. A Space's plain Brief lines add one more. A page's
     // look and the data it is drawn from add two more scoped readers.
-    // A source's unreadable files add one Global reader.
-    assert_eq!(rows.len(), 140);
+    // A source's unreadable files add one Global reader. Skill suggestions
+    // (list, apply, dismiss, undo) and the borrowing record add five Global
+    // readers.
+    assert_eq!(rows.len(), 145);
     assert_eq!(
         rows.iter()
             .filter(|row| row.scope_binding == ScopeBinding::Global)
             .count(),
-        28
+        33
     );
     assert_eq!(
         rows.iter()
