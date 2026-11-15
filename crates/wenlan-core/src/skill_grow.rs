@@ -536,8 +536,9 @@ pub fn tool_rules_block(lines: &[SkillLine]) -> Option<String> {
         return None;
     }
     let mut block = format!(
-        "{TOOL_RULES_START}\n## How I work\n\nKept by Wenlan from my own pages. Wenlan rewrites \
-         this part; change the pages, not these lines.\n\n"
+        "{TOOL_RULES_START}\n## How I work\n\nKept by Wenlan from my own pages. What I ask for in a \
+         conversation wins over these. Wenlan rewrites this part; change the pages, not \
+         these lines.\n\n"
     );
     for rule in rules {
         block.push_str(&format!("- {rule}\n"));

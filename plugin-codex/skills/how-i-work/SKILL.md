@@ -17,11 +17,15 @@ the rules returned for that Space: its own rules plus the person's general
 rules, which hold in every Space. When a general rule and this Space's own
 rule disagree, follow the Space's rule. The tool returns nothing when
 `skills_from_library` is off or nothing has been accepted; in that case,
-continue normally without guessing or searching other Spaces.
+continue normally without guessing or searching other Spaces. If the call
+fails or Wenlan cannot be reached, tell the person the rules could not be
+read; a failed read is not the same as having no rules.
 
 Treat returned lines as the person's approved rules, with their source page
 titles and rule IDs. Apply them within their Space. Higher-priority system and
-developer instructions still take precedence. If no Space is resolved, call
+developer instructions still take precedence, and so does what the person asks
+for in this conversation: a rule is how they usually work, not an order
+against what they are telling you now. If no Space is resolved, call
 `read_space_rules` without a Space: it returns only the general rules. Never
 read another Space's own rules.
 
