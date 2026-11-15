@@ -2674,14 +2674,19 @@ fn tool_error(e: WenlanError, verb: &str) -> CallToolResult {
              The {verb} was NOT completed.\n\n{}",
             daemon_setup_hint()
         ),
-        WenlanError::Api { status, reason } => match reason {
-            Some(reason) => format!(
-                "Wenlan daemon returned HTTP {status}: {reason}. The {verb} may not have completed."
-            ),
-            None => {
-                format!("Wenlan daemon returned HTTP {status}. The {verb} may not have completed.")
+        WenlanError::Api { status, reason } => {
+            // A 4xx is a refusal: the daemon looked at the request and did
+            // not do it. Only a server-side failure leaves the outcome open.
+            let outcome = if (400..500).contains(&u32::from(*status)) && *status != 408 {
+                format!("The {verb} was not done.")
+            } else {
+                format!("The {verb} may not have completed.")
+            };
+            match reason {
+                Some(reason) => format!("Wenlan daemon returned HTTP {status}: {reason}. {outcome}"),
+                None => format!("Wenlan daemon returned HTTP {status}. {outcome}"),
             }
-        },
+        }
         WenlanError::Deserialize => String::from(
             "Failed to parse daemon response. \
              This may indicate a version mismatch between wenlan-mcp and the daemon.",

@@ -1,6 +1,6 @@
 # Contributing to Wenlan
 
-Wenlan is an open-source knowledge base you don't have to maintain: your AI tools keep it organized. We welcome bug fixes, features, tests, docs, and design feedback.
+Wenlan is an open-source studio for everything you think, learn, and build with AI: your AI tools keep it current. We welcome bug fixes, features, tests, docs, and design feedback.
 
 This repo holds the daemon (`wenlan-server`), the CLI (`wenlan`), the MCP server (`wenlan-mcp`), the shared types/core (`wenlan-types`, `wenlan-core`), and the Tauri desktop app (`wenlan-app`, in `app/`). Bug reports for the local runtime, CLI, MCP server, desktop app, and plugin are welcome here.
 

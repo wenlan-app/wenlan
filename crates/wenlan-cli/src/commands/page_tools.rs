@@ -307,6 +307,31 @@ fn text_input(file: Option<&PathBuf>) -> Result<String> {
     Ok(text)
 }
 
+/// One line for a person from the write_page tool's reply, which is written
+/// for an AI tool (an id and `key: value` lines). A reply in any other shape
+/// is shown as it is.
+fn written_line(text: &str) -> String {
+    let field = |key: &str| {
+        text.lines()
+            .find_map(|line| line.strip_prefix(key)?.strip_prefix(": "))
+            .map(str::trim)
+    };
+    if text.starts_with("Page unchanged") {
+        return "Nothing changed: the page already has this text.".to_owned();
+    }
+    let verb = if text.starts_with("Created page") {
+        "Created"
+    } else if text.starts_with("Refreshed page") || text.starts_with("Updated page") {
+        "Updated"
+    } else {
+        return text.to_owned();
+    };
+    match field("space") {
+        Some(space) if !space.is_empty() => format!("{verb} the page in {space}."),
+        _ => format!("{verb} the page."),
+    }
+}
+
 fn show(format: ResolvedFormat, quiet: bool, text: &str) -> Result<()> {
     if quiet {
         return Ok(());
@@ -378,7 +403,10 @@ pub fn run_pages(
                 }
             }
             let text = session.call_text("write_page", arguments)?;
-            show(format, quiet, &text)?;
+            match format {
+                ResolvedFormat::Table => show(format, quiet, &written_line(&text))?,
+                ResolvedFormat::Json => show(format, quiet, &text)?,
+            }
         }
         PageToolAction::Rename { page, title } => {
             let id = resolve_page(&mut session, caller, &page)?;
@@ -666,6 +694,20 @@ fn pending_as_text(answer: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_write_reply_becomes_one_line_for_a_person() {
+        let created = "Created page page_1\nspace: Work\nspace_source: default\nwrite_outcome: created\nnext_step: Review the saved page.";
+        assert_eq!(written_line(created), "Created the page in Work.");
+        let updated = "Updated page page_1\nwrite_outcome: updated";
+        assert_eq!(written_line(updated), "Updated the page.");
+        let unchanged = "Page unchanged: page_1\nnext_step: nothing";
+        assert_eq!(
+            written_line(unchanged),
+            "Nothing changed: the page already has this text."
+        );
+        assert_eq!(written_line("something else"), "something else");
+    }
 
     fn pages() -> Vec<Value> {
         vec![

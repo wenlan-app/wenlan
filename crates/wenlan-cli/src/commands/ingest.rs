@@ -179,12 +179,7 @@ fn save_request(
 }
 
 fn is_conflict(error: &anyhow::Error) -> bool {
-    error.chain().any(|cause| {
-        cause
-            .downcast_ref::<reqwest::Error>()
-            .and_then(reqwest::Error::status)
-            == Some(reqwest::StatusCode::CONFLICT)
-    })
+    crate::client::refusal_status(error) == Some(reqwest::StatusCode::CONFLICT)
 }
 
 pub async fn run(
