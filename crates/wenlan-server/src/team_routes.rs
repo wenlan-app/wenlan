@@ -1640,17 +1640,33 @@ async fn team_mcp(
     Extension(member): Extension<Member>,
     req: Request,
 ) -> Response {
-    let spaces: Vec<&String> = member
+    // The same list `/team/v1/me` gives, so the address the invite page
+    // shows for "one Space" always opens: a Space open to everyone counts
+    // exactly like one given to this member by name.
+    let settings = state.settings_path.clone();
+    let hosted = match tokio::task::spawn_blocking(move || team::hosted_spaces(&settings)).await {
+        Ok(Ok(hosted)) => hosted,
+        _ => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "the Spaces cannot be read",
+            )
+                .into_response()
+        }
+    };
+    let mut spaces: Vec<String> = member
+        .me(&hosted)
         .spaces
-        .keys()
+        .into_iter()
+        .map(|entry| entry.space)
         .filter(|space| member.access(space).is_some())
         .collect();
-    match spaces.as_slice() {
-        [space] => {
-            let space = (*space).clone();
+    match spaces.len() {
+        1 => {
+            let space = spaces.remove(0);
             serve_mcp(state, member, space, req).await
         }
-        [] => (StatusCode::FORBIDDEN, "this member has no Space").into_response(),
+        0 => (StatusCode::FORBIDDEN, "this member has no Space").into_response(),
         _ => (
             StatusCode::NOT_FOUND,
             "this member has more than one Space: connect to /mcp/<Space name>",
