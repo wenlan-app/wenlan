@@ -2851,6 +2851,18 @@ impl WenlanClient {
         Ok(())
     }
 
+    /// One switch for library-derived working rules (UX-SKILL-1). Turning it
+    /// back on after a "no" counts as the one yes for the whole library.
+    pub async fn set_skills_from_library(&self, on: bool) -> Result<(), String> {
+        let mut req = empty_update();
+        req.skills_from_library = Some(on);
+        let updated = self.update_config(req).await?;
+        if updated.skills_from_library != on {
+            return Err("The daemon does not support the how-I-work setting yet".into());
+        }
+        Ok(())
+    }
+
     /// Each Space's pages in a folder of its own: `None` = not asked yet.
     pub async fn space_folders(&self) -> Result<Option<bool>, String> {
         Ok(self.get_config().await?.space_folders)

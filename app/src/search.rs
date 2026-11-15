@@ -257,6 +257,15 @@ pub async fn get_background_ai_enabled(state: tauri::State<'_, State>) -> Result
 }
 
 #[tauri::command]
+pub async fn set_skills_from_library(
+    state: tauri::State<'_, State>,
+    on: bool,
+) -> Result<(), String> {
+    let client = { state.read().await.client.clone() };
+    client.set_skills_from_library(on).await
+}
+
+#[tauri::command]
 pub async fn set_background_ai_enabled(
     state: tauri::State<'_, State>,
     enabled: bool,

@@ -1090,6 +1090,11 @@ export interface SkillBorrowRecord {
   self_report?: "changed_plan" | null;
 }
 
+/** The one Settings switch for how-I-work rules (UX-SKILL-1). */
+export async function setSkillsFromLibraryEnabled(on: boolean): Promise<void> {
+  return invoke("set_skills_from_library", { on });
+}
+
 export async function skillsFromLibraryEnabled(): Promise<boolean> {
   return invoke("get_skills_from_library_enabled");
 }

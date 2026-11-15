@@ -32,6 +32,7 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     "list_space_rules_suggestions",
     "accept_space_rules",
     "decline_space_rules",
+    "set_skills_from_library",
     "refresh_skills",
     "undo_space_rules",
     "list_skill_suggestions",

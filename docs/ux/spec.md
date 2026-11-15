@@ -538,12 +538,17 @@ and wait for evidence that people need them.
 
 ## AI tools follow how you work
 
-- **UX-SKILL-1** `shipped` When library-derived skills are on, a non-private
-  Space with grounded candidates asks once, at the top of its page above the
-  Brief, whether AI tools should follow those ways of working. The flat,
+- **UX-SKILL-1** `shipped` When library-derived skills are on, the ask comes
+  once for the whole library: the first non-private Space with grounded
+  candidates shows it at the top of its page above the Brief. The flat,
   thin-bordered panel names each rule, decision or pitfall and links its source
-  page. Yes makes the page; No is remembered and the ask never returns.
-  原文：「可以」（2026-11-15 17:33Z，回覆[草圖](https://claude.ai/artifact/EqEaFuewDn2qBRyBrG7eHn)與「put the first ask at the top of the Space page, asked only once?」）。
+  page. Yes makes this Space's page, and every other non-private Space,
+  including later ones, gets its page on the night it first has lines, with no
+  further ask. No stops asking everywhere and stops looking for candidates. After
+  either answer the ask leaves every Space's page at once. One Settings switch
+  changes the answer later. Suggested edits to the person's own skills are still
+  asked one by one.
+  原文：「可以」（2026-11-15 17:33Z，回覆[草圖](https://claude.ai/artifact/EqEaFuewDn2qBRyBrG7eHn)與「put the first ask at the top of the Space page, asked only once?」）；「而且儘量不用一直問用戶，或著第一次問，後面就不問了」（2026-11-15 20:21Z）。
 - **UX-SKILL-2** `shipped` The accepted "How I work" page is an ordinary
   Wenlan page with Update now, Undo last night and Stop. It shows its grounded
   lines without internal ids or paths; a person's edited line says "You changed

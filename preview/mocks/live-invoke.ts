@@ -1638,6 +1638,11 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
     const value = (await get("/api/config")).space_folders;
     return typeof value === "boolean" ? value : null;
   },
+  set_skills_from_library: async (a) => {
+    if (typeof a?.on !== "boolean") throw new Error("Invalid how-I-work setting");
+    const updated = await put("/api/config", { skills_from_library: a.on });
+    if (updated?.skills_from_library !== a.on) throw new Error("The daemon does not support the how-I-work setting yet");
+  },
   set_space_folders: async (a) => {
     if (typeof a?.on !== "boolean") throw new Error("Invalid Space folders setting");
     const updated = await put("/api/config", { space_folders: a.on });

@@ -37,11 +37,11 @@ export function SpaceRulesAsk({ space, onOpenPage }: Props) {
   });
   const suggestion = suggestions.data?.find((item) => item.space_id === space.id);
 
+  // One answer covers the whole library (UX-SKILL-1), so the ask leaves
+  // every Space's page at once, not only this one.
   const removeFromAsk = () => {
-    queryClient.setQueryData<SpaceRulesSuggestion[]>(
-      HOW_I_WORK_QUERY_KEYS.spaceSuggestions,
-      (current) => current?.filter((item) => item.space_id !== space.id) ?? [],
-    );
+    queryClient.setQueryData<SpaceRulesSuggestion[]>(HOW_I_WORK_QUERY_KEYS.spaceSuggestions, []);
+    void queryClient.invalidateQueries({ queryKey: HOW_I_WORK_QUERY_KEYS.enabled });
     setHidden(true);
   };
   const accept = useMutation({
@@ -66,7 +66,7 @@ export function SpaceRulesAsk({ space, onOpenPage }: Props) {
     <section className="space-rules-ask" aria-labelledby={`space-rules-ask-${space.id}`} data-testid="space-rules-ask">
       <p className="space-rules-ask-crumb">{t("howIWork.ask.crumb", { space: space.name })}</p>
       <h2 id={`space-rules-ask-${space.id}`}>{t("howIWork.ask.title", { space: space.name })}</h2>
-      <p className="space-rules-ask-subtitle">{t("howIWork.ask.subtitle")}</p>
+      <p className="space-rules-ask-subtitle">{t("howIWork.ask.subtitle", { space: space.name })}</p>
       <HowIWorkLines lines={suggestion.lines} onOpenPage={onOpenPage} showEdited={false} />
       <div className="how-i-work-actions">
         <button className="how-i-work-primary" disabled={busy} onClick={() => accept.mutate()} type="button">

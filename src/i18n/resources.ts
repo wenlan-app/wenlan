@@ -803,11 +803,15 @@ const en = {
     sourceFallback: "a page",
     ask: {
       crumb: "Space · {{space}}",
-      title: "Let AI tools follow how you work in “{{space}}”?",
-      subtitle: "AI tools will read the page rules you approve before working.",
+      title: "Let AI tools follow how you work?",
+      subtitle: "Found these in “{{space}}” first. If yes, every Space is kept up to date and AI tools read it before working.",
       accept: "Yes, do it",
       decline: "No thanks",
       failed: "Couldn’t save your choice. Try again.",
+    },
+    setting: {
+      title: "Let AI tools follow how you work",
+      failed: "Couldn’t change this. Try again.",
     },
     page: {
       title: "How I work · {{space}}",
@@ -4229,11 +4233,15 @@ const zhHans = {
     sourceFallback: "一个页面",
     ask: {
       crumb: "空间 · {{space}}",
-      title: "要让 AI 工具照你在「{{space}}」的做事方式做吗？",
-      subtitle: "从你的页面里找到了这几条。没问题的话，AI 工具做事前会先读它们。",
+      title: "要让 AI 工具照你的做事方式做吗？",
+      subtitle: "先从「{{space}}」找到这几条。好的话，每个空间都会自动整理，AI 做事前会先读。",
       accept: "好，做",
       decline: "不用",
       failed: "没能保存你的选择，请再试一次。",
+    },
+    setting: {
+      title: "让 AI 工具照你的做事方式做",
+      failed: "没能改好，请再试一次。",
     },
     page: {
       title: "我的做事方式 · {{space}}",
@@ -7610,11 +7618,15 @@ const zhHant = {
     sourceFallback: "一個頁面",
     ask: {
       crumb: "空間 · {{space}}",
-      title: "要讓 AI 工具照你在「{{space}}」的做事方式做嗎？",
-      subtitle: "從你的頁面找到這幾條。好的話，做事時 AI 工具會先讀它們。",
+      title: "要讓 AI 工具照你的做事方式做嗎？",
+      subtitle: "先從「{{space}}」找到這幾條。好的話，每個空間都會自動整理，AI 做事前會先讀。",
       accept: "好，做",
       decline: "不用",
       failed: "沒能儲存你的選擇，請再試一次。",
+    },
+    setting: {
+      title: "讓 AI 工具照你的做事方式做",
+      failed: "沒能改好，請再試一次。",
     },
     page: {
       title: "我的做事方式 · {{space}}",

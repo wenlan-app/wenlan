@@ -1882,6 +1882,7 @@ pub fn run() {
             search::get_space_folders,
             search::set_space_folders,
             search::set_background_ai_enabled,
+            search::set_skills_from_library,
             search::set_ui_language,
             search::should_show_wizard,
             search::local_setup_completed,

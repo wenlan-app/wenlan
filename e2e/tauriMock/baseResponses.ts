@@ -110,6 +110,7 @@ export function baseResponse(command: string, args: unknown, context: BaseRespon
     // Review has no library-derived working-rules state. Keeping the setting
     // off prevents fixture navigation from inventing a suggestion or usage.
     case "get_skills_from_library_enabled": return false;
+    case "set_skills_from_library": return null;
     case "list_space_rules_suggestions": case "list_skill_suggestions": case "list_skill_borrow_records": return [];
     case "refresh_skills": return { spaces_considered: 0, spaces_unchanged: 0, spaces_updated: 0, suggestions: 0, failures: 0, model_calls: 0 };
     case "accept_space_rules": return { space_id: optionalString(args, "spaceId") ?? "", status: "accepted", rules_page_id: null, undo_available: false };

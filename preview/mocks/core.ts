@@ -187,6 +187,7 @@ export async function invoke(
   const skillScreen = previewParams.get("skills");
   if (skillScreen) {
     if (cmd === "get_skills_from_library_enabled") return true;
+    if (cmd === "set_skills_from_library") return;
     if (cmd === "list_space_rules_suggestions") return skillScreen === "ask" ? [{ space_id: "project-wenlan", space_name: "Wenlan", lines: HOW_I_WORK_LINES }] : [];
     if (cmd === "list_skill_borrow_records") return skillScreen === "ask" ? [] : HOW_I_WORK_RECORDS;
     if (cmd === "list_skill_suggestions") return skillScreen === "suggestion" ? [HOW_I_WORK_SUGGESTION] : [];
