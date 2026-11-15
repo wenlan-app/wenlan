@@ -241,7 +241,15 @@ async fn team_join_page_has_private_security_headers_and_no_member_key() {
     assert!(
         page.contains(".tool.is-selected { background:#5751c9; color:white; font-weight:600; }")
     );
-    assert!(page.contains(".tool { flex:1 1 6.5rem; min-width:0; padding:8px 10px; border-radius:4px; background:transparent;"));
+    assert!(page.contains(".tools { display:flex; max-width:100%; gap:8px; }"));
+    assert!(page.contains(".tool { flex:1 1 0; min-width:0; padding:8px; border-radius:8px; overflow:hidden; background:#e8e7e2;"));
+    assert!(page
+        .contains("font-size:.9rem; line-height:1.4; text-overflow:ellipsis; white-space:nowrap;"));
+    assert!(page.contains(
+        ".tool:focus-visible,.copy:focus-visible { outline:3px solid #5146b8; outline-offset:2px; }"
+    ));
+    assert!(page.contains(".tool { background:#303137; color:#ececf1; }"));
+    assert!(page.contains(".tool:focus-visible,.copy:focus-visible { outline-color:#aaa5ff; }"));
     assert!(page.contains("snippet.hidden = true;\n      readonlyNode.hidden = true;"));
     for (id, tool) in [
         ("tool-claude", "claude"),
