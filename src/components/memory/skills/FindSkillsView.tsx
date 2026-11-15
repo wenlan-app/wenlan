@@ -208,7 +208,7 @@ function DetailPane({ row, onBack }: { readonly row: SkillSearchRow; readonly on
         <p className="find-skills-muted">{t("findSkills.pinned")}</p>
         {data && (
           <p className="find-skills-muted">
-            {t("findSkills.source")} <a href={data.skillsShUrl} onClick={(event) => { event.preventDefault(); openLink(data.skillsShUrl); }}>skills.sh</a>
+            {t("findSkills.source")}<a href={data.skillsShUrl} onClick={(event) => { event.preventDefault(); openLink(data.skillsShUrl); }}>skills.sh</a>
             {" · "}
             <a href={data.sourceUrl} onClick={(event) => { event.preventDefault(); openLink(data.sourceUrl); }}>{t("findSkills.original")}</a>
           </p>
