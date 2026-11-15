@@ -235,6 +235,8 @@ pub async fn global_routes_enforce_scope_contracts() {
         ("/api/decisions/domains", "/api/decisions/domains"),
         ("/api/snapshots", "/api/snapshots"),
         ("/api/palace/layout", "/api/palace/layout"),
+        ("/api/skills/suggestions", "/api/skills/suggestions"),
+        ("/api/skills/record", "/api/skills/record"),
     ];
     let mut executed = Vec::new();
 
@@ -284,6 +286,30 @@ pub async fn global_routes_enforce_scope_contracts() {
     assert!(!fixture._tmp.path().join("pages/Forbidden-folder").exists());
 
     executed.push((Method::Post, "/api/knowledge/folders"));
+    for (uri, catalog_path) in [
+        (
+            "/api/skills/suggestions/missing-suggestion/apply",
+            "/api/skills/suggestions/{id}/apply",
+        ),
+        (
+            "/api/skills/suggestions/missing-suggestion/dismiss",
+            "/api/skills/suggestions/{id}/dismiss",
+        ),
+        (
+            "/api/skills/suggestions/missing-suggestion/undo",
+            "/api/skills/suggestions/{id}/undo",
+        ),
+    ] {
+        let baseline = response_parts(fixture.send(HttpMethod::POST, uri, None, None).await).await;
+        let selected = response_parts(
+            fixture
+                .send(HttpMethod::POST, uri, None, Some("missing-space"))
+                .await,
+        )
+        .await;
+        assert_eq!(selected, baseline, "Global route honored Space: {uri}");
+        executed.push((Method::Post, catalog_path));
+    }
     zotero_collections_ignore_space(&fixture).await;
     executed.push((Method::Get, "/api/zotero/collections"));
     executed.push((Method::Get, "/api/zotero/items"));
