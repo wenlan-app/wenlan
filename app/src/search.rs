@@ -4277,7 +4277,11 @@ pub async fn accept_space_rules(
         .post_empty_as_person(&format!(
             "/api/skills/spaces/{}/accept{}",
             crate::api::percent_encode_path_segment(&space_id),
-            if this_space_only == Some(true) { "?this_space_only=true" } else { "" }
+            if this_space_only == Some(true) {
+                "?this_space_only=true"
+            } else {
+                ""
+            }
         ))
         .await
 }
@@ -4293,7 +4297,11 @@ pub async fn decline_space_rules(
         .post_empty_as_person(&format!(
             "/api/skills/spaces/{}/decline{}",
             crate::api::percent_encode_path_segment(&space_id),
-            if this_space_only == Some(true) { "?this_space_only=true" } else { "" }
+            if this_space_only == Some(true) {
+                "?this_space_only=true"
+            } else {
+                ""
+            }
         ))
         .await
 }

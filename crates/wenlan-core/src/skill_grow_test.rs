@@ -425,6 +425,9 @@ fn the_model_marks_lines_that_hold_for_any_project_as_general() {
     assert_eq!(lines.len(), 1);
     assert!(lines[0].general);
     let unmarked = parse_grow(&candidate_json("rule", quote, quote), &pages);
-    assert!(!unmarked[0].general, "a line is Space-only unless marked general");
+    assert!(
+        !unmarked[0].general,
+        "a line is Space-only unless marked general"
+    );
     assert!(grow_prompt("Habits", &pages).contains("general"));
 }
