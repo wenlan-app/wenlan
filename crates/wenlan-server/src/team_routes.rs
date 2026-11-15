@@ -23,11 +23,11 @@ use std::sync::{Arc, LazyLock};
 
 use axum::body::Body;
 use axum::extract::{DefaultBodyLimit, Path, Query, Request, State};
-use axum::http::{header, StatusCode};
+use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tower::ServiceExt;
 use wenlan_core::shared_space::{self, remote, Scope};
 use wenlan_core::team::{self, Member};
@@ -923,36 +923,436 @@ async fn team_health() -> impl IntoResponse {
     Json(serde_json::json!({ "status": "ok", "server": "wenlan-team" }))
 }
 
-/// GET /join — where an invite link opens in a browser. The key after `#`
-/// never reaches the server; the page only says what to do with the link.
-/// It shows the team's name and nothing else of the team.
-async fn team_join_page(State(state): State<TeamState>) -> impl IntoResponse {
-    let name = team::read_team(&state.team_path)
-        .ok()
-        .and_then(|file| file.name)
-        .unwrap_or_else(|| "a team".to_string());
-    let name = name
-        .replace('&', "&amp;")
+#[derive(Clone, Copy, Serialize)]
+struct JoinPageStrings {
+    lang: &'static str,
+    heading: &'static str,
+    unnamed_heading: &'static str,
+    unnamed_team: &'static str,
+    paste: &'static str,
+    download_before: &'static str,
+    download: &'static str,
+    download_after: &'static str,
+    connect: &'static str,
+    space: &'static str,
+    read_only: &'static str,
+    tool_question: &'static str,
+    claude_command: &'static str,
+    codex_config: &'static str,
+    cursor_config: &'static str,
+    copy: &'static str,
+    copied: &'static str,
+    copy_failed: &'static str,
+    private: &'static str,
+    expired: &'static str,
+}
+
+const JOIN_PAGE_EN: JoinPageStrings = JoinPageStrings {
+    lang: "en",
+    heading: "Join {team} on Wenlan",
+    unnamed_heading: "Join {team} on Wenlan",
+    unnamed_team: "a team",
+    paste: "Copy this page's address. In Wenlan, open Settings, then Team, choose Join with an invite link, and paste it.",
+    download_before: "Don't have Wenlan yet?",
+    download: "Download it",
+    download_after: ", then come back to this link.",
+    connect: "Don't want to install? Connect your AI tool",
+    space: "Space",
+    read_only: "Your AI tool can search this Space, but it cannot change pages.",
+    tool_question: "Which AI tool do you use?",
+    claude_command: "Run this command:",
+    codex_config: "Add to ~/.codex/config.toml:",
+    cursor_config: "Add to ~/.cursor/mcp.json:",
+    copy: "Copy",
+    copied: "Copied",
+    copy_failed: "Couldn't copy. Select the text above and copy it yourself.",
+    private: "Keep this private. It lets an AI tool act as you.",
+    expired: "This link no longer works. Ask whoever invited you for a new one.",
+};
+
+const JOIN_PAGE_ZH_HANS: JoinPageStrings = JoinPageStrings {
+    lang: "zh-Hans",
+    heading: "加入 {team}",
+    unnamed_heading: "加入{team}",
+    unnamed_team: "团队",
+    paste:
+        "复制这个页面的地址。在文澜中打开“设置”，然后打开“团队”，选择“用邀请链接加入团队”并粘贴。",
+    download_before: "还没安装文澜？",
+    download: "下载文澜",
+    download_after: "，然后再打开这个链接。",
+    connect: "不想安装？直接连接你的 AI 工具",
+    space: "Space",
+    read_only: "你的 AI 工具可以搜索这个 Space，但不能更改页面。",
+    tool_question: "你用哪个 AI 工具？",
+    claude_command: "运行这条命令：",
+    codex_config: "添加到 ~/.codex/config.toml：",
+    cursor_config: "添加到 ~/.cursor/mcp.json：",
+    copy: "复制",
+    copied: "已复制",
+    copy_failed: "未能复制。请选中上面的文字并手动复制。",
+    private: "请妥善保管。AI 工具可以用它以你的身份操作。",
+    expired: "这个链接已经失效。请让邀请你的人重新发一个。",
+};
+
+const JOIN_PAGE_ZH_HANT: JoinPageStrings = JoinPageStrings {
+    lang: "zh-Hant",
+    heading: "加入 {team}",
+    unnamed_heading: "加入{team}",
+    unnamed_team: "團隊",
+    paste: "複製這個頁面的位址。在文瀾中打開「設定」，再打開「團隊」，選擇「用邀請連結加入團隊」並貼上。",
+    download_before: "還沒安裝文瀾？",
+    download: "下載文瀾",
+    download_after: "，然後再打開這個連結。",
+    connect: "不想安裝？直接連接你的 AI 工具",
+    space: "Space",
+    read_only: "你的 AI 工具可以搜尋這個 Space，但不能更改頁面。",
+    tool_question: "你用哪個 AI 工具？",
+    claude_command: "執行這行指令：",
+    codex_config: "加入 ~/.codex/config.toml：",
+    cursor_config: "加入 ~/.cursor/mcp.json：",
+    copy: "複製",
+    copied: "已複製",
+    copy_failed: "未能複製。請選取上面的文字並手動複製。",
+    private: "請妥善保管。AI 工具可以用它以你的身分操作。",
+    expired: "這個連結已經失效。請讓邀請你的人重新傳一個。",
+};
+
+fn join_page_strings(headers: &HeaderMap) -> &'static JoinPageStrings {
+    let languages = headers
+        .get(header::ACCEPT_LANGUAGE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    let mut preferred = None;
+    let mut preferred_quality = -1.0_f32;
+    for language in languages.split(',') {
+        let mut parts = language.split(';');
+        let tag = parts.next().unwrap_or_default().trim().to_ascii_lowercase();
+        let quality = parts
+            .find_map(|part| part.trim().strip_prefix("q="))
+            .map(|quality| quality.parse::<f32>().unwrap_or(0.0))
+            .unwrap_or(1.0)
+            .clamp(0.0, 1.0);
+        if quality == 0.0 {
+            continue;
+        }
+        let candidate = if matches!(tag.as_str(), "zh-hant" | "zh-tw" | "zh-hk" | "zh-mo")
+            || tag.starts_with("zh-hant-")
+        {
+            Some(&JOIN_PAGE_ZH_HANT)
+        } else if tag == "zh" || tag.starts_with("zh-") {
+            Some(&JOIN_PAGE_ZH_HANS)
+        } else if tag == "en" || tag.starts_with("en-") || tag == "*" {
+            Some(&JOIN_PAGE_EN)
+        } else {
+            None
+        };
+        if candidate.is_some() && quality > preferred_quality {
+            preferred = candidate;
+            preferred_quality = quality;
+        }
+    }
+    preferred.unwrap_or(&JOIN_PAGE_EN)
+}
+
+fn html_escape(text: &str) -> String {
+    text.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
-        .replace('"', "&quot;");
-    let page = format!(
-        "<!doctype html><html lang=\"en\"><meta charset=\"utf-8\">\
-<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
-<title>Join {name} on Wenlan</title>\
-<style>body{{font:16px/1.6 system-ui,sans-serif;max-width:32rem;margin:15vh auto;padding:0 16px;color:#1c1d22}}\
-@media(prefers-color-scheme:dark){{body{{background:#16171b;color:#ececf1}}a{{color:#a29dff}}}}</style>\
-<h1>Join {name} on Wenlan</h1>\
-<p>Copy this page's address. In Wenlan, open Settings, then Team, choose Join with an invite link, and paste it.</p>\
-<p>Don't have Wenlan yet? <a href=\"https://wenlan.app\">Download it</a>, then come back to this link.</p>"
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
+fn join_page_script_strings(strings: &JoinPageStrings) -> String {
+    // JSON strings are valid JavaScript literals, but `<` must still be
+    // escaped because the HTML parser, not JavaScript, recognizes `</script>`.
+    serde_json::to_string(strings)
+        .expect("join-page strings serialize")
+        .replace('<', "\\u003c")
+        .replace('>', "\\u003e")
+        .replace('&', "\\u0026")
+        .replace('\u{2028}', "\\u2028")
+        .replace('\u{2029}', "\\u2029")
+}
+
+const JOIN_PAGE_TEMPLATE: &str = r#"<!doctype html>
+<html lang="%%LANG%%">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>%%HEADING%%</title>
+<style nonce="%%NONCE%%">
+:root { color-scheme: light dark; }
+* { box-sizing: border-box; }
+body { margin:0; background:#f7f7f5; color:#202124; font:16px/1.55 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+main { width:min(38rem,100%); margin:10vh auto; padding:0 20px 48px; }
+h1 { margin:0 0 12px; font-size:clamp(1.7rem,7vw,2.3rem); line-height:1.15; letter-spacing:-.025em; }
+p { margin:8px 0; }
+a { color:#5146b8; }
+button,select { font:inherit; }
+button { border:0; border-radius:8px; cursor:pointer; }
+#connect { margin-top:18px; padding:10px 14px; background:#5751c9; color:white; font-weight:600; }
+#connect:disabled { opacity:.55; cursor:default; }
+[hidden] { display:none !important; }
+#error { margin-top:18px; }
+#setup { margin-top:24px; }
+.chooser { display:flex; align-items:center; gap:10px; margin:12px 0; }
+.chooser select { min-width:0; max-width:100%; padding:6px 8px; }
+.readonly { color:#6a5a18; }
+.tool-question { margin:20px 0 8px; font-weight:600; }
+.tools { display:flex; max-width:100%; gap:8px; }
+.tool { flex:1 1 0; min-width:0; padding:8px; border-radius:8px; overflow:hidden; background:#e8e7e2; color:#202124; font-size:.9rem; line-height:1.4; text-overflow:ellipsis; white-space:nowrap; }
+.tool.is-selected { background:#5751c9; color:white; font-weight:600; }
+.tool:focus-visible,.copy:focus-visible { outline:3px solid #5146b8; outline-offset:2px; }
+.snippet { min-width:0; margin-top:16px; }
+.snippet-head { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px 12px; }
+.instruction { margin:0; color:#66676b; font-size:.88rem; }
+.copy { padding:5px 10px; background:#e8e7e2; color:#202124; }
+pre { max-width:100%; margin:0; padding:12px; overflow:auto; border-radius:8px; background:#ecece8; font:13px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace; white-space:pre-wrap; overflow-wrap:anywhere; }
+.copy-status { min-height:1.25em; margin:4px 0 0; color:#66676b; font-size:.82rem; }
+.private { margin-top:20px; font-size:.9rem; font-weight:600; }
+@media (prefers-color-scheme:dark) {
+  body { background:#16171b; color:#ececf1; }
+  a { color:#aaa5ff; }
+  .instruction,.copy-status { color:#aaaab2; }
+  .tool { background:#303137; color:#ececf1; }
+  .copy { background:#303137; color:#ececf1; }
+  .tool.is-selected { background:#7770e7; color:white; }
+  .tool:focus-visible,.copy:focus-visible { outline-color:#aaa5ff; }
+  pre { background:#25262b; }
+  .readonly { color:#e1c86b; }
+}
+@media (max-width:480px) {
+  main { margin:7vh auto; padding-inline:16px; }
+}
+</style>
+</head>
+<body>
+<main>
+<h1>%%HEADING%%</h1>
+<p>%%PASTE%%</p>
+<p>%%DOWNLOAD_BEFORE%% <a href="https://wenlan.app">%%DOWNLOAD%%</a>%%DOWNLOAD_AFTER%%</p>
+<button id="connect" type="button">%%CONNECT%%</button>
+<p id="error" hidden>%%EXPIRED%%</p>
+<section id="setup" hidden>
+  <label class="chooser" id="chooser" hidden><span>%%SPACE%%</span><select id="spaces"></select></label>
+  <p class="tool-question" id="tool-question">%%TOOL_QUESTION%%</p>
+  <div class="tools" role="group" aria-labelledby="tool-question">
+    <button class="tool" id="tool-claude" type="button" data-tool="claude" aria-pressed="false">Claude Code</button>
+    <button class="tool" id="tool-codex" type="button" data-tool="codex" aria-pressed="false">Codex</button>
+    <button class="tool" id="tool-cursor" type="button" data-tool="cursor" aria-pressed="false">Cursor</button>
+  </div>
+  <section class="snippet" id="snippet" hidden>
+    <div class="snippet-head">
+      <p class="instruction" id="instruction"></p>
+      <button class="copy" id="copy" type="button">%%COPY%%</button>
+    </div>
+    <pre tabindex="0"><code id="snippet-text"></code></pre>
+    <p class="copy-status" id="copy-status" aria-live="polite"></p>
+    <p class="readonly" id="readonly" hidden>%%READ_ONLY%%</p>
+    <p class="private">%%PRIVATE%%</p>
+  </section>
+</section>
+</main>
+<script nonce="%%NONCE%%">
+(() => {
+  const text = %%SCRIPT_STRINGS%%;
+  const connect = document.getElementById('connect');
+  const error = document.getElementById('error');
+  const setup = document.getElementById('setup');
+  const chooser = document.getElementById('chooser');
+  const spacesNode = document.getElementById('spaces');
+  const readonlyNode = document.getElementById('readonly');
+  const snippet = document.getElementById('snippet');
+  const instruction = document.getElementById('instruction');
+  const snippetText = document.getElementById('snippet-text');
+  const copy = document.getElementById('copy');
+  const copyStatus = document.getElementById('copy-status');
+  const toolButtons = {
+    claude: document.getElementById('tool-claude'),
+    codex: document.getElementById('tool-codex'),
+    cursor: document.getElementById('tool-cursor')
+  };
+  const instructions = {
+    claude: text.claude_command,
+    codex: text.codex_config,
+    cursor: text.cursor_config
+  };
+  let selectedTool = null;
+  let snippets = null;
+  let readOnly = false;
+
+  const fail = () => {
+    setup.hidden = true;
+    error.hidden = false;
+    connect.disabled = false;
+  };
+
+  const selectText = (node) => {
+    const selection = window.getSelection();
+    if (!selection) return;
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    node.parentElement.focus();
+  };
+
+  const renderTool = () => {
+    Object.entries(toolButtons).forEach(([tool, button]) => {
+      const selected = tool === selectedTool;
+      button.setAttribute('aria-pressed', String(selected));
+      button.classList.toggle('is-selected', selected);
+    });
+    if (!selectedTool || !snippets) {
+      snippet.hidden = true;
+      readonlyNode.hidden = true;
+      return;
+    }
+    instruction.textContent = instructions[selectedTool];
+    snippetText.textContent = snippets[selectedTool];
+    copy.textContent = text.copy;
+    copyStatus.textContent = '';
+    readonlyNode.hidden = !readOnly;
+    snippet.hidden = false;
+  };
+
+  Object.entries(toolButtons).forEach(([tool, button]) => {
+    button.addEventListener('click', () => {
+      selectedTool = tool;
+      renderTool();
+    });
+  });
+
+  copy.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(snippetText.textContent);
+      copy.textContent = text.copied;
+      copyStatus.textContent = '';
+    } catch (_) {
+      selectText(snippetText);
+      copyStatus.textContent = text.copy_failed;
+    }
+  });
+
+  connect.addEventListener('click', async () => {
+    const key = window.location.hash.slice(1);
+    if (!key) {
+      fail();
+      return;
+    }
+    connect.disabled = true;
+    error.hidden = true;
+    try {
+      const response = await fetch('/team/v1/me', {
+        method: 'GET',
+        headers: { Authorization: 'Bearer ' + key },
+        credentials: 'omit',
+        cache: 'no-store',
+        referrerPolicy: 'no-referrer'
+      });
+      if (!response.ok) throw new Error('join refused');
+      const me = await response.json();
+      const spaces = Array.isArray(me.spaces) ? me.spaces : [];
+      if (spaces.length === 0) throw new Error('no Space');
+
+      spacesNode.replaceChildren();
+      spaces.forEach((entry, index) => {
+        const option = document.createElement('option');
+        option.value = String(index);
+        option.textContent = entry.space;
+        spacesNode.append(option);
+      });
+      chooser.hidden = spaces.length === 1;
+
+      const update = () => {
+        const entry = spaces[Number(spacesNode.value || 0)];
+        const address = spaces.length === 1
+          ? window.location.origin + '/mcp'
+          : window.location.origin + '/mcp/' + encodeURIComponent(entry.space);
+        readOnly = entry.access === 'read';
+        snippets = {
+          claude: 'claude mcp add --transport http wenlan-team ' + address
+            + ' --header "Authorization: Bearer ' + key + '"',
+          codex: '[mcp_servers.wenlan-team]\nurl = "' + address
+            + '"\nhttp_headers = { Authorization = "Bearer ' + key + '" }',
+          cursor: JSON.stringify({
+            mcpServers: { 'wenlan-team': { url: address, headers: { Authorization: 'Bearer ' + key } } }
+          })
+        };
+        renderTool();
+      };
+      spacesNode.addEventListener('change', update, { once: false });
+      update();
+      setup.hidden = false;
+      connect.hidden = true;
+    } catch (_) {
+      fail();
+    }
+  });
+})();
+</script>
+</body>
+</html>
+"#;
+
+fn render_join_page(name: Option<&str>, strings: &JoinPageStrings, nonce: &str) -> String {
+    let (heading, name) = match name {
+        Some(name) => (strings.heading, name),
+        None => (strings.unnamed_heading, strings.unnamed_team),
+    };
+    let heading = html_escape(&heading.replace("{team}", name));
+    let mut page = JOIN_PAGE_TEMPLATE.to_string();
+    let escaped = [
+        ("%%LANG%%", html_escape(strings.lang)),
+        ("%%HEADING%%", heading),
+        ("%%NONCE%%", html_escape(nonce)),
+        ("%%PASTE%%", html_escape(strings.paste)),
+        ("%%DOWNLOAD_BEFORE%%", html_escape(strings.download_before)),
+        ("%%DOWNLOAD%%", html_escape(strings.download)),
+        ("%%DOWNLOAD_AFTER%%", html_escape(strings.download_after)),
+        ("%%CONNECT%%", html_escape(strings.connect)),
+        ("%%SPACE%%", html_escape(strings.space)),
+        ("%%READ_ONLY%%", html_escape(strings.read_only)),
+        ("%%TOOL_QUESTION%%", html_escape(strings.tool_question)),
+        ("%%COPY%%", html_escape(strings.copy)),
+        ("%%PRIVATE%%", html_escape(strings.private)),
+        ("%%EXPIRED%%", html_escape(strings.expired)),
+    ];
+    for (marker, value) in escaped {
+        page = page.replace(marker, &value);
+    }
+    page.replace("%%SCRIPT_STRINGS%%", &join_page_script_strings(strings))
+}
+
+/// GET /join — where an invite link opens in a browser. The key after `#`
+/// never reaches the server. The browser can use it only to read `/team/v1/me`
+/// and build the member's AI-tool configuration locally.
+async fn team_join_page(State(state): State<TeamState>, headers: HeaderMap) -> Response {
+    let name = team::read_team(&state.team_path)
+        .ok()
+        .and_then(|file| file.name);
+    let strings = join_page_strings(&headers);
+    let nonce = uuid::Uuid::new_v4().simple().to_string();
+    let page = render_join_page(name.as_deref(), strings, &nonce);
+    let csp = format!(
+        "default-src 'none'; script-src 'nonce-{nonce}'; style-src 'nonce-{nonce}'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
     );
-    (
-        [
-            (axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8"),
-            (axum::http::header::CACHE_CONTROL, "no-store"),
-        ],
-        page,
-    )
+    let mut response = page.into_response();
+    let response_headers = response.headers_mut();
+    response_headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/html; charset=utf-8"),
+    );
+    response_headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response_headers.insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("no-referrer"),
+    );
+    response_headers.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_str(&csp).expect("join-page CSP is a valid header"),
+    );
+    response
 }
 
 /// Origins of web AI apps whose connectors may call `/mcp` from a browser.

@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { i18n } from "../../../i18n";
 import { teamGroups } from "./TeamPage";
+import { IssuedCode } from "../sharing/TeamMembers";
 import { ScopeProvider, useScopeState } from "./scope";
 import { ScopeSwitcher } from "./ScopeSwitcher";
 import {
@@ -150,6 +151,22 @@ describe("the team's own things, in the switch at the top left, on the computer 
     expect(screen.queryByDisplayValue(/wlt_k/)).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Copy link" }));
     expect(writeText).toHaveBeenCalledWith("https://team.example.com/join#wlt_k");
+  });
+});
+
+describe("IssuedCode browser setup hint", () => {
+  it.each([
+    ["en", "No Wenlan app? Open the link in a browser to connect an AI tool."],
+    ["zh-Hans", "没有文澜应用？在浏览器中打开链接，即可改为连接 AI 工具。"],
+    ["zh-Hant", "沒有文瀾應用程式？在瀏覽器中打開連結，即可改為連接 AI 工具。"],
+  ])("renders in %s without printing the invite link", async (language, hint) => {
+    await i18n.changeLanguage(language);
+    const code = "https://team.example.com/join#wlt_secret";
+    wrap(<IssuedCode name="Cy" code={code} onDone={() => undefined} />);
+    expect(screen.getByText(hint)).toBeInTheDocument();
+    expect(screen.queryByDisplayValue(code)).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("team.example.com");
+    expect(document.body.textContent).not.toContain("wlt_secret");
   });
 });
 
