@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { oauthKV } from './fixtures/oauth-storage.mjs';
 import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -33,7 +34,7 @@ test('real OAuth library requires pairing and enforces PKCE, resource and token 
   const token = params => request('/oauth/token', { method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(params).toString() });
   const clientExpiration = async clientId => {
-    const kv = await runtime.getKVNamespace('OAUTH_KV');
+    const kv = await oauthKV(runtime, 'synthetic-authority');
     const key = `client:${clientId}`;
     const entry = (await kv.list({ prefix: key })).keys.find(item => item.name === key);
     return entry?.expiration;
@@ -197,7 +198,7 @@ test('real OAuth library requires pairing and enforces PKCE, resource and token 
       tokens = refreshed;
     });
     await t.test('expired access credentials fail while a valid refresh can renew them', async () => {
-      const kv = await runtime.getKVNamespace('OAUTH_KV');
+      const kv = await oauthKV(runtime, 'synthetic-authority');
       const [userId, grantId] = tokens.access_token.split(':');
       const entries = await kv.list({ prefix: `token:${userId}:${grantId}:` });
       assert.ok(entries.keys.length > 0);
@@ -231,7 +232,7 @@ test('real OAuth library requires pairing and enforces PKCE, resource and token 
       assert.equal(await (await post('/fixture/grant-end', { subject, grantId, expiresAt: expiresAtMs })).json(), true);
     }
     await t.test('each refresh renews the 30-day idle window, capped by the grant end', async () => {
-      const kv = await runtime.getKVNamespace('OAUTH_KV');
+      const kv = await oauthKV(runtime, 'synthetic-authority');
       const grantKey = grantKeyOf(tokens);
       const issued = await kv.get(grantKey, 'json');
       assert.ok(Math.abs(issued.expiresAt - (nowSeconds() + 30 * 86400)) <= 5);
@@ -253,7 +254,7 @@ test('real OAuth library requires pairing and enforces PKCE, resource and token 
       assert.equal((await query(tokens.access_token)).status, 200);
     });
     await t.test('30 idle days end a connection', async () => {
-      const kv = await runtime.getKVNamespace('OAUTH_KV');
+      const kv = await oauthKV(runtime, 'synthetic-authority');
       const idle = await pairedClient('Idle synthetic client');
       const grantKey = grantKeyOf(idle.tokens);
       await kv.put(grantKey, JSON.stringify({ ...await kv.get(grantKey, 'json'), expiresAt: nowSeconds() + 30 }));
@@ -262,7 +263,7 @@ test('real OAuth library requires pairing and enforces PKCE, resource and token 
       assert.deepEqual(await rejected.json(), { error: 'invalid_grant', error_description: 'Refresh token has expired' });
     });
     await t.test('a grant at its end is refused and its tokens are revoked', async () => {
-      const kv = await runtime.getKVNamespace('OAUTH_KV');
+      const kv = await oauthKV(runtime, 'synthetic-authority');
       const spent = await pairedClient('Spent synthetic client');
       // Under a minute left: the provider cannot issue a shorter refresh window.
       await setGrantEnd(spent.tokens, Date.now() + 30_000);
@@ -273,7 +274,7 @@ test('real OAuth library requires pairing and enforces PKCE, resource and token 
       assert.equal((await query(spent.tokens.access_token)).status, 401);
     });
     await t.test('a storage failure during refresh is a server error and keeps the grant', async () => {
-      const kv = await runtime.getKVNamespace('OAUTH_KV');
+      const kv = await oauthKV(runtime, 'synthetic-authority');
       const kept = await pairedClient('Transient synthetic client');
       assert.equal(await (await post('/fixture/fail-route-loads', { on: true })).json(), true);
       try {
@@ -289,7 +290,7 @@ test('real OAuth library requires pairing and enforces PKCE, resource and token 
       await retried.body?.cancel();
     });
     await t.test('a registration used in its second half renews for another 90 days', async () => {
-      const kv = await runtime.getKVNamespace('OAUTH_KV');
+      const kv = await oauthKV(runtime, 'synthetic-authority');
       const used = await pairedClient('Renewing synthetic client');
       const clientKey = `client:${used.client.client_id}`;
       const soon = nowSeconds() + 3600;
@@ -314,7 +315,7 @@ test('real OAuth library requires pairing and enforces PKCE, resource and token 
       assert.equal((await rejected.json()).error, 'invalid_grant');
     });
     await t.test('expired DCR clients require fresh registration and consent', async () => {
-      const kv = await runtime.getKVNamespace('OAUTH_KV');
+      const kv = await oauthKV(runtime, 'synthetic-authority');
       const registered = await post('/oauth/register', { client_name: 'Expiring synthetic client',
         redirect_uris: [redirectUri], grant_types: ['authorization_code', 'refresh_token'],
         response_types: ['code'], token_endpoint_auth_method: 'none' });

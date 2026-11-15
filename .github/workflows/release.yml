@@ -589,6 +589,34 @@ jobs:
             echo "Developer ID signing without notarization"
           fi
 
+      - name: Check Apple notary account before building
+        # Fail in the first minutes, not after the ~35-minute build: an
+        # expired Apple developer agreement or a revoked app password makes
+        # every notary call fail (HTTP 403 "A required agreement is missing or
+        # has expired" on v0.21.7), and a rerun repeats the whole build.
+        if: env.APPLE_NOTARIZATION_CONFIGURED == 'true'
+        shell: bash
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          set +e
+          out="$(xcrun notarytool history --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" --output-format json 2>&1)"
+          rc=$?
+          set -e
+          if [[ "$rc" -ne 0 ]]; then
+            printf '%s\n' "$out" | head -20 >&2
+            if grep -q 'agreement' <<<"$out"; then
+              echo "ERROR: Apple needs the account holder to accept an updated agreement at https://developer.apple.com/account before notarization works." >&2
+            fi
+            echo "ERROR: Apple notary service refused this account (notarytool history exited $rc); not starting the build." >&2
+            exit 1
+          fi
+          echo "Apple notary account accepts requests."
+
       - name: Build macOS desktop app bundle
         shell: bash
         env:

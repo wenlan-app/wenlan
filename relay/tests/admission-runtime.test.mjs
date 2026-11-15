@@ -161,7 +161,14 @@ test('production admission limits and bounded rate table run in Miniflare', { ti
 
     await t.test('cross-peer DCR attempts share its daily cap', async () => {
       const peers = Array.from({ length: 25 }, (_, index) => `203.0.113.${index + 1}`);
-      const attempts = await Promise.all(peers.flatMap(ip => Array.from({ length: 10 }, () => attempt('/oauth/register', ip))));
+      // Exercise the same 250 attempts across peers without opening 250 local
+      // TCP connections at once (Miniflare can reset that burst on macOS).
+      // Last-slot concurrency is exercised independently below.
+      const attempts = (await Promise.all(peers.map(async ip => {
+        const results = [];
+        for (let n = 0; n < 10; n++) results.push(await attempt('/oauth/register', ip));
+        return results;
+      }))).flat();
       assert.equal(attempts.filter(result => result.status === 400).length, 250);
       const next = await attempt('/oauth/register', '203.0.113.250');
       assert.equal(next.status, 429);

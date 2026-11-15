@@ -85,6 +85,11 @@ claim hooks are active without checking the current worktree.
 
 ## Git and release
 
+Coding agents do not open GitHub issues on their own. Put flaky tests, follow-ups,
+and ideas in the PR description or the task's handoff instead. Open an issue only
+when the maintainer asks for one in that task, or a workflow under
+`.github/workflows/` opens it by design.
+
 Use conventional PR titles because release-please uses the squash title for the
 changelog. Version changes must keep `version.txt`, `.release-please-manifest.json`, the
 workspace version, and the app version surfaces in lockstep; the existing verifier is

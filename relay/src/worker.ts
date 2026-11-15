@@ -12,6 +12,7 @@ import { domainVerification } from './domain-verification.ts';
 import { ReverseChannelUnavailable, ReverseConnections } from './reverse-connections.ts';
 import { authenticateReverseDevice, beginReverseActivation, commitReverseActivation, reverseConnectionCurrent, type OwnedState } from './reverse-devices.ts';
 import { verifyConnectorContract } from './connector-check.ts';
+import { oauthStore } from './oauth-store.ts';
 import { knownClientName } from './client-identity.ts';
 
 interface Env extends PublicEnv {
@@ -119,9 +120,13 @@ export class RelayAuthority extends DurableObject<Env> {
   private authorizationMutationActive = false;
   private connections: ReverseConnections;
   private central: boolean;
+  private oauthEnv?: Env;
+  private oauthStorage?: ReturnType<typeof oauthStore>;
   constructor(private state: DurableObjectState, env: Env) {
     super(state, env);
     this.central = state.id.equals(env.AUTHORITY.idFromName('wenlan-v1'));
+    this.oauthStorage = this.central ? oauthStore(state.storage.sql, env.OAUTH_KV) : undefined;
+    this.oauthEnv = this.oauthStorage ? { ...env, OAUTH_KV: this.oauthStorage } : undefined;
     state.storage.sql.exec('CREATE TABLE IF NOT EXISTS rate_window (key TEXT PRIMARY KEY, count INTEGER NOT NULL, expires INTEGER NOT NULL)');
     state.storage.sql.exec('CREATE INDEX IF NOT EXISTS rate_expiry ON rate_window(expires)');
     this.store = boundedStore(state.storage);
@@ -361,11 +366,12 @@ export class RelayAuthority extends DurableObject<Env> {
       return;
     }
     const maintenance = await maintainAuthority(this.store,
-      (grantId, subject) => this.provider.revokeStoredGrant(this.env, grantId, subject), now);
+      (grantId, subject) => this.provider.revokeStoredGrant(this.oauthEnv!, grantId, subject), now);
     await this.connections.sweep();
     this.state.storage.sql.exec('DELETE FROM rate_window WHERE key IN (SELECT key FROM rate_window WHERE expires <= ? LIMIT 256)', now);
     const next = this.state.storage.sql.exec<{ expires: number | null }>('SELECT MIN(expires) AS expires FROM rate_window').one().expires;
-    if (!maintenance.more && next === null) await this.state.storage.deleteAlarm();
+    const oauthMore = this.oauthStorage!.sweep();
+    if (!maintenance.more && !oauthMore && next === null) await this.state.storage.deleteAlarm();
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -430,7 +436,7 @@ export class RelayAuthority extends DurableObject<Env> {
       const completing = ['/pairing/complete', '/pairing/sample'].includes(url.pathname) && request.method === 'POST';
       const mutating = exchanging || completing;
       // Issuance and reauthorization share this authority. Do not interleave
-      // the provider's KV read/modify/write flows, or hold this guard while
+      // the provider's read/modify/write flows, or hold this guard while
       // buffering an untrusted body or streaming an MCP response.
       if (mutating && this.authorizationMutationActive) {
         const response = failure(503, exchanging ? 'temporarily_unavailable' : 'Authorization temporarily unavailable');
@@ -439,7 +445,7 @@ export class RelayAuthority extends DurableObject<Env> {
       }
       if (mutating) this.authorizationMutationActive = true;
       try {
-        const response = await this.provider.fetch(buffered, this.env, ctx);
+        const response = await this.provider.fetch(buffered, this.oauthEnv!, ctx);
         if (response.ok && request.method === 'POST'
           && ['/devices/revoke', '/devices/rotate', '/devices/refresh', '/devices/renew'].includes(url.pathname)) {
           const id = request.headers.get('x-wenlan-device-id') ?? '';

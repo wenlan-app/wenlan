@@ -4982,6 +4982,18 @@ def apple_stapler_retry_contract_violations(release: str) -> list[str]:
                 violations.append(f"Apple ticket proof missing or reordered in {step_name}: {marker}")
                 break
             position = found + len(marker)
+    precheck = named_step_body(job, "Check Apple notary account before building")
+    if not precheck:
+        violations.append("Apple notary account precheck step missing")
+    else:
+        if "if: env.APPLE_NOTARIZATION_CONFIGURED == 'true'" not in precheck:
+            violations.append("Apple notary precheck is not gated by notarization configuration")
+        if "xcrun notarytool history" not in precheck or "exit 1" not in precheck:
+            violations.append("Apple notary precheck does not fail on a refused account")
+        if job.find("- name: Check Apple notary account before building") > job.find(
+            "- name: Build macOS desktop app bundle"
+        ):
+            violations.append("Apple notary precheck runs after the build")
     notarize = named_step_body(job, "Notarize and staple the DMG")
     for marker in ["xcrun notarytool submit", "status: Accepted"]:
         if marker not in notarize:

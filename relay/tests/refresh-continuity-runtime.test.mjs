@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { oauthKV } from './fixtures/oauth-storage.mjs';
 import { createRequire } from 'node:module';
 import { createHash, randomBytes } from 'node:crypto';
 import { join, resolve } from 'node:path';
@@ -57,7 +58,7 @@ function peer(socket) {
 // "invalid_grant: Invalid refresh token", which only the library's rotation
 // check produces: the grant still existed and every Wenlan check was unreached.
 test('a paired grant survives a device outage and reconnect; each refresh rejection names its cause', { timeout: 60_000 }, async t => {
-  const bundled = await build({ entryPoints: [fileURLToPath(new URL('../src/worker.ts', import.meta.url))],
+  const bundled = await build({ entryPoints: [fileURLToPath(new URL('./fixtures/oauth-storage-worker.ts', import.meta.url))],
     bundle: true, write: false, format: 'esm', platform: 'browser', target: 'es2022',
     external: ['cloudflare:workers'], loader: { '.png': 'binary' } });
   const runtime = new Miniflare({ modules: true, script: bundled.outputFiles[0].text,
@@ -133,7 +134,7 @@ test('a paired grant survives a device outage and reconnect; each refresh reject
     }
     // Models the 900-second access TTL elapsing without waiting for it.
     async function expireAccess(tokens) {
-      const kv = await runtime.getKVNamespace('OAUTH_KV');
+      const kv = await oauthKV(runtime);
       const [subject, grantId] = tokens.access_token.split(':');
       const entries = await kv.list({ prefix: `token:${subject}:${grantId}:` });
       assert(entries.keys.length > 0);
@@ -193,7 +194,7 @@ test('a paired grant survives a device outage and reconnect; each refresh reject
     // Restores stale library records to show the authority still rejects them
     // when eager KV cleanup has not happened yet.
     async function snapshotGrant(tokens) {
-      const kv = await runtime.getKVNamespace('OAUTH_KV');
+      const kv = await oauthKV(runtime);
       const [subject, grantId] = tokens.refresh_token.split(':');
       const key = `grant:${subject}:${grantId}`;
       const value = await kv.get(key);

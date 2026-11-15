@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { oauthKV } from './fixtures/oauth-storage.mjs';
 import { createRequire } from 'node:module';
 import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,7 +14,7 @@ const { Miniflare } = requireTool('miniflare');
 const { build } = requireTool('esbuild');
 const origin = 'https://wenlan-relay.example';
 
-test('actual authority alarm persists cursor, retries bounded OAuth deletion after restart, and stops when empty', { timeout: 60_000 }, async () => {
+test('actual authority alarm persists cursor, deletes the OAuth grant without listing KV, and stops when empty', { timeout: 60_000 }, async () => {
   const bundle = await build({ entryPoints: [fileURLToPath(new URL('./fixtures/maintenance-worker.ts', import.meta.url))],
     bundle: true, write: false, format: 'esm', platform: 'browser', target: 'es2022',
     external: ['cloudflare:workers'], loader: { '.png': 'binary' } });
@@ -39,9 +40,9 @@ test('actual authority alarm persists cursor, retries bounded OAuth deletion aft
   const grantKey = `grant:${subject}:${id}`;
   const tokenPrefix = `token:${subject}:${id}:`;
   try {
-    const initialKV = await runtime.getKVNamespace('OAUTH_KV');
-    // These synthetic records test the pinned library's actual storage cleanup,
-    // not token validity. Full issued-token behavior lives in the OAuth tests.
+    const initialKV = await oauthKV(runtime);
+    // Synthetic provider records. Token validity after revocation is covered
+    // by the OAuth tests; this checks what physical cleanup touches.
     await initialKV.put(grantKey, JSON.stringify({ id, userId: subject }));
     for (let n = 0; n < 25; n++) await initialKV.put(`${tokenPrefix}${String(n).padStart(3, '0')}`, '{}');
     const receipt = { id, subject, connectorId: subject, clientId: 'synthetic', space: 'review', generation: 0,
@@ -57,13 +58,15 @@ test('actual authority alarm persists cursor, retries bounded OAuth deletion aft
       if (first.records[receiptKey].cleanupFailures !== undefined) break;
       await new Promise(resolve => setTimeout(resolve, 25));
     }
-    assert.equal(first.records[receiptKey].cleanupFailures, 0, 'native scheduled alarm did not finish its partial batch');
+    assert.equal(first.records[receiptKey].cleanupFailures, 0, 'native scheduled alarm did not finish its cleanup');
     assert(first.alarm > Date.now(), 'must reschedule without any rate buckets or new traffic');
     assert(first.records['maintenance:cursor'].after);
     assert(first.records['pairing:064'], 'one alarm cannot scan unbounded rows');
-    assert.equal(first.records[receiptKey].cleanupPending, true);
+    // SQL cleanup removes both the grant and every token without KV lists.
+    assert.equal(first.records[receiptKey].cleanupPending, false);
     assert.equal(first.records[receiptKey].active, false);
-    assert((await initialKV.list({ prefix: tokenPrefix })).keys.length > 0, 'large token sets must require another bounded batch');
+    assert.equal(await initialKV.get(grantKey), null);
+    assert.equal((await initialKV.list({ prefix: tokenPrefix })).keys.length, 0);
     await runtime.dispose();
     runtime = new Miniflare(options);
     const restored = await fixture('inspect');
@@ -73,24 +76,32 @@ test('actual authority alarm persists cursor, retries bounded OAuth deletion aft
     assert.notDeepEqual(second.records['maintenance:cursor'], first.records['maintenance:cursor']);
     for (let i = 0; i < 3; i++) await fixture('alarm');
     assert(!(await fixture('inspect')).records['pairing:064']);
-    // Simulate retry time elapsing without waiting a minute or replacing the
-    // authority implementation. No request has initialized OAuth helpers.
-    for (let i = 0; i < 6; i++) {
-      const state = await fixture('inspect');
-      const current = state.records[receiptKey];
-      if (!current.cleanupPending) break;
-      await fixture('seed', { [receiptKey]: { ...current, cleanupAfter: 0 } });
-      await fixture('alarm');
-    }
     const final = await fixture('inspect');
     assert.equal(final.records[receiptKey].cleanupPending, false);
     assert.equal(final.records[receiptKey].active, false);
-    const kv = await runtime.getKVNamespace('OAUTH_KV');
-    assert.equal((await kv.list({ prefix: tokenPrefix })).keys.length, 0);
+    const kv = await oauthKV(runtime);
     assert.equal(await kv.get(grantKey), null);
     assert(final.alarm, 'live replay tombstone still needs eventual retention cleanup');
     await fixture('clear');
     assert.equal((await fixture('alarm')).alarm, null);
+    await fixture('oauth-expired');
+    const swept = await fixture('alarm');
+    assert.equal(swept.oauthRows, 44, 'one alarm deletes at most 256 expired OAuth rows');
+    assert(swept.alarm, 'remaining OAuth expirations must keep maintenance scheduled');
+    const drained = await fixture('alarm');
+    assert.equal(drained.oauthRows, 0);
+    assert.equal(drained.alarm, null);
+    await fixture('oauth-full');
+    const refused = await runtime.dispatchFetch(`${origin}/oauth/register`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ redirect_uris: ['https://client.example/callback'],
+        grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'], token_endpoint_auth_method: 'none' }),
+    });
+    assert.equal(refused.status, 503, 'OAuth capacity failures reach the sanitized HTTP handler');
+    const errorBody = await refused.text();
+    assert(!errorBody.includes('capacity') && !errorBody.includes('oauth_kv') && !errorBody.includes('SQL'));
+    assert.equal((await fixture('inspect')).oauthRows, 50000);
+
   } finally {
     await runtime.dispose();
     await rm(dir, { recursive: true, force: true });
