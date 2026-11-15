@@ -178,7 +178,7 @@ team:
 
 ```bash
 wenlan team start "Acme" --as "Qi"
-wenlan team host "Product" --everyone
+wenlan team share "Product" --everyone
 wenlan team invite "Amy"
 wenlan team invite "Bo" --access Product:read
 ```

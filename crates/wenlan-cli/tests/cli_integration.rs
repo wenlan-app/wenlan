@@ -732,8 +732,12 @@ fn top_level_help() {
         ))
         .stdout(predicate::str::contains("\nDaily:\n"))
         .stdout(predicate::str::contains("\nSetup:\n"))
-        .stdout(predicate::str::contains("\nMaintenance:\n"))
-        .stdout(predicate::str::contains("\n  steep "))
+        .stdout(predicate::str::contains("\nTeam:\n"))
+        .stdout(predicate::str::contains(
+            "\nMore commands: wenlan help all (",
+        ))
+        .stdout(predicate::str::contains("\n  start "))
+        .stdout(predicate::str::contains("\n  steep ").not())
         .stdout(predicate::str::contains("\n  search ").not())
         .stdout(predicate::str::contains("\n  sweep ").not())
         .stdout(predicate::str::contains("\n  agents ").not());
@@ -758,6 +762,7 @@ fn each_subcommand_has_help() {
         "memories",
         "agents",
         "setup",
+        "tool",
         "start",
         "stop",
         "background",

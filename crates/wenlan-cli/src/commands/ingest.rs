@@ -21,6 +21,8 @@ use crate::output::{print_json, ResolvedFormat};
 
 #[derive(clap::Subcommand)]
 pub enum SourcesCommand {
+    /// Print the text of one saved file or webpage (the read_source tool). Needs --space.
+    Read(super::page_tools::ReadSourceArgs),
     /// Add a folder or file source and sync it now.
     Add {
         /// Path to a directory or file to add as a source.
@@ -78,6 +80,9 @@ pub async fn run_sources(
     command: SourcesCommand,
 ) -> Result<()> {
     match command {
+        SourcesCommand::Read(_) => {
+            unreachable!("sources read returns before a daemon client is made")
+        }
         SourcesCommand::Add { path, source_type } => {
             run(client, format, quiet, path, source_type).await
         }
