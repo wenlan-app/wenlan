@@ -91,6 +91,24 @@ async fn call(
     (status, bytes.to_vec())
 }
 
+async fn join_page_response(state: &TeamState, language: Option<&str>) -> Response {
+    let mut request = Request::builder().method(Method::GET).uri("/join");
+    if let Some(language) = language {
+        request = request.header(header::ACCEPT_LANGUAGE, language);
+    }
+    team_router(state.clone())
+        .oneshot(request.body(Body::empty()).unwrap())
+        .await
+        .unwrap()
+}
+
+async fn response_text(response: Response) -> String {
+    let bytes = to_bytes(response.into_body(), 16 * 1024 * 1024)
+        .await
+        .unwrap();
+    String::from_utf8(bytes.to_vec()).unwrap()
+}
+
 fn version_text(page: &str, member: &str, body: &str) -> String {
     let mut file = wenlan_core::store::format::page::PageFile::new("Plan", body);
     file.id = Some(page.into());
@@ -160,6 +178,201 @@ async fn only_health_and_the_join_page_answer_without_a_member_key() {
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn team_join_page_has_private_security_headers_and_no_member_key() {
+    let f = fixture();
+    let response = join_page_response(&f.state, None).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get(header::CACHE_CONTROL).unwrap(),
+        "no-store"
+    );
+    assert_eq!(
+        response.headers().get(header::REFERRER_POLICY).unwrap(),
+        "no-referrer"
+    );
+    let csp = response
+        .headers()
+        .get(header::CONTENT_SECURITY_POLICY)
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(csp.contains("default-src 'none'"), "{csp}");
+    assert!(csp.contains("connect-src 'self'"), "{csp}");
+    assert!(csp.contains("script-src 'nonce-"), "{csp}");
+    assert!(csp.contains("style-src 'nonce-"), "{csp}");
+    let page = response_text(response).await;
+    assert!(page.contains("Don't want to install? Connect your AI tool"));
+    assert!(page
+        .contains("<p class=\"tool-question\" id=\"tool-question\">Which AI tool do you use?</p>"));
+    for id in [
+        "connect",
+        "setup",
+        "chooser",
+        "spaces",
+        "readonly",
+        "error",
+        "tool-claude",
+        "tool-codex",
+        "tool-cursor",
+        "snippet",
+        "copy",
+    ] {
+        assert!(page.contains(&format!("id=\"{id}\"")), "missing #{id}");
+    }
+    assert!(!page.contains("id=\"address\""));
+    assert!(!page.contains("class=\"address\""));
+    assert!(!page.contains("<strong>Address:</strong>"));
+    assert!(page.contains("id=\"snippet\" hidden"));
+    let snippet_start = page
+        .find("<section class=\"snippet\" id=\"snippet\" hidden>")
+        .unwrap();
+    let snippet_end = snippet_start + page[snippet_start..].find("</section>").unwrap();
+    let snippet_markup = &page[snippet_start..snippet_end];
+    assert!(snippet_markup.contains(
+        "<p class=\"readonly\" id=\"readonly\" hidden>Your AI tool can search this Space, but it cannot change pages.</p>"
+    ));
+    assert!(snippet_markup
+        .contains("<p class=\"private\">Keep this private. It lets an AI tool act as you.</p>"));
+    assert!(page.contains("chooser.hidden = spaces.length === 1;"));
+    assert!(page.contains("button.classList.toggle('is-selected', selected)"));
+    assert!(
+        page.contains(".tool.is-selected { background:#5751c9; color:white; font-weight:600; }")
+    );
+    assert!(page.contains(".tools { display:flex; max-width:100%; gap:8px; }"));
+    assert!(page.contains(".tool { flex:1 1 0; min-width:0; padding:8px; border-radius:8px; overflow:hidden; background:#e8e7e2;"));
+    assert!(page
+        .contains("font-size:.9rem; line-height:1.4; text-overflow:ellipsis; white-space:nowrap;"));
+    assert!(page.contains(
+        ".tool:focus-visible,.copy:focus-visible { outline:3px solid #5146b8; outline-offset:2px; }"
+    ));
+    assert!(page.contains(".tool { background:#303137; color:#ececf1; }"));
+    assert!(page.contains(".tool:focus-visible,.copy:focus-visible { outline-color:#aaa5ff; }"));
+    assert!(page.contains("snippet.hidden = true;\n      readonlyNode.hidden = true;"));
+    for (id, tool) in [
+        ("tool-claude", "claude"),
+        ("tool-codex", "codex"),
+        ("tool-cursor", "cursor"),
+    ] {
+        assert!(
+            page.contains(&format!(
+                "id=\"{id}\" type=\"button\" data-tool=\"{tool}\" aria-pressed=\"false\""
+            )),
+            "#{id} must start unchosen"
+        );
+    }
+    assert_eq!(page.matches("id=\"copy\"").count(), 1);
+    assert!(!page.contains(&f.writer.1), "member key leaked into /join");
+    assert!(
+        !page.contains("wlt_"),
+        "a key-like value was emitted by /join"
+    );
+}
+
+#[tokio::test]
+async fn team_join_page_selects_english_simplified_and_traditional_chinese() {
+    let f = fixture();
+    let cases = [
+        (
+            "en-US,en;q=0.9",
+            "lang=\"en\"",
+            "<h1>Join a team on Wenlan</h1>",
+            "Don't want to install? Connect your AI tool",
+            "<p class=\"tool-question\" id=\"tool-question\">Which AI tool do you use?</p>",
+        ),
+        (
+            "zh-CN",
+            "lang=\"zh-Hans\"",
+            "<h1>加入团队</h1>",
+            "不想安装？直接连接你的 AI 工具",
+            "<p class=\"tool-question\" id=\"tool-question\">你用哪个 AI 工具？</p>",
+        ),
+        (
+            "zh-SG",
+            "lang=\"zh-Hans\"",
+            "<h1>加入团队</h1>",
+            "不想安装？直接连接你的 AI 工具",
+            "<p class=\"tool-question\" id=\"tool-question\">你用哪个 AI 工具？</p>",
+        ),
+        (
+            "zh-TW",
+            "lang=\"zh-Hant\"",
+            "<h1>加入團隊</h1>",
+            "不想安裝？直接連接你的 AI 工具",
+            "<p class=\"tool-question\" id=\"tool-question\">你用哪個 AI 工具？</p>",
+        ),
+        (
+            "zh-HK",
+            "lang=\"zh-Hant\"",
+            "<h1>加入團隊</h1>",
+            "不想安裝？直接連接你的 AI 工具",
+            "<p class=\"tool-question\" id=\"tool-question\">你用哪個 AI 工具？</p>",
+        ),
+        (
+            "zh-MO",
+            "lang=\"zh-Hant\"",
+            "<h1>加入團隊</h1>",
+            "不想安裝？直接連接你的 AI 工具",
+            "<p class=\"tool-question\" id=\"tool-question\">你用哪個 AI 工具？</p>",
+        ),
+        (
+            "zh-Hant",
+            "lang=\"zh-Hant\"",
+            "<h1>加入團隊</h1>",
+            "不想安裝？直接連接你的 AI 工具",
+            "<p class=\"tool-question\" id=\"tool-question\">你用哪個 AI 工具？</p>",
+        ),
+        (
+            "en;q=0.2,zh-TW;q=0.9",
+            "lang=\"zh-Hant\"",
+            "<h1>加入團隊</h1>",
+            "不想安裝？直接連接你的 AI 工具",
+            "<p class=\"tool-question\" id=\"tool-question\">你用哪個 AI 工具？</p>",
+        ),
+    ];
+    for (accept_language, lang, heading, button, tool_question) in cases {
+        let page = response_text(join_page_response(&f.state, Some(accept_language)).await).await;
+        assert!(page.contains(lang), "{accept_language}: {page}");
+        assert!(page.contains(heading), "{accept_language}: {page}");
+        assert!(page.contains(button), "{accept_language}: {page}");
+        assert!(page.contains(tool_question), "{accept_language}: {page}");
+    }
+}
+
+#[tokio::test]
+async fn team_join_page_escapes_a_script_shaped_team_name() {
+    let f = fixture();
+    team::rename_team(
+        &f.state.team_path,
+        "Acme </script><script>alert(\"x\")</script> \"",
+    )
+    .unwrap();
+    let page = response_text(join_page_response(&f.state, Some("en")).await).await;
+    assert!(page
+        .contains("Acme &lt;/script&gt;&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt; &quot;"));
+    assert_eq!(page.matches("<script").count(), 1, "{page}");
+    assert_eq!(page.matches("</script>").count(), 1, "{page}");
+}
+
+#[tokio::test]
+async fn team_join_page_mcp_route_decodes_encoded_space_names() {
+    async fn captured_space(Path(space): Path<String>) -> String {
+        space
+    }
+    let response = axum::Router::new()
+        .route("/mcp/{*space}", axum::routing::get(captured_space))
+        .oneshot(
+            Request::builder()
+                .uri("/mcp/Roadmap%20%26%20Ideas")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response_text(response).await, "Roadmap & Ideas");
 }
 
 #[tokio::test]

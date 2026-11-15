@@ -128,6 +128,7 @@ export function IssuedCode({ name, code, onDone }: { readonly name: string; read
       </div>
       <span className="share-hint">{t("team.page.linkPrivate")}</span>
       <span className="share-hint">{t("team.page.linkGets", { name })}</span>
+      <span className="share-hint team-issued-tool-hint">{t("team.page.linkAiTool")}</span>
       {/* When the clipboard is refused, the link is shown to copy by hand. */}
       {failed && <input className="share-input team-code" readOnly value={code} aria-label={t("team.page.linkFor", { name })} onFocus={(event) => event.currentTarget.select()} />}
       <div className="team-issued-done"><button type="button" className="share-link" onClick={onDone}>{t("team.codeDone")}</button></div>

@@ -49,6 +49,7 @@
 .team-issued { gap:6px; }
 .team-issued-head { display:flex;align-items:center;justify-content:space-between;gap:12px; }
 .team-issued-title { font-weight:500; }
+.team-issued-tool-hint { white-space:nowrap;font-size:12px;letter-spacing:-.01em; }
 .team-issued-done { display:flex;justify-content:flex-end; }
 .team-code { font-family:var(--mem-font-mono);font-size:13px;width:100%;box-sizing:border-box; }
 .team-space-access { display:flex;flex-direction:column;gap:6px; }

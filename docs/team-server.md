@@ -13,9 +13,9 @@ Cy's AI tool     ──┘   /team/v1, /mcp  └── team-spaces/<Space>/
 - **Desktop app members** keep their own copy of the Space. Every ~30 seconds
   their Wenlan takes the team's new page versions from the server and sends
   their own. It works offline and catches up later.
-- **AI-tool-only members** (no Wenlan installed) point their AI tool at the
-  server's `/mcp` with their key. What their AI tool changes is recorded as
-  theirs ("Cy's AI tool").
+- **AI-tool-only members** (no Wenlan installed) open their invite link in a
+  browser. It shows the server address and setup for Claude Code, Codex and
+  Cursor. What their AI tool changes is recorded as theirs ("Cy's AI tool").
 - **One person, many computers**: every computer and AI tool of one person
   uses the same key and is the same member, so their sentences stay theirs
   on every computer.
