@@ -61,7 +61,6 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
 pub async fn handle_import_memories(
     State(state): State<Arc<RwLock<ServerState>>>,
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
-    crate::team_actor::TeamActor(actor): crate::team_actor::TeamActor,
     Json(req): Json<ImportMemoriesRequest>,
 ) -> Result<Json<ImportMemoriesResponse>, ServerError> {
     let valid_sources = ["chatgpt", "claude", "other"];
@@ -79,20 +78,9 @@ pub async fn handle_import_memories(
             s.tuning.confidence.clone(),
         )
     };
-    // A team member through the team server adds only to the Space the team
-    // gate checked. (A memory keeps no author, so who added it is not stored.)
-    let space = match &actor {
-        Some(_) => {
-            if header_space.is_none() {
-                return Err(ServerError::NotFound("no such Space".to_string()));
-            }
-            wenlan_types::WriteSpaceTarget::Named(header_space.clone().unwrap_or_default())
-        }
-        None => req.space.clone(),
-    };
     let _space_write_guard = db.lock_space_writes().await;
     let resolved = db
-        .resolve_write_space(&space, header_space.as_deref())
+        .resolve_write_space(&req.space, header_space.as_deref())
         .await?;
     let result = wenlan_core::importer::import_memories_no_llm_in_batch(
         &db,
@@ -1271,87 +1259,11 @@ mod import_batch_status_route_tests {
         super::handle_import_memories(
             State(state.clone()),
             crate::space_header::SpaceHeader(None),
-            crate::team_actor::TeamActor::default(),
             Json(import_request(content, batch_id, chunk_index)),
         )
         .await
         .expect("import chunk")
         .0
-    }
-
-    /// Every stored value of every memory row, as text.
-    async fn stored_rows(dir: &tempfile::TempDir) -> Vec<String> {
-        let db = libsql::Builder::new_local(dir.path().join("db").join("origin_memory.db"))
-            .build()
-            .await
-            .unwrap();
-        let conn = db.connect().unwrap();
-        let mut rows = conn.query("SELECT * FROM memories", ()).await.unwrap();
-        let mut out = Vec::new();
-        while let Some(row) = rows.next().await.unwrap() {
-            let mut text = String::new();
-            for i in 0..row.column_count() {
-                if let Ok(libsql::Value::Text(value)) = row.get_value(i) {
-                    text.push_str(&value);
-                    text.push('|');
-                }
-            }
-            out.push(text);
-        }
-        out
-    }
-
-    /// Pasted text the team gate forwards for a member lands only in the
-    /// pinned Space, whatever Space the body named; the same call without
-    /// the gate's identity is unchanged.
-    #[tokio::test]
-    async fn a_members_pasted_text_lands_in_the_pinned_space() {
-        let (state, dir) = test_state().await;
-        let db = state.read().await.db.clone().unwrap();
-        db.create_space("Alpha", None, false).await.unwrap();
-        let mut headers = axum::http::HeaderMap::new();
-        for (name, value) in [
-            (
-                crate::team_actor::SECRET_HEADER,
-                crate::team_actor::secret(),
-            ),
-            (crate::team_actor::KIND_HEADER, "person"),
-            (crate::team_actor::MEMBER_HEADER, "m-amy"),
-        ] {
-            headers.insert(name, value.parse().unwrap());
-        }
-        let amy = crate::team_actor::TeamActor(crate::team_actor::from_headers(&headers));
-        assert!(amy.0.is_some());
-        let refused = super::handle_import_memories(
-            State(state.clone()),
-            crate::space_header::SpaceHeader(None),
-            amy.clone(),
-            Json(import_request("- unpinned member memory text", "b-0", 0)),
-        )
-        .await;
-        assert!(refused.is_err(), "a member call needs the pinned Space");
-        let resp = super::handle_import_memories(
-            State(state.clone()),
-            crate::space_header::SpaceHeader(Some("Alpha".into())),
-            amy,
-            Json(wenlan_types::requests::ImportMemoriesRequest {
-                space: WriteSpaceTarget::Named("Elsewhere".into()),
-                ..import_request("- amy pasted this memory text", "b-1", 0)
-            }),
-        )
-        .await
-        .unwrap()
-        .0;
-        assert_eq!(resp.imported, 1);
-        post_chunk(&state, "- the person here pasted this text", "b-2", 0).await;
-        let rows = stored_rows(&dir).await;
-        let amy_row = rows.iter().find(|row| row.contains("amy pasted")).unwrap();
-        assert!(amy_row.contains("|Alpha|"), "{amy_row}");
-        let here = rows
-            .iter()
-            .find(|row| row.contains("person here pasted"))
-            .unwrap();
-        assert!(!here.contains("|Alpha|"), "{here}");
     }
 
     #[tokio::test]

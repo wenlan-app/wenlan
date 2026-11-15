@@ -217,34 +217,6 @@ pub(crate) const CALLS: &[Call] = &[
         query: &[],
         rows: Rows::One,
     },
-    // Adding material: pasted text, or a link (read first, then saved).
-    Call {
-        method: "POST",
-        path: "/api/import/memories",
-        space: SpaceFrom::Body,
-        need: Need::Write,
-        strip: Strip::Private,
-        query: &[],
-        rows: Rows::One,
-    },
-    Call {
-        method: "POST",
-        path: "/api/webpage/fetch",
-        space: SpaceFrom::NoSpace,
-        need: Need::Write,
-        strip: Strip::Private,
-        query: &[],
-        rows: Rows::One,
-    },
-    Call {
-        method: "POST",
-        path: "/api/ingest/webpage",
-        space: SpaceFrom::Body,
-        need: Need::Write,
-        strip: Strip::Private,
-        query: &[],
-        rows: Rows::One,
-    },
 ];
 
 /// Keys taken out of every answer, wherever they are: where things are on
