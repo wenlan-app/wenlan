@@ -48,16 +48,18 @@ export function parseHowIWorkLines(content: string): SkillLine[] {
 }
 
 export function isHowIWorkPage(page: Pick<Page, "content" | "title">): boolean {
-  return page.content.includes(RULE_MARKER)
-    || page.content.includes(GENERATED_INTRO)
-    || page.title.startsWith(GENERATED_TITLE_PREFIX);
+  // List rows can arrive without a body or a title; never let one break a list.
+  const content = page.content ?? "";
+  return content.includes(RULE_MARKER)
+    || content.includes(GENERATED_INTRO)
+    || (page.title ?? "").startsWith(GENERATED_TITLE_PREFIX);
 }
 
 export function howIWorkSpaceName(page: Pick<Page, "content" | "space" | "title">): string {
   const explicit = page.space?.trim();
   if (explicit) return explicit;
   if (page.title.startsWith(GENERATED_TITLE_PREFIX)) return page.title.slice(GENERATED_TITLE_PREFIX.length).trim();
-  const heading = /^# How I work — (.+)$/mu.exec(page.content)?.[1]?.trim();
+  const heading = /^# How I work — (.+)$/mu.exec(page.content ?? "")?.[1]?.trim();
   return heading || "";
 }
 
