@@ -537,7 +537,9 @@ mod tests {
                 owner: false,
             }]
         );
-        assert!(!serde_json::to_string(&listed).unwrap().contains("wlt_secret"));
+        assert!(!serde_json::to_string(&listed)
+            .unwrap()
+            .contains("wlt_secret"));
 
         super::super::forget_membership(&settings, URL).unwrap();
         assert!(super::super::membership_infos_at(&settings)
