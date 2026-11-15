@@ -36,6 +36,11 @@ pub struct SkillLine {
     pub source_quote: String,
     #[serde(default)]
     pub person_edited: bool,
+    /// The line applies to any work, not only its own Space's project. AI
+    /// tools read general lines in every Space and with no Space at all; the
+    /// line still lives on, and is checked against, its own Space's page.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub general: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -379,7 +379,9 @@ test("the fixed how-i-work skill reads approved rules and reports only changed p
   const skill = read(`${SKILLS}/wenlan-how-i-work/SKILL.md`);
   assert.match(skill, /read_space_rules/);
   assert.match(skill, /at the start of work[\s\S]*before choosing an\s+approach/i);
-  assert.match(skill, /skills_from_library` is off or that Space has not been accepted/);
+  assert.match(skill, /skills_from_library` is off or nothing has been accepted/);
+  assert.match(skill, /without a Space: it returns only the general rules/);
+  assert.match(skill, /Never\s+read another Space's own rules/);
   assert.match(skill, /report_space_rule_use/);
   assert.match(skill, /`changed_plan`/);
   assert.match(skill, /Do not\s+include prose, conversation excerpts, or other free-text/);

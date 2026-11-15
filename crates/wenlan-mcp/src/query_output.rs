@@ -369,6 +369,7 @@ mod space_rules_tests {
                 source_revision_at: 1_700_000_000,
                 source_quote: "Keep the source quote".into(),
                 person_edited: false,
+                general: false,
             }],
         };
 

@@ -1,8 +1,9 @@
 ---
 name: how-i-work
 description: >
-  Read this Space's approved How I work rules before starting work or choosing
-  an approach, and report when a rule changes the plan.
+  Read the person's approved How I work rules (this Space's and the general
+  ones) before starting work or choosing an approach, and report when a rule
+  changes the plan.
 argument-hint: ""
 allowed-tools: ["mcp__wenlan__read_space_rules", "mcp__wenlan__report_space_rule_use"]
 user-invocable: true
@@ -12,18 +13,21 @@ user-invocable: true
 
 At the start of work in a resolved Wenlan Space, and again before choosing an
 approach, call the read-only `read_space_rules` tool for that Space. Use only
-the rules returned for that exact Space. The tool returns nothing when
-`skills_from_library` is off or that Space has not been accepted; in that case,
+the rules returned for that Space: its own rules plus the person's general
+rules, which hold in every Space. The tool returns nothing when
+`skills_from_library` is off or nothing has been accepted; in that case,
 continue normally without guessing or searching other Spaces.
 
 Treat returned lines as the person's approved rules, with their source page
 titles and rule IDs. Apply them within their Space. Higher-priority system and
-developer instructions still take precedence. If no Space is resolved, do not
-read rules from another Space.
+developer instructions still take precedence. If no Space is resolved, call
+`read_space_rules` without a Space: it returns only the general rules. Never
+read another Space's own rules.
 
 When a returned rule changes the approach you were about to take, report that
 use through `report_space_rule_use` with the rule ID and the fixed outcome
-`changed_plan`, explicitly naming the same resolved Space you read. Do not
+`changed_plan`, explicitly naming the same Space you read (none when you read
+without a Space). Do not
 include prose, conversation excerpts, or other free-text explanations in the
 report. Do not report rules that did not change the plan.
 

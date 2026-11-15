@@ -13,9 +13,13 @@ use wenlan_types::requests::{CALLER_HEADER, PERSON_CALLER_VALUE};
 const SOURCE_QUOTE: &str = "Always inspect the rendered output before claiming success.";
 const RULE_TEXT: &str = "Always inspect the rendered output before claiming success.";
 
+const GENERAL_QUOTE: &str = "Discuss the approach with the person before writing any code.";
+
 struct GrowModel {
     prompts: Mutex<Vec<String>>,
     fail_on: Option<String>,
+    /// Pages of this Space answer with GENERAL_QUOTE marked general.
+    general_in: Option<String>,
 }
 
 impl GrowModel {
@@ -23,6 +27,7 @@ impl GrowModel {
         Self {
             prompts: Mutex::new(Vec::new()),
             fail_on: None,
+            general_in: None,
         }
     }
 
@@ -30,6 +35,7 @@ impl GrowModel {
         Self {
             prompts: Mutex::new(Vec::new()),
             fail_on: Some(space.to_string()),
+            general_in: None,
         }
     }
 
@@ -51,6 +57,16 @@ impl LlmProvider for GrowModel {
             return Err(LlmError::NotAvailable);
         }
         match request.label.as_deref() {
+            Some("skills_from_library")
+                if self
+                    .general_in
+                    .as_deref()
+                    .is_some_and(|space| prompt.contains(&format!("{space:?}"))) =>
+            {
+                Ok(format!(
+                    r#"{{"lines":[{{"kind":"rule","page":"P0","quote":{GENERAL_QUOTE:?},"general":true}}]}}"#
+                ))
+            }
             Some("skills_from_library") => Ok(format!(
                 r#"{{"lines":[{{"kind":"rule","text":{RULE_TEXT:?},"page":"P0","quote":{SOURCE_QUOTE:?}}}]}}"#
             )),
@@ -745,6 +761,7 @@ async fn existing_skill_suggestions_are_person_only_positional_and_undo_conflict
         source_revision_at: revision.created_at,
         source_quote: "Use the merge queue because required checks run there.".into(),
         person_edited: false,
+        general: false,
     };
     let rules_body = skill_grow::reconcile_rules_page(
         &space.name,
@@ -1127,4 +1144,115 @@ async fn ux_skill_1_an_answer_with_the_box_cleared_covers_only_that_space() {
         .unwrap()
         .unwrap();
     assert_eq!(second_state.status, SpaceRulesStatus::Declined);
+}
+
+#[tokio::test]
+async fn ux_skill_5_general_rules_are_read_in_every_space_and_with_no_space() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(true).await;
+    let general = scratch
+        .db
+        .create_space("Habits", None, false)
+        .await
+        .unwrap();
+    let project = scratch
+        .db
+        .create_space("Project", None, false)
+        .await
+        .unwrap();
+    create_person_page(
+        &scratch.db,
+        &scratch.pages,
+        "Habits",
+        "Habits",
+        GENERAL_QUOTE,
+    )
+    .await;
+    create_person_page(
+        &scratch.db,
+        &scratch.pages,
+        "Project",
+        "Rules",
+        SOURCE_QUOTE,
+    )
+    .await;
+    let model = GrowModel {
+        general_in: Some("Habits".into()),
+        ..GrowModel::new()
+    };
+    assert_eq!(refresh(&scratch, &model).await.suggestions, 2);
+    for space in [&general, &project] {
+        let _ = handle_accept_space_rules(
+            axum::extract::State(scratch.shared.clone()),
+            person_headers(),
+            AxumPath(space.id.clone()),
+            Query(SpaceAnswerScope::default()),
+        )
+        .await
+        .unwrap();
+    }
+    let read = |space: Option<&str>| {
+        let shared = scratch.shared.clone();
+        let space = space.map(str::to_string);
+        async move {
+            let mut headers = HeaderMap::new();
+            headers.insert("x-agent-name", HeaderValue::from_static("codex"));
+            handle_read_rules(
+                axum::extract::State(shared),
+                headers,
+                Query(RulesQuery { space }),
+            )
+            .await
+            .unwrap()
+            .0
+        }
+    };
+
+    let in_project = read(Some("Project")).await;
+    let quotes: Vec<_> = in_project
+        .lines
+        .iter()
+        .map(|l| l.source_quote.as_str())
+        .collect();
+    assert_eq!(quotes, vec![SOURCE_QUOTE, GENERAL_QUOTE]);
+    assert!(in_project.lines[1].general);
+
+    let nowhere = read(None).await;
+    let quotes: Vec<_> = nowhere
+        .lines
+        .iter()
+        .map(|l| l.source_quote.as_str())
+        .collect();
+    assert_eq!(
+        quotes,
+        vec![GENERAL_QUOTE],
+        "no Space reads only the general rules"
+    );
+
+    // A report of the general rule from another Space lands on its own Space.
+    let mut headers = HeaderMap::new();
+    headers.insert("x-agent-name", HeaderValue::from_static("codex"));
+    let _ = handle_self_report(
+        axum::extract::State(scratch.shared.clone()),
+        headers,
+        Json(SkillReportRequest {
+            space: "Project".into(),
+            rule_id: in_project.lines[1].id.clone(),
+            report: wenlan_types::SkillReportKind::ChangedPlan,
+        }),
+    )
+    .await
+    .unwrap();
+    let now = chrono::Utc::now().timestamp();
+    let records = scratch
+        .db
+        .skill_borrow_records(&general.id, now - 3_600, now + 3_600)
+        .await
+        .unwrap();
+    assert!(records
+        .iter()
+        .any(|r| r.self_report == Some(wenlan_types::SkillReportKind::ChangedPlan)));
 }

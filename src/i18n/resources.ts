@@ -800,6 +800,7 @@ const en = {
   howIWork: {
     kind: { rule: "Rule", decision: "Decision", pitfall: "Pitfall" },
     sourcePrefix: "From",
+    general: "Used in every Space",
     sourceFallback: "a page",
     ask: {
       crumb: "Space · {{space}}",
@@ -4232,6 +4233,7 @@ const zhHans = {
   howIWork: {
     kind: { rule: "规则", decision: "决定", pitfall: "踩过的坑" },
     sourcePrefix: "出自",
+    general: "每个空间都会用",
     sourceFallback: "一个页面",
     ask: {
       crumb: "空间 · {{space}}",
@@ -7619,6 +7621,7 @@ const zhHant = {
   howIWork: {
     kind: { rule: "規則", decision: "決定", pitfall: "踩過的坑" },
     sourcePrefix: "出自",
+    general: "每個空間都會用",
     sourceFallback: "一個頁面",
     ask: {
       crumb: "空間 · {{space}}",

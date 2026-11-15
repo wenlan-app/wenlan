@@ -30,6 +30,7 @@ fn line(kind: SkillLineKind, id: &str, text: &str, quote: &str) -> SkillLine {
         source_revision_at: 1_800_000_000,
         source_quote: quote.into(),
         person_edited: false,
+        general: false,
     }
 }
 
@@ -410,4 +411,20 @@ fn citation_markers_are_removed_before_the_model_and_before_grounding() {
         1,
         "a sentence that ended in a marker was dropped"
     );
+}
+
+#[test]
+fn the_model_marks_lines_that_hold_for_any_project_as_general() {
+    let quote = "Discuss the approach with the person before writing any code.";
+    let pages = [page("Habits", quote, 1, 1_800_000_000)];
+    let raw = serde_json::json!({
+        "lines": [{"kind": "rule", "page": "P0", "quote": quote, "general": true}]
+    })
+    .to_string();
+    let lines = parse_grow(&raw, &pages);
+    assert_eq!(lines.len(), 1);
+    assert!(lines[0].general);
+    let unmarked = parse_grow(&candidate_json("rule", quote, quote), &pages);
+    assert!(!unmarked[0].general, "a line is Space-only unless marked general");
+    assert!(grow_prompt("Habits", &pages).contains("general"));
 }

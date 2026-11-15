@@ -152,6 +152,12 @@ describe("Space how-I-work ask", () => {
     expect(api.accept).toHaveBeenCalledExactlyOnceWith(space.id, true);
   });
 
+  it("UX-SKILL-5 marks a line that every Space uses", async () => {
+    api.list.mockResolvedValue([{ space_id: space.id, space_name: space.name, lines: [{ ...line, general: true }] }]);
+    renderAsk();
+    expect(await screen.findByText(/Used in every Space/)).toBeInTheDocument();
+  });
+
   it("UX-SKILL-1 shows nothing when the setting is off", async () => {
     api.enabled.mockResolvedValue(false);
     renderAsk();

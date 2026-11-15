@@ -569,6 +569,12 @@ and wait for evidence that people need them.
   this week, or when the first How-I-work page was just made. Its link opens
   that page; with neither event the line is absent.
   原文：「可以」（2026-11-15 17:33Z，回覆[草圖](https://claude.ai/artifact/EqEaFuewDn2qBRyBrG7eHn)）。
+- **UX-SKILL-5** `shipped` A line that holds for any project, not only its
+  own Space's, is marked "Used in every Space" on its Space's ask and page. AI
+  tools read it in every Space, and with no Space at all, where they read only
+  these lines. It stays on, and is checked against, its own Space's page, and
+  a report that it changed the plan is recorded there.
+  原文：選擇卡「加全局一份」（2026-11-15 21:24Z，問：「要不要加一份全局的「我的做事方式」？」）；「還有我們有全局跟空間範圍的 skill」（2026-11-15 21:24Z）。
 
 ## Adding to Wenlan
 

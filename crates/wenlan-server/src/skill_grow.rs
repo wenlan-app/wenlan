@@ -574,14 +574,94 @@ pub async fn handle_read_rules(
         .db
         .clone()
         .ok_or(ServerError::DbNotInitialized)?;
+    let tool = crate::memory_routes::extract_agent_name(&headers, None);
+    if no_space_named(&headers, query.space.as_deref()) {
+        // No Space: only the general lines, read from every accepted Space.
+        let general = general_lines(&db, None).await?;
+        record_general_reads(&db, &tool, &general).await?;
+        return Ok(Json(SpaceRulesResponse {
+            space_id: String::new(),
+            space_name: String::new(),
+            rules_page_id: None,
+            lines: general.into_iter().map(|(_, line)| line).collect(),
+        }));
+    }
     let space = resolved_space(&db, &headers, query.space.as_deref()).await?;
-    let response = read_rules_for_space(&db, &space).await?;
+    let mut response = read_rules_for_space(&db, &space).await?;
     if feature_enabled() && !response.lines.is_empty() {
-        let tool = crate::memory_routes::extract_agent_name(&headers, None);
         db.record_skill_rules_read(&tool, &space.id, &response.lines)
             .await?;
     }
+    // General lines from other Spaces apply here too (UX-SKILL-5).
+    let general = general_lines(&db, Some(&space.id)).await?;
+    let known: HashSet<String> = response
+        .lines
+        .iter()
+        .map(|line| line.text.trim().to_lowercase())
+        .collect();
+    let general: Vec<_> = general
+        .into_iter()
+        .filter(|(_, line)| !known.contains(&line.text.trim().to_lowercase()))
+        .collect();
+    record_general_reads(&db, &tool, &general).await?;
+    response
+        .lines
+        .extend(general.into_iter().map(|(_, line)| line));
     Ok(Json(response))
+}
+
+fn no_space_named(headers: &HeaderMap, query_space: Option<&str>) -> bool {
+    let header = headers
+        .get(crate::space_header::HEADER_NAME)
+        .or_else(|| headers.get(crate::space_header::HEADER_NAME_LEGACY))
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    header.is_none()
+        && query_space
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .is_none()
+}
+
+/// Approved general lines of every accepted Space other than `except`, each
+/// still checked against its own Space's rules page, with that Space's id.
+/// The same sentence from two Spaces is listed once.
+async fn general_lines(
+    db: &MemoryDB,
+    except: Option<&str>,
+) -> Result<Vec<(String, SkillLine)>, ServerError> {
+    if !feature_enabled() {
+        return Ok(Vec::new());
+    }
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for space in db.list_spaces().await? {
+        if Some(space.id.as_str()) == except {
+            continue;
+        }
+        for line in read_rules_for_space(db, &space).await?.lines {
+            if line.general && seen.insert(line.text.trim().to_lowercase()) {
+                out.push((space.id.clone(), line));
+            }
+        }
+    }
+    Ok(out)
+}
+
+async fn record_general_reads(
+    db: &MemoryDB,
+    tool: &str,
+    lines: &[(String, SkillLine)],
+) -> Result<(), ServerError> {
+    let mut by_space: HashMap<&str, Vec<SkillLine>> = HashMap::new();
+    for (space_id, line) in lines {
+        by_space.entry(space_id).or_default().push(line.clone());
+    }
+    for (space_id, lines) in by_space {
+        db.record_skill_rules_read(tool, space_id, &lines).await?;
+    }
+    Ok(())
 }
 
 async fn process_space(
@@ -1893,18 +1973,31 @@ pub async fn handle_self_report(
         .db
         .clone()
         .ok_or(ServerError::DbNotInitialized)?;
-    let space = resolved_space(&db, &headers, Some(&request.space)).await?;
-    let response = read_rules_for_space(&db, &space).await?;
-    let line = response
-        .lines
-        .iter()
+    // A general line is recorded under its own Space, including when it was
+    // read with no Space at all.
+    let (space_id, own_lines) = if no_space_named(&headers, Some(&request.space)) {
+        (None, Vec::new())
+    } else {
+        let space = resolved_space(&db, &headers, Some(&request.space)).await?;
+        let lines = read_rules_for_space(&db, &space).await?.lines;
+        (Some(space.id), lines)
+    };
+    let (owner, line) = match own_lines
+        .into_iter()
         .find(|line| line.id == request.rule_id)
-        .ok_or_else(|| ServerError::NotFound("approved rule not found".into()))?;
+    {
+        Some(line) => (space_id.clone().unwrap_or_default(), line),
+        None => general_lines(&db, space_id.as_deref())
+            .await?
+            .into_iter()
+            .find(|(_, line)| line.id == request.rule_id)
+            .ok_or_else(|| ServerError::NotFound("approved rule not found".into()))?,
+    };
     let tool = crate::memory_routes::extract_agent_name(&headers, None);
     if tool == "unknown" {
         return Err(ServerError::BadRequest("x-agent-name is required".into()));
     }
-    db.record_skill_self_report(&tool, &space.id, line, request.report)
+    db.record_skill_self_report(&tool, &owner, &line, request.report)
         .await?;
     Ok(Json(serde_json::json!({
         "recorded": true,

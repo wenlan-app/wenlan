@@ -1041,6 +1041,8 @@ export interface SkillLine {
   source_revision_at: number;
   source_quote: string;
   person_edited?: boolean;
+  /** Holds for any project: AI tools read it in every Space (UX-SKILL-5). */
+  general?: boolean;
 }
 
 export interface SpaceRulesSuggestion {

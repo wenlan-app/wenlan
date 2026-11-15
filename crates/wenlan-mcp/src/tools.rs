@@ -1654,7 +1654,8 @@ pub struct ListPagesParams {
 
 #[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 pub struct ReadSpaceRulesParams {
-    /// Space to read. WENLAN_SPACE, then the configured default, is used when omitted.
+    /// Space to read. WENLAN_SPACE, then the configured default, is used when
+    /// omitted; with none of them, only the general rules are returned.
     pub space: Option<String>,
 }
 
@@ -2925,17 +2926,15 @@ impl WenlanMcpServer {
         &self,
         params: ReadSpaceRulesParams,
     ) -> Result<CallToolResult, McpError> {
-        let Some(space) = effective_space(&params.space) else {
-            return Err(McpError::invalid_params(
-                "Space not resolved. Pass `space` or configure a default Space.",
-                None,
-            ));
+        // With no Space, the daemon answers with the general rules only.
+        let response: SpaceRulesResponse = match effective_space(&params.space) {
+            Some(space) => try_call!(
+                self.client
+                    .get_with_query("/api/skills/rules", &[("space", space)]),
+                "read_space_rules"
+            ),
+            None => try_call!(self.client.get("/api/skills/rules"), "read_space_rules"),
         };
-        let query = [("space", space)];
-        let response: SpaceRulesResponse = try_call!(
-            self.client.get_with_query("/api/skills/rules", &query),
-            "read_space_rules"
-        );
         if self.tool_profile.projects_query_output() {
             query_success(query_output::project_space_rules(&response))
         } else {
@@ -2950,12 +2949,8 @@ impl WenlanMcpServer {
         if params.rule_id.trim().is_empty() {
             return Err(McpError::invalid_params("rule_id is required", None));
         }
-        let Some(space) = effective_space(&params.space) else {
-            return Err(McpError::invalid_params(
-                "Space not resolved. Pass `space` or configure a default Space.",
-                None,
-            ));
-        };
+        // An empty Space reports a general rule read with no Space.
+        let space = effective_space(&params.space).unwrap_or_default();
         let request = SkillReportRequest {
             space,
             rule_id: params.rule_id,
