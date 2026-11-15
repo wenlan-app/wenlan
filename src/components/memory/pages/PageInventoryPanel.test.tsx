@@ -1,4 +1,5 @@
 import { setExampleWikiActive } from "../../../lib/exampleWiki/mode";
+import { readPinnedPages } from "../navigation/pinnedPages";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -73,7 +74,7 @@ describe("folder tree",()=>{
 });
 describe("page deletion",()=>{
  const openDirect=async()=>{const user=userEvent.setup();await user.click(await screen.findByRole("button",{name:"Work"}));return {user,row:screen.getByRole("button",{name:"Open Direct"})};};
- it("right-clicking a page opens the page menu instead of the folder menu",async()=>{setup({fileTree:true});const {user,row}=await openDirect();await user.pointer({keys:"[MouseRight]",target:row});const menu=await screen.findByRole("menu");expect(within(menu).getAllByRole("menuitem").map(item=>item.textContent)).toEqual(["Open","Archive page","Delete page"]);expect(within(menu).queryByRole("menuitem",{name:/New folder in/})).not.toBeInTheDocument();expect(within(menu).getByRole("menuitem",{name:"Open"})).toHaveFocus();});
+ it("right-clicking a page opens the page menu instead of the folder menu",async()=>{setup({fileTree:true});const {user,row}=await openDirect();await user.pointer({keys:"[MouseRight]",target:row});const menu=await screen.findByRole("menu");expect(within(menu).getAllByRole("menuitem").map(item=>item.textContent)).toEqual(["Open","Pin","Archive page","Delete page"]);expect(within(menu).queryByRole("menuitem",{name:/New folder in/})).not.toBeInTheDocument();expect(within(menu).getByRole("menuitem",{name:"Open"})).toHaveFocus();});
  it("archive takes an active page out of the directory without deleting it",async()=>{
   const confirmSpy=vi.spyOn(window,"confirm").mockReturnValue(true);
   const onDeletePage=vi.fn();setup({fileTree:true,onDeletePage});const {user,row}=await openDirect();
@@ -112,6 +113,11 @@ describe("page deletion",()=>{
   await user.pointer({keys:"[MouseRight]",target:row});await user.click(screen.getByRole("menuitem",{name:"Archive page"}));
   await waitFor(()=>expect(row).toHaveFocus());expect(archivePage).toHaveBeenCalledWith("Direct");expect(onDeletePage).not.toHaveBeenCalled();confirmSpy.mockRestore();
  });
+ it("UX-FIND-6: right-clicking a page pins it, and again unpins it",async()=>{localStorage.clear();setup({fileTree:true});const {user,row}=await openDirect();
+  await user.pointer({keys:"[MouseRight]",target:row});await user.click(screen.getByRole("menuitem",{name:"Pin"}));
+  expect(readPinnedPages()).toHaveLength(1);
+  await user.pointer({keys:"[MouseRight]",target:row});await user.click(screen.getByRole("menuitem",{name:"Unpin"}));
+  expect(readPinnedPages()).toEqual([]);});
  it("Open in the page menu opens the page like a click",async()=>{const onOpenPage=vi.fn();setup({fileTree:true,onOpenPage});const {user,row}=await openDirect();await user.pointer({keys:"[MouseRight]",target:row});await user.click(await screen.findByRole("menuitem",{name:"Open"}));expect(onOpenPage).toHaveBeenCalledWith(expect.objectContaining({id:"Direct"}));expect(screen.queryByRole("menu")).not.toBeInTheDocument();});
  it("Delete page confirms, deletes through the page command and tells the host",async()=>{const confirmSpy=vi.spyOn(window,"confirm").mockReturnValue(true);const onDeletePage=vi.fn();setup({fileTree:true,onDeletePage});const {user,row}=await openDirect();await user.pointer({keys:"[MouseRight]",target:row});await user.click(await screen.findByRole("menuitem",{name:"Delete page"}));expect(confirmSpy).toHaveBeenCalledWith("Permanently delete this page? This cannot be undone.");await waitFor(()=>expect(onDeletePage).toHaveBeenCalledWith("Direct"));expect(deletePage).toHaveBeenCalledWith("Direct");expect(discardPageDraft).not.toHaveBeenCalled();expect(screen.queryByRole("menu")).not.toBeInTheDocument();confirmSpy.mockRestore();});
  it("keeps the page when the confirmation is declined",async()=>{const confirmSpy=vi.spyOn(window,"confirm").mockReturnValue(false);const onDeletePage=vi.fn();setup({fileTree:true,onDeletePage});const {user,row}=await openDirect();await user.pointer({keys:"[MouseRight]",target:row});await user.click(await screen.findByRole("menuitem",{name:"Delete page"}));expect(confirmSpy).toHaveBeenCalled();expect(deletePage).not.toHaveBeenCalled();expect(onDeletePage).not.toHaveBeenCalled();confirmSpy.mockRestore();});
