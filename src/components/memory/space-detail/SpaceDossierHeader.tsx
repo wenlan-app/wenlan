@@ -7,6 +7,7 @@ import type { Space } from "../../../lib/tauri";
 import type { SpaceDetailCopy } from "./copy";
 import { InlineTextField } from "../editor/InlineTextField";
 import { useSpaceIdentityAutosave } from "./useSpaceIdentityAutosave";
+import { useTeamAccess } from "../../../web/teamAccess";
 
 type SpaceIdentityActions = {
   readonly onBack: () => void;
@@ -61,6 +62,7 @@ export function SpaceDossierHeader({
   }, [onRegisterFlush, registeredFlush]);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const teamAccess = useTeamAccess();
   const actionsRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const menuTriggerRef = useRef<HTMLButtonElement>(null);
@@ -157,6 +159,7 @@ export function SpaceDossierHeader({
               <InlineTextField
                 aria-label={t("spaces.overview.nameLabel")}
                 className="space-dossier-title-input"
+                readOnly={teamAccess.member}
                 value={draft.name}
                 onChange={(event) => change({ ...draft, name: event.target.value })}
                 onCompositionStart={compositionStart}
@@ -169,8 +172,9 @@ export function SpaceDossierHeader({
             <InlineTextField
               aria-label={copy.editDescription}
               className="space-dossier-description"
+              readOnly={teamAccess.member}
               value={draft.description}
-              placeholder={copy.descriptionPlaceholder}
+              placeholder={teamAccess.member ? undefined : copy.descriptionPlaceholder}
               onChange={(event) => change({ ...draft, description: event.target.value })}
               onCompositionStart={compositionStart}
               onCompositionEnd={compositionEnd}
@@ -184,13 +188,15 @@ export function SpaceDossierHeader({
           {!space.suggested && (
             <div ref={actionsRef} className="space-dossier-actions">
               {leadingAction}
-              <button
+              {teamAccess.canEdit(space.name) && <button
                 className="page-create-action space-dossier-new-page"
                 onClick={actions.onCreatePage}
                 type="button"
               >
                 {t("pages.overview.newPage")}
-              </button>
+              </button>}
+              {/* A team member cannot rename, share or remove a Space. */}
+              {!teamAccess.member && <>
               <button
                 ref={menuTriggerRef}
                 aria-expanded={menuOpen}
@@ -247,6 +253,7 @@ export function SpaceDossierHeader({
                   </button>
                 </div>
               )}
+              </>}
             </div>
           )}
         </div>

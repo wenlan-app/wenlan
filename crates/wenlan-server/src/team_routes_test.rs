@@ -153,8 +153,10 @@ async fn only_health_and_the_join_page_answer_without_a_member_key() {
         // The daemon's own routes are not served here at all.
         "/api/memory/search",
         "/api/shutdown",
-        // The embedded personal UI is never mounted on the team listener.
+        // The bundle's index is served only at /app, never at the root or
+        // under its own file name.
         "/",
+        "/index.html",
         "/assets/index-deadbeef.js",
     ] {
         let (status, _) = call(&f.state, Method::GET, uri, None, vec![]).await;
@@ -181,6 +183,80 @@ async fn only_health_and_the_join_page_answer_without_a_member_key() {
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn team_app_is_the_static_bundle_with_no_key_and_nothing_of_the_team() {
+    let f = fixture();
+    team::rename_team(&f.state.team_path, "Acme").unwrap();
+    for uri in ["/app", "/app/", "/app/anything"] {
+        let response = team_router(f.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(uri)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        // 503 when this binary was built without the web bundle.
+        assert!(
+            status == StatusCode::OK || status == StatusCode::SERVICE_UNAVAILABLE,
+            "{uri}: {status}"
+        );
+        let csp = response.headers()[header::CONTENT_SECURITY_POLICY]
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert!(csp.contains("default-src 'self'"), "{csp}");
+        assert!(csp.contains("connect-src 'self'"), "{csp}");
+        assert!(csp.contains("frame-ancestors 'none'"), "{csp}");
+        assert!(
+            csp.contains("script-src 'self';"),
+            "no inline script: {csp}"
+        );
+        assert_eq!(response.headers()[header::REFERRER_POLICY], "no-referrer");
+        let page = response_text(response).await;
+        for private in ["Acme", "Amy", "Design", &f.writer.1] {
+            assert!(!page.contains(private), "{uri} leaked {private}");
+        }
+    }
+    let (status, _) = call(&f.state, Method::POST, "/app", None, vec![]).await;
+    assert!(status == StatusCode::METHOD_NOT_ALLOWED || status == StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn team_join_page_accept_keeps_the_checked_key_and_opens_app() {
+    let f = fixture();
+    for (language, accept) in [
+        ("en", ">Accept</button>"),
+        ("zh-CN", ">接受</button>"),
+        ("zh-TW", ">接受</button>"),
+    ] {
+        let page = response_text(join_page_response(&f.state, Some(language)).await).await;
+        assert!(
+            page.contains(&format!("<button id=\"accept\" type=\"button\"{accept}")),
+            "{language}"
+        );
+        // Accept comes first; connecting an AI tool and the download stay below.
+        let accept_at = page.find("id=\"accept\"").unwrap();
+        assert!(accept_at < page.find("id=\"connect\"").unwrap());
+        assert!(accept_at < page.find("https://wenlan.app").unwrap());
+    }
+    let page = response_text(join_page_response(&f.state, None).await).await;
+    let script = &page[page.find("accept.addEventListener").unwrap()..];
+    let check = script.find("fetch('/team/v1/me'").unwrap();
+    let keep = script
+        .find("localStorage.setItem('wenlan.team.key', key)")
+        .unwrap();
+    let open = script.find("window.location.assign('/app')").unwrap();
+    assert!(
+        check < keep && keep < open,
+        "the key is kept only after it was checked"
+    );
+    assert!(script[..script.find("connect.addEventListener").unwrap()].contains("fail();"));
 }
 
 #[tokio::test]

@@ -47,6 +47,57 @@ pub(crate) async fn handle(request: Request) -> Response {
     )
 }
 
+/// The team listener's `/app` and `/app/...`: the same embedded bundle, for
+/// a member's browser. Static only: nothing of the team is in it, and no key
+/// is needed to load it; the page reads the member's key from this browser.
+pub(crate) async fn team_app(request: Request) -> Response {
+    team_response(request.method(), request.uri().path(), true, WEB_ASSETS)
+}
+
+/// The team listener's other paths: only the bundle's own files (`/assets/…`,
+/// `/web-bootstrap.js`), never `index.html` outside `/app`.
+pub(crate) async fn team_asset(request: Request) -> Response {
+    team_response(request.method(), request.uri().path(), false, WEB_ASSETS)
+}
+
+/// One route per file of the bundle other than `index.html`, for the team
+/// listener: its other paths stay behind the member key as before.
+pub(crate) fn team_asset_routes<S: Clone + Send + Sync + 'static>() -> axum::Router<S> {
+    let mut router = axum::Router::new();
+    for asset in WEB_ASSETS.iter().filter(|asset| asset.path != "index.html") {
+        router = router.route(&format!("/{}", asset.path), axum::routing::get(team_asset));
+    }
+    router
+}
+
+fn team_response(
+    method: &Method,
+    path: &str,
+    app: bool,
+    assets: &'static [EmbeddedAsset],
+) -> Response {
+    if *method != Method::GET {
+        return plain(StatusCode::NOT_FOUND, "not found");
+    }
+    if app {
+        if path != "/app" && !path.starts_with("/app/") {
+            return plain(StatusCode::NOT_FOUND, "not found");
+        }
+        return match assets.iter().find(|asset| asset.path == "index.html") {
+            Some(index) => response(StatusCode::OK, index.content_type, index.bytes, "no-store"),
+            None => missing_bundle_response(),
+        };
+    }
+    let wanted = path.trim_start_matches('/');
+    match assets
+        .iter()
+        .find(|asset| asset.path == wanted && asset.path != "index.html")
+    {
+        Some(_) => response_for(method, path, true, assets),
+        None => plain(StatusCode::NOT_FOUND, "not found"),
+    }
+}
+
 fn response_for(
     method: &Method,
     path: &str,
@@ -172,6 +223,54 @@ mod tests {
             response_for(&Method::GET, "/", true, &[]).status(),
             StatusCode::SERVICE_UNAVAILABLE
         );
+    }
+
+    #[test]
+    fn team_listener_serves_the_bundle_only_at_app_and_its_files() {
+        let app = team_response(&Method::GET, "/app", true, TEST_ASSETS);
+        assert_eq!(app.status(), StatusCode::OK);
+        let csp = app.headers()[header::CONTENT_SECURITY_POLICY]
+            .to_str()
+            .unwrap();
+        assert!(csp.contains("default-src 'self'"));
+        assert!(csp.contains("script-src 'self'"));
+        assert!(!csp.contains("script-src 'self' 'unsafe-inline'"));
+        assert!(csp.contains("connect-src 'self'"));
+        assert!(csp.contains("frame-ancestors 'none'"));
+        assert_eq!(app.headers()["referrer-policy"], "no-referrer");
+        assert_eq!(app.headers()[header::CACHE_CONTROL], "no-store");
+        assert_eq!(
+            team_response(&Method::GET, "/app/pages", true, TEST_ASSETS).status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            team_response(&Method::GET, "/application", true, TEST_ASSETS).status(),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            team_response(&Method::POST, "/app", true, TEST_ASSETS).status(),
+            StatusCode::NOT_FOUND
+        );
+        let asset = team_response(
+            &Method::GET,
+            "/assets/index-deadbeef.js",
+            false,
+            TEST_ASSETS,
+        );
+        assert_eq!(asset.status(), StatusCode::OK);
+        for refused in [
+            "/",
+            "/index.html",
+            "/api/pages",
+            "/team/v1/nothing",
+            "/settings",
+        ] {
+            assert_eq!(
+                team_response(&Method::GET, refused, false, TEST_ASSETS).status(),
+                StatusCode::NOT_FOUND,
+                "{refused}"
+            );
+        }
     }
 
     #[tokio::test]

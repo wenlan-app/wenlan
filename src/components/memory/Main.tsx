@@ -111,6 +111,7 @@ import "./navigation/navigation-shell.css";
 import "./assets/collectionToolbar.css";
 import { inventoryFolderPath } from "./pages/pageInventory";
 import { isWebBuild } from "../../web/runtime";
+import { useTeamAccess } from "../../web/teamAccess";
 
 interface MainProps {
   initialView?: View;
@@ -213,6 +214,7 @@ export default function Main({
   onBackFromDetail,
   onRegisterQuitGuard,
 }: MainProps) {
+  const teamAccess = useTeamAccess();
   const web = isWebBuild();
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -375,6 +377,11 @@ export default function Main({
   const showView = (next: View, dismissSearchOverlay = true) => {
     // The example wiki is read-only: no draft opens inside it.
     if (exampleWikiActive() && next.kind === "page-draft") { showExampleWikiReadOnly(); return; }
+    // A team member writes a new page only in a Space they may write in.
+    if (teamAccess.member && next.kind === "page-draft") {
+      if (teamAccess.writable.length === 0) return;
+      if (!teamAccess.canEdit(next.space)) next = { ...next, space: teamAccess.writable[0] };
+    }
     setOwnershipNotice(null);
     if (dismissSearchOverlay) dismissSearch();
     if (isNoteView(next) && secondaryGroupRef.current?.contains(next)) {
@@ -876,7 +883,7 @@ export default function Main({
     onSelect={tab => { focusPrimaryGroup(); navigateTo(tab.view); }} onClose={closeNoteTab}
     onHome={() => { focusPrimaryGroup(); navigateHome(); }} homeActive={view.kind === "home"}
     onMoveToOtherGroup={moveToSecondary} moveLabel={t("pages.groups.moveToRight")}
-    onCreate={exampleWiki ? undefined : () => navigateTo({
+    onCreate={exampleWiki || (teamAccess.member && teamAccess.writable.length === 0) ? undefined : () => navigateTo({
       kind: "page-draft",
       space: null,
       folderPath: wikiInventoryMode === "folders" ? wikiCreationFolderPath ?? undefined : undefined,

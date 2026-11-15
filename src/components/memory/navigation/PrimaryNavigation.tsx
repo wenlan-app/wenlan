@@ -102,6 +102,9 @@ export function PrimaryNavigation({
   const wikiSection = !compact && !!onWikiSectionHost;
   const destinations = NAVIGATION_DESTINATION_ORDER
     .filter((key) => !(wikiSection && key === "pages"))
+    // Graph and Entities appear only where they can open (not for a team
+    // member on the web).
+    .filter((key) => (key !== "graph" || !!onNavigateGraph) && (key !== "entities" || !!onNavigateEntities))
     .map((key) => ({ key, label: labels[key], ...options[key] }));
 
   return (

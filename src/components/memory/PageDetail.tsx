@@ -104,6 +104,7 @@ import { ReferencePreview } from "./links/ReferencePreview";
 import { ReferenceNavigationProvider } from "./links/ReferenceNavigationContext";
 import type { ReferencePreviewRequest, ReferenceTarget } from "./links/referenceTypes";
 import { isWebBuild } from "../../web/runtime";
+import { useTeamAccess } from "../../web/teamAccess";
 import PageCanvas from "./PageCanvas";
 import {
   prepareMarkdownSource,
@@ -344,6 +345,9 @@ export default function PageDetail({
   onOpenSettings,
 }: PageDetailProps) {
   const web = isWebBuild();
+  // A team member on the web: page actions other than editing have no gate
+  // row, and a member with read access changes nothing.
+  const teamAccess = useTeamAccess();
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
   const [wikiLinkPreview, setWikiLinkPreview] = useState<ReferencePreviewRequest | null>(null);
@@ -1624,6 +1628,7 @@ export default function PageDetail({
   };
 
   const beginEditing = async (automatic = false) => {
+    if (teamAccess.member && !teamAccess.canEdit(page?.space)) return;
     if (!page || page.status !== "active" || renaming || renameMutation.isPending || titleRenamePendingRef.current) return;
     setCanvasOpen(false);
     canvasReturnToEditorRef.current = false;
@@ -2574,7 +2579,7 @@ export default function PageDetail({
   // not disable this page's toggle.
   const reviewLockPending = reviewRequiredMutation.isPending && reviewRequiredMutation.variables?.id === page.id;
   const hasRail = pageEntities.length > 0 || outboundLinks.length > 0;
-  const canRenamePage = !exampleWiki && page.status === "active" &&
+  const canRenamePage = !exampleWiki && !teamAccess.member && page.status === "active" &&
     page.creation_kind !== "entity" && page.creation_kind !== "source" &&
     page.creation_kind !== "imported";
   const renameDisabled = storedActionPending || canvasSwitchPending || editing || editDirty || saveState.phase !== "idle" ||
@@ -2734,7 +2739,8 @@ export default function PageDetail({
       }}>
       <Info aria-hidden="true" size={18} />
     </button>
-    <button id={`${inspectorId}-canvas`} aria-controls={`${inspectorId}-panel`} ref={canvasToggleRef} type="button" className="mem-icon-action workspace-panel-toggle note-mind-map-toggle"
+    {/* A team member's web page has no mind map: its links are not served there. */}
+    {!teamAccess.member && <button id={`${inspectorId}-canvas`} aria-controls={`${inspectorId}-panel`} ref={canvasToggleRef} type="button" className="mem-icon-action workspace-panel-toggle note-mind-map-toggle"
       aria-label={t("pageCanvas.tabCanvas")} title={t("pageCanvas.tabCanvas")}
       aria-expanded={inspectorOpen} aria-pressed={showCanvas} disabled={canvasSwitchPending}
       onClick={(event) => {
@@ -2743,7 +2749,7 @@ export default function PageDetail({
         else selectInspectorTab("canvas");
       }}>
       <TreeStructure aria-hidden="true" size={18} />
-    </button>
+    </button>}
     {pdfPreview && <button id={`${inspectorId}-pdf`} aria-controls={`${inspectorId}-panel`} ref={pdfToggleRef} type="button"
       className="mem-icon-action workspace-panel-toggle note-pdf-toggle"
       aria-label={t("pdfReader.tab")} title={t("pdfReader.tab")}
@@ -2765,7 +2771,7 @@ export default function PageDetail({
   // The example wiki is for looking at: nothing in it can be moved, renamed or deleted.
   // Page actions sit in the top bar beside the page sidebar toggle, as Obsidian's
   // view header does; the title row keeps only the title.
-  const actionsMenu = exampleWiki ? null : (
+  const actionsMenu = exampleWiki || teamAccess.member ? null : (
       <div className="page-detail-actions-anchor" ref={actionMenuRef}>
                 <button
                   ref={actionMenuTriggerRef}
@@ -2867,7 +2873,8 @@ export default function PageDetail({
 
   // A page opens ready to edit. When it is only shown (opened from Review,
   // or after the editor closed), a click in the text, or Enter on it, edits it.
-  const readModeEditable = page.status === "active" && !editing && !showCanvas && !exampleWiki;
+  const readModeEditable = page.status === "active" && !editing && !showCanvas && !exampleWiki &&
+    (!teamAccess.member || teamAccess.canEdit(page.space));
   const readModeEditDisabled = storedActionPending || renaming || renameMutation.isPending;
   const editFromReading = (event: React.MouseEvent) => {
     if (!readModeEditable || readModeEditDisabled) return;
@@ -3025,7 +3032,7 @@ export default function PageDetail({
         </div>}
 
         {/* An archived page is read only, so its review items wait until it is restored. */}
-        {onOpenReview && page.status !== "archived" && <NoteReviewNotice key={pageId} page={page}
+        {onOpenReview && !teamAccess.member && page.status !== "archived" && <NoteReviewNotice key={pageId} page={page}
           onReview={onOpenReview}
           onShowSources={() => void requestPageInfo()}
           disabled={exampleWiki || storedActionPending || canvasSwitchPending || !!editorStatus?.compositionActive}

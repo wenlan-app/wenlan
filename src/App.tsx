@@ -33,16 +33,19 @@ import { setServiceFallback } from "./lib/serviceNotices";
 import { commitInputComposition, isInputCompositionActive } from "./lib/inputComposition";
 import { useInputCompositionGuard } from "./lib/useInputCompositionGuard";
 import { isWebBuild } from "./web/runtime";
+import { isTeamMemberMode } from "./web/team";
+import { TeamMemberApp } from "./web/TeamMemberApp";
 
 export default function App() {
   if (isWebBuild()) {
-    return (
+    const app = (
       <>
         <div className="w-screen min-h-screen bg-[var(--bg-secondary)]"><Main /></div>
         <ThemeDecor />
         <AppToaster />
       </>
     );
+    return isTeamMemberMode() ? <TeamMemberApp>{app}</TeamMemberApp> : app;
   }
   return <DesktopApp />;
 }

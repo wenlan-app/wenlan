@@ -6,6 +6,7 @@ import { daemonMeetsFloor } from "../lib/daemonVersion";
 import type { RenamePageResponse, RestorePageResponse } from "../lib/tauri";
 import { archiveFixturePage, restoreFixturePage } from "../../e2e/tauriMock/pageRestore";
 import { isWebBuild } from "./runtime";
+import { isTeamMemberMode, readTeamKey, teamCallAllowed, TeamCallUnavailable, TEAM_GATE_PREFIX } from "./team";
 
 declare const __WENLAN_SOURCE_PREVIEW__: boolean;
 const sourcePreviewEnabled = () => isWebBuild()
@@ -42,12 +43,20 @@ async function http(
   body?: unknown,
   extraHeaders?: Record<string, string>,
 ): Promise<any> {
-  const res = await fetch(`${isWebBuild() ? "" : "/daemon"}${path}`, {
+  const team = isTeamMemberMode();
+  if (team && !teamCallAllowed(method, path)) throw new TeamCallUnavailable(`${method} ${path.split("?")[0]}`);
+  const key = team ? readTeamKey() : null;
+  if (team && !key) throw new TeamCallUnavailable(`${method} ${path.split("?")[0]}`);
+  const base = team ? TEAM_GATE_PREFIX : isWebBuild() ? "" : "/daemon";
+  const res = await fetch(`${base}${path}`, {
     method,
     headers: {
       ...(body !== undefined ? { "content-type": "application/json" } : undefined),
-      ...extraHeaders,
+      // The gate builds a new call from the member its key names; headers
+      // meant for the local daemon would only be dropped there.
+      ...(team ? { Authorization: `Bearer ${key}` } : extraHeaders),
     },
+    ...(team ? { credentials: "omit" as const, cache: "no-store" as const } : undefined),
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   const text = await res.text();
@@ -1818,7 +1827,21 @@ function unsupportedWebCommand(command: string): Error {
   return new Error(`“${command}” is available only in the Wenlan desktop app.`);
 }
 
+/**
+ * Team-member mode answers these here, as empty, so the screen shows nothing
+ * instead of a "could not load" message for a part a member does not have.
+ */
+const TEAM_LOCAL_ANSWERS: Record<string, () => unknown> = {
+  knowledge_folders_list: () => ({ folders: [], truncated: false }),
+  list_shares: () => [],
+  // Search finds pages only: memories, topics and conversations are the owner's.
+  search: () => [],
+  search_entities_cmd: () => [],
+  search_conversations: () => [],
+};
+
 export async function liveInvoke(cmd: string, args?: Args): Promise<unknown> {
+  if (isTeamMemberMode() && cmd in TEAM_LOCAL_ANSWERS) return TEAM_LOCAL_ANSWERS[cmd]();
   if (isWebBuild() && (NATIVE_ONLY_COMMANDS.has(cmd) || PREVIEW_ONLY_HANDLERS.has(cmd) || cmd in DEFAULTS)) {
     throw unsupportedWebCommand(cmd);
   }
@@ -1827,7 +1850,7 @@ export async function liveInvoke(cmd: string, args?: Args): Promise<unknown> {
     try {
       return await handler(args);
     } catch (e) {
-      console.warn(`[preview:live] ${cmd} failed:`, e);
+      if (!(e instanceof TeamCallUnavailable)) console.warn(`[preview:live] ${cmd} failed:`, e);
       throw e;
     }
   }

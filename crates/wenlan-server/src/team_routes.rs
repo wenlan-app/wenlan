@@ -918,6 +918,10 @@ fn team_router(state: TeamState) -> axum::Router {
     axum::Router::new()
         .route("/health", get(team_health))
         .route(wenlan_types::team::JOIN_PATH, get(team_join_page))
+        .route("/app", get(crate::web_static::team_app))
+        .route("/app/", get(crate::web_static::team_app))
+        .route("/app/{*rest}", get(crate::web_static::team_app))
+        .merge(crate::web_static::team_asset_routes())
         .merge(checked)
         .layer(DefaultBodyLimit::max(remote::MAX_VERSION_BYTES))
         .with_state(state)
@@ -947,6 +951,7 @@ struct JoinPageStrings {
     heading: &'static str,
     unnamed_heading: &'static str,
     unnamed_team: &'static str,
+    accept: &'static str,
     paste: &'static str,
     download_before: &'static str,
     download: &'static str,
@@ -970,6 +975,7 @@ const JOIN_PAGE_EN: JoinPageStrings = JoinPageStrings {
     heading: "Join {team} on Wenlan",
     unnamed_heading: "Join {team} on Wenlan",
     unnamed_team: "a team",
+    accept: "Accept",
     paste: "Copy this page's address. In Wenlan, open Settings, then Team, choose Join with an invite link, and paste it.",
     download_before: "Don't have Wenlan yet?",
     download: "Download it",
@@ -993,6 +999,7 @@ const JOIN_PAGE_ZH_HANS: JoinPageStrings = JoinPageStrings {
     heading: "加入 {team}",
     unnamed_heading: "加入{team}",
     unnamed_team: "团队",
+    accept: "接受",
     paste:
         "复制这个页面的地址。在文澜中打开“设置”，然后打开“团队”，选择“用邀请链接加入团队”并粘贴。",
     download_before: "还没安装文澜？",
@@ -1017,6 +1024,7 @@ const JOIN_PAGE_ZH_HANT: JoinPageStrings = JoinPageStrings {
     heading: "加入 {team}",
     unnamed_heading: "加入{team}",
     unnamed_team: "團隊",
+    accept: "接受",
     paste: "複製這個頁面的位址。在文瀾中打開「設定」，再打開「團隊」，選擇「用邀請連結加入團隊」並貼上。",
     download_before: "還沒安裝文瀾？",
     download: "下載文瀾",
@@ -1108,8 +1116,10 @@ p { margin:8px 0; }
 a { color:#5146b8; }
 button,select { font:inherit; }
 button { border:0; border-radius:8px; cursor:pointer; }
-#connect { margin-top:18px; padding:10px 14px; background:#5751c9; color:white; font-weight:600; }
-#connect:disabled { opacity:.55; cursor:default; }
+#accept { margin:18px 0 4px; padding:10px 22px; background:#5751c9; color:white; font-weight:600; }
+#accept:disabled,#connect:disabled { opacity:.55; cursor:default; }
+.more { margin-top:28px; color:#66676b; font-size:.9rem; }
+#connect { margin-top:8px; padding:6px 10px; background:#e8e7e2; color:#202124; font-size:.9rem; }
 [hidden] { display:none !important; }
 #error { margin-top:18px; }
 #setup { margin-top:24px; }
@@ -1133,7 +1143,8 @@ pre { max-width:100%; margin:0; padding:12px; overflow:auto; border-radius:8px; 
   a { color:#aaa5ff; }
   .instruction,.copy-status { color:#aaaab2; }
   .tool { background:#303137; color:#ececf1; }
-  .copy { background:#303137; color:#ececf1; }
+  .copy,#connect { background:#303137; color:#ececf1; }
+  .more { color:#aaaab2; }
   .tool.is-selected { background:#7770e7; color:white; }
   .tool:focus-visible,.copy:focus-visible { outline-color:#aaa5ff; }
   pre { background:#25262b; }
@@ -1147,10 +1158,13 @@ pre { max-width:100%; margin:0; padding:12px; overflow:auto; border-radius:8px; 
 <body>
 <main>
 <h1>%%HEADING%%</h1>
+<button id="accept" type="button">%%ACCEPT%%</button>
+<p id="error" hidden>%%EXPIRED%%</p>
+<div class="more">
 <p>%%PASTE%%</p>
 <p>%%DOWNLOAD_BEFORE%% <a href="https://wenlan.app">%%DOWNLOAD%%</a>%%DOWNLOAD_AFTER%%</p>
 <button id="connect" type="button">%%CONNECT%%</button>
-<p id="error" hidden>%%EXPIRED%%</p>
+</div>
 <section id="setup" hidden>
   <label class="chooser" id="chooser" hidden><span>%%SPACE%%</span><select id="spaces"></select></label>
   <p class="tool-question" id="tool-question">%%TOOL_QUESTION%%</p>
@@ -1175,6 +1189,7 @@ pre { max-width:100%; margin:0; padding:12px; overflow:auto; border-radius:8px; 
 (() => {
   const text = %%SCRIPT_STRINGS%%;
   const connect = document.getElementById('connect');
+  const accept = document.getElementById('accept');
   const error = document.getElementById('error');
   const setup = document.getElementById('setup');
   const chooser = document.getElementById('chooser');
@@ -1203,7 +1218,34 @@ pre { max-width:100%; margin:0; padding:12px; overflow:auto; border-radius:8px; 
     setup.hidden = true;
     error.hidden = false;
     connect.disabled = false;
+    accept.disabled = false;
   };
+
+  // Accept: open Wenlan here, in this browser. The key is checked first,
+  // then kept for this address only, and the page moves to /app.
+  accept.addEventListener('click', async () => {
+    const key = window.location.hash.slice(1);
+    if (!key) {
+      fail();
+      return;
+    }
+    accept.disabled = true;
+    error.hidden = true;
+    try {
+      const response = await fetch('/team/v1/me', {
+        method: 'GET',
+        headers: { Authorization: 'Bearer ' + key },
+        credentials: 'omit',
+        cache: 'no-store',
+        referrerPolicy: 'no-referrer'
+      });
+      if (!response.ok) throw new Error('join refused');
+      window.localStorage.setItem('wenlan.team.key', key);
+      window.location.assign('/app');
+    } catch (_) {
+      fail();
+    }
+  });
 
   const selectText = (node) => {
     const selection = window.getSelection();
@@ -1324,6 +1366,7 @@ fn render_join_page(name: Option<&str>, strings: &JoinPageStrings, nonce: &str) 
         ("%%LANG%%", html_escape(strings.lang)),
         ("%%HEADING%%", heading),
         ("%%NONCE%%", html_escape(nonce)),
+        ("%%ACCEPT%%", html_escape(strings.accept)),
         ("%%PASTE%%", html_escape(strings.paste)),
         ("%%DOWNLOAD_BEFORE%%", html_escape(strings.download_before)),
         ("%%DOWNLOAD%%", html_escape(strings.download)),

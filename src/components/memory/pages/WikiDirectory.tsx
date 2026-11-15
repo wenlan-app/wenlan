@@ -9,6 +9,7 @@ import { PageInventoryPanel } from "./PageInventoryPanel";
 import { WikiFolderCreationContext } from "./WikiFolderCreationContext";
 import type { WikiInventoryScope } from "./pageInventory";
 import { SpaceFoldersPrompt } from "./SpaceFoldersPrompt";
+import { useTeamAccess } from "../../../web/teamAccess";
 
 /** The id of the one directory the shell renders (see Main). */
 export const WIKI_DIRECTORY_ID = "wiki-directory";
@@ -186,6 +187,7 @@ function NewMenu({ exampleWiki, canCreateFolder, onNewPage, onNewFolder }: {
   readonly onNewFolder: () => void;
 }) {
   const { t } = useTranslation();
+  const teamAccess = useTeamAccess();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -204,6 +206,8 @@ function NewMenu({ exampleWiki, canCreateFolder, onNewPage, onNewFolder }: {
     if (refocus) buttonRef.current?.focus();
   };
   const folderDisabled = !canCreateFolder;
+  // A member who may only read gets no New button.
+  if (teamAccess.member && teamAccess.writable.length === 0) return null;
   return (
     <div className="wiki-workspace-new-menu" ref={rootRef}>
       <button

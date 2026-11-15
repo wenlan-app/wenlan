@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { forwardRef, useEffect, useRef } from "react";
-import { GearSix, SidebarSimple } from "@phosphor-icons/react";
+import { GearSix, SidebarSimple, SignOut } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 import IdentityCard from "./IdentityCard";
 import { PrimaryNavigation } from "./navigation/PrimaryNavigation";
@@ -14,6 +14,7 @@ import { movePinnedPage, unpinPage, usePinnedPages } from "./navigation/pinnedPa
 import { ICONS_SIDEBAR_WIDTH, type SidebarMode } from "./navigation/navigationPreferences";
 import "./navigation/notes-sidebar.css";
 import { isWebBuild } from "../../web/runtime";
+import { forgetTeamKey, isTeamMemberMode } from "../../web/team";
 
 interface SidebarProps {
   readonly activeNavigation?: GlobalNavigation | null;
@@ -95,6 +96,7 @@ export default function Sidebar({
   activePageId = null,
 }: SidebarProps) {
   const web = isWebBuild();
+  const teamMember = isTeamMemberMode();
   const { t } = useTranslation();
   const pinnedPages = usePinnedPages();
   const asideRef = useRef<HTMLElement>(null);
@@ -185,8 +187,8 @@ export default function Sidebar({
             onOpenPinnedPage={closeAfterNavigation(onOpenPinnedPage, closeOverlay)}
             onUnpinPage={unpinPage}
             onMovePinnedPage={movePinnedPage}
-            onNavigateEntities={closeAfterNavigation(onNavigateEntities, closeOverlay)}
-            onNavigateGraph={closeAfterNavigation(onNavigateGraph, closeOverlay)}
+            onNavigateEntities={teamMember ? undefined : closeAfterNavigation(onNavigateEntities, closeOverlay)}
+            onNavigateGraph={teamMember ? undefined : closeAfterNavigation(onNavigateGraph, closeOverlay)}
             onNavigateHome={closeAfterNavigation(onNavigateHome, closeOverlay)}
             onNavigatePages={closeAfterNavigation(onNavigatePages, closeOverlay)}
             onNavigateSpaces={closeAfterNavigation(onNavigateSpaces, closeOverlay)}
@@ -218,6 +220,19 @@ export default function Sidebar({
             >
               <span aria-hidden="true" className="notes-navigation-glyph"><GearSix /></span>
               {!compact && <span>{t("identityCard.settings")}</span>}
+            </button>
+          )}
+          {teamMember && (
+            <button
+              aria-label={t("teamWeb.forget")}
+              className={compact ? "notes-rail-button" : "notes-primary-link"}
+              data-testid="team-web-forget"
+              onClick={forgetTeamKey}
+              title={compact ? t("teamWeb.forget") : undefined}
+              type="button"
+            >
+              <span aria-hidden="true" className="notes-navigation-glyph"><SignOut /></span>
+              {!compact && <span>{t("teamWeb.forget")}</span>}
             </button>
           )}
           {!web && <IdentityCard
