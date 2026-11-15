@@ -79,7 +79,9 @@ I started Wenlan because what I worked out with AI tools was scattered across ch
 
 | **Download the desktop app** | **Connect from your AI tool** |
 |---|---|
-| [The full experience](https://github.com/wenlan-app/wenlan/releases/latest): pages, imports, and one-click connections. macOS 11 or later on Apple Silicon, Windows x64, or Linux x64 (AppImage or .deb, from v0.22). In English, 简体中文, and 繁體中文. | On a Mac, run `npx -y wenlan setup` (needs Node.js), or `brew install 7xuanlu/tap/wenlan` and then `wenlan setup`. In Claude Code, add the [plugin](docs/setup-with-ai.md). Linux and Windows: [CLI install guide](docs/setup-and-data.md#installation). |
+| [Keep your pages as files on your computer](https://github.com/wenlan-app/wenlan/releases/latest), with imports and one-click connections. macOS 11 or later on Apple Silicon, Windows x64, or Linux x64 (AppImage or .deb, from v0.22). In English, 简体中文, and 繁體中文. | On a Mac, run `npx -y wenlan setup` (needs Node.js), or `brew install 7xuanlu/tap/wenlan` and then `wenlan setup`. In Claude Code, add the [plugin](docs/setup-with-ai.md). Linux and Windows: [CLI install guide](docs/setup-and-data.md#installation). |
+
+Joining a team? Open the invite link from whoever runs your team's server. [Team server guide](docs/team-server.md).
 
 ### 2. Bring in your material
 

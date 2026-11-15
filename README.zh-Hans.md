@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=3066f3ed5076a71a58e1473669cdfb1dd427643830782c092917ea53b6de5f1f -->
+<!-- README_SYNC: source=README.md sha256=78fe49d77bbda39c33542c2c4e193b0bb33431fcd5aca4e2fb52e34c8fa57105 -->
 
 <p align="center">
   <picture>
@@ -81,7 +81,9 @@
 
 | **下载桌面 App** | **从你的 AI 工具连接** |
 |---|---|
-| [完整体验](https://github.com/wenlan-app/wenlan/releases/latest)：笔记、导入和一键连接。支持 macOS 11 以上的 Apple Silicon、Windows x64 和 Linux x64（AppImage 或 .deb，v0.22 起）。界面有英文、简体中文和繁體中文。 | 在 Mac 上运行 `npx -y wenlan setup`（需要 Node.js），或运行 `brew install 7xuanlu/tap/wenlan` 再运行 `wenlan setup`。Claude Code 可以装[插件](docs/setup-with-ai.md)。Linux 和 Windows 请看 [CLI 安装说明](docs/setup-and-data.zh-Hans.md#installation)。 |
+| [页面存成你电脑上的文件](https://github.com/wenlan-app/wenlan/releases/latest)，可以导入资料、一键连接 AI 工具。支持 macOS 11 以上的 Apple Silicon、Windows x64 和 Linux x64（AppImage 或 .deb，v0.22 起）。界面有英文、简体中文和繁體中文。 | 在 Mac 上运行 `npx -y wenlan setup`（需要 Node.js），或运行 `brew install 7xuanlu/tap/wenlan` 再运行 `wenlan setup`。Claude Code 可以装[插件](docs/setup-with-ai.md)。Linux 和 Windows 请看 [CLI 安装说明](docs/setup-and-data.zh-Hans.md#installation)。 |
+
+要加入团队？打开架团队服务器的人给你的邀请链接就好。[团队服务器说明](docs/team-server.md)。
 
 ### 2. 带入你的资料
 

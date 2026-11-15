@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=3066f3ed5076a71a58e1473669cdfb1dd427643830782c092917ea53b6de5f1f -->
+<!-- README_SYNC: source=README.md sha256=78fe49d77bbda39c33542c2c4e193b0bb33431fcd5aca4e2fb52e34c8fa57105 -->
 
 <p align="center">
   <picture>
@@ -81,7 +81,9 @@ Empecé Wenlan porque lo que resolvía con herramientas de IA quedaba disperso e
 
 | **Descarga la app de escritorio** | **Conecta desde tu herramienta de IA** |
 |---|---|
-| [La experiencia completa](https://github.com/wenlan-app/wenlan/releases/latest): páginas, importaciones y conexiones con un clic. macOS 11 o posterior en Apple Silicon, Windows x64 o Linux x64 (AppImage o .deb, desde v0.22). En inglés, chino simplificado y chino tradicional. | En un Mac, ejecuta `npx -y wenlan setup` (requiere Node.js), o `brew install 7xuanlu/tap/wenlan` y después `wenlan setup`. En Claude Code, añade el [plugin](docs/setup-with-ai.md). Linux y Windows: [guía de instalación de la CLI](docs/setup-and-data.es-ES.md#installation). |
+| [Guarda tus páginas como archivos en tu ordenador](https://github.com/wenlan-app/wenlan/releases/latest), con importaciones y conexiones con un clic. macOS 11 o posterior en Apple Silicon, Windows x64 o Linux x64 (AppImage o .deb, desde v0.22). En inglés, chino simplificado y chino tradicional. | En un Mac, ejecuta `npx -y wenlan setup` (requiere Node.js), o `brew install 7xuanlu/tap/wenlan` y después `wenlan setup`. En Claude Code, añade el [plugin](docs/setup-with-ai.md). Linux y Windows: [guía de instalación de la CLI](docs/setup-and-data.es-ES.md#installation). |
+
+¿Te unes a un equipo? Abre el enlace de invitación de quien gestiona el servidor de tu equipo. [Guía del servidor de equipo](docs/team-server.md).
 
 ### 2. Trae tu material
 
