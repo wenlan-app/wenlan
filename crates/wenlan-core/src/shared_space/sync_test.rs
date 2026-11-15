@@ -3163,3 +3163,62 @@ async fn an_edit_that_lost_is_kept_once_even_when_a_third_computer_had_it() {
         assert_eq!(kept[0].content, "Fish or pasta, and a cake.");
     }
 }
+
+/// A team member's edit made on the team server through its web app (the
+/// server records it as `shared_person:<member>`, as the team gate does)
+/// shows as that member's in the server's recent changes and reaches a
+/// desktop as theirs, the same shape as a desktop member's hand edit.
+#[tokio::test]
+async fn a_members_edit_on_the_team_server_reaches_desktops_as_theirs() {
+    let folder = tempfile::tempdir().unwrap();
+    let folder = folder.path().join("Wedding (shared)");
+    let server = Member::new("Team server").await;
+    let desk = Member::new("Ana").await;
+    let other = Member::new("Ben").await;
+    let id = server
+        .write("Seating plan", "Table 1: Ana.", SPACE.to_string().into())
+        .await;
+    assert_eq!(server.sync(&folder).await.exported, 1);
+    update_share(&server.settings(), &space(), |share| share.hosted = true).unwrap();
+    assert_eq!(desk.sync(&folder).await.applied, 1);
+    assert_eq!(other.sync(&folder).await.applied, 1);
+    let ben = other.member_id();
+
+    // Ben edits on the web: the server writes it as Ben, in person.
+    let page = server.page(&id).await.unwrap();
+    let wrote = crate::post_write::page_write(
+        &server.db,
+        crate::post_write::PageWrite::UpdatePreservingSources {
+            page_id: &id,
+            req: UpdatePageRequest {
+                content: "Table 1: Ana, Ben.".into(),
+                source_memory_ids: Vec::new(),
+                expected_version: Some(page.version),
+                caller_id: None,
+                operation_id: Some("web-op-1".into()),
+            },
+            edited_by: &format!("shared_person:{ben}"),
+            knowledge_path: None,
+            basis: crate::db::BasisWrite {
+                actor: "human".into(),
+                ..Default::default()
+            },
+        },
+    )
+    .await
+    .unwrap();
+    assert!(wrote.wrote);
+    let changes = server.db.list_recent_changes(10).await.unwrap();
+    let change = changes.iter().find(|change| change.page_id == id).unwrap();
+    assert_eq!(change.edited_by, Some(format!("shared_person:{ben}")));
+
+    tick().await;
+    assert_eq!(server.sync(&folder).await.exported, 1);
+    assert_eq!(desk.sync(&folder).await.applied, 1);
+    assert_eq!(desk.content(&id).await, "Table 1: Ana, Ben.");
+    assert_eq!(
+        desk.history(&id).await[0].edited_by,
+        format!("shared_person:{ben}"),
+        "the desktop names Ben, not the server"
+    );
+}

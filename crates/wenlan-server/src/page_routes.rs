@@ -1446,6 +1446,20 @@ pub async fn handle_move_page(
     Ok(Json(MovePageResponse { storage_path }))
 }
 
+/// 404 unless page or draft `id` is filed in `pinned`, the Space the team
+/// gate checked for the member acting.
+async fn member_page_in_pinned_space(
+    db: &wenlan_core::db::MemoryDB,
+    id: &str,
+    pinned: Option<&str>,
+) -> Result<(), ServerError> {
+    let page = db.get_page(id).await?;
+    match page {
+        Some(page) if crate::team_actor::in_pinned_space(page.space.as_deref(), pinned) => Ok(()),
+        _ => Err(ServerError::NotFound(format!("page {id} not found"))),
+    }
+}
+
 /// POST /api/pages/drafts
 ///
 /// First durable snapshot of a human-authored Page draft. An omitted `space`
@@ -1453,11 +1467,18 @@ pub async fn handle_move_page(
 pub async fn handle_create_page_draft(
     State(state): State<Arc<RwLock<ServerState>>>,
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
+    crate::team_actor::TeamActor(actor): crate::team_actor::TeamActor,
     view: crate::truth_guard::TruthView,
     Json(req): Json<CreatePageDraftRequest>,
 ) -> Result<Json<PageDraftResponse>, ServerError> {
     let db = draft_db(&state).await?;
-    let space = if req.space_was_provided() {
+    // A team member's draft goes only in the Space the team gate checked.
+    let space = if actor.is_some() {
+        if header_space.is_none() || (req.space_was_provided() && req.space != header_space) {
+            return Err(ServerError::NotFound("no such Space".to_string()));
+        }
+        header_space
+    } else if req.space_was_provided() {
         req.space.clone()
     } else {
         header_space
@@ -1479,11 +1500,21 @@ pub async fn handle_create_page_draft(
 /// PUT /api/pages/drafts/{id}
 pub async fn handle_update_page_draft(
     State(state): State<Arc<RwLock<ServerState>>>,
+    crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
+    crate::team_actor::TeamActor(actor): crate::team_actor::TeamActor,
     view: crate::truth_guard::TruthView,
     Path(id): Path<String>,
     Json(req): Json<UpdatePageDraftRequest>,
 ) -> Result<Json<PageDraftResponse>, ServerError> {
     let db = draft_db(&state).await?;
+    if actor.is_some() {
+        // A team member changes a draft only in the Space the team gate
+        // checked, and does not move it out of there.
+        member_page_in_pinned_space(&db, &id, header_space.as_deref()).await?;
+        if req.space.as_deref() != header_space.as_deref() {
+            return Err(ServerError::NotFound(format!("Page draft {id}")));
+        }
+    }
     match db
         .update_page_draft_in_registered_space(
             &id,
@@ -1508,6 +1539,8 @@ pub async fn handle_update_page_draft(
 /// POST /api/pages/drafts/{id}/publish
 pub async fn handle_publish_page_draft(
     State(state): State<Arc<RwLock<ServerState>>>,
+    crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
+    crate::team_actor::TeamActor(actor): crate::team_actor::TeamActor,
     view: crate::truth_guard::TruthView,
     Path(id): Path<String>,
     Json(req): Json<PageDraftVersionRequest>,
@@ -1520,9 +1553,19 @@ pub async fn handle_publish_page_draft(
         )
     };
     // Resolve response intent before the DB commit; projection failures below remain pending.
+    // A team member publishes only in the Space the team gate checked, and
+    // the page is recorded as theirs (shared as theirs, like a desktop
+    // member's).
+    let edited_by = match &actor {
+        Some(member) => {
+            member_page_in_pinned_space(&db, &id, header_space.as_deref()).await?;
+            member.edited_by()
+        }
+        None => "publish".to_string(),
+    };
     let folder_path = db.page_initial_folder_path(&id).await?;
     let page = match db
-        .publish_page_draft(&id, req.expected_version)
+        .publish_page_draft_by(&id, req.expected_version, &edited_by)
         .await
         .map_err(page_draft_error)?
     {
@@ -2053,6 +2096,7 @@ pub async fn handle_list_orphan_links(
 pub async fn handle_update_page(
     State(state): State<Arc<RwLock<ServerState>>>,
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
+    crate::team_actor::TeamActor(actor): crate::team_actor::TeamActor,
     Path(id): Path<String>,
     Json(wire): Json<wenlan_types::requests::ManualPageEditRequest>,
 ) -> Result<Json<wenlan_types::responses::ManualPageWriteResponse>, ServerError> {
@@ -2076,6 +2120,19 @@ pub async fn handle_update_page(
         .await
         .map_err(|e| ServerError::Internal(e.to_string()))?
         .ok_or_else(|| ServerError::NotFound(format!("page {id} not found")))?;
+    // A team member through the team server: only a page of the Space the
+    // team gate checked, recorded as that member's hand edit (the writer a
+    // desktop member's edit has when it syncs). Everything else is the same.
+    let edited_by = match &actor {
+        Some(member) => {
+            if !crate::team_actor::in_pinned_space(before.space.as_deref(), header_space.as_deref())
+            {
+                return Err(ServerError::NotFound(format!("page {id} not found")));
+            }
+            member.edited_by()
+        }
+        None => "manual_edit".to_string(),
+    };
     // The body this edit was made on, when the write is fenced on it: only
     // then can a heading whose words changed be read as renamed.
     let edited_from = (req.expected_version == Some(before.version)).then_some(before.content);
@@ -2098,7 +2155,7 @@ pub async fn handle_update_page(
                 caller_id: req.caller_id,
                 operation_id: req.operation_id,
             },
-            edited_by: "manual_edit",
+            edited_by: &edited_by,
             knowledge_path: page_root.as_deref(),
             basis: wenlan_core::db::BasisWrite {
                 research_write: None,
@@ -4698,6 +4755,10 @@ mod entity_page_guard_tests;
 #[cfg(test)]
 #[path = "page_routes/real_folder_page_routes_test.rs"]
 mod real_folder_page_route_tests;
+
+#[cfg(test)]
+#[path = "page_routes/team_member_edit_test.rs"]
+mod team_member_edit_tests;
 
 #[cfg(test)]
 mod gated_code_basis_warning_tests {

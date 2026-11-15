@@ -908,6 +908,7 @@ fn team_router(state: TeamState) -> axum::Router {
         )
         .route("/mcp", any(team_mcp))
         .route("/mcp/{*space}", any(team_mcp_in))
+        .route("/team/v1/app/{*call}", any(app_gate::handle))
         .layer(middleware::from_fn(wenlan_mcp::serve::guard_initialization))
         .layer(middleware::from_fn(capped_body))
         .layer(middleware::from_fn_with_state(
@@ -1372,6 +1373,9 @@ async fn team_join_page(State(state): State<TeamState>, headers: HeaderMap) -> R
     response
 }
 
+#[path = "team_app_gate.rs"]
+mod app_gate;
+
 /// Origins of web AI apps whose connectors may call `/mcp` from a browser.
 const ALLOWED_ORIGINS: &[&str] = &["https://claude.ai", "https://chatgpt.com"];
 
@@ -1402,12 +1406,40 @@ async fn require_member(State(state): State<TeamState>, mut req: Request, next: 
         .get(header::ORIGIN)
         .and_then(|value| value.to_str().ok())
     {
-        if !ALLOWED_ORIGINS.contains(&origin) {
+        // Wenlan on the web, served by this server, is the only page that
+        // may call the app gate; the AI apps' connectors may call the rest.
+        let on_gate = req.uri().path() == app_gate::PREFIX
+            || req
+                .uri()
+                .path()
+                .starts_with(&format!("{}/", app_gate::PREFIX));
+        let allowed = if on_gate {
+            own_origin(&state).await.as_deref() == Some(origin)
+        } else {
+            ALLOWED_ORIGINS.contains(&origin)
+        };
+        if !allowed {
             return (StatusCode::FORBIDDEN, "origin not allowed").into_response();
         }
     }
     req.extensions_mut().insert(member);
     next.run(req).await
+}
+
+/// This server's own web origin (`https://team.example.com`), from the
+/// address people reach it at: `WENLAN_TEAM_URL`, else the team's saved
+/// address. None when neither is set.
+async fn own_origin(state: &TeamState) -> Option<String> {
+    let path = state.team_path.clone();
+    let url = match env_value(TEAM_URL_ENV) {
+        Some(url) => Some(url),
+        None => tokio::task::spawn_blocking(move || team::read_team(&path).ok()?.url)
+            .await
+            .ok()
+            .flatten(),
+    }?;
+    let origin = url::Url::parse(url.trim()).ok()?.origin();
+    origin.is_tuple().then(|| origin.ascii_serialization())
 }
 
 async fn team_me(State(state): State<TeamState>, Extension(member): Extension<Member>) -> Response {

@@ -638,6 +638,20 @@ impl MemoryDB {
         id: &str,
         expected_version: i64,
     ) -> Result<PageDraftPublishOutcome, WenlanError> {
+        self.publish_page_draft_by(id, expected_version, "publish")
+            .await
+    }
+
+    /// [`Self::publish_page_draft`], with the history row naming who
+    /// published: `"publish"` for the person here, or a team member's shared
+    /// writer (`shared_person:<member>`) when a member publishes through the
+    /// team server, so the page is shared as theirs.
+    pub async fn publish_page_draft_by(
+        &self,
+        id: &str,
+        expected_version: i64,
+        edited_by: &str,
+    ) -> Result<PageDraftPublishOutcome, WenlanError> {
         // Snapshot outside the write transaction so the embedding compute
         // (slow on first call while the model loads) never holds it. Any
         // concurrent draft write bumps the version, so if the in-transaction
@@ -783,7 +797,7 @@ impl MemoryDB {
         }
         // Every path that bumps `pages.version` appends its immutable history
         // row in the same transaction (`append_page_history` is the ONE site).
-        Self::append_page_history(&tx, id, "publish", chrono::Utc::now().timestamp())
+        Self::append_page_history(&tx, id, edited_by, chrono::Utc::now().timestamp())
             .await
             .map_err(|error| {
                 WenlanError::VectorDb(format!("publish Page draft history: {error}"))
