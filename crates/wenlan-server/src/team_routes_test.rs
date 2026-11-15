@@ -205,6 +205,57 @@ async fn team_join_page_has_private_security_headers_and_no_member_key() {
     assert!(csp.contains("style-src 'nonce-"), "{csp}");
     let page = response_text(response).await;
     assert!(page.contains("Don't want to install? Connect your AI tool"));
+    assert!(page
+        .contains("<p class=\"tool-question\" id=\"tool-question\">Which AI tool do you use?</p>"));
+    for id in [
+        "connect",
+        "setup",
+        "chooser",
+        "spaces",
+        "readonly",
+        "error",
+        "tool-claude",
+        "tool-codex",
+        "tool-cursor",
+        "snippet",
+        "copy",
+    ] {
+        assert!(page.contains(&format!("id=\"{id}\"")), "missing #{id}");
+    }
+    assert!(!page.contains("id=\"address\""));
+    assert!(!page.contains("class=\"address\""));
+    assert!(!page.contains("<strong>Address:</strong>"));
+    assert!(page.contains("id=\"snippet\" hidden"));
+    let snippet_start = page
+        .find("<section class=\"snippet\" id=\"snippet\" hidden>")
+        .unwrap();
+    let snippet_end = snippet_start + page[snippet_start..].find("</section>").unwrap();
+    let snippet_markup = &page[snippet_start..snippet_end];
+    assert!(snippet_markup.contains(
+        "<p class=\"readonly\" id=\"readonly\" hidden>Your AI tool can search this Space, but it cannot change pages.</p>"
+    ));
+    assert!(snippet_markup
+        .contains("<p class=\"private\">Keep this private. It lets an AI tool act as you.</p>"));
+    assert!(page.contains("chooser.hidden = spaces.length === 1;"));
+    assert!(page.contains("button.classList.toggle('is-selected', selected)"));
+    assert!(
+        page.contains(".tool.is-selected { background:#5751c9; color:white; font-weight:600; }")
+    );
+    assert!(page.contains(".tool { flex:1 1 6.5rem; min-width:0; padding:8px 10px; border-radius:4px; background:transparent;"));
+    assert!(page.contains("snippet.hidden = true;\n      readonlyNode.hidden = true;"));
+    for (id, tool) in [
+        ("tool-claude", "claude"),
+        ("tool-codex", "codex"),
+        ("tool-cursor", "cursor"),
+    ] {
+        assert!(
+            page.contains(&format!(
+                "id=\"{id}\" type=\"button\" data-tool=\"{tool}\" aria-pressed=\"false\""
+            )),
+            "#{id} must start unchosen"
+        );
+    }
+    assert_eq!(page.matches("id=\"copy\"").count(), 1);
     assert!(!page.contains(&f.writer.1), "member key leaked into /join");
     assert!(
         !page.contains("wlt_"),
@@ -221,55 +272,64 @@ async fn team_join_page_selects_english_simplified_and_traditional_chinese() {
             "lang=\"en\"",
             "<h1>Join a team on Wenlan</h1>",
             "Don't want to install? Connect your AI tool",
+            "<p class=\"tool-question\" id=\"tool-question\">Which AI tool do you use?</p>",
         ),
         (
             "zh-CN",
             "lang=\"zh-Hans\"",
             "<h1>加入团队</h1>",
             "不想安装？直接连接你的 AI 工具",
+            "<p class=\"tool-question\" id=\"tool-question\">你用哪个 AI 工具？</p>",
         ),
         (
             "zh-SG",
             "lang=\"zh-Hans\"",
             "<h1>加入团队</h1>",
             "不想安装？直接连接你的 AI 工具",
+            "<p class=\"tool-question\" id=\"tool-question\">你用哪个 AI 工具？</p>",
         ),
         (
             "zh-TW",
             "lang=\"zh-Hant\"",
             "<h1>加入團隊</h1>",
             "不想安裝？直接連接你的 AI 工具",
+            "<p class=\"tool-question\" id=\"tool-question\">你用哪個 AI 工具？</p>",
         ),
         (
             "zh-HK",
             "lang=\"zh-Hant\"",
             "<h1>加入團隊</h1>",
             "不想安裝？直接連接你的 AI 工具",
+            "<p class=\"tool-question\" id=\"tool-question\">你用哪個 AI 工具？</p>",
         ),
         (
             "zh-MO",
             "lang=\"zh-Hant\"",
             "<h1>加入團隊</h1>",
             "不想安裝？直接連接你的 AI 工具",
+            "<p class=\"tool-question\" id=\"tool-question\">你用哪個 AI 工具？</p>",
         ),
         (
             "zh-Hant",
             "lang=\"zh-Hant\"",
             "<h1>加入團隊</h1>",
             "不想安裝？直接連接你的 AI 工具",
+            "<p class=\"tool-question\" id=\"tool-question\">你用哪個 AI 工具？</p>",
         ),
         (
             "en;q=0.2,zh-TW;q=0.9",
             "lang=\"zh-Hant\"",
             "<h1>加入團隊</h1>",
             "不想安裝？直接連接你的 AI 工具",
+            "<p class=\"tool-question\" id=\"tool-question\">你用哪個 AI 工具？</p>",
         ),
     ];
-    for (accept_language, lang, heading, button) in cases {
+    for (accept_language, lang, heading, button, tool_question) in cases {
         let page = response_text(join_page_response(&f.state, Some(accept_language)).await).await;
         assert!(page.contains(lang), "{accept_language}: {page}");
         assert!(page.contains(heading), "{accept_language}: {page}");
         assert!(page.contains(button), "{accept_language}: {page}");
+        assert!(page.contains(tool_question), "{accept_language}: {page}");
     }
 }
 

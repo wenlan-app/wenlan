@@ -934,9 +934,9 @@ struct JoinPageStrings {
     download: &'static str,
     download_after: &'static str,
     connect: &'static str,
-    address: &'static str,
     space: &'static str,
     read_only: &'static str,
+    tool_question: &'static str,
     claude_command: &'static str,
     codex_config: &'static str,
     cursor_config: &'static str,
@@ -957,9 +957,9 @@ const JOIN_PAGE_EN: JoinPageStrings = JoinPageStrings {
     download: "Download it",
     download_after: ", then come back to this link.",
     connect: "Don't want to install? Connect your AI tool",
-    address: "Address",
     space: "Space",
     read_only: "Your AI tool can search this Space, but it cannot change pages.",
+    tool_question: "Which AI tool do you use?",
     claude_command: "Run this command:",
     codex_config: "Add to ~/.codex/config.toml:",
     cursor_config: "Add to ~/.cursor/mcp.json:",
@@ -981,9 +981,9 @@ const JOIN_PAGE_ZH_HANS: JoinPageStrings = JoinPageStrings {
     download: "下载文澜",
     download_after: "，然后再打开这个链接。",
     connect: "不想安装？直接连接你的 AI 工具",
-    address: "地址",
     space: "Space",
     read_only: "你的 AI 工具可以搜索这个 Space，但不能更改页面。",
+    tool_question: "你用哪个 AI 工具？",
     claude_command: "运行这条命令：",
     codex_config: "添加到 ~/.codex/config.toml：",
     cursor_config: "添加到 ~/.cursor/mcp.json：",
@@ -1004,9 +1004,9 @@ const JOIN_PAGE_ZH_HANT: JoinPageStrings = JoinPageStrings {
     download: "下載文瀾",
     download_after: "，然後再打開這個連結。",
     connect: "不想安裝？直接連接你的 AI 工具",
-    address: "位址",
     space: "Space",
     read_only: "你的 AI 工具可以搜尋這個 Space，但不能更改頁面。",
+    tool_question: "你用哪個 AI 工具？",
     claude_command: "執行這行指令：",
     codex_config: "加入 ~/.codex/config.toml：",
     cursor_config: "加入 ~/.cursor/mcp.json：",
@@ -1095,16 +1095,17 @@ button { border:0; border-radius:8px; cursor:pointer; }
 [hidden] { display:none !important; }
 #error { margin-top:18px; }
 #setup { margin-top:24px; }
-.address { overflow-wrap:anywhere; }
-.address strong { font-weight:600; }
 .chooser { display:flex; align-items:center; gap:10px; margin:12px 0; }
 .chooser select { min-width:0; max-width:100%; padding:6px 8px; }
 .readonly { color:#6a5a18; }
-.snippets { display:grid; gap:16px; margin-top:20px; }
-.snippet { min-width:0; }
-.snippet-head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
-.snippet h2 { margin:0; font-size:1rem; }
-.instruction { margin:3px 0 7px; color:#66676b; font-size:.88rem; }
+.tool-question { margin:20px 0 8px; font-weight:600; }
+.tools { display:flex; flex-wrap:wrap; gap:8px; }
+.tool { flex:1 1 6.5rem; min-width:0; padding:8px 10px; border-radius:4px; background:transparent; color:#202124; }
+.tool.is-selected { background:#5751c9; color:white; font-weight:600; }
+.tool:focus-visible,.copy:focus-visible { outline:3px solid #8c86ec; outline-offset:2px; }
+.snippet { min-width:0; margin-top:16px; }
+.snippet-head { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px 12px; }
+.instruction { margin:0; color:#66676b; font-size:.88rem; }
 .copy { padding:5px 10px; background:#e8e7e2; color:#202124; }
 pre { max-width:100%; margin:0; padding:12px; overflow:auto; border-radius:8px; background:#ecece8; font:13px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace; white-space:pre-wrap; overflow-wrap:anywhere; }
 .copy-status { min-height:1.25em; margin:4px 0 0; color:#66676b; font-size:.82rem; }
@@ -1113,13 +1114,14 @@ pre { max-width:100%; margin:0; padding:12px; overflow:auto; border-radius:8px; 
   body { background:#16171b; color:#ececf1; }
   a { color:#aaa5ff; }
   .instruction,.copy-status { color:#aaaab2; }
+  .tool { background:transparent; color:#ececf1; }
   .copy { background:#303137; color:#ececf1; }
+  .tool.is-selected { background:#7770e7; color:white; }
   pre { background:#25262b; }
   .readonly { color:#e1c86b; }
 }
 @media (max-width:480px) {
   main { margin:7vh auto; padding-inline:16px; }
-  .snippet-head { align-items:flex-start; }
 }
 </style>
 </head>
@@ -1131,30 +1133,23 @@ pre { max-width:100%; margin:0; padding:12px; overflow:auto; border-radius:8px; 
 <button id="connect" type="button">%%CONNECT%%</button>
 <p id="error" hidden>%%EXPIRED%%</p>
 <section id="setup" hidden>
-  <p class="address"><strong>%%ADDRESS%%:</strong> <code id="address"></code></p>
   <label class="chooser" id="chooser" hidden><span>%%SPACE%%</span><select id="spaces"></select></label>
-  <p class="readonly" id="readonly" hidden>%%READ_ONLY%%</p>
-  <div class="snippets" id="snippets">
-    <section class="snippet">
-      <div class="snippet-head"><h2>Claude Code</h2><button class="copy" type="button" data-copy="claude">%%COPY%%</button></div>
-      <p class="instruction">%%CLAUDE_COMMAND%%</p>
-      <pre tabindex="0"><code id="claude"></code></pre>
-      <p class="copy-status" id="claude-status" aria-live="polite"></p>
-    </section>
-    <section class="snippet">
-      <div class="snippet-head"><h2>Codex</h2><button class="copy" type="button" data-copy="codex">%%COPY%%</button></div>
-      <p class="instruction">%%CODEX_CONFIG%%</p>
-      <pre tabindex="0"><code id="codex"></code></pre>
-      <p class="copy-status" id="codex-status" aria-live="polite"></p>
-    </section>
-    <section class="snippet">
-      <div class="snippet-head"><h2>Cursor</h2><button class="copy" type="button" data-copy="cursor">%%COPY%%</button></div>
-      <p class="instruction">%%CURSOR_CONFIG%%</p>
-      <pre tabindex="0"><code id="cursor"></code></pre>
-      <p class="copy-status" id="cursor-status" aria-live="polite"></p>
-    </section>
+  <p class="tool-question" id="tool-question">%%TOOL_QUESTION%%</p>
+  <div class="tools" role="group" aria-labelledby="tool-question">
+    <button class="tool" id="tool-claude" type="button" data-tool="claude" aria-pressed="false">Claude Code</button>
+    <button class="tool" id="tool-codex" type="button" data-tool="codex" aria-pressed="false">Codex</button>
+    <button class="tool" id="tool-cursor" type="button" data-tool="cursor" aria-pressed="false">Cursor</button>
   </div>
-  <p class="private">%%PRIVATE%%</p>
+  <section class="snippet" id="snippet" hidden>
+    <div class="snippet-head">
+      <p class="instruction" id="instruction"></p>
+      <button class="copy" id="copy" type="button">%%COPY%%</button>
+    </div>
+    <pre tabindex="0"><code id="snippet-text"></code></pre>
+    <p class="copy-status" id="copy-status" aria-live="polite"></p>
+    <p class="readonly" id="readonly" hidden>%%READ_ONLY%%</p>
+    <p class="private">%%PRIVATE%%</p>
+  </section>
 </section>
 </main>
 <script nonce="%%NONCE%%">
@@ -1165,13 +1160,25 @@ pre { max-width:100%; margin:0; padding:12px; overflow:auto; border-radius:8px; 
   const setup = document.getElementById('setup');
   const chooser = document.getElementById('chooser');
   const spacesNode = document.getElementById('spaces');
-  const addressNode = document.getElementById('address');
   const readonlyNode = document.getElementById('readonly');
-  const codeNodes = {
-    claude: document.getElementById('claude'),
-    codex: document.getElementById('codex'),
-    cursor: document.getElementById('cursor')
+  const snippet = document.getElementById('snippet');
+  const instruction = document.getElementById('instruction');
+  const snippetText = document.getElementById('snippet-text');
+  const copy = document.getElementById('copy');
+  const copyStatus = document.getElementById('copy-status');
+  const toolButtons = {
+    claude: document.getElementById('tool-claude'),
+    codex: document.getElementById('tool-codex'),
+    cursor: document.getElementById('tool-cursor')
   };
+  const instructions = {
+    claude: text.claude_command,
+    codex: text.codex_config,
+    cursor: text.cursor_config
+  };
+  let selectedTool = null;
+  let snippets = null;
+  let readOnly = false;
 
   const fail = () => {
     setup.hidden = true;
@@ -1189,20 +1196,41 @@ pre { max-width:100%; margin:0; padding:12px; overflow:auto; border-radius:8px; 
     node.parentElement.focus();
   };
 
-  document.querySelectorAll('[data-copy]').forEach((button) => {
-    button.addEventListener('click', async () => {
-      const id = button.dataset.copy;
-      const node = codeNodes[id];
-      const status = document.getElementById(id + '-status');
-      try {
-        await navigator.clipboard.writeText(node.textContent);
-        button.textContent = text.copied;
-        status.textContent = '';
-      } catch (_) {
-        selectText(node);
-        status.textContent = text.copy_failed;
-      }
+  const renderTool = () => {
+    Object.entries(toolButtons).forEach(([tool, button]) => {
+      const selected = tool === selectedTool;
+      button.setAttribute('aria-pressed', String(selected));
+      button.classList.toggle('is-selected', selected);
     });
+    if (!selectedTool || !snippets) {
+      snippet.hidden = true;
+      readonlyNode.hidden = true;
+      return;
+    }
+    instruction.textContent = instructions[selectedTool];
+    snippetText.textContent = snippets[selectedTool];
+    copy.textContent = text.copy;
+    copyStatus.textContent = '';
+    readonlyNode.hidden = !readOnly;
+    snippet.hidden = false;
+  };
+
+  Object.entries(toolButtons).forEach(([tool, button]) => {
+    button.addEventListener('click', () => {
+      selectedTool = tool;
+      renderTool();
+    });
+  });
+
+  copy.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(snippetText.textContent);
+      copy.textContent = text.copied;
+      copyStatus.textContent = '';
+    } catch (_) {
+      selectText(snippetText);
+      copyStatus.textContent = text.copy_failed;
+    }
   });
 
   connect.addEventListener('click', async () => {
@@ -1240,15 +1268,17 @@ pre { max-width:100%; margin:0; padding:12px; overflow:auto; border-radius:8px; 
         const address = spaces.length === 1
           ? window.location.origin + '/mcp'
           : window.location.origin + '/mcp/' + encodeURIComponent(entry.space);
-        addressNode.textContent = address;
-        readonlyNode.hidden = entry.access !== 'read';
-        codeNodes.claude.textContent = 'claude mcp add --transport http wenlan-team ' + address
-          + ' --header "Authorization: Bearer ' + key + '"';
-        codeNodes.codex.textContent = '[mcp_servers.wenlan-team]\nurl = "' + address
-          + '"\nhttp_headers = { Authorization = "Bearer ' + key + '" }';
-        codeNodes.cursor.textContent = JSON.stringify({
-          mcpServers: { 'wenlan-team': { url: address, headers: { Authorization: 'Bearer ' + key } } }
-        });
+        readOnly = entry.access === 'read';
+        snippets = {
+          claude: 'claude mcp add --transport http wenlan-team ' + address
+            + ' --header "Authorization: Bearer ' + key + '"',
+          codex: '[mcp_servers.wenlan-team]\nurl = "' + address
+            + '"\nhttp_headers = { Authorization = "Bearer ' + key + '" }',
+          cursor: JSON.stringify({
+            mcpServers: { 'wenlan-team': { url: address, headers: { Authorization: 'Bearer ' + key } } }
+          })
+        };
+        renderTool();
       };
       spacesNode.addEventListener('change', update, { once: false });
       update();
@@ -1280,12 +1310,9 @@ fn render_join_page(name: Option<&str>, strings: &JoinPageStrings, nonce: &str) 
         ("%%DOWNLOAD%%", html_escape(strings.download)),
         ("%%DOWNLOAD_AFTER%%", html_escape(strings.download_after)),
         ("%%CONNECT%%", html_escape(strings.connect)),
-        ("%%ADDRESS%%", html_escape(strings.address)),
         ("%%SPACE%%", html_escape(strings.space)),
         ("%%READ_ONLY%%", html_escape(strings.read_only)),
-        ("%%CLAUDE_COMMAND%%", html_escape(strings.claude_command)),
-        ("%%CODEX_CONFIG%%", html_escape(strings.codex_config)),
-        ("%%CURSOR_CONFIG%%", html_escape(strings.cursor_config)),
+        ("%%TOOL_QUESTION%%", html_escape(strings.tool_question)),
         ("%%COPY%%", html_escape(strings.copy)),
         ("%%PRIVATE%%", html_escape(strings.private)),
         ("%%EXPIRED%%", html_escape(strings.expired)),
