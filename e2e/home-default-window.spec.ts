@@ -142,7 +142,7 @@ test("a new user's home keeps one column and fits 1280x800 while getting started
   await checklist.getByRole("button", { name: "Hide getting started" }).click();
   await expect(page.locator(".wiki-reading-start")).not.toHaveAttribute("data-onboarding");
   await expect(page.locator(".wiki-workspace")).toHaveAttribute("data-directory-hidden", "true");
-  await page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Wiki", exact: true }).click();
+  await page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Library", exact: true }).click();
   await expect(page.locator(".wiki-workspace")).toHaveAttribute("data-directory-hidden", "true");
   await expect(page.locator(".wiki-sidebar-directory")).toBeVisible();
 });
@@ -185,7 +185,7 @@ test("the Space review action opens Review and Back returns to the Space", async
   await expect(page.getByTestId("wiki-context-rail")).toHaveCount(0);
 
   const primaryNavigation = page.getByRole("navigation", { name: "Primary navigation" });
-  await primaryNavigation.getByRole("button", { name: "Wiki", exact: true }).click();
+  await primaryNavigation.getByRole("button", { name: "Library", exact: true }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Open a page" })).toBeVisible();
 
   await expect(page.getByRole("button", { name: "Review page changes" })).toHaveCount(0);
@@ -200,7 +200,7 @@ test("the Space review action opens Review and Back returns to the Space", async
   await expect(page.getByRole("heading", { level: 1, name: "Review", exact: true })).toBeVisible();
   // Review stays on the Wiki navigation surface. Back returns to the Space
   // dossier where the existing action lives.
-  await expect(primaryNavigation.getByRole("button", { name: "Wiki", exact: true })).toHaveAttribute("aria-current", "page");
+  await expect(primaryNavigation.getByRole("button", { name: "Library", exact: true })).toHaveAttribute("aria-current", "page");
   await expect(primaryNavigation.locator('[aria-current="page"]')).toHaveCount(1);
 
   const historyBack = page
@@ -222,7 +222,7 @@ test("review opens from Activity and Back returns to Activity", async ({ page })
   await expect(page.getByTestId("wiki-context-rail")).toHaveCount(0);
 
   const primaryNavigation = page.getByRole("navigation", { name: "Primary navigation" });
-  await primaryNavigation.getByRole("button", { name: "Wiki", exact: true }).click();
+  await primaryNavigation.getByRole("button", { name: "Library", exact: true }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Open a page" })).toBeVisible();
 
   await expect(page.getByRole("button", { name: "Review page changes" })).toHaveCount(0);
@@ -235,7 +235,7 @@ test("review opens from Activity and Back returns to Activity", async ({ page })
   await page.keyboard.press("Enter");
   await expect(page.getByRole("heading", { level: 1, name: "Review" })).toBeVisible();
   // The review is still scoped to the note library; navigation history remembers Activity.
-  await expect(primaryNavigation.getByRole("button", { name: "Wiki", exact: true })).toHaveAttribute("aria-current", "page");
+  await expect(primaryNavigation.getByRole("button", { name: "Library", exact: true })).toHaveAttribute("aria-current", "page");
   await expect(primaryNavigation.locator('[aria-current="page"]')).toHaveCount(1);
 
   await page.getByRole("button", { name: "Back" }).first().click();

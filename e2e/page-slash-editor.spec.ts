@@ -52,7 +52,7 @@ async function openEditor(page: Page, source = INITIAL_SOURCE) {
     fixture: { ...createSpacesNavigationFixture(), pages: [pageFixture(source)] },
   });
   await page.goto("/");
-  await openPrimaryDestination(page, "Wiki");
+  await openPrimaryDestination(page, "Library");
   await openWikiNote(page, PAGE_TITLE);
   const editor = page.getByRole("textbox", { name: "Page editor", exact: true });
   await expect(editor).toBeVisible();

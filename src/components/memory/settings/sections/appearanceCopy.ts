@@ -61,7 +61,7 @@ export const enAppearance = {
   saveFailed: "The theme could not be saved.",
   sample: {
     home: "Home",
-    wiki: "Wiki",
+    wiki: "Library",
     spaces: "Spaces",
     title: "Today in Wenlan",
     pages: "pages",
@@ -134,7 +134,7 @@ export const hansAppearance: typeof enAppearance = {
   saveFailed: "主题没能保存。",
   sample: {
     home: "首页",
-    wiki: "Wiki",
+    wiki: "文件",
     spaces: "空间",
     title: "今日文澜",
     pages: "页面",
@@ -207,7 +207,7 @@ export const hantAppearance: typeof enAppearance = {
   saveFailed: "主題沒能儲存。",
   sample: {
     home: "首頁",
-    wiki: "Wiki",
+    wiki: "檔案",
     spaces: "空間",
     title: "今日文瀾",
     pages: "頁面",

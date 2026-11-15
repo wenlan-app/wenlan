@@ -24,7 +24,7 @@ const localeCases: Record<Exclude<AppLocale, "en">, {
 }> = {
   "zh-Hans": {
     home: "首页",
-    wiki: "Wiki", graph: "图谱", more: "更多",
+    wiki: "文件", graph: "图谱", more: "更多",
     navigation: "主导航",
     activity: "活动",
     seeAllActivity: "查看全部活动",
@@ -39,7 +39,7 @@ const localeCases: Record<Exclude<AppLocale, "en">, {
   },
   "zh-Hant": {
     home: "首頁",
-    wiki: "Wiki", graph: "圖譜", more: "更多",
+    wiki: "檔案", graph: "圖譜", more: "更多",
     navigation: "主要導覽",
     activity: "活動",
     seeAllActivity: "查看全部活動",

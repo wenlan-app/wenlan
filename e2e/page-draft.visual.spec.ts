@@ -18,7 +18,7 @@ async function settle(page: Page): Promise<void> {
 
 async function openPrimaryDestination(
   page: Page,
-  destination: "Wiki" | "Spaces",
+  destination: "Library" | "Spaces",
 ): Promise<void> {
   const navigation = page.getByRole("navigation", { name: "Primary navigation" });
   const sidebar = page.locator('aside[aria-label="Primary navigation"]');
@@ -26,7 +26,7 @@ async function openPrimaryDestination(
     await page.getByTitle("Show sidebar").click();
   }
   await navigation.getByRole("button", { name: destination, exact: true }).click();
-  if (destination === "Wiki") await expect(page.locator(".wiki-workspace")).toBeVisible();
+  if (destination === "Library") await expect(page.locator(".wiki-workspace")).toBeVisible();
   else await expect(page.getByRole("heading", { level: 1, name: destination })).toBeAttached();
 }
 
@@ -58,7 +58,7 @@ test("captures direct Page authoring from the tab action and Space detail", asyn
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto("/");
 
-  await openPrimaryDestination(page, "Wiki");
+  await openPrimaryDestination(page, "Library");
   await settle(page);
   const newPageMetrics = await controlMetrics(page, "New page");
   await page.screenshot({

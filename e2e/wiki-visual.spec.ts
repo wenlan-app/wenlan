@@ -45,7 +45,7 @@ async function openWiki(page: BrowserPage, locale: "en" | "zh-Hant", theme: "dar
     await page.getByTitle(locale === "zh-Hant" ? "顯示側邊欄" : "Show sidebar").click();
   }
   const primaryNavigation = page.getByRole("navigation", { name: locale === "zh-Hant" ? "主要導覽" : "Primary navigation" });
-  await primaryNavigation.getByRole("button", { name: "Wiki", exact: true }).click();
+  await primaryNavigation.getByRole("button", { name: "Library", exact: true }).click();
   await expect(page.getByRole("heading", { level: 1, name: locale === "zh-Hant" ? "開啟筆記" : "Open a page" })).toBeVisible();
   if ((page.viewportSize()?.width ?? 0) < 900) await page.waitForTimeout(250);
   return browserErrors;
