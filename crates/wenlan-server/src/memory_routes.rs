@@ -1529,19 +1529,6 @@ async fn handle_search_memory_inner(
         _ => None,
     };
 
-    let borrowed: Vec<String> = supplemental_pages
-        .iter()
-        .flatten()
-        .map(|page| page.source_id.clone())
-        .chain(linked_pages.iter().flatten().map(|page| page.id.clone()))
-        .collect();
-    if let Err(error) = db
-        .record_skill_page_reads(&extract_agent_name(&headers, None), &borrowed)
-        .await
-    {
-        tracing::warn!("[skills] could not record borrowed source page: {error}");
-    }
-
     Ok(Json(SearchMemoryResponse {
         linked_pages,
         results,

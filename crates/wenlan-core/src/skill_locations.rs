@@ -2,7 +2,10 @@
 //! Shared personal skill-folder locations for connected AI tools.
 //!
 //! This is a path table only. The app decides which tools receive its bundled
-//! plugin skills; the library-grown feature uses every location here.
+//! plugin skills.
+//!
+//! The documented global paths follow vercel-labs/skills, licensed MIT:
+//! https://github.com/vercel-labs/skills/blob/main/docs/agents.md
 
 use std::path::{Path, PathBuf};
 
@@ -26,13 +29,16 @@ pub fn skills_location(tool: &str) -> Option<SkillsLocation> {
         // OpenAI's user-scope Agent Skills directory for Codex. The installed
         // version and documentation receipt belong in the delivery/PR record.
         "codex_cli" | "codex" => (SkillsBase::Home, &[".agents", "skills"]),
-        "cursor" => (SkillsBase::Home, &[".cursor", "skills"]),
-        "gemini_cli" | "gemini-cli" | "antigravity" => (SkillsBase::Home, &[".gemini", "skills"]),
-        "copilot_cli" | "copilot-cli" | "vscode" => (SkillsBase::Home, &[".copilot", "skills"]),
+        "cursor" => (SkillsBase::Home, &[".agents", "skills"]),
+        "gemini_cli" | "gemini-cli" => (SkillsBase::Home, &[".gemini", "skills"]),
+        "antigravity" => (SkillsBase::Home, &[".gemini", "config", "skills"]),
+        "copilot_cli" | "copilot-cli" | "github-copilot" | "vscode" => {
+            (SkillsBase::Home, &[".copilot", "skills"])
+        }
         "windsurf" => (SkillsBase::Home, &[".codeium", "windsurf", "skills"]),
-        "kiro" => (SkillsBase::Home, &[".kiro", "skills"]),
+        "kiro" | "kiro-cli" => (SkillsBase::Home, &[".kiro", "skills"]),
         "opencode" => (SkillsBase::Home, &[".config", "opencode", "skills"]),
-        "kimi_code" | "kimi-code" => (SkillsBase::Home, &[".kimi-code", "skills"]),
+        "kimi_code" | "kimi-code" => (SkillsBase::Home, &[".agents", "skills"]),
         "kimi_desktop" | "kimi-desktop" => (
             SkillsBase::ConfigDir,
             &["kimi-desktop", "daimon-share", "daimon", "skills"],
@@ -75,5 +81,26 @@ mod tests {
             skills_dir_for("claude-code", Some(home), None),
             Some(Ok(home.join(".claude/skills")))
         );
+    }
+
+    #[test]
+    fn shared_agent_skill_paths_follow_upstream_global_paths() {
+        let home = Path::new("/scratch/home");
+        for (tool, expected) in [
+            ("cursor", ".agents/skills"),
+            ("gemini-cli", ".gemini/skills"),
+            ("antigravity", ".gemini/config/skills"),
+            ("github-copilot", ".copilot/skills"),
+            ("kimi-code", ".agents/skills"),
+            ("windsurf", ".codeium/windsurf/skills"),
+            ("kiro-cli", ".kiro/skills"),
+            ("opencode", ".config/opencode/skills"),
+        ] {
+            assert_eq!(
+                skills_dir_for(tool, Some(home), None),
+                Some(Ok(home.join(expected))),
+                "unexpected global skill path for {tool}"
+            );
+        }
     }
 }

@@ -18,3 +18,4 @@ pub use wenlan_types::responses::{
     RevisionAcceptResponse, RevisionDismissResponse, SearchMemoryResponse, StoreMemoryResponse,
 };
 pub use wenlan_types::PageSourceWithMemory;
+pub use wenlan_types::{SkillReportKind, SkillReportRequest, SpaceRulesResponse};

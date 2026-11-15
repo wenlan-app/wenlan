@@ -395,15 +395,6 @@ pub async fn handle_get_page(
                     }
                 }
             }
-            if let Err(error) = db
-                .record_skill_page_reads(
-                    &crate::memory_routes::extract_agent_name(&headers, None),
-                    std::slice::from_ref(&id),
-                )
-                .await
-            {
-                tracing::warn!("[skills] could not record borrowed source page: {error}");
-            }
             let body = Some(wenlan_core::page_body::body_parts(&page.content));
             Ok(Json(PageReadResponse {
                 selection_impacts,

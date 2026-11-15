@@ -280,6 +280,12 @@
         "short_description": "Search Wenlan memories from Codex"
       }
     },
+    "how-i-work": {
+      "openai": {
+        "display_name": "Wenlan How I Work",
+        "short_description": "Read this Space's approved rules before choosing an approach"
+      }
+    },
     "setup": {
       "replace": [
         {

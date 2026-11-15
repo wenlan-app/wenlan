@@ -115,8 +115,8 @@ pub struct Config {
     /// installs alike, and any screen offering it labels it Beta.
     #[serde(default)]
     pub chat_check_enabled: bool,
-    /// Grow personal AI-tool skills from lasting library decisions. This is
-    /// an explicit opt-in experiment and is off for old and new installs.
+    /// Suggest and maintain approved Space working rules, and suggest edits to
+    /// the person's existing skills. Explicit opt-in; off for every install.
     #[serde(default)]
     pub skills_from_library: bool,
     /// Each Space's pages in a folder of its own (`space_folders`). `None`:

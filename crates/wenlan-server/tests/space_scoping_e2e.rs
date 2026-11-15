@@ -68,6 +68,11 @@ async fn wave_2_records_scope_history_and_chunk_source_priority() {
     space_scoping::record_cases::history_and_chunk_source_priority_are_scoped().await;
 }
 
+#[tokio::test]
+async fn skill_rules_and_borrow_records_are_space_scoped() {
+    space_scoping::record_cases::skill_rules_and_records_resolve_one_space().await;
+}
+
 #[test]
 fn wave_2_records_registry_matches_completed_catalog_contracts() {
     space_scoping::record_cases::registry_matches_catalog();

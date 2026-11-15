@@ -25734,8 +25734,8 @@ impl MemoryDB {
         tx.commit()
             .await
             .map_err(|e| WenlanError::VectorDb(format!("create_space commit: {e}")))?;
-
-        Ok(Space {
+        drop(conn);
+        let space = Space {
             id,
             name: name.to_string(),
             description: description.map(|s| s.to_string()),
@@ -25747,7 +25747,27 @@ impl MemoryDB {
             entity_count: 0,
             created_at: now,
             updated_at: now,
-        })
+        };
+        if matches!(
+            space.name.trim().to_ascii_lowercase().as_str(),
+            "personal" | "private"
+        ) {
+            self.set_space_rules_state(&skill_grow::SpaceRulesState {
+                space_id: space.id.clone(),
+                space_name: space.name.clone(),
+                status: skill_grow::SpaceRulesStatus::ExcludedPrivate,
+                rules_page_id: None,
+                lines: Vec::new(),
+                deleted_fingerprints: Vec::new(),
+                input_hash: String::new(),
+                last_success_at: 0,
+                failure_count: 0,
+                next_retry_at: 0,
+                undo: None,
+            })
+            .await?;
+        }
+        Ok(space)
     }
 
     pub async fn update_space(
@@ -25832,9 +25852,30 @@ impl MemoryDB {
             .await
             .map_err(|e| WenlanError::VectorDb(format!("update_space commit: {}", e)))?;
         drop(conn);
-        self.get_space(new_name)
+        let space = self
+            .get_space(new_name)
             .await?
-            .ok_or_else(|| WenlanError::VectorDb("space not found after update".into()))
+            .ok_or_else(|| WenlanError::VectorDb("space not found after update".into()))?;
+        if matches!(
+            space.name.trim().to_ascii_lowercase().as_str(),
+            "personal" | "private"
+        ) {
+            self.set_space_rules_state(&skill_grow::SpaceRulesState {
+                space_id: space.id.clone(),
+                space_name: space.name.clone(),
+                status: skill_grow::SpaceRulesStatus::ExcludedPrivate,
+                rules_page_id: None,
+                lines: Vec::new(),
+                deleted_fingerprints: Vec::new(),
+                input_hash: String::new(),
+                last_success_at: 0,
+                failure_count: 0,
+                next_retry_at: 0,
+                undo: None,
+            })
+            .await?;
+        }
+        Ok(space)
     }
 
     /// Delete a space. `memory_action`:

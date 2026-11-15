@@ -275,11 +275,7 @@ pub async fn look_once(
         tracing::warn!("[ai-memory] background pass: {error}");
     }
     if NIGHT_HOURS.contains(&local_hour) && still_quiet() {
-        match crate::skill_grow::run_nightly_if_due(shared, models.group.as_ref()).await {
-            Ok(Some(done)) => tracing::info!("[skills] nightly library pass: {done:?}"),
-            Ok(None) => {}
-            Err(error) => tracing::warn!("[skills] nightly library pass: {error}"),
-        }
+        crate::skill_grow::spawn_nightly_if_idle(shared.clone(), models.group.clone());
     }
     Ok(Some(report))
 }

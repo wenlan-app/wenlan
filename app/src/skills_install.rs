@@ -34,7 +34,7 @@ pub(crate) fn skills_dir_for(
 ) -> Option<Result<PathBuf, &'static str>> {
     // Claude Code and Codex receive the app's bundled skills through their
     // plugins. Keep that behavior even though the shared location table also
-    // exposes their folders to the separate library-grown feature.
+    // lets the suggestion-only reviewer inspect skills the person owns.
     if matches!(client_type, "claude_code" | "codex_cli") {
         return None;
     }
@@ -456,15 +456,15 @@ mod tests {
         let home = PathBuf::from("/fixture/home");
         let config = PathBuf::from("/fixture/config");
         for (client_type, tail) in [
-            ("cursor", [".cursor", "skills"].as_slice()),
+            ("cursor", [".agents", "skills"].as_slice()),
             ("gemini_cli", &[".gemini", "skills"]),
-            ("antigravity", &[".gemini", "skills"]),
+            ("antigravity", &[".gemini", "config", "skills"]),
             ("copilot_cli", &[".copilot", "skills"]),
             ("vscode", &[".copilot", "skills"]),
             ("windsurf", &[".codeium", "windsurf", "skills"]),
             ("kiro", &[".kiro", "skills"]),
             ("opencode", &[".config", "opencode", "skills"]),
-            ("kimi_code", &[".kimi-code", "skills"]),
+            ("kimi_code", &[".agents", "skills"]),
         ] {
             let expected = tail.iter().fold(home.clone(), |acc, part| acc.join(part));
             assert_eq!(
@@ -711,7 +711,7 @@ mod tests {
         // A measured absence beside an unread one is a measured no: "every
         // skill is installed" is false either way.
         let brief_marker = home
-            .join(".cursor")
+            .join(".agents")
             .join("skills")
             .join("wenlan-brief")
             .join(MANAGED_MARKER);

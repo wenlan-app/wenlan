@@ -548,8 +548,10 @@ async fn web_write_serves_the_write_tools_inside_the_pinned_space_only() {
             "get_page_sources",
             "list_pages",
             "read_page",
+            "read_space_rules",
             "recall",
             "rename_page",
+            "report_space_rule_use",
             "write_page"
         ]
     );

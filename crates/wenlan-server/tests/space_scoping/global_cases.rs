@@ -235,8 +235,11 @@ pub async fn global_routes_enforce_scope_contracts() {
         ("/api/decisions/domains", "/api/decisions/domains"),
         ("/api/snapshots", "/api/snapshots"),
         ("/api/palace/layout", "/api/palace/layout"),
+        (
+            "/api/skills/spaces/suggestions",
+            "/api/skills/spaces/suggestions",
+        ),
         ("/api/skills/suggestions", "/api/skills/suggestions"),
-        ("/api/skills/record", "/api/skills/record"),
     ];
     let mut executed = Vec::new();
 
