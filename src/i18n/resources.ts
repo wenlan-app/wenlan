@@ -4056,7 +4056,7 @@ const zhHans = {
     overview: {
       title: "文件",
       description: "持续生长的知识账本，汇集想法、人物、决策与回顾。",
-      newPage: "新建页面",
+      newPage: "新建笔记",
       options: "笔记选项",
       createOptions: "新建",
       readingStartTitle: "打开笔记",
@@ -7397,7 +7397,7 @@ const zhHant = {
     overview: {
       title: "檔案",
       description: "持續生長的知識帳本，匯集想法、人物、決策與回顧。",
-      newPage: "新增頁面",
+      newPage: "新增筆記",
       options: "筆記選項",
       createOptions: "新增",
       readingStartTitle: "開啟筆記",
