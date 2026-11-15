@@ -1302,6 +1302,41 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   get_profile_narrative: () => get("/api/profile/narrative"),
   list_spaces: () => listPreviewSpaces(),
   get_space: async (a) => (await listPreviewSpaces()).find(space => space.name === a.name) ?? null,
+  get_skills_from_library_enabled: () =>
+    get("/api/config").then((config) => config?.skills_from_library === true),
+  list_space_rules_suggestions: () =>
+    get("/api/skills/spaces/suggestions", AS_PERSON),
+  accept_space_rules: (a) => {
+    requireSourcePreview();
+    return http("POST", `/api/skills/spaces/${enc(String(a.spaceId))}/accept`, undefined, AS_PERSON);
+  },
+  decline_space_rules: (a) => {
+    requireSourcePreview();
+    return http("POST", `/api/skills/spaces/${enc(String(a.spaceId))}/decline`, undefined, AS_PERSON);
+  },
+  refresh_skills: () => {
+    requireSourcePreview();
+    return http("POST", "/api/skills/refresh");
+  },
+  undo_space_rules: (a) => {
+    requireSourcePreview();
+    return http("POST", `/api/skills/spaces/${enc(String(a.spaceId))}/undo`, undefined, AS_PERSON);
+  },
+  list_skill_suggestions: () => get("/api/skills/suggestions", AS_PERSON),
+  apply_skill_suggestion: (a) => {
+    requireSourcePreview();
+    return http("POST", `/api/skills/suggestions/${enc(String(a.suggestionId))}/apply`, undefined, AS_PERSON);
+  },
+  dismiss_skill_suggestion: (a) => {
+    requireSourcePreview();
+    return http("POST", `/api/skills/suggestions/${enc(String(a.suggestionId))}/dismiss`, undefined, AS_PERSON);
+  },
+  undo_skill_suggestion: (a) => {
+    requireSourcePreview();
+    return http("POST", `/api/skills/suggestions/${enc(String(a.suggestionId))}/undo`, undefined, AS_PERSON);
+  },
+  list_skill_borrow_records: (a) =>
+    get(`/api/skills/record${qs({ space: a.space })}`),
   create_space: (a) => { requireSourcePreview(); return post("/api/spaces", { name: a.name, description: a.description }); },
   patch_document_tag: (a) => { requireSourcePreview(); return post(`/api/documents/${enc(a.sourceId)}/tags`, { source: a.source, tag: a.tag, action: a.action }); },
   // Mirrors the app's list_working_on: active Brief items across kept Spaces.

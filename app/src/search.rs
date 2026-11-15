@@ -4234,6 +4234,140 @@ pub async fn list_spaces(state: tauri::State<'_, State>) -> Result<Vec<Space>, S
     client.get_json("/api/spaces").await
 }
 
+/// Whether the person turned on library-derived working rules. Keep this
+/// narrow instead of sending the whole daemon config through the webview.
+#[tauri::command]
+pub async fn get_skills_from_library_enabled(
+    state: tauri::State<'_, State>,
+) -> Result<bool, String> {
+    let client = daemon_client(&state).await;
+    let config: responses::ConfigResponse = client.get_json("/api/config").await?;
+    Ok(config.skills_from_library)
+}
+
+/// Pending one-time asks for Spaces. The route itself requires the person
+/// marker because only the app's review surface may show or act on them.
+#[tauri::command]
+pub async fn list_space_rules_suggestions(
+    state: tauri::State<'_, State>,
+) -> Result<Vec<SpaceRulesSuggestion>, String> {
+    let client = daemon_client(&state).await;
+    client
+        .get_json_as_person("/api/skills/spaces/suggestions")
+        .await
+}
+
+#[tauri::command]
+pub async fn accept_space_rules(
+    state: tauri::State<'_, State>,
+    space_id: String,
+) -> Result<SpaceRulesActionResponse, String> {
+    let client = daemon_client(&state).await;
+    client
+        .post_empty_as_person(&format!(
+            "/api/skills/spaces/{}/accept",
+            crate::api::percent_encode_path_segment(&space_id)
+        ))
+        .await
+}
+
+#[tauri::command]
+pub async fn decline_space_rules(
+    state: tauri::State<'_, State>,
+    space_id: String,
+) -> Result<SpaceRulesActionResponse, String> {
+    let client = daemon_client(&state).await;
+    client
+        .post_empty_as_person(&format!(
+            "/api/skills/spaces/{}/decline",
+            crate::api::percent_encode_path_segment(&space_id)
+        ))
+        .await
+}
+
+#[tauri::command]
+pub async fn refresh_skills(
+    state: tauri::State<'_, State>,
+) -> Result<SkillsRefreshResponse, String> {
+    let client = daemon_client(&state).await;
+    client.post_empty("/api/skills/refresh").await
+}
+
+#[tauri::command]
+pub async fn undo_space_rules(
+    state: tauri::State<'_, State>,
+    space_id: String,
+) -> Result<SpaceRulesActionResponse, String> {
+    let client = daemon_client(&state).await;
+    client
+        .post_empty_as_person(&format!(
+            "/api/skills/spaces/{}/undo",
+            crate::api::percent_encode_path_segment(&space_id)
+        ))
+        .await
+}
+
+#[tauri::command]
+pub async fn list_skill_suggestions(
+    state: tauri::State<'_, State>,
+) -> Result<Vec<SkillSuggestion>, String> {
+    let client = daemon_client(&state).await;
+    client.get_json_as_person("/api/skills/suggestions").await
+}
+
+#[tauri::command]
+pub async fn apply_skill_suggestion(
+    state: tauri::State<'_, State>,
+    suggestion_id: String,
+) -> Result<SkillSuggestionActionResponse, String> {
+    skill_suggestion_action(&state, &suggestion_id, "apply").await
+}
+
+#[tauri::command]
+pub async fn dismiss_skill_suggestion(
+    state: tauri::State<'_, State>,
+    suggestion_id: String,
+) -> Result<SkillSuggestionActionResponse, String> {
+    skill_suggestion_action(&state, &suggestion_id, "dismiss").await
+}
+
+#[tauri::command]
+pub async fn undo_skill_suggestion(
+    state: tauri::State<'_, State>,
+    suggestion_id: String,
+) -> Result<SkillSuggestionActionResponse, String> {
+    skill_suggestion_action(&state, &suggestion_id, "undo").await
+}
+
+async fn skill_suggestion_action(
+    state: &tauri::State<'_, State>,
+    suggestion_id: &str,
+    action: &str,
+) -> Result<SkillSuggestionActionResponse, String> {
+    let client = daemon_client(state).await;
+    client
+        .post_empty_as_person(&format!(
+            "/api/skills/suggestions/{}/{}",
+            crate::api::percent_encode_path_segment(suggestion_id),
+            action
+        ))
+        .await
+}
+
+#[tauri::command]
+pub async fn list_skill_borrow_records(
+    state: tauri::State<'_, State>,
+    space: String,
+) -> Result<Vec<SkillBorrowRecord>, String> {
+    let client = daemon_client(&state).await;
+    client
+        .get_json(&format!(
+            "/api/skills/record?space={}",
+            crate::api::percent_encode_path_segment(&space)
+        ))
+        .await
+}
+
 /// One active item of a Space Brief. Home lists these under "what you're
 /// working on" until things have a record of their own (docs/ux/spec.md,
 /// UX-HOME-1). `added_at` is in seconds.

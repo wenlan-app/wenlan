@@ -561,6 +561,31 @@ impl WenlanClient {
             .map_err(|e| format!("Parse {}: {}", path, e))
     }
 
+    /// [`Self::get_json`] for a collection the daemon exposes only while a
+    /// person is looking at its review surface. This is the read-side twin of
+    /// [`Self::post_empty_as_person`]: it carries the established person
+    /// marker, but never grants an AI tool permission to accept a suggestion.
+    pub async fn get_json_as_person<T: DeserializeOwned>(&self, path: &str) -> Result<T, String> {
+        let resp = self
+            .client
+            .get(self.url(path))
+            .header(
+                wenlan_types::requests::CALLER_HEADER,
+                wenlan_types::requests::PERSON_CALLER_VALUE,
+            )
+            .send()
+            .await
+            .map_err(|e| format!("HTTP GET {}: {}", path, e))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(format!("HTTP GET {} returned {}: {}", path, status, text));
+        }
+        resp.json()
+            .await
+            .map_err(|e| format!("Parse {}: {}", path, e))
+    }
+
     /// Read within the daemon's existing Space scope, without changing truth intent.
     /// Encode canonical names as query values, including Unicode and punctuation.
     /// A supplied but empty name must fail instead of becoming global.
@@ -4145,6 +4170,31 @@ mod tests {
             headers.contains("x-wenlan-reader-intent: explicit"),
             "missing intent header: {request}"
         );
+    }
+
+    #[tokio::test]
+    async fn get_json_as_person_marks_a_review_read_as_the_persons() {
+        let (base_url, request) = serve_json_once("[]").await;
+        let client = WenlanClient {
+            client: reqwest::Client::new(),
+            base_url,
+        };
+
+        let _: Vec<serde_json::Value> = client
+            .get_json_as_person("/api/skills/spaces/suggestions")
+            .await
+            .unwrap();
+
+        let request = request.await.unwrap().to_ascii_lowercase();
+        assert!(
+            request.starts_with("get /api/skills/spaces/suggestions http/1.1"),
+            "{request}"
+        );
+        assert!(
+            request.contains("\r\nx-wenlan-caller: person\r\n"),
+            "{request}"
+        );
+        assert!(!request.contains("x-agent-name"), "{request}");
     }
 
     #[tokio::test]

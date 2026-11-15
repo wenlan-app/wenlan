@@ -107,6 +107,15 @@ export function baseResponse(command: string, args: unknown, context: BaseRespon
     case "deny_remote_pairing": return null;
     case "renew_remote_access": return { status: "off" };
     case "get_profile": case "get_pending_revision": return null;
+    // Review has no library-derived working-rules state. Keeping the setting
+    // off prevents fixture navigation from inventing a suggestion or usage.
+    case "get_skills_from_library_enabled": return false;
+    case "list_space_rules_suggestions": case "list_skill_suggestions": case "list_skill_borrow_records": return [];
+    case "refresh_skills": return { spaces_considered: 0, spaces_unchanged: 0, spaces_updated: 0, suggestions: 0, failures: 0, model_calls: 0 };
+    case "accept_space_rules": return { space_id: optionalString(args, "spaceId") ?? "", status: "accepted", rules_page_id: null, undo_available: false };
+    case "decline_space_rules": return { space_id: optionalString(args, "spaceId") ?? "", status: "declined", rules_page_id: null, undo_available: false };
+    case "undo_space_rules": return { space_id: optionalString(args, "spaceId") ?? "", status: "undone", rules_page_id: null, undo_available: false };
+    case "apply_skill_suggestion": case "dismiss_skill_suggestion": case "undo_skill_suggestion": throw new TauriMockArgumentError(command, "suggestionId");
     case "list_working_on": return workingOn();
     // The fixture has no things of its own yet, so home shows Brief items.
     case "list_things": return [];

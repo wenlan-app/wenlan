@@ -25,6 +25,20 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     "search_pages",
     "search_entities_cmd",
     "list_spaces",
+    // Library-derived working rules are off in Review. The read still belongs
+    // to shared navigation because every Space page asks it before deciding
+    // whether the one-time panel exists.
+    "get_skills_from_library_enabled",
+    "list_space_rules_suggestions",
+    "accept_space_rules",
+    "decline_space_rules",
+    "refresh_skills",
+    "undo_space_rules",
+    "list_skill_suggestions",
+    "apply_skill_suggestion",
+    "dismiss_skill_suggestion",
+    "undo_skill_suggestion",
+    "list_skill_borrow_records",
     // What this Wenlan shares with people; the fixture shares nothing.
     "list_shares",
     // Home asks once about AI changes to a newly linked Obsidian vault; the
