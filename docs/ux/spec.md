@@ -518,7 +518,8 @@ and wait for evidence that people need them.
   handed off, and what is in progress, newest first, one line each. Three
   show; the rest fold under "N more". The Brief sits in one white panel with a thin border:
   where it stands on the left, what is in progress on the right. A Space
-  with no Brief is its pages alone. No other new buttons or panels.
+  with no Brief is its pages alone. No other new buttons or panels. Exception:
+  the one-time how-I-work ask (UX-SKILL-1).
   原文：「照你說的建議。我想要把 brief 結合好，不要多餘的介面」（2026-11-10 23:10Z）；草圖選擇卡「照做，連 Brief 清理一起」（2026-11-10 23:15Z）；「space 里面应该要放一些什么去区隔它的就是价值…page 是确实是被 filter 完了，但是在这里面还有什么需要特别强调的呢？」（2026-11-10 23:02Z）
 - **UX-SPACE-2** `shipped` Each night, a Space whose Brief changed gets
   those lines written for people, in their language, with no pull request
@@ -534,6 +535,33 @@ and wait for evidence that people need them.
   原文：「不 sources 放里面我也不知道它能干嘛」（2026-11-10 23:02Z）；同 UX-SPACE-1 草圖。
   版面：「感覺版面啥的不夠好看 UI/UX」（2026-11-11 00:24Z）後，選擇卡「1 淡色底一塊」（2026-11-11 00:30Z）：Brief 一塊，筆記用卡片、上方有「筆記」標題；底色選擇卡「C 白底細框」（2026-11-11 01:02Z）。
   與首頁一致：選 A，「首頁和空間的排版要一致，譬如間距和周遭」（2026-11-11）。首頁對齊空間頁：兩頁用同一條 840px 欄、第一行同高（「我以為是對其 space?」，2026-11-11 02:04Z）；區塊小標題、間距與卡片樣式（細框、無陰影、無圖示）和首頁相同。
+
+## AI tools follow how you work
+
+- **UX-SKILL-1** `shipped` When library-derived skills are on, a non-private
+  Space with grounded candidates asks once, at the top of its page above the
+  Brief, whether AI tools should follow those ways of working. The flat,
+  thin-bordered panel names each rule, decision or pitfall and links its source
+  page. Yes makes the page; No is remembered and the ask never returns.
+  原文：「可以」（2026-11-15 17:33Z，回覆[草圖](https://claude.ai/artifact/EqEaFuewDn2qBRyBrG7eHn)與「put the first ask at the top of the Space page, asked only once?」）。
+- **UX-SKILL-2** `shipped` The accepted "How I work" page is an ordinary
+  Wenlan page with Update now, Undo last night and Stop. It shows its grounded
+  lines without internal ids or paths; a person's edited line says "You changed
+  this". Above them, real examples from this week say whether an AI tool
+  reported changing its approach or Wenlan recorded the read, with no counts.
+  Stop makes the page unreadable to AI tools at once but leaves it in Wenlan so
+  it can be started again.
+  原文：「可以」（2026-11-15 17:33Z，回覆[草圖](https://claude.ai/artifact/EqEaFuewDn2qBRyBrG7eHn)）。
+- **UX-SKILL-3** `shipped` Under those lines, a suggestion for a skill the
+  person owns shows the old line struck through, the proposed grounded line,
+  and the newer source page and date. Nothing changes until the person presses
+  Change; Don't change dismisses it, and an applied change can be undone.
+  原文：「可以」（2026-11-15 17:33Z，回覆[草圖](https://claude.ai/artifact/EqEaFuewDn2qBRyBrG7eHn)）。
+- **UX-SKILL-4** `shipped` Home shows at most one quiet line, with no numbers,
+  when an AI tool reported changing its approach to follow an earlier decision
+  this week, or when the first How-I-work page was just made. Its link opens
+  that page; with neither event the line is absent.
+  原文：「可以」（2026-11-15 17:33Z，回覆[草圖](https://claude.ai/artifact/EqEaFuewDn2qBRyBrG7eHn)）。
 
 ## Adding to Wenlan
 
