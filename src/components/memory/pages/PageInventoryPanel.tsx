@@ -19,6 +19,7 @@ import { collectPageInventory, filterPageInventory, folderScope, inventoryFolder
 import { KNOWLEDGE_FOLDERS_QUERY_KEY, useKnowledgeFolders } from "./useKnowledgeFolders";
 import { useWikiFolderCreation } from "./WikiFolderCreationContext";
 import { useScope } from "../team/scope";
+import { pinPage, unpinPage, usePinnedPages } from "../navigation/pinnedPages";
 import "./pageInventory.css";
 
 /** Which folders the tree shows on one side of a split library. With no
@@ -97,6 +98,7 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
   const drafts = useQuery({ queryKey: explicitBrowse ? ["pages", "draft"] : ["pages", "inventory", "passive", "draft"], queryFn: explicitBrowse ? listAllDraftPagesExplicitBrowse : listAllDraftPages, ...(explicitBrowse ? EXPLICIT_BROWSE_QUERY_POLICY : { staleTime: 30_000 }) });
   const folders = useKnowledgeFolders();
   const scope = useScope();
+  const pinnedPages = usePinnedPages();
   const allPages = useMemo(() => collectPageInventory(active.data ?? [], drafts.data ?? []), [active.data, drafts.data]);
   const pages = useMemo(() => allPages.filter(page => scope.inScope(page.space)), [allPages, scope]);
   // A folder holding only the other side's pages stays out of sight; on a
@@ -364,6 +366,7 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
     }}>
       {contextMenu.noteId ? <>
         <button type="button" role="menuitem" ref={contextMenuItemRef} aria-disabled={!contextNote || (contextNote.status === "draft" ? !onOpenDraft : !onOpenPage)} onClick={openContextNote}>{t("pages.folders.openNote")}</button>
+        {!exampleWiki && !scope.team && contextNote?.status === "active" && <button type="button" role="menuitem" onClick={() => { const { id, title } = contextNote; setContextMenu(null); if (pinnedPages.some(pinned => pinned.id === id)) unpinPage(id); else pinPage({ id, title }); }}>{t(pinnedPages.some(pinned => pinned.id === contextNote.id) ? "sidebar.unpinPage" : "sidebar.pinPage")}</button>}
         {!exampleWiki && canArchivePage(contextNote) && <button type="button" role="menuitem" onClick={() => { if (!contextNote) return; const { id: noteId } = contextNote; const { invoker } = contextMenu; setContextMenu(null); void archiveNote(noteId, invoker); }}>{t("pageDetail.archivePage")}</button>}
         {!exampleWiki && <button type="button" role="menuitem" className="is-danger" aria-disabled={!contextNote} onClick={() => { if (!contextNote) return; const { id: noteId } = contextNote; setContextMenu(null); void deleteNote(noteId); }}>{t("pages.folders.deleteNote")}</button>}
       </> : <button type="button" role="menuitem" ref={contextMenuItemRef} aria-disabled={!canCreate || createPending || creating} onClick={() => { if (!canCreate || createPending || creating) return; const { path, invoker } = contextMenu; setContextMenu(null); openCreateFolderFormAt(path, invoker); }}>{t("pages.folders.newFolderIn", { name: contextMenu.path || t("pages.folders.root") })}</button>}

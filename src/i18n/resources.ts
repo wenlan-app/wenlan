@@ -352,7 +352,7 @@ const en = {
     intelligence: {
       title: "Choose how Wenlan thinks",
       description:
-        "Models let Wenlan tend your Wiki in the background. Skipping is fine. Your Wiki still updates whenever your AI tools use Wenlan. You can change this later in Settings.",
+        "Models let Wenlan tend your Library in the background. Skipping is fine. Your Library still updates whenever your AI tools use Wenlan. You can change this later in Settings.",
       deviceOption: "On-device model",
       cloudOption: "Cloud model",
       localOption: "Your own local server",
@@ -464,12 +464,12 @@ const en = {
       allSetBody1:
         "Keep using your AI tools normally. Wenlan turns what they learn into pages you can read and cite.",
       addedTitle: "Tools added",
-      restartHint: "Restart these tools once. After that they can read and write your wiki.",
-      backToWiki: "Back to Wiki",
+      restartHint: "Restart these tools once. After that they can read and write your library.",
+      backToWiki: "Back to Library",
       routingSummary:
         "Everyday tasks: {{everyday}}. Page synthesis: {{synthesis}}. Change this anytime in Settings → Intelligence.",
       noModelAssurance:
-        "Your Wiki updates whenever your AI tools use Wenlan. Add a model in Settings → Intelligence and Wenlan will also tend it in the background.",
+        "Your Library updates whenever your AI tools use Wenlan. Add a model in Settings → Intelligence and Wenlan will also tend it in the background.",
       memoriesImported_one: "{{count}} memory imported",
       memoriesImported_other: "{{count}} memories imported",
       topics: "Topics",
@@ -667,7 +667,7 @@ const en = {
       dismissNotice: "Dismiss",
     },
     overview: {
-      title: "Wiki",
+      title: "Library",
       description: "A living ledger of ideas, people, decisions, and recaps.",
       newPage: "New page",
       options: "Page options",
@@ -710,7 +710,7 @@ const en = {
       unavailableDescription: "The service isn’t answering. Restart it at the bottom left.",
       allPages: "All pages",
       pageCount: "{{count}} pages",
-      filtersLabel: "Wiki filters",
+      filtersLabel: "Library filters",
       spaceLabel: "Space",
       spaceAll: "Everywhere",
       sortLabel: "Sort",
@@ -1875,7 +1875,11 @@ const en = {
     filterNotes: "Filter pages",
     newNote: "New page",
     memories: "Memories",
-    pages: "Wiki",
+    pages: "Library",
+    pinnedPages: "Pinned pages",
+    unpinNamed: "Unpin {{title}}",
+    pinPage: "Pin",
+    unpinPage: "Unpin",
     entities: "Topics",
     graph: "Graph",
     sources: "Sources",
@@ -2587,7 +2591,7 @@ const en = {
       "Two relations disagree. Approve keeps the newer relation and removes the old one.",
     relationOld: "Current relation",
     relationNew: "Proposed relation",
-    pageArchiveHint: "Archiving removes this page from the active Wiki. Review its content and sources before deciding; Keep page leaves it as is.",
+    pageArchiveHint: "Archiving removes this page from the active Library. Review its content and sources before deciding; Keep page leaves it as is.",
     crossSpaceHint:
       "These memories span multiple spaces. Picking a space isn't supported in the app yet. Dismiss clears the suggestion.",
     crossSpaceSpaces: "{{count}} memories across: {{spaces}}",
@@ -2629,7 +2633,7 @@ const en = {
     revisionsEmptyBody:
       "When an agent rewrites one of your memories, the before/after diff lands here first. See Recent revisions below for what's already been applied.",
     sectionRecentRevisions: "Recent revisions",
-    recentRevisionsHint: "Read-only. This is your Wiki's changelog, not a queue.",
+    recentRevisionsHint: "Read-only. This is your Library's changelog, not a queue.",
     recentRevisionsEmpty:
       "No page revisions yet. Pages log every change here once the daemon starts refining.",
     recentRevisionsFailed: "Couldn't load recent revisions.",
@@ -3050,7 +3054,7 @@ const en = {
     chooseRoutineModel: "Choose everyday model",
     synthesisModel: "Synthesis model",
     synthesisModelDescription: "Drafts and updates your pages in the background",
-    synthesisModelTipTitle: "Background Wiki upkeep",
+    synthesisModelTipTitle: "Background Library upkeep",
     synthesisModelTipBody:
       "The synthesis model drafts and revises your pages in the background as memories accumulate, surfacing contradictions and revisions for you to review. Without a model, pages update only when your AI tools run a synthesis.",
     synthesisNoModelTipBody:
@@ -3748,7 +3752,7 @@ const zhHans = {
     intelligence: {
       title: "选择文澜的智能方式",
       description:
-        "配置模型后，文澜会在后台维护你的 Wiki。跳过也没关系，每当你的 AI 工具使用文澜时，你的 Wiki 依然会更新。你之后可以在设置中更改。",
+        "配置模型后，文澜会在后台维护你的文件。跳过也没关系，每当你的 AI 工具使用文澜时，你的文件依然会更新。你之后可以在设置中更改。",
       deviceOption: "本地模型",
       cloudOption: "云端模型",
       localOption: "你自己的本地服务器",
@@ -3850,12 +3854,12 @@ const zhHans = {
       allSetTitle: "全部设置完成。",
       allSetBody1: "继续照常使用你的 AI 工具。文澜会把它们学到的内容变成可阅读、可引用的笔记。",
       addedTitle: "工具已添加",
-      restartHint: "重启这些工具一次，之后它们就能读写你的 Wiki。",
-      backToWiki: "回到 Wiki",
+      restartHint: "重启这些工具一次，之后它们就能读写你的文件。",
+      backToWiki: "回到文件",
       routingSummary:
         "日常任务：{{everyday}}。笔记整理：{{synthesis}}。可随时在“设置 → 智能”中更改。",
       noModelAssurance:
-        "每当你的 AI 工具使用文澜时，你的 Wiki 就会更新。在“设置 → 智能”中添加模型，文澜还会在后台维护它。",
+        "每当你的 AI 工具使用文澜时，你的文件就会更新。在“设置 → 智能”中添加模型，文澜还会在后台维护它。",
       memoriesImported_one: "已导入 {{count}} 条记忆",
       memoriesImported_other: "已导入 {{count}} 条记忆",
       topics: "主题",
@@ -4048,7 +4052,7 @@ const zhHans = {
       dismissNotice: "关闭提示",
     },
     overview: {
-      title: "Wiki",
+      title: "文件",
       description: "持续生长的知识账本，汇集想法、人物、决策与回顾。",
       newPage: "新建笔记",
       options: "笔记选项",
@@ -4091,7 +4095,7 @@ const zhHans = {
       unavailableDescription: "后台服务没有响应，可以在左下角重启服务。",
       allPages: "所有笔记",
       pageCount: "{{count}} 篇笔记",
-      filtersLabel: "Wiki 筛选",
+      filtersLabel: "文件筛选",
       spaceLabel: "空间",
       spaceAll: "全部空间",
       sortLabel: "排序",
@@ -5236,7 +5240,11 @@ const zhHans = {
     filterNotes: "筛选笔记",
     newNote: "新建笔记",
     memories: "记忆",
-    pages: "Wiki",
+    pages: "文件",
+    pinnedPages: "固定的页面",
+    unpinNamed: "取消固定「{{title}}」",
+    pinPage: "固定",
+    unpinPage: "取消固定",
     entities: "主题",
     graph: "图谱",
     sources: "来源",
@@ -5943,7 +5951,7 @@ const zhHans = {
     relationConflictHint: "两条关系相互矛盾。批准将保留较新的关系并移除旧的。",
     relationOld: "当前关系",
     relationNew: "拟定关系",
-    pageArchiveHint: "封存会将此笔记移出使用中的 Wiki。请先查阅内容与来源；选择保留笔记则维持现状。",
+    pageArchiveHint: "封存会将此笔记移出使用中的文件。请先查阅内容与来源；选择保留笔记则维持现状。",
     crossSpaceHint:
       "这些记忆跨越多个空间。应用内暂不支持选择空间。忽略即可清除该建议。",
     crossSpaceSpaces: "{{count}} 条记忆分布于：{{spaces}}",
@@ -5982,7 +5990,7 @@ const zhHans = {
     revisionsEmptyBody:
       "当代理重写你的某条记忆时，改动前后的对比会先出现在这里。已应用的改动请查看下方的「最近修订」。",
     sectionRecentRevisions: "最近修订",
-    recentRevisionsHint: "只读。这是你 Wiki 的更新日志，不是待办队列。",
+    recentRevisionsHint: "只读。这是你文件的更新日志，不是待办队列。",
     recentRevisionsEmpty: "暂无笔记修订，一旦守护进程开始整理，每次变更都会记录在这里。",
     recentRevisionsFailed: "无法加载最近修订。",
     changeRevised: "已修订",
@@ -6394,7 +6402,7 @@ const zhHans = {
     chooseRoutineModel: "选择日常模型",
     synthesisModel: "整理模型",
     synthesisModelDescription: "在后台起草并更新你的笔记",
-    synthesisModelTipTitle: "后台 Wiki 维护",
+    synthesisModelTipTitle: "后台文件维护",
     synthesisModelTipBody:
       "随着记忆的积累，整理模型会在后台起草并修订你的笔记，并把矛盾之处和修订建议呈现给你审阅。未配置模型时，笔记只在你的 AI 工具整理时才会更新。",
     synthesisNoModelTipBody:
@@ -7084,7 +7092,7 @@ const zhHant = {
     intelligence: {
       title: "選擇文瀾的智慧方式",
       description:
-        "設定模型後，文瀾會在背景維護你的 Wiki。跳過也沒關係，每當你的 AI 工具使用文瀾時，你的 Wiki 仍會更新。你之後可以在設定中更改。",
+        "設定模型後，文瀾會在背景維護你的檔案。跳過也沒關係，每當你的 AI 工具使用文瀾時，你的檔案仍會更新。你之後可以在設定中更改。",
       deviceOption: "本機模型",
       cloudOption: "雲端模型",
       localOption: "你自己的本機伺服器",
@@ -7186,12 +7194,12 @@ const zhHant = {
       allSetTitle: "全部設定完成。",
       allSetBody1: "繼續照常使用你的 AI 工具。文瀾會把它們學到的內容變成可閱讀、可引用的筆記。",
       addedTitle: "工具已新增",
-      restartHint: "重新啟動這些工具一次，之後它們就能讀寫你的 Wiki。",
-      backToWiki: "回到 Wiki",
+      restartHint: "重新啟動這些工具一次，之後它們就能讀寫你的檔案。",
+      backToWiki: "回到檔案",
       routingSummary:
         "日常任務：{{everyday}}。筆記整理：{{synthesis}}。可隨時在「設定 → 智慧」中更改。",
       noModelAssurance:
-        "每當你的 AI 工具使用文瀾時，你的 Wiki 就會更新。在「設定 → 智慧」中新增模型，文瀾還會在背景維護它。",
+        "每當你的 AI 工具使用文瀾時，你的檔案就會更新。在「設定 → 智慧」中新增模型，文瀾還會在背景維護它。",
       memoriesImported_one: "已匯入 {{count}} 則記憶",
       memoriesImported_other: "已匯入 {{count}} 則記憶",
       topics: "主題",
@@ -7384,7 +7392,7 @@ const zhHant = {
       dismissNotice: "關閉提示",
     },
     overview: {
-      title: "Wiki",
+      title: "檔案",
       description: "持續生長的知識帳本，匯集想法、人物、決策與回顧。",
       newPage: "新增筆記",
       options: "筆記選項",
@@ -7427,7 +7435,7 @@ const zhHant = {
       unavailableDescription: "背景服務沒有回應，可以在左下角重新啟動服務。",
       allPages: "所有筆記",
       pageCount: "{{count}} 篇筆記",
-      filtersLabel: "Wiki 篩選",
+      filtersLabel: "檔案篩選",
       spaceLabel: "空間",
       spaceAll: "所有空間",
       sortLabel: "排序",
@@ -8572,7 +8580,11 @@ const zhHant = {
     filterNotes: "篩選筆記",
     newNote: "新增筆記",
     memories: "記憶",
-    pages: "Wiki",
+    pages: "檔案",
+    pinnedPages: "釘選的頁面",
+    unpinNamed: "取消釘選「{{title}}」",
+    pinPage: "釘選",
+    unpinPage: "取消釘選",
     entities: "主題",
     graph: "圖譜",
     sources: "來源",
@@ -9279,7 +9291,7 @@ const zhHant = {
     relationConflictHint: "兩條關係相互矛盾。核准將保留較新的關係並移除舊的。",
     relationOld: "目前關係",
     relationNew: "擬定關係",
-    pageArchiveHint: "封存會將此筆記移出使用中的 Wiki。請先查閱內容與來源；選擇保留筆記則維持現狀。",
+    pageArchiveHint: "封存會將此筆記移出使用中的檔案。請先查閱內容與來源；選擇保留筆記則維持現狀。",
     crossSpaceHint:
       "這些記憶跨越多個空間。應用程式內暫不支援選擇空間。忽略即可清除該建議。",
     crossSpaceSpaces: "{{count}} 條記憶分布於：{{spaces}}",
@@ -9318,7 +9330,7 @@ const zhHant = {
     revisionsEmptyBody:
       "當代理重寫你的某條記憶時，異動前後的對比會先出現在這裡。已套用的異動請查看下方的「最近修訂」。",
     sectionRecentRevisions: "最近修訂",
-    recentRevisionsHint: "唯讀。這是 Wiki 的更新日誌，不是待辦佇列。",
+    recentRevisionsHint: "唯讀。這是檔案的更新日誌，不是待辦佇列。",
     recentRevisionsEmpty: "尚無筆記修訂，一旦守護程序開始整理，每次異動都會記錄在這裡。",
     recentRevisionsFailed: "無法載入最近修訂。",
     changeRevised: "已修訂",
@@ -9730,7 +9742,7 @@ const zhHant = {
     chooseRoutineModel: "選擇日常模型",
     synthesisModel: "整理模型",
     synthesisModelDescription: "在背景起草並更新你的筆記",
-    synthesisModelTipTitle: "背景 Wiki 維護",
+    synthesisModelTipTitle: "背景檔案維護",
     synthesisModelTipBody:
       "隨著記憶的累積，整理模型會在背景起草並修訂你的筆記，並把矛盾之處與修訂建議呈現給你審閱。未設定模型時，筆記只在你的 AI 工具執行整理時才會更新。",
     synthesisNoModelTipBody:

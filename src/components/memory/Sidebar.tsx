@@ -10,6 +10,7 @@ import ActivityStatus from "./activity/ActivityStatus";
 import type { RegisteredSource } from "../../lib/tauri";
 import ServiceStatus from "./ServiceStatus";
 import type { GlobalNavigation } from "./navigation/viewState";
+import { movePinnedPage, unpinPage, usePinnedPages } from "./navigation/pinnedPages";
 import { ICONS_SIDEBAR_WIDTH, type SidebarMode } from "./navigation/navigationPreferences";
 import "./navigation/notes-sidebar.css";
 
@@ -41,6 +42,9 @@ interface SidebarProps {
   readonly presentation?: "desktop" | "overlay";
   /** Where the shell renders the Wiki and its pages, below the destinations. */
   readonly onWikiSectionHost?: (host: HTMLDivElement | null) => void;
+  /** Opens a page pinned to the left side; without it no pinned page shows. */
+  readonly onOpenPinnedPage?: (pageId: string) => void;
+  readonly activePageId?: string | null;
 }
 
 function closeAfterNavigation<Arguments extends readonly unknown[]>(
@@ -86,8 +90,11 @@ export default function Sidebar({
   open = !hidden,
   presentation = "desktop",
   onWikiSectionHost,
+  onOpenPinnedPage,
+  activePageId = null,
 }: SidebarProps) {
   const { t } = useTranslation();
+  const pinnedPages = usePinnedPages();
   const asideRef = useRef<HTMLElement>(null);
   const overlay = presentation === "overlay";
   const compact = !overlay && mode === "icons";
@@ -168,7 +175,14 @@ export default function Sidebar({
               navigation: t("sidebar.navigation"),
               pages: t("sidebar.pages"),
               spaces: t("sidebar.spaces"),
+              pinned: t("sidebar.pinnedPages"),
+              unpin: (title) => t("sidebar.unpinNamed", { title }),
             }}
+            pinnedPages={pinnedPages}
+            activePinnedPageId={activePageId}
+            onOpenPinnedPage={closeAfterNavigation(onOpenPinnedPage, closeOverlay)}
+            onUnpinPage={unpinPage}
+            onMovePinnedPage={movePinnedPage}
             onNavigateEntities={closeAfterNavigation(onNavigateEntities, closeOverlay)}
             onNavigateGraph={closeAfterNavigation(onNavigateGraph, closeOverlay)}
             onNavigateHome={closeAfterNavigation(onNavigateHome, closeOverlay)}

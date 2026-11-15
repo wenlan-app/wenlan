@@ -216,17 +216,17 @@ describe("translation resources", () => {
     ]).toEqual(["Reset test data", "重置测试数据", "重設測試資料"]);
   });
 
-  it("presents the Pages route as Wiki in every locale", () => {
+  it("presents the Pages route as Library in every locale", () => {
     expect([
       resources.en.translation.sidebar.pages,
       resources["zh-Hans"].translation.sidebar.pages,
       resources["zh-Hant"].translation.sidebar.pages,
-    ]).toEqual(["Wiki", "Wiki", "Wiki"]);
+    ]).toEqual(["Library", "文件", "檔案"]);
     expect([
       resources.en.translation.pages.overview.title,
       resources["zh-Hans"].translation.pages.overview.title,
       resources["zh-Hant"].translation.pages.overview.title,
-    ]).toEqual(["Wiki", "Wiki", "Wiki"]);
+    ]).toEqual(["Library", "文件", "檔案"]);
   });
 
   it("lists pages only in the Wiki: no Kind filter, column, or type labels", () => {

@@ -73,7 +73,7 @@ test("keeps the compact service row quiet during automatic recovery and explains
     if (!browserWindow.__finishDaemonRecovery) throw new Error("automatic recovery is not pending");
     browserWindow.__finishDaemonRecovery();
   });
-  await openPrimaryDestination(page, "Wiki");
+  await openPrimaryDestination(page, "Library");
   const status = page.getByTestId("service-status");
   await expect(status).toHaveAttribute("data-kind", "outOfDate");
   if (await status.getAttribute("aria-expanded") === "false") await status.click();

@@ -232,7 +232,7 @@ async function openSpaces(page: Page): Promise<void> {
 
 async function openWiki(page: Page): Promise<void> {
   await openSidebar(page);
-  await page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Wiki", exact: true }).click();
+  await page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Library", exact: true }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Open a page" })).toBeVisible();
 }
 

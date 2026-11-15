@@ -31,7 +31,7 @@ async function openReferences(page: Page, withAuthorship = false) {
     });
   }
   await page.goto('/');
-  await openPrimaryDestination(page, 'Wiki');
+  await openPrimaryDestination(page, 'Library');
   const directory = await showWikiFolders(page);
   const panel = directory.locator('.notes-list-panel');
   await panel.getByRole('button', { name: 'Work', exact: true }).click();

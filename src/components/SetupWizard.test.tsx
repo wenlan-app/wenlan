@@ -1568,7 +1568,7 @@ describe("SetupWizard", () => {
     expect(screen.queryByText(/Everyday tasks:/)).not.toBeInTheDocument();
     // Re-run entry (wireRouting=false): neither the summary nor the no-model line.
     expect(
-      screen.queryByText(/Your Wiki updates whenever your AI tools use Wenlan/),
+      screen.queryByText(/Your Library updates whenever your AI tools use Wenlan/),
     ).not.toBeInTheDocument();
   });
 
@@ -3149,7 +3149,7 @@ describe("DoneStep onboarding routing wiring (wireRouting=true)", () => {
 
     await waitFor(() => expect(getBackgroundAiEnabled).toHaveBeenCalledTimes(1));
     if (!enabled) {
-      await screen.findByText(/Your Wiki updates whenever your AI tools use Wenlan/);
+      await screen.findByText(/Your Library updates whenever your AI tools use Wenlan/);
       expect(getResolvedRouting).not.toHaveBeenCalled();
       expect(setSourcePin).not.toHaveBeenCalled();
       expect(screen.queryByText(/Everyday tasks:/)).not.toBeInTheDocument();
@@ -3163,7 +3163,7 @@ describe("DoneStep onboarding routing wiring (wireRouting=true)", () => {
     ).toBeInTheDocument();
     // Exclusivity: a wired routing shows the summary, never the no-model line.
     expect(
-      screen.queryByText(/Your Wiki updates whenever your AI tools use Wenlan/),
+      screen.queryByText(/Your Library updates whenever your AI tools use Wenlan/),
     ).not.toBeInTheDocument();
   });
 
@@ -3182,7 +3182,7 @@ describe("DoneStep onboarding routing wiring (wireRouting=true)", () => {
     expect(screen.queryByText(/Everyday tasks:/)).not.toBeInTheDocument();
     // Concluded without wiring (legacy daemon) → the no-model assurance shows.
     expect(
-      await screen.findByText(/Your Wiki updates whenever your AI tools use Wenlan/),
+      await screen.findByText(/Your Library updates whenever your AI tools use Wenlan/),
     ).toBeInTheDocument();
   });
 
@@ -3207,7 +3207,7 @@ describe("DoneStep onboarding routing wiring (wireRouting=true)", () => {
     expect(screen.queryByText(/Everyday tasks:/)).not.toBeInTheDocument();
     // Concluded without wiring (nothing configured) → the no-model assurance shows.
     expect(
-      await screen.findByText(/Your Wiki updates whenever your AI tools use Wenlan/),
+      await screen.findByText(/Your Library updates whenever your AI tools use Wenlan/),
     ).toBeInTheDocument();
   });
 
@@ -3255,7 +3255,7 @@ describe("DoneStep onboarding routing wiring (wireRouting=true)", () => {
     ).toBeInTheDocument();
     expect(setSourcePin).not.toHaveBeenCalled();
     expect(
-      screen.queryByText(/Your Wiki updates whenever your AI tools use Wenlan/),
+      screen.queryByText(/Your Library updates whenever your AI tools use Wenlan/),
     ).not.toBeInTheDocument();
   });
 
@@ -3271,7 +3271,7 @@ describe("DoneStep onboarding routing wiring (wireRouting=true)", () => {
     renderDone(true);
 
     expect(
-      await screen.findByText(/Your Wiki updates whenever your AI tools use Wenlan/),
+      await screen.findByText(/Your Library updates whenever your AI tools use Wenlan/),
     ).toBeInTheDocument();
     expect(setSourcePin).not.toHaveBeenCalled();
   });
@@ -3306,7 +3306,7 @@ describe("DoneStep onboarding routing wiring (wireRouting=true)", () => {
       ),
     ).toBeInTheDocument();
     expect(
-      screen.queryByText(/Your Wiki updates whenever your AI tools use Wenlan/),
+      screen.queryByText(/Your Library updates whenever your AI tools use Wenlan/),
     ).not.toBeInTheDocument();
     expect(error).not.toHaveBeenCalled();
     error.mockRestore();
@@ -3317,7 +3317,7 @@ describe("DoneStep onboarding routing wiring (wireRouting=true)", () => {
   // not an unhandled rejection behind a button that silently did nothing.
   it.each([
     { variant: "skip path", chatImportResult: null, label: "Open Wenlan" },
-    { variant: "imported", chatImportResult: { memories_stored: 4 }, label: "Back to Wiki" },
+    { variant: "imported", chatImportResult: { memories_stored: 4 }, label: "Back to Library" },
   ])(
     "$variant: a rejected completion shows an inline alert and stays on Done; a second click that resolves completes",
     async ({ chatImportResult, label }) => {
@@ -3530,7 +3530,7 @@ describe("DoneStep and Setting up: Added versus Connected", () => {
 
     expect(await screen.findByText("Tools added")).toBeInTheDocument();
     expect(
-      screen.getByText("Restart these tools once. After that they can read and write your wiki."),
+      screen.getByText("Restart these tools once. After that they can read and write your library."),
     ).toBeInTheDocument();
     expect(screen.queryByText("You're all set.")).not.toBeInTheDocument();
     expect(screen.queryByText(i18n.t("setup.done.allSetBody1"))).not.toBeInTheDocument();
@@ -3553,7 +3553,7 @@ describe("DoneStep and Setting up: Added versus Connected", () => {
     expect(screen.getByText(i18n.t("setup.done.allSetBody1"))).toBeInTheDocument();
     expect(screen.queryByText("Tools added")).not.toBeInTheDocument();
     expect(
-      screen.queryByText("Restart these tools once. After that they can read and write your wiki."),
+      screen.queryByText("Restart these tools once. After that they can read and write your library."),
     ).not.toBeInTheDocument();
   });
 
@@ -3570,7 +3570,7 @@ describe("DoneStep and Setting up: Added versus Connected", () => {
 
   it("the in-app connect flow returns to the Wiki; first run keeps Get started", async () => {
     const { unmount } = renderDoneWith(["cursor"], NOW());
-    expect(await screen.findByRole("button", { name: "Back to Wiki" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Back to Library" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Get started" })).not.toBeInTheDocument();
     unmount();
 
@@ -3589,7 +3589,7 @@ describe("DoneStep and Setting up: Added versus Connected", () => {
       </QueryClientProvider>,
     );
     expect(await screen.findByRole("button", { name: "Get started" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Back to Wiki" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Back to Library" })).not.toBeInTheDocument();
   });
 
   it("the Setting up row flips from Added to Connected on a fresh sighting", async () => {

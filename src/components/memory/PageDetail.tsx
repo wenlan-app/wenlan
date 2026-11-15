@@ -84,6 +84,8 @@ import { LookPencil } from "./page/look/LookPencil";
 import { usePageLook } from "./page/look/usePageLook";
 import { setTaskDone } from "./page/look/lookCheck";
 import { pageLooksEnabled } from "./page/look/lookFeature";
+import { pinPage, renamePinnedPage, unpinPage, usePinnedPages } from "./navigation/pinnedPages";
+import { useScope } from "./team/scope";
 import PageInfoDrawer from "./page/PageInfoDrawer";
 import { DetailInfoContent, DetailReadingFrame } from "./DetailLayout";
 import { InfoAction } from "./page/InfoAction";
@@ -358,6 +360,8 @@ export default function PageDetail({
   const [renameError, setRenameError] = useState(false);
   const [renameNeedsReview, setRenameNeedsReview] = useState(false);
   const exampleWiki = useExampleWikiActive();
+  const teamScope = useScope();
+  const pagePinned = usePinnedPages().some((pinned) => pinned.id === pageId);
   const readingSessionKey = JSON.stringify([exampleWiki ? "example" : "own", pageId]);
   const { infoOpen, setInfoOpen, canvasOpen, setCanvasOpen, pdfPreview, setPdfPreview, pdfPreviewOpen, setPdfPreviewOpen } = usePageInspectorSession(readingSessionKey);
   const [sourcePreview, setSourcePreview] = useState<IndexedFileInfo | null>(null);
@@ -689,6 +693,11 @@ export default function PageDetail({
     if (page == null) return;
     onPageLoaded?.({ id: page.id, status: page.status, title: page.title });
   }, [onPageLoaded, page?.id, page?.status, page?.title]);
+
+  // A pinned row keeps the page's current name.
+  useEffect(() => {
+    if (page != null && !exampleWiki) renamePinnedPage(page.id, page.title);
+  }, [exampleWiki, page?.id, page?.title]);
 
   // Opened from `[[this page#Heading]]`: show that heading once the page is
   // on screen, in the editor or the reading view, whichever is drawn.
@@ -2808,6 +2817,11 @@ export default function PageDetail({
                   >
                     <button type="button" role="menuitem" disabled={storedActionPending || page.status !== "active" || !inventoryPageFilename(page) || editDirty || saveState.phase !== "idle" || editorStatus?.compositionActive} onClick={() => { closeActionMenu(); setMoveOpen(true); }}>{t("pages.folders.move")}</button>
                     <button type="button" role="menuitem" disabled={storedActionBlocked || editDirty || saveState.phase !== "idle"} onClick={() => { closeActionMenu(); setPageExportOpen(true); }}>{t("pageExport.menuAction")}</button>
+                    {page.status === "active" && !exampleWiki && !teamScope.team ? (
+                      <button type="button" role="menuitem" disabled={storedActionBlocked} onClick={() => { closeActionMenu(); if (pagePinned) unpinPage(page.id); else pinPage({ id: page.id, title: page.title }); }}>
+                        {t(pagePinned ? "sidebar.unpinPage" : "sidebar.pinPage")}
+                      </button>
+                    ) : null}
                     {pageLooksEnabled() && lookSupported ? (
                       <button type="button" role="menuitem" disabled={storedActionBlocked} onClick={() => { closeActionMenu(); void askAiToDesignPage(); }}>{t("pageLook.askAi")}</button>
                     ) : null}
