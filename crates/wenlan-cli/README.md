@@ -6,15 +6,17 @@ License: Apache-2.0.
 
 ## Install
 
-Recommended user setup on macOS Apple Silicon:
+One line on macOS Apple Silicon, Linux x64 or ARM64 (glibc), and Windows x64. It needs Node.js 18 or newer:
 
 ```bash
 npx -y wenlan setup
 ```
 
-The setup package downloads `wenlan`, `wenlan-server`, and `wenlan-mcp` into `~/.wenlan/bin/`, configures local memory, starts the background runtime, and verifies status. It currently supports macOS Apple Silicon.
+It downloads `wenlan`, `wenlan-server`, and `wenlan-mcp` for this computer into `~/.wenlan/bin/` (`%USERPROFILE%\.wenlan\bin` on Windows, with the DLLs the daemon loads), checks the download against the release's `SHA256SUMS`, configures local memory, starts the background runtime, and prints its status. After that, `npx wenlan <command>` runs the installed CLI; the last lines of setup say how to put `wenlan` itself on `PATH`.
 
-Linux x64/ARM64 has an automated shell path:
+On Linux with no systemd user session (a container, WSL without systemd, some SSH logins) nothing can keep Wenlan running in the background. Setup starts it for now and says how to start it again after a restart.
+
+Without Node.js on macOS or Linux:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/wenlan-app/wenlan/main/install.sh | bash
@@ -24,7 +26,7 @@ wenlan background on
 wenlan status
 ```
 
-Windows x64 users can unpack `wenlan-windows-x64.zip` from [Releases](https://github.com/wenlan-app/wenlan/releases/latest) into a directory on `PATH`. Keep the bundled `onnxruntime.dll` beside the three `.exe` files, then run the same three `wenlan` commands.
+Without Node.js on Windows, unpack `wenlan-windows-x64.zip` from [Releases](https://github.com/wenlan-app/wenlan/releases/latest) as a unit into a directory on `PATH`, then run the same three `wenlan` commands.
 
 ### macOS Intel
 

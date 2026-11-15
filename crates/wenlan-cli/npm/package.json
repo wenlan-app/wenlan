@@ -32,10 +32,13 @@
     "node": ">=18"
   },
   "os": [
-    "darwin"
+    "darwin",
+    "linux",
+    "win32"
   ],
   "cpu": [
-    "arm64"
+    "arm64",
+    "x64"
   ],
   "repository": {
     "type": "git",

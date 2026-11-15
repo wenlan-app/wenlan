@@ -21,11 +21,11 @@ Detect the host before choosing the runtime install path:
 | Host | Install path |
 |---|---|
 | macOS Apple Silicon | Run `npx -y wenlan setup` (requires Node.js). Without Node.js, run `curl -fsSL https://raw.githubusercontent.com/wenlan-app/wenlan/main/install.sh \| bash` then `wenlan setup --basic`. |
-| Linux x64 or ARM64 | Run the shell installer below. |
-| Windows x64 | Download `wenlan-windows-x64.zip` from [Releases](https://github.com/wenlan-app/wenlan/releases/latest). |
+| Linux x64 or ARM64 | Run `npx -y wenlan setup` (requires Node.js). Without Node.js, run the shell installer below. |
+| Windows x64 | Run `npx -y wenlan setup` (requires Node.js). Without Node.js, download `wenlan-windows-x64.zip` from [Releases](https://github.com/wenlan-app/wenlan/releases/latest). |
 | macOS Intel | No supported complete-runtime install; see the [platform note](../crates/wenlan-cli/README.md#macos-intel). |
 
-On Linux:
+On Linux without Node.js:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/wenlan-app/wenlan/main/install.sh | bash
@@ -35,7 +35,7 @@ wenlan background on
 wenlan status
 ```
 
-On Windows, extract the archive as a unit into a user-owned directory on `PATH`. Keep `onnxruntime.dll` beside `wenlan.exe`, `wenlan-server.exe`, and `wenlan-mcp.exe`, then run:
+On Windows without Node.js, extract the archive as a unit into a user-owned directory on `PATH`. Keep `onnxruntime.dll` beside `wenlan.exe`, `wenlan-server.exe`, and `wenlan-mcp.exe`, then run:
 
 ```bash
 wenlan setup --basic

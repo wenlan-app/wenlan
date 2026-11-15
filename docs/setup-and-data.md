@@ -35,15 +35,15 @@ The installer downloads the app, checks its SHA-256, and moves it to Application
 
 **Without the desktop app**
 
-On macOS Apple Silicon:
+On macOS Apple Silicon, Linux x64 or ARM64 (glibc), and Windows x64:
 
 ```bash
 npx -y wenlan setup
 ```
 
-`npx` requires Node.js; without it, run `curl -fsSL https://raw.githubusercontent.com/wenlan-app/wenlan/main/install.sh | bash` then `wenlan setup --basic`.
+`npx` requires Node.js; [without it](setup-with-ai.md#install-the-runtime), macOS and Linux have a shell installer and Windows has an archive on [Releases](https://github.com/wenlan-app/wenlan/releases/latest).
 
-This downloads the prebuilt CLI, daemon, and MCP connector, starts the local runtime, and verifies it. No Rust toolchain or Cargo is required. Linux x64/ARM64 with glibc has an automated [shell setup path](setup-with-ai.md#install-the-runtime); Windows x64 uses the matching archive from [Releases](https://github.com/wenlan-app/wenlan/releases/latest). macOS Intel currently has [no supported complete-runtime install](../crates/wenlan-cli/README.md#macos-intel).
+This downloads the prebuilt CLI, daemon, and MCP connector, starts the local runtime, and verifies it. No Rust toolchain or Cargo is required. macOS Intel currently has [no supported complete-runtime install](../crates/wenlan-cli/README.md#macos-intel).
 
 **What is installed and how to update**
 
