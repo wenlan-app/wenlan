@@ -376,6 +376,31 @@ async fn team_join_page_mcp_route_decodes_encoded_space_names() {
 }
 
 #[tokio::test]
+async fn bare_mcp_counts_a_space_open_to_everyone() {
+    // The app's default invite names no Space: the member gets only what is
+    // open to everyone. The invite page then shows the bare `/mcp` address,
+    // so that address must open that one Space.
+    let f = fixture();
+    team::set_everyone(&f.state.team_path, "Design", Some(TeamAccess::Read)).unwrap();
+    let (_, key) = team::add_member(&f.state.team_path, "Dee", &[]).unwrap();
+    let (status, body) = call(&f.state, Method::GET, "/team/v1/me", Some(&key), vec![]).await;
+    assert_eq!(status, StatusCode::OK);
+    let me: wenlan_types::team::TeamMe = serde_json::from_slice(&body).unwrap();
+    assert_eq!(me.spaces.len(), 1);
+    let (status, body) = call(&f.state, Method::GET, "/mcp", Some(&key), vec![]).await;
+    let text = String::from_utf8_lossy(&body).to_string();
+    assert!(
+        status != StatusCode::FORBIDDEN && !text.contains("has no Space"),
+        "{status}: {text}"
+    );
+    // One of their own plus one open to everyone is two: the page shows a
+    // chooser and `/mcp/<Space>`, and the bare address says so.
+    let (status, body) = call(&f.state, Method::GET, "/mcp", Some(&f.outsider.1), vec![]).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(String::from_utf8_lossy(&body).contains("more than one Space"));
+}
+
+#[tokio::test]
 async fn a_key_reads_only_its_members_spaces() {
     let f = fixture();
     let acme = team::rename_team(&f.state.team_path, "Acme").unwrap();
