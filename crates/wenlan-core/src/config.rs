@@ -119,6 +119,12 @@ pub struct Config {
     /// the person's existing skills. Explicit opt-in; off for every install.
     #[serde(default)]
     pub skills_from_library: bool,
+    /// The person answered the one library-wide "let AI tools follow how you
+    /// work?" ask (UX-SKILL-1). After a yes, every non-private Space is
+    /// accepted without asking again; after a no, `skills_from_library` is
+    /// turned off and nothing asks again.
+    #[serde(default)]
+    pub skills_answered: bool,
     /// Each Space's pages in a folder of its own (`space_folders`). `None`:
     /// not asked yet; `Some(false)`: the person said no.
     #[serde(default, skip_serializing_if = "Option::is_none")]

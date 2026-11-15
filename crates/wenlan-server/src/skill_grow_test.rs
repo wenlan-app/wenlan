@@ -572,34 +572,44 @@ async fn suggests_then_person_accepts_and_reads_one_space_scoped_rules_page() {
     .lines
     .is_empty());
 
-    // Once the person declines, the durable row is bound to the Space id and
-    // remains declined through a rename.
+    // UX-SKILL-1: asked once for the whole library. After that yes, another
+    // Space with lines is accepted by the next night with no ask, and its
+    // acceptance is bound to the Space id through a rename.
+    assert!(wenlan_core::config::load_config().skills_answered);
     let other = scratch
         .db
-        .create_space("Declined Space", None, false)
+        .create_space("Second Space", None, false)
         .await
         .unwrap();
     create_person_page(
         &scratch.db,
         &scratch.pages,
-        "Declined Space",
+        "Second Space",
         "Rules",
         SOURCE_QUOTE,
     )
     .await;
-    let _ = refresh(&scratch, &model).await;
-    let declined = handle_decline_space_rules(
+    let report = refresh(&scratch, &model).await;
+    assert_eq!(report.suggestions, 0, "a second Space was asked again");
+    assert!(handle_space_suggestions(
         axum::extract::State(scratch.shared.clone()),
         person_headers(),
-        AxumPath(other.id.clone()),
     )
     .await
     .unwrap()
-    .0;
-    assert_eq!(declined.status, "declined");
+    .0
+    .is_empty());
+    let second = scratch
+        .db
+        .space_rules_state(&other.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(second.status, SpaceRulesStatus::Accepted);
+    assert!(second.rules_page_id.is_some());
     scratch
         .db
-        .update_space("Declined Space", "Renamed Space", None)
+        .update_space("Second Space", "Renamed Space", None)
         .await
         .unwrap();
     let _ = refresh(&scratch, &model).await;
@@ -611,7 +621,7 @@ async fn suggests_then_person_accepts_and_reads_one_space_scoped_rules_page() {
             .unwrap()
             .unwrap()
             .status,
-        SpaceRulesStatus::Declined
+        SpaceRulesStatus::Accepted
     );
 
     // Turning the feature off returns no rules and records no borrowing event.
@@ -984,4 +994,54 @@ async fn existing_skill_discovery_never_follows_skill_file_symlinks() {
     #[cfg(windows)]
     std::os::windows::fs::symlink_dir(&real_root, &linked_root).unwrap();
     assert!(unmanaged_skill_files(&[linked_root]).is_empty());
+}
+
+#[tokio::test]
+async fn ux_skill_1_one_no_stops_asking_and_model_calls_everywhere() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(true).await;
+    let first = scratch.db.create_space("First", None, false).await.unwrap();
+    scratch
+        .db
+        .create_space("Second", None, false)
+        .await
+        .unwrap();
+    for name in ["First", "Second"] {
+        create_person_page(&scratch.db, &scratch.pages, name, "Rules", SOURCE_QUOTE).await;
+    }
+    let model = GrowModel::new();
+    let report = refresh(&scratch, &model).await;
+    assert_eq!(report.suggestions, 2);
+
+    let declined = handle_decline_space_rules(
+        axum::extract::State(scratch.shared.clone()),
+        person_headers(),
+        AxumPath(first.id.clone()),
+    )
+    .await
+    .unwrap()
+    .0;
+    assert_eq!(declined.status, "declined");
+    let config = wenlan_core::config::load_config();
+    assert!(config.skills_answered);
+    assert!(!config.skills_from_library, "a no must stop the night pass");
+    assert!(
+        handle_space_suggestions(
+            axum::extract::State(scratch.shared.clone()),
+            person_headers(),
+        )
+        .await
+        .unwrap()
+        .0
+        .is_empty(),
+        "the other Space still asks after one no"
+    );
+    let calls = model.call_count();
+    assert!(refresh_with(&scratch.shared, &model, scratch.skill_dirs())
+        .await
+        .is_err());
+    assert_eq!(model.call_count(), calls, "a no still spent model calls");
 }

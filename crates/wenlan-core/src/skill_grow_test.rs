@@ -369,6 +369,9 @@ fn parser_drops_fragments_and_cited_spans_but_keeps_whole_sentences() {
         "which is the branch-protection-compliant path for every change",
         "Furthermore, keep the source page readable at all times.",
         "Keep the source page readable at all times [1].",
+        "Consequently, all numbers remain provisional until checked.",
+        "Instead, developers should open a pull request.",
+        "因此不應先賣給團隊。",
     ] {
         assert!(is_fragment(fragment), "{fragment:?} was kept");
     }
@@ -380,4 +383,28 @@ fn parser_drops_fragments_and_cited_spans_but_keeps_whole_sentences() {
     ] {
         assert!(!is_fragment(sentence), "{sentence:?} was dropped");
     }
+}
+
+#[test]
+fn citation_markers_are_removed_before_the_model_and_before_grounding() {
+    assert_eq!(
+        citation_free("Ship small changes [1]. Review every diff [12].[3]"),
+        "Ship small changes. Review every diff."
+    );
+    assert_eq!(
+        citation_free("Keep [draft] notes [x]."),
+        "Keep [draft] notes [x]."
+    );
+    let page_text = "Ship small changes [1]. Review every diff before merging [2].";
+    let source = page("Site", page_text, 2, 1_700_000_000);
+    assert!(!grow_prompt("Site", std::slice::from_ref(&source)).contains("[1]"));
+    let kept = parse_grow(
+        &candidate_json("rule", "", "Review every diff before merging."),
+        &[source],
+    );
+    assert_eq!(
+        kept.len(),
+        1,
+        "a sentence that ended in a marker was dropped"
+    );
 }

@@ -126,6 +126,24 @@ fn feature_enabled() -> bool {
     wenlan_core::config::load_config().skills_from_library
 }
 
+/// The person already answered the one library-wide ask (UX-SKILL-1).
+fn library_answered() -> bool {
+    wenlan_core::config::load_config().skills_answered
+}
+
+/// Record the library-wide answer. A no also turns the feature off, so the
+/// night pass makes no more model calls until the person turns it back on.
+fn record_library_answer(yes: bool) -> Result<(), ServerError> {
+    wenlan_core::config::update_config(|cfg| {
+        cfg.skills_answered = true;
+        if !yes {
+            cfg.skills_from_library = false;
+        }
+        Ok(())
+    })
+    .map_err(|e| ServerError::Internal(e.to_string()))
+}
+
 fn source_title(space: &str) -> String {
     format!("How I work — {space}")
 }
@@ -301,7 +319,7 @@ async fn source_line_is_eligible(
         return Ok(false);
     };
     Ok(revision.created_at == line.source_revision_at
-        && revision.content.contains(&line.source_quote)
+        && skill_grow::citation_free(&revision.content).contains(&line.source_quote)
         && (line.person_edited
             || skill_grow::meaning_is_consistent(&line.text, &line.source_quote)))
 }
@@ -602,7 +620,14 @@ async fn process_space(
     match state.status {
         SpaceRulesStatus::Suggested => {
             state.lines = lines;
-            suggested = !state.lines.is_empty();
+            if library_answered() && !state.lines.is_empty() {
+                // The person already said yes once for the whole library:
+                // accept this Space without asking again (UX-SKILL-1).
+                accept_space(db, page_root, &mut state, space.clone()).await?;
+                updated = true;
+            } else {
+                suggested = !state.lines.is_empty();
+            }
         }
         SpaceRulesStatus::Accepted => {
             updated = write_maintained_rules_page(db, page_root, &mut state, &lines).await?;
@@ -1087,7 +1112,7 @@ pub async fn handle_space_suggestions(
     headers: HeaderMap,
 ) -> Result<Json<Vec<SpaceRulesSuggestion>>, ServerError> {
     crate::memory_routes::require_person_to_accept(&headers)?;
-    if !feature_enabled() {
+    if !feature_enabled() || library_answered() {
         return Ok(Json(Vec::new()));
     }
     let db = state
@@ -1159,7 +1184,26 @@ pub async fn handle_accept_space_rules(
             "Space rules suggestion is not pending".into(),
         ));
     }
-    let grounded = eligible_lines(&db, &space.id, &rules.lines).await?;
+    let page_id = accept_space(&db, page_root.as_deref(), &mut rules, space).await?;
+    record_library_answer(true)?;
+    Ok(Json(SpaceRulesActionResponse {
+        space_id: id,
+        status: "accepted".into(),
+        rules_page_id: Some(page_id),
+        undo_available: false,
+    }))
+}
+
+/// Create the Space's rules page from its pending grounded lines and mark the
+/// Space accepted. Used by the person's yes and, after that yes, by the night
+/// pass for every other Space (asked once for the whole library).
+async fn accept_space(
+    db: &MemoryDB,
+    page_root: Option<&Path>,
+    rules: &mut SpaceRulesState,
+    space: wenlan_types::Space,
+) -> Result<String, ServerError> {
+    let grounded = eligible_lines(db, &space.id, &rules.lines).await?;
     if grounded.len() != rules.lines.len() {
         return Err(ServerError::Conflict(
             "a source changed or became unavailable; refresh the suggestion".into(),
@@ -1173,7 +1217,7 @@ pub async fn handle_accept_space_rules(
     // body this accepted suggestion produced.
     rules.status = SpaceRulesStatus::Accepting;
     rules.space_name.clone_from(&space.name);
-    db.set_space_rules_state(&rules).await?;
+    db.set_space_rules_state(rules).await?;
     let existing = db
         .list_pages_by_space("active", Some(&space.name), 1_000, 0)
         .await?
@@ -1187,7 +1231,7 @@ pub async fn handle_accept_space_rules(
         page.id
     } else {
         let result = wenlan_core::post_write::create_page(
-            &db,
+            db,
             CreateConceptRequest {
                 title,
                 content: reconciled.body,
@@ -1199,12 +1243,12 @@ pub async fn handle_accept_space_rules(
                 workspace: Some(space.name.clone()),
             },
             "wenlan-skills",
-            page_root.as_deref(),
+            page_root,
         )
         .await?;
         if result.attached_to.is_some() || !result.wrote {
             rules.status = SpaceRulesStatus::Suggested;
-            db.set_space_rules_state(&rules).await?;
+            db.set_space_rules_state(rules).await?;
             return Err(ServerError::Conflict(
                 "the rules-page title already belongs to another page".into(),
             ));
@@ -1217,13 +1261,8 @@ pub async fn handle_accept_space_rules(
     rules.lines = reconciled.lines;
     rules.deleted_fingerprints = reconciled.deleted_fingerprints;
     rules.last_success_at = chrono::Utc::now().timestamp();
-    db.set_space_rules_state(&rules).await?;
-    Ok(Json(SpaceRulesActionResponse {
-        space_id: id,
-        status: "accepted".into(),
-        rules_page_id: Some(page_id),
-        undo_available: false,
-    }))
+    db.set_space_rules_state(rules).await?;
+    Ok(page_id)
 }
 
 pub async fn handle_decline_space_rules(
@@ -1245,9 +1284,12 @@ pub async fn handle_decline_space_rules(
             "Space rules suggestion is not pending".into(),
         ));
     }
-    rules.status = SpaceRulesStatus::Declined;
+    // One answer for the whole library: a no turns the feature off and is
+    // never asked again. The Space stays unanswered, so turning the setting
+    // back on later lets the night pass accept it like every other Space.
     rules.lines.clear();
     db.set_space_rules_state(&rules).await?;
+    record_library_answer(false)?;
     Ok(Json(SpaceRulesActionResponse {
         space_id: id,
         status: "declined".into(),
