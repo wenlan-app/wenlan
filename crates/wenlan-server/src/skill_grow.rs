@@ -1074,11 +1074,11 @@ pub fn spawn_nightly_if_idle(shared: SharedState, model: Arc<dyn LlmProvider>) {
 pub async fn handle_refresh(
     State(state): State<SharedState>,
 ) -> Result<Json<SkillsRefreshResponse>, ServerError> {
-    let models = crate::things_intake::models(&state)
+    let group = crate::things_intake::group_model(&state)
         .await
         .ok_or_else(|| ServerError::Conflict("no grouping model is available".into()))?;
     Ok(Json(
-        refresh_with(&state, models.group.as_ref(), SkillDirs::system()).await?,
+        refresh_with(&state, group.as_ref(), SkillDirs::system()).await?,
     ))
 }
 

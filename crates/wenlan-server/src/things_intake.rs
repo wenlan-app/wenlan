@@ -190,6 +190,28 @@ pub(crate) async fn models(shared: &SharedState) -> Option<IntakeModels> {
     )
     .llm
     .cloned()?;
+    let group = group_from(&state, synthesis)?;
+    Some(IntakeModels { label, group })
+}
+
+/// The model that groups, alone: work that never labels (the skills night
+/// pass and its "Update now") must not wait for the everyday model, which on
+/// an on-device setup loads only once the computer is idle.
+pub(crate) async fn group_model(shared: &SharedState) -> Option<Arc<dyn LlmProvider>> {
+    let config = wenlan_core::config::load_config();
+    if !config.background_ai_enabled() {
+        return None;
+    }
+    let synthesis =
+        wenlan_core::refinery::SynthesisSource::parse(config.synthesis_source.as_deref());
+    let state = shared.read().await;
+    group_from(&state, synthesis)
+}
+
+fn group_from(
+    state: &crate::state::ServerState,
+    synthesis: Option<wenlan_core::refinery::SynthesisSource>,
+) -> Option<Arc<dyn LlmProvider>> {
     let route = wenlan_core::refinery::resolve_synthesis(
         synthesis,
         state.synthesis_llm.as_ref(),
@@ -200,14 +222,13 @@ pub(crate) async fn models(shared: &SharedState) -> Option<IntakeModels> {
     // Only a cloud model groups in its place: a small local model puts
     // everything in one pile or every chat on its own, and the person's AI
     // tool groups well and is already set up.
-    let group = (route.source == wenlan_core::refinery::SynthesisSource::Anthropic)
+    (route.source == wenlan_core::refinery::SynthesisSource::Anthropic)
         .then(|| route.llm.cloned())
         .flatten()
         .or_else(|| {
             wenlan_core::agent_cli_llm::AgentCliProvider::find()
                 .map(|p| Arc::new(p) as Arc<dyn LlmProvider>)
-        })?;
-    Some(IntakeModels { label, group })
+        })
 }
 
 /// One look, now. `None` when it did not run.
@@ -216,6 +237,13 @@ pub async fn look_once(
     backoff: &mut Backoff,
 ) -> Result<Option<LookReport>, String> {
     let Some(models) = models(shared).await else {
+        // No everyday model yet (an on-device one waits for an idle
+        // computer): the skills night pass only needs the grouping model.
+        if NIGHT_HOURS.contains(&chrono::Local::now().hour()) && still_quiet() {
+            if let Some(group) = group_model(shared).await {
+                crate::skill_grow::spawn_nightly_if_idle(shared.clone(), group);
+            }
+        }
         return Ok(None);
     };
     let db = shared
