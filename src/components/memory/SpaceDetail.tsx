@@ -23,6 +23,7 @@ import { ShareDialog } from "./sharing/ShareDialog";
 import { SharedWithLine } from "./sharing/SharedWithLine";
 import { SpaceRecentChanges } from "./space-detail/SpaceRecentChanges";
 import { spaceShare, useShares } from "./sharing/sharing";
+import { SpaceRulesAsk } from "./skills/SpaceRulesAsk";
 import "./space-detail/space-detail-header.css";
 import "./space-detail/space-detail.css";
 import "./pages/pageActions.css";
@@ -179,6 +180,7 @@ export default function SpaceDetail({
         space={space}
       />
 
+      <SpaceRulesAsk space={space} onOpenPage={onSelectPage} />
       <SpaceBrief spaceName={space.name} />
       {share && <SpaceRecentChanges space={space.name} shares={shares.data} />}
       <SpaceProjectContent

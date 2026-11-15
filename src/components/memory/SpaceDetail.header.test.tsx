@@ -20,6 +20,8 @@ vi.mock("../../lib/tauri", () => ({
   FACET_COLORS: {},
   STABILITY_TIERS: {},
   getPendingRevision: vi.fn().mockResolvedValue(null),
+  skillsFromLibraryEnabled: vi.fn().mockResolvedValue(false),
+  listSpaceRulesSuggestions: vi.fn().mockResolvedValue([]),
   acceptPendingRevision: vi.fn(),
   dismissPendingRevision: vi.fn(),
   pinMemory: vi.fn().mockResolvedValue(undefined),

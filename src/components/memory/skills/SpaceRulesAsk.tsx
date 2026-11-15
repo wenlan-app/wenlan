@@ -1,0 +1,82 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
+import {
+  acceptSpaceRules,
+  declineSpaceRules,
+  listSpaceRulesSuggestions,
+  skillsFromLibraryEnabled,
+  type Space,
+  type SpaceRulesSuggestion,
+} from "../../../lib/tauri";
+import { HowIWorkLines } from "./HowIWorkLines";
+import { HOW_I_WORK_QUERY_KEYS } from "./howIWorkModel";
+import "./howIWork.css";
+
+type Props = {
+  readonly space: Pick<Space, "id" | "name">;
+  readonly onOpenPage: (pageId: string) => void;
+};
+
+export function SpaceRulesAsk({ space, onOpenPage }: Props) {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const [hidden, setHidden] = useState(false);
+  const enabled = useQuery({
+    queryKey: HOW_I_WORK_QUERY_KEYS.enabled,
+    queryFn: skillsFromLibraryEnabled,
+    staleTime: 30_000,
+    retry: false,
+  });
+  const suggestions = useQuery({
+    queryKey: HOW_I_WORK_QUERY_KEYS.spaceSuggestions,
+    queryFn: listSpaceRulesSuggestions,
+    enabled: enabled.data === true,
+    retry: false,
+  });
+  const suggestion = suggestions.data?.find((item) => item.space_id === space.id);
+
+  const removeFromAsk = () => {
+    queryClient.setQueryData<SpaceRulesSuggestion[]>(
+      HOW_I_WORK_QUERY_KEYS.spaceSuggestions,
+      (current) => current?.filter((item) => item.space_id !== space.id) ?? [],
+    );
+    setHidden(true);
+  };
+  const accept = useMutation({
+    mutationFn: () => acceptSpaceRules(space.id),
+    onSuccess: (response) => {
+      removeFromAsk();
+      void queryClient.invalidateQueries({ queryKey: ["space-pages", space.name] });
+      void queryClient.invalidateQueries({ queryKey: ["pages"] });
+      if (response.rules_page_id) onOpenPage(response.rules_page_id);
+    },
+  });
+  const decline = useMutation({
+    mutationFn: () => declineSpaceRules(space.id),
+    onSuccess: removeFromAsk,
+  });
+
+  if (enabled.data !== true || hidden || !suggestion) return null;
+  const busy = accept.isPending || decline.isPending;
+  const failed = accept.isError || decline.isError;
+
+  return (
+    <section className="space-rules-ask" aria-labelledby={`space-rules-ask-${space.id}`} data-testid="space-rules-ask">
+      <p className="space-rules-ask-crumb">{t("howIWork.ask.crumb", { space: space.name })}</p>
+      <h2 id={`space-rules-ask-${space.id}`}>{t("howIWork.ask.title", { space: space.name })}</h2>
+      <p className="space-rules-ask-subtitle">{t("howIWork.ask.subtitle")}</p>
+      <HowIWorkLines lines={suggestion.lines} onOpenPage={onOpenPage} />
+      <div className="how-i-work-actions">
+        <button className="how-i-work-primary" disabled={busy} onClick={() => accept.mutate()} type="button">
+          {t("howIWork.ask.accept")}
+        </button>
+        <button className="how-i-work-secondary" disabled={busy} onClick={() => decline.mutate()} type="button">
+          {t("howIWork.ask.decline")}
+        </button>
+      </div>
+      {failed ? <p className="how-i-work-error" role="alert">{t("howIWork.ask.failed")}</p> : null}
+    </section>
+  );
+}
