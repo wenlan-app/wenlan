@@ -66,6 +66,21 @@ pub fn skills_dir_for(
     }))
 }
 
+/// The file a tool reads at the start of every conversation, whatever the
+/// project: where rules must sit for the tool to follow them without being
+/// asked to look. Only tools whose file is known for certain are listed.
+pub fn global_rules_file(tool: &str, home: &Path) -> Option<PathBuf> {
+    let tail: &[&str] = match tool {
+        "claude_code" | "claude-code" => &[".claude", "CLAUDE.md"],
+        "codex_cli" | "codex" => &[".codex", "AGENTS.md"],
+        _ => return None,
+    };
+    Some(tail.iter().fold(home.to_path_buf(), |p, part| p.join(part)))
+}
+
+/// Tools [`global_rules_file`] knows, in the order their files are written.
+pub const GLOBAL_RULES_TOOLS: [&str; 2] = ["codex", "claude-code"];
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -519,6 +519,59 @@ pub const RULES_APPENDIX_FILES: [&str; 3] = ["more-rules.md", "decisions.md", "p
 /// The always-read file stays short; the rest moves to `more-rules.md`.
 pub const RULES_MAIN_FILE_MAX: usize = 30;
 
+/// Wenlan's part of a tool's own always-read file (`CLAUDE.md`, `AGENTS.md`).
+pub const TOOL_RULES_START: &str = "<!-- WENLAN:RULES:START -->";
+pub const TOOL_RULES_END: &str = "<!-- WENLAN:RULES:END -->";
+
+/// The block for a tool's own file: the lines used in every Space, one per
+/// line. `None` when there are none.
+pub fn tool_rules_block(lines: &[SkillLine]) -> Option<String> {
+    let rules = lines
+        .iter()
+        .map(|line| line.text.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|text| !text.is_empty() && !text.contains(TOOL_RULES_END))
+        .take(RULES_MAIN_FILE_MAX)
+        .collect::<Vec<_>>();
+    if rules.is_empty() {
+        return None;
+    }
+    let mut block = format!(
+        "{TOOL_RULES_START}\n## How I work\n\nKept by Wenlan from my own pages. Wenlan rewrites \
+         this part; change the pages, not these lines.\n\n"
+    );
+    for rule in rules {
+        block.push_str(&format!("- {rule}\n"));
+    }
+    block.push_str(TOOL_RULES_END);
+    Some(block)
+}
+
+/// `text` with Wenlan's block replaced by `block`, appended when it has none,
+/// or taken out when `block` is `None`. Text outside the markers is kept as
+/// it is.
+pub fn upsert_tool_rules_block(text: &str, block: Option<&str>) -> String {
+    let found = match (text.find(TOOL_RULES_START), text.find(TOOL_RULES_END)) {
+        (Some(start), Some(end)) if start < end => Some((start, end + TOOL_RULES_END.len())),
+        _ => None,
+    };
+    match (found, block) {
+        (Some((start, end)), Some(block)) => format!("{}{block}{}", &text[..start], &text[end..]),
+        (Some((start, end)), None) => {
+            let before = text[..start].trim_end();
+            let after = text[end..].trim_start();
+            match (before.is_empty(), after.is_empty()) {
+                (true, true) => String::new(),
+                (true, false) => after.to_string(),
+                (false, true) => format!("{before}\n"),
+                (false, false) => format!("{before}\n\n{after}"),
+            }
+        }
+        (None, Some(block)) if text.trim().is_empty() => format!("{block}\n"),
+        (None, Some(block)) => format!("{}\n\n{block}\n", text.trim_end()),
+        (None, None) => text.to_string(),
+    }
+}
+
 fn rules_file_item(line: &SkillLine) -> String {
     let text = line.text.split_whitespace().collect::<Vec<_>>().join(" ");
     let title = line

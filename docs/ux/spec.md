@@ -592,12 +592,15 @@ and wait for evidence that people need them.
   habits and never go into a repository. Nothing reaches the repository until
   the person merges.
   原文：「空間如果是 repo，那就直接對應上了」（2026-11-15 22:26Z）；「原本說就會寫 wiki folders 這點也要看要不要一起修改？」（2026-11-15 22:51Z）。
-- **UX-SKILL-8** `shipped` In Claude Code with the Wenlan plugin, a new
-  conversation starts with the approved rules already in front of it: the
-  lines used in every Space, and the named Space's own when one is named. The
-  person does nothing and no file of theirs is changed. With no approved
-  rules, the setting off, or Wenlan not running, nothing is added.
-  原文：「所以根據這證據，實際使用情況，提出現在的建議並且動工，除非需要我來執導方向」（2026-11-15 22:48Z；證據：Codex 實測，等 AI 工具自己來問只有一半會讀，已在眼前的規則每次照做）。
+- **UX-SKILL-8** `shipped` The lines used in every Space are also kept in
+  each connected AI tool's own always-read file (Claude Code's `CLAUDE.md`,
+  Codex's `AGENTS.md`), in one part marked as Wenlan's. Wenlan changes only
+  that part and never the person's own text around it. The person is not asked
+  again: the one answer of UX-SKILL-1 covers it. When the lines change the
+  part follows; with the setting off, the tool disconnected, or no such lines
+  left, the part is taken out. A file that another one already brings in gets
+  no second copy.
+  原文：「為啥要外掛？直接把我們的規則同步過去工具，工具就會讀啊？」（2026-11-15 23:28Z）。
 
 ## Adding to Wenlan
 

@@ -1355,3 +1355,91 @@ async fn ux_skill_6_approved_rules_are_written_as_layered_files_and_follow_the_s
     assert_eq!(std::fs::read_to_string(&general_file).unwrap(), "# mine\n");
     assert!(project_file.exists());
 }
+
+#[tokio::test]
+async fn ux_skill_8_general_rules_are_kept_in_each_connected_tools_own_file() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(true).await;
+    let habits = scratch
+        .db
+        .create_space("Habits", None, false)
+        .await
+        .unwrap();
+    create_person_page(
+        &scratch.db,
+        &scratch.pages,
+        "Habits",
+        "Habits",
+        GENERAL_QUOTE,
+    )
+    .await;
+    for tool in ["codex", "claude-code"] {
+        scratch.db.register_trusted_agent(tool).await.unwrap();
+    }
+    let codex_file = scratch.home.join(".codex/AGENTS.md");
+    let claude_file = scratch.home.join(".claude/CLAUDE.md");
+    for file in [&codex_file, &claude_file] {
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    }
+    std::fs::write(&codex_file, "# Mine\n\nUse pnpm.\n").unwrap();
+
+    let model = GrowModel {
+        general_in: Some("Habits".into()),
+        ..GrowModel::new()
+    };
+    assert_eq!(refresh(&scratch, &model).await.suggestions, 1);
+    assert_eq!(
+        std::fs::read_to_string(&codex_file).unwrap(),
+        "# Mine\n\nUse pnpm.\n",
+        "nothing is written before the person says yes"
+    );
+    let _ = handle_accept_space_rules(
+        axum::extract::State(scratch.shared.clone()),
+        person_headers(),
+        AxumPath(habits.id.clone()),
+        Query(SpaceAnswerScope::default()),
+    )
+    .await
+    .unwrap();
+
+    let codex = std::fs::read_to_string(&codex_file).unwrap();
+    assert!(codex.starts_with("# Mine\n\nUse pnpm.\n\n<!-- WENLAN:RULES:START -->"));
+    assert!(codex.contains(&format!("- {GENERAL_QUOTE}\n")));
+    let claude = std::fs::read_to_string(&claude_file).unwrap();
+    assert!(claude.starts_with("<!-- WENLAN:RULES:START -->") && claude.contains(GENERAL_QUOTE));
+    assert!(
+        !scratch.home.join(".gemini").exists(),
+        "a tool that is not there gets no folder"
+    );
+
+    let set = |on: bool| {
+        wenlan_core::config::update_config(move |cfg| {
+            cfg.skills_from_library = on;
+            Ok(())
+        })
+        .unwrap();
+    };
+    // Off takes Wenlan's part out and leaves the person's text as it was.
+    set(false);
+    sync_rules_files_quietly(&scratch.db).await;
+    assert_eq!(
+        std::fs::read_to_string(&codex_file).unwrap(),
+        "# Mine\n\nUse pnpm.\n"
+    );
+    assert!(!claude_file.exists(), "a file with only Wenlan's part goes");
+
+    // A file that already brings in a written one gets no second copy.
+    std::fs::write(&claude_file, "@~/.codex/AGENTS.md\n").unwrap();
+    set(true);
+    sync_rules_files_quietly(&scratch.db).await;
+    assert!(std::fs::read_to_string(&codex_file)
+        .unwrap()
+        .contains(GENERAL_QUOTE));
+    assert_eq!(
+        std::fs::read_to_string(&claude_file).unwrap(),
+        "@~/.codex/AGENTS.md\n"
+    );
+}

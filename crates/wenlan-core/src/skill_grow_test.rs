@@ -465,3 +465,29 @@ fn ux_skill_6_rules_layer_files_keep_the_main_file_short_and_point_to_the_rest()
     assert_eq!(general.len(), 1);
     assert!(general[0].1.contains("# How I work\n"));
 }
+
+#[test]
+fn ux_skill_8_tool_rules_block_is_added_replaced_and_taken_out_again() {
+    assert_eq!(tool_rules_block(&[]), None);
+    let first = [line(SkillLineKind::Rule, "a", "Discuss\nfirst.", "q")];
+    let block = tool_rules_block(&first).unwrap();
+    assert!(block.contains("- Discuss first.\n"));
+
+    let mine = "# Mine\n\nUse pnpm.\n";
+    let with = upsert_tool_rules_block(mine, Some(&block));
+    assert!(with.starts_with("# Mine\n\nUse pnpm.\n\n<!-- WENLAN:RULES:START -->"));
+    let edited = format!("{with}\nAfter.\n");
+    let second = [line(SkillLineKind::Rule, "b", "Answer first.", "q")];
+    let replaced = upsert_tool_rules_block(&edited, tool_rules_block(&second).as_deref());
+    assert!(replaced.contains("- Answer first.") && !replaced.contains("Discuss first."));
+    assert!(replaced.contains("Use pnpm.") && replaced.contains("After."));
+    assert_eq!(replaced.matches(TOOL_RULES_START).count(), 1);
+
+    assert_eq!(upsert_tool_rules_block(&with, None), mine);
+    assert_eq!(
+        upsert_tool_rules_block(&replaced, None),
+        "# Mine\n\nUse pnpm.\n\nAfter.\n"
+    );
+    assert_eq!(upsert_tool_rules_block(&format!("{block}\n"), None), "");
+    assert_eq!(upsert_tool_rules_block(mine, None), mine);
+}

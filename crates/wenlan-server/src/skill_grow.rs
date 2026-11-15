@@ -715,13 +715,112 @@ fn sync_rules_layer(home: &Path, folder: &Path, files: &[(&'static str, String)]
     }
 }
 
+/// A file `text` pulls in with an `@path` line, as Claude Code's `CLAUDE.md`
+/// does with `@AGENTS.md`.
+fn imported_files(file: &Path, home: &Path, text: &str) -> Vec<PathBuf> {
+    let folder = file.parent().unwrap_or(home);
+    text.lines()
+        .filter_map(|line| line.trim().strip_prefix('@'))
+        .filter(|path| !path.is_empty() && !path.contains(char::is_whitespace))
+        .filter_map(|path| {
+            let path = match path.strip_prefix("~/") {
+                Some(rest) => home.join(rest),
+                None => folder.join(path),
+            };
+            path.canonicalize().ok()
+        })
+        .collect()
+}
+
+/// Keep Wenlan's block of general rules in each connected tool's own
+/// always-read file, so the tool follows them without having to ask. Only the
+/// part between Wenlan's markers is ever changed. A tool that is not
+/// connected, no general rules, or the setting off takes the block out.
+/// A file reached through a link is written where the link points; a file
+/// another written file already covers (the same file, or one it imports) is
+/// not given a second copy.
+async fn sync_tool_rules(db: &MemoryDB, dirs: &SkillDirs, general: &[SkillLine]) {
+    let Some(home) = dirs.home.as_deref() else {
+        return;
+    };
+    let block = skill_grow::tool_rules_block(general);
+    let connected: HashSet<String> = match db.list_agents().await {
+        Ok(agents) => agents
+            .into_iter()
+            .filter(|agent| agent.enabled)
+            .filter_map(|agent| {
+                wenlan_core::skill_locations::global_rules_file(&agent.name, home)
+                    .map(|path| path.to_string_lossy().into_owned())
+            })
+            .collect(),
+        Err(error) => {
+            tracing::warn!(%error, "[skills] connected tools not read; tool rules left as they are");
+            return;
+        }
+    };
+    let mut written: HashSet<PathBuf> = HashSet::new();
+    for tool in wenlan_core::skill_locations::GLOBAL_RULES_TOOLS {
+        let Some(path) = wenlan_core::skill_locations::global_rules_file(tool, home) else {
+            continue;
+        };
+        // Never create a tool's folder: no folder means the tool is not here.
+        let Some(folder) = path.parent().filter(|folder| folder.is_dir()) else {
+            continue;
+        };
+        let target = path
+            .canonicalize()
+            .or_else(|_| {
+                folder
+                    .canonicalize()
+                    .map(|folder| folder.join(path.file_name().unwrap_or_default()))
+            })
+            .unwrap_or_else(|_| path.clone());
+        let current = match std::fs::read_to_string(&target) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(error) => {
+                tracing::warn!(path = %target.display(), %error, "[skills] tool rules file not read");
+                continue;
+            }
+        };
+        let covered = written.contains(&target)
+            || imported_files(&target, home, &current)
+                .iter()
+                .any(|file| written.contains(file));
+        let wanted = block
+            .as_deref()
+            .filter(|_| !covered && connected.contains(path.to_string_lossy().as_ref()));
+        let updated = skill_grow::upsert_tool_rules_block(&current, wanted);
+        if wanted.is_some() {
+            written.insert(target.clone());
+        }
+        if updated == current {
+            continue;
+        }
+        let result = if updated.is_empty() {
+            // Only Wenlan's block was in it.
+            std::fs::remove_file(&target).map_err(|e| ServerError::Internal(e.to_string()))
+        } else {
+            staged_file(&target, &updated).and_then(|staged| {
+                std::fs::rename(&staged, &target).map_err(|e| {
+                    let _ = std::fs::remove_file(&staged);
+                    ServerError::Internal(e.to_string())
+                })
+            })
+        };
+        if let Err(error) = result {
+            tracing::warn!(path = %target.display(), %error, "[skills] tool rules file not updated");
+        }
+    }
+}
+
 /// Write the rules AI tools may read as layered files in Wenlan's own folder:
 /// `AGENTS.md` for the lines that hold in every project and
 /// `spaces/<Space>/AGENTS.md` for each Space's own, each a short main file
 /// plus appendix files. The files always say what `read_space_rules` would
 /// answer right now, so a Stop, the setting turned off, a deleted line or an
 /// Undo empties them the same way.
-async fn sync_rules_files(db: &MemoryDB) -> Result<(), ServerError> {
+async fn sync_rules_files(db: &MemoryDB, dirs: &SkillDirs) -> Result<(), ServerError> {
     let home = wenlan_core::config::wenlan_home();
     let mut general = Vec::new();
     let mut seen = HashSet::new();
@@ -741,6 +840,7 @@ async fn sync_rules_files(db: &MemoryDB) -> Result<(), ServerError> {
         }
     }
     sync_rules_layer(&home, &home, &skill_grow::rules_layer_files(None, &general));
+    sync_tool_rules(db, dirs, &general).await;
     let spaces = home.join("spaces");
     // Folders of Spaces that no longer exist still lose the files Wenlan wrote.
     if !has_symlink_below(&home, &spaces) {
@@ -787,13 +887,13 @@ pub(crate) async fn project_rules(db: &MemoryDB, space: &str) -> Vec<String> {
 /// Same, for callers that must not fail because a file could not be written.
 pub(crate) async fn sync_rules_files_quietly(db: &MemoryDB) {
     let _serial = SKILLS_MUTATION_LOCK.lock().await;
-    if let Err(error) = sync_rules_files(db).await {
+    if let Err(error) = sync_rules_files(db, &SkillDirs::system()).await {
         tracing::warn!(%error, "[skills] rules files not updated");
     }
 }
 
-async fn sync_rules_files_locked(db: &MemoryDB) {
-    if let Err(error) = sync_rules_files(db).await {
+async fn sync_rules_files_locked(db: &MemoryDB, dirs: &SkillDirs) {
+    if let Err(error) = sync_rules_files(db, dirs).await {
         tracing::warn!(%error, "[skills] rules files not updated");
     }
 }
@@ -1265,7 +1365,7 @@ async fn refresh_unlocked(
         refresh_existing_skill_suggestions(&db, model, &dirs, &approved, &mut budget).await?;
     report.suggestions += suggestions;
     report.model_calls += calls;
-    sync_rules_files_locked(&db).await;
+    sync_rules_files_locked(&db, &dirs).await;
     Ok(report)
 }
 
@@ -1412,7 +1512,7 @@ pub async fn handle_accept_space_rules(
     if !scope.this_space_only {
         record_library_answer(true)?;
     }
-    sync_rules_files_locked(&db).await;
+    sync_rules_files_locked(&db, &SkillDirs::system()).await;
     Ok(Json(SpaceRulesActionResponse {
         space_id: id,
         status: "accepted".into(),
@@ -1525,7 +1625,7 @@ pub async fn handle_decline_space_rules(
         db.set_space_rules_state(&rules).await?;
         record_library_answer(false)?;
     }
-    sync_rules_files_locked(&db).await;
+    sync_rules_files_locked(&db, &SkillDirs::system()).await;
     Ok(Json(SpaceRulesActionResponse {
         space_id: id,
         status: "declined".into(),
@@ -1588,7 +1688,7 @@ pub async fn handle_undo_space_rules(
     rules.deleted_fingerprints = undo.before_deleted_fingerprints;
     rules.undo = None;
     db.set_space_rules_state(&rules).await?;
-    sync_rules_files_locked(&db).await;
+    sync_rules_files_locked(&db, &SkillDirs::system()).await;
     Ok(Json(SpaceRulesActionResponse {
         space_id: id,
         status: "undone".into(),
