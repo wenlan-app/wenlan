@@ -13,7 +13,7 @@ GitHub CI, release builds, and current benchmark baselines pin the standard ARM6
 | Linux | `~/.local/share/wenlan/` (or `$XDG_DATA_HOME/wenlan`) | systemd user unit at `~/.config/systemd/user/wenlan-server.service` (qualifier dropped per `ServiceLabel::to_script_name()`). Enable lingering with `loginctl enable-linger` if you want the service alive after logout. |
 | Windows | `%LOCALAPPDATA%\wenlan\` | Per-user Task Scheduler ONLOGON task registered via `schtasks.exe /create /tn <task-name> /xml <definition.xml> /f`. The XML separates the executable from its arguments and records the selected data root, bind address, and port. The default root uses `WenlanServer`; custom roots use `WenlanServer-<root-hash>`. |
 
-`wenlan background on` / `wenlan background off` work on macOS, Linux, and Windows,
+`wenlan start` / `wenlan stop` work on macOS, Linux, and Windows,
 using launchd, systemd-user, or Task Scheduler for registration and startup.
 Stopping uses the daemon's root-checked HTTP shutdown endpoint, verifies that the
 selected instance has stopped, and writes its autostart-off marker while preserving
@@ -139,7 +139,7 @@ executable, arguments, and data directory against the store you intend to upgrad
 
 On macOS/Linux, back up the confirmed registration. If it has no reliable root marker, move that
 registration out of its service directory (and run `systemctl --user daemon-reload`
-on Linux). Then run `wenlan background on` with the intended absolute
+on Linux). Then run `wenlan start` with the intended absolute
 `WENLAN_DATA_DIR` and loopback `WENLAN_BIND_ADDR`. Do not delete the data directory.
 A manually started legacy daemon must be stopped from its own terminal or by its
 verified PID before retrying. A root mismatch means the selected endpoint or

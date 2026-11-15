@@ -6,25 +6,27 @@ License: Apache-2.0.
 
 ## Install
 
-Recommended user setup on macOS Apple Silicon:
+One line on macOS Apple Silicon, Linux x64 or ARM64 (glibc), and Windows x64. It needs Node.js 18 or newer:
 
 ```bash
 npx -y wenlan setup
 ```
 
-The setup package downloads `wenlan`, `wenlan-server`, and `wenlan-mcp` into `~/.wenlan/bin/`, configures local memory, starts the background runtime, and verifies status. It currently supports macOS Apple Silicon.
+It downloads `wenlan`, `wenlan-server`, and `wenlan-mcp` for this computer into `~/.wenlan/bin/` (`%USERPROFILE%\.wenlan\bin` on Windows, with the DLLs the daemon loads), checks the download against the release's `SHA256SUMS`, configures local memory, starts the background runtime, and prints its status. After that, `npx wenlan <command>` runs the installed CLI; the last lines of setup say how to put `wenlan` itself on `PATH`.
 
-Linux x64/ARM64 has an automated shell path:
+On Linux with no systemd user session (a container, WSL without systemd, some SSH logins) nothing can keep Wenlan running in the background. Setup starts it for now and says how to start it again after a restart.
+
+Without Node.js on macOS or Linux:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/wenlan-app/wenlan/main/install.sh | bash
 export PATH="$HOME/.wenlan/bin:$PATH"
 wenlan setup --basic
-wenlan background on
+wenlan start
 wenlan status
 ```
 
-Windows x64 users can unpack `wenlan-windows-x64.zip` from [Releases](https://github.com/wenlan-app/wenlan/releases/latest) into a directory on `PATH`. Keep the bundled `onnxruntime.dll` beside the three `.exe` files, then run the same three `wenlan` commands.
+Without Node.js on Windows, unpack `wenlan-windows-x64.zip` from [Releases](https://github.com/wenlan-app/wenlan/releases/latest) as a unit into a directory on `PATH`, then run the same three `wenlan` commands.
 
 ### macOS Intel
 
@@ -179,11 +181,11 @@ wenlan setup --anthropic-api-key-env ANTHROPIC_API_KEY
 
 **`wenlan background <on|off>` and `wenlan restart`**
 
-Start or stop the per-user background runtime. `wenlan background off` stops the current daemon while preserving its login registration and writes `<data root>/autostart.off`, so recovery will not start it again. Run `wenlan background on` to remove the marker and start it again; it waits up to 10 s for the daemon to answer before saying "started" and, on macOS, reports an error the daemon logged during this start (never one left over from an earlier run). Most users run `wenlan background on` once after setup and `wenlan restart` after upgrades installed outside `wenlan setup`.
+Start or stop the per-user background runtime. `wenlan stop` stops the current daemon while preserving its login registration and writes `<data root>/autostart.off`, so recovery will not start it again. Run `wenlan start` to remove the marker and start it again; it waits up to 10 s for the daemon to answer before saying "started" and, on macOS, reports an error the daemon logged during this start (never one left over from an earlier run). Most users run `wenlan start` once after setup and `wenlan restart` after upgrades installed outside `wenlan setup`.
 
 ```bash
-wenlan background on
-wenlan background off
+wenlan start
+wenlan stop
 wenlan restart
 ```
 
@@ -855,28 +857,20 @@ Options:
 
 - `--repair`: Point older ~/.wenlan/bin copies at the app bundle. The previous file is renamed aside, not deleted.
 
-### `wenlan background`
-
-Control whether Wenlan keeps running in the background.
-
-```text
-wenlan background [OPTIONS] <COMMAND>
-```
-
-#### `wenlan background on`
+### `wenlan start`
 
 Start Wenlan now and keep it running in the background after login.
 
 ```text
-wenlan background on [OPTIONS]
+wenlan start [OPTIONS]
 ```
 
-#### `wenlan background off`
+### `wenlan stop`
 
-Stop Wenlan now while keeping its background registration.
+Stop Wenlan. It stays off until `wenlan start`.
 
 ```text
-wenlan background off [OPTIONS]
+wenlan stop [OPTIONS]
 ```
 
 ### `wenlan restart`

@@ -7,7 +7,7 @@ set -euo pipefail
 # Skip checksum verification (only if the release predates SHA256SUMS): WENLAN_SKIP_CHECKSUM=1
 #
 # Supported platforms: macOS (arm64), Linux (aarch64, x86_64).
-# Windows users: download wenlan-windows-x64.zip from the GitHub release page.
+# Windows users: run `npx -y wenlan setup`, or download wenlan-windows-x64.zip from the GitHub release page.
 
 REPO="wenlan-app/wenlan"
 REQUESTED_TAG="${WENLAN_RELEASE_TAG:-${WENLAN_TAG:-${ORIGIN_RELEASE_TAG:-${ORIGIN_TAG:-}}}}"
