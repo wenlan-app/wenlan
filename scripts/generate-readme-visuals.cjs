@@ -34,23 +34,23 @@ const BANNER = {
 
 const BANNER_COPY = {
   en: {
-    title: ["The knowledge base", "you don’t have to maintain"],
-    tagline: "Free · Open source · Local-first",
+    title: ["A studio for everything you", "think, learn, and build with AI"],
+    tagline: "Free · Open source · For you and your team",
     font: BANNER.latin,
   },
   "zh-Hant": {
-    title: ["不用你維護的知識庫"],
-    tagline: "免費・開源・本地優先",
+    title: ["你和 AI 一起想、一起學、", "一起做的工作室"],
+    tagline: "免費・開源・個人和團隊都能用",
     font: '"PingFang TC", "Noto Sans TC", -apple-system, BlinkMacSystemFont, sans-serif',
   },
   "zh-Hans": {
-    title: ["不用你维护的知识库"],
-    tagline: "免费・开源・本地优先",
+    title: ["你和 AI 一起想、一起学、", "一起做的工作室"],
+    tagline: "免费・开源・个人和团队都能用",
     font: '"PingFang SC", "Noto Sans SC", -apple-system, BlinkMacSystemFont, sans-serif',
   },
   "es-ES": {
-    title: ["La base de conocimiento", "que no tienes que mantener"],
-    tagline: "Gratis · Código abierto · Local-first",
+    title: ["Un estudio para todo lo que piensas,", "aprendes y construyes con IA"],
+    tagline: "Gratis · Código abierto · Para ti y tu equipo",
     font: BANNER.latin,
   },
 };

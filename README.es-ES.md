@@ -1,16 +1,14 @@
-<!-- README_SYNC: source=README.md sha256=b1403c143567553ed61afb6bef756712eab97f18fc2d814b47c37b5b4941c955 -->
+<!-- README_SYNC: source=README.md sha256=170dddca182aefe11e87c6c01281ee8c9d9c16fb17cf1db81eedc4e2867e662b -->
 
 <p align="center">
   <picture>
     <source media="(max-width: 600px)" srcset="./docs/assets/readme-banner-es-ES-mobile.png">
-    <img src="./docs/assets/readme-banner-es-ES.png" alt="Wenlan: la base de conocimiento que no tienes que mantener. Gratis, de código abierto y local-first." width="100%">
+    <img src="./docs/assets/readme-banner-es-ES.png" alt="Wenlan: un estudio para todo lo que piensas, aprendes y construyes con IA. Gratis, de código abierto, para ti y tu equipo." width="100%">
   </picture>
 </p>
 
 <p align="center">
-  Las notas exigen mantenimiento constante, los plugins se rompen y cada chat nuevo con la IA empieza de cero.<br>
-  <strong>Configúralo una vez. Tus herramientas de IA guardan lo importante, mantienen tus páginas organizadas y te lo traen de vuelta en tu próximo chat; ves cada cambio y puedes deshacerlo.</strong><br>
-  Código abierto. Funciona con tu bóveda de Obsidian actual.
+  Páginas, skills y reglas que tus herramientas de IA llenan, mantienen al día y usan para trabajar, dibujadas como pidas. Para ti y tu equipo.
 </p>
 
 <p align="center">

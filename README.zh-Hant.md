@@ -1,16 +1,14 @@
-<!-- README_SYNC: source=README.md sha256=b1403c143567553ed61afb6bef756712eab97f18fc2d814b47c37b5b4941c955 -->
+<!-- README_SYNC: source=README.md sha256=170dddca182aefe11e87c6c01281ee8c9d9c16fb17cf1db81eedc4e2867e662b -->
 
 <p align="center">
   <picture>
     <source media="(max-width: 600px)" srcset="./docs/assets/readme-banner-zh-Hant-mobile.png">
-    <img src="./docs/assets/readme-banner-zh-Hant.png" alt="文瀾：不用你維護的知識庫。免費、開源、本地優先。" width="100%">
+    <img src="./docs/assets/readme-banner-zh-Hant.png" alt="文瀾：你和 AI 一起想、一起學、一起做的工作室。免費、開源，個人和團隊都能用。" width="100%">
   </picture>
 </p>
 
 <p align="center">
-  筆記要一直整理，插件會壞，每次開新對話又要從頭解釋。<br>
-  <strong>設定一次就好。你的 AI 工具會存下重要的內容、把筆記整理好，下次對話再帶回來；改了什麼都看得到，也能還原。</strong><br>
-  開源，能直接接上你現有的 Obsidian vault。
+  頁面、技能和規則，由你的 AI 工具填起來、保持更新、拿來做事，樣子你說、AI 來畫。個人和團隊都能用。
 </p>
 
 <p align="center">

@@ -1,16 +1,14 @@
-<!-- README_SYNC: source=README.md sha256=b1403c143567553ed61afb6bef756712eab97f18fc2d814b47c37b5b4941c955 -->
+<!-- README_SYNC: source=README.md sha256=170dddca182aefe11e87c6c01281ee8c9d9c16fb17cf1db81eedc4e2867e662b -->
 
 <p align="center">
   <picture>
     <source media="(max-width: 600px)" srcset="./docs/assets/readme-banner-zh-Hans-mobile.png">
-    <img src="./docs/assets/readme-banner-zh-Hans.png" alt="文澜：不用你维护的知识库。免费、开源、本地优先。" width="100%">
+    <img src="./docs/assets/readme-banner-zh-Hans.png" alt="文澜：你和 AI 一起想、一起学、一起做的工作室。免费、开源，个人和团队都能用。" width="100%">
   </picture>
 </p>
 
 <p align="center">
-  笔记要一直整理，插件会坏，每次开新对话又要从头解释。<br>
-  <strong>设置一次就好。你的 AI 工具会存下重要的内容、把笔记整理好，下次对话再带回来；改了什么都看得到，也能还原。</strong><br>
-  开源，能直接接上你现有的 Obsidian 仓库。
+  页面、技能和规则，由你的 AI 工具填起来、保持更新、拿来做事，样子你说、AI 来画。个人和团队都能用。
 </p>
 
 <p align="center">

@@ -1,14 +1,12 @@
 <p align="center">
   <picture>
     <source media="(max-width: 600px)" srcset="./docs/assets/readme-banner-mobile.png">
-    <img src="./docs/assets/readme-banner.png" alt="Wenlan: the knowledge base you don't have to maintain. Free, open source, local-first." width="100%">
+    <img src="./docs/assets/readme-banner.png" alt="Wenlan: a studio for everything you think, learn, and build with AI. Free, open source, for you and your team." width="100%">
   </picture>
 </p>
 
 <p align="center">
-  Notes need constant upkeep, plugins break, and every new AI chat starts from zero.<br>
-  <strong>Set up once. Your AI tools save what matters, keep your pages organized, and bring it back in your next chat; you see every change and can undo it.</strong><br>
-  Open source. Works with your existing Obsidian vault.
+  Pages, skills and rules your AI tools fill, keep live, and work from, drawn any way you ask. For you and your team.
 </p>
 
 <p align="center">
