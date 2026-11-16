@@ -2520,6 +2520,10 @@ jobs:
         if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.ref == 'release-please--branches--main' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.repo.fork == false && github.event.pull_request.draft == false && github.event.pull_request.user.login == '7xuanlu'
         shell: bash
         run: |
+          # The release build runs `pnpm build:web`, which writes dist/web; the
+          # wenlan-server build script has already embedded it in the binary.
+          # Packaging needs an empty dist/, and dist/* is the uploaded artifact.
+          rm -rf dist
           source_date_epoch="$(git show -s --format=%ct HEAD)"
           if command -v python3 >/dev/null 2>&1; then py=python3; else py=python; fi
           "$py" scripts/package-release-artifacts.py \
