@@ -1828,6 +1828,18 @@ async fn pass(
             UNFILED_SPACE_ID.to_string()
         }
     };
+    if !matches!(scope, Scope::Page(_)) {
+        // A "How I work" page is this person's own: rules taken from what
+        // they wrote, for their own AI tools. It never travels with the
+        // Space or the library; a teammate's Wenlan keeps its own. Sharing
+        // that one page on purpose still works.
+        for state in db.space_rules_states().await? {
+            if let Some(id) = state.rules_page_id {
+                local.remove(&id);
+                left_out.insert(id);
+            }
+        }
+    }
     let name = match scope {
         Scope::Space(space) => space.clone(),
         Scope::Page(id) => local
@@ -1869,9 +1881,10 @@ async fn pass(
         read.proposals.retain(|page, _| page == id);
         read.decisions.retain(|page, _| page == id);
     }
-    if matches!(scope, Scope::Library) {
-        // These keep their own folder: another person's sentences on them
-        // must not be filed under this person's id here.
+    if !matches!(scope, Scope::Page(_)) {
+        // Library pages with their own folder keep it: another person's
+        // sentences on them must not be filed under this person's id here.
+        // The same holds for this person's own "How I work" pages.
         read.pages.retain(|page, _| !left_out.contains(page));
     }
     let mut counts = SharedSyncCounts {
