@@ -292,9 +292,7 @@ impl WenlanClient {
             format!("GET {} failed", url)
         };
         let resp = self.send(self.http.get(&url), &what).await?;
-        let resp = resp
-            .error_for_status()
-            .with_context(|| format!("daemon returned error for {}", url))?;
+        let resp = ensure_ok(resp, &url).await?;
         resp.json()
             .await
             .with_context(|| format!("parsing {} response", path))
@@ -313,9 +311,7 @@ impl WenlanClient {
                 &format!("POST {} failed", url),
             )
             .await?;
-        let resp = resp
-            .error_for_status()
-            .with_context(|| format!("daemon returned error for {}", url))?;
+        let resp = ensure_ok(resp, &url).await?;
         resp.json()
             .await
             .with_context(|| format!("parsing {} response", path))
@@ -327,9 +323,7 @@ impl WenlanClient {
         let resp = self
             .send(self.http.post(&url), &format!("POST {} failed", url))
             .await?;
-        let resp = resp
-            .error_for_status()
-            .with_context(|| format!("daemon returned error for {}", url))?;
+        let resp = ensure_ok(resp, &url).await?;
         resp.json()
             .await
             .with_context(|| format!("parsing {} response", path))
@@ -344,9 +338,7 @@ impl WenlanClient {
                 &format!("PUT {} failed", url),
             )
             .await?;
-        let resp = resp
-            .error_for_status()
-            .with_context(|| format!("daemon returned error for {}", url))?;
+        let resp = ensure_ok(resp, &url).await?;
         resp.json()
             .await
             .with_context(|| format!("parsing {} response", path))
@@ -365,9 +357,7 @@ impl WenlanClient {
                 &format!("PATCH {} failed", url),
             )
             .await?;
-        let resp = resp
-            .error_for_status()
-            .with_context(|| format!("daemon returned error for {}", url))?;
+        let resp = ensure_ok(resp, &url).await?;
         resp.json()
             .await
             .with_context(|| format!("parsing {} response", path))
@@ -377,23 +367,23 @@ impl WenlanClient {
     /// discarding the response body.
     async fn post_ok<B: Serialize>(&self, path: &str, body: &B) -> Result<()> {
         let url = format!("{}{}", self.base_url, path);
-        self.send(
-            self.http.post(&url).json(body),
-            &format!("POST {} failed", url),
-        )
-        .await?
-        .error_for_status()
-        .with_context(|| format!("daemon returned error for {}", url))?;
+        let resp = self
+            .send(
+                self.http.post(&url).json(body),
+                &format!("POST {} failed", url),
+            )
+            .await?;
+        ensure_ok(resp, &url).await?;
         Ok(())
     }
 
     /// DELETE `path`, treating any 2xx as success and discarding the response body.
     async fn delete_ok(&self, path: &str) -> Result<()> {
         let url = format!("{}{}", self.base_url, path);
-        self.send(self.http.delete(&url), &format!("DELETE {} failed", url))
-            .await?
-            .error_for_status()
-            .with_context(|| format!("daemon returned error for {}", url))?;
+        let resp = self
+            .send(self.http.delete(&url), &format!("DELETE {} failed", url))
+            .await?;
+        ensure_ok(resp, &url).await?;
         Ok(())
     }
 
@@ -488,9 +478,8 @@ impl WenlanClient {
                 self.http.post(&url).timeout(SWEEP_TIMEOUT),
                 &format!("POST {url} failed"),
             )
-            .await?
-            .error_for_status()
-            .with_context(|| format!("daemon returned error for {url}"))?;
+            .await?;
+        let resp = ensure_ok(resp, &url).await?;
         resp.json()
             .await
             .context("parsing /api/ambient/sweep response")
@@ -567,9 +556,7 @@ impl WenlanClient {
         let resp = self
             .send(self.http.post(&url), &format!("POST {} failed", url))
             .await?;
-        let resp = resp
-            .error_for_status()
-            .with_context(|| format!("daemon returned error for {}", url))?;
+        let resp = ensure_ok(resp, &url).await?;
         let json: serde_json::Value = resp.json().await.context("parsing move-to response")?;
         Ok(json["affected"].as_u64().unwrap_or(0) as usize)
     }
@@ -672,9 +659,7 @@ impl WenlanClient {
         if resp.status() == reqwest::StatusCode::NOT_FOUND {
             return Ok(None);
         }
-        let resp = resp
-            .error_for_status()
-            .with_context(|| format!("daemon returned error for {}", url))?;
+        let resp = ensure_ok(resp, &url).await?;
         resp.json()
             .await
             .map(Some)
@@ -1094,11 +1079,105 @@ impl WenlanClient {
     }
 }
 
+/// A response the daemon answered with a non-success status.
+///
+/// A 4xx is the daemon telling the person what to change ("too short to
+/// save", "page not found"), so when it carries a message that message is
+/// the whole error: the status line and the daemon's own address say
+/// nothing they can act on. A 4xx with no message, and every other
+/// failure, keeps the status and the address.
+#[derive(Debug)]
+pub struct DaemonRefusal {
+    pub status: reqwest::StatusCode,
+    url: String,
+    message: String,
+}
+
+impl std::fmt::Display for DaemonRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.status.is_client_error() && !self.message.is_empty() {
+            return write!(f, "{}", self.message);
+        }
+        write!(f, "Wenlan returned {} for {}", self.status, self.url)?;
+        if !self.message.is_empty() {
+            write!(f, ": {}", self.message)?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for DaemonRefusal {}
+
+/// The status of a refused request anywhere in `error`'s chain, whether it
+/// came through [`ensure_ok`] or from `reqwest` itself.
+pub fn refusal_status(error: &anyhow::Error) -> Option<reqwest::StatusCode> {
+    error.chain().find_map(|cause| {
+        cause
+            .downcast_ref::<DaemonRefusal>()
+            .map(|refusal| refusal.status)
+            .or_else(|| {
+                cause
+                    .downcast_ref::<reqwest::Error>()
+                    .and_then(reqwest::Error::status)
+            })
+    })
+}
+
+/// Non-success response -> a [`DaemonRefusal`] carrying the daemon's own
+/// words. Every generic request helper goes through this.
+async fn ensure_ok(resp: reqwest::Response, url: &str) -> Result<reqwest::Response> {
+    if resp.status().is_success() {
+        return Ok(resp);
+    }
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    Err(DaemonRefusal {
+        status,
+        url: url.to_owned(),
+        message: daemon_refusal_message(&body),
+    }
+    .into())
+}
+
+/// What to show for a refusal body. `{"error": "..."}` is the shape every
+/// `ServerError` uses; a rejected save answers `{"reason", "detail"}`; a
+/// body that is neither (a framework's own text) is shown as it is, cut to
+/// a line a terminal can hold.
+fn daemon_refusal_message(body: &str) -> String {
+    #[derive(Deserialize)]
+    struct Rejection {
+        reason: Option<String>,
+        detail: Option<String>,
+    }
+    const MAX: usize = 300;
+    let message = match serde_json::from_str::<Rejection>(body) {
+        Ok(Rejection {
+            reason: Some(reason),
+            detail,
+        }) => match reason.as_str() {
+            "too_short" => {
+                "Not saved: too short to be useful later. Write a full sentence.".to_string()
+            }
+            "credential_leak" => {
+                "Not saved: this looks like it contains a password or key.".to_string()
+            }
+            _ => match detail {
+                Some(detail) if !detail.is_empty() => format!("Not saved: {detail}"),
+                _ => format!("Not saved ({reason})."),
+            },
+        },
+        _ => daemon_error_message(body),
+    };
+    if message.chars().count() > MAX {
+        let cut: String = message.chars().take(MAX).collect();
+        return format!("{cut}…");
+    }
+    message
+}
+
 /// Non-success response -> `anyhow::Error` carrying the daemon's own error
-/// message, not just the status line `error_for_status()` alone gives.
-/// Used only by `list_entities`, `merge_entity`, `add_entity_alias` and
-/// `export_pages_okf`; every other client method keeps `error_for_status()`
-/// as-is.
+/// message. Used by `list_entities`, `merge_entity`, `add_entity_alias` and
+/// `export_pages_okf`, which keep the status and address in every case.
 async fn ensure_daemon_success(resp: reqwest::Response, url: &str) -> Result<reqwest::Response> {
     if resp.status().is_success() {
         return Ok(resp);
@@ -1182,7 +1261,8 @@ fn build_list_request(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_list_request, daemon_error_message, daemon_supports_okf_export, WenlanClient,
+        build_list_request, daemon_error_message, daemon_refusal_message,
+        daemon_supports_okf_export, refusal_status, DaemonRefusal, WenlanClient,
     };
 
     #[test]
@@ -1307,6 +1387,70 @@ mod tests {
                 "POST /api/pages/export HTTP/1.1".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn a_refused_save_says_why_in_plain_words() {
+        let body = r#"{"detail":"Only 1 meaningful words (below minimum)","reason":"too_short","status":"rejected"}"#;
+        assert_eq!(
+            daemon_refusal_message(body),
+            "Not saved: too short to be useful later. Write a full sentence."
+        );
+        let other = r#"{"detail":"matched system_prompt_markers","reason":"noise_pattern"}"#;
+        assert_eq!(
+            daemon_refusal_message(other),
+            "Not saved: matched system_prompt_markers"
+        );
+    }
+
+    #[test]
+    fn a_client_error_with_a_message_is_only_that_message() {
+        let refusal = DaemonRefusal {
+            status: reqwest::StatusCode::NOT_FOUND,
+            url: "http://127.0.0.1:7878/api/pages/x".into(),
+            message: daemon_refusal_message(r#"{"error":"page not found"}"#),
+        };
+        assert_eq!(refusal.to_string(), "page not found");
+    }
+
+    #[test]
+    fn a_server_error_or_an_empty_refusal_keeps_the_status_and_address() {
+        let server = DaemonRefusal {
+            status: reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+            url: "http://127.0.0.1:7878/api/x".into(),
+            message: "boom".into(),
+        };
+        assert_eq!(
+            server.to_string(),
+            "Wenlan returned 500 Internal Server Error for http://127.0.0.1:7878/api/x: boom"
+        );
+        let empty = DaemonRefusal {
+            status: reqwest::StatusCode::UNPROCESSABLE_ENTITY,
+            url: "http://127.0.0.1:7878/api/x".into(),
+            message: String::new(),
+        };
+        assert_eq!(
+            empty.to_string(),
+            "Wenlan returned 422 Unprocessable Entity for http://127.0.0.1:7878/api/x"
+        );
+    }
+
+    #[test]
+    fn a_long_refusal_body_is_cut_to_one_line_worth() {
+        let message = daemon_refusal_message(&"x".repeat(1000));
+        assert_eq!(message.chars().count(), 301);
+        assert!(message.ends_with('…'));
+    }
+
+    #[test]
+    fn refusal_status_is_found_through_added_context() {
+        let error = anyhow::Error::from(DaemonRefusal {
+            status: reqwest::StatusCode::CONFLICT,
+            url: String::new(),
+            message: "already there".into(),
+        })
+        .context("adding the source");
+        assert_eq!(refusal_status(&error), Some(reqwest::StatusCode::CONFLICT));
     }
 
     #[test]

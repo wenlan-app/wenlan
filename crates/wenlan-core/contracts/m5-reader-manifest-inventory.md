@@ -1010,6 +1010,7 @@ the projection-directory reader.
 | `wenlan setup` | yes | automatic | `none` | subcommand renderer |
 | `wenlan start` | yes | automatic | `none` | subcommand renderer |
 | `wenlan stop` | yes | automatic | `none` | subcommand renderer |
+| `wenlan tool` | yes | automatic | `none` | subcommand renderer |
 | `wenlan background` | yes | automatic | `none` | subcommand renderer |
 | `wenlan restart` | yes | automatic | `none` | subcommand renderer |
 | `wenlan doctor` | yes | automatic | `none` | subcommand renderer |

@@ -174,7 +174,9 @@ pub fn load_update(path: &Path) -> Result<BriefUpdateRequest> {
 fn format_brief(response: &BriefReadResponse) -> String {
     match response.state {
         BriefReadState::SpaceNotResolved => {
-            "No Space picked. See yours with `wenlan spaces list`, then run `wenlan --space <NAME> brief`.\n".into()
+            "No Space picked. Make one with `wenlan spaces add <NAME> --default`, or see yours with \
+             `wenlan spaces list` and run `wenlan --space <NAME> brief`.\n"
+                .into()
         }
         BriefReadState::BriefNotCreated => format!(
             "No Brief exists for Space '{}'. Run `wenlan brief update --file <json>` \

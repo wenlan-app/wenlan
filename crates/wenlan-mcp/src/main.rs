@@ -11,7 +11,7 @@ use wenlan_mcp::{serve, token};
 #[derive(Parser)]
 #[command(
     name = "wenlan-mcp",
-    about = "MCP server for Wenlan, the personal wiki your AI tools keep up to date",
+    about = "MCP server for Wenlan, a studio for everything you think, learn, and build with AI",
     version
 )]
 struct Cli {
@@ -25,6 +25,11 @@ struct Cli {
     /// Agent name for source_agent on writes.
     #[arg(long, global = true)]
     agent_name: Option<String>,
+
+    /// Which tools the stdio server lists: `standard` is all of them,
+    /// `daily` the everyday ones. `serve` takes its own `--tool-profile`.
+    #[arg(long = "tool-profile", value_enum, default_value_t = ToolProfile::Standard)]
+    stdio_tool_profile: ToolProfile,
 }
 
 #[derive(Subcommand)]
@@ -135,7 +140,14 @@ async fn main() -> anyhow::Result<()> {
     }
 
     match cli.command {
-        None => run_stdio(cli.origin_url, effective_agent_name(cli.agent_name, None)).await,
+        None => {
+            run_stdio(
+                cli.origin_url,
+                effective_agent_name(cli.agent_name, None),
+                cli.stdio_tool_profile,
+            )
+            .await
+        }
         Some(Commands::Serve(args)) => {
             let agent_name = effective_agent_name(cli.agent_name, Some(&args));
             run_serve(args, cli.origin_url, agent_name).await
@@ -179,6 +191,7 @@ fn effective_agent_name(
 async fn run_stdio(
     origin_url: Option<String>,
     agent_name: EffectiveAgentName,
+    tool_profile: ToolProfile,
 ) -> anyhow::Result<()> {
     let base_url = discover_origin_url(origin_url);
     tracing::info!("Connecting to Wenlan at {}", base_url);
@@ -202,7 +215,8 @@ async fn run_stdio(
         TransportMode::Stdio,
         agent_name.into_identity(),
         None,
-    );
+    )
+    .with_tool_profile(tool_profile);
     let service = server
         .serve(stdio())
         .await
@@ -447,6 +461,22 @@ mod tests {
             effective_agent_name(cli.agent_name, Some(&args)),
             explicit_agent("chatgpt")
         );
+    }
+
+    #[test]
+    fn stdio_lists_every_tool_unless_asked_for_the_daily_list() {
+        let plain = Cli::try_parse_from(["wenlan-mcp", "--agent-name", "cursor"]).unwrap();
+        assert_eq!(plain.stdio_tool_profile, ToolProfile::Standard);
+        let daily = Cli::try_parse_from([
+            "wenlan-mcp",
+            "--agent-name",
+            "cursor",
+            "--tool-profile",
+            "daily",
+        ])
+        .unwrap();
+        assert_eq!(daily.stdio_tool_profile, ToolProfile::Daily);
+        assert!(daily.command.is_none());
     }
 
     #[test]

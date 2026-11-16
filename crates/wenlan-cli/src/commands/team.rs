@@ -88,7 +88,8 @@ pub enum TeamCmd {
         #[arg(long)]
         url: Option<String>,
     },
-    /// Host a Space of this computer for the team.
+    /// Share a Space of this computer with the team.
+    #[command(name = "share", alias = "host")]
     Host {
         /// Space name.
         #[arg(value_name = "SPACE")]
@@ -321,7 +322,7 @@ async fn start(
         if firewall.is_some_and(|firewall| !firewall.open) {
             println!("Windows Firewall is keeping other computers out. In the Wenlan app, open Settings › Team and choose Allow.");
         }
-        println!("Next: wenlan team host <SPACE> --everyone, then wenlan team invite <NAME>");
+        println!("Next: wenlan team share <SPACE> --everyone, then wenlan team invite <NAME>");
     })
 }
 
@@ -527,7 +528,7 @@ fn print_own_team(status: &TeamStatus) {
         println!("Invite links use: {url}");
     }
     if status.spaces.is_empty() {
-        println!("Hosted Spaces: none (wenlan team host <SPACE>)");
+        println!("Hosted Spaces: none (wenlan team share <SPACE>)");
     } else {
         println!("Hosted Spaces: {}", status.spaces.join(", "));
     }
@@ -586,7 +587,7 @@ fn print_key(
                 }
                 if spaces.is_empty() {
                     println!(
-                        "No Spaces are open to them yet. Open one to everyone: wenlan team host <SPACE> --everyone. Or to them: wenlan team update \"{}\" --access <SPACE>",
+                        "No Spaces are open to them yet. Open one to everyone: wenlan team share <SPACE> --everyone. Or to them: wenlan team update \"{}\" --access <SPACE>",
                         issued.member.name
                     );
                 } else {

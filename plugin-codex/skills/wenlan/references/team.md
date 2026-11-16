@@ -15,7 +15,7 @@ user's language. Do not chain commands the user did not ask for.
 |---|---|
 | See the team here, or the teams this computer joined | `"$W" team status` |
 | Start a team on this computer | `"$W" team start "<team name>"` (add `--as "<their name>"` when the command asks for it) |
-| Let the team use a Space | `"$W" team host "<Space>" --everyone` (`--everyone read` for read only; leave `--everyone` out to give it to named people only) |
+| Let the team use a Space | `"$W" team share "<Space>" --everyone` (`--everyone read` for read only; leave `--everyone` out to give it to named people only) |
 | Invite someone | `"$W" team invite "<name>"` (add `--access "<Space>"` or `--access "<Space>:read"` only when the user named a Space for them) |
 | A new link for someone who lost theirs | `"$W" team new-key "<name>"` |
 | Join a team with an invite link | `"$W" team join "<link>"` |

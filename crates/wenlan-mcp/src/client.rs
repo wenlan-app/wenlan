@@ -610,6 +610,8 @@ fn parse_api_error_reason(bytes: &[u8]) -> Option<String> {
             | "attachment_not_found"
             | "attachment_too_large"
             | "attachment_empty"
+            | "page_is_the_persons"
+            | "permanent_delete_needs_person"
             | "attachment_not_a_file"
             | "attachment_path_not_absolute"
             | "attachment_name_taken"
