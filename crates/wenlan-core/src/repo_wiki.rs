@@ -687,16 +687,20 @@ pub(crate) fn code_footer<'a>(
 /// How many of the Space's rules ride in the always-read block.
 pub const AGENTS_BLOCK_MAX_RULES: usize = 30;
 
-/// The text between [`AGENTS_START`] and [`AGENTS_END`]: where the wiki is,
-/// then the Space's own project rules, one per line, without their source
-/// pages (the repository may be public; the page titles are the person's).
-fn agents_block(folder: &str, rules: &[String]) -> String {
-    let mut block = format!(
-        "{AGENTS_START}\n## Wiki\n\nThis repository has a wiki written by Wenlan in `{folder}/`. Start at \
-         `{folder}/index.md`. Each page ends with the code lines it relies on. Read the page \
-         for an unfamiliar part before changing it, and check the cited lines: when a page \
-         and the code disagree, the code wins.\n"
-    );
+/// The text between [`AGENTS_START`] and [`AGENTS_END`]: where the wiki is
+/// (when the repository holds one, in `folder`), then the Space's own project
+/// rules, one per line, without their source pages (the repository may be
+/// public; the page titles are the person's).
+fn agents_block(folder: Option<&str>, rules: &[String]) -> String {
+    let mut block = format!("{AGENTS_START}\n");
+    if let Some(folder) = folder {
+        block.push_str(&format!(
+            "## Wiki\n\nThis repository has a wiki written by Wenlan in `{folder}/`. Start at \
+             `{folder}/index.md`. Each page ends with the code lines it relies on. Read the page \
+             for an unfamiliar part before changing it, and check the cited lines: when a page \
+             and the code disagree, the code wins.\n"
+        ));
+    }
     let rules = rules
         .iter()
         .map(|rule| rule.split_whitespace().collect::<Vec<_>>().join(" "))
@@ -704,7 +708,10 @@ fn agents_block(folder: &str, rules: &[String]) -> String {
         .take(AGENTS_BLOCK_MAX_RULES)
         .collect::<Vec<_>>();
     if !rules.is_empty() {
-        block.push_str("\n## Rules for this project\n\n");
+        if folder.is_some() {
+            block.push('\n');
+        }
+        block.push_str("## Rules for this project\n\n");
         for rule in rules {
             block.push_str(&format!("- {rule}\n"));
         }
@@ -721,7 +728,16 @@ pub fn upsert_agents_block(text: &str, folder: &str) -> String {
 
 /// [`upsert_agents_block`], with the Space's project rules inside the block.
 pub fn upsert_agents_block_with_rules(text: &str, folder: &str, rules: &[String]) -> String {
-    let block = agents_block(folder, rules);
+    upsert_block(text, &agents_block(Some(folder), rules))
+}
+
+/// Wenlan's block with the project rules alone, for a repository that holds
+/// no wiki folder: nothing in it points at one.
+pub fn upsert_agents_rules_block(text: &str, rules: &[String]) -> String {
+    upsert_block(text, &agents_block(None, rules))
+}
+
+fn upsert_block(text: &str, block: &str) -> String {
     if let (Some(start), Some(end)) = (text.find(AGENTS_START), text.find(AGENTS_END)) {
         if start < end {
             let end = end + AGENTS_END.len();
@@ -735,26 +751,23 @@ pub fn upsert_agents_block_with_rules(text: &str, folder: &str, rules: &[String]
 }
 
 /// Keep Wenlan's block in `AGENTS.md` (created when missing) and in an
-/// existing `CLAUDE.md` that does not already import `AGENTS.md`.
+/// existing `CLAUDE.md` that does not already import `AGENTS.md`. `folder`
+/// is the wiki folder when the repository holds one; without it the block
+/// carries the rules alone.
 fn maintain_agent_files(
     worktree: &Path,
-    folder: &str,
+    folder: Option<&str>,
     rules: &[String],
 ) -> Result<Vec<&'static str>, WenlanError> {
+    let block = agents_block(folder, rules);
     let mut touched = vec!["AGENTS.md"];
     let agents = worktree.join("AGENTS.md");
     let current = std::fs::read_to_string(&agents).unwrap_or_default();
-    std::fs::write(
-        &agents,
-        upsert_agents_block_with_rules(&current, folder, rules),
-    )?;
+    std::fs::write(&agents, upsert_block(&current, &block))?;
     let claude = worktree.join("CLAUDE.md");
     if let Ok(current) = std::fs::read_to_string(&claude) {
         if !current.contains("@AGENTS.md") {
-            std::fs::write(
-                &claude,
-                upsert_agents_block_with_rules(&current, folder, rules),
-            )?;
+            std::fs::write(&claude, upsert_block(&current, &block))?;
             touched.push("CLAUDE.md");
         }
     }
@@ -1433,9 +1446,11 @@ fn pr_body(body: PrBody<'_>) -> String {
     }
     if rules > 0 {
         out.push_str(&format!(
-            "\n\n`AGENTS.md` also carries {rules} project rule{} from the person's own pages \
+            "{}`AGENTS.md` {} {rules} project rule{} from the person's own pages \
              in that Space, under \"Rules for this project\". Read them before merging: \
              they come from notes, not from the code.",
+            if pages > 0 { "\n\n" } else { " " },
+            if pages > 0 { "also carries" } else { "carries" },
             plural(rules)
         ));
     }
@@ -1647,7 +1662,7 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
         .doc_fixes
         .iter()
         .any(|fix| fix.state != RepoDocFixState::Dismissed);
-    if input.pages.is_empty() && !open_fix {
+    if input.pages.is_empty() && !open_fix && input.rules.is_empty() {
         return Ok(nothing(result(
             RepoWikiPublishStatus::NothingToPublish,
             0,
@@ -1721,7 +1736,7 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
         }
     }
     waiting.set(held);
-    if ready.is_empty() && !open_fix {
+    if ready.is_empty() && !open_fix && input.rules.is_empty() {
         return Ok(nothing(result(
             RepoWikiPublishStatus::NothingToPublish,
             0,
@@ -1836,8 +1851,24 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
     for path in &prepared.carried {
         restore(&input.worktree, &branch_tree, path)?;
     }
+    // The rules go into `AGENTS.md` with or without pages. The block points
+    // at the wiki folder only when the repository holds one: written now, or
+    // merged earlier and still on the default branch.
+    let holds_wiki = export
+        || input
+            .worktree
+            .join(&folder)
+            .join(crate::repo_wiki_ci::CODE_FILE)
+            .is_file();
+    let writes_block = export || !input.rules.is_empty();
+    if writes_block {
+        maintain_agent_files(
+            &input.worktree,
+            holds_wiki.then_some(folder.as_str()),
+            &input.rules,
+        )?;
+    }
     if export {
-        maintain_agent_files(&input.worktree, &folder, &input.rules)?;
         maintain_gitattributes(&input.worktree, &folder)?;
     }
     crate::repo_wiki_github::maintain_workflow(
@@ -1926,7 +1957,7 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
         left_out: input.left_out,
         waiting: waiting.get(),
         kept: kept.get(),
-        rules: if export {
+        rules: if writes_block {
             input.rules.len().min(AGENTS_BLOCK_MAX_RULES)
         } else {
             0

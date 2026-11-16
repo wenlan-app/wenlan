@@ -309,6 +309,19 @@ pub(crate) fn describe_publish(result: &RepoWikiPublishResult) -> String {
         RepoWikiPublishStatus::NothingToPublish => {
             format!("no page of this Space rests on this repository's code yet{left_out}")
         }
+        // No pages went: the pull request carries the project rules for
+        // `AGENTS.md`, fixes to the repository's own docs, or both.
+        RepoWikiPublishStatus::PrOpened | RepoWikiPublishStatus::PrUpdated if result.pages == 0 => {
+            format!(
+                "no pages; pull request {} with the project rules or doc fixes: {}{left_out}",
+                if result.status == RepoWikiPublishStatus::PrOpened {
+                    "opened"
+                } else {
+                    "updated"
+                },
+                result.pr_url.as_deref().unwrap_or("(no link)")
+            )
+        }
         RepoWikiPublishStatus::NoChanges => {
             format!("{} page(s), already up to date{left_out}", result.pages)
         }

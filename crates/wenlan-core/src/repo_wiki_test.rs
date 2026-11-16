@@ -220,7 +220,7 @@ fn agents_block_is_appended_then_replaced_in_place() {
     assert_eq!(second.matches(AGENTS_START).count(), 1);
     assert_eq!(
         upsert_agents_block("", "wiki"),
-        format!("{}\n", agents_block("wiki", &[]))
+        format!("{}\n", agents_block(Some("wiki"), &[]))
     );
 }
 
@@ -1417,4 +1417,57 @@ fn a_repository_that_already_holds_pages_under_wiki_keeps_that_folder() {
     )
     .unwrap();
     assert_eq!(default_folder(top), "wenlan");
+}
+
+#[test]
+fn ux_skill_7_project_rules_reach_agents_md_without_any_wiki_page() {
+    let dir = tempfile::tempdir().unwrap();
+    let (origin, clone) = repo_with_origin(dir.path());
+    let store = dir.path().join("data/repo-wiki.json");
+    let binding = bind_at(&store, "site", &clone, None, None).unwrap();
+    let published = publish(PublishInput {
+        rules: vec!["Run the affected tests before a push.".to_string()],
+        binding: &binding,
+        pages: vec![],
+        left_out: 0,
+        code_bases: &HashMap::new(),
+        anchors: &CodeAnchors::new(),
+        concept_paths: &ConceptPathMap::new(),
+        worktree: dir.path().join("data/repo-wiki/site"),
+        gh: None,
+        now: 1,
+        prepared: None,
+        taken_back: BTreeSet::new(),
+        took_back: 0,
+    })
+    .unwrap();
+    assert_eq!(published.result.status, RepoWikiPublishStatus::Pushed);
+    assert_eq!(published.result.pages, 0);
+    let agents = sh(&origin, &["show", &format!("{REPO_WIKI_BRANCH}:AGENTS.md")]);
+    assert!(
+        agents.contains(
+            "<!-- WENLAN:START -->\n## Rules for this project\n\n- Run the affected tests before a push.\n<!-- WENLAN:END -->"
+        ),
+        "{agents}"
+    );
+    // No folder of pages, and nothing that points at one.
+    assert!(!agents.contains("## Wiki"), "{agents}");
+    let files = sh(&origin, &["ls-tree", "-r", "--name-only", REPO_WIKI_BRANCH]);
+    assert!(!files.contains("wenlan/"), "{files}");
+    assert!(!files.contains(".gitattributes"), "{files}");
+}
+
+#[test]
+fn the_rules_block_stands_alone_or_after_the_wiki_pointer() {
+    let rules = vec!["Use pnpm.".to_string()];
+    let alone = upsert_agents_rules_block("# Agents\n", &rules);
+    assert_eq!(
+        alone,
+        "# Agents\n\n<!-- WENLAN:START -->\n## Rules for this project\n\n- Use pnpm.\n<!-- WENLAN:END -->\n"
+    );
+    // Pages arrive later: the same block gains the pointer above the rules.
+    let both = upsert_agents_block_with_rules(&alone, "wenlan", &rules);
+    assert!(both.contains("`wenlan/index.md`"));
+    assert!(both.contains("wins.\n\n## Rules for this project\n\n- Use pnpm.\n<!-- WENLAN:END -->"));
+    assert_eq!(both.matches(AGENTS_START).count(), 1);
 }
