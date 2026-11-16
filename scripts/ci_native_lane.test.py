@@ -24,7 +24,6 @@ class NativeLaneTests(unittest.TestCase):
             "preview/main.tsx",
             "review/index.html",
             "public/fonts/x.woff2",
-            "tooling/vite.web.config.ts",
             "vite.config.ts",
             "tsconfig.json",
         ]:
@@ -43,6 +42,7 @@ class NativeLaneTests(unittest.TestCase):
             ".github/workflows/release.yml",
             "vendor/tauri-plugin-updater/src/lib.rs",
             "srcx/file",
+            "tooling/vite.review.config.ts",
         ]:
             self.assertTrue(native_relevant(path), path)
 
@@ -67,6 +67,34 @@ class NativeLaneTests(unittest.TestCase):
                     files=[".github/workflows/ci.yml", "app/src/lib.rs"],
                 )
             )
+
+    def test_darwin_preflight_keeps_workflow_edits_in_the_queue(self):
+        # Main push never runs the darwin release preflight, so a ci.yml edit
+        # has no later pre-release run of that leg.
+        self.assertTrue(
+            lane_allowed(
+                platform="darwin-preflight",
+                event_name="merge_group",
+                head_ref="",
+                files=[".github/workflows/ci.yml"],
+            )
+        )
+        self.assertFalse(
+            lane_allowed(
+                platform="darwin-preflight",
+                event_name="merge_group",
+                head_ref="",
+                files=["src/App.tsx"],
+            )
+        )
+        self.assertFalse(
+            lane_allowed(
+                platform="darwin-preflight",
+                event_name="pull_request",
+                head_ref="x",
+                files=[".github/workflows/ci.yml"],
+            )
+        )
 
     def test_pull_request_keeps_windows_and_defers_macos(self):
         self.assertFalse(

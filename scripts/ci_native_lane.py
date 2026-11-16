@@ -10,6 +10,10 @@ first. The PR run already exercised Windows on the same diff, and the main
 push after merge keeps every native job as the backstop for both platforms.
 
 Every other event keeps the lane: main push, manual runs and release-please.
+
+`darwin-preflight` is the darwin release preflight alone. Main push does not
+run it, so a queue entry that edits ci.yml keeps it: that edit has no other
+pre-release run of the darwin release leg.
 """
 
 from __future__ import annotations
@@ -21,15 +25,15 @@ import sys
 from pathlib import Path
 
 # Paths that never need a macOS or Windows runner. They are covered by the
-# Linux frontend, browser e2e and workflow-contract jobs; the main push still
-# runs the native lanes for them after merge.
+# Linux frontend, browser e2e, web build and workflow-contract jobs; the main
+# push still runs the native lanes for them after merge. tooling/ is NOT here:
+# its Vite configs decide where the Tauri and Review bundles are written.
 NATIVE_IRRELEVANT_DIRS = (
     "src/",
     "e2e/",
     "preview/",
     "review/",
     "public/",
-    "tooling/",
 )
 NATIVE_IRRELEVANT_FILES = frozenset(
     {
@@ -57,7 +61,7 @@ def native_relevant(path: str) -> bool:
 def lane_allowed(
     *, platform: str, event_name: str, head_ref: str, files: list[str]
 ) -> bool:
-    if platform not in ("macos", "windows"):
+    if platform not in ("macos", "windows", "darwin-preflight"):
         raise LaneError(f"unknown platform {platform!r}")
     if event_name == "pull_request":
         if head_ref.startswith("release-please--branches--"):
@@ -65,6 +69,8 @@ def lane_allowed(
         # Ordinary PR pushes leave macOS to the merge queue and keep Windows.
         return platform == "windows"
     if event_name == "merge_group":
+        if platform == "darwin-preflight" and ".github/workflows/ci.yml" in files:
+            return True
         return any(native_relevant(path) for path in files)
     if event_name in ("push", "workflow_dispatch"):
         return True

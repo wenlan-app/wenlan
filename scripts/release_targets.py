@@ -129,9 +129,11 @@ def release_preflight_matrix(
     matrix = _event_preflight_matrix(event_name=event_name, ref=ref, head_ref=head_ref)
     if macos_allowed:
         return matrix
-    # A merge queue entry whose changes cannot affect macOS (frontend or
-    # ci.yml only, see scripts/ci_native_lane.py) leaves darwin to the main
-    # push backstop. Never empty: the Linux targets always remain.
+    # A merge queue entry whose changes cannot affect macOS (frontend only,
+    # see scripts/ci_native_lane.py darwin-preflight) skips the darwin leg.
+    # Main push does not run darwin, so a ci.yml edit keeps it here; the
+    # release-please PR re-proves every target before a release. Never empty:
+    # the Linux targets always remain.
     if event_name != "merge_group":
         raise TargetError("only a merge queue entry may drop the darwin preflight")
     return {

@@ -990,6 +990,27 @@ jobs:
             --event-name "$EVENT_NAME" --head-ref "$HEAD_REF" \
             --files-json "$FILES_MACOS" --files-json "$FILES_WINDOWS" --files-json "$FILES_APP" --files-json "$FILES_NATIVE_CONTRACTS" --files-json "$FILES_MACOS_M4" --files-json "$FILES_M5_PLATFORM" --files-json "$FILES_NEXTEST_CONFIG" --files-json "$FILES_RELEASE_PREFLIGHT" --files-json "$FILES_RELEASE_CONTRACT" --files-json "$FILES_MCP_PLATFORM" --files-json "$FILES_WORKSPACE_PLATFORM" --files-json "$FILES_MACOS_ARCHIVE_CONTRACT" \
             --github-output "$GITHUB_OUTPUT"
+      - id: darwin-preflight-lane
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_REF: ${{ github.head_ref }}
+          FILES_MACOS: ${{ steps.filter.outputs.macos_files }}
+          FILES_WINDOWS: ${{ steps.filter.outputs.windows_files }}
+          FILES_APP: ${{ steps.filter.outputs.app_files }}
+          FILES_NATIVE_CONTRACTS: ${{ steps.filter.outputs['native-contracts_files'] }}
+          FILES_MACOS_M4: ${{ steps.filter.outputs['macos-m4_files'] }}
+          FILES_M5_PLATFORM: ${{ steps.filter.outputs['m5-platform_files'] }}
+          FILES_NEXTEST_CONFIG: ${{ steps.filter.outputs['nextest-config_files'] }}
+          FILES_RELEASE_PREFLIGHT: ${{ steps.filter.outputs['release-preflight_files'] }}
+          FILES_RELEASE_CONTRACT: ${{ steps.filter.outputs['release-contract_files'] }}
+          FILES_MCP_PLATFORM: ${{ steps.filter.outputs['mcp-platform_files'] }}
+          FILES_WORKSPACE_PLATFORM: ${{ steps.filter.outputs['workspace-platform_files'] }}
+          FILES_MACOS_ARCHIVE_CONTRACT: ${{ steps.filter.outputs['macos-archive-contract_files'] }}
+        run: |
+          python3 scripts/ci_native_lane.py --platform darwin-preflight \
+            --event-name "$EVENT_NAME" --head-ref "$HEAD_REF" \
+            --files-json "$FILES_MACOS" --files-json "$FILES_WINDOWS" --files-json "$FILES_APP" --files-json "$FILES_NATIVE_CONTRACTS" --files-json "$FILES_MACOS_M4" --files-json "$FILES_M5_PLATFORM" --files-json "$FILES_NEXTEST_CONFIG" --files-json "$FILES_RELEASE_PREFLIGHT" --files-json "$FILES_RELEASE_CONTRACT" --files-json "$FILES_MCP_PLATFORM" --files-json "$FILES_WORKSPACE_PLATFORM" --files-json "$FILES_MACOS_ARCHIVE_CONTRACT" \
+            --github-output "$GITHUB_OUTPUT"
       - id: native-os
         env:
           MACOS: ${{ steps.macos-lane.outputs.allowed }}
@@ -1139,7 +1160,7 @@ jobs:
           --event-name "$GITHUB_EVENT_NAME"
           --ref "$GITHUB_REF"
           --head-ref "$GITHUB_HEAD_REF"
-          --macos-allowed "${{ steps.macos-lane.outputs.allowed }}"
+          --macos-allowed "${{ steps.darwin-preflight-lane.outputs.allowed }}"
           --github-output "$GITHUB_OUTPUT"
       - name: Test artifact download retry
         run: bash scripts/download-run-artifact.test.sh
@@ -3244,6 +3265,12 @@ jobs:
         run: pnpm build && pnpm vitest run src/__tests__/firstPaint.test.ts
         env:
           WENLAN_REQUIRE_DIST: "1"
+      # The daemon embeds dist/web (crates/wenlan-server/build.rs) and the
+      # Tauri build hook runs this build, but the merge queue skips the native
+      # jobs for frontend-only entries (scripts/ci_native_lane.py). Prove the
+      # web bundle on Linux so a src/web break cannot wait for main.
+      - name: Web bundle builds
+        run: pnpm build:web
       - name: Install Playwright Chromium
         run: bash scripts/ci-retry.sh 3 300 pnpm exec playwright install --with-deps chromium
       - name: Review e2e

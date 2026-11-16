@@ -37,7 +37,7 @@ assert_targets merge-queue "$non_windows" \
   --event-name merge_group \
   --ref refs/heads/gh-readonly-queue/main/pr-847-a8108f257f70016a74ede72a829bb6e9dcc5035f \
   --head-ref ""
-# A queue entry with no macOS-relevant change leaves darwin to main.
+# A frontend-only queue entry skips darwin; release-please re-proves it.
 assert_targets merge-queue-no-macos "$linux_only" \
   --event-name merge_group \
   --ref refs/heads/gh-readonly-queue/main/pr-847-a8108f257f70016a74ede72a829bb6e9dcc5035f \
