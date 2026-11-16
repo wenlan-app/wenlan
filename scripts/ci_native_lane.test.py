@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from ci_native_lane import LaneError, lane_allowed, native_relevant  # noqa: E402
+from ci_native_lane import LaneError, lane_allowed, macos_specific, native_relevant  # noqa: E402
 
 SCRIPT = ROOT / "scripts" / "ci_native_lane.py"
 
@@ -45,6 +45,75 @@ class NativeLaneTests(unittest.TestCase):
             "tooling/vite.review.config.ts",
         ]:
             self.assertTrue(native_relevant(path), path)
+
+    def test_macos_specific_paths(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "crates/c/src").mkdir(parents=True)
+            (root / "crates/c/src/mac.rs").write_text('#[cfg(target_os = "macos")]\nfn f() {}\n')
+            (root / "crates/c/src/apple.rs").write_text('#[cfg(target_vendor="apple")]\nfn f() {}\n')
+            (root / "crates/c/src/shared.rs").write_text('#[cfg(unix)]\nfn f() {}\n')
+            for path in [
+                "app/src/lib.rs",
+                "vendor/tauri-plugin-updater/src/lib.rs",
+                "scripts/setup-macos-openssl.sh",
+                "scripts/first-run/macos-app.sh",
+                "scripts/build-release-binaries.sh",
+                "scripts/release_targets.py",
+                ".github/workflows/release.yml",
+                "install.sh",
+                "rust-toolchain.toml",
+                "crates/wenlan-core/build.rs",
+                "crates/wenlan-core/src/native/shim.m",
+                "crates/c/src/mac.rs",
+                "crates/c/src/apple.rs",
+                "crates/c/src/deleted.rs",
+            ]:
+                self.assertTrue(macos_specific(path, root), path)
+            for path in [
+                "crates/c/src/shared.rs",
+                "Cargo.lock",
+                "Cargo.toml",
+                "crates/wenlan-core/Cargo.toml",
+                "scripts/ci_test_plan.py",
+                ".github/workflows/ci.yml",
+                "src/App.tsx",
+                "package.json",
+            ]:
+                self.assertFalse(macos_specific(path, root), path)
+
+    def test_merge_queue_macos_lane_needs_macos_specific_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "crates/c/src").mkdir(parents=True)
+            (root / "crates/c/src/shared.rs").write_text("fn f() {}\n")
+            self.assertFalse(
+                lane_allowed(
+                    platform="macos",
+                    event_name="merge_group",
+                    head_ref="",
+                    files=["Cargo.lock", "crates/c/src/shared.rs"],
+                    root=root,
+                )
+            )
+            self.assertTrue(
+                lane_allowed(
+                    platform="windows",
+                    event_name="merge_group",
+                    head_ref="",
+                    files=["Cargo.lock", "crates/c/src/shared.rs"],
+                    root=root,
+                )
+            )
+            self.assertTrue(
+                lane_allowed(
+                    platform="macos",
+                    event_name="merge_group",
+                    head_ref="",
+                    files=["Cargo.lock", "app/src/lib.rs"],
+                    root=root,
+                )
+            )
 
     def test_merge_queue_runs_lane_only_for_native_relevant_files(self):
         for platform in ("macos", "windows"):

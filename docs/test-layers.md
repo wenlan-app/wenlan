@@ -76,21 +76,30 @@ PR. A macOS-only failure therefore first shows up in the queue.
 **Native lanes run in the queue only when native code changed.** On 2026-11-16
 five queue entries in three hours were kicked because their macOS jobs waited
 15 to 62 minutes for one of the five runners; none was a macOS test failure.
-In a merge-queue run, `scripts/ci_native_lane.py` now reads the files that woke
-any macOS or Windows filter and drops the ones that never need a native runner:
-the React frontend (`src/`, `e2e/`, `preview/`, `review/`, `public/`, root
-Vite/TS configs) and `.github/workflows/ci.yml` itself. `tooling/` stays native:
-its Vite configs decide where the Tauri and Review bundles land. If nothing is
-left, `macos-allowed` and `windows-allowed` are false and the queue skips every
-macOS and Windows job; `conclusion` expects them skipped. The PR run already
-exercised Windows on the same diff, Linux covers the frontend (`app-frontend`
-also runs `pnpm build:web`, the bundle the daemon embeds, plus `app-e2e`), and
-the main push after merge still runs every native job as the backstop. The
-darwin release preflight has no main-push run, so a queue entry that edits
-ci.yml keeps it (`darwin-preflight`). The remaining risk is that a ci.yml or
-frontend edit breaks another macOS job; it then shows up red on the main push
-instead of in the queue. For a ci.yml change to a macOS job block, run the
-workflow by hand on the branch before queueing.
+In a merge-queue run, `scripts/ci_native_lane.py` reads the files that woke any
+macOS or Windows filter:
+
+- **macOS** (`macos-allowed`) runs only for macOS-specific changes: `app/`, the
+  vendored updater, packaging and release scripts (`*macos*`,
+  `build-release-binaries*`, `release_targets*`, sidecar staging, `install.sh`,
+  `release.yml`), native C/ObjC sources, `build.rs`, `rust-toolchain.toml`, and
+  Rust files containing `target_os = "macos"` or `target_vendor = "apple"`.
+  Shared Rust (including `cfg(unix)` code) and dependency bumps are proved on
+  Linux and Windows before merge and on macOS by the main push after merge.
+- **Windows** (`windows-allowed`) runs unless every such file is React frontend
+  (`src/`, `e2e/`, `preview/`, `review/`, `public/`, root Vite/TS configs) or
+  `.github/workflows/ci.yml` alone. `tooling/` stays native: its Vite configs
+  decide where the Tauri and Review bundles land. The PR run already exercised
+  Windows on the same diff.
+- **Darwin release preflight** follows the Windows rule plus any ci.yml edit,
+  because the main push never runs it (`darwin-preflight`).
+
+Skipped lanes are expected skipped by `conclusion`. `app-frontend` also runs
+`pnpm build:web`, the bundle the daemon embeds. The main push after merge runs
+every native job as the backstop, so a macOS-only break in shared code now
+shows up red on main rather than in the queue, and must be fixed forward before
+the next release. For a ci.yml change to a macOS job block, run the workflow by
+hand on the branch before queueing.
 
 The Linux desktop bundle (`linux-app-bundle.yml`, about 90 minutes) follows the
 same rule on PRs: it runs for the app, updater, dependency graph, build scripts
