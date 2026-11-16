@@ -6,7 +6,7 @@ Wenlan owns storage, search, embeddings, pages, and distill cycles. `wenlan-mcp`
 
 ## Install
 
-Most users should install the runtime through the root README (`npx -y wenlan setup` on macOS Apple Silicon, the automated shell setup on Linux, or the matching release archive on Windows). Then use the product CLI to configure supported clients:
+Most users should install the runtime through the root README (`npx -y wenlan setup` on macOS Apple Silicon, Linux, or Windows x64). Then use the product CLI to configure supported clients:
 
 ```bash
 wenlan connect codex              # or: claude-code, cursor, claude-desktop, vscode, gemini

@@ -725,6 +725,7 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/team/start` | main | no | not_applicable | `none` | — | status only: the team now started on this computer, its member names and Spaces, the team listener address and the address in invite links; no key, no page text |
 | `POST` | `/api/team/stop` | main | no | not_applicable | `none` | — | status only: the team with its listener now off, its member names and Spaces; no key, no page text |
 | `GET` | `/api/team/firewall` | main | no | not_applicable | `none` | — | status only: this server's program path and whether Windows Firewall lets other computers reach it; no page text |
+| `GET` | `/api/team/membership` | main | no | not_applicable | `none` | — | status only: the addresses of the team servers this computer joined, each team's id and name, and whether this person owns it; no key, no page text |
 | `POST` | `/api/team/membership` | main | no | not_applicable | `none` | — | receipt only: who the invite link's key belongs to on its team, their Spaces and role; no page text |
 | `DELETE` | `/api/team/membership` | main | no | not_applicable | `none` | — | receipt only: that the team was forgotten here; no page text |
 | `POST` | `/api/steep/new/commit` | main | no | not_applicable | `none` | — | receipt only: outcome, new note id and title, citation counts; the token was issued by a Space-scoped claim |
@@ -1006,6 +1007,8 @@ the projection-directory reader.
 |---|---|---|---|---|
 | `wenlan status` | yes | automatic | `none` | subcommand renderer |
 | `wenlan setup` | yes | automatic | `none` | subcommand renderer |
+| `wenlan start` | yes | automatic | `none` | subcommand renderer |
+| `wenlan stop` | yes | automatic | `none` | subcommand renderer |
 | `wenlan background` | yes | automatic | `none` | subcommand renderer |
 | `wenlan restart` | yes | automatic | `none` | subcommand renderer |
 | `wenlan doctor` | yes | automatic | `none` | subcommand renderer |

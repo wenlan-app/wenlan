@@ -3025,6 +3025,7 @@ jobs:
         run: |
           npm pack --dry-run
           node -c run.js
+          node --test run.test.js
 
   # Relay tests are local Worker simulations, never deployment or client login.
   # Release proof does not replace this new lane's own execution evidence.

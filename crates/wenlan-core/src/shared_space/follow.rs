@@ -510,4 +510,40 @@ mod tests {
         assert!(super::super::memberships_at(&settings).unwrap().is_empty());
         assert_eq!(super::super::owned_team(&settings).unwrap(), None);
     }
+
+    #[test]
+    fn joined_teams_are_listed_by_address_name_and_ownership_without_the_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let settings = dir.path().join(super::super::SETTINGS_FILE);
+        assert!(super::super::membership_infos_at(&settings)
+            .unwrap()
+            .is_empty());
+
+        let acme = wenlan_types::team::TeamInfo {
+            id: "t1".into(),
+            name: Some("Acme".into()),
+        };
+        let member = TeamMe {
+            team: Some(acme.clone()),
+            ..me(&[])
+        };
+        super::super::remember_membership(&settings, URL, "wlt_secret", &member).unwrap();
+        let listed = super::super::membership_infos_at(&settings).unwrap();
+        assert_eq!(
+            listed,
+            vec![wenlan_types::team::TeamMembershipInfo {
+                url: URL.to_string(),
+                team: Some(acme),
+                owner: false,
+            }]
+        );
+        assert!(!serde_json::to_string(&listed)
+            .unwrap()
+            .contains("wlt_secret"));
+
+        super::super::forget_membership(&settings, URL).unwrap();
+        assert!(super::super::membership_infos_at(&settings)
+            .unwrap()
+            .is_empty());
+    }
 }

@@ -14,7 +14,7 @@ use wenlan_types::lint::LintProfile;
 #[command(
     name = "wenlan",
     version,
-    about = "Wenlan: a personal wiki your AI tools keep up to date. Capture, recall, and hand off across sessions."
+    about = "Wenlan: a studio for everything you think, learn, and build with AI. Capture, recall, and hand off across sessions."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -65,7 +65,12 @@ enum Commands {
         #[arg(short = 'y', long)]
         yes: bool,
     },
-    /// Control whether Wenlan keeps running in the background.
+    /// Start Wenlan now and keep it running in the background after login.
+    Start,
+    /// Stop Wenlan. It stays off until `wenlan start`.
+    Stop,
+    /// The earlier spelling of `start` (`background on`) and `stop` (`background off`).
+    #[command(hide = true)]
     Background {
         #[command(subcommand)]
         command: commands::service::BackgroundCommand,
@@ -184,7 +189,7 @@ enum Commands {
         #[command(subcommand)]
         cmd: commands::space::SpaceCmd,
     },
-    /// Run or join a team server: add members, host Spaces, join with a code (status, add, update, remove, new-key, host, join).
+    /// Work with a team: start one here, invite people, or join with an invite link (start, invite, join, status, leave, host, update, remove, new-key, stop).
     Team {
         #[command(subcommand)]
         cmd: commands::team::TeamCmd,
@@ -229,14 +234,7 @@ const HELP_GROUPS: &[(&str, &[&str])] = &[
     (
         "Setup",
         &[
-            "setup",
-            "status",
-            "doctor",
-            "background",
-            "restart",
-            "connect",
-            "models",
-            "keys",
+            "setup", "status", "doctor", "start", "stop", "restart", "connect", "models", "keys",
             "steep",
         ],
     ),
@@ -312,7 +310,12 @@ async fn main() -> anyhow::Result<ExitCode> {
     let agent_name = resolve_agent_name(cli.agent_name.as_deref(), environment_agent.as_deref());
     let recovery_enabled = !matches!(
         &cli.command,
-        Commands::Status | Commands::Background { .. } | Commands::Restart | Commands::Connect(_)
+        Commands::Status
+            | Commands::Start
+            | Commands::Stop
+            | Commands::Background { .. }
+            | Commands::Restart
+            | Commands::Connect(_)
     );
     let resolved_session =
         wenlan_types::session_context::resolve_session_from_env(cli.session.as_deref());
@@ -467,6 +470,12 @@ async fn main() -> anyhow::Result<ExitCode> {
                 yes,
             })
             .await?
+        }
+        Commands::Start => {
+            commands::service::run_background(commands::service::BackgroundCommand::On).await?
+        }
+        Commands::Stop => {
+            commands::service::run_background(commands::service::BackgroundCommand::Off).await?
         }
         Commands::Background { command } => commands::service::run_background(command).await?,
         Commands::Restart => commands::service::restart().await?,

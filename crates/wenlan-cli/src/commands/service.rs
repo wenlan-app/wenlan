@@ -889,7 +889,7 @@ async fn wait_for_first_health(installed: &str, marks: &DaemonLogMarks) -> Resul
     #[cfg(target_os = "macos")]
     if let Some((log_path, line)) = marks.error_since() {
         anyhow::bail!(
-            "installed {installed}, but the daemon stopped with an error ({}):\n  {line}\nFix the cause above, then run `wenlan background on` again.",
+            "installed {installed}, but the daemon stopped with an error ({}):\n  {line}\nFix the cause above, then run `wenlan start` again.",
             log_path.display()
         );
     }
@@ -1341,7 +1341,7 @@ async fn stop() -> Result<()> {
 /// incumbent on port 7878 and exits). See wenlan-server/src/main.rs:582-615.
 pub async fn restart() -> Result<()> {
     if !is_installed() {
-        anyhow::bail!("Wenlan background process is not set up. Run `wenlan background on` first.");
+        anyhow::bail!("Wenlan background process is not set up. Run `wenlan start` first.");
     }
     verify_registered_root()?;
 
@@ -1378,7 +1378,7 @@ pub async fn restart() -> Result<()> {
 /// Start the already-registered Wenlan service without stopping or replacing it.
 pub fn start_registered(explicit_user_command: bool) -> Result<()> {
     if !is_installed() {
-        anyhow::bail!("Wenlan background process is not set up. Run `wenlan background on` first.");
+        anyhow::bail!("Wenlan background process is not set up. Run `wenlan start` first.");
     }
     verify_registered_stopped()?;
     #[cfg(windows)]

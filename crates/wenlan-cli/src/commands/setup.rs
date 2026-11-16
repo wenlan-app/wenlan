@@ -830,7 +830,7 @@ async fn print_daemon_health() -> Option<wenlan_core::home_bin::Version> {
             println!("Daemon: not reachable on {url}");
             if super::service::autostart_off_marker_exists() {
                 println!(
-                    "  The background service is switched off (`wenlan background off`); turn it back on with `wenlan background on`."
+                    "  The background service is switched off (`wenlan stop`); turn it back on with `wenlan start`."
                 );
                 return None;
             }
@@ -874,7 +874,7 @@ fn print_last_daemon_error() {
                 print_downgrade_barrier_hint();
             } else {
                 println!(
-                    "  Fix the cause above, then run `wenlan background on` (or open the Wenlan app)."
+                    "  Fix the cause above, then run `wenlan start` (or open the Wenlan app)."
                 );
             }
         }
@@ -884,7 +884,7 @@ fn print_last_daemon_error() {
                 daemon_log_path().display()
             );
             println!(
-                "  Start it with `wenlan background on` (or open the Wenlan app); if it stops again, that log says why."
+                "  Start it with `wenlan start` (or open the Wenlan app); if it stops again, that log says why."
             );
         }
     }
@@ -894,7 +894,7 @@ fn print_last_daemon_error() {
 /// Task Scheduler), not to a file this command can read.
 #[cfg(not(target_os = "macos"))]
 fn print_last_daemon_error() {
-    println!("  Start it with `wenlan background on` (or open the Wenlan app).");
+    println!("  Start it with `wenlan start` (or open the Wenlan app).");
     println!(
         "  If it stops again, the service log says why (Linux: `journalctl --user -u wenlan-server`); \
          a store migrated by a NEWER Wenlan is refused on purpose — upgrade Wenlan."

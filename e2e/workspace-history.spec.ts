@@ -29,7 +29,7 @@ for (const width of [1280, 375]) {
     await forward.click();
     await expect(page.locator(".memory-detail-reading")).toBeVisible();
     await back.click();
-    await openPrimaryDestination(page, "Wiki");
+    await openPrimaryDestination(page, "Library");
     await expect(forward).toBeDisabled();
     const bounds = await history.boundingBox();
     expect(bounds!.x).toBeGreaterThanOrEqual(0);

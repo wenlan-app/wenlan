@@ -10,14 +10,46 @@ const path = require("path");
 const { pipeline } = require("stream/promises");
 
 const REPO = "wenlan-app/wenlan";
-const ASSET = "wenlan-darwin-arm64.tar.gz";
+// One release archive per supported computer. `exe` is the suffix of the three
+// programs; `all` means every file in the archive is installed beside them (the
+// Windows zip carries the DLLs the daemon loads at start).
+const TARGETS = {
+  "darwin-arm64": { asset: "wenlan-darwin-arm64.tar.gz", exe: "", all: false },
+  "linux-x64": { asset: "wenlan-linux-x64.tar.gz", exe: "", all: false },
+  "linux-arm64": { asset: "wenlan-linux-arm64.tar.gz", exe: "", all: false },
+  "win32-x64": { asset: "wenlan-windows-x64.zip", exe: ".exe", all: true },
+};
+const SUPPORTED =
+  "macOS on Apple Silicon, Linux on x64 or ARM64, and Windows on x64";
+
+function targetFor(platform, arch) {
+  const found = TARGETS[`${platform}-${arch}`];
+  if (!found) {
+    throw new Error(
+      `Wenlan has no build for this computer (${platform} ${arch}). ` +
+        `It runs on ${SUPPORTED}.`
+    );
+  }
+  return {
+    ...found,
+    binaries: ["wenlan", "wenlan-server", "wenlan-mcp"].map((name) => name + found.exe),
+  };
+}
+
+const DEFAULT_TARGET = targetFor("darwin", "arm64");
+const ASSET = DEFAULT_TARGET.asset;
 const REQUESTED_TAG =
   process.env.WENLAN_RELEASE_TAG ||
   process.env.WENLAN_TAG ||
   process.env.ORIGIN_RELEASE_TAG ||
   process.env.ORIGIN_TAG ||
   "";
-const BINARIES = ["wenlan", "wenlan-server", "wenlan-mcp"];
+const BINARIES = DEFAULT_TARGET.binaries;
+// A file Windows would not let this install replace (a running program) is
+// renamed to `<OLD_PREFIX>…` instead and removed by a later run.
+const OLD_PREFIX = ".old-";
+const SUMS_NAME = "SHA256SUMS";
+const SUMS_MAX_BYTES = 1024 * 1024;
 // Written into the bin dir only after a COMPLETE install. A run reuses the
 // installed binaries when this stamp names the wanted tag and every binary
 // still has the size it was extracted with, instead of re-downloading ~60 MB
@@ -156,12 +188,86 @@ async function download(url, dest) {
   await pipeline(res, fs.createWriteStream(dest));
 }
 
-function extractBinaries(archivePath, dir) {
-  const result = childProcess.spawnSync(
-    "tar",
-    ["-xzf", archivePath, "-C", dir, ...BINARIES],
-    { stdio: "inherit" }
-  );
+async function fetchText(url, maxBytes = SUMS_MAX_BYTES) {
+  const res = await request(url);
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of res) {
+    size += chunk.length;
+    if (size > maxBytes) {
+      res.destroy();
+      throw new Error(`${url} is larger than expected`);
+    }
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+function sha256Of(file) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash("sha256");
+    fs.createReadStream(file)
+      .on("error", reject)
+      .on("data", (chunk) => hash.update(chunk))
+      .on("end", () => resolve(hash.digest("hex")));
+  });
+}
+
+// The release's SHA256SUMS names every archive. A download that does not match
+// is never unpacked.
+async function verifyChecksum(archivePath, tag, asset, overrides = {}) {
+  const opts = {
+    fetchSums: fetchText,
+    skip: process.env.WENLAN_SKIP_CHECKSUM === "1",
+    log: (message) => process.stderr.write(message),
+    ...overrides,
+  };
+  const url = `https://github.com/${REPO}/releases/download/${tag}/${SUMS_NAME}`;
+  let sums;
+  try {
+    sums = await opts.fetchSums(url);
+  } catch (err) {
+    if (opts.skip) {
+      opts.log(`Could not get ${SUMS_NAME} for ${tag}; installing unverified because WENLAN_SKIP_CHECKSUM=1.\n`);
+      return;
+    }
+    throw new Error(
+      `Could not get ${SUMS_NAME} for ${tag} (${err.message}), so the download cannot be verified. ` +
+        "Check the network and run this again."
+    );
+  }
+  let expected = "";
+  for (const line of sums.split(/\r?\n/)) {
+    const match = /^([0-9a-f]{64})\s+\*?(.+)$/.exec(line.trim());
+    if (match && match[2] === asset) {
+      expected = match[1];
+      break;
+    }
+  }
+  if (!expected) {
+    throw new Error(`${SUMS_NAME} for ${tag} has no entry for ${asset}.`);
+  }
+  const actual = await sha256Of(archivePath);
+  if (actual !== expected) {
+    throw new Error(
+      `The download of ${asset} does not match its checksum (expected ${expected}, got ${actual}). ` +
+        "Run this again; if it repeats, do not install."
+    );
+  }
+}
+
+// Windows ships bsdtar as System32\tar.exe, which reads zip. A `tar` found on
+// PATH there can be GNU tar from Git Bash, which does not.
+function tarCommand(platform = process.platform, env = process.env) {
+  if (platform !== "win32") return "tar";
+  return path.win32.join(env.SystemRoot || env.windir || "C:\\Windows", "System32", "tar.exe");
+}
+
+function extractBinaries(archivePath, dir, target = DEFAULT_TARGET) {
+  const args = target.all
+    ? ["-xf", archivePath, "-C", dir]
+    : ["-xzf", archivePath, "-C", dir, ...target.binaries];
+  const result = childProcess.spawnSync(tarCommand(), args, { stdio: "inherit" });
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`tar exited with status ${result.status}`);
 }
@@ -175,15 +281,26 @@ function run(command, args) {
   }
 }
 
-function printPathHint(dir) {
-  const entries = (process.env.PATH || "").split(path.delimiter);
-  if (entries.includes(dir)) return;
+function pathHint(dir, platform = process.platform, env = process.env) {
+  const delimiter = platform === "win32" ? ";" : ":";
+  const same = (a, b) => (platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b);
+  const entries = (env.PATH || env.Path || "").split(delimiter);
+  if (entries.some((entry) => same(entry.replace(/[\\/]+$/, ""), dir))) return "";
 
-  process.stderr.write(
-    `\nWenlan binaries are installed in ${dir}.\n` +
-      `Add them to your shell PATH if you want to run wenlan directly:\n\n` +
-      `  export PATH="${dir}:$PATH"\n\n`
+  const line =
+    platform === "win32"
+      ? `  [Environment]::SetEnvironmentVariable("Path", "${dir};" + [Environment]::GetEnvironmentVariable("Path", "User"), "User")`
+      : `  export PATH="${dir}:$PATH"`;
+  const where = platform === "win32" ? "Run this once in PowerShell, then open a new terminal" : "Add this to your shell profile";
+  return (
+    `\nWenlan is installed in ${dir}.\n` +
+    `To type wenlan directly instead of npx wenlan: ${where}.\n\n${line}\n\n`
   );
+}
+
+function printPathHint(dir) {
+  const hint = pathHint(dir);
+  if (hint) process.stderr.write(hint);
 }
 
 function stampPath(dir) {
@@ -201,12 +318,12 @@ function readStamp(dir) {
 
 // null when the install in `dir` is a complete `tag` install that can be
 // reused as-is; otherwise the reason it cannot (for tests and diagnostics).
-function cacheProblem(dir, tag) {
+function cacheProblemFor(dir, tag, target = DEFAULT_TARGET) {
   const stamp = readStamp(dir);
   if (!stamp) return "no install stamp";
   if (stamp.tag !== tag) return `installed ${stamp.tag}, wanted ${tag}`;
-  if (stamp.asset !== ASSET) return `installed asset ${stamp.asset}, wanted ${ASSET}`;
-  for (const name of BINARIES) {
+  if (stamp.asset !== target.asset) return `installed asset ${stamp.asset}, wanted ${target.asset}`;
+  for (const name of target.binaries) {
     const expected = stamp.sizes && stamp.sizes[name];
     let stat;
     try {
@@ -218,16 +335,16 @@ function cacheProblem(dir, tag) {
     if (!Number.isInteger(expected) || expected <= 0 || stat.size !== expected) {
       return `${name} is not the size it was installed with`;
     }
-    if (process.platform !== "win32" && (stat.mode & 0o111) === 0) {
+    if (target.exe === "" && process.platform !== "win32" && (stat.mode & 0o111) === 0) {
       return `${name} is not executable`;
     }
   }
   return null;
 }
 
-function sizesOf(dir) {
+function sizesOf(dir, target = DEFAULT_TARGET) {
   const sizes = {};
-  for (const name of BINARIES) {
+  for (const name of target.binaries) {
     sizes[name] = fs.statSync(path.join(dir, name)).size;
   }
   return sizes;
@@ -237,10 +354,10 @@ function sizesOf(dir) {
 // `dir` by now. If a concurrent install of another release interleaved its
 // own files, the next run sees a size that does not match and reinstalls,
 // instead of the stamp vouching for a mixture.
-function writeStamp(dir, tag, sizes) {
+function writeStamp(dir, tag, sizes, target = DEFAULT_TARGET) {
   const finalPath = stampPath(dir);
   const tmpPath = `${finalPath}.${process.pid}.tmp`;
-  fs.writeFileSync(tmpPath, JSON.stringify({ tag, asset: ASSET, sizes }) + "\n");
+  fs.writeFileSync(tmpPath, JSON.stringify({ tag, asset: target.asset, sizes }) + "\n");
   fs.renameSync(tmpPath, finalPath);
 }
 
@@ -268,6 +385,15 @@ function sweepStaleStaging(dir, now = Date.now()) {
     return;
   }
   for (const entry of entries) {
+    if (entry.startsWith(OLD_PREFIX)) {
+      // Still running if this fails; a later run tries again.
+      try {
+        fs.unlinkSync(path.join(dir, entry));
+      } catch (_) {
+        // In use.
+      }
+      continue;
+    }
     if (!entry.startsWith(STAGING_PREFIX)) continue;
     const staged = path.join(dir, entry);
     try {
@@ -275,6 +401,23 @@ function sweepStaleStaging(dir, now = Date.now()) {
     } catch (_) {
       // Vanished (finished or swept by another process) between list and stat.
     }
+  }
+}
+
+// Windows refuses to replace a program that is running, but lets it be renamed.
+// The running daemon keeps the old file until it restarts; the new one takes
+// its name now.
+function place(from, to, rename) {
+  try {
+    rename(from, to);
+  } catch (err) {
+    if (!["EPERM", "EBUSY", "EACCES"].includes(err.code) || !fs.existsSync(to)) throw err;
+    const aside = path.join(
+      path.dirname(to),
+      `${OLD_PREFIX}${process.pid}-${crypto.randomBytes(4).toString("hex")}-${path.basename(to)}`
+    );
+    fs.renameSync(to, aside);
+    rename(from, to);
   }
 }
 
@@ -289,15 +432,16 @@ async function installBinaries(overrides = {}) {
     archiveDir: os.tmpdir(),
     fetchLatestTag: latestTag,
     downloadFile: download,
+    verify: verifyChecksum,
     extract: extractBinaries,
     rename: fs.renameSync,
     log: (message) => process.stderr.write(message),
     ...overrides,
   };
 
-  if (opts.platform !== "darwin" || opts.arch !== "arm64") {
-    throw new Error("Wenlan setup currently supports macOS Apple Silicon only.");
-  }
+  const target = targetFor(opts.platform, opts.arch);
+  const ASSET = target.asset;
+  const cacheProblem = (where, wanted) => cacheProblemFor(where, wanted, target);
 
   const dir = opts.dir;
   let tag;
@@ -350,11 +494,16 @@ async function installBinaries(overrides = {}) {
         `${err.message}. Check that the release exists at https://github.com/${REPO}/releases/tag/${tag}`
       );
     }
-    opts.extract(archivePath, staging);
-    for (const name of BINARIES) {
+    await opts.verify(archivePath, tag, ASSET);
+    opts.extract(archivePath, staging, target);
+    for (const name of target.binaries) {
       fs.chmodSync(path.join(staging, name), 0o755);
     }
-    const sizes = sizesOf(staging);
+    const sizes = sizesOf(staging, target);
+    // The three programs go last, after whatever they load at start.
+    const extras = target.all
+      ? fs.readdirSync(staging).filter((name) => !target.binaries.includes(name))
+      : [];
 
     // Another process may have finished this same install while this one was
     // downloading. Use theirs rather than replacing binaries a caller may be
@@ -366,10 +515,10 @@ async function installBinaries(overrides = {}) {
     // No stamp may survive into a half-placed install: if the renames below
     // are interrupted, the next run must see "no install" and start over.
     removeStamp(dir);
-    for (const name of BINARIES) {
-      opts.rename(path.join(staging, name), path.join(dir, name));
+    for (const name of [...extras, ...target.binaries]) {
+      place(path.join(staging, name), path.join(dir, name), opts.rename);
     }
-    writeStamp(dir, tag, sizes);
+    writeStamp(dir, tag, sizes, target);
     return dir;
   } catch (err) {
     // Losing a race is not a failure when the winner left a complete install.
@@ -387,15 +536,70 @@ async function installBinaries(overrides = {}) {
   }
 }
 
+// A Linux system with no systemd user session (a container, WSL without
+// systemd, some SSH logins) cannot register a background service at all, and
+// asking it to leaves a half-registered unit behind.
+function hasUserServiceManager(platform = process.platform, spawnSync = childProcess.spawnSync) {
+  if (platform !== "linux") return true;
+  const probe = spawnSync("systemctl", ["--user", "show-environment"], { stdio: "ignore" });
+  return !probe.error && probe.status === 0;
+}
+
+const START_WAIT_MS = 30_000;
+
+// Starts the daemon as an ordinary process that outlives this command, and says
+// plainly that nothing will start it again after a restart.
+async function startForThisSession(dir, overrides = {}) {
+  const opts = {
+    spawn: childProcess.spawn,
+    healthy: (wenlan) =>
+      childProcess.spawnSync(wenlan, ["status", "--format", "json"], { stdio: "ignore" }).status === 0,
+    waitMs: START_WAIT_MS,
+    log: (message) => process.stderr.write(message),
+    ...overrides,
+  };
+  const server = path.join(dir, "wenlan-server");
+  const wenlan = path.join(dir, "wenlan");
+  const logPath = path.join(path.dirname(dir), "wenlan-server.log");
+  let up = opts.healthy(wenlan);
+  if (!up) {
+    const out = fs.openSync(logPath, "a");
+    const child = opts.spawn(server, [], { detached: true, stdio: ["ignore", out, out] });
+    child.unref();
+    fs.closeSync(out);
+  }
+
+  const deadline = Date.now() + opts.waitMs;
+  while (!up && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    up = opts.healthy(wenlan);
+  }
+  if (!up) {
+    throw new Error(
+      `Wenlan is installed but did not start. Its output is in ${logPath}. ` +
+        `Start it yourself with: ${server}`
+    );
+  }
+  opts.log(
+    "\nThis system cannot keep Wenlan running in the background (no systemd user session),\n" +
+      "so Wenlan was started for now. After this computer restarts, start it again with:\n\n" +
+      `  ${server} &\n\n`
+  );
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const dir = await installBinaries();
-  const wenlan = path.join(dir, "wenlan");
+  const wenlan = path.join(dir, targetFor(process.platform, process.arch).binaries[0]);
 
   if (args[0] === "setup") {
     const setupArgs = args.slice(1);
     run(wenlan, ["setup", ...(setupArgs.length ? setupArgs : ["--basic"])]);
-    run(wenlan, ["background", "on"]);
+    if (hasUserServiceManager()) {
+      run(wenlan, ["background", "on"]);
+    } else {
+      await startForThisSession(dir);
+    }
     run(wenlan, ["status", "--format", "table"]);
     printPathHint(dir);
     return;
@@ -416,11 +620,18 @@ module.exports = {
   BINARIES,
   STAGING_PREFIX,
   STAMP_NAME,
-  cacheProblem,
+  cacheProblem: cacheProblemFor,
   checkTag,
+  pathHint,
+  place,
+  tarCommand,
+  targetFor,
+  verifyChecksum,
   extractBinaries,
   installBinaries,
   latestTag,
+  hasUserServiceManager,
+  startForThisSession,
   request,
   readStamp,
   safeTag,

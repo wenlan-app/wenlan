@@ -828,7 +828,7 @@ impl WenlanClient {
                 &format!("POST {url} failed"),
             )
             .await?;
-        let resp = ensure_daemon_success(resp, &url).await?;
+        let resp = ensure_team_success(resp, &url).await?;
         resp.json().await.context("parsing shared sync response")
     }
 
@@ -856,8 +856,70 @@ impl WenlanClient {
             req = req.json(&body);
         }
         let resp = self.send(req, &format!("{method} {url} failed")).await?;
-        let resp = ensure_daemon_success(resp, &url).await?;
+        let resp = ensure_team_success(resp, &url).await?;
         resp.json().await.context("parsing the team response")
+    }
+
+    /// `POST /api/team/start`: make this computer a team's server.
+    pub async fn team_start(
+        &self,
+        req: &wenlan_types::team::TeamStartRequest,
+    ) -> Result<wenlan_types::team::TeamStatus> {
+        let url = self.team_url(&["api", "team", "start"], &[])?;
+        self.team_call(reqwest::Method::POST, url, Some(serde_json::to_value(req)?))
+            .await
+    }
+
+    /// `POST /api/team/stop`: turn the team listener off.
+    pub async fn team_stop(&self) -> Result<wenlan_types::team::TeamStatus> {
+        let url = self.team_url(&["api", "team", "stop"], &[])?;
+        self.team_call(reqwest::Method::POST, url, None).await
+    }
+
+    /// `GET /api/team/firewall`: on Windows, whether other computers get
+    /// through to the team listener; `None` elsewhere.
+    pub async fn team_firewall(&self) -> Result<Option<wenlan_types::team::TeamFirewall>> {
+        let url = self.team_url(&["api", "team", "firewall"], &[])?;
+        self.team_call(reqwest::Method::GET, url, None).await
+    }
+
+    /// `GET /api/team/membership`: the teams this computer has joined.
+    pub async fn team_memberships(&self) -> Result<Vec<wenlan_types::team::TeamMembershipInfo>> {
+        let url = self.team_url(&["api", "team", "membership"], &[])?;
+        self.team_call(reqwest::Method::GET, url, None).await
+    }
+
+    /// `POST /api/team/membership`: keep that this computer is on the team
+    /// an invite link is for.
+    pub async fn team_remember_membership(&self, code: &str) -> Result<wenlan_types::team::TeamMe> {
+        let url = self.team_url(&["api", "team", "membership"], &[])?;
+        let body = serde_json::to_value(&wenlan_types::team::TeamMembershipRequest {
+            code: code.to_string(),
+        })?;
+        self.team_call(reqwest::Method::POST, url, Some(body)).await
+    }
+
+    /// `DELETE /api/team/membership?url=`: this person left the team at `url`.
+    pub async fn team_forget_membership(&self, server: &str) -> Result<()> {
+        let url = self.team_url(&["api", "team", "membership"], &[("url", server)])?;
+        let _: serde_json::Value = self.team_call(reqwest::Method::DELETE, url, None).await?;
+        Ok(())
+    }
+
+    /// `GET /api/shared`: everything this Wenlan shares or syncs.
+    pub async fn shared_list(&self) -> Result<Vec<wenlan_types::shared_space::SharedSyncStatus>> {
+        let url = self.team_url(&["api", "shared"], &[])?;
+        let list: wenlan_types::shared_space::SharedListResponse =
+            self.team_call(reqwest::Method::GET, url, None).await?;
+        Ok(list.shares)
+    }
+
+    /// `DELETE /api/spaces/{space}/shared`: stop syncing `space` from here.
+    /// Its pages stay.
+    pub async fn shared_leave(&self, space: &str) -> Result<()> {
+        let url = self.team_url(&["api", "spaces", space, "shared"], &[])?;
+        let _: serde_json::Value = self.team_call(reqwest::Method::DELETE, url, None).await?;
+        Ok(())
     }
 
     /// `GET /api/team`: the member list and hosted Spaces.
@@ -917,11 +979,12 @@ impl WenlanClient {
     pub async fn team_host_space(
         &self,
         space: &str,
+        everyone: Option<wenlan_types::team::TeamEveryone>,
     ) -> Result<wenlan_types::shared_space::SharedSyncCounts> {
         let url = self.team_url(&["api", "team", "spaces"], &[])?;
         let body = serde_json::to_value(&wenlan_types::team::TeamHostSpaceRequest {
             space: space.to_string(),
-            everyone: None,
+            everyone,
             rename_to: None,
         })?;
         self.team_call(reqwest::Method::POST, url, Some(body)).await
@@ -1043,6 +1106,24 @@ async fn ensure_daemon_success(resp: reqwest::Response, url: &str) -> Result<req
     let status = resp.status();
     let body = resp.text().await.unwrap_or_default();
     let msg = daemon_error_message(&body);
+    anyhow::bail!("daemon returned {status} for {url}: {msg}");
+}
+
+/// `ensure_daemon_success` for the team and sharing commands. A 4xx there is
+/// the daemon telling the person what to change ("this is not an invite
+/// link", "no member has that id"), so its message is the whole error: the
+/// status line and the daemon's own address say nothing they can act on. A
+/// 4xx with no message, and every other failure, keeps the full detail.
+async fn ensure_team_success(resp: reqwest::Response, url: &str) -> Result<reqwest::Response> {
+    if resp.status().is_success() {
+        return Ok(resp);
+    }
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    let msg = daemon_error_message(&body);
+    if status.is_client_error() && !msg.is_empty() {
+        anyhow::bail!("{msg}");
+    }
     anyhow::bail!("daemon returned {status} for {url}: {msg}");
 }
 

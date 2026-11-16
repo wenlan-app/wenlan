@@ -92,4 +92,34 @@ describe("PrimaryNavigation", () => {
     expect(railLabels()).toEqual(["Home", "Wiki", "Spaces"]);
     expect(container.querySelector(".notes-wiki-section")).toBeNull();
   });
+
+  it("UX-FIND-6: shows pinned pages under the destinations with no heading, and opens, unpins and reorders them", async () => {
+    const user = userEvent.setup();
+    const open = vi.fn();
+    const unpin = vi.fn();
+    const { container } = render(<PrimaryNavigation
+      active={null}
+      labels={{ ...labels, pinned: "Pinned pages", unpin: (title) => `Unpin ${title}` }}
+      onNavigateHome={vi.fn()} onNavigatePages={vi.fn()} onNavigateSpaces={vi.fn()} onNavigateGraph={vi.fn()}
+      pinnedPages={[{ id: "p1", title: "Skills" }, { id: "p2", title: "Agents" }]}
+      activePinnedPageId="p2"
+      onOpenPinnedPage={open}
+      onUnpinPage={unpin}
+    />);
+    expect(railLabels()).toEqual(["Home", "Wiki", "Spaces", "Graph", "Skills", "Unpin Skills", "Agents", "Unpin Agents"]);
+    const group = screen.getByRole("group", { name: "Pinned pages" });
+    expect(group.textContent).toBe("SkillsAgents");
+    expect(container.querySelector(".notes-pinned-pages")?.previousElementSibling?.getAttribute("aria-label")).toBe("Graph");
+    expect(screen.getByRole("button", { name: "Agents" })).toHaveAttribute("aria-current", "page");
+    await user.click(screen.getByRole("button", { name: "Skills" }));
+    expect(open).toHaveBeenCalledWith("p1");
+    await user.click(screen.getByRole("button", { name: "Unpin Agents" }));
+    expect(unpin).toHaveBeenCalledWith("p2");
+  });
+
+  it("UX-FIND-6: with nothing pinned the left side has no pinned group", () => {
+    render(<PrimaryNavigation active={null} labels={labels} onNavigateHome={vi.fn()} onNavigatePages={vi.fn()} onNavigateSpaces={vi.fn()} onOpenPinnedPage={vi.fn()} pinnedPages={[]} />);
+    expect(screen.queryByRole("group")).not.toBeInTheDocument();
+    expect(railLabels()).toEqual(["Home", "Wiki", "Spaces"]);
+  });
 });

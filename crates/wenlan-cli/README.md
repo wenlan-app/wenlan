@@ -1,30 +1,32 @@
 # wenlan-cli
 
-Wenlan's command line. Wenlan is a personal wiki your AI tools keep up to date; the CLI is how you capture, recall, hand off, and keep the pages healthy from a terminal, plus set up and check the local runtime.
+Wenlan's command line. Wenlan is a studio for everything you think, learn, and build with AI; the CLI is how you capture, recall, hand off, and keep the pages healthy from a terminal, plus set up and check the local runtime.
 
 License: Apache-2.0.
 
 ## Install
 
-Recommended user setup on macOS Apple Silicon:
+One line on macOS Apple Silicon, Linux x64 or ARM64 (glibc), and Windows x64. It needs Node.js 18 or newer:
 
 ```bash
 npx -y wenlan setup
 ```
 
-The setup package downloads `wenlan`, `wenlan-server`, and `wenlan-mcp` into `~/.wenlan/bin/`, configures local memory, starts the background runtime, and verifies status. It currently supports macOS Apple Silicon.
+It downloads `wenlan`, `wenlan-server`, and `wenlan-mcp` for this computer into `~/.wenlan/bin/` (`%USERPROFILE%\.wenlan\bin` on Windows, with the DLLs the daemon loads), checks the download against the release's `SHA256SUMS`, configures local memory, starts the background runtime, and prints its status. After that, `npx wenlan <command>` runs the installed CLI; the last lines of setup say how to put `wenlan` itself on `PATH`.
 
-Linux x64/ARM64 has an automated shell path:
+On Linux with no systemd user session (a container, WSL without systemd, some SSH logins) nothing can keep Wenlan running in the background. Setup starts it for now and says how to start it again after a restart.
+
+Without Node.js on macOS or Linux:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/wenlan-app/wenlan/main/install.sh | bash
 export PATH="$HOME/.wenlan/bin:$PATH"
 wenlan setup --basic
-wenlan background on
+wenlan start
 wenlan status
 ```
 
-Windows x64 users can unpack `wenlan-windows-x64.zip` from [Releases](https://github.com/wenlan-app/wenlan/releases/latest) into a directory on `PATH`. Keep the bundled `onnxruntime.dll` beside the three `.exe` files, then run the same three `wenlan` commands.
+Without Node.js on Windows, unpack `wenlan-windows-x64.zip` from [Releases](https://github.com/wenlan-app/wenlan/releases/latest) as a unit into a directory on `PATH`, then run the same three `wenlan` commands.
 
 ### macOS Intel
 
@@ -179,11 +181,11 @@ wenlan setup --anthropic-api-key-env ANTHROPIC_API_KEY
 
 **`wenlan background <on|off>` and `wenlan restart`**
 
-Start or stop the per-user background runtime. `wenlan background off` stops the current daemon while preserving its login registration and writes `<data root>/autostart.off`, so recovery will not start it again. Run `wenlan background on` to remove the marker and start it again; it waits up to 10 s for the daemon to answer before saying "started" and, on macOS, reports an error the daemon logged during this start (never one left over from an earlier run). Most users run `wenlan background on` once after setup and `wenlan restart` after upgrades installed outside `wenlan setup`.
+Start or stop the per-user background runtime. `wenlan stop` stops the current daemon while preserving its login registration and writes `<data root>/autostart.off`, so recovery will not start it again. Run `wenlan start` to remove the marker and start it again; it waits up to 10 s for the daemon to answer before saying "started" and, on macOS, reports an error the daemon logged during this start (never one left over from an earlier run). Most users run `wenlan start` once after setup and `wenlan restart` after upgrades installed outside `wenlan setup`.
 
 ```bash
-wenlan background on
-wenlan background off
+wenlan start
+wenlan stop
 wenlan restart
 ```
 
@@ -586,15 +588,41 @@ Options:
 
 ### `wenlan team`
 
-Run or join a team server: add members, host Spaces, join with a code (status, add, update, remove, new-key, host, join).
+Work with a team: start one here, invite people, or join with an invite link (start, invite, join, status, leave, host, update, remove, new-key, stop).
 
 ```text
 wenlan team [OPTIONS] <COMMAND>
 ```
 
+#### `wenlan team start`
+
+Start a team on this computer: others reach it with an invite link.
+
+```text
+wenlan team start [OPTIONS] <NAME>
+```
+
+Arguments:
+
+- `<NAME>`: The team's name, such as the company's. Everyone on it sees it.
+
+Options:
+
+- `--as <YOUR NAME>`: Your own name, as the team sees what you write. Left out, the name you already have in Wenlan.
+- `--url <URL>`: The address others reach this computer at, put in every invite link. Left out, Wenlan picks one: its Tailscale address first, else its address on the local network.
+- `--port <PORT>`: The port the team listens on. Left out, 7879.
+
+#### `wenlan team stop`
+
+Stop letting the team reach this computer. The team, its people and Spaces stay; `wenlan team start` turns it on again.
+
+```text
+wenlan team stop [OPTIONS]
+```
+
 #### `wenlan team status`
 
-Show the members, the Spaces this computer hosts for the team, and whether the team listener is on.
+Show the team this computer runs (its people and Spaces) and the teams it has joined.
 
 ```text
 wenlan team status [OPTIONS]
@@ -612,34 +640,34 @@ Arguments:
 
 - `<NAME>`: The team's name, such as the company's.
 
-#### `wenlan team add`
+#### `wenlan team invite`
 
-Add a member and print their invite link (or key) once.
+Invite someone: add them and print their invite link once.
 
 ```text
-wenlan team add [OPTIONS] <NAME>
+wenlan team invite [OPTIONS] <NAME>
 ```
 
 Arguments:
 
-- `<NAME>`: The member's name.
+- `<NAME>`: The person's name.
 
 Options:
 
-- `--access <SPACE[:read]>`: A Space the member can use, `Space` for read and write or `Space:read` for read only. Repeat for more Spaces.
-- `--url <URL>`: The address the member's computer reaches this server at, put in the invite link. Left out, only the key is printed.
+- `--access <SPACE[:read]>`: A Space they can use, `Space` for read and write or `Space:read` for read only. Repeat for more Spaces. Left out, they get the Spaces open to everyone on the team.
+- `--url <URL>`: The address their computer reaches this one at, put in the invite link. Left out, the address the team was started with.
 
 #### `wenlan team update`
 
 Rename a member or replace the Spaces they can use.
 
 ```text
-wenlan team update [OPTIONS] <MEMBER_ID>
+wenlan team update [OPTIONS] <MEMBER>
 ```
 
 Arguments:
 
-- `<MEMBER_ID>`: The member's id (see `wenlan team status`).
+- `<MEMBER>`: The member's name, or their id from `wenlan team status --format json`.
 
 Options:
 
@@ -651,28 +679,28 @@ Options:
 Remove a member: their key stops working at once.
 
 ```text
-wenlan team remove [OPTIONS] <MEMBER_ID>
+wenlan team remove [OPTIONS] <MEMBER>
 ```
 
 Arguments:
 
-- `<MEMBER_ID>`: The member's id (see `wenlan team status`).
+- `<MEMBER>`: The member's name, or their id from `wenlan team status --format json`.
 
 #### `wenlan team new-key`
 
-Give a member a new key; the old one stops working.
+Give a member a new invite link; the old one stops working.
 
 ```text
-wenlan team new-key [OPTIONS] <MEMBER_ID>
+wenlan team new-key [OPTIONS] <MEMBER>
 ```
 
 Arguments:
 
-- `<MEMBER_ID>`: The member's id (see `wenlan team status`).
+- `<MEMBER>`: The member's name, or their id from `wenlan team status --format json`.
 
 Options:
 
-- `--url <URL>`: The address the member's computer reaches this server at, put in the invite link.
+- `--url <URL>`: The address the member's computer reaches this one at, put in the invite link. Left out, the address the team was started with.
 
 #### `wenlan team host`
 
@@ -686,22 +714,39 @@ Arguments:
 
 - `<SPACE>`: Space name.
 
+Options:
+
+- `--everyone <ACCESS>`: Open it to everyone on the team, now and when invited later: `--everyone` to read and write, `--everyone read` to read only, `--everyone nobody` to take that back. Left out, only the people given it with `--access` can use it.
+
 #### `wenlan team join`
 
-Join a team server with a invite link: list the Spaces you can use, or sync one of them with --server-space.
+Join a team with an invite link: every Space open to you is synced to this computer, and Spaces opened to you later follow.
 
 ```text
-wenlan team join [OPTIONS] <CODE>
+wenlan team join [OPTIONS] <INVITE LINK>
 ```
 
 Arguments:
 
-- `<CODE>`: The invite link you were sent (`https://…/join#wlt_…`).
+- `<INVITE LINK>`: The invite link you were sent (`https://…/join#wlt_…`).
 
 Options:
 
-- `--server-space <SERVER_SPACE>`: Sync this Space of the server (not `--space`, which picks a Space on this computer). Left out, the Spaces you can use are listed.
-- `--as <LOCAL_SPACE>`: The Space's name on this computer. Left out, the server's name.
+- `--server-space <SERVER_SPACE>`: Take only this Space of the team (not `--space`, which picks a Space on this computer).
+- `--as <LOCAL_SPACE>`: The Space's name on this computer. Left out, the team's name for it.
+- `--list`: Only show the Spaces the link opens; join nothing.
+
+#### `wenlan team leave`
+
+Leave a team you joined: its Spaces stop syncing here. The pages already on this computer stay.
+
+```text
+wenlan team leave [OPTIONS] [TEAM]
+```
+
+Arguments:
+
+- `[TEAM]`: The team's name or its server's address. Not needed when this computer is on one team.
 
 ### `wenlan wiki`
 
@@ -820,28 +865,20 @@ Options:
 
 - `--repair`: Point older ~/.wenlan/bin copies at the app bundle. The previous file is renamed aside, not deleted.
 
-### `wenlan background`
-
-Control whether Wenlan keeps running in the background.
-
-```text
-wenlan background [OPTIONS] <COMMAND>
-```
-
-#### `wenlan background on`
+### `wenlan start`
 
 Start Wenlan now and keep it running in the background after login.
 
 ```text
-wenlan background on [OPTIONS]
+wenlan start [OPTIONS]
 ```
 
-#### `wenlan background off`
+### `wenlan stop`
 
-Stop Wenlan now while keeping its background registration.
+Stop Wenlan. It stays off until `wenlan start`.
 
 ```text
-wenlan background off [OPTIONS]
+wenlan stop [OPTIONS]
 ```
 
 ### `wenlan restart`

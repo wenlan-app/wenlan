@@ -69,7 +69,7 @@ async function openPage(
     delays,
   });
   await page.goto("/");
-  await openPrimaryDestination(page, "Wiki");
+  await openPrimaryDestination(page, "Library");
   await openFromWiki(page, fixture.title);
   return controller;
 }
@@ -374,13 +374,13 @@ test("flushes the newest draft before sidebar navigation leaves the page", async
   const editor = await openedEditor(page);
 
   await editor.fill(draft);
-  await openPrimaryDestination(page, "Wiki");
+  await openPrimaryDestination(page, "Library");
 
   await expect(page.locator(".page-detail")).toHaveCount(0, AUTOSAVE_TIMEOUT);
   // Read at once: a navigate-first-then-save bug still has the delayed write
   // in flight here and would show version 7.
   expect(await storedPage(page)).toMatchObject({ content: draft, version: 8 });
-  await expect(page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Wiki", exact: true })).toHaveAttribute("aria-current", "page");
+  await expect(page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Library", exact: true })).toHaveAttribute("aria-current", "page");
   expect(updateCalls(controller)).toHaveLength(1);
   expect(updateCalls(controller)[0]).toMatchObject({
     content: draft,

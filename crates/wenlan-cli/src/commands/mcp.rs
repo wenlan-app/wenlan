@@ -607,7 +607,7 @@ fn claude_desktop_config_file() -> Result<PathBuf> {
 
 fn claude_code_tools_only_note() -> &'static str {
     "Claude Code MCP tools only: capture, recall, read_page, update_brief, and the other Wenlan tools. \
-This does not install Wenlan plugin skills like /brief, /handoff, /distill, or /setup."
+This does not install the Wenlan plugin, which adds /wenlan and skills like /brief and /handoff."
 }
 
 fn server_command() -> ServerCommand {

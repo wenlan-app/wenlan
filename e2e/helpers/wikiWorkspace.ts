@@ -16,7 +16,7 @@ export async function leaveHomeForWiki(page: Page) {
     return;
   }
   if (await page.locator('.wiki-workspace[data-directory-hidden="true"]').count() === 0) return;
-  const wiki = page.locator('.notes-rail-nav [aria-label="Wiki"]');
+  const wiki = page.locator('.notes-rail-nav [aria-label="Library"]');
   // A narrow window, or a hidden sidebar, keeps the rail closed until asked.
   await expect(wiki).toBeAttached();
   if (!(await wiki.isVisible())) await page.locator("[data-sidebar-toggle]").click();
