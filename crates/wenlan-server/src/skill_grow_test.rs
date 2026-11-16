@@ -1531,4 +1531,17 @@ async fn ux_skill_9_a_teammates_page_never_gives_this_person_a_general_rule() {
         "and never one of this person's general rules"
     );
     assert!(!scratch.data.join("AGENTS.md").exists());
+
+    // A line that was already approved as general (before this rule) stops
+    // being one on the next read, with no new suggestion round.
+    let mut state = scratch
+        .db
+        .space_rules_state(&team.id)
+        .await
+        .unwrap()
+        .unwrap();
+    state.lines[0].general = true;
+    scratch.db.set_space_rules_state(&state).await.unwrap();
+    assert!(!read(Some("Habits")).await.lines[0].general);
+    assert!(read(None).await.lines.is_empty());
 }

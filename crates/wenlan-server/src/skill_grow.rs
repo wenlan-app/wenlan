@@ -559,11 +559,15 @@ async fn read_rules_for_space(
         Some(&page.content),
         last_page_edit_is_person(&page),
     );
+    let mut lines = eligible_lines(db, &space.id, &reconciled.lines).await?;
+    // Checked on every read too, so a line approved as general before its
+    // page turned out to be a teammate's stops being one at once.
+    keep_general_to_own_pages(db, &mut lines).await?;
     Ok(SpaceRulesResponse {
         space_id: space.id.clone(),
         space_name: space.name.clone(),
         rules_page_id: Some(page.id),
-        lines: eligible_lines(db, &space.id, &reconciled.lines).await?,
+        lines,
     })
 }
 
