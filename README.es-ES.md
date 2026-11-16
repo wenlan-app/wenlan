@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=e40e00861d70d187ba234c171d04342a775147ea69136bf968e9f63b51cef7c4 -->
+<!-- README_SYNC: source=README.md sha256=6fe7ff334f5b344d2b5c50cf2950aa5fd6e47b8d70aea966dcab73be2ac18fd0 -->
 
 <p align="center">
   <picture>
@@ -48,7 +48,7 @@ Empecé Wenlan porque lo que resolvía con herramientas de IA quedaba disperso e
 - **Memoria.** Lo que decides en una herramienta de IA se guarda y está en la siguiente, así que un chat nuevo no empieza de cero.
 - **Conocimiento.** Memorias, notas y documentos se convierten en páginas con fuentes. Wenlan comprueba que cada fuente citada respalda la frase en la que se cita y no guarda una página cuyas citas casi no coinciden. Ves cada cambio, puedes deshacerlo y las páginas que bloqueas te preguntan primero.
 - **Skills y reglas.** Cómo te gusta hacer las cosas, escrito una vez y al día en cada herramienta de IA que conectes. Trae las skills que ya tienes en tu ordenador o busca otras para instalar.
-- **El aspecto que pidas.** Cualquier página, y tu inicio, puede ser texto o una página web que tu IA dibuja. El dibujo muestra el contenido actual, así que nunca lo rehaces.
+- **El diseño que pidas.** Cualquier página, y tu inicio, puede ser texto o una página web que tu IA dibuja. El dibujo muestra el contenido actual, así que nunca lo rehaces.
 - **Trae lo que ya tienes.** Bóvedas de Obsidian, notas, documentos y chats de IA. [Lista completa](#what-can-i-bring-in).
 
 <a id="how-it-compares"></a>

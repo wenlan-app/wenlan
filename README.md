@@ -46,7 +46,7 @@ I started Wenlan because what I worked out with AI tools was scattered across ch
 - **Memory.** What you settle in one AI tool is saved and is there in the next, so a new chat does not start from zero.
 - **Knowledge.** Memories, notes, and documents become pages with sources. Wenlan checks that each cited source supports the sentence it is cited for, and won't save a page whose citations mostly don't match. You see every change, can undo it, and pages you lock ask you first.
 - **Skills and rules.** How you like things done, written once and kept current in every AI tool you connect. Bring in the skills already on your computer, or find more to install.
-- **Any look you ask for.** Any page, and your home, can be text or a web page your AI draws for it. The drawing shows the live content, so you never redo it.
+- **Any layout you ask for.** Any page, and your home, can be text or a web page your AI draws for it. The drawing shows the live content, so you never redo it.
 - **Bring what you have.** Obsidian vaults, notes, documents, and AI chats. [Full list](#what-can-i-bring-in).
 
 <a id="how-it-compares"></a>
