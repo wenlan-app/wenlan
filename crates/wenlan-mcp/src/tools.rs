@@ -7823,7 +7823,7 @@ impl ServerHandler for WenlanMcpServer {
             Implementation::new("wenlan-mcp", env!("CARGO_PKG_VERSION"))
         )
         .with_instructions(
-            "Wenlan holds the user's pages and working rules, kept current by their AI tools and shared across all of them. \
+            "Wenlan holds the user's pages, skills and working rules, kept current by their AI tools and shared across all of them. \
              What you write here, their other AI tools read later. \
              It is cumulative, so write for any future reader, not just this conversation.\n\n\
              How the pieces fit:\n\
@@ -14309,7 +14309,7 @@ mod tests {
         let i = server_instructions();
         assert!(
             i.starts_with(
-                "Wenlan holds the user's pages and working rules, kept current by their AI tools"
+                "Wenlan holds the user's pages, skills and working rules, kept current by their AI tools"
             ),
             "with_instructions must open by saying what Wenlan holds for the user, got: {i}"
         );
