@@ -116,6 +116,9 @@ pub fn build_router_with_shutdown(state: SharedState, shutdown: ShutdownHandle) 
 
     router
         .finish()
+        // Static files read no user data and therefore do not belong in the
+        // data-reading route inventory. The same local-browser guard wraps them.
+        .fallback(crate::web_static::handle)
         // Innermost of the three, and `route_layer` rather than `layer`: it
         // resolves the route's marker shape from `MatchedPath`, which only
         // exists after routing.

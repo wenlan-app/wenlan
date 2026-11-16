@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const emit = vi.hoisted(() => vi.fn());
-vi.mock("./tauri-stubs", () => ({ emit }));
+vi.mock("../../src/web/tauri-stubs", () => ({ emit }));
 
 beforeEach(() => {
   vi.resetModules();

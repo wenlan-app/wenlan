@@ -103,6 +103,8 @@ import { PageTour } from "../onboarding/PageTour";
 import { ReferencePreview } from "./links/ReferencePreview";
 import { ReferenceNavigationProvider } from "./links/ReferenceNavigationContext";
 import type { ReferencePreviewRequest, ReferenceTarget } from "./links/referenceTypes";
+import { isWebBuild } from "../../web/runtime";
+import { useTeamAccess } from "../../web/teamAccess";
 import PageCanvas from "./PageCanvas";
 import {
   prepareMarkdownSource,
@@ -344,6 +346,10 @@ export default function PageDetail({
   pageTour = false,
   onOpenSettings,
 }: PageDetailProps) {
+  const web = isWebBuild();
+  // A team member on the web: page actions other than editing have no gate
+  // row, and a member with read access changes nothing.
+  const teamAccess = useTeamAccess();
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
   const [wikiLinkPreview, setWikiLinkPreview] = useState<ReferencePreviewRequest | null>(null);
@@ -684,6 +690,7 @@ export default function PageDetail({
     queryFn: pageReviewSupported,
     staleTime: 60_000,
     retry: 1,
+    enabled: !web,
   });
   const reviewSupported = reviewAvailability === "ready";
   const reviewUnavailableReason =
@@ -1624,6 +1631,7 @@ export default function PageDetail({
   };
 
   const beginEditing = async (automatic = false) => {
+    if (teamAccess.member && !teamAccess.canEdit(page?.space)) return;
     if (!page || page.status !== "active" || renaming || renameMutation.isPending || titleRenamePendingRef.current) return;
     setCanvasOpen(false);
     canvasReturnToEditorRef.current = false;
@@ -2430,7 +2438,9 @@ export default function PageDetail({
     };
   };
   // An entity's own page cannot rely on, or be, a note.
-  const basisEditable = page.creation_kind !== "entity";
+  // A team member's server keeps no basis marks, so the Pages section and its
+  // Add a page link stay with the owner.
+  const basisEditable = page.creation_kind !== "entity" && !teamAccess.member;
 
   // A page someone wrote reads as written: its own Markdown (tables, a
   // `## Sources` heading of its own, a first H1 that is not the title), with
@@ -2576,7 +2586,7 @@ export default function PageDetail({
   // not disable this page's toggle.
   const reviewLockPending = reviewRequiredMutation.isPending && reviewRequiredMutation.variables?.id === page.id;
   const hasRail = pageEntities.length > 0 || outboundLinks.length > 0;
-  const canRenamePage = !howIWorkPage && !exampleWiki && page.status === "active" &&
+  const canRenamePage = !howIWorkPage && !exampleWiki && !teamAccess.member && page.status === "active" &&
     page.creation_kind !== "entity" && page.creation_kind !== "source" &&
     page.creation_kind !== "imported";
   const renameDisabled = storedActionPending || canvasSwitchPending || editing || editDirty || saveState.phase !== "idle" ||
@@ -2736,7 +2746,8 @@ export default function PageDetail({
       }}>
       <Info aria-hidden="true" size={18} />
     </button>
-    <button id={`${inspectorId}-canvas`} aria-controls={`${inspectorId}-panel`} ref={canvasToggleRef} type="button" className="mem-icon-action workspace-panel-toggle note-mind-map-toggle"
+    {/* A team member's web page has no mind map: its links are not served there. */}
+    {!teamAccess.member && <button id={`${inspectorId}-canvas`} aria-controls={`${inspectorId}-panel`} ref={canvasToggleRef} type="button" className="mem-icon-action workspace-panel-toggle note-mind-map-toggle"
       aria-label={t("pageCanvas.tabCanvas")} title={t("pageCanvas.tabCanvas")}
       aria-expanded={inspectorOpen} aria-pressed={showCanvas} disabled={canvasSwitchPending}
       onClick={(event) => {
@@ -2745,7 +2756,7 @@ export default function PageDetail({
         else selectInspectorTab("canvas");
       }}>
       <TreeStructure aria-hidden="true" size={18} />
-    </button>
+    </button>}
     {pdfPreview && <button id={`${inspectorId}-pdf`} aria-controls={`${inspectorId}-panel`} ref={pdfToggleRef} type="button"
       className="mem-icon-action workspace-panel-toggle note-pdf-toggle"
       aria-label={t("pdfReader.tab")} title={t("pdfReader.tab")}
@@ -2767,7 +2778,7 @@ export default function PageDetail({
   // The example wiki is for looking at: nothing in it can be moved, renamed or deleted.
   // Page actions sit in the top bar beside the page sidebar toggle, as Obsidian's
   // view header does; the title row keeps only the title.
-  const actionsMenu = exampleWiki ? null : (
+  const actionsMenu = exampleWiki || teamAccess.member ? null : (
       <div className="page-detail-actions-anchor" ref={actionMenuRef}>
                 <button
                   ref={actionMenuTriggerRef}
@@ -2797,8 +2808,8 @@ export default function PageDetail({
                   </svg>
                 </button>
                 {moveOpen && <MovePageDialog page={page} onClose={() => setMoveOpen(false)} />}
-                {pageExportOpen && <PageExportDialog pageId={page.id} onClose={() => setPageExportOpen(false)} />}
-                {sharingOpen && (spaceOfPageShare
+                {!web && pageExportOpen && <PageExportDialog pageId={page.id} onClose={() => setPageExportOpen(false)} />}
+                {!web && sharingOpen && (spaceOfPageShare
                   ? <ShareDialog kind="space" target={spaceOfPageShare.target} title={spaceOfPageShare.target} onClose={() => setSharingOpen(false)} onOpenSettings={onOpenSettings} />
                   : <ShareDialog kind="page" target={page.id} title={page.title} onClose={() => setSharingOpen(false)} onOpenSettings={onOpenSettings} />)}
                 {actionMenuOpen ? (
@@ -2821,7 +2832,7 @@ export default function PageDetail({
                     tabIndex={-1}
                   >
                     <button type="button" role="menuitem" disabled={storedActionPending || page.status !== "active" || !inventoryPageFilename(page) || editDirty || saveState.phase !== "idle" || editorStatus?.compositionActive} onClick={() => { closeActionMenu(); setMoveOpen(true); }}>{t("pages.folders.move")}</button>
-                    <button type="button" role="menuitem" disabled={storedActionBlocked || editDirty || saveState.phase !== "idle"} onClick={() => { closeActionMenu(); setPageExportOpen(true); }}>{t("pageExport.menuAction")}</button>
+                    {!web && <button type="button" role="menuitem" disabled={storedActionBlocked || editDirty || saveState.phase !== "idle"} onClick={() => { closeActionMenu(); setPageExportOpen(true); }}>{t("pageExport.menuAction")}</button>}
                     {page.status === "active" && !exampleWiki && !teamScope.team ? (
                       <button type="button" role="menuitem" disabled={storedActionBlocked} onClick={() => { closeActionMenu(); if (pagePinned) unpinPage(page.id); else pinPage({ id: page.id, title: page.title }); }}>
                         {t(pagePinned ? "sidebar.unpinPage" : "sidebar.pinPage")}
@@ -2835,7 +2846,7 @@ export default function PageDetail({
                     ) : null}
                     {/* A page of a shared Space is shared with it: the item opens
                         that Space's members rather than sharing the page alone. */}
-                    {page.status === "active" && !exampleWiki ? (
+                    {!web && page.status === "active" && !exampleWiki ? (
                       <button type="button" role="menuitem" disabled={storedActionBlocked} onClick={() => { closeActionMenu(); setSharingOpen(true); }}>
                         {t(spaceOfPageShare || ownPageShare ? "sharing.menuMembers" : "sharing.menuShare")}
                       </button>
@@ -2869,7 +2880,8 @@ export default function PageDetail({
 
   // A page opens ready to edit. When it is only shown (opened from Review,
   // or after the editor closed), a click in the text, or Enter on it, edits it.
-  const readModeEditable = !howIWorkPage && page.status === "active" && !editing && !showCanvas && !exampleWiki;
+  const readModeEditable = !howIWorkPage && page.status === "active" && !editing && !showCanvas && !exampleWiki &&
+    (!teamAccess.member || teamAccess.canEdit(page.space));
   const readModeEditDisabled = storedActionPending || renaming || renameMutation.isPending;
   const editFromReading = (event: React.MouseEvent) => {
     if (!readModeEditable || readModeEditDisabled) return;
@@ -3027,7 +3039,7 @@ export default function PageDetail({
         </div>}
 
         {/* An archived page is read only, so its review items wait until it is restored. */}
-        {onOpenReview && page.status !== "archived" && <NoteReviewNotice key={pageId} page={page}
+        {onOpenReview && !teamAccess.member && page.status !== "archived" && <NoteReviewNotice key={pageId} page={page}
           onReview={onOpenReview}
           onShowSources={() => void requestPageInfo()}
           disabled={exampleWiki || storedActionPending || canvasSwitchPending || !!editorStatus?.compositionActive}
@@ -3561,14 +3573,14 @@ export default function PageDetail({
             on={pageLength === "short"}
             onChange={(on) => choosePageLength(on ? "short" : "full")}
           />}
-          <InfoAction
+          {!web && <InfoAction
             label={t("pageDetail.markPageReviewed")}
             description={reviewSupported ? t("infoActions.reviewPageHint") : reviewUnavailableReason}
             active={cutoverLive && Boolean(page.truth?.human_reviewed)}
             disabled={storedActionBlocked || !reviewSupported}
             pending={reviewMutation.isPending}
             onClick={() => { void requestStoredPageAction("review"); }}
-          />
+          />}
           <div className="note-info-summary">
           <h3 className="note-info-section-heading">{t("detailInfo.details")}</h3>
           <p className="document-kind-label">{t("knowledgeContext.noteKind")}</p>
@@ -3632,7 +3644,9 @@ export default function PageDetail({
           </div>
           {/* The daemon refuses to lock an entity shadow page. The switch is
               the page's review lock (UX-WHO-2). */}
-          {page.creation_kind !== "entity" && <PageLockSwitch
+          {/* The lock and the knowledge graph are the owner's: the team server
+              keeps neither, so a member sees neither. */}
+          {page.creation_kind !== "entity" && !teamAccess.member && <PageLockSwitch
             locked={page.review_required === true}
             pending={reviewLockPending}
             disabled={storedActionBlocked}
@@ -3642,12 +3656,12 @@ export default function PageDetail({
             }}
           />}
           <div className="note-info-sections">
-            <KnowledgeContext standaloneGraph diagramOnly key={pageId} kind="page" id={pageId} title={page.title}
+            {!teamAccess.member && <KnowledgeContext standaloneGraph diagramOnly key={pageId} kind="page" id={pageId} title={page.title}
               onOpenGraph={onOpenGraph ? () => onOpenGraph(pageId) : undefined}
               onNavigateMemory={(id) => { setInfoOpen(false); onMemoryClick(id); }}
               onNavigatePage={onPageClick}
               onNavigateEntity={onEntityClick ? (id) => { setInfoOpen(false); onEntityClick(id); } : undefined}
-            />
+            />}
             {hasRail && (
               <div className="flex flex-col gap-4">
                 {pageEntities.length > 0 && (

@@ -48,6 +48,14 @@ afterEach(() => {
 });
 
 describe("fillUnsetPinsAtLaunch", () => {
+  it("does not read desktop setup state in the web build", async () => {
+    vi.stubGlobal("__WENLAN_WEB__", true);
+    await expect(fillUnsetPinsAtLaunch()).resolves.toBeNull();
+    expect(mocks.shouldShowWizard).not.toHaveBeenCalled();
+    expect(mocks.getResolvedRouting).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
   it("pins the loaded model for both jobs when setup is complete", async () => {
     await expect(fillUnsetPinsAtLaunch()).resolves.toEqual({
       written: { everyday: "on_device", synthesis: "on_device" },

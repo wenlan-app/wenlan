@@ -464,6 +464,10 @@ pub struct PageChange {
     /// or when either version is missing from history.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub changed_sentences: Option<u32>,
+    /// The AI tool behind an `agent_refresh` change, as its changelog entry
+    /// names it. Absent for any other writer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
 }
 
 /// The kind of item in a recent-activity feed entry.

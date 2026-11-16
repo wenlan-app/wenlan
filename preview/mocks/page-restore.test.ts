@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { invoke as fixtureInvoke } from "./core";
-import { liveInvoke } from "./live-invoke";
+import { liveInvoke } from "../../src/web/live-invoke";
 import { invoke as devInvoke } from "./dev-live-core";
 import { TauriMockRuntime } from "../../e2e/tauriMock/runtime";
 import { restoreFixturePage } from "../../e2e/tauriMock/pageRestore";

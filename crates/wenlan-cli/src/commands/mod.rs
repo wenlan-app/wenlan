@@ -24,6 +24,7 @@ pub mod store;
 pub mod sweep;
 pub mod team;
 pub mod tool;
+pub mod web;
 pub mod wiki;
 pub mod wiki_refresh;
 

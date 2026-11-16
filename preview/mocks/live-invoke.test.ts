@@ -3,7 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DEFAULTS, HANDLERS, liveInvoke } from "./live-invoke";
+import { DEFAULTS, HANDLERS, liveInvoke } from "../../src/web/live-invoke";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TAURI_TS_PATH = resolve(__dirname, "../../src/lib/tauri.ts");
@@ -1376,7 +1376,6 @@ const UNSTUBBED_DEBT = new Set([
   "add_watch_path",
   "confirm_entity_cmd",
   "confirm_observation_cmd",
-  "confirm_space",
   "connect_source",
   "correct_memory_cmd",
   "create_entity_cmd",
@@ -1386,7 +1385,6 @@ const UNSTUBBED_DEBT = new Set([
   "delete_entity_cmd",
   "delete_observation_cmd",
   "delete_snapshot",
-  "delete_space",
   "delete_tag",
   "detect_obsidian_vaults",
   "disconnect_source",
@@ -1431,7 +1429,6 @@ const UNSTUBBED_DEBT = new Set([
   "remove_legacy_mcp_entry",
   "remove_raw_mcp_entry",
   "remove_watch_path",
-  "reorder_space",
   "reset_onboarding_milestones",
   "save_temp_file",
   "set_api_key",
@@ -1446,7 +1443,6 @@ const UNSTUBBED_DEBT = new Set([
   "test_external_llm",
   "test_remote_mcp_connection",
   "toggle_remote_access",
-  "toggle_space_starred",
   "update_agent",
   "update_chunk",
   "update_observation_cmd",

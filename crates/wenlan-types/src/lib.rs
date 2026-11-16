@@ -356,6 +356,7 @@ mod retrieval_event_tests {
             changed_at_ms: 1_700_000_000_000,
             edited_by: None,
             changed_sentences: None,
+            agent: None,
         };
         let s = serde_json::to_string(&c).unwrap();
         assert!(

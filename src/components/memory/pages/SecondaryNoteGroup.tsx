@@ -13,6 +13,7 @@ import { ReferenceNavigationProvider } from "../links/ReferenceNavigationContext
 import { useViewScroll } from "../navigation/useViewScroll";
 import { exampleWikiActive, useExampleWikiActive } from "../../../lib/exampleWiki/mode";
 import { recordRecentPageVisit } from "../../../lib/recentPages";
+import { useTeamAccess } from "../../../web/teamAccess";
 
 export interface SecondaryNoteGroupHandle {
   flush: () => Promise<boolean>;
@@ -43,6 +44,8 @@ interface Props {
 export const SecondaryNoteGroup = forwardRef<SecondaryNoteGroupHandle, Props>(function SecondaryNoteGroup({ host, onPresenceChange, onFocus, onNavigationIntent, onNavigate, onOpenNote, onMove, onPageDeleted, movingNote = false, allocateDraftSession, readingPositions, selections: sharedSelections }, ref) {
   const { t } = useTranslation();
   const exampleWiki = useExampleWikiActive();
+  const teamAccess = useTeamAccess();
+  const readOnlyMember = teamAccess.member && teamAccess.writable.length === 0;
   const [mount] = useState(() => document.createElement("div"));
   mount.className = "secondary-note-group-mount";
   const root = useRef<HTMLDivElement>(null);
@@ -253,7 +256,7 @@ export const SecondaryNoteGroup = forwardRef<SecondaryNoteGroupHandle, Props>(fu
         tabs={tabs} activeKey={tabs.find(tab => matchesNote(tab, view))?.key} contentId="wiki-secondary-note-content"
         groupId="secondary" tabListLabel={t("pages.groups.right")} moveLabel={t("pages.groups.moveToCentral")}
         onMoveToOtherGroup={tab => { if (!movingNote) void transfer(tab); }} onSelect={tab => { if (!movingNote) void open(tab.view); }} onClose={tab => void close(tab)}
-        onCreate={exampleWiki ? undefined : () => { if (!movingNote) void open({ kind: "page-draft", space: null }); }} />}>
+        onCreate={exampleWiki || readOnlyMember ? undefined : () => { if (!movingNote) void open({ kind: "page-draft", space: null }); }} />}>
         {view.kind === "page" ? <PageDetail onRegisterArchive={registerArchive} pageId={view.pageId} projectionIssue={view.projectionIssue}
           onDeleted={pageId => onPageDeleted ? onPageDeleted(pageId) : removePage(pageId)}
           onProjectionResolved={() => replace({ ...view, projectionIssue: undefined })}

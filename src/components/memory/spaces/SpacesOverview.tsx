@@ -30,6 +30,7 @@ import "../assets/assetCards.css";
 import "../pages/pageActions.css";
 import "./spaces.css";
 import "./spacesInventory.css";
+import { isWebBuild } from "../../../web/runtime";
 
 const DEPENDENT_QUERY_KEYS = [
   "spaces",
@@ -77,6 +78,7 @@ function actionKey(action: SpaceRowAction): string {
 }
 
 export function SpacesOverview(props: SpacesOverviewProps) {
+  const web = isWebBuild();
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [joining, setJoining] = useState(false);
@@ -220,7 +222,7 @@ export function SpacesOverview(props: SpacesOverviewProps) {
           {/* Joining a shared folder is Private's. New makes a Space on the
               side shown: a team's comes from its server, so only the team's
               owner makes one there. */}
-          {!scope.team && (
+          {!web && !scope.team && (
             <button type="button" className="spaces-join-action collection-control" onClick={() => setJoining(true)}>
               <PeopleIcon className="spaces-join-icon" />
               {t("sharing.joinEntry")}
@@ -233,7 +235,7 @@ export function SpacesOverview(props: SpacesOverviewProps) {
           )}
         </div>
       </header>
-      {joining ? (
+      {!web && joining ? (
         <JoinSharedDialog
           only="folder"
           onClose={() => setJoining(false)}
@@ -305,7 +307,7 @@ export function SpacesOverview(props: SpacesOverviewProps) {
             </div>
           ))}
           {/* A narrow window has no room for it in the header row. */}
-          {!scope.team && (
+          {!web && !scope.team && (
             <button type="button" className="spaces-join-row spaces-quiet-action" onClick={() => setJoining(true)}>
               <PeopleIcon className="spaces-join-icon" />
               {t("sharing.joinEntry")}

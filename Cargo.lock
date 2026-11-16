@@ -9211,6 +9211,7 @@ dependencies = [
  "serde_yaml",
  "sha1",
  "sha2",
+ "subtle",
  "syn 2.0.117",
  "sysinfo",
  "temp-env",

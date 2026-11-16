@@ -908,6 +908,7 @@ fn team_router(state: TeamState) -> axum::Router {
         )
         .route("/mcp", any(team_mcp))
         .route("/mcp/{*space}", any(team_mcp_in))
+        .route("/team/v1/app/{*call}", any(app_gate::handle))
         .layer(middleware::from_fn(wenlan_mcp::serve::guard_initialization))
         .layer(middleware::from_fn(capped_body))
         .layer(middleware::from_fn_with_state(
@@ -917,6 +918,10 @@ fn team_router(state: TeamState) -> axum::Router {
     axum::Router::new()
         .route("/health", get(team_health))
         .route(wenlan_types::team::JOIN_PATH, get(team_join_page))
+        .route("/app", get(crate::web_static::team_app))
+        .route("/app/", get(crate::web_static::team_app))
+        .route("/app/{*rest}", get(crate::web_static::team_app))
+        .merge(crate::web_static::team_asset_routes())
         .merge(checked)
         .layer(DefaultBodyLimit::max(remote::MAX_VERSION_BYTES))
         .with_state(state)
@@ -946,6 +951,7 @@ struct JoinPageStrings {
     heading: &'static str,
     unnamed_heading: &'static str,
     unnamed_team: &'static str,
+    accept: &'static str,
     paste: &'static str,
     download_before: &'static str,
     download: &'static str,
@@ -969,6 +975,7 @@ const JOIN_PAGE_EN: JoinPageStrings = JoinPageStrings {
     heading: "Join {team} on Wenlan",
     unnamed_heading: "Join {team} on Wenlan",
     unnamed_team: "a team",
+    accept: "Accept",
     paste: "Copy this page's address. In Wenlan, open Settings, then Team, choose Join with an invite link, and paste it.",
     download_before: "Don't have Wenlan yet?",
     download: "Download it",
@@ -992,6 +999,7 @@ const JOIN_PAGE_ZH_HANS: JoinPageStrings = JoinPageStrings {
     heading: "加入 {team}",
     unnamed_heading: "加入{team}",
     unnamed_team: "团队",
+    accept: "接受",
     paste:
         "复制这个页面的地址。在文澜中打开“设置”，然后打开“团队”，选择“用邀请链接加入团队”并粘贴。",
     download_before: "还没安装文澜？",
@@ -1016,6 +1024,7 @@ const JOIN_PAGE_ZH_HANT: JoinPageStrings = JoinPageStrings {
     heading: "加入 {team}",
     unnamed_heading: "加入{team}",
     unnamed_team: "團隊",
+    accept: "接受",
     paste: "複製這個頁面的位址。在文瀾中打開「設定」，再打開「團隊」，選擇「用邀請連結加入團隊」並貼上。",
     download_before: "還沒安裝文瀾？",
     download: "下載文瀾",
@@ -1107,8 +1116,10 @@ p { margin:8px 0; }
 a { color:#5146b8; }
 button,select { font:inherit; }
 button { border:0; border-radius:8px; cursor:pointer; }
-#connect { margin-top:18px; padding:10px 14px; background:#5751c9; color:white; font-weight:600; }
-#connect:disabled { opacity:.55; cursor:default; }
+#accept { margin:18px 0 4px; padding:10px 22px; background:#5751c9; color:white; font-weight:600; }
+#accept:disabled,#connect:disabled { opacity:.55; cursor:default; }
+.more { margin-top:28px; color:#66676b; font-size:.9rem; }
+#connect { margin-top:8px; padding:6px 10px; background:#e8e7e2; color:#202124; font-size:.9rem; }
 [hidden] { display:none !important; }
 #error { margin-top:18px; }
 #setup { margin-top:24px; }
@@ -1132,7 +1143,8 @@ pre { max-width:100%; margin:0; padding:12px; overflow:auto; border-radius:8px; 
   a { color:#aaa5ff; }
   .instruction,.copy-status { color:#aaaab2; }
   .tool { background:#303137; color:#ececf1; }
-  .copy { background:#303137; color:#ececf1; }
+  .copy,#connect { background:#303137; color:#ececf1; }
+  .more { color:#aaaab2; }
   .tool.is-selected { background:#7770e7; color:white; }
   .tool:focus-visible,.copy:focus-visible { outline-color:#aaa5ff; }
   pre { background:#25262b; }
@@ -1146,10 +1158,13 @@ pre { max-width:100%; margin:0; padding:12px; overflow:auto; border-radius:8px; 
 <body>
 <main>
 <h1>%%HEADING%%</h1>
+<button id="accept" type="button">%%ACCEPT%%</button>
+<p id="error" hidden>%%EXPIRED%%</p>
+<div class="more">
 <p>%%PASTE%%</p>
 <p>%%DOWNLOAD_BEFORE%% <a href="https://wenlan.app">%%DOWNLOAD%%</a>%%DOWNLOAD_AFTER%%</p>
 <button id="connect" type="button">%%CONNECT%%</button>
-<p id="error" hidden>%%EXPIRED%%</p>
+</div>
 <section id="setup" hidden>
   <label class="chooser" id="chooser" hidden><span>%%SPACE%%</span><select id="spaces"></select></label>
   <p class="tool-question" id="tool-question">%%TOOL_QUESTION%%</p>
@@ -1174,6 +1189,7 @@ pre { max-width:100%; margin:0; padding:12px; overflow:auto; border-radius:8px; 
 (() => {
   const text = %%SCRIPT_STRINGS%%;
   const connect = document.getElementById('connect');
+  const accept = document.getElementById('accept');
   const error = document.getElementById('error');
   const setup = document.getElementById('setup');
   const chooser = document.getElementById('chooser');
@@ -1202,7 +1218,34 @@ pre { max-width:100%; margin:0; padding:12px; overflow:auto; border-radius:8px; 
     setup.hidden = true;
     error.hidden = false;
     connect.disabled = false;
+    accept.disabled = false;
   };
+
+  // Accept: open Wenlan here, in this browser. The key is checked first,
+  // then kept for this address only, and the page moves to /app.
+  accept.addEventListener('click', async () => {
+    const key = window.location.hash.slice(1);
+    if (!key) {
+      fail();
+      return;
+    }
+    accept.disabled = true;
+    error.hidden = true;
+    try {
+      const response = await fetch('/team/v1/me', {
+        method: 'GET',
+        headers: { Authorization: 'Bearer ' + key },
+        credentials: 'omit',
+        cache: 'no-store',
+        referrerPolicy: 'no-referrer'
+      });
+      if (!response.ok) throw new Error('join refused');
+      window.localStorage.setItem('wenlan.team.key', key);
+      window.location.assign('/app');
+    } catch (_) {
+      fail();
+    }
+  });
 
   const selectText = (node) => {
     const selection = window.getSelection();
@@ -1323,6 +1366,7 @@ fn render_join_page(name: Option<&str>, strings: &JoinPageStrings, nonce: &str) 
         ("%%LANG%%", html_escape(strings.lang)),
         ("%%HEADING%%", heading),
         ("%%NONCE%%", html_escape(nonce)),
+        ("%%ACCEPT%%", html_escape(strings.accept)),
         ("%%PASTE%%", html_escape(strings.paste)),
         ("%%DOWNLOAD_BEFORE%%", html_escape(strings.download_before)),
         ("%%DOWNLOAD%%", html_escape(strings.download)),
@@ -1372,6 +1416,9 @@ async fn team_join_page(State(state): State<TeamState>, headers: HeaderMap) -> R
     response
 }
 
+#[path = "team_app_gate.rs"]
+mod app_gate;
+
 /// Origins of web AI apps whose connectors may call `/mcp` from a browser.
 const ALLOWED_ORIGINS: &[&str] = &["https://claude.ai", "https://chatgpt.com"];
 
@@ -1402,7 +1449,20 @@ async fn require_member(State(state): State<TeamState>, mut req: Request, next: 
         .get(header::ORIGIN)
         .and_then(|value| value.to_str().ok())
     {
-        if !ALLOWED_ORIGINS.contains(&origin) {
+        // Wenlan on the web, served by this server, is the only page that
+        // may call the app gate; the AI apps' connectors may call the rest.
+        let on_gate = req.uri().path() == app_gate::PREFIX
+            || req
+                .uri()
+                .path()
+                .starts_with(&format!("{}/", app_gate::PREFIX));
+        let allowed = if on_gate {
+            own_origin(&state).await.as_deref() == Some(origin)
+                || same_site_as_host(origin, req.headers())
+        } else {
+            ALLOWED_ORIGINS.contains(&origin)
+        };
+        if !allowed {
             return (StatusCode::FORBIDDEN, "origin not allowed").into_response();
         }
     }
@@ -1410,11 +1470,66 @@ async fn require_member(State(state): State<TeamState>, mut req: Request, next: 
     next.run(req).await
 }
 
+/// This server's own web origin (`https://team.example.com`), from the
+/// address people reach it at: `WENLAN_TEAM_URL`, else the team's saved
+/// address. None when neither is set.
+async fn own_origin(state: &TeamState) -> Option<String> {
+    let path = state.team_path.clone();
+    let url = match env_value(TEAM_URL_ENV) {
+        Some(url) => Some(url),
+        None => tokio::task::spawn_blocking(move || team::read_team(&path).ok()?.url)
+            .await
+            .ok()
+            .flatten(),
+    }?;
+    let origin = url::Url::parse(url.trim()).ok()?.origin();
+    origin.is_tuple().then(|| origin.ascii_serialization())
+}
+
+/// Whether `origin` is the very address this request was sent to (its
+/// `Host`): the page was served by this server, whatever name or address
+/// the member reached it at (a LAN address, or a name the team has not
+/// saved as its address). Another site's page always carries its own
+/// origin against this server's Host, so it never matches.
+fn same_site_as_host(origin: &str, headers: &HeaderMap) -> bool {
+    let Some(host) = headers
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|host| !host.is_empty())
+    else {
+        return false;
+    };
+    ["http://", "https://"]
+        .iter()
+        .filter_map(|scheme| origin.strip_prefix(scheme))
+        .any(|authority| authority.eq_ignore_ascii_case(host))
+}
+
+/// `GET /team/v1/me`, and the people this member shares a Space with
+/// (names only), so their browser can name who changed a page.
+#[derive(serde::Serialize)]
+struct MeWithPeople {
+    #[serde(flatten)]
+    me: wenlan_types::team::TeamMe,
+    people: Vec<wenlan_types::team::TeamPerson>,
+}
+
 async fn team_me(State(state): State<TeamState>, Extension(member): Extension<Member>) -> Response {
     let settings = state.settings_path.clone();
-    let hosted = tokio::task::spawn_blocking(move || team::hosted_spaces(&settings)).await;
-    match hosted {
-        Ok(Ok(hosted)) => Json(member.me(&hosted)).into_response(),
+    let team_path = state.team_path.clone();
+    let read = tokio::task::spawn_blocking(move || {
+        let hosted = team::hosted_spaces(&settings)?;
+        let file = team::read_team(&team_path)?;
+        Ok::<_, wenlan_core::error::WenlanError>((hosted, file))
+    })
+    .await;
+    match read {
+        Ok(Ok((hosted, file))) => Json(MeWithPeople {
+            me: member.me(&hosted),
+            people: team::people_sharing_with(&file, &member, &hosted),
+        })
+        .into_response(),
         _ => (
             StatusCode::INTERNAL_SERVER_ERROR,
             "the Spaces cannot be read",

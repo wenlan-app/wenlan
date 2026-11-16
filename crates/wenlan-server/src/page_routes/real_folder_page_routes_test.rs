@@ -87,6 +87,7 @@ async fn publish_reports_committed_page_with_pending_projection_and_retains_inte
     let Json(saved) = handle_create_page_draft(
         State(state.clone()),
         SpaceHeader(None),
+        crate::team_actor::TeamActor::default(),
         TruthView::automatic(),
         Json(request),
     )
@@ -105,6 +106,8 @@ async fn publish_reports_committed_page_with_pending_projection_and_retains_inte
     assert_eq!(reloaded.page.folder_path.as_deref(), Some("Missing"));
     let Json(published) = handle_publish_page_draft(
         State(state.clone()),
+        SpaceHeader(None),
+        crate::team_actor::TeamActor::default(),
         TruthView::automatic(),
         Path(id.into()),
         Json(PageDraftVersionRequest {
@@ -124,6 +127,8 @@ async fn publish_reports_committed_page_with_pending_projection_and_retains_inte
     std::fs::create_dir(root.join("Missing")).unwrap();
     let Json(retry) = handle_publish_page_draft(
         State(state),
+        SpaceHeader(None),
+        crate::team_actor::TeamActor::default(),
         TruthView::automatic(),
         Path(id.into()),
         Json(PageDraftVersionRequest {

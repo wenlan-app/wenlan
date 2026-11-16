@@ -4,7 +4,7 @@
 //
 // Scope contract (fail closed):
 // - Reads: narrow allowlist of the commands the first-use surfaces mount.
-//   Live reads reuse preview/mocks/live-invoke.ts HANDLERS; a few browser-
+//   Live reads reuse src/web/live-invoke.ts HANDLERS; a few browser-
 //   honest values are local (get_api_key has no keychain here; the browser
 //   cannot mint review capabilities, so page_review_supported is honestly
 //   "platform_unsupported", never a ready claim).
@@ -26,7 +26,7 @@
 //   is sent.
 //
 // Data flow: browser fetch("/daemon/...") → vite proxy → WENLAN_PREVIEW_DAEMON.
-import { DEFAULTS, HANDLERS } from "./live-invoke";
+import { DEFAULTS, HANDLERS } from "../../src/web/live-invoke";
 
 export const FIRST_USE_LIVE_DAEMON = "http://127.0.0.1:17878";
 export const FIRST_USE_LIVE_PORT = 1433;

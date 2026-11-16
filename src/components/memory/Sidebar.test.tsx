@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -43,9 +43,21 @@ function renderSidebar(extraProps: Partial<ComponentProps<typeof Sidebar>> = {})
 }
 
 describe("Sidebar workspace", () => {
+  afterEach(() => vi.unstubAllGlobals());
   beforeEach(async () => {
     localStorage.clear();
     await i18n.changeLanguage("en");
+  });
+
+  it("hides native service and account controls but keeps Settings reachable in the production web build", async () => {
+    vi.stubGlobal("__WENLAN_WEB__", true);
+    const user = userEvent.setup();
+    const onNavigateSettings = vi.fn();
+    renderSidebar({ onNavigateSettings, onOpenAbout: vi.fn() });
+    expect(screen.queryByTestId("identity-card")).not.toBeInTheDocument();
+    expect(document.querySelector(".service-status")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+    expect(onNavigateSettings).toHaveBeenCalledOnce();
   });
 
   it("shows the 240px labels navigation without an inventory panel", () => {

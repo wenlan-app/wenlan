@@ -4505,6 +4505,8 @@ export interface PageChange {
   edited_by?: string | null;
   /** Sentences that change added, changed or removed. Absent for a new page. */
   changed_sentences?: number | null;
+  /** The AI tool behind an `agent_refresh` change. */
+  agent?: string | null;
 }
 
 /** @deprecated Use {@link PageChange} instead. */

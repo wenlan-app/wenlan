@@ -13,6 +13,7 @@ fi
 "$python_bin" "$tools_root/release_targets.py" check --target "$target" >/dev/null
 
 cd "$repo_root"
+pnpm build:web
 cargo build --release \
   -p wenlan \
   -p wenlan-server \

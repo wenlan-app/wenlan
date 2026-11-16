@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import SettingsSidebar from "./SettingsSidebar";
@@ -23,6 +23,18 @@ function renderSettingsSidebar(extraProps: Partial<React.ComponentProps<typeof S
 }
 
 describe("SettingsSidebar", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("shows only browser-safe groups in the web build", () => {
+    vi.stubGlobal("__WENLAN_WEB__", true);
+    renderSettingsSidebar();
+
+    expect(screen.getByRole("button", { name: "General" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Appearance" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Connections" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Diagnostics" })).not.toBeInTheDocument();
+  });
+
   it("starts with Back to home and aligned General navigation without a Settings caption", async () => {
     const user = userEvent.setup();
     const onSelect = vi.fn();

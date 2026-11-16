@@ -9,6 +9,8 @@ import { PageInventoryPanel } from "./PageInventoryPanel";
 import { WikiFolderCreationContext } from "./WikiFolderCreationContext";
 import type { WikiInventoryScope } from "./pageInventory";
 import { SpaceFoldersPrompt } from "./SpaceFoldersPrompt";
+import { useTeamAccess } from "../../../web/teamAccess";
+import { isWebBuild } from "../../../web/runtime";
 
 /** The id of the one directory the shell renders (see Main). */
 export const WIKI_DIRECTORY_ID = "wiki-directory";
@@ -191,6 +193,7 @@ function NewMenu({ exampleWiki, canCreateFolder, onNewPage, onNewFolder, onFindS
   readonly onFindSkills?: () => void;
 }) {
   const { t } = useTranslation();
+  const teamAccess = useTeamAccess();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -209,6 +212,8 @@ function NewMenu({ exampleWiki, canCreateFolder, onNewPage, onNewFolder, onFindS
     if (refocus) buttonRef.current?.focus();
   };
   const folderDisabled = !canCreateFolder;
+  // A member who may only read gets no New button.
+  if (teamAccess.member && teamAccess.writable.length === 0) return null;
   return (
     <div className="wiki-workspace-new-menu" ref={rootRef}>
       <button
@@ -246,11 +251,16 @@ function NewMenu({ exampleWiki, canCreateFolder, onNewPage, onNewFolder, onFindS
               <span>{t("pages.overview.newPage")}</span>
             </button>
           )}
-          <button type="button" role="menuitem" aria-disabled={folderDisabled} onClick={() => { if (folderDisabled) return; close(true); onNewFolder(); }}>
-            <FolderPlus aria-hidden="true" size={16} />
-            <span>{t("pages.folders.newFolder")}</span>
-          </button>
-          {onFindSkills && !exampleWiki && (
+          {/* Folders live on the owner's computer; the team server makes none. */}
+          {!teamAccess.member && (
+            <button type="button" role="menuitem" aria-disabled={folderDisabled} onClick={() => { if (folderDisabled) return; close(true); onNewFolder(); }}>
+              <FolderPlus aria-hidden="true" size={16} />
+              <span>{t("pages.folders.newFolder")}</span>
+            </button>
+          )}
+          {/* Finding and installing skills runs in the desktop app only; the
+              browser build has no route for it. */}
+          {onFindSkills && !exampleWiki && !isWebBuild() && (
             <button type="button" role="menuitem" onClick={() => { close(false); onFindSkills(); }}>
               <PuzzlePiece aria-hidden="true" size={16} />
               <span>{t("findSkills.entry")}</span>

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { liveInvoke } from "./live-invoke";
+import { liveInvoke } from "../../src/web/live-invoke";
 import { allowsDevLiveCommand } from "../devLivePolicy";
 export { convertFileSrc, isTauri, Resource, Channel, PluginListener, addPluginListener, transformCallback } from "./core";
 

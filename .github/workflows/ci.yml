@@ -236,6 +236,11 @@ jobs:
               - 'crates/wenlan-server/src/source_routes.rs'
               - 'crates/wenlan-server/src/main/**'
               - 'crates/wenlan-server/src/main.rs'
+              - 'crates/wenlan-server/src/web_static.rs'
+              - 'src/web/**'
+              - 'tooling/vite.web.config.ts'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
               - 'crates/wenlan-server/src/routes.rs'
               - 'crates/wenlan-types/**'
               - 'scripts/resolve-backend-dir*'
@@ -2227,6 +2232,14 @@ jobs:
         with:
           toolchain: 1.95.0
           targets: ${{ matrix.target }}
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 10.28.2
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
       - name: Stabilize Windows Rust cache toolchain inputs
         if: matrix.target == 'x86_64-pc-windows-msvc'
         shell: bash

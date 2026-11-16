@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Live browser backend: maps Tauri invoke() commands to the daemon's HTTP API
-// (proxied at /daemon → http://127.0.0.1:7878), mirroring app/src/search.rs.
-// Commands with no daemon route get app-local defaults; unknown ones warn.
+// Live browser backend: maps Tauri invoke() commands to the daemon's HTTP API.
+// Dev preview uses /daemon through Vite; the shipped web build is same-origin.
 
-import { daemonMeetsFloor } from "../../src/lib/daemonVersion";
-import type { RenamePageResponse, RestorePageResponse } from "../../src/lib/tauri";
+import { daemonMeetsFloor } from "../lib/daemonVersion";
+import type { RenamePageResponse, RestorePageResponse } from "../lib/tauri";
 import { archiveFixturePage, restoreFixturePage } from "../../e2e/tauriMock/pageRestore";
+import { isWebBuild } from "./runtime";
+import { isTeamMemberMode, readTeamKey, teamCallAllowed, TeamCallUnavailable, TEAM_GATE_PREFIX } from "./team";
 
 declare const __WENLAN_SOURCE_PREVIEW__: boolean;
-const sourcePreviewEnabled = () => typeof __WENLAN_SOURCE_PREVIEW__ !== "undefined" && __WENLAN_SOURCE_PREVIEW__;
+const sourcePreviewEnabled = () => isWebBuild()
+  || (typeof __WENLAN_SOURCE_PREVIEW__ !== "undefined" && __WENLAN_SOURCE_PREVIEW__);
 const requireSourcePreview = () => {
   if (!sourcePreviewEnabled()) throw new Error("Live page writes require an explicitly isolated daemon");
 };
@@ -41,12 +43,20 @@ async function http(
   body?: unknown,
   extraHeaders?: Record<string, string>,
 ): Promise<any> {
-  const res = await fetch(`/daemon${path}`, {
+  const team = isTeamMemberMode();
+  if (team && !teamCallAllowed(method, path)) throw new TeamCallUnavailable(`${method} ${path.split("?")[0]}`);
+  const key = team ? readTeamKey() : null;
+  if (team && !key) throw new TeamCallUnavailable(`${method} ${path.split("?")[0]}`);
+  const base = team ? TEAM_GATE_PREFIX : isWebBuild() ? "" : "/daemon";
+  const res = await fetch(`${base}${path}`, {
     method,
     headers: {
       ...(body !== undefined ? { "content-type": "application/json" } : undefined),
-      ...extraHeaders,
+      // The gate builds a new call from the member its key names; headers
+      // meant for the local daemon would only be dropped there.
+      ...(team ? { Authorization: `Bearer ${key}` } : extraHeaders),
     },
+    ...(team ? { credentials: "omit" as const, cache: "no-store" as const } : undefined),
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   const text = await res.text();
@@ -492,7 +502,7 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   get_zotero_document: (a) => { requireSourcePreview(); return get(`/api/zotero/documents${qs({source_id:a.sourceId,space:a.space,attachment_key:a.attachmentKey,expected_digest:a.expectedDigest,allow_retained:a.allowRetained})}`); },
   read_zotero_pdf: async (a) => {
     requireSourcePreview();
-    const response = await fetch(`/daemon/api/zotero/pdf${qs({source_id:a.sourceId,attachment_key:a.attachmentKey,space:a.space,expected_digest:a.expectedDigest,allow_retained:a.allowRetained})}`);
+    const response = await fetch(`${isWebBuild() ? "" : "/daemon"}/api/zotero/pdf${qs({source_id:a.sourceId,attachment_key:a.attachmentKey,space:a.space,expected_digest:a.expectedDigest,allow_retained:a.allowRetained})}`);
     if (!response.ok) throw new Error(`Could not read saved PDF: ${response.status}`);
     return response.arrayBuffer();
   },
@@ -1338,6 +1348,10 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   list_skill_borrow_records: (a) =>
     get(`/api/skills/record${qs({ space: a.space })}`),
   create_space: (a) => { requireSourcePreview(); return post("/api/spaces", { name: a.name, description: a.description }); },
+  delete_space: (a) => del(`/api/spaces/${encodeURIComponent(a.name)}`).then(() => undefined),
+  confirm_space: (a) => post(`/api/spaces/${encodeURIComponent(a.name)}/confirm`, {}).then(() => undefined),
+  reorder_space: (a) => post("/api/spaces/reorder", { name: a.name, new_order: a.newOrder }).then(() => undefined),
+  toggle_space_starred: async (a) => Boolean((await post(`/api/spaces/${encodeURIComponent(a.name)}/star`, {})).starred),
   patch_document_tag: (a) => { requireSourcePreview(); return post(`/api/documents/${enc(a.sourceId)}/tags`, { source: a.source, tag: a.tag, action: a.action }); },
   // Mirrors the app's list_working_on: active Brief items across kept Spaces.
   list_working_on: async () => {
@@ -1412,6 +1426,12 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
     const name = normalizedSpace(a?.name);
     const newName = normalizedSpace(a?.newName);
     if (!name || !newName) throw new Error("A Space name is required");
+    if (isWebBuild()) {
+      return put(`/api/spaces/${enc(name)}`, {
+        new_name: newName,
+        description: typeof a?.description === "string" ? a.description : null,
+      });
+    }
     const spaces = await listPreviewSpaces();
     const current = spaces.find((space) => space.name === name);
     if (!current) throw new Error(`Space ${JSON.stringify(name)} is not registered`);
@@ -1798,17 +1818,90 @@ export const DEFAULTS: Record<string, unknown> = {
   start_daemon_sidecar: { status: "already_running" },
 };
 
+const PREVIEW_ONLY_HANDLERS = new Set([
+  "add_source", "approve_remote_pairing", "attach_bytes_to_page",
+  "attach_image_url_to_page", "configure_remote_access", "deny_remote_pairing",
+  "download_on_device_model", "get_on_device_model", "import_theme_image",
+  "inspect_remote_pairing", "lookup_remote_pairing", "on_device_model_download_bytes",
+  "open_themes_folder", "problem_report", "reconnect_remote_access",
+  "renew_remote_access", "repair_apply", "repair_cancel", "repair_lint",
+  "repair_operation_status", "repair_plan", "repair_plan_entries", "repair_prepare",
+  "repair_prepare_current", "repair_prepare_operation", "repair_prepare_operation_cancel",
+  "repair_prepare_operation_status", "repair_recovery", "repair_resume_runtime",
+  "repair_validate_manifest", "repair_verify", "restart_daemon_to_move_pages",
+  "reveal_shared_folder", "revoke_remote_grant", "set_source_follow_changes",
+  "store_memory", "suggest_library_folder", "sync_registered_source",
+  "team_firewall_allow",
+]);
+
+const NATIVE_ONLY_COMMANDS = new Set([
+  "acknowledge_guarded_quit_request", "cancel_guarded_quit_request", "daemon_version_status",
+  "dismiss_quick_capture", "get_startup_preflight_status", "is_run_at_login_enabled",
+  "local_setup_completed", "open_quick_capture", "position_quick_capture", "quick_capture",
+  "quit_wenlan_full", "restart_daemon", "restart_daemon_to_move_pages", "set_editor_composing",
+  "set_run_at_login", "set_traffic_lights_visible", "start_daemon_sidecar", "take_open_link",
+  "take_remote_pairing_link", "tray_panel_daemon_state", "tray_panel_hide", "tray_panel_open_main",
+  "tray_panel_quit", "tray_panel_set_height", "active_theme_image", "add_source", "add_watch_path",
+  "attach_bytes_to_page", "attach_file_to_page", "attach_image_url_to_page", "connect_source",
+  "delete_uploaded_file", "detect_obsidian_vaults", "disconnect_source", "get_avatar_data_url",
+  "get_index_status", "get_system_info", "import_chat_export", "import_theme_image",
+  "list_external_models", "list_sources", "list_watch_paths", "open_file", "open_search_result",
+  "open_themes_folder", "open_tool_with_prompt", "page_attachments_dir", "problem_report",
+  "read_code_lines", "read_git_blob_lines", "read_source_dir", "read_text_file", "reindex",
+  "remove_avatar", "remove_watch_path", "resolve_page_embed", "reveal_shared_folder", "save_temp_file",
+  "set_avatar", "set_source_follow_changes", "suggest_library_folder", "sync_source", "theme_image",
+  "upload_source_files", "uploads_folder", "detect_mcp_clients_cmd", "disconnect_client",
+  "get_wenlan_mcp_entry", "install_client_plugin", "install_client_skills", "remove_legacy_mcp_entry",
+  "remove_raw_mcp_entry", "wire_state", "write_mcp_config", "approve_remote_pairing",
+  "configure_remote_access", "deny_remote_pairing", "get_remote_access_profile",
+  "get_remote_access_status", "inspect_remote_pairing", "list_remote_grants", "lookup_remote_pairing",
+  "reconnect_remote_access", "renew_remote_access", "revoke_remote_grant", "take_remote_access_notice",
+  "test_remote_mcp_connection", "toggle_remote_access", "page_review_supported", "review_page",
+  "repair_apply", "repair_cancel", "repair_lint", "repair_operation_status", "repair_plan",
+  "repair_plan_entries", "repair_prepare", "repair_prepare_current", "repair_prepare_operation",
+  "repair_prepare_operation_cancel", "repair_prepare_operation_status", "repair_recovery",
+  "repair_resume_runtime", "repair_validate_manifest", "repair_verify",
+]);
+
+function unsupportedWebCommand(command: string): Error {
+  return new Error(`“${command}” is available only in the Wenlan desktop app.`);
+}
+
+/**
+ * Team-member mode answers these here, as empty, so the screen shows nothing
+ * instead of a "could not load" message for a part a member does not have.
+ */
+const TEAM_LOCAL_ANSWERS: Record<string, () => unknown> = {
+  knowledge_folders_list: () => ({ folders: [], truncated: false }),
+  list_shares: () => [],
+  // A page's links can name pages in Spaces the member cannot open, so the
+  // gate has no row for them; the page shows none instead of an error.
+  get_page_links: () => ({ outbound: [], inbound: [] }),
+  // The knowledge graph holds the owner's whole library, so a member gets an
+  // empty one and the page panel says it has no connections to show.
+  get_knowledge_graph_cmd: () => ({ entities: [], relations: [], memories: [], memory_links: [], pages: [], page_links: [] }),
+  // Search finds pages only: memories, topics and conversations are the owner's.
+  search: () => [],
+  search_entities_cmd: () => [],
+  search_conversations: () => [],
+};
+
 export async function liveInvoke(cmd: string, args?: Args): Promise<unknown> {
+  if (isTeamMemberMode() && cmd in TEAM_LOCAL_ANSWERS) return TEAM_LOCAL_ANSWERS[cmd]();
+  if (isWebBuild() && (NATIVE_ONLY_COMMANDS.has(cmd) || PREVIEW_ONLY_HANDLERS.has(cmd) || cmd in DEFAULTS)) {
+    throw unsupportedWebCommand(cmd);
+  }
   const handler = HANDLERS[cmd];
   if (handler) {
     try {
       return await handler(args);
     } catch (e) {
-      console.warn(`[preview:live] ${cmd} failed:`, e);
+      if (!(e instanceof TeamCallUnavailable)) console.warn(`[preview:live] ${cmd} failed:`, e);
       throw e;
     }
   }
   if (cmd in DEFAULTS) return DEFAULTS[cmd];
+  if (isWebBuild()) throw unsupportedWebCommand(cmd);
   console.warn(`[preview:live] unmapped invoke: ${cmd}`, args);
   return null;
 }

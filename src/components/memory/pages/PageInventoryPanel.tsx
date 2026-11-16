@@ -20,6 +20,7 @@ import { KNOWLEDGE_FOLDERS_QUERY_KEY, useKnowledgeFolders } from "./useKnowledge
 import { useWikiFolderCreation } from "./WikiFolderCreationContext";
 import { useScope } from "../team/scope";
 import { pinPage, unpinPage, usePinnedPages } from "../navigation/pinnedPages";
+import { useTeamAccess } from "../../../web/teamAccess";
 import "./pageInventory.css";
 import { howIWorkPageTitle } from "../skills/howIWorkModel";
 
@@ -100,6 +101,9 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
   const folders = useKnowledgeFolders();
   const scope = useScope();
   const pinnedPages = usePinnedPages();
+  // A team member's server keeps no folders and lets no one archive or
+  // delete: those stay with the owner, so the list only opens and pins.
+  const member = useTeamAccess().member;
   const allPages = useMemo(() => collectPageInventory(active.data ?? [], drafts.data ?? []), [active.data, drafts.data]);
   const pages = useMemo(() => allPages.filter(page => scope.inScope(page.space)), [allPages, scope]);
   // A folder holding only the other side's pages stays out of sight; on a
@@ -133,7 +137,7 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
     });
   }, [selectedPath]);
   const hasFilter = !fileTree && !!filter.trim();
-  const canCreate = !exampleWiki && !!folders.data && !folders.data.truncated;
+  const canCreate = !exampleWiki && !member && !!folders.data && !folders.data.truncated;
   const folderUnavailable = folders.isError || !!folders.data?.truncated;
   const createStateRef = useRef({ canCreate, createPending, creating });
   const requestedCreatePath = (fileTree ? creationPath : selectedPath) ?? "";
@@ -185,13 +189,13 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
   };
   const handleContextMenu = (event: React.MouseEvent<HTMLDivElement>) => {
     const target = contextTarget(event.target, event.currentTarget);
-    if (!target) return;
+    if (!target || (member && !target.noteId)) return;
     event.preventDefault();
     openContextMenu(target.path, target.invoker, event.clientX, event.clientY, target.noteId);
   };
   const deleteNote = async (noteId: string) => {
     const note = pages.find(candidate => candidate.id === noteId);
-    if (!note || deletingRef.current || exampleWikiActive()) return;
+    if (!note || member || deletingRef.current || exampleWikiActive()) return;
     deletingRef.current = true;
     const confirmed = await confirmAction(t("pageDetail.deleteConfirm"), {
       confirm: t("pageDetail.deletePage"),
@@ -229,7 +233,7 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
     }
     if (event.key !== "ContextMenu" && !(event.key === "F10" && event.shiftKey)) return;
     const target = contextTarget(event.target, event.currentTarget);
-    if (!target) return;
+    if (!target || (member && !target.noteId)) return;
     event.preventDefault();
     const rect = target.invoker.getBoundingClientRect();
     openContextMenu(target.path, target.invoker, rect.left, rect.bottom, target.noteId);
@@ -334,7 +338,7 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
   return <section aria-label={fileTree ? undefined : t("sidebar.notes")} className={`notes-list-panel notes-inventory-panel${fileTree ? " notes-inventory-panel--file-tree" : ""}`}>
     {fileTree ? <h2 className="sr-only">{t("pages.folders.title")}</h2> : <div className="notes-list-header"><h2>{t("sidebar.notes")}</h2><div className="flex items-center gap-1">
       {!exampleWiki && onCreatePage && <button type="button" className="notes-list-create" aria-label={t("sidebar.newNote")} title={t("sidebar.newNote")} onClick={() => { if (selectedPath === null) onCreatePage(); else onCreatePage(selectedPath); }}><Plus aria-hidden="true" size={16}/></button>}
-      <button type="button" className="notes-list-create" aria-label={t("pages.folders.newFolder")} title={t("pages.folders.newFolder")} disabled={!canCreate || createPending} onClick={event => { if (creating) closeFolderForm(false); else openCreateFolderFormAt(selectedPath ?? "", event.currentTarget); }}><FolderPlus aria-hidden="true" size={16}/></button>
+      {!member && <button type="button" className="notes-list-create" aria-label={t("pages.folders.newFolder")} title={t("pages.folders.newFolder")} disabled={!canCreate || createPending} onClick={event => { if (creating) closeFolderForm(false); else openCreateFolderFormAt(selectedPath ?? "", event.currentTarget); }}><FolderPlus aria-hidden="true" size={16}/></button>}
     </div></div>}
     {!fileTree && folderCreateForm}
     {!fileTree && <label className="notes-list-filter"><span className="sr-only">{t("pages.folders.searchAll")}</span><MagnifyingGlass aria-hidden="true" size={14}/><input aria-label={t("pages.folders.searchAll")} placeholder={t("pages.folders.searchAll")} onChange={event => setFilter(event.target.value)} type="search" value={filter}/></label>}
@@ -368,8 +372,8 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
       {contextMenu.noteId ? <>
         <button type="button" role="menuitem" ref={contextMenuItemRef} aria-disabled={!contextNote || (contextNote.status === "draft" ? !onOpenDraft : !onOpenPage)} onClick={openContextNote}>{t("pages.folders.openNote")}</button>
         {!exampleWiki && !scope.team && contextNote?.status === "active" && <button type="button" role="menuitem" onClick={() => { const { id, title } = contextNote; setContextMenu(null); if (pinnedPages.some(pinned => pinned.id === id)) unpinPage(id); else pinPage({ id, title }); }}>{t(pinnedPages.some(pinned => pinned.id === contextNote.id) ? "sidebar.unpinPage" : "sidebar.pinPage")}</button>}
-        {!exampleWiki && canArchivePage(contextNote) && <button type="button" role="menuitem" onClick={() => { if (!contextNote) return; const { id: noteId } = contextNote; const { invoker } = contextMenu; setContextMenu(null); void archiveNote(noteId, invoker); }}>{t("pageDetail.archivePage")}</button>}
-        {!exampleWiki && <button type="button" role="menuitem" className="is-danger" aria-disabled={!contextNote} onClick={() => { if (!contextNote) return; const { id: noteId } = contextNote; setContextMenu(null); void deleteNote(noteId); }}>{t("pages.folders.deleteNote")}</button>}
+        {!exampleWiki && !member && canArchivePage(contextNote) && <button type="button" role="menuitem" onClick={() => { if (!contextNote) return; const { id: noteId } = contextNote; const { invoker } = contextMenu; setContextMenu(null); void archiveNote(noteId, invoker); }}>{t("pageDetail.archivePage")}</button>}
+        {!exampleWiki && !member && <button type="button" role="menuitem" className="is-danger" aria-disabled={!contextNote} onClick={() => { if (!contextNote) return; const { id: noteId } = contextNote; setContextMenu(null); void deleteNote(noteId); }}>{t("pages.folders.deleteNote")}</button>}
       </> : <button type="button" role="menuitem" ref={contextMenuItemRef} aria-disabled={!canCreate || createPending || creating} onClick={() => { if (!canCreate || createPending || creating) return; const { path, invoker } = contextMenu; setContextMenu(null); openCreateFolderFormAt(path, invoker); }}>{t("pages.folders.newFolderIn", { name: contextMenu.path || t("pages.folders.root") })}</button>}
     </div>, document.body)}
   </section>;

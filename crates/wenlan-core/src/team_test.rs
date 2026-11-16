@@ -305,3 +305,12 @@ fn the_listener_address_and_invite_address_are_kept_until_turned_off() {
         Some("https://wiki.acme.com")
     );
 }
+
+#[test]
+fn key_hashes_match_only_when_identical() {
+    let hash = key_hash("wl_team_example");
+    assert!(same_hash(&hash, &key_hash("wl_team_example")));
+    assert!(!same_hash(&hash, &key_hash("wl_team_other")));
+    assert!(!same_hash(&hash, &hash[..hash.len() - 1]));
+    assert!(!same_hash(&hash, ""));
+}
