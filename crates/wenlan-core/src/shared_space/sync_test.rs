@@ -3163,3 +3163,52 @@ async fn an_edit_that_lost_is_kept_once_even_when_a_third_computer_had_it() {
         assert_eq!(kept[0].content, "Fish or pasta, and a cake.");
     }
 }
+
+#[tokio::test]
+async fn ux_skill_9_a_how_i_work_page_stays_with_its_person() {
+    let folder = tempfile::tempdir().unwrap();
+    let folder = folder.path().to_path_buf();
+    let a = Member::new("Qi-Xuan").await;
+    let b = Member::new("Mei").await;
+    let menu = a
+        .write("Menu", "Fish or pasta.", SPACE.to_string().into())
+        .await;
+    let rules = a
+        .write(
+            "How I work — Family",
+            "- [rule] Discuss the approach first.",
+            SPACE.to_string().into(),
+        )
+        .await;
+    a.db.set_space_rules_state(&crate::db::skill_grow::SpaceRulesState {
+        space_id: "space-a".to_string(),
+        space_name: SPACE.to_string(),
+        status: crate::db::skill_grow::SpaceRulesStatus::Accepted,
+        rules_page_id: Some(rules.clone()),
+        lines: Vec::new(),
+        deleted_fingerprints: Vec::new(),
+        input_hash: String::new(),
+        last_success_at: 0,
+        failure_count: 0,
+        next_retry_at: 0,
+        undo: None,
+    })
+    .await
+    .unwrap();
+
+    a.sync(&folder).await;
+    b.sync(&folder).await;
+    assert!(
+        b.page(&menu).await.is_some(),
+        "the Space's pages still travel"
+    );
+    assert!(
+        b.page(&rules).await.is_none(),
+        "the person's own rules page does not"
+    );
+    // Still here, untouched, after the others have synced.
+    a.sync(&folder).await;
+    let kept = a.page(&rules).await.unwrap();
+    assert_eq!(kept.status, "active");
+    assert_eq!(kept.content, "- [rule] Discuss the approach first.");
+}
