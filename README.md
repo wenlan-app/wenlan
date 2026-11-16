@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  Every doc links to its sources and can look any way you ask. Use it from the AI tools you already have, the desktop app, or your browser.
+  A studio for everything you think, learn, and build with AI. Every doc links to its sources.
 </p>
 
 <p align="center">

@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=b218fd466cd51c431b99678cd75b0709831a822e9dbb99d1e532be8fb24d0d2b -->
+<!-- README_SYNC: source=README.md sha256=e40e00861d70d187ba234c171d04342a775147ea69136bf968e9f63b51cef7c4 -->
 
 <p align="center">
   <picture>
@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  Cada documento enlaza a sus fuentes y puede verse como pidas. Úsalo desde las herramientas de IA que ya tienes, la app de escritorio o el navegador.
+  Un estudio para todo lo que piensas, aprendes y construyes con IA. Cada documento enlaza a sus fuentes.
 </p>
 
 <p align="center">

@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=b218fd466cd51c431b99678cd75b0709831a822e9dbb99d1e532be8fb24d0d2b -->
+<!-- README_SYNC: source=README.md sha256=e40e00861d70d187ba234c171d04342a775147ea69136bf968e9f63b51cef7c4 -->
 
 <p align="center">
   <picture>
@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  每份文件都附出处，样子你说、AI 来画。从你已经在用的 AI 工具、桌面 App 或浏览器都能用。
+  你和 AI 一起想、一起学、一起做的地方。每份文件都附出处。
 </p>
 
 <p align="center">
