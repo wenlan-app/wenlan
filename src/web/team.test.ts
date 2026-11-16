@@ -84,6 +84,8 @@ describe("team-member mode", () => {
     await expect(liveInvoke("search", { query: "x" })).resolves.toEqual([]);
     await expect(liveInvoke("search_conversations", { query: "x" })).resolves.toEqual([]);
     await expect(liveInvoke("list_shares")).resolves.toEqual([]);
+    await expect(liveInvoke("get_page_links", { pageId: "page_x" })).resolves.toEqual({ outbound: [], inbound: [] });
+    await expect(liveInvoke("get_knowledge_graph_cmd")).resolves.toEqual({ entities: [], relations: [], memories: [], memory_links: [], pages: [], page_links: [] });
     expect(fetch).not.toHaveBeenCalled();
     expect(warn).not.toHaveBeenCalled();
   });

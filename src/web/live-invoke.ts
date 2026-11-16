@@ -1834,6 +1834,12 @@ function unsupportedWebCommand(command: string): Error {
 const TEAM_LOCAL_ANSWERS: Record<string, () => unknown> = {
   knowledge_folders_list: () => ({ folders: [], truncated: false }),
   list_shares: () => [],
+  // A page's links can name pages in Spaces the member cannot open, so the
+  // gate has no row for them; the page shows none instead of an error.
+  get_page_links: () => ({ outbound: [], inbound: [] }),
+  // The knowledge graph holds the owner's whole library, so a member gets an
+  // empty one and the page panel says it has no connections to show.
+  get_knowledge_graph_cmd: () => ({ entities: [], relations: [], memories: [], memory_links: [], pages: [], page_links: [] }),
   // Search finds pages only: memories, topics and conversations are the owner's.
   search: () => [],
   search_entities_cmd: () => [],
