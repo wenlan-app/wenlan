@@ -19,7 +19,7 @@ const ALLOWED_FONTS = [
 ];
 
 // name, tokens, dark, light (mirrors SLOTS in wenlan-core theme/mod.rs)
-const SLOTS: [string, string[], string, string][] = [
+export const SLOTS: [string, string[], string, string][] = [
   ["background", ["--mem-bg"], "#191C24", "#FCFCFB"],
   ["surface", ["--mem-surface", "--mem-detail-surface", "--mem-popover"], "#202430", "#FFFFFF"],
   ["card", ["--mem-card-surface"], "#20232A", "#F8F8F7"],
