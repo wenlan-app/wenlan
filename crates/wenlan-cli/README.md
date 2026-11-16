@@ -173,7 +173,7 @@ wenlan lint
 
 **`wenlan init`**
 
-Run it once inside a git repository. It makes a Space named after the repository, ties the two, and offers to connect the AI tools it finds. After that the terminal and AI tools started in that folder use that Space; `wenlan status` shows which one.
+Run it once inside a git repository. It makes a Space named after the repository, ties the two, and offers to connect the AI tools it finds. The first time, it also asks whether to open a pull request every day (Enter means yes; `wenlan repo bind --daily off` stops it). After that the terminal and AI tools started in that folder use that Space; `wenlan status` shows which one.
 
 ```bash
 cd ~/Repos/acme-api

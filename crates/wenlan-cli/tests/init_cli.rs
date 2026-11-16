@@ -127,8 +127,13 @@ fn ux_cli_5_init_makes_the_space_ties_the_repository_and_says_what_comes_next() 
         .find(|(route, _)| route == "PUT /api/spaces/acme-api/wiki/repo")
         .expect("the repository is tied");
     assert!(tied.1.contains("repo_root"), "{}", tied.1);
-    // No daily run is turned on by setting a repository up.
+    // The daily pull request is turned on only by a yes on the terminal;
+    // here nobody is there to ask.
     assert!(!tied.1.contains("daily"), "{}", tied.1);
+    assert!(
+        stdout.contains("No daily pull request. `wenlan repo bind --daily 9` turns it on."),
+        "{stdout}"
+    );
 }
 
 #[test]

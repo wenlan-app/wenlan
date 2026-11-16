@@ -12,7 +12,9 @@ use std::io::{IsTerminal, Write};
 use std::path::Path;
 use wenlan_core::repo_wiki::{self, PublishTarget};
 use wenlan_types::folder_space::{self, FolderSpaceHint};
-use wenlan_types::repo_wiki::{BindRepoWikiRequest, RepoWikiBinding};
+use wenlan_types::repo_wiki::{
+    BindRepoWikiRequest, RepoWikiAgent, RepoWikiBinding, RepoWikiDaily, RepoWikiRunner,
+};
 
 use super::mcp::{ConnectArgs, McpClient};
 use crate::client::WenlanClient;
@@ -81,6 +83,43 @@ fn installed_tools(on_path: impl Fn(&str) -> bool, home: Option<&Path>) -> Vec<T
     tools
 }
 
+/// The local hour after which the daily run `init` turns on starts.
+const DAILY_HOUR: u8 = 9;
+
+/// The AI tool a daily run would start: the first one installed here, in the
+/// order `wenlan repo bind --agent` lists them.
+fn daily_agent(on_path: impl Fn(&str) -> bool) -> Option<RepoWikiAgent> {
+    RepoWikiAgent::ALL
+        .into_iter()
+        .find(|agent| agent.programs().iter().any(|program| on_path(program)))
+}
+
+/// Whether to open a pull request every day, asked once when the repository
+/// is first tied. Only a yes on the terminal turns it on: with nobody to ask,
+/// no pull request to open (no `origin`) or no AI tool to start, it stays off.
+fn daily_choice(
+    target: &PublishTarget,
+    agent: Option<RepoWikiAgent>,
+    interactive: bool,
+) -> Result<Option<RepoWikiDaily>> {
+    let (Some(_), Some(agent), true) = (target.name(), agent, interactive) else {
+        return Ok(None);
+    };
+    let yes = ask(
+        &format!(
+            "Open a pull request every day when something changed? It starts {} on this computer once a day, after {DAILY_HOUR:02}:00.",
+            agent.display_name()
+        ),
+        true,
+    )?;
+    Ok(yes.then_some(RepoWikiDaily {
+        enabled: true,
+        hour: DAILY_HOUR,
+        agent,
+        runs_on: RepoWikiRunner::Computer,
+    }))
+}
+
 /// How the Space and this repository stand after `init`.
 enum Tie {
     /// Tied by this run.
@@ -135,13 +174,18 @@ pub async fn run(client: &WenlanClient, format: ResolvedFormat, quiet: bool) -> 
         None => {
             let target = repo_wiki::publish_target(&top, repo_wiki::find_gh().as_deref());
             if agreed(&target, interactive)? {
+                let daily = daily_choice(
+                    &target,
+                    daily_agent(|program| which::which(program).is_ok()),
+                    interactive,
+                )?;
                 let binding = client
                     .bind_repo_wiki(
                         &space,
                         &BindRepoWikiRequest {
                             repo_root: top.to_string_lossy().into_owned(),
                             folder: None,
-                            daily: None,
+                            daily,
                         },
                     )
                     .await?;
@@ -212,10 +256,22 @@ pub async fn run(client: &WenlanClient, format: ResolvedFormat, quiet: bool) -> 
         println!("Space '{space}' is already set up for this folder.");
     }
     match &tie {
-        Tie::Made(binding) => println!(
-            "Tied it to {}. `wenlan repo publish` puts its pages into the repository as a pull request.",
-            binding.repo_root
-        ),
+        Tie::Made(binding) => {
+            println!(
+                "Tied it to {}. `wenlan repo publish` puts its pages into the repository as a pull request.",
+                binding.repo_root
+            );
+            match &binding.daily {
+                Some(daily) if daily.enabled => println!(
+                    "A pull request opens every day when something changed, after {:02}:00, with {}. `wenlan repo bind --daily off` stops it.",
+                    daily.hour,
+                    daily.agent.display_name()
+                ),
+                _ => println!(
+                    "No daily pull request. `wenlan repo bind --daily {DAILY_HOUR}` turns it on."
+                ),
+            }
+        }
         Tie::Already(binding) => println!("It is already tied to {}.", binding.repo_root),
         Tie::Elsewhere(binding) => println!(
             "It is tied to another folder, {}, and was left as it is.",
@@ -381,5 +437,39 @@ mod tests {
             signed_in_as: None,
         };
         assert!(agreed(&no_remote, false).unwrap());
+    }
+
+    #[test]
+    fn the_daily_question_is_not_asked_with_nobody_to_ask_no_origin_or_no_ai_tool() {
+        let mine = PublishTarget {
+            remote_url: Some("https://github.com/me/acme-api.git".to_owned()),
+            slug: Some("me/acme-api".to_owned()),
+            signed_in_as: Some("me".to_owned()),
+        };
+        let no_remote = PublishTarget {
+            remote_url: None,
+            slug: None,
+            signed_in_as: None,
+        };
+        let claude = Some(RepoWikiAgent::Claude);
+        // No terminal.
+        assert_eq!(daily_choice(&mine, claude, false).unwrap(), None);
+        // Nowhere to open a pull request.
+        assert_eq!(daily_choice(&no_remote, claude, true).unwrap(), None);
+        // No AI tool to start.
+        assert_eq!(daily_choice(&mine, None, true).unwrap(), None);
+    }
+
+    #[test]
+    fn the_daily_run_starts_the_first_ai_tool_installed() {
+        assert_eq!(daily_agent(|_| false), None);
+        assert_eq!(
+            daily_agent(|program| program == "codex" || program == "copilot"),
+            Some(RepoWikiAgent::Codex)
+        );
+        assert_eq!(
+            daily_agent(|program| program == "cursor-agent"),
+            Some(RepoWikiAgent::Cursor)
+        );
     }
 }

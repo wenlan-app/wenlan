@@ -650,9 +650,11 @@ and wait for evidence that people need them.
   computer. From then on the terminal and every AI tool started in that
   folder use that Space without being told, and `wenlan status` shows which
   Space the folder uses. `wenlan spaces` and `wenlan repo` keep working and
-  sit under `wenlan help all`. Setting a repository up turns on no daily run,
-  and it never ties a repository that is not yours without a yes.
-  原文：「跟空間啥的一起思考呢？」（2026-11-16 08:15Z）；「對 還有意思是指 讓他們進到 repo 後就可以下指令不用 wenlan repo 動作」（2026-11-16 08:30Z）；「那這樣 wenlan space 還有存在必要？」「還是說要怎麼整合整併」（2026-11-16 08:33Z）；「繼續推進」（2026-11-16 08:35Z）。
+  sit under `wenlan help all`. When it first ties a repository, `wenlan init`
+  asks once whether to open a pull request every day, and Enter means yes;
+  with nobody to ask, the daily run stays off and the command that turns it
+  on is named. It never ties a repository that is not yours without a yes.
+  原文：「跟空間啥的一起思考呢？」（2026-11-16 08:15Z）；「對 還有意思是指 讓他們進到 repo 後就可以下指令不用 wenlan repo 動作」（2026-11-16 08:30Z）；「那這樣 wenlan space 還有存在必要？」「還是說要怎麼整合整併」（2026-11-16 08:33Z）；「繼續推進」（2026-11-16 08:35Z）；「感覺可以」（2026-11-16，答「讓 init 多問一句『要不要每天自動開 PR』，預設是要」）。
 
 ## Adding to Wenlan
 
