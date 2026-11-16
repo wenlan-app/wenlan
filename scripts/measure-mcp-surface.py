@@ -7,7 +7,7 @@ declaration and the standard `with_instructions("...")` string, unescapes the
 Rust string literals, and prints the Unicode character count of each tool
 description plus the totals. The numbers back the budget tests in `tools.rs`
 (`visible_tool_descriptions_stay_within_budget`,
-`instructions_open_with_the_wiki_and_stay_short`).
+`instructions_open_with_what_wenlan_holds_and_stay_short`).
 
 Usage: python3 scripts/measure-mcp-surface.py [--json]
 """

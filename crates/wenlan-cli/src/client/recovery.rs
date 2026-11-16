@@ -38,8 +38,8 @@ pub(crate) fn connect_failure_hint(base_url: &str) -> String {
         return format!("cannot connect to the Wenlan daemon at {base_url} (from WENLAN_HOST)");
     }
     let mut hint = format!(
-        "Wenlan is not running at {base_url} — run `wenlan status`; if Wenlan is \
-         installed, `wenlan start` starts it"
+        "Wenlan is not running at {base_url} — `wenlan start` starts it; if that fails, \
+         `wenlan doctor` says why"
     );
     if std::env::var_os("WENLAN_NO_AUTOSTART").is_some_and(|value| !value.is_empty()) {
         hint.push_str(" (WENLAN_NO_AUTOSTART is set, so it was not started automatically)");
