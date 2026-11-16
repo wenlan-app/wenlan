@@ -26,6 +26,8 @@ export type View =
   | { readonly kind: "pages"; readonly inventoryScope?: WikiInventoryScope }
   | { readonly kind: "recaps" }
   | { readonly kind: "settings"; readonly section?: SettingsSection }
+  /** Library › Skills: find and install other people's skills (skills.sh). */
+  | { readonly kind: "skills" }
   | { readonly kind: "sources" }
   | { readonly kind: "source-document"; readonly file: IndexedFileInfo }
   | { readonly kind: "space"; readonly spaceId: string | null; readonly spaceName: string }
@@ -55,6 +57,7 @@ export function activeNavigationForView(view: View): GlobalNavigation | null {
     case "page":
     case "page-draft":
     case "pages":
+    case "skills":
       return "pages";
     // The topic list opens from the graph, so the graph stays lit there.
     case "entities":
