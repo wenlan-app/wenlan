@@ -441,6 +441,22 @@ function searchPagesVia(a: any, headers?: Record<string, string>): Promise<unkno
   ).then((r) => r.pages ?? r);
 }
 
+/**
+ * The page object of a `GET /api/pages/{id}` answer, with the lists that
+ * ride beside it (the pages and code it relies on, selection impacts)
+ * folded in, as the desktop app's `page_from_wire` does. A field the page
+ * already carries wins.
+ */
+export function pageFromWire(wire: any): unknown {
+  const page = wire?.page;
+  if (!page || typeof page !== "object") return null;
+  const folded: Record<string, unknown> = { ...page };
+  for (const key of ["selection_impacts", "basis", "code_basis"]) {
+    if (wire[key] != null && folded[key] === undefined) folded[key] = wire[key];
+  }
+  return folded;
+}
+
 async function getPageVia(a: any, headers?: Record<string, string>): Promise<unknown> {
   const id = String(a.id);
   const previewPage = PREVIEW_AUTHORED_PAGES.get(id);
@@ -448,7 +464,7 @@ async function getPageVia(a: any, headers?: Record<string, string>): Promise<unk
   if (PREVIEW_DELETED_PAGE_IDS.has(id)) return null;
   try {
     const wire = await get(`/api/pages/${enc(a.id)}`, headers);
-    return wire?.page ?? null;
+    return pageFromWire(wire);
   } catch (e) {
     if (e instanceof HttpError && e.status === 404) return null;
     throw e;

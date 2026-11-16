@@ -153,6 +153,19 @@ describe("PageDetail info panel for a team member", () => {
     });
   }
 
+  it("only the owner gets Update from sources, which has no team row", async () => {
+    tauriMocks.getPage.mockResolvedValue({ ...PAGE, version: 2, basis: [{ page_id: "page-2", title: "Bird counts", state: "ok", from_version: 1, to_version: 1, minor_only: false }] });
+    const update = () => screen.queryByRole("button", { name: i18n.t("pageDetail.redistillPage") });
+    const owner = renderPage();
+    await openInfo(owner.user);
+    await waitFor(() => expect(update()).not.toBeNull());
+    owner.unmount();
+    const writer = renderPage(member("write"));
+    await openInfo(writer.user);
+    expect(await screen.findByText("Bird counts")).toBeInTheDocument();
+    expect(update()).toBeNull();
+  });
+
   it("an unlocked page shows a member no lock notice", async () => {
     const { user } = renderPage(member("write"));
     await openInfo(user);

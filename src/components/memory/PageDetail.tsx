@@ -3721,11 +3721,11 @@ export default function PageDetail({
               onMarkBasis={basisEditable ? markBasis : undefined}
               onUnmarkBasis={basisEditable ? unmarkBasis : undefined}
               codeBasis={codeBasisRefs}
-              onUnmarkCodeBasis={unmarkCodeBasis}
+              onUnmarkCodeBasis={teamAccess.member ? undefined : unmarkCodeBasis}
               shares={shares.data}
               openVersion={openLostVersion}
               onOpenedVersion={clearOpenLostVersion}
-              sourcesAction={page.status === "active" && canUpdateFromSources ? <button
+              sourcesAction={page.status === "active" && canUpdateFromSources && !teamAccess.member ? <button
                 className="note-info-sources-action"
                 disabled={storedActionBlocked || redistillMutation.isPending}
                 aria-busy={redistillMutation.isPending}
