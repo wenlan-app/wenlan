@@ -245,10 +245,13 @@ function NewMenu({ exampleWiki, canCreateFolder, onNewPage, onNewFolder }: {
               <span>{t("pages.overview.newPage")}</span>
             </button>
           )}
-          <button type="button" role="menuitem" aria-disabled={folderDisabled} onClick={() => { if (folderDisabled) return; close(true); onNewFolder(); }}>
-            <FolderPlus aria-hidden="true" size={16} />
-            <span>{t("pages.folders.newFolder")}</span>
-          </button>
+          {/* Folders live on the owner's computer; the team server makes none. */}
+          {!teamAccess.member && (
+            <button type="button" role="menuitem" aria-disabled={folderDisabled} onClick={() => { if (folderDisabled) return; close(true); onNewFolder(); }}>
+              <FolderPlus aria-hidden="true" size={16} />
+              <span>{t("pages.folders.newFolder")}</span>
+            </button>
+          )}
         </div>
       )}
     </div>

@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { WikiWorkspace } from "./WikiWorkspace";
 import { WikiDirectory } from "./WikiDirectory";
 import { useWikiFolderCreation } from "./WikiFolderCreationContext";
+import { TeamAccessProvider, teamAccessFor } from "../../../web/teamAccess";
 
 // Panels read through react-query, so every render needs a query client.
 // Each render gets its own.
@@ -98,6 +99,15 @@ describe("WikiWorkspace", () => {
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
     rerender(<WikiWorkspace {...props} inventoryMode="archived"><textarea /></WikiWorkspace>);
     expect(screen.queryByRole("button", { name: "New page or folder" })).not.toBeInTheDocument();
+  });
+
+  it("a team member's New menu has New page but no New folder, since folders stay on the owner's computer", () => {
+    const props = { onBrowse: vi.fn(), onCreatePage: vi.fn(), onOpenDraft: vi.fn(), onOpenPage: vi.fn() };
+    const access = teamAccessFor({ member_id: "m", name: "Amy", spaces: [{ space: "Field Notes", access: "write" }] });
+    render(<TeamAccessProvider value={access}><WikiWorkspace {...props}><textarea /></WikiWorkspace></TeamAccessProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "New page or folder" }));
+    const menu = screen.getByRole("menu", { name: "New page or folder" });
+    expect(Array.from(menu.querySelectorAll("[role='menuitem']")).map(item => item.textContent)).toEqual(["New page"]);
   });
 
   it("shows the page count as a number beside the Folders title", () => {

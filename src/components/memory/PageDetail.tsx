@@ -2433,7 +2433,9 @@ export default function PageDetail({
     };
   };
   // An entity's own page cannot rely on, or be, a note.
-  const basisEditable = page.creation_kind !== "entity";
+  // A team member's server keeps no basis marks, so the Pages section and its
+  // Add a page link stay with the owner.
+  const basisEditable = page.creation_kind !== "entity" && !teamAccess.member;
 
   // A page someone wrote reads as written: its own Markdown (tables, a
   // `## Sources` heading of its own, a first H1 that is not the title), with
@@ -3635,7 +3637,9 @@ export default function PageDetail({
           </div>
           {/* The daemon refuses to lock an entity shadow page. The switch is
               the page's review lock (UX-WHO-2). */}
-          {page.creation_kind !== "entity" && <PageLockSwitch
+          {/* The lock and the knowledge graph are the owner's: the team server
+              keeps neither, so a member sees neither. */}
+          {page.creation_kind !== "entity" && !teamAccess.member && <PageLockSwitch
             locked={page.review_required === true}
             pending={reviewLockPending}
             disabled={storedActionBlocked}
@@ -3645,12 +3649,12 @@ export default function PageDetail({
             }}
           />}
           <div className="note-info-sections">
-            <KnowledgeContext standaloneGraph diagramOnly key={pageId} kind="page" id={pageId} title={page.title}
+            {!teamAccess.member && <KnowledgeContext standaloneGraph diagramOnly key={pageId} kind="page" id={pageId} title={page.title}
               onOpenGraph={onOpenGraph ? () => onOpenGraph(pageId) : undefined}
               onNavigateMemory={(id) => { setInfoOpen(false); onMemoryClick(id); }}
               onNavigatePage={onPageClick}
               onNavigateEntity={onEntityClick ? (id) => { setInfoOpen(false); onEntityClick(id); } : undefined}
-            />
+            />}
             {hasRail && (
               <div className="flex flex-col gap-4">
                 {pageEntities.length > 0 && (
