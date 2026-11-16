@@ -1589,6 +1589,15 @@ def candidate_observer_contract_violations(
     indices = [producer.find(f"- name: {name}") for name in producer_steps]
     if any(index < 0 for index in indices) or indices != sorted(indices):
         violations.append("candidate producer does not package, smoke, manifest, then upload in order")
+    rehearsal = named_step_body(producer, "Rehearse release archive packaging")
+    if (
+        f'if: "!({exact_gate})"' not in rehearsal
+        or "scripts/package-release-artifacts.py" not in rehearsal
+        or "--output-dir dist" not in rehearsal
+        or "upload-artifact" in rehearsal
+        or producer.find("- name: Rehearse release archive packaging") > indices[0]
+    ):
+        violations.append("non-release preflight does not rehearse release packaging before the candidate producer")
     checkout = re.search(
         r"uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6\n"
         r"\s+with:\n(?P<body>.*?)(?=\n\s+- uses:|\n\s+- name:)",
