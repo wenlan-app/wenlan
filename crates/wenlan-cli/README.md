@@ -1282,6 +1282,34 @@ Stop putting this Space's pages into its repository.
 wenlan wiki unbind [OPTIONS]
 ```
 
+#### `wenlan wiki follow`
+
+Make docs of the bound repository follow a page of the Space: when the page changes, the AI tool suggests fixes to them for the wiki pull request.
+
+```text
+wenlan wiki follow [OPTIONS] --page <PAGE> <FILES>...
+```
+
+Arguments:
+
+- `<FILES>...`: Docs relative to the repository root, such as README.md.
+
+Options:
+
+- `--page <PAGE>`: The page the docs follow (its id).
+
+#### `wenlan wiki unfollow`
+
+Stop the docs following a page.
+
+```text
+wenlan wiki unfollow [OPTIONS] --page <PAGE>
+```
+
+Options:
+
+- `--page <PAGE>`: The page the docs follow (its id).
+
 #### `wenlan wiki refresh`
 
 Check the wiki folder of this checkout against the code: fix line numbers that moved and have an AI tool rewrite pages whose code changed. Works without Wenlan running; the GitHub Actions workflow runs it.
