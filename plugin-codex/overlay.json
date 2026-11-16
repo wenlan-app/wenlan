@@ -280,12 +280,18 @@
         "short_description": "Search Wenlan memories from Codex"
       }
     },
+    "how-i-work": {
+      "openai": {
+        "display_name": "Wenlan How I Work",
+        "short_description": "Read this Space's approved rules before choosing an approach"
+      }
+    },
     "setup": {
       "replace": [
         {
           "from": [
             "```bash",
-            "npx -y wenlan@0.21.7 setup",
+            "npx -y wenlan@0.22.0 setup",
             "export PATH=\"$HOME/.wenlan/bin:$PATH\"",
             "```",
             "",
@@ -317,11 +323,12 @@
             "prints the status:",
             "",
             "```bash",
-            "npx -y wenlan@0.21.7 setup",
+            "npx -y wenlan@0.22.0 setup",
             "export PATH=\"$HOME/.wenlan/bin:$PATH\"",
             "```",
             "",
-            "The package supports macOS Apple Silicon and needs Node.js. On any other",
+            "The package supports macOS Apple Silicon, Linux x64 or ARM64, and Windows x64,",
+            "and needs Node.js. On Windows the folder is `%USERPROFILE%\\.wenlan\\bin`. On any other",
             "platform, or when `npx` is missing or the command fails, do not fetch or run an",
             "installer yourself. Stop and tell the user to install the runtime by following",
             "<https://github.com/wenlan-app/wenlan/blob/main/docs/setup-with-ai.md#install-the-runtime>,",
@@ -331,7 +338,7 @@
             "If absent, install and configure local memory:",
             "",
             "```bash",
-            "curl -fsSL https://raw.githubusercontent.com/wenlan-app/wenlan/v0.21.7/install.sh | bash",
+            "curl -fsSL https://raw.githubusercontent.com/wenlan-app/wenlan/v0.22.0/install.sh | bash",
             "export PATH=\"$HOME/.wenlan/bin:$PATH\"",
             "wenlan setup --basic",
             "wenlan background on",

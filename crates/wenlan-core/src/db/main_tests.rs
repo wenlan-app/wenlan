@@ -24419,6 +24419,42 @@ async fn list_recent_changes_classifies_created_vs_revised() {
     assert_eq!(by_id.get("c_rev"), Some(&PageChangeKind::Revised));
 }
 
+/// A change an AI tool made through a refresh names that tool, read from the
+/// page's changelog; a person's change carries no tool.
+#[tokio::test]
+async fn list_recent_changes_names_the_ai_tool_behind_a_refresh() {
+    let (db, _dir) = test_db().await;
+    let now = chrono::Utc::now().to_rfc3339();
+    for id in ["by_ai", "by_hand"] {
+        db.insert_page(id, id, None, "content", None, None, &[], &now)
+            .await
+            .unwrap();
+    }
+    {
+        let conn = db.conn.lock().await;
+        conn.execute_batch(
+            "UPDATE pages SET version = 2, changelog = '[{\"version\":2,\"at\":1,\"edited_by\":\"agent_refresh\",\"agent\":\"claude-code@team.m-ben\"}]' WHERE id = 'by_ai';
+             UPDATE pages SET version = 2 WHERE id = 'by_hand';
+             INSERT INTO page_history (page_id, version, content, source_memory_ids, edited_by, created_at)
+             VALUES ('by_ai', 2, 'content', '[]', 'agent_refresh', 1),
+                    ('by_hand', 2, 'content', '[]', 'shared_person:m-amy', 1);",
+        )
+        .await
+        .unwrap();
+    }
+    let changes = db.list_recent_changes(10).await.unwrap();
+    let agent = |id: &str| {
+        changes
+            .iter()
+            .find(|change| change.page_id == id)
+            .unwrap()
+            .agent
+            .clone()
+    };
+    assert_eq!(agent("by_ai").as_deref(), Some("claude-code@team.m-ben"));
+    assert_eq!(agent("by_hand"), None);
+}
+
 #[tokio::test]
 async fn list_recent_changes_excludes_non_active() {
     let (db, _dir) = test_db().await;

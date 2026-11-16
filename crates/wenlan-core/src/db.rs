@@ -129,6 +129,7 @@ pub mod research_disputes;
 pub mod research_runs;
 pub mod research_write;
 pub mod sessions;
+pub mod skill_grow;
 pub mod source_annotations;
 mod source_sync;
 mod space_context;
@@ -25733,8 +25734,8 @@ impl MemoryDB {
         tx.commit()
             .await
             .map_err(|e| WenlanError::VectorDb(format!("create_space commit: {e}")))?;
-
-        Ok(Space {
+        drop(conn);
+        let space = Space {
             id,
             name: name.to_string(),
             description: description.map(|s| s.to_string()),
@@ -25746,7 +25747,27 @@ impl MemoryDB {
             entity_count: 0,
             created_at: now,
             updated_at: now,
-        })
+        };
+        if matches!(
+            space.name.trim().to_ascii_lowercase().as_str(),
+            "personal" | "private"
+        ) {
+            self.set_space_rules_state(&skill_grow::SpaceRulesState {
+                space_id: space.id.clone(),
+                space_name: space.name.clone(),
+                status: skill_grow::SpaceRulesStatus::ExcludedPrivate,
+                rules_page_id: None,
+                lines: Vec::new(),
+                deleted_fingerprints: Vec::new(),
+                input_hash: String::new(),
+                last_success_at: 0,
+                failure_count: 0,
+                next_retry_at: 0,
+                undo: None,
+            })
+            .await?;
+        }
+        Ok(space)
     }
 
     pub async fn update_space(
@@ -25831,9 +25852,30 @@ impl MemoryDB {
             .await
             .map_err(|e| WenlanError::VectorDb(format!("update_space commit: {}", e)))?;
         drop(conn);
-        self.get_space(new_name)
+        let space = self
+            .get_space(new_name)
             .await?
-            .ok_or_else(|| WenlanError::VectorDb("space not found after update".into()))
+            .ok_or_else(|| WenlanError::VectorDb("space not found after update".into()))?;
+        if matches!(
+            space.name.trim().to_ascii_lowercase().as_str(),
+            "personal" | "private"
+        ) {
+            self.set_space_rules_state(&skill_grow::SpaceRulesState {
+                space_id: space.id.clone(),
+                space_name: space.name.clone(),
+                status: skill_grow::SpaceRulesStatus::ExcludedPrivate,
+                rules_page_id: None,
+                lines: Vec::new(),
+                deleted_fingerprints: Vec::new(),
+                input_hash: String::new(),
+                last_success_at: 0,
+                failure_count: 0,
+                next_retry_at: 0,
+                undo: None,
+            })
+            .await?;
+        }
+        Ok(space)
     }
 
     /// Delete a space. `memory_action`:
@@ -52780,6 +52822,7 @@ impl MemoryDB {
                 changed_at_ms,
                 edited_by: None,
                 changed_sentences: None,
+                agent: None,
             });
             versions.push(version);
         }
@@ -52804,6 +52847,9 @@ impl MemoryDB {
             };
             if !current.edited_by.is_empty() {
                 change.edited_by = Some(current.edited_by.clone());
+            }
+            if current.edited_by == "agent_refresh" {
+                change.agent = self.changelog_agent_at(&change.page_id, version).await;
             }
             if version <= 1 {
                 continue;
@@ -62110,6 +62156,19 @@ impl MemoryDB {
             Some(row) => Ok(row.get::<Option<String>>(0).unwrap_or(None)),
             None => Ok(None),
         }
+    }
+
+    /// The AI tool the page's changelog names for `version`, if any.
+    async fn changelog_agent_at(&self, page_id: &str, version: i64) -> Option<String> {
+        let json = self.get_page_changelog(page_id).await.ok()?;
+        let entries: Vec<wenlan_types::responses::PageChangelogEntry> =
+            serde_json::from_str(&json).ok()?;
+        entries
+            .into_iter()
+            .rev()
+            .find(|entry| entry.version == version)
+            .and_then(|entry| entry.agent)
+            .filter(|agent| !agent.trim().is_empty())
     }
 
     /// Read the current `changelog` JSON string for a page.

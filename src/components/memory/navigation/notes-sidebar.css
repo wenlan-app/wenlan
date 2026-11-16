@@ -444,3 +444,34 @@
 /* One icon column: top-level pages line up with top-level folders,
    whose caret sits in the gutter to the left of the icon. */
 .notes-wiki-section .notes-inventory-root-pages > li > .notes-inventory-page { padding-left: calc(9px + 18px); }
+
+/* Pages the person pinned sit under the destinations with a gap and no
+   heading (UX-FIND-6). */
+.notes-pinned-pages { display: flex; flex: 0 0 auto; flex-direction: column; width: 100%; margin-top: 14px; }
+.notes-rail-nav--icons .notes-pinned-pages { align-items: center; }
+.notes-pinned-page { position: relative; display: flex; width: 100%; }
+.notes-rail-nav--icons .notes-pinned-page { width: auto; }
+.notes-pinned-page[data-dragging="true"] { opacity: 0.5; }
+.notes-pinned-page-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.notes-pinned-page-initial { font: 600 13px var(--mem-font-body); }
+.notes-pinned-page-unpin {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  display: none;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--mem-r-5);
+  background: var(--mem-hover);
+  color: var(--mem-text-secondary);
+  cursor: pointer;
+  transform: translateY(-50%);
+}
+.notes-pinned-page:hover .notes-pinned-page-unpin,
+.notes-pinned-page-unpin:focus-visible { display: flex; }
+.notes-pinned-page-unpin:hover { color: var(--mem-text); }
+.notes-pinned-page:hover .notes-primary-link { padding-right: 36px; }
+.notes-pinned-page .notes-primary-link { flex: 1 1 auto; min-width: 0; }

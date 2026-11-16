@@ -1,30 +1,32 @@
 # wenlan-cli
 
-Wenlan's command line. Wenlan is a personal wiki your AI tools keep up to date; the CLI is how you capture, recall, hand off, and keep the pages healthy from a terminal, plus set up and check the local runtime.
+Wenlan's command line. Wenlan is a studio for everything you think, learn, and build with AI; the CLI is how you capture, recall, hand off, and keep the pages healthy from a terminal, plus set up and check the local runtime.
 
 License: Apache-2.0.
 
 ## Install
 
-Recommended user setup on macOS Apple Silicon:
+One line on macOS Apple Silicon, Linux x64 or ARM64 (glibc), and Windows x64. It needs Node.js 18 or newer:
 
 ```bash
 npx -y wenlan setup
 ```
 
-The setup package downloads `wenlan`, `wenlan-server`, and `wenlan-mcp` into `~/.wenlan/bin/`, configures local memory, starts the background runtime, and verifies status. It currently supports macOS Apple Silicon.
+It downloads `wenlan`, `wenlan-server`, and `wenlan-mcp` for this computer into `~/.wenlan/bin/` (`%USERPROFILE%\.wenlan\bin` on Windows, with the DLLs the daemon loads), checks the download against the release's `SHA256SUMS`, configures local memory, starts the background runtime, and prints its status. After that, `npx wenlan <command>` runs the installed CLI; the last lines of setup say how to put `wenlan` itself on `PATH`.
 
-Linux x64/ARM64 has an automated shell path:
+On Linux with no systemd user session (a container, WSL without systemd, some SSH logins) nothing can keep Wenlan running in the background. Setup starts it for now and says how to start it again after a restart.
+
+Without Node.js on macOS or Linux:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/wenlan-app/wenlan/main/install.sh | bash
 export PATH="$HOME/.wenlan/bin:$PATH"
 wenlan setup --basic
-wenlan background on
+wenlan start
 wenlan status
 ```
 
-Windows x64 users can unpack `wenlan-windows-x64.zip` from [Releases](https://github.com/wenlan-app/wenlan/releases/latest) into a directory on `PATH`. Keep the bundled `onnxruntime.dll` beside the three `.exe` files, then run the same three `wenlan` commands.
+Without Node.js on Windows, unpack `wenlan-windows-x64.zip` from [Releases](https://github.com/wenlan-app/wenlan/releases/latest) as a unit into a directory on `PATH`, then run the same three `wenlan` commands.
 
 ### macOS Intel
 
@@ -117,6 +119,42 @@ wenlan pages "project roadmap" --print
 
 `--print` writes the page text and the memories it was written from to the terminal instead of opening it. If the query matches more than one page, it lists them and asks you to narrow the query. With `--format json` it prints one object with `page` and `sources`.
 
+**Change pages from the terminal**
+
+Everything an AI tool can do to a page through the MCP server, under the same names. A page is named by its title, part of its title, or its id; if more than one page matches, the command lists them and stops.
+
+```bash
+wenlan pages read "project roadmap"
+wenlan pages write --title "Project roadmap" --file roadmap.md
+wenlan pages write "project roadmap" --file roadmap.md   # replace the text
+wenlan pages rename "project roadmap" "Roadmap 2027"
+wenlan pages move "Roadmap 2027" plans/2027               # folders are created as needed
+wenlan pages history "Roadmap 2027"
+wenlan pages restore "Roadmap 2027" <version>
+wenlan pages links "Roadmap 2027"
+```
+
+These commands act as an AI tool does, so the same limits apply. `wenlan pages delete` cannot remove a page a person wrote; delete those in the app.
+
+**`wenlan memories pending | confirm | forget | history`**
+
+```bash
+wenlan memories pending
+wenlan memories confirm <id>
+wenlan memories forget <id>
+```
+
+**`wenlan tool`**
+
+The full tool list the MCP server offers, callable by name. Use it for anything that has no command of its own yet.
+
+```bash
+wenlan tool list
+wenlan tool show write_page
+wenlan tool call list_pages limit=5
+wenlan tool call write_page --json '{"title":"Notes","content":"Hello"}'
+```
+
 **`wenlan curate`**
 
 Walk pending revisions (conflicts / merges) awaiting your accept or dismiss.
@@ -147,7 +185,7 @@ wenlan spaces move scratch career
 
 **`wenlan team`**
 
-Run a team server (add members, host Spaces) or join one with a join code.
+Run a team server (add members, share Spaces) or join one with a join code.
 
 ```bash
 wenlan team status
@@ -179,11 +217,11 @@ wenlan setup --anthropic-api-key-env ANTHROPIC_API_KEY
 
 **`wenlan background <on|off>` and `wenlan restart`**
 
-Start or stop the per-user background runtime. `wenlan background off` stops the current daemon while preserving its login registration and writes `<data root>/autostart.off`, so recovery will not start it again. Run `wenlan background on` to remove the marker and start it again; it waits up to 10 s for the daemon to answer before saying "started" and, on macOS, reports an error the daemon logged during this start (never one left over from an earlier run). Most users run `wenlan background on` once after setup and `wenlan restart` after upgrades installed outside `wenlan setup`.
+Start or stop the per-user background runtime. `wenlan stop` stops the current daemon while preserving its login registration and writes `<data root>/autostart.off`, so recovery will not start it again. Run `wenlan start` to remove the marker and start it again; it waits up to 10 s for the daemon to answer before saying "started" and, on macOS, reports an error the daemon logged during this start (never one left over from an earlier run). Most users run `wenlan start` once after setup and `wenlan restart` after upgrades installed outside `wenlan setup`.
 
 ```bash
-wenlan background on
-wenlan background off
+wenlan start
+wenlan stop
 wenlan restart
 ```
 
@@ -241,7 +279,10 @@ Configure Wenlan MCP for a supported client. This is the MCP-only path for Claud
 wenlan connect claude-code
 wenlan connect codex
 wenlan connect cursor --dry-run
+wenlan connect cursor --all-tools
 ```
+
+The client is given the 19 everyday tools: reading and searching, the approved working rules, saving, writing and reshaping pages, and writing pages on demand. A client loads every listed tool into each conversation, and the full list of 59 is more than twice the size. `--all-tools` lists them all (health checks and repairs, review queues, entities, folders, version history); without it they are still one `wenlan tool call <name>` away in a terminal.
 
 Supported clients: `claude-code`, `codex`, `gemini`, `cursor`, `claude-desktop`, `vscode`.
 
@@ -356,7 +397,7 @@ Options:
 
 ### `wenlan recall`
 
-Recall scored memories for a query, plus the compiled pages that match it.
+Find the memories and pages that match a query.
 
 ```text
 wenlan recall [OPTIONS] <QUERY>
@@ -370,9 +411,17 @@ Options:
 
 - `-l, --limit <LIMIT>`: Max memories to return. Default: `10`.
 
+### `wenlan rules`
+
+Read the working rules approved for a Space.
+
+```text
+wenlan rules [OPTIONS]
+```
+
 ### `wenlan pages`
 
-Browse distilled pages, open one in your editor by title query, or lock a page so machine updates wait for your review.
+List pages or open one by title; read, write, rename, move, delete or restore one (read, write, rename, delete, move, history, restore, links, lock, unlock).
 
 ```text
 wenlan pages [OPTIONS] [QUERY]
@@ -413,12 +462,122 @@ Arguments:
 
 - `<PAGE_ID>`: The page's id (see `wenlan pages <query> --resolve-id`).
 
+#### `wenlan pages read`
+
+Print a page: its title, text and sources (the read_page tool).
+
+```text
+wenlan pages read [OPTIONS] <PAGE>
+```
+
+Arguments:
+
+- `<PAGE>`: The page's title, part of it, or its id.
+
+#### `wenlan pages write`
+
+Create a page, or replace the text of an existing one (the write_page tool). Text comes from --file or stdin.
+
+```text
+wenlan pages write [OPTIONS] [PAGE]
+```
+
+Arguments:
+
+- `[PAGE]`: An existing page to replace: its title, part of it, or its id. Leave out to create a page.
+
+Options:
+
+- `--title <TITLE>`: Title for a new page.
+- `--file <PATH>`: Read the text from this file instead of stdin.
+- `--summary <SUMMARY>`: One-sentence summary.
+
+#### `wenlan pages rename`
+
+Change a page's title; links to it follow (the rename_page tool).
+
+```text
+wenlan pages rename [OPTIONS] <PAGE> <TITLE>
+```
+
+Arguments:
+
+- `<PAGE>`: The page's title, part of it, or its id.
+- `<TITLE>`: The new title.
+
+#### `wenlan pages delete`
+
+Delete a page (the delete_page tool). Asks first.
+
+```text
+wenlan pages delete [OPTIONS] <PAGE>
+```
+
+Arguments:
+
+- `<PAGE>`: The page's title, part of it, or its id.
+
+Options:
+
+- `-y, --yes`: Do not ask.
+
+#### `wenlan pages move`
+
+Move a page into a folder; "" is the top level (the move_page tool).
+
+```text
+wenlan pages move [OPTIONS] <PAGE> <FOLDER>
+```
+
+Arguments:
+
+- `<PAGE>`: The page's title, part of it, or its id.
+- `<FOLDER>`: Destination folder path.
+
+#### `wenlan pages history`
+
+List a page's versions, newest first (the get_page_revisions tool).
+
+```text
+wenlan pages history [OPTIONS] <PAGE>
+```
+
+Arguments:
+
+- `<PAGE>`: The page's title, part of it, or its id.
+
+#### `wenlan pages restore`
+
+Put an earlier version of a page back (the restore_page_version tool).
+
+```text
+wenlan pages restore [OPTIONS] <PAGE> <VERSION>
+```
+
+Arguments:
+
+- `<PAGE>`: The page's title, part of it, or its id.
+- `<VERSION>`: The version to put back, as `wenlan pages history` lists it.
+
+#### `wenlan pages links`
+
+Show the pages this page links to and the pages linking to it (the get_page_links tool).
+
+```text
+wenlan pages links [OPTIONS] <PAGE>
+```
+
+Arguments:
+
+- `<PAGE>`: The page's title, part of it, or its id.
+
 ### `wenlan memories`
 
-List recent memories.
+List recent memories, or confirm, forget and review them (pending, confirm, forget, history).
 
 ```text
 wenlan memories [OPTIONS]
+       wenlan memories <COMMAND>
 ```
 
 Options:
@@ -427,68 +586,369 @@ Options:
 - `-t, --type <MEMORY_TYPE>`: Filter by memory type.
 - `--pending`: Only pending captures (not yet confirmed; what the MCP list_pending tool returns).
 
-### `wenlan curate`
+#### `wenlan memories pending`
 
-Walk pending revisions (conflicts / merges) awaiting your accept or dismiss.
-
-```text
-wenlan curate [OPTIONS] [COMMAND]
-```
-
-#### `wenlan curate revisions`
-
-List pending revisions (the default when no action is given).
+List captures waiting for review (the list_pending tool).
 
 ```text
-wenlan curate revisions [OPTIONS]
+wenlan memories pending [OPTIONS]
 ```
 
 Options:
 
-- `-l, --limit <LIMIT>`: Max revisions to fetch. Default: `20`.
+- `-l, --limit <LIMIT>`: Max results. Default: `20`.
 
-#### `wenlan curate accept`
+#### `wenlan memories confirm`
 
-Not available here: only the person accepts a revision, in the Wenlan app. Prints where to accept it and exits with an error.
+Confirm a pending memory (the confirm_memory tool).
 
 ```text
-wenlan curate accept [OPTIONS] <REVISION_SOURCE_ID>
+wenlan memories confirm [OPTIONS] <ID>
 ```
 
 Arguments:
 
-- `<REVISION_SOURCE_ID>`: `revision_source_id` of the revision (from the list output).
+- `<ID>`: The memory's id, as `wenlan memories` prints it.
 
-#### `wenlan curate dismiss`
+#### `wenlan memories forget`
 
-Dismiss a revision: drop it, keep the original memory.
+Delete a memory (the forget tool). Asks first.
 
 ```text
-wenlan curate dismiss [OPTIONS] <REVISION_SOURCE_ID>
+wenlan memories forget [OPTIONS] <ID>
 ```
 
 Arguments:
 
-- `<REVISION_SOURCE_ID>`: `revision_source_id` of the revision (from the list output).
+- `<ID>`: The memory's id, as `wenlan memories` prints it.
 
-### `wenlan lint`
+Options:
 
-Check the health of memories, pages, and the running Wenlan; report, then resolve findings safely.
+- `-y, --yes`: Do not ask.
+
+#### `wenlan memories history`
+
+Show how a memory changed over time (the get_memory_revisions tool).
 
 ```text
-wenlan lint [OPTIONS]
+wenlan memories history [OPTIONS] <ID>
+```
+
+Arguments:
+
+- `<ID>`: The memory's id.
+
+### `wenlan sources`
+
+Manage folders and files Wenlan should learn from (add, save, read).
+
+```text
+wenlan sources [OPTIONS] <COMMAND>
+```
+
+#### `wenlan sources read`
+
+Print the text of one saved file or webpage (the read_source tool). Needs --space.
+
+```text
+wenlan sources read [OPTIONS] <SOURCE_ID>
+```
+
+Arguments:
+
+- `<SOURCE_ID>`: The source's id.
+
+Options:
+
+- `--kind <KIND>`: What the source is. Possible values: `file`, `webpage`. Default: `file`.
+- `--offset <OFFSET>`: Start at this character. Default: `0`.
+- `--limit <LIMIT>`: Max characters to print (1 to 16000). Default: `8000`.
+
+#### `wenlan sources add`
+
+Add a folder or file source and sync it now.
+
+```text
+wenlan sources add [OPTIONS] <PATH>
+```
+
+Arguments:
+
+- `<PATH>`: Path to a directory or file to add as a source.
+
+Options:
+
+- `--type <SOURCE_TYPE>`: Kind of source. `okf` imports an OKF bundle (for example an OpenWiki folder) into one Space; pass --space to choose it. Possible values: `directory` (A folder or single file of documents), `okf` (An OKF knowledge bundle). Default: `directory`.
+
+#### `wenlan sources save`
+
+Save one document read elsewhere (an email, a Notion or Drive page, a Slack thread, an article) with its link, so notes cite the original. Text comes from --file or stdin. Saving the same link again replaces the saved copy; Wenlan does not re-fetch the original.
+
+```text
+wenlan sources save [OPTIONS] --url <URL> --title <TITLE>
 ```
 
 Options:
 
-- `--profile <PROFILE>`
-- `--allow-external`: Permit a deep semantic pass to use an already configured external provider.
-- `--agent-assist`: Return bounded high-recall semantic candidates for the calling agent.
-- `--agent-submission <JSON_FILE>`: Submit typed agent verdicts produced from a prior prepare report.
+- `--url <URL>`: Permanent http(s) link to the original.
+- `--title <TITLE>`: Title of the original.
+- `--label <LABEL>`: Where it came from, e.g. gmail, notion, drive, slack, github, web.
+- `--file <FILE>`: Read the text from this file instead of stdin.
+- `--create-only`: Refuse if this link is already saved instead of replacing it.
+
+**Setup**
+
+### `wenlan setup`
+
+Guided setup: get Wenlan running, optionally with a local model or an Anthropic key.
+
+```text
+wenlan setup [OPTIONS]
+```
+
+Options:
+
+- `--basic`: Set up without a model or API key.
+- `--model <MODEL_ID>`: Download and select a local model, for example qwen3.5-4b.
+- `--anthropic-api-key-env <ENV_VAR>`: Read an Anthropic key from this environment variable.
+- `-y, --yes`: Skip confirmation prompts where possible.
+
+### `wenlan open`
+
+Open Wenlan's personal browser UI.
+
+```text
+wenlan open [OPTIONS]
+```
+
+### `wenlan connect`
+
+Connect Wenlan to a supported agent or editor.
+
+```text
+wenlan connect [OPTIONS] <CLIENT>
+```
+
+Arguments:
+
+- `<CLIENT>`: Client to configure. Possible values: `claude-code` (Claude Code without the Wenlan plugin), `codex` (OpenAI Codex CLI), `gemini` (Gemini CLI), `cursor` (Cursor editor), `claude-desktop` (Claude Desktop), `vscode` (VS Code workspace MCP config).
+
+Options:
+
+- `--dry-run`: Print the command or file edit without changing anything.
+- `--all-tools`: List every Wenlan tool in the client, not only the everyday ones. Health checks, review queues, entities, folders and version history then load into each conversation too.
+
+### `wenlan status`
+
+Check whether Wenlan is running.
+
+```text
+wenlan status [OPTIONS]
+```
+
+### `wenlan doctor`
+
+Diagnose runtime, model, and API key setup.
+
+```text
+wenlan doctor [OPTIONS]
+```
+
+Options:
+
+- `--repair`: Point older ~/.wenlan/bin copies at the app bundle. The previous file is renamed aside, not deleted.
+
+### `wenlan start`
+
+Start Wenlan now and keep it running in the background after login.
+
+```text
+wenlan start [OPTIONS]
+```
+
+### `wenlan stop`
+
+Stop Wenlan. It stays off until `wenlan start`.
+
+```text
+wenlan stop [OPTIONS]
+```
+
+### `wenlan restart`
+
+Restart the Wenlan background process. Required after an update.
+
+```text
+wenlan restart [OPTIONS]
+```
+
+**Team**
+
+### `wenlan team`
+
+Work with a team: start one here, invite people, or join with an invite link (start, share, invite, join, status, leave, update, remove, new-key, stop).
+
+```text
+wenlan team [OPTIONS] <COMMAND>
+```
+
+#### `wenlan team start`
+
+Start a team on this computer: others reach it with an invite link.
+
+```text
+wenlan team start [OPTIONS] <NAME>
+```
+
+Arguments:
+
+- `<NAME>`: The team's name, such as the company's. Everyone on it sees it.
+
+Options:
+
+- `--as <YOUR NAME>`: Your own name, as the team sees what you write. Left out, the name you already have in Wenlan.
+- `--url <URL>`: The address others reach this computer at, put in every invite link. Left out, Wenlan picks one: its Tailscale address first, else its address on the local network.
+- `--port <PORT>`: The port the team listens on. Left out, 7879.
+
+#### `wenlan team stop`
+
+Stop letting the team reach this computer. The team, its people and Spaces stay; `wenlan team start` turns it on again.
+
+```text
+wenlan team stop [OPTIONS]
+```
+
+#### `wenlan team status`
+
+Show the team this computer runs (its people and Spaces) and the teams it has joined.
+
+```text
+wenlan team status [OPTIONS]
+```
+
+#### `wenlan team rename`
+
+Name the team; every member's Wenlan shows the name.
+
+```text
+wenlan team rename [OPTIONS] <NAME>
+```
+
+Arguments:
+
+- `<NAME>`: The team's name, such as the company's.
+
+#### `wenlan team invite`
+
+Invite someone: add them and print their invite link once.
+
+```text
+wenlan team invite [OPTIONS] <NAME>
+```
+
+Arguments:
+
+- `<NAME>`: The person's name.
+
+Options:
+
+- `--access <SPACE[:read]>`: A Space they can use, `Space` for read and write or `Space:read` for read only. Repeat for more Spaces. Left out, they get the Spaces open to everyone on the team.
+- `--url <URL>`: The address their computer reaches this one at, put in the invite link. Left out, the address the team was started with.
+
+#### `wenlan team update`
+
+Rename a member or replace the Spaces they can use.
+
+```text
+wenlan team update [OPTIONS] <MEMBER>
+```
+
+Arguments:
+
+- `<MEMBER>`: The member's name, or their id from `wenlan team status --format json`.
+
+Options:
+
+- `--name <NAME>`: The new name.
+- `--access <SPACE[:read]>`: A Space the member can use, `Space` or `Space:read`. Repeat for more; the list replaces the current one.
+
+#### `wenlan team remove`
+
+Remove a member: their key stops working at once.
+
+```text
+wenlan team remove [OPTIONS] <MEMBER>
+```
+
+Arguments:
+
+- `<MEMBER>`: The member's name, or their id from `wenlan team status --format json`.
+
+#### `wenlan team new-key`
+
+Give a member a new invite link; the old one stops working.
+
+```text
+wenlan team new-key [OPTIONS] <MEMBER>
+```
+
+Arguments:
+
+- `<MEMBER>`: The member's name, or their id from `wenlan team status --format json`.
+
+Options:
+
+- `--url <URL>`: The address the member's computer reaches this one at, put in the invite link. Left out, the address the team was started with.
+
+#### `wenlan team share`
+
+Share a Space of this computer with the team.
+
+```text
+wenlan team share [OPTIONS] <SPACE>
+```
+
+Arguments:
+
+- `<SPACE>`: Space name.
+
+Options:
+
+- `--everyone <ACCESS>`: Open it to everyone on the team, now and when invited later: `--everyone` to read and write, `--everyone read` to read only, `--everyone nobody` to take that back. Left out, only the people given it with `--access` can use it.
+
+#### `wenlan team join`
+
+Join a team with an invite link: every Space open to you is synced to this computer, and Spaces opened to you later follow.
+
+```text
+wenlan team join [OPTIONS] <INVITE LINK>
+```
+
+Arguments:
+
+- `<INVITE LINK>`: The invite link you were sent (`https://…/join#wlt_…`).
+
+Options:
+
+- `--server-space <SERVER_SPACE>`: Take only this Space of the team (not `--space`, which picks a Space on this computer).
+- `--as <LOCAL_SPACE>`: The Space's name on this computer. Left out, the team's name for it.
+- `--list`: Only show the Spaces the link opens; join nothing.
+
+#### `wenlan team leave`
+
+Leave a team you joined: its Spaces stop syncing here. The pages already on this computer stay.
+
+```text
+wenlan team leave [OPTIONS] [TEAM]
+```
+
+Arguments:
+
+- `[TEAM]`: The team's name or its server's address. Not needed when this computer is on one team.
 
 ### `wenlan spaces`
 
-Manage Spaces, the separate wikis Wenlan keeps (list, add, default, move, show, share-sync).
+Manage Spaces, the separate sets of pages Wenlan keeps (list, add, default, show).
 
 ```text
 wenlan spaces [OPTIONS] <COMMAND>
@@ -534,19 +994,6 @@ Options:
 
 - `--clear`: Clear the daemon-owned default save space.
 
-#### `wenlan spaces move`
-
-Bulk-reassign all memories from one space to another.
-
-```text
-wenlan spaces move [OPTIONS] <FROM> <TO>
-```
-
-Arguments:
-
-- `<FROM>`: Source space.
-- `<TO>`: Destination space.
-
 #### `wenlan spaces show`
 
 Show detail for a space — name, description, memory count, entity count, default + starred flags.
@@ -559,306 +1006,54 @@ Arguments:
 
 - `<NAME>`: Space name.
 
-#### `wenlan spaces share-sync`
+**Advanced**
 
-Share a Space's pages through a folder a sync tool (Google Drive, iCloud) keeps the same on each member's computer: write this Space's new page versions there and take the other members' versions. Pages only; nothing from other Spaces, memories or chats goes into the folder.
+### `wenlan curate`
+
+List changes waiting for review, or dismiss one. Accepting is done in the Wenlan app.
 
 ```text
-wenlan spaces share-sync [OPTIONS] --folder <FOLDER> <SPACE>
+wenlan curate [OPTIONS] [COMMAND]
+```
+
+#### `wenlan curate revisions`
+
+List pending revisions (the default when no action is given).
+
+```text
+wenlan curate revisions [OPTIONS]
+```
+
+Options:
+
+- `-l, --limit <LIMIT>`: Max revisions to fetch. Default: `20`.
+
+#### `wenlan curate dismiss`
+
+Dismiss a revision: drop it, keep the original memory.
+
+```text
+wenlan curate dismiss [OPTIONS] <REVISION_SOURCE_ID>
 ```
 
 Arguments:
 
-- `<SPACE>`: Space name.
+- `<REVISION_SOURCE_ID>`: `revision_source_id` of the revision (from the list output).
 
-Options:
+### `wenlan lint`
 
-- `--folder <FOLDER>`: The shared folder. The first sync adds you to it.
-- `--name <NAME>`: The name the other members see for you. Left out, your display name in Settings.
-
-### `wenlan team`
-
-Run or join a team server: add members, host Spaces, join with a code (status, add, update, remove, new-key, host, join).
+Check the health of memories, pages, and the running Wenlan; report, then resolve findings safely.
 
 ```text
-wenlan team [OPTIONS] <COMMAND>
-```
-
-#### `wenlan team status`
-
-Show the members, the Spaces this computer hosts for the team, and whether the team listener is on.
-
-```text
-wenlan team status [OPTIONS]
-```
-
-#### `wenlan team rename`
-
-Name the team; every member's Wenlan shows the name.
-
-```text
-wenlan team rename [OPTIONS] <NAME>
-```
-
-Arguments:
-
-- `<NAME>`: The team's name, such as the company's.
-
-#### `wenlan team add`
-
-Add a member and print their invite link (or key) once.
-
-```text
-wenlan team add [OPTIONS] <NAME>
-```
-
-Arguments:
-
-- `<NAME>`: The member's name.
-
-Options:
-
-- `--access <SPACE[:read]>`: A Space the member can use, `Space` for read and write or `Space:read` for read only. Repeat for more Spaces.
-- `--url <URL>`: The address the member's computer reaches this server at, put in the invite link. Left out, only the key is printed.
-
-#### `wenlan team update`
-
-Rename a member or replace the Spaces they can use.
-
-```text
-wenlan team update [OPTIONS] <MEMBER_ID>
-```
-
-Arguments:
-
-- `<MEMBER_ID>`: The member's id (see `wenlan team status`).
-
-Options:
-
-- `--name <NAME>`: The new name.
-- `--access <SPACE[:read]>`: A Space the member can use, `Space` or `Space:read`. Repeat for more; the list replaces the current one.
-
-#### `wenlan team remove`
-
-Remove a member: their key stops working at once.
-
-```text
-wenlan team remove [OPTIONS] <MEMBER_ID>
-```
-
-Arguments:
-
-- `<MEMBER_ID>`: The member's id (see `wenlan team status`).
-
-#### `wenlan team new-key`
-
-Give a member a new key; the old one stops working.
-
-```text
-wenlan team new-key [OPTIONS] <MEMBER_ID>
-```
-
-Arguments:
-
-- `<MEMBER_ID>`: The member's id (see `wenlan team status`).
-
-Options:
-
-- `--url <URL>`: The address the member's computer reaches this server at, put in the invite link.
-
-#### `wenlan team host`
-
-Host a Space of this computer for the team.
-
-```text
-wenlan team host [OPTIONS] <SPACE>
-```
-
-Arguments:
-
-- `<SPACE>`: Space name.
-
-#### `wenlan team join`
-
-Join a team server with a invite link: list the Spaces you can use, or sync one of them with --server-space.
-
-```text
-wenlan team join [OPTIONS] <CODE>
-```
-
-Arguments:
-
-- `<CODE>`: The invite link you were sent (`https://…/join#wlt_…`).
-
-Options:
-
-- `--server-space <SERVER_SPACE>`: Sync this Space of the server (not `--space`, which picks a Space on this computer). Left out, the Spaces you can use are listed.
-- `--as <LOCAL_SPACE>`: The Space's name on this computer. Left out, the server's name.
-
-### `wenlan wiki`
-
-Put this Space's code pages into its git repository as a pull request.
-
-```text
-wenlan wiki [OPTIONS] <COMMAND>
-```
-
-#### `wenlan wiki bind`
-
-Tie the Space to this git repository (or --repo), so its code pages can go into the repository as a pull request.
-
-```text
-wenlan wiki bind [OPTIONS]
+wenlan lint [OPTIONS]
 ```
 
 Options:
 
-- `--repo <REPO>`: Any folder inside the repository. Default: the current folder.
-- `--folder <FOLDER>`: Folder inside the repository for the pages. Default: wiki.
-- `--daily <HOUR|off>`: Bring the wiki up to date by itself every day after this local hour (0-23), or `off`.
-- `--agent <AGENT>`: The AI tool the daily run starts. Default: claude. Possible values: `claude`, `codex`, `cursor`, `copilot`.
-- `--on-github`: Run the daily update on GitHub Actions instead of this computer: the next publish adds the workflow to the pull request.
-- `--confirm-repo <OWNER/NAME>`: The repository pull requests go to (`owner/name` on GitHub, else the remote URL). Needed when it is not yours.
-
-#### `wenlan wiki publish`
-
-Write the Space's code pages into the repository and open or update the pull request.
-
-```text
-wenlan wiki publish [OPTIONS]
-```
-
-#### `wenlan wiki status`
-
-Show the repository the Space is bound to and the last publish.
-
-```text
-wenlan wiki status [OPTIONS]
-```
-
-#### `wenlan wiki unbind`
-
-Stop putting this Space's pages into its repository.
-
-```text
-wenlan wiki unbind [OPTIONS]
-```
-
-#### `wenlan wiki refresh`
-
-Check the wiki folder of this checkout against the code: fix line numbers that moved and have an AI tool rewrite pages whose code changed. Works without Wenlan running; the GitHub Actions workflow runs it.
-
-```text
-wenlan wiki refresh [OPTIONS]
-```
-
-Options:
-
-- `--repo <REPO>`: Any folder inside the repository. Default: the current folder.
-- `--folder <FOLDER>`: The wiki folder inside the repository. Default: `wiki`.
-- `--agent <AGENT>`: The AI tool that rewrites pages whose code changed. Possible values: `claude`, `codex`, `cursor`, `copilot`, `none` (Only fix line numbers and list the pages that need rewriting). Default: `claude`.
-- `--pull-request`: Commit the changed pages on `wenlan/wiki-refresh` and open or update the pull request.
-
-#### `wenlan wiki workflow`
-
-Print, or `--write`, the GitHub Actions workflow that runs `refresh` every day and opens a pull request when a page changed.
-
-```text
-wenlan wiki workflow [OPTIONS]
-```
-
-Options:
-
-- `--repo <REPO>`: Any folder inside the repository. Default: the current folder.
-- `--folder <FOLDER>`: The wiki folder inside the repository. Default: `wiki`.
-- `--agent <AGENT>`: The AI tool the workflow runs. Possible values: `claude`, `codex`, `cursor`, `copilot`. Default: `claude`.
-- `--utc-hour <UTC_HOUR>`: The hour (0-23, UTC) it runs every day. Default: `1`.
-- `--write`: Write it into the repository's GitHub workflows folder, as wenlan-wiki.yml, instead of printing it.
-
-**Setup**
-
-### `wenlan setup`
-
-Guided setup: get Wenlan running, optionally with a local model or an Anthropic key.
-
-```text
-wenlan setup [OPTIONS]
-```
-
-Options:
-
-- `--basic`: Set up without a model or API key.
-- `--model <MODEL_ID>`: Download and select a local model, for example qwen3.5-4b.
-- `--anthropic-api-key-env <ENV_VAR>`: Read an Anthropic key from this environment variable.
-- `-y, --yes`: Skip confirmation prompts where possible.
-
-### `wenlan status`
-
-Check whether Wenlan is running.
-
-```text
-wenlan status [OPTIONS]
-```
-
-### `wenlan doctor`
-
-Diagnose runtime, model, and API key setup.
-
-```text
-wenlan doctor [OPTIONS]
-```
-
-Options:
-
-- `--repair`: Point older ~/.wenlan/bin copies at the app bundle. The previous file is renamed aside, not deleted.
-
-### `wenlan background`
-
-Control whether Wenlan keeps running in the background.
-
-```text
-wenlan background [OPTIONS] <COMMAND>
-```
-
-#### `wenlan background on`
-
-Start Wenlan now and keep it running in the background after login.
-
-```text
-wenlan background on [OPTIONS]
-```
-
-#### `wenlan background off`
-
-Stop Wenlan now while keeping its background registration.
-
-```text
-wenlan background off [OPTIONS]
-```
-
-### `wenlan restart`
-
-Restart the Wenlan background process. Required after an update.
-
-```text
-wenlan restart [OPTIONS]
-```
-
-### `wenlan connect`
-
-Connect Wenlan to a supported agent or editor.
-
-```text
-wenlan connect [OPTIONS] <CLIENT>
-```
-
-Arguments:
-
-- `<CLIENT>`: Client to configure. Possible values: `claude-code` (Claude Code without the Wenlan plugin), `codex` (OpenAI Codex CLI), `gemini` (Gemini CLI), `cursor` (Cursor editor), `claude-desktop` (Claude Desktop), `vscode` (VS Code workspace MCP config).
-
-Options:
-
-- `--dry-run`: Print the command or file edit without changing anything.
+- `--profile <PROFILE>`
+- `--allow-external`: Permit a deep semantic pass to use an already configured external provider.
+- `--agent-assist`: Return bounded high-recall semantic candidates for the calling agent.
+- `--agent-submission <JSON_FILE>`: Submit typed agent verdicts produced from a prior prepare report.
 
 ### `wenlan models`
 
@@ -899,18 +1094,6 @@ Arguments:
 Options:
 
 - `-y, --yes`: Skip confirmation before downloading.
-
-#### `wenlan models reranker`
-
-Set the cross-encoder reranker mode (off/lite/full).
-
-```text
-wenlan models reranker [OPTIONS] <MODE>
-```
-
-Arguments:
-
-- `<MODE>`: Mode to persist; the daemon reads it at startup. Possible values: `off` (No cross-encoder on any path (default)), `lite` (Turbo CE (jina-turbo, ~146MB) on quick + context + explicit deep rerank), `full` (Turbo on the light paths; heavy bge-base (~1.1GB) on the deep rerank).
 
 ### `wenlan keys`
 
@@ -994,51 +1177,89 @@ Turn off all model-backed background work without removing providers.
 wenlan steep disable [OPTIONS]
 ```
 
-**Maintenance**
+### `wenlan wiki`
 
-### `wenlan sources`
-
-Manage folders and files Wenlan should learn from.
+Put this Space's code pages into its git repository as a pull request.
 
 ```text
-wenlan sources [OPTIONS] <COMMAND>
+wenlan wiki [OPTIONS] <COMMAND>
 ```
 
-#### `wenlan sources add`
+#### `wenlan wiki bind`
 
-Add a folder or file source and sync it now.
-
-```text
-wenlan sources add [OPTIONS] <PATH>
-```
-
-Arguments:
-
-- `<PATH>`: Path to a directory or file to add as a source.
-
-Options:
-
-- `--type <SOURCE_TYPE>`: Kind of source. `okf` imports an OKF bundle (for example an OpenWiki folder) into one Space; pass --space to choose it. Possible values: `directory` (A folder or single file of documents), `okf` (An OKF knowledge bundle). Default: `directory`.
-
-#### `wenlan sources save`
-
-Save one document read elsewhere (an email, a Notion or Drive page, a Slack thread, an article) with its link, so notes cite the original. Text comes from --file or stdin. Saving the same link again replaces the saved copy; Wenlan does not re-fetch the original.
+Tie the Space to this git repository (or --repo), so its code pages can go into the repository as a pull request.
 
 ```text
-wenlan sources save [OPTIONS] --url <URL> --title <TITLE>
+wenlan wiki bind [OPTIONS]
 ```
 
 Options:
 
-- `--url <URL>`: Permanent http(s) link to the original.
-- `--title <TITLE>`: Title of the original.
-- `--label <LABEL>`: Where it came from, e.g. gmail, notion, drive, slack, github, web.
-- `--file <FILE>`: Read the text from this file instead of stdin.
-- `--create-only`: Refuse if this link is already saved instead of replacing it.
+- `--repo <REPO>`: Any folder inside the repository. Default: the current folder.
+- `--folder <FOLDER>`: Folder inside the repository for the pages. Default: wiki.
+- `--daily <HOUR|off>`: Bring the wiki up to date by itself every day after this local hour (0-23), or `off`.
+- `--agent <AGENT>`: The AI tool the daily run starts. Default: claude. Possible values: `claude`, `codex`, `cursor`, `copilot`.
+- `--on-github`: Run the daily update on GitHub Actions instead of this computer: the next publish adds the workflow to the pull request.
+- `--confirm-repo <OWNER/NAME>`: The repository pull requests go to (`owner/name` on GitHub, else the remote URL). Needed when it is not yours.
+
+#### `wenlan wiki publish`
+
+Write the Space's code pages into the repository and open or update the pull request.
+
+```text
+wenlan wiki publish [OPTIONS]
+```
+
+#### `wenlan wiki status`
+
+Show the repository the Space is bound to and the last publish.
+
+```text
+wenlan wiki status [OPTIONS]
+```
+
+#### `wenlan wiki unbind`
+
+Stop putting this Space's pages into its repository.
+
+```text
+wenlan wiki unbind [OPTIONS]
+```
+
+#### `wenlan wiki refresh`
+
+Check the wiki folder of this checkout against the code: fix line numbers that moved and have an AI tool rewrite pages whose code changed. Works without Wenlan running; the GitHub Actions workflow runs it.
+
+```text
+wenlan wiki refresh [OPTIONS]
+```
+
+Options:
+
+- `--repo <REPO>`: Any folder inside the repository. Default: the current folder.
+- `--folder <FOLDER>`: The wiki folder inside the repository. Default: `wiki`.
+- `--agent <AGENT>`: The AI tool that rewrites pages whose code changed. Possible values: `claude`, `codex`, `cursor`, `copilot`, `none` (Only fix line numbers and list the pages that need rewriting). Default: `claude`.
+- `--pull-request`: Commit the changed pages on `wenlan/wiki-refresh` and open or update the pull request.
+
+#### `wenlan wiki workflow`
+
+Print, or `--write`, the GitHub Actions workflow that runs `refresh` every day and opens a pull request when a page changed.
+
+```text
+wenlan wiki workflow [OPTIONS]
+```
+
+Options:
+
+- `--repo <REPO>`: Any folder inside the repository. Default: the current folder.
+- `--folder <FOLDER>`: The wiki folder inside the repository. Default: `wiki`.
+- `--agent <AGENT>`: The AI tool the workflow runs. Possible values: `claude`, `codex`, `cursor`, `copilot`. Default: `claude`.
+- `--utc-hour <UTC_HOUR>`: The hour (0-23, UTC) it runs every day. Default: `1`.
+- `--write`: Write it into the repository's GitHub workflows folder, as wenlan-wiki.yml, instead of printing it.
 
 ### `wenlan outbox`
 
-Inspect or sync notes saved locally while Wenlan was not running.
+Show or send what was saved locally while Wenlan was not running.
 
 ```text
 wenlan outbox [OPTIONS] <COMMAND>
@@ -1046,7 +1267,7 @@ wenlan outbox [OPTIONS] <COMMAND>
 
 #### `wenlan outbox status`
 
-List queued and failed envelope files without contacting the daemon.
+List what is waiting or failed, without contacting Wenlan.
 
 ```text
 wenlan outbox status [OPTIONS]
@@ -1054,7 +1275,7 @@ wenlan outbox status [OPTIONS]
 
 #### `wenlan outbox drain`
 
-Ask the daemon to replay queued envelopes.
+Send what is waiting to Wenlan now.
 
 ```text
 wenlan outbox drain [OPTIONS]
@@ -1165,6 +1386,51 @@ Arguments:
 
 - `<ENTITY>`: Entity id or exact name.
 - `<ALIAS>`: The alias to add.
+
+### `wenlan tool`
+
+Call any Wenlan tool an AI tool can call, by the same name (list, show, call).
+
+```text
+wenlan tool [OPTIONS] <COMMAND>
+```
+
+#### `wenlan tool list`
+
+List every tool, with one line on what it does.
+
+```text
+wenlan tool list [OPTIONS]
+```
+
+#### `wenlan tool show`
+
+Show one tool's description and the arguments it takes.
+
+```text
+wenlan tool show [OPTIONS] <NAME>
+```
+
+Arguments:
+
+- `<NAME>`: Tool name, as `wenlan tool list` prints it.
+
+#### `wenlan tool call`
+
+Call a tool. Arguments are `key=value` pairs, or one JSON object with --json.
+
+```text
+wenlan tool call [OPTIONS] <NAME> [ARGS]...
+```
+
+Arguments:
+
+- `<NAME>`: Tool name, as `wenlan tool list` prints it.
+- `[ARGS]...`: Arguments as key=value. A value that parses as JSON (a number, true, a list) is sent as that; anything else is sent as text. `key=@file` reads the value from a file, `key=-` from stdin.
+
+Options:
+
+- `--json <OBJECT>`: All arguments as one JSON object. Not with key=value pairs.
 
 <!-- cli-reference:end -->
 

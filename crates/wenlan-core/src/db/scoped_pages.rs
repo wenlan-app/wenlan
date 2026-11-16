@@ -491,6 +491,7 @@ impl MemoryDB {
                     .unwrap_or(0),
                 edited_by: None,
                 changed_sentences: None,
+                agent: None,
             });
             versions.push(version);
         }

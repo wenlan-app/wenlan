@@ -204,7 +204,7 @@ test("has no page-level horizontal overflow across all responsive surfaces", asy
   ] as const) {
     await page.setViewportSize(viewport);
     await openSidebar(page);
-    await openPrimaryDestination(page, "Wiki");
+    await openPrimaryDestination(page, "Library");
     await assertNoPageOverflow(page);
     await openSpaces(page);
     await assertNoPageOverflow(page);
@@ -279,7 +279,7 @@ test("switches exactly at the management and dossier breakpoints", async ({ page
   await page.setViewportSize({ width: 899, height: 900 });
   await openSidebar(page);
   const primaryNavigation = page.getByRole("navigation", { name: "Primary navigation" });
-  for (const name of ["Home", "Wiki", "Spaces", "Graph"]) {
+  for (const name of ["Home", "Library", "Spaces", "Graph"]) {
     await expect(primaryNavigation.getByRole("button", { name, exact: true })).toBeVisible();
   }
   await expect(primaryNavigation.locator('[aria-current="page"]')).toHaveCount(1);
@@ -351,7 +351,7 @@ test("supports keyboard-only drawer and dossier navigation with visible focus", 
   await expect(aside).toHaveAttribute("aria-hidden", "false");
   await expect(primaryNavigation.locator('[aria-current="page"]')).toHaveCount(1);
   const search = aside.getByRole("button", { name: "Search", exact: true });
-  const wiki = page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Wiki", exact: true });
+  const wiki = page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Library", exact: true });
   await expect(search).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(aside).toHaveAttribute("aria-hidden", "true");
@@ -564,7 +564,7 @@ test("preserves the Entity signature and CJK dossiers at 200 percent zoom", asyn
   await installTauriMock(zoomPage, { locale: "zh-Hant", localStorage: { "wenlan-spaces-view-mode": "rows" }, rawActions: [] });
   await zoomPage.goto("/");
   await openSidebar(zoomPage, "顯示側邊欄");
-  await zoomPage.getByRole("navigation", { name: "主要導覽" }).getByRole("button", { name: "Wiki", exact: true }).click();
+  await zoomPage.getByRole("navigation", { name: "主要導覽" }).getByRole("button", { name: "檔案", exact: true }).click();
   const pagesHeading = zoomPage.getByRole("heading", { level: 1, name: "Independent research" });
   await openWikiNote(zoomPage, "Independent research");
   await expect(pagesHeading).toBeVisible();

@@ -251,6 +251,10 @@ pub async fn handle_update_agent(
     )
     .await
     .map_err(|e| ServerError::Internal(e.to_string()))?;
+    if req.enabled.is_some() {
+        // A tool turned off loses Wenlan's rules in its own file right away.
+        crate::skill_grow::sync_rules_files_quietly(&db).await;
+    }
     let updated = db
         .get_agent(&name)
         .await
@@ -272,6 +276,7 @@ pub async fn handle_delete_agent(
     db.delete_agent(&name)
         .await
         .map_err(|e| ServerError::Internal(e.to_string()))?;
+    crate::skill_grow::sync_rules_files_quietly(&db).await;
     Ok(Json(serde_json::json!({ "deleted": name })))
 }
 

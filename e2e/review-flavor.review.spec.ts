@@ -8,7 +8,7 @@ import type { Page as KnowledgePage } from "../src/lib/tauri";
 async function openWiki(page: Page): Promise<void> {
   await page
     .getByRole("navigation", { name: "Primary navigation" })
-    .getByRole("button", { name: "Wiki", exact: true })
+    .getByRole("button", { name: "Library", exact: true })
     .click();
   await expect(page.getByRole("heading", { level: 1, name: "Open a page" })).toBeVisible();
 }
@@ -82,7 +82,7 @@ test("keeps every enabled primary destination inside the Review command contract
 
   const navigation = page.getByRole("navigation", { name: "Primary navigation" });
 
-  await navigation.getByRole("button", { name: "Wiki", exact: true }).click();
+  await navigation.getByRole("button", { name: "Library", exact: true }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Open a page" })).toBeVisible();
 
   await navigation.getByRole("button", { name: "Spaces", exact: true }).click();
@@ -97,9 +97,9 @@ test("keeps every enabled primary destination inside the Review command contract
   // Sources is no longer a primary destination: its list opens from Settings,
   // which is outside this Review command contract. source-library.spec covers it.
 
-  await openPrimaryDestination(page, "Wiki");
+  await openPrimaryDestination(page, "Library");
   await expect(page.getByRole("heading", { level: 1, name: "Open a page", exact: true })).toBeVisible();
-  await expect(navigation.getByRole("button", { name: "Wiki", exact: true })).toHaveAttribute("aria-current", "page");
+  await expect(navigation.getByRole("button", { name: "Library", exact: true })).toHaveAttribute("aria-current", "page");
   await expect(navigation.locator('[aria-current="page"]')).toHaveCount(1);
 
   await page.waitForTimeout(250);

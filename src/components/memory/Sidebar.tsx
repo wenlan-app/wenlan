@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { forwardRef, useEffect, useRef } from "react";
-import { SidebarSimple } from "@phosphor-icons/react";
+import { GearSix, SidebarSimple, SignOut } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 import IdentityCard from "./IdentityCard";
 import { PrimaryNavigation } from "./navigation/PrimaryNavigation";
@@ -10,8 +10,11 @@ import ActivityStatus from "./activity/ActivityStatus";
 import type { RegisteredSource } from "../../lib/tauri";
 import ServiceStatus from "./ServiceStatus";
 import type { GlobalNavigation } from "./navigation/viewState";
+import { movePinnedPage, unpinPage, usePinnedPages } from "./navigation/pinnedPages";
 import { ICONS_SIDEBAR_WIDTH, type SidebarMode } from "./navigation/navigationPreferences";
 import "./navigation/notes-sidebar.css";
+import { isWebBuild } from "../../web/runtime";
+import { forgetTeamKey, isTeamMemberMode } from "../../web/team";
 
 interface SidebarProps {
   readonly activeNavigation?: GlobalNavigation | null;
@@ -41,6 +44,9 @@ interface SidebarProps {
   readonly presentation?: "desktop" | "overlay";
   /** Where the shell renders the Wiki and its pages, below the destinations. */
   readonly onWikiSectionHost?: (host: HTMLDivElement | null) => void;
+  /** Opens a page pinned to the left side; without it no pinned page shows. */
+  readonly onOpenPinnedPage?: (pageId: string) => void;
+  readonly activePageId?: string | null;
 }
 
 function closeAfterNavigation<Arguments extends readonly unknown[]>(
@@ -86,8 +92,13 @@ export default function Sidebar({
   open = !hidden,
   presentation = "desktop",
   onWikiSectionHost,
+  onOpenPinnedPage,
+  activePageId = null,
 }: SidebarProps) {
+  const web = isWebBuild();
+  const teamMember = isTeamMemberMode();
   const { t } = useTranslation();
+  const pinnedPages = usePinnedPages();
   const asideRef = useRef<HTMLElement>(null);
   const overlay = presentation === "overlay";
   const compact = !overlay && mode === "icons";
@@ -151,7 +162,7 @@ export default function Sidebar({
           zIndex: overlay ? 40 : 2,
         }}
       >
-        {switcher?.(compact)}
+        {!web && switcher?.(compact)}
         {onOpenSearch && (
           <div className={`notes-sidebar-search${compact ? " notes-sidebar-search--compact" : ""}`}>
             <SearchEntry compact={compact} disabled={searchDisabled} expanded={searchOpen} onOpen={onOpenSearch} />
@@ -168,9 +179,16 @@ export default function Sidebar({
               navigation: t("sidebar.navigation"),
               pages: t("sidebar.pages"),
               spaces: t("sidebar.spaces"),
+              pinned: t("sidebar.pinnedPages"),
+              unpin: (title) => t("sidebar.unpinNamed", { title }),
             }}
-            onNavigateEntities={closeAfterNavigation(onNavigateEntities, closeOverlay)}
-            onNavigateGraph={closeAfterNavigation(onNavigateGraph, closeOverlay)}
+            pinnedPages={pinnedPages}
+            activePinnedPageId={activePageId}
+            onOpenPinnedPage={closeAfterNavigation(onOpenPinnedPage, closeOverlay)}
+            onUnpinPage={unpinPage}
+            onMovePinnedPage={movePinnedPage}
+            onNavigateEntities={teamMember ? undefined : closeAfterNavigation(onNavigateEntities, closeOverlay)}
+            onNavigateGraph={teamMember ? undefined : closeAfterNavigation(onNavigateGraph, closeOverlay)}
             onNavigateHome={closeAfterNavigation(onNavigateHome, closeOverlay)}
             onNavigatePages={closeAfterNavigation(onNavigatePages, closeOverlay)}
             onNavigateSpaces={closeAfterNavigation(onNavigateSpaces, closeOverlay)}
@@ -179,7 +197,7 @@ export default function Sidebar({
         </div>
         <div className={`notes-rail-utilities${compact ? " notes-rail-utilities--icons" : ""}`}>
           {/* The service speaks in Activity's place, so the footer keeps its rows. */}
-          {sidebarVisible && (
+          {sidebarVisible && !web && (
             <ServiceStatus compact={compact}>
               {onNavigateActivity && (
                 <ActivityStatus
@@ -192,13 +210,38 @@ export default function Sidebar({
             </ServiceStatus>
           )}
           <ReviewEnvironmentBadge compact />
-          <IdentityCard
+          {web && onNavigateSettings && (
+            <button
+              aria-label={t("identityCard.settings")}
+              className={compact ? "notes-rail-button" : "notes-primary-link"}
+              onClick={closeAfterNavigation(onNavigateSettings, closeOverlay)}
+              title={compact ? t("identityCard.settings") : undefined}
+              type="button"
+            >
+              <span aria-hidden="true" className="notes-navigation-glyph"><GearSix /></span>
+              {!compact && <span>{t("identityCard.settings")}</span>}
+            </button>
+          )}
+          {teamMember && (
+            <button
+              aria-label={t("teamWeb.forget")}
+              className={compact ? "notes-rail-button" : "notes-primary-link"}
+              data-testid="team-web-forget"
+              onClick={forgetTeamKey}
+              title={compact ? t("teamWeb.forget") : undefined}
+              type="button"
+            >
+              <span aria-hidden="true" className="notes-navigation-glyph"><SignOut /></span>
+              {!compact && <span>{t("teamWeb.forget")}</span>}
+            </button>
+          )}
+          {!web && <IdentityCard
             compact={compact}
             onOpenDetail={closeAfterNavigation(onEntityClick, closeOverlay)}
             onOpenSettings={closeAfterNavigation(onNavigateSettings, closeOverlay)}
             onOpenAbout={closeAfterNavigation(onOpenAbout, closeOverlay)}
             onConnectTool={closeAfterNavigation(onConnectTool, closeOverlay)}
-          />
+          />}
         </div>
       </aside>
     </>

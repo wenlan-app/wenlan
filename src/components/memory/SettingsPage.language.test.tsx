@@ -2,11 +2,13 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { i18n } from "../../i18n";
 import { APP_LOCALE_STORAGE_KEY } from "../../i18n/locales";
 import SettingsPage from "./SettingsPage";
+
+const setUiLanguage = vi.hoisted(() => vi.fn(() => Promise.resolve()));
 
 vi.mock("../../lib/theme", () => ({
   useTheme: () => ["system", vi.fn()] as const,
@@ -37,6 +39,7 @@ vi.mock("../../lib/tauri", () => ({
     Promise.resolve({ enabled, available: true, pending_operations: 0 }),
   ),
   setSetupCompleted: vi.fn(() => Promise.resolve()),
+  setUiLanguage,
   removeAvatar: vi.fn(() => Promise.resolve()),
   updateAgent: vi.fn(() => Promise.resolve()),
   updateProfile: vi.fn(() => Promise.resolve()),
@@ -83,6 +86,7 @@ function renderSettingsPage() {
 }
 
 describe("SettingsPage language selector", () => {
+  afterEach(() => vi.unstubAllGlobals());
   beforeEach(async () => {
     window.localStorage.clear();
     await i18n.changeLanguage("en");
@@ -110,5 +114,17 @@ describe("SettingsPage language selector", () => {
 
     expect(window.localStorage.getItem(APP_LOCALE_STORAGE_KEY)).toBe("zh-Hant");
     expect(i18n.language).toBe("zh-Hant");
+  });
+
+  it("keeps only the HTTP-backed language row in Web General and persists it to the daemon", async () => {
+    vi.stubGlobal("__WENLAN_WEB__", true);
+    const user = userEvent.setup();
+    renderSettingsPage();
+
+    expect(screen.getByLabelText("Language")).toBeInTheDocument();
+    expect(screen.queryByText("Open at login")).not.toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText("Language"), "zh-Hant");
+    expect(setUiLanguage).toHaveBeenCalledWith("zh-Hant");
   });
 });

@@ -2,6 +2,7 @@
 // Shared display helpers for the page-detail subcomponents.
 import type { TFunction } from "i18next";
 import { agentDisplayName, type MemoryItem, type PageChangelogEntry } from "../../../lib/tauri";
+import { writerAgentName } from "../sharing/teamPeople";
 
 export function prettyAgent(name: string | null | undefined): string {
   return agentDisplayName(name) ?? "unknown agent";
@@ -34,13 +35,13 @@ export function revisionWriterLabel(
   agent?: string | null,
 ): string {
   if (editedBy === "agent_refresh") {
-    const name = agentDisplayName(agent?.trim());
+    const name = writerAgentName(t, agent);
     return name
       ? t("revisionLabel.writer.agentRefreshNamed", { agent: name })
       : t("revisionLabel.writer.agentRefresh");
   }
   if (editedBy === "person_asked") {
-    const name = agentDisplayName(agent?.trim());
+    const name = writerAgentName(t, agent);
     return name
       ? t("revisionLabel.writer.personAskedNamed", { agent: name })
       : t("revisionLabel.writer.personAsked");

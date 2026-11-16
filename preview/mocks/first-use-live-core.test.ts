@@ -14,7 +14,7 @@ import {
   verifyScratchBinding,
   verifyUpstreamScratchBinding,
 } from "./first-use-live-core";
-import { HANDLERS } from "./live-invoke";
+import { HANDLERS } from "../../src/web/live-invoke";
 
 const SCRATCH = "/tmp/wenlan-preview-scratch/pages";
 

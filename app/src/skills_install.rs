@@ -23,51 +23,6 @@ pub(crate) const MANAGED_MARKER: &str = ".wenlan-managed";
 /// skill can name its own scripts (`{{WENLAN_SKILLS_DIR}}/wenlan/scripts/..`).
 pub(crate) const SKILLS_DIR_PLACEHOLDER: &str = "{{WENLAN_SKILLS_DIR}}";
 
-/// The platform folder a client's skills folder hangs off.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SkillsBase {
-    Home,
-    /// The application-configuration folder (`dirs::config_dir()`).
-    ConfigDir,
-}
-
-/// Where `client_type`'s skills folder is, as a base and a relative tail.
-/// `None` for a client whose skills arrive another way (the Claude Code and
-/// Codex plugins) or that has no skills surface (Claude Desktop, Muse Code).
-///
-/// Several clients share a folder: Antigravity reads Gemini CLI's
-/// `~/.gemini/skills`, and VS Code reads Copilot's `~/.copilot/skills`.
-fn skills_location(client_type: &str) -> Option<(SkillsBase, PathBuf)> {
-    let tail: &[&str] = match client_type {
-        "cursor" => &[".cursor", "skills"],
-        "gemini_cli" | "antigravity" => &[".gemini", "skills"],
-        "copilot_cli" | "vscode" => &[".copilot", "skills"],
-        "windsurf" => &[".codeium", "windsurf", "skills"],
-        "kiro" => &[".kiro", "skills"],
-        "opencode" => &[".config", "opencode", "skills"],
-        // Kimi Code also reads the shared `~/.agents/skills`; its own folder
-        // keeps Wenlan's copy next to the MCP entry it pairs with.
-        "kimi_code" => &[".kimi-code", "skills"],
-        // Kimi, the desktop app: its daemon hands its embedded Kimi Code one
-        // skills folder, `<config dir>/kimi-desktop/daimon-share/daimon/skills`
-        // (measured on macOS, Kimi 3.2.21), and reads neither `~/.agents/skills`
-        // nor a `skills` folder in its Kimi Code home. The app's own built-in
-        // skills live there too, listed in its
-        // `.daimon-managed-builtin-skills.json`; Wenlan's carry
-        // [`MANAGED_MARKER`] like everywhere else, so neither is mistaken for
-        // the other.
-        "kimi_desktop" => {
-            let tail = crate::mcp_config::KIMI_DESKTOP_DAIMON
-                .iter()
-                .chain(&["skills"])
-                .collect::<PathBuf>();
-            return Some((SkillsBase::ConfigDir, tail));
-        }
-        _ => return None,
-    };
-    Some((SkillsBase::Home, tail.iter().collect()))
-}
-
 /// The skills folder `client_type` reads, under `home` or the platform
 /// `config_dir` (whichever that client's folder hangs off). `None` for a
 /// client with no skills folder; `Some(Err(what))` when the directory it
@@ -77,15 +32,13 @@ pub(crate) fn skills_dir_for(
     home: Option<&Path>,
     config_dir: Option<&Path>,
 ) -> Option<Result<PathBuf, &'static str>> {
-    let (base, tail) = skills_location(client_type)?;
-    Some(match base {
-        SkillsBase::Home => home
-            .map(|home| home.join(&tail))
-            .ok_or("the home directory"),
-        SkillsBase::ConfigDir => config_dir
-            .map(|config_dir| config_dir.join(&tail))
-            .ok_or("the application-configuration directory"),
-    })
+    // Claude Code and Codex receive the app's bundled skills through their
+    // plugins. Keep that behavior even though the shared location table also
+    // lets the suggestion-only reviewer inspect skills the person owns.
+    if matches!(client_type, "claude_code" | "codex_cli") {
+        return None;
+    }
+    wenlan_core::skill_locations::skills_dir_for(client_type, home, config_dir)
 }
 
 /// Why an install did not happen. Every variant is raised before anything is
@@ -503,15 +456,15 @@ mod tests {
         let home = PathBuf::from("/fixture/home");
         let config = PathBuf::from("/fixture/config");
         for (client_type, tail) in [
-            ("cursor", [".cursor", "skills"].as_slice()),
+            ("cursor", [".agents", "skills"].as_slice()),
             ("gemini_cli", &[".gemini", "skills"]),
-            ("antigravity", &[".gemini", "skills"]),
+            ("antigravity", &[".gemini", "config", "skills"]),
             ("copilot_cli", &[".copilot", "skills"]),
             ("vscode", &[".copilot", "skills"]),
             ("windsurf", &[".codeium", "windsurf", "skills"]),
             ("kiro", &[".kiro", "skills"]),
             ("opencode", &[".config", "opencode", "skills"]),
-            ("kimi_code", &[".kimi-code", "skills"]),
+            ("kimi_code", &[".agents", "skills"]),
         ] {
             let expected = tail.iter().fold(home.clone(), |acc, part| acc.join(part));
             assert_eq!(
@@ -758,7 +711,7 @@ mod tests {
         // A measured absence beside an unread one is a measured no: "every
         // skill is installed" is false either way.
         let brief_marker = home
-            .join(".cursor")
+            .join(".agents")
             .join("skills")
             .join("wenlan-brief")
             .join(MANAGED_MARKER);

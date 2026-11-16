@@ -34,6 +34,7 @@ pub enum ModelCommand {
         yes: bool,
     },
     /// Set the cross-encoder reranker mode (off/lite/full).
+    #[command(hide = true)]
     Reranker {
         /// Mode to persist; the daemon reads it at startup.
         mode: RerankerModeArg,
@@ -140,6 +141,7 @@ pub async fn run_setup(args: SetupArgs) -> anyhow::Result<()> {
         println!("Wenlan is set up for local memory.");
         println!("Storage, search, recall, and MCP memory work without a local model or API key.");
         println!("Steep (background upkeep) is off.");
+        print_browser_address();
         return Ok(());
     }
 
@@ -147,6 +149,7 @@ pub async fn run_setup(args: SetupArgs) -> anyhow::Result<()> {
         install_model(&model_id, args.yes).await?;
         mark_setup_completed()?;
         print_enrichment_opt_in("on-device");
+        print_browser_address();
         return Ok(());
     }
 
@@ -156,10 +159,21 @@ pub async fn run_setup(args: SetupArgs) -> anyhow::Result<()> {
         set_anthropic_key(key).await?;
         mark_setup_completed()?;
         print_enrichment_opt_in("Anthropic");
+        print_browser_address();
         return Ok(());
     }
 
-    interactive_setup().await
+    interactive_setup().await?;
+    print_browser_address();
+    Ok(())
+}
+
+fn print_browser_address() {
+    println!(
+        "Open Wenlan in your browser: {}",
+        super::web::browser_url(&origin_host_from_env())
+    );
+    println!("Or run `wenlan open`.");
 }
 
 pub async fn run_model(command: ModelCommand) -> anyhow::Result<()> {
@@ -830,7 +844,7 @@ async fn print_daemon_health() -> Option<wenlan_core::home_bin::Version> {
             println!("Daemon: not reachable on {url}");
             if super::service::autostart_off_marker_exists() {
                 println!(
-                    "  The background service is switched off (`wenlan background off`); turn it back on with `wenlan background on`."
+                    "  The background service is switched off (`wenlan stop`); turn it back on with `wenlan start`."
                 );
                 return None;
             }
@@ -874,7 +888,7 @@ fn print_last_daemon_error() {
                 print_downgrade_barrier_hint();
             } else {
                 println!(
-                    "  Fix the cause above, then run `wenlan background on` (or open the Wenlan app)."
+                    "  Fix the cause above, then run `wenlan start` (or open the Wenlan app)."
                 );
             }
         }
@@ -884,7 +898,7 @@ fn print_last_daemon_error() {
                 daemon_log_path().display()
             );
             println!(
-                "  Start it with `wenlan background on` (or open the Wenlan app); if it stops again, that log says why."
+                "  Start it with `wenlan start` (or open the Wenlan app); if it stops again, that log says why."
             );
         }
     }
@@ -894,7 +908,7 @@ fn print_last_daemon_error() {
 /// Task Scheduler), not to a file this command can read.
 #[cfg(not(target_os = "macos"))]
 fn print_last_daemon_error() {
-    println!("  Start it with `wenlan background on` (or open the Wenlan app).");
+    println!("  Start it with `wenlan start` (or open the Wenlan app).");
     println!(
         "  If it stops again, the service log says why (Linux: `journalctl --user -u wenlan-server`); \
          a store migrated by a NEWER Wenlan is refused on purpose — upgrade Wenlan."

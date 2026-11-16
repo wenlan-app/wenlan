@@ -63,7 +63,7 @@ test("renders the Planet Space mark across light, dark, mobile, focus, and physi
   await page.setViewportSize({ width: 1280, height: 900 });
   await installTauriMock(page, { locale: "en", localStorage: { "wenlan-spaces-view-mode": "rows" }, rawActions: [] });
   await page.goto("/");
-  await openPrimaryDestination(page, "Wiki");
+  await openPrimaryDestination(page, "Library");
   await settle(page);
 
   const screenshots: string[] = [];
@@ -111,7 +111,7 @@ test("renders the Planet Space mark across light, dark, mobile, focus, and physi
 
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
-  await openPrimaryDestination(page, "Wiki");
+  await openPrimaryDestination(page, "Library");
   const darkDefault = await markState(spacesButton(page).locator(markSelector));
   expect(darkDefault).toMatchObject({
     color: "rgb(201, 200, 209)",

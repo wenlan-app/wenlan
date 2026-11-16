@@ -52,6 +52,7 @@ mod repo_wiki;
 mod research;
 mod research_disputes;
 mod search;
+mod skill_registry_commands;
 mod skills_install;
 mod source_lifecycle;
 pub mod sources;
@@ -1728,6 +1729,17 @@ pub fn run() {
             search::get_snapshot_captures_with_content,
             search::delete_snapshot,
             search::list_spaces,
+            search::get_skills_from_library_enabled,
+            search::list_space_rules_suggestions,
+            search::accept_space_rules,
+            search::decline_space_rules,
+            search::refresh_skills,
+            search::undo_space_rules,
+            search::list_skill_suggestions,
+            search::apply_skill_suggestion,
+            search::dismiss_skill_suggestion,
+            search::undo_skill_suggestion,
+            search::list_skill_borrow_records,
             search::list_working_on,
             search::get_space_brief,
             search::get_space,
@@ -1871,6 +1883,7 @@ pub fn run() {
             search::get_space_folders,
             search::set_space_folders,
             search::set_background_ai_enabled,
+            search::set_skills_from_library,
             search::set_ui_language,
             search::should_show_wizard,
             search::local_setup_completed,
@@ -1883,6 +1896,16 @@ pub fn run() {
             search::get_wenlan_mcp_entry,
             search::install_client_plugin,
             search::install_client_skills,
+            skill_registry_commands::skills_search,
+            skill_registry_commands::skills_preview,
+            skill_registry_commands::skills_install,
+            skill_registry_commands::skills_installed,
+            skill_registry_commands::skills_set_additions,
+            skill_registry_commands::skills_set_scope,
+            skill_registry_commands::skills_remove,
+            skill_registry_commands::skills_refresh,
+            skill_registry_commands::skills_scan_local,
+            skill_registry_commands::skills_import_local,
             search::register_connected_agent,
             search::wire_state,
             // Remote access commands

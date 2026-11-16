@@ -31,6 +31,7 @@ import { archiveFixturePage, restoreFixturePage } from "./pageRestore";
 import { PageBasisStore } from "./pageBasis";
 import { PageCodeBasisStore } from "./pageCodeBasis";
 import { ResearchFixtureStore } from "./research";
+import { SkillsFixture } from "./skills";
 import { PageMapStore } from "./pageMap";
 import type { MockCommandCall, MockFailure, TauriMockPageScenario } from "./types";
 
@@ -137,6 +138,7 @@ function stringArray(args: unknown, key: string): readonly string[] {
 
 export class TauriMockRuntime {
   private readonly research = new ResearchFixtureStore();
+  private readonly skills = new SkillsFixture();
   private spaces: Space[];
   private folders: KnowledgeFolder[];
   private readonly folderMoveReceipts = new Map<string, {id:string;expectedStoragePath:string;folderPath:string;storage_path:string}>();
@@ -234,6 +236,7 @@ export class TauriMockRuntime {
     const delay = this.delays[command];
     if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
 
+    if (this.skills.supports(command)) return this.skills.invoke(command, args as Record<string, unknown> | undefined);
     if (this.research.supports(command)) return this.research.invoke(command, args, this.spaces, this.pages, (this.fixture.documents ?? []).map(document => document.file), this.refinements);
 
     switch (command) {

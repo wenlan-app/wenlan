@@ -168,7 +168,10 @@ async fn verify_http(origin_url: String) {
         .map(|tool| tool["name"].as_str().unwrap())
         .collect();
     names.sort();
-    assert_eq!(names, ["brief", "get_page_sources", "recall"]);
+    assert_eq!(
+        names,
+        ["brief", "get_page_sources", "read_space_rules", "recall"]
+    );
     for (index, (name, arguments)) in [
         ("brief", json!({})),
         ("brief", json!({"topic":"Atlas authentication decision"})),

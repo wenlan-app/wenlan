@@ -161,7 +161,7 @@ for (const theme of THEMES) {
       await page.goto("/");
       await page
         .getByRole("navigation", { name: "Primary navigation" })
-        .getByRole("button", { name: "Wiki", exact: true })
+        .getByRole("button", { name: "Library", exact: true })
         .click();
       await openWikiNote(page, "Fixture architecture");
       await saveOpenPage(page);
@@ -180,7 +180,7 @@ for (const theme of THEMES) {
       await page.goto("/");
       await page
         .getByRole("navigation", { name: "Primary navigation" })
-        .getByRole("button", { name: "Wiki", exact: true })
+        .getByRole("button", { name: "Library", exact: true })
         .click();
       await openWikiNote(page, "Fixture architecture");
       await saveOpenPage(page);

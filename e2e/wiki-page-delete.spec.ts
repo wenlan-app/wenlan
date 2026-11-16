@@ -8,7 +8,7 @@ import { openWikiNote } from "./helpers/wikiWorkspace";
 async function openFixturePage(page: Page): Promise<void> {
   await page.goto("/");
   const navigation = page.getByRole("navigation", { name: "Primary navigation" });
-  await navigation.getByRole("button", { name: "Wiki", exact: true }).click();
+  await navigation.getByRole("button", { name: "Library", exact: true }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Open a page" })).toBeVisible();
   await openWikiNote(page, "Fixture architecture");
   await expect(page.getByRole("heading", { level: 1, name: "Fixture architecture" })).toBeVisible();

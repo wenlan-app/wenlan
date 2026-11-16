@@ -36,6 +36,8 @@ pub enum PagesAction {
         /// The page's id (see `wenlan pages <query> --resolve-id`).
         page_id: String,
     },
+    #[command(flatten)]
+    Tool(super::page_tools::PageToolAction),
 }
 
 /// Page ids are opaque ASCII tokens; refuse anything that could change the
@@ -62,6 +64,9 @@ pub async fn run_action(
     let (page_id, required) = match action {
         PagesAction::Lock { page_id } => (page_id, true),
         PagesAction::Unlock { page_id } => (page_id, false),
+        PagesAction::Tool(_) => {
+            unreachable!("tool-backed page commands return before a daemon client is made")
+        }
     };
     validate_page_id(&page_id)?;
     let receipt = client.set_page_review_required(&page_id, required).await?;
@@ -478,7 +483,7 @@ fn print_list(shown: &[(String, usize)], total_titles: usize, total_pages: usize
     if total_pages == 0 {
         println!("(no pages in {})", dir.display());
         println!(
-            "  Pages come from the distill tool (/distill in the Claude Code or Codex plugin, or any MCP client) once a few related memories exist, or from the page editor in the Wenlan app."
+            "  Ask your AI tool to write pages from what you saved (/wenlan steep in Claude Code, $wenlan steep in Codex), or write one in the Wenlan app."
         );
         return;
     }

@@ -14,7 +14,7 @@ use wenlan_types::lint::LintProfile;
 #[command(
     name = "wenlan",
     version,
-    about = "Wenlan: a personal wiki your AI tools keep up to date. Capture, recall, and hand off across sessions."
+    about = "Wenlan: a studio for everything you think, learn, and build with AI. Capture, recall, and hand off across sessions."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -50,6 +50,8 @@ struct Cli {
 enum Commands {
     /// Check whether Wenlan is running.
     Status,
+    /// Open Wenlan's personal browser UI.
+    Open,
     /// Guided setup: get Wenlan running, optionally with a local model or an Anthropic key.
     Setup {
         /// Set up without a model or API key.
@@ -65,7 +67,12 @@ enum Commands {
         #[arg(short = 'y', long)]
         yes: bool,
     },
-    /// Control whether Wenlan keeps running in the background.
+    /// Start Wenlan now and keep it running in the background after login.
+    Start,
+    /// Stop Wenlan. It stays off until `wenlan start`.
+    Stop,
+    /// The earlier spelling of `start` (`background on`) and `stop` (`background off`).
+    #[command(hide = true)]
     Background {
         #[command(subcommand)]
         command: commands::service::BackgroundCommand,
@@ -109,7 +116,7 @@ enum Commands {
     },
     /// Connect Wenlan to a supported agent or editor.
     Connect(commands::mcp::ConnectArgs),
-    /// Recall scored memories for a query, plus the compiled pages that match it.
+    /// Find the memories and pages that match a query.
     Recall {
         /// Query to recall memories for.
         query: String,
@@ -117,10 +124,11 @@ enum Commands {
         #[arg(short, long, default_value_t = 10)]
         limit: usize,
     },
+    /// Read the working rules approved for a Space.
+    Rules,
     /// Read the current Space Brief, optionally with related context.
     Brief(commands::brief::BriefArgs),
-    /// Browse distilled pages, open one in your editor by title query, or
-    /// lock a page so machine updates wait for your review.
+    /// List pages or open one by title; read, write, rename, move, delete or restore one (read, write, rename, delete, move, history, restore, links, lock, unlock).
     #[command(args_conflicts_with_subcommands = true)]
     Pages {
         #[command(subcommand)]
@@ -137,7 +145,7 @@ enum Commands {
         #[arg(long, requires = "query", conflicts_with = "resolve_id")]
         print: bool,
     },
-    /// Manage folders and files Wenlan should learn from.
+    /// Manage folders and files Wenlan should learn from (add, save, read).
     Sources {
         #[command(subcommand)]
         command: commands::ingest::SourcesCommand,
@@ -154,8 +162,11 @@ enum Commands {
         #[arg(short = 't', long = "type")]
         memory_type: Option<String>,
     },
-    /// List recent memories.
+    /// List recent memories, or confirm, forget and review them (pending, confirm, forget, history).
+    #[command(args_conflicts_with_subcommands = true)]
     Memories {
+        #[command(subcommand)]
+        action: Option<commands::page_tools::MemoryAction>,
         /// Max results.
         #[arg(short, long, default_value_t = 20)]
         limit: usize,
@@ -166,7 +177,7 @@ enum Commands {
         #[arg(long)]
         pending: bool,
     },
-    /// Walk pending revisions (conflicts / merges) awaiting your accept or dismiss.
+    /// List changes waiting for review, or dismiss one. Accepting is done in the Wenlan app.
     Curate {
         #[command(subcommand)]
         action: Option<commands::curate::CurateAction>,
@@ -177,17 +188,17 @@ enum Commands {
         #[command(subcommand)]
         cmd: commands::agents::AgentsCmd,
     },
-    /// Manage Spaces, the separate wikis Wenlan keeps (list, add, default, move, show, share-sync).
+    /// Manage Spaces, the separate sets of pages Wenlan keeps (list, add, default, show).
     Spaces {
         #[command(subcommand)]
         cmd: commands::space::SpaceCmd,
     },
-    /// Run or join a team server: add members, host Spaces, join with a code (status, add, update, remove, new-key, host, join).
+    /// Work with a team: start one here, invite people, or join with an invite link (start, share, invite, join, status, leave, update, remove, new-key, stop).
     Team {
         #[command(subcommand)]
         cmd: commands::team::TeamCmd,
     },
-    /// Inspect or sync notes saved locally while Wenlan was not running.
+    /// Show or send what was saved locally while Wenlan was not running.
     Outbox {
         #[command(subcommand)]
         command: commands::outbox::OutboxCommand,
@@ -207,6 +218,11 @@ enum Commands {
         #[command(subcommand)]
         command: commands::wiki::WikiCommand,
     },
+    /// Call any Wenlan tool an AI tool can call, by the same name (list, show, call).
+    Tool {
+        #[command(subcommand)]
+        cmd: commands::tool::ToolCmd,
+    },
     /// Force one bounded pass over every due ambient job now, instead of
     /// waiting for a quiet turn.
     #[command(hide = true)]
@@ -220,31 +236,33 @@ const HELP_GROUPS: &[(&str, &[&str])] = &[
     (
         "Daily",
         &[
-            "brief", "capture", "recall", "pages", "memories", "curate", "lint", "spaces", "team",
-            "wiki",
+            "brief", "capture", "recall", "rules", "pages", "memories", "sources",
         ],
     ),
     (
         "Setup",
         &[
-            "setup",
-            "status",
-            "doctor",
-            "background",
-            "restart",
-            "connect",
-            "models",
-            "keys",
-            "steep",
+            "setup", "open", "connect", "status", "doctor", "start", "stop", "restart",
         ],
     ),
-    ("Maintenance", &["sources", "outbox", "export", "entities"]),
+    ("Team", &["team", "spaces"]),
+    (
+        ADVANCED_GROUP,
+        &[
+            "curate", "lint", "models", "keys", "steep", "wiki", "outbox", "export", "entities",
+            "tool",
+        ],
+    ),
 ];
+
+/// The last help group: commands most people never need. `wenlan --help` names
+/// them on one line; `wenlan help all` lists them like the rest.
+const ADVANCED_GROUP: &str = "Advanced";
 
 /// Build a clap help template that lists the subcommands by `HELP_GROUPS`
 /// instead of one flat `Commands:` block. Every line keeps clap's two-space
 /// indent so help parsers that read the first word of indented lines still work.
-fn grouped_help_template(cmd: &clap::Command) -> String {
+fn grouped_help_template(cmd: &clap::Command, all: bool) -> String {
     let abouts: std::collections::BTreeMap<&str, String> = cmd
         .get_subcommands()
         .map(|sub| {
@@ -263,6 +281,15 @@ fn grouped_help_template(cmd: &clap::Command) -> String {
     let mut template =
         String::from("{before-help}{about-with-newline}\n{usage-heading} {usage}\n\n");
     for (heading, names) in HELP_GROUPS {
+        if *heading == ADVANCED_GROUP && !all {
+            // Not indented: tools that read the first word of indented
+            // lines as a command must not see this one.
+            template.push_str(&format!(
+                "More commands: wenlan help all ({})\n\n",
+                names.join(", ")
+            ));
+            continue;
+        }
         template.push_str(heading);
         template.push_str(":\n");
         for name in names.iter() {
@@ -278,7 +305,16 @@ fn grouped_help_template(cmd: &clap::Command) -> String {
 #[tokio::main]
 async fn main() -> anyhow::Result<ExitCode> {
     let cmd = Cli::command();
-    let template = grouped_help_template(&cmd);
+    // `wenlan help all`: the same help with the Advanced group written out.
+    let wants_all = std::env::args()
+        .skip(1)
+        .eq(["help", "all"].map(String::from));
+    if wants_all {
+        let template = grouped_help_template(&cmd, true);
+        cmd.help_template(template).print_help()?;
+        return Ok(ExitCode::SUCCESS);
+    }
+    let template = grouped_help_template(&cmd, false);
     let matches = cmd.help_template(template).get_matches();
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
     if cli.all_spaces && matches!(&cli.command, Commands::Brief(_)) {
@@ -308,9 +344,76 @@ async fn main() -> anyhow::Result<ExitCode> {
     }
     let environment_agent = std::env::var("WENLAN_AGENT_NAME").ok();
     let agent_name = resolve_agent_name(cli.agent_name.as_deref(), environment_agent.as_deref());
+    // Commands that are an MCP tool under a CLI name go through `wenlan-mcp`,
+    // not the daemon client below, so they behave as they do in an AI tool.
+    let tool_backed = matches!(
+        &cli.command,
+        Commands::Tool { .. }
+            | Commands::Pages {
+                action: Some(commands::pages::PagesAction::Tool(_)),
+                ..
+            }
+            | Commands::Memories {
+                action: Some(_),
+                ..
+            }
+            | Commands::Sources {
+                command: commands::ingest::SourcesCommand::Read(_)
+            }
+    );
+    if tool_backed {
+        if cli.all_spaces {
+            anyhow::bail!(
+                "--all-spaces is not supported by this command; name one Space with --space"
+            );
+        }
+        let caller = commands::tool::Caller {
+            host: std::env::var("WENLAN_HOST")
+                .ok()
+                .filter(|host| !host.is_empty()),
+            agent_name,
+            space: cli.space.clone(),
+        };
+        let (format, quiet) = (cli.format.resolve(), cli.quiet);
+        let ok = match cli.command {
+            Commands::Tool { cmd } => commands::tool::run(cmd, &caller, format, quiet)?,
+            Commands::Pages {
+                action: Some(commands::pages::PagesAction::Tool(action)),
+                ..
+            } => {
+                commands::page_tools::run_pages(action, &caller, format, quiet)?;
+                true
+            }
+            Commands::Memories {
+                action: Some(action),
+                ..
+            } => {
+                commands::page_tools::run_memories(action, &caller, format, quiet)?;
+                true
+            }
+            Commands::Sources {
+                command: commands::ingest::SourcesCommand::Read(args),
+            } => {
+                commands::page_tools::run_read_source(args, &caller, format, quiet)?;
+                true
+            }
+            _ => unreachable!("matched above"),
+        };
+        return Ok(if ok {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        });
+    }
     let recovery_enabled = !matches!(
         &cli.command,
-        Commands::Status | Commands::Background { .. } | Commands::Restart | Commands::Connect(_)
+        Commands::Status
+            | Commands::Start
+            | Commands::Stop
+            | Commands::Open
+            | Commands::Background { .. }
+            | Commands::Restart
+            | Commands::Connect(_)
     );
     let resolved_session =
         wenlan_types::session_context::resolve_session_from_env(cli.session.as_deref());
@@ -327,7 +430,9 @@ async fn main() -> anyhow::Result<ExitCode> {
     );
     let is_outbox = matches!(&cli.command, Commands::Outbox { .. });
     let operation = match &cli.command {
-        Commands::Recall { .. } | Commands::Memories { .. } => Some(CliSpaceOperation::Read),
+        Commands::Recall { .. } | Commands::Memories { .. } | Commands::Rules => {
+            Some(CliSpaceOperation::Read)
+        }
         Commands::Brief(args) if !args.is_update() => Some(CliSpaceOperation::Read),
         Commands::Capture { .. } | Commands::Wiki { .. } => Some(CliSpaceOperation::Write),
         _ => None,
@@ -450,6 +555,7 @@ async fn main() -> anyhow::Result<ExitCode> {
     let format = cli.format.resolve();
     match cli.command {
         Commands::Status => commands::status::run(&client, format, cli.quiet).await?,
+        Commands::Open => commands::web::run(&client)?,
         Commands::Setup {
             basic,
             model,
@@ -464,8 +570,17 @@ async fn main() -> anyhow::Result<ExitCode> {
             })
             .await?
         }
+        Commands::Start => {
+            commands::service::run_background(commands::service::BackgroundCommand::On).await?
+        }
+        Commands::Stop => {
+            commands::service::run_background(commands::service::BackgroundCommand::Off).await?
+        }
         Commands::Background { command } => commands::service::run_background(command).await?,
         Commands::Restart => commands::service::restart().await?,
+        Commands::Tool { .. } => {
+            unreachable!("tool commands return before a daemon client is made")
+        }
         Commands::Doctor { repair } => commands::setup::run_doctor(repair).await?,
         Commands::Lint {
             profile,
@@ -492,6 +607,7 @@ async fn main() -> anyhow::Result<ExitCode> {
         Commands::Recall { query, limit } => {
             commands::recall::run(&client, format, cli.quiet, query, limit).await?
         }
+        Commands::Rules => commands::skills::read_space_rules(&client, format, cli.quiet).await?,
         Commands::Brief(args) => {
             commands::brief::run(
                 &client,
@@ -538,6 +654,7 @@ async fn main() -> anyhow::Result<ExitCode> {
             .await?
         }
         Commands::Memories {
+            action: _,
             limit,
             memory_type,
             pending,

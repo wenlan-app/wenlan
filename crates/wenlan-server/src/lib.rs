@@ -70,6 +70,7 @@ pub mod security;
 pub mod sensitive_read_routes;
 pub mod sentence_routes;
 pub mod session_routes;
+pub mod skill_grow;
 mod slow_save;
 pub mod snapshot_routes;
 pub mod source_annotation_routes;
@@ -80,6 +81,7 @@ pub mod spaces_routes;
 pub mod state;
 pub mod steep_new_routes;
 pub mod steep_routes;
+pub mod team_actor;
 mod team_firewall;
 pub mod team_routes;
 pub mod telemetry;
@@ -91,6 +93,7 @@ pub mod trust_scan_routes;
 pub mod truth_guard;
 mod web_fetch;
 pub mod web_fetch_routes;
+mod web_static;
 pub mod websocket;
 
 #[cfg(test)]

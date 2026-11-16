@@ -18,6 +18,7 @@ import {
   openFile,
   daemonErrorMessage,
   isOkfExportDaemonTooOld,
+  setUiLanguage,
 } from "../../../../lib/tauri";
 import {
   readStoredLocalePreference,
@@ -35,6 +36,7 @@ import { SettingsGroup } from "../SettingsView";
 import ProfileAvatar from "../../ProfileAvatar";
 import { replayPageTour, usePageTourState } from "../../../onboarding/PageTour";
 import { resetTabIntros } from "../../../onboarding/TabIntro";
+import { isWebBuild } from "../../../../web/runtime";
 
 interface ProfileUpdateFields {
   name?: string;
@@ -172,12 +174,56 @@ function errorMessage(error: unknown): string | null {
   return null;
 }
 
-export default function GeneralSection() {
+function LanguageSettingRow() {
   const { t } = useTranslation();
-  const queryClient = useQueryClient();
   const [languagePreference, setLanguagePreference] = useState<StoredLocale>(
     () => readStoredLocalePreference(),
   );
+  return (
+    <SettingRow
+      title={t("settings.language.label")}
+      description=""
+      control={
+        <div className="w-fit shrink-0">
+          <Select
+            size="sm"
+            aria-label={t("settings.language.label")}
+            value={languagePreference}
+            onChange={(event) => {
+              const nextPreference = event.currentTarget.value as StoredLocale;
+              setLanguagePreference(nextPreference);
+              void setLocalePreference(nextPreference).then((language) => {
+                if (isWebBuild()) return setUiLanguage(language);
+              }).catch(() => {});
+            }}
+          >
+            <option value="system">{t("settings.language.system")}</option>
+            <option value="en">{t("settings.language.english")}</option>
+            <option value="zh-Hans">{t("settings.language.simplifiedChinese")}</option>
+            <option value="zh-Hant">{t("settings.language.traditionalChinese")}</option>
+          </Select>
+        </div>
+      }
+    />
+  );
+}
+
+function WebGeneralSection() {
+  const { t } = useTranslation();
+  return (
+    <SettingsGroup heading={t("settings.general.appSection")} className="mem-fade-up" style={{ animationDelay: "0ms" }}>
+      <LanguageSettingRow />
+    </SettingsGroup>
+  );
+}
+
+export default function GeneralSection() {
+  return isWebBuild() ? <WebGeneralSection /> : <DesktopGeneralSection />;
+}
+
+function DesktopGeneralSection() {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
 
   // ── Run at login ───────────────────────────────────────────────────
   const runAtLoginQuery = useQuery({
@@ -269,29 +315,7 @@ export default function GeneralSection() {
     <>
       <ProfileSettingsBlock />
       <SettingsGroup heading={t("settings.general.appSection")} className="mem-fade-up" style={{ animationDelay: "0ms" }}>
-          <SettingRow
-            title={t("settings.language.label")}
-            description=""
-            control={
-              <div className="w-fit shrink-0">
-                <Select
-                  size="sm"
-                  aria-label={t("settings.language.label")}
-                  value={languagePreference}
-                  onChange={(event) => {
-                    const nextPreference = event.currentTarget.value as StoredLocale;
-                    setLanguagePreference(nextPreference);
-                    void setLocalePreference(nextPreference);
-                  }}
-                >
-                  <option value="system">{t("settings.language.system")}</option>
-                  <option value="en">{t("settings.language.english")}</option>
-                  <option value="zh-Hans">{t("settings.language.simplifiedChinese")}</option>
-                  <option value="zh-Hant">{t("settings.language.traditionalChinese")}</option>
-                </Select>
-              </div>
-            }
-          />
+          <LanguageSettingRow />
           <SettingRow
             title={t("settings.general.runAtLoginTitle")}
             description=""

@@ -28,7 +28,12 @@ import "./archivedNotes.css";
 import { useShares } from "../sharing/sharing";
 import { useScope } from "../team/scope";
 import { TeamChanges, TeamWaiting } from "../team/TeamPage";
+import { SpaceRecentChanges } from "../space-detail/SpaceRecentChanges";
+import { isTeamMemberMode } from "../../../web/team";
 import { HomeLookView, useHomeLook } from "./HomeLook";
+import { isWebBuild } from "../../../web/runtime";
+import { SkillHomeLine } from "../skills/SkillHomeLine";
+import { isHowIWorkPage } from "../skills/howIWorkModel";
 
 interface PagesOverviewProps {
   readonly inventoryScope?: WikiInventoryScope;
@@ -72,6 +77,7 @@ export function PagesOverview({
   onOpenIntelligence,
   onOpenNoteSuggestion,
 }: PagesOverviewProps) {
+  const web = isWebBuild();
   const { t } = useTranslation();
   const { pages, empty } = useLibraryInventory();
   // On a team's side home is this same home, laid out the same: that team's
@@ -80,6 +86,11 @@ export function PagesOverview({
   // Private.
   const scope = useScope();
   const team = scope.team;
+  // A team member's browser: every Space here is one the team shares with
+  // them, so who changed what in them is shown the way a team's home shows it.
+  const memberSpaces = isTeamMemberMode()
+    ? [...new Set(pages.map((page) => page.space).filter((space): space is string => !!space))].sort()
+    : [];
   const checklist = useGettingStartedState();
   const [adding, setAdding] = useState<false | "menu" | "folder" | "chats">(false);
   // What the user picked on the welcome screen happens here, once: the
@@ -165,8 +176,9 @@ export function PagesOverview({
   // An AI-made HTML view of home (UX-LOOK-10), on Private home only. It
   // stands in for the Spaces and pages; the night line and anything that
   // needs the person stay where they are.
-  const homeLook = useHomeLook({ supported: !team && !example && !onboarding && daemonReady, pages });
+  const homeLook = useHomeLook({ supported: !web && !team && !example && !onboarding && daemonReady, pages });
   const lookShown = homeLook.shown;
+  const howIWorkPages = pages.filter(isHowIWorkPage);
   // With pages to list, "open a page" has nothing to add.
   const listsPages = lookShown || (newPages !== null && recentPages(pages).length > 0);
 
@@ -181,9 +193,9 @@ export function PagesOverview({
       {/* A changed source shows on the pages that cite it, never on Home (UX-HOME-4). */}
       {onOpenNoteSuggestion && !team && <NoteSuggestionsSummary onOpen={onOpenNoteSuggestion} />}
       {/* Asks once, the day after a vault is linked, whether the AI may change its notes. */}
-      {example || team ? null : <LinkedVaultAsk />}
+      {web || example || team ? null : <LinkedVaultAsk />}
       {/* The open checklist carries the same offer as a step; one place at a time. */}
-      {onboarding || team ? null : (
+      {web || onboarding || team ? null : (
         <WritePagesLine
           state={writePages}
           pages={pages}
@@ -212,6 +224,9 @@ export function PagesOverview({
           under it as one row of cards that scrolls sideways, so neither pushes
           the other down. */}
       <div className={`home-columns${thingsOn ? "" : " home-columns--spaces"}`}>
+        {example || team || onboarding || howIWorkPages.length === 0 ? null : (
+          <SkillHomeLine pages={howIWorkPages} onOpenPage={onSelectPage} />
+        )}
         {/* What last night steeped spans every Space and the Wiki, so it
             opens home on its own line. "What you're working on" carries its
             own steeped line, so while it is on only the "not written yet"
@@ -226,7 +241,7 @@ export function PagesOverview({
           ? <WorkingOn onSelectSpace={onSelectSpace} onOpenThing={onOpenThing} onReplayNight={onReplayNight} />
           : <HomeSpaces pages={pages} onSelectSpace={onSelectSpace} onBrowseSpaces={onBrowseSpaces} />}
         {lookShown ? null : newPages}
-        {team ? <TeamChanges group={team} /> : null}
+        {team ? <TeamChanges group={team} /> : memberSpaces.length > 0 ? <SpaceRecentChanges space={memberSpaces} /> : null}
         {/* With no AI tool connected there is nothing to be working on yet:
             the pages lead, and one line says what connecting adds. Only
             while "what you're working on" is on: it is what the line names. */}
@@ -245,7 +260,7 @@ export function PagesOverview({
           {t("pages.archive.title")}
         </button>
       )}
-      {adding ? <AddSourceMenu start={adding} onQuickChats={onImportChatsQuick} onClose={closeAdding} /> : null}
+      {!web && adding ? <AddSourceMenu start={adding} onQuickChats={onImportChatsQuick} onClose={closeAdding} /> : null}
     </section>
   );
 }

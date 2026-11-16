@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke as fixtureInvoke } from "./core";
-import { liveInvoke } from "./live-invoke";
+import { liveInvoke } from "../../src/web/live-invoke";
 import { invoke as devInvoke } from "./dev-live-core";
 import { invoke as firstUseInvoke } from "./first-use-live-core";
 import { invoke as reviewInvoke, resetReviewRuntime } from "../../review/tauri-core";

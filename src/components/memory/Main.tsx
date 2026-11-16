@@ -110,6 +110,9 @@ import { ReferenceNavigationProvider } from "./links/ReferenceNavigationContext"
 import "./navigation/navigation-shell.css";
 import "./assets/collectionToolbar.css";
 import { inventoryFolderPath } from "./pages/pageInventory";
+import { FindSkillsView } from "./skills/FindSkillsView";
+import { isWebBuild } from "../../web/runtime";
+import { useTeamAccess } from "../../web/teamAccess";
 
 interface MainProps {
   initialView?: View;
@@ -212,6 +215,8 @@ export default function Main({
   onBackFromDetail,
   onRegisterQuitGuard,
 }: MainProps) {
+  const teamAccess = useTeamAccess();
+  const web = isWebBuild();
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   // Give the unpinned routing jobs a source once per launch. Main is the first
@@ -373,6 +378,11 @@ export default function Main({
   const showView = (next: View, dismissSearchOverlay = true) => {
     // The example wiki is read-only: no draft opens inside it.
     if (exampleWikiActive() && next.kind === "page-draft") { showExampleWikiReadOnly(); return; }
+    // A team member writes a new page only in a Space they may write in.
+    if (teamAccess.member && next.kind === "page-draft") {
+      if (teamAccess.writable.length === 0) return;
+      if (!teamAccess.canEdit(next.space)) next = { ...next, space: teamAccess.writable[0] };
+    }
     setOwnershipNotice(null);
     if (dismissSearchOverlay) dismissSearch();
     if (isNoteView(next) && secondaryGroupRef.current?.contains(next)) {
@@ -874,7 +884,7 @@ export default function Main({
     onSelect={tab => { focusPrimaryGroup(); navigateTo(tab.view); }} onClose={closeNoteTab}
     onHome={() => { focusPrimaryGroup(); navigateHome(); }} homeActive={view.kind === "home"}
     onMoveToOtherGroup={moveToSecondary} moveLabel={t("pages.groups.moveToRight")}
-    onCreate={exampleWiki ? undefined : () => navigateTo({
+    onCreate={exampleWiki || (teamAccess.member && teamAccess.writable.length === 0) ? undefined : () => navigateTo({
       kind: "page-draft",
       space: null,
       folderPath: wikiInventoryMode === "folders" ? wikiCreationFolderPath ?? undefined : undefined,
@@ -1008,7 +1018,7 @@ export default function Main({
   // pages: conversations, sources, topics and things are the person's own.
   const split = scope.teams.length > 0;
   const onTeamSide = Boolean(teamSide);
-  const sourceResults = onTeamSide ? [] : results.filter((result) => searchResultTarget(result).kind === "file");
+  const sourceResults = onTeamSide || web ? [] : results.filter((result) => searchResultTarget(result).kind === "file");
 
   useEffect(() => {
     if (view.kind !== "page-draft" && view.kind !== "page") setPendingDraftSearchQuery(null);
@@ -1317,6 +1327,7 @@ export default function Main({
   // native side holds the code until asked, so a link that launched the app is
   // not lost before this listener exists. The approval dialog takes it from here.
   useEffect(() => {
+    if (web) return;
     const pull = () => {
       takeRemotePairingLink()
         .then((code) => { if (code) setPendingPairingCode(code); })
@@ -1325,7 +1336,7 @@ export default function Main({
     pull();
     const unlisten = listen("remote-pairing-link", pull);
     return () => { unlisten.then((f) => f()); };
-  }, []);
+  }, [web]);
 
   // wenlan://page/{id}, wenlan://memory/{id} and wenlan://thing/{id} links (an
   // AI tool prints them next to an in-chat reminder, or where a conversation
@@ -1338,6 +1349,7 @@ export default function Main({
     else if (target.kind === "thing") navigateTo({ kind: "thing", thingId: target.thingId });
   };
   useEffect(() => {
+    if (web) return;
     const pull = () => {
       takeOpenLink()
         .then((target) => { if (target) openLinkNavigateRef.current(target); })
@@ -1346,7 +1358,7 @@ export default function Main({
     pull();
     const unlisten = listen("wenlan-open-link", pull);
     return () => { unlisten.then((f) => f()); };
-  }, []);
+  }, [web]);
 
   // Cmd/Ctrl+K is delivered by App.tsx and opens the shared search dialog.
   useEffect(() => {
@@ -1517,6 +1529,7 @@ export default function Main({
       onFilterChange={setPageInventoryFilter}
       onBrowse={(scope) => navigateTo({ kind: "pages", inventoryScope: scope })}
       onCreatePage={(folderPath) => navigateTo({ kind: "page-draft", space: null, folderPath, inventoryScope: retainWikiScope ? view.inventoryScope : undefined })}
+      onFindSkills={() => navigateTo({ kind: "skills" })}
       onOpenDraft={openWikiDraft}
       onOpenPage={openWikiPage}
       onDeletePage={handleDirectoryNoteDeleted}
@@ -1638,12 +1651,14 @@ export default function Main({
             onConnectTool={() => navigateTo({ kind: "connect-agent" })}
             onNavigateHome={navigateHome}
             onNavigatePages={navigateNotes}
+            onOpenPinnedPage={teamSide ? undefined : (pageId) => navigateTo({ kind: "page", pageId })}
+            activePageId={view.kind === "page" ? view.pageId : null}
             // The graph and topics read the whole library, so a team's side
             // leaves them out.
             onNavigateEntities={teamSide ? undefined : () => navigateTo({ kind: "entities" })}
             onNavigateGraph={teamSide ? undefined : () => navigateTo({ kind: "graph" })}
             onNavigateSpaces={navigateSpaces}
-            switcher={(compact) => (
+            switcher={web ? undefined : (compact) => (
               <ScopeSwitcher
                 compact={compact}
                 onSwitched={() => navigateTo({ kind: "home" })}
@@ -1652,7 +1667,7 @@ export default function Main({
             )}
             onNavigateSettings={() => navigateTo({ kind: "settings", section: "general" })}
             onOpenSearch={openSearch}
-            onOpenAbout={() => setAboutOpen(true)}
+            onOpenAbout={web ? undefined : () => setAboutOpen(true)}
             searchOpen={mobileSearchOpen}
             searchDisabled={pageSavePending}
             onRequestClose={responsiveSidebar.close}
@@ -1747,11 +1762,11 @@ export default function Main({
                 onSelectSpace={(spaceName) => navigateTo({ kind: "space", spaceId: null, spaceName })}
                 onOpenThing={(thingId) => navigateTo({ kind: "thing", thingId })}
                 onReplayNight={() => navigateTo({ kind: "graph", replay: Date.now() })}
-                onConnectTool={() => navigateTo({ kind: "connect-agent" })}
+                onConnectTool={web ? undefined : () => navigateTo({ kind: "connect-agent" })}
                 onSeeExample={() => switchExampleWiki(true)}
-                onImportChatsQuick={() => navigateTo({ kind: "import", fromHome: true })}
-                onOpenIntelligence={() => navigateTo({ kind: "settings", section: "intelligence" })}
-                onOpenNoteSuggestion={(container) => {
+                onImportChatsQuick={web ? undefined : () => navigateTo({ kind: "import", fromHome: true })}
+                onOpenIntelligence={web ? undefined : () => navigateTo({ kind: "settings", section: "intelligence" })}
+                onOpenNoteSuggestion={web ? undefined : (container) => {
                   setSourceLibraryState({ search: "", filter: "all", container });
                   navigateTo({ kind: "sources" });
                 }}
@@ -1971,6 +1986,8 @@ export default function Main({
             />
           ) : view.kind === "source-document" ? (
             <SourceDocumentPage key={JSON.stringify([view.file.source, view.file.source_id, view.file.space ?? null])} file={view.file} onReady={() => setReadySourceView(view)} onRegisterFlush={registerSourceDescriptionFlush} onOpenPage={(pageId) => navigateTo({ kind: "page", pageId })} onDeleted={navigateBack} />
+          ) : view.kind === "skills" ? (
+            <FindSkillsView />
           ) : view.kind === "sources" ? (
             <SourcesView
               libraryState={sourceLibraryState}
@@ -2052,11 +2069,11 @@ export default function Main({
       <div className="workspace-pane-host" ref={setWorkspacePaneHostRef} />
       {wikiDirectoryTarget && createPortal(wikiDirectory, wikiDirectoryTarget)}
 
-      <AboutWenlanDialog open={aboutOpen} onClose={() => setAboutOpen(false)} />
+      {!web && <AboutWenlanDialog open={aboutOpen} onClose={() => setAboutOpen(false)} />}
       {/* The approval dialog opens over whatever screen is showing; it never navigates. */}
-      <PairingApprovalDialog currentSpace={contextSpace?.spaceName} />
-      <RemoteAccessNotifier />
-      <QuickCaptureScrim />
+      {!web && <PairingApprovalDialog currentSpace={contextSpace?.spaceName} />}
+      {!web && <RemoteAccessNotifier />}
+      {!web && <QuickCaptureScrim />}
       <SearchModal
         open={mobileSearchOpen}
         query={displayedSearchQuery}

@@ -10,7 +10,7 @@ import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
 
 const mock = (p: string) => fileURLToPath(new URL(p, import.meta.url));
-const stubs = mock("../preview/mocks/tauri-stubs.ts");
+const stubs = mock("../src/web/tauri-stubs.ts");
 
 // Verification must never run against the shared prod daemon on :7878 (dev and
 // prod share the platform data dir). Point this at an isolated instance with
@@ -36,18 +36,20 @@ export default defineConfig({
   // `vite.config.ts`; the review harness is the only config that sets it true.
   define: {
     __WENLAN_REVIEW__: "false",
+    __WENLAN_WEB__: "false",
     __WENLAN_SOURCE_PREVIEW__: JSON.stringify(sourcePreview),
   },
   resolve: {
     alias: {
       "@tauri-apps/api/core": mock("../preview/mocks/core.ts"),
-      "@tauri-apps/plugin-shell": mock("../preview/mocks/shell.ts"),
+      "@tauri-apps/plugin-shell": mock("../src/web/shell.ts"),
       "@tauri-apps/api/event": stubs,
       "@tauri-apps/api/app": stubs,
       "@tauri-apps/api/window": stubs,
       "@tauri-apps/api/webviewWindow": stubs,
       "@tauri-apps/plugin-dialog": stubs,
       "@tauri-apps/plugin-fs": stubs,
+      "@tauri-apps/plugin-notification": stubs,
       "tauri-plugin-clipboard-x-api": stubs,
     },
   },

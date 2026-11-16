@@ -18,8 +18,15 @@ const {
   STAGING_PREFIX,
   cacheProblem,
   extractBinaries,
+  hasUserServiceManager,
   installBinaries,
+  pathHint,
+  startForThisSession,
+  place,
   readStamp,
+  tarCommand,
+  targetFor,
+  verifyChecksum,
 } = require("./run.js");
 
 let root;
@@ -39,7 +46,7 @@ afterEach(() => {
 
 // Records every effect so a test can assert what did and did not happen.
 function harness({ latest = "v1.0.0", requestedTag = "", extractBody } = {}) {
-  const calls = { latest: 0, download: [], extract: 0, log: [] };
+  const calls = { latest: 0, download: [], verify: [], extract: 0, log: [] };
   return {
     calls,
     opts: {
@@ -58,10 +65,13 @@ function harness({ latest = "v1.0.0", requestedTag = "", extractBody } = {}) {
         calls.download.push(url);
         fs.writeFileSync(dest, "archive");
       },
-      extract: (_archive, into) => {
+      verify: async (_archive, tag, asset) => {
+        calls.verify.push(`${tag}/${asset}`);
+      },
+      extract: (_archive, into, target) => {
         calls.extract += 1;
-        if (extractBody) return extractBody(into);
-        for (const name of BINARIES) {
+        if (extractBody) return extractBody(into, target);
+        for (const name of target.binaries) {
           fs.writeFileSync(path.join(into, name), `#!/bin/sh\n# ${name}\n`);
         }
       },
@@ -264,12 +274,267 @@ describe("installBinaries version cache", () => {
     assert.equal(readStamp(dir), null);
   });
 
-  test("anything but macOS Apple Silicon is refused before touching disk", async () => {
+  test("a computer with no build is refused before touching disk, and told what works", async () => {
     const h = harness();
-    h.opts.platform = "linux";
-    await assert.rejects(installBinaries(h.opts), /macOS Apple Silicon only/);
+    h.opts.platform = "darwin";
+    h.opts.arch = "x64";
+    await assert.rejects(
+      installBinaries(h.opts),
+      /no build for this computer \(darwin x64\).*Apple Silicon.*Linux.*Windows/
+    );
     assert.equal(fs.existsSync(dir), false);
     assert.equal(h.calls.latest, 0);
+  });
+
+  test("a download that fails its checksum is never unpacked or stamped", async () => {
+    const h = harness();
+    h.opts.verify = async () => {
+      throw new Error("does not match its checksum");
+    };
+    await assert.rejects(installBinaries(h.opts), /does not match its checksum/);
+    assert.equal(h.calls.extract, 0);
+    assert.equal(readStamp(dir), null);
+    assert.deepEqual(leftovers(), []);
+  });
+});
+
+describe("installBinaries on each supported computer", () => {
+  for (const [platform, arch, asset] of [
+    ["darwin", "arm64", "wenlan-darwin-arm64.tar.gz"],
+    ["linux", "x64", "wenlan-linux-x64.tar.gz"],
+    ["linux", "arm64", "wenlan-linux-arm64.tar.gz"],
+    ["win32", "x64", "wenlan-windows-x64.zip"],
+  ]) {
+    test(`${platform} ${arch} downloads and verifies ${asset}`, async () => {
+      const h = harness();
+      h.opts.platform = platform;
+      h.opts.arch = arch;
+      await installBinaries(h.opts);
+
+      assert.deepEqual(h.calls.download, [
+        `https://github.com/wenlan-app/wenlan/releases/download/v1.0.0/${asset}`,
+      ]);
+      assert.deepEqual(h.calls.verify, [`v1.0.0/${asset}`]);
+      assert.equal(readStamp(dir).asset, asset);
+      const target = targetFor(platform, arch);
+      assert.equal(cacheProblem(dir, "v1.0.0", target), null);
+      for (const name of target.binaries) assert.ok(fs.existsSync(path.join(dir, name)), name);
+    });
+  }
+
+  test("Windows installs the .exe programs and every DLL shipped beside them", async () => {
+    const target = targetFor("win32", "x64");
+    assert.deepEqual(target.binaries, ["wenlan.exe", "wenlan-server.exe", "wenlan-mcp.exe"]);
+    const h = harness({
+      extractBody: (into) => {
+        for (const name of [...target.binaries, "onnxruntime.dll", "vcruntime140.dll"]) {
+          fs.writeFileSync(path.join(into, name), `file ${name}`);
+        }
+      },
+    });
+    h.opts.platform = "win32";
+    h.opts.arch = "x64";
+    await installBinaries(h.opts);
+
+    assert.deepEqual(
+      fs.readdirSync(dir).sort(),
+      [".wenlan-install.json", "onnxruntime.dll", "vcruntime140.dll", ...target.binaries].sort()
+    );
+    assert.deepEqual(Object.keys(readStamp(dir).sizes).sort(), [...target.binaries].sort());
+  });
+
+  test("an install for another computer in the same folder is not reused", async () => {
+    await installBinaries(harness().opts);
+    assert.match(
+      cacheProblem(dir, "v1.0.0", targetFor("linux", "x64")),
+      /installed asset wenlan-darwin-arm64/
+    );
+  });
+});
+
+describe("place", () => {
+  test("a file the system will not replace is moved aside, and the new one takes its name", () => {
+    fs.mkdirSync(dir);
+    const from = path.join(root, "new.exe");
+    const to = path.join(dir, "wenlan-server.exe");
+    fs.writeFileSync(from, "new");
+    fs.writeFileSync(to, "running");
+    let refused = 0;
+    const rename = (a, b) => {
+      if (fs.existsSync(b)) {
+        refused += 1;
+        throw Object.assign(new Error("in use"), { code: "EPERM" });
+      }
+      fs.renameSync(a, b);
+    };
+
+    place(from, to, rename);
+
+    assert.equal(refused, 1);
+    assert.equal(fs.readFileSync(to, "utf8"), "new");
+    const aside = fs.readdirSync(dir).filter((name) => name.startsWith(".old-"));
+    assert.equal(aside.length, 1);
+    assert.equal(fs.readFileSync(path.join(dir, aside[0]), "utf8"), "running");
+  });
+
+  test("the next install removes what was moved aside", async () => {
+    fs.mkdirSync(dir);
+    fs.writeFileSync(path.join(dir, ".old-1-abcd-wenlan-server.exe"), "old");
+    await installBinaries(harness().opts);
+    assert.deepEqual(leftovers(), []);
+  });
+
+  test("any other failure is reported as it is", () => {
+    const rename = () => {
+      throw Object.assign(new Error("disk full"), { code: "ENOSPC" });
+    };
+    assert.throws(() => place(path.join(root, "a"), path.join(root, "b"), rename), /disk full/);
+  });
+});
+
+describe("verifyChecksum", () => {
+  const crypto = require("node:crypto");
+  const sumsFor = (name, body) =>
+    `${"0".repeat(64)}  other.tar.gz\n${crypto.createHash("sha256").update(body).digest("hex")}  ${name}\n`;
+  const quiet = { skip: false, log: () => {} };
+
+  test("passes when the archive matches its line in SHA256SUMS", async () => {
+    const archive = path.join(root, "a.tar.gz");
+    fs.writeFileSync(archive, "real archive");
+    let asked;
+    await verifyChecksum(archive, "v1.0.0", "wenlan-linux-x64.tar.gz", {
+      ...quiet,
+      fetchSums: async (url) => {
+        asked = url;
+        return sumsFor("wenlan-linux-x64.tar.gz", "real archive");
+      },
+    });
+    assert.equal(asked, "https://github.com/wenlan-app/wenlan/releases/download/v1.0.0/SHA256SUMS");
+  });
+
+  test("refuses an archive that does not match", async () => {
+    const archive = path.join(root, "a.tar.gz");
+    fs.writeFileSync(archive, "tampered");
+    await assert.rejects(
+      verifyChecksum(archive, "v1.0.0", "wenlan-linux-x64.tar.gz", {
+        ...quiet,
+        fetchSums: async () => sumsFor("wenlan-linux-x64.tar.gz", "real archive"),
+      }),
+      /does not match its checksum/
+    );
+  });
+
+  test("refuses when SHA256SUMS does not name the archive", async () => {
+    const archive = path.join(root, "a.zip");
+    fs.writeFileSync(archive, "x");
+    await assert.rejects(
+      verifyChecksum(archive, "v1.0.0", "wenlan-windows-x64.zip", {
+        ...quiet,
+        fetchSums: async () => sumsFor("wenlan-linux-x64.tar.gz", "x"),
+      }),
+      /no entry for wenlan-windows-x64\.zip/
+    );
+  });
+
+  test("a missing SHA256SUMS stops the install unless the person opted out", async () => {
+    const archive = path.join(root, "a.tar.gz");
+    fs.writeFileSync(archive, "x");
+    const fetchSums = async () => {
+      throw new Error("HTTP 404");
+    };
+    await assert.rejects(
+      verifyChecksum(archive, "v1.0.0", "wenlan-linux-x64.tar.gz", { ...quiet, fetchSums }),
+      /cannot be verified/
+    );
+    const said = [];
+    await verifyChecksum(archive, "v1.0.0", "wenlan-linux-x64.tar.gz", {
+      fetchSums,
+      skip: true,
+      log: (message) => said.push(message),
+    });
+    assert.match(said.join(""), /installing unverified/);
+  });
+});
+
+describe("a Linux system with no systemd user session", () => {
+  test("only Linux is probed, and a failing or missing systemctl means no session", () => {
+    const never = () => {
+      throw new Error("not probed");
+    };
+    assert.equal(hasUserServiceManager("darwin", never), true);
+    assert.equal(hasUserServiceManager("win32", never), true);
+    assert.equal(hasUserServiceManager("linux", () => ({ status: 0 })), true);
+    assert.equal(hasUserServiceManager("linux", () => ({ status: 1 })), false);
+    assert.equal(hasUserServiceManager("linux", () => ({ error: new Error("ENOENT") })), false);
+  });
+
+  test("the daemon is started once and the person is told it will not come back by itself", async () => {
+    fs.mkdirSync(dir);
+    const spawned = [];
+    const said = [];
+    let checks = 0;
+    await startForThisSession(dir, {
+      spawn: (program, args, options) => {
+        spawned.push({ program, detached: options.detached });
+        return { unref() {} };
+      },
+      healthy: () => (checks += 1) > 1,
+      waitMs: 5000,
+      log: (message) => said.push(message),
+    });
+    assert.deepEqual(spawned, [{ program: path.join(dir, "wenlan-server"), detached: true }]);
+    assert.match(said.join(""), /After this computer restarts, start it again/);
+    assert.match(said.join(""), /wenlan-server &/);
+  });
+
+  test("a daemon that is already running is not started twice", async () => {
+    fs.mkdirSync(dir);
+    let spawned = 0;
+    await startForThisSession(dir, {
+      spawn: () => {
+        spawned += 1;
+        return { unref() {} };
+      },
+      healthy: () => true,
+      log: () => {},
+    });
+    assert.equal(spawned, 0);
+  });
+
+  test("a daemon that never answers is reported with where its output went", async () => {
+    fs.mkdirSync(dir);
+    await assert.rejects(
+      startForThisSession(dir, {
+        spawn: () => ({ unref() {} }),
+        healthy: () => false,
+        waitMs: 600,
+        log: () => {},
+      }),
+      /did not start\. Its output is in .*wenlan-server\.log/
+    );
+  });
+});
+
+describe("what the person is told", () => {
+  test("no hint when the folder is already on PATH", () => {
+    assert.equal(pathHint("/home/a/.wenlan/bin", "linux", { PATH: "/usr/bin:/home/a/.wenlan/bin" }), "");
+    assert.equal(
+      pathHint("C:\\Users\\a\\.wenlan\\bin", "win32", { Path: "C:\\Windows;c:\\users\\A\\.wenlan\\bin\\" }),
+      ""
+    );
+  });
+
+  test("each system gets a line its own shell understands", () => {
+    assert.match(pathHint("/home/a/.wenlan/bin", "linux", { PATH: "/usr/bin" }), /export PATH="\/home\/a\/\.wenlan\/bin:\$PATH"/);
+    const windows = pathHint("C:\\Users\\a\\.wenlan\\bin", "win32", { Path: "C:\\Windows" });
+    assert.match(windows, /PowerShell/);
+    assert.match(windows, /SetEnvironmentVariable/);
+    assert.doesNotMatch(windows, /export PATH/);
+  });
+
+  test("Windows unpacks with its own tar, not one found on PATH", () => {
+    assert.equal(tarCommand("win32", { SystemRoot: "D:\\Win" }), "D:\\Win\\System32\\tar.exe");
+    assert.equal(tarCommand("linux", {}), "tar");
   });
 });
 

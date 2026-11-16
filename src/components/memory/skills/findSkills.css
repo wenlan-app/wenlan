@@ -1,0 +1,59 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+.find-skills { max-width: 960px; margin: 0 auto; padding: 32px 40px 64px; display: flex; flex-direction: column; gap: 24px; color: var(--mem-text); font-family: var(--mem-font-body); }
+.find-skills h1 { margin: 0; font-family: var(--mem-font-heading); font-weight: 500; font-size: 28px; }
+.find-skills h2 { margin: 0; font-family: var(--mem-font-heading); font-weight: 500; font-size: 20px; }
+.find-skills h3 { margin: 0; font-family: var(--mem-font-heading); font-weight: 500; font-size: 17px; }
+.find-skills a { color: var(--mem-link); }
+.find-skills a:hover { color: var(--mem-link-hover); }
+.find-skills-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.find-skills-header p { margin: 0 0 4px; }
+.find-skills-muted { color: var(--mem-text-secondary); font-size: 13px; }
+.find-skills-search { display: flex; flex-direction: column; gap: 12px; }
+.find-skills-search-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.find-skills-search-field { flex: 1 1 320px; display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 14px; border-radius: var(--mem-control-radius); border: 1px solid var(--mem-control-border); background: var(--mem-card-surface); color: var(--mem-text-secondary); }
+.find-skills-search-field input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; color: var(--mem-text); font: inherit; font-size: 15px; }
+.find-skills-search-field:focus-within { box-shadow: 0 0 0 2px var(--mem-focus-ring); }
+.find-skills-toggle { display: inline-flex; gap: 8px; align-items: center; color: var(--mem-text-secondary); font-size: 13px; }
+.find-skills-results, .find-skills-installed ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.find-skills-row { width: 100%; display: flex; gap: 16px; align-items: center; padding: 14px 18px; border: 0; border-radius: var(--mem-r-10); background: var(--mem-card-surface); color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.find-skills-row:hover { background: var(--mem-card-hover); }
+.find-skills-row:focus-visible { outline: 2px solid var(--mem-focus-ring); }
+.find-skills-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.find-skills-row-name { font-weight: 600; font-size: 15px; }
+.find-skills-badges { display: flex; gap: 8px; flex-wrap: wrap; }
+.find-skills-badge { padding: 3px 10px; border-radius: 999px; background: var(--mem-hover); color: var(--mem-text-secondary); font-size: 13px; white-space: nowrap; }
+.find-skills-badge--pass { color: var(--mem-accent-sage-text); }
+.find-skills-badge--warn { color: var(--mem-accent-warm-text); }
+.find-skills-note { margin: 0; color: var(--mem-accent-warm-text); font-size: 13px; }
+.find-skills-audits { margin: 0; padding-left: 18px; color: var(--mem-text-secondary); font-size: 13px; }
+.find-skills-detail { display: flex; gap: 24px; flex-wrap: wrap; align-items: flex-start; }
+.find-skills-detail-main { flex: 999 1 480px; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+.find-skills-detail-title { font-size: 26px !important; }
+.find-skills-back { align-self: flex-start; padding: 0; border: 0; background: none; color: var(--mem-text-secondary); font: inherit; font-size: 13px; cursor: pointer; }
+.find-skills-files { display: flex; flex-direction: column; gap: 12px; padding: 18px 20px; border-radius: var(--mem-r-10); background: var(--mem-card-surface); }
+.find-skills-files p { margin: 0; }
+.find-skills-file-path { font-family: var(--mem-font-mono); font-size: 12px; color: var(--mem-text-secondary); margin-bottom: 6px; }
+.find-skills-file pre { margin: 0; max-height: 360px; overflow: auto; font-family: var(--mem-font-mono); font-size: 13px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; color: var(--mem-text); }
+.find-skills-side { flex: 1 1 280px; display: flex; flex-direction: column; gap: 14px; padding: 20px; border-radius: var(--mem-r-10); background: var(--mem-card-surface); }
+.find-skills-side p { margin: 0; }
+.find-skills-where { margin: 0; padding: 0; border: 0; display: flex; flex-direction: column; gap: 8px; }
+.find-skills-choice { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: var(--mem-control-radius); background: var(--mem-bg); cursor: pointer; }
+.find-skills-choice[data-selected="true"] { background: var(--mem-hover-strong); }
+.find-skills-choice > span { display: flex; flex-direction: column; gap: 2px; }
+.find-skills-where select { height: var(--mem-control-height); border-radius: var(--mem-control-radius); border: 1px solid var(--mem-control-border); background: var(--mem-bg); color: var(--mem-text); font: inherit; padding: 0 8px; }
+.find-skills-install { height: 44px; border: 0; border-radius: var(--mem-control-radius); background: var(--mem-accent-indigo); color: var(--mem-text-on-accent); font: inherit; font-weight: 600; font-size: 15px; cursor: pointer; }
+.find-skills-install:disabled { opacity: 0.5; cursor: default; }
+.find-skills-installed { display: flex; flex-direction: column; gap: 12px; }
+.find-skills-installed-row { display: flex; flex-direction: column; gap: 10px; padding: 14px 18px; border-radius: var(--mem-r-10); background: var(--mem-card-surface); }
+.find-skills-installed-head { display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; }
+.find-skills-additions { display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
+.find-skills-additions textarea { margin-top: 4px; padding: 8px 10px; border-radius: var(--mem-control-radius); border: 1px solid var(--mem-control-border); background: var(--mem-bg); color: var(--mem-text); font: inherit; resize: vertical; }
+.find-skills-installed-actions { display: flex; gap: 12px; align-items: center; }
+.find-skills-installed-actions button, .find-skills-link-button { padding: 6px 12px; border-radius: var(--mem-control-radius); border: 1px solid var(--mem-control-border); background: transparent; color: var(--mem-text); font: inherit; font-size: 13px; cursor: pointer; }
+.find-skills-installed-actions button:disabled { opacity: 0.5; cursor: default; }
+.find-skills-link-button { margin-left: auto; }
+.find-skills-local { display: flex; flex-direction: column; gap: 12px; padding: 18px 20px; border-radius: var(--mem-r-10); background: var(--mem-card-surface); }
+.find-skills-local p { margin: 0; }
+.find-skills-local-names { list-style: none; margin: 0; padding: 0; display: flex; gap: 8px; flex-wrap: wrap; }
+.find-skills-local-button { align-self: flex-start; padding: 0 20px; }
+@media (max-width: 640px) { .find-skills { padding: 20px 16px 48px; } }

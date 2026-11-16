@@ -24,7 +24,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use wenlan_types::team::{TeamAccess, TeamInfo, TeamMe, TeamMember, TeamRole, TeamSpaceAccess};
+use wenlan_types::team::{
+    TeamAccess, TeamInfo, TeamMe, TeamMember, TeamPerson, TeamRole, TeamSpaceAccess,
+};
 
 use crate::error::WenlanError;
 use crate::shared_space::{self, version, Scope, SpaceMember};
@@ -219,6 +221,40 @@ pub fn read_team(path: &Path) -> Result<TeamFile, WenlanError> {
     Ok(file)
 }
 
+/// The people `member` shares a hosted Space with, `member` included, by id
+/// and name only: who may have changed a page they can open. A removed
+/// member stays listed, so their past changes keep their name; nobody who
+/// shares no hosted Space with `member` is listed.
+pub fn people_sharing_with(
+    file: &TeamFile,
+    member: &Member,
+    hosted: &[(String, PathBuf)],
+) -> Vec<TeamPerson> {
+    let hosted_space = |space: &str| hosted.iter().any(|(name, _)| name == space);
+    let mine: std::collections::BTreeSet<String> = member
+        .me(hosted)
+        .spaces
+        .into_iter()
+        .map(|entry| entry.space)
+        .filter(|space| hosted_space(space))
+        .collect();
+    file.members
+        .iter()
+        .filter(|other| {
+            other
+                .me(hosted)
+                .spaces
+                .iter()
+                .any(|entry| mine.contains(&entry.space))
+        })
+        .map(|other| TeamPerson {
+            id: other.id.clone(),
+            name: other.name.clone(),
+            owner: other.role == TeamRole::Owner,
+        })
+        .collect()
+}
+
 /// Changes `team.json` under its lock and writes it back (0600 on Unix: it
 /// holds key hashes).
 fn change_team<T>(
@@ -259,6 +295,12 @@ pub fn new_key() -> String {
         uuid::Uuid::new_v4().simple(),
         uuid::Uuid::new_v4().simple()
     )
+}
+
+/// Whether two key hashes are equal, compared in constant time.
+fn same_hash(a: &str, b: &str) -> bool {
+    use subtle::ConstantTimeEq;
+    a.as_bytes().ct_eq(b.as_bytes()).into()
 }
 
 fn key_hash(key: &str) -> String {
@@ -396,7 +438,7 @@ pub fn set_owner_hash(path: &Path, name: &str, hash: &str) -> Result<Member, Wen
 pub fn is_owner_hash(path: &Path, hash: &str) -> Result<bool, WenlanError> {
     let hash = hash.trim();
     Ok(read_team(path)?.members.iter().any(|member| {
-        member.role == TeamRole::Owner && member.is_active() && member.key_sha256 == hash
+        member.role == TeamRole::Owner && member.is_active() && same_hash(&member.key_sha256, hash)
     }))
 }
 
@@ -581,18 +623,11 @@ pub fn authenticate(path: &Path, key: &str) -> Result<Option<Member>, WenlanErro
     }
     let hash = key_hash(key);
     let file = read_team(path)?;
-    // Compared in full whatever matches, so the time taken does not say how
-    // much of a hash matched.
+    // Checked against every member in constant time, so the time taken does
+    // not say how much of a hash matched or which member it was.
     let mut found = None;
     for member in file.members {
-        let same = member
-            .key_sha256
-            .bytes()
-            .zip(hash.bytes())
-            .fold(member.key_sha256.len() ^ hash.len(), |acc, (a, b)| {
-                acc | usize::from(a ^ b)
-            })
-            == 0;
+        let same = same_hash(&member.key_sha256, &hash);
         if same && member.is_active() {
             found = Some(member);
         }

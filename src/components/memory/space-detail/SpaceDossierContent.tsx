@@ -15,6 +15,7 @@ import {
   pageCountLabel,
   sortedSpacePages,
 } from "./model";
+import { howIWorkPageTitle } from "../skills/howIWorkModel";
 
 type SpaceDossierNavigation = {
   readonly onSelectPage: (pageId: string) => void;
@@ -48,7 +49,7 @@ export function SpaceDossierContent({ copy, navigation, pages, lens, shares }: S
               <button key={page.id} onClick={() => navigation.onSelectPage(page.id)} type="button">
                 {lens !== "cards" && <PageIcon />}
                 <span className="space-dossier-page-text">
-                  <span className="space-dossier-page-title">{page.title}{lens !== "cards" && aiUpdatedRecently(page) && <span className="space-dossier-page-fresh">{t("spaceDetail.brief.aiUpdated")}</span>}</span>{" "}
+                  <span className="space-dossier-page-title">{howIWorkPageTitle(page, t)}{lens !== "cards" && aiUpdatedRecently(page) && <span className="space-dossier-page-fresh">{t("spaceDetail.brief.aiUpdated")}</span>}</span>{" "}
                   {page.summary?.trim() && <span className="space-dossier-page-summary">{page.summary}</span>}
                   {lens === "cards" && aiUpdatedRecently(page) && <span className="space-dossier-page-fresh">{t("spaceDetail.brief.aiUpdated")}</span>}
                 </span>

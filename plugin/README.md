@@ -1,6 +1,6 @@
 # Wenlan
 
-The knowledge base you don't have to maintain. Your AI tools keep it organized, and each page links to its sources. Open source, and works with your existing Obsidian vault.
+Docs, skills and rules your AI tools keep current and work from. Each doc links to its sources. Open source, and works with your existing Obsidian vault.
 
 Wenlan is local-first. Memories, pages, and session notes live on your machine under `~/.wenlan`, served by a small local daemon. Nothing in this plugin is stored by Anthropic or by the plugin itself.
 
@@ -20,7 +20,7 @@ Install from the Claude directory, or from the Claude Code marketplace:
 /plugin install wenlan@7xuanlu-wenlan
 ```
 
-Then restart Claude Code and run `/wenlan`. When Wenlan is not ready yet it starts setup, which installs the local runtime if it is missing (macOS Apple Silicon; elsewhere it links the install guide), configures local memory, verifies the MCP round trip, and prints "Wenlan ready". After that, `/capture <something to remember>` or `/brief` is the daily loop.
+Then restart Claude Code and run `/wenlan`. When Wenlan is not ready yet it starts setup, which installs the local runtime if it is missing (macOS Apple Silicon, Linux x64 or ARM64, Windows x64; elsewhere it links the install guide), configures local memory, verifies the MCP round trip, and prints "Wenlan ready". After that, `/capture <something to remember>` or `/brief` is the daily loop.
 
 The first run downloads an embedding model of roughly 210 MB, so allow a few minutes.
 
@@ -31,7 +31,7 @@ Everything the plugin does is listed here so you can decide whether to install i
 | Component | What it runs | Network destination |
 |---|---|---|
 | Skills and MCP server | Read and write memories, pages, and session notes | `127.0.0.1:7878` (the local Wenlan daemon on your machine) |
-| `/wenlan` setup | When the runtime is missing, runs `npx -y wenlan@<pinned version> setup` (macOS Apple Silicon). On other platforms it stops and points you to the install guide | `registry.npmjs.org` (npm package `wenlan`), which downloads release binaries from `github.com/wenlan-app/wenlan/releases` (GitHub serves the files from `objects.githubusercontent.com`) |
+| `/wenlan` setup | When the runtime is missing, runs `npx -y wenlan@<pinned version> setup` (macOS Apple Silicon, Linux x64 or ARM64, Windows x64). On other platforms it stops and points you to the install guide | `registry.npmjs.org` (npm package `wenlan`), which downloads release binaries from `github.com/wenlan-app/wenlan/releases` (GitHub serves the files from `objects.githubusercontent.com`) |
 | MCP runner fallback | If no local `wenlan-mcp` binary exists, runs `npx -y wenlan-mcp@<pinned version>` | `registry.npmjs.org` (npm package `wenlan-mcp`) |
 | `SessionStart` hooks | One health probe of the local daemon, plus the local outbox and version checks above | `127.0.0.1:7878` only (the session hook makes no network call) |
 | `UserPromptSubmit` and `Stop` hooks | When you turn the in-chat check on, send the prompt or the latest reply to the local daemon to check it against your earlier decisions | `127.0.0.1:7878` only |
@@ -78,6 +78,7 @@ The daemon stays the single writer and storage owner. The connected AI handles o
 - `/capture <x>` - save one durable memory in flow, or this conversation as one note on request
 - `/recall <q>` - search local memory
 - `/handoff` - end-of-session debrief: captures, session log, Brief update
+- `/how-i-work` - read this Space's approved rules before choosing an approach
 - `/wenlan setup` - set up or repair Wenlan (installs the local runtime)
 - `/wenlan lint [deep|repair] [scope]` - diagnose, or resolve all findings safely
 - `/wenlan steep [request] [space:<name>]` - prepare new material, update pages, or arrange existing knowledge around your goal

@@ -322,6 +322,23 @@ pub fn memberships_at(path: &Path) -> Result<BTreeMap<String, Membership>, Wenla
     Ok(read_settings(path)?.memberships)
 }
 
+/// The teams this person is on, for showing: each server's address, the
+/// team as the server last said, and whether they own it. Never a key.
+pub fn membership_infos_at(
+    path: &Path,
+) -> Result<Vec<wenlan_types::team::TeamMembershipInfo>, WenlanError> {
+    let store = read_settings(path)?;
+    Ok(store
+        .memberships
+        .iter()
+        .map(|(url, membership)| wenlan_types::team::TeamMembershipInfo {
+            url: url.clone(),
+            team: store.teams.get(url).cloned(),
+            owner: membership.owner,
+        })
+        .collect())
+}
+
 /// The team each team Space here belongs to, by Space name: Spaces synced
 /// with a team server, and Spaces this computer hosts for its own team.
 /// `None` for a team whose name this computer does not know yet.
@@ -1811,6 +1828,18 @@ async fn pass(
             UNFILED_SPACE_ID.to_string()
         }
     };
+    if !matches!(scope, Scope::Page(_)) {
+        // A "How I work" page is this person's own: rules taken from what
+        // they wrote, for their own AI tools. It never travels with the
+        // Space or the library; a teammate's Wenlan keeps its own. Sharing
+        // that one page on purpose still works.
+        for state in db.space_rules_states().await? {
+            if let Some(id) = state.rules_page_id {
+                local.remove(&id);
+                left_out.insert(id);
+            }
+        }
+    }
     let name = match scope {
         Scope::Space(space) => space.clone(),
         Scope::Page(id) => local
@@ -1852,9 +1881,10 @@ async fn pass(
         read.proposals.retain(|page, _| page == id);
         read.decisions.retain(|page, _| page == id);
     }
-    if matches!(scope, Scope::Library) {
-        // These keep their own folder: another person's sentences on them
-        // must not be filed under this person's id here.
+    if !matches!(scope, Scope::Page(_)) {
+        // Library pages with their own folder keep it: another person's
+        // sentences on them must not be filed under this person's id here.
+        // The same holds for this person's own "How I work" pages.
         read.pages.retain(|page, _| !left_out.contains(page));
     }
     let mut counts = SharedSyncCounts {

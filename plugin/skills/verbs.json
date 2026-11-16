@@ -4,6 +4,7 @@
   {"verb": "/capture", "args": "<x>", "skill": "capture", "menu": true, "line": "save one durable memory in flow, or this conversation as one note on request"},
   {"verb": "/recall", "args": "<q>", "skill": "recall", "menu": true, "line": "search local memory"},
   {"verb": "/handoff", "skill": "handoff", "menu": true, "line": "end-of-session debrief: captures, session log, Brief update"},
+  {"verb": "/how-i-work", "skill": "how-i-work", "menu": true, "line": "read this Space's approved rules before choosing an approach"},
   {"verb": "/wenlan setup", "skill": "setup", "menu": false, "line": "set up or repair Wenlan (installs the local runtime)"},
   {"verb": "/wenlan lint", "args": "[deep|repair] [scope]", "skill": "lint", "menu": false, "line": "diagnose, or resolve all findings safely"},
   {"verb": "/wenlan steep", "args": "[request] [space:<name>]", "skill": "steep", "menu": false, "line": "prepare new material, update pages, or arrange existing knowledge around your goal"},

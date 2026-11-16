@@ -1,8 +1,8 @@
 {
   "name": "wenlan",
   "displayName": "Wenlan",
-  "description": "The knowledge base you don't have to maintain. Your AI tools keep it organized, and each page links to its sources. Open source, and works with your existing Obsidian vault.",
-  "version": "0.21.7",
+  "description": "Docs, skills and rules your AI tools keep current and work from. Each doc links to its sources. Open source, and works with your existing Obsidian vault.",
+  "version": "0.22.0",
   "author": {
     "name": "Qi-Xuan Lu",
     "url": "https://github.com/7xuanlu"

@@ -1,4 +1,5 @@
 import { setExampleWikiActive } from "../../../lib/exampleWiki/mode";
+import { readPinnedPages } from "../navigation/pinnedPages";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -7,6 +8,7 @@ import { i18n } from "../../../i18n";
 import { archivePage, deletePage, discardPageDraft, getPage, knowledgeFoldersList, knowledgeFolderCreate, type Page } from "../../../lib/tauri";
 import { PageInventoryPanel } from "./PageInventoryPanel";
 import { WikiWorkspace } from "./WikiWorkspace";
+import { TeamAccessProvider, teamAccessFor } from "../../../web/teamAccess";
 const { active, drafts } = vi.hoisted(() => ({ active:vi.fn(), drafts:vi.fn() }));
 vi.mock("./listAllPages", () => ({ EXPLICIT_BROWSE_QUERY_POLICY:{},listAllActivePages:active,listAllDraftPages:drafts,listAllActivePagesExplicitBrowse:active,listAllDraftPagesExplicitBrowse:drafts }));
 vi.mock("../../../lib/tauri", async original => ({...await original<typeof import("../../../lib/tauri")>(),knowledgeFoldersList:vi.fn(),knowledgeFolderCreate:vi.fn(),archivePage:vi.fn(),deletePage:vi.fn(),discardPageDraft:vi.fn(),getPage:vi.fn()}));
@@ -73,7 +75,7 @@ describe("folder tree",()=>{
 });
 describe("page deletion",()=>{
  const openDirect=async()=>{const user=userEvent.setup();await user.click(await screen.findByRole("button",{name:"Work"}));return {user,row:screen.getByRole("button",{name:"Open Direct"})};};
- it("right-clicking a page opens the page menu instead of the folder menu",async()=>{setup({fileTree:true});const {user,row}=await openDirect();await user.pointer({keys:"[MouseRight]",target:row});const menu=await screen.findByRole("menu");expect(within(menu).getAllByRole("menuitem").map(item=>item.textContent)).toEqual(["Open","Archive page","Delete page"]);expect(within(menu).queryByRole("menuitem",{name:/New folder in/})).not.toBeInTheDocument();expect(within(menu).getByRole("menuitem",{name:"Open"})).toHaveFocus();});
+ it("right-clicking a page opens the page menu instead of the folder menu",async()=>{setup({fileTree:true});const {user,row}=await openDirect();await user.pointer({keys:"[MouseRight]",target:row});const menu=await screen.findByRole("menu");expect(within(menu).getAllByRole("menuitem").map(item=>item.textContent)).toEqual(["Open","Pin","Archive page","Delete page"]);expect(within(menu).queryByRole("menuitem",{name:/New folder in/})).not.toBeInTheDocument();expect(within(menu).getByRole("menuitem",{name:"Open"})).toHaveFocus();});
  it("archive takes an active page out of the directory without deleting it",async()=>{
   const confirmSpy=vi.spyOn(window,"confirm").mockReturnValue(true);
   const onDeletePage=vi.fn();setup({fileTree:true,onDeletePage});const {user,row}=await openDirect();
@@ -112,6 +114,11 @@ describe("page deletion",()=>{
   await user.pointer({keys:"[MouseRight]",target:row});await user.click(screen.getByRole("menuitem",{name:"Archive page"}));
   await waitFor(()=>expect(row).toHaveFocus());expect(archivePage).toHaveBeenCalledWith("Direct");expect(onDeletePage).not.toHaveBeenCalled();confirmSpy.mockRestore();
  });
+ it("UX-FIND-6: right-clicking a page pins it, and again unpins it",async()=>{localStorage.clear();setup({fileTree:true});const {user,row}=await openDirect();
+  await user.pointer({keys:"[MouseRight]",target:row});await user.click(screen.getByRole("menuitem",{name:"Pin"}));
+  expect(readPinnedPages()).toHaveLength(1);
+  await user.pointer({keys:"[MouseRight]",target:row});await user.click(screen.getByRole("menuitem",{name:"Unpin"}));
+  expect(readPinnedPages()).toEqual([]);});
  it("Open in the page menu opens the page like a click",async()=>{const onOpenPage=vi.fn();setup({fileTree:true,onOpenPage});const {user,row}=await openDirect();await user.pointer({keys:"[MouseRight]",target:row});await user.click(await screen.findByRole("menuitem",{name:"Open"}));expect(onOpenPage).toHaveBeenCalledWith(expect.objectContaining({id:"Direct"}));expect(screen.queryByRole("menu")).not.toBeInTheDocument();});
  it("Delete page confirms, deletes through the page command and tells the host",async()=>{const confirmSpy=vi.spyOn(window,"confirm").mockReturnValue(true);const onDeletePage=vi.fn();setup({fileTree:true,onDeletePage});const {user,row}=await openDirect();await user.pointer({keys:"[MouseRight]",target:row});await user.click(await screen.findByRole("menuitem",{name:"Delete page"}));expect(confirmSpy).toHaveBeenCalledWith("Permanently delete this page? This cannot be undone.");await waitFor(()=>expect(onDeletePage).toHaveBeenCalledWith("Direct"));expect(deletePage).toHaveBeenCalledWith("Direct");expect(discardPageDraft).not.toHaveBeenCalled();expect(screen.queryByRole("menu")).not.toBeInTheDocument();confirmSpy.mockRestore();});
  it("keeps the page when the confirmation is declined",async()=>{const confirmSpy=vi.spyOn(window,"confirm").mockReturnValue(false);const onDeletePage=vi.fn();setup({fileTree:true,onDeletePage});const {user,row}=await openDirect();await user.pointer({keys:"[MouseRight]",target:row});await user.click(await screen.findByRole("menuitem",{name:"Delete page"}));expect(confirmSpy).toHaveBeenCalled();expect(deletePage).not.toHaveBeenCalled();expect(onDeletePage).not.toHaveBeenCalled();confirmSpy.mockRestore();});
@@ -122,6 +129,7 @@ describe("page deletion",()=>{
  it("discards a draft at its latest version instead of deleting a page",async()=>{const confirmSpy=vi.spyOn(window,"confirm").mockReturnValue(true);drafts.mockResolvedValue([page("Draft",{status:"draft",folder_path:"Work",version:2})]);vi.mocked(getPage).mockResolvedValue(page("Draft",{status:"draft",version:5}));const onDeletePage=vi.fn();setup({fileTree:true,onDeletePage});const {user}=await openDirect();await user.pointer({keys:"[MouseRight]",target:screen.getByRole("button",{name:"Open Draft"})});await user.click(await screen.findByRole("menuitem",{name:"Delete page"}));await waitFor(()=>expect(onDeletePage).toHaveBeenCalledWith("Draft"));expect(discardPageDraft).toHaveBeenCalledWith({id:"Draft",expectedVersion:5});expect(deletePage).not.toHaveBeenCalled();confirmSpy.mockRestore();});
  it("right-clicking a folder still shows the folder menu",async()=>{setup({fileTree:true});const user=userEvent.setup();await user.pointer({keys:"[MouseRight]",target:await screen.findByRole("button",{name:"Work"})});const menu=await screen.findByRole("menu");expect(within(menu).getAllByRole("menuitem").map(item=>item.textContent)).toEqual(["New folder in Work"]);});
  it("right-clicking empty space still shows the root folder menu",async()=>{setup({fileTree:true});const user=userEvent.setup();await screen.findByRole("button",{name:"Work"});await user.pointer({keys:"[MouseRight]",target:screen.getByRole("group",{name:"Folders"})});const menu=await screen.findByRole("menu");expect(within(menu).getAllByRole("menuitem").map(item=>item.textContent)).toEqual(["New folder in Folders"]);});
+ it("a team member's page menu only opens and pins, with no folder menu, archive or delete",async()=>{const client=new QueryClient({defaultOptions:{queries:{retry:false}}});render(<TeamAccessProvider value={teamAccessFor({member_id:"m",name:"Amy",spaces:[{space:"Work",access:"write"}]})}><QueryClientProvider client={client}><PageInventoryPanel fileTree onBrowse={vi.fn()} onOpenPage={vi.fn()} onOpenDraft={vi.fn()}/></QueryClientProvider></TeamAccessProvider>);const {user,row}=await openDirect();await user.pointer({keys:"[MouseRight]",target:row});const menu=await screen.findByRole("menu");expect(within(menu).getAllByRole("menuitem").map(item=>item.textContent)).toEqual(["Open","Pin"]);await user.keyboard("{Escape}");await user.pointer({keys:"[MouseRight]",target:screen.getByRole("button",{name:"Work"})});expect(screen.queryByRole("menu")).not.toBeInTheDocument();row.focus();await user.keyboard("{Delete}");expect(deletePage).not.toHaveBeenCalled();});
  it("opens the page menu from the keyboard on a focused page",async()=>{setup({fileTree:true});const {user,row}=await openDirect();row.focus();await user.keyboard("{ContextMenu}");const menu=await screen.findByRole("menu");expect(within(menu).getByRole("menuitem",{name:"Delete page"})).toBeInTheDocument();await user.keyboard("{Escape}");await waitFor(()=>expect(row).toHaveFocus());});
 });
 

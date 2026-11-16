@@ -33,6 +33,8 @@ import {
 } from "../../../../lib/tauri";
 import { Button, SegmentedControl, Select } from "../primitives";
 import HomeLookSetting from "./HomeLookSetting";
+import { isWebBuild } from "../../../../web/runtime";
+import { isTeamMemberMode } from "../../../../web/team";
 import "./appearance.css";
 
 const EDITOR_SLOTS = ["background", "surface", "text", "accent", "accentWarm", "border"] as const;
@@ -50,6 +52,10 @@ function useThemeImage(id: string | null, file: string | undefined, kind: ImageK
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
+    if (isWebBuild()) {
+      setUrl(null);
+      return;
+    }
     if (!id || !file) {
       setUrl(null);
       return;
@@ -65,10 +71,14 @@ function useThemeImage(id: string | null, file: string | undefined, kind: ImageK
 }
 
 export default function AppearanceSection() {
+  const web = isWebBuild();
+  // Custom themes are files on the owner's computer; a team member picks only
+  // among the built-in ones, which this browser keeps.
+  const member = isTeamMemberMode();
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [builtInTheme, setBuiltInTheme] = useTheme();
-  const themesQuery = useQuery({ queryKey: ["themes"], queryFn: listThemes });
+  const themesQuery = useQuery({ queryKey: ["themes"], queryFn: listThemes, enabled: !member });
   const list = themesQuery.data;
   const activeId = list?.active ?? null;
 
@@ -267,14 +277,18 @@ export default function AppearanceSection() {
       <div className="appearance-heading">
         <h2 className="appearance-label">{t("appearance.themes")}</h2>
         <div className="appearance-actions">
-          <Button variant="ghost" size="sm" onClick={() => void onAskAi()}>
-            <SparkleIcon />
-            {t("appearance.askAi")}
-          </Button>
-          <Button variant="ghost" size="sm" onClick={() => void openThemesFolder().catch(() => {})}>
-            <FolderIcon />
-            {t("appearance.openFolder")}
-          </Button>
+          {!member && (
+            <Button variant="ghost" size="sm" onClick={() => void onAskAi()}>
+              <SparkleIcon />
+              {t("appearance.askAi")}
+            </Button>
+          )}
+          {!web && (
+            <Button variant="ghost" size="sm" onClick={() => void openThemesFolder().catch(() => {})}>
+              <FolderIcon />
+              {t("appearance.openFolder")}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -311,13 +325,15 @@ export default function AppearanceSection() {
             onSelect={() => setEditingId(theme.id)}
           />
         ))}
-        <button type="button" role="listitem" className="appearance-card appearance-card-new" onClick={() => void onNewTheme()}>
-          <span aria-hidden="true" className="appearance-card-plus">+</span>
-          <span className="appearance-card-name">{t("appearance.newTheme")}</span>
-        </button>
+        {!member && (
+          <button type="button" role="listitem" className="appearance-card appearance-card-new" onClick={() => void onNewTheme()}>
+            <span aria-hidden="true" className="appearance-card-plus">+</span>
+            <span className="appearance-card-name">{t("appearance.newTheme")}</span>
+          </button>
+        )}
       </div>
 
-      <HomeLookSetting />
+      {!member && <HomeLookSetting />}
 
       {editingId && draft && (
         <div className="appearance-editor">
@@ -380,17 +396,19 @@ export default function AppearanceSection() {
               />
             </Row>
 
-            <Row label={t("appearance.backgroundImage")}>
-              <ImageField
-                url={backgroundUrl}
-                file={draft.images.background?.file}
-                chooseLabel={draft.images.background ? t("appearance.replace") : t("appearance.choose")}
-                removeLabel={t("appearance.remove")}
-                onChoose={() => void pickImage("background")}
-                onRemove={draft.images.background ? () => removeImage("background") : undefined}
-              >
-              </ImageField>
-            </Row>
+            {!web && (
+              <Row label={t("appearance.backgroundImage")}>
+                <ImageField
+                  url={backgroundUrl}
+                  file={draft.images.background?.file}
+                  chooseLabel={draft.images.background ? t("appearance.replace") : t("appearance.choose")}
+                  removeLabel={t("appearance.remove")}
+                  onChoose={() => void pickImage("background")}
+                  onRemove={draft.images.background ? () => removeImage("background") : undefined}
+                >
+                </ImageField>
+              </Row>
+            )}
             {draft.images.background && (
               <Row label={t("appearance.placement")}>
                 <SegmentedControl
@@ -428,17 +446,19 @@ export default function AppearanceSection() {
               </Row>
             )}
 
-            <Row label={t("appearance.sticker")}>
-              <ImageField
-                url={stickerUrl}
-                file={draft.images.sticker?.file}
-                chooseLabel={draft.images.sticker ? t("appearance.replace") : t("appearance.choose")}
-                removeLabel={t("appearance.remove")}
-                onChoose={() => void pickImage("sticker")}
-                onRemove={draft.images.sticker ? () => removeImage("sticker") : undefined}
-              >
-              </ImageField>
-            </Row>
+            {!web && (
+              <Row label={t("appearance.sticker")}>
+                <ImageField
+                  url={stickerUrl}
+                  file={draft.images.sticker?.file}
+                  chooseLabel={draft.images.sticker ? t("appearance.replace") : t("appearance.choose")}
+                  removeLabel={t("appearance.remove")}
+                  onChoose={() => void pickImage("sticker")}
+                  onRemove={draft.images.sticker ? () => removeImage("sticker") : undefined}
+                >
+                </ImageField>
+              </Row>
+            )}
             {draft.images.sticker && (
               <Row label={t("appearance.corner")}>
                 <SegmentedControl<ThemeStickerCorner>
@@ -476,7 +496,7 @@ export default function AppearanceSection() {
                 />
               </Row>
             )}
-            {imageError && <p className="appearance-error" role="alert">{imageError}</p>}
+            {!web && imageError && <p className="appearance-error" role="alert">{imageError}</p>}
 
             <div className="appearance-footer">
               <Button variant="primary" size="md" loading={busy === "apply"} disabled={busy !== null || problems.length > 0} onClick={() => void onApply()}>

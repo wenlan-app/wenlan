@@ -5,7 +5,7 @@
     "url": "https://github.com/7xuanlu"
   },
   "metadata": {
-    "description": "Wenlan: the knowledge base you don't have to maintain. Your AI tools keep it organized."
+    "description": "Wenlan: docs, skills and rules your AI tools keep current and work from."
   },
   "plugins": [
     {
@@ -15,7 +15,7 @@
         "url": "https://github.com/wenlan-app/wenlan.git",
         "path": "plugin"
       },
-      "description": "The knowledge base you don't have to maintain. Your AI tools keep it organized, and each page links to its sources. Open source, and works with your existing Obsidian vault.",
+      "description": "Docs, skills and rules your AI tools keep current and work from. Each doc links to its sources. Open source, and works with your existing Obsidian vault.",
       "category": "productivity",
       "keywords": [
         "claude-code",

@@ -13,6 +13,7 @@ vi.mock("../../../lib/tauri", async (original) => ({
 import { getPageRevisions, listRecentChanges, updatePage, type SharedStatus } from "../../../lib/tauri";
 import { i18n } from "../../../i18n";
 import { SpaceRecentChanges, changeWho } from "./SpaceRecentChanges";
+import { TeamAccessProvider, teamAccessFor } from "../../../web/teamAccess";
 
 const shares = [{
   kind: "space", target: "Product", folder: "", host: "https://team.example.com", read_only: false, hosted: false,
@@ -20,9 +21,12 @@ const shares = [{
   members: [{ id: "me", name: "Lucian" }, { id: "amy", name: "Amy" }, { id: "bo", name: "Bo" }],
 }] as unknown as SharedStatus[];
 
-function renderChanges() {
+function renderChanges(member?: "read" | "write") {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={client}><SpaceRecentChanges space="Product" shares={shares} /></QueryClientProvider>);
+  const changes = <QueryClientProvider client={client}><SpaceRecentChanges space="Product" shares={shares} /></QueryClientProvider>;
+  if (!member) return render(changes);
+  const access = teamAccessFor({ member_id: "amy", name: "Amy", spaces: [{ space: "Product", access: member }] });
+  return render(<TeamAccessProvider value={access}>{changes}</TeamAccessProvider>);
 }
 
 beforeEach(async () => {
@@ -69,6 +73,23 @@ describe("recent changes on a shared Space", () => {
     fireEvent.click(await screen.findByText("Amy changed Roadmap"));
     fireEvent.click(await screen.findByRole("button", { name: "Put back the earlier text" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't put it back");
+  });
+
+  it("a team member who can edit the Space puts the earlier text back through the same save", async () => {
+    renderChanges("write");
+    fireEvent.click(await screen.findByText("Amy changed Roadmap"));
+    fireEvent.click(await screen.findByRole("button", { name: "Put back the earlier text" }));
+    await waitFor(() => expect(updatePage).toHaveBeenCalledWith(expect.objectContaining({
+      id: "p1", content: "Ship in June.", expectedVersion: 4,
+    })));
+  });
+
+  it("a team member who only reads the Space sees the change with no put back", async () => {
+    renderChanges("read");
+    fireEvent.click(await screen.findByText("Amy changed Roadmap"));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Put back the earlier text" })).toBeNull();
+    expect(updatePage).not.toHaveBeenCalled();
   });
 
   it("names a page the person started in the app and published, or restored, as theirs, never their AI tool", () => {

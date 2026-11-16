@@ -23,9 +23,12 @@ import { ShareDialog } from "./sharing/ShareDialog";
 import { SharedWithLine } from "./sharing/SharedWithLine";
 import { SpaceRecentChanges } from "./space-detail/SpaceRecentChanges";
 import { spaceShare, useShares } from "./sharing/sharing";
+import { SpaceRulesAsk } from "./skills/SpaceRulesAsk";
 import "./space-detail/space-detail-header.css";
 import "./space-detail/space-detail.css";
 import "./pages/pageActions.css";
+import { isWebBuild } from "../../web/runtime";
+import { isTeamMemberMode } from "../../web/team";
 
 export type SpaceDetailProps = {
   readonly copy?: SpaceDetailCopy;
@@ -63,6 +66,7 @@ export default function SpaceDetail({
   onOpenSettings,
   spaceName,
 }: SpaceDetailProps) {
+  const web = isWebBuild();
   const queryClient = useQueryClient();
   const shares = useShares();
   const [sharing, setSharing] = useState(false);
@@ -156,9 +160,9 @@ export default function SpaceDetail({
     <SpaceDossierFrame>
       <SpaceDossierHeader
         key={space.id}
-        leadingAction={<RepoWikiButton space={space.name} />}
-        shared={share !== undefined}
-        sharedLine={share && <SharedWithLine share={share} onOpen={() => setSharing(true)} />}
+        leadingAction={web ? undefined : <RepoWikiButton space={space.name} />}
+        shared={!web && share !== undefined}
+        sharedLine={!web && share ? <SharedWithLine share={share} onOpen={() => setSharing(true)} /> : undefined}
         onRegisterFlush={registerIdentityFlush}
         actions={{
           onBack,
@@ -168,7 +172,7 @@ export default function SpaceDetail({
           onKeep: () => confirmMutation.mutate(),
           onReviewAll,
           onOpenGraph: onOpenGraph ? () => onOpenGraph(space.name) : undefined,
-          onShare: () => setSharing(true),
+          onShare: web ? undefined : () => setSharing(true),
           onCreatePage: () => onCreatePage?.(space.name),
           onSaveIdentity: async ({ name, description }) => {
             await renameMutation.mutateAsync({ newName: name, description });
@@ -179,8 +183,9 @@ export default function SpaceDetail({
         space={space}
       />
 
+      <SpaceRulesAsk space={space} onOpenPage={onSelectPage} />
       <SpaceBrief spaceName={space.name} />
-      {share && <SpaceRecentChanges space={space.name} shares={shares.data} />}
+      {((!web && share) || isTeamMemberMode()) && <SpaceRecentChanges space={space.name} shares={shares.data} />}
       <SpaceProjectContent
         key={`${space.id}:${space.name}`}
         copy={copy}
@@ -192,7 +197,7 @@ export default function SpaceDetail({
         onSelectPage={onSelectPage}
         shares={shares.data}
       />
-      {sharing && (
+      {!web && sharing && (
         <ShareDialog
           kind="space"
           target={space.name}

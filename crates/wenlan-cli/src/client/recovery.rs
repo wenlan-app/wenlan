@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use crate::commands::service;
 
 pub(crate) const NO_SERVICE_HINT: &str =
-    "Wenlan is not running and no background service is set up — run `wenlan background on`";
+    "Wenlan is not running and no background service is set up — run `wenlan start`";
 
 pub(crate) fn autostart_allowed(env_no_autostart: Option<&str>, recovery_enabled: bool) -> bool {
     recovery_enabled && matches!(env_no_autostart, None | Some(""))
@@ -38,8 +38,8 @@ pub(crate) fn connect_failure_hint(base_url: &str) -> String {
         return format!("cannot connect to the Wenlan daemon at {base_url} (from WENLAN_HOST)");
     }
     let mut hint = format!(
-        "Wenlan is not running at {base_url} — run `wenlan status`; if Wenlan is \
-         installed, `wenlan background on` starts it"
+        "Wenlan is not running at {base_url} — `wenlan start` starts it; if that fails, \
+         `wenlan doctor` says why"
     );
     if std::env::var_os("WENLAN_NO_AUTOSTART").is_some_and(|value| !value.is_empty()) {
         hint.push_str(" (WENLAN_NO_AUTOSTART is set, so it was not started automatically)");
@@ -53,7 +53,7 @@ pub(crate) async fn recover(base_url: &str) -> Result<()> {
     }
     if service::autostart_off_marker_exists() {
         anyhow::bail!(
-            "Wenlan was switched off with `wenlan background off` — run `wenlan background on` to turn it back on"
+            "Wenlan was switched off with `wenlan stop` — run `wenlan start` to turn it back on"
         );
     }
     if !service::is_installed() {
@@ -105,10 +105,10 @@ mod tests {
             hint.starts_with("Wenlan is not running at http://127.0.0.1:1"),
             "{hint}"
         );
-        assert!(hint.contains("`wenlan background on`"), "{hint}");
+        assert!(hint.contains("`wenlan start`"), "{hint}");
         let remote = connect_failure_hint("http://wenlan.example:7878");
         assert!(remote.contains("WENLAN_HOST"), "{remote}");
-        assert!(!remote.contains("background on"), "{remote}");
+        assert!(!remote.contains("wenlan start"), "{remote}");
     }
     use std::io::Write;
     use std::net::TcpListener;
@@ -131,7 +131,7 @@ mod tests {
     fn no_service_hint_is_actionable() {
         assert_eq!(
             NO_SERVICE_HINT,
-            "Wenlan is not running and no background service is set up — run `wenlan background on`"
+            "Wenlan is not running and no background service is set up — run `wenlan start`"
         );
     }
 

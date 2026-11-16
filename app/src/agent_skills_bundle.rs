@@ -12,7 +12,7 @@
 
 /// First 16 hex digits of the SHA-256 over every file's path and contents in
 /// `FILES`, sorted by path. Changes whenever any installed skill changes.
-pub const BUNDLE_VERSION: &str = "592f8743f062dc45";
+pub const BUNDLE_VERSION: &str = "161c0a5261febac6";
 
 /// Every file of the bundle as (path relative to the skills folder, contents),
 /// sorted by path.
@@ -28,6 +28,10 @@ pub const FILES: &[(&str, &str)] = &[
     (
         "wenlan-handoff/SKILL.md",
         include_str!("../../plugin-agents/skills/wenlan-handoff/SKILL.md"),
+    ),
+    (
+        "wenlan-how-i-work/SKILL.md",
+        include_str!("../../plugin-agents/skills/wenlan-how-i-work/SKILL.md"),
     ),
     (
         "wenlan-recall/SKILL.md",
@@ -80,6 +84,10 @@ pub const FILES: &[(&str, &str)] = &[
     (
         "wenlan/references/steep/reshape-knowledge.md",
         include_str!("../../plugin-agents/skills/wenlan/references/steep/reshape-knowledge.md"),
+    ),
+    (
+        "wenlan/references/team.md",
+        include_str!("../../plugin-agents/skills/wenlan/references/team.md"),
     ),
     (
         "wenlan/references/theme.md",

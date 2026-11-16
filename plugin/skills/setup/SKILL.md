@@ -61,7 +61,7 @@ comparing numerically per component with build metadata (`+g<sha>`) stripped.
   runtime (`result=older`):
 
 ```bash
-npx -y wenlan@0.21.7 setup
+npx -y wenlan@0.22.0 setup
 export PATH="$HOME/.wenlan/bin:$PATH"
 ```
 
@@ -84,11 +84,12 @@ pinned to this plugin's exact version. It installs the runtime into
 prints the status:
 
 ```bash
-npx -y wenlan@0.21.7 setup
+npx -y wenlan@0.22.0 setup
 export PATH="$HOME/.wenlan/bin:$PATH"
 ```
 
-The package supports macOS Apple Silicon and needs Node.js. On any other
+The package supports macOS Apple Silicon, Linux x64 or ARM64, and Windows x64,
+and needs Node.js. On Windows the folder is `%USERPROFILE%\.wenlan\bin`. On any other
 platform, or when `npx` is missing or the command fails, do not fetch or run an
 installer yourself. Stop and tell the user to install the runtime by following
 <https://github.com/wenlan-app/wenlan/blob/main/docs/setup-with-ai.md#install-the-runtime>,

@@ -46,6 +46,7 @@ pub mod responses;
 pub mod session_context;
 pub mod sessions;
 pub mod shared_space;
+pub mod skills;
 pub mod source_annotations;
 pub mod sources;
 pub mod space_context;
@@ -117,6 +118,11 @@ pub use sessions::{
     AgentSession, PageSessionEntry, PageSessionVia, PageSessionsResponse, SessionCitedByEntry,
     SessionDetailResponse, SessionHandoffEntry, SessionMemoryEntry, SessionPageEntry,
     SessionReadEntry, SessionReadKind, SessionRef, UpsertSessionRequest, SESSION_HEADER,
+};
+pub use skills::{
+    SkillBorrowRecord, SkillLine, SkillLineKind, SkillReportKind, SkillReportRequest,
+    SkillSuggestion, SkillSuggestionActionResponse, SkillsRefreshResponse,
+    SpaceRulesActionResponse, SpaceRulesResponse, SpaceRulesSuggestion,
 };
 pub use sources::{MemoryType, RawDocument, SourceType, StabilityTier, SyncStatus};
 pub use space_context::{WriteOutcome, WriteSpaceSource, WriteSpaceTarget};
@@ -350,6 +356,7 @@ mod retrieval_event_tests {
             changed_at_ms: 1_700_000_000_000,
             edited_by: None,
             changed_sentences: None,
+            agent: None,
         };
         let s = serde_json::to_string(&c).unwrap();
         assert!(

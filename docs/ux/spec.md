@@ -84,7 +84,7 @@ and wait for evidence that people need them.
 
 - **UX-HOME-1** `shipped` Home opens with one quiet line naming what last
   night steeped, with a visible Replay; steeping spans every Space and the
-  Wiki, so the line sits above them. Then your Spaces: the one whose pages
+  Library, so the line sits above them. Then your Spaces: the one whose pages
   changed last leads, set large; under it starred Spaces, then the rest, each
   used-last first. Then the pages edited last. "What you're working on" is an experiment, off
   until you turn it on in Settings, Experiments (a tab of its own); on, it leads home instead
@@ -413,14 +413,14 @@ and wait for evidence that people need them.
   原文：點出處只顯示那一句和用在哪，文瀾裡不顯示整段對話。「C 啊，不过能看到前后一点点的话会更好，然后也能展开看全部」（2026-10-31 16:54）「一般这种对话怎么渲染会更适合一些？就像现在这样在左边，还是说要左右左右这样子的？」（2026-11-02 16:03）「2. 同意」（2026-11-02 16:47）
 - **UX-FIND-3** `shipped` There is "open in the original AI tool".
   原文：有「在原本的 AI 工具打開」。
-- **UX-FIND-4** `shipped` The left side shows Search, Home, Wiki, Spaces and the
+- **UX-FIND-4** `shipped` The left side shows Search, Home, Library, Spaces and the
   graph, with no More menu: there are few enough to show them all. Topics have
   no entry of their own, since few open them: a topic opens from a page, the
   graph or search, and the list of every topic from the graph's top corner.
-  It is one column: with labels, the Wiki comes last and every page and folder
+  It is one column: with labels, the Library comes last and every page and folder
   follows it in the same column, on every screen, never as a second column
   beside it. Only when the left side shrinks to icons do the pages sit beside
-  the Wiki. The pages show only as folders: no menu to pick another list (recent
+  the Library. The pages show only as folders: no menu to pick another list (recent
   pages are on Home), and archived pages stay out of the tree, as in Obsidian;
   search finds them, and an archived page opens read only with Restore.
   One New button heads the tree and offers a new page or a new folder.
@@ -429,7 +429,9 @@ and wait for evidence that people need them.
   pages cite it, and the list of added files and links opens from Settings.
   When a source can't be reached (moved, or its drive unplugged), Activity says
   so in its own place at the bottom left, not on Home, and opens that source.
-  原文：「以及要把左邊的導覽，只留下重要的，剩下的可以不用特別的 tab」（2026-11-01 22:20）「我确定是、不会特别需要有一个记忆的页面」（2026-11-01 23:35）「活动还是要在的……它就在左下角」（2026-11-01 23:46）「那你说你有什么情况下会特别需要到一个来源的页面，导览页面里面去管理那些东西？感觉机会并不是很大。」（2026-11-02 16:02）「1. 同意」（2026-11-02 16:47）選擇卡「左下角「活动」」（2026-11-02 18:11）「因為現在選項沒有很多，全放出來也還好」（2026-11-02 19:38）「我们会有左边的 navigation pane，然后我们还有这个 wiki 再靠右边一个，所以相当于我们会有两个 navigation，这个到底要怎么解决啊？」（2026-11-09 17:46）「同意」（2026-11-09 17:52，一欄方案）「好」（2026-11-09 17:58，草圖）「三種呈現類型有下拉選單過於複雜？」（2026-11-09 19:09）「2 或著 OB 放在哪」（2026-11-09 19:14，已歸檔不放左欄、靠搜尋找）「新建合成一個按鈕？」（2026-11-09 19:36）「主題在想怎麼收起來，沒人會點開那」（2026-11-09 19:37）選擇卡「拿掉，列表放进图谱」（2026-11-09 19:38）
+  The place that holds every page is called Library (檔案, 文件), not Wiki: it
+  also holds skills and more, and reads like folders.
+  原文：「以及要把左邊的導覽，只留下重要的，剩下的可以不用特別的 tab」（2026-11-01 22:20）「我确定是、不会特别需要有一个记忆的页面」（2026-11-01 23:35）「活动还是要在的……它就在左下角」（2026-11-01 23:46）「那你说你有什么情况下会特别需要到一个来源的页面，导览页面里面去管理那些东西？感觉机会并不是很大。」（2026-11-02 16:02）「1. 同意」（2026-11-02 16:47）選擇卡「左下角「活动」」（2026-11-02 18:11）「因為現在選項沒有很多，全放出來也還好」（2026-11-02 19:38）「我们会有左边的 navigation pane，然后我们还有这个 wiki 再靠右边一个，所以相当于我们会有两个 navigation，这个到底要怎么解决啊？」（2026-11-09 17:46）「同意」（2026-11-09 17:52，一欄方案）「好」（2026-11-09 17:58，草圖）「三種呈現類型有下拉選單過於複雜？」（2026-11-09 19:09）「2 或著 OB 放在哪」（2026-11-09 19:14，已歸檔不放左欄、靠搜尋找）「新建合成一個按鈕？」（2026-11-09 19:36）「主題在想怎麼收起來，沒人會點開那」（2026-11-09 19:37）選擇卡「拿掉，列表放进图谱」（2026-11-09 19:38）「我想要讓 Wiki 不再是那名字，而是改叫更加兼容的 Library? 因為裡面會放更多 skills 等等的東西，更像是資料夾？」（2026-11-15 12:44）「太學術？我以為有比較自然的叫法」（2026-11-15 12:47，否決書庫／資料庫）「那先這樣吧」（2026-11-15 12:50，Library／檔案／文件）
 - **UX-FIND-5** `shipped` When an AI tool's lookup finds pages, the pages
   they link to come along in the same answer, at most two, each as its title
   and first paragraph, so no AI tool has to think of following the links
@@ -437,6 +439,17 @@ and wait for evidence that people need them.
   read, does not come along. The AI tool reads the rest of a page when it
   needs it.
   原文：「自己 get page links 區別在哪」「可以做些量測，能確認方向對就行」（2026-11-09 03:48）「以上三點都同意」「為什麼不現在做？」（2026-11-09 03:55）
+- **UX-FIND-6** `shipped` Any page of your own can be pinned to the left
+  side from its More menu, or by right-clicking it in the Library's list
+  ("Pin", 釘選, 固定). Pinned
+  pages sit under the graph and above the Library, with a gap and no heading,
+  and open in one click; with the left side shrunk to icons each shows its
+  first letter. Hovering one shows a small x to unpin it, the page's menu
+  unpins it too, and dragging changes the order. Unpinning never touches the
+  page. With nothing pinned the left side is exactly as UX-FIND-4 describes.
+  Pins stay on this computer, like a page's look (UX-LOOK-6). A team's side
+  and the example show none.
+  原文：「甚至在想導覽頁也能讓他們自由產生」「現在說的客製化還延伸到新的導覽，比如說要搞 skills hub or agents 等等 自由發揮」（2026-11-15 08:24–08:27）「可以」「是指 `我的` 用詞不好」（2026-11-15 13:20，草圖）「不放也行」（2026-11-15 13:21，那一段不放標題）「釘選左側改成丁選。大家也可以右鍵在左側邊欄的頁面丁選」（2026-11-15 13:53）
 
 ## What AI tools made (HTML, images)
 
@@ -518,7 +531,8 @@ and wait for evidence that people need them.
   handed off, and what is in progress, newest first, one line each. Three
   show; the rest fold under "N more". The Brief sits in one white panel with a thin border:
   where it stands on the left, what is in progress on the right. A Space
-  with no Brief is its pages alone. No other new buttons or panels.
+  with no Brief is its pages alone. No other new buttons or panels. Exception:
+  the one-time how-I-work ask (UX-SKILL-1).
   原文：「照你說的建議。我想要把 brief 結合好，不要多餘的介面」（2026-11-10 23:10Z）；草圖選擇卡「照做，連 Brief 清理一起」（2026-11-10 23:15Z）；「space 里面应该要放一些什么去区隔它的就是价值…page 是确实是被 filter 完了，但是在这里面还有什么需要特别强调的呢？」（2026-11-10 23:02Z）
 - **UX-SPACE-2** `shipped` Each night, a Space whose Brief changed gets
   those lines written for people, in their language, with no pull request
@@ -534,6 +548,82 @@ and wait for evidence that people need them.
   原文：「不 sources 放里面我也不知道它能干嘛」（2026-11-10 23:02Z）；同 UX-SPACE-1 草圖。
   版面：「感覺版面啥的不夠好看 UI/UX」（2026-11-11 00:24Z）後，選擇卡「1 淡色底一塊」（2026-11-11 00:30Z）：Brief 一塊，筆記用卡片、上方有「筆記」標題；底色選擇卡「C 白底細框」（2026-11-11 01:02Z）。
   與首頁一致：選 A，「首頁和空間的排版要一致，譬如間距和周遭」（2026-11-11）。首頁對齊空間頁：兩頁用同一條 840px 欄、第一行同高（「我以為是對其 space?」，2026-11-11 02:04Z）；區塊小標題、間距與卡片樣式（細框、無陰影、無圖示）和首頁相同。
+
+## AI tools follow how you work
+
+- **UX-SKILL-1** `shipped` When library-derived skills are on, the ask comes
+  once for the whole library: the first non-private Space with grounded
+  candidates shows it at the top of its page above the Brief. The flat,
+  thin-bordered panel names each rule, decision or pitfall and links its source
+  page. A box above the buttons, ticked by default, says the answer is for
+  other Spaces too. Ticked, Yes makes this Space's page and every other
+  non-private Space, including later ones, gets its page on the night it first
+  has lines, with no further ask; No stops asking everywhere and stops looking
+  for candidates; the ask leaves every Space's page at once. Cleared, the
+  answer is for this Space only and other Spaces still ask. One Settings switch
+  changes the answer later. Suggested edits to the person's own skills are still
+  asked one by one.
+  原文：「可以」（2026-11-15 17:33Z，回覆[草圖](https://claude.ai/artifact/EqEaFuewDn2qBRyBrG7eHn)與「put the first ask at the top of the Space page, asked only once?」）；「而且儘量不用一直問用戶，或著第一次問，後面就不問了」（2026-11-15 20:21Z）；「第一次在空間那的改動，要有選項以後都自動，勾掉就是不要」（2026-11-15 21:24Z）。
+- **UX-SKILL-2** `shipped` The accepted "How I work" page is an ordinary
+  Wenlan page with Update now, Undo last night and Stop. It shows its grounded
+  lines without internal ids or paths; a person's edited line says "You changed
+  this". Above them, real examples from this week say whether an AI tool
+  reported changing its approach or Wenlan recorded the read, with no counts.
+  Stop makes the page unreadable to AI tools at once but leaves it in Wenlan so
+  it can be started again.
+  原文：「可以」（2026-11-15 17:33Z，回覆[草圖](https://claude.ai/artifact/EqEaFuewDn2qBRyBrG7eHn)）。
+- **UX-SKILL-3** `shipped` Under those lines, a suggestion for a skill the
+  person owns shows the old line struck through, the proposed grounded line,
+  and the newer source page and date. Nothing changes until the person presses
+  Change; Don't change dismisses it, and an applied change can be undone.
+  原文：「可以」（2026-11-15 17:33Z，回覆[草圖](https://claude.ai/artifact/EqEaFuewDn2qBRyBrG7eHn)）。
+- **UX-SKILL-4** `shipped` Home shows at most one quiet line, with no numbers,
+  when an AI tool reported changing its approach to follow an earlier decision
+  this week, or when the first How-I-work page was just made. Its link opens
+  that page; with neither event the line is absent.
+  原文：「可以」（2026-11-15 17:33Z，回覆[草圖](https://claude.ai/artifact/EqEaFuewDn2qBRyBrG7eHn)）。
+- **UX-SKILL-5** `shipped` A line that holds for any project, not only its
+  own Space's, is marked "Used in every Space" on its Space's ask and page. AI
+  tools read it in every Space, and with no Space at all, where they read only
+  these lines; where it and a Space's own line disagree, the Space's line wins.
+  It stays on, and is checked against, its own Space's page, and
+  a report that it changed the plan is recorded there.
+  原文：選擇卡「加全局一份」（2026-11-15 21:24Z，問：「要不要加一份全局的「我的做事方式」？」）；「還有我們有全局跟空間範圍的 skill」（2026-11-15 21:24Z）。
+- **UX-SKILL-6** `shipped` The rules AI tools may read are also kept as files
+  in Wenlan's own folder, in the `AGENTS.md` shape other tools already read:
+  one layer for the lines used in every Space and one per Space, each a short
+  main file plus appendix files it names for when the work needs them. Every
+  line names the page it comes from. The files say what the AI tools would be
+  told right then, so Stop, the setting turned off, a deleted line and Undo
+  take them away the same way. Wenlan never changes or removes a file there
+  that it did not write.
+  原文：「現在只想要把這層整合好再 .wenlan」（2026-11-15 22:20Z）；「AGENTS 檔案可以分層 不論是個人還是空間/專案/repo」（2026-11-15 22:39Z）。
+- **UX-SKILL-7** `shipped` For a Space connected to a repository, the wiki
+  pull request also puts that Space's own rules (rules only, not decisions or
+  pitfalls) in Wenlan's part of the
+  repository's `AGENTS.md`, without the names of the pages they come from, and
+  says so in its description. Lines used in every Space are the person's
+  habits and never go into a repository. Nothing reaches the repository until
+  the person merges.
+  原文：「空間如果是 repo，那就直接對應上了」（2026-11-15 22:26Z）；「原本說就會寫 wiki folders 這點也要看要不要一起修改？」（2026-11-15 22:51Z）。
+- **UX-SKILL-8** `shipped` The rules used in every Space (rules only, not
+  decisions or pitfalls) are also kept in
+  each connected AI tool's own always-read file (Claude Code's `CLAUDE.md`,
+  Codex's `AGENTS.md`), in one part marked as Wenlan's. Wenlan changes only
+  that part and never the person's own text around it. Only the installed
+  app does this: a test or trial run on other data never writes these files. The person is not asked
+  again: the one answer of UX-SKILL-1 covers it. When the lines change the
+  part follows; with the setting off, the tool disconnected, or no such lines
+  left, the part is taken out. A file that another one already brings in gets
+  no second copy.
+  原文：「為啥要外掛？直接把我們的規則同步過去工具，工具就會讀啊？」（2026-11-15 23:28Z）。
+- **UX-SKILL-9** `shipped` In a Space shared with teammates, each person's
+  "How I work" page stays on their own computer and is not sent to the
+  others. A page a teammate wrote can still give that Space a rule, but never
+  one of this person's rules for every Space, so it never reaches this
+  person's own AI tools' files. Rules for the whole team go through the
+  repo's `AGENTS.md` in a PR (UX-SKILL-7).
+  原文：「我們這改動包含團隊了嗎？」「可以下個 PR 繼續開搞」（2026-11-15 23:30Z）。
 
 ## Adding to Wenlan
 

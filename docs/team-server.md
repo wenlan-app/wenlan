@@ -173,33 +173,48 @@ need a person:
 
 ### From a terminal
 
-On the server itself, the same can be done with commands:
+Everything above can be done with commands on the computer that runs the
+team:
 
 ```bash
-wenlan team rename "Acme"
-wenlan team host "Product"
-wenlan team add "Amy" --access Product --url https://wenlan.example.com
-wenlan team add "Bo"  --access Product:read --url https://wenlan.example.com
+wenlan team start "Acme" --as "Qi"
+wenlan team share "Product" --everyone
+wenlan team invite "Amy"
+wenlan team invite "Bo" --access Product:read
 ```
 
-Each `add` prints an invite link once, such as
-`https://wenlan.example.com/join#wlt_…`. Send it to that person privately.
+`start` turns the team listener on, now and after restarts, and picks the
+address for invite links (the computer's Tailscale address first, else its
+address on the local network); give another with `--url https://wenlan.example.com`.
+`host` lets the team use a Space: `--everyone` opens it to every member, now
+and later (`--everyone read` for read only); without it only the people given
+it with `--access` can use it. Each `invite` prints an invite link once, such
+as `https://wenlan.example.com/join#wlt_…`. Send it to that person privately.
 The key stays after `#`, so a browser opening the link never sends it to the
-server. Older links without `/join` still work. Renaming a hosted Space
-renames it for the whole team: access goes with it, and members' copies
-follow by themselves. `wenlan team status` lists
-members; `wenlan team remove <id>` removes one; `wenlan team new-key <id>`
-replaces a lost key. A desktop install can also set `WENLAN_TEAM_ADDR` for
-the background service instead of starting the team in Settings.
+server. Older links without `/join` still work.
+
+`wenlan team status` shows the team, its Spaces and its people.
+`wenlan team update Amy --access Product` changes what someone can use,
+`wenlan team remove Amy` removes them, and `wenlan team new-key Amy` replaces
+a lost link. People are named by their name; when two people have the same
+name the command says so and lists their ids. `wenlan team stop` turns the
+listener off and keeps the team, its people and Spaces. Renaming a hosted
+Space renames it for the whole team: access goes with it, and members'
+copies follow by themselves. A desktop install can also set
+`WENLAN_TEAM_ADDR` for the background service instead of `wenlan team start`.
 
 ## Join
 
 - **Desktop app**: in Settings › Team, choose "Join with an invite link" and paste it:
   one "Join Acme" joins every Space opened to you, and Spaces opened to you
   later follow by themselves. From a terminal,
-  `wenlan team join <invite link>` lists the Spaces you can
-  use; `wenlan team join <invite link> --server-space Product` adds one
-  (`--as <name>` gives it another name on your computer).
+  `wenlan team join <invite link>` does the same: every Space open to you is
+  synced to this computer. A Space of your own with the same name is left
+  alone, and the team's copy goes beside it as `Product (Acme)`.
+  `wenlan team join <invite link> --list` only shows what the link opens,
+  `--server-space Product --as <name>` takes one Space under another name,
+  `wenlan team status` shows the teams this computer joined, and
+  `wenlan team leave` leaves one (the pages already on the computer stay).
 - **AI tool only**: add a remote MCP server with URL
   `https://wenlan.example.com/mcp` (or `/mcp/<Space>` when you have more than
   one Space) and header `Authorization: Bearer wlt_…`. Members who may write

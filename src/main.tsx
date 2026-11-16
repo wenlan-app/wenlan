@@ -11,6 +11,8 @@ import { applyTheme } from "./lib/theme";
 import { refuseStrayFileDrops } from "./lib/fileDropGuard";
 import "./devTools";
 import "./index.css";
+import { isWebBuild } from "./web/runtime";
+import { initializeWebI18n } from "./web/language";
 
 // Apply theme before first render to prevent flash
 applyTheme();
@@ -22,11 +24,12 @@ void bootstrap().catch((error: unknown) => {
 });
 
 async function bootstrap() {
-  await initializeI18n();
+  if (isWebBuild()) await initializeWebI18n();
+  else await initializeI18n();
 
-  const isToast = window.location.hash === "#toast";
-  const isQuickCapture = window.location.hash === "#quick-capture";
-  const isTrayPanel = window.location.hash === "#tray-panel";
+  const isToast = !isWebBuild() && window.location.hash === "#toast";
+  const isQuickCapture = !isWebBuild() && window.location.hash === "#quick-capture";
+  const isTrayPanel = !isWebBuild() && window.location.hash === "#tray-panel";
 
   if (isToast) {
     // No StrictMode for the toast overlay — its double-mount behavior causes

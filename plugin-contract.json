@@ -62,7 +62,8 @@
       "codex_user_invocable": true,
       "codex_openai_interface": true,
       "supporting_references": [
-        "status.md"
+        "status.md",
+        "team.md"
       ]
     },
     {
@@ -85,6 +86,12 @@
     },
     {
       "name": "recall",
+      "status": "shared_now",
+      "codex_user_invocable": true,
+      "codex_openai_interface": true
+    },
+    {
+      "name": "how-i-work",
       "status": "shared_now",
       "codex_user_invocable": true,
       "codex_openai_interface": true

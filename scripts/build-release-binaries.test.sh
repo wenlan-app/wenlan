@@ -35,13 +35,26 @@ done
 EOF
 chmod +x "$tmp/bin/cargo"
 
+# The daemon embeds the web bundle at compile time, so the script builds it
+# before cargo. This job has no Node toolchain: record the call instead.
+cat > "$tmp/bin/pnpm" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ ! -e "$CARGO_LOG" ]]
+printf '%s\n' "$*" > "$PNPM_LOG"
+EOF
+chmod +x "$tmp/bin/pnpm"
+
 export PATH="$tmp/bin:$PATH"
 export CARGO_LOG="$tmp/cargo.log"
+export PNPM_LOG="$tmp/pnpm.log"
 export CARGO_TARGET_DIR="$tmp/target"
 
 bash "$repo_root/scripts/build-release-binaries.sh" x86_64-unknown-linux-gnu
 expected="build --release -p wenlan -p wenlan-server -p wenlan-mcp --target x86_64-unknown-linux-gnu"
 [[ "$(cat "$CARGO_LOG")" == "$expected" ]]
+[[ "$(cat "$PNPM_LOG")" == "build:web" ]]
+rm "$CARGO_LOG" "$PNPM_LOG"
 
 mkdir -p "$tmp/release-tools/scripts"
 cp "$repo_root/scripts/build-release-binaries.sh" \
@@ -51,6 +64,8 @@ WENLAN_REPO_ROOT="$repo_root" \
   bash "$tmp/release-tools/scripts/build-release-binaries.sh" aarch64-apple-darwin
 expected="build --release -p wenlan -p wenlan-server -p wenlan-mcp --target aarch64-apple-darwin"
 [[ "$(cat "$CARGO_LOG")" == "$expected" ]]
+[[ "$(cat "$PNPM_LOG")" == "build:web" ]]
+rm "$CARGO_LOG" "$PNPM_LOG"
 
 rm -rf "$CARGO_TARGET_DIR/x86_64-unknown-linux-gnu"
 if OMIT_MCP=1 \
@@ -59,9 +74,10 @@ if OMIT_MCP=1 \
   exit 1
 fi
 
-rm "$CARGO_LOG"
+rm -f "$CARGO_LOG" "$PNPM_LOG"
 if bash "$repo_root/scripts/build-release-binaries.sh" x86_64-apple-darwin; then
   echo "unsupported release target unexpectedly succeeded" >&2
   exit 1
 fi
 [[ ! -e "$CARGO_LOG" ]]
+[[ ! -e "$PNPM_LOG" ]]

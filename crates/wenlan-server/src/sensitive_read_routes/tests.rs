@@ -103,8 +103,15 @@ fn canonical_matrix_freezes_exact_global_and_scoped_keys() {
         (Method::Get, "/api/decisions/domains"),
         (Method::Get, "/api/snapshots"),
         (Method::Get, "/api/palace/layout"),
+        (Method::Get, "/api/skills/spaces/suggestions"),
+        (Method::Get, "/api/skills/suggestions"),
+        (Method::Post, "/api/skills/suggestions/{id}/apply"),
+        (Method::Post, "/api/skills/suggestions/{id}/dismiss"),
+        (Method::Post, "/api/skills/suggestions/{id}/undo"),
     ];
     const SCOPED: &[(Method, &str)] = &[
+        (Method::Get, "/api/skills/rules"),
+        (Method::Get, "/api/skills/record"),
         (Method::Post, "/api/pages/{id}/export-capture"),
         (Method::Get, "/api/pages/{id}/export-versions"),
         (Method::Get, "/api/pages/{id}/export-bundles/{bundle_id}"),
@@ -241,8 +248,8 @@ fn canonical_matrix_freezes_exact_global_and_scoped_keys() {
         .map(|row| (row.method, row.path))
         .collect::<BTreeSet<_>>();
 
-    assert_eq!(rows.len(), 140);
-    assert_eq!(keys.len(), 140, "duplicate sensitive route key");
+    assert_eq!(rows.len(), 147);
+    assert_eq!(keys.len(), 147, "duplicate sensitive route key");
     assert_eq!(global, GLOBAL.iter().copied().collect());
     assert_eq!(scoped, SCOPED.iter().copied().collect());
     assert_eq!(
