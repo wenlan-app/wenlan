@@ -34,3 +34,8 @@ Remove this override when the dependency conflict is resolved and upstream both
 preserves macOS bundles on failure and runs the Windows exit hook only after
 successful launch. Verify native macOS failure/retry/restart and actual Windows
 NSIS update/restart and failure recovery before removing it.
+
+The Windows-only `zip` dependency is raised from 4 to 9 (the same requirement
+as upstream 2.14.x) to pick up the RUSTSEC-2026-0367/0368/0369/0429 extraction
+fixes. `extract_zip` uses only `ZipArchive::new` and `extract`, which are
+unchanged in 9.
