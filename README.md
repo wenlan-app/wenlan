@@ -44,9 +44,9 @@ I started Wenlan because what I worked out with AI tools was scattered across ch
 
 **Teams:** run one Wenlan server everyone connects to, with view-only or edit access for each person. [Team server guide](docs/team-server.md).
 
-- **Memory.** What you settle in one AI tool is saved and is there in the next, so a new chat does not start from zero.
-- **Knowledge.** Memories, notes, and documents become pages with sources. Wenlan checks that each cited source supports the sentence it is cited for, and won't save a page whose citations mostly don't match. You see every change, can undo it, and pages you lock ask you first.
+- **Docs.** Memories, notes, and documents become pages with sources. Wenlan checks that each cited source supports the sentence it is cited for, and won't save a page whose citations mostly don't match. You see every change, can undo it, and pages you lock ask you first.
 - **Skills and rules.** How you like things done, written once and kept current in every AI tool you connect. Bring in the skills already on your computer, or find more to install.
+- **Memory.** What you settle in one AI tool is saved and is there in the next, so a new chat does not start from zero.
 - **Any layout you ask for.** Any page, and your home, can be text or a web page your AI draws for it. The drawing shows the live content, so you never redo it.
 - **Bring what you have.** Obsidian vaults, notes, documents, and AI chats. [Full list](#what-can-i-bring-in).
 
@@ -54,13 +54,13 @@ I started Wenlan because what I worked out with AI tools was scattered across ch
 
 ### How it compares
 
-| | Obsidian + plugins | Claude Code + a folder | LLM wiki apps | Wenlan |
-|---|---|---|---|---|
-| Who organizes | You, with plugins | You, by asking each time | An AI you set up | Your AI tools; updates when a source changes |
-| Setup | Find and update plugins | Your own instructions, plus a decisions file you paste in each session | Model key or scheduled routine | Set up once; no plugins to install or maintain |
-| Checks the AI's work | Depends on the plugin | You review what it files; duplicates and stale notes wait for a cleanup | Links to sources | Checks each cited source supports its sentence before saving; keeps the old version |
-| What AI may change | Depends on the plugin | What you approve, or allow in its settings | Its wiki folder | You choose per page; locked pages ask first; undo anytime |
-| Where notes live | Your computer | Plain files on your computer; free, and enough for many people | Your computer | Your files, plain Markdown; works with your vault |
+| | Obsidian + plugins | Claude Code + a folder | A rules file per tool (AGENTS.md…) | LLM wiki apps | Wenlan |
+|---|---|---|---|---|---|
+| Who organizes | You, with plugins | You, by asking each time | You, by hand, once for each tool | An AI you set up | Your AI tools; updates when a source changes |
+| Setup | Find and update plugins | Your own instructions, plus a decisions file you paste in each session | One file per tool, copied and kept in step by hand | Model key or scheduled routine | Set up once; no plugins to install or maintain |
+| Checks the AI's work | Depends on the plugin | You review what it files; duplicates and stale notes wait for a cleanup | Nothing checks it; an old rule stays until someone notices | Links to sources | Checks each cited source supports its sentence before saving; keeps the old version |
+| What AI may change | Depends on the plugin | What you approve, or allow in its settings | Anything in the file | Its wiki folder | You choose per page; locked pages ask first; undo anytime |
+| Where notes live | Your computer | Plain files on your computer; free, and enough for many people | A file in each repository | Your computer | Your files, plain Markdown; works with your vault |
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
@@ -114,7 +114,7 @@ When an import finishes, the app offers **Write pages with** your AI tool to tur
 - **Web links:** paste a link into a page and it becomes a source. YouTube, X, Threads, Instagram, and RedNote links show as a card or video.
 - **Gmail, Notion, Google Drive, Slack, GitHub:** your AI tool reads them with its own connectors and saves what matters, with a link to the original.
 - **AI chats:** decisions and findings are saved as memories, not full transcripts. ChatGPT and Claude export ZIPs work too.
-- **A code repository:** `/wenlan wiki` writes pages tied to the code. [Code wiki](#code-repository-wiki).
+- **A code repository:** `/wenlan wiki` writes pages tied to the code. [Docs for code](#code-repository-wiki).
 
 You can also connect an Open Knowledge Format (OKF) folder as a source. Scanned PDFs need text extraction first; chat attachments are not imported. [Import guide](docs/import-guide.md).
 
@@ -172,13 +172,13 @@ Already using Claude Code or Codex on a folder of notes? Keep doing that. Wenlan
 
 <br>
 
-## A wiki for your code repository
+## Docs for your code repository
 
 Run `/wenlan wiki` (`$wenlan wiki` in Codex) in a repository. Your AI tool writes an overview and one page for each part or flow a newcomer needs. A rerun writes only the pages that are missing.
 
 - **Tied to the code:** Each page records the code lines it was read from, and shows what changed when that code changes.
 - **As a pull request:** The GitHub button on a Space puts the pages in the repository's `wiki/` folder as a pull request, when you press it or daily. The daily run uses your own AI tool on your computer, or GitHub Actions with your AI tool's key saved as a repository secret. The same pull request fixes sentences in the repository's docs that the code no longer agrees with.
-- **Your edits stay:** A wiki page someone edited in the repository keeps that edit. Pages that cite your memories or chats stay out of the repository.
+- **Your edits stay:** A page someone edited in the repository keeps that edit. Pages that cite your memories or chats stay out of the repository.
 
 <a id="what-wenlan-is-not"></a>
 <a id="retrieval"></a>

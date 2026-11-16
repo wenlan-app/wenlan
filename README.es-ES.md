@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=be00837d7b80c4900debbaa692cc53d633a8930ca062f829a98a59a042409827 -->
+<!-- README_SYNC: source=README.md sha256=9aaa672a496a392a0ad2fd4b5f33601a7758a953d06d3fea12f48b5bcd4a8c28 -->
 
 <p align="center">
   <picture>
@@ -46,9 +46,9 @@ Empecé Wenlan porque lo que resolvía con herramientas de IA quedaba disperso e
 
 **Equipos:** un servidor de Wenlan al que todos se conectan, con acceso de solo lectura o de edición para cada persona. [Guía del servidor de equipo](docs/team-server.md).
 
-- **Memoria.** Lo que decides en una herramienta de IA se guarda y está en la siguiente, así que un chat nuevo no empieza de cero.
-- **Conocimiento.** Memorias, notas y documentos se convierten en páginas con fuentes. Wenlan comprueba que cada fuente citada respalda la frase en la que se cita y no guarda una página cuyas citas casi no coinciden. Ves cada cambio, puedes deshacerlo y las páginas que bloqueas te preguntan primero.
+- **Documentos.** Memorias, notas y documentos se convierten en páginas con fuentes. Wenlan comprueba que cada fuente citada respalda la frase en la que se cita y no guarda una página cuyas citas casi no coinciden. Ves cada cambio, puedes deshacerlo y las páginas que bloqueas te preguntan primero.
 - **Skills y reglas.** Cómo te gusta hacer las cosas, escrito una vez y al día en cada herramienta de IA que conectes. Trae las skills que ya tienes en tu ordenador o busca otras para instalar.
+- **Memoria.** Lo que decides en una herramienta de IA se guarda y está en la siguiente, así que un chat nuevo no empieza de cero.
 - **El diseño que pidas.** Cualquier página, y tu inicio, puede ser texto o una página web que tu IA dibuja. El dibujo muestra el contenido actual, así que nunca lo rehaces.
 - **Trae lo que ya tienes.** Bóvedas de Obsidian, notas, documentos y chats de IA. [Lista completa](#what-can-i-bring-in).
 
@@ -56,13 +56,13 @@ Empecé Wenlan porque lo que resolvía con herramientas de IA quedaba disperso e
 
 ### Cómo se compara
 
-| | Obsidian + plugins | Claude Code + una carpeta | Apps de LLM wiki | Wenlan |
-|---|---|---|---|---|
-| Quién organiza | Tú, con plugins | Tú, pidiéndoselo cada vez | Una IA que configuras | Tus herramientas de IA; actualiza cuando cambia una fuente |
-| Configuración | Buscar y actualizar plugins | Tus propias instrucciones, más un archivo de decisiones que pegas en cada sesión | Clave de modelo o rutina programada | Una vez; sin plugins que instalar ni mantener |
-| Revisa a la IA | Depende del plugin | Revisas tú lo que guarda; duplicados y notas viejas esperan una limpieza | Enlaza a fuentes | Comprueba que cada fuente citada respalda su frase antes de guardar; conserva la versión anterior |
-| Qué puede cambiar la IA | Depende del plugin | Lo que apruebes o permitas en sus ajustes | Su carpeta de wiki | Tú eliges por página; las bloqueadas preguntan primero; deshaz cuando quieras |
-| Dónde viven tus notas | Tu ordenador | Archivos de texto en tu ordenador; gratis, y suficiente para mucha gente | Tu ordenador | Tus archivos, Markdown plano; funciona con tu bóveda |
+| | Obsidian + plugins | Claude Code + una carpeta | Un archivo de reglas por herramienta (AGENTS.md…) | Apps de LLM wiki | Wenlan |
+|---|---|---|---|---|---|
+| Quién organiza | Tú, con plugins | Tú, pidiéndoselo cada vez | Tú, a mano, una vez por herramienta | Una IA que configuras | Tus herramientas de IA; actualiza cuando cambia una fuente |
+| Configuración | Buscar y actualizar plugins | Tus propias instrucciones, más un archivo de decisiones que pegas en cada sesión | Un archivo por herramienta, copiado y sincronizado a mano | Clave de modelo o rutina programada | Una vez; sin plugins que instalar ni mantener |
+| Revisa a la IA | Depende del plugin | Revisas tú lo que guarda; duplicados y notas viejas esperan una limpieza | Nada lo comprueba; una regla vieja sigue ahí hasta que alguien la ve | Enlaza a fuentes | Comprueba que cada fuente citada respalda su frase antes de guardar; conserva la versión anterior |
+| Qué puede cambiar la IA | Depende del plugin | Lo que apruebes o permitas en sus ajustes | Cualquier cosa del archivo | Su carpeta de wiki | Tú eliges por página; las bloqueadas preguntan primero; deshaz cuando quieras |
+| Dónde viven tus notas | Tu ordenador | Archivos de texto en tu ordenador; gratis, y suficiente para mucha gente | Un archivo en cada repositorio | Tu ordenador | Tus archivos, Markdown plano; funciona con tu bóveda |
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
@@ -116,7 +116,7 @@ Cuando termina una importación, la aplicación ofrece **Write pages with** tu h
 - **Enlaces web:** pega un enlace en una página y se convierte en fuente. Los enlaces de YouTube, X, Threads, Instagram y RedNote se muestran como tarjeta o vídeo.
 - **Gmail, Notion, Google Drive, Slack, GitHub:** tu herramienta de IA los lee con sus propios conectores y guarda lo importante, con un enlace al original.
 - **Chats de IA:** las decisiones y hallazgos se guardan como memorias, no como transcripciones completas. También sirven los ZIP exportados de ChatGPT y Claude.
-- **Un repositorio de código:** `/wenlan wiki` escribe páginas ligadas al código. [Wiki de código](#code-repository-wiki).
+- **Un repositorio de código:** `/wenlan wiki` escribe páginas ligadas al código. [Documentación de código](#code-repository-wiki).
 
 También puedes conectar una carpeta Open Knowledge Format (OKF) como fuente. Los PDF escaneados necesitan extracción de texto primero; los adjuntos de los chats no se importan. [Guía de importación](docs/import-guide.md).
 
@@ -185,13 +185,13 @@ Tu herramienta de IA lee lo que traes y lo escribe en páginas Markdown. Enlaza 
 
 <br>
 
-## Una wiki para tu repositorio de código
+## Documentación para tu repositorio de código
 
 Ejecuta `/wenlan wiki` (`$wenlan wiki` en Codex) en un repositorio. Tu herramienta de IA escribe un resumen y una página por cada parte o flujo que necesita conocer alguien nuevo. Al volver a ejecutarlo, solo escribe las páginas que faltan.
 
 - **Ligada al código:** Cada página registra las líneas de código de las que se leyó y muestra qué cambió cuando ese código cambia.
 - **Como pull request:** El botón de GitHub de un Espacio pone las páginas en la carpeta `wiki/` del repositorio como pull request, cuando lo pulsas o a diario. La ejecución diaria usa tu propia herramienta de IA en tu ordenador, o GitHub Actions con la clave de tu herramienta de IA guardada como secreto del repositorio. La misma pull request corrige las frases de la documentación del repositorio con las que el código ya no coincide.
-- **Tus ediciones se quedan:** Una página de la wiki que alguien editó en el repositorio conserva esa edición. Las páginas que citan tus memorias o chats se quedan fuera del repositorio.
+- **Tus ediciones se quedan:** Una página que alguien editó en el repositorio conserva esa edición. Las páginas que citan tus memorias o chats se quedan fuera del repositorio.
 
 <a id="what-wenlan-is-not"></a>
 <a id="retrieval"></a>
