@@ -316,7 +316,7 @@ const en = {
       openFailed: "Could not open your pages. Please try again.",
       finishFailed: "Could not save setup. You can keep using Wenlan and retry.",
       checkConnection: "Check connection",
-      intro: "A personal Wiki you and your AI tools build together. Your files and chats become pages they can recall.",
+      intro: "A studio for everything you think, learn, and build with AI. Your files and chats become pages your AI tools keep up to date.",
       start: "Get started",
       writer: {
         question: "Who writes your pages? Pick once and leave it.",
@@ -343,7 +343,7 @@ const en = {
         example: { title: "Look around an example wiki", hint: "A separate wiki. Yours isn't touched." },
       },
     },
-    tagline: "A living Wiki your AI tools build as they work.",
+    tagline: "A studio for everything you think, learn, and build with AI.",
     welcomeBody:
       "Your AI tools write what they learn into source-cited pages that refresh between sessions.",
     getStarted: "Get started",
@@ -2382,7 +2382,7 @@ const en = {
   },
   aboutWenlan: {
     title: "About Wenlan",
-    description: "Memory and Wiki for AI tools.",
+    description: "Pages, skills and rules your AI tools keep up to date and work from.",
     version: "Version {{version}}",
     updates: "Software updates",
     automatic: "Checks automatically while Wenlan is open.",
@@ -3770,7 +3770,7 @@ const zhHans = {
       openFailed: "暂时无法打开笔记，请再试一次。",
       finishFailed: "未能保存设置。你可以继续使用文澜，稍后重试。",
       checkConnection: "检查连接",
-      intro: "你和 AI 工具一起搭建的个人 Wiki。文件和对话会变成它们记得住的笔记。",
+      intro: "你和 AI 一起想、一起学、一起做的地方。文件和对话会变成页面，由你的 AI 工具保持更新。",
       start: "开始使用",
       writer: {
         question: "谁来帮你整理成笔记？选一次，之后不用再管。",
@@ -3797,7 +3797,7 @@ const zhHans = {
         example: { title: "逛逛范例 wiki", hint: "另外一个 wiki，不会动到你的。" },
       },
     },
-    tagline: "一个随你的 AI 工具工作而持续更新的 Wiki。",
+    tagline: "你和 AI 一起想、一起学、一起做的地方。",
     welcomeBody: "你的 AI 工具会把学到的内容写成带来源引用的笔记，并在会话之间自动刷新。",
     getStarted: "开始使用",
     back: "返回",
@@ -5800,7 +5800,7 @@ const zhHans = {
   },
   aboutWenlan: {
     title: "关于文澜",
-    description: "AI 工具的记忆和 Wiki。",
+    description: "页面、技能和规则，由你的 AI 工具保持更新、拿来做事。",
     version: "版本 {{version}}",
     updates: "软件更新",
     automatic: "文澜打开时会自动检查更新。",
@@ -7163,7 +7163,7 @@ const zhHant = {
       openFailed: "暫時無法開啟筆記，請再試一次。",
       finishFailed: "未能儲存設定。你可以繼續使用文瀾，稍後重試。",
       checkConnection: "檢查連線",
-      intro: "你和 AI 工具一起搭建的個人 Wiki。文字、檔案和對話會變成它們記得住的筆記。",
+      intro: "你和 AI 一起想、一起學、一起做的地方。文字、檔案和對話會變成頁面，由你的 AI 工具保持更新。",
       start: "開始使用",
       writer: {
         question: "誰來幫你整理成筆記？選一次，之後不用再管。",
@@ -7190,7 +7190,7 @@ const zhHant = {
         example: { title: "逛逛範例 wiki", hint: "另外一個 wiki，不會動到你的。" },
       },
     },
-    tagline: "一個隨你的 AI 工具工作而持續更新的 Wiki。",
+    tagline: "你和 AI 一起想、一起學、一起做的地方。",
     welcomeBody: "你的 AI 工具會把學到的內容寫成附來源引用的筆記，並在工作階段之間自動更新。",
     getStarted: "開始使用",
     back: "返回",
@@ -9193,7 +9193,7 @@ const zhHant = {
   },
   aboutWenlan: {
     title: "關於文瀾",
-    description: "AI 工具的記憶和 Wiki。",
+    description: "頁面、技能和規則，由你的 AI 工具保持更新、拿來做事。",
     version: "版本 {{version}}",
     updates: "軟體更新",
     automatic: "文瀾開啟時會自動檢查更新。",
