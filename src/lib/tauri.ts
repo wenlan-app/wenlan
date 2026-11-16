@@ -1901,6 +1901,8 @@ export interface RepoDocFix {
   new_text: string;
   reason: string;
   code?: RepoDocCode[];
+  /** For a fix from a page the doc follows: the page's line it rests on. */
+  page?: { page_id: string; version: number; quote: string } | null;
   state: RepoDocFixState;
   /** Unix seconds. */
   found_at: number;

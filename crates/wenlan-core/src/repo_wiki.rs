@@ -21,9 +21,9 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use wenlan_types::repo_wiki::{
-    RepoDocCheck, RepoDocCode, RepoDocFix, RepoDocFixState, RepoWikiAgent, RepoWikiBinding,
-    RepoWikiCandidate, RepoWikiDaily, RepoWikiPublishResult, RepoWikiPublishStatus, RepoWikiRunner,
-    DEFAULT_REPO_WIKI_FOLDER, REPO_WIKI_BRANCH,
+    RepoDocCheck, RepoDocCode, RepoDocFix, RepoDocFixState, RepoDocFollow, RepoDocPageLine,
+    RepoWikiAgent, RepoWikiBinding, RepoWikiCandidate, RepoWikiDaily, RepoWikiPublishResult,
+    RepoWikiPublishStatus, RepoWikiRunner, DEFAULT_REPO_WIKI_FOLDER, REPO_WIKI_BRANCH,
 };
 use wenlan_types::CodeBasisLocator;
 
@@ -40,6 +40,12 @@ const BUNDLE_MARKER: &str = ".wenlan-okf-export.json";
 const BUNDLE_ARCHIVE: &str = ".wenlan-archive";
 /// Most fixes waiting for or in the pull request at once.
 const MAX_OPEN_DOC_FIXES: usize = 50;
+/// Most docs one page can lead.
+const MAX_FOLLOW_FILES: usize = 20;
+/// Most pages the docs of one Space can follow.
+const MAX_FOLLOWS: usize = 20;
+/// Longest quote of a followed page a fix may rest on.
+const MAX_PAGE_QUOTE: usize = 500;
 
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 struct Store {
@@ -225,6 +231,7 @@ pub fn bind_at(
                     current.doc_fixes.clear();
                     current.doc_check = None;
                     current.kept_edits.clear();
+                    current.follows.clear();
                 }
                 current.repo_root = repo_root.clone();
                 current.folder = folder;
@@ -246,6 +253,7 @@ pub fn bind_at(
                     doc_fixes: Vec::new(),
                     doc_check: None,
                     kept_edits: Vec::new(),
+                    follows: Vec::new(),
                 };
                 bindings.push(binding.clone());
                 binding
@@ -362,6 +370,9 @@ pub struct DocFixRequest {
     pub new_text: String,
     pub reason: String,
     pub code: Vec<RepoDocCode>,
+    /// For a fix from a followed page. The caller has checked that the quote
+    /// is in that version of the page and that the version is current.
+    pub page: Option<RepoDocPageLine>,
 }
 
 /// Record a fix to one of the repository's docs for the next publish of
@@ -401,10 +412,44 @@ pub fn suggest_doc_fix_at(
         ));
     }
     if reason.is_empty() || reason.chars().count() > 500 {
-        return Err(WenlanError::Validation(
-            "reason must say in one sentence what the code says instead".into(),
-        ));
+        return Err(WenlanError::Validation(if request.page.is_some() {
+            "reason must say in one sentence what the followed page says now".into()
+        } else {
+            "reason must say in one sentence what the code says instead".into()
+        }));
     }
+    let page = match request.page {
+        Some(page) => {
+            if !request.code.is_empty() {
+                return Err(WenlanError::Validation(
+                    "a fix rests on the code or on a followed page, not both".into(),
+                ));
+            }
+            let quote = page.quote.trim();
+            if quote.is_empty() || quote.chars().count() > MAX_PAGE_QUOTE {
+                return Err(WenlanError::Validation(format!(
+                    "page.quote must be the page's line the fix rests on, at most \
+                     {MAX_PAGE_QUOTE} characters"
+                )));
+            }
+            let follows_file = binding
+                .follows
+                .iter()
+                .any(|follow| follow.page_id == page.page_id && follow.files.contains(&path));
+            if !follows_file {
+                return Err(WenlanError::Validation(format!(
+                    "{path} does not follow page {}; only the files a page leads take fixes \
+                     from it",
+                    page.page_id
+                )));
+            }
+            Some(RepoDocPageLine {
+                quote: quote.to_owned(),
+                ..page
+            })
+        }
+        None => None,
+    };
     if request.code.len() > 20 {
         return Err(WenlanError::Validation(
             "at most 20 code entries per fix".into(),
@@ -469,6 +514,7 @@ pub fn suggest_doc_fix_at(
             new_text: new_text.clone(),
             reason: reason.clone(),
             code: code.clone(),
+            page: page.clone(),
             state: RepoDocFixState::Pending,
             found_at: now,
         };
@@ -523,6 +569,131 @@ pub fn record_doc_check_at(
         binding.doc_check = Some(RepoDocCheck { at: now, docs });
         Ok(open_fixes(binding))
     })
+}
+
+/// Make `files` of the repository follow the page `page_id` of `space`.
+/// Each must be one of the repository's docs (see [`is_repo_doc`]) and exist
+/// in the working copy. Following a page again replaces its files and keeps
+/// the version they last followed.
+pub fn follow_page_at(
+    store: &Path,
+    space: &str,
+    page_id: &str,
+    files: Vec<String>,
+    now: i64,
+) -> Result<RepoDocFollow, WenlanError> {
+    let binding = binding_at(store, space)?.ok_or_else(|| {
+        WenlanError::NotFound(format!(
+            "Space {space:?} is not connected to a repository; connect it first"
+        ))
+    })?;
+    let page_id = page_id.trim();
+    if page_id.is_empty() {
+        return Err(WenlanError::Validation("page_id is required".into()));
+    }
+    if files.is_empty() || files.len() > MAX_FOLLOW_FILES {
+        return Err(WenlanError::Validation(format!(
+            "name 1 to {MAX_FOLLOW_FILES} docs to follow the page"
+        )));
+    }
+    let mut normalized: Vec<String> = Vec::with_capacity(files.len());
+    for file in files {
+        let path = normalize_repo_path(&file)?;
+        if !is_repo_doc(&path, &binding.folder) {
+            return Err(WenlanError::Validation(format!(
+                "{path} is not one of the repository's docs: a page can lead Markdown files \
+                 outside `{}/`, not a changelog",
+                binding.folder
+            )));
+        }
+        if !Path::new(&binding.repo_root).join(&path).is_file() {
+            return Err(WenlanError::Validation(format!(
+                "{path} is not in {}",
+                binding.repo_root
+            )));
+        }
+        if !normalized.contains(&path) {
+            normalized.push(path);
+        }
+    }
+    update_store_at(store, |bindings| {
+        let binding = bindings
+            .iter_mut()
+            .find(|binding| binding.space == space)
+            .ok_or_else(|| WenlanError::NotFound(format!("Space {space:?} is not connected")))?;
+        if let Some(existing) = binding
+            .follows
+            .iter_mut()
+            .find(|follow| follow.page_id == page_id)
+        {
+            existing.files = normalized.clone();
+            return Ok(existing.clone());
+        }
+        if binding.follows.len() >= MAX_FOLLOWS {
+            return Err(WenlanError::Conflict(format!(
+                "the docs already follow {MAX_FOLLOWS} pages; stop following one first"
+            )));
+        }
+        let follow = RepoDocFollow {
+            page_id: page_id.to_owned(),
+            files: normalized.clone(),
+            followed_version: None,
+            added_at: now,
+        };
+        binding.follows.push(follow.clone());
+        Ok(follow)
+    })
+}
+
+/// The docs stop following `page_id`. Fixes already found from it stay.
+/// True when they followed it.
+pub fn unfollow_page_at(store: &Path, space: &str, page_id: &str) -> Result<bool, WenlanError> {
+    update_store_at(store, |bindings| {
+        let binding = bindings
+            .iter_mut()
+            .find(|binding| binding.space == space)
+            .ok_or_else(|| WenlanError::NotFound(format!("Space {space:?} is not connected")))?;
+        let before = binding.follows.len();
+        binding.follows.retain(|follow| follow.page_id != page_id);
+        Ok(binding.follows.len() != before)
+    })
+}
+
+/// An AI tool brought the docs that follow `page_id` up to `version` of it.
+/// The caller has checked that `version` is the page's current one.
+pub fn mark_followed_at(
+    store: &Path,
+    space: &str,
+    page_id: &str,
+    version: i64,
+) -> Result<RepoDocFollow, WenlanError> {
+    update_store_at(store, |bindings| {
+        let binding = bindings
+            .iter_mut()
+            .find(|binding| binding.space == space)
+            .ok_or_else(|| WenlanError::NotFound(format!("Space {space:?} is not connected")))?;
+        let follow = binding
+            .follows
+            .iter_mut()
+            .find(|follow| follow.page_id == page_id)
+            .ok_or_else(|| {
+                WenlanError::NotFound(format!("no docs follow page {page_id} in {space:?}"))
+            })?;
+        follow.followed_version = Some(version);
+        Ok(follow.clone())
+    })
+}
+
+/// Whether `quote` is on the page: the same text once surrounding white
+/// space is set aside on each line, so a quote copied from a Markdown line
+/// without its indent or list marker spacing still counts.
+pub fn page_has_quote(page_text: &str, quote: &str) -> bool {
+    let quote = quote.trim();
+    !quote.is_empty() && (page_text.contains(quote) || squeeze(page_text).contains(&squeeze(quote)))
+}
+
+fn squeeze(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// After a publish: fixes it put in the pull request are `in_pr`, fixes whose
@@ -1376,6 +1547,11 @@ fn plural(n: usize) -> &'static str {
     }
 }
 
+/// A quote on one line, for the pull request body.
+fn one_line_quote(quote: &str) -> String {
+    squeeze(quote).replace('"', "'")
+}
+
 struct PrBody<'a> {
     binding: &'a RepoWikiBinding,
     pages: usize,
@@ -1388,6 +1564,21 @@ struct PrBody<'a> {
     /// `owner/name` on GitHub, for links to the code.
     slug: Option<&'a str>,
     base: &'a str,
+}
+
+#[cfg(test)]
+fn pr_body_for_test(binding: &RepoWikiBinding, fixes: Vec<&RepoDocFix>) -> String {
+    pr_body(PrBody {
+        binding,
+        pages: 0,
+        left_out: 0,
+        waiting: 0,
+        kept: 0,
+        rules: 0,
+        fixes,
+        slug: None,
+        base: "main",
+    })
 }
 
 fn pr_body(body: PrBody<'_>) -> String {
@@ -1424,13 +1615,27 @@ fn pr_body(body: PrBody<'_>) -> String {
     }
     if !fixes.is_empty() {
         out.push_str(&format!(
-            "\n\n{} sentence{} in the repository's docs no longer match{} the code:\n",
+            "\n\n{} sentence{} in the repository's docs no longer match{} {}:\n",
             fixes.len(),
             plural(fixes.len()),
-            if fixes.len() == 1 { "es" } else { "" }
+            if fixes.len() == 1 { "es" } else { "" },
+            match (
+                fixes.iter().any(|fix| fix.page.is_none()),
+                fixes.iter().any(|fix| fix.page.is_some()),
+            ) {
+                (true, true) => "the code or the page the doc follows",
+                (false, true) => "the page the doc follows",
+                _ => "the code",
+            }
         ));
         for fix in fixes {
             out.push_str(&format!("\n- `{}`: {}", fix.path, fix.reason));
+            if let Some(page) = &fix.page {
+                out.push_str(&format!(
+                    " (the page it follows says: \"{}\")",
+                    one_line_quote(&page.quote)
+                ));
+            }
             let links: Vec<String> = fix
                 .code
                 .iter()

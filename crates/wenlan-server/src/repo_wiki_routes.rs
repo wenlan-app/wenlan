@@ -194,10 +194,70 @@ async fn handle_docs(
             other => other,
         }
     };
+    if let Err(error) = check_followed_page(&db, &space, &req).await? {
+        return Err(refused(error).into());
+    }
     let reply =
         blocking(move || docs_action(&repo_wiki::store_path(), &space, req, now).map_err(refused))
             .await?;
     Ok(Json(reply))
+}
+
+/// For a request about a followed page: the page is in `space` and active,
+/// a fix's quote is in the version it names, and that version is the
+/// page's current one (a version an AI tool says it followed may be older).
+async fn check_followed_page(
+    db: &MemoryDB,
+    space: &str,
+    req: &RepoDocsRequest,
+) -> Result<Result<(), wenlan_core::WenlanError>, ServerError> {
+    use wenlan_core::WenlanError as E;
+    let (page_id, version) = match req {
+        RepoDocsRequest::Suggest {
+            page: Some(line), ..
+        } => (line.page_id.as_str(), Some(line.version)),
+        RepoDocsRequest::Follow { page_id, .. } => (page_id.as_str(), None),
+        RepoDocsRequest::Followed { page_id, version } => (page_id.as_str(), Some(*version)),
+        _ => return Ok(Ok(())),
+    };
+    let scope = crate::read_scope::effective_read_scope(db, Some(space), None).await?;
+    let Some(page) = db
+        .get_page_scoped(page_id, &scope)
+        .await
+        .map_err(|e| ServerError::Internal(e.to_string()))?
+        .filter(|page| page.status == "active")
+    else {
+        return Ok(Err(E::NotFound(format!(
+            "page {page_id} is not an active page of {space:?}"
+        ))));
+    };
+    match req {
+        RepoDocsRequest::Suggest {
+            page: Some(line), ..
+        } => {
+            if line.version != page.version {
+                return Ok(Err(E::Conflict(format!(
+                    "page {page_id} is at version {}, not {}; read it again with read_page",
+                    page.version, line.version
+                ))));
+            }
+            if !repo_wiki::page_has_quote(&page.content, &line.quote) {
+                return Ok(Err(E::Validation(format!(
+                    "page.quote is not on page {page_id}; copy the line from the page exactly"
+                ))));
+            }
+        }
+        RepoDocsRequest::Followed { .. }
+            if version.is_some_and(|version| version < 1 || version > page.version) =>
+        {
+            return Ok(Err(E::Validation(format!(
+                "page {page_id} is at version {}; name the version you read",
+                page.version
+            ))));
+        }
+        _ => {}
+    }
+    Ok(Ok(()))
 }
 
 /// The binding of the registered Space `space`, or 404.
@@ -315,6 +375,7 @@ fn docs_action(
             new_text,
             reason,
             code,
+            page,
         } => {
             let (fix, open) = repo_wiki::suggest_doc_fix_at(
                 store,
@@ -325,12 +386,14 @@ fn docs_action(
                     new_text,
                     reason,
                     code,
+                    page,
                 },
                 now,
             )?;
             RepoDocsReply {
                 fix: Some(fix),
                 open,
+                follow: None,
             }
         }
         RepoDocsRequest::Dismiss { id } => {
@@ -338,13 +401,56 @@ fn docs_action(
             RepoDocsReply {
                 fix: Some(fix),
                 open,
+                follow: None,
             }
         }
         RepoDocsRequest::Checked { docs } => RepoDocsReply {
             fix: None,
             open: repo_wiki::record_doc_check_at(store, space, docs, now)?,
+            follow: None,
         },
+        RepoDocsRequest::Follow { page_id, files } => {
+            let follow = repo_wiki::follow_page_at(store, space, &page_id, files, now)?;
+            RepoDocsReply {
+                fix: None,
+                open: open_fix_count(store, space)?,
+                follow: Some(follow),
+            }
+        }
+        RepoDocsRequest::Unfollow { page_id } => {
+            if !repo_wiki::unfollow_page_at(store, space, &page_id)? {
+                return Err(wenlan_core::WenlanError::NotFound(format!(
+                    "no docs follow page {page_id} in {space:?}"
+                )));
+            }
+            RepoDocsReply {
+                fix: None,
+                open: open_fix_count(store, space)?,
+                follow: None,
+            }
+        }
+        RepoDocsRequest::Followed { page_id, version } => {
+            let follow = repo_wiki::mark_followed_at(store, space, &page_id, version)?;
+            RepoDocsReply {
+                fix: None,
+                open: open_fix_count(store, space)?,
+                follow: Some(follow),
+            }
+        }
     })
+}
+
+/// Fixes of `space` waiting for or in the pull request.
+fn open_fix_count(store: &std::path::Path, space: &str) -> Result<usize, wenlan_core::WenlanError> {
+    Ok(repo_wiki::binding_at(store, space)?
+        .map(|binding| {
+            binding
+                .doc_fixes
+                .iter()
+                .filter(|fix| fix.state != RepoDocFixState::Dismissed)
+                .count()
+        })
+        .unwrap_or(0))
 }
 
 /// What a publish of `space` writes from: its pages that may go into the
