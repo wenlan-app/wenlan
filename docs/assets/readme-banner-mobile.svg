@@ -1,15 +1,16 @@
 <svg width="720" height="256" viewBox="0 0 720 256" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
   <title id="title">Wenlan README banner</title>
-  <desc id="desc">Wenlan: A studio for everything you think, learn, and build with AI</desc>
+  <desc id="desc">Wenlan: Docs, skills and rules your AI tools keep current and work from</desc>
   <rect width="720" height="256" fill="#151D2B"/>
-  <g transform="translate(324 14) scale(0.140625)">
+  <g transform="translate(332 8) scale(0.109375)">
     <circle cx="256" cy="256" r="160" fill="none" stroke="url(#banner-en-mobile-ring)" stroke-width="76"/>
     <circle cx="322" cy="160" r="42" fill="url(#banner-en-mobile-orb)"/>
   </g>
-  <text x="360" y="120" fill="#93E3F2" font-size="28" font-weight="500" text-anchor="middle"><tspan font-family="-apple-system, BlinkMacSystemFont, &quot;SF Pro Display&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif">Wenlan</tspan></text>
-  <text x="360" y="158" fill="#F7F8FF" font-family="-apple-system, BlinkMacSystemFont, &quot;SF Pro Display&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif" font-size="28" font-weight="500" text-anchor="middle">A studio for everything you</text>
-  <text x="360" y="192" fill="#F7F8FF" font-family="-apple-system, BlinkMacSystemFont, &quot;SF Pro Display&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif" font-size="28" font-weight="500" text-anchor="middle">think, learn, and build with AI</text>
-  <text x="360" y="230" fill="#BAC4D2" font-family="-apple-system, BlinkMacSystemFont, &quot;SF Pro Display&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif" font-size="18" font-weight="400" text-anchor="middle">Free · Open source · For you and your team</text>
+  <text x="360" y="90" fill="#93E3F2" font-size="24" font-weight="500" text-anchor="middle"><tspan font-family="-apple-system, BlinkMacSystemFont, &quot;SF Pro Display&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif">Wenlan</tspan></text>
+  <text x="360" y="120" fill="#BAC4D2" font-family="-apple-system, BlinkMacSystemFont, &quot;SF Pro Display&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif" font-size="16" font-weight="400" text-anchor="middle">A studio for everything you think, learn, and build with AI</text>
+  <text x="360" y="156" fill="#F7F8FF" font-family="-apple-system, BlinkMacSystemFont, &quot;SF Pro Display&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif" font-size="26" font-weight="500" text-anchor="middle">Docs, skills and rules your AI tools</text>
+  <text x="360" y="189" fill="#F7F8FF" font-family="-apple-system, BlinkMacSystemFont, &quot;SF Pro Display&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif" font-size="26" font-weight="500" text-anchor="middle">keep current and work from</text>
+  <text x="360" y="224" fill="#BAC4D2" font-family="-apple-system, BlinkMacSystemFont, &quot;SF Pro Display&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif" font-size="16" font-weight="400" text-anchor="middle">Free · Open source · For you and your team</text>
   <defs>
     <linearGradient id="banner-en-mobile-ring" x1="96" y1="256" x2="416" y2="256" gradientUnits="userSpaceOnUse">
       <stop stop-color="#6C63FF"/>

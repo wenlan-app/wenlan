@@ -34,22 +34,26 @@ const BANNER = {
 
 const BANNER_COPY = {
   en: {
-    title: ["A studio for everything you", "think, learn, and build with AI"],
+    kicker: "A studio for everything you think, learn, and build with AI",
+    title: ["Docs, skills and rules your AI tools", "keep current and work from"],
     tagline: "Free · Open source · For you and your team",
     font: BANNER.latin,
   },
   "zh-Hant": {
-    title: ["你和 AI 一起想、一起學、", "一起做的地方"],
+    kicker: "你和 AI 一起想、一起學、一起做的地方",
+    title: ["文件、技能和規則，", "你的 AI 工具幫你更新，也拿來做事"],
     tagline: "免費・開源・個人和團隊都能用",
     font: '"PingFang TC", "Noto Sans TC", -apple-system, BlinkMacSystemFont, sans-serif',
   },
   "zh-Hans": {
-    title: ["你和 AI 一起想、一起学、", "一起做的地方"],
+    kicker: "你和 AI 一起想、一起学、一起做的地方",
+    title: ["文件、技能和规则，", "你的 AI 工具帮你更新，也拿来做事"],
     tagline: "免费・开源・个人和团队都能用",
     font: '"PingFang SC", "Noto Sans SC", -apple-system, BlinkMacSystemFont, sans-serif',
   },
   "es-ES": {
-    title: ["Un estudio para todo lo que piensas,", "aprendes y construyes con IA"],
+    kicker: "Un estudio para todo lo que piensas, aprendes y construyes con IA",
+    title: ["Documentos, skills y reglas", "que tu IA mantiene al día y usa"],
     tagline: "Gratis · Código abierto · Para ti y tu equipo",
     font: BANNER.latin,
   },
@@ -103,7 +107,24 @@ function makeSimpleBanner(viewport, locale) {
   // A two-line title (English, Spanish) moves everything up so the tagline still fits,
   // and its ring grows to the height of the text so no line reaches above or below it.
   const twoLines = copy.title.length > 1 && tagline;
-  const content = twoLines
+  // With a kicker, the studio line sits small above the two-line headline, which is the
+  // largest text; the chips close the block.
+  const kicker = copy.kicker ?? null;
+  const content = kicker && twoLines
+    ? mobile
+      ? `${logoMarkup({ x: 332, y: 8, size: 56, prefix })}
+  ${brand(360, 90, 24, "middle")}
+  ${text(360, 120, kicker, 16, BANNER.secondary, 400, "middle")}
+  ${text(360, 156, copy.title[0], 26, BANNER.white, 500, "middle")}
+  ${text(360, 189, copy.title[1], 26, BANNER.white, 500, "middle")}
+  ${text(360, 224, tagline, 16, BANNER.secondary, 400, "middle")}`
+      : `${logoMarkup({ x: 62, y: 70, size: 212, prefix })}
+  ${brand(300, 112, 32, "start")}
+  ${text(300, 146, kicker, 19, BANNER.secondary, 400, "start")}
+  ${text(300, 190, copy.title[0], 34, BANNER.white, 500, "start")}
+  ${text(300, 230, copy.title[1], 34, BANNER.white, 500, "start")}
+  ${text(300, 270, tagline, 18, BANNER.secondary, 400, "start")}`
+    : twoLines
     ? mobile
       ? `${logoMarkup({ x: 324, y: 14, size: 72, prefix })}
   ${brand(360, 120, 28, "middle")}
@@ -150,7 +171,7 @@ function makeSimpleBanner(viewport, locale) {
     width,
     height,
     background: BANNER.dark,
-    requiredCopy: ["Wenlan", ...(chineseName ? [chineseName] : []), ...copy.title, ...(tagline ? [tagline] : [])],
+    requiredCopy: ["Wenlan", ...(chineseName ? [chineseName] : []), ...(copy.kicker ? [copy.kicker] : []), ...copy.title, ...(tagline ? [tagline] : [])],
     svg,
   };
 }

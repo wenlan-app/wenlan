@@ -1,14 +1,14 @@
-<!-- README_SYNC: source=README.md sha256=be527f5e6f2c134c4709f160001e42c7655df17ff208e1f8b64d63ce79ea33c3 -->
+<!-- README_SYNC: source=README.md sha256=b218fd466cd51c431b99678cd75b0709831a822e9dbb99d1e532be8fb24d0d2b -->
 
 <p align="center">
   <picture>
     <source media="(max-width: 600px)" srcset="./docs/assets/readme-banner-zh-Hant-mobile.png">
-    <img src="./docs/assets/readme-banner-zh-Hant.png" alt="文瀾：你和 AI 一起想、一起學、一起做的地方。免費、開源，個人和團隊都能用。" width="100%">
+    <img src="./docs/assets/readme-banner-zh-Hant.png" alt="文瀾：文件、技能和規則，你的 AI 工具幫你更新，也拿來做事。你和 AI 一起想、一起學、一起做的地方。免費、開源，個人和團隊都能用。" width="100%">
   </picture>
 </p>
 
 <p align="center">
-  有出處的頁面、技能和規則，由你的 AI 工具保持更新、拿來做事，樣子你說、AI 來畫。個人和團隊都能用。
+  每份文件都附出處，樣子你說、AI 來畫。從你已經在用的 AI 工具、桌面 App 或瀏覽器都能用。
 </p>
 
 <p align="center">
@@ -39,7 +39,7 @@
 
 ## 為什麼用文瀾
 
-我做文瀾，是因為和 AI 一起想出來的東西散在對話、筆記和文件裡，每次開新對話又要從頭解釋。文瀾是你和 AI 工具一起想、一起學、一起做的地方：每個連上的工具用的都是同一份頁面、技能和規則，你也看得到、改得了。
+我做文瀾，是因為和 AI 一起想出來的東西散在對話、筆記和文件裡，每次開新對話又要從頭解釋。文瀾是你和 AI 工具一起想、一起學、一起做的地方：每個連上的工具用的都是同一份文件、技能和規則，你也看得到、改得了。
 
 **個人版**：下載桌面 App，或從你的 AI 工具連上。
 
@@ -47,7 +47,7 @@
 
 - **記憶。** 你在一個 AI 工具裡定下的事會存下來，換到下一個工具還在，開新對話不用從頭解釋。
 - **知識。** 記憶、筆記和文件會整理成有出處的頁面。存下前文瀾會確認每個引用的來源真的支持那一句，引用大多對不上的頁面不會存下。改了什麼都看得到、能還原，鎖定的頁面會先問你。
-- **技能和規則。** 你習慣怎麼做事，寫一次，每個連上的 AI 工具都照著用。
+- **技能和規則。** 你習慣怎麼做事，寫一次，每個連上的 AI 工具都保持最新、照著用。可以帶進電腦上已有的技能，也能找新的來裝。
 - **樣子你說，AI 來畫。** 任何一頁、連首頁，都可以是文字，或是 AI 幫它畫的網頁；畫面顯示的是當下的內容，改字不用重畫。
 - **帶進現有資料。** Obsidian vault、筆記、文件和 AI 對話都能帶進來。[完整清單](#what-can-i-bring-in)。
 
@@ -81,7 +81,7 @@
 
 | **下載桌面 App** | **從你的 AI 工具連接** |
 |---|---|
-| [最完整的體驗](https://github.com/wenlan-app/wenlan/releases/latest)：頁面存成你電腦上的檔案，可以匯入資料、一鍵連接 AI 工具。支援 macOS 11 以上的 Apple Silicon、Windows x64 和 Linux x64（AppImage 或 .deb，v0.22 起）。介面有英文、简体中文和繁體中文。 | 不用裝 App，自己用或團隊用都可以。在 Mac 上執行 `npx -y wenlan setup`（需要 Node.js），或執行 `brew install 7xuanlu/tap/wenlan` 再執行 `wenlan setup`。Claude Code 可以裝[插件](docs/setup-with-ai.md)。Linux 和 Windows 請看 [CLI 安裝說明](docs/setup-and-data.zh-Hant.md#installation)。 |
+| [最完整的體驗](https://github.com/wenlan-app/wenlan/releases/latest)：頁面存成你電腦上的檔案，可以匯入資料、一鍵連接 AI 工具。支援 macOS 11 以上的 Apple Silicon、Windows x64 和 Linux x64（AppImage 或 .deb，v0.22 起）。介面有英文、简体中文和繁體中文。 | 不用裝 App，自己用或團隊用都可以。在 Mac 上執行 `npx -y wenlan setup`（需要 Node.js），或執行 `brew install 7xuanlu/tap/wenlan` 再執行 `wenlan setup`；之後用 `wenlan open` 就能在瀏覽器看你的頁面。Claude Code 可以裝[插件](docs/setup-with-ai.md)。Linux 和 Windows 請看 [CLI 安裝說明](docs/setup-and-data.zh-Hant.md#installation)。 |
 
 要加入團隊？打開架團隊伺服器的人給你的邀請連結，上面會教你怎麼連上自己的 AI 工具，不用裝 App。[團隊伺服器說明](docs/team-server.md)。
 

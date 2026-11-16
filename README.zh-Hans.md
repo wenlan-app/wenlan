@@ -1,14 +1,14 @@
-<!-- README_SYNC: source=README.md sha256=be527f5e6f2c134c4709f160001e42c7655df17ff208e1f8b64d63ce79ea33c3 -->
+<!-- README_SYNC: source=README.md sha256=b218fd466cd51c431b99678cd75b0709831a822e9dbb99d1e532be8fb24d0d2b -->
 
 <p align="center">
   <picture>
     <source media="(max-width: 600px)" srcset="./docs/assets/readme-banner-zh-Hans-mobile.png">
-    <img src="./docs/assets/readme-banner-zh-Hans.png" alt="文澜：你和 AI 一起想、一起学、一起做的地方。免费、开源，个人和团队都能用。" width="100%">
+    <img src="./docs/assets/readme-banner-zh-Hans.png" alt="文澜：文件、技能和规则，你的 AI 工具帮你更新，也拿来做事。你和 AI 一起想、一起学、一起做的地方。免费、开源，个人和团队都能用。" width="100%">
   </picture>
 </p>
 
 <p align="center">
-  有出处的页面、技能和规则，由你的 AI 工具保持更新、拿来做事，样子你说、AI 来画。个人和团队都能用。
+  每份文件都附出处，样子你说、AI 来画。从你已经在用的 AI 工具、桌面 App 或浏览器都能用。
 </p>
 
 <p align="center">
@@ -39,7 +39,7 @@
 
 ## 为什么用文澜
 
-我做文澜，是因为和 AI 一起想出来的东西散在对话、笔记和文档里，每次开新对话又要从头解释。文澜是你和 AI 工具一起想、一起学、一起做的地方：每个连上的工具用的都是同一份页面、技能和规则，你也看得到、改得了。
+我做文澜，是因为和 AI 一起想出来的东西散在对话、笔记和文档里，每次开新对话又要从头解释。文澜是你和 AI 工具一起想、一起学、一起做的地方：每个连上的工具用的都是同一份文件、技能和规则，你也看得到、改得了。
 
 **个人版**：下载桌面 App，或从你的 AI 工具连上。
 
@@ -47,7 +47,7 @@
 
 - **记忆。** 你在一个 AI 工具里定下的事会存下来，换到下一个工具还在，开新对话不用从头解释。
 - **知识。** 记忆、笔记和文档会整理成有出处的页面。保存前文澜会确认每个引用的来源真的支持那一句，引用大多对不上的页面不会保存。改了什么都看得到、能还原，锁定的页面会先问你。
-- **技能和规则。** 你习惯怎么做事，写一次，每个连上的 AI 工具都照着用。
+- **技能和规则。** 你习惯怎么做事，写一次，每个连上的 AI 工具都保持最新、照着用。可以带进电脑上已有的技能，也能找新的来装。
 - **样子你说，AI 来画。** 任何一页、连首页，都可以是文字，或是 AI 帮它画的网页；画面显示的是当下的内容，改字不用重画。
 - **带进现有资料。** Obsidian 仓库、笔记、文档和 AI 对话都能带进来。[完整清单](#what-can-i-bring-in)。
 
@@ -81,7 +81,7 @@
 
 | **下载桌面 App** | **从你的 AI 工具连接** |
 |---|---|
-| [最完整的体验](https://github.com/wenlan-app/wenlan/releases/latest)：页面存成你电脑上的文件，可以导入资料、一键连接 AI 工具。支持 macOS 11 以上的 Apple Silicon、Windows x64 和 Linux x64（AppImage 或 .deb，v0.22 起）。界面有英文、简体中文和繁體中文。 | 不用装 App，自己用或团队用都可以。在 Mac 上运行 `npx -y wenlan setup`（需要 Node.js），或运行 `brew install 7xuanlu/tap/wenlan` 再运行 `wenlan setup`。Claude Code 可以装[插件](docs/setup-with-ai.md)。Linux 和 Windows 请看 [CLI 安装说明](docs/setup-and-data.zh-Hans.md#installation)。 |
+| [最完整的体验](https://github.com/wenlan-app/wenlan/releases/latest)：页面存成你电脑上的文件，可以导入资料、一键连接 AI 工具。支持 macOS 11 以上的 Apple Silicon、Windows x64 和 Linux x64（AppImage 或 .deb，v0.22 起）。界面有英文、简体中文和繁體中文。 | 不用装 App，自己用或团队用都可以。在 Mac 上运行 `npx -y wenlan setup`（需要 Node.js），或运行 `brew install 7xuanlu/tap/wenlan` 再运行 `wenlan setup`；之后用 `wenlan open` 就能在浏览器看你的页面。Claude Code 可以装[插件](docs/setup-with-ai.md)。Linux 和 Windows 请看 [CLI 安装说明](docs/setup-and-data.zh-Hans.md#installation)。 |
 
 要加入团队？打开架团队服务器的人给你的邀请链接，上面会教你怎么连上自己的 AI 工具，不用装 App。[团队服务器说明](docs/team-server.md)。
 

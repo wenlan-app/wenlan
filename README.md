@@ -1,12 +1,12 @@
 <p align="center">
   <picture>
     <source media="(max-width: 600px)" srcset="./docs/assets/readme-banner-mobile.png">
-    <img src="./docs/assets/readme-banner.png" alt="Wenlan: a studio for everything you think, learn, and build with AI. Free, open source, for you and your team." width="100%">
+    <img src="./docs/assets/readme-banner.png" alt="Wenlan: docs, skills and rules your AI tools keep current and work from. A studio for everything you think, learn, and build with AI. Free, open source, for you and your team." width="100%">
   </picture>
 </p>
 
 <p align="center">
-  Pages with sources, skills and rules your AI tools keep up to date and work from, drawn any way you ask. For you and your team.
+  Every doc links to its sources and can look any way you ask. Use it from the AI tools you already have, the desktop app, or your browser.
 </p>
 
 <p align="center">
@@ -37,7 +37,7 @@
 
 ## Why Wenlan
 
-I started Wenlan because what I worked out with AI tools was scattered across chats, notes, and documents, and every new chat started from zero. Wenlan is the one place where you and your AI tools think, learn, and build: every tool you connect works from the same pages, skills, and rules, and you can read and change all of it.
+I started Wenlan because what I worked out with AI tools was scattered across chats, notes, and documents, and every new chat started from zero. Wenlan is the one place where you and your AI tools think, learn, and build: every tool you connect works from the same docs, skills, and rules, and you can read and change all of it.
 
 **Personal:** download the desktop app, or connect from your AI tool.
 
@@ -45,7 +45,7 @@ I started Wenlan because what I worked out with AI tools was scattered across ch
 
 - **Memory.** What you settle in one AI tool is saved and is there in the next, so a new chat does not start from zero.
 - **Knowledge.** Memories, notes, and documents become pages with sources. Wenlan checks that each cited source supports the sentence it is cited for, and won't save a page whose citations mostly don't match. You see every change, can undo it, and pages you lock ask you first.
-- **Skills and rules.** How you like things done, written once and used by every AI tool you connect.
+- **Skills and rules.** How you like things done, written once and kept current in every AI tool you connect. Bring in the skills already on your computer, or find more to install.
 - **Any look you ask for.** Any page, and your home, can be text or a web page your AI draws for it. The drawing shows the live content, so you never redo it.
 - **Bring what you have.** Obsidian vaults, notes, documents, and AI chats. [Full list](#what-can-i-bring-in).
 
@@ -79,7 +79,7 @@ I started Wenlan because what I worked out with AI tools was scattered across ch
 
 | **Download the desktop app** | **Connect from your AI tool** |
 |---|---|
-| [The fullest experience](https://github.com/wenlan-app/wenlan/releases/latest): pages kept as files on your computer, imports, and one-click connections. macOS 11 or later on Apple Silicon, Windows x64, or Linux x64 (AppImage or .deb, from v0.22). In English, 简体中文, and 繁體中文. | No app needed, whether you use it on your own or with a team. On a Mac, run `npx -y wenlan setup` (needs Node.js), or `brew install 7xuanlu/tap/wenlan` and then `wenlan setup`. In Claude Code, add the [plugin](docs/setup-with-ai.md). Linux and Windows: [CLI install guide](docs/setup-and-data.md#installation). |
+| [The fullest experience](https://github.com/wenlan-app/wenlan/releases/latest): pages kept as files on your computer, imports, and one-click connections. macOS 11 or later on Apple Silicon, Windows x64, or Linux x64 (AppImage or .deb, from v0.22). In English, 简体中文, and 繁體中文. | No app needed, whether you use it on your own or with a team. On a Mac, run `npx -y wenlan setup` (needs Node.js), or `brew install 7xuanlu/tap/wenlan` and then `wenlan setup`; `wenlan open` then shows your pages in your browser. In Claude Code, add the [plugin](docs/setup-with-ai.md). Linux and Windows: [CLI install guide](docs/setup-and-data.md#installation). |
 
 Joining a team? Open the invite link from whoever runs your team's server: it shows how to connect your own AI tool, with no app needed. [Team server guide](docs/team-server.md).
 

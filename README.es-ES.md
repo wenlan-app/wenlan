@@ -1,14 +1,14 @@
-<!-- README_SYNC: source=README.md sha256=be527f5e6f2c134c4709f160001e42c7655df17ff208e1f8b64d63ce79ea33c3 -->
+<!-- README_SYNC: source=README.md sha256=b218fd466cd51c431b99678cd75b0709831a822e9dbb99d1e532be8fb24d0d2b -->
 
 <p align="center">
   <picture>
     <source media="(max-width: 600px)" srcset="./docs/assets/readme-banner-es-ES-mobile.png">
-    <img src="./docs/assets/readme-banner-es-ES.png" alt="Wenlan: un estudio para todo lo que piensas, aprendes y construyes con IA. Gratis, de código abierto, para ti y tu equipo." width="100%">
+    <img src="./docs/assets/readme-banner-es-ES.png" alt="Wenlan: documentos, skills y reglas que tu IA mantiene al día y usa para trabajar. Un estudio para todo lo que piensas, aprendes y construyes con IA. Gratis, de código abierto, para ti y tu equipo." width="100%">
   </picture>
 </p>
 
 <p align="center">
-  Páginas con fuentes, skills y reglas que tus herramientas de IA mantienen al día y usan para trabajar, dibujadas como pidas. Para ti y tu equipo.
+  Cada documento enlaza a sus fuentes y puede verse como pidas. Úsalo desde las herramientas de IA que ya tienes, la app de escritorio o el navegador.
 </p>
 
 <p align="center">
@@ -39,7 +39,7 @@
 
 ## Por qué Wenlan
 
-Empecé Wenlan porque lo que resolvía con herramientas de IA quedaba disperso entre chats, notas y documentos, y cada chat nuevo empezaba de cero. Wenlan es el lugar donde tú y tus herramientas de IA piensan, aprenden y construyen: cada herramienta que conectas trabaja con las mismas páginas, skills y reglas, y tú puedes leerlo y cambiarlo todo.
+Empecé Wenlan porque lo que resolvía con herramientas de IA quedaba disperso entre chats, notas y documentos, y cada chat nuevo empezaba de cero. Wenlan es el lugar donde tú y tus herramientas de IA piensan, aprenden y construyen: cada herramienta que conectas trabaja con los mismos documentos, skills y reglas, y tú puedes leerlo y cambiarlo todo.
 
 **Personal:** descarga la app de escritorio o conéctate desde tu herramienta de IA.
 
@@ -47,7 +47,7 @@ Empecé Wenlan porque lo que resolvía con herramientas de IA quedaba disperso e
 
 - **Memoria.** Lo que decides en una herramienta de IA se guarda y está en la siguiente, así que un chat nuevo no empieza de cero.
 - **Conocimiento.** Memorias, notas y documentos se convierten en páginas con fuentes. Wenlan comprueba que cada fuente citada respalda la frase en la que se cita y no guarda una página cuyas citas casi no coinciden. Ves cada cambio, puedes deshacerlo y las páginas que bloqueas te preguntan primero.
-- **Skills y reglas.** Cómo te gusta hacer las cosas, escrito una vez y usado por cada herramienta de IA que conectes.
+- **Skills y reglas.** Cómo te gusta hacer las cosas, escrito una vez y al día en cada herramienta de IA que conectes. Trae las skills que ya tienes en tu ordenador o busca otras para instalar.
 - **El aspecto que pidas.** Cualquier página, y tu inicio, puede ser texto o una página web que tu IA dibuja. El dibujo muestra el contenido actual, así que nunca lo rehaces.
 - **Trae lo que ya tienes.** Bóvedas de Obsidian, notas, documentos y chats de IA. [Lista completa](#what-can-i-bring-in).
 
@@ -81,7 +81,7 @@ Empecé Wenlan porque lo que resolvía con herramientas de IA quedaba disperso e
 
 | **Descarga la app de escritorio** | **Conecta desde tu herramienta de IA** |
 |---|---|
-| [La experiencia más completa](https://github.com/wenlan-app/wenlan/releases/latest): tus páginas como archivos en tu ordenador, importaciones y conexiones con un clic. macOS 11 o posterior en Apple Silicon, Windows x64 o Linux x64 (AppImage o .deb, desde v0.22). En inglés, chino simplificado y chino tradicional. | Sin instalar la app, tanto si lo usas por tu cuenta como en equipo. En un Mac, ejecuta `npx -y wenlan setup` (requiere Node.js), o `brew install 7xuanlu/tap/wenlan` y después `wenlan setup`. En Claude Code, añade el [plugin](docs/setup-with-ai.md). Linux y Windows: [guía de instalación de la CLI](docs/setup-and-data.es-ES.md#installation). |
+| [La experiencia más completa](https://github.com/wenlan-app/wenlan/releases/latest): tus páginas como archivos en tu ordenador, importaciones y conexiones con un clic. macOS 11 o posterior en Apple Silicon, Windows x64 o Linux x64 (AppImage o .deb, desde v0.22). En inglés, chino simplificado y chino tradicional. | Sin instalar la app, tanto si lo usas por tu cuenta como en equipo. En un Mac, ejecuta `npx -y wenlan setup` (requiere Node.js), o `brew install 7xuanlu/tap/wenlan` y después `wenlan setup`; luego `wenlan open` muestra tus páginas en el navegador. En Claude Code, añade el [plugin](docs/setup-with-ai.md). Linux y Windows: [guía de instalación de la CLI](docs/setup-and-data.es-ES.md#installation). |
 
 ¿Te unes a un equipo? Abre el enlace de invitación de quien gestiona el servidor de tu equipo: explica cómo conectar tu propia herramienta de IA, sin instalar la app. [Guía del servidor de equipo](docs/team-server.md).
 

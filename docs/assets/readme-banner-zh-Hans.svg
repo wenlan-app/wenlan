@@ -1,15 +1,16 @@
 <svg width="1120" height="260" viewBox="0 0 1120 260" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
   <title id="title">Wenlan README banner</title>
-  <desc id="desc">Wenlan: 你和 AI 一起想、一起学、 一起做的地方</desc>
+  <desc id="desc">Wenlan: 文件、技能和规则， 你的 AI 工具帮你更新，也拿来做事</desc>
   <rect width="1120" height="260" fill="#151D2B"/>
   <g transform="translate(172 -45)"><g transform="translate(62 70) scale(0.4140625)">
     <circle cx="256" cy="256" r="160" fill="none" stroke="url(#banner-zh-Hans-desktop-ring)" stroke-width="76"/>
     <circle cx="322" cy="160" r="42" fill="url(#banner-zh-Hans-desktop-orb)"/>
   </g>
-  <text x="300" y="123" fill="#93E3F2" font-size="40" font-weight="500" text-anchor="start"><tspan font-family="-apple-system, BlinkMacSystemFont, &quot;SF Pro Display&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif">Wenlan</tspan><tspan dx="10" font-family="&quot;PingFang SC&quot;, &quot;Noto Sans SC&quot;, -apple-system, BlinkMacSystemFont, sans-serif">文澜</tspan></text>
-  <text x="300" y="170" fill="#F7F8FF" font-family="&quot;PingFang SC&quot;, &quot;Noto Sans SC&quot;, -apple-system, BlinkMacSystemFont, sans-serif" font-size="36" font-weight="500" text-anchor="start">你和 AI 一起想、一起学、</text>
-  <text x="300" y="212" fill="#F7F8FF" font-family="&quot;PingFang SC&quot;, &quot;Noto Sans SC&quot;, -apple-system, BlinkMacSystemFont, sans-serif" font-size="36" font-weight="500" text-anchor="start">一起做的地方</text>
-  <text x="300" y="254" fill="#BAC4D2" font-family="&quot;PingFang SC&quot;, &quot;Noto Sans SC&quot;, -apple-system, BlinkMacSystemFont, sans-serif" font-size="20" font-weight="400" text-anchor="start">免费・开源・个人和团队都能用</text></g>
+  <text x="300" y="112" fill="#93E3F2" font-size="32" font-weight="500" text-anchor="start"><tspan font-family="-apple-system, BlinkMacSystemFont, &quot;SF Pro Display&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif">Wenlan</tspan><tspan dx="8" font-family="&quot;PingFang SC&quot;, &quot;Noto Sans SC&quot;, -apple-system, BlinkMacSystemFont, sans-serif">文澜</tspan></text>
+  <text x="300" y="146" fill="#BAC4D2" font-family="&quot;PingFang SC&quot;, &quot;Noto Sans SC&quot;, -apple-system, BlinkMacSystemFont, sans-serif" font-size="19" font-weight="400" text-anchor="start">你和 AI 一起想、一起学、一起做的地方</text>
+  <text x="300" y="190" fill="#F7F8FF" font-family="&quot;PingFang SC&quot;, &quot;Noto Sans SC&quot;, -apple-system, BlinkMacSystemFont, sans-serif" font-size="34" font-weight="500" text-anchor="start">文件、技能和规则，</text>
+  <text x="300" y="230" fill="#F7F8FF" font-family="&quot;PingFang SC&quot;, &quot;Noto Sans SC&quot;, -apple-system, BlinkMacSystemFont, sans-serif" font-size="34" font-weight="500" text-anchor="start">你的 AI 工具帮你更新，也拿来做事</text>
+  <text x="300" y="270" fill="#BAC4D2" font-family="&quot;PingFang SC&quot;, &quot;Noto Sans SC&quot;, -apple-system, BlinkMacSystemFont, sans-serif" font-size="18" font-weight="400" text-anchor="start">免费・开源・个人和团队都能用</text></g>
   <defs>
     <linearGradient id="banner-zh-Hans-desktop-ring" x1="96" y1="256" x2="416" y2="256" gradientUnits="userSpaceOnUse">
       <stop stop-color="#6C63FF"/>
