@@ -559,11 +559,15 @@ async fn read_rules_for_space(
         Some(&page.content),
         last_page_edit_is_person(&page),
     );
+    let mut lines = eligible_lines(db, &space.id, &reconciled.lines).await?;
+    // Checked on every read too, so a line approved as general before its
+    // page turned out to be a teammate's stops being one at once.
+    keep_general_to_own_pages(db, &mut lines).await?;
     Ok(SpaceRulesResponse {
         space_id: space.id.clone(),
         space_name: space.name.clone(),
         rules_page_id: Some(page.id),
-        lines: eligible_lines(db, &space.id, &reconciled.lines).await?,
+        lines,
     })
 }
 
@@ -909,6 +913,32 @@ async fn sync_rules_files_locked(db: &MemoryDB, dirs: &SkillDirs) {
     }
 }
 
+/// A line counts as the person's own habit, used in every Space and written
+/// into their own AI tools, only when they wrote its source page. In a shared
+/// Space a teammate's page still gives that Space a rule; it never becomes
+/// this person's general one.
+///
+/// Any version a teammate wrote counts, not only the newest: the sentence may
+/// be theirs even when this person edited the page afterwards.
+const TEAMMATE_HISTORY_DEPTH: i64 = 500;
+
+async fn keep_general_to_own_pages(
+    db: &MemoryDB,
+    lines: &mut [SkillLine],
+) -> Result<(), ServerError> {
+    for line in lines.iter_mut().filter(|line| line.general) {
+        let by_teammate = db
+            .list_page_history(&line.source_page_id, TEAMMATE_HISTORY_DEPTH)
+            .await?
+            .iter()
+            .any(|version| wenlan_core::shared_space::shared_writer(&version.edited_by).is_some());
+        if by_teammate {
+            line.general = false;
+        }
+    }
+    Ok(())
+}
+
 async fn process_space(
     db: &MemoryDB,
     page_root: Option<&Path>,
@@ -939,7 +969,8 @@ async fn process_space(
         return Ok((state, false, false));
     }
     let lines = ask_for_lines(model, &space.name, pages).await?;
-    let lines = eligible_lines(db, &space.id, &lines).await?;
+    let mut lines = eligible_lines(db, &space.id, &lines).await?;
+    keep_general_to_own_pages(db, &mut lines).await?;
     let mut updated = false;
     let mut suggested = false;
     match state.status {

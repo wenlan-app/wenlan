@@ -617,6 +617,13 @@ and wait for evidence that people need them.
   left, the part is taken out. A file that another one already brings in gets
   no second copy.
   原文：「為啥要外掛？直接把我們的規則同步過去工具，工具就會讀啊？」（2026-11-15 23:28Z）。
+- **UX-SKILL-9** `shipped` In a Space shared with teammates, each person's
+  "How I work" page stays on their own computer and is not sent to the
+  others. A page a teammate wrote can still give that Space a rule, but never
+  one of this person's rules for every Space, so it never reaches this
+  person's own AI tools' files. Rules for the whole team go through the
+  repo's `AGENTS.md` in a PR (UX-SKILL-7).
+  原文：「我們這改動包含團隊了嗎？」「可以下個 PR 繼續開搞」（2026-11-15 23:30Z）。
 
 ## Adding to Wenlan
 
