@@ -32,6 +32,8 @@ import { SpaceRecentChanges } from "../space-detail/SpaceRecentChanges";
 import { isTeamMemberMode } from "../../../web/team";
 import { HomeLookView, useHomeLook } from "./HomeLook";
 import { isWebBuild } from "../../../web/runtime";
+import { SkillHomeLine } from "../skills/SkillHomeLine";
+import { isHowIWorkPage } from "../skills/howIWorkModel";
 
 interface PagesOverviewProps {
   readonly inventoryScope?: WikiInventoryScope;
@@ -176,6 +178,7 @@ export function PagesOverview({
   // needs the person stay where they are.
   const homeLook = useHomeLook({ supported: !web && !team && !example && !onboarding && daemonReady, pages });
   const lookShown = homeLook.shown;
+  const howIWorkPages = pages.filter(isHowIWorkPage);
   // With pages to list, "open a page" has nothing to add.
   const listsPages = lookShown || (newPages !== null && recentPages(pages).length > 0);
 
@@ -221,6 +224,9 @@ export function PagesOverview({
           under it as one row of cards that scrolls sideways, so neither pushes
           the other down. */}
       <div className={`home-columns${thingsOn ? "" : " home-columns--spaces"}`}>
+        {example || team || onboarding || howIWorkPages.length === 0 ? null : (
+          <SkillHomeLine pages={howIWorkPages} onOpenPage={onSelectPage} />
+        )}
         {/* What last night steeped spans every Space and the Wiki, so it
             opens home on its own line. "What you're working on" carries its
             own steeped line, so while it is on only the "not written yet"

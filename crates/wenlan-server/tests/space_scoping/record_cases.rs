@@ -478,6 +478,53 @@ pub fn registry_matches_catalog() {
     assert_eq!(WAVE_2_RECORDS.len(), 14);
 }
 
+/// The rules reader and borrowing record both resolve one Space from the
+/// explicit selector or the Space header, and their responses retain that
+/// Space identity even when the feature is off and the lines are empty.
+pub async fn skill_rules_and_records_resolve_one_space() {
+    let fixture = ScopeFixture::new().await;
+    for (space, expected_name) in [("work", "work"), ("personal", "personal")] {
+        let (status, rules) = json_body(
+            fixture
+                .send(
+                    HttpMethod::GET,
+                    &format!("/api/skills/rules?space={space}"),
+                    None,
+                    None,
+                )
+                .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(rules["space_name"], expected_name);
+        assert!(rules["lines"].as_array().unwrap().is_empty());
+
+        let (status, records) = json_body(
+            fixture
+                .send(
+                    HttpMethod::GET,
+                    &format!("/api/skills/record?space={space}"),
+                    None,
+                    Some(space),
+                )
+                .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(records.as_array().unwrap().is_empty());
+    }
+
+    let response = fixture
+        .send(
+            HttpMethod::GET,
+            "/api/skills/rules?space=missing-space",
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
 /// Research cards carry private evidence; legacy generic cards have no Space identity.
 pub async fn refinery_queue_research_payloads_are_scoped() {
     use std::collections::BTreeSet;

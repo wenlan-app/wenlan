@@ -124,6 +124,8 @@ enum Commands {
         #[arg(short, long, default_value_t = 10)]
         limit: usize,
     },
+    /// Read the approved working rules for one resolved Space.
+    Rules,
     /// Read the current Space Brief, optionally with related context.
     Brief(commands::brief::BriefArgs),
     /// Browse distilled pages, open one in your editor by title query, or
@@ -227,8 +229,8 @@ const HELP_GROUPS: &[(&str, &[&str])] = &[
     (
         "Daily",
         &[
-            "brief", "capture", "recall", "pages", "memories", "curate", "lint", "spaces", "team",
-            "wiki",
+            "brief", "capture", "recall", "rules", "pages", "memories", "curate", "lint", "spaces",
+            "team", "wiki",
         ],
     ),
     (
@@ -333,7 +335,9 @@ async fn main() -> anyhow::Result<ExitCode> {
     );
     let is_outbox = matches!(&cli.command, Commands::Outbox { .. });
     let operation = match &cli.command {
-        Commands::Recall { .. } | Commands::Memories { .. } => Some(CliSpaceOperation::Read),
+        Commands::Recall { .. } | Commands::Memories { .. } | Commands::Rules => {
+            Some(CliSpaceOperation::Read)
+        }
         Commands::Brief(args) if !args.is_update() => Some(CliSpaceOperation::Read),
         Commands::Capture { .. } | Commands::Wiki { .. } => Some(CliSpaceOperation::Write),
         _ => None,
@@ -505,6 +509,7 @@ async fn main() -> anyhow::Result<ExitCode> {
         Commands::Recall { query, limit } => {
             commands::recall::run(&client, format, cli.quiet, query, limit).await?
         }
+        Commands::Rules => commands::skills::read_space_rules(&client, cli.quiet).await?,
         Commands::Brief(args) => {
             commands::brief::run(
                 &client,

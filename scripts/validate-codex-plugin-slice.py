@@ -35,6 +35,10 @@ REQUIRED_SKILL_INTERFACE = {
         "display_name": "Wenlan Recall",
         "short_description": "Search Wenlan memories from Codex",
     },
+    "how-i-work": {
+        "display_name": "Wenlan How I Work",
+        "short_description": "Read this Space's approved rules before choosing an approach",
+    },
 }
 # Workflows hidden from the Claude menu are reference files under the wenlan
 # skill in Codex (plugin-contract.json `hidden_routed`), not separate skills.

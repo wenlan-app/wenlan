@@ -11,6 +11,7 @@ import { detectMcpClients, writeMcpConfig, type McpClient, type RemoteAccessStat
 // no-auth warning consolidation (redesign spec §6/§8) is proven against the
 // actual composed Settings screen, not a component that merely intends to be
 // the sole renderer.
+vi.mock("../../skills/HowIWorkSetting", () => ({ HowIWorkSetting: () => null }));
 vi.mock("../../../../lib/tauri", () => ({
   listAgents: vi.fn().mockResolvedValue([]),
   updateAgent: vi.fn().mockResolvedValue(null),

@@ -52,4 +52,8 @@
 .find-skills-installed-actions button, .find-skills-link-button { padding: 6px 12px; border-radius: var(--mem-control-radius); border: 1px solid var(--mem-control-border); background: transparent; color: var(--mem-text); font: inherit; font-size: 13px; cursor: pointer; }
 .find-skills-installed-actions button:disabled { opacity: 0.5; cursor: default; }
 .find-skills-link-button { margin-left: auto; }
+.find-skills-local { display: flex; flex-direction: column; gap: 12px; padding: 18px 20px; border-radius: var(--mem-r-10); background: var(--mem-card-surface); }
+.find-skills-local p { margin: 0; }
+.find-skills-local-names { list-style: none; margin: 0; padding: 0; display: flex; gap: 8px; flex-wrap: wrap; }
+.find-skills-local-button { align-self: flex-start; padding: 0 20px; }
 @media (max-width: 640px) { .find-skills { padding: 20px 16px 48px; } }

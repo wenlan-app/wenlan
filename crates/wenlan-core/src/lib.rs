@@ -99,6 +99,8 @@ pub mod said_lines;
 pub mod schema;
 pub mod sentences;
 pub mod shared_space;
+pub mod skill_grow;
+pub mod skill_locations;
 pub mod skill_registry;
 pub mod sources;
 pub mod space_context;

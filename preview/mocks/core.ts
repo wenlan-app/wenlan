@@ -134,6 +134,26 @@ const HOME_THINGS = [
   { id: "thg_home_7", title: "New Mac setup", title_by: "ai" as const, status_line: "Apps moved over; backups still need a schedule.", spaces: [], last_activity_at: HOME_NOW - 5 * 86_400, quiet: false },
 ];
 
+const HOW_I_WORK_LINES = [
+  { id: "rule-preview-1", kind: "rule", text: "先討論再動手寫程式", source_page_id: "page-working-style", source_page_title: "工作方式", source_revision: 3, source_revision_at: 1_794_211_200, source_quote: "先討論再動手寫程式", person_edited: false, general: true },
+  { id: "rule-preview-2", kind: "decision", text: "PR 只走合併佇列，不直接推上 main", source_page_id: "page-release-flow", source_page_title: "發版流程", source_revision: 8, source_revision_at: 1_794_211_200, source_quote: "完成後直接推上 main", person_edited: true },
+  { id: "rule-preview-3", kind: "rule", text: "回覆用繁體中文，先講結論", source_page_id: "page-communication", source_page_title: "溝通偏好", source_revision: 2, source_revision_at: 1_794_038_400, source_quote: "回覆用繁體中文，先講結論", person_edited: false },
+  { id: "rule-preview-4", kind: "pitfall", text: "測試要用獨立資料夾，別碰真的圖書館", source_page_id: "page-test-isolation", source_page_title: "測試隔離", source_revision: 5, source_revision_at: 1_793_952_000, source_quote: "測試要用獨立資料夾，別碰真的圖書館", person_edited: false },
+];
+const HOW_I_WORK_RECORDS = [
+  { at: HOME_NOW - 2 * 86_400, tool: "codex", space_id: "project-wenlan", page_title: "發版流程", rule_id: "rule-preview-2", self_report: "changed_plan" },
+  { at: HOME_NOW - 3_600, tool: "ai-tool", space_id: "project-wenlan", page_title: "發版流程", rule_id: "rule-preview-2" },
+];
+const HOW_I_WORK_SUGGESTION = {
+  id: "skill-suggestion-preview",
+  skill: "發版",
+  old_line: "完成後直接推上 main",
+  new_line: "完成後放進合併佇列",
+  reason: "較新的發版決定不同",
+  source_rule_id: "rule-preview-2",
+  source_page: "發版流程",
+};
+
 let graphObsSeq = 0;
 let fixtureBackgroundAiEnabled = false;
 type PreviewPageUpdateRequest = {
@@ -158,6 +178,26 @@ export async function invoke(
   if (cmd === "set_editor_composing") return null;
   if (!(window as { __PREVIEW_FIXTURES__?: boolean }).__PREVIEW_FIXTURES__) {
     return liveInvoke(cmd, args);
+  }
+  // Fixture pages never inherit a team or import state from whichever daemon
+  // happens to be running on the developer's machine.
+  if (cmd === "team_status") return { team: null, members: [], spaces: [], everyone: [], listening: null, url: null, suggested_urls: [], remote: null };
+  if (cmd === "get_ai_memory_import") return { found: [], ready: false, import: null };
+  const previewParams = new URLSearchParams(window.location.search);
+  const skillScreen = previewParams.get("skills");
+  if (skillScreen) {
+    if (cmd === "get_skills_from_library_enabled") return true;
+    if (cmd === "set_skills_from_library") return;
+    if (cmd === "list_space_rules_suggestions") return skillScreen === "ask" ? [{ space_id: "project-wenlan", space_name: "Wenlan", lines: HOW_I_WORK_LINES }] : [];
+    if (cmd === "list_skill_borrow_records") return skillScreen === "ask" ? [] : HOW_I_WORK_RECORDS;
+    if (cmd === "list_skill_suggestions") return skillScreen === "suggestion" ? [HOW_I_WORK_SUGGESTION] : [];
+    if (cmd === "get_space" && args?.name === "Wenlan") return { id: "project-wenlan", name: "Wenlan", description: null, suggested: false, starred: true, sort_order: 0, memory_count: 0, entity_count: 0, created_at: HOME_NOW - 86_400, updated_at: HOME_NOW };
+    if (cmd === "refresh_skills") return { spaces_considered: 1, spaces_unchanged: 1, spaces_updated: 0, suggestions: 0, failures: 0, model_calls: 0 };
+    if (cmd === "accept_space_rules") return { space_id: "project-wenlan", status: "accepted", rules_page_id: "page-how-i-work", undo_available: false };
+    if (cmd === "decline_space_rules") return { space_id: "project-wenlan", status: "declined", rules_page_id: null, undo_available: false };
+    if (cmd === "undo_space_rules") return { space_id: "project-wenlan", status: "undone", rules_page_id: "page-how-i-work", undo_available: false };
+    if (cmd === "apply_skill_suggestion") return { suggestion: HOW_I_WORK_SUGGESTION, applied: true, undo_available: true };
+    if (cmd === "dismiss_skill_suggestion" || cmd === "undo_skill_suggestion") return { suggestion: HOW_I_WORK_SUGGESTION, applied: false, undo_available: false };
   }
   if (cmd === "rename_page") {
     throw new Error("Renaming is unavailable in this fixture");
@@ -205,7 +245,10 @@ export async function invoke(
       const at = Math.floor(Date.now() / 1000);
       return [{ id: `preview-${tool}`, name: tool, display_name: null, agent_type: "mcp", description: null, enabled: true, trust_level: "full", last_seen_at: at - 180, memory_count: 14, created_at: at - 86_400, updated_at: at - 180 }];
     }
-    if (cmd === "list_pages_explicit_browse") return args?.status === "active" && !args?.offset ? HOME_PAGES : [];
+    if (cmd === "list_pages_explicit_browse") {
+      if (args?.status !== "active" || args?.offset) return [];
+      return skillScreen === "home" ? [PAGES["page-how-i-work"], ...HOME_PAGES] : HOME_PAGES;
+    }
     if (cmd === "get_thing") {
       const thing = HOME_THINGS.find((item) => item.id === args?.id) ?? HOME_THINGS[0];
       const base = { ...thing, sessions: [{ id: `ses_${thing.id}`, tool: "claude-code", title: thing.title, last_write_at: thing.last_activity_at }], pages: [], memories: [] };

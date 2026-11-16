@@ -1027,6 +1027,122 @@ export async function listSpaces(): Promise<Space[]> {
   return invoke("list_spaces");
 }
 
+// ── AI tools follow how you work ─────────────────────────────────────
+
+export type SkillLineKind = "rule" | "decision" | "pitfall";
+
+export interface SkillLine {
+  id: string;
+  kind: SkillLineKind;
+  text: string;
+  source_page_id: string;
+  source_page_title: string;
+  source_revision: number;
+  source_revision_at: number;
+  source_quote: string;
+  person_edited?: boolean;
+  /** Holds for any project: AI tools read it in every Space (UX-SKILL-5). */
+  general?: boolean;
+}
+
+export interface SpaceRulesSuggestion {
+  space_id: string;
+  space_name: string;
+  lines: SkillLine[];
+}
+
+export interface SpaceRulesActionResponse {
+  space_id: string;
+  status: string;
+  rules_page_id?: string | null;
+  undo_available: boolean;
+}
+
+export interface SkillsRefreshResponse {
+  spaces_considered: number;
+  spaces_unchanged: number;
+  spaces_updated: number;
+  suggestions: number;
+  failures: number;
+  model_calls: number;
+}
+
+export interface SkillSuggestion {
+  id: string;
+  skill: string;
+  old_line: string;
+  new_line: string;
+  reason: string;
+  source_rule_id: string;
+  source_page: string;
+}
+
+export interface SkillSuggestionActionResponse {
+  suggestion: SkillSuggestion;
+  applied: boolean;
+  undo_available: boolean;
+}
+
+export interface SkillBorrowRecord {
+  at: number;
+  tool: string;
+  space_id: string;
+  page_title: string;
+  rule_id: string;
+  self_report?: "changed_plan" | null;
+}
+
+/** The one Settings switch for how-I-work rules (UX-SKILL-1). */
+export async function setSkillsFromLibraryEnabled(on: boolean): Promise<void> {
+  return invoke("set_skills_from_library", { on });
+}
+
+export async function skillsFromLibraryEnabled(): Promise<boolean> {
+  return invoke("get_skills_from_library_enabled");
+}
+
+export async function listSpaceRulesSuggestions(): Promise<SpaceRulesSuggestion[]> {
+  return invoke("list_space_rules_suggestions");
+}
+
+/** `thisSpaceOnly` = the "other Spaces too" box was cleared (UX-SKILL-1). */
+export async function acceptSpaceRules(spaceId: string, thisSpaceOnly = false): Promise<SpaceRulesActionResponse> {
+  return invoke("accept_space_rules", { spaceId, thisSpaceOnly });
+}
+
+/** `thisSpaceOnly` = the "other Spaces too" box was cleared (UX-SKILL-1). */
+export async function declineSpaceRules(spaceId: string, thisSpaceOnly = false): Promise<SpaceRulesActionResponse> {
+  return invoke("decline_space_rules", { spaceId, thisSpaceOnly });
+}
+
+export async function refreshSkills(): Promise<SkillsRefreshResponse> {
+  return invoke("refresh_skills");
+}
+
+export async function undoSpaceRules(spaceId: string): Promise<SpaceRulesActionResponse> {
+  return invoke("undo_space_rules", { spaceId });
+}
+
+export async function listSkillSuggestions(): Promise<SkillSuggestion[]> {
+  return invoke("list_skill_suggestions");
+}
+
+export async function applySkillSuggestion(suggestionId: string): Promise<SkillSuggestionActionResponse> {
+  return invoke("apply_skill_suggestion", { suggestionId });
+}
+
+export async function dismissSkillSuggestion(suggestionId: string): Promise<SkillSuggestionActionResponse> {
+  return invoke("dismiss_skill_suggestion", { suggestionId });
+}
+
+export async function undoSkillSuggestion(suggestionId: string): Promise<SkillSuggestionActionResponse> {
+  return invoke("undo_skill_suggestion", { suggestionId });
+}
+
+export async function listSkillBorrowRecords(space: string): Promise<SkillBorrowRecord[]> {
+  return invoke("list_skill_borrow_records", { space });
+}
+
 // ── Sharing a Space or one page with people ───────────────────────────
 
 export type SharedKind = "space" | "page" | "library";
@@ -6098,4 +6214,29 @@ export async function removeSkill(name: string): Promise<void> {
 
 export async function refreshInstalledSkills(): Promise<SkillUpdateOutcome[]> {
   return invoke("skills_refresh");
+}
+
+/** `source` of a skill taken in from an AI tool folder on this computer. */
+export const LOCAL_SKILL_SOURCE = "local";
+
+export interface LocalSkill {
+  name: string;
+  path: string;
+  description: string | null;
+}
+
+export interface LocalSkillImport {
+  imported: string[];
+  /** [name, reason] for each skill that could not be taken in. */
+  failed: [string, string][];
+}
+
+/** Skills already in this computer's AI tool folders that Wenlan does not hold yet. */
+export async function scanLocalSkills(): Promise<LocalSkill[]> {
+  return invoke("skills_scan_local");
+}
+
+/** Copy these skills into Wenlan; the originals are left as they are. */
+export async function importLocalSkills(names: string[]): Promise<LocalSkillImport> {
+  return invoke("skills_import_local", { names });
 }

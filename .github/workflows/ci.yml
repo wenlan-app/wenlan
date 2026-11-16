@@ -567,6 +567,10 @@ jobs:
               - 'crates/wenlan-server/src/repair_prepare_operation_routes.rs'
               - 'crates/wenlan-server/src/scheduler.rs'
               - 'crates/wenlan-server/src/scheduler/scheduler_tests.rs'
+              # Skill reads open files without following links per platform (O_NOFOLLOW /
+              # reparse point), and the tests build real symlinks on each side.
+              - 'crates/wenlan-server/src/skill_grow.rs'
+              - 'crates/wenlan-server/src/skill_grow_test.rs'
               # The OKF overlap refusal is proved against a symlinked spelling
               # too, and that case is `cfg(unix)`, so the file carries a
               # platform route and must schedule both sides of the gate.
@@ -616,6 +620,9 @@ jobs:
               # `cfg(unix)` symlink case; Windows proves the other side.
               - 'crates/wenlan-server/src/source_routes/okf_registration_tests.rs'
               - 'crates/wenlan-server/src/telemetry.rs'
+              # No-follow skill reads and symlink tests have a Windows branch.
+              - 'crates/wenlan-server/src/skill_grow.rs'
+              - 'crates/wenlan-server/src/skill_grow_test.rs'
               # The team's Windows Firewall probe runs PowerShell only on Windows.
               - 'crates/wenlan-server/src/team_firewall.rs'
               - 'crates/wenlan-server/tests/graceful_shutdown.rs'
