@@ -2,7 +2,7 @@
 import type { TFunction } from "i18next";
 import type { PageChangelogEntry, PageHistoryItem, SharedStatus } from "../../../lib/tauri";
 import { sharedWriter } from "../sharing/sharing";
-import { writerAgentName } from "../sharing/teamPeople";
+import { teamAiWriter, writerAgentName } from "../sharing/teamPeople";
 import { revisionWriterLabel } from "./format";
 
 // The writers the daemon records for a person (app editor, vault file edit).
@@ -19,6 +19,8 @@ export function lifecycleActorName(
   if (!actor) return null;
   const member = sharedWriter(actor, shares, t);
   if (member) return member;
+  const teamAi = teamAiWriter(t, actor);
+  if (teamAi) return teamAi;
   if (actor.startsWith("ai:")) {
     return writerAgentName(t, actor.slice(3)) ?? t("team.changes.yourAi");
   }
@@ -44,7 +46,9 @@ export function historyItemLabel(
   if (item.restored_from != null) {
     return t("pageHistory.restored", { version: item.restored_from });
   }
-  return sharedWriter(item.edited_by, shares, t) ?? revisionWriterLabel(t, item.edited_by ?? "", item.agent);
+  return sharedWriter(item.edited_by, shares, t)
+    ?? teamAiWriter(t, item.edited_by, item.agent)
+    ?? revisionWriterLabel(t, item.edited_by ?? "", item.agent);
 }
 
 /**

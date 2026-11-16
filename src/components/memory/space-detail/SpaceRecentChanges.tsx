@@ -18,7 +18,7 @@ import { PutBackButton } from "../page/PutBackButton";
 import { relativeMs } from "../page/format";
 import { lifecycleActorName } from "../page/historyItems";
 import { sharedWriter } from "../sharing/sharing";
-import { writerAgentName } from "../sharing/teamPeople";
+import { teamAiWriter, WENLAN_WRITERS as WENLAN, writerAgentName } from "../sharing/teamPeople";
 import { useTeamAccess } from "../../../web/teamAccess";
 import "./space-recent-changes.css";
 
@@ -27,8 +27,6 @@ const SHOWN = 5;
 // The same writers the core counts as a person (authorship.rs): a page started
 // in the app and published, or a version the person restored, is theirs.
 const PERSON = new Set(["manual_edit", "fs_edit", "human", "own_device", "person_create", "revision_accept", "publish", "restore"]);
-/** Wenlan's own background organizing, not anyone's AI tool. */
-const WENLAN = new Set(["distill", "re_distill", "page_growth", "refinery_merge", "citation_backfill", "link_rename"]);
 
 /** Who made a change, said the way the row reads: a member, their AI tool,
  *  you, your AI tool, or Wenlan itself. */
@@ -38,6 +36,9 @@ export function changeWho(editedBy: string | null | undefined, shares: readonly 
   // A member's AI tool connected through the team server names its member.
   const tool = editedBy === "agent_refresh" && agent?.includes("@team.") ? writerAgentName(t, agent) : null;
   if (tool) return tool;
+  // In a member's browser, any other AI change is the owner's AI tool.
+  const ai = teamAiWriter(t, editedBy, agent);
+  if (ai) return ai;
   if (editedBy && PERSON.has(editedBy)) return t("team.changes.you");
   if (editedBy && WENLAN.has(editedBy)) return t("team.changes.wenlan");
   return t("team.changes.yourAi");
