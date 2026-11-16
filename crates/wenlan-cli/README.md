@@ -1086,7 +1086,7 @@ wenlan repo refresh [OPTIONS]
 Options:
 
 - `--repo <REPO>`: Any folder inside the repository. Default: the current folder.
-- `--folder <FOLDER>`: The wiki folder inside the repository. Default: `wiki`.
+- `--folder <FOLDER>`: The folder of pages inside the repository. Default: wenlan, or wiki when the repository already holds its pages there.
 - `--agent <AGENT>`: The AI tool that rewrites pages whose code changed. Possible values: `claude`, `codex`, `cursor`, `copilot`, `none` (Only fix line numbers and list the pages that need rewriting). Default: `claude`.
 - `--pull-request`: Commit the changed pages on `wenlan/wiki-refresh` and open or update the pull request.
 
@@ -1101,7 +1101,7 @@ wenlan repo workflow [OPTIONS]
 Options:
 
 - `--repo <REPO>`: Any folder inside the repository. Default: the current folder.
-- `--folder <FOLDER>`: The wiki folder inside the repository. Default: `wiki`.
+- `--folder <FOLDER>`: The folder of pages inside the repository. Default: wenlan, or wiki when the repository already holds its pages there.
 - `--agent <AGENT>`: The AI tool the workflow runs. Possible values: `claude`, `codex`, `cursor`, `copilot`. Default: `claude`.
 - `--utc-hour <UTC_HOUR>`: The hour (0-23, UTC) it runs every day. Default: `1`.
 - `--write`: Write it into the repository's GitHub workflows folder, as wenlan-wiki.yml, instead of printing it.

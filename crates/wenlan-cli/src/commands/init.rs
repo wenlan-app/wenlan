@@ -261,6 +261,10 @@ pub async fn run(client: &WenlanClient, format: ResolvedFormat, quiet: bool) -> 
                 "Tied it to {}. `wenlan repo publish` puts its pages into the repository as a pull request.",
                 binding.repo_root
             );
+            println!(
+                "The pages go in `{}/` there. `wenlan repo bind --folder <NAME>` picks another folder.",
+                binding.folder
+            );
             match &binding.daily {
                 Some(daily) if daily.enabled => println!(
                     "A pull request opens every day when something changed, after {:02}:00, with {}. `wenlan repo bind --daily off` stops it.",

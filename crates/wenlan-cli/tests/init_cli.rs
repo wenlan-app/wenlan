@@ -73,7 +73,7 @@ fn binding(space: &str, repo_root: &Path) -> String {
     json!({
         "space": space,
         "repo_root": repo_root.to_string_lossy(),
-        "folder": "wiki",
+        "folder": "wenlan",
     })
     .to_string()
 }
@@ -110,6 +110,12 @@ fn ux_cli_5_init_makes_the_space_ties_the_repository_and_says_what_comes_next() 
         "{stdout}"
     );
     assert!(stdout.contains("Tied it to"), "{stdout}");
+    assert!(
+        stdout.contains(
+            "The pages go in `wenlan/` there. `wenlan repo bind --folder <NAME>` picks another folder."
+        ),
+        "{stdout}"
+    );
     assert!(
         stdout.contains(
             "the terminal and AI tools started in this folder use Space 'acme-api'. `wenlan status` shows it."

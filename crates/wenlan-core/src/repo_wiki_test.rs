@@ -330,7 +330,7 @@ fn bind_stores_the_top_level_and_keeps_daily_when_not_named() {
     )
     .unwrap();
     assert_eq!(bound.repo_root, clone.to_string_lossy());
-    assert_eq!(bound.folder, "wiki");
+    assert_eq!(bound.folder, "wenlan");
     assert!(bound.remote_url.is_some());
     let again = bind_at(&store, "site", &clone, Some("docs/wiki"), None).unwrap();
     assert_eq!(again.folder, "docs/wiki");
@@ -357,7 +357,7 @@ fn publish_pushes_the_wiki_branch_without_touching_the_working_copy() {
     // citing it waits: its lines may not match the remote's default branch.
     std::fs::write(clone.join("src/main.rs"), "fn main() { run() }\n").unwrap();
     let store = dir.path().join("data/repo-wiki.json");
-    let binding = bind_at(&store, "site", &clone, None, None).unwrap();
+    let binding = bind_at(&store, "site", &clone, Some("wiki"), None).unwrap();
     let root = binding.repo_root.clone();
     let code_bases = HashMap::from([
         ("p1".to_string(), vec![locator(&root, "src/lib.rs", 1, 2)]),
@@ -556,7 +556,7 @@ fn publish_refuses_a_folder_holding_files_wenlan_did_not_write() {
     sh(&clone, &["commit", "--quiet", "-m", "own wiki"]);
     sh(&clone, &["push", "--quiet", "origin", "main"]);
     let store = dir.path().join("data/repo-wiki.json");
-    let binding = bind_at(&store, "site", &clone, None, None).unwrap();
+    let binding = bind_at(&store, "site", &clone, Some("wiki"), None).unwrap();
     let code_bases = HashMap::from([(
         "p1".to_string(),
         vec![locator(&binding.repo_root, "src/lib.rs", 1, 2)],
@@ -779,7 +779,7 @@ fn doc_fixes_are_checked_against_the_file_before_they_are_kept() {
     let dir = tempfile::tempdir().unwrap();
     let (_, clone) = repo_with_readme(dir.path());
     let store = dir.path().join("data/repo-wiki.json");
-    bind_at(&store, "site", &clone, None, None).unwrap();
+    bind_at(&store, "site", &clone, Some("wiki"), None).unwrap();
 
     let refused = |request: DocFixRequest| {
         suggest_doc_fix_at(&store, "site", request, 1)
@@ -846,7 +846,7 @@ fn wenlans_own_block_takes_no_doc_fix() {
     )
     .unwrap();
     let store = dir.path().join("data/repo-wiki.json");
-    bind_at(&store, "site", &clone, None, None).unwrap();
+    bind_at(&store, "site", &clone, Some("wiki"), None).unwrap();
     let mut inside = readme_fix("Start at `wiki/index.md`", "Start anywhere");
     inside.path = "AGENTS.md".into();
     assert!(suggest_doc_fix_at(&store, "site", inside, 1)
@@ -863,7 +863,7 @@ fn doc_fixes_go_into_the_wiki_pull_request_and_leave_once_merged() {
     let dir = tempfile::tempdir().unwrap();
     let (origin, clone) = repo_with_readme(dir.path());
     let store = dir.path().join("data/repo-wiki.json");
-    bind_at(&store, "site", &clone, None, None).unwrap();
+    bind_at(&store, "site", &clone, Some("wiki"), None).unwrap();
     suggest_doc_fix_at(
         &store,
         "site",
@@ -946,7 +946,7 @@ fn a_page_file_edited_in_the_repository_is_found_and_kept() {
     let dir = tempfile::tempdir().unwrap();
     let (origin, clone) = repo_with_origin(dir.path());
     let store = dir.path().join("data/repo-wiki.json");
-    let binding = bind_at(&store, "site", &clone, None, None).unwrap();
+    let binding = bind_at(&store, "site", &clone, Some("wiki"), None).unwrap();
     let root = binding.repo_root.clone();
     let code_bases = HashMap::from([(
         "page_map".to_string(),
@@ -1086,7 +1086,7 @@ fn a_merged_refresh_is_told_apart_from_a_persons_edit() {
     sh(&clone, &["config", "user.name", "Test"]);
     sh(&clone, &["config", "user.email", "test@example.com"]);
     let store = dir.path().join("data/repo-wiki.json");
-    let binding = bind_at(&store, "site", &clone, None, None).unwrap();
+    let binding = bind_at(&store, "site", &clone, Some("wiki"), None).unwrap();
     let root = binding.repo_root.clone();
     let code_bases = HashMap::from([
         ("p1".to_string(), vec![locator(&root, "src/lib.rs", 1, 2)]),
@@ -1174,7 +1174,7 @@ fn edits_people_push_to_the_wiki_branch_survive_the_next_publish() {
     let dir = tempfile::tempdir().unwrap();
     let (origin, clone) = repo_with_readme(dir.path());
     let store = dir.path().join("data/repo-wiki.json");
-    let binding = bind_at(&store, "site", &clone, None, None).unwrap();
+    let binding = bind_at(&store, "site", &clone, Some("wiki"), None).unwrap();
     let root = binding.repo_root.clone();
     suggest_doc_fix_at(
         &store,
@@ -1303,7 +1303,7 @@ fn publish_refuses_an_origin_that_changed_since_bind() {
     let dir = tempfile::tempdir().unwrap();
     let (origin, clone) = repo_with_origin(dir.path());
     let store = dir.path().join("data/repo-wiki.json");
-    let binding = bind_at(&store, "site", &clone, None, None).unwrap();
+    let binding = bind_at(&store, "site", &clone, Some("wiki"), None).unwrap();
     let root = binding.repo_root.clone();
     let code_bases = HashMap::from([("p1".to_string(), vec![locator(&root, "src/lib.rs", 1, 2)])]);
     let (pages, _) = select_pages(
@@ -1397,4 +1397,24 @@ fn publish_target_names_the_repository_and_its_owner() {
     };
     assert!(!signed_in("lucian").owned());
     assert!(signed_in("Pallets").owned());
+}
+
+#[test]
+fn a_repository_that_already_holds_pages_under_wiki_keeps_that_folder() {
+    let dir = tempfile::tempdir().unwrap();
+    let top = dir.path();
+    assert_eq!(default_folder(top), "wenlan");
+    // A hand-written `wiki/` folder is not Wenlan's.
+    std::fs::create_dir_all(top.join("wiki")).unwrap();
+    assert_eq!(default_folder(top), "wenlan");
+    std::fs::write(top.join("wiki").join(crate::repo_wiki_ci::CODE_FILE), "{}").unwrap();
+    assert_eq!(default_folder(top), "wiki");
+    // Once pages are under `wenlan/`, that is the folder.
+    std::fs::create_dir_all(top.join("wenlan")).unwrap();
+    std::fs::write(
+        top.join("wenlan").join(crate::repo_wiki_ci::CODE_FILE),
+        "{}",
+    )
+    .unwrap();
+    assert_eq!(default_folder(top), "wenlan");
 }

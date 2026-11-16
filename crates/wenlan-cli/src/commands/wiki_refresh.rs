@@ -37,9 +37,10 @@ pub struct RefreshArgs {
     /// Any folder inside the repository. Default: the current folder.
     #[arg(long)]
     pub repo: Option<PathBuf>,
-    /// The wiki folder inside the repository.
-    #[arg(long, default_value = DEFAULT_REPO_WIKI_FOLDER)]
-    pub folder: String,
+    /// The folder of pages inside the repository. Default: wenlan, or wiki
+    /// when the repository already holds its pages there.
+    #[arg(long)]
+    pub folder: Option<String>,
     /// The AI tool that rewrites pages whose code changed.
     #[arg(long, value_enum, default_value = "claude")]
     pub agent: RefreshAgentArg,
@@ -54,9 +55,10 @@ pub struct WorkflowArgs {
     /// Any folder inside the repository. Default: the current folder.
     #[arg(long)]
     pub repo: Option<PathBuf>,
-    /// The wiki folder inside the repository.
-    #[arg(long, default_value = DEFAULT_REPO_WIKI_FOLDER)]
-    pub folder: String,
+    /// The folder of pages inside the repository. Default: wenlan, or wiki
+    /// when the repository already holds its pages there.
+    #[arg(long)]
+    pub folder: Option<String>,
     /// The AI tool the workflow runs.
     #[arg(long, value_enum, default_value = "claude")]
     pub agent: super::wiki::AgentArg,
@@ -137,17 +139,23 @@ fn restore(top: &Path, path: &str) -> Result<()> {
 }
 
 pub fn workflow(args: WorkflowArgs, quiet: bool) -> Result<()> {
-    let folder = repo_wiki::normalize_folder(&args.folder)?;
+    let repo = match args.repo {
+        Some(repo) => repo,
+        None => std::env::current_dir()?,
+    };
+    // Printing works outside a repository too; only `--write` needs one.
+    let top = repo_wiki::repository_top_level(&repo);
+    let folder = match (&args.folder, &top) {
+        (Some(folder), _) => repo_wiki::normalize_folder(folder)?,
+        (None, Ok(top)) => repo_wiki::default_folder(top).to_owned(),
+        (None, Err(_)) => DEFAULT_REPO_WIKI_FOLDER.to_owned(),
+    };
     let text = repo_wiki_ci::workflow(&folder, args.agent.into(), args.utc_hour);
     if !args.write {
         print!("{text}");
         return Ok(());
     }
-    let repo = match args.repo {
-        Some(repo) => repo,
-        None => std::env::current_dir()?,
-    };
-    let top = repo_wiki::repository_top_level(&repo)?;
+    let top = top?;
     let path = top.join(WORKFLOW_PATH);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -170,7 +178,10 @@ pub fn refresh(args: RefreshArgs, format: ResolvedFormat, quiet: bool) -> Result
         None => std::env::current_dir()?,
     };
     let top = repo_wiki::repository_top_level(&repo)?;
-    let folder = repo_wiki::normalize_folder(&args.folder)?;
+    let folder = match &args.folder {
+        Some(folder) => repo_wiki::normalize_folder(folder)?,
+        None => repo_wiki::default_folder(&top).to_owned(),
+    };
     let found = repo_wiki_ci::check(&top, &folder)?;
     let mut report = RefreshReport {
         unchanged: found.unchanged,

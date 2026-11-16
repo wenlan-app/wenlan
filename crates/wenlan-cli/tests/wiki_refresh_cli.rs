@@ -215,6 +215,6 @@ fn workflow_prints_the_github_actions_file() {
         .success()
         .stdout(predicates::str::contains("cron: \"17 6 * * *\""))
         .stdout(predicates::str::contains(
-            "wenlan repo refresh --folder wiki --agent codex --pull-request",
+            "wenlan repo refresh --folder wenlan --agent codex --pull-request",
         ));
 }
