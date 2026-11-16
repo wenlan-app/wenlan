@@ -1462,3 +1462,86 @@ async fn ux_skill_8_general_rules_are_kept_in_each_connected_tools_own_file() {
         "@~/.codex/AGENTS.md\n"
     );
 }
+
+#[tokio::test]
+async fn ux_skill_9_a_teammates_page_never_gives_this_person_a_general_rule() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(true).await;
+    let team = scratch
+        .db
+        .create_space("Habits", None, false)
+        .await
+        .unwrap();
+    // The page came in through a shared Space, written by another member.
+    wenlan_core::post_write::create_page(
+        &scratch.db,
+        CreateConceptRequest {
+            title: "Habits".into(),
+            content: GENERAL_QUOTE.into(),
+            summary: None,
+            entity_id: None,
+            space: WriteSpaceTarget::Named("Habits".into()),
+            source_memory_ids: Vec::new(),
+            creation_kind: Some("authored".into()),
+            workspace: Some("Habits".into()),
+        },
+        "shared_person:member-b",
+        Some(&scratch.pages),
+    )
+    .await
+    .unwrap();
+    let model = GrowModel {
+        general_in: Some("Habits".into()),
+        ..GrowModel::new()
+    };
+    assert_eq!(refresh(&scratch, &model).await.suggestions, 1);
+    let _ = handle_accept_space_rules(
+        axum::extract::State(scratch.shared.clone()),
+        person_headers(),
+        AxumPath(team.id.clone()),
+        Query(SpaceAnswerScope::default()),
+    )
+    .await
+    .unwrap();
+
+    let read = |space: Option<&str>| {
+        let shared = scratch.shared.clone();
+        let space = space.map(str::to_string);
+        async move {
+            let mut headers = HeaderMap::new();
+            headers.insert("x-agent-name", HeaderValue::from_static("codex"));
+            handle_read_rules(
+                axum::extract::State(shared),
+                headers,
+                Query(RulesQuery { space }),
+            )
+            .await
+            .unwrap()
+            .0
+        }
+    };
+    let in_space = read(Some("Habits")).await;
+    assert_eq!(in_space.lines.len(), 1, "it is still a rule of that Space");
+    assert!(!in_space.lines[0].general);
+    assert!(
+        read(None).await.lines.is_empty(),
+        "and never one of this person's general rules"
+    );
+    assert!(!scratch.data.join("AGENTS.md").exists());
+
+    // A line that was already approved as general (before this rule) stops
+    // being one on the next read, with no new suggestion round.
+    let mut state = scratch
+        .db
+        .space_rules_state(&team.id)
+        .await
+        .unwrap()
+        .unwrap();
+    state.lines[0].general = true;
+    scratch.db.set_space_rules_state(&state).await.unwrap();
+    assert!(!read(Some("Habits")).await.lines[0].general);
+    assert!(read(None).await.lines.is_empty());
+}
