@@ -747,6 +747,33 @@ mod catalog_tests {
         );
     }
 
+    /// UX-CLI-3: turning Wenlan on and off uses the plain words, each one
+    /// listed in the short help, and the earlier `background on|off` still
+    /// parses.
+    #[test]
+    fn ux_cli_3_start_stop_and_restart_are_plain_top_level_words() {
+        use super::Commands;
+        use clap::Parser;
+
+        let start = Cli::try_parse_from(["wenlan", "start"]).expect("start");
+        assert!(matches!(start.command, Commands::Start));
+        let stop = Cli::try_parse_from(["wenlan", "stop"]).expect("stop");
+        assert!(matches!(stop.command, Commands::Stop));
+        let restart = Cli::try_parse_from(["wenlan", "restart"]).expect("restart");
+        assert!(matches!(restart.command, Commands::Restart));
+
+        let listed: BTreeSet<&str> = super::HELP_GROUPS
+            .iter()
+            .flat_map(|(_, names)| names.iter().copied())
+            .collect();
+        for word in ["start", "stop", "restart"] {
+            assert!(listed.contains(word), "{word} left the short help");
+        }
+
+        Cli::try_parse_from(["wenlan", "background", "on"]).expect("background on");
+        Cli::try_parse_from(["wenlan", "background", "off"]).expect("background off");
+    }
+
     /// `wenlan pages lock|unlock <id>` parse as the review-lock actions, and
     /// a plain query (or no argument) still browses pages as before.
     #[test]

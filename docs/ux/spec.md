@@ -625,6 +625,26 @@ and wait for evidence that people need them.
   repo's `AGENTS.md` in a PR (UX-SKILL-7).
   原文：「我們這改動包含團隊了嗎？」「可以下個 PR 繼續開搞」（2026-11-15 23:30Z）。
 
+## From the terminal
+
+- **UX-CLI-1** `shipped` Same things, two doors. Whatever an AI tool can do in
+  Wenlan, a person can do from the terminal under the matching name
+  (`write_page` is `wenlan pages write`), and `wenlan tool call` reaches any
+  tool by its own name. The terminal adds only installing, setting up and team.
+  原文：「建議指令要完整，然後明確跟 MCP 的分工，有時候我還是會不太清楚區別」（2026-11-15 21:03Z）；「要的，以及你其他建議也同意。」（2026-11-15 21:36Z）。
+- **UX-CLI-2** `shipped` `wenlan --help` fits one screen: what a person needs
+  in the first week, in named groups. Everything else is under
+  `wenlan help all`. A command that leaves the short help, or gets a new name,
+  keeps working under its old name.
+  原文：「精簡這些，總感覺亂亂的」（2026-11-15 21:06Z）；選擇卡「四項都做」（2026-11-16 07:07Z）；選擇卡「wenlan repo」（2026-11-16 08:15Z）。
+- **UX-CLI-3** `shipped` Turning Wenlan on and off uses plain words:
+  `wenlan start`, `wenlan stop`, `wenlan restart`.
+  原文：「background 要改名？感覺像是 restart 就挺直觀的。」（2026-11-15 21:35Z）；「要的，以及你其他建議也同意。」（2026-11-15 21:36Z）。
+- **UX-CLI-4** `shipped` When something fails, the terminal says what happened
+  in plain words and names the next command to run. A refusal shows Wenlan's
+  own sentence, not a status code or an address.
+  原文：「要讓體驗簡潔易懂」（2026-11-16 08:23Z）。
+
 ## Adding to Wenlan
 
 - **UX-ADD-1** `planned` There is one "Add to Wenlan" in the app; the shortcut,
