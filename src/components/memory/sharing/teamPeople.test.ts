@@ -61,11 +61,13 @@ describe("names in a team member's browser", () => {
   }
 
   it("never says you or your for anyone else's change", () => {
-    for (const editedBy of ["agent_refresh", "agent_create", "own_device_ai", "restore", "revision_accept", "publish", "create"]) {
+    for (const editedBy of ["agent_refresh", "agent_create", "own_device_ai", "restore", "revision_accept", "publish"]) {
       const who = changeWho(editedBy, undefined, t, null);
       expect(who, editedBy).not.toMatch(/\b(you|your)\b/i);
     }
     expect(changeWho("distill", undefined, t)).toBe("Wenlan");
+    // A page Wenlan made itself names nobody's tool.
+    expect(changeWho("create", undefined, t, null)).toBe("Wenlan");
   });
 
   it("names nothing outside a member's browser or for a stranger", () => {

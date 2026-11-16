@@ -64,12 +64,15 @@ export function teamWriter(editedBy: string | null | undefined, t: TFunction): s
  * through the team server (`<tool>@team.<member>`) by that member, and any
  * other AI writer on the server by the team's owner, whose server it is.
  * `agent` is the tool the change records, or the `ai:<tool>` of an archive.
- * `null` outside a member's browser, for a person's or Wenlan's own change,
- * or when the person cannot be named.
+ * A page an internal caller made (`create`) is Wenlan's. `null` outside a
+ * member's browser, for a person's or Wenlan's background change, or when
+ * the person cannot be named.
  */
 export function teamAiWriter(t: TFunction, editedBy: string | null | undefined, agent?: string | null): string | null {
   if (!me || !editedBy || OWNER_WRITERS.has(editedBy) || WENLAN_WRITERS.has(editedBy)) return null;
   if (/^(shared_person|shared_ai):/.test(editedBy)) return null;
+  // A page an internal caller made without naming anyone: Wenlan's own work.
+  if (editedBy === "create") return t("team.changes.wenlan");
   const tool = editedBy.startsWith("ai:") ? editedBy.slice(3) : agent;
   const team = tool ? /@team\.([A-Za-z0-9_-]+)$/.exec(tool.trim()) : null;
   const person = team ? people.get(team[1]) : owner();
