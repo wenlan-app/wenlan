@@ -7823,8 +7823,8 @@ impl ServerHandler for WenlanMcpServer {
             Implementation::new("wenlan-mcp", env!("CARGO_PKG_VERSION"))
         )
         .with_instructions(
-            "Wenlan is the user's personal wiki, kept up to date by their AI tools and shared across all of them: \
-             what you write here, Claude Desktop, Claude Code, ChatGPT, Cursor, and other agents read later. \
+            "Wenlan holds the user's pages, skills and working rules, kept current by their AI tools and shared across all of them. \
+             What you write here, their other AI tools read later. \
              It is cumulative, so write for any future reader, not just this conversation.\n\n\
              How the pieces fit:\n\
              - Pages are the result: wiki pages that cite their sources. list_pages shows what exists; \
@@ -7893,7 +7893,7 @@ mod tests {
             make_server_with_profile(TransportMode::Stdio, "agent", None, ToolProfile::Daily)
                 .get_info();
         let instructions = daily.instructions.expect("instructions");
-        assert!(instructions.starts_with("Wenlan is the user's personal wiki"));
+        assert!(instructions.starts_with("Wenlan holds the user's pages"));
         assert!(instructions.contains("wenlan tool list"));
         let standard =
             make_server_with_profile(TransportMode::Stdio, "agent", None, ToolProfile::Standard)
@@ -14305,11 +14305,13 @@ mod tests {
     }
 
     #[test]
-    fn instructions_open_with_the_wiki_and_stay_short() {
+    fn instructions_open_with_what_wenlan_holds_and_stay_short() {
         let i = server_instructions();
         assert!(
-            i.starts_with("Wenlan is the user's personal wiki"),
-            "with_instructions must open by describing Wenlan as the user's wiki, got: {i}"
+            i.starts_with(
+                "Wenlan holds the user's pages, skills and working rules, kept current by their AI tools"
+            ),
+            "with_instructions must open by saying what Wenlan holds for the user, got: {i}"
         );
         assert!(
             !i.to_ascii_lowercase().contains("memory layer"),

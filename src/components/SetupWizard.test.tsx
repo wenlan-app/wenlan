@@ -346,7 +346,7 @@ describe("SetupWizard", () => {
     renderWizard();
 
     expect(screen.getByText("欢迎使用文澜")).toBeInTheDocument();
-    expect(screen.getByText(/你的 wiki 存在你自己的电脑上/)).toBeInTheDocument();
+    expect(screen.getByText(/你的页面存在你自己的电脑上/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /从空白开始/ })).toBeInTheDocument();
   });
 
@@ -2657,7 +2657,7 @@ describe("SetupWizard", () => {
     renderWizard();
 
     expect(
-      await screen.findByText(/Your wiki lives on your computer/),
+      await screen.findByText(/Your pages live on your computer/),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: "Welcome to Wenlan" }),

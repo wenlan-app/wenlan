@@ -607,7 +607,7 @@ async fn main() -> anyhow::Result<ExitCode> {
         Commands::Recall { query, limit } => {
             commands::recall::run(&client, format, cli.quiet, query, limit).await?
         }
-        Commands::Rules => commands::skills::read_space_rules(&client, cli.quiet).await?,
+        Commands::Rules => commands::skills::read_space_rules(&client, format, cli.quiet).await?,
         Commands::Brief(args) => {
             commands::brief::run(
                 &client,
