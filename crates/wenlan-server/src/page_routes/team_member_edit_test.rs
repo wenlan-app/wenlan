@@ -334,3 +334,69 @@ async fn a_member_save_guarded_to_a_space_the_page_left_writes_nothing() {
     assert_eq!(page.content, "Body");
     assert_eq!(page.version, version);
 }
+
+/// An AI tool's change, written the way a connected tool's refresh is.
+async fn ai_change(db: &wenlan_core::db::MemoryDB, id: &str, content: &str, version: i64) -> i64 {
+    wenlan_core::post_write::page_write(
+        db,
+        wenlan_core::post_write::PageWrite::Update {
+            page_id: id,
+            req: wenlan_types::requests::UpdatePageRequest {
+                content: content.into(),
+                source_memory_ids: vec![],
+                expected_version: Some(version),
+                caller_id: None,
+                operation_id: Some(format!("op-ai-{content}")),
+            },
+            edited_by: "agent_refresh",
+            require_stale: false,
+            expected_source_revision: None,
+            knowledge_path: None,
+            citations: None,
+        },
+    )
+    .await
+    .unwrap();
+    db.get_page(id).await.unwrap().unwrap().version
+}
+
+/// Putting back an AI tool's change is the member's own hand edit with the
+/// text from before it: a new version by that member, in the history and in
+/// the Space's recent changes, refused when stale or once the page left.
+#[tokio::test]
+async fn a_members_put_back_is_a_new_version_by_that_member() {
+    let (_tmp, db, state) = server().await;
+    let first = page_in(&db, PAGE, "Alpha").await;
+    let after_ai = ai_change(&db, PAGE, "Body\n\nAn AI tool's sentence.", first).await;
+    let amy = actor(team_actor::secret(), "m-amy");
+
+    // A put-back computed against the version before the AI's is stale.
+    let stale = edit(&state, Some("Alpha"), amy.clone(), PAGE, "Body", first).await;
+    assert!(stale.is_err(), "a stale put-back must be refused");
+
+    let _ = edit(&state, Some("Alpha"), amy.clone(), PAGE, "Body", after_ai)
+        .await
+        .unwrap();
+    let page = db.get_page(PAGE).await.unwrap().unwrap();
+    assert_eq!(page.content, "Body");
+    assert_eq!(page.version, after_ai + 1, "a new version, not a rewind");
+    let history = db.list_page_history(PAGE, 3).await.unwrap();
+    assert_eq!(history[0].edited_by, "shared_person:m-amy");
+    assert_eq!(history[1].edited_by, "agent_refresh", "the AI's version stays");
+    let changes = db
+        .list_recent_changes_scoped(5, &wenlan_core::read_scope::ReadScope::Space("Alpha".into()))
+        .await
+        .unwrap();
+    let change = changes.iter().find(|c| c.page_id == PAGE).expect("in recent changes");
+    assert_eq!(change.edited_by.as_deref(), Some("shared_person:m-amy"));
+
+    // The owner moves the page to Beta: a put-back pinned to Alpha gets nothing.
+    let moved = db
+        .set_page_space(PAGE, Some("Beta"), page.version, &wenlan_core::read_scope::ReadScope::Global)
+        .await;
+    assert!(moved.is_ok(), "{:?}", moved.err());
+    let version = db.get_page(PAGE).await.unwrap().unwrap().version;
+    let refused = edit(&state, Some("Alpha"), amy, PAGE, "Taken back", version).await;
+    assert!(refused.is_err(), "a page that left the Space is not put back");
+    assert_eq!(db.get_page(PAGE).await.unwrap().unwrap().content, "Body");
+}

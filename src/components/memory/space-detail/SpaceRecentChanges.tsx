@@ -18,7 +18,7 @@ import { PutBackButton } from "../page/PutBackButton";
 import { relativeMs } from "../page/format";
 import { sharedWriter } from "../sharing/sharing";
 import { writerAgentName } from "../sharing/teamPeople";
-import { isTeamMemberMode } from "../../../web/team";
+import { useTeamAccess } from "../../../web/teamAccess";
 import "./space-recent-changes.css";
 
 const SHOWN = 5;
@@ -100,6 +100,7 @@ export function SpaceRecentChanges({ space, shares }: Props) {
 
 /** The page's newest change, with a way back to the text before it. */
 function ChangeDialog({ change, space, shares, onClose }: { readonly change: PageChange; readonly space: string; readonly shares?: readonly SharedStatus[]; readonly onClose: () => void }) {
+  const teamAccess = useTeamAccess();
   const revisions = useQuery({
     queryKey: ["page-revisions-text", change.page_id],
     queryFn: () => getPageRevisions(change.page_id, true),
@@ -120,9 +121,8 @@ function ChangeDialog({ change, space, shares, onClose }: { readonly change: Pag
       item={item}
       shares={shares}
       onClose={onClose}
-      // Putting a page back stays with the owner for now: a team member
-      // reads the change but gets no way to undo it here.
-      action={isTeamMemberMode() ? undefined
+      // A team member puts text back only in a Space they can edit.
+      action={teamAccess.member && !teamAccess.canEdit(space) ? undefined
         : <PutBackButton pageId={change.page_id} item={item} onDone={onClose} invalidate={[["recent-changes", space]]} />}
     />
   );

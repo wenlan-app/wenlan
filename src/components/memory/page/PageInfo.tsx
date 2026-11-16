@@ -20,7 +20,7 @@ import PageInfoCode from "./PageInfoCode";
 import PageInfoNotes from "./PageInfoNotes";
 import { HistoryChangeDialog } from "./HistoryChangeDialog";
 import { PutBackButton } from "./PutBackButton";
-import { isTeamMemberMode } from "../../../web/team";
+import { useTeamAccess } from "../../../web/teamAccess";
 import { entryForItem, historyItemLabel, historyRows } from "./historyItems";
 import "./NoteInfo.css";
 
@@ -137,6 +137,7 @@ export default function PageInfo({
   onOpenedVersion,
 }: PageInfoProps) {
   const { t, i18n } = useTranslation();
+  const teamAccess = useTeamAccess();
   // English keeps the legacy abbreviated relatives ("1d ago"); Chinese gets
   // a real locale so "1d ago" does not leak into the zh UI.
   const relativeLocale = i18n.language?.startsWith("zh") ? i18n.language : undefined;
@@ -551,9 +552,9 @@ export default function PageInfo({
           item={openHistoryItem}
           shares={shares}
           onClose={() => setOpenHistoryItem(null)}
-          // A team member reads old versions; putting one back stays with
-          // the owner for now.
-          action={isTeamMemberMode() ? undefined
+          // A team member puts text back only in a Space they can edit; a
+          // reader sees the change with no way to undo it.
+          action={teamAccess.member && !teamAccess.canEdit(currentSpace) ? undefined
             : <PutBackButton pageId={currentPageId} item={openHistoryItem} onDone={() => setOpenHistoryItem(null)} />}
         />
       )}
