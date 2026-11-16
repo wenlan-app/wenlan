@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Wenlan CLI for setup, service management, and your knowledge base."
+description = "Wenlan CLI: set up Wenlan, keep it running, and work with your pages from the terminal."
 default-run = "wenlan"
 publish = false
 

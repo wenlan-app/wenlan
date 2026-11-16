@@ -475,6 +475,8 @@ jobs:
               - 'crates/wenlan-cli/tests/cli_integration.rs'
               # The refresh test drives a shell-script stand-in AI tool, so it is `cfg(unix)`.
               - 'crates/wenlan-cli/tests/wiki_refresh_cli.rs'
+              # The tool tests drive a shell-script stand-in `wenlan-mcp`, so they are `cfg(unix)`.
+              - 'crates/wenlan-cli/tests/tool_cli.rs'
               - 'crates/wenlan-core/src/config.rs'
               - 'crates/wenlan-core/src/home_bin.rs'
               - 'crates/wenlan-core/src/community_grouping.rs'
@@ -604,6 +606,8 @@ jobs:
               - 'crates/wenlan-cli/tests/cli_integration.rs'
               # The refresh test drives a shell-script stand-in AI tool, so it is `cfg(unix)`.
               - 'crates/wenlan-cli/tests/wiki_refresh_cli.rs'
+              # The tool tests drive a shell-script stand-in `wenlan-mcp`, so they are `cfg(unix)`.
+              - 'crates/wenlan-cli/tests/tool_cli.rs'
               - 'crates/wenlan-server/src/bind_addr_tests.rs'
               - 'crates/wenlan-server/src/cmd_backfill.rs'
               - 'crates/wenlan-server/src/main.rs'

@@ -33,6 +33,11 @@ pub struct ConnectArgs {
     /// Print the command or file edit without changing anything.
     #[arg(long)]
     pub dry_run: bool,
+    /// List every Wenlan tool in the client, not only the everyday ones.
+    /// Health checks, review queues, entities, folders and version history
+    /// then load into each conversation too.
+    #[arg(long)]
+    pub all_tools: bool,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -60,7 +65,11 @@ pub async fn run_connect(
 ) -> Result<()> {
     let agent = agent_name_for_client(args.client);
     let dry_run = args.dry_run;
+    let note = tool_list_note(args.client, args.all_tools);
     add(args, quiet)?;
+    if !quiet {
+        println!("{note}");
+    }
     if !dry_run {
         register_connected_tool(client, agent).await;
     }
@@ -93,7 +102,10 @@ fn agent_name_for_client(client: McpClient) -> &'static str {
 }
 
 fn add(args: ConnectArgs, quiet: bool) -> Result<()> {
-    let server = with_agent_name(server_command(), agent_name_for_client(args.client));
+    let server = with_tool_list(
+        with_agent_name(server_command(), agent_name_for_client(args.client)),
+        args.all_tools,
+    );
     match args.client {
         McpClient::ClaudeCode => add_native(
             "claude-code",
@@ -656,6 +668,34 @@ fn with_agent_name(mut server: ServerCommand, agent_name: &str) -> ServerCommand
     server
 }
 
+/// `server` asked for the everyday tool list unless the person wants every
+/// tool. A client loads each listed tool's definition into every
+/// conversation, so the short list is the default; `wenlan-mcp` with no
+/// profile still lists everything, which is what the plugins start.
+fn with_tool_list(mut server: ServerCommand, all_tools: bool) -> ServerCommand {
+    if !all_tools {
+        server
+            .args
+            .extend(["--tool-profile".to_string(), "daily".to_string()]);
+    }
+    server
+}
+
+/// What `connect` says about the list it asked for.
+fn tool_list_note(client: McpClient, all_tools: bool) -> String {
+    if all_tools {
+        return "Every Wenlan tool is listed.".to_string();
+    }
+    let name = client
+        .to_possible_value()
+        .map(|value| value.get_name().to_owned())
+        .unwrap_or_default();
+    format!(
+        "The everyday tools are listed. For every tool (health checks, review queues, \
+         entities, folders): wenlan connect {name} --all-tools"
+    )
+}
+
 fn native_args(prefix: &str, args: &[&str], server: &ServerCommand) -> Vec<String> {
     let mut out = Vec::with_capacity(1 + args.len() + 1 + server.args.len());
     out.push(prefix.to_string());
@@ -799,6 +839,23 @@ mod tests {
         assert_eq!(
             server_json(&npx)["args"],
             json!(["-y", "wenlan-mcp", "--agent-name", "gemini-cli"])
+        );
+    }
+
+    #[test]
+    fn connect_asks_for_the_everyday_list_unless_told_otherwise() {
+        let daily = with_tool_list(with_agent_name(wenlan_server(), "cursor"), false);
+        assert_eq!(
+            daily.args,
+            ["--agent-name", "cursor", "--tool-profile", "daily"]
+        );
+        let all = with_tool_list(with_agent_name(wenlan_server(), "cursor"), true);
+        assert_eq!(all.args, ["--agent-name", "cursor"]);
+        assert!(
+            tool_list_note(McpClient::Cursor, false).contains("wenlan connect cursor --all-tools")
+        );
+        assert!(
+            tool_list_note(McpClient::Vscode, false).contains("wenlan connect vscode --all-tools")
         );
     }
 

@@ -994,7 +994,7 @@ must be demoted individually with a recorded reason. **Every MCP tool is
 | `read_space_rules` | yes | automatic | `none` | tool handler |
 | `report_space_rule_use` | no | not_applicable | `none` | structured rule id and fixed changed_plan outcome only; no Page prose |
 
-## CLI — all 26 `Commands` variants
+## CLI — all 27 `Commands` variants
 
 From `crates/wenlan-cli/src/main.rs`. The count is 26: `Connect` and
 `Brief` are tuple variants, easy to miss when scanning for brace-shaped
@@ -1009,6 +1009,7 @@ the projection-directory reader.
 | `wenlan setup` | yes | automatic | `none` | subcommand renderer |
 | `wenlan start` | yes | automatic | `none` | subcommand renderer |
 | `wenlan stop` | yes | automatic | `none` | subcommand renderer |
+| `wenlan tool` | yes | automatic | `none` | subcommand renderer |
 | `wenlan background` | yes | automatic | `none` | subcommand renderer |
 | `wenlan restart` | yes | automatic | `none` | subcommand renderer |
 | `wenlan doctor` | yes | automatic | `none` | subcommand renderer |

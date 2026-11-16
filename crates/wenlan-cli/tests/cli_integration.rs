@@ -732,8 +732,12 @@ fn top_level_help() {
         ))
         .stdout(predicate::str::contains("\nDaily:\n"))
         .stdout(predicate::str::contains("\nSetup:\n"))
-        .stdout(predicate::str::contains("\nMaintenance:\n"))
-        .stdout(predicate::str::contains("\n  steep "))
+        .stdout(predicate::str::contains("\nTeam:\n"))
+        .stdout(predicate::str::contains(
+            "\nMore commands: wenlan help all (",
+        ))
+        .stdout(predicate::str::contains("\n  start "))
+        .stdout(predicate::str::contains("\n  steep ").not())
         .stdout(predicate::str::contains("\n  search ").not())
         .stdout(predicate::str::contains("\n  sweep ").not())
         .stdout(predicate::str::contains("\n  agents ").not());
@@ -758,6 +762,7 @@ fn each_subcommand_has_help() {
         "memories",
         "agents",
         "setup",
+        "tool",
         "start",
         "stop",
         "background",
@@ -961,7 +966,7 @@ fn connect_claude_code_dry_run_explains_tools_only() {
         .assert()
         .success()
         .stdout(predicate::str::contains(format!(
-            "claude mcp add -s user wenlan -- {} --agent-name claude-code",
+            "claude mcp add -s user wenlan -- {} --agent-name claude-code --tool-profile daily",
             origin_mcp_sibling_arg()
         )))
         .stdout(predicate::str::contains("claude mcp remove -s user origin"))
@@ -986,7 +991,7 @@ fn connect_native_clients_add_named_entry_then_retire_legacy_origin() {
             "claude-code",
             "claude",
             format!(
-                "claude\tmcp\tadd\t-s\tuser\twenlan\t--\t{wenlan_mcp}\t--agent-name\tclaude-code\n\
+                "claude\tmcp\tadd\t-s\tuser\twenlan\t--\t{wenlan_mcp}\t--agent-name\tclaude-code\t--tool-profile\tdaily\n\
                  claude\tmcp\tremove\t-s\tuser\torigin\n"
             ),
         ),
@@ -994,7 +999,7 @@ fn connect_native_clients_add_named_entry_then_retire_legacy_origin() {
             "codex",
             "codex",
             format!(
-                "codex\tmcp\tadd\twenlan\t--\t{wenlan_mcp}\t--agent-name\tcodex\n\
+                "codex\tmcp\tadd\twenlan\t--\t{wenlan_mcp}\t--agent-name\tcodex\t--tool-profile\tdaily\n\
                  codex\tmcp\tremove\torigin\n"
             ),
         ),
@@ -1002,7 +1007,7 @@ fn connect_native_clients_add_named_entry_then_retire_legacy_origin() {
             "gemini",
             "gemini",
             format!(
-                "gemini\tmcp\tadd\t-s\tuser\twenlan\t{wenlan_mcp}\t--agent-name\tgemini-cli\n\
+                "gemini\tmcp\tadd\t-s\tuser\twenlan\t{wenlan_mcp}\t--agent-name\tgemini-cli\t--tool-profile\tdaily\n\
                  gemini\tmcp\tremove\t-s\tuser\torigin\n"
             ),
         ),
@@ -1148,7 +1153,7 @@ fn connect_json_clients_name_the_client() {
     ] {
         assert_eq!(
             wenlan_entry_args(&path, section),
-            ["--agent-name", name],
+            ["--agent-name", name, "--tool-profile", "daily"],
             "{}",
             path.display()
         );
@@ -1193,7 +1198,7 @@ fn connect_json_client_replaces_the_legacy_origin_entry() {
     assert_eq!(config["mcpServers"]["other"]["command"], "other-cmd");
     assert_eq!(
         wenlan_entry_args(&config_path, "mcpServers"),
-        ["--agent-name", "cursor"]
+        ["--agent-name", "cursor", "--tool-profile", "daily"]
     );
 
     // Once replaced, a second connect has nothing to do.
