@@ -17,6 +17,7 @@ pub mod pages;
 pub mod recall;
 pub mod service;
 pub mod setup;
+pub mod skills;
 pub mod space;
 pub mod status;
 pub mod store;

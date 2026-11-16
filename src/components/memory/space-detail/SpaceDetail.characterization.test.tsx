@@ -5,6 +5,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 
 vi.mock("../../../lib/tauri", () => ({
+  skillsFromLibraryEnabled: vi.fn().mockResolvedValue(false),
+  listSpaceRulesSuggestions: vi.fn().mockResolvedValue([]),
   acceptPendingRevision: vi.fn(),
   agentDisplayName: (slug: string | null) => slug,
   confirmSpace: vi.fn(),

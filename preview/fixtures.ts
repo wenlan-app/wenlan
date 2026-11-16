@@ -68,6 +68,30 @@ const base = {
 };
 
 export const PAGES: Record<string, Page> = {
+  "page-how-i-work": {
+    ...base,
+    id: "page-how-i-work",
+    title: "How I work — Wenlan",
+    summary: null,
+    space: "Wenlan",
+    domain: "Wenlan",
+    creation_kind: "authored",
+    source_memory_ids: [],
+    version: 4,
+    created_at: "2026-11-12T18:00:00+00:00",
+    last_compiled: "2026-11-15T11:00:00+00:00",
+    last_modified: "2026-11-15T11:00:00+00:00",
+    content: `# How I work — Wenlan
+
+These are this Space's approved working rules. Wenlan suggests the first version; only the person accepts it. After that Wenlan may maintain grounded lines automatically. Edit a line to make it yours; delete it to keep that line out.
+
+- [rule] 先討論再動手寫程式 — Source: 工作方式 (page-working-style) r3 at 1794211200 — Quote: "先討論再動手寫程式" <!-- wenlan-rule:rule-preview-1 -->
+- [decision] PR 只走合併佇列，不直接推上 main — Source: 發版流程 (page-release-flow) r8 at 1794211200 — Quote: "完成後直接推上 main" <!-- wenlan-rule:rule-preview-2 -->
+- [rule] 回覆用繁體中文，先講結論 — Source: 溝通偏好 (page-communication) r2 at 1794038400 — Quote: "回覆用繁體中文，先講結論" <!-- wenlan-rule:rule-preview-3 -->
+- [pitfall] 測試要用獨立資料夾，別碰真的圖書館 — Source: 測試隔離 (page-test-isolation) r5 at 1793952000 — Quote: "測試要用獨立資料夾，別碰真的圖書館" <!-- wenlan-rule:rule-preview-4 -->
+`,
+    citations: [],
+  } as Page,
   // A page whose sentences came from an AI conversation (UX-WHO-6):
   // `?page=page-said&said=1`.
   "page-said": {

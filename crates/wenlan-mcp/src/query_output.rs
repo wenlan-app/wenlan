@@ -6,7 +6,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use wenlan_types::{
     responses::SearchMemoryResponse, BriefReadResponse, BriefReadState, PageSourceWithMemory,
-    SearchResult,
+    SearchResult, SpaceRulesResponse,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -299,6 +299,85 @@ pub fn output_schema(tool_name: &str) -> Option<Arc<serde_json::Map<String, serd
         "brief" => Some(schema_for::<QueryBriefOutput>()),
         "recall" => Some(schema_for::<QueryRecallOutput>()),
         "get_page_sources" => Some(schema_for::<QueryPageSourcesOutput>()),
+        "read_space_rules" => Some(schema_for::<QuerySpaceRulesOutput>()),
         _ => None,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct QuerySpaceRulesOutput {
+    pub space_id: String,
+    pub space_name: String,
+    pub rules_page_id: Option<String>,
+    pub lines: Vec<QuerySpaceRuleLine>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct QuerySpaceRuleLine {
+    pub id: String,
+    pub kind: String,
+    pub text: String,
+    pub source_page_id: String,
+    pub source_page_title: String,
+    pub source_revision: i64,
+    pub source_revision_at: i64,
+    pub source_quote: String,
+}
+
+pub fn project_space_rules(response: &SpaceRulesResponse) -> QuerySpaceRulesOutput {
+    QuerySpaceRulesOutput {
+        space_id: response.space_id.clone(),
+        space_name: response.space_name.clone(),
+        rules_page_id: response.rules_page_id.clone(),
+        lines: response
+            .lines
+            .iter()
+            .map(|line| QuerySpaceRuleLine {
+                id: line.id.clone(),
+                kind: line.kind.as_str().to_string(),
+                text: line.text.clone(),
+                source_page_id: line.source_page_id.clone(),
+                source_page_title: line.source_page_title.clone(),
+                source_revision: line.source_revision,
+                source_revision_at: line.source_revision_at,
+                source_quote: line.source_quote.clone(),
+            })
+            .collect(),
+    }
+}
+
+#[cfg(test)]
+mod space_rules_tests {
+    use super::{output_schema, project_space_rules};
+    use wenlan_types::{SkillLine, SkillLineKind, SpaceRulesResponse};
+
+    #[test]
+    fn query_space_rules_projection_preserves_grounding_and_has_a_schema() {
+        let response = SpaceRulesResponse {
+            space_id: "space-1".into(),
+            space_name: "Research".into(),
+            rules_page_id: Some("rules-1".into()),
+            lines: vec![SkillLine {
+                id: "rule-1".into(),
+                kind: SkillLineKind::Rule,
+                text: "Keep the source quote with the approved rule.".into(),
+                source_page_id: "page-1".into(),
+                source_page_title: "Working agreements".into(),
+                source_revision: 7,
+                source_revision_at: 1_700_000_000,
+                source_quote: "Keep the source quote".into(),
+                person_edited: false,
+                general: false,
+            }],
+        };
+
+        let projected = project_space_rules(&response);
+        assert_eq!(projected.space_id, "space-1");
+        assert_eq!(projected.lines[0].source_page_title, "Working agreements");
+        assert_eq!(projected.lines[0].source_revision, 7);
+        assert_eq!(projected.lines[0].source_quote, "Keep the source quote");
+        assert!(output_schema("read_space_rules").is_some());
     }
 }

@@ -450,6 +450,18 @@ pub const HTTP_READERS: &[HttpReader] = &[
     HttpReader { method: ReaderMethod::Delete, path: "/api/setup/anthropic-key", builder: Builder::Main, page_bearing: PageBearing::No, class: TruthClass::NotApplicable, marker_shape: MarkerShape::None, adapter: "—", evidence: "no prose fields" },
     HttpReader { method: ReaderMethod::Put, path: "/api/setup/anthropic-key", builder: Builder::Main, page_bearing: PageBearing::No, class: TruthClass::NotApplicable, marker_shape: MarkerShape::None, adapter: "—", evidence: "no prose fields" },
     HttpReader { method: ReaderMethod::Get, path: "/api/setup/status", builder: Builder::MainAndRepair, page_bearing: PageBearing::No, class: TruthClass::NotApplicable, marker_shape: MarkerShape::None, adapter: "—", evidence: "no prose fields" },
+    HttpReader { method: ReaderMethod::Post, path: "/api/skills/refresh", builder: Builder::Main, page_bearing: PageBearing::No, class: TruthClass::NotApplicable, marker_shape: MarkerShape::None, adapter: "—", evidence: "SkillsRefreshResponse contains counts only" },
+    HttpReader { method: ReaderMethod::Get, path: "/api/skills/rules", builder: Builder::Main, page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "handle_read_rules", evidence: "approved Space rule lines and source page titles; only accepted, eligible rules are returned" },
+    HttpReader { method: ReaderMethod::Get, path: "/api/skills/spaces/suggestions", builder: Builder::Main, page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "handle_space_suggestions", evidence: "candidate rule lines and Space names awaiting person acceptance" },
+    HttpReader { method: ReaderMethod::Post, path: "/api/skills/spaces/{id}/accept", builder: Builder::Main, page_bearing: PageBearing::No, class: TruthClass::NotApplicable, marker_shape: MarkerShape::None, adapter: "—", evidence: "person acceptance receipt contains status and rules page id only" },
+    HttpReader { method: ReaderMethod::Post, path: "/api/skills/spaces/{id}/decline", builder: Builder::Main, page_bearing: PageBearing::No, class: TruthClass::NotApplicable, marker_shape: MarkerShape::None, adapter: "—", evidence: "person decline receipt contains status only" },
+    HttpReader { method: ReaderMethod::Post, path: "/api/skills/spaces/{id}/undo", builder: Builder::Main, page_bearing: PageBearing::No, class: TruthClass::NotApplicable, marker_shape: MarkerShape::None, adapter: "—", evidence: "nightly undo receipt contains status and rules page id only" },
+    HttpReader { method: ReaderMethod::Get, path: "/api/skills/suggestions", builder: Builder::Main, page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "handle_suggestions", evidence: "SkillSuggestion carries a library-derived line and its generated source Page title" },
+    HttpReader { method: ReaderMethod::Post, path: "/api/skills/suggestions/{id}/apply", builder: Builder::Main, page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "handle_apply_suggestion", evidence: "SkillSuggestionActionResponse returns the library-derived suggestion and source Page title" },
+    HttpReader { method: ReaderMethod::Post, path: "/api/skills/suggestions/{id}/dismiss", builder: Builder::Main, page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "handle_dismiss_suggestion", evidence: "SkillSuggestionActionResponse returns the library-derived suggestion and source Page title" },
+    HttpReader { method: ReaderMethod::Post, path: "/api/skills/suggestions/{id}/undo", builder: Builder::Main, page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "handle_undo_suggestion", evidence: "SkillSuggestionActionResponse returns the library-derived suggestion and source Page title" },
+    HttpReader { method: ReaderMethod::Get, path: "/api/skills/record", builder: Builder::Main, page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "handle_record", evidence: "Space-filtered SkillBorrowRecord carries source page titles and rule ids" },
+    HttpReader { method: ReaderMethod::Post, path: "/api/skills/record", builder: Builder::Main, page_bearing: PageBearing::No, class: TruthClass::NotApplicable, marker_shape: MarkerShape::None, adapter: "—", evidence: "self-report receipt contains a boolean and rule id only" },
     HttpReader { method: ReaderMethod::Post, path: "/api/shutdown", builder: Builder::Main, page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "handle_shutdown", evidence: "opaque response type — fail-closed" },
     HttpReader { method: ReaderMethod::Get, path: "/api/snapshots", builder: Builder::Main, page_bearing: PageBearing::No, class: TruthClass::NotApplicable, marker_shape: MarkerShape::None, adapter: "—", evidence: "DEMOTED — proof in the inventory doc" },
     HttpReader { method: ReaderMethod::Get, path: "/api/snapshots/{id}/captures", builder: Builder::Main, page_bearing: PageBearing::No, class: TruthClass::NotApplicable, marker_shape: MarkerShape::None, adapter: "—", evidence: "DEMOTED — proof in the inventory doc" },
@@ -578,6 +590,8 @@ pub const MCP_READERS: &[McpReader] = &[
     McpReader { tool: "get_memory_revisions", page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "tool handler" },
     McpReader { tool: "get_page_revisions", page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "tool handler" },
     McpReader { tool: "get_page_sources", page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "tool handler" },
+    McpReader { tool: "read_space_rules", page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "tool handler" },
+    McpReader { tool: "report_space_rule_use", page_bearing: PageBearing::No, class: TruthClass::NotApplicable, marker_shape: MarkerShape::None, adapter: "structured rule id and fixed changed_plan outcome only; no Page prose" },
     McpReader { tool: "read_source", page_bearing: PageBearing::No, class: TruthClass::NotApplicable, marker_shape: MarkerShape::None, adapter: "exact file or webpage text; rejects page sources" },
     McpReader { tool: "lint", page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "tool handler" },
     McpReader { tool: "lint_repair_apply", page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "tool handler" },
@@ -605,7 +619,7 @@ pub const MCP_READERS: &[McpReader] = &[
     McpReader { tool: "write_page", page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "tool handler" },
 ];
 
-/// All 24 top-level `Commands` variants in `crates/wenlan-cli/src/main.rs`.
+/// All 25 top-level `Commands` variants in `crates/wenlan-cli/src/main.rs`.
 #[rustfmt::skip]
 pub const CLI_READERS: &[CliReader] = &[
     CliReader { subcommand: "wenlan status", page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "subcommand renderer" },
@@ -623,6 +637,7 @@ pub const CLI_READERS: &[CliReader] = &[
     CliReader { subcommand: "wenlan connect", page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "subcommand renderer" },
     CliReader { subcommand: "wenlan recall", page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "subcommand renderer" },
     CliReader { subcommand: "wenlan brief", page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "subcommand renderer" },
+    CliReader { subcommand: "wenlan rules", page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "subcommand renderer" },
     CliReader { subcommand: "wenlan pages", page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::CollectionAndNamedPage, adapter: "enforce_projection_directory_invariant" },
     CliReader { subcommand: "wenlan sources", page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "subcommand renderer" },
     CliReader { subcommand: "wenlan capture", page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "subcommand renderer" },

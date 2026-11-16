@@ -667,20 +667,44 @@ pub(crate) fn code_footer<'a>(
     out
 }
 
-/// The text between [`AGENTS_START`] and [`AGENTS_END`].
-fn agents_block(folder: &str) -> String {
-    format!(
+/// How many of the Space's rules ride in the always-read block.
+pub const AGENTS_BLOCK_MAX_RULES: usize = 30;
+
+/// The text between [`AGENTS_START`] and [`AGENTS_END`]: where the wiki is,
+/// then the Space's own project rules, one per line, without their source
+/// pages (the repository may be public; the page titles are the person's).
+fn agents_block(folder: &str, rules: &[String]) -> String {
+    let mut block = format!(
         "{AGENTS_START}\n## Wiki\n\nThis repository has a wiki written by Wenlan in `{folder}/`. Start at \
          `{folder}/index.md`. Each page ends with the code lines it relies on. Read the page \
          for an unfamiliar part before changing it, and check the cited lines: when a page \
-         and the code disagree, the code wins.\n{AGENTS_END}"
-    )
+         and the code disagree, the code wins.\n"
+    );
+    let rules = rules
+        .iter()
+        .map(|rule| rule.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|rule| !rule.is_empty() && !rule.contains(AGENTS_END))
+        .take(AGENTS_BLOCK_MAX_RULES)
+        .collect::<Vec<_>>();
+    if !rules.is_empty() {
+        block.push_str("\n## Rules for this project\n\n");
+        for rule in rules {
+            block.push_str(&format!("- {rule}\n"));
+        }
+    }
+    block.push_str(AGENTS_END);
+    block
 }
 
 /// `text` with Wenlan's block replaced, or appended when it has none. Text
 /// outside the markers is never changed.
 pub fn upsert_agents_block(text: &str, folder: &str) -> String {
-    let block = agents_block(folder);
+    upsert_agents_block_with_rules(text, folder, &[])
+}
+
+/// [`upsert_agents_block`], with the Space's project rules inside the block.
+pub fn upsert_agents_block_with_rules(text: &str, folder: &str, rules: &[String]) -> String {
+    let block = agents_block(folder, rules);
     if let (Some(start), Some(end)) = (text.find(AGENTS_START), text.find(AGENTS_END)) {
         if start < end {
             let end = end + AGENTS_END.len();
@@ -695,15 +719,25 @@ pub fn upsert_agents_block(text: &str, folder: &str) -> String {
 
 /// Keep Wenlan's block in `AGENTS.md` (created when missing) and in an
 /// existing `CLAUDE.md` that does not already import `AGENTS.md`.
-fn maintain_agent_files(worktree: &Path, folder: &str) -> Result<Vec<&'static str>, WenlanError> {
+fn maintain_agent_files(
+    worktree: &Path,
+    folder: &str,
+    rules: &[String],
+) -> Result<Vec<&'static str>, WenlanError> {
     let mut touched = vec!["AGENTS.md"];
     let agents = worktree.join("AGENTS.md");
     let current = std::fs::read_to_string(&agents).unwrap_or_default();
-    std::fs::write(&agents, upsert_agents_block(&current, folder))?;
+    std::fs::write(
+        &agents,
+        upsert_agents_block_with_rules(&current, folder, rules),
+    )?;
     let claude = worktree.join("CLAUDE.md");
     if let Ok(current) = std::fs::read_to_string(&claude) {
         if !current.contains("@AGENTS.md") {
-            std::fs::write(&claude, upsert_agents_block(&current, folder))?;
+            std::fs::write(
+                &claude,
+                upsert_agents_block_with_rules(&current, folder, rules),
+            )?;
             touched.push("CLAUDE.md");
         }
     }
@@ -915,6 +949,10 @@ pub struct PublishInput<'a> {
     /// the remote's default branch.
     pub anchors: &'a CodeAnchors,
     pub concept_paths: &'a ConceptPathMap,
+    /// The Space's own approved project rules, for the block in `AGENTS.md`.
+    /// Never the general ones: those are the person's habits, not the
+    /// repository's.
+    pub rules: Vec<String>,
     /// Folder for this Space's worktree (under [`worktrees_root`]).
     pub worktree: PathBuf,
     /// `gh` to open the pull request with; `None` pushes the branch only.
@@ -1344,6 +1382,8 @@ struct PrBody<'a> {
     left_out: usize,
     waiting: usize,
     kept: usize,
+    /// Project rules written into the block in `AGENTS.md`.
+    rules: usize,
     fixes: Vec<&'a RepoDocFix>,
     /// `owner/name` on GitHub, for links to the code.
     slug: Option<&'a str>,
@@ -1357,6 +1397,7 @@ fn pr_body(body: PrBody<'_>) -> String {
         left_out,
         waiting,
         kept,
+        rules,
         fixes,
         slug,
         base,
@@ -1371,6 +1412,14 @@ fn pr_body(body: PrBody<'_>) -> String {
              `AGENTS.md` points coding agents at it.",
             plural(pages),
             binding.folder
+        ));
+    }
+    if rules > 0 {
+        out.push_str(&format!(
+            "\n\n`AGENTS.md` also carries {rules} project rule{} from the person's own pages \
+             in that Space, under \"Rules for this project\". Read them before merging: \
+             they come from notes, not from the code.",
+            plural(rules)
         ));
     }
     if !fixes.is_empty() {
@@ -1771,7 +1820,7 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
         restore(&input.worktree, &branch_tree, path)?;
     }
     if export {
-        maintain_agent_files(&input.worktree, &folder)?;
+        maintain_agent_files(&input.worktree, &folder, &input.rules)?;
         maintain_gitattributes(&input.worktree, &folder)?;
     }
     crate::repo_wiki_github::maintain_workflow(
@@ -1860,6 +1909,11 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
         left_out: input.left_out,
         waiting: waiting.get(),
         kept: kept.get(),
+        rules: if export {
+            input.rules.len().min(AGENTS_BLOCK_MAX_RULES)
+        } else {
+            0
+        },
         fixes: binding
             .doc_fixes
             .iter()

@@ -70,6 +70,7 @@ pub mod security;
 pub mod sensitive_read_routes;
 pub mod sentence_routes;
 pub mod session_routes;
+pub mod skill_grow;
 mod slow_save;
 pub mod snapshot_routes;
 pub mod source_annotation_routes;

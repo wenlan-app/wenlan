@@ -282,7 +282,7 @@ wenlan connect cursor --dry-run
 wenlan connect cursor --all-tools
 ```
 
-The client is given the 17 everyday tools: reading and searching, saving, writing and reshaping pages, and writing pages on demand. A client loads every listed tool into each conversation, and the full list of 57 is more than twice the size. `--all-tools` lists them all (health checks and repairs, review queues, entities, folders, version history); without it they are still one `wenlan tool call <name>` away in a terminal.
+The client is given the 19 everyday tools: reading and searching, the approved working rules, saving, writing and reshaping pages, and writing pages on demand. A client loads every listed tool into each conversation, and the full list of 59 is more than twice the size. `--all-tools` lists them all (health checks and repairs, review queues, entities, folders, version history); without it they are still one `wenlan tool call <name>` away in a terminal.
 
 Supported clients: `claude-code`, `codex`, `gemini`, `cursor`, `claude-desktop`, `vscode`.
 
@@ -410,6 +410,14 @@ Arguments:
 Options:
 
 - `-l, --limit <LIMIT>`: Max memories to return. Default: `10`.
+
+### `wenlan rules`
+
+Read the approved working rules for one resolved Space.
+
+```text
+wenlan rules [OPTIONS]
+```
 
 ### `wenlan pages`
 
