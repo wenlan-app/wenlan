@@ -125,19 +125,65 @@ describe("PageDetail info panel for a team member", () => {
     expect(basis()).not.toBeNull();
   });
 
+  it("a reader sees the graph, with no lock switch and no Pages section", async () => {
+    const { user } = renderPage(member("read"));
+    await openInfo(user);
+    expect(lock()).toBeNull();
+    expect(screen.queryByText(i18n.t("pageLock.offHint"))).toBeNull();
+    await waitFor(() => expect(graph()).not.toBeNull());
+    expect(basis()).toBeNull();
+    expect(tauriMocks.setPageReviewRequired).not.toHaveBeenCalled();
+  });
+
+  it("a writer sees the graph and the Pages section, with no lock switch", async () => {
+    const { user } = renderPage(member("write"));
+    await openInfo(user);
+    expect(lock()).toBeNull();
+    await waitFor(() => expect(graph()).not.toBeNull());
+    expect(basis()).not.toBeNull();
+  });
+
   for (const access of ["read", "write"] as const) {
-    it(`a ${access === "read" ? "reader" : "writer"} gets no lock, no graph and no Pages section`, async () => {
+    it(`a ${access === "read" ? "reader" : "writer"} sees that a locked page is locked, with no switch`, async () => {
+      tauriMocks.getPage.mockResolvedValue({ ...PAGE, version: 2, review_required: true });
       const { user } = renderPage(member(access));
       await openInfo(user);
+      expect(await screen.findByText(i18n.t("pageLock.lockedNotice"))).toBeInTheDocument();
       expect(lock()).toBeNull();
-      expect(screen.queryByText(i18n.t("pageLock.offHint"))).toBeNull();
-      expect(graph()).toBeNull();
-      expect(screen.queryByText(i18n.t("knowledgeContext.openInGraph"))).toBeNull();
-      expect(screen.queryByText(i18n.t("knowledgeContext.noLinks"))).toBeNull();
-      expect(basis()).toBeNull();
-      expect(tauriMocks.setPageReviewRequired).not.toHaveBeenCalled();
     });
   }
+
+  it("an unlocked page shows a member no lock notice", async () => {
+    const { user } = renderPage(member("write"));
+    await openInfo(user);
+    expect(screen.queryByText(i18n.t("pageLock.lockedNotice"))).toBeNull();
+  });
+
+  const actions = () => screen.queryByRole("button", { name: i18n.t("pageDetail.actions") });
+
+  it("a writer's page menu holds only Archive page", async () => {
+    const { user } = renderPage(member("write"));
+    await user.click(await screen.findByRole("button", { name: i18n.t("pageDetail.actions") }));
+    const items = (await screen.findAllByRole("menuitem")).map((item) => item.textContent);
+    expect(items).toEqual([i18n.t("pageDetail.archivePage")]);
+  });
+
+  for (const access of ["read", "write"] as const) {
+    it(`an archived page offers Restore to a ${access === "read" ? "reader: no" : "writer: yes"}`, async () => {
+      tauriMocks.getPage.mockResolvedValue({ ...PAGE, version: 2, status: "archived" });
+      renderPage(member(access));
+      await screen.findByText(i18n.t("pages.archive.readOnly"));
+      const restore = screen.queryByRole("button", { name: i18n.t("pages.archive.restore") });
+      if (access === "write") expect(restore).not.toBeNull();
+      else expect(restore).toBeNull();
+    });
+  }
+
+  it("a reader gets no page menu", async () => {
+    renderPage(member("read"));
+    await screen.findByRole("button", { name: i18n.t("pageInspector.info") });
+    expect(actions()).toBeNull();
+  });
 
   it("a writer puts an AI tool's change back through the same save as a hand edit", async () => {
     const { user } = renderPage(member("write"));

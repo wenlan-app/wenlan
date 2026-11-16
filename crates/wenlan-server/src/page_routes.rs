@@ -4839,6 +4839,9 @@ mod entity_page_guard_tests;
 mod real_folder_page_route_tests;
 
 #[cfg(test)]
+#[path = "page_routes/team_member_archive_test.rs"]
+mod team_member_archive_tests;
+#[cfg(test)]
 #[path = "page_routes/team_member_edit_test.rs"]
 mod team_member_edit_tests;
 
