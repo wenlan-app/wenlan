@@ -14,7 +14,7 @@ use wenlan_types::lint::LintProfile;
 #[command(
     name = "wenlan",
     version,
-    about = "Wenlan: a studio for everything you think, learn, and build with AI. Capture, recall, and hand off across sessions."
+    about = "Wenlan: docs, skills and rules your AI tools keep current and work from. Capture, recall, and hand off across sessions."
 )]
 struct Cli {
     #[command(subcommand)]

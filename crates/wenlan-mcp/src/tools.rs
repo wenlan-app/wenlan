@@ -3532,7 +3532,9 @@ impl WenlanMcpServer {
 
         let output = match response.state {
             wenlan_types::BriefReadState::SpaceNotResolved => {
-                "Space not resolved. Pass `space` or configure a default Space.".to_string()
+                // A new install has no Space yet: say that nothing is wrong
+                // and what makes one, so the tool does not report a failure.
+                "No Brief to show: this folder has no Space yet. Nothing is wrong. The user can run `wenlan init` inside their repository to make one, or pass `space` to read another Space's Brief.".to_string()
             }
             wenlan_types::BriefReadState::BriefNotCreated => {
                 let mut output = format!(
@@ -5970,7 +5972,7 @@ impl WenlanMcpServer {
     ) -> Result<CallToolResult, McpError> {
         let Some(space) = effective_space(&params.space) else {
             return Ok(CallToolResult::error(vec![ContentBlock::text(
-                "Space not resolved. Pass `space` or configure a default Space.".to_string(),
+                "Nothing was saved: this folder has no Space yet. Pass `space`, or have the user run `wenlan init` inside their repository to make one.".to_string(),
             )]));
         };
         if params.summary.is_none() && params.mutations.is_empty() {
