@@ -11,9 +11,9 @@ use crate::output::{print_json, ResolvedFormat};
 
 #[derive(Debug, Subcommand)]
 pub enum OutboxCommand {
-    /// List queued and failed envelope files without contacting the daemon.
+    /// List what is waiting or failed, without contacting Wenlan.
     Status,
-    /// Ask the daemon to replay queued envelopes.
+    /// Send what is waiting to Wenlan now.
     Drain,
 }
 

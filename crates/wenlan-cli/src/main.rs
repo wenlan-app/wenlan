@@ -116,7 +116,7 @@ enum Commands {
     },
     /// Connect Wenlan to a supported agent or editor.
     Connect(commands::mcp::ConnectArgs),
-    /// Recall scored memories for a query, plus the compiled pages that match it.
+    /// Find the memories and pages that match a query.
     Recall {
         /// Query to recall memories for.
         query: String,
@@ -124,7 +124,7 @@ enum Commands {
         #[arg(short, long, default_value_t = 10)]
         limit: usize,
     },
-    /// Read the approved working rules for one resolved Space.
+    /// Read the working rules approved for a Space.
     Rules,
     /// Read the current Space Brief, optionally with related context.
     Brief(commands::brief::BriefArgs),
@@ -177,7 +177,7 @@ enum Commands {
         #[arg(long)]
         pending: bool,
     },
-    /// Walk pending revisions (conflicts / merges) awaiting your accept or dismiss.
+    /// List changes waiting for review, or dismiss one. Accepting is done in the Wenlan app.
     Curate {
         #[command(subcommand)]
         action: Option<commands::curate::CurateAction>,
@@ -188,7 +188,7 @@ enum Commands {
         #[command(subcommand)]
         cmd: commands::agents::AgentsCmd,
     },
-    /// Manage Spaces, the separate wikis Wenlan keeps (list, add, default, move, show, share-sync).
+    /// Manage Spaces, the separate sets of pages Wenlan keeps (list, add, default, show).
     Spaces {
         #[command(subcommand)]
         cmd: commands::space::SpaceCmd,
@@ -198,7 +198,7 @@ enum Commands {
         #[command(subcommand)]
         cmd: commands::team::TeamCmd,
     },
-    /// Inspect or sync notes saved locally while Wenlan was not running.
+    /// Show or send what was saved locally while Wenlan was not running.
     Outbox {
         #[command(subcommand)]
         command: commands::outbox::OutboxCommand,
@@ -246,11 +246,11 @@ const HELP_GROUPS: &[(&str, &[&str])] = &[
         ],
     ),
     ("Team", &["team", "spaces"]),
-    ("Upkeep", &["curate", "lint"]),
     (
         ADVANCED_GROUP,
         &[
-            "models", "keys", "steep", "wiki", "outbox", "export", "entities", "tool",
+            "curate", "lint", "models", "keys", "steep", "wiki", "outbox", "export", "entities",
+            "tool",
         ],
     ),
 ];
