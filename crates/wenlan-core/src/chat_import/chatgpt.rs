@@ -10,6 +10,7 @@ use crate::chat_import::types::{
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer};
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::{Cursor, Read};
 
@@ -54,7 +55,10 @@ impl ChatExportParser for ChatGptParser {
 
     fn can_parse(&self, archive: &mut zip::ZipArchive<Cursor<&[u8]>>) -> bool {
         let names: Vec<String> = (0..archive.len())
-            .filter_map(|i| archive.by_index(i).ok().map(|f| f.name().to_string()))
+            .filter_map(|i| {
+                let entry = archive.by_index(i).ok()?;
+                entry.name().ok().map(Cow::into_owned)
+            })
             .collect();
         names.iter().any(|n| n == "message_feedback.json")
             && (names.iter().any(|n| n == "conversations.json")
@@ -126,10 +130,12 @@ impl ChatExportParser for ChatGptParser {
 fn conversation_files(
     archive: &mut zip::ZipArchive<Cursor<&[u8]>>,
 ) -> Result<Vec<String>, ImportError> {
-    if archive
+    let entry_names = archive
         .file_names()
-        .any(|name| name == "export_manifest.json")
-    {
+        .map(|name| name.map(Cow::into_owned))
+        .collect::<Result<Vec<String>, _>>()?;
+    let file_names = || entry_names.iter().map(String::as_str);
+    if file_names().any(|name| name == "export_manifest.json") {
         let mut entry =
             archive
                 .by_name("export_manifest.json")
@@ -180,10 +186,8 @@ fn conversation_files(
                     }
                 }
             }
-            let has_legacy_root = archive
-                .file_names()
-                .any(|name| name == "conversations.json");
-            let has_numbered_shards = archive.file_names().any(is_numbered_conversation_shard);
+            let has_legacy_root = file_names().any(|name| name == "conversations.json");
+            let has_numbered_shards = file_names().any(is_numbered_conversation_shard);
             if has_legacy_root && !has_numbered_shards {
                 return Ok(vec!["conversations.json".into()]);
             }
@@ -247,14 +251,13 @@ fn conversation_files(
             });
         }
         for path in &logical.files {
-            if !archive.file_names().any(|name| name == path) {
+            if !file_names().any(|name| name == path) {
                 return Err(ImportError::InvalidFormat {
                     reason: format!("manifest conversation file '{path}' is missing from archive"),
                 });
             }
         }
-        if archive
-            .file_names()
+        if file_names()
             .filter(|name| is_conversation_export_path(name))
             .any(|name| !unique.contains(name))
         {
@@ -264,10 +267,7 @@ fn conversation_files(
             });
         }
         Ok(logical.files)
-    } else if archive
-        .file_names()
-        .any(|name| name == "conversations.json")
-    {
+    } else if file_names().any(|name| name == "conversations.json") {
         Ok(vec!["conversations.json".into()])
     } else {
         Err(ImportError::InvalidFormat {

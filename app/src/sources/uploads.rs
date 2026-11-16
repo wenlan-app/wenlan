@@ -292,6 +292,7 @@ fn stage_zip(
     // the chats, so the whole zip goes to the past-chats import instead.
     if archive
         .file_names()
+        .filter_map(Result::ok)
         .any(|n| n.trim_start_matches("./") == "conversations.json")
     {
         outcome.chat_exports.push(display.to_string());
@@ -305,8 +306,13 @@ fn stage_zip(
         if entry.is_dir() {
             continue;
         }
-        // `enclosed_name` refuses absolute paths and `..`, so nothing in the
-        // zip can land outside its folder.
+        // `enclosed_name` refuses `..` that climbs out, so nothing in the zip
+        // can land outside its folder. Since zip 9 it turns an absolute name
+        // into a relative one instead of refusing it, so absolute names are
+        // still skipped here.
+        if entry.name().map_or(true, |raw| is_absolute_zip_name(&raw)) {
+            continue;
+        }
         let Some(relative) = entry.enclosed_name() else {
             continue;
         };
@@ -384,6 +390,13 @@ pub fn remove_upload(sources_dir: &Path, file: &Path) -> std::io::Result<()> {
         parent = dir.parent().map(Path::to_path_buf);
     }
     Ok(())
+}
+
+/// A zip entry name that starts at a root: `/x`, `\\x`, or a drive like `C:`.
+fn is_absolute_zip_name(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    name.starts_with(['/', '\\'])
+        || (bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':')
 }
 
 #[cfg(test)]

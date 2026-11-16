@@ -103,7 +103,7 @@ lru = "0.18.2"
 futures = "0.3"
 tempfile = "3"
 pdf-extract = "0.12.1"
-zip = { version = "2.2", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 service-manager = "0.11"
 serde_yaml = "0.9"
 sysinfo = { version = "=0.38.3", default-features = false, features = ["system"] }
