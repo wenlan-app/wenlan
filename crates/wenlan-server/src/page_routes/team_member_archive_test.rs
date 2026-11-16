@@ -293,3 +293,62 @@ async fn a_members_basis_mark_is_recorded_as_that_member_and_kept_in_one_space()
     assert!(refused.is_err());
     assert!(db2.list_page_basis(PAGE).await.unwrap().is_empty());
 }
+
+/// The activity log names the member who archived, not the owner.
+#[tokio::test]
+async fn a_members_archive_is_logged_under_their_name() {
+    let (_tmp, db, state) = server().await;
+    page_in(&db, PAGE, "Alpha").await;
+    let _ = archive(&state, HeaderMap::new(), Some("Alpha"), amy(), PAGE)
+        .await
+        .unwrap();
+    let names: Vec<String> = db
+        .list_agent_activity(20, None, None)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|row| row.action.contains("archive"))
+        .map(|row| row.agent_name)
+        .collect();
+    // The log keeps agent names in its normalized form.
+    assert_eq!(names, ["shared-person:m-amy"]);
+}
+
+/// Repeating a restore that already landed writes nothing, so it names
+/// nobody: an earlier restore recorded without a name stays unnamed.
+#[tokio::test]
+async fn a_replayed_restore_names_nobody() {
+    let (_tmp, db, state) = server().await;
+    page_in(&db, PAGE, "Alpha").await;
+    let _ = archive(&state, person_headers(), None, TeamActor::default(), PAGE)
+        .await
+        .unwrap();
+    let archived = db.get_page(PAGE).await.unwrap().unwrap().version;
+    // Restored straight in the store, as before names were kept: no name.
+    let restored = db
+        .restore_page(
+            PAGE,
+            None,
+            archived,
+            &wenlan_core::read_scope::ReadScope::Global,
+        )
+        .await
+        .unwrap();
+    let _ = restore(
+        &state,
+        HeaderMap::new(),
+        Some("Alpha"),
+        amy(),
+        PAGE,
+        restored.version,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        lifecycle(&db, PAGE).await,
+        [
+            ("restore".to_string(), None),
+            ("archive".to_string(), Some("manual_edit".to_string())),
+        ]
+    );
+}

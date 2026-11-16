@@ -82,9 +82,9 @@ async fn stand_in(log: Log, req: Request) -> Response {
             "entities": [{"id": "e1", "name": "Beta secret"}],
             "relations": [], "memories": [], "memory_links": [],
             "pages": [
-                {"id": "a1", "title": "Alpha one", "space": "Alpha", "storage_path": "/srv/a1.md"},
-                {"id": "a2", "title": "Alpha two", "space": "Alpha"},
-                {"id": "b1", "title": "Beta secret", "space": "Beta"},
+                {"id": "a1", "title": "Alpha one", "space": "Alpha", "storage_path": "/srv/a1.md", "entity_id": "e1"},
+                {"id": "a2", "title": "Alpha two", "space": "Alpha", "entity_id": null},
+                {"id": "b1", "title": "Beta secret", "space": "Beta", "entity_id": "e1"},
             ],
             "page_links": [
                 {"from": {"kind": "page", "id": "a1"}, "to": {"kind": "page", "id": "a2"}},
@@ -98,6 +98,9 @@ async fn stand_in(log: Log, req: Request) -> Response {
         ("GET", "/api/pages/recent-changes") => json!([
             {"page_id": format!("c-{}", pinned.clone().unwrap_or_default()), "changed_at_ms": 5},
         ]),
+        // A route that answers for some other page than the one named, as a
+        // list route under `/api/pages/` would.
+        ("GET", "/api/pages/alias") => json!({"page": {"id": "a2", "space": "Alpha"}}),
         ("GET", _) if path.starts_with("/api/pages/") && path.matches('/').count() == 3 => {
             let id = path.trim_start_matches("/api/pages/");
             match space_of(id) {
@@ -816,6 +819,15 @@ async fn a_member_reaches_only_their_own_spaces() {
             &[],
         ),
         case(
+            "add a basis whose id answers for another page",
+            AlphaWriter,
+            "PUT",
+            "/api/pages/a1/basis/alias",
+            Some(json!({"version": 1})),
+            not_found,
+            &[],
+        ),
+        case(
             "add a basis naming another Space in the body",
             AlphaWriter,
             "PUT",
@@ -976,6 +988,10 @@ async fn the_graph_shows_only_the_members_pages_and_their_links() {
     );
     for key in ["entities", "relations", "memories", "memory_links"] {
         assert_eq!(answer[key], json!([]), "{key}");
+    }
+    // No entity id: two pages sharing a subject is not told.
+    for page in answer["pages"].as_array().unwrap() {
+        assert_eq!(page["entity_id"], Value::Null, "{page}");
     }
     let text = answer.to_string();
     assert!(

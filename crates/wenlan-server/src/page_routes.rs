@@ -576,17 +576,17 @@ pub async fn handle_archive_page(
     let (remover, actor) = match &member {
         Some(member) => {
             member_page_in_pinned_space(&db, &id, header_space.as_deref()).await?;
-            (
-                wenlan_core::post_write::PageRemover::Person,
-                member.edited_by(),
-            )
+            (None, member.edited_by())
         }
         None => {
             let remover = page_remover(&headers, &agent);
             let actor = remover_actor(&remover);
-            (remover, actor)
+            (Some(remover), actor)
         }
     };
+    // A member's archive is recorded under their name in the activity log
+    // as well as in the page's history.
+    let remover = remover.unwrap_or(wenlan_core::post_write::PageRemover::Member(&actor));
     let session = crate::session_routes::extract_session_ref(&headers);
     archive_page_for(
         &db,
@@ -606,6 +606,7 @@ fn remover_actor(remover: &wenlan_core::post_write::PageRemover<'_>) -> String {
         wenlan_core::post_write::PageRemover::Person => {
             wenlan_core::db::page_history_actor::PERSON_ACTOR.to_string()
         }
+        wenlan_core::post_write::PageRemover::Member(actor) => (*actor).to_string(),
         wenlan_core::post_write::PageRemover::Ai(agent) => {
             wenlan_core::db::page_history_actor::ai_actor(agent)
         }
@@ -787,11 +788,16 @@ pub async fn handle_restore_page(
     )
     .await
     .map_err(restore_error)?;
-    if let Err(error) = db
-        .stamp_page_history_actor(&id, response.version, &actor)
-        .await
-    {
-        tracing::warn!("[page] restored {id} but could not record who: {error}");
+    // A replay of a restore that already landed writes nothing and answers
+    // the version it was asked at; naming anyone then would put a name on
+    // an earlier row.
+    if response.version != req.expected_version {
+        if let Err(error) = db
+            .stamp_page_history_actor(&id, response.version, &actor)
+            .await
+        {
+            tracing::warn!("[page] restored {id} but could not record who: {error}");
+        }
     }
     if let Some(root) = page_root {
         // Use the current durable row rather than request/saved editor text.

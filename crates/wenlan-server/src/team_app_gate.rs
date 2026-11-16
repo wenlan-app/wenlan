@@ -506,6 +506,11 @@ async fn page_space(
         return Ok(None);
     }
     let read: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+    // Only the page asked for counts: a reserved segment (`recent`, ...)
+    // reaches a list route whose answer names no single page.
+    if read.pointer("/page/id").and_then(Value::as_str) != Some(id) {
+        return Ok(None);
+    }
     let space = read
         .pointer("/page/space")
         .or_else(|| read.pointer("/page/domain"))
@@ -782,6 +787,15 @@ pub(super) async fn handle(
     if call.rows == Rows::Graph {
         if let Some(Value::Array(pages)) = value.get_mut("pages") {
             pages.retain(|row| row_space(row).is_some_and(|space| spaces.contains_key(space)));
+            // An entity id would tell two pages share a subject, possibly
+            // one from a Space the member cannot read.
+            for page in pages.iter_mut() {
+                if let Some(row) = page.as_object_mut() {
+                    if row.contains_key("entity_id") {
+                        row.insert("entity_id".into(), Value::Null);
+                    }
+                }
+            }
         }
         let kept: std::collections::HashSet<String> = value
             .get("pages")
