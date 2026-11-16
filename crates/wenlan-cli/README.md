@@ -372,6 +372,14 @@ Options:
 
 - `-l, --limit <LIMIT>`: Max memories to return. Default: `10`.
 
+### `wenlan rules`
+
+Read the approved working rules for one resolved Space.
+
+```text
+wenlan rules [OPTIONS]
+```
+
 ### `wenlan pages`
 
 Browse distilled pages, open one in your editor by title query, or lock a page so machine updates wait for your review.

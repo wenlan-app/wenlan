@@ -417,19 +417,21 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
     // single-id route. The list of note groups Automatic set aside adds one
     // more scoped reader. A Space's plain Brief lines add one more. A page's
     // look and the data it is drawn from add two more scoped readers.
-    // A source's unreadable files add one Global reader.
-    assert_eq!(rows.len(), 140);
+    // A source's unreadable files add one Global reader. Existing-skill
+    // suggestions (list, apply, dismiss, undo) stay Global; approved Space
+    // rules and their borrowing record add two Space-scoped readers.
+    assert_eq!(rows.len(), 147);
     assert_eq!(
         rows.iter()
             .filter(|row| row.scope_binding == ScopeBinding::Global)
             .count(),
-        28
+        33
     );
     assert_eq!(
         rows.iter()
             .filter(|row| row.scope_binding != ScopeBinding::Global)
             .count(),
-        112
+        114
     );
     assert_eq!(
         rows.iter()
@@ -467,7 +469,7 @@ pub fn assert_global_executed_keys(executed: impl IntoIterator<Item = (Method, &
     let executed = executed.into_iter().collect::<Vec<_>>();
     let unique = executed.iter().copied().collect::<BTreeSet<_>>();
 
-    assert_eq!(expected.len(), 28, "Global route catalog count drifted");
+    assert_eq!(expected.len(), 33, "Global route catalog count drifted");
     assert_eq!(
         unique.len(),
         executed.len(),

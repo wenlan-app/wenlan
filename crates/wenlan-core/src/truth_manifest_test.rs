@@ -330,20 +330,24 @@ fn manifest_counts_match_the_spec() {
     // library is the main one; names and a status, no page text).
     // Then 362 after the six page look routes (GET/PUT/DELETE
     // `/api/pages/{id}/look`, POST `/look/restore` and `/look/error`, and GET
-    // `/look/data`, the only page-bearing one) and 57 tools with
-    // `read_page_look` and `set_page_look`.
+    // `/look/data`, the only page-bearing one), 57 tools with `read_page_look`
+    // and `set_page_look`, then `read_space_rules` and the structured-only
+    // `report_space_rule_use` as the 58th and 59th tools.
     // Then 363 after GET `/api/team/firewall` (whether Windows Firewall lets
     // teammates in; a status, no page text).
     // Then 364 after GET `/api/sources/{id}/unreadable-files` (paths and a
     // skip reason only).
     // Then 365 after GET `/api/team/membership` (the teams this computer
     // joined: addresses, names and ownership; no key, no page text).
+    // Then 377 after the twelve `/api/skills/*` routes (refresh, approved
+    // rules, per-Space suggestions and person actions, existing-skill
+    // suggestions and actions, and Space-filtered borrowing records).
     assert_eq!(
         HTTP_READERS.len(),
-        365,
+        377,
         "registered (method, path, handler) triples"
     );
-    assert_eq!(MCP_READERS.len(), 57, "#[tool( declarations");
+    assert_eq!(MCP_READERS.len(), 59, "#[tool( declarations");
     // No hand-bumped CLI count here: `wenlan-cli`'s
     // `catalog_tests::truth_manifest_cli_rows_match_clap_subcommands` derives
     // the expected set from clap's `Commands` enum, which this crate cannot see.
@@ -351,7 +355,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        377,
+        389,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -359,7 +363,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        360,
+        372,
         "main builder entries"
     );
     assert_eq!(
@@ -378,8 +382,11 @@ fn manifest_counts_match_the_spec() {
     // +2: the in-chat check (two routes). +1: GET `/api/things/{id}` (the
     // titles of its conversations' pages). +1: GET `/api/trust/scan`. +1:
     // POST `/api/pages/{id}/space` (names the page it moves).
+    // +7: skill candidate/rule readers and existing-skill suggestions (the
+    // rules, Space suggestions, suggestion list and its three actions, plus
+    // GET `/api/skills/record`).
     // +1: POST `/api/pages/{id}/restore-version`. +1: GET `/api/pages/{id}/look/data`.
-    assert_eq!(bearing, 101, "page-bearing HTTP routes");
+    assert_eq!(bearing, 108, "page-bearing HTTP routes");
 }
 
 #[test]
@@ -399,6 +406,19 @@ fn brief_routes_have_explicit_truth_shapes() {
     assert_eq!(patch.page_bearing, PageBearing::No);
     assert_eq!(patch.class, TruthClass::NotApplicable);
     assert_eq!(patch.marker_shape, MarkerShape::None);
+}
+
+#[test]
+fn skill_rules_readers_are_page_bearing_without_page_markers() {
+    for path in ["/api/skills/rules", "/api/skills/spaces/suggestions"] {
+        let row = HTTP_READERS
+            .iter()
+            .find(|row| row.method == ReaderMethod::Get && row.path == path)
+            .unwrap_or_else(|| panic!("GET {path} manifest row"));
+        assert_eq!(row.page_bearing, PageBearing::Yes, "GET {path}");
+        assert_eq!(row.class, TruthClass::Automatic, "GET {path}");
+        assert_eq!(row.marker_shape, MarkerShape::None, "GET {path}");
+    }
 }
 
 /// No runtime identity may be registered twice. `(method, path)` alone collides
@@ -550,7 +570,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::None)
             .count(),
-        355 // Existing 273 plus 22 research workflow routes, 7 custom-theme routes, a memory's conversation lines, the nights undo, the memory restore, the two trust scan routes, keeping a session original, the 12 sharing routes, one tidy's undo, the three old-pass routes and the four linked-vault routes, the two set-aside routes, the plain Brief lines, the seven team routes and naming the team, the three AI-memory routes, the four team start/stop/membership routes, the six page look routes and the team firewall status and a source's unreadable files, all with no page markers.
+        367 // Existing 273 plus 22 research workflow routes, 7 custom-theme routes, a memory's conversation lines, the nights undo, the memory restore, the two trust scan routes, keeping a session original, the 12 sharing routes, one tidy's undo, the three old-pass routes and the four linked-vault routes, the two set-aside routes, the plain Brief lines, the seven team routes and naming the team, the three AI-memory routes, the four team start/stop/membership routes, the six page look routes and the team firewall status and a source's unreadable files, twelve skill routes, all with no page markers.
     );
 }
 

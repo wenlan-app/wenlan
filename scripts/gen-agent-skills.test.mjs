@@ -358,6 +358,7 @@ test("real tree: the output includes each declared shared and nested supporting 
     "wenlan-brief/SKILL.md",
     "wenlan-capture/SKILL.md",
     "wenlan-handoff/SKILL.md",
+    "wenlan-how-i-work/SKILL.md",
     "wenlan-recall/SKILL.md",
     "wenlan/SKILL.md",
     "wenlan/scripts/resolve-space.sh",
@@ -372,6 +373,20 @@ test("real tree: the output includes each declared shared and nested supporting 
   ].sort();
   assert.deepEqual(treeFiles(), expected);
   assert.equal(hidden.length, 8);
+});
+
+test("the fixed how-i-work skill reads approved rules and reports only changed plans", () => {
+  const skill = read(`${SKILLS}/wenlan-how-i-work/SKILL.md`);
+  assert.match(skill, /read_space_rules/);
+  assert.match(skill, /at the start of work[\s\S]*before choosing an\s+approach/i);
+  assert.match(skill, /skills_from_library` is off or nothing has been accepted/);
+  assert.match(skill, /without a Space: it returns only the general rules/);
+  assert.match(skill, /disagree, follow the Space's rule/);
+  assert.match(skill, /Never\s+read another Space's own rules/);
+  assert.match(skill, /report_space_rule_use/);
+  assert.match(skill, /`changed_plan`/);
+  assert.match(skill, /Do not\s+include prose, conversation excerpts, or other free-text/);
+  assert.doesNotMatch(skill, /npx\s+-y\s+wenlan/);
 });
 
 test("real tree: every SKILL.md is valid Agent Skills with name equal to its folder", () => {

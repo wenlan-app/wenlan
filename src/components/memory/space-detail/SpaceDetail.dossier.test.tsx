@@ -10,6 +10,8 @@ vi.mock("../../../lib/tauri", () => ({
   confirmSpace: vi.fn(), createPage: vi.fn(), deleteFileChunks: vi.fn(), deleteSpace: vi.fn(),
   dismissPendingRevision: vi.fn(), FACET_COLORS: {}, getNurtureCards: vi.fn().mockResolvedValue([]),
   getPendingRevision: vi.fn().mockResolvedValue(null), getSpace: vi.fn(),
+  skillsFromLibraryEnabled: vi.fn().mockResolvedValue(false),
+  listSpaceRulesSuggestions: vi.fn().mockResolvedValue([]),
   getVersionChain: vi.fn().mockResolvedValue([]), listEntities: vi.fn(),
   listMemoriesRich: vi.fn(), listPages: vi.fn(), listSpaces: vi.fn(), pinMemory: vi.fn(),
   setStability: vi.fn(), STABILITY_TIERS: {}, unpinMemory: vi.fn(),

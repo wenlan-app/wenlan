@@ -115,6 +115,17 @@ pub struct Config {
     /// installs alike, and any screen offering it labels it Beta.
     #[serde(default)]
     pub chat_check_enabled: bool,
+    /// Suggest and maintain approved Space working rules, and suggest edits to
+    /// the person's existing skills. On by default (Qi-Xuan 2026-11-15, after
+    /// one real night); nothing is accepted until the one library-wide ask.
+    #[serde(default = "default_true")]
+    pub skills_from_library: bool,
+    /// The person answered the one library-wide "let AI tools follow how you
+    /// work?" ask (UX-SKILL-1). After a yes, every non-private Space is
+    /// accepted without asking again; after a no, `skills_from_library` is
+    /// turned off and nothing asks again.
+    #[serde(default)]
+    pub skills_answered: bool,
     /// Each Space's pages in a folder of its own (`space_folders`). `None`:
     /// not asked yet; `Some(false)`: the person said no.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -315,6 +326,33 @@ pub fn default_pages_root() -> PathBuf {
     }
 }
 
+/// Wenlan's own folder: `~/.wenlan`, or the data root of an isolated run. It
+/// stays put when the pages folder is moved elsewhere.
+pub fn wenlan_home() -> PathBuf {
+    isolated_data_root().unwrap_or_else(real_wenlan_home)
+}
+
+#[cfg(not(any(test, feature = "scratch-config")))]
+fn real_wenlan_home() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".wenlan")
+}
+
+/// A test build never resolves the person's real `~/.wenlan`.
+#[cfg(any(test, feature = "scratch-config"))]
+fn real_wenlan_home() -> PathBuf {
+    default_config_root().join("wenlan-home")
+}
+
+/// Whether this run may write into the person's own AI-tool files
+/// (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`). Only the installed app's
+/// own run does: a dev, test or demo run on other data must never put that
+/// data's rules into the person's real tools.
+pub fn may_write_tool_files() -> bool {
+    !cfg!(any(test, feature = "scratch-config")) && isolated_data_root().is_none()
+}
+
 fn home_pages_root() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -444,9 +482,10 @@ pub fn load_config() -> Config {
     config
 }
 
-fn new_install_config() -> Config {
+pub(crate) fn new_install_config() -> Config {
     Config {
         background_ai_enabled: Some(false),
+        skills_from_library: true,
         ..Config::default()
     }
 }

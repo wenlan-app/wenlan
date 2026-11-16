@@ -145,6 +145,8 @@ import { ShareDialog } from "./sharing/ShareDialog";
 import { SharedWithLine } from "./sharing/SharedWithLine";
 import { ConcurrentEditLine, markConcurrentEditSeen, unseenConcurrentEdit } from "./sharing/ConcurrentEditLine";
 import { pageShare, sharedWriter, spaceShare, useShares } from "./sharing/sharing";
+import { HowIWorkPage } from "./skills/HowIWorkPage";
+import { howIWorkPageTitle, isHowIWorkPage } from "./skills/howIWorkModel";
 
 interface PageDetailProps {
   pageId: string;
@@ -689,10 +691,11 @@ export default function PageDetail({
       ? t("pageDetail.reviewUnsupportedPlatform")
       : t("pageDetail.reviewUnsupported");
 
+  const reportedPageTitle = page ? howIWorkPageTitle(page, t) : null;
   useEffect(() => {
     if (page == null) return;
-    onPageLoaded?.({ id: page.id, status: page.status, title: page.title });
-  }, [onPageLoaded, page?.id, page?.status, page?.title]);
+    onPageLoaded?.({ id: page.id, status: page.status, title: reportedPageTitle ?? page.title });
+  }, [onPageLoaded, page?.id, page?.status, reportedPageTitle]);
 
   // A pinned row keeps the page's current name.
   useEffect(() => {
@@ -1708,7 +1711,7 @@ export default function PageDetail({
       autoEditIntentRef.current = { pageId, mode: "read" };
       return;
     }
-    if (!page || page.id !== pageId || page.status !== "active" || canvasOpen) return;
+    if (!page || page.id !== pageId || page.status !== "active" || canvasOpen || isHowIWorkPage(page)) return;
     // What an AI tool made opens as it was, not as its source text (UX-ART-1).
     if (page.creation_kind === "original") return;
     const attempted = autoEditIntentRef.current;
@@ -2297,6 +2300,8 @@ export default function PageDetail({
     );
   }
 
+  const howIWorkPage = isHowIWorkPage(page);
+  const visiblePageTitle = howIWorkPageTitle(page, t);
   const sourceCount = pageSources?.length ?? page.source_memory_ids.length;
   const basisRefs = page.basis ?? [];
   // A note that relies on other notes is not rebuilt by itself: the daemon says
@@ -2571,7 +2576,7 @@ export default function PageDetail({
   // not disable this page's toggle.
   const reviewLockPending = reviewRequiredMutation.isPending && reviewRequiredMutation.variables?.id === page.id;
   const hasRail = pageEntities.length > 0 || outboundLinks.length > 0;
-  const canRenamePage = !exampleWiki && page.status === "active" &&
+  const canRenamePage = !howIWorkPage && !exampleWiki && page.status === "active" &&
     page.creation_kind !== "entity" && page.creation_kind !== "source" &&
     page.creation_kind !== "imported";
   const renameDisabled = storedActionPending || canvasSwitchPending || editing || editDirty || saveState.phase !== "idle" ||
@@ -2864,7 +2869,7 @@ export default function PageDetail({
 
   // A page opens ready to edit. When it is only shown (opened from Review,
   // or after the editor closed), a click in the text, or Enter on it, edits it.
-  const readModeEditable = page.status === "active" && !editing && !showCanvas && !exampleWiki;
+  const readModeEditable = !howIWorkPage && page.status === "active" && !editing && !showCanvas && !exampleWiki;
   const readModeEditDisabled = storedActionPending || renaming || renameMutation.isPending;
   const editFromReading = (event: React.MouseEvent) => {
     if (!readModeEditable || readModeEditDisabled) return;
@@ -2914,7 +2919,7 @@ export default function PageDetail({
         </div>}
         {/* A design draws the page's title itself (UX-LOOK-1); the app's own
             title stays for screen readers, so the design starts where it would. */}
-        {pageLook.shown && <h1 className="sr-only">{page.title}</h1>}
+        {pageLook.shown && <h1 className="sr-only">{visiblePageTitle}</h1>}
         {pageLook.shown && !documentToolsHost && <div className="page-document-title-row">{documentTools}</div>}
         {!pageLook.shown && !hideOuterTitleWhileEditing && (
           <div className="page-document-title-row">
@@ -2973,7 +2978,7 @@ export default function PageDetail({
                 ) : null}
               </form>
             ) : (
-              <h1 aria-label={page.title} className="page-detail-title">
+              <h1 aria-label={visiblePageTitle} className="page-detail-title">
                 {canRenamePage ? (
                   <button
                     aria-label={t("pageDetail.renamePage")}
@@ -2982,9 +2987,9 @@ export default function PageDetail({
                     onClick={() => void renameFromTitle()}
                     type="button"
                   >
-                    {page.title}
+                    {visiblePageTitle}
                   </button>
-                ) : page.title}
+                ) : visiblePageTitle}
               </h1>
             )}
             {documentTools}
@@ -3165,7 +3170,9 @@ export default function PageDetail({
 
         {/* The text stays mounted behind a look, so an edit in progress is kept. */}
         <div className="page-look-text" hidden={pageLook.shown}>
-        {editing ? (
+        {howIWorkPage ? (
+          <HowIWorkPage page={page} onOpenPage={(id) => onPageClick?.(id)} />
+        ) : editing ? (
           editGate.kind === "checking" ? (
             <div role="status" className="page-editor-notice">
               {t("pageDetail.editor.checking")}

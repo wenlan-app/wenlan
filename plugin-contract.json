@@ -91,6 +91,12 @@
       "codex_openai_interface": true
     },
     {
+      "name": "how-i-work",
+      "status": "shared_now",
+      "codex_user_invocable": true,
+      "codex_openai_interface": true
+    },
+    {
       "name": "setup",
       "status": "hidden_routed",
       "codex_reference": "wenlan/references/setup.md"

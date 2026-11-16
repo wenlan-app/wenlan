@@ -6,7 +6,7 @@ import { getSpace, getSpaceBrief, listEntities, listIndexedFiles, listMemoriesRi
 import SpaceDetail from "../SpaceDetail";
 import { SPACE_DETAIL_TEST_COPY } from "./testTranslation";
 
-vi.mock("../../../lib/tauri", () => ({ getSpace: vi.fn(), getSpaceBrief: vi.fn(), listPages: vi.fn(), listIndexedFiles: vi.fn(), listEntities: vi.fn(), listMemoriesRich: vi.fn(), updateSpace: vi.fn(), deleteSpace: vi.fn(), confirmSpace: vi.fn() }));
+vi.mock("../../../lib/tauri", () => ({ getSpace: vi.fn(), getSpaceBrief: vi.fn(), listPages: vi.fn(), listIndexedFiles: vi.fn(), listEntities: vi.fn(), listMemoriesRich: vi.fn(), updateSpace: vi.fn(), deleteSpace: vi.fn(), confirmSpace: vi.fn(), skillsFromLibraryEnabled: vi.fn().mockResolvedValue(false), listSpaceRulesSuggestions: vi.fn().mockResolvedValue([]) }));
 const a: Space = { id: "stable-a", name: "讀書會", description: "Reading together", suggested: false, starred: false, sort_order: 0, memory_count: 12, entity_count: 6, created_at: 1, updated_at: 1 };
 function workspace() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });

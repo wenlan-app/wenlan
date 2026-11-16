@@ -21,6 +21,7 @@ import { useWikiFolderCreation } from "./WikiFolderCreationContext";
 import { useScope } from "../team/scope";
 import { pinPage, unpinPage, usePinnedPages } from "../navigation/pinnedPages";
 import "./pageInventory.css";
+import { howIWorkPageTitle } from "../skills/howIWorkModel";
 
 /** Which folders the tree shows on one side of a split library. With no
  *  team every folder shows. A folder with pages under it shows when one of
@@ -275,7 +276,7 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
   };
   const renderPage = (page: Page) => {
     const draft = page.status === "draft";
-    const title = draft && !page.title.trim() ? t("pages.overview.untitledDraft") : page.title;
+    const title = draft && !page.title.trim() ? t("pages.overview.untitledDraft") : howIWorkPageTitle(page, t);
     return <li key={page.id} data-folder-path={pageFolderPath(page) ?? ""} data-page-id={page.id} data-page-status={page.status}><button type="button" className="notes-page-button notes-inventory-page" aria-label={t("pages.overview.openPage", { title })} aria-current={currentPageId === page.id ? "page" : undefined} data-active={currentPageId === page.id ? "true" : undefined} title={title} disabled={draft ? !onOpenDraft : !onOpenPage} onClick={() => draft ? onOpenDraft?.(page.id, pageSpaceContext(page) ?? null) : onOpenPage?.(page)}><PageIcon size={16}/><span className="notes-page-title">{title}</span>{sharedMark(page)}</button></li>;
   };
   // A small people mark on a page shared with people, alone or with its Space.

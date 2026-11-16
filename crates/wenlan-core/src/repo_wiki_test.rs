@@ -183,6 +183,30 @@ fn generated_attributes_are_added_once_beside_other_lines() {
 }
 
 #[test]
+fn ux_skill_7_agents_block_carries_the_project_rules_and_drops_them_again() {
+    let rules = vec![
+        "Run the affected\ntests before a push.".to_string(),
+        "  ".to_string(),
+        format!("sneaky {AGENTS_END}"),
+    ];
+    let with = upsert_agents_block_with_rules("# Agents\n\nUse pnpm.\n", "wiki", &rules);
+    assert!(with.starts_with("# Agents\n\nUse pnpm.\n\n<!-- WENLAN:START -->"));
+    assert!(with.contains(
+        "## Rules for this project\n\n- Run the affected tests before a push.\n<!-- WENLAN:END -->"
+    ));
+    assert_eq!(with.matches(AGENTS_END).count(), 1);
+    let many = (0..AGENTS_BLOCK_MAX_RULES + 5)
+        .map(|n| format!("Rule {n}."))
+        .collect::<Vec<_>>();
+    let capped = upsert_agents_block_with_rules(&with, "wiki", &many);
+    assert_eq!(capped.matches("\n- Rule ").count(), AGENTS_BLOCK_MAX_RULES);
+    assert!(!capped.contains("affected tests"));
+    let without = upsert_agents_block(&capped, "wiki");
+    assert!(!without.contains("Rules for this project"));
+    assert!(without.contains("Use pnpm."));
+}
+
+#[test]
 fn agents_block_is_appended_then_replaced_in_place() {
     let first = upsert_agents_block("# Rules\n\nBe kind.\n", "wiki");
     assert!(first.starts_with("# Rules\n\nBe kind.\n\n<!-- WENLAN:START -->"));
@@ -196,7 +220,7 @@ fn agents_block_is_appended_then_replaced_in_place() {
     assert_eq!(second.matches(AGENTS_START).count(), 1);
     assert_eq!(
         upsert_agents_block("", "wiki"),
-        format!("{}\n", agents_block("wiki"))
+        format!("{}\n", agents_block("wiki", &[]))
     );
 }
 
@@ -359,6 +383,7 @@ fn publish_pushes_the_wiki_branch_without_touching_the_working_copy() {
     let worktree = dir.path().join("data/repo-wiki/site");
     let publish_once = |pages: Vec<Page>| {
         publish(PublishInput {
+            rules: Vec::new(),
             binding: &binding,
             pages,
             left_out,
@@ -537,6 +562,7 @@ fn publish_refuses_a_folder_holding_files_wenlan_did_not_write() {
         vec![locator(&binding.repo_root, "src/lib.rs", 1, 2)],
     )]);
     let error = publish(PublishInput {
+        rules: Vec::new(),
         binding: &binding,
         pages: vec![page("p1", "Module map", "x")],
         left_out: 0,
@@ -576,6 +602,7 @@ fn publish_with_no_selected_pages_does_nothing() {
         kept_edits: Vec::new(),
     };
     let result = publish(PublishInput {
+        rules: Vec::new(),
         binding: &binding,
         pages: vec![],
         left_out: 4,
@@ -731,6 +758,7 @@ fn publish_input<'a>(
     worktree: &Path,
 ) -> PublishInput<'a> {
     PublishInput {
+        rules: Vec::new(),
         binding,
         pages,
         left_out: 0,
@@ -983,6 +1011,7 @@ fn a_page_file_edited_in_the_repository_is_found_and_kept() {
 
     // Not taken back: the edit stays and nothing is offered.
     let kept = publish(PublishInput {
+        rules: Vec::new(),
         prepared: Some(prepared),
         ..publish_input(
             &binding,
@@ -1002,6 +1031,7 @@ fn a_page_file_edited_in_the_repository_is_found_and_kept() {
     let mut seen = binding.clone();
     seen.kept_edits = kept.kept_edits.clone().unwrap();
     let again = publish(PublishInput {
+        rules: Vec::new(),
         prepared: Some(prepare(&seen, &worktree).unwrap()),
         ..publish_input(
             &seen,
@@ -1023,6 +1053,7 @@ fn a_page_file_edited_in_the_repository_is_found_and_kept() {
     taken[0].content = prepared.edits[0].body.clone();
     taken[0].version = 2;
     let back = publish(PublishInput {
+        rules: Vec::new(),
         taken_back: BTreeSet::from([page_file.clone()]),
         took_back: 1,
         prepared: Some(prepared),
@@ -1219,6 +1250,7 @@ fn edits_people_push_to_the_wiki_branch_survive_the_next_publish() {
     let mut changed = pages.clone();
     changed[0].title = "Module map".into();
     let next = publish(PublishInput {
+        rules: Vec::new(),
         prepared: Some(prepared),
         ..publish_input(
             &binding,

@@ -750,6 +750,11 @@ impl WenlanClient {
         self.get_json(&format!("/api/pages/{}", id), true).await
     }
 
+    /// GET /api/skills/rules — read approved rules for the resolved Space.
+    pub async fn read_space_rules(&self) -> Result<wenlan_types::SpaceRulesResponse> {
+        self.get_json("/api/skills/rules", true).await
+    }
+
     /// GET /api/pages/{id}/sources — the memories a page was written from.
     pub async fn get_page_sources(&self, id: &str) -> Result<Vec<PageSourceWithMemory>> {
         self.get_json(&format!("/api/pages/{}/sources", id), true)

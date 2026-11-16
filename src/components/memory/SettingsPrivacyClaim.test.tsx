@@ -30,6 +30,7 @@ vi.mock("../../lib/theme", () => ({
   useTheme: () => ["system", vi.fn()] as const,
 }));
 
+vi.mock("./skills/HowIWorkSetting", () => ({ HowIWorkSetting: () => null }));
 vi.mock("../../lib/tauri", () => ({
   deleteAgent: vi.fn(() => Promise.resolve()),
   detectMcpClients: vi.fn(() => Promise.resolve([])),

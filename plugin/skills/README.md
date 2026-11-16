@@ -22,6 +22,7 @@ Skills must write `${CLAUDE_PLUGIN_ROOT}` with braces and no `:-` default: Claud
 | `/capture <x>` | save one durable memory in flow, or this conversation as one note on request |
 | `/recall <q>` | search local memory |
 | `/handoff` | end-of-session debrief: captures, session log, Brief update |
+| `/how-i-work` | read this Space's approved rules before choosing an approach |
 | `/wenlan setup` | set up or repair Wenlan (installs the local runtime) |
 | `/wenlan lint [deep\|repair] [scope]` | diagnose, or resolve all findings safely |
 | `/wenlan steep [request] [space:<name>]` | prepare new material, update pages, or arrange existing knowledge around your goal |

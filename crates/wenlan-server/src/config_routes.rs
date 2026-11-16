@@ -56,6 +56,7 @@ fn config_to_response(cfg: &config::Config) -> ConfigResponse {
         ui_language: cfg.ui_language.clone(),
         page_map_auto_suggest: cfg.page_map_auto_suggest,
         chat_check_enabled: cfg.chat_check_enabled,
+        skills_from_library: cfg.skills_from_library,
         space_folders: cfg.space_folders,
     }
 }
@@ -71,6 +72,7 @@ pub async fn handle_update_config(
     State(state): State<SharedState>,
     Json(req): Json<UpdateConfigRequest>,
 ) -> Result<Json<ConfigResponse>, ServerError> {
+    let rules_setting_touched = req.skills_from_library.is_some();
     let external_touched = req.external_llm_endpoint.is_some()
         || req.external_llm_model.is_some()
         || req.external_llm_api_key.is_some();
@@ -161,6 +163,9 @@ pub async fn handle_update_config(
         if let Some(v) = req.chat_check_enabled {
             cfg.chat_check_enabled = v;
         }
+        if let Some(v) = req.skills_from_library {
+            cfg.skills_from_library = v;
+        }
         if let Some(v) = req.space_folders {
             // Once on, pages have moved; turning it off only stops moving more.
             cfg.space_folders = Some(v);
@@ -178,6 +183,13 @@ pub async fn handle_update_config(
     if external_touched {
         let mut s = state.write().await;
         apply_external_provider(&mut s, &cfg);
+    }
+    if rules_setting_touched {
+        // Off removes the rules files Wenlan wrote; on writes them again.
+        let db = state.read().await.db.clone();
+        if let Some(db) = db {
+            crate::skill_grow::sync_rules_files_quietly(&db).await;
+        }
     }
     Ok(Json(config_to_response(&cfg)))
 }

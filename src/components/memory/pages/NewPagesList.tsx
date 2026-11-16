@@ -9,6 +9,7 @@ import { PageIcon } from "../assets/PageIcon";
 import { askablePages } from "../../onboarding/useGettingStartedState";
 import { addedWhen } from "./WorkingOn";
 import { readablePageContent } from "../page/original/originalContent";
+import { howIWorkPageTitle, isHowIWorkPage } from "../skills/howIWorkModel";
 
 /** How many of the newest pages the Wiki home lists. */
 export const NEW_PAGES_LISTED = 5;
@@ -114,7 +115,8 @@ export function NewPagesList({
       <ul>
         {rows.map(({ page, byAi, at }) => {
           const fresh = justWritten?.has(page.id) === true;
-          const preview = pagePreview(page);
+          const title = howIWorkPageTitle(page, t);
+          const preview = isHowIWorkPage(page) ? t("howIWork.page.preview") : pagePreview(page);
           // On a team's side every page is the team's: no mark says so on each.
           const share = scope.team ? undefined : pageShare(shares, page.id) ?? (page.space ? spaceShare(shares, page.space) : undefined);
           const sharedWith = share ? others(share).map((member) => member.name).join(", ") : "";
@@ -132,7 +134,7 @@ export function NewPagesList({
                   ) : (
                     <PageIcon className="wiki-new-pages-icon" size={16} />
                   )}
-                  <span className="wiki-new-pages-title" title={page.title}>{page.title}</span>
+                  <span className="wiki-new-pages-title" title={title}>{title}</span>
                 </span>
                 <span className="wiki-new-pages-preview">{preview}</span>
                 {/* Home counts nothing, sources included (UX-HOME-2). */}
