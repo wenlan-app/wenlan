@@ -3,21 +3,22 @@
 // the person or AI that made it, how many sentences it touched and when.
 // Opening one shows the change and can put the page back as it was before.
 import { useEffect, useState } from "react";
-import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import {
   getPageRevisions,
   listRecentChanges,
-  updatePage,
   type PageChange,
   type PageHistoryItem,
   type SharedStatus,
 } from "../../../lib/tauri";
-import { HistoryChangeDialog, historyTexts } from "../page/HistoryChangeDialog";
+import { HistoryChangeDialog } from "../page/HistoryChangeDialog";
+import { PutBackButton } from "../page/PutBackButton";
 import { relativeMs } from "../page/format";
-import { Button } from "../settings/primitives";
 import { sharedWriter } from "../sharing/sharing";
+import { writerAgentName } from "../sharing/teamPeople";
+import { isTeamMemberMode } from "../../../web/team";
 import "./space-recent-changes.css";
 
 const SHOWN = 5;
@@ -30,9 +31,12 @@ const WENLAN = new Set(["distill", "re_distill", "page_growth", "refinery_merge"
 
 /** Who made a change, said the way the row reads: a member, their AI tool,
  *  you, your AI tool, or Wenlan itself. */
-export function changeWho(editedBy: string | null | undefined, shares: readonly SharedStatus[] | undefined, t: TFunction): string {
+export function changeWho(editedBy: string | null | undefined, shares: readonly SharedStatus[] | undefined, t: TFunction, agent?: string | null): string {
   const member = sharedWriter(editedBy, shares, t);
   if (member) return member;
+  // A member's AI tool connected through the team server names its member.
+  const tool = editedBy === "agent_refresh" && agent?.includes("@team.") ? writerAgentName(t, agent) : null;
+  if (tool) return tool;
   if (editedBy && PERSON.has(editedBy)) return t("team.changes.you");
   if (editedBy && WENLAN.has(editedBy)) return t("team.changes.wenlan");
   return t("team.changes.yourAi");
@@ -71,7 +75,7 @@ export function SpaceRecentChanges({ space, shares }: Props) {
       <h2 className="space-brief-heading">{t("team.changes.title")}</h2>
       <ul>
         {rows.map((change) => {
-          const who = changeWho(change.edited_by, shares, t);
+          const who = changeWho(change.edited_by, shares, t, change.agent);
           const created = change.change_kind === "created" || change.changed_sentences == null;
           const what = t(created ? "team.changes.added" : "team.changes.changed", { who, title: change.title });
           const meta = [
@@ -96,8 +100,6 @@ export function SpaceRecentChanges({ space, shares }: Props) {
 
 /** The page's newest change, with a way back to the text before it. */
 function ChangeDialog({ change, space, shares, onClose }: { readonly change: PageChange; readonly space: string; readonly shares?: readonly SharedStatus[]; readonly onClose: () => void }) {
-  const { t } = useTranslation();
-  const queryClient = useQueryClient();
   const revisions = useQuery({
     queryKey: ["page-revisions-text", change.page_id],
     queryFn: () => getPageRevisions(change.page_id, true),
@@ -106,25 +108,6 @@ function ChangeDialog({ change, space, shares, onClose }: { readonly change: Pag
   });
   const history = revisions.data?.history ?? [];
   const item: PageHistoryItem | undefined = history.find((candidate) => candidate.kind !== "source_update");
-  const before = item ? historyTexts(history, item).before : null;
-  const revert = useMutation({
-    mutationFn: async () => {
-      if (before == null || !revisions.data) throw new Error("nothing to put back");
-      const outcome = await updatePage({
-        id: change.page_id,
-        content: before,
-        expectedVersion: revisions.data.current_version,
-        callerId: "wenlan-app",
-        operationId: crypto.randomUUID(),
-      });
-      if (outcome.outcome !== "saved") throw new Error(outcome.outcome);
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["recent-changes", space] });
-      void queryClient.invalidateQueries({ queryKey: ["page-revisions-text", change.page_id] });
-      onClose();
-    },
-  });
 
   const missing = !revisions.isPending && !item;
   useEffect(() => {
@@ -137,10 +120,10 @@ function ChangeDialog({ change, space, shares, onClose }: { readonly change: Pag
       item={item}
       shares={shares}
       onClose={onClose}
-      action={before != null && <>
-        {revert.isError && <p className="space-recent-changes-error" role="alert">{t("team.changes.revertFailed")}</p>}
-        <Button variant="secondary" disabled={revert.isPending} onClick={() => revert.mutate()}>{t("team.changes.revert")}</Button>
-      </>}
+      // Putting a page back stays with the owner for now: a team member
+      // reads the change but gets no way to undo it here.
+      action={isTeamMemberMode() ? undefined
+        : <PutBackButton pageId={change.page_id} item={item} onDone={onClose} invalidate={[["recent-changes", space]]} />}
     />
   );
 }

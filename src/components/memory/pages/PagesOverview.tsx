@@ -28,6 +28,8 @@ import "./archivedNotes.css";
 import { useShares } from "../sharing/sharing";
 import { useScope } from "../team/scope";
 import { TeamChanges, TeamWaiting } from "../team/TeamPage";
+import { SpaceRecentChanges } from "../space-detail/SpaceRecentChanges";
+import { isTeamMemberMode } from "../../../web/team";
 import { HomeLookView, useHomeLook } from "./HomeLook";
 import { isWebBuild } from "../../../web/runtime";
 
@@ -82,6 +84,11 @@ export function PagesOverview({
   // Private.
   const scope = useScope();
   const team = scope.team;
+  // A team member's browser: every Space here is one the team shares with
+  // them, so who changed what in them is shown the way a team's home shows it.
+  const memberSpaces = isTeamMemberMode()
+    ? [...new Set(pages.map((page) => page.space).filter((space): space is string => !!space))].sort()
+    : [];
   const checklist = useGettingStartedState();
   const [adding, setAdding] = useState<false | "menu" | "folder" | "chats">(false);
   // What the user picked on the welcome screen happens here, once: the
@@ -228,7 +235,7 @@ export function PagesOverview({
           ? <WorkingOn onSelectSpace={onSelectSpace} onOpenThing={onOpenThing} onReplayNight={onReplayNight} />
           : <HomeSpaces pages={pages} onSelectSpace={onSelectSpace} onBrowseSpaces={onBrowseSpaces} />}
         {lookShown ? null : newPages}
-        {team ? <TeamChanges group={team} /> : null}
+        {team ? <TeamChanges group={team} /> : memberSpaces.length > 0 ? <SpaceRecentChanges space={memberSpaces} /> : null}
         {/* With no AI tool connected there is nothing to be working on yet:
             the pages lead, and one line says what connecting adds. Only
             while "what you're working on" is on: it is what the line names. */}

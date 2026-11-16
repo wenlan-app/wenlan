@@ -19,6 +19,8 @@ import { sourceLocatorLabel } from "../sources/sourcePresentation";
 import PageInfoCode from "./PageInfoCode";
 import PageInfoNotes from "./PageInfoNotes";
 import { HistoryChangeDialog } from "./HistoryChangeDialog";
+import { PutBackButton } from "./PutBackButton";
+import { isTeamMemberMode } from "../../../web/team";
 import { entryForItem, historyItemLabel, historyRows } from "./historyItems";
 import "./NoteInfo.css";
 
@@ -549,6 +551,10 @@ export default function PageInfo({
           item={openHistoryItem}
           shares={shares}
           onClose={() => setOpenHistoryItem(null)}
+          // A team member reads old versions; putting one back stays with
+          // the owner for now.
+          action={isTeamMemberMode() ? undefined
+            : <PutBackButton pageId={currentPageId} item={openHistoryItem} onDone={() => setOpenHistoryItem(null)} />}
         />
       )}
     </Wrapper>

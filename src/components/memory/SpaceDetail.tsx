@@ -27,6 +27,7 @@ import "./space-detail/space-detail-header.css";
 import "./space-detail/space-detail.css";
 import "./pages/pageActions.css";
 import { isWebBuild } from "../../web/runtime";
+import { isTeamMemberMode } from "../../web/team";
 
 export type SpaceDetailProps = {
   readonly copy?: SpaceDetailCopy;
@@ -182,7 +183,7 @@ export default function SpaceDetail({
       />
 
       <SpaceBrief spaceName={space.name} />
-      {!web && share && <SpaceRecentChanges space={space.name} shares={shares.data} />}
+      {((!web && share) || isTeamMemberMode()) && <SpaceRecentChanges space={space.name} shares={shares.data} />}
       <SpaceProjectContent
         key={`${space.id}:${space.name}`}
         copy={copy}
