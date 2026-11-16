@@ -110,6 +110,23 @@ describe("WikiWorkspace", () => {
     expect(Array.from(menu.querySelectorAll("[role='menuitem']")).map(item => item.textContent)).toEqual(["New page"]);
   });
 
+  it("the browser build offers no Find skills, which only the desktop app can run", () => {
+    const props = { onBrowse: vi.fn(), onCreatePage: vi.fn(), onOpenDraft: vi.fn(), onOpenPage: vi.fn(), onFindSkills: vi.fn() };
+    const items = () => Array.from(screen.getByRole("menu", { name: "New page or folder" }).querySelectorAll("[role='menuitem']")).map(item => item.textContent);
+    const app = render(<WikiDirectory {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "New page or folder" }));
+    expect(items()).toContain("Find skills");
+    app.unmount();
+    vi.stubGlobal("__WENLAN_WEB__", true);
+    try {
+      render(<WikiDirectory {...props} />);
+      fireEvent.click(screen.getByRole("button", { name: "New page or folder" }));
+      expect(items()).not.toContain("Find skills");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("shows the page count as a number beside the Folders title", () => {
     render(<WikiWorkspace onBrowse={vi.fn()} onCreatePage={vi.fn()} onOpenDraft={vi.fn()} onOpenPage={vi.fn()}><textarea /></WikiWorkspace>);
     const count = screen.getByTitle("145 pages");

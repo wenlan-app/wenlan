@@ -382,21 +382,38 @@ async fn a_members_put_back_is_a_new_version_by_that_member() {
     assert_eq!(page.version, after_ai + 1, "a new version, not a rewind");
     let history = db.list_page_history(PAGE, 3).await.unwrap();
     assert_eq!(history[0].edited_by, "shared_person:m-amy");
-    assert_eq!(history[1].edited_by, "agent_refresh", "the AI's version stays");
+    assert_eq!(
+        history[1].edited_by, "agent_refresh",
+        "the AI's version stays"
+    );
     let changes = db
-        .list_recent_changes_scoped(5, &wenlan_core::read_scope::ReadScope::Space("Alpha".into()))
+        .list_recent_changes_scoped(
+            5,
+            &wenlan_core::read_scope::ReadScope::Space("Alpha".into()),
+        )
         .await
         .unwrap();
-    let change = changes.iter().find(|c| c.page_id == PAGE).expect("in recent changes");
+    let change = changes
+        .iter()
+        .find(|c| c.page_id == PAGE)
+        .expect("in recent changes");
     assert_eq!(change.edited_by.as_deref(), Some("shared_person:m-amy"));
 
     // The owner moves the page to Beta: a put-back pinned to Alpha gets nothing.
     let moved = db
-        .set_page_space(PAGE, Some("Beta"), page.version, &wenlan_core::read_scope::ReadScope::Global)
+        .set_page_space(
+            PAGE,
+            Some("Beta"),
+            page.version,
+            &wenlan_core::read_scope::ReadScope::Global,
+        )
         .await;
     assert!(moved.is_ok(), "{:?}", moved.err());
     let version = db.get_page(PAGE).await.unwrap().unwrap().version;
     let refused = edit(&state, Some("Alpha"), amy, PAGE, "Taken back", version).await;
-    assert!(refused.is_err(), "a page that left the Space is not put back");
+    assert!(
+        refused.is_err(),
+        "a page that left the Space is not put back"
+    );
     assert_eq!(db.get_page(PAGE).await.unwrap().unwrap().content, "Body");
 }

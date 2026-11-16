@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
-import { CaretLeft, FolderPlus, NotePencil, Plus } from "@phosphor-icons/react";
+import { CaretLeft, FolderPlus, NotePencil, Plus, PuzzlePiece } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 import { useExampleWikiActive } from "../../../lib/exampleWiki/mode";
 import type { Page } from "../../../lib/tauri";
@@ -10,6 +10,7 @@ import { WikiFolderCreationContext } from "./WikiFolderCreationContext";
 import type { WikiInventoryScope } from "./pageInventory";
 import { SpaceFoldersPrompt } from "./SpaceFoldersPrompt";
 import { useTeamAccess } from "../../../web/teamAccess";
+import { isWebBuild } from "../../../web/runtime";
 
 /** The id of the one directory the shell renders (see Main). */
 export const WIKI_DIRECTORY_ID = "wiki-directory";
@@ -36,6 +37,8 @@ export interface WikiDirectoryProps {
   readonly onFilterChange?: (filter: string) => void;
   readonly onBrowse: (scope: WikiInventoryScope) => void;
   readonly onCreatePage: (folderPath?: string) => void;
+  /** Opens Library › Skills (find and install skills from skills.sh). */
+  readonly onFindSkills?: () => void;
   readonly onCreationFolderPathChange?: (path: string | null) => void;
   readonly onOpenDraft: (draftId: string, space: string | null) => void;
   readonly onOpenPage: (page: Page) => void;
@@ -65,6 +68,7 @@ export function WikiDirectory({
   onFilterChange,
   onBrowse,
   onCreatePage,
+  onFindSkills,
   onCreationFolderPathChange,
   onOpenDraft,
   onOpenPage,
@@ -149,6 +153,7 @@ export function WikiDirectory({
             onNewPage={() => closeForNavigation(onCreatePage)(creationFolderPath ?? currentFolderPath ?? undefined)}
             // The New button has focus again, so the folder form returns it there.
             onNewFolder={() => { requestCreateFolder(); }}
+            onFindSkills={onFindSkills ? () => closeForNavigation(onFindSkills)() : undefined}
           />
         )}
       </div>
@@ -180,11 +185,12 @@ export function WikiDirectory({
 }
 
 /** The directory's one New button: a small menu with New page and New folder. */
-function NewMenu({ exampleWiki, canCreateFolder, onNewPage, onNewFolder }: {
+function NewMenu({ exampleWiki, canCreateFolder, onNewPage, onNewFolder, onFindSkills }: {
   readonly exampleWiki: boolean;
   readonly canCreateFolder: boolean;
   readonly onNewPage: () => void;
   readonly onNewFolder: () => void;
+  readonly onFindSkills?: () => void;
 }) {
   const { t } = useTranslation();
   const teamAccess = useTeamAccess();
@@ -250,6 +256,14 @@ function NewMenu({ exampleWiki, canCreateFolder, onNewPage, onNewFolder }: {
             <button type="button" role="menuitem" aria-disabled={folderDisabled} onClick={() => { if (folderDisabled) return; close(true); onNewFolder(); }}>
               <FolderPlus aria-hidden="true" size={16} />
               <span>{t("pages.folders.newFolder")}</span>
+            </button>
+          )}
+          {/* Finding and installing skills runs in the desktop app only; the
+              browser build has no route for it. */}
+          {onFindSkills && !exampleWiki && !isWebBuild() && (
+            <button type="button" role="menuitem" onClick={() => { close(false); onFindSkills(); }}>
+              <PuzzlePiece aria-hidden="true" size={16} />
+              <span>{t("findSkills.entry")}</span>
             </button>
           )}
         </div>

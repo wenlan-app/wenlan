@@ -536,7 +536,9 @@ async fn a_member_reaches_only_their_own_spaces() {
             BetaWriter,
             "POST",
             "/api/memory/a1/update-page",
-            Some(json!({"content": "before", "source_memory_ids": [], "expected_version": 3, "caller_id": "wenlan-app", "operation_id": "op-put-back"})),
+            Some(
+                json!({"content": "before", "source_memory_ids": [], "expected_version": 3, "caller_id": "wenlan-app", "operation_id": "op-put-back"}),
+            ),
             not_found,
             &[],
         ),
@@ -545,7 +547,9 @@ async fn a_member_reaches_only_their_own_spaces() {
             AlphaReader,
             "POST",
             "/api/memory/a1/update-page",
-            Some(json!({"content": "before", "source_memory_ids": [], "expected_version": 3, "caller_id": "wenlan-app", "operation_id": "op-put-back"})),
+            Some(
+                json!({"content": "before", "source_memory_ids": [], "expected_version": 3, "caller_id": "wenlan-app", "operation_id": "op-put-back"}),
+            ),
             forbidden,
             &[],
         ),
@@ -554,7 +558,9 @@ async fn a_member_reaches_only_their_own_spaces() {
             AlphaWriter,
             "POST",
             "/api/memory/a1/update-page",
-            Some(json!({"content": "before", "source_memory_ids": [], "expected_version": 3, "caller_id": "wenlan-app", "operation_id": "op-put-back", "space": "Beta"})),
+            Some(
+                json!({"content": "before", "source_memory_ids": [], "expected_version": 3, "caller_id": "wenlan-app", "operation_id": "op-put-back", "space": "Beta"}),
+            ),
             not_found,
             &[],
         ),
@@ -563,7 +569,9 @@ async fn a_member_reaches_only_their_own_spaces() {
             AlphaWriter,
             "POST",
             "/api/memory/a1/update-page",
-            Some(json!({"content": "before", "source_memory_ids": [], "expected_version": 3, "caller_id": "wenlan-app", "operation_id": "op-put-back"})),
+            Some(
+                json!({"content": "before", "source_memory_ids": [], "expected_version": 3, "caller_id": "wenlan-app", "operation_id": "op-put-back"}),
+            ),
             ok,
             &["Alpha"],
         ),
