@@ -16,7 +16,7 @@ import zlib
 from pathlib import Path, PurePosixPath
 
 
-MAX_ARCHIVE_BYTES = 384 * 1024 * 1024
+MAX_ARCHIVE_BYTES = 512 * 1024 * 1024
 MAX_ENTRY_BYTES = 256 * 1024 * 1024
 MAX_TOTAL_BYTES = 768 * 1024 * 1024
 MAX_ENTRIES = 32
