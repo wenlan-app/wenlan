@@ -644,6 +644,15 @@ and wait for evidence that people need them.
   in plain words and names the next command to run. A refusal shows Wenlan's
   own sentence, not a status code or an address.
   原文：「要讓體驗簡潔易懂」（2026-11-16 08:23Z）。
+- **UX-CLI-5** `shipped` The repository is the Space. Inside a git
+  repository, `wenlan init` sets it up in one step: it makes a Space named
+  after the repository, ties the two, and connects the AI tools on this
+  computer. From then on the terminal and every AI tool started in that
+  folder use that Space without being told, and `wenlan status` shows which
+  Space the folder uses. `wenlan spaces` and `wenlan repo` keep working and
+  sit under `wenlan help all`. Setting a repository up turns on no daily run,
+  and it never ties a repository that is not yours without a yes.
+  原文：「跟空間啥的一起思考呢？」（2026-11-16 08:15Z）；「對 還有意思是指 讓他們進到 repo 後就可以下指令不用 wenlan repo 動作」（2026-11-16 08:30Z）；「那這樣 wenlan space 還有存在必要？」「還是說要怎麼整合整併」（2026-11-16 08:33Z）；「繼續推進」（2026-11-16 08:35Z）。
 
 ## Adding to Wenlan
 

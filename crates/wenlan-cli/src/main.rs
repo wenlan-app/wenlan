@@ -48,7 +48,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Check whether Wenlan is running.
+    /// Check whether Wenlan is running, and which Space this folder uses.
     Status,
     /// Open Wenlan's personal browser UI.
     Open,
@@ -67,6 +67,8 @@ enum Commands {
         #[arg(short = 'y', long)]
         yes: bool,
     },
+    /// Set this repository up: a Space named after it, tied to it, and your AI tools connected.
+    Init,
     /// Start Wenlan now and keep it running in the background after login.
     Start,
     /// Stop Wenlan. It stays off until `wenlan start`.
@@ -244,15 +246,15 @@ const HELP_GROUPS: &[(&str, &[&str])] = &[
     (
         "Setup",
         &[
-            "setup", "open", "connect", "status", "doctor", "start", "stop", "restart",
+            "setup", "init", "open", "connect", "status", "doctor", "start", "stop", "restart",
         ],
     ),
-    ("Team", &["team", "spaces"]),
+    ("Team", &["team"]),
     (
         ADVANCED_GROUP,
         &[
-            "curate", "lint", "models", "keys", "steep", "repo", "outbox", "export", "entities",
-            "tool",
+            "spaces", "repo", "curate", "lint", "models", "keys", "steep", "outbox", "export",
+            "entities", "tool",
         ],
     ),
 ];
@@ -572,6 +574,7 @@ async fn main() -> anyhow::Result<ExitCode> {
             })
             .await?
         }
+        Commands::Init => commands::init::run(&client, format, cli.quiet).await?,
         Commands::Start => {
             commands::service::run_background(commands::service::BackgroundCommand::On).await?
         }

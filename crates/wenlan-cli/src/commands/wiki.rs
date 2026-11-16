@@ -290,7 +290,7 @@ fn print_binding(format: ResolvedFormat, quiet: bool, binding: &RepoWikiBinding)
     Ok(())
 }
 
-fn describe_publish(result: &RepoWikiPublishResult) -> String {
+pub(crate) fn describe_publish(result: &RepoWikiPublishResult) -> String {
     let mut left_out = if result.left_out > 0 {
         format!(
             "; {} page(s) that rest on personal notes stay out",

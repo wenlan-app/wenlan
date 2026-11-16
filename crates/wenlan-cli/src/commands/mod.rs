@@ -8,6 +8,7 @@ pub mod entities;
 pub mod export;
 pub mod home_bin;
 pub mod ingest;
+pub mod init;
 pub mod lint;
 pub mod list;
 pub mod mcp;

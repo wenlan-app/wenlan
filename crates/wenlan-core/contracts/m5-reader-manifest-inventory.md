@@ -1008,6 +1008,7 @@ the projection-directory reader.
 | `wenlan status` | yes | automatic | `none` | subcommand renderer |
 | `wenlan open` | yes | automatic | `none` | opens embedded browser UI |
 | `wenlan setup` | yes | automatic | `none` | subcommand renderer |
+| `wenlan init` | yes | automatic | `none` | subcommand renderer |
 | `wenlan start` | yes | automatic | `none` | subcommand renderer |
 | `wenlan stop` | yes | automatic | `none` | subcommand renderer |
 | `wenlan tool` | yes | automatic | `none` | subcommand renderer |
