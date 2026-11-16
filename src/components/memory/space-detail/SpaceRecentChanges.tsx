@@ -16,6 +16,7 @@ import {
 import { HistoryChangeDialog } from "../page/HistoryChangeDialog";
 import { PutBackButton } from "../page/PutBackButton";
 import { relativeMs } from "../page/format";
+import { lifecycleActorName } from "../page/historyItems";
 import { sharedWriter } from "../sharing/sharing";
 import { writerAgentName } from "../sharing/teamPeople";
 import { useTeamAccess } from "../../../web/teamAccess";
@@ -75,12 +76,21 @@ export function SpaceRecentChanges({ space, shares }: Props) {
       <h2 className="space-brief-heading">{t("team.changes.title")}</h2>
       <ul>
         {rows.map((change) => {
-          const who = changeWho(change.edited_by, shares, t, change.agent);
-          const created = change.change_kind === "created" || change.changed_sentences == null;
-          const what = t(created ? "team.changes.added" : "team.changes.changed", { who, title: change.title });
+          const lifecycle = change.change_kind === "archived" || change.change_kind === "restored" ? change.change_kind : null;
+          const created = !lifecycle && (change.change_kind === "created" || change.changed_sentences == null);
+          let what: string;
+          if (lifecycle) {
+            const named = lifecycleActorName(t, change.edited_by, shares);
+            what = named == null
+              ? t(`team.changes.${lifecycle}Unnamed`, { title: change.title })
+              : t(`team.changes.${lifecycle}`, { who: named, title: change.title });
+          } else {
+            const who = changeWho(change.edited_by, shares, t, change.agent);
+            what = t(created ? "team.changes.added" : "team.changes.changed", { who, title: change.title });
+          }
           const meta = [
             ...(several ? [change.space] : []),
-            created ? t("team.changes.newPage") : t("team.changes.sentences", { count: change.changed_sentences ?? 0 }),
+            ...(lifecycle ? [] : [created ? t("team.changes.newPage") : t("team.changes.sentences", { count: change.changed_sentences ?? 0 })]),
             relativeMs(change.changed_at_ms, locale),
           ].join(" · ");
           return (

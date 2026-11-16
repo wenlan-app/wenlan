@@ -2,10 +2,28 @@
 import type { TFunction } from "i18next";
 import type { PageChangelogEntry, PageHistoryItem, SharedStatus } from "../../../lib/tauri";
 import { sharedWriter } from "../sharing/sharing";
+import { writerAgentName } from "../sharing/teamPeople";
 import { revisionWriterLabel } from "./format";
 
 // The writers the daemon records for a person (app editor, vault file edit).
 const PERSON_WRITERS = new Set(["manual_edit", "fs_edit", "human", "own_device"]);
+
+/** Who archived or restored a page, as a name for a sentence: a member,
+ * you, or an AI tool. `null` when nobody was recorded (an archive or restore
+ * from before this was kept); the caller then uses its unnamed sentence. */
+export function lifecycleActorName(
+  t: TFunction,
+  actor: string | null | undefined,
+  shares?: readonly SharedStatus[],
+): string | null {
+  if (!actor) return null;
+  const member = sharedWriter(actor, shares, t);
+  if (member) return member;
+  if (actor.startsWith("ai:")) {
+    return writerAgentName(t, actor.slice(3)) ?? t("team.changes.yourAi");
+  }
+  return t("team.changes.you");
+}
 
 /** Who or what made one change, in the person's words. A change taken
  * from a shared folder names the member who made it. */
@@ -16,6 +34,12 @@ export function historyItemLabel(
 ): string {
   if (item.kind === "source_update") {
     return t("pageHistory.sourceUpdate", { title: item.source?.title || t("pageHistory.untitledSource") });
+  }
+  if (item.kind === "archived" || item.kind === "restored") {
+    const who = lifecycleActorName(t, item.edited_by, shares);
+    const archived = item.kind === "archived";
+    if (who == null) return t(archived ? "pageHistory.archivedUnnamed" : "pageHistory.restoredUnnamed");
+    return t(archived ? "pageHistory.archivedBy" : "pageHistory.restoredBy", { who });
   }
   if (item.restored_from != null) {
     return t("pageHistory.restored", { version: item.restored_from });

@@ -6,6 +6,7 @@ import { daemonMeetsFloor } from "../lib/daemonVersion";
 import type { RenamePageResponse, RestorePageResponse } from "../lib/tauri";
 import { archiveFixturePage, restoreFixturePage } from "../../e2e/tauriMock/pageRestore";
 import { isWebBuild } from "./runtime";
+import { MEMBER_THEME_COMMANDS } from "./memberThemes";
 import { isTeamMemberMode, readTeamKey, teamCallAllowed, TeamCallUnavailable, TEAM_GATE_PREFIX } from "./team";
 
 declare const __WENLAN_SOURCE_PREVIEW__: boolean;
@@ -1888,6 +1889,8 @@ const TEAM_LOCAL_ANSWERS: Record<string, () => unknown> = {
 
 export async function liveInvoke(cmd: string, args?: Args): Promise<unknown> {
   if (isTeamMemberMode() && cmd in TEAM_LOCAL_ANSWERS) return TEAM_LOCAL_ANSWERS[cmd]();
+  // A member's custom themes live in this browser only; no server call.
+  if (isTeamMemberMode() && cmd in MEMBER_THEME_COMMANDS) return MEMBER_THEME_COMMANDS[cmd](args ?? {});
   if (isWebBuild() && (NATIVE_ONLY_COMMANDS.has(cmd) || PREVIEW_ONLY_HANDLERS.has(cmd) || cmd in DEFAULTS)) {
     throw unsupportedWebCommand(cmd);
   }

@@ -72,13 +72,13 @@ function useThemeImage(id: string | null, file: string | undefined, kind: ImageK
 
 export default function AppearanceSection() {
   const web = isWebBuild();
-  // Custom themes are files on the owner's computer; a team member picks only
-  // among the built-in ones, which this browser keeps.
+  // A team member's custom themes live in this browser only (web/memberThemes);
+  // the AI-tool prompt and the home look belong to the owner's computer.
   const member = isTeamMemberMode();
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [builtInTheme, setBuiltInTheme] = useTheme();
-  const themesQuery = useQuery({ queryKey: ["themes"], queryFn: listThemes, enabled: !member });
+  const themesQuery = useQuery({ queryKey: ["themes"], queryFn: listThemes });
   const list = themesQuery.data;
   const activeId = list?.active ?? null;
 
@@ -325,12 +325,10 @@ export default function AppearanceSection() {
             onSelect={() => setEditingId(theme.id)}
           />
         ))}
-        {!member && (
-          <button type="button" role="listitem" className="appearance-card appearance-card-new" onClick={() => void onNewTheme()}>
-            <span aria-hidden="true" className="appearance-card-plus">+</span>
-            <span className="appearance-card-name">{t("appearance.newTheme")}</span>
-          </button>
-        )}
+        <button type="button" role="listitem" className="appearance-card appearance-card-new" onClick={() => void onNewTheme()}>
+          <span aria-hidden="true" className="appearance-card-plus">+</span>
+          <span className="appearance-card-name">{t("appearance.newTheme")}</span>
+        </button>
       </div>
 
       {!member && <HomeLookSetting />}

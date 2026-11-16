@@ -442,6 +442,10 @@ pub enum PageChangeKind {
     Created,
     Revised,
     Merged,
+    /// The page was archived; `edited_by` names who, when recorded.
+    Archived,
+    /// The page was put back from the archive; `edited_by` as for `Archived`.
+    Restored,
 }
 
 /// A change event for a page — feeds the home page delta zones.
