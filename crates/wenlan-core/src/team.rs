@@ -297,6 +297,12 @@ pub fn new_key() -> String {
     )
 }
 
+/// Whether two key hashes are equal, compared in constant time.
+fn same_hash(a: &str, b: &str) -> bool {
+    use subtle::ConstantTimeEq;
+    a.as_bytes().ct_eq(b.as_bytes()).into()
+}
+
 fn key_hash(key: &str) -> String {
     version::sha256_hex(key.trim().as_bytes())
 }
@@ -432,7 +438,7 @@ pub fn set_owner_hash(path: &Path, name: &str, hash: &str) -> Result<Member, Wen
 pub fn is_owner_hash(path: &Path, hash: &str) -> Result<bool, WenlanError> {
     let hash = hash.trim();
     Ok(read_team(path)?.members.iter().any(|member| {
-        member.role == TeamRole::Owner && member.is_active() && member.key_sha256 == hash
+        member.role == TeamRole::Owner && member.is_active() && same_hash(&member.key_sha256, hash)
     }))
 }
 
@@ -617,18 +623,11 @@ pub fn authenticate(path: &Path, key: &str) -> Result<Option<Member>, WenlanErro
     }
     let hash = key_hash(key);
     let file = read_team(path)?;
-    // Compared in full whatever matches, so the time taken does not say how
-    // much of a hash matched.
+    // Checked against every member in constant time, so the time taken does
+    // not say how much of a hash matched or which member it was.
     let mut found = None;
     for member in file.members {
-        let same = member
-            .key_sha256
-            .bytes()
-            .zip(hash.bytes())
-            .fold(member.key_sha256.len() ^ hash.len(), |acc, (a, b)| {
-                acc | usize::from(a ^ b)
-            })
-            == 0;
+        let same = same_hash(&member.key_sha256, &hash);
         if same && member.is_active() {
             found = Some(member);
         }
