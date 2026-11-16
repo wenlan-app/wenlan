@@ -30,6 +30,9 @@ pub const ADDITIONS_FILE: &str = "my-additions.md";
 pub const RECORD_FILE: &str = "skill.json";
 pub const AUTHOR_DIR: &str = "author";
 const ADDITIONS_HEADING: &str = "## My additions";
+/// `source` of a skill taken in from an AI tool's folder on this computer
+/// rather than downloaded. It has no author to check for updates.
+pub const LOCAL_SOURCE: &str = "local";
 
 const MAX_FILES: usize = 100;
 const MAX_FILE_BYTES: u64 = 1024 * 1024;
@@ -956,6 +959,18 @@ pub fn store_skill(
         .ok_or(RegistryError::NotFound)?;
     let name = folder_name(&skill_md, &fetched.skill_id)
         .ok_or_else(|| RegistryError::Refused("the skill has no usable name".into()))?;
+    store_as(root, name, &skill_md, fetched, verdict, scope, now)
+}
+
+fn store_as(
+    root: &Path,
+    name: String,
+    skill_md: &str,
+    fetched: &FetchedSkill,
+    verdict: Verdict,
+    scope: Scope,
+    now: i64,
+) -> Result<InstalledSkill, RegistryError> {
     let previous = find(root, &name);
     if let Some((_, prev)) = &previous {
         if prev.source != fetched.source || prev.skill_id != fetched.skill_id {
@@ -1010,7 +1025,7 @@ pub fn store_skill(
         hash: fetched.hash.clone(),
         verdict,
         scope,
-        description: front_matter_field(&skill_md, "description"),
+        description: front_matter_field(skill_md, "description"),
         installed_at: previous
             .as_ref()
             .map(|(_, p)| p.installed_at)
@@ -1123,6 +1138,9 @@ pub async fn refresh_one(
         name: name.into(),
         outcome: o.into(),
     };
+    if record.source == LOCAL_SOURCE {
+        return Ok(outcome("unchanged"));
+    }
     let head = head_commit(http, endpoints, &record.source).await?;
     if head == record.commit {
         return Ok(outcome("unchanged"));
@@ -1148,6 +1166,120 @@ pub async fn refresh_one(
     }
     store_skill(root, &fetched, report.verdict, record.scope.clone(), now)?;
     Ok(outcome("updated"))
+}
+
+// ── Skills already on this computer ─────────────────────────────────────
+//
+// Folders the person (or another installer) put in an AI tool's skills
+// folder. Importing copies them into the Wenlan folder; the original is
+// never changed, so the tool that had it keeps using it, and the copy can
+// reach the other tools.
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalSkill {
+    pub name: String,
+    /// The folder it was found in.
+    pub path: String,
+    pub description: Option<String>,
+}
+
+/// A folder name that is already tool-safe, so the Wenlan copy keeps the
+/// same name and never lands beside the original as a second skill.
+fn local_name(dir: &Path) -> Option<String> {
+    let name = dir.file_name()?.to_str()?.to_string();
+    (folder_name("", &name).as_deref() == Some(name.as_str())).then_some(name)
+}
+
+/// Skills in the given tool folders that Wenlan does not hold yet. Copies
+/// Wenlan wrote (they carry the marker) and folders without SKILL.md are
+/// left out; a name found in two tools is listed once.
+pub fn scan_local(root: &Path, tool_dirs: &[PathBuf]) -> Vec<LocalSkill> {
+    let held: std::collections::HashSet<String> =
+        all_records(root).into_iter().map(|(_, r)| r.name).collect();
+    let mut out: Vec<LocalSkill> = Vec::new();
+    for tool in tool_dirs {
+        let Ok(entries) = std::fs::read_dir(tool) else {
+            continue;
+        };
+        let mut found: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+        found.sort();
+        for dir in found {
+            let Some(name) = local_name(&dir) else {
+                continue;
+            };
+            if !dir.is_dir()
+                || dir.join(MANAGED_MARKER).exists()
+                || held.contains(&name)
+                || out.iter().any(|s| s.name == name)
+            {
+                continue;
+            }
+            let Ok(skill_md) = std::fs::read_to_string(dir.join("SKILL.md")) else {
+                continue;
+            };
+            out.push(LocalSkill {
+                description: front_matter_field(&skill_md, "description"),
+                path: dir.display().to_string(),
+                name,
+            });
+        }
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
+
+/// Copy one tool-folder skill into the Wenlan folder for every Space. The
+/// original folder is only read. No check has run on it, so it is recorded
+/// as "warn".
+pub fn import_local(root: &Path, dir: &Path, now: i64) -> Result<InstalledSkill, RegistryError> {
+    let name = local_name(dir)
+        .ok_or_else(|| RegistryError::Refused(format!("{} has no usable name", dir.display())))?;
+    if dir.join(MANAGED_MARKER).exists() {
+        return Err(RegistryError::Refused(format!(
+            "{} is a copy Wenlan wrote",
+            dir.display()
+        )));
+    }
+    if find(root, &name).is_some() {
+        return Err(RegistryError::Refused(format!(
+            "a skill named {name} is already in Wenlan"
+        )));
+    }
+    let mut files = Vec::new();
+    read_tree(dir, dir, false, &mut files)?;
+    let total: u64 = files.iter().map(|f| f.bytes.len() as u64).sum();
+    if files.len() > MAX_FILES
+        || total > MAX_TOTAL_BYTES
+        || files.iter().any(|f| f.bytes.len() as u64 > MAX_FILE_BYTES)
+    {
+        return Err(RegistryError::Refused(format!(
+            "{} is too large to take in",
+            dir.display()
+        )));
+    }
+    let skill_md = files
+        .iter()
+        .find(|f| f.path == "SKILL.md")
+        .map(|f| String::from_utf8_lossy(&f.bytes).to_string())
+        .ok_or(RegistryError::NotFound)?;
+    let fetched = FetchedSkill {
+        source: LOCAL_SOURCE.into(),
+        skill_id: name.clone(),
+        commit: String::new(),
+        repo_path: dir.display().to_string(),
+        hash: hash_files(&files),
+        files,
+    };
+    store_as(
+        root,
+        name,
+        &skill_md,
+        &fetched,
+        Verdict::Warn,
+        Scope::All,
+        now,
+    )
 }
 
 /// Text of each file for showing before install; binary files are listed

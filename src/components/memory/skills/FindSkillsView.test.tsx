@@ -13,6 +13,9 @@ const tauri = vi.hoisted(() => ({
   refreshInstalledSkills: vi.fn(),
   removeSkill: vi.fn(),
   setSkillAdditions: vi.fn(),
+  scanLocalSkills: vi.fn(),
+  importLocalSkills: vi.fn(),
+  LOCAL_SKILL_SOURCE: "local",
 }));
 vi.mock("../../../lib/tauri", () => tauri);
 vi.mock("@tauri-apps/plugin-shell", () => ({ open: vi.fn(() => Promise.resolve()) }));
@@ -40,6 +43,23 @@ describe("FindSkillsView", () => {
     tauri.listInstalledSkills.mockResolvedValue([]);
     tauri.listSpaces.mockResolvedValue([{ id: "s1", name: "Clinic" }]);
     tauri.refreshInstalledSkills.mockResolvedValue([]);
+    tauri.scanLocalSkills.mockResolvedValue([]);
+  });
+
+  it("takes skills already on this computer into Wenlan in one click", async () => {
+    tauri.scanLocalSkills.mockResolvedValueOnce([
+      { name: "my-review", path: "/h/.claude/skills/my-review", description: "How I review." },
+      { name: "deploy", path: "/h/.claude/skills/deploy", description: null },
+    ]).mockResolvedValue([]);
+    tauri.importLocalSkills.mockResolvedValue({ imported: ["my-review"], failed: [["deploy", "too large"]] });
+    render(wrap(<FindSkillsView />));
+    expect(await screen.findByText("my-review")).toBeTruthy();
+    expect(screen.getByText(/The originals stay as they are/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Take all into Wenlan" }));
+    await waitFor(() => expect(tauri.importLocalSkills).toHaveBeenCalledWith(["my-review", "deploy"]));
+    expect(await screen.findByText("Took in 1 skill.")).toBeTruthy();
+    expect(screen.getByText("Couldn't take in deploy.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Take all into Wenlan" })).toBeNull();
   });
 
   it("searches, opens a skill with its full text, and installs it into one Space at the pinned commit", async () => {

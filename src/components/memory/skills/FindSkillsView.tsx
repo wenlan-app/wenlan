@@ -11,12 +11,15 @@ import type { TFunction } from "i18next";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
 import { MagnifyingGlass } from "@phosphor-icons/react";
 import {
+  LOCAL_SKILL_SOURCE,
+  importLocalSkills,
   installSkill,
   listInstalledSkills,
   listSpaces,
   previewSkill,
   refreshInstalledSkills,
   removeSkill,
+  scanLocalSkills,
   searchSkillRegistry,
   setSkillAdditions,
   type InstalledSkill,
@@ -29,6 +32,7 @@ import { confirmAction } from "../../../lib/confirmAction";
 import "./findSkills.css";
 
 export const INSTALLED_SKILLS_KEY = ["installed-skills"] as const;
+export const LOCAL_SKILLS_KEY = ["local-skills"] as const;
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -229,10 +233,15 @@ function InstalledRow({ skill }: { readonly skill: InstalledSkill }) {
   });
   const remove = useMutation({
     mutationFn: () => removeSkill(skill.name),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: INSTALLED_SKILLS_KEY }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: INSTALLED_SKILLS_KEY });
+      void queryClient.invalidateQueries({ queryKey: LOCAL_SKILLS_KEY });
+    },
   });
+  const local = skill.source === LOCAL_SKILL_SOURCE;
   const askRemove = async () => {
-    const ok = await confirmAction(t("findSkills.removeConfirm", { name: skill.name }), { confirm: t("findSkills.remove"), cancel: t("common.cancel") });
+    const question = local ? t("findSkills.removeLocalConfirm", { name: skill.name }) : t("findSkills.removeConfirm", { name: skill.name });
+    const ok = await confirmAction(question, { confirm: t("findSkills.remove"), cancel: t("common.cancel") });
     if (ok) remove.mutate();
   };
   return (
@@ -240,7 +249,7 @@ function InstalledRow({ skill }: { readonly skill: InstalledSkill }) {
       <div className="find-skills-installed-head">
         <span className="find-skills-row-name">{skill.name}</span>
         <span className="find-skills-muted">{skill.scope.kind === "space" ? t("findSkills.forSpace", { space: skill.scope.name }) : t("findSkills.forAll")}</span>
-        <span className="find-skills-muted">{skill.source}</span>
+        <span className="find-skills-muted">{local ? t("findSkills.fromComputer") : skill.source}</span>
         <button type="button" className="find-skills-link-button" onClick={() => void askRemove()}>{t("findSkills.remove")}</button>
       </div>
       <label className="find-skills-additions">
@@ -253,6 +262,42 @@ function InstalledRow({ skill }: { readonly skill: InstalledSkill }) {
         {saved && <span role="status" className="find-skills-muted">{t("findSkills.saved")}</span>}
       </div>
     </li>
+  );
+}
+
+function LocalPane() {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const local = useQuery({ queryKey: LOCAL_SKILLS_KEY, queryFn: scanLocalSkills, retry: false });
+  const [result, setResult] = useState<{ imported: number; failed: string[] } | null>(null);
+  const take = useMutation({
+    mutationFn: (names: string[]) => importLocalSkills(names),
+    onSuccess: (outcome) => {
+      setResult({ imported: outcome.imported.length, failed: outcome.failed.map(([name]) => name) });
+      void queryClient.invalidateQueries({ queryKey: LOCAL_SKILLS_KEY });
+      void queryClient.invalidateQueries({ queryKey: INSTALLED_SKILLS_KEY });
+    },
+  });
+  const found = local.data ?? [];
+  if (found.length === 0 && !result) return null;
+  return (
+    <section className="find-skills-local" aria-label={t("findSkills.localTitle")}>
+      {found.length > 0 && (
+        <>
+          <h2>{t("findSkills.localTitle")}</h2>
+          <p className="find-skills-muted">{t("findSkills.localHint", { count: found.length })}</p>
+          <ul className="find-skills-local-names">
+            {found.map((skill) => <li key={skill.name} className="find-skills-badge" title={skill.description ?? undefined}>{skill.name}</li>)}
+          </ul>
+          <button type="button" className="find-skills-install find-skills-local-button" disabled={take.isPending} onClick={() => take.mutate(found.map((skill) => skill.name))}>
+            {take.isPending ? t("findSkills.localImporting") : t("findSkills.localImport")}
+          </button>
+        </>
+      )}
+      {result && result.imported > 0 && <p role="status" className="find-skills-muted">{t("findSkills.localImported", { count: result.imported })}</p>}
+      {result?.failed.map((name) => <p key={name} className="find-skills-note">{t("findSkills.localFailed", { name })}</p>)}
+      {take.isError && <p role="alert">{message(take.error)}</p>}
+    </section>
   );
 }
 
@@ -302,6 +347,7 @@ export function FindSkillsView() {
       {open ? <DetailPane row={open} onBack={() => setOpen(null)} /> : (
         <>
           <SearchPane onOpen={setOpen} />
+          <LocalPane />
           <InstalledPane />
         </>
       )}
