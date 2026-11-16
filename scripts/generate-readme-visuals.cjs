@@ -34,23 +34,19 @@ const BANNER = {
 
 const BANNER_COPY = {
   en: {
-    title: ["Docs, skills and rules your AI tools", "keep current and work from"],
-    tagline: "Free · Open source · For you and your team",
+    title: ["The living playbook for every AI tool"],
     font: BANNER.latin,
   },
   "zh-Hant": {
-    title: ["文件、技能和規則，", "你的 AI 工具幫你更新，也拿來做事"],
-    tagline: "免費・開源・個人和團隊都能用",
+    title: ["會自己更新的做事手冊，每個 AI 工具都用"],
     font: '"PingFang TC", "Noto Sans TC", -apple-system, BlinkMacSystemFont, sans-serif',
   },
   "zh-Hans": {
-    title: ["文件、技能和规则，", "你的 AI 工具帮你更新，也拿来做事"],
-    tagline: "免费・开源・个人和团队都能用",
+    title: ["会自己更新的做事手册，每个 AI 工具都用"],
     font: '"PingFang SC", "Noto Sans SC", -apple-system, BlinkMacSystemFont, sans-serif',
   },
   "es-ES": {
-    title: ["Documentos, skills y reglas", "que tu IA mantiene al día y usa"],
-    tagline: "Gratis · Código abierto · Para ti y tu equipo",
+    title: ["El manual vivo para cada herramienta de IA"],
     font: BANNER.latin,
   },
 };
@@ -130,8 +126,8 @@ function makeSimpleBanner(viewport, locale) {
   ${text(300, chineseName ? 196 : 191, copy.title[0], 40, BANNER.white, 500, "start", chineseName ? 0.65 : null)}
   ${text(300, chineseName ? 234 : 229, tagline, 20, BANNER.secondary, 400, "start", chineseName ? 0.65 : null)}`
       : `${logoMarkup({ x: 81.28, y: 84.28, size: 181.44, prefix })}
-  ${brand(300, 153, chineseName ? 41.6 : 43.2, "start")}
-  ${text(300, 219, copy.title[0], 40, BANNER.white, 500, "start", chineseName ? 0.65 : null)}`;
+  ${brand(300, 160, chineseName ? 48 : 50, "start")}
+  ${text(300, 216, copy.title[0], 30, BANNER.white, 500, "start", chineseName ? 0.65 : null)}`;
 
   const svg = `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
   <title id="title">Wenlan README banner</title>

@@ -1,14 +1,15 @@
-<!-- README_SYNC: source=README.md sha256=6fe7ff334f5b344d2b5c50cf2950aa5fd6e47b8d70aea966dcab73be2ac18fd0 -->
+<!-- README_SYNC: source=README.md sha256=be00837d7b80c4900debbaa692cc53d633a8930ca062f829a98a59a042409827 -->
 
 <p align="center">
   <picture>
     <source media="(max-width: 600px)" srcset="./docs/assets/readme-banner-zh-Hant-mobile.png">
-    <img src="./docs/assets/readme-banner-zh-Hant.png" alt="文瀾：文件、技能和規則，你的 AI 工具幫你更新，也拿來做事。你和 AI 一起想、一起學、一起做的地方。免費、開源，個人和團隊都能用。" width="100%">
+    <img src="./docs/assets/readme-banner-zh-Hant.png" alt="文瀾：會自己更新的做事手冊，每個 AI 工具都用。" width="100%">
   </picture>
 </p>
 
 <p align="center">
-  你和 AI 一起想、一起學、一起做的地方。每份文件都附出處。
+  <strong>文件、技能和規則，你的 AI 工具幫你更新，也拿來做事。</strong><br>
+  每份文件都附出處。免費、開源，個人和團隊都能用。
 </p>
 
 <p align="center">

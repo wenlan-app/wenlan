@@ -1,12 +1,13 @@
 <p align="center">
   <picture>
     <source media="(max-width: 600px)" srcset="./docs/assets/readme-banner-mobile.png">
-    <img src="./docs/assets/readme-banner.png" alt="Wenlan: docs, skills and rules your AI tools keep current and work from. A studio for everything you think, learn, and build with AI. Free, open source, for you and your team." width="100%">
+    <img src="./docs/assets/readme-banner.png" alt="Wenlan: the living playbook for every AI tool." width="100%">
   </picture>
 </p>
 
 <p align="center">
-  A studio for everything you think, learn, and build with AI. Every doc links to its sources.
+  <strong>Docs, skills and rules your AI tools keep current and work from.</strong><br>
+  Every doc links to its sources. Free and open source, for you and your team.
 </p>
 
 <p align="center">

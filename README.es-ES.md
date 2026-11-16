@@ -1,14 +1,15 @@
-<!-- README_SYNC: source=README.md sha256=6fe7ff334f5b344d2b5c50cf2950aa5fd6e47b8d70aea966dcab73be2ac18fd0 -->
+<!-- README_SYNC: source=README.md sha256=be00837d7b80c4900debbaa692cc53d633a8930ca062f829a98a59a042409827 -->
 
 <p align="center">
   <picture>
     <source media="(max-width: 600px)" srcset="./docs/assets/readme-banner-es-ES-mobile.png">
-    <img src="./docs/assets/readme-banner-es-ES.png" alt="Wenlan: documentos, skills y reglas que tu IA mantiene al día y usa para trabajar. Un estudio para todo lo que piensas, aprendes y construyes con IA. Gratis, de código abierto, para ti y tu equipo." width="100%">
+    <img src="./docs/assets/readme-banner-es-ES.png" alt="Wenlan: el manual vivo para cada herramienta de IA." width="100%">
   </picture>
 </p>
 
 <p align="center">
-  Un estudio para todo lo que piensas, aprendes y construyes con IA. Cada documento enlaza a sus fuentes.
+  <strong>Documentos, skills y reglas que tus herramientas de IA mantienen al día y usan para trabajar.</strong><br>
+  Cada documento enlaza a sus fuentes. Gratis y de código abierto, para ti y tu equipo.
 </p>
 
 <p align="center">

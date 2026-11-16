@@ -1,14 +1,15 @@
-<!-- README_SYNC: source=README.md sha256=6fe7ff334f5b344d2b5c50cf2950aa5fd6e47b8d70aea966dcab73be2ac18fd0 -->
+<!-- README_SYNC: source=README.md sha256=be00837d7b80c4900debbaa692cc53d633a8930ca062f829a98a59a042409827 -->
 
 <p align="center">
   <picture>
     <source media="(max-width: 600px)" srcset="./docs/assets/readme-banner-zh-Hans-mobile.png">
-    <img src="./docs/assets/readme-banner-zh-Hans.png" alt="文澜：文件、技能和规则，你的 AI 工具帮你更新，也拿来做事。你和 AI 一起想、一起学、一起做的地方。免费、开源，个人和团队都能用。" width="100%">
+    <img src="./docs/assets/readme-banner-zh-Hans.png" alt="文澜：会自己更新的做事手册，每个 AI 工具都用。" width="100%">
   </picture>
 </p>
 
 <p align="center">
-  你和 AI 一起想、一起学、一起做的地方。每份文件都附出处。
+  <strong>文档、技能和规则，你的 AI 工具帮你更新，也拿来做事。</strong><br>
+  每份文档都附出处。免费、开源，个人和团队都能用。
 </p>
 
 <p align="center">

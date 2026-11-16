@@ -19,10 +19,10 @@ const ASSET_DIR = path.resolve(__dirname, "..", "docs", "assets");
 
 test("borderless banners preserve four-locale copy in desktop and mobile layouts", () => {
   const expected = {
-    en: ["Docs, skills and rules your AI tools", "The knowledge base"],
-    "zh-Hant": ["文件、技能和規則，", "不用你維護的知識庫"],
-    "zh-Hans": ["文件、技能和规则，", "不用你维护的知识库"],
-    "es-ES": ["Documentos, skills y reglas", "La base de conocimiento"],
+    en: ["The living playbook for every AI tool", "The knowledge base"],
+    "zh-Hant": ["會自己更新的做事手冊，每個 AI 工具都用", "不用你維護的知識庫"],
+    "zh-Hans": ["会自己更新的做事手册，每个 AI 工具都用", "不用你维护的知识库"],
+    "es-ES": ["El manual vivo para cada herramienta de IA", "La base de conocimiento"],
   };
 
   for (const [locale, lines] of Object.entries(expected)) {
