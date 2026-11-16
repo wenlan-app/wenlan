@@ -2,8 +2,8 @@
 
 use anyhow::{bail, Result};
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::PathBuf;
+use wenlan_types::folder_space;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CliSpaceOperation {
@@ -157,7 +157,8 @@ fn resolve_cli_space_core(
     }
 
     if let (Some(cwd), Some(config)) = (&inputs.cwd, &inputs.spaces_file) {
-        if let Some(mapped) = longest_mapping(cwd, config) {
+        let home = dirs::home_dir();
+        if let Some(mapped) = folder_space::mapped_space(cwd, config, home.as_deref()) {
             if let Some(registered_spaces) = registered_spaces {
                 validate_registered(&mapped, registered_spaces, "cwd mapping")?;
             }
@@ -169,7 +170,7 @@ fn resolve_cli_space_core(
     }
 
     if let Some(cwd) = &inputs.cwd {
-        if let Some(repo) = repository_basename(cwd) {
+        if let Some(repo) = folder_space::repository_folder_name(cwd) {
             match registered_spaces {
                 Some(registered_spaces) => {
                     if registered_spaces.contains(&repo) {
@@ -240,90 +241,6 @@ fn validate_registered(
         bail!("{source} names unregistered Space '{name}'");
     }
     Ok(())
-}
-
-fn longest_mapping(cwd: &Path, config: &Path) -> Option<String> {
-    let body = std::fs::read_to_string(config).ok()?;
-    let mut mappings: Vec<(String, String)> = Vec::new();
-    let mut prefix: Option<String> = None;
-    let mut space: Option<String> = None;
-
-    let mut finish = |prefix: &mut Option<String>, space: &mut Option<String>| {
-        if let (Some(prefix), Some(space)) = (prefix.take(), space.take()) {
-            mappings.push((prefix, space));
-        }
-    };
-    for line in body.lines() {
-        let line = line.trim();
-        if line == "[[mapping]]" {
-            finish(&mut prefix, &mut space);
-        } else if let Some(value) = parse_toml_string(line, "prefix") {
-            prefix = Some(value);
-        } else if let Some(value) = parse_toml_string(line, "space") {
-            space = Some(value);
-        }
-    }
-    finish(&mut prefix, &mut space);
-
-    mappings
-        .into_iter()
-        // `.rev()` makes `max_by_key` below (which returns the LAST maximum)
-        // return the FIRST-defined mapping among equal-length prefix matches,
-        // matching the documented tie-break (plugin/skills/README.md,
-        // plugin/examples/spaces.toml) and resolve-space.sh's strict `>` check.
-        .rev()
-        .filter_map(|(prefix, space)| {
-            let expanded = if prefix == "~" {
-                dirs::home_dir()
-            } else if let Some(suffix) = prefix.strip_prefix("~/") {
-                dirs::home_dir().map(|home| home.join(suffix))
-            } else {
-                Some(PathBuf::from(prefix))
-            }?;
-            cwd.starts_with(&expanded)
-                .then_some((expanded.as_os_str().len(), space))
-        })
-        .max_by_key(|(length, _)| *length)
-        .map(|(_, space)| space)
-}
-
-fn parse_toml_string(line: &str, key: &str) -> Option<String> {
-    let rest = line.strip_prefix(key)?.trim_start();
-    let rest = rest.strip_prefix('=')?.trim();
-    let value = rest.strip_prefix('"')?.strip_suffix('"')?.trim();
-    (!value.is_empty()).then(|| value.to_string())
-}
-
-fn repository_basename(cwd: &Path) -> Option<String> {
-    let common = Command::new("git")
-        .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
-        .current_dir(cwd)
-        .output()
-        .ok()?;
-    if !common.status.success() {
-        return None;
-    }
-    let common = PathBuf::from(String::from_utf8(common.stdout).ok()?.trim());
-    if common.file_name().and_then(|name| name.to_str()) == Some(".git") {
-        return common
-            .parent()?
-            .file_name()?
-            .to_str()
-            .map(ToOwned::to_owned);
-    }
-
-    let root = Command::new("git")
-        .args(["rev-parse", "--show-toplevel"])
-        .current_dir(cwd)
-        .output()
-        .ok()?;
-    if !root.status.success() {
-        return None;
-    }
-    PathBuf::from(String::from_utf8(root.stdout).ok()?.trim())
-        .file_name()?
-        .to_str()
-        .map(ToOwned::to_owned)
 }
 
 #[cfg(test)]
