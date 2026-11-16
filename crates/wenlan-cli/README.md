@@ -397,7 +397,7 @@ Options:
 
 ### `wenlan recall`
 
-Recall scored memories for a query, plus the compiled pages that match it.
+Find the memories and pages that match a query.
 
 ```text
 wenlan recall [OPTIONS] <QUERY>
@@ -413,7 +413,7 @@ Options:
 
 ### `wenlan rules`
 
-Read the approved working rules for one resolved Space.
+Read the working rules approved for a Space.
 
 ```text
 wenlan rules [OPTIONS]
@@ -948,7 +948,7 @@ Arguments:
 
 ### `wenlan spaces`
 
-Manage Spaces, the separate wikis Wenlan keeps (list, add, default, move, show, share-sync).
+Manage Spaces, the separate sets of pages Wenlan keeps (list, add, default, show).
 
 ```text
 wenlan spaces [OPTIONS] <COMMAND>
@@ -994,19 +994,6 @@ Options:
 
 - `--clear`: Clear the daemon-owned default save space.
 
-#### `wenlan spaces move`
-
-Bulk-reassign all memories from one space to another.
-
-```text
-wenlan spaces move [OPTIONS] <FROM> <TO>
-```
-
-Arguments:
-
-- `<FROM>`: Source space.
-- `<TO>`: Destination space.
-
 #### `wenlan spaces show`
 
 Show detail for a space — name, description, memory count, entity count, default + starred flags.
@@ -1019,28 +1006,11 @@ Arguments:
 
 - `<NAME>`: Space name.
 
-#### `wenlan spaces share-sync`
-
-Share a Space's pages through a folder a sync tool (Google Drive, iCloud) keeps the same on each member's computer: write this Space's new page versions there and take the other members' versions. Pages only; nothing from other Spaces, memories or chats goes into the folder.
-
-```text
-wenlan spaces share-sync [OPTIONS] --folder <FOLDER> <SPACE>
-```
-
-Arguments:
-
-- `<SPACE>`: Space name.
-
-Options:
-
-- `--folder <FOLDER>`: The shared folder. The first sync adds you to it.
-- `--name <NAME>`: The name the other members see for you. Left out, your display name in Settings.
-
-**Upkeep**
+**Advanced**
 
 ### `wenlan curate`
 
-Walk pending revisions (conflicts / merges) awaiting your accept or dismiss.
+List changes waiting for review, or dismiss one. Accepting is done in the Wenlan app.
 
 ```text
 wenlan curate [OPTIONS] [COMMAND]
@@ -1057,18 +1027,6 @@ wenlan curate revisions [OPTIONS]
 Options:
 
 - `-l, --limit <LIMIT>`: Max revisions to fetch. Default: `20`.
-
-#### `wenlan curate accept`
-
-Not available here: only the person accepts a revision, in the Wenlan app. Prints where to accept it and exits with an error.
-
-```text
-wenlan curate accept [OPTIONS] <REVISION_SOURCE_ID>
-```
-
-Arguments:
-
-- `<REVISION_SOURCE_ID>`: `revision_source_id` of the revision (from the list output).
 
 #### `wenlan curate dismiss`
 
@@ -1096,8 +1054,6 @@ Options:
 - `--allow-external`: Permit a deep semantic pass to use an already configured external provider.
 - `--agent-assist`: Return bounded high-recall semantic candidates for the calling agent.
 - `--agent-submission <JSON_FILE>`: Submit typed agent verdicts produced from a prior prepare report.
-
-**Advanced**
 
 ### `wenlan models`
 
@@ -1138,18 +1094,6 @@ Arguments:
 Options:
 
 - `-y, --yes`: Skip confirmation before downloading.
-
-#### `wenlan models reranker`
-
-Set the cross-encoder reranker mode (off/lite/full).
-
-```text
-wenlan models reranker [OPTIONS] <MODE>
-```
-
-Arguments:
-
-- `<MODE>`: Mode to persist; the daemon reads it at startup. Possible values: `off` (No cross-encoder on any path (default)), `lite` (Turbo CE (jina-turbo, ~146MB) on quick + context + explicit deep rerank), `full` (Turbo on the light paths; heavy bge-base (~1.1GB) on the deep rerank).
 
 ### `wenlan keys`
 
@@ -1315,7 +1259,7 @@ Options:
 
 ### `wenlan outbox`
 
-Inspect or sync notes saved locally while Wenlan was not running.
+Show or send what was saved locally while Wenlan was not running.
 
 ```text
 wenlan outbox [OPTIONS] <COMMAND>
@@ -1323,7 +1267,7 @@ wenlan outbox [OPTIONS] <COMMAND>
 
 #### `wenlan outbox status`
 
-List queued and failed envelope files without contacting the daemon.
+List what is waiting or failed, without contacting Wenlan.
 
 ```text
 wenlan outbox status [OPTIONS]
@@ -1331,7 +1275,7 @@ wenlan outbox status [OPTIONS]
 
 #### `wenlan outbox drain`
 
-Ask the daemon to replay queued envelopes.
+Send what is waiting to Wenlan now.
 
 ```text
 wenlan outbox drain [OPTIONS]

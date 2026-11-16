@@ -29,6 +29,7 @@ pub enum SpaceCmd {
         clear: bool,
     },
     /// Bulk-reassign all memories from one space to another.
+    #[command(hide = true)]
     Move {
         /// Source space.
         from: String,
@@ -44,6 +45,7 @@ pub enum SpaceCmd {
     /// iCloud) keeps the same on each member's computer: write this Space's
     /// new page versions there and take the other members' versions. Pages
     /// only; nothing from other Spaces, memories or chats goes into the folder.
+    #[command(hide = true)]
     ShareSync {
         // Not called `space`: that id is the global `--space` flag, and
         // clap would fill it with this value.

@@ -47,6 +47,7 @@ pub enum CurateAction {
     },
     /// Not available here: only the person accepts a revision, in the Wenlan
     /// app. Prints where to accept it and exits with an error.
+    #[command(hide = true)]
     Accept {
         /// `revision_source_id` of the revision (from the list output).
         revision_source_id: String,
