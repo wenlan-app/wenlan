@@ -1,6 +1,6 @@
 # wenlan-cli
 
-Wenlan's command line. Wenlan is a studio for everything you think, learn, and build with AI; the CLI is how you capture, recall, hand off, and keep the pages healthy from a terminal, plus set up and check the local runtime.
+Wenlan's command line. Wenlan holds the docs, skills and rules your AI tools keep current and work from; the CLI is how you capture, recall, hand off, and keep the pages healthy from a terminal, plus set up and check the local runtime.
 
 License: Apache-2.0.
 
@@ -171,9 +171,19 @@ Check the health of memories, pages, and the running Wenlan; report, then resolv
 wenlan lint
 ```
 
+**`wenlan init`**
+
+Run it once inside a git repository. It makes a Space named after the repository, ties the two, and offers to connect the AI tools it finds. The first time, it also asks whether to open a pull request every day (Enter means yes; `wenlan repo bind --daily off` stops it). After that the terminal and AI tools started in that folder use that Space; `wenlan status` shows which one.
+
+```bash
+cd ~/Repos/acme-api
+wenlan init
+wenlan status
+```
+
 **`wenlan spaces`**
 
-Manage memory spaces (buckets).
+Manage Spaces by hand. `wenlan init` covers the usual case.
 
 ```bash
 wenlan spaces list
@@ -713,6 +723,14 @@ Options:
 - `--anthropic-api-key-env <ENV_VAR>`: Read an Anthropic key from this environment variable.
 - `-y, --yes`: Skip confirmation prompts where possible.
 
+### `wenlan init`
+
+Set this repository up: a Space named after it, tied to it, and your AI tools connected.
+
+```text
+wenlan init [OPTIONS]
+```
+
 ### `wenlan open`
 
 Open Wenlan's personal browser UI.
@@ -740,7 +758,7 @@ Options:
 
 ### `wenlan status`
 
-Check whether Wenlan is running.
+Check whether Wenlan is running, and which Space this folder uses.
 
 ```text
 wenlan status [OPTIONS]
@@ -946,6 +964,8 @@ Arguments:
 
 - `[TEAM]`: The team's name or its server's address. Not needed when this computer is on one team.
 
+**Advanced**
+
 ### `wenlan spaces`
 
 Manage Spaces, the separate sets of pages Wenlan keeps (list, add, default, show).
@@ -1006,7 +1026,85 @@ Arguments:
 
 - `<NAME>`: Space name.
 
-**Advanced**
+### `wenlan repo`
+
+Put this Space's code pages into its git repository as a pull request. `wenlan wiki` is the earlier name and still works.
+
+```text
+wenlan repo [OPTIONS] <COMMAND>
+```
+
+#### `wenlan repo bind`
+
+Tie the Space to this git repository (or --repo), so its code pages can go into the repository as a pull request.
+
+```text
+wenlan repo bind [OPTIONS]
+```
+
+Options:
+
+- `--repo <REPO>`: Any folder inside the repository. Default: the current folder.
+- `--folder <FOLDER>`: Folder inside the repository for the pages. Default: wiki.
+- `--daily <HOUR|off>`: Bring the wiki up to date by itself every day after this local hour (0-23), or `off`.
+- `--agent <AGENT>`: The AI tool the daily run starts. Default: claude. Possible values: `claude`, `codex`, `cursor`, `copilot`.
+- `--on-github`: Run the daily update on GitHub Actions instead of this computer: the next publish adds the workflow to the pull request.
+- `--confirm-repo <OWNER/NAME>`: The repository pull requests go to (`owner/name` on GitHub, else the remote URL). Needed when it is not yours.
+
+#### `wenlan repo publish`
+
+Write the Space's code pages into the repository and open or update the pull request.
+
+```text
+wenlan repo publish [OPTIONS]
+```
+
+#### `wenlan repo status`
+
+Show the repository the Space is bound to and the last publish.
+
+```text
+wenlan repo status [OPTIONS]
+```
+
+#### `wenlan repo unbind`
+
+Stop putting this Space's pages into its repository.
+
+```text
+wenlan repo unbind [OPTIONS]
+```
+
+#### `wenlan repo refresh`
+
+Check the wiki folder of this checkout against the code: fix line numbers that moved and have an AI tool rewrite pages whose code changed. Works without Wenlan running; the GitHub Actions workflow runs it.
+
+```text
+wenlan repo refresh [OPTIONS]
+```
+
+Options:
+
+- `--repo <REPO>`: Any folder inside the repository. Default: the current folder.
+- `--folder <FOLDER>`: The folder of pages inside the repository. Default: wenlan, or wiki when the repository already holds its pages there.
+- `--agent <AGENT>`: The AI tool that rewrites pages whose code changed. Possible values: `claude`, `codex`, `cursor`, `copilot`, `none` (Only fix line numbers and list the pages that need rewriting). Default: `claude`.
+- `--pull-request`: Commit the changed pages on `wenlan/wiki-refresh` and open or update the pull request.
+
+#### `wenlan repo workflow`
+
+Print, or `--write`, the GitHub Actions workflow that runs `refresh` every day and opens a pull request when a page changed.
+
+```text
+wenlan repo workflow [OPTIONS]
+```
+
+Options:
+
+- `--repo <REPO>`: Any folder inside the repository. Default: the current folder.
+- `--folder <FOLDER>`: The folder of pages inside the repository. Default: wenlan, or wiki when the repository already holds its pages there.
+- `--agent <AGENT>`: The AI tool the workflow runs. Possible values: `claude`, `codex`, `cursor`, `copilot`. Default: `claude`.
+- `--utc-hour <UTC_HOUR>`: The hour (0-23, UTC) it runs every day. Default: `1`.
+- `--write`: Write it into the repository's GitHub workflows folder, as wenlan-wiki.yml, instead of printing it.
 
 ### `wenlan curate`
 
@@ -1176,86 +1274,6 @@ Turn off all model-backed background work without removing providers.
 ```text
 wenlan steep disable [OPTIONS]
 ```
-
-### `wenlan wiki`
-
-Put this Space's code pages into its git repository as a pull request.
-
-```text
-wenlan wiki [OPTIONS] <COMMAND>
-```
-
-#### `wenlan wiki bind`
-
-Tie the Space to this git repository (or --repo), so its code pages can go into the repository as a pull request.
-
-```text
-wenlan wiki bind [OPTIONS]
-```
-
-Options:
-
-- `--repo <REPO>`: Any folder inside the repository. Default: the current folder.
-- `--folder <FOLDER>`: Folder inside the repository for the pages. Default: wiki.
-- `--daily <HOUR|off>`: Bring the wiki up to date by itself every day after this local hour (0-23), or `off`.
-- `--agent <AGENT>`: The AI tool the daily run starts. Default: claude. Possible values: `claude`, `codex`, `cursor`, `copilot`.
-- `--on-github`: Run the daily update on GitHub Actions instead of this computer: the next publish adds the workflow to the pull request.
-- `--confirm-repo <OWNER/NAME>`: The repository pull requests go to (`owner/name` on GitHub, else the remote URL). Needed when it is not yours.
-
-#### `wenlan wiki publish`
-
-Write the Space's code pages into the repository and open or update the pull request.
-
-```text
-wenlan wiki publish [OPTIONS]
-```
-
-#### `wenlan wiki status`
-
-Show the repository the Space is bound to and the last publish.
-
-```text
-wenlan wiki status [OPTIONS]
-```
-
-#### `wenlan wiki unbind`
-
-Stop putting this Space's pages into its repository.
-
-```text
-wenlan wiki unbind [OPTIONS]
-```
-
-#### `wenlan wiki refresh`
-
-Check the wiki folder of this checkout against the code: fix line numbers that moved and have an AI tool rewrite pages whose code changed. Works without Wenlan running; the GitHub Actions workflow runs it.
-
-```text
-wenlan wiki refresh [OPTIONS]
-```
-
-Options:
-
-- `--repo <REPO>`: Any folder inside the repository. Default: the current folder.
-- `--folder <FOLDER>`: The wiki folder inside the repository. Default: `wiki`.
-- `--agent <AGENT>`: The AI tool that rewrites pages whose code changed. Possible values: `claude`, `codex`, `cursor`, `copilot`, `none` (Only fix line numbers and list the pages that need rewriting). Default: `claude`.
-- `--pull-request`: Commit the changed pages on `wenlan/wiki-refresh` and open or update the pull request.
-
-#### `wenlan wiki workflow`
-
-Print, or `--write`, the GitHub Actions workflow that runs `refresh` every day and opens a pull request when a page changed.
-
-```text
-wenlan wiki workflow [OPTIONS]
-```
-
-Options:
-
-- `--repo <REPO>`: Any folder inside the repository. Default: the current folder.
-- `--folder <FOLDER>`: The wiki folder inside the repository. Default: `wiki`.
-- `--agent <AGENT>`: The AI tool the workflow runs. Possible values: `claude`, `codex`, `cursor`, `copilot`. Default: `claude`.
-- `--utc-hour <UTC_HOUR>`: The hour (0-23, UTC) it runs every day. Default: `1`.
-- `--write`: Write it into the repository's GitHub workflows folder, as wenlan-wiki.yml, instead of printing it.
 
 ### `wenlan outbox`
 

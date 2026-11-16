@@ -14,7 +14,7 @@ use wenlan_types::lint::LintProfile;
 #[command(
     name = "wenlan",
     version,
-    about = "Wenlan: a studio for everything you think, learn, and build with AI. Capture, recall, and hand off across sessions."
+    about = "Wenlan: docs, skills and rules your AI tools keep current and work from. Capture, recall, and hand off across sessions."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -48,7 +48,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Check whether Wenlan is running.
+    /// Check whether Wenlan is running, and which Space this folder uses.
     Status,
     /// Open Wenlan's personal browser UI.
     Open,
@@ -67,6 +67,8 @@ enum Commands {
         #[arg(short = 'y', long)]
         yes: bool,
     },
+    /// Set this repository up: a Space named after it, tied to it, and your AI tools connected.
+    Init,
     /// Start Wenlan now and keep it running in the background after login.
     Start,
     /// Stop Wenlan. It stays off until `wenlan start`.
@@ -214,6 +216,8 @@ enum Commands {
         command: commands::export::ExportCommand,
     },
     /// Put this Space's code pages into its git repository as a pull request.
+    /// `wenlan wiki` is the earlier name and still works.
+    #[command(name = "repo", alias = "wiki")]
     Wiki {
         #[command(subcommand)]
         command: commands::wiki::WikiCommand,
@@ -242,15 +246,15 @@ const HELP_GROUPS: &[(&str, &[&str])] = &[
     (
         "Setup",
         &[
-            "setup", "open", "connect", "status", "doctor", "start", "stop", "restart",
+            "setup", "init", "open", "connect", "status", "doctor", "start", "stop", "restart",
         ],
     ),
-    ("Team", &["team", "spaces"]),
+    ("Team", &["team"]),
     (
         ADVANCED_GROUP,
         &[
-            "curate", "lint", "models", "keys", "steep", "wiki", "outbox", "export", "entities",
-            "tool",
+            "spaces", "repo", "curate", "lint", "models", "keys", "steep", "outbox", "export",
+            "entities", "tool",
         ],
     ),
 ];
@@ -570,6 +574,7 @@ async fn main() -> anyhow::Result<ExitCode> {
             })
             .await?
         }
+        Commands::Init => commands::init::run(&client, format, cli.quiet).await?,
         Commands::Start => {
             commands::service::run_background(commands::service::BackgroundCommand::On).await?
         }
@@ -743,6 +748,33 @@ mod catalog_tests {
             visible,
             "HELP_GROUPS in main.rs drifted from the visible clap subcommands"
         );
+    }
+
+    /// UX-CLI-3: turning Wenlan on and off uses the plain words, each one
+    /// listed in the short help, and the earlier `background on|off` still
+    /// parses.
+    #[test]
+    fn ux_cli_3_start_stop_and_restart_are_plain_top_level_words() {
+        use super::Commands;
+        use clap::Parser;
+
+        let start = Cli::try_parse_from(["wenlan", "start"]).expect("start");
+        assert!(matches!(start.command, Commands::Start));
+        let stop = Cli::try_parse_from(["wenlan", "stop"]).expect("stop");
+        assert!(matches!(stop.command, Commands::Stop));
+        let restart = Cli::try_parse_from(["wenlan", "restart"]).expect("restart");
+        assert!(matches!(restart.command, Commands::Restart));
+
+        let listed: BTreeSet<&str> = super::HELP_GROUPS
+            .iter()
+            .flat_map(|(_, names)| names.iter().copied())
+            .collect();
+        for word in ["start", "stop", "restart"] {
+            assert!(listed.contains(word), "{word} left the short help");
+        }
+
+        Cli::try_parse_from(["wenlan", "background", "on"]).expect("background on");
+        Cli::try_parse_from(["wenlan", "background", "off"]).expect("background off");
     }
 
     /// `wenlan pages lock|unlock <id>` parse as the review-lock actions, and

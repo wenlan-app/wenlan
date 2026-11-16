@@ -226,7 +226,7 @@ is connected. Otherwise run the `wiki status` command of step 8 first; when it
 prints `null`, or the command is missing, skip this step.
 
 1. List the docs with `git ls-files '*.md' '*.mdx'`. Leave out the wiki folder
-   (`folder` in the status, `wiki` by default), any changelog and anything
+   (`folder` in the status, `wenlan` by default), any changelog and anything
    under `node_modules`. Read at most 30 per run, in this order: `README.md`,
    `AGENTS.md`, `CLAUDE.md`, then files under `docs/`, then `SKILL.md` files,
    then the rest.
@@ -268,7 +268,7 @@ W="$(command -v wenlan || echo "$HOME/.wenlan/bin/wenlan")"
   a link to open the pull request by hand).
 - It prints `null`: find where a pull request would go with
   `git -C "$repo_root" remote get-url origin` (on GitHub, the `owner/name` in
-  it). Ask once whether to put the pages in this repository's `wiki/` folder
+  it). Ask once whether to put the pages in this repository's `wenlan/` folder
   and open a pull request there, naming that repository in the question.
   Offer two answers, with No first and as the default: "No, keep the pages in
   Wenlan only" and "Yes, open a pull request on <owner/name>". Only a clear

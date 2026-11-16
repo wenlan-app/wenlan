@@ -174,8 +174,8 @@ pub fn load_update(path: &Path) -> Result<BriefUpdateRequest> {
 fn format_brief(response: &BriefReadResponse) -> String {
     match response.state {
         BriefReadState::SpaceNotResolved => {
-            "No Space picked. Make one with `wenlan spaces add <NAME> --default`, or see yours with \
-             `wenlan spaces list` and run `wenlan --space <NAME> brief`.\n"
+            "No Space for this folder yet. Inside a git repository, `wenlan init` sets one up. \
+             Elsewhere, `wenlan spaces list` shows yours and `wenlan --space <NAME> brief` reads one.\n"
                 .into()
         }
         BriefReadState::BriefNotCreated => format!(
@@ -449,6 +449,28 @@ mod tests {
         assert!(output.starts_with("Version 1 ("));
         assert!(output.ends_with(&current));
         assert!(!output.contains("secret-"));
+    }
+
+    /// UX-CLI-4: a new install has no Space yet, and its first `wenlan brief`
+    /// says so in plain words and names the command that makes one.
+    #[test]
+    fn ux_cli_4_a_brief_with_no_space_names_the_command_that_makes_one() {
+        let output = format_brief(&BriefReadResponse {
+            state: BriefReadState::SpaceNotResolved,
+            space: None,
+            brief: None,
+            related_context: None,
+            code_basis_pending: None,
+            code_basis_pending_explained: false,
+            getting_started: None,
+        });
+
+        assert!(
+            output.starts_with("No Space for this folder yet."),
+            "{output}"
+        );
+        assert!(output.contains("`wenlan init` sets one up"), "{output}");
+        assert!(!output.contains("not resolved"), "{output}");
     }
 
     #[test]

@@ -100,7 +100,7 @@ fn tool_list_prints_one_line_per_tool_sorted() {
 }
 
 #[test]
-fn tool_call_sends_typed_arguments_and_the_daemon_address() {
+fn ux_cli_1_tool_call_sends_typed_arguments_and_the_daemon_address() {
     let dir = tempfile::tempdir().unwrap();
     let mcp = stand_in(dir.path(), &[text("{\"count\":0,\"pages\":[]}")]);
     cli(&mcp)
@@ -137,7 +137,7 @@ fn tool_call_sends_typed_arguments_and_the_daemon_address() {
 }
 
 #[test]
-fn a_tool_that_reports_an_error_fails_with_the_tools_own_sentence() {
+fn ux_cli_4_a_tool_that_reports_an_error_fails_with_the_tools_own_sentence() {
     let dir = tempfile::tempdir().unwrap();
     let mut refusal = text("Delete operations are not available over remote connections.");
     refusal["isError"] = json!(true);
@@ -386,7 +386,7 @@ fn sources_read_needs_a_space_and_sends_the_kind() {
 }
 
 #[test]
-fn help_keeps_advanced_commands_on_a_second_page() {
+fn ux_cli_2_help_keeps_advanced_commands_on_a_second_page() {
     let dir = tempfile::tempdir().unwrap();
     let mcp = stand_in(dir.path(), &[]);
     cli(&mcp).arg("--help").assert().success().stdout(
@@ -399,8 +399,17 @@ fn help_keeps_advanced_commands_on_a_second_page() {
         .assert()
         .success()
         .stdout(predicate::str::contains("\n  models ").and(predicate::str::contains("\n  tool ")));
+    // Earlier names keep working after a rename.
     cli(&mcp)
         .args(["team", "host", "--help"])
+        .assert()
+        .success();
+    cli(&mcp)
+        .args(["wiki", "status", "--help"])
+        .assert()
+        .success();
+    cli(&mcp)
+        .args(["background", "on", "--help"])
         .assert()
         .success();
     cli(&mcp)

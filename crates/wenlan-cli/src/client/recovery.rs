@@ -99,7 +99,7 @@ mod tests {
     };
 
     #[test]
-    fn connect_failure_hint_names_the_next_command_for_a_loopback_daemon() {
+    fn ux_cli_4_connect_failure_hint_names_the_next_command_for_a_loopback_daemon() {
         let hint = connect_failure_hint("http://127.0.0.1:1");
         assert!(
             hint.starts_with("Wenlan is not running at http://127.0.0.1:1"),

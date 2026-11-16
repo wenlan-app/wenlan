@@ -625,6 +625,37 @@ and wait for evidence that people need them.
   repo's `AGENTS.md` in a PR (UX-SKILL-7).
   原文：「我們這改動包含團隊了嗎？」「可以下個 PR 繼續開搞」（2026-11-15 23:30Z）。
 
+## From the terminal
+
+- **UX-CLI-1** `shipped` Same things, two doors. Whatever an AI tool can do in
+  Wenlan, a person can do from the terminal under the matching name
+  (`write_page` is `wenlan pages write`), and `wenlan tool call` reaches any
+  tool by its own name. The terminal adds only installing, setting up and team.
+  原文：「建議指令要完整，然後明確跟 MCP 的分工，有時候我還是會不太清楚區別」（2026-11-15 21:03Z）；「要的，以及你其他建議也同意。」（2026-11-15 21:36Z）。
+- **UX-CLI-2** `shipped` `wenlan --help` fits one screen: what a person needs
+  in the first week, in named groups. Everything else is under
+  `wenlan help all`. A command that leaves the short help, or gets a new name,
+  keeps working under its old name.
+  原文：「精簡這些，總感覺亂亂的」（2026-11-15 21:06Z）；選擇卡「四項都做」（2026-11-16 07:07Z）；選擇卡「wenlan repo」（2026-11-16 08:15Z）。
+- **UX-CLI-3** `shipped` Turning Wenlan on and off uses plain words:
+  `wenlan start`, `wenlan stop`, `wenlan restart`.
+  原文：「background 要改名？感覺像是 restart 就挺直觀的。」（2026-11-15 21:35Z）；「要的，以及你其他建議也同意。」（2026-11-15 21:36Z）。
+- **UX-CLI-4** `shipped` When something fails, the terminal says what happened
+  in plain words and names the next command to run. A refusal shows Wenlan's
+  own sentence, not a status code or an address.
+  原文：「要讓體驗簡潔易懂」（2026-11-16 08:23Z）。
+- **UX-CLI-5** `shipped` The repository is the Space. Inside a git
+  repository, `wenlan init` sets it up in one step: it makes a Space named
+  after the repository, ties the two, and connects the AI tools on this
+  computer. From then on the terminal and every AI tool started in that
+  folder use that Space without being told, and `wenlan status` shows which
+  Space the folder uses. `wenlan spaces` and `wenlan repo` keep working and
+  sit under `wenlan help all`. When it first ties a repository, `wenlan init`
+  asks once whether to open a pull request every day, and Enter means yes;
+  with nobody to ask, the daily run stays off and the command that turns it
+  on is named. It never ties a repository that is not yours without a yes.
+  原文：「跟空間啥的一起思考呢？」（2026-11-16 08:15Z）；「對 還有意思是指 讓他們進到 repo 後就可以下指令不用 wenlan repo 動作」（2026-11-16 08:30Z）；「那這樣 wenlan space 還有存在必要？」「還是說要怎麼整合整併」（2026-11-16 08:33Z）；「繼續推進」（2026-11-16 08:35Z）；「感覺可以」（2026-11-16，答「讓 init 多問一句『要不要每天自動開 PR』，預設是要」）。
+
 ## Adding to Wenlan
 
 - **UX-ADD-1** `planned` There is one "Add to Wenlan" in the app; the shortcut,
