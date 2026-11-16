@@ -214,6 +214,8 @@ enum Commands {
         command: commands::export::ExportCommand,
     },
     /// Put this Space's code pages into its git repository as a pull request.
+    /// `wenlan wiki` is the earlier name and still works.
+    #[command(name = "repo", alias = "wiki")]
     Wiki {
         #[command(subcommand)]
         command: commands::wiki::WikiCommand,
@@ -249,7 +251,7 @@ const HELP_GROUPS: &[(&str, &[&str])] = &[
     (
         ADVANCED_GROUP,
         &[
-            "curate", "lint", "models", "keys", "steep", "wiki", "outbox", "export", "entities",
+            "curate", "lint", "models", "keys", "steep", "repo", "outbox", "export", "entities",
             "tool",
         ],
     ),

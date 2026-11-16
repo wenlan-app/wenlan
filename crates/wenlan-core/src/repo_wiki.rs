@@ -918,7 +918,7 @@ fn bound_origin(binding: &RepoWikiBinding) -> Result<String, WenlanError> {
         if !same_remote(bound, &remote) {
             return Err(WenlanError::Validation(format!(
                 "the repository's `origin` changed since it was bound (was {bound}, now \
-                 {remote}); nothing was pushed. Run `wenlan wiki bind` again to publish there"
+                 {remote}); nothing was pushed. Run `wenlan repo bind` again to publish there"
             )));
         }
     }

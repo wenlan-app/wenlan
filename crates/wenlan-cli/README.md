@@ -1177,20 +1177,20 @@ Turn off all model-backed background work without removing providers.
 wenlan steep disable [OPTIONS]
 ```
 
-### `wenlan wiki`
+### `wenlan repo`
 
-Put this Space's code pages into its git repository as a pull request.
+Put this Space's code pages into its git repository as a pull request. `wenlan wiki` is the earlier name and still works.
 
 ```text
-wenlan wiki [OPTIONS] <COMMAND>
+wenlan repo [OPTIONS] <COMMAND>
 ```
 
-#### `wenlan wiki bind`
+#### `wenlan repo bind`
 
 Tie the Space to this git repository (or --repo), so its code pages can go into the repository as a pull request.
 
 ```text
-wenlan wiki bind [OPTIONS]
+wenlan repo bind [OPTIONS]
 ```
 
 Options:
@@ -1202,36 +1202,36 @@ Options:
 - `--on-github`: Run the daily update on GitHub Actions instead of this computer: the next publish adds the workflow to the pull request.
 - `--confirm-repo <OWNER/NAME>`: The repository pull requests go to (`owner/name` on GitHub, else the remote URL). Needed when it is not yours.
 
-#### `wenlan wiki publish`
+#### `wenlan repo publish`
 
 Write the Space's code pages into the repository and open or update the pull request.
 
 ```text
-wenlan wiki publish [OPTIONS]
+wenlan repo publish [OPTIONS]
 ```
 
-#### `wenlan wiki status`
+#### `wenlan repo status`
 
 Show the repository the Space is bound to and the last publish.
 
 ```text
-wenlan wiki status [OPTIONS]
+wenlan repo status [OPTIONS]
 ```
 
-#### `wenlan wiki unbind`
+#### `wenlan repo unbind`
 
 Stop putting this Space's pages into its repository.
 
 ```text
-wenlan wiki unbind [OPTIONS]
+wenlan repo unbind [OPTIONS]
 ```
 
-#### `wenlan wiki refresh`
+#### `wenlan repo refresh`
 
 Check the wiki folder of this checkout against the code: fix line numbers that moved and have an AI tool rewrite pages whose code changed. Works without Wenlan running; the GitHub Actions workflow runs it.
 
 ```text
-wenlan wiki refresh [OPTIONS]
+wenlan repo refresh [OPTIONS]
 ```
 
 Options:
@@ -1241,12 +1241,12 @@ Options:
 - `--agent <AGENT>`: The AI tool that rewrites pages whose code changed. Possible values: `claude`, `codex`, `cursor`, `copilot`, `none` (Only fix line numbers and list the pages that need rewriting). Default: `claude`.
 - `--pull-request`: Commit the changed pages on `wenlan/wiki-refresh` and open or update the pull request.
 
-#### `wenlan wiki workflow`
+#### `wenlan repo workflow`
 
 Print, or `--write`, the GitHub Actions workflow that runs `refresh` every day and opens a pull request when a page changed.
 
 ```text
-wenlan wiki workflow [OPTIONS]
+wenlan repo workflow [OPTIONS]
 ```
 
 Options:

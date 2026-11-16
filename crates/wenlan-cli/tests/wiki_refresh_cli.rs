@@ -134,6 +134,8 @@ fn refresh_moves_lines_rewrites_changed_pages_and_pushes_a_branch() {
         .env("HOME", dir.path())
         .env("WENLAN_NO_AUTOSTART", "1")
         .env("ANTHROPIC_API_KEY", "")
+        // `wiki` is the earlier name of `repo`; workflows already installed in
+        // people's repositories call it, so this run keeps proving it works.
         .args(["--format", "json", "wiki", "refresh", "--pull-request"])
         .output()
         .unwrap();
@@ -197,10 +199,10 @@ fn refresh_without_a_manifest_says_what_to_do() {
         .unwrap()
         .current_dir(dir.path())
         .env("WENLAN_NO_AUTOSTART", "1")
-        .args(["wiki", "refresh", "--agent", "none"])
+        .args(["repo", "refresh", "--agent", "none"])
         .assert()
         .failure()
-        .stderr(predicates::str::contains("wenlan wiki publish"));
+        .stderr(predicates::str::contains("wenlan repo publish"));
 }
 
 #[test]
@@ -208,11 +210,11 @@ fn workflow_prints_the_github_actions_file() {
     Command::cargo_bin("wenlan")
         .unwrap()
         .env("WENLAN_NO_AUTOSTART", "1")
-        .args(["wiki", "workflow", "--agent", "codex", "--utc-hour", "6"])
+        .args(["repo", "workflow", "--agent", "codex", "--utc-hour", "6"])
         .assert()
         .success()
         .stdout(predicates::str::contains("cron: \"17 6 * * *\""))
         .stdout(predicates::str::contains(
-            "wenlan wiki refresh --folder wiki --agent codex --pull-request",
+            "wenlan repo refresh --folder wiki --agent codex --pull-request",
         ));
 }

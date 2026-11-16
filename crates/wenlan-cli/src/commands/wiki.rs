@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! `wenlan wiki` — put a Space's code pages into its git repository.
+//! `wenlan repo` (earlier `wenlan wiki`) — put a Space's code pages into its git repository.
 //!
 //! `bind` ties the Space to the repository the command runs in (or
 //! `--repo`), `publish` writes the pages into the repository's wiki folder on
@@ -150,7 +150,7 @@ pub async fn run(
                     match format {
                         ResolvedFormat::Json => print_json(&serde_json::Value::Null)?,
                         ResolvedFormat::Table => println!(
-                            "Space '{space}' is not bound to a repository. `wenlan wiki bind` ties it to this one."
+                            "Space '{space}' is not bound to a repository. `wenlan repo bind` ties it to this one."
                         ),
                     }
                 }
