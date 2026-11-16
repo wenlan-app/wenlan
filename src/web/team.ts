@@ -97,6 +97,9 @@ export interface TeamMe {
   name: string;
   spaces: TeamMeSpace[];
   team?: { name?: string | null } | null;
+  /** The people this member shares a Space with, to name who changed a
+   *  page: id and name only. Left out by an older server. */
+  people?: { id: string; name: string; owner?: boolean }[];
 }
 
 let meCache: Promise<TeamMe | null> | null = null;

@@ -1506,11 +1506,30 @@ fn same_site_as_host(origin: &str, headers: &HeaderMap) -> bool {
         .any(|authority| authority.eq_ignore_ascii_case(host))
 }
 
+/// `GET /team/v1/me`, and the people this member shares a Space with
+/// (names only), so their browser can name who changed a page.
+#[derive(serde::Serialize)]
+struct MeWithPeople {
+    #[serde(flatten)]
+    me: wenlan_types::team::TeamMe,
+    people: Vec<wenlan_types::team::TeamPerson>,
+}
+
 async fn team_me(State(state): State<TeamState>, Extension(member): Extension<Member>) -> Response {
     let settings = state.settings_path.clone();
-    let hosted = tokio::task::spawn_blocking(move || team::hosted_spaces(&settings)).await;
-    match hosted {
-        Ok(Ok(hosted)) => Json(member.me(&hosted)).into_response(),
+    let team_path = state.team_path.clone();
+    let read = tokio::task::spawn_blocking(move || {
+        let hosted = team::hosted_spaces(&settings)?;
+        let file = team::read_team(&team_path)?;
+        Ok::<_, wenlan_core::error::WenlanError>((hosted, file))
+    })
+    .await;
+    match read {
+        Ok(Ok((hosted, file))) => Json(MeWithPeople {
+            me: member.me(&hosted),
+            people: team::people_sharing_with(&file, &member, &hosted),
+        })
+        .into_response(),
         _ => (
             StatusCode::INTERNAL_SERVER_ERROR,
             "the Spaces cannot be read",

@@ -4,6 +4,7 @@
 import { useQuery } from "@tanstack/react-query";
 import type { TFunction } from "i18next";
 import { listShares, type SharedMember, type SharedStatus, type TeamInfo } from "../../../lib/tauri";
+import { teamWriter } from "./teamPeople";
 
 export const SHARES_KEY = ["shares"] as const;
 
@@ -89,6 +90,8 @@ export function withLine(share: SharedStatus, t: TFunction): string {
 /** Who wrote a page's last version, when it was another member: their name,
  *  or "<name>'s AI tool". `null` for this person and anyone else. */
 export function sharedWriter(editedBy: string | null | undefined, shares: readonly SharedStatus[] | undefined, t: TFunction): string | null {
+  const fromTeam = teamWriter(editedBy, t);
+  if (fromTeam) return fromTeam;
   const found = /^(shared_person|shared_ai):([A-Za-z0-9_-]+)$/.exec(editedBy ?? "");
   if (!found || !shares) return null;
   const [, kind, id] = found;

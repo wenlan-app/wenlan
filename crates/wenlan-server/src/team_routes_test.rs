@@ -846,3 +846,74 @@ async fn the_owner_is_told_every_hosted_space_and_can_read_it() {
     .await;
     assert_eq!(status, StatusCode::OK);
 }
+
+/// `people` names whoever may have changed a page the member can open, and
+/// nobody else: id and name only, never a key, a key hash or an invite.
+#[tokio::test]
+async fn a_member_learns_only_the_names_of_people_in_their_spaces() {
+    let f = fixture();
+    let (owner, _) = team::owner_key(&f.state.team_path, "Lin").unwrap();
+    let gone = team::add_member(
+        &f.state.team_path,
+        "Dee",
+        &[TeamSpaceAccess {
+            space: "Design".into(),
+            access: TeamAccess::Write,
+            id: None,
+        }],
+    )
+    .unwrap();
+    team::remove_member(&f.state.team_path, &gone.0.id).unwrap();
+    let (status, body) = call(
+        &f.state,
+        Method::GET,
+        "/team/v1/me",
+        Some(&f.reader.1),
+        vec![],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let me: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let people: Vec<wenlan_types::team::TeamPerson> =
+        serde_json::from_value(me["people"].clone()).unwrap();
+    let mut named: Vec<(&str, &str, bool)> = people
+        .iter()
+        .map(|person| (person.id.as_str(), person.name.as_str(), person.owner))
+        .collect();
+    named.sort();
+    let mut want = vec![
+        (f.writer.0.id.as_str(), "Amy", false),
+        (f.reader.0.id.as_str(), "Bo", false),
+        // A removed member's past changes keep their name.
+        (gone.0.id.as_str(), "Dee", false),
+        (owner.id.as_str(), "Lin", true),
+    ];
+    want.sort();
+    assert_eq!(named, want, "Cy shares no Space with Bo");
+    // Each person is an id, a name and the owner mark: nothing else.
+    for person in me["people"].as_array().unwrap() {
+        let keys: Vec<&String> = person.as_object().unwrap().keys().collect();
+        assert!(
+            keys.iter()
+                .all(|key| ["id", "name", "owner"].contains(&key.as_str())),
+            "{keys:?}"
+        );
+    }
+    let text = String::from_utf8(body).unwrap();
+    for secret in [&f.writer.1, &f.outsider.1, &f.writer.0.key_sha256] {
+        assert!(!text.contains(secret.as_str()));
+    }
+    assert!(!text.contains("Cy") && !text.contains("Other") && !text.contains("join"));
+
+    // Cy's only Space, "Other", is not hosted here: Cy is told of nobody.
+    let (_, body) = call(
+        &f.state,
+        Method::GET,
+        "/team/v1/me",
+        Some(&f.outsider.1),
+        vec![],
+    )
+    .await;
+    let me: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(me["people"], serde_json::json!([]));
+}

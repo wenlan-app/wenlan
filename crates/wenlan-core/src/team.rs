@@ -24,7 +24,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use wenlan_types::team::{TeamAccess, TeamInfo, TeamMe, TeamMember, TeamRole, TeamSpaceAccess};
+use wenlan_types::team::{
+    TeamAccess, TeamInfo, TeamMe, TeamMember, TeamPerson, TeamRole, TeamSpaceAccess,
+};
 
 use crate::error::WenlanError;
 use crate::shared_space::{self, version, Scope, SpaceMember};
@@ -217,6 +219,40 @@ pub fn read_team(path: &Path) -> Result<TeamFile, WenlanError> {
         member.team = info.clone();
     }
     Ok(file)
+}
+
+/// The people `member` shares a hosted Space with, `member` included, by id
+/// and name only: who may have changed a page they can open. A removed
+/// member stays listed, so their past changes keep their name; nobody who
+/// shares no hosted Space with `member` is listed.
+pub fn people_sharing_with(
+    file: &TeamFile,
+    member: &Member,
+    hosted: &[(String, PathBuf)],
+) -> Vec<TeamPerson> {
+    let hosted_space = |space: &str| hosted.iter().any(|(name, _)| name == space);
+    let mine: std::collections::BTreeSet<String> = member
+        .me(hosted)
+        .spaces
+        .into_iter()
+        .map(|entry| entry.space)
+        .filter(|space| hosted_space(space))
+        .collect();
+    file.members
+        .iter()
+        .filter(|other| {
+            other
+                .me(hosted)
+                .spaces
+                .iter()
+                .any(|entry| mine.contains(&entry.space))
+        })
+        .map(|other| TeamPerson {
+            id: other.id.clone(),
+            name: other.name.clone(),
+            owner: other.role == TeamRole::Owner,
+        })
+        .collect()
 }
 
 /// Changes `team.json` under its lock and writes it back (0600 on Unix: it

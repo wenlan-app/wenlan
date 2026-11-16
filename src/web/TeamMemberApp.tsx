@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { setTeamPeople } from "../components/memory/sharing/teamPeople";
 import { readTeamKey, teamMe } from "./team";
 import { TeamAccessProvider, teamAccessFor, type TeamAccess } from "./teamAccess";
 
@@ -18,6 +19,7 @@ export function TeamMemberApp({ children }: { children: ReactNode }) {
     let live = true;
     void teamMe().then((me) => {
       if (!live) return;
+      if (me) setTeamPeople(me.member_id, me.people ?? []);
       setState(me ? { kind: "ready", access: teamAccessFor(me) } : { kind: "dead" });
     });
     return () => {

@@ -230,6 +230,20 @@ pub struct TeamHostSpaceRequest {
     pub rename_to: Option<String>,
 }
 
+/// One person a member shares a Space with, as `GET /team/v1/me` lists them
+/// (`people`): enough to name who changed a page, and nothing else.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamPerson {
+    /// The id their changes are recorded under (`shared_person:<id>`,
+    /// `<tool>@team.<id>`).
+    pub id: String,
+    pub name: String,
+    /// The team's owner: the person at the server's own computer, whose
+    /// changes are recorded as this computer's person.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub owner: bool,
+}
+
 /// `GET /team/v1/me`: who a key belongs to and what they can use.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TeamMe {
