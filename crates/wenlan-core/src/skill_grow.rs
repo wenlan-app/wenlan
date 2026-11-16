@@ -159,6 +159,35 @@ pub fn citation_free(text: &str) -> String {
 /// the sentence before ("Furthermore, …"), or one still carrying a citation
 /// marker. The line is the quote verbatim, so such a span is dropped rather
 /// than repaired.
+/// A quote that stops before its sentence does: it has no closing mark and
+/// the source carries on along the same line (" — one session caught …").
+/// A list item or heading that simply ends its line is whole.
+pub fn cut_mid_sentence(source: &str, quote: &str) -> bool {
+    let quote = quote.trim_end();
+    if quote.ends_with(['.', '!', '?', '。', '！', '？', '"', '」', '）', ')']) {
+        return false;
+    }
+    let Some(at) = source.find(quote) else {
+        return false;
+    };
+    let rest = source[at + quote.len()..].trim_start_matches([' ', '\t']);
+    !(rest.is_empty() || rest.starts_with(['\n', '\r']))
+}
+
+/// A sentence whose second or third word points at something named in the
+/// sentence before it ("Treat it as …", "Skipping either step …").
+fn points_outside_itself(quote: &str) -> bool {
+    quote
+        .split_whitespace()
+        .skip(1)
+        .take(2)
+        .map(|word| {
+            word.trim_matches(|c: char| !c.is_alphanumeric())
+                .to_lowercase()
+        })
+        .any(|word| matches!(word.as_str(), "it" | "them" | "either"))
+}
+
 pub fn is_fragment(quote: &str) -> bool {
     const LEADS: &[&str] = &[
         "which",
@@ -284,6 +313,8 @@ pub fn parse_grow(raw: &str, pages: &[SkillPageInput]) -> Vec<SkillLine> {
             || !citation_free(&redact_for_model(&page.text)).contains(&quote)
             || !meaning_is_consistent(&text, &quote)
             || is_fragment(&quote)
+            || points_outside_itself(&quote)
+            || cut_mid_sentence(&citation_free(&page.text), &quote)
             || crate::ai_memory_import::looks_sensitive(&text)
             || crate::ai_memory_import::looks_sensitive(&quote)
             || redact_for_model(&text) != text
@@ -523,11 +554,13 @@ pub const RULES_MAIN_FILE_MAX: usize = 30;
 pub const TOOL_RULES_START: &str = "<!-- WENLAN:RULES:START -->";
 pub const TOOL_RULES_END: &str = "<!-- WENLAN:RULES:END -->";
 
-/// The block for a tool's own file: the lines used in every Space, one per
+/// The block for a tool's own file: the rules used in every Space, one per
 /// line. `None` when there are none.
 pub fn tool_rules_block(lines: &[SkillLine]) -> Option<String> {
+    // Only rules: a decision or a pitfall read as a bare order misleads.
     let rules = lines
         .iter()
+        .filter(|line| line.kind == SkillLineKind::Rule)
         .map(|line| line.text.split_whitespace().collect::<Vec<_>>().join(" "))
         .filter(|text| !text.is_empty() && !text.contains(TOOL_RULES_END))
         .take(RULES_MAIN_FILE_MAX)

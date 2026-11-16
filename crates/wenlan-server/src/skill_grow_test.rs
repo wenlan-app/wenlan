@@ -185,6 +185,7 @@ impl Scratch {
         SkillDirs {
             home: Some(self.home.clone()),
             config: Some(self.config.clone()),
+            tool_files: true,
         }
     }
 }
@@ -1404,6 +1405,12 @@ async fn ux_skill_8_general_rules_are_kept_in_each_connected_tools_own_file() {
     )
     .await
     .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&codex_file).unwrap(),
+        "# Mine\n\nUse pnpm.\n",
+        "a run on scratch data never writes the person's tool files by itself"
+    );
+    sync_rules_files_in(&scratch.db, &scratch.skill_dirs()).await;
 
     let codex = std::fs::read_to_string(&codex_file).unwrap();
     assert!(codex.starts_with("# Mine\n\nUse pnpm.\n\n<!-- WENLAN:RULES:START -->"));
@@ -1415,6 +1422,18 @@ async fn ux_skill_8_general_rules_are_kept_in_each_connected_tools_own_file() {
         "a tool that is not there gets no folder"
     );
 
+    // A tool the person turned off loses the part; the other keeps it.
+    scratch
+        .db
+        .update_agent("claude-code", None, None, Some(false), None, None)
+        .await
+        .unwrap();
+    sync_rules_files_in(&scratch.db, &scratch.skill_dirs()).await;
+    assert!(!claude_file.exists());
+    assert!(std::fs::read_to_string(&codex_file)
+        .unwrap()
+        .contains(GENERAL_QUOTE));
+
     let set = |on: bool| {
         wenlan_core::config::update_config(move |cfg| {
             cfg.skills_from_library = on;
@@ -1424,7 +1443,7 @@ async fn ux_skill_8_general_rules_are_kept_in_each_connected_tools_own_file() {
     };
     // Off takes Wenlan's part out and leaves the person's text as it was.
     set(false);
-    sync_rules_files_quietly(&scratch.db).await;
+    sync_rules_files_in(&scratch.db, &scratch.skill_dirs()).await;
     assert_eq!(
         std::fs::read_to_string(&codex_file).unwrap(),
         "# Mine\n\nUse pnpm.\n"
@@ -1434,7 +1453,7 @@ async fn ux_skill_8_general_rules_are_kept_in_each_connected_tools_own_file() {
     // A file that already brings in a written one gets no second copy.
     std::fs::write(&claude_file, "@~/.codex/AGENTS.md\n").unwrap();
     set(true);
-    sync_rules_files_quietly(&scratch.db).await;
+    sync_rules_files_in(&scratch.db, &scratch.skill_dirs()).await;
     assert!(std::fs::read_to_string(&codex_file)
         .unwrap()
         .contains(GENERAL_QUOTE));

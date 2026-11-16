@@ -491,3 +491,28 @@ fn ux_skill_8_tool_rules_block_is_added_replaced_and_taken_out_again() {
     assert_eq!(upsert_tool_rules_block(&format!("{block}\n"), None), "");
     assert_eq!(upsert_tool_rules_block(mine, None), mine);
 }
+
+#[test]
+fn a_quote_cut_before_its_sentence_ends_or_pointing_outside_itself_is_dropped() {
+    let source =
+        "Skipping the review, even for small tasks, leaves real defects behind \u{2014} one \
+                  session caught seven.\n- Keep the wiki flat\nRun the tests before a push.";
+    assert!(cut_mid_sentence(
+        source,
+        "Skipping the review, even for small tasks, leaves real defects behind"
+    ));
+    assert!(!cut_mid_sentence(source, "- Keep the wiki flat"));
+    assert!(!cut_mid_sentence(source, "Keep the wiki flat"));
+    assert!(!cut_mid_sentence(source, "Run the tests before a push."));
+
+    assert!(points_outside_itself(
+        "Treat it as navigation, then require tests to prove the change."
+    ));
+    assert!(points_outside_itself(
+        "Skipping either step leaves real defects behind."
+    ));
+    assert!(!points_outside_itself("Run the tests before a push."));
+    assert!(!points_outside_itself(
+        "Always inspect the rendered output before claiming success."
+    ));
+}

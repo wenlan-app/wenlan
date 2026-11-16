@@ -89,6 +89,8 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
 struct SkillDirs {
     home: Option<PathBuf>,
     config: Option<PathBuf>,
+    /// Whether the tools' own always-read files under `home` may be written.
+    tool_files: bool,
 }
 
 impl SkillDirs {
@@ -102,11 +104,13 @@ impl SkillDirs {
             return Self {
                 home: Some(root.join("home")),
                 config: Some(root.join("config")),
+                tool_files: true,
             };
         }
         Self {
             home: dirs::home_dir(),
             config: dirs::config_dir(),
+            tool_files: wenlan_core::config::may_write_tool_files(),
         }
     }
 }
@@ -740,7 +744,7 @@ fn imported_files(file: &Path, home: &Path, text: &str) -> Vec<PathBuf> {
 /// another written file already covers (the same file, or one it imports) is
 /// not given a second copy.
 async fn sync_tool_rules(db: &MemoryDB, dirs: &SkillDirs, general: &[SkillLine]) {
-    let Some(home) = dirs.home.as_deref() else {
+    let Some(home) = dirs.home.as_deref().filter(|_| dirs.tool_files) else {
         return;
     };
     let block = skill_grow::tool_rules_block(general);
@@ -862,8 +866,8 @@ async fn sync_rules_files(db: &MemoryDB, dirs: &SkillDirs) -> Result<(), ServerE
     Ok(())
 }
 
-/// The Space's own approved lines as plain sentences, rules first, for the
-/// repository copy. General lines are the person's habits and stay out.
+/// The Space's own approved rules as plain sentences, for the repository
+/// copy. General lines are the person's habits and stay out.
 pub(crate) async fn project_rules(db: &MemoryDB, space: &str) -> Vec<String> {
     let lines = match db.get_space(space).await {
         Ok(Some(space)) => read_rules_for_space(db, &space)
@@ -879,8 +883,8 @@ pub(crate) async fn project_rules(db: &MemoryDB, space: &str) -> Vec<String> {
             return Vec::new();
         }
     };
-    lines.retain(|line| !line.general);
-    lines.sort_by_key(|line| line.kind != wenlan_types::SkillLineKind::Rule);
+    // Only rules: a decision or a pitfall read as a bare order misleads.
+    lines.retain(|line| !line.general && line.kind == wenlan_types::SkillLineKind::Rule);
     lines.into_iter().map(|line| line.text).collect()
 }
 
@@ -890,6 +894,13 @@ pub(crate) async fn sync_rules_files_quietly(db: &MemoryDB) {
     if let Err(error) = sync_rules_files(db, &SkillDirs::system()).await {
         tracing::warn!(%error, "[skills] rules files not updated");
     }
+}
+
+/// Same, with the tool folders given: for a caller that holds its own.
+#[cfg(test)]
+async fn sync_rules_files_in(db: &MemoryDB, dirs: &SkillDirs) {
+    let _serial = SKILLS_MUTATION_LOCK.lock().await;
+    sync_rules_files_locked(db, dirs).await;
 }
 
 async fn sync_rules_files_locked(db: &MemoryDB, dirs: &SkillDirs) {

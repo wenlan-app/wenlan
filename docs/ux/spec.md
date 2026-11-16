@@ -599,16 +599,19 @@ and wait for evidence that people need them.
   that it did not write.
   原文：「現在只想要把這層整合好再 .wenlan」（2026-11-15 22:20Z）；「AGENTS 檔案可以分層 不論是個人還是空間/專案/repo」（2026-11-15 22:39Z）。
 - **UX-SKILL-7** `shipped` For a Space connected to a repository, the wiki
-  pull request also puts that Space's own rules in Wenlan's part of the
+  pull request also puts that Space's own rules (rules only, not decisions or
+  pitfalls) in Wenlan's part of the
   repository's `AGENTS.md`, without the names of the pages they come from, and
   says so in its description. Lines used in every Space are the person's
   habits and never go into a repository. Nothing reaches the repository until
   the person merges.
   原文：「空間如果是 repo，那就直接對應上了」（2026-11-15 22:26Z）；「原本說就會寫 wiki folders 這點也要看要不要一起修改？」（2026-11-15 22:51Z）。
-- **UX-SKILL-8** `shipped` The lines used in every Space are also kept in
+- **UX-SKILL-8** `shipped` The rules used in every Space (rules only, not
+  decisions or pitfalls) are also kept in
   each connected AI tool's own always-read file (Claude Code's `CLAUDE.md`,
   Codex's `AGENTS.md`), in one part marked as Wenlan's. Wenlan changes only
-  that part and never the person's own text around it. The person is not asked
+  that part and never the person's own text around it. Only the installed
+  app does this: a test or trial run on other data never writes these files. The person is not asked
   again: the one answer of UX-SKILL-1 covers it. When the lines change the
   part follows; with the setting off, the tool disconnected, or no such lines
   left, the part is taken out. A file that another one already brings in gets
