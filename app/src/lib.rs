@@ -1892,6 +1892,8 @@ pub fn run() {
             skill_registry_commands::skills_set_scope,
             skill_registry_commands::skills_remove,
             skill_registry_commands::skills_refresh,
+            skill_registry_commands::skills_scan_local,
+            skill_registry_commands::skills_import_local,
             search::register_connected_agent,
             search::wire_state,
             // Remote access commands

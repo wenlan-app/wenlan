@@ -22,8 +22,15 @@ description: Turn a meeting transcript into decisions, action items and owners.
 4. Keep the speaker's words when quoting.
 `;
 
+const LOCAL = [
+  { name: "code-review", path: "~/.claude/skills/code-review", description: "How this team reviews a pull request." },
+  { name: "release-notes", path: "~/.claude/skills/release-notes", description: "Write release notes from merged changes." },
+  { name: "sql-style", path: "~/.agents/skills/sql-style", description: "House style for SQL queries." },
+];
+
 export class SkillsFixture {
   private installed: Record<string, unknown>[] = [];
+  private local = [...LOCAL];
 
   supports(command: string): boolean {
     return command.startsWith("skills_");
@@ -54,6 +61,20 @@ export class SkillsFixture {
       }
       case "skills_installed": return this.installed;
       case "skills_refresh": return [];
+      case "skills_scan_local": return this.local;
+      case "skills_import_local": {
+        const names = (args?.names as string[] | undefined) ?? [];
+        for (const name of names) {
+          const found = this.local.find((s) => s.name === name);
+          if (!found) continue;
+          this.installed = [...this.installed, {
+            name, source: "local", skillId: name, repoPath: found.path, commit: "", hash: "h", verdict: "warn",
+            scope: { kind: "all" }, description: found.description, installedAt: 1, updatedAt: 1, additions: "",
+          }];
+        }
+        this.local = this.local.filter((s) => !names.includes(s.name));
+        return { imported: names, failed: [] };
+      }
       case "skills_set_additions": {
         this.installed = this.installed.map((s) => s.name === args?.name ? { ...s, additions: args?.text } : s);
         return { skill: this.installed.find((s) => s.name === args?.name), tools: [], skipped: [] };

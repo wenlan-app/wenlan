@@ -7,8 +7,8 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 use wenlan_core::skill_registry::{
-    self as registry, Endpoints, InstalledSkill, ReqwestFetch, SafetyReport, Scope, SearchVia,
-    SkillHit, UpdateOutcome, Verdict,
+    self as registry, Endpoints, InstalledSkill, LocalSkill, ReqwestFetch, SafetyReport, Scope,
+    SearchVia, SkillHit, UpdateOutcome, Verdict,
 };
 
 /// The skills folders of the AI tools installed on this computer. A tool
@@ -331,4 +331,56 @@ pub async fn skills_refresh() -> Result<Vec<UpdateOutcome>, String> {
         out.push(outcome);
     }
     Ok(out)
+}
+
+/// Skills already in this computer's AI tool folders that Wenlan does not
+/// hold yet.
+#[tauri::command]
+pub async fn skills_scan_local() -> Result<Vec<LocalSkill>, String> {
+    tokio::task::spawn_blocking(|| registry::scan_local(&store(), &tool_skill_dirs()))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportResult {
+    pub imported: Vec<String>,
+    /// Name and reason for each skill that could not be taken in.
+    pub failed: Vec<(String, String)>,
+}
+
+/// Take in the named skills found by `skills_scan_local`. Only folders the
+/// scan finds again are read, so the UI cannot point this at any other
+/// path. Originals are never changed; Wenlan's copy then reaches the other
+/// AI tools.
+#[tauri::command]
+pub async fn skills_import_local(names: Vec<String>) -> Result<ImportResult, String> {
+    tokio::task::spawn_blocking(move || {
+        let store = store();
+        let tools = tool_skill_dirs();
+        let found = registry::scan_local(&store, &tools);
+        let mut out = ImportResult {
+            imported: Vec::new(),
+            failed: Vec::new(),
+        };
+        for name in names {
+            let Some(local) = found.iter().find(|s| s.name == name) else {
+                out.failed.push((name, "not found on this computer".into()));
+                continue;
+            };
+            match registry::import_local(&store, std::path::Path::new(&local.path), now()) {
+                Ok(skill) => {
+                    if let Err(error) = registry::deliver(&store, &skill.name, &tools) {
+                        log::warn!("[skills] took in {name} but could not copy it: {error}");
+                    }
+                    out.imported.push(name);
+                }
+                Err(error) => out.failed.push((name, error.to_string())),
+            }
+        }
+        out
+    })
+    .await
+    .map_err(|e| e.to_string())
 }

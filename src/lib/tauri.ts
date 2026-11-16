@@ -6097,3 +6097,28 @@ export async function removeSkill(name: string): Promise<void> {
 export async function refreshInstalledSkills(): Promise<SkillUpdateOutcome[]> {
   return invoke("skills_refresh");
 }
+
+/** `source` of a skill taken in from an AI tool folder on this computer. */
+export const LOCAL_SKILL_SOURCE = "local";
+
+export interface LocalSkill {
+  name: string;
+  path: string;
+  description: string | null;
+}
+
+export interface LocalSkillImport {
+  imported: string[];
+  /** [name, reason] for each skill that could not be taken in. */
+  failed: [string, string][];
+}
+
+/** Skills already in this computer's AI tool folders that Wenlan does not hold yet. */
+export async function scanLocalSkills(): Promise<LocalSkill[]> {
+  return invoke("skills_scan_local");
+}
+
+/** Copy these skills into Wenlan; the originals are left as they are. */
+export async function importLocalSkills(names: string[]): Promise<LocalSkillImport> {
+  return invoke("skills_import_local", { names });
+}

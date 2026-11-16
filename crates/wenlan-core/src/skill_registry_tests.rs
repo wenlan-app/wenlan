@@ -434,6 +434,81 @@ fn one_space_lives_under_spaces_and_moves_with_its_scope() {
     ));
 }
 
+#[tokio::test]
+async fn local_skills_are_found_imported_and_spread_without_touching_the_original() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("wenlan");
+    let claude = tmp.path().join("claude/skills");
+    let codex = tmp.path().join("agents/skills");
+    let mine = claude.join("my-review");
+    std::fs::create_dir_all(mine.join("ref")).unwrap();
+    std::fs::write(
+        mine.join("SKILL.md"),
+        "---\nname: Review my way\ndescription: How I review.\n---\nBody.\n",
+    )
+    .unwrap();
+    std::fs::write(mine.join("ref/list.md"), "a").unwrap();
+    // Not offered: no SKILL.md, a copy Wenlan wrote, a name tools may not accept.
+    std::fs::create_dir_all(claude.join("empty")).unwrap();
+    std::fs::create_dir_all(claude.join("ours")).unwrap();
+    std::fs::write(claude.join("ours/SKILL.md"), "x").unwrap();
+    std::fs::write(claude.join("ours").join(MANAGED_MARKER), "o/r@x").unwrap();
+    std::fs::create_dir_all(claude.join("Odd Name")).unwrap();
+    std::fs::write(claude.join("Odd Name/SKILL.md"), "x").unwrap();
+    // The same name in a second tool is listed once.
+    std::fs::create_dir_all(codex.join("my-review")).unwrap();
+    std::fs::write(codex.join("my-review/SKILL.md"), "other").unwrap();
+    let tools = vec![claude.clone(), codex.clone()];
+
+    let found = scan_local(&root, &tools);
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].name, "my-review");
+    assert_eq!(found[0].path, mine.display().to_string());
+    assert_eq!(found[0].description.as_deref(), Some("How I review."));
+
+    let original = std::fs::read(mine.join("SKILL.md")).unwrap();
+    let record = import_local(&root, &mine, 7).unwrap();
+    assert_eq!(record.name, "my-review");
+    assert_eq!(record.source, LOCAL_SOURCE);
+    assert_eq!(record.verdict, Verdict::Warn);
+    assert_eq!(record.scope, Scope::All);
+    assert_eq!(
+        std::fs::read_to_string(root.join("skills/my-review/ref/list.md")).unwrap(),
+        "a"
+    );
+    assert!(scan_local(&root, &tools).is_empty());
+    assert!(matches!(
+        import_local(&root, &mine, 8),
+        Err(RegistryError::Refused(_))
+    ));
+
+    // Additions and delivery work as for a downloaded skill; the original and
+    // the other tool's own same-named folder are left alone.
+    set_additions(&root, "my-review", "Also check tests.").unwrap();
+    let empty_tool = tmp.path().join("cursor/skills");
+    let (written, skipped) =
+        deliver(&root, "my-review", &[claude.clone(), empty_tool.clone()]).unwrap();
+    assert_eq!(written, vec![empty_tool.join("my-review")]);
+    assert_eq!(skipped, vec![mine.clone()]);
+    assert_eq!(std::fs::read(mine.join("SKILL.md")).unwrap(), original);
+    assert!(!mine.join(MANAGED_MARKER).exists());
+    let copy = std::fs::read_to_string(empty_tool.join("my-review/SKILL.md")).unwrap();
+    assert!(copy.ends_with("Also check tests.\n"));
+
+    // There is no author to ask for updates: nothing is fetched.
+    let http = Fake::default();
+    let outcome = refresh_one(&http, &ep(), &root, "my-review", 9)
+        .await
+        .unwrap();
+    assert_eq!(outcome.outcome, "unchanged");
+    assert!(http.seen().is_empty());
+
+    // Removing it from Wenlan removes only Wenlan's copies.
+    remove(&root, "my-review", &[claude.clone(), empty_tool.clone()]).unwrap();
+    assert!(mine.join("SKILL.md").is_file());
+    assert!(!empty_tool.join("my-review").exists());
+}
+
 /// Real network run: skills.sh search, safety, GitHub at a pinned commit,
 /// store and deliver into temp folders. Run by hand:
 /// `cargo test -p wenlan-core --lib skill_registry::tests::live_end_to_end -- --ignored --nocapture`
