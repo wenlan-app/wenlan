@@ -1148,6 +1148,22 @@ export async function undoSpaceRules(spaceId: string): Promise<SpaceRulesActionR
 }
 
 /** Tool by tool, whether the rules used in every Space reached it. */
+/** The rules AI tools are told in one Space (or, with no Space, in every
+ *  Space), as the daemon decides them: each line says the page it is on,
+ *  whether the person wrote it, and whether it holds for every Space. */
+export interface SpaceRulesResponse {
+  space_id: string;
+  space_name: string;
+  rules_page_id?: string | null;
+  lines: SkillLine[];
+}
+
+/** Read as the person: the daemon records only an AI tool's read. */
+export async function getSpaceRules(space: string | null): Promise<SpaceRulesResponse> {
+  const response = await invoke<Partial<SpaceRulesResponse> | null>("get_space_rules", { space: space?.trim() || null });
+  return { space_id: response?.space_id ?? "", space_name: response?.space_name ?? "", rules_page_id: response?.rules_page_id ?? null, lines: response?.lines ?? [] };
+}
+
 export async function getRulesDelivery(): Promise<ToolRulesDelivery[]> {
   const response = await invoke<{ tools?: ToolRulesDelivery[] } | null>("get_rules_delivery");
   return response?.tools ?? [];

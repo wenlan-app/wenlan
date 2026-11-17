@@ -4,12 +4,14 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { i18n } from "../../../i18n";
-import { knowledgeFolderCreate, knowledgeFoldersList, listSpaceRulesSuggestions, skillsFromLibraryEnabled, type Page } from "../../../lib/tauri";
+import { toast } from "sonner";
+import { getSpaceFolders, knowledgeFolderCreate, knowledgeFoldersList, listSpaceRulesSuggestions, skillsFromLibraryEnabled, type Page } from "../../../lib/tauri";
 import { readPinnedPages } from "../navigation/pinnedPages";
 import { SectionListPage, type SectionListPageProps } from "./SectionListPage";
 
 const { active, drafts } = vi.hoisted(() => ({ active: vi.fn(), drafts: vi.fn() }));
 vi.mock("./listAllPages", () => ({ EXPLICIT_BROWSE_QUERY_POLICY: {}, listAllActivePages: active, listAllDraftPages: drafts, listAllActivePagesExplicitBrowse: active, listAllDraftPagesExplicitBrowse: drafts }));
+vi.mock("sonner", () => ({ toast: vi.fn() }));
 vi.mock("../../../lib/tauri", async (original) => ({
   ...await original<typeof import("../../../lib/tauri")>(),
   knowledgeFoldersList: vi.fn(),
@@ -50,6 +52,8 @@ beforeEach(async () => {
     { path: "Empty", name: "Empty", parent_path: "" }, { path: "Rules", name: "Rules", parent_path: "" }, { path: "Skills", name: "Skills", parent_path: "" },
   ], truncated: false });
   vi.mocked(knowledgeFolderCreate).mockReset();
+  vi.mocked(getSpaceFolders).mockReset().mockResolvedValue(false);
+  vi.mocked(toast).mockReset();
   vi.mocked(skillsFromLibraryEnabled).mockReset().mockResolvedValue(false);
   vi.mocked(listSpaceRulesSuggestions).mockReset().mockResolvedValue([]);
 });
@@ -133,6 +137,75 @@ describe("section list page", () => {
     await waitFor(() => expect(handlers.onCreatePage).toHaveBeenCalledWith("Skills"));
   });
 
+  it("a new rules page never lands in a Space's own Rules folder: the top one is made instead", async () => {
+    vi.mocked(getSpaceFolders).mockResolvedValue(true);
+    active.mockResolvedValue([page("Team git", { space: "Work", storage_path: "Work/Rules/git.md" })]);
+    vi.mocked(knowledgeFoldersList).mockResolvedValue({ folders: [{ path: "Work", name: "Work", parent_path: "" }, { path: "Work/Rules", name: "Rules", parent_path: "Work" }], truncated: false });
+    vi.mocked(knowledgeFolderCreate).mockResolvedValue({ path: "Rules" });
+    const handlers = setup({ section: "rules" });
+    const user = userEvent.setup();
+    await screen.findByRole("button", { name: "Open Team git" });
+    await waitFor(() => expect(getSpaceFolders).toHaveBeenCalled());
+    await user.click(screen.getByRole("button", { name: "New" }));
+    await waitFor(() => expect(knowledgeFolderCreate).toHaveBeenCalledWith("", "Rules"));
+    await waitFor(() => expect(handlers.onCreatePage).toHaveBeenCalledWith("Rules"));
+    expect(handlers.onCreatePage).toHaveBeenCalledTimes(1);
+  });
+
+  it("a new rules page is not made anywhere else when its folder cannot be: it says so", async () => {
+    vi.mocked(knowledgeFoldersList).mockResolvedValue({ folders: [], truncated: false });
+    vi.mocked(knowledgeFolderCreate).mockRejectedValue(new Error("read-only"));
+    const handlers = setup({ section: "rules" });
+    const user = userEvent.setup();
+    await screen.findByRole("button", { name: "Open Git rules" });
+    await waitFor(() => expect(knowledgeFoldersList).toHaveBeenCalled());
+    await user.click(await screen.findByRole("button", { name: "New" }));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("Couldn’t make the Rules folder."));
+    expect(handlers.onCreatePage).not.toHaveBeenCalled();
+  });
+
+  it("a new rules page is not made when a Space already owns the top folder called Rules", async () => {
+    vi.mocked(getSpaceFolders).mockResolvedValue(true);
+    active.mockResolvedValue([page("Plan", { space: "Rules", storage_path: "Rules/plan.md" }), page("How I work — Wenlan", { space: "Wenlan" })]);
+    vi.mocked(knowledgeFoldersList).mockResolvedValue({ folders: [{ path: "Rules", name: "Rules", parent_path: "" }], truncated: false });
+    const handlers = setup({ section: "rules" });
+    const user = userEvent.setup();
+    await screen.findByRole("button", { name: "Open How I work · Wenlan" });
+    // The Space's page is a Docs page, so it is not listed under Rules.
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Open Plan" })).not.toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "New" }));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("Couldn’t make the Rules folder."));
+    expect(knowledgeFolderCreate).not.toHaveBeenCalled();
+    expect(handlers.onCreatePage).not.toHaveBeenCalled();
+  });
+
+  it("UX-FIND-4: a Space called Rules or Skills keeps its pages under Docs, in its own folder card, never counted and unlisted", async () => {
+    vi.mocked(getSpaceFolders).mockResolvedValue(true);
+    active.mockResolvedValue([
+      page("Plan", { space: "Rules", storage_path: "Rules/plan.md" }),
+      page("Deep", { space: "Rules", storage_path: "Rules/Skills/deep.md" }),
+      page("Notes", { space: "Skills", storage_path: "Skills/notes.md" }),
+      page("Git rules", { space: "Rules", storage_path: "Rules/Rules/git.md" }),
+    ]);
+    vi.mocked(knowledgeFoldersList).mockResolvedValue({ folders: [
+      { path: "Rules", name: "Rules", parent_path: "" }, { path: "Rules/Rules", name: "Rules", parent_path: "Rules" },
+      { path: "Rules/Skills", name: "Skills", parent_path: "Rules" }, { path: "Skills", name: "Skills", parent_path: "" },
+    ], truncated: false });
+    setup();
+    const folders = await screen.findByRole("list", { name: "Folders" });
+    await waitFor(() => expect(within(folders).getAllByRole("button").map((card) => card.textContent)).toEqual(["Rules1", "Skills1"]));
+  });
+
+  it("UX-FIND-4: inside a Space called Rules, its Docs pages are listed and its own Rules folder is not a card", async () => {
+    vi.mocked(getSpaceFolders).mockResolvedValue(true);
+    active.mockResolvedValue([page("Plan", { space: "Rules", storage_path: "Rules/plan.md" }), page("Git rules", { space: "Rules", storage_path: "Rules/Rules/git.md" })]);
+    vi.mocked(knowledgeFoldersList).mockResolvedValue({ folders: [{ path: "Rules", name: "Rules", parent_path: "" }, { path: "Rules/Rules", name: "Rules", parent_path: "Rules" }], truncated: false });
+    setup({ folderPath: "Rules" });
+    expect(await screen.findByRole("button", { name: "Open Plan" })).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Folders" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open Git rules" })).not.toBeInTheDocument();
+  });
+
   it("UX-FIND-6: right-clicking a page in the list pins it, and again unpins it", async () => {
     setup();
     const user = userEvent.setup();
@@ -151,11 +224,26 @@ describe("section list page", () => {
     const handlers = setup({ section: "rules" });
     const user = userEvent.setup();
     const box = await screen.findByTestId("space-rules-ask");
-    expect(box).toHaveTextContent("AI drew 1 rule from your pages in “Wenlan”. It doesn’t count yet.");
+    expect(box).toHaveTextContent("WenlanAI drew 1 rule from your pages. Not counted yet.");
     expect(within(box).getByRole("button", { name: "Accept" })).toBeInTheDocument();
     expect(within(box).getByRole("button", { name: "No" })).toBeInTheDocument();
     expect(box.textContent).not.toMatch(/follow|obey/i);
     await user.click(within(box).getByRole("button", { name: "from “Replies”" }));
     expect(handlers.onOpenPageId).toHaveBeenCalledWith("src");
+  });
+
+  it("UX-SKILL-11, UX-SKILL-1: every Space with rules waiting shows its own box on the Rules list, not only the first", async () => {
+    vi.mocked(skillsFromLibraryEnabled).mockResolvedValue(true);
+    const line = (id: string, text: string) => ({ id, kind: "rule" as const, text, source_page_id: "src", source_page_title: "Replies", source_revision: 1, source_revision_at: 1, source_quote: text });
+    vi.mocked(listSpaceRulesSuggestions).mockResolvedValue([
+      { space_id: "s1", space_name: "Wenlan", lines: [line("l1", "Thank the customer first")] },
+      { space_id: "s2", space_name: "Support", lines: [line("l2", "Answer within a day"), line("l3", "Never promise a date")] },
+    ]);
+    setup({ section: "rules" });
+    await waitFor(() => expect(screen.getAllByTestId("space-rules-ask")).toHaveLength(2));
+    const [first, second] = screen.getAllByTestId("space-rules-ask");
+    expect(first).toHaveTextContent("WenlanAI drew 1 rule from your pages. Not counted yet.");
+    expect(second).toHaveTextContent("SupportAI drew 2 rules from your pages. Not counted yet.");
+    expect(within(second).getByText("Never promise a date")).toBeInTheDocument();
   });
 });

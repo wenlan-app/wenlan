@@ -278,7 +278,6 @@ vi.mock("./pages/WikiWorkspace", () => ({
   ),
 }));
 vi.mock("./pages/PagesOverview", () => ({
-  WikiStart: () => <div data-testid="wiki-start" />,
   PagesOverview: (props: {
     onCreatePage: (space: string | null) => void;
     onSelectDraft: (draftId: string, space: string | null) => void;

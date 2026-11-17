@@ -12,6 +12,7 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import {
   listMemoriesRich,
+  getSpaceFolders,
   listSpaces,
   listThings,
   openSearchResult as openSearchResultTarget,
@@ -62,7 +63,8 @@ import { ScopeProvider, useScopeState } from "./team/scope";
 import { ScopeSwitcher } from "./team/ScopeSwitcher";
 import { PagesOverview } from "./pages/PagesOverview";
 import { SectionListPage } from "./pages/SectionListPage";
-import { pageSection, type PageSection } from "./pages/pageSections";
+import { pageSection, spaceLayout, type PageSection } from "./pages/pageSections";
+import { SPACE_FOLDERS_QUERY_KEY } from "./pages/SpaceFoldersPrompt";
 import { listAllActivePages } from "./pages/listAllPages";
 import { openPageMapOnVisit } from "./page/usePageInspectorSession";
 import { WikiWorkspace } from "./pages/WikiWorkspace";
@@ -416,8 +418,6 @@ export default function Main({
     updateHistory(viewHistoryRef.current, []);
     showView(next);
   };
-  const lastNoteViewRef = useRef<View | null>(null);
-  if (view.kind === "page" || view.kind === "page-draft") lastNoteViewRef.current = view;
   const pageSelectionsRef = useRef(new Map<string, MarkdownEditorSelection>());
   const readingPositions = noteReadingPositionsFor(pageSelectionsRef.current);
   const [readyEditorView, setReadyEditorView] = useState<View | null>(null);
@@ -500,7 +500,6 @@ export default function Main({
       if (identity.publishedPage) {
         const next: View = { kind: "page", pageId: identity.publishedPage.id, inventoryScope: source.inventoryScope, projectionIssue: identity.projectionIssue };
         updateNoteTabs(promoteNoteTab(noteTabsRef.current, source, next).map(tab => matchesNote(tab, next) ? { ...tab, title: identity.publishedPage!.title } : tab));
-        lastNoteViewRef.current = next;
         showView(next, false);
       }
     }
@@ -560,8 +559,6 @@ export default function Main({
             }
           }
           // The intermediate setView may be batched away by navigation.
-          // Remember the saved identity before leaving so Notes reopens it.
-          lastNoteViewRef.current = sourceView;
           if (sourceView.kind === "page") showView(sourceView, false);
           pending?.action(sourceView);
         } else pending?.refuse();
@@ -799,10 +796,7 @@ export default function Main({
       updateNoteTabs(remaining);
       if (active) {
         const next = remaining[Math.min(index, remaining.length - 1)]?.view ?? { kind: "home" } as View;
-        lastNoteViewRef.current = isNoteView(next) ? next : null;
         showView(next);
-      } else if (lastNoteViewRef.current && isNoteView(lastNoteViewRef.current) && matchesNote(tab, lastNoteViewRef.current)) {
-        lastNoteViewRef.current = remaining[remaining.length - 1]?.view ?? null;
       }
     };
     if (active) afterNavigationGuards(close);
@@ -843,10 +837,8 @@ export default function Main({
         updateNoteTabs(remaining);
         const retained = (entry: View) => !isNoteView(entry) || !matchesNote(current, entry);
         updateHistory(viewHistoryRef.current.filter(retained), viewForwardRef.current.filter(retained));
-        if (lastNoteViewRef.current && isNoteView(lastNoteViewRef.current) && matchesNote(current, lastNoteViewRef.current)) lastNoteViewRef.current = null;
         if (active) {
           const next = remaining[Math.min(index, remaining.length - 1)]?.view ?? { kind: "home" } as View;
-          lastNoteViewRef.current = isNoteView(next) ? next : null;
           showView(next);
         }
         return true;
@@ -1084,7 +1076,11 @@ export default function Main({
   // lights, and which folder a new page beside it lands in.
   const { data: shellPages } = useQuery({ queryKey: ["pages", "inventory", "passive", "active"], queryFn: listAllActivePages, staleTime: 30_000 });
   const openPage = view.kind === "page" ? shellPages?.find((page) => page.id === view.pageId) : undefined;
-  const activeNavigation = openPage ? navigationForSection(pageSection(openPage)) : activeNavigationForView(view);
+  // Only a page whose folders carry a section's name needs the daemon's
+  // setting, to tell a Space's own folder from one the person named.
+  const { data: spaceFoldersOn } = useQuery({ queryKey: SPACE_FOLDERS_QUERY_KEY, queryFn: () => getSpaceFolders(), enabled: !!openPage && pageSection(openPage) !== "docs", retry: false, staleTime: Infinity });
+  const shellLayout = useMemo(() => spaceLayout(shellPages ?? [], spaceFoldersOn === true, scope.teamSpaces), [shellPages, spaceFoldersOn, scope.teamSpaces]);
+  const activeNavigation = openPage ? navigationForSection(pageSection(openPage, shellLayout)) : activeNavigationForView(view);
   const creationFolderPath = view.kind === "pages"
     ? wikiCreationFolderPath
     : openPage ? pageFolderPath(openPage) || null
@@ -1128,7 +1124,6 @@ export default function Main({
   const headerSidebarBackdropClass = `is-sidebar-backdrop-${sidebarLayout}`;
   // The left side never lists pages: a section opens its list in the main
   // area (UX-FIND-4), so no directory sits in the sidebar or beside it.
-  const directoryInSidebar = false;
   const spacesOverviewLabels = createSpacesOverviewLabels(t);
   const spaceDetailCopy = createSpaceDetailCopy(t);
   const { data: spaces } = useQuery({ queryKey: ["spaces"], queryFn: listSpaces });
@@ -1154,7 +1149,6 @@ export default function Main({
       updateNoteTabs([]);
       primaryDraftIdentityByTab.current.clear();
       updateHistory([], []);
-      lastNoteViewRef.current = null;
       pageSelectionsRef.current.clear();
       readingPositions.clear();
       setOwnershipNotice(null);
@@ -1204,7 +1198,6 @@ export default function Main({
     const isPage = (candidate: View) => candidate.kind === "page" && candidate.pageId === pageId;
     updateNoteTabs(noteTabsRef.current.filter(tab => !isPage(tab.view)));
     updateHistory(viewHistoryRef.current.filter(candidate => !isPage(candidate)), viewForwardRef.current.filter(candidate => !isPage(candidate)));
-    if (lastNoteViewRef.current && isPage(lastNoteViewRef.current)) lastNoteViewRef.current = null;
     pageSelectionsRef.current.delete(pageId);
     secondaryGroupRef.current?.removePage(pageId);
     if (isPage(viewRef.current)) {
@@ -1254,11 +1247,9 @@ export default function Main({
       updateNoteTabs(noteTabsRef.current.filter(tab => !goneTabs.some(gone => gone.key === tab.key)));
     }
     updateHistory(viewHistoryRef.current.filter(entry => !isGone(entry)), viewForwardRef.current.filter(entry => !isGone(entry)));
-    if (lastNoteViewRef.current && isGone(lastNoteViewRef.current)) lastNoteViewRef.current = null;
     if (!wasOnScreen) return;
     const remaining = noteTabsRef.current;
     const next: View = remaining[Math.min(Math.max(firstIndex, 0), remaining.length - 1)]?.view ?? { kind: "home" };
-    lastNoteViewRef.current = isNoteView(next) ? next : null;
     showView(next);
   };
   const handleDraftTitleChange = useCallback((title: string) => {
@@ -1697,7 +1688,6 @@ export default function Main({
               directoryOpenRequest={wikiDirectoryOpenRequest}
               directoryCloseRequest={wikiDirectoryCloseRequest}
               externalDirectory
-              directoryInSidebar={directoryInSidebar}
               onDirectoryHost={setWorkspaceDirectoryHost}
               onInventoryModeChange={setWikiInventoryMode}
               inventoryScope={wikiInventoryScope}
@@ -1835,7 +1825,6 @@ export default function Main({
               directoryOpenRequest={wikiDirectoryOpenRequest}
               directoryCloseRequest={wikiDirectoryCloseRequest}
               externalDirectory
-              directoryInSidebar={directoryInSidebar}
               onDirectoryHost={setWorkspaceDirectoryHost}
               onInventoryModeChange={setWikiInventoryMode}
               inventoryScope={wikiInventoryScope}
@@ -1893,7 +1882,6 @@ export default function Main({
               directoryOpenRequest={wikiDirectoryOpenRequest}
               directoryCloseRequest={wikiDirectoryCloseRequest}
               externalDirectory
-              directoryInSidebar={directoryInSidebar}
               onDirectoryHost={setWorkspaceDirectoryHost}
               onInventoryModeChange={setWikiInventoryMode}
               inventoryScope={wikiInventoryScope}

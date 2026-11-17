@@ -103,7 +103,7 @@ export default function Sidebar({
   const { t } = useTranslation();
   const pinnedPages = usePinnedPages();
   const sections = useSectionPages();
-  const recentPages = useRecentSectionPages(sections.pages, SIDEBAR_RECENT_LISTED)
+  const recentPages = useRecentSectionPages(sections.pages, SIDEBAR_RECENT_LISTED, sections.sectionOf)
     .map((recent) => ({ ...recent, title: howIWorkPageTitle(recent.page, t) }));
   const asideRef = useRef<HTMLElement>(null);
   const overlay = presentation === "overlay";

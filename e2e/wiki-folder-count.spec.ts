@@ -59,8 +59,20 @@ for (const mode of ["labels", "icons"] as const) {
     await page.screenshot({ path: info.outputPath(`folders-count-1280-${mode}-top.png`) });
 
     const last = directory.getByRole("button", { name: "Open Root page 60", exact: true });
-    await last.scrollIntoViewIfNeeded();
+    // Scroll the list's own scroll area to its end: the last page must sit
+    // wholly inside it, not cut off by its bottom edge.
+    const scrollBox = await last.evaluate((element) => {
+      let scroller: HTMLElement | null = element.parentElement;
+      while (scroller && !(/(auto|scroll)/u.test(getComputedStyle(scroller).overflowY) && scroller.scrollHeight > scroller.clientHeight)) scroller = scroller.parentElement;
+      if (!scroller) throw new Error("the list does not scroll");
+      scroller.scrollTop = scroller.scrollHeight;
+      const bounds = scroller.getBoundingClientRect();
+      return { y: bounds.y, height: bounds.height };
+    });
     await expect(last).toBeInViewport({ ratio: 1 });
+    const lastBox = await last.boundingBox();
+    expect(lastBox).not.toBeNull();
+    expect(lastBox!.y + lastBox!.height).toBeLessThanOrEqual(scrollBox.y + scrollBox.height + 1);
     await page.screenshot({ path: info.outputPath(`folders-count-1280-${mode}-bottom.png`) });
     expect(errors.pageErrors).toEqual([]);
     expect(errors.consoleErrors).toEqual([]);

@@ -129,6 +129,25 @@ export function sectionsInvoke(cmd: string, args: Record<string, unknown> | unde
     case "get_page":
     case "get_page_explicit_browse":
       return pages.find((item) => item.id === args?.id) ?? undefined;
+    case "get_space_rules": {
+      // What the daemon lists: who wrote each rule and which are used in
+      // every Space. The page's own text says neither.
+      if (empty) return { space_id: "", space_name: "", rules_page_id: null, lines: [] };
+      const copy = COPY[params.get("lang")?.startsWith("zh") ? "zh" : "en"];
+      const line = (id: string, text: string, source: string, title: string, more: Partial<SkillLine>): SkillLine => ({ id, kind: "rule", text, source_page_id: source, source_page_title: title, source_revision: 3, source_revision_at: 1794211200, source_quote: text, ...more });
+      const own = copy.handRules.lines.map((text, index) => line(`sec-hand-${index}`, text, "sec-rule-hand", copy.handRules.title, { hand_written: true, general: true }));
+      if (!args?.space) return { space_id: "", space_name: "", rules_page_id: null, lines: own };
+      return {
+        space_id: "project-wenlan",
+        space_name: "Wenlan",
+        rules_page_id: "sec-rule-how",
+        lines: [
+          ...copy.managed.map((item, index) => line(`sec-rule-${index}`, item.text, item.sourceId, item.source, { general: index === 0 })),
+          line("sec-own-0", copy.ownLine, "sec-rule-how", "How I work — Wenlan", { hand_written: true }),
+          ...own,
+        ],
+      };
+    }
     case "get_rules_delivery":
       return { tools: empty ? [] : SECTIONS_DELIVERY };
     case "get_skills_from_library_enabled":

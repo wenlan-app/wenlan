@@ -430,7 +430,8 @@
   white-space: nowrap;
 }
 
-.rules-tools-standing { white-space: nowrap; }
+/* One line always; in a very narrow window it is cut short, never spilled. */
+.rules-tools-standing { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rules-tools-row[data-standing="overLimit"] .rules-tools-standing,
 .rules-tools-row[data-standing="blocked"] .rules-tools-standing { color: var(--mem-status-warning-text); }
 
@@ -446,5 +447,11 @@
   border-radius: var(--mem-r-10);
   background: var(--mem-hover);
 }
-.rules-pending-label { margin: 0; color: var(--mem-text-secondary); font: 13px/1.5 var(--mem-font-body); }
+.rules-pending-head { display: grid; gap: 2px; min-width: 0; }
+.rules-pending-space { margin: 0; overflow: hidden; color: var(--mem-text); font: 600 13px/1.5 var(--mem-font-body); text-overflow: ellipsis; white-space: nowrap; }
+.rules-pending-label { margin: 0; overflow: hidden; color: var(--mem-text-secondary); font: 13px/1.5 var(--mem-font-body); text-overflow: ellipsis; white-space: nowrap; }
+
+/* The rules the daemon reads from a page kept in a Rules folder. */
+.rules-page-lines { margin: 0 0 22px; }
+.rules-page-lines-title { margin: 0 0 8px; color: var(--mem-text-tertiary); font: 12px/1.5 var(--mem-font-body); }
 .rules-pending .space-rules-ask-all { margin: 0; }

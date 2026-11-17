@@ -103,7 +103,8 @@ test("the Docs list is the one place pages are listed before opening or after cl
  await expect(page.locator(".wiki-workspace .wiki-workspace-directory")).toHaveCount(0);
  await tree.getByRole("button",{name:"Work",exact:true}).click();
  await expect(tree.getByRole("button",{name:"Open Fixture architecture",exact:true})).toBeVisible();
- await expect(reading.getByText("Fixture architecture",{exact:true})).toHaveCount(1);await expect(reading.getByTestId("wiki-new-pages")).toHaveCount(0);
+ // The page is named once on the whole screen: in the list, and nowhere beside it.
+ await expect(page.getByText("Fixture architecture",{exact:true})).toHaveCount(1);await expect(page.locator(".notes-rail-nav")).not.toContainText("Fixture architecture");await expect(reading.getByTestId("wiki-new-pages")).toHaveCount(0);
  expect(runtime.calls().filter(c=>c.command==="get_page_explicit_browse")).toHaveLength(0);
  await tree.getByRole("button",{name:"Open Fixture architecture",exact:true}).click();
  await expect(reading.locator(".page-detail")).toBeVisible();

@@ -41,6 +41,7 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     "undo_skill_suggestion",
     "list_skill_borrow_records",
     "get_rules_delivery",
+    "get_space_rules",
     // What this Wenlan shares with people; the fixture shares nothing.
     "list_shares",
     // Home asks once about AI changes to a newly linked Obsidian vault; the

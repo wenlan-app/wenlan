@@ -463,7 +463,7 @@ const en = {
         "Keep using your AI tools normally. Wenlan turns what they learn into pages you can read and cite.",
       addedTitle: "Tools added",
       restartHint: "Restart these tools once. After that they can read and write your library.",
-      backToWiki: "Back to Library",
+      backToWiki: "Back to Home",
       routingSummary:
         "Everyday tasks: {{everyday}}. Page synthesis: {{synthesis}}. Change this anytime in Settings → Intelligence.",
       noModelAssurance:
@@ -797,15 +797,17 @@ const en = {
   },
   sections: {
     new: "New",
+    noFolder: "Couldn’t make the {{section}} folder.",
     pages: "Pages",
     empty: { docs: "No pages yet", skills: "No skills yet", rules: "No rules yet" },
   },
   howIWork: {
     from: "from “{{title}}”",
     writtenByYou: "written by you",
+    rulesOnPage: "Rules on this page",
     pending: {
-      label_one: "AI drew {{count}} rule from your pages in “{{space}}”. It doesn’t count yet.",
-      label_other: "AI drew {{count}} rules from your pages in “{{space}}”. They don’t count yet.",
+      label_one: "AI drew {{count}} rule from your pages. Not counted yet.",
+      label_other: "AI drew {{count}} rules from your pages. Not counted yet.",
       accept: "Accept",
       decline: "No",
     },
@@ -815,8 +817,8 @@ const en = {
       delivered: "connected, rules delivered",
       connected: "connected",
       pending: "connected, not delivered yet",
-      overLimit: "connected, not delivered: too long for this tool",
-      blocked: "connected, not delivered: its file can’t be changed safely",
+      overLimit: "connected, too long to deliver",
+      blocked: "connected, file can’t be changed",
       notDelivered: "connected, not delivered",
       none: "No AI tool connected",
     },
@@ -3938,7 +3940,7 @@ const zhHans = {
       allSetBody1: "继续照常使用你的 AI 工具。文澜会把它们学到的内容变成可阅读、可引用的笔记。",
       addedTitle: "工具已添加",
       restartHint: "重启这些工具一次，之后它们就能读写你的文件。",
-      backToWiki: "回到文件",
+      backToWiki: "回到首页",
       routingSummary:
         "日常任务：{{everyday}}。笔记整理：{{synthesis}}。可随时在“设置 → 智能”中更改。",
       noModelAssurance:
@@ -4073,7 +4075,7 @@ const zhHans = {
     tabs: { label: "已打开的笔记", close: "关闭 {{title}}", home: "首页" },
     folders: {
       spaceFoldersAsk: "把每个空间的页面放进各自的文件夹？", spaceFoldersHint: "文件会搬进以空间命名的文件夹。把文件拖到别的空间文件夹，页面就换到那个空间。", spaceFoldersYes: "好", spaceFoldersNo: "先不要", spaceFoldersFailed: "没能保存，请再试一次。",
-      title: "文件夹", root: "文件夹", rootDestination: "最外层", emptyDirectory: "还没有笔记", locationPending: "笔记已保存，但未能将文件保存到所选文件夹。", retryLocation: "重试保存文件", retryLocationError: "仍无法保存文件。请确认文件夹可用后重试。", newFolder: "新建文件夹", newMenu: "新建笔记或文件夹", newFolderIn: "在 {{name}} 中新建文件夹", openNote: "打开", deleteNote: "删除笔记", folderName: "文件夹名称", createIn: "创建于 {{name}}", create: "创建", cancel: "取消", createError: "未能创建文件夹，请重试。", unavailable: "暂时无法浏览文件夹。仍可访问所有笔记。", searchAll: "搜索所有笔记", view: "笔记视图", cards: "卡片", list: "列表", empty: "这个文件夹还没有笔记。", move: "移至文件夹", destination: "目标文件夹", moveError: "未能移动笔记，请重试。", moving: "正在移动…", moveConfirm: "移动", close: "关闭", currentFolder: "当前文件夹：{{name}}", noteCount_one: "{{count}} 篇笔记", noteCount_other: "{{count}} 篇笔记",
+      title: "文件夹", root: "文件夹", rootDestination: "最外层", emptyDirectory: "还没有笔记", locationPending: "笔记已保存，但未能将文件保存到所选文件夹。", retryLocation: "重试保存文件", retryLocationError: "仍无法保存文件。请确认文件夹可用后重试。", newFolder: "新建文件夹", newMenu: "新建笔记或文件夹", newFolderIn: "在 {{name}} 中新建文件夹", openNote: "打开", deleteNote: "删除页面", folderName: "文件夹名称", createIn: "创建于 {{name}}", create: "创建", cancel: "取消", createError: "未能创建文件夹，请重试。", unavailable: "暂时无法浏览文件夹。仍可访问所有笔记。", searchAll: "搜索所有笔记", view: "笔记视图", cards: "卡片", list: "列表", empty: "这个文件夹还没有页面。", move: "移至文件夹", destination: "目标文件夹", moveError: "未能移动笔记，请重试。", moving: "正在移动…", moveConfirm: "移动", close: "关闭", currentFolder: "当前文件夹：{{name}}", noteCount_one: "{{count}} 个页面", noteCount_other: "{{count}} 个页面",
     },
     inventory: {
       all: "所有笔记",
@@ -4189,7 +4191,7 @@ const zhHans = {
       reviewStatusUnconfirmed: "待审核",
       unconfirmed: "待审核",
       draft: "草稿",
-      untitledDraft: "新笔记",
+      untitledDraft: "新页面",
       cleanupSuggested: "建议清理",
       previewCandidate: "预览候选笔记：{{title}}",
       columns: {
@@ -4267,15 +4269,17 @@ const zhHans = {
   },
   sections: {
     new: "新建",
+    noFolder: "无法创建“{{section}}”文件夹。",
     pages: "页面",
     empty: { docs: "还没有页面", skills: "还没有技能", rules: "还没有规则" },
   },
   howIWork: {
     from: "来自《{{title}}》",
     writtenByYou: "你写的",
+    rulesOnPage: "这页的规则",
     pending: {
-      label_one: "AI 从「{{space}}」的页面整理出 {{count}} 条，还没算数",
-      label_other: "AI 从「{{space}}」的页面整理出 {{count}} 条，还没算数",
+      label_one: "AI 从你的页面整理出 {{count}} 条，还没算数",
+      label_other: "AI 从你的页面整理出 {{count}} 条，还没算数",
       accept: "接受",
       decline: "不要",
     },
@@ -4285,8 +4289,8 @@ const zhHans = {
       delivered: "已连接，规则已送达",
       connected: "已连接",
       pending: "已连接，还没送达",
-      overLimit: "已连接，没送达：超过这个工具的长度上限",
-      blocked: "已连接，没送达：它的文件没法安全修改",
+      overLimit: "已连接，太长，没送达",
+      blocked: "已连接，文件不能改，没送达",
       notDelivered: "已连接，没送达",
       none: "还没连接 AI 工具",
     },
@@ -7363,7 +7367,7 @@ const zhHant = {
       allSetBody1: "繼續照常使用你的 AI 工具。文瀾會把它們學到的內容變成可閱讀、可引用的筆記。",
       addedTitle: "工具已新增",
       restartHint: "重新啟動這些工具一次，之後它們就能讀寫你的檔案。",
-      backToWiki: "回到檔案",
+      backToWiki: "回到首頁",
       routingSummary:
         "日常任務：{{everyday}}。筆記整理：{{synthesis}}。可隨時在「設定 → 智慧」中更改。",
       noModelAssurance:
@@ -7498,7 +7502,7 @@ const zhHant = {
     tabs: { label: "已開啟的筆記", close: "關閉 {{title}}", home: "首頁" },
     folders: {
       spaceFoldersAsk: "把每個空間的頁面放進各自的資料夾？", spaceFoldersHint: "檔案會搬進以空間命名的資料夾。把檔案拖到別的空間資料夾，頁面就換到那個空間。", spaceFoldersYes: "好", spaceFoldersNo: "先不要", spaceFoldersFailed: "沒能儲存，請再試一次。",
-      title: "資料夾", root: "資料夾", rootDestination: "最外層", emptyDirectory: "還沒有筆記", locationPending: "筆記已儲存，但無法將檔案儲存到所選資料夾。", retryLocation: "重試儲存檔案", retryLocationError: "仍無法儲存檔案。請確認資料夾可用後重試。", newFolder: "新增資料夾", newMenu: "新增筆記或資料夾", newFolderIn: "在 {{name}} 中新增資料夾", openNote: "開啟", deleteNote: "刪除筆記", folderName: "資料夾名稱", createIn: "建立於 {{name}}", create: "建立", cancel: "取消", createError: "無法建立資料夾，請重試。", unavailable: "暫時無法瀏覽資料夾。仍可存取所有筆記。", searchAll: "搜尋所有筆記", view: "筆記檢視", cards: "卡片", list: "清單", empty: "這個資料夾還沒有筆記。", move: "移至資料夾", destination: "目標資料夾", moveError: "無法移動筆記，請重試。", moving: "移動中…", moveConfirm: "移動", close: "關閉", currentFolder: "目前資料夾：{{name}}", noteCount_one: "{{count}} 篇筆記", noteCount_other: "{{count}} 篇筆記",
+      title: "資料夾", root: "資料夾", rootDestination: "最外層", emptyDirectory: "還沒有筆記", locationPending: "筆記已儲存，但無法將檔案儲存到所選資料夾。", retryLocation: "重試儲存檔案", retryLocationError: "仍無法儲存檔案。請確認資料夾可用後重試。", newFolder: "新增資料夾", newMenu: "新增筆記或資料夾", newFolderIn: "在 {{name}} 中新增資料夾", openNote: "開啟", deleteNote: "刪除頁面", folderName: "資料夾名稱", createIn: "建立於 {{name}}", create: "建立", cancel: "取消", createError: "無法建立資料夾，請重試。", unavailable: "暫時無法瀏覽資料夾。仍可存取所有筆記。", searchAll: "搜尋所有筆記", view: "筆記檢視", cards: "卡片", list: "清單", empty: "這個資料夾還沒有頁面。", move: "移至資料夾", destination: "目標資料夾", moveError: "無法移動筆記，請重試。", moving: "移動中…", moveConfirm: "移動", close: "關閉", currentFolder: "目前資料夾：{{name}}", noteCount_one: "{{count}} 個頁面", noteCount_other: "{{count}} 個頁面",
     },
     inventory: {
       all: "所有筆記",
@@ -7614,7 +7618,7 @@ const zhHant = {
       reviewStatusUnconfirmed: "待審核",
       unconfirmed: "待審核",
       draft: "草稿",
-      untitledDraft: "新筆記",
+      untitledDraft: "新頁面",
       cleanupSuggested: "建議清理",
       previewCandidate: "預覽候選筆記：{{title}}",
       columns: {
@@ -7692,15 +7696,17 @@ const zhHant = {
   },
   sections: {
     new: "新增",
+    noFolder: "無法建立「{{section}}」資料夾。",
     pages: "頁面",
     empty: { docs: "還沒有頁面", skills: "還沒有技能", rules: "還沒有規則" },
   },
   howIWork: {
     from: "來自〈{{title}}〉",
     writtenByYou: "你寫的",
+    rulesOnPage: "這頁的規則",
     pending: {
-      label_one: "AI 從「{{space}}」的頁面整理出 {{count}} 條，還沒算數",
-      label_other: "AI 從「{{space}}」的頁面整理出 {{count}} 條，還沒算數",
+      label_one: "AI 從你的頁面整理出 {{count}} 條，還沒算數",
+      label_other: "AI 從你的頁面整理出 {{count}} 條，還沒算數",
       accept: "接受",
       decline: "不要",
     },
@@ -7710,8 +7716,8 @@ const zhHant = {
       delivered: "已連接，規則已送達",
       connected: "已連接",
       pending: "已連接，還沒送達",
-      overLimit: "已連接，沒送達：超過這個工具的長度上限",
-      blocked: "已連接，沒送達：它的檔案沒辦法安全修改",
+      overLimit: "已連接，太長，沒送達",
+      blocked: "已連接，檔案不能改，沒送達",
       notDelivered: "已連接，沒送達",
       none: "還沒連接 AI 工具",
     },

@@ -113,6 +113,7 @@ export function baseResponse(command: string, args: unknown, context: BaseRespon
     case "set_skills_from_library": return null;
     case "list_space_rules_suggestions": case "list_skill_suggestions": case "list_skill_borrow_records": return [];
     case "get_rules_delivery": return { tools: [] };
+    case "get_space_rules": return { space_id: "", space_name: optionalString(args, "space") ?? "", rules_page_id: null, lines: [] };
     case "refresh_skills": return { spaces_considered: 0, spaces_unchanged: 0, spaces_updated: 0, suggestions: 0, failures: 0, model_calls: 0 };
     case "accept_space_rules": return { space_id: optionalString(args, "spaceId") ?? "", status: "accepted", rules_page_id: null, undo_available: false };
     case "decline_space_rules": return { space_id: optionalString(args, "spaceId") ?? "", status: "declined", rules_page_id: null, undo_available: false };

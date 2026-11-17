@@ -20,7 +20,7 @@ import { deleteWikiPage } from "./deleteWikiPage";
 import { pageFolderPath } from "./pageInventory";
 import { scopedFolders } from "./PageInventoryPanel";
 import { pageSpaceContext } from "./pagePresentation";
-import { RULES_FOLDER_NAMES, SKILLS_FOLDER_NAMES, folderSection, sectionFolderPath, type PageSection } from "./pageSections";
+import { RULES_FOLDER_NAMES, SKILLS_FOLDER_NAMES, folderSection, sectionFolderPath, topFolderIsASpaces, type PageSection } from "./pageSections";
 import { SpaceFoldersPrompt } from "./SpaceFoldersPrompt";
 import { KNOWLEDGE_FOLDERS_QUERY_KEY, useKnowledgeFolders } from "./useKnowledgeFolders";
 import { useSectionPages } from "./useSectionPages";
@@ -87,19 +87,23 @@ export function SectionListPage({
   const sectionPages = sections.bySection[section];
 
   // Folders are cards only under Docs: a folder named Rules or Skills (and
-  // what is in it) shows in its own section instead.
+  // what is in it) shows in its own section instead. A folder holding a
+  // Docs page is always a card, whatever its name, so no page counted under
+  // Docs is ever out of reach (a Space may itself be called Rules).
+  const layout = sections.layout;
   const folderCards = useMemo(() => {
     if (section !== "docs" || folderUnavailable) return [];
     return (folders.data?.folders ?? [])
-      .filter((item) => item.parent_path === (folder ?? "") && item.path !== (folder ?? "") && folderSection(item.path) === "docs" && folderShown(item.path))
+      .filter((item) => item.parent_path === (folder ?? "") && item.path !== (folder ?? "") && folderShown(item.path))
       .map((item) => ({
         ...item,
         count: sectionPages.filter((page) => {
           const path = pageFolderPath(page);
           return path === item.path || !!path?.startsWith(`${item.path}/`);
         }).length,
-      }));
-  }, [folder, folderShown, folderUnavailable, folders.data, section, sectionPages]);
+      }))
+      .filter((item) => item.count > 0 || folderSection(item.path, layout) === "docs");
+  }, [folder, folderShown, folderUnavailable, folders.data, layout, section, sectionPages]);
 
   const knownFolder = (path: string) => !!folders.data?.folders.some((item) => item.path === path);
   const rows = useMemo(() => {
@@ -117,7 +121,7 @@ export function SectionListPage({
   // A new page lands in the folder in view; in Skills and Rules, in that
   // section's folder.
   const namedFolders = (folders.data?.folders ?? []).map((item) => item.path);
-  const sectionFolder = section === "docs" ? folder : sectionFolderPath(section, namedFolders);
+  const sectionFolder = section === "docs" ? folder : sectionFolderPath(section, namedFolders, layout);
   useEffect(() => {
     onCreationFolderPathChange?.(sectionFolder);
     return () => onCreationFolderPathChange?.(null);
@@ -150,14 +154,17 @@ export function SectionListPage({
     const names = section === "rules" ? RULES_FOLDER_NAMES : SKILLS_FOLDER_NAMES;
     const label = t(section === "rules" ? "sidebar.rules" : "sidebar.skills");
     const folderName = names.includes(label) ? label : names[0];
-    if (!canCreateFolder || createPending) { onCreatePage(); return; }
+    if (createPending) return;
+    // Never somewhere else: a page made outside that folder would be a Docs
+    // page, and a folder of that name inside a Space is that Space's alone.
+    if (!canCreateFolder || topFolderIsASpaces(folderName, layout)) { toast(t("sections.noFolder", { section: label })); return; }
     setCreatePending(true);
     try {
       const made = await knowledgeFolderCreate("", folderName);
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_FOLDERS_QUERY_KEY });
       onCreatePage(made.path);
     } catch {
-      toast(t("pages.folders.createError"));
+      toast(t("sections.noFolder", { section: label }));
     } finally {
       setCreatePending(false);
     }
@@ -252,7 +259,7 @@ export function SectionListPage({
     enabled: section === "rules" && rulesFeature.data === true,
     retry: false,
   });
-  const pending = section === "rules" ? pendingRules.data?.[0] : undefined;
+  const pending = section === "rules" ? pendingRules.data ?? [] : [];
 
   const sectionTitle = t(section === "docs" ? "sidebar.pages" : section === "skills" ? "sidebar.skills" : "sidebar.rules");
   const folderName = folder === null ? null : folder.split("/").pop() ?? folder;
@@ -266,7 +273,7 @@ export function SectionListPage({
   ];
 
   return (
-    <section className="section-list" data-section={section} data-testid="section-list" aria-busy={sections.pending || (section === "docs" && folders.isPending)} aria-labelledby={`${id}-title`}>
+    <section className="section-list" data-section={section} data-testid="section-list" data-keeps-group-focus="" aria-busy={sections.pending || (section === "docs" && folders.isPending)} aria-labelledby={`${id}-title`}>
       {folder !== null && (
         <button type="button" className="section-list-back" onClick={() => onBrowseFolder(parentPath)}>
           <CaretLeft aria-hidden="true" size={12} />
@@ -317,7 +324,7 @@ export function SectionListPage({
       </header>
 
       {section === "docs" && folder === null && !exampleWiki && <SpaceFoldersPrompt noteCount={sections.loaded ? sections.pages.length : null} />}
-      {pending && <SpaceRulesAsk space={{ id: pending.space_id, name: pending.space_name }} onOpenPage={onOpenPageId} variant="pending" />}
+      {pending.map((item) => <SpaceRulesAsk key={item.space_id} space={{ id: item.space_id, name: item.space_name }} onOpenPage={onOpenPageId} variant="pending" />)}
 
       {creating && (
         <form className="notes-folder-create section-list-folder-form" onSubmit={createFolder} onKeyDown={(event) => { if (event.key === "Escape" && !createPending) { event.preventDefault(); event.stopPropagation(); closeFolderForm(); } }}>

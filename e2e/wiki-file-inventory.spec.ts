@@ -25,7 +25,9 @@ for (const locale of ["en"] as const) for (const width of [1280,375]) {
   await list.getByRole("button",{name:/Fixture architecture$/}).click();
   const editor=page.locator(".cm-content[contenteditable=true]");
   await expect(editor).toContainText("Fixture architecture");
-  // The open page lights its section on the left; the left side lists no pages.
+  // The open page lights its section on the left (the wide window shows
+  // the left side); the left side lists no pages.
+  if(width===1280) await expect(page.locator(".notes-rail-nav").getByRole("button",{name:"Docs",exact:true})).toHaveAttribute("aria-current","page");
   await expect(page.locator(".notes-rail-nav .notes-inventory-page")).toHaveCount(0);
   await page.locator(".workspace-history-navigation").getByRole("button",{name:copy.back,exact:true}).click();
   // Back returns to the folder the page was opened from.
@@ -90,6 +92,9 @@ test("an existing folder-and-Space draft survives reload, then auto-finalizes an
  await expect(dialog).toBeHidden();
  await expect(page.locator(".cm-content[contenteditable=true]")).toContainText("Updated content survives reload and move.");
  await expect(page.locator(".page-detail")).toBeVisible();
+ // The moved page is still the open one: its tab is selected and its section lit.
+ await expect(page.getByRole("tab",{name:"Folder draft after reload",exact:true})).toHaveAttribute("aria-selected","true");
+ await expect(page.locator(".notes-rail-nav").getByRole("button",{name:"Docs",exact:true})).toHaveAttribute("aria-current","page");
  const moves=runtime.calls().filter(call=>call.command==="page_move");
  expect(moves).toHaveLength(2);
  expect(moves[0].args).toMatchObject({id:draftId,folderPath:"Reading"});
@@ -162,6 +167,28 @@ test("actual file-save failure survives Main navigation and safely replays the s
   if (!internals) throw new Error("Expected the installed Tauri mock before reading the saved Page");
   return internals.invoke("get_page",{id});
  },args.id)).toMatchObject({id:args.id,version:args.expectedVersion+1,storage_path:`Work/${args.id}.md`});
+});
+
+test("browsing folders in the Docs list keeps a page open beside it in the same editor session", async ({ page }) => {
+  await page.setViewportSize({width:1440,height:900});
+  await installTauriMock(page,{locale:"en",rawActions:[],fixture:createReviewDecisionFixture("wiki-folders")});
+  await page.goto("/");
+  let list=await openDocsFolder(page,"Work");
+  await list.getByRole("button",{name:"Open Fixture architecture",exact:true}).click();
+  list=await openDocsFolder(page,"Work/Research");
+  await list.getByRole("button",{name:"Open Why fixtures stay deterministic",exact:true}).click();
+  await page.getByRole("tab",{name:"Why fixtures stay deterministic",exact:true}).click({button:"right"});
+  await page.getByRole("menuitem",{name:"Move to right group",exact:true}).click();
+  const right=page.locator('.note-group-frame[data-note-group-id="secondary"]');
+  const editor=right.locator(".cm-content[contenteditable=true]");
+  await expect(editor).toContainText("Decision: keep review fixtures deterministic.");
+  await editor.evaluate(el=>el.setAttribute("data-session-proof","same"));
+  // Going through folders in the list never replaces the editor beside it.
+  list=await openDocsFolder(page,"Work");
+  await expect(list.getByRole("button",{name:"Open Fixture architecture",exact:true})).toBeVisible();
+  await list.locator(".section-list-back").click();
+  await expect(list.getByRole("button",{name:"Work",exact:true})).toBeVisible();
+  await expect(editor).toHaveAttribute("data-session-proof","same");
 });
 
 test("a folder card opens its own pages and an empty folder says so", async ({ page }) => {

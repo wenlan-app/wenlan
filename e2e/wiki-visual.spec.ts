@@ -62,6 +62,8 @@ for(const locale of ["en","zh-Hant"] as const)for(const theme of ["light","dark"
  await tree.getByRole("button",{name:"Research",exact:true}).click();
  await expect(tree.getByTitle("Memory provenance",{exact:true})).toBeVisible();
  await expect(tree.getByTitle("Local-first architecture",{exact:true})).toHaveCount(0);
+ // The list is the one place the page is named: nothing beside it repeats it.
+ await expect(page.getByText("Memory provenance",{exact:true})).toHaveCount(1);
  await tree.getByRole("button",{name:"Pages",exact:true}).click();
  await expect(tree.getByTitle("Local-first architecture",{exact:true})).toBeVisible();
  await expect(tree.getByTitle("Nash Su",{exact:true})).toHaveCount(0);

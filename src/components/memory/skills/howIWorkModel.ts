@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { TFunction } from "i18next";
-import type { Page, SkillLine, SkillLineKind } from "../../../lib/tauri";
+import type { Page, SkillLine, SkillLineKind, SpaceRulesResponse } from "../../../lib/tauri";
 
 export const NOT_FOR_AI_TOOLS_MARKER = "<!-- wenlan:not-for-ai-tools -->";
 export const HOW_I_WORK_QUERY_KEYS = {
@@ -8,6 +8,9 @@ export const HOW_I_WORK_QUERY_KEYS = {
   spaceSuggestions: ["space-rules-suggestions"] as const,
   skillSuggestions: ["skill-suggestions"] as const,
   records: (space: string) => ["skill-borrow-records", space] as const,
+  /** The rules the daemon lists for a Space (or for every Space, with ""),
+   *  asked again whenever the page in view changes. */
+  rules: (space: string, pageId: string, version: number) => ["space-rules", space, pageId, version] as const,
 };
 
 const RULE_MARKER = "<!-- wenlan-rule:";
@@ -28,12 +31,12 @@ const BULLET = /^( {0,3})[-*+] +(.*)$/u;
 const TAGGED = /^\[(rule|decision|pitfall)\]\s*/iu;
 
 /** Read the page projection without exposing its revision bindings in the UI.
- *  A managed line names the page it came from. A plain top-level bullet is a
- *  rule the person wrote themselves (UX-SKILL-10), read as the daemon reads
- *  it (`skill_grow::person_rule_lines`): outside code blocks, not a to-do
- *  box, a rule unless it opens with `[decision]` or `[pitfall]`. The daemon
- *  also checks who wrote each bullet; the page text alone cannot, so a
- *  bullet someone else added shows the same here. */
+ *  A managed line names the page it came from. A plain top-level bullet is
+ *  read as the daemon reads it (`skill_grow::person_rule_lines`): outside
+ *  code blocks, not a to-do box, a rule unless it opens with `[decision]` or
+ *  `[pitfall]`. Who wrote a bullet is not in the page text: only the daemon
+ *  knows, from the page's history, so a bullet carries no author here until
+ *  `withDaemonAuthors` adds the daemon's answer. */
 export function parseHowIWorkLines(content: string, page?: Pick<Page, "id" | "title">): SkillLine[] {
   const lines: SkillLine[] = [];
   const seen = new Set<string>();
@@ -85,11 +88,47 @@ export function parseHowIWorkLines(content: string, page?: Pick<Page, "id" | "ti
       source_revision: 0,
       source_revision_at: 0,
       source_quote: text,
-      person_edited: true,
-      hand_written: true,
     });
   }
   return lines;
+}
+
+/** One rule's words, compared as the daemon compares them. */
+export function ruleTextKey(text: string): string {
+  return text.split(/\s+/u).filter(Boolean).join(" ").toLowerCase();
+}
+
+/** The daemon's lines that came from `pageId` itself. */
+export function rulesFromPage(rules: SpaceRulesResponse | undefined, pageId: string): SkillLine[] {
+  return (rules?.lines ?? []).filter((line) => line.source_page_id === pageId);
+}
+
+/** Marks a plain bullet as written by the person only where the daemon says
+ *  so: a line it returned as hand-written, from this page, with the same
+ *  words. Every other bullet keeps no author. */
+export function withDaemonAuthors(lines: readonly SkillLine[], rules: SpaceRulesResponse | undefined, pageId: string): SkillLine[] {
+  const own = new Map(rulesFromPage(rules, pageId).filter((line) => line.hand_written).map((line) => [ruleTextKey(line.text), line] as const));
+  const all = new Map((rules?.lines ?? []).map((line) => [line.id, line] as const));
+  return lines.map((line) => {
+    if (!line.id.startsWith("own:")) return all.get(line.id)?.general ? { ...line, general: true } : line;
+    const told = own.get(ruleTextKey(line.text));
+    return told ? { ...line, hand_written: true, person_edited: true, general: told.general } : line;
+  });
+}
+
+/** Whether `page` gives any rule that is used in every Space: those are the
+ *  only rules Wenlan writes into the AI tools' files. `everySpace` says the
+ *  daemon was asked with no Space, where every line it lists is one. */
+export function pageGivesGeneralRules(
+  rules: SpaceRulesResponse | undefined,
+  page: Pick<Page, "id">,
+  pageLines: readonly SkillLine[],
+  everySpace: boolean,
+): boolean {
+  if (!rules) return false;
+  const onPage = new Set(pageLines.map((line) => line.id));
+  return rules.lines.some((line) => (everySpace || line.general === true)
+    && (line.source_page_id === page.id || (rules.rules_page_id === page.id && onPage.has(line.id))));
 }
 
 export function isHowIWorkPage(page: Pick<Page, "content" | "title">): boolean {

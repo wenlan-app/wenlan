@@ -425,7 +425,13 @@ and wait for evidence that people need them.
   empty section's list says so in a few words. A person's own folders live
   under Docs. Nothing moves on disk: Rules is the pages in a folder named
   Rules (規則, 规则) and the "How I work" pages, Skills is the pages in a folder
-  named Skills (技能), and Docs is every other page. Below the rows come the
+  named Skills (技能), and Docs is every other page. A Space's own folder is
+  never read as one of these, so a Space called Rules or Skills keeps its
+  pages under Docs, and every page is listed in the one section that counts
+  it. New under Rules or Skills puts the page in that section's folder
+  outside every Space's folder, making it if needed; when that cannot be
+  done it says so and makes no page elsewhere. A page picked from a list
+  opens in the group of pages that has focus. Below the rows come the
   pinned pages (UX-FIND-6) and then Recent (最近): the last four pages opened
   on this computer, from all three sections, each marked with its section.
   With the left side shrunk to icons the same rows stay and Recent is left
@@ -690,17 +696,28 @@ and wait for evidence that people need them.
   原文：決定 4：「A rule the person writes themselves counts at once. AI tools get it and `wenlan rules` prints it, with no model needed. Rules the AI derives from pages still need the person's accept.」Qi-Xuan 以輸入「A」回答此題（2026-11-16 22:30Z；題目與決定記錄於 `/mnt/project-files/readme-2026-11/cover-v3/2026-11-16-app-changes-from-cover.md`，決定 4）。
 - **UX-SKILL-11** `shipped` A rules page shows two things. Under each rule,
   where it came from: a link "from" the page it was taken from, or "written
-  by you" for a rule the person wrote themselves (UX-SKILL-10). At the top,
-  which connected AI tools the rules are used in, from what Wenlan can say
-  tool by tool (UX-SKILL-8): "connected, rules delivered" where Wenlan's part
-  is in the tool's own file, only "connected" for a tool that gets the rules
+  by you" for a rule the person wrote themselves (UX-SKILL-10). Who wrote a
+  rule is the daemon's answer, from the page's history, never a guess from
+  the page's text: a line reads "written by you" only when the daemon lists
+  it as the person's own, from this page, in the same words, and a line it
+  does not list that way names no author. A page kept in a Rules folder
+  shows the same, in a short list above its text. Looking at rules in the
+  app is the person reading, never recorded as an AI tool reading them. At
+  the top, which connected AI tools the rules are used in, from what Wenlan
+  can say tool by tool (UX-SKILL-8). Only rules used in every Space are
+  written into the tools' files, so only a page that gives such a rule says
+  more than "connected": "connected, rules delivered" where Wenlan's part is
+  in the tool's own file, only "connected" for a tool that gets the rules
   when it asks Wenlan, and a short plain line when the rules were not
-  delivered (not yet, too long for the tool, or a file Wenlan cannot safely
-  change). A tool that is not connected is not listed. It says connected and
-  delivered only, never that the AI follows the rules, and shows no file path.
-  Rules the AI drew from pages that nobody answered yet stay in a box of
-  their own with Accept and No, on the Rules list and on a rules page of that
-  Space; they do not count until accepted (UX-SKILL-1).
+  delivered (not yet, too long for the tool, or a file Wenlan cannot
+  change). A page whose rules are for its own Space only, a stopped page and
+  a `#not-for-ai-tools` page say "connected" for every connected tool. A
+  tool that is not connected is not listed. It says connected and delivered
+  only, never that the AI follows the rules, and shows no file path. Rules
+  the AI drew from pages that nobody answered yet stay in a box of their
+  own with Accept and No, one box for each Space that has any, on the Rules
+  list and on a rules page of that Space; they do not count until accepted
+  (UX-SKILL-1).
   原文：決定 3：「A rules page shows two things. Under each rule, the page it came from. At the top of the page, which AI tools the rules are used in. Wording limit: say the tool is connected and the rules were delivered; never say the AI always follows them.」Qi-Xuan 以輸入「A」回答此題（2026-11-16 22:28Z–22:30Z；記錄於 `/mnt/project-files/readme-2026-11/cover-v3/2026-11-16-app-changes-from-cover.md`，決定 3）；草圖 `Main.dc.html` 右側規則頁（「用在 … 已連接，規則已送達」「來自〈…〉」「你寫的」「AI 從你的頁面整理出一條，還沒算數」「接受／不要」）。
 
 ## From the terminal

@@ -3583,3 +3583,69 @@ async fn ux_skill_8_opencode_and_zed_follow_the_xdg_config_folder_and_never_from
     // never read or written.
     assert!(!SkillDirs::system().tool_files);
 }
+
+#[tokio::test]
+async fn ux_skill_11_the_person_reading_their_rules_in_the_app_is_not_recorded_as_a_tool_read() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(true).await;
+    let project = scratch
+        .db
+        .create_space("Project", None, false)
+        .await
+        .unwrap();
+    scratch.db.register_trusted_agent("codex").await.unwrap();
+    let git = write_page_in_folder(
+        &scratch,
+        1,
+        Some("Project"),
+        "Rules",
+        "Git",
+        "- Use the merge queue\n",
+        "publish",
+    )
+    .await;
+
+    // The app asks as the person, with and without a Space: it gets the same
+    // lines a tool gets, each saying whose hand wrote it and on which page.
+    for space in [Some("Project"), None] {
+        let shown = handle_read_rules(
+            axum::extract::State(scratch.shared.clone()),
+            person_headers(),
+            Query(RulesQuery {
+                space: space.map(str::to_string),
+            }),
+        )
+        .await
+        .unwrap()
+        .0;
+        if space.is_some() {
+            assert_eq!(texts(&shown), vec!["Use the merge queue"]);
+            assert!(shown.lines[0].hand_written);
+            assert_eq!(shown.lines[0].source_page_id, git);
+        }
+    }
+    assert!(
+        scratch
+            .db
+            .skill_borrow_records(&project.id, 0, i64::MAX)
+            .await
+            .unwrap()
+            .is_empty(),
+        "the person's own look is not a tool reading the rules"
+    );
+
+    // A tool's read of the same lines is recorded.
+    read_rules_as_codex(&scratch, Some("Project")).await;
+    assert_eq!(
+        scratch
+            .db
+            .skill_borrow_records(&project.id, 0, i64::MAX)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+}

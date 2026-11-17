@@ -72,7 +72,12 @@ export function SpaceRulesAsk({ space, onOpenPage, variant = "ask" }: Props) {
   return (
     <section className={variant === "pending" ? "rules-pending" : "space-rules-ask"} aria-labelledby={`space-rules-ask-${space.id}`} data-testid="space-rules-ask">
       {variant === "pending" ? (
-        <p className="rules-pending-label" id={`space-rules-ask-${space.id}`}>{t("howIWork.pending.label", { count: suggestion.lines.length, space: space.name })}</p>
+        <div className="rules-pending-head" id={`space-rules-ask-${space.id}`}>
+          {/* The Space's name on a line of its own, cut short when long, so
+              the sentence under it never wraps. */}
+          <p className="rules-pending-space" title={space.name}>{space.name}</p>
+          <p className="rules-pending-label">{t("howIWork.pending.label", { count: suggestion.lines.length })}</p>
+        </div>
       ) : (
         <>
           <p className="space-rules-ask-crumb">{t("howIWork.ask.crumb", { space: space.name })}</p>

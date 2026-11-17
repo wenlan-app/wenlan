@@ -178,13 +178,17 @@ test("opening a page owned by the other group requires an explicit action", asyn
  await start(page);
  await move(page);
  const left=group(page,"primary"),right=group(page,"secondary");
- // The Docs list sits in the central group, so a page chosen there opens there.
+ // A page picked from the Docs list opens in the group that has focus: the right one.
+ await right.getByRole("tab",{name:"Why fixtures stay deterministic",exact:true}).click();
  await openWikiNote(page,"Independent research");
- await move(page);
  await expect(right.getByRole("tab",{name:"Independent research",exact:true})).toHaveAttribute("aria-selected","true");
+ await expect(left.getByRole("tab",{name:"Independent research",exact:true})).toHaveCount(0);
  await left.getByRole("tab",{name:"Fixture architecture",exact:true}).click();
  await openWikiNote(page,"Why fixtures stay deterministic");
  await expect(right.getByRole("tab",{name:"Independent research",exact:true})).toHaveAttribute("aria-selected","true");
+ // The central group opened nothing: it still shows the list, with its own tab and no other.
+ await expect(sectionList(page,"docs")).toBeVisible();
+ await expect(left.getByRole("tab",{name:"Fixture architecture",exact:true})).toHaveCount(1);
  await expect(left.getByRole("tab",{name:"Why fixtures stay deterministic",exact:true})).toHaveCount(0);
  await page.getByRole("button",{name:"Show page",exact:true}).click();
  await expect(right.getByRole("tab",{name:"Why fixtures stay deterministic",exact:true})).toHaveAttribute("aria-selected","true");
@@ -195,8 +199,10 @@ test("a newer right tab choice cancels a pending global graph navigation", async
  await start(page,"light",2560);
  await move(page);
  const left=group(page,"primary"),right=group(page,"secondary");
+ await right.getByRole("tab",{name:"Why fixtures stay deterministic",exact:true}).click();
  await openWikiNote(page,"Independent research");
- await move(page);
+ await expect(right.getByRole("tab",{name:"Independent research",exact:true})).toHaveAttribute("aria-selected","true");
+ // The central group shows the Docs list; bring its page back to edit it.
  await left.getByRole("tab",{name:"Fixture architecture",exact:true}).click();
  await right.getByRole("tab",{name:"Why fixtures stay deterministic",exact:true}).click();
  await page.getByRole("button",{name:"Info",exact:true}).click();

@@ -3,12 +3,20 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import {
   getRulesDelivery,
+  getSpaceFolders,
+  getSpaceRules,
   listSpaceRulesSuggestions,
   skillsFromLibraryEnabled,
+  type Page,
+  type SpaceRulesResponse,
   type ToolRulesDelivery,
 } from "../../../lib/tauri";
+import { pageSection, spaceLayout } from "../pages/pageSections";
+import { SPACE_FOLDERS_QUERY_KEY } from "../pages/SpaceFoldersPrompt";
+import { useScope } from "../team/scope";
+import { HowIWorkLines } from "./HowIWorkLines";
 import { useExampleWikiActive } from "../../../lib/exampleWiki/mode";
-import { HOW_I_WORK_QUERY_KEYS } from "./howIWorkModel";
+import { HOW_I_WORK_QUERY_KEYS, pageGivesGeneralRules, rulesFromPage } from "./howIWorkModel";
 import { SpaceRulesAsk } from "./SpaceRulesAsk";
 import "./howIWork.css";
 
@@ -42,10 +50,27 @@ export function toolStanding(tool: ToolRulesDelivery): ToolStanding | null {
   }
 }
 
+/** The rules the daemon lists for the Space a page is in (every Space's
+ *  rules when it is in none), read as the person: who wrote each one, and
+ *  which are used in every Space. Asked again when the page changes. */
+export function usePageRules(page: Pick<Page, "id" | "version">, spaceName: string | null): SpaceRulesResponse | undefined {
+  const exampleWiki = useExampleWikiActive();
+  const rules = useQuery({
+    queryKey: HOW_I_WORK_QUERY_KEYS.rules(spaceName ?? "", page.id, page.version),
+    queryFn: () => getSpaceRules(spaceName),
+    enabled: !exampleWiki,
+    retry: false,
+  });
+  return rules.data;
+}
+
 /** Heads a rules page: which connected AI tools the rules are used in, and
- *  whether Wenlan delivered them. Nothing shows until the daemon answers; an
- *  older daemon that cannot answer shows nothing. */
-export function RulesToolsHeader() {
+ *  whether Wenlan delivered them. Only rules used in every Space are written
+ *  into the tools' files, so `delivers` says whether this page gives any;
+ *  without one, each connected tool reads "connected" and nothing more.
+ *  Nothing shows until the daemon answers; an older daemon that cannot
+ *  answer shows nothing. */
+export function RulesToolsHeader({ delivers }: { readonly delivers: boolean }) {
   const { t } = useTranslation();
   const exampleWiki = useExampleWikiActive();
   const delivery = useQuery({
@@ -57,7 +82,7 @@ export function RulesToolsHeader() {
   });
   if (!delivery.isSuccess) return null;
   const groups = STANDING_ORDER
-    .map((standing) => ({ standing, tools: delivery.data.filter((tool) => toolStanding(tool) === standing) }))
+    .map((standing) => ({ standing, tools: delivery.data.filter((tool) => { const own = toolStanding(tool); return (own !== null && !delivers ? "connected" : own) === standing; }) }))
     .filter((group) => group.tools.length > 0);
   return (
     <section className="rules-tools" aria-label={t("howIWork.tools.label")} data-testid="rules-tools">
@@ -71,6 +96,45 @@ export function RulesToolsHeader() {
         </p>
       ))}
     </section>
+  );
+}
+
+/** Heads a page the person keeps in a Rules folder, and shows nothing on
+ *  any other page: the same header as a "How I work" page, then each rule
+ *  the daemon reads from this page with who wrote it, then what is still
+ *  waiting for an answer. */
+export function RulesFolderPageHead({ page, onOpenPage }: { readonly page: Page; readonly onOpenPage: (pageId: string) => void }) {
+  // No folder named Rules on the page's path: nothing to ask the daemon.
+  return pageSection(page) === "rules" ? <RulesFolderGate page={page} onOpenPage={onOpenPage} /> : null;
+}
+
+function RulesFolderGate({ page, onOpenPage }: { readonly page: Page; readonly onOpenPage: (pageId: string) => void }) {
+  const scope = useScope();
+  const spaceFolders = useQuery({ queryKey: SPACE_FOLDERS_QUERY_KEY, queryFn: () => getSpaceFolders(), retry: false, staleTime: Infinity });
+  // The folder may be a Space's own, which is no rules folder. The page's
+  // own Space folder is enough to tell.
+  if (!spaceFolders.isFetched) return null;
+  const section = pageSection(page, spaceLayout([page], spaceFolders.data === true, scope.teamSpaces));
+  return section === "rules" ? <RulesFolderRules page={page} onOpenPage={onOpenPage} /> : null;
+}
+
+function RulesFolderRules({ page, onOpenPage }: { readonly page: Page; readonly onOpenPage: (pageId: string) => void }) {
+  const { t } = useTranslation();
+  const space = page.space?.trim();
+  const spaceName = space && space !== "uncategorized" ? space : null;
+  const rules = usePageRules(page, spaceName);
+  const lines = rulesFromPage(rules, page.id);
+  return (
+    <>
+      <RulesToolsHeader delivers={pageGivesGeneralRules(rules, page, [], spaceName === null)} />
+      {lines.length > 0 && (
+        <section className="rules-page-lines" aria-label={t("howIWork.rulesOnPage")} data-testid="rules-page-lines">
+          <h2 className="rules-page-lines-title">{t("howIWork.rulesOnPage")}</h2>
+          <HowIWorkLines lines={lines} onOpenPage={onOpenPage} ownPageId={page.id} showEdited={false} />
+        </section>
+      )}
+      <RulesPagePending spaceName={page.space} onOpenPage={onOpenPage} />
+    </>
   );
 }
 

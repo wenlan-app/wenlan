@@ -148,8 +148,7 @@ import { SharedWithLine } from "./sharing/SharedWithLine";
 import { ConcurrentEditLine, markConcurrentEditSeen, unseenConcurrentEdit } from "./sharing/ConcurrentEditLine";
 import { pageShare, sharedWriter, spaceShare, useShares } from "./sharing/sharing";
 import { HowIWorkPage } from "./skills/HowIWorkPage";
-import { RulesPagePending, RulesToolsHeader } from "./skills/RulesToolsHeader";
-import { pageSection } from "./pages/pageSections";
+import { RulesFolderPageHead } from "./skills/RulesToolsHeader";
 import { howIWorkPageTitle, isHowIWorkPage } from "./skills/howIWorkModel";
 
 interface PageDetailProps {
@@ -3193,11 +3192,8 @@ export default function PageDetail({
         <div className="page-look-text" hidden={pageLook.shown}>
         {/* A page the person keeps in a Rules folder: the same header as a
             "How I work" page, above their own text. */}
-        {!howIWorkPage && page.status === "active" && pageSection(page) === "rules" && (
-          <>
-            <RulesToolsHeader />
-            <RulesPagePending spaceName={page.space} onOpenPage={(id) => onPageClick?.(id)} />
-          </>
+        {!howIWorkPage && page.status === "active" && (
+          <RulesFolderPageHead page={page} onOpenPage={(id) => onPageClick?.(id)} />
         )}
         {howIWorkPage ? (
           <HowIWorkPage page={page} onOpenPage={(id) => onPageClick?.(id)} />

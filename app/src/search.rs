@@ -4317,6 +4317,30 @@ pub async fn get_rules_delivery(
     client.get_json_as_person("/api/skills/delivery").await
 }
 
+/// The rules AI tools are told in `space` (none: the rules for every Space),
+/// read as the person so the app can say, rule by rule, where each came from
+/// and whether the person wrote it (UX-SKILL-11). The daemon records only a
+/// tool's read, never this one.
+#[tauri::command]
+pub async fn get_space_rules(
+    state: tauri::State<'_, State>,
+    space: Option<String>,
+) -> Result<SpaceRulesResponse, String> {
+    let client = daemon_client(&state).await;
+    let path = match space
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    {
+        Some(name) => format!(
+            "/api/skills/rules?space={}",
+            crate::api::percent_encode_path_segment(name)
+        ),
+        None => "/api/skills/rules".to_string(),
+    };
+    client.get_json_as_person(&path).await
+}
+
 #[tauri::command]
 pub async fn refresh_skills(
     state: tauri::State<'_, State>,

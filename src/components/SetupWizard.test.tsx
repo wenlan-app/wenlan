@@ -3317,7 +3317,7 @@ describe("DoneStep onboarding routing wiring (wireRouting=true)", () => {
   // not an unhandled rejection behind a button that silently did nothing.
   it.each([
     { variant: "skip path", chatImportResult: null, label: "Open Wenlan" },
-    { variant: "imported", chatImportResult: { memories_stored: 4 }, label: "Back to Library" },
+    { variant: "imported", chatImportResult: { memories_stored: 4 }, label: "Back to Home" },
   ])(
     "$variant: a rejected completion shows an inline alert and stays on Done; a second click that resolves completes",
     async ({ chatImportResult, label }) => {
@@ -3570,7 +3570,7 @@ describe("DoneStep and Setting up: Added versus Connected", () => {
 
   it("the in-app connect flow returns to the Wiki; first run keeps Get started", async () => {
     const { unmount } = renderDoneWith(["cursor"], NOW());
-    expect(await screen.findByRole("button", { name: "Back to Library" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Back to Home" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Get started" })).not.toBeInTheDocument();
     unmount();
 
@@ -3589,7 +3589,7 @@ describe("DoneStep and Setting up: Added versus Connected", () => {
       </QueryClientProvider>,
     );
     expect(await screen.findByRole("button", { name: "Get started" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Back to Library" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Back to Home" })).not.toBeInTheDocument();
   });
 
   it("the Setting up row flips from Added to Connected on a fresh sighting", async () => {

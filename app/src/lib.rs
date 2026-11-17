@@ -1736,6 +1736,7 @@ pub fn run() {
             search::refresh_skills,
             search::undo_space_rules,
             search::get_rules_delivery,
+            search::get_space_rules,
             search::list_skill_suggestions,
             search::apply_skill_suggestion,
             search::dismiss_skill_suggestion,

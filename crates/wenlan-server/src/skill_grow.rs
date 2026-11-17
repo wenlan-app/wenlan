@@ -921,10 +921,15 @@ pub async fn handle_read_rules(
     let (db, page_root) = db_and_page_root(&state).await?;
     let own = OwnRulePages::load(&db, page_root.as_deref()).await?;
     let tool = crate::memory_routes::extract_agent_name(&headers, None);
+    // The person looking at their own rules in the app is not an AI tool
+    // reading them: only a tool's read is recorded.
+    let by_tool = !crate::memory_routes::caller_is_person(&headers);
     if no_space_named(&headers, query.space.as_deref()) {
         // No Space: only the general lines, read from every accepted Space.
         let general = general_lines(&db, &own, None).await?;
-        record_general_reads(&db, &tool, &general).await?;
+        if by_tool {
+            record_general_reads(&db, &tool, &general).await?;
+        }
         return Ok(Json(SpaceRulesResponse {
             space_id: String::new(),
             space_name: String::new(),
@@ -934,7 +939,7 @@ pub async fn handle_read_rules(
     }
     let space = resolved_space(&db, &headers, query.space.as_deref()).await?;
     let mut response = read_rules_for_space(&db, &own, &space).await?;
-    if feature_enabled() && !response.lines.is_empty() {
+    if by_tool && feature_enabled() && !response.lines.is_empty() {
         db.record_skill_rules_read(&tool, &space.id, &response.lines)
             .await?;
     }
@@ -949,7 +954,9 @@ pub async fn handle_read_rules(
         .into_iter()
         .filter(|(_, line)| !known.contains(&line.text.trim().to_lowercase()))
         .collect();
-    record_general_reads(&db, &tool, &general).await?;
+    if by_tool {
+        record_general_reads(&db, &tool, &general).await?;
+    }
     response
         .lines
         .extend(general.into_iter().map(|(_, line)| line));

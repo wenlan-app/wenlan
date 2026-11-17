@@ -196,7 +196,6 @@ vi.mock("./pages/WikiWorkspace", () => ({
   ),
 }));
 vi.mock("./pages/PagesOverview", () => ({
-  WikiStart: () => <div data-testid="wiki-start" />,
   PagesOverview: ({ onSelectPage, onBrowseArchived }: { onSelectPage: (id: string) => void; onBrowseArchived?: () => void }) => (
     <div data-testid="pages-overview">
       <button type="button" onClick={onBrowseArchived}>Browse archived notes</button>

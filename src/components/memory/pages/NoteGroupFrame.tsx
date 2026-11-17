@@ -25,7 +25,12 @@ export function NoteGroupFrame({ id, label, tabs, children, onFocus, contentId, 
   const [toolsHost, setToolsHost] = useState<HTMLDivElement | null>(null);
   const sharedInspector = useContext(SharedWikiInspectorContext);
   const assignElement = useCallback((node: HTMLDivElement | null) => setElement(node), []);
-  const notifyFocus = (_event: FocusEvent<HTMLDivElement> | PointerEvent<HTMLDivElement>) => onFocus?.();
+  // A list of pages shown in this column is not a page of the column: using
+  // it keeps the group that had focus, so a page picked there opens in it.
+  const notifyFocus = (event: FocusEvent<HTMLDivElement> | PointerEvent<HTMLDivElement>) => {
+    if (event.target instanceof Element && event.target.closest("[data-keeps-group-focus]")) return;
+    onFocus?.();
+  };
   const group = useMemo(() => ({ id, element }), [id, element]);
 
   return (
