@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=53f75872573c06e8fde49d3988478ddfbfa6c4fd9443679de75735150d686dff -->
+<!-- README_SYNC: source=README.md sha256=d5bee29788b363274b85853a4dce7b9107145d16841d741ceddb9a00ba576827 -->
 
 <p align="center">
   <picture>
@@ -42,7 +42,7 @@
 
 每個 AI 工具各記各的、規則各一份。有了文瀾，你定下的事，每個工具、代理和隊友都拿得到。
 
-給每天用好幾個 AI 工具的人，和工程師跟非工程師一起做事的小團隊。
+給每天用好幾個 AI 工具的人，和小團隊，全是工程師或混著其他角色都行。
 
 - **有出處的文件。** 存下前，文瀾會確認每個引用的來源支持那一句。
 - **技能和規則只有一份。** 同一份，在你連上的每個 AI 工具和平台上都能用。
@@ -79,25 +79,31 @@
 
 **自己用。** 從你的 AI 工具開始，不用裝 App。
 
-1. 在終端機執行（需要 Node.js）：
+1. 安裝（需要 Node.js）。裝完會自動啟動並常駐，不用再設定別的。
 
    ```sh
    npx -y wenlan setup
    ```
 
-   也可以用 [Claude Code 插件](docs/setup-with-ai.md)、`brew install 7xuanlu/tap/wenlan`，或[其他方式](docs/setup-and-data.zh-Hant.md#installation)。
+   用 Claude Code 的話，[插件](docs/setup-with-ai.md)會幫你做完第 1、2 步。[其他安裝方式](docs/setup-and-data.zh-Hant.md#installation)。
 
-2. 帶進一個放筆記或文件的資料夾，例如 Obsidian vault。[其他匯入方式](docs/import-guide.zh-Hant.md)。
+2. 連上你的 AI 工具。你用幾個工具，就各執行一次。
+
+   ```sh
+   wenlan connect claude-code   # 或 codex, cursor, gemini, vscode, claude-desktop
+   ```
+
+3. 想要的話：帶進一個放筆記或文件的資料夾，例如 Obsidian vault。[其他方式](docs/import-guide.zh-Hant.md)。
 
    ```sh
    wenlan sources add ~/notes
    ```
 
-3. 開一個新的 AI 對話，問它：
+4. 開一個新的 AI 對話，問它：
 
    > /wenlan 我之前對這件事怎麼決定的？再幫我：……
 
-4. 在瀏覽器裡看和改你的頁面：`wenlan open`。
+5. 在瀏覽器裡看和改你的頁面：`wenlan open`。
 
 想要的話再裝：[桌面 App](https://github.com/wenlan-app/wenlan/releases/latest)（macOS、Windows、Linux）多了匯入和一鍵連接 AI 工具。
 

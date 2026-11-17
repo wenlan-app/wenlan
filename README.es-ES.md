@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=53f75872573c06e8fde49d3988478ddfbfa6c4fd9443679de75735150d686dff -->
+<!-- README_SYNC: source=README.md sha256=d5bee29788b363274b85853a4dce7b9107145d16841d741ceddb9a00ba576827 -->
 
 <p align="center">
   <picture>
@@ -42,7 +42,7 @@
 
 Cada IA guarda su memoria y sus reglas. Wenlan lleva lo que decides a cada herramienta, agente y equipo.
 
-Para quien usa varias herramientas de IA cada día, y equipos pequeños de ingenieros y no ingenieros.
+Para quien usa varias herramientas de IA cada día, y equipos pequeños, solo de ingenieros o mixtos.
 
 - **Documentos con fuentes.** Wenlan comprueba que cada fuente citada respalda su frase.
 - **Una sola copia de skills y reglas.** Funciona en cada herramienta y plataforma de IA que conectas.
@@ -79,25 +79,31 @@ Más comparaciones, con Obsidian, Notion AI y herramientas de memoria: [wenlan.a
 
 **Por tu cuenta.** Empieza desde tu herramienta de IA. Sin instalar la app.
 
-1. En una terminal, ejecuta esto (requiere Node.js):
+1. Instálalo (requiere Node.js). También arranca Wenlan y lo deja en marcha.
 
    ```sh
    npx -y wenlan setup
    ```
 
-   O: el [plugin de Claude Code](docs/setup-with-ai.md), `brew install 7xuanlu/tap/wenlan` u [otra forma](docs/setup-and-data.es-ES.md#installation).
+   En Claude Code, el [plugin](docs/setup-with-ai.md) hace los pasos 1 y 2 por ti. [Otras formas de instalar](docs/setup-and-data.es-ES.md#installation).
 
-2. Trae una carpeta de notas o documentos, como una bóveda de Obsidian. [Otras formas de importar](docs/import-guide.md).
+2. Conecta tu herramienta de IA. Ejecútalo una vez por cada una que uses.
+
+   ```sh
+   wenlan connect claude-code   # o codex, cursor, gemini, vscode, claude-desktop
+   ```
+
+3. Opcional: trae una carpeta de notas o documentos, como una bóveda de Obsidian. [Otras formas](docs/import-guide.md).
 
    ```sh
    wenlan sources add ~/notes
    ```
 
-3. Inicia una nueva sesión de IA y pide:
+4. Inicia una nueva sesión de IA y pide:
 
    > /wenlan ¿qué decidí antes sobre esto? Luego ayúdame con: …
 
-4. Lee y edita tus páginas en el navegador: `wenlan open`.
+5. Lee y edita tus páginas en el navegador: `wenlan open`.
 
 Opcional: la [app de escritorio](https://github.com/wenlan-app/wenlan/releases/latest) para macOS, Windows y Linux añade importaciones y conexión con un clic.
 

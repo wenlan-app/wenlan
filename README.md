@@ -40,7 +40,7 @@
 
 Each AI tool keeps its own memory and rules. Wenlan gives every tool, agent and teammate what you settled.
 
-For people who use several AI tools daily, and small teams of engineers and non-engineers.
+For people who use several AI tools daily, and small teams, all engineers or mixed.
 
 - **Docs with sources.** Wenlan checks that each cited source supports its sentence before saving.
 - **One copy of skills and rules.** It runs in every AI tool and platform you connect.
@@ -77,25 +77,31 @@ More comparisons, with Obsidian, Notion AI, and memory tools: [wenlan.app/learn]
 
 **On your own.** Start from your AI tool. No app needed.
 
-1. In a terminal, run this (it needs Node.js):
+1. Install it (needs Node.js). This also starts Wenlan and keeps it running; nothing else to configure.
 
    ```sh
    npx -y wenlan setup
    ```
 
-   Or: the [Claude Code plugin](docs/setup-with-ai.md), `brew install 7xuanlu/tap/wenlan`, or [another way](docs/setup-and-data.md#installation).
+   In Claude Code, the [plugin](docs/setup-with-ai.md) does steps 1 and 2 for you. [Other ways to install](docs/setup-and-data.md#installation).
 
-2. Bring in a folder of notes or documents, such as an Obsidian vault. [More ways to import](docs/import-guide.md).
+2. Connect your AI tool. Run it once for each tool you use.
+
+   ```sh
+   wenlan connect claude-code   # or codex, cursor, gemini, vscode, claude-desktop
+   ```
+
+3. Optional: bring in a folder of notes or documents, such as an Obsidian vault. [More ways](docs/import-guide.md).
 
    ```sh
    wenlan sources add ~/notes
    ```
 
-3. Start a new AI session and ask:
+4. Start a new AI session and ask:
 
    > /wenlan what did I decide about this before? Then help me: …
 
-4. Read and edit your pages in your browser: `wenlan open`.
+5. Read and edit your pages in your browser: `wenlan open`.
 
 Optional: the [desktop app](https://github.com/wenlan-app/wenlan/releases/latest) for macOS, Windows and Linux adds imports and one-press connections.
 
