@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import {
   getRulesDelivery,
   getSpaceFolders,
   getSpaceRules,
   listSpaceRulesSuggestions,
+  removeSavedRule,
   skillsFromLibraryEnabled,
   type Page,
+  type SkillLine,
   type SpaceRulesResponse,
   type ToolRulesDelivery,
 } from "../../../lib/tauri";
@@ -16,7 +18,7 @@ import { SPACE_FOLDERS_QUERY_KEY } from "../pages/SpaceFoldersPrompt";
 import { useScope } from "../team/scope";
 import { HowIWorkLines } from "./HowIWorkLines";
 import { useExampleWikiActive } from "../../../lib/exampleWiki/mode";
-import { HOW_I_WORK_QUERY_KEYS, pageGivesGeneralRules, rulesFromPage } from "./howIWorkModel";
+import { HOW_I_WORK_QUERY_KEYS, pageGivesGeneralRules, rulesFromPage, savedRuleRemoveFailure } from "./howIWorkModel";
 import { SpaceRulesAsk } from "./SpaceRulesAsk";
 import "./howIWork.css";
 
@@ -99,8 +101,8 @@ export function RulesToolsHeader({ delivers }: { readonly delivers: boolean }) {
   );
 }
 
-/** Heads a page the person keeps in a Rules folder, and shows nothing on
- *  any other page: the same header as a "How I work" page, then each rule
+/** Heads a page the person keeps in a Rules folder, and the page that keeps
+ *  the rules they asked to be saved, and shows nothing on any other page: the same header as a "How I work" page, then each rule
  *  the daemon reads from this page with who wrote it, then what is still
  *  waiting for an answer. */
 export function RulesFolderPageHead({ page, onOpenPage }: { readonly page: Page; readonly onOpenPage: (pageId: string) => void }) {
@@ -124,13 +126,30 @@ function RulesFolderRules({ page, onOpenPage }: { readonly page: Page; readonly 
   const spaceName = space && space !== "uncategorized" ? space : null;
   const rules = usePageRules(page, spaceName);
   const lines = rulesFromPage(rules, page.id);
+  const queryClient = useQueryClient();
+  // One press takes a saved rule off its page; the page's history keeps it.
+  const removeSaved = async (line: SkillLine): Promise<string | null> => {
+    try {
+      const outcome = await removeSavedRule(line.id);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["page", page.id] }),
+        queryClient.invalidateQueries({ queryKey: ["space-rules"] }),
+      ]);
+      void queryClient.invalidateQueries({ queryKey: ["pages"] });
+      void queryClient.invalidateQueries({ queryKey: ["page-revisions", page.id] });
+      void queryClient.invalidateQueries({ queryKey: RULES_DELIVERY_QUERY_KEY });
+      return outcome.status === "waiting" ? t("howIWork.saved.waiting") : null;
+    } catch (error) {
+      return savedRuleRemoveFailure(error, t);
+    }
+  };
   return (
     <>
       <RulesToolsHeader delivers={pageGivesGeneralRules(rules, page, [], spaceName === null)} />
       {lines.length > 0 && (
         <section className="rules-page-lines" aria-label={t("howIWork.rulesOnPage")} data-testid="rules-page-lines">
           <h2 className="rules-page-lines-title">{t("howIWork.rulesOnPage")}</h2>
-          <HowIWorkLines lines={lines} onOpenPage={onOpenPage} ownPageId={page.id} showEdited={false} />
+          <HowIWorkLines lines={lines} onOpenPage={onOpenPage} ownPageId={page.id} showEdited={false} onRemoveSaved={removeSaved} />
         </section>
       )}
       <RulesPagePending spaceName={page.space} onOpenPage={onOpenPage} />

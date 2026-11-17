@@ -110,7 +110,7 @@ describe("WikiWorkspace", () => {
     expect(Array.from(menu.querySelectorAll("[role='menuitem']")).map(item => item.textContent)).toEqual(["New page"]);
   });
 
-  it("the browser build offers no Find skills, which only the desktop app can run", () => {
+  it("UX-SKILL-12: the browser build offers Find skills as the desktop app does; a team member is offered none", () => {
     const props = { onBrowse: vi.fn(), onCreatePage: vi.fn(), onOpenDraft: vi.fn(), onOpenPage: vi.fn(), onFindSkills: vi.fn() };
     const items = () => Array.from(screen.getByRole("menu", { name: "New page or folder" }).querySelectorAll("[role='menuitem']")).map(item => item.textContent);
     const app = render(<WikiDirectory {...props} />);
@@ -121,7 +121,9 @@ describe("WikiWorkspace", () => {
     try {
       render(<WikiDirectory {...props} />);
       fireEvent.click(screen.getByRole("button", { name: "New page or folder" }));
-      expect(items()).not.toContain("Find skills");
+      // The daemon has the routes now; only a team member (the test above)
+      // is not offered it.
+      expect(items()).toContain("Find skills");
     } finally {
       vi.unstubAllGlobals();
     }

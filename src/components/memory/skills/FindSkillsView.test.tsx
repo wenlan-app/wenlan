@@ -19,6 +19,8 @@ const tauri = vi.hoisted(() => ({
 }));
 vi.mock("../../../lib/tauri", () => tauri);
 vi.mock("@tauri-apps/plugin-shell", () => ({ open: vi.fn(() => Promise.resolve()) }));
+// The person says yes to the app's own question before a skill is removed.
+vi.mock("../../../lib/confirmAction", () => ({ confirmAction: vi.fn(() => Promise.resolve(true)) }));
 
 import { FindSkillsView, visibleRows } from "./FindSkillsView";
 
@@ -92,6 +94,74 @@ describe("FindSkillsView", () => {
     fireEvent.click(install);
     await waitFor(() => expect(tauri.installSkill).toHaveBeenCalledWith(preview, { kind: "space", name: "Clinic" }));
     await screen.findByText("Installed for 1 AI tool");
+  });
+
+  const openPreview = async (preview: object) => {
+    tauri.searchSkillRegistry.mockResolvedValue({ via: "skills.sh", rows: [row("meeting-notes", "pass")] });
+    tauri.previewSkill.mockResolvedValue(preview);
+    render(wrap(<FindSkillsView />));
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "meeting notes" } });
+    fireEvent.submit(screen.getByRole("search"));
+    fireEvent.click(await screen.findByRole("button", { name: /meeting-notes/ }));
+  };
+  const shown = {
+    source: "o/r", skillId: "meeting-notes", commit: "0".repeat(40), repoPath: "", name: "meeting-notes", description: null,
+    files: [{ path: "SKILL.md", text: "Read it all." }], runnable: [], safety: { verdict: "pass", audits: [] },
+    sourceUrl: "https://github.com/o/r", skillsShUrl: "https://skills.sh/o/r/meeting-notes", installedAs: null,
+  };
+
+  it("UX-SKILL-13: says a file is cut, and will not install a skill that cannot be shown in full", async () => {
+    await openPreview({
+      ...shown,
+      files: [{ path: "SKILL.md", text: "Read it all.", cut: false }, { path: "notes/long.md", text: "First lines", cut: true }],
+      cannotInstall: "notes/long.md is too long to show in full (65536 characters at most), so Wenlan refuses this skill",
+    });
+    await screen.findByText("First lines");
+    expect(screen.getAllByText("Cut here. The rest of this file is not shown.")).toHaveLength(1);
+    const reason = screen.getByRole("note");
+    expect(reason.textContent).toBe("notes/long.md is too long to show in full, so it can't be installed.");
+    const install = screen.getByRole("button", { name: "Install" }) as HTMLButtonElement;
+    expect(install.disabled).toBe(true);
+    expect(install.getAttribute("aria-describedby")).toBe(reason.id);
+    expect(screen.getByText("Can't be installed")).toBeTruthy();
+    fireEvent.click(install);
+    expect(tauri.installSkill).not.toHaveBeenCalled();
+  });
+
+  it("UX-SKILL-13: gives a reason it does not know as it came, and one for a file that is not text", async () => {
+    await openPreview({ ...shown, files: [{ path: "SKILL.md", text: null }], cannotInstall: "SKILL.md is not readable text (not valid UTF-8), so Wenlan refuses this skill" });
+    expect((await screen.findByRole("note")).textContent).toBe("SKILL.md can't be read as text, so it can't be installed.");
+    expect((screen.getByRole("button", { name: "Install" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("installs as before when the answer carries no cut mark and no refusal (an older desktop command)", async () => {
+    await openPreview(shown);
+    await screen.findByText("Read it all.");
+    expect(screen.queryByRole("note")).toBeNull();
+    expect(screen.queryByText("Cut here. The rest of this file is not shown.")).toBeNull();
+    expect((screen.getByRole("button", { name: "Install" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("UX-SKILL-13: says the daemon's refusal in plain words when an install, a take-in or a removal is refused", async () => {
+    tauri.installSkill.mockRejectedValue(new Error("skills_need_this_computer: this Wenlan listens beyond this computer (WENLAN_BIND_ADDR), so skills cannot be installed, taken in or removed over it. Use the Wenlan app"));
+    await openPreview(shown);
+    await screen.findByText("Read it all.");
+    fireEvent.click(screen.getByRole("button", { name: "Install" }));
+    const refused = await screen.findByRole("alert");
+    expect(refused.textContent).toBe("Couldn't install: Wenlan can be reached from other computers right now, so skills can't be installed, taken in or removed here.");
+    expect(refused.textContent).not.toContain("WENLAN_BIND_ADDR");
+  });
+
+  it("UX-SKILL-13: a refused take-in or removal says why, and a reason Wenlan has no words for comes through as it is", async () => {
+    tauri.scanLocalSkills.mockResolvedValue([{ name: "my-review", path: "/h/.claude/skills/my-review", description: null }]);
+    tauri.importLocalSkills.mockRejectedValue(new Error("skills_need_the_person: only the person can install, take in or remove a skill. Ask them"));
+    tauri.listInstalledSkills.mockResolvedValue([{ name: "held", source: "o/r", skillId: "held", repoPath: "", commit: "c", hash: "h", verdict: "pass", scope: { kind: "all" }, description: null, installedAt: 1, updatedAt: 1, additions: "" }]);
+    tauri.removeSkill.mockRejectedValue(new Error("no skill by that name"));
+    render(wrap(<FindSkillsView />));
+    fireEvent.click(await screen.findByRole("button", { name: "Take all into Wenlan" }));
+    expect(await screen.findByText("Couldn't take them in: Only the person at this computer can install, take in or remove skills.")).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: "Remove" }));
+    expect(await screen.findByText("Couldn't remove: no skill by that name")).toBeTruthy();
   });
 
   it("asks before installing a skill whose checks warned", async () => {

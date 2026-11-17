@@ -155,6 +155,17 @@ const pageUpdateErrorMessage = (
   }
 };
 
+// A refusal's own sentence (`{"error": "..."}`) instead of the status line,
+// so the screen can say why the daemon said no.
+async function daemonSentence<T>(call: () => Promise<T>): Promise<T> {
+  try {
+    return await call();
+  } catch (error) {
+    if (error instanceof HttpError) throw new Error(pageUpdateErrorMessage(error, error.message));
+    throw error;
+  }
+}
+
 const pageUpdateFailureKind = (
   status: number,
 ):
@@ -1389,6 +1400,35 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   get_space_rules: (a) => get(`/api/skills/rules${qs({ space: a.space })}`, AS_PERSON),
   list_skill_borrow_records: (a) =>
     get(`/api/skills/record${qs({ space: a.space })}`),
+  // The person pressed Remove on a saved rule (UX-SKILL-14): no quoted
+  // words, the press is the ask.
+  remove_saved_rule: (a) => {
+    requireSourcePreview();
+    return daemonSentence(() => post(`/api/skills/rules/${enc(String(a.id))}/remove`, { person_asked: "" }, AS_PERSON));
+  },
+  // Skills from skills.sh (UX-SKILL-12, UX-SKILL-13). Reading is open;
+  // installing, taking in and removing go as the person, and the daemon
+  // refuses them from a team member or while it listens beyond this computer.
+  skills_search: (a) => daemonSentence(() => get(`/api/skills/registry/search${qs({ q: a.query })}`)),
+  skills_preview: (a) => daemonSentence(() => get(`/api/skills/registry/preview${qs({ source: a.source, skillId: a.skillId })}`)),
+  skills_installed: () => get("/api/skills/registry/installed").then((r) => r?.skills ?? []),
+  skills_scan_local: () => get("/api/skills/registry/local").then((r) => r?.skills ?? []),
+  // The daemon has no route that looks for an author's new version.
+  skills_refresh: async () => [],
+  skills_import_local: (a) => {
+    requireSourcePreview();
+    return daemonSentence(() => post("/api/skills/registry/import", { names: a.names }, AS_PERSON));
+  },
+  skills_install: (a) => {
+    requireSourcePreview();
+    return daemonSentence(() => post("/api/skills/registry/install", {
+      source: a.source, skillId: a.skillId, commit: a.commit, repoPath: a.repoPath, scope: a.scope,
+    }, AS_PERSON));
+  },
+  skills_remove: (a) => {
+    requireSourcePreview();
+    return daemonSentence(() => post("/api/skills/registry/remove", { name: a.name }, AS_PERSON)).then(() => undefined);
+  },
   create_space: (a) => { requireSourcePreview(); return post("/api/spaces", { name: a.name, description: a.description }); },
   delete_space: (a) => del(`/api/spaces/${encodeURIComponent(a.name)}`).then(() => undefined),
   confirm_space: (a) => post(`/api/spaces/${encodeURIComponent(a.name)}/confirm`, {}).then(() => undefined),
@@ -1894,6 +1934,8 @@ const NATIVE_ONLY_COMMANDS = new Set([
   "set_avatar", "set_source_follow_changes", "suggest_library_folder", "sync_source", "theme_image",
   "upload_source_files", "uploads_folder", "detect_mcp_clients_cmd", "disconnect_client",
   "get_wenlan_mcp_entry", "install_client_plugin", "install_client_skills", "remove_legacy_mcp_entry",
+  // The daemon has no route for a skill's additions or its scope.
+  "skills_set_additions", "skills_set_scope",
   "remove_raw_mcp_entry", "wire_state", "write_mcp_config", "approve_remote_pairing",
   "configure_remote_access", "deny_remote_pairing", "get_remote_access_profile",
   "get_remote_access_status", "inspect_remote_pairing", "list_remote_grants", "lookup_remote_pairing",

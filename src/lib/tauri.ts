@@ -1045,6 +1045,26 @@ export interface SkillLine {
   general?: boolean;
   /** The person wrote this line themselves; it counts at once (UX-SKILL-10). */
   hand_written?: boolean;
+  /** The person asked for this rule to be saved (UX-SKILL-14): the name of
+   *  the AI tool it was saved from, or `SAVED_FROM_TERMINAL`. Never shown as
+   *  written by the person. */
+  saved_from?: string | null;
+}
+
+/** `SkillLine.saved_from` for a rule saved with the `wenlan` command. */
+export const SAVED_FROM_TERMINAL = "terminal";
+/** The writer a page's history names when the person pressed Remove on a
+ *  saved rule in the app (`wenlan_types::RULE_REMOVED_IN_APP`). */
+export const RULE_REMOVED_IN_APP = "wenlan-app";
+
+/** `waiting`: the page is locked, so the removal waits as a card. */
+export interface RemoveSavedRuleResponse {
+  status: "saved" | "removed" | "waiting";
+  id: string;
+  page_id: string;
+  page_title: string;
+  revision_card_id?: string | null;
+  message: string;
 }
 
 /** `file`: Wenlan keeps the rules in a file the tool always reads. `mcp`:
@@ -1162,6 +1182,13 @@ export interface SpaceRulesResponse {
 export async function getSpaceRules(space: string | null): Promise<SpaceRulesResponse> {
   const response = await invoke<Partial<SpaceRulesResponse> | null>("get_space_rules", { space: space?.trim() || null });
   return { space_id: response?.space_id ?? "", space_name: response?.space_name ?? "", rules_page_id: response?.rules_page_id ?? null, lines: response?.lines ?? [] };
+}
+
+/** The person presses Remove on a rule they had asked to be saved
+ *  (UX-SKILL-14). Sent as the person, with no quoted words: the press is
+ *  the ask. AI tools are no longer told the rule; the page's history keeps it. */
+export async function removeSavedRule(id: string): Promise<RemoveSavedRuleResponse> {
+  return invoke("remove_saved_rule", { id });
 }
 
 export async function getRulesDelivery(): Promise<ToolRulesDelivery[]> {
@@ -6200,12 +6227,16 @@ export interface SkillPreview {
   repoPath: string;
   name: string | null;
   description: string | null;
-  files: { path: string; text: string | null }[];
+  /** `cut`: the file is longer than `text`, so not all of it is shown. */
+  files: { path: string; text: string | null; cut?: boolean }[];
   runnable: string[];
   safety: { verdict: SkillVerdict; audits: SkillAuditLine[] };
   sourceUrl: string;
   skillsShUrl: string;
   installedAs: string | null;
+  /** Why Wenlan will refuse to install this skill: it holds text that
+   *  cannot be shown in full. Absent from an answer that does not check. */
+  cannotInstall?: string | null;
 }
 
 export interface InstalledSkill {

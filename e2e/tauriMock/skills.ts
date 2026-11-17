@@ -9,7 +9,23 @@ const ROWS = [
   { source: "acme/agent-skills", skillId: "minutes-to-tasks", name: "minutes-to-tasks", installs: 3100, verdict: "pass" },
   { source: "team/standup", skillId: "standup-summary", name: "standup-summary", installs: 890, verdict: "pass" },
   { source: "someone/tools", skillId: "notes-sync", name: "notes-sync", installs: 410, verdict: "warn" },
+  // Its notes file is longer than a preview shows, so it cannot be installed.
+  { source: "team/standup", skillId: "long-playbook", name: "long-playbook", installs: 120, verdict: "pass" },
 ];
+
+const LONG_SKILL_MD = `---
+name: long-playbook
+description: Run a short daily stand-up.
+---
+
+Follow notes/playbook.md.
+`;
+
+const LONG_NOTES = `# Playbook
+
+Start every stand-up with what changed since yesterday.
+Keep each update under one minute.
+`;
 
 const SKILL_MD = `---
 name: meeting-notes
@@ -41,10 +57,15 @@ export class SkillsFixture {
       case "skills_search": return { via: "skills.sh", rows: ROWS };
       case "skills_preview": {
         const skillId = String(args?.skillId ?? "meeting-notes");
+        const tooLong = skillId === "long-playbook";
         return {
           source: String(args?.source ?? "acme/agent-skills"), skillId, commit: COMMIT, repoPath: `skills/${skillId}`,
-          name: skillId, description: "Turn a meeting transcript into decisions, action items and owners.",
-          files: [{ path: "SKILL.md", text: SKILL_MD }], runnable: [],
+          name: skillId, description: tooLong ? "Run a short daily stand-up." : "Turn a meeting transcript into decisions, action items and owners.",
+          files: tooLong
+            ? [{ path: "SKILL.md", text: LONG_SKILL_MD, cut: false }, { path: "notes/playbook.md", text: LONG_NOTES, cut: true }]
+            : [{ path: "SKILL.md", text: SKILL_MD, cut: false }],
+          cannotInstall: tooLong ? "notes/playbook.md is too long to show in full (65536 characters at most), so Wenlan refuses this skill" : null,
+          runnable: [],
           safety: { verdict: "pass", audits: ["Gen Agent Trust Hub", "Socket", "Snyk", "Runlayer", "ZeroLeaks"].map((provider) => ({ provider, status: "pass", summary: "" })) },
           sourceUrl: `https://github.com/acme/agent-skills/tree/${COMMIT}/skills/${skillId}`,
           skillsShUrl: `https://skills.sh/acme/agent-skills/${skillId}`, installedAs: null,

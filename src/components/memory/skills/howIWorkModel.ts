@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { TFunction } from "i18next";
-import type { Page, SkillLine, SkillLineKind, SpaceRulesResponse } from "../../../lib/tauri";
+import { SAVED_FROM_TERMINAL, type Page, type SkillLine, type SkillLineKind, type SpaceRulesResponse } from "../../../lib/tauri";
 
 export const NOT_FOR_AI_TOOLS_MARKER = "<!-- wenlan:not-for-ai-tools -->";
 export const HOW_I_WORK_QUERY_KEYS = {
@@ -137,6 +137,34 @@ export function isHowIWorkPage(page: Pick<Page, "content" | "title">): boolean {
   return content.includes(RULE_MARKER)
     || content.includes(GENERATED_INTRO)
     || (page.title ?? "").startsWith(GENERATED_TITLE_PREFIX);
+}
+
+/** The title the daemon gives the page that keeps the rules the person asked
+ *  to be saved (`skill_grow::SAVED_RULES_TITLE`), one for every Space and
+ *  one per Space. The page is an ordinary page in no Rules folder, so its
+ *  title is what tells it. */
+const SAVED_RULES_TITLE = "Rules I saved";
+
+export function isSavedRulesPage(page: Pick<Page, "title">): boolean {
+  const title = (page.title ?? "").trim();
+  return title === SAVED_RULES_TITLE || title.startsWith(`${SAVED_RULES_TITLE} — `);
+}
+
+/** "saved from <tool>" for a rule the person asked to be saved, else null.
+ *  The tool's name is the daemon's; it is never the person (UX-SKILL-14). */
+export function savedFromLabel(line: Pick<SkillLine, "saved_from">, t: TFunction): string | null {
+  const from = line.saved_from?.trim();
+  if (!from) return null;
+  return from === SAVED_FROM_TERMINAL ? t("howIWork.saved.fromTerminal") : t("howIWork.saved.from", { tool: from });
+}
+
+/** Why a Remove did not go through, in the person's words. The daemon's own
+ *  sentence carries a route or an id, so it is never shown as it is. */
+export function savedRuleRemoveFailure(error: unknown, t: TFunction): string {
+  const text = error instanceof Error ? error.message : String(error);
+  if (text.includes("team member")) return t("howIWork.saved.refusedTeam");
+  if (text.includes("listens on this computer alone")) return t("howIWork.saved.refusedBeyond");
+  return t("howIWork.saved.failed");
 }
 
 export function howIWorkSpaceName(page: Pick<Page, "content" | "space" | "title">): string {

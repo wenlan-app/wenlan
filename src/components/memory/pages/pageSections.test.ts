@@ -65,6 +65,14 @@ describe("page sections", () => {
     expect(pageSection(page({ status: "draft", folder_path: "規則" }))).toBe("rules");
   });
 
+  it("UX-SKILL-14: lists the page that keeps the rules the person asked to be saved under Rules, though it is in no Rules folder", () => {
+    expect(pageSection(page({ title: "Rules I saved", storage_path: "Rules I saved.md" }))).toBe("rules");
+    expect(pageSection(page({ title: "Rules I saved — Wenlan", space: "Wenlan", storage_path: "Wenlan/Rules I saved — Wenlan.md" }))).toBe("rules");
+    // Only the title the daemon gives it: a page that merely mentions it is a doc.
+    expect(pageSection(page({ title: "Rules I saved up", storage_path: "notes.md" }))).toBe("docs");
+    expect(pageSection(page({ title: "My Rules I saved", storage_path: "notes.md" }))).toBe("docs");
+  });
+
   it("finds the section's folder for a new page, nearest the top first, and never one inside a Space's or a team's folder", () => {
     expect(sectionFolderPath("rules", ["Work", "Work/Rules", "規則"])).toBe("規則");
     expect(sectionFolderPath("skills", ["Work", "Rules"])).toBeNull();

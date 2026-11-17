@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { Page } from "../../../lib/tauri";
-import { isHowIWorkPage } from "../skills/howIWorkModel";
+import { isHowIWorkPage, isSavedRulesPage } from "../skills/howIWorkModel";
 import { pageFolderPath } from "./pageInventory";
 
 /** The three fixed sections of the left side. They are a way of looking at
@@ -124,12 +124,13 @@ export function folderSection(path: string | null, layout: SpaceLayout = NO_SPAC
 }
 
 /** Which section lists `page`. A "How I work" page is a rules page wherever
- *  its file is. Every page is in exactly one section. */
+ *  its file is, and so is the page that keeps the rules the person asked to
+ *  be saved. Every page is in exactly one section. */
 export function pageSection(
   page: Pick<Page, "content" | "title" | "space" | "storage_path" | "folder_path" | "status">,
   layout: SpaceLayout = NO_SPACE_LAYOUT,
 ): PageSection {
-  if (isHowIWorkPage(page)) return "rules";
+  if (isHowIWorkPage(page) || isSavedRulesPage(page)) return "rules";
   return folderSection(pageFolderPath(page as Page), layout, ownSpace(page) !== null);
 }
 

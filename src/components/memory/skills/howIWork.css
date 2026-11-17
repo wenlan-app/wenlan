@@ -455,3 +455,10 @@
 .rules-page-lines { margin: 0 0 22px; }
 .rules-page-lines-title { margin: 0 0 8px; color: var(--mem-text-tertiary); font: 12px/1.5 var(--mem-font-body); }
 .rules-pending .space-rules-ask-all { margin: 0; }
+
+/* Remove on a rule the person asked to be saved: a quiet word at the end of
+   its line, never a second row. */
+.how-i-work-line-source .how-i-work-line-remove { margin-left: 12px; color: var(--mem-text-secondary); white-space: nowrap; }
+.how-i-work-line-source .how-i-work-line-remove:hover { color: var(--mem-text); }
+.how-i-work-line-source .how-i-work-line-remove:disabled { opacity: 0.5; cursor: default; text-decoration: none; }
+.how-i-work-line-remove-note { margin: 0; color: var(--mem-status-warning-text); font: 12px/1.45 var(--mem-font-body); }

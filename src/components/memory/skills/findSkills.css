@@ -57,3 +57,5 @@
 .find-skills-local-names { list-style: none; margin: 0; padding: 0; display: flex; gap: 8px; flex-wrap: wrap; }
 .find-skills-local-button { align-self: flex-start; padding: 0 20px; }
 @media (max-width: 640px) { .find-skills { padding: 20px 16px 48px; } }
+.find-skills-additions-text { margin: 0; white-space: pre-wrap; }
+.find-skills-cut { margin-top: 6px; }

@@ -10,7 +10,6 @@ import { WikiFolderCreationContext } from "./WikiFolderCreationContext";
 import type { WikiInventoryScope } from "./pageInventory";
 import { SpaceFoldersPrompt } from "./SpaceFoldersPrompt";
 import { useTeamAccess } from "../../../web/teamAccess";
-import { isWebBuild } from "../../../web/runtime";
 
 /** The id of the one directory the shell renders (see Main). */
 export const WIKI_DIRECTORY_ID = "wiki-directory";
@@ -259,9 +258,8 @@ function NewMenu({ exampleWiki, canCreateFolder, onNewPage, onNewFolder, onFindS
               <span>{t("pages.folders.newFolder")}</span>
             </button>
           )}
-          {/* Finding and installing skills runs in the desktop app only; the
-              browser build has no route for it. */}
-          {onFindSkills && !exampleWiki && !isWebBuild() && (
+          {/* A team member's browser has no skills of its own to hold. */}
+          {onFindSkills && !exampleWiki && !teamAccess.member && (
             <button type="button" role="menuitem" onClick={() => { close(false); onFindSkills(); }}>
               <PuzzlePiece aria-hidden="true" size={16} />
               <span>{t("findSkills.entry")}</span>

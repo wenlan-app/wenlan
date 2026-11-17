@@ -19,6 +19,7 @@ const api = vi.hoisted(() => ({
   askSuggestions: vi.fn(),
   rules: vi.fn(),
   spaceFolders: vi.fn(),
+  removeSaved: vi.fn(),
 }));
 
 vi.mock("../../../lib/tauri", () => ({
@@ -36,6 +37,8 @@ vi.mock("../../../lib/tauri", () => ({
   listSpaceRulesSuggestions: api.askSuggestions,
   getSpaceRules: api.rules,
   getSpaceFolders: api.spaceFolders,
+  removeSavedRule: api.removeSaved,
+  SAVED_FROM_TERMINAL: "terminal",
 }));
 
 import { HowIWorkPage } from "./HowIWorkPage";
@@ -314,6 +317,65 @@ describe("a page kept in a Rules folder", () => {
     const header = screen.getByRole("region", { name: "AI tools these rules are used in" });
     expect(header).toHaveTextContent("Used inClaude Codeconnected");
     expect(header).not.toHaveTextContent("delivered");
+  });
+
+  describe("the page that keeps the rules the person asked to be saved", () => {
+    const savedPage: Page = { ...folderPage, id: "saved-rules", title: "Rules I saved", storage_path: "Rules I saved.md", content: "# Rules I saved\n\n- Release on Tuesdays\n- Answer in plain words\n- Keep pull requests small\n" };
+    const saved = (id: string, text: string, more: object = {}) => ({ ...line(id, text, more), source_page_id: savedPage.id, source_page_title: "Rules I saved" });
+    const lines = [
+      saved("a", "Release on Tuesdays", { saved_from: "Codex", general: true }),
+      // Even a line the daemon also marks hand-written is never the person's.
+      saved("b", "Answer in plain words", { saved_from: "terminal", general: true, hand_written: true }),
+      saved("c", "Keep pull requests small", { hand_written: true, general: true }),
+    ];
+    beforeEach(() => {
+      api.rules.mockResolvedValue({ space_id: "", space_name: "", rules_page_id: null, lines });
+      api.removeSaved.mockReset();
+    });
+
+    it("UX-SKILL-14: says where each rule was saved from, never written by you, and offers Remove only on a saved rule", async () => {
+      renderHead(savedPage);
+      const list = await screen.findByRole("region", { name: "Rules on this page" });
+      const rows = [...list.querySelectorAll("li")].map((row) => row.textContent);
+      expect(rows).toEqual([
+        "RuleRelease on Tuesdayssaved from Codex·Used in every SpaceRemove",
+        "RuleAnswer in plain wordssaved from the terminal·Used in every SpaceRemove",
+        "RuleKeep pull requests smallwritten by you·Used in every Space",
+      ]);
+      expect(within(list).getAllByRole("button", { name: /^Remove “/ })).toHaveLength(2);
+      // The page is in no Rules folder: its title alone lists it under Rules.
+      expect(savedPage.storage_path).not.toContain("Rules/");
+    });
+
+    it("UX-SKILL-14: one press on Remove asks the daemon as the person, with no question first", async () => {
+      api.removeSaved.mockResolvedValue({ status: "removed", id: "a", page_id: savedPage.id, page_title: "Rules I saved", message: "" });
+      renderHead(savedPage);
+      fireEvent.click(await screen.findByRole("button", { name: "Remove “Release on Tuesdays”" }));
+      await waitFor(() => expect(api.removeSaved).toHaveBeenCalledWith("a"));
+      expect(api.removeSaved).toHaveBeenCalledTimes(1);
+      // The daemon is asked again for the rules that still count.
+      await waitFor(() => expect(api.rules.mock.calls.length).toBeGreaterThan(1));
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    });
+
+    it("UX-SKILL-14: says so in plain words when the page is locked or the daemon refuses, with no route or id", async () => {
+      renderHead(savedPage);
+      const press = async () => fireEvent.click(await screen.findByRole("button", { name: "Remove “Release on Tuesdays”" }));
+      api.removeSaved.mockResolvedValueOnce({ status: "waiting", id: "a", page_id: savedPage.id, page_title: "Rules I saved", revision_card_id: "card-1", message: "" });
+      await press();
+      expect(await screen.findByText("This page is locked. Accept its card to remove the rule.")).toBeInTheDocument();
+      api.removeSaved.mockRejectedValueOnce(new Error('HTTP POST /api/skills/rules/a/remove returned 403 Forbidden: {"error":"rule_save_refused: a rule saved this way goes to the AI tools of the person at this computer, so a team member cannot save or remove one"}'));
+      await press();
+      expect(await screen.findByText("Team members can’t remove a saved rule.")).toBeInTheDocument();
+      api.removeSaved.mockRejectedValueOnce(new Error("rule_save_refused: a rule can be saved or removed only while Wenlan listens on this computer alone"));
+      await press();
+      expect(await screen.findByText("Can’t remove while Wenlan can be reached from other computers.")).toBeInTheDocument();
+      api.removeSaved.mockRejectedValueOnce(new Error("HTTP POST /api/skills/rules/a/remove returned 500"));
+      await press();
+      const note = await screen.findByText("Couldn’t remove it. Nothing changed.");
+      expect(note.closest("li")).not.toHaveTextContent("/api/");
+      expect(screen.getByRole("region", { name: "Rules on this page" })).not.toHaveTextContent("rule_save_refused");
+    });
   });
 
   it("UX-FIND-4: shows nothing on a Docs page, and nothing in a Space's own folder that is only called Rules", async () => {

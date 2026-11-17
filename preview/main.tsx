@@ -166,6 +166,8 @@ function Harness() {
   // `?mode=sections&section=docs|skills|rules[&folder=Work][&page=<id>][&demo=empty]`:
   // the fixed left side with a section's list page, or one of its pages.
   if (params.get("mode") === "sections") {
+    // `&view=find-skills`: the screen behind Skills › New › Find skills.
+    if (params.get("view") === "find-skills") return <Main initialView={{ kind: "skills" }} />;
     const pageId = params.get("page");
     const section = param("section", ["docs", "skills", "rules"] as const, "docs");
     const folder = params.get("folder");

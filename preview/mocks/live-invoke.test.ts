@@ -1400,14 +1400,6 @@ const UNSTUBBED_DEBT = new Set([
   "import_chat_export",
   "install_client_plugin",
   "install_client_skills",
-  "skills_import_local",
-  "skills_install",
-  "skills_installed",
-  "skills_preview",
-  "skills_refresh",
-  "skills_remove",
-  "skills_scan_local",
-  "skills_search",
   "skills_set_additions",
   "skills_set_scope",
   "list_external_models",
@@ -1668,5 +1660,73 @@ describe("modular research API preview routes",()=>{
   });
   it("refuses native diagnostics collection explicitly",async()=>{
     await expect(liveInvoke("problem_report")).rejects.toThrow("native app");
+  });
+});
+
+describe("liveInvoke skills and saved rules over the daemon (UX-SKILL-12, UX-SKILL-13, UX-SKILL-14)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("ux_skill_12 reads skills through the daemon's own routes, with no person marker", async () => {
+    const fetch = vi.fn(async (url: string) => new Response(JSON.stringify(
+      url.includes("/installed") || url.includes("/local") ? { skills: [{ name: "a" }] } : { via: "skills.sh", rows: [] },
+    ), { status: 200 }));
+    vi.stubGlobal("fetch", fetch);
+
+    await liveInvoke("skills_search", { query: "meeting notes" });
+    expect(fetch).toHaveBeenLastCalledWith("/daemon/api/skills/registry/search?q=meeting%20notes", expect.anything());
+    await liveInvoke("skills_preview", { source: "acme/agent-skills", skillId: "meeting-notes" });
+    expect(fetch).toHaveBeenLastCalledWith(
+      "/daemon/api/skills/registry/preview?source=acme%2Fagent-skills&skillId=meeting-notes",
+      expect.anything(),
+    );
+    await expect(liveInvoke("skills_installed")).resolves.toEqual([{ name: "a" }]);
+    await expect(liveInvoke("skills_scan_local")).resolves.toEqual([{ name: "a" }]);
+    for (const call of fetch.mock.calls as unknown as Array<[string, { headers?: Record<string, string> }]>) {
+      expect(call[1].headers ?? {}).not.toHaveProperty("x-wenlan-caller");
+    }
+    // No route looks for an author's new version: nothing is asked.
+    const asked = fetch.mock.calls.length;
+    await expect(liveInvoke("skills_refresh")).resolves.toEqual([]);
+    expect(fetch.mock.calls.length).toBe(asked);
+  });
+
+  it("ux_skill_13 installs, takes in and removes a skill only as the person", async () => {
+    vi.stubGlobal("__WENLAN_SOURCE_PREVIEW__", true);
+    const fetch = vi.fn(async () => new Response(JSON.stringify({}), { status: 200 }));
+    vi.stubGlobal("fetch", fetch);
+    const scope = { kind: "space", name: "Work" };
+    const calls: Array<[string, Record<string, unknown>, string, unknown]> = [
+      ["skills_install", { source: "o/r", skillId: "n", commit: "c", repoPath: "skills/n", scope }, "/daemon/api/skills/registry/install",
+        { source: "o/r", skillId: "n", commit: "c", repoPath: "skills/n", scope }],
+      ["skills_import_local", { names: ["a", "b"] }, "/daemon/api/skills/registry/import", { names: ["a", "b"] }],
+      ["skills_remove", { name: "n" }, "/daemon/api/skills/registry/remove", { name: "n" }],
+      ["remove_saved_rule", { id: "own:3:abc" }, "/daemon/api/skills/rules/own%3A3%3Aabc/remove", { person_asked: "" }],
+    ];
+    for (const [command, args, url, body] of calls) {
+      await liveInvoke(command, args);
+      expect(fetch, command).toHaveBeenLastCalledWith(url, expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({ "x-wenlan-caller": "person" }),
+        body: JSON.stringify(body),
+      }));
+    }
+  });
+
+  it("ux_skill_13 passes on the daemon's own sentence when it refuses", async () => {
+    vi.stubGlobal("__WENLAN_SOURCE_PREVIEW__", true);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const sentence = "skills_need_this_computer: this Wenlan listens beyond this computer";
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: sentence }), { status: 422 })));
+    for (const [command, args] of [
+      ["skills_install", { source: "o/r", skillId: "n", commit: "c", repoPath: "", scope: { kind: "all" } }],
+      ["skills_import_local", { names: ["a"] }],
+      ["skills_remove", { name: "n" }],
+      ["remove_saved_rule", { id: "r" }],
+    ] as const) {
+      await expect(liveInvoke(command, args), command).rejects.toThrow(sentence);
+    }
+    vi.restoreAllMocks();
   });
 });

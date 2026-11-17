@@ -42,6 +42,21 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     "list_skill_borrow_records",
     "get_rules_delivery",
     "get_space_rules",
+    // The fixture keeps no saved rule, so no rules page offers Remove; the
+    // command still answers.
+    "remove_saved_rule",
+    // Skills › Find skills: the fixture answers with example skills, never
+    // skills.sh, and keeps what was installed for the session only.
+    "skills_search",
+    "skills_preview",
+    "skills_install",
+    "skills_installed",
+    "skills_refresh",
+    "skills_scan_local",
+    "skills_import_local",
+    "skills_set_additions",
+    "skills_set_scope",
+    "skills_remove",
     // What this Wenlan shares with people; the fixture shares nothing.
     "list_shares",
     // Home asks once about AI changes to a newly linked Obsidian vault; the
