@@ -49,10 +49,11 @@ use wenlan_types::requests::UpdatePageRequest;
 use wenlan_types::steep::{
     SteepCode, SteepCodeAnswer, SteepCodeCheck, SteepSource, SteepWorkItem, STEEP_ACTION_JUDGE,
     STEEP_ACTION_RELEASE, STEEP_ACTION_REWRITE, STEEP_ACTION_STILL_ACCURATE, STEEP_PLAN_JUDGE,
-    STEEP_PLAN_NEEDS_YOU, STEEP_PLAN_REVIEW_CARD, STEEP_PLAN_REWRITE, STEEP_REASON_CODE_CHANGED,
-    STEEP_REASON_CODE_CHECK,
+    STEEP_PLAN_NEEDS_YOU, STEEP_PLAN_REVIEW_CARD, STEEP_PLAN_REWRITE, STEEP_REASON_BASIS_CHANGED,
+    STEEP_REASON_CODE_CHANGED, STEEP_REASON_CODE_CHECK,
 };
 use wenlan_types::CodeBasisLocator;
+use wenlan_types::SteepBasis;
 
 use crate::db::{MemoryDB, PageFence};
 use crate::error::WenlanError;
@@ -113,6 +114,9 @@ struct Snapshot {
     /// For `code_changed` and `code_check`: the code bases the claim is
     /// about, in the order the claim numbered them.
     code: Vec<CodeSnap>,
+    /// The pages the note relies on, `(page id, version)` as the claim showed
+    /// them. A commit lands only while each is still at that version.
+    bases: Vec<(String, i64)>,
 }
 
 /// One code basis as a code claim saw it.
@@ -341,6 +345,7 @@ pub struct SteepClaim {
     pub code: Vec<SteepCode>,
     pub judge_instructions: Option<String>,
     pub code_checks: Vec<SteepCodeCheck>,
+    pub bases: Vec<SteepBasis>,
     pub note: String,
 }
 
@@ -418,7 +423,37 @@ pub async fn waiting_page_ids(db: &MemoryDB) -> Result<Vec<String>, WenlanError>
             .into_iter()
             .map(|(page, _, _)| page.id),
     );
+    ids.extend(basis_work(db).await?.into_iter().map(|page| page.id));
     Ok(ids)
+}
+
+/// Notes that rely on a page that changed since they last agreed with it,
+/// not already waiting for steep for their own sources and with no revision
+/// card already waiting for the user.
+async fn basis_work(db: &MemoryDB) -> Result<Vec<crate::pages::Page>, WenlanError> {
+    let mut ids: Vec<String> = db
+        .list_basis_pending(None)
+        .await?
+        .into_iter()
+        .filter(|group| group.state == crate::db::BASIS_STATE_PENDING)
+        .flat_map(|group| group.citers.into_iter().map(|citer| citer.page_id))
+        .collect();
+    ids.sort();
+    ids.dedup();
+    let mut pages = Vec::new();
+    for id in ids {
+        let Some(page) = db.get_page(&id).await? else {
+            continue;
+        };
+        if page.status != "active" || page.kind == "entity" || page.stale_reason.is_some() {
+            continue;
+        }
+        if db.get_pending_revision_for(&page.id).await?.is_some() {
+            continue;
+        }
+        pages.push(page);
+    }
+    Ok(pages)
 }
 
 /// Every note steep can act on, with its reason: the notes waiting for steep
@@ -446,6 +481,14 @@ async fn steep_work(
             }
         } else if judge_code && unjudged > 0 {
             work.push((page, STEEP_REASON_CODE_CHECK.to_string()));
+        }
+    }
+    let listed: HashSet<String> = work.iter().map(|(page, _)| page.id.clone()).collect();
+    for page in basis_work(db).await? {
+        // A note listed for its code is listed once; a claim takes the
+        // changed base first.
+        if !listed.contains(&page.id) {
+            work.push((page, STEEP_REASON_BASIS_CHANGED.to_string()));
         }
     }
     work.sort_by(|(a, _), (b, _)| {
@@ -508,17 +551,20 @@ pub async fn list_work(
             .len()
             .try_into()
             .unwrap_or(u32::MAX);
-        // A note written from code alone has no sources to lose.
-        let nothing_left = !code_work && source_count == 0;
-        // Judging changed code never touches the note, so a note that rests
-        // on other notes is only the user's once it would be rewritten.
-        let needs_you = nothing_left || (has_basis && reason != STEEP_REASON_CODE_CHECK);
+        // A note written from code alone has no sources to lose, and one
+        // that relies on other pages can be rebuilt from them.
+        let needs_you = !code_work && !has_basis && source_count == 0;
+        let human_owned = if reason == STEEP_REASON_BASIS_CHANGED {
+            page.review_required
+        } else {
+            owned(page, code_work)
+        };
         items.push(SteepWorkItem {
             page_id: page.id.clone(),
             title: page.title.clone(),
             space: page.space.clone(),
             stale_reason: reason.clone(),
-            human_owned: owned(page, code_work),
+            human_owned,
             needs_you,
             blocked_reason: page.refresh_blocked_reason.clone(),
             leased_by: db
@@ -549,6 +595,7 @@ fn needs_you(page: &crate::pages::Page, note: String) -> SteepClaim {
         code: Vec::new(),
         judge_instructions: None,
         code_checks: Vec::new(),
+        bases: Vec::new(),
         note,
     }
 }
@@ -575,24 +622,11 @@ async fn rewrite_sources(
     scope: &ReadScope,
     allow_none: bool,
 ) -> Result<Result<Vec<(String, String)>, SteepClaim>, SteepError> {
-    // Same rule as the automatic run: a note that relies on other notes is
-    // rebuilt only by an explicit "Update from sources", so a rewrite never
-    // lands over text a person confirmed against those notes.
-    if db.page_has_basis(&page.id).await? {
-        db.set_page_refresh_blocked_reason_at_fence(
-            &page.id,
-            crate::synthesis::distill::REFRESH_BLOCKED_HAS_BASIS,
-            fence,
-        )
-        .await?;
-        return Ok(Err(needs_you(
-            page,
-            "This page relies on other pages. Open it in Wenlan and use Update from sources, \
-             so you can check it against those pages."
-                .into(),
-        )));
-    }
-
+    // A note that relies on other pages is rewritten like any other: the
+    // pages it relies on ride the claim as context, a locked note's rewrite
+    // waits as a revision card, and every earlier version stays in its
+    // history. Such a note may rest on those pages alone, with no memory.
+    let allow_none = allow_none || db.page_has_basis(&page.id).await?;
     let ids = current_source_ids(db, page).await?;
     if ids.len() > STEEP_SOURCE_CAP {
         return Ok(Err(needs_you(
@@ -683,15 +717,32 @@ async fn claim_as(
     }
     let stale_reason = match page.stale_reason.clone() {
         Some(reason) if reason == "source_updated" || reason == "source_removed" => reason,
+        // Only a caller's own AI tool brings a note in line with a changed
+        // base; the automatic run takes code work alone.
+        _ if holder == SteepHolder::OnDemand && basis_changed(db, &page).await? => {
+            STEEP_REASON_BASIS_CHANGED.to_string()
+        }
         _ => return claim_code(db, page, fence, scope, judge_instructions, holder).await,
     };
+    let basis_work = stale_reason == STEEP_REASON_BASIS_CHANGED;
 
     let sources = match rewrite_sources(db, &page, &fence, scope, false).await? {
         Ok(sources) => sources,
         Err(user) => return Ok(user),
     };
+    let (bases, basis_snap) = match claim_bases(db, &page, scope).await? {
+        Ok(bases) => bases,
+        Err(user) => return Ok(user),
+    };
 
-    let human_owned = owned(&page, false);
+    // Work from a page the note relies on lands as the AI tool's own edit:
+    // only a locked note waits for the person. Work from sources keeps the
+    // rule for every note a person wrote or edited.
+    let human_owned = if basis_work {
+        page.review_required
+    } else {
+        owned(&page, false)
+    };
     // Read before the hold, so a failed read leaves no hold behind.
     let keep_note = if human_owned {
         user_lines_note(db, &page).await?
@@ -704,27 +755,49 @@ async fn claim_as(
         stale_reason: stale_reason.clone(),
         sources: sources.clone(),
         scope: scope.clone(),
-        page_stale_reason: Some(stale_reason.clone()),
+        page_stale_reason: page.stale_reason.clone(),
         code: Vec::new(),
+        bases: basis_snap,
     };
     let (token, held_until) = hold(db, page_id, holder, snapshot)?;
 
     let removed = stale_reason == "source_removed";
-    let mut note = String::from(
-        "Rewrite the page from the numbered sources only. Cite each claim with its source \
-         number, like [1]. Keep the title and the page's language.",
-    );
+    let mut note = if basis_work {
+        String::from(
+            "A page this page relies on changed (see bases: before is what this page agreed \
+             with, content is what it says now). Change only what no longer agrees with it, \
+             keep everything else as it is, and keep the title and the page's language. A \
+             sentence taken from a numbered source keeps its [n]; a sentence taken from a \
+             base page needs none. If the page still agrees, commit still_accurate.",
+        )
+    } else {
+        String::from(
+            "Rewrite the page from the numbered sources only. Cite each claim with its source \
+             number, like [1]. Keep the title and the page's language.",
+        )
+    };
+    if !basis_work && !bases.is_empty() {
+        note.push_str(
+            " This page also relies on the pages in bases: keep what they say; a sentence \
+             taken from them needs no [n].",
+        );
+    }
     if removed {
         note.push_str(
             " A source of this page was removed: drop everything that only it supported.",
         );
-    } else {
+    } else if !basis_work {
         note.push_str(
             " If the sources changed but the page still says the right thing, commit \
              still_accurate instead of rewriting.",
         );
     }
-    if human_owned {
+    if human_owned && basis_work {
+        note.push_str(
+            " The user locked this page, so the rewrite goes to them as a revision card; the \
+             page itself does not change until they accept it.",
+        );
+    } else if human_owned {
         note.push_str(
             " The user wrote or edited this page, so the rewrite goes to them as a revision \
              card; the page itself does not change until they accept it.",
@@ -749,8 +822,92 @@ async fn claim_as(
         code: Vec::new(),
         judge_instructions: None,
         code_checks: Vec::new(),
+        bases,
         note,
     })
+}
+
+/// Whether a page the note relies on changed since the note last agreed
+/// with it.
+async fn basis_changed(db: &MemoryDB, page: &crate::pages::Page) -> Result<bool, WenlanError> {
+    Ok(db
+        .list_page_basis(&page.id)
+        .await?
+        .iter()
+        .any(|basis| basis.state == crate::db::BASIS_STATE_PENDING))
+}
+
+/// The pages `page` relies on, as the claim shows them, and the
+/// `(page id, version)` a commit checks; or the answer that leaves the note
+/// to the user when one of them is outside the caller's Space.
+async fn claim_bases(
+    db: &MemoryDB,
+    page: &crate::pages::Page,
+    scope: &ReadScope,
+) -> Result<Result<(Vec<SteepBasis>, Vec<(String, i64)>), SteepClaim>, SteepError> {
+    let rows = db.list_page_basis(&page.id).await?;
+    let mut bases = Vec::new();
+    let mut snap = Vec::new();
+    for context in db.list_basis_context(&page.id).await? {
+        let id = context.snapshot.basis_page_id.clone();
+        let pending = rows
+            .iter()
+            .any(|row| row.basis_page_id == id && row.state == crate::db::BASIS_STATE_PENDING);
+        let before = if pending {
+            match db
+                .basis_diff_in_scope(&page.id, &id, scope)
+                .await
+                .map_err(WenlanError::from)?
+            {
+                crate::db::BasisDiffOutcome::Available(diff) => Some(diff.from_content),
+                crate::db::BasisDiffOutcome::OutOfScope(_) => {
+                    return Ok(Err(needs_you(
+                        page,
+                        "This page relies on a page outside this Space. Steep it from a \
+                         session that is not locked to one Space."
+                            .into(),
+                    )))
+                }
+                // The text it agreed with is no longer stored: the page is
+                // brought in line with the base as it reads now.
+                crate::db::BasisDiffOutcome::Unavailable(_) => None,
+            }
+        } else {
+            let in_scope = match db.get_page(&id).await? {
+                Some(basis) => scope.matches(basis.space.as_deref()),
+                None => false,
+            };
+            if !in_scope {
+                return Ok(Err(needs_you(
+                    page,
+                    "This page relies on a page outside this Space. Steep it from a session \
+                     that is not locked to one Space."
+                        .into(),
+                )));
+            }
+            None
+        };
+        snap.push((id.clone(), context.snapshot.version));
+        bases.push(SteepBasis {
+            page_id: id,
+            title: context.title,
+            version: context.snapshot.version,
+            content: context.content,
+            before,
+        });
+    }
+    Ok(Ok((bases, snap)))
+}
+
+/// The `(page id, version)` of each page `page_id` relies on, read the way a
+/// claim reads them.
+async fn current_bases(db: &MemoryDB, page_id: &str) -> Result<Vec<(String, i64)>, WenlanError> {
+    Ok(db
+        .list_basis_context(page_id)
+        .await?
+        .into_iter()
+        .map(|context| (context.snapshot.basis_page_id, context.snapshot.version))
+        .collect())
 }
 
 /// The claim's line asking to keep what the user wrote on a page they
@@ -928,6 +1085,7 @@ async fn claim_code(
                 scope: scope.clone(),
                 page_stale_reason: page.stale_reason.clone(),
                 code: snaps,
+                bases: Vec::new(),
             },
         )?;
         let mut note = String::from(
@@ -963,6 +1121,7 @@ async fn claim_code(
             code,
             judge_instructions: None,
             code_checks: Vec::new(),
+            bases: Vec::new(),
             note,
         });
     }
@@ -1039,6 +1198,7 @@ async fn claim_code(
             scope: scope.clone(),
             page_stale_reason: page.stale_reason.clone(),
             code: snaps,
+            bases: Vec::new(),
         },
     )?;
     Ok(SteepClaim {
@@ -1054,6 +1214,7 @@ async fn claim_code(
         code: Vec::new(),
         judge_instructions: Some(instructions.to_string()),
         code_checks,
+        bases: Vec::new(),
         note: "Code this page relies on changed. Put each check to a small model: \
                judge_instructions as the system prompt, the check's prompt as the user \
                message. Pass each reply back unchanged with action judge, as answers \
@@ -1330,6 +1491,14 @@ pub async fn commit(
         release();
         return Err(SteepError::Changed(CHANGED.into()));
     }
+    // The pages the note relies on are still the ones, at the versions, the
+    // claim showed. Code claims do not read them.
+    if !is_code_work(&snapshot.stale_reason) && current_bases(db, &page_id).await? != snapshot.bases
+    {
+        release();
+        return Err(SteepError::Changed(CHANGED.into()));
+    }
+    let basis_work = snapshot.stale_reason == STEEP_REASON_BASIS_CHANGED;
 
     if judging {
         let judged = judge(db, &page_id, &snapshot, answers).await;
@@ -1362,6 +1531,35 @@ pub async fn commit(
         release();
         if confirmed? == 0 {
             return Err(SteepError::Changed(CHANGED.into()));
+        }
+        return Ok(SteepCommit {
+            page_id,
+            outcome: "still_accurate",
+            revision_card_id: None,
+            citations: None,
+            judged: None,
+            replayed: false,
+        });
+    }
+    if action == STEEP_ACTION_STILL_ACCURATE && basis_work {
+        // The note still agrees with the pages it relies on as they read now:
+        // it is confirmed against them, and nothing about it is rewritten.
+        let space_guard = (snapshot.scope != ReadScope::Global).then(|| snapshot.scope.clone());
+        let confirmed = db
+            .mark_page_bases(
+                &page_id,
+                snapshot.version,
+                &snapshot.bases,
+                &[],
+                agent.unwrap_or(STEEP_CONFIRMED_BY),
+                space_guard.as_ref(),
+            )
+            .await;
+        release();
+        match confirmed {
+            Ok(()) => {}
+            Err(crate::db::BasisError::Db(error)) => return Err(error.into()),
+            Err(_) => return Err(SteepError::Changed(CHANGED.into())),
         }
         return Ok(SteepCommit {
             page_id,
@@ -1463,7 +1661,8 @@ pub async fn commit(
     // A sentence corrected for the code carries no [n], so a rewrite for code
     // need not cite at all: only the markers it does carry must match their
     // source. A rewrite from sources must cite.
-    let too_few = if code_rows.is_empty() {
+    // A sentence taken from a page the note relies on carries no [n] either.
+    let too_few = if code_rows.is_empty() && snapshot.bases.is_empty() {
         stats.verified == 0 || stats.unverified > stats.verified
     } else {
         stats.unverified > stats.verified
@@ -1480,7 +1679,7 @@ pub async fn commit(
     let summary = crate::synthesis::distill::extract_page_summary(&body);
 
     let space_guard = (snapshot.scope != ReadScope::Global).then(|| snapshot.scope.clone());
-    let result = crate::post_write::steep_update_page(
+    let result = crate::post_write::steep_update_page_with_bases(
         db,
         &page_id,
         UpdatePageRequest {
@@ -1493,11 +1692,23 @@ pub async fn commit(
         agent,
         space_guard,
         snapshot.fence.source_revision,
-        // A note rewritten for its code is not stale by its sources, and is
-        // a card only when a person edited it.
-        (!code_rows.is_empty()).then(|| page.as_ref().is_some_and(|page| owned(page, true))),
+        if basis_work {
+            // Brought in line with a changed base: the AI tool's own edit,
+            // which waits as a card only on a locked note. The bases it read
+            // are confirmed with it.
+            Some(false)
+        } else {
+            // A note rewritten for its code is not stale by its sources, and
+            // is a card only when a person edited it.
+            (!code_rows.is_empty()).then(|| page.as_ref().is_some_and(|page| owned(page, true)))
+        },
         knowledge_path,
         Some((citations_json, stats.summary())),
+        if basis_work {
+            snapshot.bases.clone()
+        } else {
+            Vec::new()
+        },
     )
     .await;
     release();
@@ -1556,3 +1767,7 @@ pub use automatic::{rewrite_one_code_page, CodeRewriteOutcome};
 #[cfg(test)]
 #[path = "steep_test.rs"]
 mod steep_test;
+
+#[cfg(test)]
+#[path = "steep_basis_test.rs"]
+mod steep_basis_test;

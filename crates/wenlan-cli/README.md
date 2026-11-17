@@ -581,6 +581,20 @@ Arguments:
 
 - `<PAGE>`: The page's title, part of it, or its id.
 
+#### `wenlan pages basis`
+
+Make a page follow another page, or check or stop it (the page_basis tool). When the other page changes, steep brings this one in line; a locked page waits for your review.
+
+```text
+wenlan pages basis [OPTIONS] <ACTION> <PAGE> <BASIS>
+```
+
+Arguments:
+
+- `<ACTION>`: mark: follow it; diff: what it said then and says now; confirm: this page still holds; remove: stop following. Possible values: `mark`, `diff`, `confirm`, `remove`.
+- `<PAGE>`: The page that follows: its title, part of it, or its id.
+- `<BASIS>`: The page it follows: its title, part of it, or its id.
+
 ### `wenlan memories`
 
 List recent memories, or confirm, forget and review them (pending, confirm, forget, history).
@@ -1074,6 +1088,34 @@ Stop putting this Space's pages into its repository.
 ```text
 wenlan repo unbind [OPTIONS]
 ```
+
+#### `wenlan repo follow`
+
+Make docs of the bound repository follow a page of the Space: when the page changes, the AI tool suggests fixes to them for the wiki pull request.
+
+```text
+wenlan repo follow [OPTIONS] --page <PAGE> <FILES>...
+```
+
+Arguments:
+
+- `<FILES>...`: Docs relative to the repository root, such as README.md.
+
+Options:
+
+- `--page <PAGE>`: The page the docs follow (its id).
+
+#### `wenlan repo unfollow`
+
+Stop the docs following a page.
+
+```text
+wenlan repo unfollow [OPTIONS] --page <PAGE>
+```
+
+Options:
+
+- `--page <PAGE>`: The page the docs follow (its id).
 
 #### `wenlan repo refresh`
 

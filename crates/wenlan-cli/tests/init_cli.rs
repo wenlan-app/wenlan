@@ -78,9 +78,10 @@ fn binding(space: &str, repo_root: &Path) -> String {
     .to_string()
 }
 
-/// `wenlan status` first asks the daemon for its health and for Steep. The
-/// stub serves one request per route it was given, so each of those two
-/// needs a slot; this one matches neither and answers "no such route".
+/// `wenlan status` first asks the daemon for its health, for Steep and for
+/// pages waiting to follow another page. The stub serves one request per
+/// route it was given, so each of those three needs a slot; this one matches
+/// none and answers "no such route".
 const STATUS_CALL: (&str, String) = ("(health or Steep)", String::new());
 
 /// The repository's top level as `wenlan` reads it.
@@ -232,6 +233,7 @@ fn ux_cli_5_status_shows_the_space_and_repository_of_this_folder() {
     let (host, _requests) = spawn_stub(vec![
         STATUS_CALL,
         STATUS_CALL,
+        STATUS_CALL,
         ("GET /api/spaces", json!([space("acme-api")]).to_string()),
         (
             "GET /api/spaces/acme-api/wiki/repo",
@@ -250,6 +252,7 @@ fn ux_cli_5_status_shows_the_space_and_repository_of_this_folder() {
 fn status_in_a_repository_wenlan_does_not_know_names_init() {
     let (_dir, repo, home) = repository("acme-api");
     let (host, _requests) = spawn_stub(vec![
+        STATUS_CALL,
         STATUS_CALL,
         STATUS_CALL,
         ("GET /api/spaces", json!([space("other")]).to_string()),

@@ -802,6 +802,39 @@ pub async fn print_steep_summary() {
         Err(err) => format!("status unavailable ({err})"),
     };
     println!("Steep: {summary}");
+    print_following_pages().await;
+}
+
+/// `Following pages: 2 waiting to catch up` when pages that follow another
+/// page have not caught up with its change yet. Silent when there are none,
+/// or when the daemon cannot say.
+async fn print_following_pages() {
+    let Ok(groups) = get_json("/api/pages/basis-pending").await else {
+        return;
+    };
+    let mut waiting: Vec<&str> = groups
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|group| group["state"].as_str() == Some("pending"))
+        .flat_map(|group| group["citers"].as_array().into_iter().flatten())
+        .filter_map(|citer| citer["page_id"].as_str())
+        .collect();
+    waiting.sort_unstable();
+    waiting.dedup();
+    if let Some(line) = following_line(waiting.len()) {
+        println!("{line}");
+    }
+}
+
+fn following_line(waiting: usize) -> Option<String> {
+    match waiting {
+        0 => None,
+        1 => Some("Following pages: 1 waiting to catch up; the next steep updates it".into()),
+        n => Some(format!(
+            "Following pages: {n} waiting to catch up; the next steep updates them"
+        )),
+    }
 }
 
 fn print_job_route(label: &str, route: &serde_json::Value) {
@@ -1288,5 +1321,17 @@ mod doctor_tests {
                 "TMPDIR={tmpdir:?}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod following_tests {
+    use super::following_line;
+
+    #[test]
+    fn the_line_shows_only_when_a_page_waits() {
+        assert_eq!(following_line(0), None);
+        assert!(following_line(1).unwrap().contains("1 waiting"));
+        assert!(following_line(3).unwrap().contains("3 waiting"));
     }
 }

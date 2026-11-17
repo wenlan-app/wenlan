@@ -76,6 +76,28 @@ pub enum PageToolAction {
         /// The page's title, part of it, or its id.
         page: String,
     },
+    /// Make a page follow another page, or check or stop it (the page_basis tool).
+    /// When the other page changes, steep brings this one in line; a locked
+    /// page waits for your review.
+    Basis {
+        /// mark: follow it; diff: what it said then and says now; confirm: this
+        /// page still holds; remove: stop following.
+        #[arg(value_enum)]
+        action: BasisAction,
+        /// The page that follows: its title, part of it, or its id.
+        page: String,
+        /// The page it follows: its title, part of it, or its id.
+        basis: String,
+    },
+}
+
+/// `wenlan pages basis` actions, the page_basis tool's own.
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BasisAction {
+    Mark,
+    Diff,
+    Confirm,
+    Remove,
 }
 
 #[derive(Subcommand, Debug)]
@@ -332,6 +354,36 @@ fn written_line(text: &str) -> String {
     }
 }
 
+/// One line (or the two texts, for diff) for a person from the page_basis
+/// tool's reply.
+fn basis_as_text(action: BasisAction, page: &str, basis: &str, text: &str) -> String {
+    let value = super::tool::json_in(text).ok();
+    match action {
+        BasisAction::Mark => format!(
+            "\"{page}\" now follows \"{basis}\". When it changes, steep brings this page in line; \
+             a locked page waits for your review.\n"
+        ),
+        BasisAction::Confirm => format!("\"{page}\" still holds after \"{basis}\" changed.\n"),
+        BasisAction::Remove => format!("\"{page}\" no longer follows \"{basis}\".\n"),
+        BasisAction::Diff => {
+            let field = |key: &str| {
+                value
+                    .as_ref()
+                    .and_then(|v| v.get(key))
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            };
+            match (field("from_content"), field("to_content")) {
+                (Some(then), Some(now)) => format!(
+                    "What \"{basis}\" said when \"{page}\" last agreed with it:\n\n{then}\n\n\
+                     What it says now:\n\n{now}\n"
+                ),
+                _ => format!("{text}\n"),
+            }
+        }
+    }
+}
+
 fn show(format: ResolvedFormat, quiet: bool, text: &str) -> Result<()> {
     if quiet {
         return Ok(());
@@ -491,6 +543,40 @@ pub fn run_pages(
                 json!({ "page_id": id, "version": version, "expected_version": version_of(&current)? }),
             )?;
             show(format, quiet, &text)?;
+        }
+        PageToolAction::Basis {
+            action,
+            page,
+            basis,
+        } => {
+            let id = resolve_page(&mut session, caller, &page)?;
+            let basis_id = resolve_page(&mut session, caller, &basis)?;
+            let mut arguments = json!({
+                "action": match action {
+                    BasisAction::Mark => "mark",
+                    BasisAction::Diff => "diff",
+                    BasisAction::Confirm => "confirm",
+                    BasisAction::Remove => "remove",
+                },
+                "page_id": id,
+                "basis_page_id": basis_id,
+            });
+            // The version is the other page's as it reads now, looked up for
+            // the person; an AI tool passes the one it read.
+            if matches!(action, BasisAction::Mark | BasisAction::Confirm) {
+                let current = read_page(&mut session, &basis_id)?;
+                arguments["version"] = json!(version_of(&current)?);
+            }
+            let text = session.call_text("page_basis", arguments)?;
+            if quiet {
+                return Ok(());
+            }
+            match format {
+                ResolvedFormat::Json => show(format, quiet, &text)?,
+                ResolvedFormat::Table => {
+                    print!("{}", basis_as_text(action, &page, &basis, &text))
+                }
+            }
         }
         PageToolAction::Links { page } => {
             let id = resolve_page(&mut session, caller, &page)?;
