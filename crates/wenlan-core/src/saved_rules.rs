@@ -13,7 +13,9 @@
 use chrono::TimeZone;
 
 use crate::db::skill_grow::SavedRule;
-use wenlan_types::{SAVED_FROM_TERMINAL, SAVED_RULES_PER_DAY, SAVED_RULES_PER_TOOL_PER_DAY};
+use wenlan_types::{
+    RULE_REMOVED_IN_APP, SAVED_FROM_TERMINAL, SAVED_RULES_PER_DAY, SAVED_RULES_PER_TOOL_PER_DAY,
+};
 
 /// Where a save came from.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,6 +31,20 @@ pub struct Saver {
 impl Saver {
     pub fn is_terminal(&self) -> bool {
         self.id == SAVED_FROM_TERMINAL
+    }
+
+    /// The person pressing Remove in the Wenlan app themselves. The daemon
+    /// gives this only to a request that carries the app's person marker
+    /// and no tool name, while it listens on this computer alone.
+    pub fn person_in_app() -> Self {
+        Saver {
+            id: RULE_REMOVED_IN_APP.to_string(),
+            label: RULE_REMOVED_IN_APP.to_string(),
+        }
+    }
+
+    pub fn is_person_in_app(&self) -> bool {
+        self.id == RULE_REMOVED_IN_APP
     }
 }
 
@@ -115,8 +131,9 @@ pub fn saver(agent_name: Option<&str>, display_name: Option<&str>) -> Saver {
     } else {
         shown
     };
-    // A tool cannot take the terminal's count either.
-    let id = if id == SAVED_FROM_TERMINAL {
+    // A tool cannot take the terminal's count either, nor the name the
+    // app's own Remove is recorded under.
+    let id = if id == SAVED_FROM_TERMINAL || id == RULE_REMOVED_IN_APP {
         format!("tool:{id}")
     } else {
         id
@@ -220,10 +237,10 @@ pub fn save_scope(
 }
 
 /// Why `saver` may not remove the rule `record` saved, if it may not. The
-/// terminal removes any saved rule. An AI tool removes only what was saved
-/// under its own name.
+/// terminal removes any saved rule, and so does the person in the app. An
+/// AI tool removes only what was saved under its own name.
 pub fn removal_refusal(saver: &Saver, record: &SavedRule) -> Option<String> {
-    if saver.is_terminal() || tool_id(&record.tool_id) == saver.id {
+    if saver.is_terminal() || saver.is_person_in_app() || tool_id(&record.tool_id) == saver.id {
         return None;
     }
     Some(format!(
@@ -382,6 +399,24 @@ mod tests {
             let refusal = removal_refusal(&saver(Some(name), None), &by_terminal);
             assert!(
                 refusal.is_some_and(|text| text.contains("saved from the terminal")),
+                "{name}"
+            );
+        }
+    }
+
+    /// UX-SKILL-14: the person pressing Remove in the app takes out any
+    /// saved rule, and no AI tool can be recorded under the app's name.
+    #[test]
+    fn ux_skill_14_the_person_in_the_app_removes_any_saved_rule() {
+        let person = Saver::person_in_app();
+        assert!(removal_refusal(&person, &record("Codex", 1)).is_none());
+        assert!(removal_refusal(&person, &record("terminal", 1)).is_none());
+        for name in ["wenlan-app", "Wenlan-App", " WENLAN-APP "] {
+            let tool = saver(Some(name), None);
+            assert!(!tool.is_person_in_app(), "{name}");
+            assert!(!tool.is_terminal(), "{name}");
+            assert!(
+                removal_refusal(&tool, &record("Codex", 1)).is_some(),
                 "{name}"
             );
         }

@@ -57,6 +57,14 @@ pub struct SkillLine {
 /// `SkillLine::saved_from` for a save that named no AI tool.
 pub const SAVED_FROM_TERMINAL: &str = "terminal";
 
+/// Who a page's history names when the person pressed Remove on a saved
+/// rule in the Wenlan app. No AI tool can be recorded under it.
+pub const RULE_REMOVED_IN_APP: &str = "wenlan-app";
+
+/// What the history keeps in place of the person's words for that press:
+/// they pressed a button and said nothing.
+pub const RULE_REMOVED_IN_APP_WORDS: &str = "Remove, pressed in the Wenlan app";
+
 /// The longest rule one save may carry, in characters.
 pub const SAVED_RULE_MAX_CHARS: usize = 300;
 
@@ -139,7 +147,9 @@ pub struct SaveRuleResponse {
 /// `POST /api/skills/rules/{id}/remove`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoveRuleRequest {
-    /// The person's own words asking for the removal.
+    /// The person's own words asking for the removal. Blank only when the
+    /// person pressed Remove in the Wenlan app themselves.
+    #[serde(default)]
     pub person_asked: String,
 }
 

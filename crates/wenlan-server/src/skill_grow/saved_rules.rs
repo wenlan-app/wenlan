@@ -512,10 +512,23 @@ pub(super) async fn remove_rule_in(
     local_only: bool,
 ) -> Result<RemoveRuleResponse, ServerError> {
     refuse_who_cannot(&member, local_only)?;
-    let person_asked = persons_words(&req.person_asked)?;
+    // The person pressing Remove in the Wenlan app said nothing: the press
+    // itself is the ask, and the history says so in place of a quote. Every
+    // other caller still has to pass the person's own words.
+    let pressed_in_app =
+        crate::memory_routes::caller_is_person(headers) && req.person_asked.trim().is_empty();
+    let person_asked = if pressed_in_app {
+        wenlan_types::RULE_REMOVED_IN_APP_WORDS.to_string()
+    } else {
+        persons_words(&req.person_asked)?
+    };
     let (db, page_root) = db_and_page_root(state).await?;
     let page_root = page_root.as_deref();
-    let saver = saver(&db, headers).await?;
+    let saver = if pressed_in_app {
+        Saver::person_in_app()
+    } else {
+        saver(&db, headers).await?
+    };
 
     let locked = locked_space(headers)?;
     let locked_id = match locked.as_deref() {
@@ -567,7 +580,7 @@ pub(super) async fn remove_rule_in(
         Some(record) => decide::removal_refusal(&saver, record),
         // A saved rule always has its record; without one only the
         // terminal may take it out.
-        None => (!saver.is_terminal()).then(|| {
+        None => (!saver.is_terminal() && !saver.is_person_in_app()).then(|| {
             "only the person can remove this rule, with `wenlan rules remove <id>` in a \
              terminal; nothing was removed"
                 .to_string()

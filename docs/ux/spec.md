@@ -740,7 +740,8 @@ and wait for evidence that people need them.
 - **UX-SKILL-12** `shipped` Skills are reached the same way from every door.
   The skills Wenlan holds (each with where it is used, where it came from and
   whether it carries the person's additions) and the search of skills.sh are
-  in the app, in the terminal (`wenlan skills list`, `wenlan skills search`)
+  in the app (the desktop app, and Wenlan opened in a browser on this
+  computer), in the terminal (`wenlan skills list`, `wenlan skills search`)
   and in an AI tool on this computer (`list_skills`, `search_skills`). The
   terminal also shows everything in one skill before it is installed
   (`wenlan skills show`) and the skills the AI tools already have
@@ -791,8 +792,12 @@ and wait for evidence that people need them.
   spells its name, and all of them together at most thirty. Taking a saved
   rule out is one step, `wenlan rules remove <id>` or `remove_rule` with the
   person's words, and the files follow; an AI tool removes only the rules
-  saved under its own name, the terminal any saved rule. Only a save counts
-  this way: a line an AI tool adds to that page by an ordinary edit gives no
+  saved under its own name, the terminal any saved rule. In the Wenlan app
+  the "Rules I saved" pages are listed under Rules; each saved rule shows
+  where it was saved from and a Remove that takes it out in one press, with
+  no question first. That press is the person's own: it carries no quoted
+  words, and the page's history lists it as a rule they removed. Only a save
+  counts this way: a line an AI tool adds to that page by an ordinary edit gives no
   rule, a saved line that anyone but the person later changes, a comma
   included, stops being a rule, and rules Wenlan takes from pages still need
   the person's accept (UX-SKILL-1). The setting and a No do not silence a
@@ -801,7 +806,7 @@ and wait for evidence that people need them.
   dismissing it drops the save. A teammate's connection cannot save or
   remove a rule, the page is not sent to the others in a team Space, and
   Wenlan refuses a save or a removal while it listens beyond this computer.
-  原文：選擇卡（2026-11-17 08:29Z）：人在 AI 工具或用 `wenlan` 明確說「存成規則」時立即算數；規則清單顯示是從哪個工具存的；一步就能移除；AI 自己整理出來的規則仍要人點頭。細節待 Qi-Xuan 確認：每次一條、最多 300 字、純文字句子；每個工具每天十條、全部合計三十條；沒有 Space 也沒說每個 Space 就拒絕；鎖定在一個 Space 的連線只能存在那個 Space；工具名稱是工具自己報的，「終端機」只代表指令沒帶工具名稱；AI 工具只能用 `remove_rule` 移除自己存的；鎖定頁面上的卡片被拒絕就不算；團隊成員暫不開放。
+  原文：選擇卡（2026-11-17 08:29Z）：人在 AI 工具或用 `wenlan` 明確說「存成規則」時立即算數；規則清單顯示是從哪個工具存的；一步就能移除；AI 自己整理出來的規則仍要人點頭。App 裡的補充（2026-11-17 交辦）：「a rule saved through an AI tool or the terminal to show where it was saved from and be removable in one click」；這段補充的英文字句待 Qi-Xuan 確認。細節待 Qi-Xuan 確認：每次一條、最多 300 字、純文字句子；每個工具每天十條、全部合計三十條；沒有 Space 也沒說每個 Space 就拒絕；鎖定在一個 Space 的連線只能存在那個 Space；工具名稱是工具自己報的，「終端機」只代表指令沒帶工具名稱；AI 工具只能用 `remove_rule` 移除自己存的；鎖定頁面上的卡片被拒絕就不算；團隊成員暫不開放。
 
 ## From the terminal
 

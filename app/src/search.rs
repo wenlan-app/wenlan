@@ -4341,6 +4341,27 @@ pub async fn get_space_rules(
     client.get_json_as_person(&path).await
 }
 
+/// The person pressed Remove on a rule they had asked to be saved
+/// (UX-SKILL-14). Sent as the person with no quoted words: the press is the
+/// ask, and the daemon records it as made in the app. The daemon refuses a
+/// team member and any caller while it listens beyond this computer.
+#[tauri::command]
+pub async fn remove_saved_rule(
+    state: tauri::State<'_, State>,
+    id: String,
+) -> Result<wenlan_types::RemoveRuleResponse, String> {
+    let client = daemon_client(&state).await;
+    client
+        .post_json_as_person(
+            &format!(
+                "/api/skills/rules/{}/remove",
+                crate::api::percent_encode_path_segment(&id)
+            ),
+            &wenlan_types::RemoveRuleRequest::default(),
+        )
+        .await
+}
+
 #[tauri::command]
 pub async fn refresh_skills(
     state: tauri::State<'_, State>,

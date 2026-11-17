@@ -5166,3 +5166,110 @@ async fn a_rule_from_a_following_page_changes_the_night_after_that_page_catches_
     assert!(page.content.contains(FOLLOW_RULE_V2), "{}", page.content);
     assert!(!page.content.contains(FOLLOW_RULE_V1), "{}", page.content);
 }
+
+/// UX-SKILL-14: the person pressing Remove in the Wenlan app takes out any
+/// saved rule with no quoted words, and the page's history names the app,
+/// not a tool or the terminal. A caller that is not the person still has to
+/// pass the person's words, and an AI tool cannot borrow the app's name.
+#[tokio::test]
+async fn ux_skill_14_the_person_removes_a_saved_rule_with_one_press_in_the_app() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(false).await;
+    scratch
+        .db
+        .create_space("Project", None, false)
+        .await
+        .unwrap();
+    let saved = save_rule(
+        &scratch,
+        &caller(Some("codex"), Some("Project")),
+        save_request("We release on Tuesdays.", false),
+    )
+    .await
+    .unwrap();
+    let rule = saved.rule_id.as_deref().unwrap();
+    let press = |headers: HeaderMap| {
+        let shared = scratch.shared.clone();
+        let dirs = scratch.skill_dirs();
+        let rule = rule.to_string();
+        async move {
+            saved_rules::remove_rule_in(
+                &shared,
+                &headers,
+                None,
+                &rule,
+                wenlan_types::RemoveRuleRequest::default(),
+                dirs,
+                true,
+            )
+            .await
+        }
+    };
+
+    // No words and no person marker: refused, whoever the caller names.
+    for headers in [caller(None, None), caller(Some("cursor"), None), {
+        // A tool that sends the person marker is still a tool.
+        let mut named = person_headers();
+        named.insert("x-agent-name", HeaderValue::from_static("wenlan-app"));
+        named
+    }] {
+        let refused = refusal_text(press(headers).await.unwrap_err());
+        assert!(
+            refused.contains("rule_save_refused: person_asked must quote"),
+            "{refused}"
+        );
+    }
+    // An AI tool that calls itself the app, with words, removes only its own.
+    let borrowed = remove_rule(&scratch, &caller(Some("wenlan-app"), None), rule)
+        .await
+        .unwrap_err();
+    assert!(
+        refusal_text(borrowed).contains("only the rules saved under its own name"),
+        "the app's name gives a tool nothing"
+    );
+    assert_eq!(
+        texts(&read_rules_as_codex(&scratch, Some("Project")).await),
+        vec!["We release on Tuesdays."]
+    );
+
+    let removed = press(person_headers()).await.unwrap();
+    assert_eq!(removed.status, wenlan_types::SavedRuleStatus::Removed);
+    assert!(texts(&read_rules_as_codex(&scratch, Some("Project")).await).is_empty());
+    let page = scratch.db.get_page(&saved.page_id).await.unwrap().unwrap();
+    assert!(!page.content.contains("We release on Tuesdays."));
+    let history = scratch.db.list_page_history(&page.id, 10).await.unwrap();
+    assert_eq!(history[0].edited_by, skill_grow::RULE_SAVE);
+    let changelog = page.changelog.clone().unwrap_or_default();
+    assert!(
+        changelog.contains("\"agent\":\"wenlan-app\""),
+        "{changelog}"
+    );
+    assert!(
+        changelog.contains("\"person_asked\":\"Remove, pressed in the Wenlan app\""),
+        "{changelog}"
+    );
+
+    // While Wenlan listens beyond this computer the press is refused too.
+    let again = save_rule(
+        &scratch,
+        &caller(None, Some("Project")),
+        save_request("Tag every release.", false),
+    )
+    .await
+    .unwrap();
+    let outside = saved_rules::remove_rule_in(
+        &scratch.shared,
+        &person_headers(),
+        None,
+        again.rule_id.as_deref().unwrap(),
+        wenlan_types::RemoveRuleRequest::default(),
+        scratch.skill_dirs(),
+        false,
+    )
+    .await
+    .unwrap_err();
+    assert!(refusal_text(outside).contains("listens on this computer alone"));
+}
