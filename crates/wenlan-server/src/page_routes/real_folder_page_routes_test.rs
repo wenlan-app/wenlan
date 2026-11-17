@@ -185,6 +185,7 @@ async fn move_route_changes_projection_path_and_preserves_page_identity() {
     let Json(moved) = handle_move_page(
         State(state.clone()),
         SpaceHeader(None),
+        crate::team_actor::TeamActor(None),
         TruthView::automatic(),
         Path(id.into()),
         Json(MovePageRequest {
@@ -288,6 +289,7 @@ async fn move_accepts_a_live_file_when_stored_kind_is_stale_overview() {
     let Json(moved) = handle_move_page(
         State(state.clone()),
         SpaceHeader(Some("work".into())),
+        crate::team_actor::TeamActor(None),
         TruthView::automatic(),
         Path(page.id.clone()),
         Json(MovePageRequest {
@@ -370,6 +372,7 @@ async fn overview_title_with_stale_concept_kind_cannot_be_moved() {
     let result = handle_move_page(
         State(state),
         SpaceHeader(Some("work".into())),
+        crate::team_actor::TeamActor(None),
         TruthView::automatic(),
         Path(page.id),
         Json(MovePageRequest {
@@ -410,6 +413,7 @@ async fn move_checks_scope_before_missing_configuration_or_disk_paths() {
     let result = handle_move_page(
         State(state.clone()),
         SpaceHeader(Some("work".into())),
+        crate::team_actor::TeamActor(None),
         TruthView::automatic(),
         Path(id.into()),
         Json(MovePageRequest {
@@ -437,6 +441,7 @@ async fn move_checks_scope_before_missing_configuration_or_disk_paths() {
     let hidden = handle_move_page(
         State(state.clone()),
         SpaceHeader(None),
+        crate::team_actor::TeamActor(None),
         TruthView::automatic(),
         Path(id.into()),
         Json(MovePageRequest {

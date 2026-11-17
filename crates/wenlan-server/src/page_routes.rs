@@ -1476,9 +1476,10 @@ async fn draft_response(
 pub async fn handle_move_page(
     State(state): State<SharedState>,
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
+    crate::team_actor::TeamActor(actor): crate::team_actor::TeamActor,
     view: crate::truth_guard::TruthView,
     Path(id): Path<String>,
-    Json(req): Json<MovePageRequest>,
+    Json(mut req): Json<MovePageRequest>,
 ) -> Result<Json<MovePageResponse>, ServerError> {
     let (db, root) = {
         let s = state.read().await;
@@ -1495,6 +1496,24 @@ pub async fn handle_move_page(
         .ok_or_else(|| ServerError::NotFound("page not found".into()))?;
     let root = root
         .ok_or_else(|| ServerError::ValidationError("Wiki projection is not configured".into()))?;
+    // A team member names paths as they see them, inside their Space's own
+    // folder only.
+    let member_view = match actor {
+        Some(_) => Some(
+            crate::member_folders::view(&db, &root, true, header_space.as_deref())
+                .await
+                .ok_or_else(|| {
+                    ServerError::ValidationError(
+                        "Folders need each Space kept in a folder of its own".into(),
+                    )
+                })?,
+        ),
+        None => None,
+    };
+    if let Some(member_view) = &member_view {
+        req.expected_storage_path = member_view.file_path(&req.expected_storage_path)?;
+        req.folder_path = member_view.folder_path(&req.folder_path)?;
+    }
     let projection_write = db.begin_page_projection_write();
     let storage_path = tokio::task::spawn_blocking(move || {
         // The blocking mutation may outlive cancellation of the request future.
@@ -1509,6 +1528,14 @@ pub async fn handle_move_page(
     })
     .await
     .map_err(|e| ServerError::Internal(e.to_string()))??;
+    // The answer keeps the server path; for a member the gate takes it out
+    // and `member_folders::add_space_paths` puts the path they see beside it.
+    if member_view
+        .as_ref()
+        .is_some_and(|member_view| member_view.shown(&storage_path).is_none())
+    {
+        return Err(ServerError::Internal("page moved outside the Space".into()));
+    }
     Ok(Json(MovePageResponse { storage_path }))
 }
 

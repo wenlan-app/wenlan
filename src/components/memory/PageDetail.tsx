@@ -132,6 +132,7 @@ import { linkCompletionText, pageTitleKey, trimLikeDaemon } from "./editor/pageT
 import { loadAllLinkCandidates, linkNotesFor } from "./page/linkCandidates";
 import { leadingMarkdownH1, leadingMarkdownH1MatchesTitle, withoutLeadingTitleH1 } from "./editor/pageEditorPresentation";
 import { MovePageDialog } from "./pages/MovePageDialog";
+import { useKnowledgeFolders } from "./pages/useKnowledgeFolders";
 import { PageProjectionNotice } from "./pages/PageProjectionNotice";
 import { finishRenameLinks } from "./pages/renameLinksNotice";
 import { applyTextEdits, renameRewriteExplaining } from "./pages/renameLinkRewrite";
@@ -355,6 +356,9 @@ export default function PageDetail({
   const [wikiLinkPreview, setWikiLinkPreview] = useState<ReferencePreviewRequest | null>(null);
   const wikiLinkPreviewLeaveTimerRef = useRef<number | null>(null);
   const [moveOpen, setMoveOpen] = useState(false);
+  // A member has folders only while the owner keeps each Space in a folder
+  // of its own; then the list holds each of their Spaces as a top folder.
+  const memberFolders = useKnowledgeFolders({ enabled: teamAccess.member });
   const [editing, setEditing] = useState(false);
   const [restoreOpen, setRestoreOpen] = useState(false);
   useEffect(() => setRestoreOpen(false), [pageId]);
@@ -2836,6 +2840,11 @@ export default function PageDetail({
                     role="menu"
                     tabIndex={-1}
                   >
+                    {/* A member who can edit the page's Space moves it between
+                        that Space's folders; the dialog offers no others. */}
+                    {teamAccess.member && teamAccess.canEdit(page.space) && (memberFolders.data?.folders ?? []).some(folder => folder.path === page.space) && (
+                    <button type="button" role="menuitem" disabled={storedActionPending || page.status !== "active" || !inventoryPageFilename(page) || editDirty || saveState.phase !== "idle" || editorStatus?.compositionActive} onClick={() => { closeActionMenu(); setMoveOpen(true); }}>{t("pages.folders.move")}</button>
+                    )}
                     {!teamAccess.member && <>
                     <button type="button" role="menuitem" disabled={storedActionPending || page.status !== "active" || !inventoryPageFilename(page) || editDirty || saveState.phase !== "idle" || editorStatus?.compositionActive} onClick={() => { closeActionMenu(); setMoveOpen(true); }}>{t("pages.folders.move")}</button>
                     {!web && <button type="button" role="menuitem" disabled={storedActionBlocked || editDirty || saveState.phase !== "idle"} onClick={() => { closeActionMenu(); setPageExportOpen(true); }}>{t("pageExport.menuAction")}</button>}

@@ -493,6 +493,54 @@ pub async fn new_page_folder(
     Some(folder)
 }
 
+/// The folder of Space `space`, relative to the pages folder, while pages
+/// are kept in their Spaces' folders. `None` while that is off, or when the
+/// Space has no folder (a team Space whose team has no name yet).
+pub async fn space_folder(db: &MemoryDB, root: &Path, space: &str) -> Option<String> {
+    if !is_on(root) {
+        return None;
+    }
+    let input = layout_input(
+        db,
+        root,
+        &crate::shared_space::settings_path(),
+        &vault_folders(),
+    )
+    .await
+    .ok()?;
+    layout(&input).get(space).cloned()
+}
+
+/// `path` (relative to the pages folder) as seen from inside the Space
+/// folder `folder`: `None` when it is not inside it.
+pub fn inside_space(folder: &str, path: &str) -> Option<String> {
+    if folder.is_empty() {
+        return None;
+    }
+    if path == folder {
+        return Some(String::new());
+    }
+    path.strip_prefix(folder)?
+        .strip_prefix('/')
+        .map(str::to_string)
+}
+
+/// A path given relative to the Space folder `folder`, as a path relative
+/// to the pages folder. Refused unless it is a plain folder path (no `..`,
+/// no absolute path, no Wenlan folder), so it can only name a place inside
+/// the Space's folder.
+pub fn in_space(folder: &str, relative: &str) -> Result<String, WenlanError> {
+    let relative = crate::export::knowledge::validate_knowledge_folder_path(relative)?;
+    if folder.is_empty() {
+        return Err(WenlanError::Validation("no Space folder".into()));
+    }
+    Ok(if relative.is_empty() {
+        folder.to_string()
+    } else {
+        format!("{folder}/{relative}")
+    })
+}
+
 /// Most moves one pass makes: each move reads the folder's notes once, and
 /// the page watcher waits for the pass. The rest go in the next passes.
 pub const MOVES_PER_PASS: usize = 40;

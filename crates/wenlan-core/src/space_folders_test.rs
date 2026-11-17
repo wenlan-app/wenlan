@@ -325,3 +325,37 @@ fn turning_off_keeps_the_record_for_turning_on_again() {
     turn_on(dir.path()).unwrap();
     assert_eq!(read_record(dir.path()).unwrap().unwrap(), kept);
 }
+
+#[test]
+fn a_path_is_read_from_inside_its_space_folder_only() {
+    assert_eq!(inside_space("Acme/產品", "Acme/產品"), Some(String::new()));
+    assert_eq!(
+        inside_space("Acme/產品", "Acme/產品/Q3/路線.md"),
+        Some("Q3/路線.md".into())
+    );
+    assert_eq!(inside_space("Acme/產品", "Acme/產品 2/路線.md"), None);
+    assert_eq!(inside_space("Acme/產品", "Acme/設計/x.md"), None);
+    assert_eq!(inside_space("", "x.md"), None);
+}
+
+#[test]
+fn a_path_given_inside_a_space_folder_stays_inside_it() {
+    assert_eq!(in_space("Acme/產品", "").unwrap(), "Acme/產品");
+    assert_eq!(
+        in_space("Acme/產品", "Q3/Launch").unwrap(),
+        "Acme/產品/Q3/Launch"
+    );
+    for bad in [
+        "..",
+        "../設計",
+        "Q3/../../x",
+        "/etc",
+        "a\\b",
+        "Q3/",
+        ".wenlan",
+        "archive",
+    ] {
+        assert!(in_space("Acme/產品", bad).is_err(), "{bad} accepted");
+    }
+    assert!(in_space("", "Q3").is_err());
+}
