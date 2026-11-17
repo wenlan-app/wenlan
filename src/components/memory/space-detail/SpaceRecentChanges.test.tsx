@@ -99,6 +99,19 @@ describe("recent changes on a shared Space", () => {
     expect(changeWho("agent_create", [], t)).toBe("Your AI tool");
   });
 
+  it("says who archived or restored a page, and reads whole when nobody was recorded", async () => {
+    vi.mocked(listRecentChanges).mockResolvedValue([
+      { page_id: "p4", title: "Roadmap", change_kind: "archived", changed_at_ms: Date.now() - 60_000, edited_by: "shared_person:amy" },
+      { page_id: "p5", title: "Pricing", change_kind: "restored", changed_at_ms: Date.now() - 120_000, edited_by: "manual_edit" },
+      { page_id: "p6", title: "Notes", change_kind: "archived", changed_at_ms: Date.now() - 180_000, edited_by: null },
+    ]);
+    renderChanges();
+    expect(await screen.findByText("Amy archived Roadmap")).toBeInTheDocument();
+    expect(screen.getByText("You restored Pricing")).toBeInTheDocument();
+    expect(screen.getByText("Notes was archived")).toBeInTheDocument();
+    expect(screen.queryByText(/New page/)).not.toBeInTheDocument();
+  });
+
   it("shows nothing when the Space has no changes yet", async () => {
     vi.mocked(listRecentChanges).mockResolvedValue([]);
     const { container } = renderChanges();

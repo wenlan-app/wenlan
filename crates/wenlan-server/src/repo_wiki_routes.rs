@@ -107,13 +107,29 @@ async fn handle_bind(
         )));
     }
     let binding = blocking(move || {
-        repo_wiki::bind_at(
-            &repo_wiki::store_path(),
-            &space,
-            &repo_path,
-            req.folder.as_deref(),
-            req.daily,
-        )
+        let store = repo_wiki::store_path();
+        // A repository has one Wenlan keeping its pages and rules. Tying a
+        // second one is refused here, where it reads from the files on disk,
+        // rather than at the first publish.
+        if !req.take_over && repo_wiki::binding_at(&store, &space)?.is_none() {
+            let top = repo_wiki::repository_top_level(&repo_path)?;
+            let ours = repo_wiki::publisher_id_at(&store)?;
+            if repo_wiki::working_copy_kept_by_another(&top, &ours) {
+                let folder = req
+                    .folder
+                    .clone()
+                    .unwrap_or_else(|| repo_wiki::default_folder(&top).to_owned());
+                return Err(repo_wiki::kept_by_another_error(&folder));
+            }
+        }
+        let binding =
+            repo_wiki::bind_at(&store, &space, &repo_path, req.folder.as_deref(), req.daily)?;
+        if req.take_over {
+            if let Some(binding) = repo_wiki::set_take_over_at(&store, &space, true)? {
+                return Ok(binding);
+            }
+        }
+        Ok(binding)
     })
     .await?;
     Ok(Json(binding))
@@ -789,6 +805,7 @@ pub(crate) async fn publish_space(
             anchors: &anchors,
             concept_paths: &concept_paths,
             rules,
+            publisher: repo_wiki::publisher_id_at(&store)?,
             worktree,
             gh: repo_wiki::find_gh(),
             now,

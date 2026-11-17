@@ -63,6 +63,11 @@ pub enum WikiCommand {
         /// the remote URL). Needed when it is not yours.
         #[arg(long, value_name = "OWNER/NAME")]
         confirm_repo: Option<String>,
+        /// Publish from this computer although another Wenlan (a teammate's,
+        /// or another computer of yours) keeps this repository's pages and
+        /// rules. The next publish replaces theirs.
+        #[arg(long)]
+        take_over: bool,
     },
     /// Write the Space's code pages into the repository and open or update
     /// the pull request.
@@ -127,6 +132,7 @@ pub async fn run(
             agent,
             on_github,
             confirm_repo,
+            take_over,
         } => {
             let repo = match repo {
                 Some(repo) => repo,
@@ -147,6 +153,7 @@ pub async fn run(
                         repo_root: repo.to_string_lossy().into_owned(),
                         folder,
                         daily,
+                        take_over,
                     },
                 )
                 .await?;
@@ -382,6 +389,19 @@ pub(crate) fn describe_publish(result: &RepoWikiPublishResult) -> String {
         RepoWikiPublishStatus::NothingToPublish => {
             format!("no page of this Space rests on this repository's code yet{left_out}")
         }
+        // No pages went: the pull request carries the project rules for
+        // `AGENTS.md`, fixes to the repository's own docs, or both.
+        RepoWikiPublishStatus::PrOpened | RepoWikiPublishStatus::PrUpdated if result.pages == 0 => {
+            format!(
+                "no pages; pull request {} with the project rules or doc fixes: {}{left_out}",
+                if result.status == RepoWikiPublishStatus::PrOpened {
+                    "opened"
+                } else {
+                    "updated"
+                },
+                result.pr_url.as_deref().unwrap_or("(no link)")
+            )
+        }
         RepoWikiPublishStatus::NoChanges => {
             format!("{} page(s), already up to date{left_out}", result.pages)
         }
@@ -471,6 +491,7 @@ mod tests {
             doc_check: None,
             kept_edits: Vec::new(),
             follows: Vec::new(),
+            take_over: false,
         };
         let now = target(Some("pallets/itsdangerous"), None);
         let ssh = binding(Some("git@github.com:pallets/itsdangerous.git"));

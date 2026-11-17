@@ -24456,7 +24456,7 @@ async fn list_recent_changes_names_the_ai_tool_behind_a_refresh() {
 }
 
 #[tokio::test]
-async fn list_recent_changes_excludes_non_active() {
+async fn list_recent_changes_lists_an_archive_as_archived() {
     let (db, _dir) = test_db().await;
     let now = chrono::Utc::now().to_rfc3339();
     db.insert_page(
@@ -24480,7 +24480,16 @@ async fn list_recent_changes_excludes_non_active() {
     let ids: std::collections::HashSet<String> =
         changes.iter().map(|c| c.page_id.clone()).collect();
     assert!(ids.contains("c_active"));
-    assert!(!ids.contains("c_gone"));
+    // An archive is a change too; who did it is unknown here, so no name.
+    let gone = changes.iter().find(|c| c.page_id == "c_gone").unwrap();
+    assert_eq!(gone.change_kind, wenlan_types::PageChangeKind::Archived);
+    assert_eq!(gone.edited_by, None);
+    db.stamp_page_history_actor("c_gone", 2, "shared_person:m-amy")
+        .await
+        .unwrap();
+    let changes = db.list_recent_changes(10).await.unwrap();
+    let gone = changes.iter().find(|c| c.page_id == "c_gone").unwrap();
+    assert_eq!(gone.edited_by.as_deref(), Some("shared_person:m-amy"));
 }
 
 #[tokio::test]

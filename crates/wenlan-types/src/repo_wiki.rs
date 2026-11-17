@@ -201,6 +201,10 @@ pub struct RepoWikiBinding {
     /// changes, its AI tool suggests fixes to those docs.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub follows: Vec<RepoDocFollow>,
+    /// Set by `wenlan repo bind --take-over`: the next publish may replace
+    /// what another Wenlan keeps in this repository. Cleared once it has.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub take_over: bool,
 }
 
 /// Docs of the repository that follow one page of the Space: when the page
@@ -336,6 +340,10 @@ pub struct BindRepoWikiRequest {
     /// Leave the daily setting as it is when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub daily: Option<RepoWikiDaily>,
+    /// Publish from this Wenlan although another one keeps this repository's
+    /// pages and rules: the next publish replaces theirs.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub take_over: bool,
 }
 
 /// A repository the pages of a Space could go into.

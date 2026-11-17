@@ -120,6 +120,9 @@ fn daily_choice(
     }))
 }
 
+/// The words the daemon uses when another Wenlan keeps the repository.
+const KEPT_BY_ANOTHER: &str = "already kept by another Wenlan";
+
 /// How the Space and this repository stand after `init`.
 enum Tie {
     /// Tied by this run.
@@ -128,6 +131,9 @@ enum Tie {
     Already(RepoWikiBinding),
     /// The Space is tied to another working copy; left as it is.
     Elsewhere(RepoWikiBinding),
+    /// Another Wenlan (a teammate's, or another computer) already keeps this
+    /// repository's pages and rules; a repository has one.
+    KeptByAnother,
     /// Pull requests would open on a repository that is not the user's, and
     /// nobody said yes. Holds the repository's name and its owner.
     NotAgreed { name: String, owner: Option<String> },
@@ -186,10 +192,16 @@ pub async fn run(client: &WenlanClient, format: ResolvedFormat, quiet: bool) -> 
                             repo_root: top.to_string_lossy().into_owned(),
                             folder: None,
                             daily,
+                            take_over: false,
                         },
                     )
-                    .await?;
-                Tie::Made(binding)
+                    .await;
+                match binding {
+                    Ok(binding) => Tie::Made(binding),
+                    // Another Wenlan keeps this repository's pages and rules.
+                    Err(error) if error.to_string().contains(KEPT_BY_ANOTHER) => Tie::KeptByAnother,
+                    Err(error) => return Err(error),
+                }
             } else {
                 Tie::NotAgreed {
                     name: target.name().unwrap_or_default().to_owned(),
@@ -239,6 +251,7 @@ pub async fn run(client: &WenlanClient, format: ResolvedFormat, quiet: bool) -> 
             Tie::Already(binding) => (Some(binding), "already_tied"),
             Tie::Elsewhere(binding) => (Some(binding), "tied_elsewhere"),
             Tie::NotAgreed { .. } => (None, "not_agreed"),
+            Tie::KeptByAnother => (None, "kept_by_another"),
         };
         return print_json(&serde_json::json!({
             "space": space,
@@ -280,6 +293,11 @@ pub async fn run(client: &WenlanClient, format: ResolvedFormat, quiet: bool) -> 
         Tie::Elsewhere(binding) => println!(
             "It is tied to another folder, {}, and was left as it is.",
             binding.repo_root
+        ),
+        Tie::KeptByAnother => println!(
+            "Not tied to the repository: its pages and rules are already kept by another Wenlan \
+             (a teammate's, or another computer of yours). Your AI tools read them from the \
+             repository. `wenlan repo bind --take-over` publishes from this computer instead."
         ),
         Tie::NotAgreed { name, owner } => {
             let whose = match owner {

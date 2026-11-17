@@ -16,8 +16,9 @@ import {
 import { HistoryChangeDialog } from "../page/HistoryChangeDialog";
 import { PutBackButton } from "../page/PutBackButton";
 import { relativeMs } from "../page/format";
+import { lifecycleActorName } from "../page/historyItems";
 import { sharedWriter } from "../sharing/sharing";
-import { writerAgentName } from "../sharing/teamPeople";
+import { teamAiWriter, WENLAN_WRITERS as WENLAN, writerAgentName } from "../sharing/teamPeople";
 import { useTeamAccess } from "../../../web/teamAccess";
 import "./space-recent-changes.css";
 
@@ -26,8 +27,6 @@ const SHOWN = 5;
 // The same writers the core counts as a person (authorship.rs): a page started
 // in the app and published, or a version the person restored, is theirs.
 const PERSON = new Set(["manual_edit", "fs_edit", "human", "own_device", "person_create", "revision_accept", "publish", "restore"]);
-/** Wenlan's own background organizing, not anyone's AI tool. */
-const WENLAN = new Set(["distill", "re_distill", "page_growth", "refinery_merge", "citation_backfill", "link_rename"]);
 
 /** Who made a change, said the way the row reads: a member, their AI tool,
  *  you, your AI tool, or Wenlan itself. */
@@ -37,6 +36,9 @@ export function changeWho(editedBy: string | null | undefined, shares: readonly 
   // A member's AI tool connected through the team server names its member.
   const tool = editedBy === "agent_refresh" && agent?.includes("@team.") ? writerAgentName(t, agent) : null;
   if (tool) return tool;
+  // In a member's browser, any other AI change is the owner's AI tool.
+  const ai = teamAiWriter(t, editedBy, agent);
+  if (ai) return ai;
   if (editedBy && PERSON.has(editedBy)) return t("team.changes.you");
   if (editedBy && WENLAN.has(editedBy)) return t("team.changes.wenlan");
   return t("team.changes.yourAi");
@@ -75,12 +77,21 @@ export function SpaceRecentChanges({ space, shares }: Props) {
       <h2 className="space-brief-heading">{t("team.changes.title")}</h2>
       <ul>
         {rows.map((change) => {
-          const who = changeWho(change.edited_by, shares, t, change.agent);
-          const created = change.change_kind === "created" || change.changed_sentences == null;
-          const what = t(created ? "team.changes.added" : "team.changes.changed", { who, title: change.title });
+          const lifecycle = change.change_kind === "archived" || change.change_kind === "restored" ? change.change_kind : null;
+          const created = !lifecycle && (change.change_kind === "created" || change.changed_sentences == null);
+          let what: string;
+          if (lifecycle) {
+            const named = lifecycleActorName(t, change.edited_by, shares);
+            what = named == null
+              ? t(`team.changes.${lifecycle}Unnamed`, { title: change.title })
+              : t(`team.changes.${lifecycle}`, { who: named, title: change.title });
+          } else {
+            const who = changeWho(change.edited_by, shares, t, change.agent);
+            what = t(created ? "team.changes.added" : "team.changes.changed", { who, title: change.title });
+          }
           const meta = [
             ...(several ? [change.space] : []),
-            created ? t("team.changes.newPage") : t("team.changes.sentences", { count: change.changed_sentences ?? 0 }),
+            ...(lifecycle ? [] : [created ? t("team.changes.newPage") : t("team.changes.sentences", { count: change.changed_sentences ?? 0 })]),
             relativeMs(change.changed_at_ms, locale),
           ].join(" · ");
           return (

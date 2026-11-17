@@ -1602,6 +1602,11 @@ pub enum PageHistoryKind {
     /// A page this one relies on (its basis) got a new version. Derived from
     /// that page's own writes; this page did not change.
     SourceUpdate,
+    /// The page was archived. `edited_by` names who did it, in the writer
+    /// vocabulary; absent when it was not recorded.
+    Archived,
+    /// The page was put back from the archive. `edited_by` as for `Archived`.
+    Restored,
 }
 
 /// The page a [`PageHistoryKind::SourceUpdate`] is about.
