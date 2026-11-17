@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=70e1be4704f8317497c69ab070f5a416465c05c3228bd1c07e8e4f5bd035acdc -->
+<!-- README_SYNC: source=README.md sha256=f3e581b2d8244952539ac7945bcacb84cbf29536347552ac53816556a4799583 -->
 
 <p align="center">
   <picture>
@@ -318,4 +318,4 @@ El runtime local, la CLI, el servidor MCP, los tipos compartidos y los plugins u
 
 ## Linaje y proyectos afines
 
-Wenlan toma su nombre del Pabellón Wenlan y continúa las tradiciones de LLM-wiki y agent-memory: [la nota LLM-wiki de Karpathy](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f), [la propuesta de Rohitg00](https://gist.github.com/rohitg00/2067ab416f7bbe447c1977edaaa681e2) y [nashsu/llm_wiki](https://github.com/nashsu/llm_wiki).
+Wenlan toma su nombre del Pabellón Wenlan y continúa las tradiciones de LLM-wiki y agent-memory: [la nota LLM-wiki de Karpathy](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f), [la propuesta de Rohitg00](https://gist.github.com/rohitg00/2067ab416f7bbe447c1977edaaa681e2) y [nashsu/llm_wiki](https://github.com/nashsu/llm_wiki). Para documentar código, el proyecto más afín es [OpenWiki](https://github.com/langchain-ai/openwiki); la pull request diaria de Wenlan sigue su patrón.

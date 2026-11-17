@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=70e1be4704f8317497c69ab070f5a416465c05c3228bd1c07e8e4f5bd035acdc -->
+<!-- README_SYNC: source=README.md sha256=f3e581b2d8244952539ac7945bcacb84cbf29536347552ac53816556a4799583 -->
 
 <p align="center">
   <picture>
@@ -319,4 +319,4 @@ wenlan init
 
 ## 源流與同類專案
 
-Wenlan 名稱來自文瀾閣，產品方向承接 LLM-wiki 與 agent-memory 脈絡：[Karpathy 的 LLM-wiki note](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)、[Rohitg00 的提案](https://gist.github.com/rohitg00/2067ab416f7bbe447c1977edaaa681e2) 與 [nashsu/llm_wiki](https://github.com/nashsu/llm_wiki)。
+Wenlan 名稱來自文瀾閣，產品方向承接 LLM-wiki 與 agent-memory 脈絡：[Karpathy 的 LLM-wiki note](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)、[Rohitg00 的提案](https://gist.github.com/rohitg00/2067ab416f7bbe447c1977edaaa681e2) 與 [nashsu/llm_wiki](https://github.com/nashsu/llm_wiki)。程式碼文件方面，最接近的同類專案是 [OpenWiki](https://github.com/langchain-ai/openwiki)；文瀾每天開 pull request 的做法參考了它。
