@@ -196,7 +196,7 @@ Replace `<id>` with the id `capture` printed. The `wenlan` CLI has no forget com
 
 ## MCP-only setup and other clients
 
-Install the runtime using the host-specific path above, then configure only the client the user named:
+`wenlan setup` connects every AI tool it finds on the computer (Claude Code, Codex, Gemini CLI, Cursor) and leaves a tool that has the Wenlan plugin as it is. To connect only the client the user named, install the runtime with `wenlan setup --basic --config-only`, which connects nothing, then run:
 
 ```bash
 wenlan connect <client>

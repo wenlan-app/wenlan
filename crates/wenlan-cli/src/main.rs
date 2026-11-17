@@ -52,7 +52,7 @@ enum Commands {
     Status,
     /// Open Wenlan's personal browser UI.
     Open,
-    /// Guided setup: get Wenlan running, optionally with a local model or an Anthropic key.
+    /// Set Wenlan up and connect the AI tools on this computer; optionally a local model or an Anthropic key.
     Setup {
         /// Set up without a model or API key.
         #[arg(long)]
@@ -66,6 +66,12 @@ enum Commands {
         /// Skip confirmation prompts where possible.
         #[arg(short = 'y', long)]
         yes: bool,
+        /// Write the settings only: connect no AI tool and ask nothing.
+        #[arg(long)]
+        config_only: bool,
+        /// Only what follows the settings; the installer runs it once Wenlan has started.
+        #[arg(long, hide = true, conflicts_with_all = ["basic", "model", "anthropic_api_key_env", "config_only"])]
+        finish: bool,
     },
     /// Set this repository up: a Space named after it, tied to it, and your AI tools connected.
     Init,
@@ -565,13 +571,20 @@ async fn main() -> anyhow::Result<ExitCode> {
             model,
             anthropic_api_key_env,
             yes,
+            config_only,
+            finish,
         } => {
-            commands::setup::run_setup(commands::setup::SetupArgs {
-                basic,
-                model,
-                anthropic_api_key_env,
-                yes,
-            })
+            commands::setup::run_setup(
+                &client,
+                commands::setup::SetupArgs {
+                    basic,
+                    model,
+                    anthropic_api_key_env,
+                    yes,
+                    config_only,
+                    finish,
+                },
+            )
             .await?
         }
         Commands::Init => commands::init::run(&client, format, cli.quiet).await?,
@@ -608,7 +621,9 @@ async fn main() -> anyhow::Result<ExitCode> {
         Commands::Models { command } => commands::setup::run_model(command).await?,
         Commands::Keys { command } => commands::setup::run_key(command).await?,
         Commands::Steep { command } => commands::setup::run_enrichment(command).await?,
-        Commands::Connect(args) => commands::mcp::run_connect(&client, args, cli.quiet).await?,
+        Commands::Connect(args) => {
+            commands::mcp::run_connect(&client, args, cli.quiet).await?;
+        }
         Commands::Recall { query, limit } => {
             commands::recall::run(&client, format, cli.quiet, query, limit).await?
         }
