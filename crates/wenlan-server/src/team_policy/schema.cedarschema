@@ -1,0 +1,12 @@
+namespace Wenlan {
+  entity Space = { hosted: Bool };
+  entity Team;
+  entity Member = {
+    owner: Bool,
+    active: Bool,
+    reads: Set<Space>,
+    writes: Set<Space>,
+  };
+  action read, write appliesTo { principal: Member, resource: Space };
+  action manage appliesTo { principal: Member, resource: Team };
+}

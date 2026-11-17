@@ -83,6 +83,7 @@ pub mod steep_new_routes;
 pub mod steep_routes;
 pub mod team_actor;
 mod team_firewall;
+mod team_policy;
 pub mod team_routes;
 pub mod telemetry;
 pub mod telemetry_routes;
