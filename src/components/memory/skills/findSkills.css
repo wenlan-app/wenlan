@@ -59,3 +59,10 @@
 @media (max-width: 640px) { .find-skills { padding: 20px 16px 48px; } }
 .find-skills-additions-text { margin: 0; white-space: pre-wrap; }
 .find-skills-cut { margin-top: 6px; }
+/* A refusal is a block of its own under the button, so a long sentence
+   wraps inside the narrow install column instead of trailing a label. */
+.find-skills-refusal { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border-radius: var(--mem-control-radius); background: var(--mem-bg); color: var(--mem-accent-warm-text); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.find-skills-refusal-lead { font-weight: 600; }
+/* A character that would not show, written out by Wenlan. */
+.find-skills-mark { padding: 0 3px; border-radius: var(--mem-r-4); background: var(--mem-hover-strong); color: var(--mem-accent-warm-text); font-size: 12px; }
+.find-skills-marked { margin-bottom: 6px; }

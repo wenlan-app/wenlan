@@ -55,8 +55,26 @@ describe("revisionWriterLabel", () => {
     expect(revisionWriterLabel(en, "rule_save", "terminal", -24)).toBe("Rule removed in the terminal");
     // The Remove the person pressed in the app.
     expect(revisionWriterLabel(en, "rule_save", "wenlan-app", -24)).toBe("You removed a rule");
-    // A tool that calls itself the terminal is recorded apart from it.
-    expect(revisionWriterLabel(en, "rule_save", "tool:terminal", 24)).toBe("Rule saved from Terminal");
+    // A tool that calls itself the terminal, you or Wenlan is recorded apart
+    // from them (`tool:<name>`), and is listed as an AI tool with the name
+    // it gave in quotes: never as the terminal, the person or the app.
+    expect(revisionWriterLabel(en, "rule_save", "tool:terminal", 24)).toBe("Rule saved from an AI tool that calls itself “terminal”");
+    expect(revisionWriterLabel(en, "rule_save", "tool:terminal", -24)).toBe("Rule removed in an AI tool that calls itself “terminal”");
+    expect(revisionWriterLabel(en, "rule_save", "tool:you", 24)).toBe("Rule saved from an AI tool that calls itself “you”");
+    expect(revisionWriterLabel(en, "rule_save", "tool:wenlan-app", -24)).toBe("Rule removed in an AI tool that calls itself “wenlan-app”");
+    expect(revisionWriterLabel(en, "rule_save", "tool:wenlan app", -24)).toBe("Rule removed in an AI tool that calls itself “wenlan app”");
+    expect(revisionWriterLabel(tFor("zh-Hant"), "rule_save", "tool:terminal", 24)).toBe("自稱「terminal」的 AI 工具存的規則");
+    expect(revisionWriterLabel(tFor("zh-Hans"), "rule_save", "tool:you", -24)).toBe("自称「you」的 AI 工具移除了规则");
+    expect(revisionWriterLabel(en, "rule_save", "tool:", 24)).toBe("Rule saved");
+    for (const lng of ["en", "zh-Hans", "zh-Hant"] as const) {
+      for (const agent of ["tool:terminal", "tool:you", "tool:wenlan-app", "tool:wenlan app", "tool:the terminal"]) {
+        for (const delta of [24, -24]) {
+          const label = revisionWriterLabel(tFor(lng), "rule_save", agent, delta);
+          expect(label).toMatch(/AI tool that calls itself “|自稱「|自称「/u);
+          expect(label).not.toMatch(/^Rule (saved from|removed in) (the terminal|Terminal|You|Wenlan App)$|You removed|你移除|從終端機|从终端|在終端機|在终端/u);
+        }
+      }
+    }
     expect(revisionWriterLabel(en, "rule_save", null, 24)).toBe("Rule saved");
     expect(revisionWriterLabel(en, "rule_save", " ", -1)).toBe("Rule removed");
     expect(revisionWriterLabel(tFor("zh-Hant"), "rule_save", "cursor", 24)).toBe("從 Cursor 存的規則");

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Each skill action from start to finish, as the daemon's routes run it,
-//! so the terminal and AI tools get one set of checks and answers. The
-//! desktop app's own commands (`app/src/skill_registry_commands.rs`) do not
-//! call these yet: they carry their own copy of the same steps.
+//! so the terminal, AI tools and the desktop app get one set of checks and
+//! answers. The desktop app's own commands
+//! (`app/src/skill_registry_commands.rs`) call these too.
 
 use std::path::{Path, PathBuf};
 
@@ -131,6 +131,7 @@ pub async fn preview_from_network(
             path: file.path,
             text: file.text,
             cut: file.cut,
+            marked: file.marked as u32,
         })
         .collect();
     // SKILL.md first, the rest in path order.

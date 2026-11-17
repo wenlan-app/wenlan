@@ -8,6 +8,10 @@ export function prettyAgent(name: string | null | undefined): string {
   return agentDisplayName(name) ?? "unknown agent";
 }
 
+/** How the daemon opens the id of a tool whose own name reads as the
+ *  terminal, the person or Wenlan (`saved_rules::SELF_NAMED_TOOL_ID_PREFIX`). */
+const SELF_NAMED_TOOL_PREFIX = "tool:";
+
 const WRITER_LABEL_KEYS = {
   manual_edit: "revisionLabel.writer.manualEdit",
   // The person, or their AI tool, on another of their own computers.
@@ -39,8 +43,15 @@ function ruleSaveLabel(t: TFunction, agent: string | null | undefined, removed: 
   if (from === SAVED_FROM_TERMINAL) {
     return t(removed ? "revisionLabel.writer.ruleRemovedTerminal" : "revisionLabel.writer.ruleSavedTerminal");
   }
-  // The daemon records a tool that calls itself the terminal as `tool:<name>`.
-  const name = writerAgentName(t, from.replace(/^tool:/u, ""));
+  // A tool that calls itself the terminal, the person or Wenlan is recorded
+  // as `tool:<name>`. It is said to be an AI tool, with the name it gave in
+  // quotes and as it gave it: never the terminal, the person or the app.
+  if (from.startsWith(SELF_NAMED_TOOL_PREFIX)) {
+    const called = from.slice(SELF_NAMED_TOOL_PREFIX.length).trim();
+    if (!called) return t(removed ? "revisionLabel.writer.ruleRemoved" : "revisionLabel.writer.ruleSaved");
+    return t(removed ? "revisionLabel.writer.ruleRemovedSelfNamed" : "revisionLabel.writer.ruleSavedSelfNamed", { name: called });
+  }
+  const name = writerAgentName(t, from);
   if (!name) return t(removed ? "revisionLabel.writer.ruleRemoved" : "revisionLabel.writer.ruleSaved");
   return t(removed ? "revisionLabel.writer.ruleRemovedNamed" : "revisionLabel.writer.ruleSavedNamed", { agent: name });
 }

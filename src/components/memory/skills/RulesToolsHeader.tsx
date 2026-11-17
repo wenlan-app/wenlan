@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import {
@@ -18,7 +19,8 @@ import { SPACE_FOLDERS_QUERY_KEY } from "../pages/SpaceFoldersPrompt";
 import { useScope } from "../team/scope";
 import { HowIWorkLines } from "./HowIWorkLines";
 import { useExampleWikiActive } from "../../../lib/exampleWiki/mode";
-import { HOW_I_WORK_QUERY_KEYS, pageGivesGeneralRules, rulesFromPage, savedRuleRemoveFailure } from "./howIWorkModel";
+import { HOW_I_WORK_QUERY_KEYS, pageGivesGeneralRules, rulesFromPage, savedRuleAlreadyRemoved, savedRuleRemoveFailure } from "./howIWorkModel";
+import { useSavedRulesPageIds } from "./useSavedRulesPages";
 import { SpaceRulesAsk } from "./SpaceRulesAsk";
 import "./howIWork.css";
 
@@ -101,22 +103,25 @@ export function RulesToolsHeader({ delivers }: { readonly delivers: boolean }) {
   );
 }
 
-/** Heads a page the person keeps in a Rules folder, and the page that keeps
- *  the rules they asked to be saved, and shows nothing on any other page: the same header as a "How I work" page, then each rule
- *  the daemon reads from this page with who wrote it, then what is still
- *  waiting for an answer. */
+/** Heads a page the person keeps in a Rules folder, and a page that keeps
+ *  the rules they asked to be saved (the daemon says which pages those are),
+ *  and shows nothing on any other page: the same header as a "How I work"
+ *  page, then each rule the daemon reads from this page with who wrote it,
+ *  then what is still waiting for an answer. */
 export function RulesFolderPageHead({ page, onOpenPage }: { readonly page: Page; readonly onOpenPage: (pageId: string) => void }) {
-  // No folder named Rules on the page's path: nothing to ask the daemon.
-  return pageSection(page) === "rules" ? <RulesFolderGate page={page} onOpenPage={onOpenPage} /> : null;
+  const savedRulesPages = useSavedRulesPageIds();
+  // No folder named Rules on the page's path, and not a saved-rules page:
+  // nothing more to ask the daemon.
+  return pageSection(page, undefined, savedRulesPages) === "rules" ? <RulesFolderGate page={page} onOpenPage={onOpenPage} savedRulesPages={savedRulesPages} /> : null;
 }
 
-function RulesFolderGate({ page, onOpenPage }: { readonly page: Page; readonly onOpenPage: (pageId: string) => void }) {
+function RulesFolderGate({ page, onOpenPage, savedRulesPages }: { readonly page: Page; readonly onOpenPage: (pageId: string) => void; readonly savedRulesPages: ReadonlySet<string> }) {
   const scope = useScope();
   const spaceFolders = useQuery({ queryKey: SPACE_FOLDERS_QUERY_KEY, queryFn: () => getSpaceFolders(), retry: false, staleTime: Infinity });
   // The folder may be a Space's own, which is no rules folder. The page's
   // own Space folder is enough to tell.
   if (!spaceFolders.isFetched) return null;
-  const section = pageSection(page, spaceLayout([page], spaceFolders.data === true, scope.teamSpaces));
+  const section = pageSection(page, spaceLayout([page], spaceFolders.data === true, scope.teamSpaces), savedRulesPages);
   return section === "rules" ? <RulesFolderRules page={page} onOpenPage={onOpenPage} /> : null;
 }
 
@@ -127,19 +132,32 @@ function RulesFolderRules({ page, onOpenPage }: { readonly page: Page; readonly 
   const rules = usePageRules(page, spaceName);
   const lines = rulesFromPage(rules, page.id);
   const queryClient = useQueryClient();
+  const [alreadyRemoved, setAlreadyRemoved] = useState(false);
+  // Whatever the press came to, the rules are read again: a rule taken out
+  // somewhere else must not stay listed here with a Remove that cannot work.
+  const readAgain = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["page", page.id] }),
+      queryClient.invalidateQueries({ queryKey: ["space-rules"] }),
+    ]);
+    void queryClient.invalidateQueries({ queryKey: ["pages"] });
+    void queryClient.invalidateQueries({ queryKey: ["page-revisions", page.id] });
+    void queryClient.invalidateQueries({ queryKey: RULES_DELIVERY_QUERY_KEY });
+  };
   // One press takes a saved rule off its page; the page's history keeps it.
   const removeSaved = async (line: SkillLine): Promise<string | null> => {
+    setAlreadyRemoved(false);
     try {
       const outcome = await removeSavedRule(line.id);
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["page", page.id] }),
-        queryClient.invalidateQueries({ queryKey: ["space-rules"] }),
-      ]);
-      void queryClient.invalidateQueries({ queryKey: ["pages"] });
-      void queryClient.invalidateQueries({ queryKey: ["page-revisions", page.id] });
-      void queryClient.invalidateQueries({ queryKey: RULES_DELIVERY_QUERY_KEY });
+      await readAgain();
       return outcome.status === "waiting" ? t("howIWork.saved.waiting") : null;
     } catch (error) {
+      await readAgain().catch(() => undefined);
+      if (savedRuleAlreadyRemoved(error)) {
+        // Its row goes with the fresh list, so this is said for the page.
+        setAlreadyRemoved(true);
+        return null;
+      }
       return savedRuleRemoveFailure(error, t);
     }
   };
@@ -152,6 +170,7 @@ function RulesFolderRules({ page, onOpenPage }: { readonly page: Page; readonly 
           <HowIWorkLines lines={lines} onOpenPage={onOpenPage} ownPageId={page.id} showEdited={false} onRemoveSaved={removeSaved} />
         </section>
       )}
+      {alreadyRemoved ? <p className="how-i-work-line-remove-note rules-page-removed-note" role="status" data-testid="rules-already-removed">{t("howIWork.saved.alreadyRemoved")}</p> : null}
       <RulesPagePending spaceName={page.space} onOpenPage={onOpenPage} />
     </>
   );

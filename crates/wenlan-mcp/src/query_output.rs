@@ -378,6 +378,7 @@ mod space_rules_tests {
             space_id: "space-1".into(),
             space_name: "Research".into(),
             rules_page_id: Some("rules-1".into()),
+            saved_rules_page_ids: Vec::new(),
             lines: vec![SkillLine {
                 id: "rule-1".into(),
                 kind: SkillLineKind::Rule,
@@ -391,6 +392,7 @@ mod space_rules_tests {
                 general: false,
                 hand_written: false,
                 saved_from: None,
+                saved_by: None,
             }],
         };
 

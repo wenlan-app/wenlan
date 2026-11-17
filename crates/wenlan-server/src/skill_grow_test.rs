@@ -773,6 +773,7 @@ async fn existing_skill_suggestions_are_person_only_positional_and_undo_conflict
         general: false,
         hand_written: false,
         saved_from: None,
+        saved_by: None,
     };
     let rules_body = skill_grow::reconcile_rules_page(
         &space.name,
@@ -5272,4 +5273,420 @@ async fn ux_skill_14_the_person_removes_a_saved_rule_with_one_press_in_the_app()
     .await
     .unwrap_err();
     assert!(refusal_text(outside).contains("listens on this computer alone"));
+}
+
+async fn press_remove(
+    scratch: &Scratch,
+    headers: &HeaderMap,
+    member: Option<crate::team_actor::ActingMember>,
+    id: &str,
+) -> Result<wenlan_types::RemoveRuleResponse, ServerError> {
+    saved_rules::remove_rule_in(
+        &scratch.shared,
+        headers,
+        member,
+        id,
+        wenlan_types::RemoveRuleRequest::default(),
+        scratch.skill_dirs(),
+        true,
+    )
+    .await
+}
+
+async fn read_rules_as_person(scratch: &Scratch, space: Option<&str>) -> SpaceRulesResponse {
+    handle_read_rules(
+        axum::extract::State(scratch.shared.clone()),
+        person_headers(),
+        Query(RulesQuery {
+            space: space.map(str::to_string),
+        }),
+    )
+    .await
+    .unwrap()
+    .0
+}
+
+/// UX-SKILL-14: the person's press keeps every other rule of a removal. On
+/// a locked page it waits as a card and nothing is removed; over a
+/// connection limited to another Space it is refused; a team member's
+/// forwarded press is refused whatever marker it carries; and an id that is
+/// gone, or pressed twice, is answered as not found.
+#[tokio::test]
+async fn ux_skill_14_the_persons_press_waits_on_a_locked_page_and_is_refused_where_a_removal_is() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(false).await;
+    for space in ["Project", "Other"] {
+        scratch.db.create_space(space, None, false).await.unwrap();
+    }
+    let saved = save_rule(
+        &scratch,
+        &caller(Some("codex"), Some("Project")),
+        save_request("We release on Tuesdays.", false),
+    )
+    .await
+    .unwrap();
+    let rule = saved.rule_id.as_deref().unwrap();
+    let page_now = || async { scratch.db.get_page(&saved.page_id).await.unwrap().unwrap() };
+    let before = page_now().await;
+
+    // A team member, forwarded by the team listener: refused first.
+    let member = crate::team_actor::ActingMember {
+        id: "member-1".into(),
+        name: "Ana".into(),
+    };
+    let as_member = press_remove(&scratch, &person_headers(), Some(member), rule)
+        .await
+        .unwrap_err();
+    assert!(matches!(as_member, ServerError::AgentDisabled(_)));
+    assert!(refusal_text(as_member).contains(saved_rules::TEAM_MEMBERS_CANNOT_SAVE_RULES));
+
+    // A connection limited to another Space.
+    let mut elsewhere = person_headers();
+    elsewhere.insert(
+        crate::space_header::HEADER_NAME,
+        HeaderValue::from_static("Other"),
+    );
+    let refused = press_remove(&scratch, &elsewhere, None, rule)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            &refused,
+            ServerError::Structured { status, .. } if *status == axum::http::StatusCode::FORBIDDEN
+        ),
+        "{refused}"
+    );
+    assert!(refusal_text(refused).contains("limited to one Space"));
+
+    // A locked page: the press waits as a card, and the page is as it was.
+    scratch
+        .db
+        .set_page_review_required(&saved.page_id, true)
+        .await
+        .unwrap();
+    let waiting = press_remove(&scratch, &person_headers(), None, rule)
+        .await
+        .unwrap();
+    assert_eq!(waiting.status, wenlan_types::SavedRuleStatus::Waiting);
+    assert!(waiting.revision_card_id.is_some(), "a card to accept");
+    assert!(waiting.message.starts_with("Not removed yet"));
+    let held = page_now().await;
+    assert_eq!(
+        (held.content.as_str(), held.version),
+        (before.content.as_str(), before.version),
+        "nothing was removed by any of these"
+    );
+    scratch
+        .db
+        .set_page_review_required(&saved.page_id, false)
+        .await
+        .unwrap();
+
+    // An id nothing has, and the same rule pressed twice.
+    let unknown = press_remove(
+        &scratch,
+        &person_headers(),
+        None,
+        "000000000000000000000000",
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(unknown, ServerError::NotFound(_)), "{unknown}");
+    let removed = press_remove(&scratch, &person_headers(), None, rule)
+        .await
+        .unwrap();
+    assert_eq!(removed.status, wenlan_types::SavedRuleStatus::Removed);
+    let again = press_remove(&scratch, &person_headers(), None, rule)
+        .await
+        .unwrap_err();
+    assert!(matches!(again, ServerError::NotFound(_)), "{again}");
+    assert!(refusal_text(again).contains("no saved rule has that id"));
+}
+
+/// UX-SKILL-14 at the door itself: through the daemon's own router the
+/// person's press removes the rule, a second press is a 404, and a press
+/// the team listener forwarded for a member is a 403 that removes nothing.
+#[tokio::test]
+async fn ux_skill_14_the_router_takes_the_persons_press_and_refuses_a_team_members() {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(false).await;
+    scratch
+        .db
+        .create_space("Project", None, false)
+        .await
+        .unwrap();
+    let saved = save_rule(
+        &scratch,
+        &caller(None, Some("Project")),
+        save_request("We release on Tuesdays.", false),
+    )
+    .await
+    .unwrap();
+    let rule = saved.rule_id.clone().unwrap();
+    let press = |member: bool| {
+        let mut request = Request::builder()
+            .method("POST")
+            .uri(format!("/api/skills/rules/{rule}/remove"))
+            .header("content-type", "application/json")
+            .header(CALLER_HEADER, PERSON_CALLER_VALUE);
+        if member {
+            request = request
+                .header(
+                    crate::team_actor::SECRET_HEADER,
+                    crate::team_actor::secret(),
+                )
+                .header(crate::team_actor::KIND_HEADER, "person")
+                .header(crate::team_actor::MEMBER_HEADER, "member-1")
+                .header(crate::team_actor::MEMBER_NAME_HEADER, "Ana");
+        }
+        let router = crate::router::build_router(scratch.shared.clone());
+        async move {
+            let response = router
+                .oneshot(request.body(Body::from(r#"{"person_asked":""}"#)).unwrap())
+                .await
+                .unwrap();
+            let status = response.status();
+            let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+                .await
+                .unwrap();
+            let answer: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            (status, answer)
+        }
+    };
+
+    let (status, answer) = press(true).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{answer}");
+    assert_eq!(
+        texts(&read_rules_as_codex(&scratch, Some("Project")).await),
+        vec!["We release on Tuesdays."]
+    );
+
+    let (status, answer) = press(false).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(answer["status"], "removed");
+    assert!(texts(&read_rules_as_codex(&scratch, Some("Project")).await).is_empty());
+
+    let (status, answer) = press(false).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{answer}");
+    assert!(
+        answer["error"]
+            .as_str()
+            .is_some_and(|text| text.contains("no saved rule has that id")),
+        "{answer}"
+    );
+}
+
+/// UX-SKILL-14: a tool name that is not plain ASCII is still a tool's name.
+/// Such a caller is listed as an AI tool and removes only its own saves; it
+/// is never the terminal, which removes any saved rule.
+#[tokio::test]
+async fn ux_skill_14_a_tool_name_in_any_script_is_a_tool_never_the_terminal() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(false).await;
+    scratch
+        .db
+        .create_space("Project", None, false)
+        .await
+        .unwrap();
+    let named = |bytes: &[u8]| {
+        let mut headers = caller(None, Some("Project"));
+        headers.insert("x-agent-name", HeaderValue::from_bytes(bytes).unwrap());
+        headers
+    };
+    let typed = save_rule(
+        &scratch,
+        &caller(None, Some("Project")),
+        save_request("Typed in the terminal.", false),
+    )
+    .await
+    .unwrap();
+    assert_eq!(typed.saved_from, "terminal");
+
+    for (bytes, label, text) in [
+        ("文瀾助手".as_bytes(), "文瀾助手", "Saved by a named tool."),
+        (&b"caf\xe9"[..], "caf", "Saved by a tool with odd bytes."),
+        (
+            &b"\xff\xfe"[..],
+            "an AI tool",
+            "Saved by a tool with no text.",
+        ),
+    ] {
+        let headers = named(bytes);
+        assert!(!crate::memory_routes::caller_is_person(&headers));
+        let saved = save_rule(&scratch, &headers, save_request(text, false))
+            .await
+            .unwrap();
+        assert_eq!(saved.saved_from, label);
+        let refused = remove_rule(&scratch, &headers, typed.rule_id.as_deref().unwrap())
+            .await
+            .unwrap_err();
+        assert!(
+            refusal_text(refused).contains("only the rules saved under its own name"),
+            "{label}: such a caller is not the terminal"
+        );
+        remove_rule(&scratch, &headers, saved.rule_id.as_deref().unwrap())
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        texts(&read_rules_as_codex(&scratch, Some("Project")).await),
+        vec!["Typed in the terminal."]
+    );
+}
+
+/// UX-SKILL-14: a tool that spells its name near the app's, the terminal's
+/// or the person's is recorded apart from them in the page's history too,
+/// and the rules list carries where a rule was saved from as its parts.
+#[tokio::test]
+async fn ux_skill_14_a_near_spelling_of_a_reserved_name_is_recorded_as_a_tools() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(false).await;
+    scratch
+        .db
+        .create_space("Project", None, false)
+        .await
+        .unwrap();
+    for (name, id, text) in [
+        ("Wenlan App", "tool:wenlan app", "Rule one."),
+        ("wenlan_app", "tool:wenlan_app", "Rule two."),
+        ("You", "tool:you", "Rule three."),
+        ("The Terminal", "tool:the terminal", "Rule four."),
+    ] {
+        let saved = save_rule(
+            &scratch,
+            &caller(Some(name), Some("Project")),
+            save_request(text, false),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            saved.saved_from,
+            format!("an AI tool that calls itself \"{name}\"")
+        );
+        let page = scratch.db.get_page(&saved.page_id).await.unwrap().unwrap();
+        let changelog = page.changelog.clone().unwrap_or_default();
+        assert!(
+            changelog.contains(&format!("\"agent\":\"{id}\"")),
+            "{name}: {changelog}"
+        );
+        assert!(
+            !changelog.contains("\"agent\":\"wenlan-app\"")
+                && !changelog.contains("\"agent\":\"wenlan app\"")
+                && !changelog.contains("\"agent\":\"you\""),
+            "{name}: {changelog}"
+        );
+    }
+    save_rule(
+        &scratch,
+        &caller(Some("codex"), Some("Project")),
+        save_request("Rule five.", false),
+    )
+    .await
+    .unwrap();
+    save_rule(
+        &scratch,
+        &caller(None, Some("Project")),
+        save_request("Rule six.", false),
+    )
+    .await
+    .unwrap();
+    let rules = read_rules_as_person(&scratch, Some("Project")).await;
+    let by = |text: &str| {
+        let line = rules.lines.iter().find(|line| line.text == text).unwrap();
+        serde_json::to_value(line.saved_by.as_ref().unwrap()).unwrap()
+    };
+    assert_eq!(
+        by("Rule one."),
+        serde_json::json!({"kind": "self_named", "name": "Wenlan App"})
+    );
+    assert_eq!(
+        by("Rule three."),
+        serde_json::json!({"kind": "self_named", "name": "You"})
+    );
+    assert_eq!(
+        by("Rule five."),
+        serde_json::json!({"kind": "tool", "name": "ChatGPT / Codex"})
+    );
+    assert_eq!(by("Rule six."), serde_json::json!({"kind": "terminal"}));
+}
+
+/// UX-SKILL-14: the app is told which pages keep saved rules by their ids,
+/// so a renamed one is still one and a page that only carries the title is
+/// not. An AI tool reading the rules is not given the list.
+#[tokio::test]
+async fn ux_skill_14_the_saved_rules_pages_are_told_by_id_not_by_title() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(false).await;
+    for space in ["Project", "Other"] {
+        scratch.db.create_space(space, None, false).await.unwrap();
+    }
+    assert!(read_rules_as_person(&scratch, None)
+        .await
+        .saved_rules_page_ids
+        .is_empty());
+    let saved = save_rule(
+        &scratch,
+        &caller(Some("codex"), Some("Project")),
+        save_request("We release on Tuesdays.", false),
+    )
+    .await
+    .unwrap();
+    let lookalike = create_person_page(
+        &scratch.db,
+        &scratch.pages,
+        "Other",
+        "Rules I saved — Other",
+        "- Not a rule anyone saved.\n",
+    )
+    .await;
+
+    let page = scratch.db.get_page(&saved.page_id).await.unwrap().unwrap();
+    wenlan_core::post_write::rename_page(
+        &scratch.db,
+        &page.id,
+        "Work conventions",
+        page.version,
+        &wenlan_core::read_scope::ReadScope::Global,
+        Some(&scratch.pages),
+    )
+    .await
+    .unwrap();
+
+    for space in [None, Some("Project"), Some("Other")] {
+        let told = read_rules_as_person(&scratch, space).await;
+        assert_eq!(
+            told.saved_rules_page_ids,
+            vec![saved.page_id.clone()],
+            "{space:?}"
+        );
+        assert!(!told.saved_rules_page_ids.contains(&lookalike));
+    }
+    // The renamed page still gives its rule, with Remove's id.
+    let rules = read_rules_as_person(&scratch, Some("Project")).await;
+    assert_eq!(texts(&rules), vec!["We release on Tuesdays."]);
+    assert_eq!(rules.lines[0].source_page_id, saved.page_id);
+    assert!(rules.lines[0].saved_from.is_some());
+    assert!(read_rules_as_codex(&scratch, Some("Project"))
+        .await
+        .saved_rules_page_ids
+        .is_empty());
 }

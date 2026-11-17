@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Page, SkillSuggestion, Space } from "../../../lib/tauri";
+import { i18n } from "../../../i18n";
 
 const api = vi.hoisted(() => ({
   enabled: vi.fn(),
@@ -329,7 +330,8 @@ describe("a page kept in a Rules folder", () => {
       saved("c", "Keep pull requests small", { hand_written: true, general: true }),
     ];
     beforeEach(() => {
-      api.rules.mockResolvedValue({ space_id: "", space_name: "", rules_page_id: null, lines });
+      // The daemon says which pages keep saved rules, by id.
+      api.rules.mockResolvedValue({ space_id: "", space_name: "", rules_page_id: null, lines, saved_rules_page_ids: [savedPage.id] });
       api.removeSaved.mockReset();
     });
 
@@ -343,8 +345,72 @@ describe("a page kept in a Rules folder", () => {
         "RuleKeep pull requests smallwritten by you·Used in every Space",
       ]);
       expect(within(list).getAllByRole("button", { name: /^Remove “/ })).toHaveLength(2);
-      // The page is in no Rules folder: its title alone lists it under Rules.
+      // The page is in no Rules folder: the daemon's list alone puts it under Rules.
       expect(savedPage.storage_path).not.toContain("Rules/");
+    });
+
+    it("UX-SKILL-14: a renamed saved-rules page keeps its rules and their Remove, and a page that only has the title is an ordinary page", async () => {
+      const renamed: Page = { ...savedPage, title: "Work conventions", storage_path: "Work conventions.md" };
+      renderHead(renamed);
+      const list = await screen.findByRole("region", { name: "Rules on this page" });
+      expect(within(list).getAllByRole("button", { name: /^Remove “/ })).toHaveLength(2);
+      expect(screen.getByRole("region", { name: "AI tools these rules are used in" })).toBeInTheDocument();
+    });
+
+    it("UX-SKILL-14: a page somebody titled like the saved-rules page gets no rules header and no Remove", async () => {
+      const lookalike: Page = { ...savedPage, id: "made-by-a-tool", title: "Rules I saved — anything", storage_path: "Rules I saved — anything.md" };
+      renderHead(lookalike);
+      await waitFor(() => expect(api.rules).toHaveBeenCalledWith(null));
+      await Promise.resolve();
+      expect(screen.queryByRole("region", { name: "AI tools these rules are used in" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("region", { name: "Rules on this page" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /^Remove/ })).not.toBeInTheDocument();
+      expect(api.spaceFolders).not.toHaveBeenCalled();
+    });
+
+    it("UX-SKILL-14: says where a rule was saved from in the app's language, with a self-named tool's name in quotes", async () => {
+      api.rules.mockResolvedValue({
+        space_id: "", space_name: "", rules_page_id: null, saved_rules_page_ids: [savedPage.id],
+        lines: [
+          saved("a", "Release on Tuesdays", { saved_from: "ChatGPT / Codex", saved_by: { kind: "tool", name: "ChatGPT / Codex" } }),
+          saved("b", "Answer in plain words", { saved_from: "terminal", saved_by: { kind: "terminal" } }),
+          saved("d", "Tag every release", { saved_from: 'an AI tool that calls itself "terminal"', saved_by: { kind: "self_named", name: "terminal" } }),
+          saved("e", "Write the changelog", { saved_from: "an AI tool", saved_by: { kind: "unnamed" } }),
+        ],
+      });
+      await i18n.changeLanguage("zh-Hant");
+      try {
+        renderHead(savedPage);
+        const list = await screen.findByRole("region", { name: "這頁的規則" });
+        const sources = [...list.querySelectorAll(".how-i-work-line-source > span:first-child")].map((item) => item.textContent);
+        expect(sources).toEqual(["從 ChatGPT / Codex 存的", "從終端機存的", "從自稱「terminal」的 AI 工具存的", "從某個 AI 工具存的"]);
+        // No English sentence from the daemon is left inside the line.
+        expect(list).not.toHaveTextContent(/an AI tool|calls itself|saved from/u);
+      } finally {
+        await i18n.changeLanguage("en");
+      }
+      cleanup();
+      renderHead(savedPage);
+      const list = await screen.findByRole("region", { name: "Rules on this page" });
+      expect(within(list).getByText("saved from an AI tool that calls itself “terminal”")).toBeInTheDocument();
+      expect(within(list).getByText("saved from an AI tool")).toBeInTheDocument();
+    });
+
+    it("UX-SKILL-14: a rule already removed somewhere else leaves the list at the press, and the page says it was already removed", async () => {
+      renderHead(savedPage);
+      const press = await screen.findByRole("button", { name: "Remove “Release on Tuesdays”" });
+      // The daemon no longer has the rule: its answer to the press is a 404,
+      // and its fresh list no longer carries the row.
+      api.removeSaved.mockRejectedValueOnce(new Error('HTTP POST /api/skills/rules/a/remove returned 404 Not Found: {"error":"rule_save_refused: no saved rule has that id; nothing was removed. `wenlan rules` and read_space_rules list each saved rule with its id"}'));
+      api.rules.mockResolvedValue({ space_id: "", space_name: "", rules_page_id: null, lines: lines.slice(1), saved_rules_page_ids: [savedPage.id] });
+      const asked = api.rules.mock.calls.length;
+      fireEvent.click(press);
+      const note = await screen.findByText("That rule was already removed.");
+      expect(note).toHaveAttribute("role", "status");
+      expect(api.rules.mock.calls.length).toBeGreaterThan(asked);
+      await waitFor(() => expect(screen.queryByRole("button", { name: "Remove “Release on Tuesdays”" })).not.toBeInTheDocument());
+      expect(screen.getByRole("button", { name: "Remove “Answer in plain words”" })).toBeInTheDocument();
+      expect(document.body).not.toHaveTextContent(/rule_save_refused|\/api\/|Couldn’t remove it/u);
     });
 
     it("UX-SKILL-14: one press on Remove asks the daemon as the person, with no question first", async () => {
@@ -371,8 +437,11 @@ describe("a page kept in a Rules folder", () => {
       await press();
       expect(await screen.findByText("Can’t remove while Wenlan can be reached from other computers.")).toBeInTheDocument();
       api.removeSaved.mockRejectedValueOnce(new Error("HTTP POST /api/skills/rules/a/remove returned 500"));
+      // Any failure reads the rules again, so a stale row cannot stay.
+      const asked = api.rules.mock.calls.length;
       await press();
       const note = await screen.findByText("Couldn’t remove it. Nothing changed.");
+      expect(api.rules.mock.calls.length).toBeGreaterThan(asked);
       expect(note.closest("li")).not.toHaveTextContent("/api/");
       expect(screen.getByRole("region", { name: "Rules on this page" })).not.toHaveTextContent("rule_save_refused");
     });
@@ -386,6 +455,8 @@ describe("a page kept in a Rules folder", () => {
     await waitFor(() => expect(api.spaceFolders).toHaveBeenCalled());
     await Promise.resolve();
     expect(screen.queryByRole("region", { name: "AI tools these rules are used in" })).not.toBeInTheDocument();
-    expect(api.rules).not.toHaveBeenCalled();
+    // Each page asked the daemon once which pages keep saved rules (with no
+    // Space); neither page's own rules were asked for.
+    expect(api.rules.mock.calls).toEqual([[null], [null]]);
   });
 });

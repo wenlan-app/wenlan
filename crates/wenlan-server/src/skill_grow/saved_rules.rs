@@ -51,12 +51,14 @@ pub(super) const RULE_NEEDS_A_SPACE: &str = decide::RULE_NEEDS_A_SPACE;
 /// Who a request is recorded as coming from (`wenlan_core::saved_rules`
 /// decides; this looks up the name Wenlan lists the tool under).
 async fn saver(db: &MemoryDB, headers: &HeaderMap) -> Result<Saver, ServerError> {
+    // A name is a name in any script. Bytes that are not text still say
+    // "a tool sent this", as `caller_is_person` reads them, so such a
+    // caller is a named tool and never the terminal.
     let named = headers
         .get("x-agent-name")
-        .and_then(|value| value.to_str().ok())
-        .map(str::trim)
+        .map(|value| String::from_utf8_lossy(value.as_bytes()).trim().to_string())
         .filter(|name| !name.is_empty());
-    let Some(name) = named else {
+    let Some(name) = named.as_deref() else {
         return Ok(decide::saver(None, None));
     };
     let id = decide::tool_id(name);
@@ -176,6 +178,18 @@ pub(super) async fn page_of(
         page_belongs_to_space(db, &page, &entry.space_id).await?
     };
     Ok((page.status == "active" && in_scope).then_some(page))
+}
+
+/// The pages that keep saved rules now, by id: every ledger page that is
+/// still its scope's own, whatever its title has become.
+pub(super) async fn page_ids(db: &MemoryDB) -> Result<Vec<String>, ServerError> {
+    let mut ids = Vec::new();
+    for entry in db.saved_rules_pages().await? {
+        if let Some(page) = page_of(db, &entry).await? {
+            ids.push(page.id);
+        }
+    }
+    Ok(ids)
 }
 
 /// The rules on a "Rules I saved" page that count, each with where it came

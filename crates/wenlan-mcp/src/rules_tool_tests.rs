@@ -263,11 +263,13 @@ fn ux_skill_14_read_space_rules_says_where_a_rule_was_saved_from() {
         general: false,
         hand_written: false,
         saved_from: Some("Codex".into()),
+        saved_by: None,
     };
     let projected = crate::query_output::project_space_rules(&wenlan_types::SpaceRulesResponse {
         space_id: "space_1".into(),
         space_name: "Clinic".into(),
         rules_page_id: None,
+        saved_rules_page_ids: Vec::new(),
         lines: vec![line],
     });
     assert_eq!(projected.lines[0].source, "saved");

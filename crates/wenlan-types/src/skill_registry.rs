@@ -130,6 +130,11 @@ pub struct SkillPreviewFile {
     /// The file is longer than `text`: not all of it is shown.
     #[serde(default)]
     pub cut: bool,
+    /// How many characters of the file would not show on a screen and are
+    /// written out in `text` as `<U+XXXX>` instead. The file an install
+    /// writes is the author's own, with those characters as they are.
+    #[serde(default)]
+    pub marked: u32,
 }
 
 /// What a person looks at before a skill is installed: every file, the
@@ -152,7 +157,7 @@ pub struct SkillPreview {
     /// Already installed under this folder name.
     pub installed_as: Option<String>,
     /// Why Wenlan will refuse to install this skill, when it holds text
-    /// that cannot be shown to the person in full.
+    /// that cannot be shown to the person as it is.
     #[serde(default)]
     pub cannot_install: Option<String>,
 }

@@ -122,12 +122,13 @@ pub use sessions::{
     SessionReadEntry, SessionReadKind, SessionRef, UpsertSessionRequest, SESSION_HEADER,
 };
 pub use skills::{
-    saved_from_label, RemoveRuleRequest, RemoveRuleResponse, RulesDeliveryMethod,
-    RulesDeliveryResponse, RulesDeliveryState, SaveRuleRequest, SaveRuleResponse, SavedRuleStatus,
-    SkillBorrowRecord, SkillLine, SkillLineKind, SkillReportKind, SkillReportRequest,
-    SkillSuggestion, SkillSuggestionActionResponse, SkillsRefreshResponse,
-    SpaceRulesActionResponse, SpaceRulesResponse, SpaceRulesSuggestion, ToolRulesDelivery,
-    RULE_REMOVED_IN_APP, RULE_REMOVED_IN_APP_WORDS, SAVED_FROM_TERMINAL, SAVED_RULES_PER_DAY,
+    saved_from_label, saved_from_self_named, RemoveRuleRequest, RemoveRuleResponse,
+    RulesDeliveryMethod, RulesDeliveryResponse, RulesDeliveryState, SaveRuleRequest,
+    SaveRuleResponse, SavedBy, SavedByKind, SavedRuleStatus, SkillBorrowRecord, SkillLine,
+    SkillLineKind, SkillReportKind, SkillReportRequest, SkillSuggestion,
+    SkillSuggestionActionResponse, SkillsRefreshResponse, SpaceRulesActionResponse,
+    SpaceRulesResponse, SpaceRulesSuggestion, ToolRulesDelivery, RULE_REMOVED_IN_APP,
+    RULE_REMOVED_IN_APP_WORDS, SAVED_FROM_TERMINAL, SAVED_FROM_UNNAMED_TOOL, SAVED_RULES_PER_DAY,
     SAVED_RULES_PER_TOOL_PER_DAY, SAVED_RULE_MAX_CHARS,
 };
 pub use sources::{MemoryType, RawDocument, SourceType, StabilityTier, SyncStatus};

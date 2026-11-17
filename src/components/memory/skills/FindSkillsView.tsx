@@ -50,8 +50,10 @@ export function refusalText(error: unknown, t: TFunction): string {
 }
 
 /** Why Wenlan will not install the skill a preview shows, or null: it holds
- *  text that cannot be shown to the person in full. An answer that does not
- *  check (an older desktop command) gives no reason and blocks nothing. */
+ *  text that cannot be shown to the person as it is. The daemon and the
+ *  desktop app both say so in `cannotInstall` and refuse the install
+ *  themselves; an answer without the field (a daemon older than the rule)
+ *  blocks nothing here. */
 export function cannotInstallReason(preview: Pick<SkillPreview, "files" | "cannotInstall">, t: TFunction): string | null {
   const reason = preview.cannotInstall?.trim();
   if (!reason) return null;
@@ -59,7 +61,26 @@ export function cannotInstallReason(preview: Pick<SkillPreview, "files" | "canno
   if (cut) return t("findSkills.cannotInstallCut", { file: cut.path });
   const unreadable = /^(.+) is not readable text/u.exec(reason)?.[1];
   if (unreadable) return t("findSkills.cannotInstallUnreadable", { file: unreadable });
+  const hidden = /^(.+) holds characters that do not show/u.exec(reason)?.[1];
+  if (hidden) return t("findSkills.cannotInstallHidden", { file: hidden });
   return reason;
+}
+
+/** One `<U+XXXX>` in a file's text, as the daemon writes out a character
+ *  that would not show. */
+const WRITTEN_OUT = /(<U\+[0-9A-F]{4,6}>)/u;
+
+/** A file's text with each written-out character set apart, so it reads as
+ *  a mark and not as part of the author's words. */
+function FileText({ text, marked }: { readonly text: string; readonly marked: boolean }) {
+  if (!marked) return <pre>{text}</pre>;
+  return (
+    <pre>
+      {text.split(WRITTEN_OUT).map((part, index) => index % 2 === 1
+        ? <mark className="find-skills-mark" key={index}>{part}</mark>
+        : part)}
+    </pre>
+  );
 }
 
 function openLink(url: string) {
@@ -196,9 +217,10 @@ function DetailPane({ row, onBack }: { readonly row: SkillSearchRow; readonly on
               {data.files.map((file) => (
                 <div key={file.path} className="find-skills-file">
                   <div className="find-skills-file-path">{file.path}</div>
+                  {(file.marked ?? 0) > 0 && <p className="find-skills-note find-skills-marked">{t("findSkills.marked", { count: file.marked ?? 0 })}</p>}
                   {file.text === null
                     ? <p className="find-skills-muted">{t("findSkills.binary")}</p>
-                    : <pre>{file.text}</pre>}
+                    : <FileText text={file.text} marked={(file.marked ?? 0) > 0} />}
                   {file.cut === true && <p className="find-skills-note find-skills-cut">{t("findSkills.cut")}</p>}
                 </div>
               ))}
@@ -236,7 +258,12 @@ function DetailPane({ row, onBack }: { readonly row: SkillSearchRow; readonly on
         </button>
         {blocked && <p className="find-skills-note">{t("findSkills.cannotInstall")}</p>}
         {done && <p role="status">{done}</p>}
-        {install.isError && <p role="alert">{t("findSkills.installFailed", { message: refusalText(install.error, t) })}</p>}
+        {install.isError && (
+          <div className="find-skills-refusal" role="alert">
+            <p className="find-skills-refusal-lead">{t("findSkills.installFailedLead")}</p>
+            <p>{refusalText(install.error, t)}</p>
+          </div>
+        )}
         <p className="find-skills-muted">{t("findSkills.pinned")}</p>
         {data && (
           <p className="find-skills-muted">

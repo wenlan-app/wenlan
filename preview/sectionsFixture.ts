@@ -16,7 +16,7 @@ type Copy = {
   readonly managed: readonly { readonly text: string; readonly source: string; readonly sourceId: string }[];
   readonly ownLine: string;
   /** Rules the person asked to be saved: from an AI tool, from the terminal. */
-  readonly saved: readonly { readonly text: string; readonly from: string; readonly asked: string }[];
+  readonly saved: readonly { readonly text: string; readonly from: string; readonly by: NonNullable<SkillLine["saved_by"]>; readonly asked: string }[];
   readonly savedOwn: string;
   readonly pending: { readonly text: string; readonly source: string };
   readonly filler: string;
@@ -36,8 +36,10 @@ const COPY: Record<"en" | "zh", Copy> = {
     ],
     ownLine: "Ask before changing the plan; when stuck, give options.",
     saved: [
-      { text: "Write commit messages in the imperative.", from: "Cursor", asked: "save this as a rule: write commit messages in the imperative" },
-      { text: "Answer in plain words, no jargon.", from: "terminal", asked: "wenlan rules add \"Answer in plain words, no jargon.\" --every-space" },
+      { text: "Write commit messages in the imperative.", from: "Cursor", by: { kind: "tool", name: "Cursor" }, asked: "save this as a rule: write commit messages in the imperative" },
+      { text: "Answer in plain words, no jargon.", from: "terminal", by: { kind: "terminal" }, asked: "wenlan rules add \"Answer in plain words, no jargon.\" --every-space" },
+      // A tool that reported its own name as "terminal": never the terminal.
+      { text: "Tag every release.", from: "an AI tool that calls itself \"terminal\"", by: { kind: "self_named", name: "terminal" }, asked: "save this as a rule: tag every release" },
     ],
     savedOwn: "Keep pull requests small.",
     pending: { text: "Thank the customer first, then give a date.", source: "Reply to a customer" },
@@ -56,8 +58,9 @@ const COPY: Record<"en" | "zh", Copy> = {
     ],
     ownLine: "改計畫前先問；卡住時，給選項。",
     saved: [
-      { text: "提交訊息用祈使句寫。", from: "Cursor", asked: "把這條存成規則：提交訊息用祈使句寫" },
-      { text: "用白話回答，不用術語。", from: "terminal", asked: "wenlan rules add \"用白話回答，不用術語。\" --every-space" },
+      { text: "提交訊息用祈使句寫。", from: "Cursor", by: { kind: "tool", name: "Cursor" }, asked: "把這條存成規則：提交訊息用祈使句寫" },
+      { text: "用白話回答，不用術語。", from: "terminal", by: { kind: "terminal" }, asked: "wenlan rules add \"用白話回答，不用術語。\" --every-space" },
+      { text: "每次發版都打標籤。", from: "an AI tool that calls itself \"terminal\"", by: { kind: "self_named", name: "terminal" }, asked: "把這條存成規則：每次發版都打標籤" },
     ],
     savedOwn: "Pull request 保持小。",
     pending: { text: "回客戶信先道謝，再給日期。", source: "回覆客戶" },
@@ -98,7 +101,7 @@ export function sectionsLibrary(lang: string | null): { pages: Page[]; folders: 
     content: `# How I work — Wenlan\n\nThese are this Space's approved working rules.\n\n${managed[0]}\n- ${copy.ownLine}\n${managed[1]}\n`,
   });
   // The page the daemon keeps saved rules on: an ordinary page in no Rules
-  // folder, told by its title.
+  // folder. The daemon's rules answer names it by id (`get_space_rules`).
   const savedLines = copy.saved.filter((_, index) => !removedSaved.has(`sec-saved-${index}`)).map((item) => `- ${item.text}`);
   pages.push(page(
     SAVED_PAGE_ID,
@@ -141,7 +144,8 @@ function savedHistory(copy: Copy): PageChangelogEntry[] {
     { version: 3, at: now - 86_400, edited_by: "rule_save", agent: "claude-code", char_delta: 24, person_asked: copy.saved[0].asked },
     { version: 4, at: now - 7_200, edited_by: "rule_save", agent: "cursor", char_delta: copy.saved[0].text.length + 3, person_asked: copy.saved[0].asked },
     { version: 5, at: now - 3_600, edited_by: "rule_save", agent: "terminal", char_delta: copy.saved[1].text.length + 3, person_asked: copy.saved[1].asked },
-    { version: 6, at: now - 600, edited_by: "rule_save", agent: "wenlan-app", char_delta: -24, person_asked: "Remove, pressed in the Wenlan app" },
+    { version: 6, at: now - 1_800, edited_by: "rule_save", agent: "tool:terminal", char_delta: copy.saved[2].text.length + 3, person_asked: copy.saved[2].asked },
+    { version: 7, at: now - 600, edited_by: "rule_save", agent: "wenlan-app", char_delta: -24, person_asked: "Remove, pressed in the Wenlan app" },
   ];
   return entries;
 }
@@ -175,19 +179,20 @@ export function sectionsInvoke(cmd: string, args: Record<string, unknown> | unde
     case "get_space_rules": {
       // What the daemon lists: who wrote each rule and which are used in
       // every Space. The page's own text says neither.
-      if (empty) return { space_id: "", space_name: "", rules_page_id: null, lines: [] };
+      if (empty) return { space_id: "", space_name: "", rules_page_id: null, lines: [], saved_rules_page_ids: [] };
       const copy = COPY[params.get("lang")?.startsWith("zh") ? "zh" : "en"];
       const line = (id: string, text: string, source: string, title: string, more: Partial<SkillLine>): SkillLine => ({ id, kind: "rule", text, source_page_id: source, source_page_title: title, source_revision: 3, source_revision_at: 1794211200, source_quote: text, ...more });
       const own = [
         ...copy.handRules.lines.map((text, index) => line(`sec-hand-${index}`, text, "sec-rule-hand", copy.handRules.title, { hand_written: true, general: true })),
-        ...copy.saved.map((item, index) => line(`sec-saved-${index}`, item.text, SAVED_PAGE_ID, "Rules I saved", { general: true, saved_from: item.from })).filter((item) => !removedSaved.has(item.id)),
+        ...copy.saved.map((item, index) => line(`sec-saved-${index}`, item.text, SAVED_PAGE_ID, "Rules I saved", { general: true, saved_from: item.from, saved_by: item.by })).filter((item) => !removedSaved.has(item.id)),
         line("sec-saved-own", copy.savedOwn, SAVED_PAGE_ID, "Rules I saved", { hand_written: true, general: true }),
       ];
-      if (!args?.space) return { space_id: "", space_name: "", rules_page_id: null, lines: own };
+      if (!args?.space) return { space_id: "", space_name: "", rules_page_id: null, lines: own, saved_rules_page_ids: [SAVED_PAGE_ID] };
       return {
         space_id: "project-wenlan",
         space_name: "Wenlan",
         rules_page_id: "sec-rule-how",
+        saved_rules_page_ids: [SAVED_PAGE_ID],
         lines: [
           ...copy.managed.map((item, index) => line(`sec-rule-${index}`, item.text, item.sourceId, item.source, { general: index === 0 })),
           line("sec-own-0", copy.ownLine, "sec-rule-how", "How I work — Wenlan", { hand_written: true }),
@@ -197,13 +202,18 @@ export function sectionsInvoke(cmd: string, args: Record<string, unknown> | unde
     }
     case "remove_saved_rule": {
       const id = String(args?.id ?? "");
+      // `remove=gone`: the rule was already taken out somewhere else.
+      if (params.get("remove") === "gone") {
+        removedSaved.add(id);
+        throw new Error('HTTP POST /api/skills/rules/x/remove returned 404 Not Found: {"error":"rule_save_refused: no saved rule has that id; nothing was removed"}');
+      }
       removedSaved.add(id);
       return { status: "removed", id, page_id: SAVED_PAGE_ID, page_title: "Rules I saved", message: "" };
     }
     case "get_page_revisions": {
       if (args?.pageId !== SAVED_PAGE_ID) return undefined;
       const copy = COPY[params.get("lang")?.startsWith("zh") ? "zh" : "en"];
-      return { page_id: SAVED_PAGE_ID, current_version: 6, user_edited: true, stale_reason: null, entries: savedHistory(copy) };
+      return { page_id: SAVED_PAGE_ID, current_version: 7, user_edited: true, stale_reason: null, entries: savedHistory(copy) };
     }
     case "get_rules_delivery":
       return { tools: empty ? [] : SECTIONS_DELIVERY };
@@ -226,7 +236,10 @@ export function sectionsInvoke(cmd: string, args: Record<string, unknown> | unde
     case "get_truth_status":
       return null;
     default:
-      // Skills › Find skills: example skills, never skills.sh.
+      // Skills › Find skills: example skills, never skills.sh. `install=`
+      // answers an install with one of the daemon's two refusals by rule.
+      if (cmd === "skills_install" && params.get("install") === "beyond") throw new Error("skills_need_this_computer: this Wenlan listens beyond this computer (WENLAN_BIND_ADDR), so skills cannot be installed, taken in or removed over it. Use the Wenlan app");
+      if (cmd === "skills_install" && params.get("install") === "person") throw new Error("skills_need_the_person: only the person can install, take in or remove a skill. Ask them to do it in the Wenlan app");
       return skills.supports(cmd) ? skills.invoke(cmd, args) : undefined;
   }
 }

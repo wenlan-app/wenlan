@@ -1087,7 +1087,7 @@ pub async fn refresh_one(
         return Ok(outcome("unchanged"));
     }
     let report = safety(http, endpoints, &record.source, &record.skill_id).await?;
-    if report.verdict != Verdict::Pass {
+    if report.verdict != Verdict::Pass || hidden_from_the_person(&fetched.files).is_some() {
         return Ok(outcome("needs_look"));
     }
     store_skill(root, &fetched, report.verdict, record.scope.clone(), now)?;
@@ -1238,14 +1238,104 @@ pub fn preview_text(files: &[SkillFile]) -> BTreeMap<String, Option<String>> {
 /// How much of one text file a preview shows.
 pub const PREVIEW_CHARS: usize = 64 * 1024;
 
+/// Characters that take no room on the screen or change how the text
+/// around them is drawn: zero-width and joining marks, direction marks and
+/// overrides, variation selectors, invisible fillers and the tag block. A
+/// skill could use them to put words in a file that the person reading it
+/// never sees.
+pub fn is_invisible(c: char) -> bool {
+    matches!(
+        c,
+        '\u{00AD}'
+            | '\u{034F}'
+            | '\u{061C}'
+            | '\u{115F}'..='\u{1160}'
+            | '\u{17B4}'..='\u{17B5}'
+            | '\u{180B}'..='\u{180F}'
+            | '\u{200B}'..='\u{200F}'
+            | '\u{2028}'..='\u{202E}'
+            | '\u{2060}'..='\u{206F}'
+            | '\u{3164}'
+            | '\u{FE00}'..='\u{FE0F}'
+            | '\u{FEFF}'
+            | '\u{FFA0}'
+            | '\u{FFF0}'..='\u{FFFB}'
+            | '\u{1BCA0}'..='\u{1BCA3}'
+            | '\u{1D173}'..='\u{1D17A}'
+            | '\u{E0000}'..='\u{E0FFF}'
+    )
+}
+
+/// A character that must be written out to be seen: a control character
+/// (which can move the cursor, hide a line or recolour text) or one that
+/// does not show at all. Line breaks and tabs are neither.
+fn needs_a_mark(c: char) -> bool {
+    !matches!(c, '\n' | '\t') && (c.is_control() || is_invisible(c))
+}
+
+fn push_mark(out: &mut String, c: char) {
+    out.push_str(&format!("<U+{:04X}>", c as u32));
+}
+
+/// Text from the network or from a skill's files, safe to show: each control
+/// character and each character that does not show at all is replaced with a
+/// visible `<U+XXXX>`, so nothing a file holds goes unseen. Line breaks and
+/// tabs stay.
+pub fn printable(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        if needs_a_mark(c) {
+            push_mark(&mut out, c);
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// One file's text as a preview shows it, and how many characters were
+/// written out as `<U+XXXX>` marks. It is [`printable`] with the two things
+/// an ordinary text file may hold left alone: a byte-order mark at the very
+/// start, and the carriage return of a Windows line ending.
+fn shown_text(text: &str) -> (String, usize) {
+    let mut out = String::with_capacity(text.len());
+    let mut marked = 0;
+    let mut chars = text.chars().enumerate().peekable();
+    while let Some((at, c)) = chars.next() {
+        let ordinary = (at == 0 && c == '\u{FEFF}')
+            || (c == '\r' && chars.peek().is_some_and(|(_, next)| *next == '\n'));
+        if needs_a_mark(c) && !ordinary {
+            push_mark(&mut out, c);
+            marked += 1;
+        } else {
+            out.push(c);
+        }
+    }
+    (out, marked)
+}
+
+/// Characters no skill file may hold: the tag block, which spells out words
+/// that never show, and the controls that override or isolate the direction
+/// of text, which make a line read as something other than what it says.
+/// Nothing a person writes for an AI tool to read needs them.
+fn never_shown_honestly(c: char) -> bool {
+    matches!(
+        c,
+        '\u{E0000}'..='\u{E007F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
+    )
+}
+
 /// One file as a preview shows it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShownFile {
     pub path: String,
-    /// `None` for a file that is not text.
+    /// `None` for a file that is not text. A character that would not show
+    /// is written out as `<U+XXXX>`; the file itself is never changed.
     pub text: Option<String>,
     /// The text is longer than what is shown.
     pub cut: bool,
+    /// How many characters of `text` were written out as marks.
+    pub marked: usize,
 }
 
 /// Each file for showing before install, and whether all of it is shown.
@@ -1255,10 +1345,15 @@ pub fn preview_files(files: &[SkillFile]) -> Vec<ShownFile> {
         .map(|f| {
             let whole = std::str::from_utf8(&f.bytes).ok();
             let end = whole.and_then(|t| t.char_indices().nth(PREVIEW_CHARS).map(|(at, _)| at));
+            let (text, marked) = match whole.map(|t| shown_text(&t[..end.unwrap_or(t.len())])) {
+                Some((text, marked)) => (Some(text), marked),
+                None => (None, 0),
+            };
             ShownFile {
                 path: f.path.clone(),
-                text: whole.map(|t| t[..end.unwrap_or(t.len())].to_string()),
+                text,
                 cut: end.is_some(),
+                marked,
             }
         })
         .collect()
@@ -1274,24 +1369,35 @@ fn must_be_readable_text(path: &str) -> bool {
             .any(|ending| lower.ends_with(ending))
 }
 
-/// Why this skill holds text the person could not be shown in full, if it
-/// does: a text file longer than a preview shows, or a SKILL.md (or other
-/// notes file) that is not valid UTF-8 and so shows as "not a text file".
-/// Such a skill must not be installed or taken in, because an AI tool would
-/// read what the person never saw.
+/// Why this skill holds text the person could not be shown as it is, if it
+/// does: a text file longer than a preview shows, a SKILL.md (or other
+/// notes file) that is not valid UTF-8 and so shows as "not a text file",
+/// or a text file with characters that spell words without showing or that
+/// reorder the line. Such a skill must not be installed or taken in,
+/// because an AI tool would read what the person never saw.
 pub fn hidden_from_the_person(files: &[SkillFile]) -> Option<String> {
-    for file in preview_files(files) {
-        if file.cut {
+    for (file, shown) in files.iter().zip(preview_files(files)) {
+        if shown.cut {
             return Some(format!(
                 "{} is too long to show in full ({PREVIEW_CHARS} characters at most), so Wenlan \
                  refuses this skill",
-                file.path
+                shown.path
             ));
         }
-        if file.text.is_none() && must_be_readable_text(&file.path) {
+        if shown.text.is_none() && must_be_readable_text(&shown.path) {
             return Some(format!(
                 "{} is not readable text (not valid UTF-8), so Wenlan refuses this skill",
-                file.path
+                shown.path
+            ));
+        }
+        let hidden = std::str::from_utf8(&file.bytes)
+            .ok()
+            .and_then(|text| text.chars().find(|c| never_shown_honestly(*c)));
+        if let Some(c) = hidden {
+            return Some(format!(
+                "{} holds characters that do not show or that reorder the text (the first is \
+                 U+{:04X}), so Wenlan refuses this skill",
+                shown.path, c as u32
             ));
         }
     }

@@ -1049,7 +1049,14 @@ export interface SkillLine {
    *  the AI tool it was saved from, or `SAVED_FROM_TERMINAL`. Never shown as
    *  written by the person. */
   saved_from?: string | null;
+  /** `saved_from` as its parts, so it can be said in the app's language:
+   *  the terminal, an AI tool by name, an AI tool whose own name reads as
+   *  the terminal, the person or Wenlan (shown in quotes), or an AI tool
+   *  with no usable name. Absent from an older daemon. */
+  saved_by?: { kind: SavedByKind; name?: string | null } | null;
 }
+
+export type SavedByKind = "terminal" | "tool" | "self_named" | "unnamed";
 
 /** `SkillLine.saved_from` for a rule saved with the `wenlan` command. */
 export const SAVED_FROM_TERMINAL = "terminal";
@@ -1176,12 +1183,16 @@ export interface SpaceRulesResponse {
   space_name: string;
   rules_page_id?: string | null;
   lines: SkillLine[];
+  /** The pages that keep the rules the person asked to be saved, by id,
+   *  whatever they are titled now (UX-SKILL-14). The daemon's ledger says
+   *  which they are; a page's title never does. */
+  saved_rules_page_ids?: string[];
 }
 
 /** Read as the person: the daemon records only an AI tool's read. */
 export async function getSpaceRules(space: string | null): Promise<SpaceRulesResponse> {
   const response = await invoke<Partial<SpaceRulesResponse> | null>("get_space_rules", { space: space?.trim() || null });
-  return { space_id: response?.space_id ?? "", space_name: response?.space_name ?? "", rules_page_id: response?.rules_page_id ?? null, lines: response?.lines ?? [] };
+  return { space_id: response?.space_id ?? "", space_name: response?.space_name ?? "", rules_page_id: response?.rules_page_id ?? null, lines: response?.lines ?? [], saved_rules_page_ids: response?.saved_rules_page_ids ?? [] };
 }
 
 /** The person presses Remove on a rule they had asked to be saved
@@ -6227,15 +6238,18 @@ export interface SkillPreview {
   repoPath: string;
   name: string | null;
   description: string | null;
-  /** `cut`: the file is longer than `text`, so not all of it is shown. */
-  files: { path: string; text: string | null; cut?: boolean }[];
+  /** `cut`: the file is longer than `text`, so not all of it is shown.
+   *  `marked`: how many characters of the file would not show on a screen;
+   *  each is written out in `text` as `<U+XXXX>`. */
+  files: { path: string; text: string | null; cut?: boolean; marked?: number }[];
   runnable: string[];
   safety: { verdict: SkillVerdict; audits: SkillAuditLine[] };
   sourceUrl: string;
   skillsShUrl: string;
   installedAs: string | null;
   /** Why Wenlan will refuse to install this skill: it holds text that
-   *  cannot be shown in full. Absent from an answer that does not check. */
+   *  cannot be shown as it is. Absent only from an older daemon's answer;
+   *  the daemon and the desktop app both refuse such an install themselves. */
   cannotInstall?: string | null;
 }
 

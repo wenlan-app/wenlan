@@ -15,6 +15,8 @@ use wenlan_types::{
     SpaceRulesResponse,
 };
 
+use wenlan_core::skill_registry::printable;
+
 use crate::client::WenlanClient;
 use crate::output::{print_json, ResolvedFormat};
 
@@ -124,53 +126,6 @@ fn skill_address(skill: &str) -> Result<(String, String)> {
              (got {skill:?})"
         ),
     }
-}
-
-/// Characters that take no room on the screen or change how the text
-/// around them is drawn: zero-width and joining marks, direction marks and
-/// overrides, variation selectors, invisible fillers and the tag block. A
-/// skill could use them to put words in a file that a person reading the
-/// terminal never sees.
-fn is_invisible(c: char) -> bool {
-    matches!(
-        c,
-        '\u{00AD}'
-            | '\u{034F}'
-            | '\u{061C}'
-            | '\u{115F}'..='\u{1160}'
-            | '\u{17B4}'..='\u{17B5}'
-            | '\u{180B}'..='\u{180F}'
-            | '\u{200B}'..='\u{200F}'
-            | '\u{2028}'..='\u{202E}'
-            | '\u{2060}'..='\u{206F}'
-            | '\u{3164}'
-            | '\u{FE00}'..='\u{FE0F}'
-            | '\u{FEFF}'
-            | '\u{FFA0}'
-            | '\u{FFF0}'..='\u{FFFB}'
-            | '\u{1BCA0}'..='\u{1BCA3}'
-            | '\u{1D173}'..='\u{1D17A}'
-            | '\u{E0000}'..='\u{E0FFF}'
-    )
-}
-
-/// Text from the network or from a skill's files, safe to print: a terminal
-/// must show what the file says. Control characters (which can move the
-/// cursor, hide lines or recolour text) and characters that do not show at
-/// all are each replaced with a visible `<U+XXXX>`, so nothing a file holds
-/// goes unseen. Line breaks and tabs stay.
-fn printable(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for c in text.chars() {
-        match c {
-            '\n' | '\t' => out.push(c),
-            c if c.is_control() || is_invisible(c) => {
-                out.push_str(&format!("<U+{:04X}>", c as u32));
-            }
-            c => out.push(c),
-        }
-    }
-    out
 }
 
 /// One line of such text: line breaks become spaces too.
@@ -889,6 +844,7 @@ mod tests {
             general,
             hand_written: false,
             saved_from: None,
+            saved_by: None,
         }
     }
 
@@ -898,10 +854,12 @@ mod tests {
             space_id: "space_0123456789abcdef".to_string(),
             space_name: "Wenlan".to_string(),
             rules_page_id: None,
+            saved_rules_page_ids: Vec::new(),
             lines: vec![
                 SkillLine {
                     hand_written: true,
                     saved_from: None,
+                    saved_by: None,
                     person_edited: true,
                     ..line("Use the merge queue.", "Git", false)
                 },
@@ -922,6 +880,7 @@ mod tests {
             space_id: "space_0123456789abcdef".to_string(),
             space_name: "Wenlan".to_string(),
             rules_page_id: Some("page_fedcba9876543210".to_string()),
+            saved_rules_page_ids: Vec::new(),
             lines: vec![
                 line("Merge through the merge queue only.", "Release flow", false),
                 line("Answer in plain words.", "How I talk", true),
@@ -941,6 +900,7 @@ mod tests {
             space_id: String::new(),
             space_name: String::new(),
             rules_page_id: None,
+            saved_rules_page_ids: Vec::new(),
             lines: vec![line("Never skip a failing test.", "How I test", true)],
         };
         assert_eq!(
@@ -998,16 +958,19 @@ mod tests {
                     path: "SKILL.md".into(),
                     text: Some(skill_md.into()),
                     cut: false,
+                    marked: 0,
                 },
                 SkillPreviewFile {
                     path: "logo.png".into(),
                     text: None,
                     cut: false,
+                    marked: 0,
                 },
                 SkillPreviewFile {
                     path: "scripts/run.sh".into(),
                     text: Some("#!/bin/sh\necho hi".into()),
                     cut: false,
+                    marked: 0,
                 },
             ],
             runnable: vec!["scripts/run.sh".into()],
@@ -1195,7 +1158,8 @@ mod tests {
         assert!(
             !text
                 .chars()
-                .any(|c| is_invisible(c) || (c.is_control() && c != '\n')),
+                .any(|c| wenlan_core::skill_registry::is_invisible(c)
+                    || (c.is_control() && c != '\n')),
             "an invisible character reached the terminal: {text:?}"
         );
         assert!(text.contains("Read it all.<U+E0073><U+E0065><U+E006E><U+E0064>"));

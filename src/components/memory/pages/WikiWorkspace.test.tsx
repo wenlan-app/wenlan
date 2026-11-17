@@ -113,17 +113,25 @@ describe("WikiWorkspace", () => {
   it("UX-SKILL-12: the browser build offers Find skills as the desktop app does; a team member is offered none", () => {
     const props = { onBrowse: vi.fn(), onCreatePage: vi.fn(), onOpenDraft: vi.fn(), onOpenPage: vi.fn(), onFindSkills: vi.fn() };
     const items = () => Array.from(screen.getByRole("menu", { name: "New page or folder" }).querySelectorAll("[role='menuitem']")).map(item => item.textContent);
+    const member = teamAccessFor({ member_id: "m", name: "Amy", spaces: [{ space: "Field Notes", access: "write" }] });
     const app = render(<WikiDirectory {...props} />);
     fireEvent.click(screen.getByRole("button", { name: "New page or folder" }));
     expect(items()).toContain("Find skills");
     app.unmount();
     vi.stubGlobal("__WENLAN_WEB__", true);
     try {
-      render(<WikiDirectory {...props} />);
+      // The person's own Wenlan in a browser: the daemon has the routes.
+      const web = render(<WikiDirectory {...props} />);
       fireEvent.click(screen.getByRole("button", { name: "New page or folder" }));
-      // The daemon has the routes now; only a team member (the test above)
-      // is not offered it.
       expect(items()).toContain("Find skills");
+      web.unmount();
+      // A team member, given the very same way to open it: the entry is not
+      // offered, since their browser has no skills of its own to hold.
+      render(<TeamAccessProvider value={member}><WikiDirectory {...props} /></TeamAccessProvider>);
+      fireEvent.click(screen.getByRole("button", { name: "New page or folder" }));
+      expect(items()).toEqual(["New page"]);
+      expect(screen.queryByRole("menuitem", { name: "Find skills" })).not.toBeInTheDocument();
+      expect(props.onFindSkills).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllGlobals();
     }

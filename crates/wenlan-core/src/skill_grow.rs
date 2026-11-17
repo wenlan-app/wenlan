@@ -339,6 +339,7 @@ pub fn parse_grow(raw: &str, pages: &[SkillPageInput]) -> Vec<SkillLine> {
             general: candidate.general,
             hand_written: false,
             saved_from: None,
+            saved_by: None,
         });
     }
     out
@@ -585,6 +586,7 @@ fn rule_bullets(page: &SkillPageInput) -> Vec<(SkillLine, std::ops::Range<usize>
                 general: false,
                 hand_written: true,
                 saved_from: None,
+                saved_by: None,
             },
             first..at,
         ));
@@ -712,6 +714,9 @@ pub fn rule_lines_through_versions(
             if saved_from.is_some() {
                 line.hand_written = false;
                 line.person_edited = false;
+                line.saved_by = saved_from
+                    .as_deref()
+                    .map(wenlan_types::SavedBy::from_saved_from);
                 line.saved_from = saved_from;
             }
             Some(line)

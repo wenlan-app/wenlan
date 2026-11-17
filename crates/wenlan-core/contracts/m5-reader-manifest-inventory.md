@@ -1730,7 +1730,7 @@ carrying the authority of agreement.
 | `server/skill_grow.rs::source_line_is_eligible` | `private` | no | no | `server/skill_grow.rs::eligible_lines` | `core/db.rs::get_page` |
 | `server/skill_grow.rs::write_maintained_rules_page` | `private` | no | no | `server/skill_grow.rs::process_space` | `core/db.rs::get_page` |
 | `server/skill_grow/saved_rules.rs::make_page` | `private` | no | no | `server/skill_grow/saved_rules.rs::save_rule_in` | `core/db.rs::get_page` |
-| `server/skill_grow/saved_rules.rs::page_of` | `pub(super)` | no | no | `server/skill_grow.rs::load_saved`, `server/skill_grow/saved_rules.rs::remove_rule_in`, `server/skill_grow/saved_rules.rs::save_rule_in` | `core/db.rs::get_page` |
+| `server/skill_grow/saved_rules.rs::page_of` | `pub(super)` | no | no | `server/skill_grow.rs::load_saved`, `server/skill_grow/saved_rules.rs::page_ids`, `server/skill_grow/saved_rules.rs::remove_rule_in`, `server/skill_grow/saved_rules.rs::save_rule_in` | `core/db.rs::get_page` |
 | `server/skill_grow/saved_rules.rs::save_rule_in` | `pub(super)` | no | no | `server/skill_grow/saved_rules.rs::handle_save_rule` | `core/db.rs::get_page` |
 | `server/skill_grow/saved_rules.rs::write_rule_change` | `private` | no | no | `server/skill_grow/saved_rules.rs::remove_rule_in`, `server/skill_grow/saved_rules.rs::save_rule_in` | `core/db.rs::get_page` |
 | `server/source_lifecycle_routes.rs::read` | `private` | yes | no | — | `core/db/citation_provenance.rs::source_lifecycle` |
@@ -1925,6 +1925,7 @@ carrying the authority of agreement.
 | `server/skill_grow.rs::read_rules_for_space` | `private` | no | no | `server/skill_grow.rs::approved_rule_ids`, `server/skill_grow.rs::general_lines`, `server/skill_grow.rs::handle_read_rules`, `server/skill_grow.rs::handle_self_report`, `server/skill_grow.rs::project_rules`, `server/skill_grow.rs::rules_by_layer` | `server/skill_grow.rs::readable_rules_page` |
 | `server/skill_grow.rs::refresh_with` | `private` | no | no | `server/skill_grow.rs::handle_refresh`, `server/skill_grow.rs::run_nightly_if_due` | `server/skill_grow.rs::refresh_unlocked` |
 | `server/skill_grow/saved_rules.rs::handle_save_rule` | `pub` | no | no | — | `server/skill_grow/saved_rules.rs::save_rule_in` |
+| `server/skill_grow/saved_rules.rs::page_ids` | `pub(super)` | yes | no | — | `server/skill_grow/saved_rules.rs::page_of` |
 | `server/skill_grow/saved_rules.rs::remove_rule_in` | `pub(super)` | no | no | `server/skill_grow/saved_rules.rs::handle_remove_rule` | `server/skill_grow/saved_rules.rs::page_of`, `server/skill_grow/saved_rules.rs::write_rule_change` |
 | `server/source_lifecycle_routes.rs::write` | `private` | yes | no | — | `core/db/citation_provenance.rs::set_source_lifecycle` |
 | `server/source_routes.rs::sync_directory_source` | `pub(crate)` | no | no | `server/scheduler.rs::sync_directory_sources_in_scope`, `server/source_routes.rs::handle_sync_source` | `core/db.rs::rebind_source_id_with_source_page` |

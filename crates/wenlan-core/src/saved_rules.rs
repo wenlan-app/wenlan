@@ -56,42 +56,49 @@ pub fn tool_id(name: &str) -> String {
         .to_lowercase()
 }
 
+/// A name with its case, spaces, hyphens, underscores and every other mark
+/// taken out, so `Wenlan App`, `wenlan-app`, `wenlan_app` and `WenlanApp`
+/// compare as one.
+fn squashed(name: &str) -> String {
+    name.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
 /// Names no AI tool may be listed under: they read as the person, the
 /// terminal or Wenlan itself.
 fn reads_as_someone_else(label: &str) -> bool {
-    let plain: String = label
-        .chars()
-        .map(|c| if c.is_alphanumeric() { c } else { ' ' })
-        .collect::<String>()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_lowercase();
     matches!(
-        plain.as_str(),
+        squashed(label).as_str(),
         "terminal"
-            | "the terminal"
-            | "a terminal"
+            | "theterminal"
+            | "aterminal"
             | "cli"
-            | "the cli"
+            | "thecli"
             | "wenlan"
-            | "wenlan cli"
-            | "wenlan app"
-            | "the wenlan app"
+            | "wenlancli"
+            | "wenlanapp"
+            | "thewenlanapp"
             | "you"
             | "me"
             | "i"
             | "myself"
             | "yourself"
             | "user"
-            | "the user"
+            | "theuser"
             | "person"
-            | "the person"
+            | "theperson"
             | "owner"
-            | "the owner"
+            | "theowner"
             | "human"
     )
 }
+
+/// The start of the id every such tool is kept under, so its saves, its
+/// count and its line in a page's history are never the terminal's, the
+/// person's or the app's own, however it spells the name.
+pub const SELF_NAMED_TOOL_ID_PREFIX: &str = "tool:";
 
 /// The saver for a caller. `agent_name` is the `x-agent-name` the request
 /// carried, if any; `display_name` is the name Wenlan lists that tool under,
@@ -122,19 +129,23 @@ pub fn saver(agent_name: Option<&str>, display_name: Option<&str>) -> Saver {
         .filter(|name| !name.is_empty())
         .unwrap_or_else(|| reported.clone());
     let label = if shown.is_empty() {
-        "an AI tool".to_string()
+        wenlan_types::SAVED_FROM_UNNAMED_TOOL.to_string()
     } else if reads_as_someone_else(&shown) || reads_as_someone_else(&reported) {
         // Never the terminal's label, the person's or Wenlan's: say it is an
         // AI tool, and give the name it reported in quotes.
         let name = if reported.is_empty() { shown } else { reported };
-        format!("an AI tool that calls itself \"{name}\"")
+        wenlan_types::saved_from_self_named(&name)
     } else {
         shown
     };
     // A tool cannot take the terminal's count either, nor the name the
-    // app's own Remove is recorded under.
-    let id = if id == SAVED_FROM_TERMINAL || id == RULE_REMOVED_IN_APP {
-        format!("tool:{id}")
+    // app's own Remove is recorded under, nor any near spelling of them
+    // (`Wenlan App`, `wenlan_app`, `The Terminal`, `you`). A name that
+    // already opens with the prefix gets it again, so no tool can pick
+    // another's prefixed id.
+    let raw = agent_name.unwrap_or_default();
+    let id = if reads_as_someone_else(raw) || id.starts_with(SELF_NAMED_TOOL_ID_PREFIX) {
+        format!("{SELF_NAMED_TOOL_ID_PREFIX}{id}")
     } else {
         id
     };
@@ -339,6 +350,49 @@ mod tests {
                 "{name}"
             );
         }
+        // Its saves, its count and its history line are kept apart too.
+        for name in [
+            "terminal",
+            "Terminal",
+            "The-Terminal",
+            "the_terminal",
+            "you",
+            "YOU",
+            "wenlan-app",
+            "Wenlan App",
+            "wenlan app",
+            "wenlan_app",
+            "WenlanApp",
+            " WENLAN  APP ",
+        ] {
+            let tool = saver(Some(name), None);
+            assert_eq!(
+                tool.id,
+                format!("tool:{}", tool_id(name)),
+                "{name}: a near spelling of a reserved name is kept as a tool's"
+            );
+            assert!(!tool.is_terminal() && !tool.is_person_in_app(), "{name}");
+            assert!(
+                tool.label.starts_with("an AI tool that calls itself \""),
+                "{name}: {}",
+                tool.label
+            );
+        }
+        // An ordinary tool keeps its plain id, and no tool can name itself
+        // into another's prefixed one.
+        assert_eq!(saver(Some("Codex"), None).id, "codex");
+        assert_eq!(saver(Some("tool:terminal"), None).id, "tool:tool:terminal");
+        // A name in another script is a tool's name like any other.
+        let named = saver(Some("文瀾助手"), None);
+        assert_eq!(
+            (named.id.as_str(), named.label.as_str()),
+            ("文瀾助手", "文瀾助手")
+        );
+        assert!(!named.is_terminal());
+        // A name with nothing to show is still an AI tool, never the terminal.
+        let marks = saver(Some("\u{fffd}\u{fffd}"), None);
+        assert_eq!(marks.label, "an AI tool");
+        assert!(!marks.is_terminal());
         // A display name does not get it there either.
         let dressed = saver(Some("helper"), Some("the terminal"));
         assert_eq!(dressed.label, "an AI tool that calls itself \"helper\"");
@@ -411,7 +465,13 @@ mod tests {
         let person = Saver::person_in_app();
         assert!(removal_refusal(&person, &record("Codex", 1)).is_none());
         assert!(removal_refusal(&person, &record("terminal", 1)).is_none());
-        for name in ["wenlan-app", "Wenlan-App", " WENLAN-APP "] {
+        for name in [
+            "wenlan-app",
+            "Wenlan-App",
+            " WENLAN-APP ",
+            "Wenlan App",
+            "wenlan_app",
+        ] {
             let tool = saver(Some(name), None);
             assert!(!tool.is_person_in_app(), "{name}");
             assert!(!tool.is_terminal(), "{name}");

@@ -1009,6 +1009,7 @@ async fn read_rules_for_space(
         space_id: space.id.clone(),
         space_name: space.name.clone(),
         rules_page_id,
+        saved_rules_page_ids: Vec::new(),
         lines,
     })
 }
@@ -1036,6 +1037,13 @@ pub async fn handle_read_rules(
     // The person looking at their own rules in the app is not an AI tool
     // reading them: only a tool's read is recorded.
     let by_tool = !crate::memory_routes::caller_is_person(&headers);
+    // The app lists the saved-rules pages under Rules by their ids, so a
+    // renamed one stays there and a page that only has the title does not.
+    let saved_pages = if by_tool {
+        Vec::new()
+    } else {
+        saved_rules::page_ids(&db).await?
+    };
     if no_space_named(&headers, query.space.as_deref()) {
         // No Space: only the general lines, read from every accepted Space.
         let general = general_lines(&db, &own, None).await?;
@@ -1046,6 +1054,7 @@ pub async fn handle_read_rules(
             space_id: String::new(),
             space_name: String::new(),
             rules_page_id: None,
+            saved_rules_page_ids: saved_pages,
             lines: general.into_iter().map(|(_, line)| line).collect(),
         }));
     }
@@ -1072,6 +1081,7 @@ pub async fn handle_read_rules(
     response
         .lines
         .extend(general.into_iter().map(|(_, line)| line));
+    response.saved_rules_page_ids = saved_pages;
     Ok(Json(response))
 }
 

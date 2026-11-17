@@ -52,6 +52,76 @@ pub struct SkillLine {
     /// spoke, only where the save came from (UX-SKILL-14).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub saved_from: Option<String>,
+    /// `saved_from` taken apart, for a screen that says it in the person's
+    /// own language: which kind of place the save came from, and the tool's
+    /// name where there is one. `saved_from` stays the English wording the
+    /// terminal and the AI tools' files print.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saved_by: Option<SavedBy>,
+}
+
+/// Which kind of place a saved rule came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SavedByKind {
+    /// The `wenlan` command, run with no tool name.
+    Terminal,
+    /// An AI tool, listed under `name`.
+    Tool,
+    /// An AI tool whose own name reads as the terminal, the person or
+    /// Wenlan: `name` is what it called itself, shown in quotes.
+    SelfNamed,
+    /// An AI tool that gave no usable name.
+    Unnamed,
+}
+
+/// [`SkillLine::saved_from`] as its parts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedBy {
+    pub kind: SavedByKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+/// `saved_from` for an AI tool that gave no usable name.
+pub const SAVED_FROM_UNNAMED_TOOL: &str = "an AI tool";
+
+const SELF_NAMED_OPENS: &str = "an AI tool that calls itself \"";
+
+/// `saved_from` for an AI tool whose own name reads as the terminal, the
+/// person or Wenlan. `name` holds no quote mark: the daemon cleans it first.
+pub fn saved_from_self_named(name: &str) -> String {
+    format!("{SELF_NAMED_OPENS}{name}\"")
+}
+
+impl SavedBy {
+    /// Take a `saved_from` value apart. A tool's cleaned name never holds a
+    /// quote mark, so only [`saved_from_self_named`] makes the quoted form.
+    pub fn from_saved_from(saved_from: &str) -> Self {
+        let named = |kind, name: &str| SavedBy {
+            kind,
+            name: Some(name.to_string()),
+        };
+        if saved_from == SAVED_FROM_TERMINAL {
+            return SavedBy {
+                kind: SavedByKind::Terminal,
+                name: None,
+            };
+        }
+        if saved_from == SAVED_FROM_UNNAMED_TOOL {
+            return SavedBy {
+                kind: SavedByKind::Unnamed,
+                name: None,
+            };
+        }
+        match saved_from
+            .strip_prefix(SELF_NAMED_OPENS)
+            .and_then(|rest| rest.strip_suffix('"'))
+        {
+            Some(name) => named(SavedByKind::SelfNamed, name),
+            None => named(SavedByKind::Tool, saved_from),
+        }
+    }
 }
 
 /// `SkillLine::saved_from` for a save that named no AI tool.
@@ -231,6 +301,12 @@ pub struct SpaceRulesResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rules_page_id: Option<String>,
     pub lines: Vec<SkillLine>,
+    /// The ids of the pages that keep the rules the person asked to be
+    /// saved (UX-SKILL-14), every Space's and each Space's own, whatever
+    /// they are titled now. Given only to the person reading in the app,
+    /// which lists those pages under Rules by this and never by title.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub saved_rules_page_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -346,6 +422,38 @@ mod saved_rule_tests {
         ] {
             assert!(!label.contains("written by you"), "{label}");
         }
+    }
+
+    /// UX-SKILL-14: the app says where a rule was saved from in the
+    /// person's language, so the label also travels as its parts.
+    #[test]
+    fn ux_skill_14_saved_from_comes_apart_into_a_kind_and_a_name() {
+        let parts = |label: &str| {
+            let by = SavedBy::from_saved_from(label);
+            (by.kind, by.name)
+        };
+        assert_eq!(parts("terminal"), (SavedByKind::Terminal, None));
+        assert_eq!(parts("an AI tool"), (SavedByKind::Unnamed, None));
+        assert_eq!(
+            parts("ChatGPT / Codex"),
+            (SavedByKind::Tool, Some("ChatGPT / Codex".into()))
+        );
+        assert_eq!(
+            parts(&saved_from_self_named("Terminal")),
+            (SavedByKind::SelfNamed, Some("Terminal".into()))
+        );
+        assert_eq!(
+            saved_from_self_named("you"),
+            "an AI tool that calls itself \"you\""
+        );
+        let json = serde_json::to_value(SavedBy::from_saved_from("terminal")).unwrap();
+        assert_eq!(json, serde_json::json!({"kind": "terminal"}));
+        let json =
+            serde_json::to_value(SavedBy::from_saved_from(&saved_from_self_named("you"))).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({"kind": "self_named", "name": "you"})
+        );
     }
 
     #[test]

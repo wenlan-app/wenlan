@@ -458,7 +458,12 @@
 
 /* Remove on a rule the person asked to be saved: a quiet word at the end of
    its line, never a second row. */
+/* The source line wraps between its parts, never inside one: a long "saved
+   from" stays whole and Remove drops to the next line with it. */
+.how-i-work-line-source { overflow-wrap: anywhere; }
+.how-i-work-line-source .how-i-work-line-general { white-space: nowrap; }
 .how-i-work-line-source .how-i-work-line-remove { margin-left: 12px; color: var(--mem-text-secondary); white-space: nowrap; }
+.rules-page-removed-note { margin: 0 0 14px; }
 .how-i-work-line-source .how-i-work-line-remove:hover { color: var(--mem-text); }
 .how-i-work-line-source .how-i-work-line-remove:disabled { opacity: 0.5; cursor: default; text-decoration: none; }
 .how-i-work-line-remove-note { margin: 0; color: var(--mem-status-warning-text); font: 12px/1.45 var(--mem-font-body); }

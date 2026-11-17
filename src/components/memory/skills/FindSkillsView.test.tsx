@@ -134,7 +134,44 @@ describe("FindSkillsView", () => {
     expect((screen.getByRole("button", { name: "Install" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("installs as before when the answer carries no cut mark and no refusal (an older desktop command)", async () => {
+  it("UX-SKILL-13: will not install a skill with characters that hide or reorder its text, and says which file", async () => {
+    await openPreview({
+      ...shown,
+      files: [{ path: "SKILL.md", text: "Read it all.<U+E0073><U+E0065><U+E006E><U+E0064>", cut: false, marked: 4 }],
+      cannotInstall: "SKILL.md holds characters that do not show or that reorder the text (the first is U+E0073), so Wenlan refuses this skill",
+    });
+    const reason = await screen.findByText("SKILL.md has characters that don't show or that reorder its text, so it can't be installed.");
+    expect(reason.id).toBe("find-skills-blocked");
+    const install = screen.getByRole("button", { name: "Install" }) as HTMLButtonElement;
+    expect(install.disabled).toBe(true);
+    expect(install.getAttribute("aria-describedby")).toBe(reason.id);
+    fireEvent.click(install);
+    expect(tauri.installSkill).not.toHaveBeenCalled();
+  });
+
+  it("UX-SKILL-12: shows each character that would not show as a visible mark, says how many, and still installs", async () => {
+    await openPreview({
+      ...shown,
+      files: [
+        { path: "SKILL.md", text: "Read<U+200B> it all<U+200D>.", cut: false, marked: 2 },
+        { path: "notes.md", text: "Plain notes.", cut: false, marked: 0 },
+      ],
+      cannotInstall: null,
+    });
+    const marks = await screen.findAllByText(/^<U\+[0-9A-F]{4,6}>$/u);
+    expect(marks.map((mark) => [mark.tagName, mark.textContent])).toEqual([["MARK", "<U+200B>"], ["MARK", "<U+200D>"]]);
+    // The author's words around the marks are all still there, in order.
+    expect(marks[0].closest("pre")?.textContent).toBe("Read<U+200B> it all<U+200D>.");
+    expect(screen.getAllByText("2 characters in this file don't show on screen. Each is written out here as <U+…>.")).toHaveLength(1);
+    expect(screen.getByText("Plain notes.").querySelector("mark")).toBeNull();
+    expect((screen.getByRole("button", { name: "Install" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("an answer without the cut mark and the refusal (a daemon older than the rule) shows no reason and leaves Install to the daemon", async () => {
+    // Every current door answers with both fields: the daemon's route and
+    // the desktop command run the same check, and both refuse the install
+    // themselves. Only a browser page newer than its daemon sees neither
+    // field; the page then blocks nothing and the daemon decides.
     await openPreview(shown);
     await screen.findByText("Read it all.");
     expect(screen.queryByRole("note")).toBeNull();
@@ -148,7 +185,11 @@ describe("FindSkillsView", () => {
     await screen.findByText("Read it all.");
     fireEvent.click(screen.getByRole("button", { name: "Install" }));
     const refused = await screen.findByRole("alert");
-    expect(refused.textContent).toBe("Couldn't install: Wenlan can be reached from other computers right now, so skills can't be installed, taken in or removed here.");
+    // A block of its own: what happened, then why, each on its own line.
+    expect([...refused.querySelectorAll("p")].map((line) => line.textContent)).toEqual([
+      "Couldn't install.",
+      "Wenlan can be reached from other computers right now, so skills can't be changed here.",
+    ]);
     expect(refused.textContent).not.toContain("WENLAN_BIND_ADDR");
   });
 
@@ -159,7 +200,7 @@ describe("FindSkillsView", () => {
     tauri.removeSkill.mockRejectedValue(new Error("no skill by that name"));
     render(wrap(<FindSkillsView />));
     fireEvent.click(await screen.findByRole("button", { name: "Take all into Wenlan" }));
-    expect(await screen.findByText("Couldn't take them in: Only the person at this computer can install, take in or remove skills.")).toBeTruthy();
+    expect(await screen.findByText("Couldn't take them in: Only you, at this computer, can install, take in or remove skills.")).toBeTruthy();
     fireEvent.click(await screen.findByRole("button", { name: "Remove" }));
     expect(await screen.findByText("Couldn't remove: no skill by that name")).toBeTruthy();
   });

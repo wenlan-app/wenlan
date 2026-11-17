@@ -33,6 +33,7 @@ fn line(kind: SkillLineKind, id: &str, text: &str, quote: &str) -> SkillLine {
         general: false,
         hand_written: false,
         saved_from: None,
+        saved_by: None,
     }
 }
 

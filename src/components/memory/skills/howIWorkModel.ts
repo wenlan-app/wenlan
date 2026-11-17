@@ -139,23 +139,44 @@ export function isHowIWorkPage(page: Pick<Page, "content" | "title">): boolean {
     || (page.title ?? "").startsWith(GENERATED_TITLE_PREFIX);
 }
 
-/** The title the daemon gives the page that keeps the rules the person asked
- *  to be saved (`skill_grow::SAVED_RULES_TITLE`), one for every Space and
- *  one per Space. The page is an ordinary page in no Rules folder, so its
- *  title is what tells it. */
-const SAVED_RULES_TITLE = "Rules I saved";
+/** The daemon's answer that carries which pages keep saved rules. Its key
+ *  opens like every rules query, so whatever refreshes the rules refreshes
+ *  it too. */
+export const SAVED_RULES_PAGES_QUERY_KEY = ["space-rules", "saved-pages"] as const;
+export const NO_SAVED_RULES_PAGES: ReadonlySet<string> = new Set<string>();
 
-export function isSavedRulesPage(page: Pick<Page, "title">): boolean {
-  const title = (page.title ?? "").trim();
-  return title === SAVED_RULES_TITLE || title.startsWith(`${SAVED_RULES_TITLE} — `);
+/** Whether `page` keeps the rules the person asked to be saved. Only the
+ *  daemon knows: its ledger holds each such page's id, and `savedPages` is
+ *  that answer. The title says nothing, so a renamed page still is one and
+ *  a page somebody titled "Rules I saved" is an ordinary page (UX-SKILL-14). */
+export function isSavedRulesPage(page: Pick<Page, "id">, savedPages: ReadonlySet<string>): boolean {
+  return savedPages.has(page.id);
 }
 
-/** "saved from <tool>" for a rule the person asked to be saved, else null.
- *  The tool's name is the daemon's; it is never the person (UX-SKILL-14). */
-export function savedFromLabel(line: Pick<SkillLine, "saved_from">, t: TFunction): string | null {
+/** "saved from <tool>" for a rule the person asked to be saved, else null,
+ *  in the app's language. The daemon says which kind of place it was saved
+ *  from and the tool's name; a tool that calls itself the terminal, the
+ *  person or Wenlan is said to be an AI tool, with its name in quotes. It
+ *  is never the person (UX-SKILL-14). An older daemon sends only its
+ *  English label, shown as it is. */
+export function savedFromLabel(line: Pick<SkillLine, "saved_from" | "saved_by">, t: TFunction): string | null {
   const from = line.saved_from?.trim();
   if (!from) return null;
-  return from === SAVED_FROM_TERMINAL ? t("howIWork.saved.fromTerminal") : t("howIWork.saved.from", { tool: from });
+  const name = line.saved_by?.name?.trim() ?? "";
+  switch (line.saved_by?.kind) {
+    case "terminal": return t("howIWork.saved.fromTerminal");
+    case "unnamed": return t("howIWork.saved.fromUnnamed");
+    case "self_named": return name ? t("howIWork.saved.fromSelfNamed", { name }) : t("howIWork.saved.fromUnnamed");
+    case "tool": return name ? t("howIWork.saved.from", { tool: name }) : t("howIWork.saved.fromUnnamed");
+    default: return from === SAVED_FROM_TERMINAL ? t("howIWork.saved.fromTerminal") : t("howIWork.saved.from", { tool: from });
+  }
+}
+
+/** The daemon's answer to a Remove for a rule that is no longer there: it
+ *  was already removed somewhere else (the terminal, another window). */
+export function savedRuleAlreadyRemoved(error: unknown): boolean {
+  const text = error instanceof Error ? error.message : String(error);
+  return text.includes("no saved rule has that id");
 }
 
 /** Why a Remove did not go through, in the person's words. The daemon's own
