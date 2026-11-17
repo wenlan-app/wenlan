@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Who may do what on a team server. The server asks these rules before
 // every team call; the facts (who is the owner, which Spaces a member was
 // given, which Spaces this server hosts) come from the team file and the
