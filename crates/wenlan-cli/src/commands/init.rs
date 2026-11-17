@@ -83,6 +83,168 @@ fn installed_tools(on_path: impl Fn(&str) -> bool, home: Option<&Path>) -> Vec<T
     tools
 }
 
+/// Whether the tool already has Wenlan through its plugin, which carries its
+/// own MCP entry: connecting it again would list every Wenlan tool twice.
+/// Claude Code names enabled plugins in `~/.claude/settings.json`, Codex in
+/// `config.toml` under its home; both key them `wenlan@<marketplace>`. A file
+/// that is missing or cannot be read counts as no plugin.
+fn has_plugin(tool: Tool, home: Option<&Path>, codex_home: Option<&Path>) -> bool {
+    let read = |path: std::path::PathBuf| std::fs::read_to_string(path).unwrap_or_default();
+    match tool.client {
+        McpClient::ClaudeCode => home.is_some_and(|home| {
+            claude_plugin_enabled(&read(home.join(".claude").join("settings.json")))
+        }),
+        McpClient::Codex => {
+            codex_home.is_some_and(|dir| codex_plugin_enabled(&read(dir.join("config.toml"))))
+        }
+        _ => false,
+    }
+}
+
+fn claude_plugin_enabled(settings_json: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(settings_json)
+        .ok()
+        .and_then(|value| value.get("enabledPlugins")?.as_object().cloned())
+        .is_some_and(|plugins| {
+            plugins
+                .iter()
+                .any(|(key, on)| key.starts_with("wenlan@") && on.as_bool() == Some(true))
+        })
+}
+
+/// `[plugins."wenlan@<marketplace>"]` with `enabled = true` before the next
+/// table. Read line by line: the CLI carries no TOML reader.
+fn codex_plugin_enabled(config_toml: &str) -> bool {
+    let mut inside = false;
+    for line in config_toml.lines().map(str::trim) {
+        if line.starts_with('[') {
+            inside =
+                line.starts_with("[plugins.\"wenlan@") || line.starts_with("[plugins.'wenlan@");
+        } else if inside {
+            let compact: String = line
+                .split('#')
+                .next()
+                .unwrap_or("")
+                .split_whitespace()
+                .collect();
+            if compact == "enabled=true" {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Where Codex keeps its settings: `CODEX_HOME`, or `.codex` in the home folder.
+fn codex_home(home: Option<&Path>) -> Option<std::path::PathBuf> {
+    std::env::var_os("CODEX_HOME")
+        .filter(|value| !value.is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(|| home.map(|home| home.join(".codex")))
+}
+
+/// How the AI tools found on this computer get connected.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Connect {
+    /// Ask about each one (`wenlan init` on a terminal).
+    AskEach,
+    /// Connect every one without asking (`wenlan setup`).
+    All,
+    /// Connect none; only report (nobody to ask).
+    Report,
+}
+
+/// The AI tools on this computer after the connect step.
+pub(super) struct Tools {
+    /// Connected now: just connected, connected before, or through a plugin.
+    connected: Vec<Tool>,
+    /// Among `connected`, how many this run added to the tool's settings.
+    pub(super) new: usize,
+    /// Installed and not connected.
+    waiting: Vec<Tool>,
+}
+
+impl Tools {
+    pub(super) fn connect_names(&self) -> Vec<&'static str> {
+        self.connected.iter().map(|tool| tool.connect_as).collect()
+    }
+
+    pub(super) fn waiting_names(&self) -> Vec<&'static str> {
+        self.waiting.iter().map(|tool| tool.connect_as).collect()
+    }
+
+    /// The label of the first connected tool, for "open … and ask".
+    pub(super) fn first_label(&self) -> Option<&'static str> {
+        self.connected.first().map(|tool| tool.label)
+    }
+
+    /// What `init` and `setup` print about the tools.
+    pub(super) fn print(&self) {
+        if !self.connected.is_empty() {
+            println!("Connected AI tools: {}.", labels(&self.connected));
+        }
+        for tool in &self.waiting {
+            println!(
+                "{} is not connected yet. `wenlan connect {}` connects it.",
+                tool.label, tool.connect_as
+            );
+        }
+        if self.connected.is_empty() && self.waiting.is_empty() {
+            println!("No AI tool was found on this computer. `wenlan connect --help` lists the ones Wenlan can connect.");
+        }
+    }
+}
+
+/// Find the AI tools installed here and connect them as `how` says. A tool the
+/// daemon already knows, or one that has the Wenlan plugin, is left as it is.
+/// A daemon that cannot list them counts as none known.
+pub(super) async fn connect_tools(client: &WenlanClient, how: Connect) -> Result<Tools> {
+    let known: HashSet<String> = client
+        .list_agents()
+        .await
+        .map(|agents| agents.into_iter().map(|agent| agent.name).collect())
+        .unwrap_or_default();
+    let home = dirs::home_dir();
+    let codex = codex_home(home.as_deref());
+    let installed = installed_tools(|binary| which::which(binary).is_ok(), home.as_deref());
+    let mut tools = Tools {
+        connected: Vec::new(),
+        new: 0,
+        waiting: Vec::new(),
+    };
+    for tool in installed {
+        if known.contains(tool.agent) || has_plugin(tool, home.as_deref(), codex.as_deref()) {
+            tools.connected.push(tool);
+            continue;
+        }
+        let go = match how {
+            Connect::All => true,
+            Connect::AskEach => ask(&format!("Connect {}?", tool.label), true)?,
+            Connect::Report => false,
+        };
+        if !go {
+            tools.waiting.push(tool);
+            continue;
+        }
+        let args = ConnectArgs {
+            client: tool.client,
+            dry_run: false,
+            all_tools: false,
+        };
+        match super::mcp::run_connect(client, args, true).await {
+            Ok(changed) => {
+                tools.connected.push(tool);
+                tools.new += usize::from(changed);
+            }
+            Err(error) => {
+                eprintln!("wenlan: {} was not connected: {error:#}", tool.label);
+                tools.waiting.push(tool);
+            }
+        }
+    }
+    Ok(tools)
+}
+
 /// The local hour after which the daily run `init` turns on starts.
 const DAILY_HOUR: u8 = 9;
 
@@ -211,36 +373,13 @@ pub async fn run(client: &WenlanClient, format: ResolvedFormat, quiet: bool) -> 
         }
     };
 
-    // 3. The AI tools. A daemon that cannot list them counts as none known.
-    let known: HashSet<String> = client
-        .list_agents()
-        .await
-        .map(|agents| agents.into_iter().map(|agent| agent.name).collect())
-        .unwrap_or_default();
-    let home = dirs::home_dir();
-    let installed = installed_tools(|binary| which::which(binary).is_ok(), home.as_deref());
-    let mut connected: Vec<Tool> = Vec::new();
-    let mut waiting: Vec<Tool> = Vec::new();
-    for tool in installed {
-        if known.contains(tool.agent) {
-            connected.push(tool);
-        } else if interactive && ask(&format!("Connect {}?", tool.label), true)? {
-            let args = ConnectArgs {
-                client: tool.client,
-                dry_run: false,
-                all_tools: false,
-            };
-            match super::mcp::run_connect(client, args, quiet).await {
-                Ok(()) => connected.push(tool),
-                Err(error) => {
-                    eprintln!("wenlan: {} was not connected: {error:#}", tool.label);
-                    waiting.push(tool);
-                }
-            }
-        } else {
-            waiting.push(tool);
-        }
-    }
+    // 3. The AI tools.
+    let how = if interactive {
+        Connect::AskEach
+    } else {
+        Connect::Report
+    };
+    let tools = connect_tools(client, how).await?;
 
     if quiet {
         return Ok(());
@@ -258,8 +397,8 @@ pub async fn run(client: &WenlanClient, format: ResolvedFormat, quiet: bool) -> 
             "created": created,
             "repository_state": repository_state,
             "repository": repository,
-            "connected": connected.iter().map(|tool| tool.connect_as).collect::<Vec<_>>(),
-            "not_connected": waiting.iter().map(|tool| tool.connect_as).collect::<Vec<_>>(),
+            "connected": tools.connect_names(),
+            "not_connected": tools.waiting_names(),
         }));
     }
 
@@ -310,18 +449,7 @@ pub async fn run(client: &WenlanClient, format: ResolvedFormat, quiet: bool) -> 
             );
         }
     }
-    if !connected.is_empty() {
-        println!("Connected AI tools: {}.", labels(&connected));
-    }
-    for tool in &waiting {
-        println!(
-            "{} is not connected yet. `wenlan connect {}` connects it.",
-            tool.label, tool.connect_as
-        );
-    }
-    if connected.is_empty() && waiting.is_empty() {
-        println!("No AI tool was found on this computer. `wenlan connect --help` lists the ones Wenlan can connect.");
-    }
+    tools.print();
     println!(
         "From now on, the terminal and AI tools started in this folder use Space '{space}'. `wenlan status` shows it."
     );
@@ -425,6 +553,37 @@ pub async fn print_folder(client: &WenlanClient) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_tool_with_the_wenlan_plugin_counts_as_connected() {
+        assert!(claude_plugin_enabled(
+            r#"{"enabledPlugins":{"wenlan@7xuanlu":true}}"#
+        ));
+        assert!(claude_plugin_enabled(
+            r#"{"enabledPlugins":{"other@x":true,"wenlan@7xuanlu-wenlan":true}}"#
+        ));
+        // Switched off, another plugin, no key, or a file that is not JSON.
+        assert!(!claude_plugin_enabled(
+            r#"{"enabledPlugins":{"wenlan@7xuanlu":false}}"#
+        ));
+        assert!(!claude_plugin_enabled(
+            r#"{"enabledPlugins":{"notwenlan@x":true}}"#
+        ));
+        assert!(!claude_plugin_enabled("{}"));
+        assert!(!claude_plugin_enabled(""));
+
+        assert!(codex_plugin_enabled(
+            "model = \"x\"\n[plugins.\"wenlan@7xuanlu-wenlan\"]\nenabled = true # on\n"
+        ));
+        assert!(!codex_plugin_enabled(
+            "[plugins.\"wenlan@7xuanlu-wenlan\"]\nenabled = false\n"
+        ));
+        // `enabled = true` under another table is not Wenlan's.
+        assert!(!codex_plugin_enabled(
+            "[plugins.\"wenlan@x\"]\n[plugins.\"other@x\"]\nenabled = true\n"
+        ));
+        assert!(!codex_plugin_enabled(""));
+    }
 
     #[test]
     fn enter_takes_the_default_and_anything_else_but_yes_is_no() {

@@ -710,7 +710,7 @@ Options:
 
 ### `wenlan setup`
 
-Guided setup: get Wenlan running, optionally with a local model or an Anthropic key.
+Set Wenlan up and connect the AI tools on this computer; optionally a local model or an Anthropic key.
 
 ```text
 wenlan setup [OPTIONS]
@@ -722,6 +722,7 @@ Options:
 - `--model <MODEL_ID>`: Download and select a local model, for example qwen3.5-4b.
 - `--anthropic-api-key-env <ENV_VAR>`: Read an Anthropic key from this environment variable.
 - `-y, --yes`: Skip confirmation prompts where possible.
+- `--config-only`: Write the settings only: connect no AI tool and ask nothing.
 
 ### `wenlan init`
 
