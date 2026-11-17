@@ -6,7 +6,7 @@ description: >
   setting up or fixing Wenlan ("set up wenlan", "is wenlan working", "裝好了嗎"),
   turning what was imported or saved into notes and bringing out of date
   notes up to date ("steep", "沉澱", "整理成筆記"), getting to know a code
-  repository ("build a wiki for this repo", "認識這個倉庫"), opening or listing notes
+  repository ("write the docs for this repo", "幫這個 repo 寫文件", "認識這個倉庫"), opening or listing notes
   ("open my note on X", "打開筆記"), organizing existing pages and folders
   ("organize my notes", "整理我的資料"), checking memory quality or cleaning
   up ("lint", "檢查重複", "清一清"), reviewing pending items ("review what's
@@ -40,7 +40,7 @@ Match the request to one row. Old command words count as their row.
 | Just starting, or not sure what to do next | the status in step 1 | `$wenlan 怎麼開始`, `$wenlan what now?` |
 | Set up, repair, upgrade, check it works | setup | `$wenlan setup`, `$wenlan 好像壞了` |
 | Prepare new material, update stale pages, make a page follow another page, arrange existing knowledge around a goal, or explicitly rebuild/merge pages | steep | `$wenlan steep`, `$wenlan 整理我的資料`, `$wenlan 沉澱`, `$wenlan 讓這頁跟著定位頁`, `$wenlan steep rebuild <page-id>` |
-| Get to know this repository; write a small wiki about it and keep it current; make its docs follow a page | wiki | `$wenlan wiki`, `$wenlan 認識這個倉庫`, `$wenlan 幫這個倉庫建 wiki`, `$wenlan 讓 README 跟著這頁` |
+| Get to know this repository; write docs about it and keep them current; make its docs follow a page | wiki | `$wenlan docs`, `$wenlan 幫這個 repo 寫文件`, `$wenlan wiki` (earlier name), `$wenlan 認識這個倉庫`, `$wenlan 幫這個倉庫建 wiki`, `$wenlan 讓 README 跟著這頁` |
 | List, find, open or print a note | pages | `$wenlan pages release`, `$wenlan 打開那篇筆記` |
 | Check memory quality, duplicates, vocabulary; repair findings | lint | `$wenlan lint`, `$wenlan lint repair`, `$wenlan 檢查重複` |
 | Walk pending captures, revisions or refinements | curate | `$wenlan curate revisions`, `$wenlan 看待確認的` |

@@ -1,6 +1,11 @@
-# $wenlan wiki
+# $wenlan docs
 
-Read this repository and keep a wiki about it in its Space. How many pages it
+`$wenlan wiki` is the earlier name of this command and means the same. The
+steps below still say "wiki" for the set of pages, and the `wenlan wiki ...`
+terminal commands they run are the spelling every installed Wenlan
+understands (newer ones also answer to `wenlan repo ...`).
+
+Read this repository and write docs about it in its Space. How many pages it
 has depends on the repository: a small tool may need five, a large monorepo
 twenty or more. The overview page lists them all.
 Each key sentence is tied to the code lines it was read from (a code basis), so
@@ -16,7 +21,7 @@ The skill accepts one optional inline token of the form `space:<name>`. The
 bundled resolver strips it and prints the resolved Space line itself:
 
 ```bash
-raw_args="<the full argument string passed to $wenlan wiki>"
+raw_args="<the full argument string passed to $wenlan docs>"
 # The resolver ships inside the installed plugin; the relative path only
 # exists in a wenlan checkout.
 resolver="$(find "$HOME/.codex/plugins/cache" -path '*/wenlan/*/bin/resolve-space.sh' 2>/dev/null | head -1)"
@@ -30,7 +35,7 @@ commands), take the Space from the `space:<name>` token instead.
 
 If the `git rev-parse` fails, say this folder is not a git repository and stop.
 If `space` is empty, say this folder is not matched to a Space and that
-`$wenlan wiki space:<name>` names one, then stop. Do not ask a question.
+`$wenlan docs space:<name>` names one, then stop. Do not ask a question.
 
 ## 2. Plan the pages
 
@@ -213,7 +218,7 @@ read: read it again and redo the edit once.
 
 One line per planned page with its title: written, left as is, waiting for
 steep, re-pointed, or staged for review. When pages are left over for the next
-run, say how many and that `$wenlan wiki` again writes them. Then one line on
+run, say how many and that `$wenlan docs` again writes them. Then one line on
 what happens later: `/brief` names how many pages rely on code that changed,
 and `$wenlan steep` brings them up to date. When step 7 ran, one more line:
 how many docs were read and how many fixes go into the pull request, each as
