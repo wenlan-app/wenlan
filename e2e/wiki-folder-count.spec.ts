@@ -26,7 +26,7 @@ function fixtureWithManyNotes() {
 }
 
 for (const mode of ["labels", "icons"] as const) {
-  test(`the Folders list shows its page count beside the rail and reaches the last page at 1280 ${mode}`, async ({ page }, info) => {
+  test(`the Docs row shows its page count and the list reaches the last page at 1280 ${mode}`, async ({ page }, info) => {
     const errors = collectBrowserErrors(page);
     const fixture = fixtureWithManyNotes();
     const listed = fixture.pages.filter((item) => (item.status === "active" || item.status === "draft") && item.creation_kind !== "entity").length;
@@ -36,35 +36,31 @@ for (const mode of ["labels", "icons"] as const) {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto("/");
     const directory = await showWikiFolders(page);
-    // Beside the icon rail the tree has its own title row; the count sits right
-    // after "Folders", as a bare number. The sidebar keeps only what you act on.
-    if (mode === "icons") {
-      const count = directory.locator(".wiki-workspace-mode-row .wiki-workspace-note-count");
-      await expect(count).toHaveAttribute("title", `${listed} pages`);
-      await expect(count.locator("[aria-hidden=true]")).toHaveText(`${listed}`);
-      const title = await directory.locator(".wiki-workspace-title").boundingBox();
+    // The count sits on the Docs row, at its right, as a bare number; the
+    // icon rail has no room for it and the list page needs none.
+    const row = page.locator(".notes-rail-nav").getByRole("button", { name: "Docs", exact: true });
+    if (mode === "labels") {
+      const count = row.locator(".notes-primary-count");
+      await expect(count).toHaveText(`${listed}`);
+      await expect(row).toHaveAttribute("aria-description", `Docs, ${listed} pages`);
+      const rowBox = await row.boundingBox();
       const countBox = await count.boundingBox();
-      expect(title).not.toBeNull(); expect(countBox).not.toBeNull();
-      expect(countBox!.x).toBeGreaterThanOrEqual(title!.x + title!.width - 1);
-      expect(countBox!.x - (title!.x + title!.width)).toBeLessThanOrEqual(8);
-      expect(Math.abs((countBox!.y + countBox!.height / 2) - (title!.y + title!.height / 2))).toBeLessThanOrEqual(2);
+      expect(rowBox).not.toBeNull(); expect(countBox).not.toBeNull();
+      expect(countBox!.x + countBox!.width).toBeLessThanOrEqual(rowBox!.x + rowBox!.width);
+      expect(countBox!.x).toBeGreaterThan(rowBox!.x + rowBox!.width / 2);
     } else {
-      await expect(directory.locator(".wiki-workspace-note-count")).toHaveCount(0);
+      await expect(page.locator(".notes-rail-nav .notes-primary-count:visible")).toHaveCount(0);
     }
+    await expect(directory.locator(".wiki-workspace-note-count")).toHaveCount(0);
     await expect(directory.getByRole("button", { name: "Open Root page 01", exact: true })).toBeVisible();
     await expect(directory.getByRole("button", { name: "Open Entity shadow", exact: true })).toHaveCount(0);
     await page.mouse.move(0, 0);
     await page.evaluate(() => document.fonts.ready);
     await page.screenshot({ path: info.outputPath(`folders-count-1280-${mode}-top.png`) });
 
-    const scroll = directory.locator(".notes-list-scroll");
-    await scroll.evaluate((element) => { element.scrollTop = element.scrollHeight; });
     const last = directory.getByRole("button", { name: "Open Root page 60", exact: true });
-    await expect(last).toBeInViewport();
-    const scrollBox = await scroll.boundingBox();
-    const lastBox = await last.boundingBox();
-    expect(scrollBox).not.toBeNull(); expect(lastBox).not.toBeNull();
-    expect(lastBox!.y + lastBox!.height).toBeLessThanOrEqual(scrollBox!.y + scrollBox!.height + 1);
+    await last.scrollIntoViewIfNeeded();
+    await expect(last).toBeInViewport({ ratio: 1 });
     await page.screenshot({ path: info.outputPath(`folders-count-1280-${mode}-bottom.png`) });
     expect(errors.pageErrors).toEqual([]);
     expect(errors.consoleErrors).toEqual([]);

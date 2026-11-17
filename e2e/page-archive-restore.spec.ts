@@ -2,7 +2,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { collectBrowserErrors, installTauriMock } from "./tauriMock";
 import { createSpacesNavigationFixture } from "./fixtures/spacesNavigation";
-import { openWikiNote } from "./helpers/wikiWorkspace";
+import { findWikiNote, openWikiNote, sectionList } from "./helpers/wikiWorkspace";
 import { openPrimaryDestination } from "./helpers/primaryNavigation";
 
 const BANNER = "This page is archived. Restore it to edit.";
@@ -24,6 +24,11 @@ function fixtureWithArchivedTwin() {
 async function openForWriting(page: Page, title: string): Promise<void> {
   await openWikiNote(page, title);
   await expect(page.getByRole("textbox", { name: "Page editor", exact: true })).toBeVisible();
+}
+
+/** Whether a page is listed under Docs, Rules or Skills; leaves its list on screen. */
+async function listed(page: Page, title: string): Promise<boolean> {
+  return (await findWikiNote(page, title)) !== null;
 }
 
 async function confirm(page: Page, action: string): Promise<void> {
@@ -57,10 +62,10 @@ test("archive keeps the tab read only; Archived pages restores, through a title 
   await expect(page.getByRole("menuitem", { name: "Archive page" })).toHaveCount(0);
   await page.keyboard.press("Escape");
 
-  // The page left the folder tree, which has no browse menu (UX-FIND-4).
+  // The page left the Docs list, which has no browse menu (UX-FIND-4).
   const directory = page.locator(".wiki-workspace-directory");
-  await expect(directory.locator(".notes-inventory-page").getByText("History semantics", { exact: true })).toHaveCount(0);
-  await expect(directory.getByRole("combobox")).toHaveCount(0);
+  expect(await listed(page, "History semantics")).toBe(false);
+  await expect(sectionList(page).getByRole("combobox")).toHaveCount(0);
 
   // Search finds archived pages, in their own group.
   await page.locator(".notes-workspace-sidebar").getByRole("button", { name: "Search", exact: true }).click();
@@ -95,36 +100,38 @@ test("archive keeps the tab read only; Archived pages restores, through a title 
   await page.getByRole("dialog", { name: "Restore page" }).getByRole("button", { name: "Restore page" }).click();
   expect(await stored(page, "page-history")).toMatchObject({ status: "active", title: "History semantics", version: 3 });
   await expect(archived).toContainText("No archived pages.");
-  // Back to folders: the restored page is in the tree again.
+  // Back to folders: the restored page is listed under Docs again.
   await directory.getByRole("button", { name: "Back to folders" }).click();
-  await expect(directory.locator(".notes-inventory-page").getByText("History semantics", { exact: true })).toHaveCount(1);
+  expect(await listed(page, "History semantics")).toBe(true);
 
   expect(errors.pageErrors).toEqual([]);
   expect(errors.consoleErrors).toEqual([]);
 });
 
-test("Archive from the folder tree, without deleting anything", async ({ page }) => {
+test("Archive from the Docs list, without deleting anything", async ({ page }) => {
   const errors = collectBrowserErrors(page);
   await installTauriMock(page, { locale: "en", rawActions: [] });
   await page.goto("/");
   await openForWriting(page, "Fixture architecture");
 
-  const directory = page.locator(".wiki-workspace-directory");
-  // Folder tree: right-click a page that is not on screen.
-  await directory.locator(".notes-inventory-page").getByText("Weekly fixture recap", { exact: true }).click({ button: "right" });
+  // Docs list: right-click a page that is not on screen.
+  expect(await listed(page, "Weekly fixture recap")).toBe(true);
+  await sectionList(page).locator(".section-list-page-title").getByText("Weekly fixture recap", { exact: true }).click({ button: "right" });
   const treeMenu = page.getByRole("menu");
   await expect(treeMenu.getByRole("menuitem")).toHaveText(["Open", "Pin", "Archive page", "Delete page"]);
   await treeMenu.getByRole("menuitem", { name: "Archive page" }).click();
   await confirm(page, "Archive page");
-  await expect(directory.locator(".notes-inventory-page").getByText("Weekly fixture recap", { exact: true })).toHaveCount(0);
+  await expect(sectionList(page).locator(".section-list-page-title").getByText("Weekly fixture recap", { exact: true })).toHaveCount(0);
   expect(await stored(page, "page-keyboard")).toMatchObject({ status: "archived" });
 
   // The open page archives through its editor.
-  await directory.locator(".notes-inventory-page").getByText("Fixture architecture", { exact: true }).click({ button: "right" });
+  expect(await listed(page, "Fixture architecture")).toBe(true);
+  await sectionList(page).locator(".section-list-page-title").getByText("Fixture architecture", { exact: true }).click({ button: "right" });
   await page.getByRole("menuitem", { name: "Archive page" }).click();
   await confirm(page, "Archive page");
+  await expect(sectionList(page).locator(".section-list-page-title").getByText("Fixture architecture", { exact: true })).toHaveCount(0);
+  await page.locator('[data-note-tab-group="primary"] [role="tab"]', { hasText: "Fixture architecture" }).click();
   await expect(page.getByText(BANNER)).toBeVisible();
-  await expect(directory.locator(".notes-inventory-page").getByText("Fixture architecture", { exact: true })).toHaveCount(0);
   expect(errors.pageErrors).toEqual([]);
   expect(errors.consoleErrors).toEqual([]);
 });

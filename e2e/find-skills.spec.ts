@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Library › Skills: the entry is in the Library's + menu (not a sidebar item),
+// Skills › New: the entry is in the Skills list's New menu (not a sidebar row of its own),
 // search lists only passing skills, the full SKILL.md shows before install,
 // and install goes to all Spaces or one Space. Set FIND_SKILLS_SHOTS to a
 // folder to keep screenshots.
 import { expect, test, type Page } from "@playwright/test";
-import { showWikiFolders } from "./helpers/wikiWorkspace";
+import { openSection } from "./helpers/wikiWorkspace";
 import { collectBrowserErrors, installTauriMock } from "./tauriMock";
 
 const shots = process.env.FIND_SKILLS_SHOTS;
@@ -14,15 +14,15 @@ async function shot(page: Page, name: string) {
 }
 
 for (const locale of ["zh-Hant", "en"] as const) {
-  test(`find, read and install a skill from the Library (${locale})`, async ({ page }) => {
+  test(`find, read and install a skill from the Skills list (${locale})`, async ({ page }) => {
     const errors = collectBrowserErrors(page);
     const controller = await installTauriMock(page, { locale, rawActions: [] });
     await page.setViewportSize({ width: 1280, height: 860 });
     await page.goto("/");
-    const directory = await showWikiFolders(page);
+    const directory = await openSection(page, "skills");
     const sidebarItemsBefore = await page.locator(".notes-primary-link").count();
 
-    await directory.locator(".wiki-workspace-new").click();
+    await directory.locator(".section-list-new-button").click();
     const zh = locale === "zh-Hant";
     await shot(page, `0-library-menu-${locale}`);
     await page.getByRole("menuitem", { name: zh ? "找技能" : "Find skills" }).click();
@@ -61,9 +61,9 @@ for (const locale of ["zh-Hant", "en"] as const) {
     const controller = await installTauriMock(page, { locale, rawActions: [] });
     await page.setViewportSize({ width: 1280, height: 860 });
     await page.goto("/");
-    const directory = await showWikiFolders(page);
+    const directory = await openSection(page, "skills");
     const zh = locale === "zh-Hant";
-    await directory.locator(".wiki-workspace-new").click();
+    await directory.locator(".section-list-new-button").click();
     await page.getByRole("menuitem", { name: zh ? "找技能" : "Find skills" }).click();
 
     const local = page.getByRole("region", { name: zh ? "這台電腦上已有的技能" : "Already on this computer" });

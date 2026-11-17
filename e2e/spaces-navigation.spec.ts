@@ -21,21 +21,21 @@ test("Wiki -> Spaces -> Space -> Page -> back and Space -> global Topics -> Topi
 
   // When the two primary hierarchy journeys are driven through the rendered shell.
   const primaryNavigation = page.getByRole("navigation", { name: "Primary navigation" });
-  await openPrimaryDestination(page, "Library");
+  await openPrimaryDestination(page, "Docs");
   await expect(primaryNavigation.locator('[aria-current="page"]')).toHaveCount(1);
-  const wiki = primaryNavigation.getByRole("button", { name: "Library", exact: true });
+  const wiki = primaryNavigation.getByRole("button", { name: "Docs", exact: true });
   await expect(wiki).toHaveAttribute("aria-current", "page");
   await expect(primaryNavigation.getByRole("button", { name: "Home", exact: true })).not.toHaveAttribute("aria-current");
   await expect(primaryNavigation.getByRole("button", { name: "More", exact: true })).toHaveCount(0);
 
-  await primaryNavigation.getByRole("button", { name: "Library", exact: true }).click();
-  await expect(page.getByRole("heading", { level: 1, name: "Open a page" })).toBeVisible();
-  await expect(primaryNavigation.getByRole("button", { name: "Library" })).toHaveAttribute("aria-current", "page");
+  await primaryNavigation.getByRole("button", { name: "Docs", exact: true }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Docs", exact: true })).toBeVisible();
+  await expect(primaryNavigation.getByRole("button", { name: "Docs" })).toHaveAttribute("aria-current", "page");
   await openWikiNote(page, "Independent research");
   await expect(page.getByRole("heading", { level: 1, name: "Independent research" })).toBeVisible();
-  await expect(primaryNavigation.getByRole("button", { name: "Library" })).toHaveAttribute("aria-current", "page");
+  await expect(primaryNavigation.getByRole("button", { name: "Docs" })).toHaveAttribute("aria-current", "page");
   await page.getByRole("group", { name: "History navigation" }).getByRole("button", { name: "Back", exact: true }).click();
-  await expect(page.getByRole("heading", { level: 1, name: "Open a page" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Docs", exact: true })).toBeVisible();
 
   await openWikiNote(page, "Fixture architecture");
   const wikiContent = page.locator(".wiki-workspace-content");

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { expect, test, type Page, type Locator } from "@playwright/test";
-import { showWikiFolders } from "./helpers/wikiWorkspace";
+import { openDocsPage, openWikiNote, sectionList, showWikiFolders } from "./helpers/wikiWorkspace";
 import { expectEditorSource } from "./helpers/markdownEditor";
 import { createReviewDecisionFixture } from "./fixtures/reviewDecisions";
 import { collectBrowserErrors, installTauriMock } from "./tauriMock";
@@ -10,14 +10,11 @@ async function start(page: Page, theme = "light", width = 1440) {
  const errors = collectBrowserErrors(page);
  const runtime = await installTauriMock(page, { locale: "en", rawActions: [], fixture: createReviewDecisionFixture("wiki-folders"), delays: { update_page: 250 }, localStorage: { "wenlan-theme": theme } });
  await page.goto("/"); await showWikiFolders(page);
- const tree = page.locator(".wiki-workspace-directory");
- await tree.getByRole("button", { name: "Work", exact: true }).click();
- await tree.getByRole("button", { name: "Open Fixture architecture", exact: true }).click();
+  await openWikiNote(page,"Fixture architecture");
  await expect(group(page,"primary").getByRole("textbox",{name:"Page editor",exact:true})).toBeVisible();
- await tree.getByRole("button", { name: "Research", exact: true }).click();
- await tree.getByRole("button", { name: "Open Why fixtures stay deterministic", exact: true }).click();
+  await openWikiNote(page,"Why fixtures stay deterministic");
  await expect(group(page,"primary").getByRole("tab",{name:"Why fixtures stay deterministic",exact:true})).toHaveAttribute("aria-selected","true");
- return { tree, runtime, errors };
+ return { runtime, errors };
 }
 async function move(page:Page, from="primary") {
  const label=from==="primary"?"Move to right group":"Move to central group";
@@ -95,7 +92,7 @@ test("independent editors share one focused inspector without losing a moved pag
  expect(errors.pageErrors).toEqual([]); expect(errors.consoleErrors).toEqual([]);
 });
 test("switching Wiki pages keeps inspector state with the same page and preserves the other editor",async({page},info)=>{
- const {tree,errors}=await start(page,"light",2560);
+ const {errors}=await start(page,"light",2560);
  await move(page);
  const right=group(page,"secondary"), left=group(page,"primary");
  await right.getByRole("tab",{name:"Why fixtures stay deterministic",exact:true}).click();
@@ -103,9 +100,9 @@ test("switching Wiki pages keeps inspector state with the same page and preserve
  await expect(page.getByRole("region",{name:"Canvas for Why fixtures stay deterministic",exact:true})).toBeVisible();
  const editor=right.locator(".page-detail");
  await editor.evaluate(el=>el.setAttribute("data-editor-instance","right-stays"));
- // Focus the central group before choosing another note in the shared tree.
+ // Focus the central group before choosing another note from the Docs list.
  await left.getByRole("tab",{name:"Fixture architecture",exact:true}).click();
- await tree.getByRole("button",{name:"Open Next experiment",exact:true}).click();
+ await openWikiNote(page,"Next experiment");
  await expect(left.getByRole("textbox",{name:"Title",exact:true})).toHaveValue("Next experiment");
  await expect(editor).toHaveAttribute("data-editor-instance","right-stays");
  // Next experiment is opened as a draft editor, which has no Wiki inspector toolbar.
@@ -118,8 +115,8 @@ test("switching Wiki pages keeps inspector state with the same page and preserve
  expect(errors.pageErrors).toEqual([]);
 });
 test("a saved draft moves, auto-finalizes, and retains durable content in the right group",async({page})=>{
- const {tree}=await start(page);
- await tree.getByRole("button",{name:"Open Next experiment",exact:true}).click();
+ await start(page);
+ await openWikiNote(page,"Next experiment");
  const left=group(page,"primary");
  await left.getByRole("textbox",{name:"Content",exact:true}).fill("Draft transferred safely.");
  await move(page);
@@ -131,7 +128,7 @@ test("a saved draft moves, auto-finalizes, and retains durable content in the ri
 });
 
 test("Back and Forward respect ownership and do not wait for the other group's failed save", async ({page}) => {
- const {tree,runtime}=await start(page);
+ const {runtime}=await start(page);
  await group(page,"primary").getByRole("tab",{name:"Fixture architecture",exact:true}).click();
  await move(page); // A now belongs exclusively to the right.
  await expect(group(page,"secondary").getByRole("tab",{name:"Fixture architecture",exact:true})).toBeVisible();
@@ -140,12 +137,17 @@ test("Back and Forward respect ownership and do not wait for the other group's f
  await expect(group(page,"secondary").locator(".page-detail").getByRole("alert")).toBeVisible();
  // Open an additional central page, then use the shared history buttons.
  await group(page,"primary").getByRole("tab",{name:"Why fixtures stay deterministic",exact:true}).click();
- await tree.getByRole("button",{name:"Open Independent research",exact:true}).click();
+ await openDocsPage(page,null,"Independent research");
  await expect(group(page,"primary").getByRole("tab",{name:"Independent research",exact:true})).toHaveAttribute("aria-selected","true");
+ // Back passes the Docs list the page was opened from, then the earlier page.
+ await page.getByRole("button",{name:"Back",exact:true}).click();
+ await expect(sectionList(page,"docs")).toBeVisible();
  await page.getByRole("button",{name:"Back",exact:true}).click();
  await expect(group(page,"primary").getByRole("tab",{name:"Why fixtures stay deterministic",exact:true})).toHaveAttribute("aria-selected","true");
  await page.getByRole("button",{name:"Forward",exact:true}).click();
+ await page.getByRole("button",{name:"Forward",exact:true}).click();
  await expect(group(page,"primary").getByRole("tab",{name:"Independent research",exact:true})).toHaveAttribute("aria-selected","true");
+ await page.getByRole("button",{name:"Back",exact:true}).click();
  await page.getByRole("button",{name:"Back",exact:true}).click();
  await page.getByRole("button",{name:"Back",exact:true}).click();
  await expect(group(page,"primary").getByRole("tab",{name:"Fixture architecture",exact:true})).toHaveCount(0);
@@ -154,8 +156,8 @@ test("Back and Forward respect ownership and do not wait for the other group's f
 });
 
 test("Escape in a right draft cannot close or navigate a central draft", async ({page}) => {
- const {tree}=await start(page);
- await tree.getByRole("button",{name:"Open Next experiment",exact:true}).click();
+ await start(page);
+ await openWikiNote(page,"Next experiment");
  await move(page);
  const left=group(page,"primary"),right=group(page,"secondary");
  await left.getByRole("button",{name:"New page",exact:true}).click();
@@ -173,27 +175,29 @@ test("Escape in a right draft cannot close or navigate a central draft", async (
 });
 
 test("opening a page owned by the other group requires an explicit action", async ({page}) => {
- const {tree}=await start(page);
+ await start(page);
  await move(page);
  const left=group(page,"primary"),right=group(page,"secondary");
- await right.getByRole("tab",{name:"Why fixtures stay deterministic",exact:true}).click();
- await tree.getByRole("button",{name:"Open Independent research",exact:true}).click();
+ // The Docs list sits in the central group, so a page chosen there opens there.
+ await openWikiNote(page,"Independent research");
+ await move(page);
  await expect(right.getByRole("tab",{name:"Independent research",exact:true})).toHaveAttribute("aria-selected","true");
  await left.getByRole("tab",{name:"Fixture architecture",exact:true}).click();
- await tree.getByRole("button",{name:"Open Why fixtures stay deterministic",exact:true}).click();
+ await openWikiNote(page,"Why fixtures stay deterministic");
  await expect(right.getByRole("tab",{name:"Independent research",exact:true})).toHaveAttribute("aria-selected","true");
- await expect(left.getByRole("tab",{name:"Fixture architecture",exact:true})).toHaveAttribute("aria-selected","true");
+ await expect(left.getByRole("tab",{name:"Why fixtures stay deterministic",exact:true})).toHaveCount(0);
  await page.getByRole("button",{name:"Show page",exact:true}).click();
  await expect(right.getByRole("tab",{name:"Why fixtures stay deterministic",exact:true})).toHaveAttribute("aria-selected","true");
  await expect(page.getByRole("tab",{name:"Why fixtures stay deterministic",exact:true})).toHaveCount(1);
 });
 
 test("a newer right tab choice cancels a pending global graph navigation", async ({page}) => {
- const {tree}=await start(page,"light",2560);
+ await start(page,"light",2560);
  await move(page);
  const left=group(page,"primary"),right=group(page,"secondary");
- await right.getByRole("tab",{name:"Why fixtures stay deterministic",exact:true}).click();
- await tree.getByRole("button",{name:"Open Independent research",exact:true}).click();
+ await openWikiNote(page,"Independent research");
+ await move(page);
+ await left.getByRole("tab",{name:"Fixture architecture",exact:true}).click();
  await right.getByRole("tab",{name:"Why fixtures stay deterministic",exact:true}).click();
  await page.getByRole("button",{name:"Info",exact:true}).click();
  await append(page,"primary","\nSave before global graph navigation.");

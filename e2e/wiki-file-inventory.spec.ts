@@ -1,52 +1,46 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { expect, test } from "@playwright/test";
-import { showWikiFolders } from "./helpers/wikiWorkspace";
+import { openDocsFolder, sectionList, showWikiFolders } from "./helpers/wikiWorkspace";
 import { expectEditorSource } from "./helpers/markdownEditor";
 import { createReviewDecisionFixture } from "./fixtures/reviewDecisions";
 import { collectBrowserErrors, installTauriMock } from "./tauriMock";
 const labels = {
- en:{all:"All pages",back:"Back",newFolder:"New folder",folderName:"Folder name",create:"Create",newPage:"New page",empty:"This folder has no pages yet.",folders:"Folders"},
+ en:{all:"All pages",back:"Back",newFolder:"New folder",folderName:"Folder name",create:"Create",new:"New",newPage:"New page",empty:"This folder has no pages yet.",folders:"Folders"},
 };
 for (const locale of ["en"] as const) for (const width of [1280,375]) {
  test(`real directories and reading workspace/history agree ${locale} ${width}`,async({page})=>{
   const copy=labels[locale]; const errors=collectBrowserErrors(page);
   await page.setViewportSize({width,height:800});
   const runtime=await installTauriMock(page,{locale,rawActions:[],fixture:createReviewDecisionFixture("wiki-folders")});
-  await page.goto("/");await showWikiFolders(page);await expect(page.locator(".wiki-workspace")).toBeVisible();
-  const panel=page.locator(".wiki-workspace-directory .notes-list-panel"); const overview=page.locator(".wiki-overview");
-  const openDirectory=async()=>{await expect(panel).toBeAttached();if(!(await panel.isVisible()))await page.locator(".wiki-workspace-folders-toggle").click();await expect(panel).toBeVisible();};
-  await openDirectory(); await panel.getByRole("button",{name:"Work",exact:true}).click();
-  await expect(panel.getByRole("button",{name:"Research",exact:true})).toBeVisible();
-  await expect(panel.getByRole("button",{name:/Fixture architecture$/})).toBeVisible();
-  await expect(panel.getByRole("button",{name:/Why fixtures stay deterministic$/})).toHaveCount(0);
-  // Opening a folder never replaces the overview or the active editor.
-  await expect(overview).toBeVisible();
-  if(width===375) await page.locator(".wiki-workspace-folders-toggle").click();
-  await expect(overview.getByRole("table")).toHaveCount(0);
-  await expect(overview.locator(".wiki-page-link, .asset-card")).toHaveCount(0);
-  await expect(overview.getByTestId("asset-lens-cards")).toHaveCount(0);
-  await openDirectory();
-  await panel.getByRole("button",{name:/Fixture architecture$/}).click();
+  await page.goto("/");const list=await showWikiFolders(page);await expect(page.locator(".wiki-workspace")).toBeVisible();
+  // Folders are cards on the Docs list; a card opens that folder's own pages.
+  await list.getByRole("button",{name:"Work",exact:true}).click();
+  await expect(list.getByRole("heading",{level:1,name:"Work",exact:true})).toBeVisible();
+  await expect(list.getByRole("button",{name:"Research",exact:true})).toBeVisible();
+  await expect(list.getByRole("button",{name:/Fixture architecture$/})).toBeVisible();
+  await expect(list.getByRole("button",{name:/Why fixtures stay deterministic$/})).toHaveCount(0);
+  await expect(list.getByRole("table")).toHaveCount(0);
+  await expect(list.locator(".wiki-page-link, .asset-card")).toHaveCount(0);
+  await expect(page.getByTestId("asset-lens-cards")).toHaveCount(0);
+  await list.getByRole("button",{name:/Fixture architecture$/}).click();
   const editor=page.locator(".cm-content[contenteditable=true]");
   await expect(editor).toContainText("Fixture architecture");
-  await editor.evaluate(el=>el.setAttribute("data-session-proof","same"));
-  await openDirectory(); await panel.getByRole("button",{name:"Work",exact:true}).click();
-  await expect(panel.getByRole("button",{name:/Fixture architecture$/})).toHaveCount(0);
-  await expect(editor).toHaveAttribute("data-session-proof","same");
-  await panel.getByRole("button",{name:"Work",exact:true}).click();
-  await expect(panel.getByRole("button",{name:/Fixture architecture$/})).toHaveAttribute("aria-current","page");
+  // The open page lights its section on the left; the left side lists no pages.
+  await expect(page.locator(".notes-rail-nav .notes-inventory-page")).toHaveCount(0);
   await page.locator(".workspace-history-navigation").getByRole("button",{name:copy.back,exact:true}).click();
-  await expect(overview).toBeVisible();
-  await openDirectory(); await panel.getByRole("button",{name:"Empty",exact:true}).click();
-  const emptyRow=panel.getByRole("button",{name:"Empty",exact:true}).locator("..");
-  await emptyRow.hover();
-  await emptyRow.locator(".notes-inventory-folder-action").click();
-  await expect(panel.getByRole("textbox",{name:copy.folderName,exact:true})).toBeFocused();
-  await panel.getByRole("textbox",{name:copy.folderName,exact:true}).fill("New child");
-  await panel.getByRole("button",{name:copy.create,exact:true}).click();
-  await expect(panel.getByRole("button",{name:"New child",exact:true})).toBeVisible();
+  // Back returns to the folder the page was opened from.
+  await expect(list.getByRole("heading",{level:1,name:"Work",exact:true})).toBeVisible();
+  await expect(list.getByRole("button",{name:/Fixture architecture$/})).toBeVisible();
+  await list.locator(".section-list-back").click();
+  await list.getByRole("button",{name:"Empty",exact:true}).click();
+  await expect(list.getByText(copy.empty,{exact:true})).toBeVisible();
+  await list.getByRole("button",{name:copy.new,exact:true}).click();
+  await page.getByRole("menuitem",{name:copy.newFolder,exact:true}).click();
+  await expect(list.getByRole("textbox",{name:copy.folderName,exact:true})).toBeFocused();
+  await list.getByRole("textbox",{name:copy.folderName,exact:true}).fill("New child");
+  await list.getByRole("button",{name:copy.create,exact:true}).click();
+  await expect(list.getByRole("button",{name:"New child",exact:true})).toBeVisible();
   expect(runtime.calls().filter(call=>call.command==="knowledge_folder_create")).toMatchObject([{args:{parentPath:"Empty",name:"New child"}}]);
-  await expect(overview).toBeVisible();
   expect(errors.pageErrors).toEqual([]);expect(errors.consoleErrors).toEqual([]);
   expect(await page.locator("body").evaluate(el=>el.scrollWidth<=window.innerWidth)).toBe(true);
  });
@@ -55,9 +49,7 @@ test("an existing folder-and-Space draft survives reload, then auto-finalizes an
  const errors=collectBrowserErrors(page);
  const runtime=await installTauriMock(page,{locale:"en",rawActions:[],fixture:createReviewDecisionFixture("wiki-folders")});
  await page.goto("/");await showWikiFolders(page);await expect(page.locator(".wiki-workspace")).toBeVisible();
- const sidebar=page.locator(".wiki-workspace-directory .notes-list-panel");
- const openDirectory=async()=>{await expect(sidebar).toBeAttached();if(!(await sidebar.isVisible()))await page.locator(".wiki-workspace-folders-toggle").click();await expect(sidebar).toBeVisible();};
- await openDirectory();await sidebar.getByRole("button",{name:"Work",exact:true}).click();
+ const sidebar=sectionList(page,"docs");
  // Seed a previously saved draft with both scopes. The current New-note form
  // inherits Space only from Space-origin creation and no longer edits Space.
  const draftId="page_10000000-0000-4000-8000-000000000001";
@@ -67,7 +59,7 @@ test("an existing folder-and-Space draft survives reload, then auto-finalizes an
   return internals.invoke("create_page_draft",{clientDraftId:id,folderPath:"Work",title:"Folder draft",content:"Initial saved draft content.",space:"Research"});
  },draftId);
  expect(seeded).toMatchObject({id:draftId,status:"draft",folder_path:"Work",space:"Research"});
- await page.reload();await showWikiFolders(page);await openDirectory();await sidebar.getByRole("button",{name:"Work",exact:true}).click();
+ await page.reload();await openDocsFolder(page,"Work");
  await sidebar.getByRole("button",{name:"Open Folder draft",exact:true}).click();
  await expect(page.getByRole("textbox",{name:"Title",exact:true})).toHaveValue("Folder draft");
  await expectEditorSource(page.getByRole("textbox",{name:"Content",exact:true}),"Initial saved draft content.");
@@ -75,10 +67,11 @@ test("an existing folder-and-Space draft survives reload, then auto-finalizes an
  await page.getByRole("textbox",{name:"Content",exact:true}).fill("Updated content survives reload and move.");
  await expect.poll(()=>runtime.calls().filter(call=>call.command==="update_page_draft").length).toBe(1);
  await expect.poll(async()=>page.evaluate(async id=>window.__TAURI_INTERNALS__!.invoke("get_page",{id}),draftId)).toMatchObject({id:draftId,status:"draft",version:2,title:"Folder draft after reload",content:"Updated content survives reload and move.",folder_path:"Work",space:"Research"});
- await page.reload();await showWikiFolders(page);await openDirectory();await sidebar.getByRole("button",{name:"Work",exact:true}).click();
+ await page.reload();await openDocsFolder(page,"Work");
  await sidebar.getByRole("button",{name:"Open Folder draft after reload",exact:true}).click();
  await expect(page.getByRole("textbox",{name:"Title",exact:true})).toHaveValue("Folder draft after reload");
  await expectEditorSource(page.getByRole("textbox",{name:"Content",exact:true}),"Updated content survives reload and move.");
+ await openDocsFolder(page,"Work");
  await sidebar.getByRole("button",{name:"Open Fixture architecture",exact:true}).click();
  await expect(page.getByRole("tab",{name:"Fixture architecture",exact:true})).toHaveAttribute("aria-selected","true");
  await page.getByRole("tab",{name:"Folder draft after reload",exact:true}).click();
@@ -95,17 +88,20 @@ test("an existing folder-and-Space draft survives reload, then auto-finalizes an
  await expect(dialog.getByRole("alert")).toBeVisible();
  await dialog.getByRole("button",{name:"Move",exact:true}).click();
  await expect(dialog).toBeHidden();
- await openDirectory();await expect(sidebar.getByRole("button",{name:"Open Folder draft after reload",exact:true})).toHaveAttribute("aria-current","page");
  await expect(page.locator(".cm-content[contenteditable=true]")).toContainText("Updated content survives reload and move.");
+ await expect(page.locator(".page-detail")).toBeVisible();
  const moves=runtime.calls().filter(call=>call.command==="page_move");
  expect(moves).toHaveLength(2);
  expect(moves[0].args).toMatchObject({id:draftId,folderPath:"Reading"});
  expect(moves[1].args).toEqual(moves[0].args);
  const saved=await page.evaluate(async id=>window.__TAURI_INTERNALS__!.invoke("get_page",{id}),draftId);
  expect(saved).toMatchObject({id:draftId,status:"active",space:"Research",content:"Updated content survives reload and move.",storage_path:`Reading/${draftId}.md`});
- await sidebar.getByRole("button",{name:"Reading",exact:true}).click();
+ // The moved page is listed in its new folder and no longer in the old one.
+ await openDocsFolder(page,"Reading");
+ await expect(sidebar.getByRole("button",{name:"Open Folder draft after reload",exact:true})).toBeVisible();
+ await openDocsFolder(page,"Work");
+ await expect(sidebar.getByRole("button",{name:"Open Fixture architecture",exact:true})).toBeVisible();
  await expect(sidebar.getByRole("button",{name:"Open Folder draft after reload",exact:true})).toHaveCount(0);
- await expect(page.locator(".page-detail")).toBeVisible();
  expect(errors.pageErrors).toEqual([]);expect(errors.consoleErrors).toEqual([]);
 });
 
@@ -113,16 +109,9 @@ test("old daemon keeps every page available and disables unsupported folder oper
   const errors = collectBrowserErrors(page);
   await installTauriMock(page, { locale: "en", rawActions: [], fixture: createReviewDecisionFixture("wiki-folders"), failures: [{command:"knowledge_folders_list",message:"Unknown command",times:100}] });
   await page.goto("/");await showWikiFolders(page);await expect(page.locator(".wiki-workspace")).toBeVisible();
-  const sidebar = page.locator(".wiki-workspace-directory .notes-list-panel");
-  if (!(await sidebar.isVisible())) await page.locator(".wiki-workspace-folders-toggle").click();
+  const sidebar = sectionList(page, "docs");
   await expect(sidebar.getByText("Folder browsing is unavailable. All pages are still accessible.")).toBeVisible();
-  // Right-click the notice, not a corner of the list: a note row now has its own menu.
-  // The list scrolls in the sidebar, and a scroll closes the menu: bring the
-  // notice into view and let that scroll land before the right-click.
-  const notice = sidebar.getByText("Folder browsing is unavailable. All pages are still accessible.");
-  await notice.scrollIntoViewIfNeeded();
-  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  await notice.click({button:"right"});
+  await sidebar.getByRole("button",{name:"New",exact:true}).click();
   await expect(page.getByRole("menuitem",{name:/^New folder/})).toBeDisabled();
   await page.keyboard.press("Escape");
   await expect(sidebar.getByRole("button",{name:"Work",exact:true})).toHaveCount(0);
@@ -141,9 +130,7 @@ test("old daemon keeps every page available and disables unsupported folder oper
 test("actual file-save failure survives Main navigation and safely replays the same publish", async ({ page }) => {
   const runtime = await installTauriMock(page, { locale: "en", rawActions: [], fixture: createReviewDecisionFixture("wiki-folders"), pageScenario:{projectionPendingOnce:true} });
   await page.goto("/");await showWikiFolders(page);await expect(page.locator(".wiki-workspace")).toBeVisible();
-  const sidebar=page.locator(".wiki-workspace-directory .notes-list-panel");
-  if (!(await sidebar.isVisible())) await page.locator(".wiki-workspace-folders-toggle").click();
-  await sidebar.getByRole("button",{name:"Work",exact:true}).click();
+  const sidebar=await openDocsFolder(page,"Work");
   await sidebar.getByRole("button",{name:"Open Fixture architecture",exact:true}).click();
   await expect(page.getByRole("tab",{name:"Fixture architecture",exact:true})).toHaveAttribute("aria-selected","true");
   await page.locator(".note-tab-create").click();
@@ -177,17 +164,19 @@ test("actual file-save failure survives Main navigation and safely replays the s
  },args.id)).toMatchObject({id:args.id,version:args.expectedVersion+1,storage_path:`Work/${args.id}.md`});
 });
 
-test("folder expansion keeps the reading pane and empty folders have no false disclosure", async ({ page }) => {
+test("a folder card opens its own pages and an empty folder says so", async ({ page }) => {
   await page.setViewportSize({width:1280,height:900});
   await installTauriMock(page,{locale:"en",rawActions:[],fixture:createReviewDecisionFixture("wiki-folders")});
-  await page.goto("/");await showWikiFolders(page);const directory=page.locator(".wiki-workspace-directory");
-  const expand=directory.getByRole("button",{name:"Expand Work",exact:true});await expand.focus();await expand.press("Enter");
+  await page.goto("/");const directory=await showWikiFolders(page);
+  const work=directory.getByRole("button",{name:"Work",exact:true});await work.focus();await work.press("Enter");
   await expect(directory.getByRole("button",{name:/Fixture architecture$/})).toBeVisible();
   await directory.getByRole("button",{name:"Research",exact:true}).click();
   await expect(directory.getByRole("button",{name:/Why fixtures stay deterministic$/})).toBeVisible();
-  await expect(directory.getByRole("button",{name:"Expand Empty",exact:true})).toHaveCount(0);
-  await expect(page.locator(".wiki-overview")).toBeVisible();
+  // Nothing in the list expands or collapses (UX-FIND-4).
+  await expect(directory.locator("[aria-expanded]:not([aria-haspopup])")).toHaveCount(0);
   await directory.getByRole("button",{name:/Why fixtures stay deterministic$/}).click();
   await expect(page.getByRole("tab",{name:"Why fixtures stay deterministic",exact:true})).toHaveAttribute("aria-selected","true");
   await expect(page.locator(".cm-content")).toContainText("Decision: keep review fixtures deterministic.");
+  await openDocsFolder(page,"Empty");
+  await expect(directory.getByText("This folder has no pages yet.",{exact:true})).toBeVisible();
 });

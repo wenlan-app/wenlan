@@ -105,9 +105,9 @@ for (const cfg of [
     await page.getByRole("button", { name: t.pageInspector.info, exact: true }).click();
     await expect(pane).toBeVisible();
     // Labels fold to icons while the rail, Info and a 600px note do not fit.
-    // With labels, the list is part of the rail, not a column beside the note.
+    // No list of pages sits in the rail or beside the note (UX-FIND-4).
     const folds = cfg.mode === "labels" && cfg.width < 240 + 320 + 600;
-    if (cfg.mode === "labels") await expect(page.locator(".notes-workspace-sidebar .wiki-sidebar-directory")).toBeVisible();
+    await expect(page.locator(".notes-workspace-sidebar .wiki-sidebar-directory")).toHaveCount(0);
     await expect(shell).toHaveAttribute("data-sidebar-layout", folds ? "icons" : cfg.mode);
     await expect(page.locator(".memory-shell[data-sidebar-auto-transition]")).toHaveCount(0);
     expect((await pane.boundingBox())!.width).toBe(320);
