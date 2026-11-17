@@ -38,7 +38,7 @@
 
 ## Why Wenlan
 
-Every AI tool starts from zero and wants its own rules file. Wenlan gives them all one shared set.
+Each AI tool keeps its own memory and rules. Wenlan gives every tool, agent and teammate what you settled.
 
 - **Docs with sources.** Wenlan checks that each cited source supports its sentence before saving.
 - **One copy of skills and rules.** It runs in every AI tool and platform you connect.

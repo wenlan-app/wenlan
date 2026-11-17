@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=1ace43fade7c8813820d77e970fe484c829fa589d553e74e5b76feaf64f14a12 -->
+<!-- README_SYNC: source=README.md sha256=753ad2d02ad37a68543c811bde11e52dc8346d00f064777d4ad92e1f3bd511e0 -->
 
 <p align="center">
   <picture>
@@ -40,7 +40,7 @@
 
 ## Por qué Wenlan
 
-Cada herramienta de IA empieza de cero y quiere su propio archivo de reglas. Wenlan les da uno común.
+Cada IA guarda su memoria y sus reglas. Wenlan lleva lo que decides a cada herramienta, agente y equipo.
 
 - **Documentos con fuentes.** Wenlan comprueba que cada fuente citada respalda su frase.
 - **Una sola copia de skills y reglas.** Funciona en cada herramienta y plataforma de IA que conectas.
