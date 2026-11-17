@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=ef622a4150db54f13cf5792522cf1e873b26bf4b7bcd50bf53cb4894f02efee1 -->
+<!-- README_SYNC: source=README.md sha256=70e1be4704f8317497c69ab070f5a416465c05c3228bd1c07e8e4f5bd035acdc -->
 
 <p align="center">
   <picture>
@@ -101,9 +101,9 @@ Más comparaciones, con Obsidian, Notion AI y herramientas de memoria: [wenlan.a
 
 4. Dile a una herramienta de IA algo que guardar. Luego pregunta en otra:
 
-   > Recuerda: publicamos los martes, cuando pasan las pruebas.
+   > Guarda en Wenlan: publicamos los martes, cuando pasan las pruebas.
 
-   > ¿Cuándo publicamos?
+   > Pregunta a Wenlan: ¿cuándo publicamos?
 
 5. Lee y edita tus páginas en el navegador: `wenlan open`.
 
@@ -187,7 +187,7 @@ Tu IA convierte lo que traes en páginas Markdown enlazadas y con citas, y las m
 - **Al día:** Si cambia una fuente, una memoria o el código citado, se marcan las páginas afectadas.
 - **Tú decides qué cambia la IA:** **Allowed** o **Ask me first** por página, y restauras cualquier versión.
 - **Dos formas:** tu IA mientras trabaja (por defecto) o un modelo en segundo plano. [Guía de Steep](docs/steep.md).
-- **En tu herramienta de IA:** pídelo con tus palabras. El plugin añade atajos `/wenlan`. [Comandos](plugin/skills/README.md).
+- **En tu herramienta de IA:** nombra Wenlan y pide. El plugin añade `/wenlan`. [Comandos](plugin/skills/README.md).
 - **En la app:** añade material, edita páginas, sigue las citas y revisa cambios sin conectar ninguna IA.
 
 ¿Ya usas Claude Code con una carpeta de notas? Sigue. Wenlan añade comprobación de citas.
@@ -206,7 +206,7 @@ cd your-repo
 wenlan init
 ```
 
-Conecta tus herramientas de IA y pregunta por la pull request diaria. Luego pide los documentos.
+Conecta tus herramientas de IA y pregunta por la pull request diaria. El plugin los escribe ya.
 
 - **Ligada al código:** Cada frase clave apunta a las líneas de código de las que salió. Si cambian, lo ves.
 - **Como pull request:** Las páginas entran en el repositorio como pull request, al pulsar el botón o a diario.

@@ -99,9 +99,9 @@ More comparisons, with Obsidian, Notion AI, and memory tools: [wenlan.app/learn]
 
 4. Tell one AI tool something to keep. Then ask in another:
 
-   > Remember: we release on Tuesdays, after the tests pass.
+   > Save to Wenlan: we release on Tuesdays, after the tests pass.
 
-   > When do we release?
+   > Ask Wenlan: when do we release?
 
 5. Read and edit your pages in your browser: `wenlan open`.
 
@@ -174,7 +174,7 @@ Your AI tool turns what you bring in into linked, cited Markdown pages and keeps
 - **Kept current:** When a source, memory, or cited code changes, pages relying on it are flagged.
 - **You decide what AI may change:** Set a page to **Allowed** or **Ask me first**, and restore any earlier version.
 - **Two ways to run it:** your AI tool as it works (default), or a background model you pick. [Steep guide](docs/steep.md).
-- **In your AI tool:** ask in plain words. The plugin adds `/wenlan` shortcuts. [All commands](plugin/skills/README.md).
+- **In your AI tool:** name Wenlan and ask in plain words. The plugin adds `/wenlan`. [Commands](plugin/skills/README.md).
 - **In the app:** add material, edit pages, follow citations, and review changes without connecting an AI.
 
 Already run Claude Code on a notes folder? Keep it. Wenlan adds citation checks and per-page control.
@@ -193,7 +193,7 @@ cd your-repo
 wenlan init
 ```
 
-It connects your AI tools and asks once about a daily pull request. Then ask one to write the docs.
+It connects your AI tools and asks once about a daily pull request. The plugin writes the docs right away.
 
 - **Tied to the code:** Each key sentence points to the code lines behind it. You see when they change.
 - **As a pull request:** Pages go into the repository as a pull request, when you press the button or daily.
