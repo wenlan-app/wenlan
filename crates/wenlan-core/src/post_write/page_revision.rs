@@ -382,6 +382,7 @@ pub(super) async fn accept_page_revision_card_with_edit(
             if edit.is_none() && reason.starts_with(wenlan_types::PAGE_REVISION_BASIS_REFUSED) =>
         {
             db.delete_by_source_id("memory", &card.revision_id).await?;
+            saved_rule_card_gone(db, &card.revision_id).await;
             return Err(WenlanError::Conflict(format!(
                 "{reason}. Revision card {} for page {} was discarded and the page is \
                  unchanged. Re-read the page and propose the change again.",
@@ -453,7 +454,21 @@ pub(super) async fn accept_page_revision_card_with_edit(
         }
         msg.push_str("); the card was discarded. Re-read the page and propose the change again.");
         db.delete_by_source_id("memory", &card.revision_id).await?;
+        saved_rule_card_gone(db, &card.revision_id).await;
         return Err(WenlanError::Conflict(msg));
+    }
+
+    // A rule the person asked to be saved, which waited as this very card
+    // because its page was locked, counts from this version on
+    // (UX-SKILL-14). No other card's accept does that.
+    if let Err(error) = db
+        .saved_rule_card_accepted(&card.revision_id, new_version)
+        .await
+    {
+        log::warn!(
+            "[accept_page_revision_card] saved rule of card {} not settled: {error}",
+            card.revision_id
+        );
     }
 
     if let Some(ref projection) = projection {
@@ -473,6 +488,14 @@ pub(super) async fn accept_page_revision_card_with_edit(
         revision_source_id: card.revision_id,
         wrote: true,
     })
+}
+
+/// A page card is gone without being accepted: a rule that waited as it
+/// (UX-SKILL-14) no longer waits, so nothing later can bring it in.
+pub(crate) async fn saved_rule_card_gone(db: &MemoryDB, card_id: &str) {
+    if let Err(error) = db.saved_rule_card_gone(card_id).await {
+        log::warn!("[page_revision_card] saved rule of card {card_id} not dropped: {error}");
+    }
 }
 
 /// Accept a pending memory revision. Canonical entry for both agent-triggered
@@ -576,6 +599,7 @@ pub async fn dismiss_pending_revision(
     refuse_replaced_card(db, id).await?;
     if let Some(card) = resolve_page_revision_card(db, id).await? {
         db.delete_by_source_id("memory", &card.revision_id).await?;
+        saved_rule_card_gone(db, &card.revision_id).await;
         log_activity_best_effort(db, agent, "revision_dismiss", &card.page_id).await;
         return Ok(wenlan_types::RevisionDismissResponse {
             target_source_id: card.page_id,

@@ -675,7 +675,12 @@ and wait for evidence that people need them.
   part (from Wenlan's own note, not the file's date); a tool is shown as
   covered by another file only while that file holds the part. It
   says what is in the file, not that the AI followed it.
-  原文：「為啥要外掛？直接把我們的規則同步過去工具，工具就會讀啊？」（2026-11-15 23:28Z）；「要有信心，馬上就要做了」（2026-11-17 05:01Z）。
+  A rule is written into these files, and into the files of UX-SKILL-6, as
+  words to read and nothing else: a word starting with `@` is written with
+  `&#64;`, the marks of an HTML comment with `&lt;!--` and `--&gt;`, and
+  characters that do not show are left out, so no rule, the person's own
+  included, makes a tool load another file or hides text from the person.
+  原文：「為啥要外掛？直接把我們的規則同步過去工具，工具就會讀啊？」（2026-11-15 23:28Z）；「要有信心，馬上就要做了」（2026-11-17 05:01Z）。寫入工具檔案的補充（2026-11-17，審查發現）：規則只當文字寫入，`@` 與 HTML 註解改寫、看不見的字元拿掉；英文字句待 Qi-Xuan 確認。
 - **UX-SKILL-9** `shipped` In a Space shared with teammates, each person's
   "How I work" page stays on their own computer and is not sent to the
   others. A page a teammate wrote can still give that Space a rule, but never
@@ -697,13 +702,16 @@ and wait for evidence that people need them.
   page; a Space's own are listed before the lines Wenlan took from its pages.
   A rule the person asked to be saved (UX-SKILL-14) counts at once too, but
   it is never listed as "written by you": it says where it was saved from.
+  Wenlan moving or renaming a page, or rewriting a link because the page it
+  points at was renamed, is not the person writing: it keeps a bullet whose
+  it already was and never makes an AI tool's bullet the person's.
   The files of UX-SKILL-6 and UX-SKILL-8 follow when the page is saved; the
   repository's `AGENTS.md` (UX-SKILL-7) gets them at the next wiki pull
   request. A page in a Space, or in a Space's folder, gives rules for that
   Space only; a page in no Space and outside every Space's folder gives rules
   used in every Space. The setting and a No do not silence them;
   `#not-for-ai-tools` on the page does.
-  原文：決定 4：「A rule the person writes themselves counts at once. AI tools get it and `wenlan rules` prints it, with no model needed. Rules the AI derives from pages still need the person's accept.」Qi-Xuan 以輸入「A」回答此題（2026-11-16 22:30Z；題目與決定記錄於 `/mnt/project-files/readme-2026-11/cover-v3/2026-11-16-app-changes-from-cover.md`，決定 4）。存成規則的補充（2026-11-17）：見 UX-SKILL-14；這句補充的英文字句待 Qi-Xuan 確認。
+  原文：決定 4：「A rule the person writes themselves counts at once. AI tools get it and `wenlan rules` prints it, with no model needed. Rules the AI derives from pages still need the person's accept.」Qi-Xuan 以輸入「A」回答此題（2026-11-16 22:30Z；題目與決定記錄於 `/mnt/project-files/readme-2026-11/cover-v3/2026-11-16-app-changes-from-cover.md`，決定 4）。存成規則的補充（2026-11-17）：見 UX-SKILL-14；這句補充的英文字句待 Qi-Xuan 確認。連結改名的補充（2026-11-17，審查發現）：Wenlan 自己改連結不算人寫的；英文字句待 Qi-Xuan 確認。
 - **UX-SKILL-11** `shipped` A rules page shows two things. Under each rule,
   where it came from: a link "from" the page it was taken from, or "written
   by you" for a rule the person wrote themselves (UX-SKILL-10). Who wrote a
@@ -766,22 +774,34 @@ and wait for evidence that people need them.
   then on: `wenlan rules`, `read_space_rules`, and the files of UX-SKILL-6
   and UX-SKILL-8 all follow. Wenlan cannot know who spoke, so every place
   that lists the rule says where it was saved from ("saved from Codex",
-  "saved from the terminal") and never "written by you". One save is one
-  rule of one line, at most 300 characters, and carries the person's own
-  words, which the page's history keeps. It is for the Space the tool or the
+  "saved from the terminal") and never "written by you". The tool's name is
+  what the tool reported about itself, and "the terminal" means only that
+  the `wenlan` command was run with no tool name: Wenlan cannot tell who ran
+  it. A tool that calls itself the terminal, you or Wenlan is listed as an
+  AI tool with that name in quotes. One save is one rule of one line, at
+  most 300 characters, and carries the person's own words, which the page's
+  history keeps. The rule is a plain sentence: Wenlan refuses one that an AI
+  tool's own file would act on instead of read (a word starting with `@`, an
+  HTML tag or comment, backticks, a Markdown link, characters that do not
+  show or that reorder the text). It is for the Space the tool or the
   terminal is working in; for every Space only when asked in so many words
   (`every_space`, `--every-space`), and with no Space and no such ask it is
-  refused. One tool saves at most ten rules a day. Taking a saved rule out is
-  one step, `wenlan rules remove <id>` or `remove_rule` with the person's
-  words, and the files follow. Only a save counts this way: a line an AI tool
-  adds to that page by an ordinary edit gives no rule, and rules Wenlan takes
-  from pages still need the person's accept (UX-SKILL-1). The setting and a
-  No do not silence a saved rule; `#not-for-ai-tools` on the page does, and
-  on a locked page the save waits as a card the person accepts. A teammate's
-  connection cannot save or remove a rule, the page is not sent to the
-  others in a team Space, and Wenlan refuses a save or a removal while it
-  listens beyond this computer.
-  原文：選擇卡（2026-11-17 08:29Z）：人在 AI 工具或用 `wenlan` 明確說「存成規則」時立即算數；規則清單顯示是從哪個工具存的；一步就能移除；AI 自己整理出來的規則仍要人點頭。細節（每次一條、最多 300 字、每個工具每天十條、沒有 Space 也沒說每個 Space 就拒絕、AI 工具也能用 `remove_rule`、團隊成員暫不開放）待 Qi-Xuan 確認。
+  refused. A tool or terminal limited to one Space (`WENLAN_SPACE`) saves and
+  removes only there. One tool saves at most ten rules a day, however it
+  spells its name, and all of them together at most thirty. Taking a saved
+  rule out is one step, `wenlan rules remove <id>` or `remove_rule` with the
+  person's words, and the files follow; an AI tool removes only the rules
+  saved under its own name, the terminal any saved rule. Only a save counts
+  this way: a line an AI tool adds to that page by an ordinary edit gives no
+  rule, a saved line that anyone but the person later changes, a comma
+  included, stops being a rule, and rules Wenlan takes from pages still need
+  the person's accept (UX-SKILL-1). The setting and a No do not silence a
+  saved rule; `#not-for-ai-tools` on the page does. On a locked page the
+  save waits as a card: only accepting that very card makes it count, and
+  dismissing it drops the save. A teammate's connection cannot save or
+  remove a rule, the page is not sent to the others in a team Space, and
+  Wenlan refuses a save or a removal while it listens beyond this computer.
+  原文：選擇卡（2026-11-17 08:29Z）：人在 AI 工具或用 `wenlan` 明確說「存成規則」時立即算數；規則清單顯示是從哪個工具存的；一步就能移除；AI 自己整理出來的規則仍要人點頭。細節待 Qi-Xuan 確認：每次一條、最多 300 字、純文字句子；每個工具每天十條、全部合計三十條；沒有 Space 也沒說每個 Space 就拒絕；鎖定在一個 Space 的連線只能存在那個 Space；工具名稱是工具自己報的，「終端機」只代表指令沒帶工具名稱；AI 工具只能用 `remove_rule` 移除自己存的；鎖定頁面上的卡片被拒絕就不算；團隊成員暫不開放。
 
 ## From the terminal
 

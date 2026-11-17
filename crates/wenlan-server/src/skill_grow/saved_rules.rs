@@ -10,12 +10,13 @@
 //! day; removal in one step. The rules live on an ordinary page per scope,
 //! "Rules I saved", whose id the skills ledger keeps.
 
-use chrono::TimeZone;
+use wenlan_core::db::revision_cards::PageCardState;
 use wenlan_core::db::skill_grow::{SavedRule, SavedRulesPage};
 use wenlan_core::post_write::{PageWrite, WriteOutcome};
+use wenlan_core::saved_rules::{self as decide, SaveScope, Saver};
 use wenlan_types::{
     RemoveRuleRequest, RemoveRuleResponse, SaveRuleRequest, SaveRuleResponse, SavedRuleStatus,
-    SkillLineKind, SAVED_FROM_TERMINAL, SAVED_RULES_PER_TOOL_PER_DAY,
+    SkillLineKind,
 };
 
 use super::*;
@@ -32,25 +33,23 @@ fn refused(detail: impl std::fmt::Display) -> String {
     format!("{REFUSED}: {detail}")
 }
 
+fn refused_with(status: axum::http::StatusCode, detail: impl std::fmt::Display) -> ServerError {
+    ServerError::Structured {
+        status,
+        body: serde_json::json!({ "error": refused(detail) }),
+    }
+}
+
 pub(super) const TEAM_MEMBERS_CANNOT_SAVE_RULES: &str =
     "a rule saved this way goes to the AI tools of the person at this computer, so a team \
      member cannot save or remove one";
 pub(super) const RULES_NEED_THIS_COMPUTER: &str =
     "a rule can be saved or removed only while Wenlan listens on this computer alone";
-pub(super) const RULE_NEEDS_A_SPACE: &str =
-    "say which Space this rule is for, or ask for every Space (every_space, \
-     `--every-space`); nothing was saved";
+#[cfg(test)]
+pub(super) const RULE_NEEDS_A_SPACE: &str = decide::RULE_NEEDS_A_SPACE;
 
-/// Where a save came from.
-struct Saver {
-    /// What the day's count is kept by: the caller's own name for itself.
-    id: String,
-    /// What rules lists show after "saved from".
-    label: String,
-}
-
-/// A caller that names an AI tool is that tool. One that names none is a
-/// command someone ran here: the terminal.
+/// Who a request is recorded as coming from (`wenlan_core::saved_rules`
+/// decides; this looks up the name Wenlan lists the tool under).
 async fn saver(db: &MemoryDB, headers: &HeaderMap) -> Result<Saver, ServerError> {
     let named = headers
         .get("x-agent-name")
@@ -58,39 +57,33 @@ async fn saver(db: &MemoryDB, headers: &HeaderMap) -> Result<Saver, ServerError>
         .map(str::trim)
         .filter(|name| !name.is_empty());
     let Some(name) = named else {
-        return Ok(Saver {
-            id: SAVED_FROM_TERMINAL.to_string(),
-            label: SAVED_FROM_TERMINAL.to_string(),
-        });
+        return Ok(decide::saver(None, None));
     };
+    let id = decide::tool_id(name);
     let display = db
         .list_agents()
         .await?
         .into_iter()
-        .find(|agent| agent.name.eq_ignore_ascii_case(name))
+        .find(|agent| decide::tool_id(&agent.name) == id)
         .and_then(|agent| agent.display_name)
-        .or_else(|| wenlan_core::db::known_client_display_name(name).map(str::to_string))
-        .unwrap_or_else(|| name.to_string());
-    // The name goes into files every AI tool reads: letters, digits and a
-    // few marks only, and short.
-    let mut label: String = display
-        .chars()
-        .filter(|c| c.is_alphanumeric() || matches!(c, ' ' | '-' | '_' | '.' | '/'))
-        .take(40)
-        .collect::<String>()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
-    if label.is_empty() {
-        label = "an AI tool".to_string();
-    }
-    if label.eq_ignore_ascii_case(SAVED_FROM_TERMINAL) {
-        label = format!("{label} (AI tool)");
-    }
-    Ok(Saver {
-        id: name.to_string(),
-        label,
-    })
+        .or_else(|| wenlan_core::db::known_client_display_name(&id).map(str::to_string));
+    Ok(decide::saver(Some(name), display.as_deref()))
+}
+
+/// The Space this connection is limited to: the Space header.
+fn locked_space(headers: &HeaderMap) -> Result<Option<String>, ServerError> {
+    Ok(headers
+        .get(crate::space_header::HEADER_NAME)
+        .or_else(|| headers.get(crate::space_header::HEADER_NAME_LEGACY))
+        .map(|value| {
+            value
+                .to_str()
+                .map(str::trim)
+                .map(str::to_string)
+                .map_err(|_| ServerError::BadRequest("invalid Space header".into()))
+        })
+        .transpose()?
+        .filter(|value| !value.is_empty()))
 }
 
 fn refuse_who_cannot(
@@ -127,12 +120,38 @@ fn local_only_now() -> bool {
     )
 }
 
-fn same_local_day(left: i64, right: i64) -> bool {
-    chrono::Local
-        .timestamp_opt(left, 0)
-        .single()
-        .zip(chrono::Local.timestamp_opt(right, 0).single())
-        .is_some_and(|(left, right)| left.date_naive() == right.date_naive())
+/// Drop the saves of `entry` that still wait though their card is no longer
+/// open (the accept, the dismissal and the replacement of a card settle its
+/// save themselves; this is for a card that went another way). Returns the
+/// entry as it stands, and whether a save still waits on an open card.
+async fn settle_waiting(
+    db: &MemoryDB,
+    entry: SavedRulesPage,
+) -> Result<(SavedRulesPage, bool), ServerError> {
+    let mut gone = Vec::new();
+    let mut waits = false;
+    for save in entry.saves.iter().filter(|save| save.version.is_none()) {
+        let open = match save.card.as_deref() {
+            Some(card) => db.page_card_state(card).await? == PageCardState::Open,
+            None => false,
+        };
+        if open {
+            waits = true;
+        } else {
+            gone.push(save.id.clone());
+        }
+    }
+    if gone.is_empty() {
+        return Ok((entry, waits));
+    }
+    let (_, entry) = db
+        .edit_saved_rules_page(&entry.space_id, |entry| {
+            entry
+                .saves
+                .retain(|save| save.version.is_some() || !gone.contains(&save.id));
+        })
+        .await?;
+    Ok((entry, waits))
 }
 
 fn no_space(page: &wenlan_types::Page) -> bool {
@@ -270,42 +289,34 @@ pub(super) async fn save_rule_in(
     let person_asked = persons_words(&req.person_asked)?;
     let (db, page_root) = db_and_page_root(state).await?;
     let page_root = page_root.as_deref();
-    // Never general unless asked by name: no Space and no flag is refused.
-    let space = if req.every_space {
-        None
-    } else if no_space_named(headers, req.space.as_deref()) {
-        return Err(ServerError::ValidationError(refused(RULE_NEEDS_A_SPACE)));
-    } else {
-        Some(resolved_space(&db, headers, req.space.as_deref()).await?)
+    // Never general unless asked by name, and never over a connection
+    // limited to one Space.
+    let locked = locked_space(headers)?;
+    let scope = decide::save_scope(locked.as_deref(), req.space.as_deref(), req.every_space)
+        .map_err(|reason| ServerError::ValidationError(refused(reason)))?;
+    let space = match &scope {
+        SaveScope::EverySpace => None,
+        SaveScope::Space(name) => Some(resolved_space(&db, headers, Some(name)).await?),
     };
     let saver = saver(&db, headers).await?;
 
     let _serial = SKILLS_MUTATION_LOCK.lock().await;
     let ledger = db.saved_rules_pages().await?;
     let now = chrono::Utc::now().timestamp();
-    let today = ledger
-        .iter()
-        .flat_map(|page| page.saves.iter())
-        .filter(|save| save.tool_id == saver.id && same_local_day(save.at, now))
-        .count();
-    if today >= SAVED_RULES_PER_TOOL_PER_DAY {
-        return Err(ServerError::Structured {
-            status: axum::http::StatusCode::TOO_MANY_REQUESTS,
-            body: serde_json::json!({
-                "error": refused(format!(
-                    "{SAVED_RULES_PER_TOOL_PER_DAY} rules were already saved from here today, \
-                     which is the most for one day; nothing was saved. The person can write \
-                     more on a page in a folder named Rules, or save again tomorrow"
-                )),
-            }),
-        });
+    if let Some(reason) =
+        decide::day_limit_refusal(ledger.iter().flat_map(|page| &page.saves), &saver, now)
+    {
+        return Err(refused_with(
+            axum::http::StatusCode::TOO_MANY_REQUESTS,
+            reason,
+        ));
     }
 
     let space_id = space
         .as_ref()
         .map(|space| space.id.clone())
         .unwrap_or_default();
-    let mut entry = ledger
+    let entry = ledger
         .into_iter()
         .find(|page| page.space_id == space_id)
         .unwrap_or_else(|| SavedRulesPage {
@@ -313,42 +324,99 @@ pub(super) async fn save_rule_in(
             page_id: String::new(),
             saves: Vec::new(),
         });
+    let (entry, waits) = settle_waiting(&db, entry).await?;
+    if waits {
+        // A second card would replace the first, and its rule with it.
+        return Err(ServerError::Conflict(refused(
+            "a rule already waits as a card on the locked saved-rules page; nothing was saved. \
+             Once the person accepts or dismisses that card in the Wenlan app, save this one",
+        )));
+    }
     let page = match page_of(&db, &entry).await? {
         Some(page) => page,
-        None => {
-            let page = make_page(&db, page_root, space.as_ref()).await?;
-            entry.page_id.clone_from(&page.id);
-            page
+        None => make_page(&db, page_root, space.as_ref()).await?,
+    };
+    let content = match skill_grow::page_with_saved_rule(&page.content, kind, &text) {
+        Ok(content) => content,
+        Err(skill_grow::SavedRuleRefusal::NotARule(reason)) => {
+            return Err(ServerError::ValidationError(refused(reason)));
+        }
+        Err(skill_grow::SavedRuleRefusal::AlreadyOnPage) => {
+            let counts = lines_of(&db, page_root, &page, &entry)
+                .await?
+                .iter()
+                .any(|line| {
+                    skill_grow::rule_text_key(&line.text) == skill_grow::rule_text_key(&text)
+                });
+            return Err(ServerError::Conflict(refused(if counts {
+                "this is already a rule on the saved-rules page; nothing was saved"
+            } else {
+                // A line that never counted, or one changed after it was
+                // saved: it has to go before the same words can be saved.
+                "the saved-rules page already has this sentence as a line that is not a rule \
+                 (it was put there or changed by an edit, not by a save); nothing was saved. \
+                 Delete that line on the page, then save the rule again"
+            })));
+        }
+        Err(skill_grow::SavedRuleRefusal::PageCannotTakeIt) => {
+            return Err(ServerError::Conflict(refused(
+                "the saved-rules page cannot take a new rule as it stands (an open code block \
+                 at its end?); nothing was saved",
+            )));
         }
     };
-    let content =
-        skill_grow::page_with_saved_rule(&page.content, kind, &text).map_err(|refusal| {
-            match refusal {
-                skill_grow::SavedRuleRefusal::NotARule(reason) => {
-                    ServerError::ValidationError(refused(reason))
-                }
-                skill_grow::SavedRuleRefusal::AlreadyOnPage => ServerError::Conflict(refused(
-                    "the saved-rules page already has this sentence; nothing was saved",
-                )),
-                skill_grow::SavedRuleRefusal::PageCannotTakeIt => ServerError::Conflict(refused(
-                    "the saved-rules page cannot take a new rule as it stands (an open code \
-                     block at its end?); nothing was saved",
-                )),
-            }
-        })?;
 
     // The record comes first, so no reader ever sees the new version
     // without it. It names the version this write will make.
-    entry.saves.push(SavedRule {
+    let record = SavedRule {
+        id: uuid::Uuid::new_v4().simple().to_string(),
         text: text.clone(),
         tool: saver.label.clone(),
         tool_id: saver.id.clone(),
         person_asked: person_asked.clone(),
         at: now,
         version: Some(page.version + 1),
-    });
-    db.set_saved_rules_page(&entry).await?;
-    let landed = write_rule_change(&db, page_root, &page, content, &saver, &person_asked).await;
+        card: None,
+    };
+    let record_id = record.id.clone();
+    db.edit_saved_rules_page(&space_id, |entry| {
+        entry.page_id.clone_from(&page.id);
+        entry.saves.push(record);
+    })
+    .await?;
+    let landed = match write_rule_change(
+        &db,
+        page_root,
+        &page,
+        content.clone(),
+        &saver,
+        &person_asked,
+    )
+    .await
+    {
+        Ok(landed) => landed,
+        Err(error) => {
+            // The write may have landed and only its answer been lost. The
+            // record stays exactly when the page now holds this save as its
+            // next version, so no bullet is left on the page that can never
+            // count; otherwise the record goes and the page is as it was.
+            let now_page = db.get_page(&page.id).await.ok().flatten();
+            match now_page {
+                Some(written)
+                    if written.version == page.version + 1 && written.content == content =>
+                {
+                    Landed::Wrote(Box::new(written))
+                }
+                _ => {
+                    db.edit_saved_rules_page(&space_id, |entry| {
+                        entry.saves.retain(|save| save.id != record_id);
+                    })
+                    .await?;
+                    return Err(error);
+                }
+            }
+        }
+    };
     let space_name = space
         .as_ref()
         .map(|space| space.name.clone())
@@ -360,17 +428,26 @@ pub(super) async fn save_rule_in(
     };
     let from = wenlan_types::saved_from_label(&saver.label);
     match landed {
-        Err(error) => {
-            entry.saves.pop();
-            db.set_saved_rules_page(&entry).await?;
-            Err(error)
+        Landed::Card(None) => {
+            // Held back with no card to accept: nothing can bring it in.
+            db.edit_saved_rules_page(&space_id, |entry| {
+                entry.saves.retain(|save| save.id != record_id);
+            })
+            .await?;
+            Err(ServerError::Conflict(refused(
+                "the saved-rules page did not take the rule and no card was made for it; \
+                 nothing was saved",
+            )))
         }
-        Ok(Landed::Card(card)) => {
-            // The card's accept brings the rule in; the record waits for it.
-            if let Some(save) = entry.saves.last_mut() {
-                save.version = None;
-            }
-            db.set_saved_rules_page(&entry).await?;
+        Landed::Card(Some(card)) => {
+            // Only the accept of this very card brings the rule in.
+            db.edit_saved_rules_page(&space_id, |entry| {
+                for save in entry.saves.iter_mut().filter(|save| save.id == record_id) {
+                    save.version = None;
+                    save.card = Some(card.clone());
+                }
+            })
+            .await?;
             Ok(SaveRuleResponse {
                 status: SavedRuleStatus::Waiting,
                 rule_id: None,
@@ -378,20 +455,22 @@ pub(super) async fn save_rule_in(
                 page_id: page.id.clone(),
                 message: format!(
                     "Not saved yet: the page {:?} is locked, so the rule waits as a card. Once \
-                     the person accepts it in the Wenlan app and unlocks the page, it counts \
-                     for {whose}.",
+                     the person accepts that card in the Wenlan app and unlocks the page, it \
+                     counts for {whose}. If they dismiss it, it is dropped.",
                     page.title
                 ),
                 page_title: page.title,
                 saved_from: saver.label,
-                revision_card_id: card,
+                revision_card_id: Some(card),
             })
         }
-        Ok(Landed::Wrote(written)) => {
-            if let Some(save) = entry.saves.last_mut() {
-                save.version = Some(written.version);
-            }
-            db.set_saved_rules_page(&entry).await?;
+        Landed::Wrote(written) => {
+            db.edit_saved_rules_page(&space_id, |entry| {
+                for save in entry.saves.iter_mut().filter(|save| save.id == record_id) {
+                    save.version = Some(written.version);
+                }
+            })
+            .await?;
             sync_rules_files_locked(&db, page_root, &dirs).await;
             let rule_id = skill_grow::line_id(kind, &written.id, 0, &text);
             let silenced = skill_grow::page_is_not_for_ai_tools(&written.content);
@@ -438,28 +517,65 @@ pub(super) async fn remove_rule_in(
     let page_root = page_root.as_deref();
     let saver = saver(&db, headers).await?;
 
+    let locked = locked_space(headers)?;
+    let locked_id = match locked.as_deref() {
+        Some(name) => Some(resolved_space(&db, headers, Some(name)).await?.id),
+        None => None,
+    };
+
     let _serial = SKILLS_MUTATION_LOCK.lock().await;
     let mut found = None;
     for entry in db.saved_rules_pages().await? {
         let Some(page) = page_of(&db, &entry).await? else {
             continue;
         };
-        let saved = lines_of(&db, page_root, &page, &entry)
+        let line = lines_of(&db, page_root, &page, &entry)
             .await?
             .into_iter()
-            .any(|line| line.id == id && line.saved_from.is_some());
-        if saved {
-            found = Some(page);
+            .find(|line| line.id == id && line.saved_from.is_some());
+        if let Some(line) = line {
+            found = Some((entry, page, line));
             break;
         }
     }
-    let Some(page) = found else {
+    let Some((entry, page, line)) = found else {
         return Err(ServerError::NotFound(refused(
             "no saved rule has that id; nothing was removed. `wenlan rules` and \
              read_space_rules list each saved rule with its id. A rule written on a page by \
              hand is removed by editing that page",
         )));
     };
+    // A connection limited to one Space removes only that Space's rules.
+    if locked_id
+        .as_deref()
+        .is_some_and(|locked| locked != entry.space_id)
+    {
+        return Err(refused_with(
+            axum::http::StatusCode::FORBIDDEN,
+            "this connection is limited to one Space, and this rule is not that Space's own; \
+             nothing was removed",
+        ));
+    }
+    // An AI tool removes only what was saved under its own name.
+    let key = skill_grow::rule_text_key(&line.text);
+    let record = entry
+        .saves
+        .iter()
+        .rev()
+        .find(|save| save.version.is_some() && skill_grow::rule_text_key(&save.text) == key);
+    let may = match record {
+        Some(record) => decide::removal_refusal(&saver, record),
+        // A saved rule always has its record; without one only the
+        // terminal may take it out.
+        None => (!saver.is_terminal()).then(|| {
+            "only the person can remove this rule, with `wenlan rules remove <id>` in a \
+             terminal; nothing was removed"
+                .to_string()
+        }),
+    };
+    if let Some(reason) = may {
+        return Err(refused_with(axum::http::StatusCode::FORBIDDEN, reason));
+    }
     let (content, _) = skill_grow::page_without_rule(
         &SkillPageInput {
             id: page.id.clone(),

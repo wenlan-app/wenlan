@@ -717,12 +717,42 @@ pub fn save_rule_request(text: &str, every_space: bool, kind: Option<RuleKind>) 
     }
 }
 
+/// Refuse, before anything is sent, a rule command that reaches past one
+/// Space where it may not: `rules add --every-space` and `rules remove`.
+/// `strict_space` is `WENLAN_SPACE`, which limits this terminal to one
+/// Space: a rule for every Space is then not this terminal's to save. A
+/// named Space and `--all-spaces` do not go with either command.
+pub fn refuse_rule_beyond_one_space(
+    every_space: bool,
+    strict_space: Option<&str>,
+    named_space: Option<&str>,
+    all_spaces: bool,
+) -> Result<()> {
+    if every_space {
+        if let Some(strict) = strict_space {
+            bail!(
+                "WENLAN_SPACE limits this terminal to the Space '{strict}', so it cannot save \
+                 a rule for every Space. Nothing was saved. Save it for that Space (leave out \
+                 --every-space), or run the command without WENLAN_SPACE"
+            );
+        }
+        if named_space.is_some() {
+            bail!("a rule is for one Space (--space) or for every Space (--every-space), not both");
+        }
+    } else if named_space.is_some() {
+        bail!("`wenlan rules remove` takes the rule's id only; --space does not go with it");
+    }
+    if all_spaces {
+        bail!("--all-spaces is valid only for read commands");
+    }
+    Ok(())
+}
+
 pub async fn run_rules(
     client: &WenlanClient,
     format: ResolvedFormat,
     quiet: bool,
     command: Option<RulesCmd>,
-    space_was_named: bool,
 ) -> Result<()> {
     match command {
         None => read_space_rules(client, format, quiet).await,
@@ -731,9 +761,6 @@ pub async fn run_rules(
             every_space,
             kind,
         }) => {
-            if every_space && space_was_named {
-                bail!("a rule is for one Space (--space) or for every Space (--every-space), not both");
-            }
             let saved = client
                 .save_rule(&save_rule_request(&text, every_space, kind))
                 .await?;

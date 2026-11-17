@@ -116,6 +116,101 @@ fn ux_skill_14_every_space_is_only_ever_explicit() {
     assert!(sent(&received).is_empty(), "nothing was sent");
 }
 
+/// UX-SKILL-14: `WENLAN_SPACE` limits this terminal to one Space. A rule
+/// for every Space is then refused before anything is sent; a rule for that
+/// Space goes out under the Space, so the daemon holds it there. Without the
+/// limit, a rule for every Space carries no Space at all, whatever Space
+/// the folder or the default would give.
+#[test]
+fn ux_skill_14_every_space_is_refused_under_the_space_lock() {
+    let (base, received) = spawn_stub(vec![spaces(), ("POST /api/skills/rules", saved())]);
+    cli(&base)
+        .env("WENLAN_SPACE", "Clinic")
+        .args(["rules", "add", "Answer in plain words.", "--every-space"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "WENLAN_SPACE limits this terminal to the Space 'Clinic'",
+        ))
+        .stderr(predicate::str::contains("Nothing was saved"));
+    assert!(
+        received.try_iter().next().is_none(),
+        "nothing at all was sent"
+    );
+
+    // For its own Space the locked terminal saves, and says which Space.
+    let (base, received) = spawn_headers_stub("POST /api/skills/rules", saved());
+    cli(&base)
+        .env("WENLAN_SPACE", "Clinic")
+        .args(["rules", "add", "We release on Tuesdays."])
+        .assert()
+        .success();
+    let headers = received.recv().expect("the save");
+    assert!(headers.contains("x-wenlan-space: clinic"), "{headers}");
+
+    // Not locked: every Space carries no Space, even with a default set.
+    let (base, received) = spawn_headers_stub("POST /api/skills/rules", saved());
+    cli(&base)
+        .env("WENLAN_DEFAULT_SPACE", "Clinic")
+        .args(["rules", "add", "Answer in plain words.", "--every-space"])
+        .assert()
+        .success();
+    let headers = received.recv().expect("the save");
+    assert!(!headers.contains("x-wenlan-space"), "{headers}");
+}
+
+/// A stand-in daemon that answers `GET /api/spaces` and one other route,
+/// and hands back that other request's headers, lower-cased.
+fn spawn_headers_stub(
+    route: &'static str,
+    payload: String,
+) -> (String, std::sync::mpsc::Receiver<String>) {
+    use std::io::{BufRead, BufReader, Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind stub");
+    let base = format!("http://{}", listener.local_addr().expect("stub address"));
+    let (sent, received) = std::sync::mpsc::channel();
+    let spaces = spaces().1;
+    std::thread::spawn(move || {
+        for stream in listener.incoming().take(2).flatten() {
+            let mut reader = BufReader::new(stream);
+            let mut request_line = String::new();
+            reader.read_line(&mut request_line).expect("request line");
+            let (mut headers, mut length) = (String::new(), 0usize);
+            loop {
+                let mut line = String::new();
+                reader.read_line(&mut line).expect("header");
+                if line == "\r\n" || line.is_empty() {
+                    break;
+                }
+                let line = line.to_lowercase();
+                if let Some(value) = line.strip_prefix("content-length:") {
+                    length = value.trim().parse().unwrap_or(0);
+                }
+                headers.push_str(&line);
+            }
+            let mut body = vec![0u8; length];
+            reader.read_exact(&mut body).expect("body");
+            let is_route = request_line.starts_with(route);
+            let payload = if is_route { &payload } else { &spaces };
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",
+                payload.len()
+            );
+            if is_route {
+                let _ = sent.send(headers);
+            }
+            reader
+                .get_mut()
+                .write_all(response.as_bytes())
+                .expect("answer");
+            if is_route {
+                break;
+            }
+        }
+    });
+    (base, received)
+}
+
 /// UX-SKILL-14: removing is one command with the id `wenlan rules` prints.
 #[test]
 fn ux_skill_14_rules_remove_asks_the_daemon_to_remove_that_rule() {

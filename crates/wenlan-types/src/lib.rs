@@ -127,7 +127,7 @@ pub use skills::{
     SkillBorrowRecord, SkillLine, SkillLineKind, SkillReportKind, SkillReportRequest,
     SkillSuggestion, SkillSuggestionActionResponse, SkillsRefreshResponse,
     SpaceRulesActionResponse, SpaceRulesResponse, SpaceRulesSuggestion, ToolRulesDelivery,
-    SAVED_FROM_TERMINAL, SAVED_RULES_PER_TOOL_PER_DAY, SAVED_RULE_MAX_CHARS,
+    SAVED_FROM_TERMINAL, SAVED_RULES_PER_DAY, SAVED_RULES_PER_TOOL_PER_DAY, SAVED_RULE_MAX_CHARS,
 };
 pub use sources::{MemoryType, RawDocument, SourceType, StabilityTier, SyncStatus};
 pub use space_context::{WriteOutcome, WriteSpaceSource, WriteSpaceTarget};

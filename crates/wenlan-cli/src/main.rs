@@ -487,7 +487,23 @@ async fn main() -> anyhow::Result<ExitCode> {
         Commands::Brief(args) if args.is_update()
     );
     let is_outbox = matches!(&cli.command, Commands::Outbox { .. });
+    // A rule for every Space, and the removal of a rule by its id, are not
+    // for the Space this folder or the default points at: they carry a
+    // Space only when `WENLAN_SPACE` limits this terminal to one, and then
+    // the daemon holds them to it (UX-SKILL-14).
+    let is_rule_beyond_one_space = matches!(
+        &cli.command,
+        Commands::Rules {
+            command: Some(
+                commands::skills::RulesCmd::Add {
+                    every_space: true,
+                    ..
+                } | commands::skills::RulesCmd::Remove { .. }
+            ),
+        }
+    );
     let operation = match &cli.command {
+        Commands::Rules { .. } if is_rule_beyond_one_space => None,
         Commands::Recall { .. } | Commands::Memories { .. } | Commands::Rules { .. } => {
             Some(CliSpaceOperation::Read)
         }
@@ -514,6 +530,30 @@ async fn main() -> anyhow::Result<ExitCode> {
         }
         effective_cli_space = None;
         base_client
+    } else if is_rule_beyond_one_space {
+        let strict_space = std::env::var("WENLAN_SPACE")
+            .ok()
+            .map(|space| space.trim().to_string())
+            .filter(|space| !space.is_empty());
+        let every_space = matches!(
+            &cli.command,
+            Commands::Rules {
+                command: Some(commands::skills::RulesCmd::Add { .. })
+            }
+        );
+        commands::skills::refuse_rule_beyond_one_space(
+            every_space,
+            strict_space.as_deref(),
+            cli.space.as_deref(),
+            cli.all_spaces,
+        )?;
+        effective_cli_space = strict_space;
+        client::WenlanClient::from_env_with_context(
+            agent_name.as_deref(),
+            effective_cli_space.as_deref(),
+        )?
+        .with_session(session.clone())?
+        .with_recovery(recovery_enabled)
     } else if let Some(operation) = operation {
         let context = match base_client.list_spaces().await {
             Ok(spaces) => {
@@ -694,8 +734,7 @@ async fn main() -> anyhow::Result<ExitCode> {
             commands::recall::run(&client, format, cli.quiet, query, limit).await?
         }
         Commands::Rules { command } => {
-            commands::skills::run_rules(&client, format, cli.quiet, command, cli.space.is_some())
-                .await?
+            commands::skills::run_rules(&client, format, cli.quiet, command).await?
         }
         Commands::Skills { command } => {
             commands::skills::run_skills(&client, format, cli.quiet, command).await?

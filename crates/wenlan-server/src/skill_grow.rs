@@ -603,8 +603,8 @@ struct TracedPage {
     version: i64,
     title: String,
     person_note: bool,
-    /// How many saves the ledger held for the page.
-    saves: usize,
+    /// The saves the ledger held for the page that had brought a rule in.
+    saves: Vec<(String, i64, String)>,
     lines: Vec<SkillLine>,
 }
 
@@ -638,7 +638,19 @@ async fn person_lines_of(
     person_note: bool,
     saved: Option<&wenlan_core::db::skill_grow::SavedRulesPage>,
 ) -> Result<Vec<SkillLine>, ServerError> {
-    let saves = saved.map_or(0, |saved| saved.saves.len());
+    // A waiting save (no version yet) gives no rule: only the accept of its
+    // own card gives it the version that brings its rule in.
+    let saves: Vec<(String, i64, String)> = saved
+        .iter()
+        .flat_map(|saved| saved.saves.iter())
+        .filter_map(|save| {
+            Some((
+                skill_grow::rule_text_key(&save.text),
+                save.version?,
+                save.tool.clone(),
+            ))
+        })
+        .collect();
     let mut input = SkillPageInput {
         id: page.id.clone(),
         title: page.title.clone(),
@@ -675,31 +687,33 @@ async fn person_lines_of(
     // What each save may bring in: the rule's text, and where it came from.
     let nothing: HashMap<String, String> = HashMap::new();
     let mut by_version: HashMap<i64, HashMap<String, String>> = HashMap::new();
-    let mut waiting: HashMap<String, String> = HashMap::new();
-    for save in saved.iter().flat_map(|saved| saved.saves.iter()) {
-        let key = skill_grow::rule_text_key(&save.text);
-        match save.version {
-            Some(version) => by_version.entry(version).or_default(),
-            None => &mut waiting,
-        }
-        .insert(key, save.tool.clone());
+    for (key, version, tool) in &saves {
+        by_version
+            .entry(*version)
+            .or_default()
+            .insert(key.clone(), tool.clone());
     }
     let versions: Vec<skill_grow::RuleVersion<'_>> = history
         .iter()
         .map(|version| {
-            let own = !accepted.contains(&version.version)
-                && (skill_grow::version_is_the_persons_own(&version.edited_by)
-                    || (person_note && version.edited_by == "agent_create"));
+            let hand = if accepted.contains(&version.version) {
+                skill_grow::VersionHand::Other
+            } else if person_note && version.edited_by == "agent_create" {
+                skill_grow::VersionHand::Person
+            } else {
+                skill_grow::version_hand(&version.edited_by)
+            };
+            // A save's own version, or the accept of the very card a save
+            // on a locked page waited as: the ledger names the version.
             let saved = match version.edited_by.as_str() {
-                skill_grow::RULE_SAVE => by_version.get(&version.version).unwrap_or(&nothing),
-                // The person accepted the card a save on a locked page
-                // waited as.
-                "revision_accept" => &waiting,
+                skill_grow::RULE_SAVE | "revision_accept" => {
+                    by_version.get(&version.version).unwrap_or(&nothing)
+                }
                 _ => &nothing,
             };
             skill_grow::RuleVersion {
                 content: version.content.as_str(),
-                by_person: own,
+                hand,
                 saved,
             }
         })

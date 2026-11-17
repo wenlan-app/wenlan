@@ -63,6 +63,9 @@ pub const SAVED_RULE_MAX_CHARS: usize = 300;
 /// How many rules one tool may save in a day.
 pub const SAVED_RULES_PER_TOOL_PER_DAY: usize = 10;
 
+/// How many rules all callers together may save in a day.
+pub const SAVED_RULES_PER_DAY: usize = 30;
+
 impl SkillLine {
     /// "saved from Claude Code" / "saved from the terminal", for a rule the
     /// person asked to be saved; `None` for every other line.

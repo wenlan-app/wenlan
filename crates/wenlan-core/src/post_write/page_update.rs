@@ -755,7 +755,9 @@ async fn stage_page_revision_card_inner(
             )
             .await
         {
-            Ok(true) => {}
+            Ok(true) => {
+                super::page_revision::saved_rule_card_gone(db, old_card_id).await;
+            }
             Ok(false) => log::info!(
                 "[page_revision_card] open card {old_card_id} of page {} changed before it \
                  could be replaced; left it open beside {revision_card_id}",

@@ -403,19 +403,43 @@ pub fn may_be_in_rules_folder(file: &str) -> bool {
     has_rules_folder(dir)
 }
 
+/// Whose hand a page version is, for deciding which bullets are the
+/// person's own rules.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VersionHand {
+    /// The person wrote it: typed in the app or in the file, or a draft
+    /// they published. A bullet it brings in is theirs.
+    Person,
+    /// Wenlan's own bookkeeping: a page moved or renamed, or a link
+    /// rewritten because the page it points at was renamed. It keeps a
+    /// bullet whose it already was, also when it rewrites that bullet's
+    /// text, and never makes a bullet anyone's.
+    Carries,
+    /// An AI tool, a teammate, AI text the person accepted, or a writer
+    /// this code does not know. A bullet it brings in gives no rule.
+    Other,
+}
+
+/// The hand of a page version, from its `page_history.edited_by`.
+pub fn version_hand(edited_by: &str) -> VersionHand {
+    use crate::authorship::{version_author, VersionAuthor};
+    if crate::shared_space::shared_writer(edited_by).is_some() || edited_by == "revision_accept" {
+        return VersionHand::Other;
+    }
+    match version_author(edited_by, "") {
+        VersionAuthor::Person => VersionHand::Person,
+        VersionAuthor::System => VersionHand::Carries,
+        _ => VersionHand::Other,
+    }
+}
+
 /// Whether a page version with this `page_history.edited_by` is the person's
-/// own writing here: typed in the app or in the file, a draft they
-/// published, or Wenlan only moving or renaming the page. A version an AI
-/// tool wrote, one a teammate wrote, AI text the person accepted, and any
+/// own writing: typed in the app or in the file, or a draft they published.
+/// A version an AI tool wrote, one a teammate wrote, AI text the person
+/// accepted, Wenlan's own bookkeeping ([`VersionHand::Carries`]) and any
 /// writer this code does not know are not.
 pub fn version_is_the_persons_own(edited_by: &str) -> bool {
-    use crate::authorship::{version_author, VersionAuthor};
-    crate::shared_space::shared_writer(edited_by).is_none()
-        && edited_by != "revision_accept"
-        && matches!(
-            version_author(edited_by, ""),
-            VersionAuthor::Person | VersionAuthor::System
-        )
+    version_hand(edited_by) == VersionHand::Person
 }
 
 const RULE_MARKER_START: &str = "<!-- wenlan-rule:";
@@ -584,7 +608,11 @@ pub fn person_rule_lines_through_history(
         .iter()
         .map(|(by_person, content)| RuleVersion {
             content,
-            by_person: *by_person,
+            hand: if *by_person {
+                VersionHand::Person
+            } else {
+                VersionHand::Other
+            },
             saved: &nothing_saved,
         })
         .collect();
@@ -595,8 +623,8 @@ pub fn person_rule_lines_through_history(
 #[derive(Debug, Clone, Copy)]
 pub struct RuleVersion<'a> {
     pub content: &'a str,
-    /// The person wrote this version themselves.
-    pub by_person: bool,
+    /// Whose hand this version is.
+    pub hand: VersionHand,
     /// The rules this version may bring in as ones the person asked to be
     /// saved (UX-SKILL-14): [`rule_text_key`] of the rule, and where the
     /// save came from. A bullet of this version that is not named here, and
@@ -604,9 +632,12 @@ pub struct RuleVersion<'a> {
     pub saved: &'a HashMap<String, String>,
 }
 
-/// What a rule's text is matched by: letters and digits only, lower case.
+/// What a rule's text is matched by through a page's history: the text
+/// itself, with runs of white space as one space. Anything else that
+/// differs, a comma or a capital included, is another text: a rule counts
+/// only as the very words that were written or saved.
 pub fn rule_text_key(text: &str) -> String {
-    normalized(&one_line(text, 500))
+    one_line(text, 500)
 }
 
 /// The rules on `page` that count at once, traced through its history,
@@ -619,26 +650,57 @@ pub fn rule_lines_through_versions(
     page: &SkillPageInput,
     versions: &[RuleVersion<'_>],
 ) -> Vec<SkillLine> {
-    let texts = |content: &str| -> HashSet<String> {
+    // The rule bullets of a version, in the order they stand on the page.
+    let texts = |content: &str| -> Vec<String> {
         person_rule_lines(&SkillPageInput {
             text: content.to_string(),
             ..page.clone()
         })
         .iter()
-        .map(|line| normalized(&line.text))
+        .map(|line| rule_text_key(&line.text))
         .collect()
     };
     // `None`: the person wrote it. `Some`: saved, and where from.
     let mut owned: HashMap<String, Option<String>> = HashMap::new();
-    let mut before: HashSet<String> = HashSet::new();
+    let mut before: Vec<String> = Vec::new();
     for version in versions {
         let now = texts(version.content);
-        owned.retain(|text, _| now.contains(text));
-        for text in now.difference(&before) {
-            if version.by_person {
-                owned.insert(text.clone(), None);
-            } else if let Some(from) = version.saved.get(text) {
-                owned.insert(text.clone(), Some(from.clone()));
+        let stands: HashSet<&str> = now.iter().map(String::as_str).collect();
+        let stood: HashSet<&str> = before.iter().map(String::as_str).collect();
+        let was = std::mem::take(&mut owned);
+        // A bullet a version leaves as it is stays whose it was.
+        owned = was
+            .iter()
+            .filter(|(text, _)| stands.contains(text.as_str()))
+            .map(|(text, whose)| (text.clone(), whose.clone()))
+            .collect();
+        let brought_in = now.iter().filter(|text| !stood.contains(text.as_str()));
+        match version.hand {
+            VersionHand::Person => {
+                for text in brought_in {
+                    owned.insert(text.clone(), None);
+                }
+            }
+            // Wenlan rewrote text in place (a renamed link): the bullet in
+            // the same place is the same bullet, and stays whose it was.
+            // With bullets added or gone it is not that, and nothing new
+            // becomes anyone's.
+            VersionHand::Carries if now.len() == before.len() => {
+                for (old, new) in before.iter().zip(&now) {
+                    if old != new && !stood.contains(new.as_str()) {
+                        if let Some(whose) = was.get(old) {
+                            owned.insert(new.clone(), whose.clone());
+                        }
+                    }
+                }
+            }
+            VersionHand::Carries => {}
+            VersionHand::Other => {
+                for text in brought_in {
+                    if let Some(from) = version.saved.get(text) {
+                        owned.insert(text.clone(), Some(from.clone()));
+                    }
+                }
             }
         }
         before = now;
@@ -646,7 +708,7 @@ pub fn rule_lines_through_versions(
     person_rule_lines(page)
         .into_iter()
         .filter_map(|mut line| {
-            let saved_from = owned.get(&normalized(&line.text))?.clone();
+            let saved_from = owned.get(&rule_text_key(&line.text))?.clone();
             if saved_from.is_some() {
                 line.hand_written = false;
                 line.person_edited = false;
@@ -680,8 +742,9 @@ pub fn saved_rules_page_body(space: Option<&str>) -> String {
         None => "They are used in every Space.",
     };
     format!(
-        "# {}\n\nRules I asked an AI tool, or the `wenlan` command, to save. Each one counts \
-         at once and my AI tools are told it. {scope} Delete a line to remove its rule.\n",
+        "# {}\n\nRules saved here through an AI tool or the `wenlan` command. Each one counts at \
+         once and my AI tools are told it; `wenlan rules` says where each was saved from. \
+         {scope} Delete a line to remove its rule.\n",
         saved_rules_title(space)
     )
 }
@@ -714,6 +777,15 @@ pub fn saved_rule_text(kind: SkillLineKind, text: &str) -> Result<String, String
     if text.contains(['\n', '\r']) {
         return Err("a rule is one line; save each rule on its own".into());
     }
+    let hidden = "the rule holds characters that do not show (zero-width, text-direction or tag \
+                  characters); type it again as plain text";
+    // Before white space is tidied: some of these count as white space.
+    if text
+        .chars()
+        .any(|c| c != '\t' && (c.is_control() || never_shows(c)))
+    {
+        return Err(hidden.into());
+    }
     let text = one_line(text, usize::MAX);
     if text.is_empty() {
         return Err("the rule has no text".into());
@@ -722,8 +794,8 @@ pub fn saved_rule_text(kind: SkillLineKind, text: &str) -> Result<String, String
     if text.chars().count() > max {
         return Err(format!("a rule is at most {max} characters"));
     }
-    if text.chars().any(char::is_control) {
-        return Err("a rule cannot hold control characters".into());
+    if let Some(reason) = reads_as_an_instruction_to_the_tool(&text) {
+        return Err(reason.into());
     }
     if STANDALONE_SECRET.is_match(&text) {
         return Err("the rule holds what looks like a key or token; it was not saved".into());
@@ -737,6 +809,116 @@ pub fn saved_rule_text(kind: SkillLineKind, text: &str) -> Result<String, String
                 .into(),
         ),
     }
+}
+
+/// A character that takes no room on the screen, so text can hide behind it
+/// or be shown in another order than it is read in: every Unicode format
+/// character (zero-width spaces and joiners, direction marks and overrides,
+/// the tag block, the byte-order mark, the soft hyphen), line and paragraph
+/// separators, private-use characters, the variation selectors that carry
+/// no picture, and the letters that are drawn as nothing.
+fn never_shows(c: char) -> bool {
+    static NEVER_SHOWS: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(
+            r"[\p{Cf}\p{Zl}\p{Zp}\p{Co}\x{FE00}-\x{FE0E}\x{E0100}-\x{E01EF}\x{115F}\x{1160}\x{3164}\x{FFA0}\x{2800}\x{034F}\x{17B4}\x{17B5}\x{180B}-\x{180F}]",
+        )
+        .expect("invisible characters")
+    });
+    let mut bytes = [0u8; 4];
+    NEVER_SHOWS.is_match(c.encode_utf8(&mut bytes))
+}
+
+/// Why a saved rule's text is refused for what an AI tool's own instruction
+/// file would make of it, if it is. Such a file (`CLAUDE.md`, `GEMINI.md`,
+/// `AGENTS.md`, Copilot's instructions) is not only read as words: `@path`
+/// at the start of a word loads another file into it, an HTML comment is
+/// hidden from the person looking at it, backticks and fences turn off or
+/// swallow what follows, a Markdown link or a `#name:` reference pulls a
+/// file or a tool in. A rule is a plain sentence, so none of these may ride
+/// in on one.
+fn reads_as_an_instruction_to_the_tool(text: &str) -> Option<&'static str> {
+    let mut before: Option<char> = None;
+    for c in text.chars() {
+        if c == '@' && !before.is_some_and(char::is_alphanumeric) {
+            return Some(
+                "a word in a rule cannot start with @: AI tools read that in their own files \
+                 as another file to load. Write the name without the @",
+            );
+        }
+        before = Some(c);
+    }
+    static TAG: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"<[A-Za-z/!?]|-->|\]\(|\]\[|\]:").expect("tag"));
+    static REFERENCE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(^|[^\w#])#[A-Za-z][\w-]*:").expect("reference"));
+    if text.contains('`') || text.contains("~~~") {
+        return Some(
+            "a rule cannot hold backticks or code fences; write the command or the name in \
+             plain words",
+        );
+    }
+    if text.contains("<!--") || text.contains("-->") {
+        return Some(
+            "a rule cannot hold an HTML comment (<!-- -->): it would be hidden from the person \
+             reading the file",
+        );
+    }
+    if TAG.is_match(text) {
+        return Some(
+            "a rule cannot hold an HTML tag or a Markdown link or image; write it as a plain \
+             sentence, with an address written out as text",
+        );
+    }
+    if REFERENCE.is_match(text) {
+        return Some(
+            "a rule cannot hold a #name: reference; AI tools read that in their own files as \
+             a file or a tool to pull in",
+        );
+    }
+    if text.starts_with(['#', '>', '|']) {
+        return Some("a rule cannot start with #, > or |; write it as a plain sentence");
+    }
+    None
+}
+
+/// A rule's text as it is written into a file an AI tool reads on its own
+/// (`~/.wenlan/AGENTS.md`, a tool's `CLAUDE.md` and the like). The rule may
+/// be the person's own bullet or a line taken from a page, so nothing is
+/// refused here: the words stay, and only what the tool's file would act on
+/// instead of read is written so that it is read. Characters that do not
+/// show are left out (the joiners some scripts and emoji need are kept);
+/// `@` at the start of a word, which would load a file, is written
+/// `&#64;`; an HTML comment's `<!--` and `-->` are written `&lt;!--` and
+/// `--&gt;`; a line that would open a code fence gets a backslash first.
+pub fn tool_file_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut before: Option<char> = None;
+    for c in text.chars() {
+        if c.is_whitespace() {
+            out.push(' ');
+            before = Some(' ');
+            continue;
+        }
+        if c.is_control() || (never_shows(c) && !matches!(c, '\u{200C}' | '\u{200D}')) {
+            continue;
+        }
+        if c == '@' && !before.is_some_and(char::is_alphanumeric) {
+            out.push_str("&#64;");
+        } else {
+            out.push(c);
+        }
+        before = Some(c);
+    }
+    let mut out = out
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .replace("<!--", "&lt;!--")
+        .replace("-->", "--&gt;");
+    if out.starts_with("```") || out.starts_with("~~~") {
+        out.insert(0, '\\');
+    }
+    out
 }
 
 /// Why a page could not take a saved rule.
@@ -1082,8 +1264,9 @@ pub fn tool_rules(lines: &[SkillLine]) -> Vec<String> {
     lines
         .iter()
         .filter(|line| line.kind == SkillLineKind::Rule)
-        .map(|line| line.text.split_whitespace().collect::<Vec<_>>().join(" "))
-        .filter(|text| !text.is_empty() && !text.contains(TOOL_RULES_END))
+        .filter(|line| !line.text.contains(TOOL_RULES_END))
+        .map(|line| tool_file_text(&line.text))
+        .filter(|text| !text.is_empty())
         .take(RULES_MAIN_FILE_MAX)
         .collect()
 }
@@ -1359,18 +1542,14 @@ pub fn upsert_tool_rules_block(text: &str, block: Option<&str>) -> Result<String
 }
 
 fn rules_file_item(line: &SkillLine) -> String {
-    let text = line.text.split_whitespace().collect::<Vec<_>>().join(" ");
-    let title = line
-        .source_page_title
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
+    let text = tool_file_text(&line.text);
+    let title = tool_file_text(&line.source_page_title);
     if line.hand_written {
         format!("- {text} (written by you in \"{title}\")\n")
     } else if let Some(saved) = line.saved_from_label() {
         // Never "written by you": Wenlan knows where a save came from, not
         // who spoke (UX-SKILL-14).
-        let saved: String = saved.split_whitespace().collect::<Vec<_>>().join(" ");
+        let saved = tool_file_text(&saved);
         format!("- {text} ({saved}, kept in \"{title}\")\n")
     } else {
         format!("- {text} (from \"{title}\")\n")
