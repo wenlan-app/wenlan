@@ -1437,7 +1437,10 @@ async fn update_page_db_impl(
             // A forced rebuild and a rename's link rewrite keep the card.
             // A person-asked write to a locked page still waits as a
             // whole-page card: the Lock holds even when the person asked.
+            // So does a write that says which pages it relied on: those
+            // marks ride the card and are recorded when it is accepted.
             let lock_proposes = basis.citation_snapshots.is_empty()
+                && basis.marks.is_empty()
                 && !person_asked_write
                 && basis.research_write.is_none()
                 && writer.is_machine()
