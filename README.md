@@ -246,7 +246,8 @@ Importing a 10,000-note Obsidian vault in 0.20.2 (invented notes, M2 Pro Mac wit
 ## Data and privacy
 
 - Pages are Markdown files on your computer, and they go only where you send them.
-- Export eligible pages as an Open Knowledge Format (OKF) wiki.
+- With a team server, only pages in shared Spaces go to it. Memories, sources and other Spaces stay with you.
+- Export eligible pages as an Open Knowledge Format (OKF) folder.
 - A cloud AI tool may send what it retrieves to its provider, and a cloud model receives the material it processes, so local storage does not keep those interactions local.
 - Usage statistics are off by default.
 

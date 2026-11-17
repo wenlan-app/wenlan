@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=9032d25d7d9093947a3a63292d0cf6ac20f855cddf2050665cc5fae8dfba3b39 -->
+<!-- README_SYNC: source=README.md sha256=6a3746cbc4c8febd2bcc8554b4bb74f383862ff62c2372589d9d6c5ca58fb194 -->
 
 <p align="center">
   <picture>
@@ -259,8 +259,9 @@ wenlan init
 
 ## 数据与隐私
 
-- 笔记是你电脑上的 Markdown 文件，只会去你让它去的地方。
-- 符合条件的笔记可以导出为 Open Knowledge Format（OKF）知识库。
+- 页面是你电脑上的 Markdown 文件，只会去你让它去的地方。
+- 用团队服务器时，只有共用 Space 里的页面会送过去。记忆、来源和其他 Space 都留在你的电脑。
+- 符合条件的页面可以导出为 Open Knowledge Format（OKF）文件夹。
 - 云端 AI 工具可能会把找回的内容传给它的服务商，云端模型也会收到它处理的内容，所以本地存储不代表这些交互都留在本机。
 - 使用统计默认关闭。
 

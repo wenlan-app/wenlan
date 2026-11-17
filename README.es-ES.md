@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=9032d25d7d9093947a3a63292d0cf6ac20f855cddf2050665cc5fae8dfba3b39 -->
+<!-- README_SYNC: source=README.md sha256=6a3746cbc4c8febd2bcc8554b4bb74f383862ff62c2372589d9d6c5ca58fb194 -->
 
 <p align="center">
   <picture>
@@ -259,7 +259,8 @@ Al importar una bóveda de Obsidian de 10.000 notas en 0.20.2 (notas inventadas,
 ## Datos y privacidad
 
 - Las páginas son archivos Markdown en tu ordenador y solo van adonde tú las envías.
-- Exporta las páginas que cumplan los requisitos como una wiki Open Knowledge Format (OKF).
+- Con un servidor de equipo, solo van a él las páginas de los Spaces compartidos. Lo demás se queda contigo.
+- Exporta las páginas que cumplan los requisitos como una carpeta Open Knowledge Format (OKF).
 - Una herramienta de IA en la nube puede enviar lo que recupera a su proveedor, y un modelo en la nube recibe el material que procesa, así que el almacenamiento local no mantiene locales esas interacciones.
 - Las estadísticas de uso están desactivadas por defecto.
 
