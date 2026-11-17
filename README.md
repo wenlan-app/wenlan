@@ -41,11 +41,11 @@
 Every AI tool starts from zero and wants its own rules file. Wenlan gives them all one shared set.
 
 - **Docs with sources.** Wenlan checks that each cited source supports its sentence before saving.
-- **Skills and rules, written once.** Every AI tool you connect gets the current version.
-- **Organized memory.** What you settle becomes knowledge and topic pages, so it all stays current.
+- **One copy of skills and rules.** It runs in every AI tool and platform you connect.
+- **Organized memory.** What you settle is sorted into your docs, skills and rules, so they stay current.
 - **You stay in charge.** See every change, undo it, and lock a page so AI asks you first.
-- **Any layout you ask for.** A page can be text, or a web page your AI draws.
 - **Files first, self-hosted, portable.** Plain Markdown files; the database is only an index.
+- **Easy for people to read too.** A page can be text, or a web page you ask your AI to draw.
 
 <a id="how-it-compares"></a>
 

@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=71cb4fe8becb56e8c7e97ab1d94f3eceb58451ab7b16500e173ceeb47435d0ef -->
+<!-- README_SYNC: source=README.md sha256=1ace43fade7c8813820d77e970fe484c829fa589d553e74e5b76feaf64f14a12 -->
 
 <p align="center">
   <picture>
@@ -43,11 +43,11 @@
 Cada herramienta de IA empieza de cero y quiere su propio archivo de reglas. Wenlan les da uno común.
 
 - **Documentos con fuentes.** Wenlan comprueba que cada fuente citada respalda su frase.
-- **Skills y reglas, escritas una vez.** Cada herramienta que conectas recibe la versión actual.
-- **Memoria ordenada.** Lo que decides pasa a páginas de conocimiento y temas, siempre al día.
+- **Una sola copia de skills y reglas.** Funciona en cada herramienta y plataforma de IA que conectas.
+- **Memoria ordenada.** Lo que decides pasa a tus documentos, skills y reglas; por eso están al día.
 - **Tú mandas.** Ves cada cambio, lo deshaces y bloqueas una página para que la IA pregunte.
-- **El diseño que pidas.** Una página puede ser texto o una página web que dibuja tu IA.
 - **Archivos primero, autoalojado, portable.** Archivos Markdown; la base de datos es solo un índice.
+- **Fácil de leer también para personas.** Una página puede ser texto o una web que dibuja tu IA.
 
 <a id="how-it-compares"></a>
 
