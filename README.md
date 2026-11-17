@@ -42,7 +42,7 @@ Your AI tools each start from zero, and each wants its own rules file. Wenlan gi
 
 - **Docs with sources.** Notes, documents and AI chats become pages. Before saving, Wenlan checks that each cited source supports its sentence.
 - **Skills and rules, written once.** Kept current in every AI tool you connect. Bring in the skills already on your computer, or find more to install.
-- **Memory across tools.** What you settle in one AI tool is there in the next.
+- **Memory that keeps it current.** What you settle in any AI tool is saved, and is there in the next. That memory is what lets your docs, skills and rules stay current.
 - **You stay in charge.** See every change, undo it, and lock a page so AI asks you first.
 - **Any layout you ask for.** A page can be text, or a web page your AI draws that shows the live content.
 
@@ -57,18 +57,7 @@ A rules file (AGENTS.md, CLAUDE.md, .cursor/rules) is enough for one tool in one
 - **More than rules.** Docs with sources, skills and memory sit next to the rules.
 - **You choose what AI may change.** AI can rewrite anything in a rules file. In Wenlan you choose per page, and locked pages ask you first.
 
-<details>
-<summary>Compared with Obsidian, a plain folder, and LLM wiki apps</summary>
-
-| | Obsidian + plugins | Claude Code + a folder | LLM wiki apps | Wenlan |
-|---|---|---|---|---|
-| Who organizes | You, with plugins | You, by asking each time | An AI you set up | Your AI tools; updates when a source changes |
-| Setup | Find and update plugins | Your own instructions, plus a decisions file you paste in each session | Model key or scheduled routine | Set up once; no plugins to install or maintain |
-| Checks the AI's work | Depends on the plugin | You review what it files; duplicates and stale notes wait for a cleanup | Links to sources | Checks each cited source supports its sentence before saving; keeps the old version |
-| What AI may change | Depends on the plugin | What you approve, or allow in its settings | Its wiki folder | You choose per page; locked pages ask first; undo anytime |
-| Where notes live | Your computer | Plain files on your computer; free, and enough for many people | Your computer | Your files, plain Markdown; works with your vault |
-
-</details>
+More comparisons, with Obsidian, Notion AI, and memory tools: [wenlan.app/learn](https://wenlan.app/learn).
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>

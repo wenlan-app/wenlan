@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=7401de81beb72b65f0360068c544a7ccb48106a9f7904c6b8fc631ca15a4f08b -->
+<!-- README_SYNC: source=README.md sha256=793947e7a55b1643c26dd8cebaf4b2103650f2778ea694b831ae6c1f59436a57 -->
 
 <p align="center">
   <picture>
@@ -44,7 +44,7 @@ Cada herramienta de IA empieza de cero, y cada una quiere su propio archivo de r
 
 - **Documentos con fuentes.** Notas, documentos y chats de IA se convierten en páginas. Antes de guardar, Wenlan comprueba que cada fuente citada respalda su frase.
 - **Skills y reglas, escritas una vez.** Al día en cada herramienta de IA que conectes. Trae las skills que ya tienes en tu ordenador o busca otras para instalar.
-- **Memoria entre herramientas.** Lo que decides en una herramienta de IA está en la siguiente.
+- **Memoria que lo mantiene al día.** Lo que decides en cualquier herramienta de IA se guarda y está en la siguiente. Esa memoria es lo que mantiene al día tus documentos, skills y reglas.
 - **Tú mandas.** Ves cada cambio, puedes deshacerlo y bloquear una página para que la IA te pregunte primero.
 - **El diseño que pidas.** Una página puede ser texto o una página web que tu IA dibuja con el contenido actual.
 
@@ -59,18 +59,7 @@ Un archivo de reglas (AGENTS.md, CLAUDE.md, .cursor/rules) basta para una herram
 - **Más que reglas.** Documentos con fuentes, skills y memoria están junto a las reglas.
 - **Tú eliges qué puede cambiar la IA.** La IA puede reescribir cualquier cosa de un archivo de reglas. En Wenlan eliges por página, y las bloqueadas te preguntan primero.
 
-<details>
-<summary>Comparado con Obsidian, una simple carpeta y las apps de LLM wiki</summary>
-
-| | Obsidian + plugins | Claude Code + una carpeta | Apps de LLM wiki | Wenlan |
-|---|---|---|---|---|
-| Quién organiza | Tú, con plugins | Tú, pidiéndoselo cada vez | Una IA que configuras | Tus herramientas de IA; actualiza cuando cambia una fuente |
-| Configuración | Buscar y actualizar plugins | Tus propias instrucciones, más un archivo de decisiones que pegas en cada sesión | Clave de modelo o rutina programada | Una vez; sin plugins que instalar ni mantener |
-| Revisa a la IA | Depende del plugin | Revisas tú lo que guarda; duplicados y notas viejas esperan una limpieza | Enlaza a fuentes | Comprueba que cada fuente citada respalda su frase antes de guardar; conserva la versión anterior |
-| Qué puede cambiar la IA | Depende del plugin | Lo que apruebes o permitas en sus ajustes | Su carpeta de wiki | Tú eliges por página; las bloqueadas preguntan primero; deshaz cuando quieras |
-| Dónde viven tus notas | Tu ordenador | Archivos de texto en tu ordenador; gratis, y suficiente para mucha gente | Tu ordenador | Tus archivos, Markdown plano; funciona con tu bóveda |
-
-</details>
+Más comparaciones, con Obsidian, Notion AI y herramientas de memoria: [wenlan.app/learn](https://wenlan.app/learn).
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
