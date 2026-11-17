@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=d5bee29788b363274b85853a4dce7b9107145d16841d741ceddb9a00ba576827 -->
+<!-- README_SYNC: source=README.md sha256=453b57ca74a4207a6de9e977d0c94d1f810a119929baa748b7a8fb8b4a935b2d -->
 
 <p align="center">
   <picture>
@@ -126,7 +126,7 @@ Funciona con Claude Code, Codex, Cursor, Copilot, Gemini CLI y otras herramienta
 - **Enlaces web:** pega un enlace en una página y se convierte en fuente.
 - **Gmail, Notion, Google Drive, Slack, GitHub:** tu IA los lee y guarda lo importante, con enlace al original.
 - **Chats de IA:** decisiones y hallazgos se guardan como memorias. También los ZIP de ChatGPT y Claude.
-- **Un repositorio de código:** `/wenlan wiki` escribe páginas ligadas al código. [Documentación de código](#code-repository-wiki).
+- **Un repositorio de código:** tu herramienta de IA lee el código y escribe documentos ligados a él. [Más](#code-repository-wiki).
 
 También carpetas OKF. Los PDF escaneados necesitan extraer el texto antes. [Guía de importación](docs/import-guide.md).
 
@@ -197,11 +197,16 @@ Tu IA convierte lo que traes en páginas Markdown enlazadas y con citas, y las m
 
 ## Documentación para tu repositorio de código
 
-Ejecuta `/wenlan wiki` (`$wenlan wiki` en Codex) en un repositorio: un resumen y una página por cada parte.
+En un repositorio, tu herramienta de IA lee el código y escribe un resumen y un documento por cada parte.
+
+```text
+/wenlan wiki        # $wenlan wiki en Codex
+```
 
 - **Ligada al código:** Cada página registra las líneas de código que leyó y muestra qué cambió.
 - **Como pull request:** Las páginas entran en el repositorio como pull request, al pulsar el botón o a diario.
 - **También la documentación:** La misma pull request corrige frases que el código ya no respalda.
+- **También las reglas:** Las reglas del proyecto van a `AGENTS.md`, para las herramientas del equipo.
 - **Tus ediciones se quedan:** Lo editado en el repositorio se conserva. Tus memorias quedan fuera.
 
 <a id="what-wenlan-is-not"></a>

@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=d5bee29788b363274b85853a4dce7b9107145d16841d741ceddb9a00ba576827 -->
+<!-- README_SYNC: source=README.md sha256=453b57ca74a4207a6de9e977d0c94d1f810a119929baa748b7a8fb8b4a935b2d -->
 
 <p align="center">
   <picture>
@@ -126,7 +126,7 @@
 - **网页链接：** 在页面里粘贴链接，就会保存为来源。
 - **Gmail、Notion、Google Drive、Slack、GitHub：** 你的 AI 工具读取后存下重点，附上原文链接。
 - **AI 对话：** 决定和发现会存成记忆。ChatGPT 和 Claude 导出的 ZIP 也能带进来。
-- **代码仓库：** `/wenlan wiki` 写出对应到代码的页面。[代码文档](#code-repository-wiki)。
+- **代码仓库：** AI 工具读代码，写出对应到代码的文档。[代码文档](#code-repository-wiki)。
 
 OKF 文件夹也可以。扫描版 PDF 需要先提取文字。[导入指南](docs/import-guide.md)。
 
@@ -198,11 +198,16 @@ OKF 文件夹也可以。扫描版 PDF 需要先提取文字。[导入指南](do
 
 ## 帮代码仓库写文档
 
-在仓库里运行 `/wenlan wiki`（Codex 是 `$wenlan wiki`），AI 工具会写一篇总览，每个部分再各写一页。
+在仓库里，AI 工具读代码，写一篇总览，每个部分再各写一份文档。
+
+```text
+/wenlan wiki        # Codex 是 $wenlan wiki
+```
 
 - **与代码绑定：** 每一页都记录它依据的代码行；代码变了，会显示改了什么。
 - **以 pull request 放进仓库：** 点一下按钮，或每天自动跑一次。
 - **现有文档也一起修：** 同一个 pull request 会修正仓库文档中与代码不再相符的句子。
+- **项目规则也一起送：** 项目规则会写进 `AGENTS.md`，队友的 AI 工具都读得到。
 - **保留你的修改：** 在仓库里改过的页面会保留。引用你的记忆或对话的页面不会放进去。
 
 <a id="what-wenlan-is-not"></a>

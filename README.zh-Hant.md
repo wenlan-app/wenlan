@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=d5bee29788b363274b85853a4dce7b9107145d16841d741ceddb9a00ba576827 -->
+<!-- README_SYNC: source=README.md sha256=453b57ca74a4207a6de9e977d0c94d1f810a119929baa748b7a8fb8b4a935b2d -->
 
 <p align="center">
   <picture>
@@ -126,7 +126,7 @@
 - **網頁連結：** 在頁面裡貼上連結，就會存成來源。
 - **Gmail、Notion、Google Drive、Slack、GitHub：** 你的 AI 工具讀取後存下重點，附上原文連結。
 - **AI 對話：** 決定和發現會存成記憶。ChatGPT 和 Claude 匯出的 ZIP 也能帶進來。
-- **程式碼儲存庫：** `/wenlan wiki` 寫出對應到程式碼的頁面。[程式碼文件](#code-repository-wiki)。
+- **程式碼儲存庫：** AI 工具讀程式碼，寫出對應到程式碼的文件。[程式碼文件](#code-repository-wiki)。
 
 OKF 資料夾也可以。掃描版 PDF 須先擷取文字。[匯入教學](docs/import-guide.zh-Hant.md)。
 
@@ -198,11 +198,16 @@ OKF 資料夾也可以。掃描版 PDF 須先擷取文字。[匯入教學](docs/
 
 ## 幫程式碼儲存庫寫文件
 
-在儲存庫裡執行 `/wenlan wiki`（Codex 是 `$wenlan wiki`），AI 工具會寫一篇總覽，每個部分再各寫一頁。
+在儲存庫裡，AI 工具讀程式碼，寫一篇總覽，每個部分再各寫一份文件。
+
+```text
+/wenlan wiki        # Codex 是 $wenlan wiki
+```
 
 - **與程式碼綁定：** 每一頁都記錄它依據的程式碼行；程式碼變了，會顯示改了什麼。
 - **以 pull request 放進儲存庫：** 按一下按鈕，或每天自動跑一次。
 - **現有文件也一起修：** 同一個 pull request 會修正儲存庫文件中與程式碼不再相符的句子。
+- **專案規則也一起送：** 專案規則會寫進 `AGENTS.md`，隊友的 AI 工具都讀得到。
 - **保留你的修改：** 在儲存庫裡改過的頁面會保留。引用你的記憶或對話的頁面不會放進去。
 
 <a id="what-wenlan-is-not"></a>

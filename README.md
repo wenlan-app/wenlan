@@ -124,7 +124,7 @@ Works with Claude Code, Codex, Cursor, GitHub Copilot, Gemini CLI, and other MCP
 - **Web links:** paste a link into a page and it becomes a source.
 - **Gmail, Notion, Google Drive, Slack, GitHub:** your AI tool reads them and saves what matters, with a link.
 - **AI chats:** decisions and findings are saved as memories. ChatGPT and Claude export ZIPs work too.
-- **A code repository:** `/wenlan wiki` writes pages tied to the code. [Docs for code](#code-repository-wiki).
+- **A code repository:** your AI tool reads the code and writes docs tied to it. [Docs for code](#code-repository-wiki).
 
 OKF folders work too. Scanned PDFs need text extraction first. [Import guide](docs/import-guide.md).
 
@@ -184,11 +184,16 @@ Already run Claude Code on a notes folder? Keep it. Wenlan adds citation checks 
 
 ## Docs for your code repository
 
-Run `/wenlan wiki` (`$wenlan wiki` in Codex) in a repository to get an overview and a page for each part.
+In a repository, your AI tool reads the code and writes an overview and a doc for each part.
+
+```text
+/wenlan wiki        # $wenlan wiki in Codex
+```
 
 - **Tied to the code:** Each page records the code lines it was read from and shows what changed.
 - **As a pull request:** Pages go into the repository as a pull request, when you press the button or daily.
 - **Existing docs too:** The same pull request fixes doc sentences the code no longer matches.
+- **Project rules too:** It also puts the project's rules into `AGENTS.md`, where teammates' AI tools read them.
 - **Your edits stay:** Edits made in the repository are kept. Pages that cite your memories or chats stay out.
 
 <a id="what-wenlan-is-not"></a>
