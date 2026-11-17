@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=453b57ca74a4207a6de9e977d0c94d1f810a119929baa748b7a8fb8b4a935b2d -->
+<!-- README_SYNC: source=README.md sha256=ef622a4150db54f13cf5792522cf1e873b26bf4b7bcd50bf53cb4894f02efee1 -->
 
 <p align="center">
   <picture>
@@ -99,9 +99,11 @@ Más comparaciones, con Obsidian, Notion AI y herramientas de memoria: [wenlan.a
    wenlan sources add ~/notes
    ```
 
-4. Inicia una nueva sesión de IA y pide:
+4. Dile a una herramienta de IA algo que guardar. Luego pregunta en otra:
 
-   > /wenlan ¿qué decidí antes sobre esto? Luego ayúdame con: …
+   > Recuerda: publicamos los martes, cuando pasan las pruebas.
+
+   > ¿Cuándo publicamos?
 
 5. Lee y edita tus páginas en el navegador: `wenlan open`.
 
@@ -185,7 +187,7 @@ Tu IA convierte lo que traes en páginas Markdown enlazadas y con citas, y las m
 - **Al día:** Si cambia una fuente, una memoria o el código citado, se marcan las páginas afectadas.
 - **Tú decides qué cambia la IA:** **Allowed** o **Ask me first** por página, y restauras cualquier versión.
 - **Dos formas:** tu IA mientras trabaja (por defecto) o un modelo en segundo plano. [Guía de Steep](docs/steep.md).
-- **En tu herramienta de IA:** escribe `/wenlan` y di lo que quieres. [Todos los comandos](plugin/skills/README.md).
+- **En tu herramienta de IA:** pídelo con tus palabras. El plugin añade atajos `/wenlan`. [Comandos](plugin/skills/README.md).
 - **En la app:** añade material, edita páginas, sigue las citas y revisa cambios sin conectar ninguna IA.
 
 ¿Ya usas Claude Code con una carpeta de notas? Sigue. Wenlan añade comprobación de citas.
@@ -199,11 +201,14 @@ Tu IA convierte lo que traes en páginas Markdown enlazadas y con citas, y las m
 
 En un repositorio, tu herramienta de IA lee el código y escribe un resumen y un documento por cada parte.
 
-```text
-/wenlan wiki        # $wenlan wiki en Codex
+```sh
+cd your-repo
+wenlan init
 ```
 
-- **Ligada al código:** Cada página registra las líneas de código que leyó y muestra qué cambió.
+Conecta tus herramientas de IA y pregunta por la pull request diaria. Luego pide los documentos.
+
+- **Ligada al código:** Cada frase clave apunta a las líneas de código de las que salió. Si cambian, lo ves.
 - **Como pull request:** Las páginas entran en el repositorio como pull request, al pulsar el botón o a diario.
 - **También la documentación:** La misma pull request corrige frases que el código ya no respalda.
 - **También las reglas:** Las reglas del proyecto van a `AGENTS.md`, para las herramientas del equipo.

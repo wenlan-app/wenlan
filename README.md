@@ -97,9 +97,11 @@ More comparisons, with Obsidian, Notion AI, and memory tools: [wenlan.app/learn]
    wenlan sources add ~/notes
    ```
 
-4. Start a new AI session and ask:
+4. Tell one AI tool something to keep. Then ask in another:
 
-   > /wenlan what did I decide about this before? Then help me: …
+   > Remember: we release on Tuesdays, after the tests pass.
+
+   > When do we release?
 
 5. Read and edit your pages in your browser: `wenlan open`.
 
@@ -172,7 +174,7 @@ Your AI tool turns what you bring in into linked, cited Markdown pages and keeps
 - **Kept current:** When a source, memory, or cited code changes, pages relying on it are flagged.
 - **You decide what AI may change:** Set a page to **Allowed** or **Ask me first**, and restore any earlier version.
 - **Two ways to run it:** your AI tool as it works (default), or a background model you pick. [Steep guide](docs/steep.md).
-- **In your AI tool:** type `/wenlan` and say what you want. [All commands](plugin/skills/README.md).
+- **In your AI tool:** ask in plain words. The plugin adds `/wenlan` shortcuts. [All commands](plugin/skills/README.md).
 - **In the app:** add material, edit pages, follow citations, and review changes without connecting an AI.
 
 Already run Claude Code on a notes folder? Keep it. Wenlan adds citation checks and per-page control.
@@ -186,11 +188,14 @@ Already run Claude Code on a notes folder? Keep it. Wenlan adds citation checks 
 
 In a repository, your AI tool reads the code and writes an overview and a doc for each part.
 
-```text
-/wenlan wiki        # $wenlan wiki in Codex
+```sh
+cd your-repo
+wenlan init
 ```
 
-- **Tied to the code:** Each page records the code lines it was read from and shows what changed.
+It connects your AI tools and asks once about a daily pull request. Then ask one to write the docs.
+
+- **Tied to the code:** Each key sentence points to the code lines behind it. You see when they change.
 - **As a pull request:** Pages go into the repository as a pull request, when you press the button or daily.
 - **Existing docs too:** The same pull request fixes doc sentences the code no longer matches.
 - **Project rules too:** It also puts the project's rules into `AGENTS.md`, where teammates' AI tools read them.
