@@ -232,10 +232,12 @@ pub async fn handle_get_page(
     let edit_root = page_root
         .clone()
         .unwrap_or_else(|| wenlan_core::config::load_config().knowledge_path_or_default());
-    if let Err(error) =
-        wenlan_core::sources::page_watcher::sync_page_file_if_changed(&db, &edit_root, &id).await
+    match wenlan_core::sources::page_watcher::sync_page_file_if_changed(&db, &edit_root, &id).await
     {
-        tracing::debug!("[pages] reading back {id} from its file failed: {error}");
+        // An edit just taken in from the file may be a rule the person wrote.
+        Ok(true) => drop(crate::skill_grow::RulesPageWrite::begin(&state, Some(&id)).await),
+        Ok(false) => {}
+        Err(error) => tracing::debug!("[pages] reading back {id} from its file failed: {error}"),
     }
     let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
     // Q1 browse surface: a shadow id resolves 200 here, so read the unfenced
@@ -518,6 +520,7 @@ pub async fn handle_set_page_review_required(
     Path(id): Path<String>,
     Json(req): Json<wenlan_types::requests::SetPageReviewRequiredRequest>,
 ) -> Result<Json<wenlan_types::responses::PageReviewRequiredResponse>, ServerError> {
+    let _rules = crate::skill_grow::RulesPageWrite::begin(&state, Some(&id)).await;
     let db = {
         let s = state.read().await;
         s.db.clone().ok_or(ServerError::DbNotInitialized)?
@@ -565,6 +568,7 @@ pub async fn handle_archive_page(
     crate::team_actor::TeamActor(member): crate::team_actor::TeamActor,
     Path(id): Path<String>,
 ) -> Result<Json<PageRemovalResponse>, ServerError> {
+    let _rules = crate::skill_grow::RulesPageWrite::begin(&state, Some(&id)).await;
     let (db, page_root) = {
         let s = state.read().await;
         (
@@ -741,6 +745,7 @@ pub async fn handle_restore_page(
     Path(id): Path<String>,
     Json(req): Json<wenlan_types::requests::RestorePageRequest>,
 ) -> Result<Json<wenlan_types::responses::RestorePageResponse>, ServerError> {
+    let _rules = crate::skill_grow::RulesPageWrite::begin(&state, Some(&id)).await;
     let (db, page_root) = {
         let state = state.read().await;
         (
@@ -867,6 +872,7 @@ pub async fn handle_set_page_space(
     Path(id): Path<String>,
     Json(req): Json<wenlan_types::requests::SetPageSpaceRequest>,
 ) -> Result<Json<wenlan_types::responses::SetPageSpaceResponse>, ServerError> {
+    let _rules = crate::skill_grow::RulesPageWrite::begin(&state, Some(&id)).await;
     let (db, page_root) = {
         let state = state.read().await;
         (
@@ -977,6 +983,7 @@ pub async fn handle_delete_page(
     Path(id): Path<String>,
     axum::extract::Query(query): axum::extract::Query<DeletePageQuery>,
 ) -> Result<Json<PageRemovalResponse>, ServerError> {
+    let _rules = crate::skill_grow::RulesPageWrite::begin(&state, Some(&id)).await;
     let (db, page_root) = {
         let s = state.read().await;
         (
@@ -1107,6 +1114,7 @@ pub async fn handle_create_page(
         &req.source_memory_ids,
         page_min_cluster_size,
     ) == "distilled";
+    let mut rules = crate::skill_grow::RulesPageWrite::begin(&state, None).await;
     let mut slow = crate::slow_save::SlowSaveLog::start("saving a page");
     let result = handle_create_page_inner(
         State(state),
@@ -1116,6 +1124,9 @@ pub async fn handle_create_page(
     )
     .await;
     slow.finish(&result);
+    if let Ok(Json(response)) = &result {
+        rules.page(&response.id);
+    }
     if is_distilled {
         match &result {
             Ok(Json(response)) if response.write_outcome == Some(WriteOutcome::Created) => {
@@ -1480,6 +1491,7 @@ pub async fn handle_move_page(
     Path(id): Path<String>,
     Json(req): Json<MovePageRequest>,
 ) -> Result<Json<MovePageResponse>, ServerError> {
+    let _rules = crate::skill_grow::RulesPageWrite::begin(&state, Some(&id)).await;
     let (db, root) = {
         let s = state.read().await;
         (
@@ -1630,6 +1642,7 @@ pub async fn handle_publish_page_draft(
     Path(id): Path<String>,
     Json(req): Json<PageDraftVersionRequest>,
 ) -> Result<Json<PageDraftResponse>, ServerError> {
+    let _rules = crate::skill_grow::RulesPageWrite::begin(&state, Some(&id)).await;
     let (db, page_root) = {
         let s = state.read().await;
         (
@@ -1992,6 +2005,7 @@ pub async fn handle_rename_page(
     Path(id): Path<String>,
     Json(req): Json<wenlan_types::requests::RenamePageRequest>,
 ) -> Result<Json<wenlan_types::responses::RenamePageResponse>, ServerError> {
+    let _rules = crate::skill_grow::RulesPageWrite::begin(&state, Some(&id)).await;
     let (db, page_root) = {
         let state = state.read().await;
         (
@@ -2185,6 +2199,7 @@ pub async fn handle_update_page(
     Path(id): Path<String>,
     Json(wire): Json<wenlan_types::requests::ManualPageEditRequest>,
 ) -> Result<Json<wenlan_types::responses::ManualPageWriteResponse>, ServerError> {
+    let _rules = crate::skill_grow::RulesPageWrite::begin(&state, Some(&id)).await;
     let wenlan_types::requests::ManualPageEditRequest {
         edit: req,
         minor,
@@ -2356,6 +2371,7 @@ pub async fn handle_refresh_page(
     headers: HeaderMap,
     Json(req): Json<wenlan_types::requests::RefreshPageRequest>,
 ) -> Result<Json<wenlan_types::responses::PageWriteResponse>, ServerError> {
+    let _rules = crate::skill_grow::RulesPageWrite::begin(&state, Some(&id)).await;
     let telemetry = { state.read().await.telemetry.clone() };
     // The agent named on a staged revision card. Only the header counts: an
     // unattributed write leaves the card unattributed.
@@ -2949,6 +2965,7 @@ pub async fn handle_restore_page_version(
     headers: HeaderMap,
     Json(req): Json<wenlan_types::requests::RestorePageVersionRequest>,
 ) -> Result<Json<wenlan_types::responses::RestorePageVersionResponse>, ServerError> {
+    let _rules = crate::skill_grow::RulesPageWrite::begin(&state, Some(&id)).await;
     use wenlan_types::responses::RestorePageVersionErrorCode as Code;
     let proposer = headers
         .get("x-agent-name")

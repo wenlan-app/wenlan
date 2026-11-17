@@ -60,7 +60,16 @@ fn rules_for_a_person(response: &SpaceRulesResponse) -> String {
         } else {
             ""
         };
-        out.push_str(&format!("  from \"{}\"{scope}\n", line.source_page_title));
+        // A rule the person wrote themselves says so (UX-SKILL-10).
+        let source = if line.hand_written {
+            "written by you in"
+        } else {
+            "from"
+        };
+        out.push_str(&format!(
+            "  {source} \"{}\"{scope}\n",
+            line.source_page_title
+        ));
     }
     out
 }
@@ -86,7 +95,31 @@ mod tests {
             source_quote: text.to_string(),
             person_edited: false,
             general,
+            hand_written: false,
         }
+    }
+
+    #[test]
+    fn ux_skill_10_a_rule_the_person_wrote_says_so() {
+        let response = SpaceRulesResponse {
+            space_id: "space_0123456789abcdef".to_string(),
+            space_name: "Wenlan".to_string(),
+            rules_page_id: None,
+            lines: vec![
+                SkillLine {
+                    hand_written: true,
+                    person_edited: true,
+                    ..line("Use the merge queue.", "Git", false)
+                },
+                line("Answer in plain words.", "How I talk", true),
+            ],
+        };
+        assert_eq!(
+            rules_for_a_person(&response),
+            "Working rules for Wenlan\n\n\
+             - Use the merge queue.\n  written by you in \"Git\"\n\
+             - Answer in plain words.\n  from \"How I talk\", used in every Space\n"
+        );
     }
 
     #[test]

@@ -20,11 +20,15 @@ use wenlan_core::db::skill_grow::{
 use wenlan_core::db::MemoryDB;
 use wenlan_core::llm_provider::{LlmProvider, LlmRequest};
 use wenlan_core::skill_grow::{self, OldSkillCandidate, SkillPageInput};
+use wenlan_core::skill_locations::{
+    rules_location, RulesFileKind, RulesLocation, RulesRoots, GLOBAL_RULES_TOOLS,
+};
 use wenlan_types::requests::{CreateConceptRequest, UpdatePageRequest};
 use wenlan_types::{
-    SkillBorrowRecord, SkillLine, SkillReportRequest, SkillSuggestion,
-    SkillSuggestionActionResponse, SkillsRefreshResponse, SpaceRulesActionResponse,
-    SpaceRulesResponse, SpaceRulesSuggestion, WriteSpaceTarget,
+    RulesDeliveryMethod, RulesDeliveryResponse, RulesDeliveryState, SkillBorrowRecord, SkillLine,
+    SkillReportRequest, SkillSuggestion, SkillSuggestionActionResponse, SkillsRefreshResponse,
+    SpaceRulesActionResponse, SpaceRulesResponse, SpaceRulesSuggestion, ToolRulesDelivery,
+    WriteSpaceTarget,
 };
 
 use crate::error::ServerError;
@@ -35,6 +39,7 @@ const MAX_PAGES_PER_SPACE: usize = 80;
 const MAX_UNMANAGED_SKILLS: usize = 40;
 const MAX_NIGHTLY_MODEL_CALLS: usize = 8;
 const MANAGED_MARKER: &str = ".wenlan-managed";
+const TOOL_FILES_RECORD: &str = "tool-rules-files.json";
 static SKILLS_MUTATION_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static NIGHTLY_RUNNING: AtomicBool = AtomicBool::new(false);
 
@@ -50,6 +55,7 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
     router
         .route("/api/skills/refresh", post(handle_refresh))
         .route("/api/skills/rules", get(handle_read_rules))
+        .route("/api/skills/delivery", get(handle_rules_delivery))
         .route(
             "/api/skills/spaces/suggestions",
             get(handle_space_suggestions),
@@ -89,13 +95,25 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
 struct SkillDirs {
     home: Option<PathBuf>,
     config: Option<PathBuf>,
+    /// A non-empty `CODEX_HOME`: where Codex keeps its files instead of
+    /// `~/.codex`.
+    codex_home: Option<PathBuf>,
+    /// A non-empty `COPILOT_HOME`, the same for Copilot's `~/.copilot`.
+    copilot_home: Option<PathBuf>,
+    /// A non-empty, absolute `XDG_CONFIG_HOME`: where OpenCode, and Zed on
+    /// Linux, keep their settings instead of `~/.config`.
+    xdg_config_home: Option<PathBuf>,
     /// Whether the tools' own always-read files under `home` may be written.
     tool_files: bool,
+    /// Wenlan's own note, under its data root, of when it last wrote its
+    /// part of each tool's file and whether it made the file.
+    tool_files_record: Option<PathBuf>,
 }
 
 impl SkillDirs {
     /// Mirror the app's isolated AI-tool roots. A debug/scratch daemon with a
-    /// selected dev state can never discover the person's real skill files.
+    /// selected dev state can never discover the person's real skill files,
+    /// whatever `CODEX_HOME` or `COPILOT_HOME` say.
     fn system() -> Self {
         if let Some(root) =
             std::env::var_os("WENLAN_DEV_STATE_DIR").filter(|value| !value.is_empty())
@@ -104,13 +122,39 @@ impl SkillDirs {
             return Self {
                 home: Some(root.join("home")),
                 config: Some(root.join("config")),
+                codex_home: None,
+                copilot_home: None,
+                xdg_config_home: None,
                 tool_files: true,
+                tool_files_record: Some(root.join(TOOL_FILES_RECORD)),
             };
         }
+        let folder_from = |name: &str| {
+            std::env::var_os(name)
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+        };
         Self {
             home: dirs::home_dir(),
             config: dirs::config_dir(),
+            codex_home: folder_from("CODEX_HOME"),
+            copilot_home: folder_from("COPILOT_HOME"),
+            xdg_config_home: folder_from("XDG_CONFIG_HOME").filter(|folder| folder.is_absolute()),
             tool_files: wenlan_core::config::may_write_tool_files(),
+            tool_files_record: Some(wenlan_core::config::data_root().join(TOOL_FILES_RECORD)),
+        }
+    }
+
+    fn rules_roots(&self) -> RulesRoots<'_> {
+        RulesRoots {
+            home: self.home.as_deref(),
+            config_dir: self.config.as_deref(),
+            codex_home: self.codex_home.as_deref(),
+            copilot_home: self.copilot_home.as_deref(),
+            xdg_config_home: self.xdg_config_home.as_deref(),
+            // Zed follows it on Linux; on macOS it always uses `~/.config`.
+            zed_follows_xdg: cfg!(not(any(windows, target_os = "macos"))),
+            windows: cfg!(windows),
         }
     }
 }
@@ -216,6 +260,7 @@ async fn charge_model_call(
 
 async fn pages_for_space(
     db: &MemoryDB,
+    own: &OwnRulePages,
     space: &wenlan_types::Space,
     rules_page_id: Option<&str>,
 ) -> Result<Vec<SkillPageInput>, ServerError> {
@@ -232,6 +277,9 @@ async fn pages_for_space(
     for page in pages
         .into_iter()
         .filter(|page| Some(page.id.as_str()) != rules_page_id)
+        // The person's own rules already count; the model is not asked to
+        // suggest them back (UX-SKILL-10).
+        .filter(|page| !own.holds(&page.id))
         .filter(|page| !page.review_required)
         .filter(|page| !skill_grow::page_is_not_for_ai_tools(&page.content))
         .take(MAX_PAGES_PER_SPACE)
@@ -511,33 +559,291 @@ async fn resolved_space(
         .ok_or_else(|| ServerError::NotFound(format!("Space {name:?} not found")))
 }
 
-async fn read_rules_for_space(
+/// A page in a folder named Rules, with the rules the person wrote on it
+/// themselves (UX-SKILL-10).
+struct OwnRulePage {
+    id: String,
+    /// The Space the page gives rules for; `None` for a page in no Space
+    /// and outside every Space's folder, whose rules hold everywhere.
+    space: Option<String>,
+    version: i64,
+    file: String,
+    lines: Vec<SkillLine>,
+    /// Every plain bullet on the page is the person's own.
+    all_own: bool,
+}
+
+/// The person's own rules pages, read once for a whole pass.
+#[derive(Default)]
+struct OwnRulePages {
+    /// The pages folder they were read from; also names the trace cache.
+    root: Option<PathBuf>,
+    pages: Vec<OwnRulePage>,
+}
+
+/// The file `state.json` records for each page, with whether the page began
+/// as a note the person put in the folder. Read off the async runtime: the
+/// state file grows with the library.
+async fn page_files(db: &MemoryDB, root: &Path) -> HashMap<String, (String, bool)> {
+    let writer = wenlan_core::export::knowledge::KnowledgeWriter::new(root.to_path_buf(), db);
+    tokio::task::spawn_blocking(move || writer.page_files_with_person_notes())
+        .await
+        .unwrap_or_default()
+}
+
+/// One traced page: what the trace was made from, and its result.
+struct TracedPage {
+    version: i64,
+    title: String,
+    person_note: bool,
+    lines: Vec<SkillLine>,
+}
+
+/// Traces by pages folder and page id. A trace reads the page's whole
+/// history, and is the same until the page has a new version.
+static TRACED: std::sync::Mutex<Option<HashMap<(PathBuf, String), TracedPage>>> =
+    std::sync::Mutex::new(None);
+
+/// History read for one trace.
+const RULES_PAGE_HISTORY_DEPTH: i64 = 2_000;
+
+/// The bullets on `page` the person wrote themselves: each is traced to the
+/// version that first brought its text in, and counts only when that version
+/// was the person's own. A version an AI tool or a teammate wrote, AI text
+/// the person accepted (a revision, or one sentence), and a version whose
+/// writer is not known give no rule, and do not take away a bullet the
+/// person wrote before or after. `person_note` says the page began as a note
+/// the person put in the folder, whose first version is recorded as a
+/// tool's. A page with no plain bullet costs no history read.
+async fn person_lines_of(
+    db: &MemoryDB,
+    root: Option<&Path>,
+    page: &wenlan_types::Page,
+    person_note: bool,
+) -> Result<Vec<SkillLine>, ServerError> {
+    let mut input = SkillPageInput {
+        id: page.id.clone(),
+        title: page.title.clone(),
+        revision: page.version,
+        revision_at: 0,
+        text: page.content.clone(),
+    };
+    if skill_grow::person_rule_lines(&input).is_empty() {
+        return Ok(Vec::new());
+    }
+    let key = root.map(|root| (root.to_path_buf(), page.id.clone()));
+    if let Some(key) = &key {
+        let cache = TRACED
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(found) = cache.as_ref().and_then(|cache| cache.get(key)).filter(|t| {
+            t.version == page.version && t.title == page.title && t.person_note == person_note
+        }) {
+            return Ok(found.lines.clone());
+        }
+    }
+    let mut history = db
+        .list_page_history(&page.id, RULES_PAGE_HISTORY_DEPTH)
+        .await?;
+    history.reverse();
+    let accepted: HashSet<i64> = db
+        .sentence_accept_versions(&page.id)
+        .await?
+        .into_iter()
+        .collect();
+    let versions: Vec<(bool, &str)> = history
+        .iter()
+        .map(|version| {
+            let own = !accepted.contains(&version.version)
+                && (skill_grow::version_is_the_persons_own(&version.edited_by)
+                    || (person_note && version.edited_by == "agent_create"));
+            (own, version.content.as_str())
+        })
+        .collect();
+    input.revision_at = history.last().map_or(0, |version| version.created_at);
+    let lines = skill_grow::person_rule_lines_through_history(&input, &versions);
+    if let Some(key) = key {
+        TRACED
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get_or_insert_with(HashMap::new)
+            .insert(
+                key,
+                TracedPage {
+                    version: page.version,
+                    title: page.title.clone(),
+                    person_note,
+                    lines: lines.clone(),
+                },
+            );
+    }
+    Ok(lines)
+}
+
+impl OwnRulePages {
+    /// For a reader that wants only what Wenlan derived from pages.
+    fn none() -> Self {
+        Self::default()
+    }
+
+    /// Every active page whose file sits in a folder named Rules, with the
+    /// bullets the person wrote on it themselves. A page under review and
+    /// one marked not for AI tools are left out. A page gives rules for its
+    /// Space; a page with no Space gives them for the Space whose folder
+    /// holds its file, and only a page outside every Space's folder holds
+    /// for every Space. No pages folder, no such pages.
+    async fn load(db: &MemoryDB, page_root: Option<&Path>) -> Result<Self, ServerError> {
+        let Some(root) = page_root else {
+            return Ok(Self::default());
+        };
+        let mut files: Vec<(String, (String, bool))> = page_files(db, root)
+            .await
+            .into_iter()
+            .filter(|(_, (file, _))| skill_grow::may_be_in_rules_folder(file))
+            .collect();
+        files.sort();
+        let mut pages = Vec::new();
+        if files.is_empty() {
+            return Ok(Self {
+                root: Some(root.to_path_buf()),
+                pages,
+            });
+        }
+        let layout = wenlan_core::space_folders::current_layout(db, root).await?;
+        for (id, (file, person_note)) in files {
+            let Some(page) = db.get_page(&id).await? else {
+                continue;
+            };
+            if page.status != "active"
+                || page.review_required
+                || skill_grow::page_is_not_for_ai_tools(&page.content)
+            {
+                continue;
+            }
+            let own_space = page
+                .space
+                .as_deref()
+                .map(str::trim)
+                .filter(|name| !name.is_empty() && *name != "uncategorized")
+                .map(str::to_string);
+            // The Space's own folder (or its team's) is not a folder the
+            // person named: only the folders inside it count.
+            let mut placed = wenlan_core::space_folders::placed(&file, &layout);
+            // Unless a Space that happens to be named Rules now sits on the
+            // folder the person keeps their rules in: for a page that is not
+            // in that Space the folder still means rules, as it did before
+            // the Space was made.
+            let on_a_rules_folder = placed.space.as_ref().is_some_and(|space| {
+                layout.get(space).is_some_and(|folder| {
+                    !folder.contains('/') && skill_grow::has_rules_folder(folder)
+                })
+            });
+            if own_space.is_none() && on_a_rules_folder {
+                placed = wenlan_core::space_folders::placed(&file, &Default::default());
+            }
+            if !skill_grow::has_rules_folder(&placed.inside) {
+                continue;
+            }
+            let space = own_space.or(placed.space);
+            // A file in a team's folder but in none of its Spaces has no
+            // Space to give rules to, and is never the person's general one.
+            if space.is_none() && placed.team_only {
+                continue;
+            }
+            let Some(page) = wenlan_core::truth_adapter::filter_page(
+                db,
+                &wenlan_core::truth_contract::TruthGrant::Automatic,
+                Some(page),
+            )
+            .await?
+            else {
+                continue;
+            };
+            let mut lines = person_lines_of(db, Some(root), &page, person_note).await?;
+            for line in &mut lines {
+                line.general = space.is_none();
+            }
+            let all_own = !lines.is_empty()
+                && lines.len()
+                    == skill_grow::person_rule_lines(&SkillPageInput {
+                        id: page.id.clone(),
+                        title: page.title.clone(),
+                        revision: page.version,
+                        revision_at: 0,
+                        text: page.content.clone(),
+                    })
+                    .len();
+            pages.push(OwnRulePage {
+                all_own,
+                id: page.id,
+                space,
+                version: page.version,
+                file,
+                lines,
+            });
+        }
+        Ok(Self {
+            root: Some(root.to_path_buf()),
+            pages,
+        })
+    }
+
+    /// A page whose every bullet is the person's own already counts, so the
+    /// model is not asked to suggest it back. A page with a bullet that is
+    /// not theirs (an AI tool's, a teammate's) still goes to the model.
+    fn holds(&self, page_id: &str) -> bool {
+        self.pages
+            .iter()
+            .any(|page| page.id == page_id && page.all_own)
+    }
+
+    /// The lines of the pages in `space` (`None`: the pages in no Space).
+    fn lines_in(&self, space: Option<&str>) -> Vec<SkillLine> {
+        self.pages
+            .iter()
+            .filter(|page| page.space.as_deref() == space)
+            .flat_map(|page| page.lines.iter().cloned())
+            .collect()
+    }
+
+    /// Changes whenever a page joins, leaves, moves or is saved.
+    fn signature(&self) -> String {
+        let mut hasher = Sha256::new();
+        for page in &self.pages {
+            hasher.update(page.id.as_bytes());
+            hasher.update(page.version.to_be_bytes());
+            hasher.update(page.file.as_bytes());
+            hasher.update(page.space.as_deref().unwrap_or_default().as_bytes());
+            hasher.update([0]);
+        }
+        hasher
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
+}
+
+/// The Space's "How I work" page when AI tools may read it: accepted, still
+/// in the Space, not under review and not stopped.
+async fn readable_rules_page(
     db: &MemoryDB,
     space: &wenlan_types::Space,
-) -> Result<SpaceRulesResponse, ServerError> {
-    let empty = || SpaceRulesResponse {
-        space_id: space.id.clone(),
-        space_name: space.name.clone(),
-        rules_page_id: None,
-        lines: Vec::new(),
-    };
-    if !feature_enabled() {
-        return Ok(empty());
-    }
+) -> Result<Option<(SpaceRulesState, wenlan_types::Page)>, ServerError> {
     let Some(state) = db.space_rules_state(&space.id).await? else {
-        return Ok(empty());
+        return Ok(None);
     };
     if state.status != SpaceRulesStatus::Accepted {
-        return Ok(empty());
+        return Ok(None);
     }
     let Some(page_id) = state.rules_page_id.as_deref() else {
-        return Ok(empty());
+        return Ok(None);
     };
     let Some(page) = db.get_page(page_id).await? else {
-        return Ok(empty());
+        return Ok(None);
     };
     if !page_belongs_to_space(db, &page, &space.id).await? {
-        return Ok(empty());
+        return Ok(None);
     }
     let Some(page) = wenlan_core::truth_adapter::filter_page(
         db,
@@ -546,29 +852,65 @@ async fn read_rules_for_space(
     )
     .await?
     else {
-        return Ok(empty());
+        return Ok(None);
     };
     if page.review_required || skill_grow::page_is_not_for_ai_tools(&page.content) {
-        return Ok(empty());
+        return Ok(None);
     }
-    let reconciled = skill_grow::reconcile_rules_page(
-        &space.name,
-        &state.lines,
-        &state.lines,
-        &state.deleted_fingerprints,
-        Some(&page.content),
-        last_page_edit_is_person(&page),
-    );
-    let mut lines = eligible_lines(db, &space.id, &reconciled.lines).await?;
-    // Checked on every read too, so a line approved as general before its
-    // page turned out to be a teammate's stops being one at once.
-    keep_general_to_own_pages(db, &mut lines).await?;
+    Ok(Some((state, page)))
+}
+
+/// What AI tools are told in `space`. The person's own rules come first and
+/// need neither a model, the accept, nor the setting (UX-SKILL-10); the lines
+/// Wenlan derived from pages follow, only once accepted and with the setting
+/// on.
+async fn read_rules_for_space(
+    db: &MemoryDB,
+    own: &OwnRulePages,
+    space: &wenlan_types::Space,
+) -> Result<SpaceRulesResponse, ServerError> {
+    let mut lines = own.lines_in(Some(&space.name));
+    let mut rules_page_id = None;
+    if let Some((state, page)) = readable_rules_page(db, space).await? {
+        lines.extend(person_lines_of(db, own.root.as_deref(), &page, false).await?);
+        if feature_enabled() {
+            let reconciled = skill_grow::reconcile_rules_page(
+                &space.name,
+                &state.lines,
+                &state.lines,
+                &state.deleted_fingerprints,
+                Some(&page.content),
+                last_page_edit_is_person(&page),
+            );
+            let mut derived = eligible_lines(db, &space.id, &reconciled.lines).await?;
+            // Checked on every read too, so a line approved as general before its
+            // page turned out to be a teammate's stops being one at once.
+            keep_general_to_own_pages(db, &mut derived).await?;
+            lines.extend(derived);
+            rules_page_id = Some(page.id);
+        }
+    }
+    // The same sentence is told once; the person's own wording comes first.
+    let mut seen = HashSet::new();
+    lines.retain(|line| seen.insert(line.text.trim().to_lowercase()));
     Ok(SpaceRulesResponse {
         space_id: space.id.clone(),
         space_name: space.name.clone(),
-        rules_page_id: Some(page.id),
+        rules_page_id,
         lines,
     })
+}
+
+/// The pages folder and database of a request, read without holding the
+/// state lock across an await.
+async fn db_and_page_root(
+    state: &SharedState,
+) -> Result<(Arc<MemoryDB>, Option<PathBuf>), ServerError> {
+    let state = state.read().await;
+    Ok((
+        state.db.clone().ok_or(ServerError::DbNotInitialized)?,
+        state.lint_config.page_root().map(Path::to_path_buf),
+    ))
 }
 
 pub async fn handle_read_rules(
@@ -576,16 +918,12 @@ pub async fn handle_read_rules(
     headers: HeaderMap,
     Query(query): Query<RulesQuery>,
 ) -> Result<Json<SpaceRulesResponse>, ServerError> {
-    let db = state
-        .read()
-        .await
-        .db
-        .clone()
-        .ok_or(ServerError::DbNotInitialized)?;
+    let (db, page_root) = db_and_page_root(&state).await?;
+    let own = OwnRulePages::load(&db, page_root.as_deref()).await?;
     let tool = crate::memory_routes::extract_agent_name(&headers, None);
     if no_space_named(&headers, query.space.as_deref()) {
         // No Space: only the general lines, read from every accepted Space.
-        let general = general_lines(&db, None).await?;
+        let general = general_lines(&db, &own, None).await?;
         record_general_reads(&db, &tool, &general).await?;
         return Ok(Json(SpaceRulesResponse {
             space_id: String::new(),
@@ -595,13 +933,13 @@ pub async fn handle_read_rules(
         }));
     }
     let space = resolved_space(&db, &headers, query.space.as_deref()).await?;
-    let mut response = read_rules_for_space(&db, &space).await?;
+    let mut response = read_rules_for_space(&db, &own, &space).await?;
     if feature_enabled() && !response.lines.is_empty() {
         db.record_skill_rules_read(&tool, &space.id, &response.lines)
             .await?;
     }
     // General lines from other Spaces apply here too (UX-SKILL-5).
-    let general = general_lines(&db, Some(&space.id)).await?;
+    let general = general_lines(&db, &own, Some(&space.id)).await?;
     let known: HashSet<String> = response
         .lines
         .iter()
@@ -632,23 +970,28 @@ fn no_space_named(headers: &HeaderMap, query_space: Option<&str>) -> bool {
             .is_none()
 }
 
-/// Approved general lines of every accepted Space other than `except`, each
-/// still checked against its own Space's rules page, with that Space's id.
-/// The same sentence from two Spaces is listed once.
+/// The rules the person wrote on their own pages in no Space (listed under an
+/// empty Space id), then the approved general lines of every accepted Space
+/// other than `except`, each still checked against its own Space's rules
+/// page, with that Space's id. The same sentence from two places is listed
+/// once.
 async fn general_lines(
     db: &MemoryDB,
+    own: &OwnRulePages,
     except: Option<&str>,
 ) -> Result<Vec<(String, SkillLine)>, ServerError> {
-    if !feature_enabled() {
-        return Ok(Vec::new());
-    }
     let mut seen = HashSet::new();
     let mut out = Vec::new();
+    for line in own.lines_in(None) {
+        if seen.insert(line.text.trim().to_lowercase()) {
+            out.push((String::new(), line));
+        }
+    }
     for space in db.list_spaces().await? {
         if Some(space.id.as_str()) == except {
             continue;
         }
-        for line in read_rules_for_space(db, &space).await?.lines {
+        for line in read_rules_for_space(db, own, &space).await?.lines {
             if line.general && seen.insert(line.text.trim().to_lowercase()) {
                 out.push((space.id.clone(), line));
             }
@@ -662,6 +1005,9 @@ async fn record_general_reads(
     tool: &str,
     lines: &[(String, SkillLine)],
 ) -> Result<(), ServerError> {
+    if !feature_enabled() {
+        return Ok(());
+    }
     let mut by_space: HashMap<&str, Vec<SkillLine>> = HashMap::new();
     for (space_id, line) in lines {
         by_space.entry(space_id).or_default().push(line.clone());
@@ -673,9 +1019,10 @@ async fn record_general_reads(
 }
 
 /// Whether Wenlan wrote the file at `path`: a regular file that opens with
-/// the managed mark. Anything else is the person's own.
+/// the managed mark, after the front matter when a tool needs one first.
+/// Anything else is the person's own.
 fn is_wenlan_rules_file(path: &Path) -> bool {
-    read_regular_nofollow(path).is_ok_and(|text| text.starts_with(skill_grow::RULES_FILE_MARK))
+    read_regular_nofollow(path).is_ok_and(|text| skill_grow::is_wenlan_rules_text(&text))
 }
 
 /// Bring one layer's folder in line with `files`: write what changed, remove
@@ -724,102 +1071,810 @@ fn sync_rules_layer(home: &Path, folder: &Path, files: &[(&'static str, String)]
 }
 
 /// A file `text` pulls in with an `@path` line, as Claude Code's `CLAUDE.md`
-/// does with `@AGENTS.md`.
+/// does with `@AGENTS.md`. Only asked of a tool whose file format has them.
+/// An `@` line the person shows inside fenced code brings nothing in.
 fn imported_files(file: &Path, home: &Path, text: &str) -> Vec<PathBuf> {
     let folder = file.parent().unwrap_or(home);
-    text.lines()
-        .filter_map(|line| line.trim().strip_prefix('@'))
+    skill_grow::lines_outside_code_fences(text)
+        .into_iter()
+        .filter_map(|(_, line)| line.trim().strip_prefix('@'))
         .filter(|path| !path.is_empty() && !path.contains(char::is_whitespace))
-        .filter_map(|path| {
-            let path = match path.strip_prefix("~/") {
-                Some(rest) => home.join(rest),
-                None => folder.join(path),
-            };
-            path.canonicalize().ok()
+        .map(|path| match path.strip_prefix("~/") {
+            Some(rest) => home.join(rest),
+            None => folder.join(path),
         })
+        // The file it names may be one this same pass is about to make.
+        .map(|path| canonical_target(&path))
         .collect()
 }
 
-/// Keep Wenlan's block of general rules in each connected tool's own
-/// always-read file, so the tool follows them without having to ask. Only the
-/// part between Wenlan's markers is ever changed. A tool that is not
-/// connected, no general rules, or the setting off takes the block out.
-/// A file reached through a link is written where the link points; a file
-/// another written file already covers (the same file, or one it imports) is
-/// not given a second copy.
-async fn sync_tool_rules(db: &MemoryDB, dirs: &SkillDirs, general: &[SkillLine]) {
-    let Some(home) = dirs.home.as_deref().filter(|_| dirs.tool_files) else {
+/// Where a write to `path` lands: the file a link points to, or, for a file
+/// not there yet, its place under the real spelling of the nearest folder
+/// that is.
+fn canonical_target(path: &Path) -> PathBuf {
+    if let Ok(target) = path.canonicalize() {
+        return target;
+    }
+    let mut missing = Vec::new();
+    let mut folder = path;
+    while let (Some(parent), Some(name)) = (folder.parent(), folder.file_name()) {
+        missing.push(name);
+        if let Ok(real) = parent.canonicalize() {
+            return missing.iter().rev().fold(real, |p, part| p.join(part));
+        }
+        folder = parent;
+    }
+    path.to_path_buf()
+}
+
+/// What is at a tool's file right now.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ToolFileNow {
+    /// No file, and nothing in the way of making one.
+    Missing,
+    Text(String),
+    /// Something Wenlan cannot safely read or put a file in place of, with a
+    /// short reason. It is never replaced.
+    Blocked(&'static str),
+}
+
+/// Read the file at `target`, a path [`canonical_target`] gave. Only a plain
+/// "there is no file" counts as missing: a link that leads nowhere, a folder,
+/// a file that is not text and a file that cannot be read are all left.
+fn read_tool_file(target: &Path) -> ToolFileNow {
+    use std::io::ErrorKind::NotFound;
+    let metadata = match std::fs::symlink_metadata(target) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == NotFound => {
+            // A folder on the way that is a link to nowhere is not "no file".
+            let mut folder = target.parent();
+            while let Some(dir) = folder {
+                match std::fs::symlink_metadata(dir) {
+                    Ok(_) if dir.is_dir() => return ToolFileNow::Missing,
+                    Ok(_) => return ToolFileNow::Blocked("folder_not_usable"),
+                    Err(error) if error.kind() == NotFound => folder = dir.parent(),
+                    Err(_) => return ToolFileNow::Blocked("not_readable"),
+                }
+            }
+            return ToolFileNow::Missing;
+        }
+        Err(_) => return ToolFileNow::Blocked("not_readable"),
+    };
+    // Every link that leads somewhere was followed to get `target`.
+    if metadata.file_type().is_symlink() {
+        return ToolFileNow::Blocked("broken_link");
+    }
+    if !metadata.is_file() {
+        return ToolFileNow::Blocked("not_a_file");
+    }
+    match std::fs::read(target) {
+        Ok(bytes) => match String::from_utf8(bytes) {
+            Ok(text) => ToolFileNow::Text(text),
+            Err(_) => ToolFileNow::Blocked("not_text"),
+        },
+        Err(error) if error.kind() == NotFound => ToolFileNow::Missing,
+        Err(_) => ToolFileNow::Blocked("not_readable"),
+    }
+}
+
+/// Whether the person made the file at `target` read-only. Such a file is
+/// left alone on every platform.
+fn is_read_only(target: &Path) -> bool {
+    std::fs::metadata(target).is_ok_and(|metadata| metadata.permissions().readonly())
+}
+
+/// What Wenlan noted about one tool file it wrote.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, Deserialize)]
+struct ToolFileRecord {
+    /// When Wenlan last wrote its part (Unix seconds).
+    written_at: i64,
+    /// Wenlan made the file: there was none when it first wrote.
+    #[serde(default)]
+    created_file: bool,
+    /// Wenlan also made the folder the file is in.
+    #[serde(default)]
+    created_folder: bool,
+}
+
+type ToolFileRecords = std::collections::BTreeMap<String, ToolFileRecord>;
+
+/// Wenlan's note of the tool files it wrote. No note, or one that cannot be
+/// read, means nothing is known: no time is reported and no file is removed.
+fn read_tool_file_records(dirs: &SkillDirs) -> ToolFileRecords {
+    dirs.tool_files_record
+        .as_deref()
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+fn write_tool_file_records(dirs: &SkillDirs, records: &ToolFileRecords) {
+    let Some(path) = dirs.tool_files_record.as_deref() else {
         return;
     };
-    let block = skill_grow::tool_rules_block(general);
-    let connected: HashSet<String> = match db.list_agents().await {
-        Ok(agents) => agents
-            .into_iter()
-            .filter(|agent| agent.enabled)
-            .filter_map(|agent| {
-                wenlan_core::skill_locations::global_rules_file(&agent.name, home)
-                    .map(|path| path.to_string_lossy().into_owned())
+    let result = serde_json::to_string_pretty(records)
+        .map_err(|e| ServerError::Internal(e.to_string()))
+        .and_then(|text| {
+            path.parent()
+                .map_or(Ok(()), std::fs::create_dir_all)
+                .map_err(|e| ServerError::Internal(e.to_string()))?;
+            let staged = staged_file(path, &text)?;
+            std::fs::rename(&staged, path).map_err(|e| {
+                let _ = std::fs::remove_file(&staged);
+                ServerError::Internal(e.to_string())
             })
-            .collect(),
+        });
+    if let Err(error) = result {
+        tracing::warn!(path = %path.display(), %error, "[skills] tool rules record not saved");
+    }
+}
+
+/// Whether `text` holds what Wenlan writes: its one marked part, or a whole
+/// file of its own.
+fn holds_wenlans_part(text: &str) -> bool {
+    skill_grow::holds_tool_rules_block(text) || skill_grow::is_wenlan_rules_text(text)
+}
+
+/// What Wenlan does about one tool's always-read file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ToolRulesOutcome {
+    /// The tool's own file holds the rules once `change` is made.
+    Kept,
+    /// Another file the tool reads holds them: one its file brings in, or
+    /// the file it falls back to.
+    Covered,
+    /// The tool's own folder is not there, so nothing is written.
+    FolderMissing,
+    /// The person's text plus Wenlan's part is more than the tool reads.
+    OverLimit,
+    /// The tool has no file of its own and Wenlan must not make one.
+    NoFile,
+    /// Wenlan cannot safely change the file, so it is left exactly as it is:
+    /// it cannot be read, is a link to nothing, is read-only, has markers
+    /// that are not one START then one END, or is a file of the person's own
+    /// where Wenlan's would go. The reason is a short machine word.
+    Blocked(&'static str),
+    /// Nothing to keep there: not connected, or no rules.
+    NotWanted,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ToolFileChange {
+    Write(String),
+    /// Take the file away: only a file Wenlan made that holds nothing else.
+    Remove,
+}
+
+#[derive(Debug, Clone)]
+struct ToolRulesPlan {
+    tool: &'static str,
+    /// Where a write lands: the same file, or the one a link points to.
+    target: PathBuf,
+    outcome: ToolRulesOutcome,
+    /// Whether the file already holds what it should.
+    in_line: bool,
+    /// What brings the file in line. `None` when it already is, and for a
+    /// later tool of a shared file, whose change the first tool carries.
+    change: Option<ToolFileChange>,
+    /// The file as it was when this was planned (`None`: no file). A change
+    /// is made only while the file still reads the same.
+    seen: Option<String>,
+    /// The file that holds the rules for this tool when `Covered`.
+    covered_by: Option<PathBuf>,
+}
+
+/// One file's part of a plan.
+struct ToolFilePlan {
+    outcome: ToolRulesOutcome,
+    change: Option<ToolFileChange>,
+    seen: Option<String>,
+    covered_by: Option<PathBuf>,
+}
+
+impl ToolFilePlan {
+    fn untouched(outcome: ToolRulesOutcome) -> Self {
+        Self {
+            outcome,
+            change: None,
+            seen: None,
+            covered_by: None,
+        }
+    }
+}
+
+/// The canonical ids of the connected tools that have an always-read file.
+async fn connected_rules_tools(db: &MemoryDB) -> Result<HashSet<&'static str>, ServerError> {
+    Ok(db
+        .list_agents()
+        .await?
+        .into_iter()
+        .filter(|agent| agent.enabled)
+        .filter_map(|agent| rules_location(&agent.name, cfg!(windows)))
+        .map(|location| location.tool)
+        .collect())
+}
+
+/// Decide, without writing anything, what each tool's always-read file should
+/// hold. A file reached through a link is planned where the link points, and
+/// tools that share one file share one plan, under the smallest limit any of
+/// them has. A file another kept file already covers (one it imports) gets
+/// no second copy. A tool that is not connected, no general rules, or the
+/// setting off takes Wenlan's part out. A file Wenlan cannot safely change
+/// is planned to stay exactly as it is.
+fn plan_tool_rules(
+    dirs: &SkillDirs,
+    connected: &HashSet<&'static str>,
+    general: &[SkillLine],
+) -> Vec<ToolRulesPlan> {
+    let roots = dirs.rules_roots();
+    let records = read_tool_file_records(dirs);
+    let block = skill_grow::tool_rules_block(general);
+    let files: Vec<(RulesLocation, PathBuf, Option<PathBuf>)> = GLOBAL_RULES_TOOLS
+        .iter()
+        .filter_map(|tool| rules_location(tool, roots.windows))
+        .filter_map(|location| {
+            let file = location.resolve(&roots)?;
+            // Never create a tool's folder: no folder means the tool is not here.
+            let target = file
+                .tool_folder
+                .is_dir()
+                .then(|| canonical_target(&file.path));
+            Some((location, file.path, target))
+        })
+        .collect();
+    let connected_targets: HashSet<&Path> = files
+        .iter()
+        .filter(|(location, _, _)| connected.contains(location.tool))
+        .filter_map(|(_, _, target)| target.as_deref())
+        .collect();
+    let mut kept: HashSet<PathBuf> = HashSet::new();
+    let mut decided: HashMap<PathBuf, (ToolRulesOutcome, bool, Option<PathBuf>)> = HashMap::new();
+    let mut plans = Vec::new();
+    for (location, path, target) in &files {
+        let Some(target) = target else {
+            plans.push(ToolRulesPlan {
+                tool: location.tool,
+                target: path.clone(),
+                outcome: ToolRulesOutcome::FolderMissing,
+                in_line: true,
+                change: None,
+                seen: None,
+                covered_by: None,
+            });
+            continue;
+        };
+        if let Some((outcome, in_line, covered_by)) = decided.get(target) {
+            // The same file as an earlier tool's: one part serves both.
+            plans.push(ToolRulesPlan {
+                tool: location.tool,
+                target: target.clone(),
+                outcome: *outcome,
+                in_line: *in_line,
+                change: None,
+                seen: None,
+                covered_by: covered_by.clone(),
+            });
+            continue;
+        }
+        let wanted = connected_targets.contains(target.as_path());
+        // Every connected tool that reads this file must be able to read all
+        // of it, so the smallest limit among them holds.
+        let max_chars = files
+            .iter()
+            .filter(|(other, _, other_target)| {
+                other_target.as_ref() == Some(target) && connected.contains(other.tool)
+            })
+            .filter_map(|(other, _, _)| other.max_chars)
+            .min();
+        let record = records.get(target.to_string_lossy().as_ref());
+        let mut file = match location.kind {
+            RulesFileKind::Block => plan_block(
+                dirs,
+                location,
+                max_chars,
+                target,
+                block.as_deref().filter(|_| wanted),
+                &kept,
+                record.is_some_and(|record| record.created_file),
+            ),
+            RulesFileKind::OwnedFile => {
+                let file = skill_grow::tool_rules_owned_file(general, location.front_matter);
+                plan_owned_file(target, file.filter(|_| wanted))
+            }
+        };
+        if file.outcome == ToolRulesOutcome::NoFile {
+            let fallback = location.falls_back_to.and_then(|tool| {
+                files
+                    .iter()
+                    .find(|(other, _, _)| other.tool == tool)
+                    .and_then(|(_, _, target)| target.as_ref())
+            });
+            if let Some(fallback) = fallback.filter(|file| kept.contains(*file)) {
+                file.outcome = ToolRulesOutcome::Covered;
+                file.covered_by = Some(fallback.clone());
+            }
+        }
+        if file.outcome == ToolRulesOutcome::Kept {
+            kept.insert(target.clone());
+        }
+        let in_line = file.change.is_none();
+        decided.insert(
+            target.clone(),
+            (file.outcome, in_line, file.covered_by.clone()),
+        );
+        plans.push(ToolRulesPlan {
+            tool: location.tool,
+            target: target.clone(),
+            outcome: file.outcome,
+            in_line,
+            change: file.change,
+            seen: file.seen,
+            covered_by: file.covered_by,
+        });
+    }
+    plans
+}
+
+/// Plan Wenlan's marked part of the person's own file at `target`. Only the
+/// part between Wenlan's markers is ever planned to change, and a file whose
+/// markers are not one START then one END is planned to stay as it is.
+fn plan_block(
+    dirs: &SkillDirs,
+    location: &RulesLocation,
+    max_chars: Option<usize>,
+    target: &Path,
+    block: Option<&str>,
+    kept: &HashSet<PathBuf>,
+    wenlan_made_the_file: bool,
+) -> ToolFilePlan {
+    let (current, exists) = match read_tool_file(target) {
+        ToolFileNow::Text(text) => (text, true),
+        ToolFileNow::Missing => (String::new(), false),
+        ToolFileNow::Blocked(reason) => {
+            return ToolFilePlan::untouched(ToolRulesOutcome::Blocked(reason));
+        }
+    };
+    let seen = exists.then(|| current.clone());
+    let blocked = |reason| ToolFilePlan {
+        seen: seen.clone(),
+        ..ToolFilePlan::untouched(ToolRulesOutcome::Blocked(reason))
+    };
+    let mut outcome = ToolRulesOutcome::NotWanted;
+    let mut covered_by = None;
+    let mut wanted = None;
+    if let Some(block) = block {
+        if location.at_imports {
+            covered_by = dirs.home.as_deref().and_then(|home| {
+                imported_files(target, home, &current)
+                    .into_iter()
+                    .find(|file| kept.contains(file))
+            });
+        }
+        outcome = if covered_by.is_some() {
+            ToolRulesOutcome::Covered
+        } else if !exists && !location.create_file {
+            ToolRulesOutcome::NoFile
+        } else {
+            match skill_grow::upsert_tool_rules_block(&current, Some(block)) {
+                Err(reason) => return blocked(reason),
+                Ok(text) if max_chars.is_some_and(|max| text.chars().count() > max) => {
+                    ToolRulesOutcome::OverLimit
+                }
+                Ok(_) => {
+                    wanted = Some(block);
+                    ToolRulesOutcome::Kept
+                }
+            }
+        };
+    }
+    let updated = match skill_grow::upsert_tool_rules_block(&current, wanted) {
+        Ok(updated) => updated,
+        Err(reason) => return blocked(reason),
+    };
+    let change = if updated == current {
+        None
+    } else if is_read_only(target) {
+        return blocked("read_only");
+    } else if updated.is_empty() && wenlan_made_the_file {
+        // Wenlan made the file and only its part was in it.
+        Some(ToolFileChange::Remove)
+    } else {
+        // A file Wenlan did not make stays, even with nothing left in it.
+        Some(ToolFileChange::Write(updated))
+    };
+    ToolFilePlan {
+        outcome,
+        change,
+        seen,
+        covered_by,
+    }
+}
+
+/// Plan a whole file of Wenlan's own at `target`. A file there that Wenlan
+/// did not write is the person's and is never changed or removed.
+fn plan_owned_file(target: &Path, file: Option<String>) -> ToolFilePlan {
+    let now = match read_tool_file(target) {
+        ToolFileNow::Blocked(reason) => {
+            return ToolFilePlan::untouched(ToolRulesOutcome::Blocked(reason));
+        }
+        ToolFileNow::Missing => None,
+        ToolFileNow::Text(text) => Some(text),
+    };
+    let ours = now.as_deref().is_some_and(skill_grow::is_wenlan_rules_text);
+    let (outcome, change) = match file {
+        Some(_) if now.is_some() && !ours => (ToolRulesOutcome::Blocked("not_wenlans_file"), None),
+        Some(file) if now.as_deref() == Some(file.as_str()) => (ToolRulesOutcome::Kept, None),
+        Some(file) => (ToolRulesOutcome::Kept, Some(ToolFileChange::Write(file))),
+        None if ours => (ToolRulesOutcome::NotWanted, Some(ToolFileChange::Remove)),
+        None => (ToolRulesOutcome::NotWanted, None),
+    };
+    if change.is_some() && now.is_some() && is_read_only(target) {
+        return ToolFilePlan {
+            seen: now,
+            ..ToolFilePlan::untouched(ToolRulesOutcome::Blocked("read_only"))
+        };
+    }
+    ToolFilePlan {
+        outcome,
+        change,
+        seen: now,
+        covered_by: None,
+    }
+}
+
+/// How one planned change ended.
+enum ToolFileApplied {
+    Done {
+        created_folder: bool,
+    },
+    /// The file no longer reads as it did when the change was planned, so it
+    /// was left; the next pass plans from what it holds now.
+    ChangedSincePlan,
+}
+
+/// Make one planned change, if the file still reads as it did when planned.
+/// A rewritten file keeps its permissions and, where the system allows, its
+/// owner.
+fn apply_tool_file_change(
+    target: &Path,
+    seen: Option<&str>,
+    change: &ToolFileChange,
+) -> Result<ToolFileApplied, ServerError> {
+    let internal = |error: std::io::Error| ServerError::Internal(error.to_string());
+    let reads_as_planned = || match (read_tool_file(target), seen) {
+        (ToolFileNow::Missing, None) => true,
+        (ToolFileNow::Text(now), Some(seen)) => now == seen,
+        _ => false,
+    };
+    let text = match change {
+        ToolFileChange::Remove => {
+            if !reads_as_planned() {
+                return Ok(ToolFileApplied::ChangedSincePlan);
+            }
+            std::fs::remove_file(target).map_err(internal)?;
+            return Ok(ToolFileApplied::Done {
+                created_folder: false,
+            });
+        }
+        ToolFileChange::Write(text) => text,
+    };
+    let folder = target
+        .parent()
+        .ok_or_else(|| ServerError::Internal("tool rules file has no folder".into()))?;
+    let created_folder = std::fs::symlink_metadata(folder).is_err();
+    std::fs::create_dir_all(folder).map_err(internal)?;
+    let give_up = |staged: Option<&Path>| {
+        if let Some(staged) = staged {
+            let _ = std::fs::remove_file(staged);
+        }
+        if created_folder {
+            // Only an empty folder goes.
+            let _ = std::fs::remove_dir(folder);
+        }
+    };
+    let staged = staged_file(target, text).inspect_err(|_| give_up(None))?;
+    if let Ok(metadata) = std::fs::metadata(target) {
+        if let Err(error) = std::fs::set_permissions(&staged, metadata.permissions()) {
+            give_up(Some(&staged));
+            return Err(internal(error));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let _ = std::os::unix::fs::chown(&staged, Some(metadata.uid()), Some(metadata.gid()));
+        }
+    }
+    // Read again right before the swap: what the person saved meanwhile wins.
+    if !reads_as_planned() {
+        give_up(Some(&staged));
+        return Ok(ToolFileApplied::ChangedSincePlan);
+    }
+    std::fs::rename(&staged, target).map_err(|error| {
+        give_up(Some(&staged));
+        internal(error)
+    })?;
+    Ok(ToolFileApplied::Done { created_folder })
+}
+
+/// Make the changes [`plan_tool_rules`] decided, and note in Wenlan's own
+/// record what was written. A change that fails or is skipped leaves the
+/// file as it is; a file that counted on it (its part taken out because the
+/// other file would hold the rules) is left as it is too.
+fn apply_tool_rules(dirs: &SkillDirs, plans: Vec<ToolRulesPlan>) {
+    let mut records = read_tool_file_records(dirs);
+    let before = records.clone();
+    let mut not_done: HashSet<PathBuf> = HashSet::new();
+    for plan in plans {
+        let Some(change) = plan.change else {
+            continue;
+        };
+        let target = plan.target;
+        if plan
+            .covered_by
+            .as_ref()
+            .is_some_and(|file| not_done.contains(file))
+        {
+            not_done.insert(target);
+            continue;
+        }
+        let created_folder = match apply_tool_file_change(&target, plan.seen.as_deref(), &change) {
+            Ok(ToolFileApplied::Done { created_folder }) => created_folder,
+            Ok(ToolFileApplied::ChangedSincePlan) => {
+                tracing::debug!(path = %target.display(), "[skills] tool rules file changed since planned; left for the next pass");
+                not_done.insert(target);
+                continue;
+            }
+            Err(error) => {
+                tracing::warn!(path = %target.display(), %error, "[skills] tool rules file not updated");
+                not_done.insert(target);
+                continue;
+            }
+        };
+        let key = target.to_string_lossy().into_owned();
+        // What Wenlan made stays known as its own only while the file it
+        // found still held its part.
+        let earlier = records
+            .remove(&key)
+            .filter(|_| plan.seen.as_deref().is_some_and(holds_wenlans_part));
+        match change {
+            ToolFileChange::Write(text) if holds_wenlans_part(&text) => {
+                records.insert(
+                    key,
+                    ToolFileRecord {
+                        written_at: chrono::Utc::now().timestamp(),
+                        created_file: plan.seen.is_none()
+                            || earlier.as_ref().is_some_and(|record| record.created_file),
+                        created_folder: created_folder
+                            || earlier.as_ref().is_some_and(|record| record.created_folder),
+                    },
+                );
+            }
+            // Wenlan's part was taken out; the rest is the person's.
+            ToolFileChange::Write(_) => {}
+            ToolFileChange::Remove => {
+                // A folder goes only when Wenlan's record says it made it,
+                // and only when it is empty.
+                if earlier.is_some_and(|record| record.created_folder) {
+                    if let Some(folder) = target.parent() {
+                        let _ = std::fs::remove_dir(folder);
+                    }
+                }
+            }
+        }
+    }
+    if records != before {
+        write_tool_file_records(dirs, &records);
+    }
+}
+
+/// Keep the general rules in each connected tool's own always-read file, so
+/// the tool has them without having to ask: Wenlan's marked part of the
+/// person's file, or a file of Wenlan's own where the tool reads a folder.
+/// [`plan_tool_rules`] decides; [`apply_tool_rules`] only writes what it
+/// decided. The file work runs off the async runtime.
+async fn sync_tool_rules(db: &MemoryDB, dirs: &SkillDirs, general: &[SkillLine]) {
+    if !dirs.tool_files {
+        return;
+    }
+    let connected = match connected_rules_tools(db).await {
+        Ok(connected) => connected,
         Err(error) => {
             tracing::warn!(%error, "[skills] connected tools not read; tool rules left as they are");
             return;
         }
     };
-    let mut written: HashSet<PathBuf> = HashSet::new();
-    for tool in wenlan_core::skill_locations::GLOBAL_RULES_TOOLS {
-        let Some(path) = wenlan_core::skill_locations::global_rules_file(tool, home) else {
-            continue;
-        };
-        // Never create a tool's folder: no folder means the tool is not here.
-        let Some(folder) = path.parent().filter(|folder| folder.is_dir()) else {
-            continue;
-        };
-        let target = path
-            .canonicalize()
-            .or_else(|_| {
-                folder
-                    .canonicalize()
-                    .map(|folder| folder.join(path.file_name().unwrap_or_default()))
-            })
-            .unwrap_or_else(|_| path.clone());
-        let current = match std::fs::read_to_string(&target) {
-            Ok(text) => text,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
-            Err(error) => {
-                tracing::warn!(path = %target.display(), %error, "[skills] tool rules file not read");
-                continue;
-            }
-        };
-        let covered = written.contains(&target)
-            || imported_files(&target, home, &current)
-                .iter()
-                .any(|file| written.contains(file));
-        let wanted = block
-            .as_deref()
-            .filter(|_| !covered && connected.contains(path.to_string_lossy().as_ref()));
-        let updated = skill_grow::upsert_tool_rules_block(&current, wanted);
-        if wanted.is_some() {
-            written.insert(target.clone());
-        }
-        if updated == current {
-            continue;
-        }
-        let result = if updated.is_empty() {
-            // Only Wenlan's block was in it.
-            std::fs::remove_file(&target).map_err(|e| ServerError::Internal(e.to_string()))
-        } else {
-            staged_file(&target, &updated).and_then(|staged| {
-                std::fs::rename(&staged, &target).map_err(|e| {
-                    let _ = std::fs::remove_file(&staged);
-                    ServerError::Internal(e.to_string())
-                })
-            })
-        };
-        if let Err(error) = result {
-            tracing::warn!(path = %target.display(), %error, "[skills] tool rules file not updated");
+    let (dirs, general) = (dirs.clone(), general.to_vec());
+    let done = tokio::task::spawn_blocking(move || {
+        let plans = plan_tool_rules(&dirs, &connected, &general);
+        apply_tool_rules(&dirs, plans);
+    })
+    .await;
+    if let Err(error) = done {
+        tracing::warn!(%error, "[skills] tool rules sync did not finish");
+    }
+}
+
+/// The rules used in every Space, and each Space folder's own with the
+/// Space's name: what `read_space_rules` would answer right now.
+async fn rules_by_layer(
+    db: &MemoryDB,
+    page_root: Option<&Path>,
+) -> Result<(Vec<SkillLine>, HashMap<String, (String, Vec<SkillLine>)>), ServerError> {
+    let own = OwnRulePages::load(db, page_root).await?;
+    let mut general = Vec::new();
+    let mut seen = HashSet::new();
+    for line in own.lines_in(None) {
+        if seen.insert(line.text.trim().to_lowercase()) {
+            general.push(line);
         }
     }
+    let mut layers: HashMap<String, (String, Vec<SkillLine>)> = HashMap::new();
+    for space in db.list_spaces().await? {
+        let folder = wenlan_core::space_folders::folder_name(&space.name);
+        let layer = &mut layers
+            .entry(folder)
+            .or_insert_with(|| (space.name.clone(), Vec::new()))
+            .1;
+        for line in read_rules_for_space(db, &own, &space).await?.lines {
+            if !line.general {
+                layer.push(line);
+            } else if seen.insert(line.text.trim().to_lowercase()) {
+                general.push(line);
+            }
+        }
+    }
+    Ok((general, layers))
+}
+
+/// Report, for every AI tool, how the rules used in every Space reach it,
+/// worked out now from the files as they are. Nothing is written. The file
+/// reads run off the async runtime.
+async fn rules_delivery(
+    db: &MemoryDB,
+    page_root: Option<&Path>,
+    dirs: &SkillDirs,
+) -> Result<RulesDeliveryResponse, ServerError> {
+    let (general, _) = rules_by_layer(db, page_root).await?;
+    let rule_count = skill_grow::tool_rules(&general).len();
+    let agents = db.list_agents().await?;
+    let connected: HashSet<&'static str> = agents
+        .iter()
+        .filter(|agent| agent.enabled)
+        .filter_map(|agent| rules_location(&agent.name, cfg!(windows)))
+        .map(|location| location.tool)
+        .collect();
+    let (plans, records, enabled) = {
+        let (dirs, connected) = (dirs.clone(), connected.clone());
+        tokio::task::spawn_blocking(move || {
+            // A run that may not write the tools' files does not read them either.
+            let (plans, records) = if dirs.tool_files {
+                (
+                    plan_tool_rules(&dirs, &connected, &general),
+                    read_tool_file_records(&dirs),
+                )
+            } else {
+                Default::default()
+            };
+            (plans, records, feature_enabled())
+        })
+        .await
+        .map_err(|error| ServerError::Internal(error.to_string()))?
+    };
+    let roots = dirs.rules_roots();
+    let display_name = |id: &str| {
+        agents
+            .iter()
+            .find(|agent| agent.name == id)
+            .and_then(|agent| agent.display_name.clone())
+            .or_else(|| wenlan_core::db::known_client_display_name(id).map(str::to_string))
+            .unwrap_or_else(|| id.to_string())
+    };
+    let nothing_to_write = || {
+        if enabled {
+            RulesDeliveryState::NoRules
+        } else {
+            RulesDeliveryState::SettingOff
+        }
+    };
+    // A file holds the rules only when it reads, on disk, as Wenlan would
+    // write it now.
+    let holds_them_now = |file: &Path| {
+        plans.iter().any(|plan| {
+            plan.target == file && plan.outcome == ToolRulesOutcome::Kept && plan.in_line
+        })
+    };
+    let mut tools = Vec::new();
+    for tool in GLOBAL_RULES_TOOLS {
+        let plan = plans.iter().find(|plan| plan.tool == tool);
+        let is_connected = connected.contains(tool);
+        let mut delivered_at = None;
+        let mut blocked_reason = None;
+        let state = match plan.map(|plan| (plan.outcome, plan.in_line)) {
+            _ if !is_connected => RulesDeliveryState::NotConnected,
+            _ if !dirs.tool_files => RulesDeliveryState::IsolatedRun,
+            _ if rule_count == 0 => nothing_to_write(),
+            // No file Wenlan may write: the tool still gets them by asking.
+            None | Some((ToolRulesOutcome::NoFile, _)) => RulesDeliveryState::OnRequest,
+            Some((ToolRulesOutcome::FolderMissing, _)) => RulesDeliveryState::FolderMissing,
+            Some((ToolRulesOutcome::OverLimit, _)) => RulesDeliveryState::OverLimit,
+            Some((ToolRulesOutcome::Blocked(reason), _)) => {
+                blocked_reason = Some(reason.to_string());
+                RulesDeliveryState::Blocked
+            }
+            Some((ToolRulesOutcome::Covered, true))
+                if plan
+                    .and_then(|plan| plan.covered_by.as_deref())
+                    .is_some_and(holds_them_now) =>
+            {
+                RulesDeliveryState::CoveredByAnotherFile
+            }
+            Some((ToolRulesOutcome::Kept, true)) => {
+                // The time Wenlan noted when it wrote, never the file's own:
+                // the person's edits move that one.
+                delivered_at = plan
+                    .and_then(|plan| records.get(plan.target.to_string_lossy().as_ref()))
+                    .map(|record| record.written_at);
+                RulesDeliveryState::Delivered
+            }
+            Some((
+                ToolRulesOutcome::Kept | ToolRulesOutcome::Covered | ToolRulesOutcome::NotWanted,
+                _,
+            )) => RulesDeliveryState::OutOfDate,
+        };
+        let path = rules_location(tool, roots.windows)
+            .and_then(|location| location.resolve(&roots))
+            .map(|file| file.path)
+            .filter(|_| state != RulesDeliveryState::OnRequest);
+        tools.push(ToolRulesDelivery {
+            id: tool.to_string(),
+            display_name: display_name(tool),
+            connected: is_connected,
+            method: if path.is_some() {
+                RulesDeliveryMethod::File
+            } else {
+                RulesDeliveryMethod::Mcp
+            },
+            path: path.map(|path| path.to_string_lossy().into_owned()),
+            state,
+            blocked_reason,
+            delivered_at,
+            rule_count,
+        });
+    }
+    // Every other tool Wenlan knows has no file it can write.
+    let mut others: Vec<_> = agents
+        .iter()
+        .filter(|agent| rules_location(&agent.name, cfg!(windows)).is_none())
+        .collect();
+    others.sort_by(|a, b| a.name.cmp(&b.name));
+    for agent in others {
+        tools.push(ToolRulesDelivery {
+            id: agent.name.clone(),
+            display_name: display_name(&agent.name),
+            connected: agent.enabled,
+            method: RulesDeliveryMethod::Mcp,
+            path: None,
+            state: if !agent.enabled {
+                RulesDeliveryState::NotConnected
+            } else if rule_count == 0 {
+                nothing_to_write()
+            } else {
+                RulesDeliveryState::OnRequest
+            },
+            blocked_reason: None,
+            delivered_at: None,
+            rule_count,
+        });
+    }
+    Ok(RulesDeliveryResponse { tools })
+}
+
+pub async fn handle_rules_delivery(
+    State(state): State<SharedState>,
+) -> Result<Json<RulesDeliveryResponse>, ServerError> {
+    let (db, page_root) = db_and_page_root(&state).await?;
+    let delivery = rules_delivery(&db, page_root.as_deref(), &SkillDirs::system()).await?;
+    Ok(Json(delivery))
 }
 
 /// Write the rules AI tools may read as layered files in Wenlan's own folder:
@@ -827,26 +1882,14 @@ async fn sync_tool_rules(db: &MemoryDB, dirs: &SkillDirs, general: &[SkillLine])
 /// `spaces/<Space>/AGENTS.md` for each Space's own, each a short main file
 /// plus appendix files. The files always say what `read_space_rules` would
 /// answer right now, so a Stop, the setting turned off, a deleted line or an
-/// Undo empties them the same way.
-async fn sync_rules_files(db: &MemoryDB, dirs: &SkillDirs) -> Result<(), ServerError> {
+/// Undo takes lines out of them the same way.
+async fn sync_rules_files(
+    db: &MemoryDB,
+    page_root: Option<&Path>,
+    dirs: &SkillDirs,
+) -> Result<(), ServerError> {
     let home = wenlan_core::config::wenlan_home();
-    let mut general = Vec::new();
-    let mut seen = HashSet::new();
-    let mut layers: HashMap<String, (String, Vec<SkillLine>)> = HashMap::new();
-    for space in db.list_spaces().await? {
-        let folder = wenlan_core::space_folders::folder_name(&space.name);
-        let own = &mut layers
-            .entry(folder)
-            .or_insert_with(|| (space.name.clone(), Vec::new()))
-            .1;
-        for line in read_rules_for_space(db, &space).await?.lines {
-            if !line.general {
-                own.push(line);
-            } else if seen.insert(line.text.trim().to_lowercase()) {
-                general.push(line);
-            }
-        }
-    }
+    let (general, mut layers) = rules_by_layer(db, page_root).await?;
     sync_rules_layer(&home, &home, &skill_grow::rules_layer_files(None, &general));
     sync_tool_rules(db, dirs, &general).await;
     let spaces = home.join("spaces");
@@ -872,11 +1915,18 @@ async fn sync_rules_files(db: &MemoryDB, dirs: &SkillDirs) -> Result<(), ServerE
 
 /// The Space's own approved rules as plain sentences, for the repository
 /// copy. General lines are the person's habits and stay out.
-pub(crate) async fn project_rules(db: &MemoryDB, space: &str) -> Vec<String> {
+pub(crate) async fn project_rules(
+    db: &MemoryDB,
+    page_root: Option<&Path>,
+    space: &str,
+) -> Vec<String> {
     let lines = match db.get_space(space).await {
-        Ok(Some(space)) => read_rules_for_space(db, &space)
-            .await
-            .map(|rules| rules.lines),
+        Ok(Some(space)) => match OwnRulePages::load(db, page_root).await {
+            Ok(own) => read_rules_for_space(db, &own, &space)
+                .await
+                .map(|rules| rules.lines),
+            Err(error) => Err(error),
+        },
         Ok(None) => return Vec::new(),
         Err(error) => Err(error.into()),
     };
@@ -893,23 +1943,226 @@ pub(crate) async fn project_rules(db: &MemoryDB, space: &str) -> Vec<String> {
 }
 
 /// Same, for callers that must not fail because a file could not be written.
-pub(crate) async fn sync_rules_files_quietly(db: &MemoryDB) {
+///
+/// It takes the skills lock itself: never call it while holding that lock.
+pub(crate) async fn sync_rules_files_quietly(db: &MemoryDB, page_root: Option<&Path>) {
     let _serial = SKILLS_MUTATION_LOCK.lock().await;
-    if let Err(error) = sync_rules_files(db, &SkillDirs::system()).await {
-        tracing::warn!(%error, "[skills] rules files not updated");
-    }
+    sync_rules_files_locked(db, page_root, &SkillDirs::system()).await;
 }
 
 /// Same, with the tool folders given: for a caller that holds its own.
 #[cfg(test)]
-async fn sync_rules_files_in(db: &MemoryDB, dirs: &SkillDirs) {
+async fn sync_rules_files_in(db: &MemoryDB, page_root: Option<&Path>, dirs: &SkillDirs) {
     let _serial = SKILLS_MUTATION_LOCK.lock().await;
-    sync_rules_files_locked(db, dirs).await;
+    sync_rules_files_locked(db, page_root, dirs).await;
 }
 
-async fn sync_rules_files_locked(db: &MemoryDB, dirs: &SkillDirs) {
-    if let Err(error) = sync_rules_files(db, dirs).await {
+async fn sync_rules_files_locked(db: &MemoryDB, page_root: Option<&Path>, dirs: &SkillDirs) {
+    if let Err(error) = sync_rules_files(db, page_root, dirs).await {
         tracing::warn!(%error, "[skills] rules files not updated");
+    }
+}
+
+/// Whether a write to page `id` can change the rules AI tools are told: it
+/// is a Space's "How I work" page, or some folder above its file is named
+/// Rules. A cheap test, wider than the real one; the sync decides the rest.
+async fn may_hold_own_rules(db: &MemoryDB, page_root: Option<&Path>, id: &str) -> bool {
+    if let Some(root) = page_root {
+        let writer = wenlan_core::export::knowledge::KnowledgeWriter::new(root.to_path_buf(), db);
+        let page_id = id.to_string();
+        let file = tokio::task::spawn_blocking(move || writer.page_filename(&page_id))
+            .await
+            .ok()
+            .flatten();
+        if file.is_some_and(|file| skill_grow::may_be_in_rules_folder(&file)) {
+            return true;
+        }
+    }
+    db.space_rules_states().await.is_ok_and(|states| {
+        states
+            .iter()
+            .any(|state| state.rules_page_id.as_deref() == Some(id))
+    })
+}
+
+/// One library's background sync: whether a run is going, and the newest
+/// request no run has taken yet.
+#[derive(Default)]
+struct BackgroundSync {
+    wanted: Option<(Arc<MemoryDB>, Option<PathBuf>)>,
+}
+
+/// Background syncs by library (the database's address), so two libraries in
+/// one process, as in tests, never wait on each other's run. An entry is
+/// there exactly while a run is going.
+static BACKGROUND_SYNCS: std::sync::Mutex<Option<HashMap<usize, BackgroundSync>>> =
+    std::sync::Mutex::new(None);
+#[cfg(test)]
+static BACKGROUND_SYNC_RUNS: std::sync::Mutex<Option<HashMap<usize, usize>>> =
+    std::sync::Mutex::new(None);
+
+fn with_background_syncs<T>(act: impl FnOnce(&mut HashMap<usize, BackgroundSync>) -> T) -> T {
+    let mut syncs = BACKGROUND_SYNCS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    act(syncs.get_or_insert_with(HashMap::new))
+}
+
+/// Ends a run's entry when its task is dropped before it finished (the
+/// runtime shut down), so a later request starts a new run.
+struct BackgroundSyncRun {
+    library: usize,
+    finished: bool,
+}
+
+impl Drop for BackgroundSyncRun {
+    fn drop(&mut self) {
+        if !self.finished {
+            with_background_syncs(|syncs| syncs.remove(&self.library));
+        }
+    }
+}
+
+/// Bring the rules files up to date in the background. One sync runs at a
+/// time; requests that arrive meanwhile become one more run after it, not a
+/// queue, so many saves in a row cost two syncs and the files still end at
+/// the latest state. Needs a Tokio runtime; without one nothing happens.
+pub(crate) fn request_rules_sync(db: Arc<MemoryDB>, page_root: Option<PathBuf>) {
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
+    let library = Arc::as_ptr(&db) as usize;
+    let already_running = with_background_syncs(|syncs| {
+        let running = syncs.contains_key(&library);
+        syncs.entry(library).or_default().wanted = Some((db, page_root));
+        running
+    });
+    if already_running {
+        return;
+    }
+    let run = BackgroundSyncRun {
+        library,
+        finished: false,
+    };
+    runtime.spawn(async move {
+        // The whole guard lives in the task, not only its flag.
+        let mut run = run;
+        loop {
+            // Taking the request and ending the run are one step, so a
+            // request is either seen here or starts a run of its own.
+            let next = with_background_syncs(|syncs| {
+                let next = syncs.get_mut(&library).and_then(|sync| sync.wanted.take());
+                if next.is_none() {
+                    syncs.remove(&library);
+                }
+                next
+            });
+            let Some((db, root)) = next else {
+                run.finished = true;
+                break;
+            };
+            sync_rules_files_quietly(&db, root.as_deref()).await;
+            #[cfg(test)]
+            {
+                *BACKGROUND_SYNC_RUNS
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .get_or_insert_with(HashMap::new)
+                    .entry(library)
+                    .or_default() += 1;
+            }
+        }
+    });
+}
+
+/// For a route that changed some page without naming it (an accepted
+/// revision): ask for a sync, in the background.
+pub(crate) async fn rules_may_have_changed(state: &SharedState) {
+    if let Ok((db, root)) = db_and_page_root(state).await {
+        request_rules_sync(db, root);
+    }
+}
+
+/// Held by a route that writes, moves or removes a page. When the route
+/// ends, however it ends, and the page was a rules page before or is one
+/// now, the rules files are brought up to date in the background, so a rule
+/// the person just wrote reaches their AI tools at once (UX-SKILL-10). The
+/// page save never waits for it.
+pub(crate) struct RulesPageWrite {
+    state: SharedState,
+    page_id: Option<String>,
+    before: bool,
+}
+
+impl RulesPageWrite {
+    /// `page_id` is `None` for a route that creates the page; it then names
+    /// the page with [`Self::page`].
+    pub(crate) async fn begin(state: &SharedState, page_id: Option<&str>) -> Self {
+        let before = match (page_id, db_and_page_root(state).await) {
+            (Some(id), Ok((db, root))) => may_hold_own_rules(&db, root.as_deref(), id).await,
+            _ => false,
+        };
+        Self {
+            state: state.clone(),
+            page_id: page_id.map(str::to_string),
+            before,
+        }
+    }
+
+    pub(crate) fn page(&mut self, page_id: &str) {
+        self.page_id = Some(page_id.to_string());
+    }
+}
+
+impl Drop for RulesPageWrite {
+    fn drop(&mut self) {
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let Some(page_id) = self.page_id.take() else {
+            return;
+        };
+        let state = self.state.clone();
+        let before = self.before;
+        runtime.spawn(async move {
+            let Ok((db, root)) = db_and_page_root(&state).await else {
+                return;
+            };
+            if before || may_hold_own_rules(&db, root.as_deref(), &page_id).await {
+                request_rules_sync(db, root);
+            }
+        });
+    }
+}
+
+/// The scheduler's catch-up for what no route saw: a file the person edited,
+/// added, moved or deleted in the pages folder. The files are written again
+/// when `edited` says the watcher took in an edit, or when the set of the
+/// person's own rules pages is not what it was at the last call. When that
+/// set cannot be read, an edit still asks for the sync.
+pub(crate) async fn sync_rules_files_after_file_changes(
+    db: &MemoryDB,
+    page_root: &Path,
+    edited: bool,
+) {
+    static LAST: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+    let changed = match OwnRulePages::load(db, Some(page_root)).await {
+        Ok(own) => {
+            let signature = own.signature();
+            let mut last = LAST.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let changed = last.as_deref() != Some(signature.as_str());
+            *last = Some(signature);
+            changed
+        }
+        Err(error) => {
+            tracing::warn!(%error, "[skills] own rules pages not read");
+            // Not remembered: the next pass compares again.
+            *LAST.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+            false
+        }
+    };
+    if edited || changed {
+        sync_rules_files_quietly(db, Some(page_root)).await;
     }
 }
 
@@ -1285,6 +2538,7 @@ async fn refresh_unlocked(
         .into_iter()
         .map(|state| (state.space_id.clone(), state))
         .collect();
+    let own = OwnRulePages::load(&db, page_root.as_deref()).await?;
     let mut report = SkillsRefreshResponse::default();
     let now = chrono::Utc::now().timestamp();
     let today = chrono::Local::now().date_naive().to_string();
@@ -1321,6 +2575,7 @@ async fn refresh_unlocked(
         }
         let pages = match pages_for_space(
             &db,
+            &own,
             &space,
             previous
                 .as_ref()
@@ -1407,7 +2662,7 @@ async fn refresh_unlocked(
         refresh_existing_skill_suggestions(&db, model, &dirs, &approved, &mut budget).await?;
     report.suggestions += suggestions;
     report.model_calls += calls;
-    sync_rules_files_locked(&db, &dirs).await;
+    sync_rules_files_locked(&db, page_root.as_deref(), &dirs).await;
     Ok(report)
 }
 
@@ -1453,12 +2708,28 @@ pub fn spawn_nightly_if_idle(shared: SharedState, model: Arc<dyn LlmProvider>) {
     });
 }
 
+/// "Update now" with no model: write the rules files from what already
+/// counts, and say that no model was asked.
+async fn refresh_without_model(
+    shared: &SharedState,
+    dirs: SkillDirs,
+) -> Result<SkillsRefreshResponse, ServerError> {
+    let (db, page_root) = db_and_page_root(shared).await?;
+    let _serial = SKILLS_MUTATION_LOCK.lock().await;
+    sync_rules_files_locked(&db, page_root.as_deref(), &dirs).await;
+    Ok(SkillsRefreshResponse::default())
+}
+
 pub async fn handle_refresh(
     State(state): State<SharedState>,
 ) -> Result<Json<SkillsRefreshResponse>, ServerError> {
-    let group = crate::things_intake::group_model(&state)
-        .await
-        .ok_or_else(|| ServerError::Conflict("no grouping model is available".into()))?;
+    let Some(group) = crate::things_intake::group_model(&state).await else {
+        // No model: nothing new can be suggested from pages, but the rules
+        // the person wrote themselves need none (UX-SKILL-10).
+        return Ok(Json(
+            refresh_without_model(&state, SkillDirs::system()).await?,
+        ));
+    };
     Ok(Json(
         refresh_with(&state, group.as_ref(), SkillDirs::system()).await?,
     ))
@@ -1554,7 +2825,7 @@ pub async fn handle_accept_space_rules(
     if !scope.this_space_only {
         record_library_answer(true)?;
     }
-    sync_rules_files_locked(&db, &SkillDirs::system()).await;
+    sync_rules_files_locked(&db, page_root.as_deref(), &SkillDirs::system()).await;
     Ok(Json(SpaceRulesActionResponse {
         space_id: id,
         status: "accepted".into(),
@@ -1642,12 +2913,7 @@ pub async fn handle_decline_space_rules(
 ) -> Result<Json<SpaceRulesActionResponse>, ServerError> {
     crate::memory_routes::require_person_to_accept(&headers)?;
     let _serial = SKILLS_MUTATION_LOCK.lock().await;
-    let db = state
-        .read()
-        .await
-        .db
-        .clone()
-        .ok_or(ServerError::DbNotInitialized)?;
+    let (db, page_root) = db_and_page_root(&state).await?;
     let (mut rules, _) = state_and_space(&db, &id).await?;
     if rules.status != SpaceRulesStatus::Suggested {
         return Err(ServerError::Conflict(
@@ -1667,7 +2933,7 @@ pub async fn handle_decline_space_rules(
         db.set_space_rules_state(&rules).await?;
         record_library_answer(false)?;
     }
-    sync_rules_files_locked(&db, &SkillDirs::system()).await;
+    sync_rules_files_locked(&db, page_root.as_deref(), &SkillDirs::system()).await;
     Ok(Json(SpaceRulesActionResponse {
         space_id: id,
         status: "declined".into(),
@@ -1730,7 +2996,7 @@ pub async fn handle_undo_space_rules(
     rules.deleted_fingerprints = undo.before_deleted_fingerprints;
     rules.undo = None;
     db.set_space_rules_state(&rules).await?;
-    sync_rules_files_locked(&db, &SkillDirs::system()).await;
+    sync_rules_files_locked(&db, page_root.as_deref(), &SkillDirs::system()).await;
     Ok(Json(SpaceRulesActionResponse {
         space_id: id,
         status: "undone".into(),
@@ -1754,30 +3020,41 @@ pub async fn handle_suggestions(
         return Ok(Json(Vec::new()));
     }
     let mut suggestions = Vec::new();
-    for item in db.skill_suggestions().await?.into_iter().filter(|item| {
-        matches!(
-            item.status,
-            SuggestionStatus::Pending | SuggestionStatus::Applying
-        )
-    }) {
-        if approved_rule(&db, &item.suggestion.source_rule_id)
-            .await?
-            .is_some()
-        {
+    let pending: Vec<_> = db
+        .skill_suggestions()
+        .await?
+        .into_iter()
+        .filter(|item| {
+            matches!(
+                item.status,
+                SuggestionStatus::Pending | SuggestionStatus::Applying
+            )
+        })
+        .collect();
+    if pending.is_empty() {
+        return Ok(Json(suggestions));
+    }
+    // Read once for all of them.
+    let approved = approved_rule_ids(&db).await?;
+    for item in pending {
+        if approved.contains(&item.suggestion.source_rule_id) {
             suggestions.push(item.suggestion);
         }
     }
     Ok(Json(suggestions))
 }
 
-async fn approved_rule(db: &MemoryDB, rule_id: &str) -> Result<Option<SkillLine>, ServerError> {
+/// The ids of every line AI tools are told now. A suggestion for an
+/// existing skill names a line derived from pages, never one from the
+/// person's own rules pages, so those are not read here.
+async fn approved_rule_ids(db: &MemoryDB) -> Result<HashSet<String>, ServerError> {
+    let own = OwnRulePages::none();
+    let mut ids = HashSet::new();
     for space in db.list_spaces().await? {
-        let response = read_rules_for_space(db, &space).await?;
-        if let Some(line) = response.lines.into_iter().find(|line| line.id == rule_id) {
-            return Ok(Some(line));
-        }
+        let response = read_rules_for_space(db, &own, &space).await?;
+        ids.extend(response.lines.into_iter().map(|line| line.id));
     }
-    Ok(None)
+    Ok(ids)
 }
 
 fn validated_skill_path(stored: &StoredSkillSuggestion) -> Result<PathBuf, ServerError> {
@@ -1909,9 +3186,9 @@ pub async fn handle_apply_suggestion(
     ) {
         return Err(ServerError::Conflict("suggestion is not pending".into()));
     }
-    if approved_rule(&db, &stored.suggestion.source_rule_id)
+    if !approved_rule_ids(&db)
         .await?
-        .is_none()
+        .contains(&stored.suggestion.source_rule_id)
     {
         return Err(ServerError::Conflict(
             "the approved source rule is no longer available".into(),
@@ -2247,19 +3524,15 @@ pub async fn handle_self_report(
     if !feature_enabled() {
         return Ok(Json(serde_json::json!({ "recorded": false })));
     }
-    let db = state
-        .read()
-        .await
-        .db
-        .clone()
-        .ok_or(ServerError::DbNotInitialized)?;
+    let (db, page_root) = db_and_page_root(&state).await?;
+    let own = OwnRulePages::load(&db, page_root.as_deref()).await?;
     // A general line is recorded under its own Space, including when it was
     // read with no Space at all.
     let (space_id, own_lines) = if no_space_named(&headers, Some(&request.space)) {
         (None, Vec::new())
     } else {
         let space = resolved_space(&db, &headers, Some(&request.space)).await?;
-        let lines = read_rules_for_space(&db, &space).await?.lines;
+        let lines = read_rules_for_space(&db, &own, &space).await?.lines;
         (Some(space.id), lines)
     };
     let (owner, line) = match own_lines
@@ -2267,7 +3540,7 @@ pub async fn handle_self_report(
         .find(|line| line.id == request.rule_id)
     {
         Some(line) => (space_id.clone().unwrap_or_default(), line),
-        None => general_lines(&db, space_id.as_deref())
+        None => general_lines(&db, &own, space_id.as_deref())
             .await?
             .into_iter()
             .find(|(_, line)| line.id == request.rule_id)

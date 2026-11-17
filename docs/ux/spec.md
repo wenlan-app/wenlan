@@ -562,7 +562,9 @@ and wait for evidence that people need them.
   for candidates; the ask leaves every Space's page at once. Cleared, the
   answer is for this Space only and other Spaces still ask. One Settings switch
   changes the answer later. Suggested edits to the person's own skills are still
-  asked one by one.
+  asked one by one. The ask, a No and the switch are about what Wenlan takes
+  from pages; a rule the person wrote themselves needs none of them
+  (UX-SKILL-10).
   原文：「可以」（2026-11-15 17:33Z，回覆[草圖](https://claude.ai/artifact/EqEaFuewDn2qBRyBrG7eHn)與「put the first ask at the top of the Space page, asked only once?」）；「而且儘量不用一直問用戶，或著第一次問，後面就不問了」（2026-11-15 20:21Z）；「第一次在空間那的改動，要有選項以後都自動，勾掉就是不要」（2026-11-15 21:24Z）。
 - **UX-SKILL-2** `shipped` The accepted "How I work" page is an ordinary
   Wenlan page with Update now, Undo last night and Stop. It shows its grounded
@@ -595,8 +597,9 @@ and wait for evidence that people need them.
   main file plus appendix files it names for when the work needs them. Every
   line names the page it comes from. The files say what the AI tools would be
   told right then, so Stop, the setting turned off, a deleted line and Undo
-  take them away the same way. Wenlan never changes or removes a file there
-  that it did not write.
+  take them away the same way; with the setting off, the rules the person
+  wrote themselves stay (UX-SKILL-10). Wenlan never changes or removes a file
+  there that it did not write.
   原文：「現在只想要把這層整合好再 .wenlan」（2026-11-15 22:20Z）；「AGENTS 檔案可以分層 不論是個人還是空間/專案/repo」（2026-11-15 22:39Z）。
 - **UX-SKILL-7** `shipped` For a Space connected to a repository, the wiki
   pull request also puts that Space's own rules (rules only, not decisions or
@@ -608,15 +611,46 @@ and wait for evidence that people need them.
   原文：「空間如果是 repo，那就直接對應上了」（2026-11-15 22:26Z）；「原本說就會寫 wiki folders 這點也要看要不要一起修改？」（2026-11-15 22:51Z）。
 - **UX-SKILL-8** `shipped` The rules used in every Space (rules only, not
   decisions or pitfalls) are also kept in
-  each connected AI tool's own always-read file (Claude Code's `CLAUDE.md`,
-  Codex's `AGENTS.md`), in one part marked as Wenlan's. Wenlan changes only
-  that part and never the person's own text around it. Only the installed
-  app does this: a test or trial run on other data never writes these files. The person is not asked
-  again: the one answer of UX-SKILL-1 covers it. When the lines change the
-  part follows; with the setting off, the tool disconnected, or no such lines
-  left, the part is taken out. A file that another one already brings in gets
-  no second copy.
-  原文：「為啥要外掛？直接把我們的規則同步過去工具，工具就會讀啊？」（2026-11-15 23:28Z）。
+  each connected AI tool's own always-read file, in one part marked as
+  Wenlan's: Claude Code's `CLAUDE.md`, Codex's `AGENTS.md`, the `GEMINI.md`
+  Gemini CLI and Antigravity both read, the `copilot-instructions.md` Copilot
+  CLI and Copilot in VS Code both read, Windsurf's `global_rules.md`,
+  OpenCode's and Zed's `AGENTS.md`. Kiro reads every file of a folder, so
+  there the rules are a file of Wenlan's own, `wenlan-rules.md`, and no file
+  of the person's is touched. Wenlan changes only
+  its part and never the person's own text around it: the file keeps its
+  line endings, its last line as it was, and its permissions. Wenlan's part
+  is what sits between its two marker lines, one start then one end, each
+  alone on a line and not inside a code example. A file Wenlan cannot safely
+  change is left exactly as it is and shown as blocked, with the reason: a
+  marker without its pair or more than one pair, a link that leads nowhere,
+  a file that is read-only, not text or unreadable, or a file of the
+  person's own where Wenlan's would go. A file the person saved while Wenlan
+  was working is left for the next pass. Wenlan never makes a
+  tool's folder: a tool that is not on the computer gets nothing. Only the
+  installed app does this: a test or trial run on other data never writes these files. The person is not asked
+  again: the one answer of UX-SKILL-1 covers it, and a rule the person wrote
+  themselves for every Space (UX-SKILL-10) needs no answer. When the lines
+  change the part follows; with the tool disconnected or no such lines left,
+  the part is taken out, and with the setting off only the rules the person
+  wrote themselves stay in it. A file is removed only when Wenlan made it
+  and nothing but Wenlan's part is in it; a file the person had first stays,
+  even empty. A file two tools share, or two names that
+  reach one file, gets one part, kept while either tool is connected, under
+  the smallest limit any connected tool reading it has. A file
+  that another one already brings in gets no second copy; only Claude Code's
+  and Gemini's files can bring one in, and a line shown inside a code example
+  brings nothing in. When OpenCode has no `AGENTS.md` of
+  its own Wenlan makes none, because OpenCode then reads Claude Code's file,
+  and the part there covers it. When the person's text and the part together
+  would pass the 6,000 characters Windsurf reads, the part is left out. Every
+  other tool (Cursor, Claude Desktop, ChatGPT and the rest) has no such file
+  Wenlan can write and gets the rules only when it asks Wenlan. Wenlan can
+  say, tool by tool, which of these holds and when Wenlan last wrote its
+  part (from Wenlan's own note, not the file's date); a tool is shown as
+  covered by another file only while that file holds the part. It
+  says what is in the file, not that the AI followed it.
+  原文：「為啥要外掛？直接把我們的規則同步過去工具，工具就會讀啊？」（2026-11-15 23:28Z）；「要有信心，馬上就要做了」（2026-11-17 05:01Z）。
 - **UX-SKILL-9** `shipped` In a Space shared with teammates, each person's
   "How I work" page stays on their own computer and is not sent to the
   others. A page a teammate wrote can still give that Space a rule, but never
@@ -624,6 +658,25 @@ and wait for evidence that people need them.
   person's own AI tools' files. Rules for the whole team go through the
   repo's `AGENTS.md` in a PR (UX-SKILL-7).
   原文：「我們這改動包含團隊了嗎？」「可以下個 PR 繼續開搞」（2026-11-15 23:30Z）。
+- **UX-SKILL-10** `shipped` A rule the person writes themselves counts at
+  once, with no model and no accept. On a page in a folder named Rules (規則,
+  规则; any depth, any app language), each top-level bullet the person wrote is
+  a rule, or a decision or pitfall when it starts with `[decision]` or
+  `[pitfall]`. It is decided bullet by bullet: a bullet counts when the person
+  wrote it. A bullet an AI tool or a teammate wrote, and AI text the person
+  only accepted, do not count this way and still go through the ask
+  (UX-SKILL-1, UX-SKILL-9); when an AI tool later changes other lines of the
+  page, the person's own bullets still count. A plain bullet the person adds
+  to a "How I work" page counts the same way, and the nightly update keeps it
+  on the page. `wenlan rules` prints these rules as "written by you" with the
+  page; a Space's own are listed before the lines Wenlan took from its pages.
+  The files of UX-SKILL-6 and UX-SKILL-8 follow when the page is saved; the
+  repository's `AGENTS.md` (UX-SKILL-7) gets them at the next wiki pull
+  request. A page in a Space, or in a Space's folder, gives rules for that
+  Space only; a page in no Space and outside every Space's folder gives rules
+  used in every Space. The setting and a No do not silence them;
+  `#not-for-ai-tools` on the page does.
+  原文：決定 4：「A rule the person writes themselves counts at once. AI tools get it and `wenlan rules` prints it, with no model needed. Rules the AI derives from pages still need the person's accept.」Qi-Xuan 以輸入「A」回答此題（2026-11-16 22:30Z；題目與決定記錄於 `/mnt/project-files/readme-2026-11/cover-v3/2026-11-16-app-changes-from-cover.md`，決定 4）。
 
 ## From the terminal
 

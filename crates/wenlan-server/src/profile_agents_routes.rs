@@ -233,9 +233,12 @@ pub async fn handle_update_agent(
 ) -> Result<Json<AgentResponse>, ServerError> {
     // Snapshot the DB Arc; the guard must not be held across the DB awaits
     // below (AGENTS.md: never hold a tokio RwLock guard across .await).
-    let db = {
+    let (db, page_root) = {
         let s = state.read().await;
-        s.db.clone().ok_or(ServerError::DbNotInitialized)?
+        (
+            s.db.clone().ok_or(ServerError::DbNotInitialized)?,
+            s.lint_config.page_root().map(std::path::Path::to_path_buf),
+        )
     };
     db.get_agent(&name)
         .await
@@ -253,7 +256,7 @@ pub async fn handle_update_agent(
     .map_err(|e| ServerError::Internal(e.to_string()))?;
     if req.enabled.is_some() {
         // A tool turned off loses Wenlan's rules in its own file right away.
-        crate::skill_grow::sync_rules_files_quietly(&db).await;
+        crate::skill_grow::sync_rules_files_quietly(&db, page_root.as_deref()).await;
     }
     let updated = db
         .get_agent(&name)
@@ -269,14 +272,17 @@ pub async fn handle_delete_agent(
 ) -> Result<Json<serde_json::Value>, ServerError> {
     // Snapshot the DB Arc; the guard must not be held across the DB awaits
     // below (AGENTS.md: never hold a tokio RwLock guard across .await).
-    let db = {
+    let (db, page_root) = {
         let s = state.read().await;
-        s.db.clone().ok_or(ServerError::DbNotInitialized)?
+        (
+            s.db.clone().ok_or(ServerError::DbNotInitialized)?,
+            s.lint_config.page_root().map(std::path::Path::to_path_buf),
+        )
     };
     db.delete_agent(&name)
         .await
         .map_err(|e| ServerError::Internal(e.to_string()))?;
-    crate::skill_grow::sync_rules_files_quietly(&db).await;
+    crate::skill_grow::sync_rules_files_quietly(&db, page_root.as_deref()).await;
     Ok(Json(serde_json::json!({ "deleted": name })))
 }
 

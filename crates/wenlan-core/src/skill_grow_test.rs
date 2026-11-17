@@ -31,6 +31,7 @@ fn line(kind: SkillLineKind, id: &str, text: &str, quote: &str) -> SkillLine {
         source_quote: quote.into(),
         person_edited: false,
         general: false,
+        hand_written: false,
     }
 }
 
@@ -474,22 +475,172 @@ fn ux_skill_8_tool_rules_block_is_added_replaced_and_taken_out_again() {
     assert!(block.contains("- Discuss first.\n"));
 
     let mine = "# Mine\n\nUse pnpm.\n";
-    let with = upsert_tool_rules_block(mine, Some(&block));
+    let with = upsert_tool_rules_block(mine, Some(&block)).unwrap();
     assert!(with.starts_with("# Mine\n\nUse pnpm.\n\n<!-- WENLAN:RULES:START -->"));
     let edited = format!("{with}\nAfter.\n");
     let second = [line(SkillLineKind::Rule, "b", "Answer first.", "q")];
-    let replaced = upsert_tool_rules_block(&edited, tool_rules_block(&second).as_deref());
+    let replaced = upsert_tool_rules_block(&edited, tool_rules_block(&second).as_deref()).unwrap();
     assert!(replaced.contains("- Answer first.") && !replaced.contains("Discuss first."));
     assert!(replaced.contains("Use pnpm.") && replaced.contains("After."));
     assert_eq!(replaced.matches(TOOL_RULES_START).count(), 1);
 
-    assert_eq!(upsert_tool_rules_block(&with, None), mine);
+    assert_eq!(upsert_tool_rules_block(&with, None).unwrap(), mine);
     assert_eq!(
-        upsert_tool_rules_block(&replaced, None),
+        upsert_tool_rules_block(&replaced, None).unwrap(),
         "# Mine\n\nUse pnpm.\n\nAfter.\n"
     );
-    assert_eq!(upsert_tool_rules_block(&format!("{block}\n"), None), "");
-    assert_eq!(upsert_tool_rules_block(mine, None), mine);
+    assert_eq!(
+        upsert_tool_rules_block(&format!("{block}\n"), None).unwrap(),
+        ""
+    );
+    assert_eq!(upsert_tool_rules_block(mine, None).unwrap(), mine);
+}
+
+fn one_rule_block() -> String {
+    tool_rules_block(&[line(SkillLineKind::Rule, "a", "Discuss first.", "q")]).unwrap()
+}
+
+#[test]
+fn ux_skill_8_half_or_doubled_markers_leave_the_text_alone() {
+    let block = one_rule_block();
+    let pair = format!("{TOOL_RULES_START}\n- old\n{TOOL_RULES_END}\n");
+    for (text, reason) in [
+        (
+            format!("# Mine\n{TOOL_RULES_START}\nmy notes below\nmore notes\n"),
+            "start_marker_without_end",
+        ),
+        (
+            format!("# Mine\n{TOOL_RULES_END}\nmy notes\n"),
+            "end_marker_without_start",
+        ),
+        (
+            format!("{TOOL_RULES_END}\nmine\n{TOOL_RULES_START}\n"),
+            "end_marker_before_start",
+        ),
+        (format!("{pair}\nmine\n\n{pair}"), "more_than_one_part"),
+        (format!("{TOOL_RULES_START}\n{pair}"), "more_than_one_part"),
+    ] {
+        assert_eq!(upsert_tool_rules_block(&text, Some(&block)), Err(reason));
+        assert_eq!(upsert_tool_rules_block(&text, None), Err(reason));
+    }
+}
+
+#[test]
+fn ux_skill_8_a_marker_quoted_in_a_sentence_or_a_code_fence_is_the_persons_text() {
+    let block = one_rule_block();
+    let prose = format!(
+        "Wenlan keeps its part after `{TOOL_RULES_START}` in this file.\n\
+         It ends at {TOOL_RULES_END} they say.\n"
+    );
+    let fenced = format!(
+        "# Notes\n\n```md\n{TOOL_RULES_START}\nan example of mine\n{TOOL_RULES_END}\n```\n\
+         \n1. In a list:\n   ~~~\n   {TOOL_RULES_START}\n   ~~~\n"
+    );
+    for mine in [prose, fenced] {
+        assert!(!holds_tool_rules_block(&mine));
+        assert_eq!(upsert_tool_rules_block(&mine, None).unwrap(), mine);
+        let with = upsert_tool_rules_block(&mine, Some(&block)).unwrap();
+        assert_eq!(with, format!("{mine}\n{block}\n"));
+        // A second pass changes nothing and taking it out gives the text back.
+        assert_eq!(upsert_tool_rules_block(&with, Some(&block)).unwrap(), with);
+        assert_eq!(upsert_tool_rules_block(&with, None).unwrap(), mine);
+    }
+    // A fence left open would swallow the part, so nothing is added.
+    let open = "# Notes\n\n```\nnever closed\n";
+    assert_eq!(
+        upsert_tool_rules_block(open, Some(&block)),
+        Err("part_would_not_read_back")
+    );
+}
+
+#[test]
+fn ux_skill_8_line_endings_last_line_and_byte_order_mark_stay_the_persons() {
+    let block = one_rule_block();
+    let crlf_block = block.replace('\n', "\r\n");
+
+    let crlf = "# Mine\r\n\r\nUse pnpm.\r\n";
+    let with = upsert_tool_rules_block(crlf, Some(&block)).unwrap();
+    assert_eq!(with, format!("{crlf}\r\n{crlf_block}\r\n"));
+    assert!(!with.replace("\r\n", "").contains('\n'));
+    assert_eq!(upsert_tool_rules_block(&with, None).unwrap(), crlf);
+
+    // Text the person adds on both sides is kept byte for byte.
+    let around = format!("Top.\r\n\r\n{crlf_block}\r\n\r\nmixed\nlines  \r\n\tend");
+    let second = tool_rules_block(&[line(SkillLineKind::Rule, "b", "Answer first.", "q")])
+        .unwrap()
+        .replace('\n', "\r\n");
+    let replaced = upsert_tool_rules_block(&around, Some(&second.replace("\r\n", "\n"))).unwrap();
+    assert_eq!(
+        replaced,
+        format!("Top.\r\n\r\n{second}\r\n\r\nmixed\nlines  \r\n\tend")
+    );
+
+    let no_newline = "# Mine\n\nlast line";
+    let with = upsert_tool_rules_block(no_newline, Some(&block)).unwrap();
+    assert_eq!(with, format!("{no_newline}\n\n{block}"));
+    assert_eq!(upsert_tool_rules_block(&with, None).unwrap(), no_newline);
+
+    let spaces = "mine  \n\n\n";
+    let with = upsert_tool_rules_block(spaces, Some(&block)).unwrap();
+    assert!(with.starts_with(spaces));
+    assert_eq!(upsert_tool_rules_block(&with, None).unwrap(), spaces);
+
+    for bom in ["\u{feff}# Mine\n", "\u{feff}"] {
+        let with = upsert_tool_rules_block(bom, Some(&block)).unwrap();
+        assert!(with.starts_with(bom) && holds_tool_rules_block(&with));
+        assert_eq!(upsert_tool_rules_block(&with, Some(&block)).unwrap(), with);
+        assert_eq!(upsert_tool_rules_block(&with, None).unwrap(), bom);
+    }
+}
+
+#[test]
+fn ux_skill_8_lines_in_fenced_code_are_not_read_as_lines_of_the_file() {
+    let text =
+        "@one.md\n```\n@two.md\n```\n> ~~~~\n> @three.md\n> ~~~\n> @four.md\n> ~~~~\n@five.md";
+    let lines: Vec<&str> = lines_outside_code_fences(text)
+        .into_iter()
+        .map(|(_, line)| line)
+        .collect();
+    assert_eq!(lines, ["@one.md", "@five.md"]);
+}
+
+#[test]
+fn ux_skill_8_a_whole_file_of_wenlans_keeps_its_mark_after_the_tools_front_matter() {
+    let front = "---\ninclusion: always\n---\n";
+    assert_eq!(tool_rules_owned_file(&[], Some(front)), None);
+    let rules = [
+        line(SkillLineKind::Rule, "a", "Discuss\nfirst.", "q"),
+        line(SkillLineKind::Decision, "b", "We chose SQLite.", "q"),
+    ];
+    let file = tool_rules_owned_file(&rules, Some(front)).unwrap();
+    assert!(
+        file.starts_with(&format!("{front}{RULES_FILE_MARK}\n# How I work\n")),
+        "the tool's front matter comes first, then Wenlan's mark"
+    );
+    assert!(file.ends_with("- Discuss first.\n"));
+    assert!(
+        !file.contains("SQLite"),
+        "only rules, as in the marked part"
+    );
+    assert!(is_wenlan_rules_text(&file));
+    // The mark is still found when the person changed the front matter, or
+    // an editor saved the file with Windows line ends.
+    assert!(is_wenlan_rules_text(&file.replace("always", "manual")));
+    assert!(is_wenlan_rules_text(&file.replace('\n', "\r\n")));
+    let plain = tool_rules_owned_file(&rules, None).unwrap();
+    assert!(plain.starts_with(RULES_FILE_MARK) && is_wenlan_rules_text(&plain));
+
+    // A file of the person's own is never taken for Wenlan's.
+    for own in [
+        String::new(),
+        "# My steering\n".to_string(),
+        "---\ninclusion: always\n---\n# My steering\n".to_string(),
+        format!("---\ninclusion: always\n# never closed\n{RULES_FILE_MARK}\n"),
+        format!("# Mine\n{RULES_FILE_MARK}\n"),
+        format!("---\ninclusion: always\n---\n\n# Mine\n{RULES_FILE_MARK}\n"),
+    ] {
+        assert!(!is_wenlan_rules_text(&own), "{own:?}");
+    }
 }
 
 #[test]
@@ -515,4 +666,357 @@ fn a_quote_cut_before_its_sentence_ends_or_pointing_outside_itself_is_dropped() 
     assert!(!points_outside_itself(
         "Always inspect the rendered output before claiming success."
     ));
+}
+
+#[test]
+fn ux_skill_10_a_bullet_the_person_wrote_is_a_rule_without_a_model() {
+    let token = format!("ghp_{}", "a".repeat(32));
+    let text = format!(
+        "# My rules\n\nSome prose that is not a rule.\n\n\
+         - Use the merge queue\n\
+         * [decision] We ship on Tuesdays\n\
+         - [Pitfall] Renaming a folder by hand loses its history\n\
+         - 不要用表情符號\n\
+         - [ ] buy milk\n\
+         - [x] done already\n\
+         - Use the merge queue\n\
+         - Never paste {token} anywhere\n\
+         - [rule] A managed line — Source: Page (p) r1 at 1 — Quote: \"x\" <!-- wenlan-rule:abc -->\n\
+         \x20 - a nested bullet is a detail, not a rule\n\
+         ```\n- a bullet inside code\n```\n\
+         1. a numbered step\n"
+    );
+    let page = page("My rules", &text, 4, 1_800_000_000);
+    let lines = person_rule_lines(&page);
+
+    let got: Vec<(SkillLineKind, &str)> = lines
+        .iter()
+        .map(|line| (line.kind, line.text.as_str()))
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            (SkillLineKind::Rule, "Use the merge queue"),
+            (SkillLineKind::Decision, "We ship on Tuesdays"),
+            (
+                SkillLineKind::Pitfall,
+                "Renaming a folder by hand loses its history"
+            ),
+            (SkillLineKind::Rule, "不要用表情符號"),
+        ]
+    );
+    for line in &lines {
+        assert!(line.hand_written && line.person_edited && !line.general);
+        assert_eq!(line.source_page_id, "page-source-1");
+        assert_eq!(line.source_page_title, "My rules");
+        assert_eq!(line.source_revision, 4);
+    }
+    // The id does not move when the page is saved again.
+    let later = person_rule_lines(&SkillPageInput {
+        revision: 9,
+        ..page.clone()
+    });
+    assert_eq!(later[0].id, lines[0].id);
+    // The sentence filters for model quotes do not apply to a person's words.
+    let short = person_rule_lines(&SkillPageInput {
+        text: "- it must stay small\n- and so on".into(),
+        ..page.clone()
+    });
+    assert_eq!(short.len(), 2);
+
+    let files = rules_layer_files(None, &lines);
+    assert!(files[0]
+        .1
+        .contains("- Use the merge queue (written by you in \"My rules\")"));
+}
+
+#[test]
+fn ux_skill_10_a_rules_folder_is_named_in_any_language_at_any_depth() {
+    assert!(may_be_in_rules_folder("Rules/git.md"));
+    assert!(may_be_in_rules_folder("work/rules/git.md"));
+    assert!(may_be_in_rules_folder("規則/提交.md"));
+    assert!(may_be_in_rules_folder("筆記/规则/提交.md"));
+    assert!(may_be_in_rules_folder("a\\RULES\\b.md"));
+    assert!(!may_be_in_rules_folder("Rules.md"));
+    assert!(!may_be_in_rules_folder("My Rules/git.md"));
+    assert!(!may_be_in_rules_folder("git.md"));
+    assert!(has_rules_folder("Rules") && has_rules_folder("a/rules/b"));
+    assert!(!has_rules_folder("") && !has_rules_folder("Rules 2"));
+}
+
+#[test]
+fn ux_skill_10_a_space_or_team_folder_named_rules_is_not_a_rules_folder() {
+    use crate::space_folders::{layout, placed, LayoutInput};
+    let teams = [
+        ("Handbook".to_string(), Some("Rules".to_string())),
+        ("Ops".to_string(), Some("Acme".to_string())),
+    ]
+    .into_iter()
+    .collect();
+    let layout = layout(&LayoutInput {
+        // Two Spaces whose names differ only in case share no folder: the
+        // second gets "rules 2". "work" is spelled in lower case on disk.
+        spaces: ["Rules", "rules", "Work", "Handbook", "Ops"]
+            .map(String::from)
+            .to_vec(),
+        teams,
+        top_folders: vec!["work".into()],
+        skip: Vec::new(),
+    });
+    let rules_in = |file: &str| {
+        let at = placed(file, &layout);
+        (has_rules_folder(&at.inside), at.space, at.team_only)
+    };
+    let space = |name: &str| Some(name.to_string());
+
+    // The Space's own folder is the Space, in whatever case it is spelled.
+    assert_eq!(rules_in("Rules/git.md"), (false, space("Rules"), false));
+    assert_eq!(rules_in("RULES/git.md"), (false, space("Rules"), false));
+    assert_eq!(
+        rules_in("Rules/Rules/git.md"),
+        (true, space("Rules"), false)
+    );
+    let second = layout["rules"].clone();
+    assert_ne!(second, "Rules");
+    assert_eq!(
+        rules_in(&format!("{second}/git.md")),
+        (false, space("rules"), false)
+    );
+    // The folder as spelled on disk is still the Space's.
+    assert_eq!(rules_in("work/Rules/git.md"), (true, space("Work"), false));
+    assert_eq!(rules_in("Work/notes/git.md"), (false, space("Work"), false));
+    // A team Space is <team>/<space>; a team named Rules is not a rules
+    // folder, and a file in the team's folder but in no Space has no Space.
+    let team = layout["Handbook"].split('/').next().unwrap().to_string();
+    assert_eq!(
+        rules_in(&format!("{team}/Handbook/git.md")),
+        (false, space("Handbook"), false)
+    );
+    assert_eq!(
+        rules_in(&format!("{team}/Handbook/規則/git.md")),
+        (true, space("Handbook"), false)
+    );
+    assert_eq!(rules_in(&format!("{team}/git.md")), (false, None, true));
+    assert_eq!(
+        rules_in("Acme/Ops/Rules/git.md"),
+        (true, space("Ops"), false)
+    );
+    assert_eq!(rules_in("Acme/Rules/git.md"), (true, None, true));
+    // Outside every Space's folder.
+    assert_eq!(rules_in("筆記/規則/git.md"), (true, None, false));
+}
+
+#[test]
+fn ux_skill_10_a_bullet_may_be_indented_and_run_over_lines() {
+    let text = "Intro.\n\n\
+        \x20\x20- Indented a little is still a rule\n\
+        \x20\x20- A rule that runs on\n\
+        \x20\x20\x20\x20over a second line\n\
+        \x20\x20\x20\x20- a detail under it\n\
+        \x20\x20- Cite the page — Source: the handbook, always\n\
+        \n\
+        ## Next\n\n\
+        \x20\x20\x20- Three spaces after a heading\n\
+        \x20\x20\x20\x20- four spaces is code or a detail\n\
+        - [rule] Once managed — Source: Page (p) r1 at 1 — Quote: \"Once managed\"\n";
+    let lines = person_rule_lines(&page("Mine", text, 1, 1));
+    let got: Vec<&str> = lines.iter().map(|line| line.text.as_str()).collect();
+    assert_eq!(
+        got,
+        vec![
+            "Indented a little is still a rule",
+            "A rule that runs on over a second line",
+            "Cite the page — Source: the handbook, always",
+            "Three spaces after a heading",
+            "Once managed",
+        ]
+    );
+}
+
+#[test]
+fn ux_skill_10_on_the_how_i_work_page_only_a_bullet_the_person_added_counts() {
+    let v1 = "# How I work — Wenlan\n\n- [rule] Managed — Source: P (p) r1 at 1 — Quote: \"Managed\" <!-- wenlan-rule:abc -->\n";
+    let v2 = format!("{v1}\n- Mine: use the merge queue\n");
+    let v3 = format!("{v2}- An AI tool slipped this in\n");
+    let v4 = format!("{v3}- Mine again: verify before done\n");
+    let page = page("How I work — Wenlan", &v4, 4, 1_800_000_000);
+    let lines = person_rule_lines_through_history(
+        &page,
+        &[(false, v1), (true, &v2), (false, &v3), (true, &v4)],
+    );
+    let texts: Vec<&str> = lines.iter().map(|line| line.text.as_str()).collect();
+    assert_eq!(
+        texts,
+        vec![
+            "Mine: use the merge queue",
+            "Mine again: verify before done"
+        ],
+        "an AI tool's bullet never counts, also after the person saved again"
+    );
+    // A bullet the person took out and an AI tool put back is not theirs.
+    let back = person_rule_lines_through_history(&page, &[(true, &v2), (true, v1), (false, &v4)]);
+    assert!(back.is_empty());
+
+    // A version whose writer is not known (an old label) gives no rule, and
+    // does not spoil the bullet the person wrote after it; an AI tool's
+    // later rewrite of other lines does not take that bullet away.
+    let legacy = "- From before history was kept\n";
+    let mine = format!("{legacy}- Stand-up is at ten\n");
+    let ai = "- Reworded by a tool\n- Stand-up is at ten\n- Added by a tool\n".to_string();
+    let page = super::SkillPageInput {
+        text: ai.clone(),
+        ..page
+    };
+    let lines =
+        person_rule_lines_through_history(&page, &[(false, legacy), (true, &mine), (false, &ai)]);
+    let texts: Vec<&str> = lines.iter().map(|line| line.text.as_str()).collect();
+    assert_eq!(texts, vec!["Stand-up is at ten"]);
+}
+
+#[test]
+fn ux_skill_10_refresh_keeps_what_the_person_wrote_on_the_page() {
+    let managed = line(
+        SkillLineKind::Rule,
+        "rule-1",
+        "Verify the rendered result.",
+        "Verify the rendered result.",
+    );
+    let first = reconcile_rules_page(
+        "Wenlan",
+        std::slice::from_ref(&managed),
+        &[],
+        &[],
+        None,
+        false,
+    );
+    assert!(first.body.ends_with("<!-- wenlan-rule:rule-1 -->\n"));
+    let edited = format!(
+        "{}\n## Mine\n\n- Use the merge queue\nA note to myself.\n",
+        first.body
+    );
+    let newer = line(
+        SkillLineKind::Pitfall,
+        "rule-2",
+        "A new grounded line.",
+        "A new grounded line.",
+    );
+    let refreshed = reconcile_rules_page(
+        "Wenlan",
+        &[managed.clone(), newer],
+        &first.lines,
+        &[],
+        Some(&edited),
+        true,
+    );
+    assert!(refreshed
+        .body
+        .contains("## Mine\n\n- Use the merge queue\nA note to myself.\n"));
+    assert!(refreshed.body.contains("wenlan-rule:rule-2"));
+    assert_eq!(refreshed.lines.len(), 2, "managed lines are unchanged");
+    let mine = refreshed.body.find("## Mine").unwrap();
+    assert!(refreshed.body.find("wenlan-rule:rule-2").unwrap() < mine);
+
+    // Running it again changes nothing.
+    let again = reconcile_rules_page(
+        "Wenlan",
+        &refreshed.lines,
+        &refreshed.lines,
+        &[],
+        Some(&refreshed.body),
+        false,
+    );
+    assert_eq!(again.body, refreshed.body);
+    // A blank line the person put above the heading adds no second heading.
+    let padded = format!("\n\n{}", refreshed.body);
+    let from_padded = reconcile_rules_page(
+        "Wenlan",
+        &refreshed.lines,
+        &refreshed.lines,
+        &[],
+        Some(&padded),
+        false,
+    );
+    assert_eq!(from_padded.body, refreshed.body);
+    // A page with nothing of the person's own is written as before.
+    let plain = reconcile_rules_page(
+        "Wenlan",
+        &first.lines,
+        &first.lines,
+        &[],
+        Some(&first.body),
+        false,
+    );
+    assert_eq!(plain.body, first.body);
+}
+
+#[test]
+fn ux_skill_10_only_the_persons_own_versions_bring_in_a_rule() {
+    for own in [
+        "person_create",
+        "manual_edit",
+        "fs_edit",
+        "publish",
+        "restore",
+        "own_device",
+        "title_rename",
+        "space_move",
+    ] {
+        assert!(version_is_the_persons_own(own), "{own}");
+    }
+    for other in [
+        "agent_create",
+        "agent_refresh",
+        "revision_accept",
+        "shared_person:member-b",
+        "shared_ai:member-b",
+        "own_device_ai",
+        // Old labels that do not say who wrote the version.
+        "create",
+        "migration_87",
+        "legacy_authored",
+        "distill",
+    ] {
+        assert!(!version_is_the_persons_own(other), "{other}");
+    }
+}
+
+#[test]
+fn ux_skill_10_a_space_named_rules_does_not_take_pages_from_the_persons_rules_folder() {
+    use crate::space_folders::{layout, plan, LayoutInput, Placement, Record, Step};
+    let layout = layout(&LayoutInput {
+        spaces: vec!["Rules".into(), "Work".into()],
+        top_folders: vec!["Rules".into(), "Work".into()],
+        ..Default::default()
+    });
+    let page = |id: &str, file: &str| Placement {
+        id: id.into(),
+        file: file.into(),
+        space: None,
+    };
+    // Both pages were made in no Space and recorded at the top.
+    let record = Record {
+        format: 1,
+        placed: [("rule", ""), ("note", "")]
+            .map(|(id, at)| (id.to_string(), at.to_string()))
+            .into_iter()
+            .collect(),
+    };
+    let steps = plan(
+        &[
+            page("rule", "Rules/how-we-work.md"),
+            page("note", "Work/idea.md"),
+        ],
+        &layout,
+        &Default::default(),
+        &record,
+        &[],
+    );
+    assert_eq!(
+        steps,
+        vec![Step::SetSpace {
+            id: "note".into(),
+            space: "Work".into()
+        }],
+        "a page in the Rules folder is not moved into the Space named Rules"
+    );
 }
