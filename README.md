@@ -40,6 +40,8 @@
 
 Each AI tool keeps its own memory and rules. Wenlan gives every tool, agent and teammate what you settled.
 
+For people who use several AI tools daily, and small teams of engineers and non-engineers.
+
 - **Docs with sources.** Wenlan checks that each cited source supports its sentence before saving.
 - **One copy of skills and rules.** It runs in every AI tool and platform you connect.
 - **Organized memory.** What you settle is sorted into your docs, skills and rules, so they stay current.
@@ -83,11 +85,17 @@ More comparisons, with Obsidian, Notion AI, and memory tools: [wenlan.app/learn]
 
    Or: the [Claude Code plugin](docs/setup-with-ai.md), `brew install 7xuanlu/tap/wenlan`, or [another way](docs/setup-and-data.md#installation).
 
-2. Start a new AI session and ask:
+2. Bring in a folder of notes or documents, such as an Obsidian vault. [More ways to import](docs/import-guide.md).
+
+   ```sh
+   wenlan sources add ~/notes
+   ```
+
+3. Start a new AI session and ask:
 
    > /wenlan what did I decide about this before? Then help me: …
 
-3. Read and edit your pages in your browser: `wenlan open`.
+4. Read and edit your pages in your browser: `wenlan open`.
 
 Optional: the [desktop app](https://github.com/wenlan-app/wenlan/releases/latest) for macOS, Windows and Linux adds imports and one-press connections.
 
@@ -95,8 +103,6 @@ Optional: the [desktop app](https://github.com/wenlan-app/wenlan/releases/latest
 
 - Each person connects with their own key, with view-only or edit access to each Space.
 - Members join from an invite link with their own AI tool. Desktop apps sync by themselves.
-
-Bring in Obsidian vaults, Logseq graphs, folders, or earlier AI chats: [Import guide](docs/import-guide.md).
 
 Works with Claude Code, Codex, Cursor, GitHub Copilot, Gemini CLI, and other MCP tools: [setup guide](docs/setup-with-ai.md).
 
@@ -107,14 +113,14 @@ Works with Claude Code, Codex, Cursor, GitHub Copilot, Gemini CLI, and other MCP
 
 ## What you can bring in
 
-- **Files and folders:** Markdown, text, text-based PDFs, and DOCX. Import once, or keep a folder in sync.
-- **Obsidian vaults and Logseq graphs:** keep them in sync, or import once. Notes you wrote start on **Ask me first**.
-- **Web links:** paste a link into a page and it becomes a source. YouTube, X, Threads, Instagram, and RedNote links show as a card or video.
-- **Gmail, Notion, Google Drive, Slack, GitHub:** your AI tool reads them with its own connectors and saves what matters, with a link to the original.
-- **AI chats:** decisions and findings are saved as memories, not full transcripts. ChatGPT and Claude export ZIPs work too.
+- **Files and folders:** Markdown, text, text-based PDFs, and DOCX. Import once, or keep in sync.
+- **Obsidian and Logseq:** keep in sync or import once. Notes you wrote start on **Ask me first**.
+- **Web links:** paste a link into a page and it becomes a source.
+- **Gmail, Notion, Google Drive, Slack, GitHub:** your AI tool reads them and saves what matters, with a link.
+- **AI chats:** decisions and findings are saved as memories. ChatGPT and Claude export ZIPs work too.
 - **A code repository:** `/wenlan wiki` writes pages tied to the code. [Docs for code](#code-repository-wiki).
 
-You can also connect an Open Knowledge Format (OKF) folder as a source. Scanned PDFs need text extraction first; chat attachments are not imported. [Import guide](docs/import-guide.md).
+OKF folders work too. Scanned PDFs need text extraction first. [Import guide](docs/import-guide.md).
 
 <a id="what-makes-wenlan-distinct"></a>
 <a id="why-is-wenlan-different"></a>
@@ -149,21 +155,21 @@ You can also connect an Open Knowledge Format (OKF) folder as a source. Scanned 
 
 ## How it stays organized
 
-Your AI tool reads what you bring in and writes it into Markdown pages. It links related pages, cites where each sentence came from, and brings pages up to date when a source changes. You can open any page and write in it yourself.
+Your AI tool turns what you bring in into linked, cited Markdown pages and keeps them current.
 
 <p align="center">
   <img src="./docs/assets/wenlan-updates-history.animated.svg" alt="Illustrative flow: AI chats, documents and folders (including Obsidian), code, and web content go into Steep. It writes a new page from several memories, merges duplicate pages, and updates a page with a citation it checks against the source; a page set to Ask me first waits for approval. It also finds a new link and resolves a contradiction by keeping the newer statement, with the older one restorable from history. Next time you ask, your AI tool cites the updated page." width="100%">
 </p>
 <p>Illustration based on current update behavior; not an App screenshot.</p>
 
-- **Pages with sources:** Each citation opens the original. When a page cites its sources as `[n]`, Wenlan compares each cited sentence with its source and refuses the page when most citations don't match. Passing the check does not prove a page correct.
-- **Kept current:** When a source, memory, or cited code changes, the pages that rely on it are flagged for an update. Without any model, Wenlan also suggests merging near-duplicate pages and lists `[[links]]` that point to no page yet.
-- **You decide what AI may change:** Pages you wrote start on **Ask me first**, so AI changes wait for your OK. Set any page to **Allowed** or **Ask me first**, see what changed, and restore an earlier version.
-- **Two ways to run it:** In **On demand**, the default, your AI tool does the writing while it works, so there is no API key to set up. In **Automatic**, Wenlan does it in the background with a model you choose, on your computer or in the cloud. [Steep guide](docs/steep.md).
-- **In your AI tool:** type `/wenlan` and say what you want: look up earlier decisions, save a lesson, or pick up where you stopped. Shortcuts: `/recall`, `/capture`, `/handoff`, `/brief`. [Plugin commands](plugin/skills/README.md).
-- **In the app:** Add material, write and edit pages, follow citations, and review proposed changes without connecting an AI. Pages can include Mermaid diagrams, which the app draws.
+- **Docs with sources:** Wenlan refuses a page when most citations don't match. A pass is not proof.
+- **Kept current:** When a source, memory, or cited code changes, pages relying on it are flagged.
+- **You decide what AI may change:** Set a page to **Allowed** or **Ask me first**, and restore any earlier version.
+- **Two ways to run it:** your AI tool as it works (default), or a background model you pick. [Steep guide](docs/steep.md).
+- **In your AI tool:** type `/wenlan` and say what you want. [All commands](plugin/skills/README.md).
+- **In the app:** add material, edit pages, follow citations, and review changes without connecting an AI.
 
-Already using Claude Code or Codex on a folder of notes? Keep doing that. Wenlan connects to the same tool and adds what a folder can't do alone: citation checks, flags when sources change, and per-page control over what AI may change.
+Already run Claude Code on a notes folder? Keep it. Wenlan adds citation checks and per-page control.
 
 <a id="code-repository-wiki"></a>
 <a id="a-wiki-for-your-code-repository"></a>
@@ -172,11 +178,12 @@ Already using Claude Code or Codex on a folder of notes? Keep doing that. Wenlan
 
 ## Docs for your code repository
 
-Run `/wenlan wiki` (`$wenlan wiki` in Codex) in a repository. Your AI tool writes an overview and one page for each part or flow a newcomer needs. A rerun writes only the pages that are missing.
+Run `/wenlan wiki` (`$wenlan wiki` in Codex) in a repository to get an overview and a page for each part.
 
-- **Tied to the code:** Each page records the code lines it was read from, and shows what changed when that code changes.
-- **As a pull request:** The GitHub button on a Space puts the pages in the repository's `wiki/` folder as a pull request, when you press it or daily. The daily run uses your own AI tool on your computer, or GitHub Actions with your AI tool's key saved as a repository secret. The same pull request fixes sentences in the repository's docs that the code no longer agrees with.
-- **Your edits stay:** A page someone edited in the repository keeps that edit. Pages that cite your memories or chats stay out of the repository.
+- **Tied to the code:** Each page records the code lines it was read from and shows what changed.
+- **As a pull request:** Pages go into the repository as a pull request, when you press the button or daily.
+- **Existing docs too:** The same pull request fixes doc sentences the code no longer matches.
+- **Your edits stay:** Edits made in the repository are kept. Pages that cite your memories or chats stay out.
 
 <a id="what-wenlan-is-not"></a>
 <a id="retrieval"></a>

@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=753ad2d02ad37a68543c811bde11e52dc8346d00f064777d4ad92e1f3bd511e0 -->
+<!-- README_SYNC: source=README.md sha256=53f75872573c06e8fde49d3988478ddfbfa6c4fd9443679de75735150d686dff -->
 
 <p align="center">
   <picture>
@@ -41,6 +41,8 @@
 ## 為什麼用文瀾
 
 每個 AI 工具各記各的、規則各一份。有了文瀾，你定下的事，每個工具、代理和隊友都拿得到。
+
+給每天用好幾個 AI 工具的人，和工程師跟非工程師一起做事的小團隊。
 
 - **有出處的文件。** 存下前，文瀾會確認每個引用的來源支持那一句。
 - **技能和規則只有一份。** 同一份，在你連上的每個 AI 工具和平台上都能用。
@@ -85,11 +87,17 @@
 
    也可以用 [Claude Code 插件](docs/setup-with-ai.md)、`brew install 7xuanlu/tap/wenlan`，或[其他方式](docs/setup-and-data.zh-Hant.md#installation)。
 
-2. 開一個新的 AI 對話，問它：
+2. 帶進一個放筆記或文件的資料夾，例如 Obsidian vault。[其他匯入方式](docs/import-guide.zh-Hant.md)。
+
+   ```sh
+   wenlan sources add ~/notes
+   ```
+
+3. 開一個新的 AI 對話，問它：
 
    > /wenlan 我之前對這件事怎麼決定的？再幫我：……
 
-3. 在瀏覽器裡看和改你的頁面：`wenlan open`。
+4. 在瀏覽器裡看和改你的頁面：`wenlan open`。
 
 想要的話再裝：[桌面 App](https://github.com/wenlan-app/wenlan/releases/latest)（macOS、Windows、Linux）多了匯入和一鍵連接 AI 工具。
 
@@ -97,8 +105,6 @@
 
 - 每個人用自己的金鑰連上，每個 Space 可以設成只能看或可以改。
 - 成員打開邀請連結，用自己的 AI 工具加入。桌面 App 會自己同步。
-
-可以帶進 Obsidian vault、Logseq 圖譜、資料夾或之前的 AI 對話：[匯入教學](docs/import-guide.zh-Hant.md)。
 
 支援 Claude Code、Codex、Cursor、GitHub Copilot、Gemini CLI 和其他 MCP 工具：[設定說明](docs/setup-with-ai.md)。
 
@@ -109,14 +115,14 @@
 
 ## 能帶進什麼
 
-- **檔案和資料夾：** Markdown、文字檔、文字型 PDF、DOCX。可以只匯入一次，也可以讓資料夾持續同步。
+- **檔案和資料夾：** Markdown、文字檔、文字型 PDF、DOCX。匯入一次，或持續同步。
 - **Obsidian vault 和 Logseq 圖譜：** 持續同步或只匯入一次。你自己寫的筆記預設是「先問我」。
-- **網頁連結：** 在筆記裡貼上連結就會存成來源。YouTube、X、Threads、Instagram 和小紅書會顯示成卡片或影片。
-- **Gmail、Notion、Google Drive、Slack、GitHub：** 你的 AI 工具用自己的連接器讀取，把重要的內容存進來，附上原文連結。
-- **AI 對話：** 決定和發現會存成記憶，不存完整對話紀錄。ChatGPT 和 Claude 匯出的 ZIP 也能帶進來。
-- **程式碼儲存庫：** `/wenlan wiki` 寫出對應到程式碼的筆記。[程式碼文件](#code-repository-wiki)。
+- **網頁連結：** 在頁面裡貼上連結，就會存成來源。
+- **Gmail、Notion、Google Drive、Slack、GitHub：** 你的 AI 工具讀取後存下重點，附上原文連結。
+- **AI 對話：** 決定和發現會存成記憶。ChatGPT 和 Claude 匯出的 ZIP 也能帶進來。
+- **程式碼儲存庫：** `/wenlan wiki` 寫出對應到程式碼的頁面。[程式碼文件](#code-repository-wiki)。
 
-也可以把 Open Knowledge Format（OKF）資料夾連接成來源。掃描版 PDF 須先擷取文字；對話附件不會匯入。[匯入教學](docs/import-guide.zh-Hant.md)。
+OKF 資料夾也可以。掃描版 PDF 須先擷取文字。[匯入教學](docs/import-guide.zh-Hant.md)。
 
 <a id="what-makes-wenlan-distinct"></a>
 <a id="why-is-wenlan-different"></a>
@@ -163,21 +169,21 @@
 
 ## 它怎麼幫你整理
 
-你的 AI 工具會讀你帶進來的資料，寫成 Markdown 筆記：把相關的筆記連起來，標出每句話的出處，來源變了就跟著更新。任何一篇筆記你都可以打開自己寫。
+你的 AI 工具把你帶進來的資料寫成 Markdown 頁面，連起相關的頁面、標出每句的出處，並保持最新。
 
 <p align="center">
   <img src="./docs/assets/wenlan-updates-history-zh-Hant.animated.svg" alt="示意流程：AI 對話、文件與資料夾（含 Obsidian）、程式碼和網頁內容進入沉澱。它把幾則記憶寫成新頁、整併重複的頁，並更新舊頁，引用會對照來源查核；設成「先問我」的頁會等你點頭。它也會找出新關聯，處理矛盾時改用較新的說法，舊的留在紀錄可還原。下次再問，AI 工具會引用更新後的頁面。" width="100%">
 </p>
 <p>示意圖依據目前的更新行為繪製；並非 App 截圖。</p>
 
-- **每篇筆記都有出處：** 每個引用都能點回原文。筆記用 `[n]` 引用來源時，文瀾會拿每個引用的句子對照它的來源；引用大多對不上時，不會儲存該筆記。通過檢查不代表內容一定正確。
-- **跟著來源更新：** 來源、記憶或引用的程式碼變了，依據它們的筆記會被標出來等待更新。不需要任何模型，文瀾也會建議合併近似重複的筆記，並列出還沒有對應筆記的 `[[連結]]`。
-- **AI 能改什麼由你決定：** 你寫的筆記預設是「先問我」，AI 的修改會先等你點頭。每篇筆記都可以設成「直接改」或「先問我」，看得到改了什麼，也能還原到之前的版本。
-- **兩種方式：** 「隨叫」是預設，由你的 AI 工具在工作時順手寫，不用另外設定 API key。「自動」則由文瀾用你選的模型在背景處理，模型可以在你的電腦上，也可以在雲端。[沉澱指南](docs/steep.zh-Hant.md)。
-- **在你的 AI 工具裡：** 打 `/wenlan`，後面說你要做什麼：找回先前的決定、存下一個心得，或接著上次做到的地方。捷徑：`/recall`、`/capture`、`/handoff`、`/brief`。[插件指令](plugin/skills/README.md)。
-- **在 App 裡：** 不連 AI 也能加資料、寫筆記、改筆記、查回引用、審核修改建議。筆記可以包含 Mermaid 圖表，由 App 畫出來。
+- **有出處的文件：** 引用大多對不上來源的頁面，文瀾不會存。通過檢查不代表內容一定正確。
+- **跟著來源更新：** 來源、記憶或引用的程式碼變了，依據它們的頁面會被標出來等更新。
+- **AI 能改什麼由你決定：** 每一頁可以設成「直接改」或「先問我」，也能還原到之前的版本。
+- **兩種方式：** 你的 AI 工具邊工作邊寫（預設），或由你選的模型在背景處理。[沉澱指南](docs/steep.zh-Hant.md)。
+- **在你的 AI 工具裡：** 打 `/wenlan`，後面說你要做什麼。[全部指令](plugin/skills/README.md)。
+- **在 App 裡：** 不連 AI 也能加資料、改頁面、查回引用、審核修改建議。
 
-已經用 Claude Code 或 Codex 管一個筆記資料夾？繼續用就好。文瀾接上同一個工具，補上資料夾自己做不到的事：檢查引用、來源變了會標記，而且每篇筆記 AI 能不能改由你決定。
+已經用 Claude Code 或 Codex 管一個筆記資料夾？繼續用就好。文瀾補上引用檢查和每一頁的修改控制。
 
 <a id="code-repository-wiki"></a>
 <a id="a-wiki-for-your-code-repository"></a>
@@ -186,11 +192,12 @@
 
 ## 幫程式碼儲存庫寫文件
 
-在程式碼儲存庫中執行 `/wenlan wiki`（Codex 中為 `$wenlan wiki`）。你的 AI 工具會寫一篇總覽，再為新人需要了解的每個部分或流程各寫一篇。再次執行時只補寫缺少的筆記。
+在儲存庫裡執行 `/wenlan wiki`（Codex 是 `$wenlan wiki`），AI 工具會寫一篇總覽，每個部分再各寫一頁。
 
-- **與程式碼綁定：** 每篇筆記都會記錄它依據的程式碼行；程式碼變了，筆記會顯示改了什麼。
-- **以 pull request 放進儲存庫：** Space 上的 GitHub 按鈕會把筆記以 pull request 放進儲存庫的 `wiki/` 資料夾，可以按按鈕執行，也可以每天自動跑。每日更新可以在你的電腦上用你自己的 AI 工具跑，或在 GitHub Actions 上跑（AI 工具的金鑰存成儲存庫 secret）。同一個 pull request 還會修正儲存庫文件中與程式碼不再相符的句子。
-- **保留你的修改：** 有人在儲存庫中修改過的筆記會保留那次修改。引用你的記憶或對話的筆記不會放進儲存庫。
+- **與程式碼綁定：** 每一頁都記錄它依據的程式碼行；程式碼變了，會顯示改了什麼。
+- **以 pull request 放進儲存庫：** 按一下按鈕，或每天自動跑一次。
+- **現有文件也一起修：** 同一個 pull request 會修正儲存庫文件中與程式碼不再相符的句子。
+- **保留你的修改：** 在儲存庫裡改過的頁面會保留。引用你的記憶或對話的頁面不會放進去。
 
 <a id="what-wenlan-is-not"></a>
 <a id="retrieval"></a>

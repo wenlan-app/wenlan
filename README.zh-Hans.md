@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=753ad2d02ad37a68543c811bde11e52dc8346d00f064777d4ad92e1f3bd511e0 -->
+<!-- README_SYNC: source=README.md sha256=53f75872573c06e8fde49d3988478ddfbfa6c4fd9443679de75735150d686dff -->
 
 <p align="center">
   <picture>
@@ -41,6 +41,8 @@
 ## 为什么用文澜
 
 每个 AI 工具各记各的、规则各一份。有了文澜，你定下的事，每个工具、代理和队友都拿得到。
+
+给每天用好几个 AI 工具的人，和工程师跟非工程师一起做事的小团队。
 
 - **有出处的文档。** 保存前，文澜会确认每个引用的来源支持那一句。
 - **技能和规则只有一份。** 同一份，在你连上的每个 AI 工具和平台上都能用。
@@ -85,11 +87,17 @@
 
    也可以用 [Claude Code 插件](docs/setup-with-ai.md)、`brew install 7xuanlu/tap/wenlan`，或[其他方式](docs/setup-and-data.zh-Hans.md#installation)。
 
-2. 开一个新的 AI 会话，问它：
+2. 带入一个放笔记或文档的文件夹，例如 Obsidian 仓库。[其他导入方式](docs/import-guide.md)。
+
+   ```sh
+   wenlan sources add ~/notes
+   ```
+
+3. 开一个新的 AI 会话，问它：
 
    > /wenlan 我之前对这件事怎么决定的？再帮我：……
 
-3. 在浏览器里看和改你的页面：`wenlan open`。
+4. 在浏览器里看和改你的页面：`wenlan open`。
 
 想要的话再装：[桌面 App](https://github.com/wenlan-app/wenlan/releases/latest)（macOS、Windows、Linux）多了导入和一键连接 AI 工具。
 
@@ -97,8 +105,6 @@
 
 - 每个人用自己的密钥连上，每个 Space 可以设成只能看或可以改。
 - 成员打开邀请链接，用自己的 AI 工具加入。桌面 App 会自己同步。
-
-可以带入 Obsidian 仓库、Logseq 图谱、文件夹或之前的 AI 对话：[导入指南](docs/import-guide.md)。
 
 支持 Claude Code、Codex、Cursor、GitHub Copilot、Gemini CLI 和其他 MCP 工具：[设置说明](docs/setup-with-ai.md)。
 
@@ -109,14 +115,14 @@
 
 ## 能带进什么
 
-- **文件和文件夹：** Markdown、文本文件、文本型 PDF、DOCX。可以只导入一次，也可以让文件夹持续同步。
+- **文件和文件夹：** Markdown、文本文件、文本型 PDF、DOCX。导入一次，或持续同步。
 - **Obsidian 仓库和 Logseq 图谱：** 持续同步或只导入一次。你自己写的笔记默认是“先问我”。
-- **网页链接：** 在笔记里粘贴链接就会保存为来源。YouTube、X、Threads、Instagram 和小红书会显示成卡片或视频。
-- **Gmail、Notion、Google Drive、Slack、GitHub：** 你的 AI 工具用自己的连接器读取，把重要的内容存进来，附上原文链接。
-- **AI 对话：** 决定和发现会存成记忆，不存完整对话记录。ChatGPT 和 Claude 导出的 ZIP 也能带进来。
-- **代码仓库：** `/wenlan wiki` 写出对应到代码的笔记。[代码文档](#code-repository-wiki)。
+- **网页链接：** 在页面里粘贴链接，就会保存为来源。
+- **Gmail、Notion、Google Drive、Slack、GitHub：** 你的 AI 工具读取后存下重点，附上原文链接。
+- **AI 对话：** 决定和发现会存成记忆。ChatGPT 和 Claude 导出的 ZIP 也能带进来。
+- **代码仓库：** `/wenlan wiki` 写出对应到代码的页面。[代码文档](#code-repository-wiki)。
 
-也可以把 Open Knowledge Format（OKF）文件夹连接为来源。扫描版 PDF 需要先提取文字；对话附件不会导入。[导入指南](docs/import-guide.md)。
+OKF 文件夹也可以。扫描版 PDF 需要先提取文字。[导入指南](docs/import-guide.md)。
 
 <a id="what-makes-wenlan-distinct"></a>
 <a id="why-is-wenlan-different"></a>
@@ -163,21 +169,21 @@
 
 ## 它怎么帮你整理
 
-你的 AI 工具会读你带进来的资料，写成 Markdown 笔记：把相关的笔记连起来，标出每句话的出处，来源变了就跟着更新。任何一篇笔记你都可以打开自己写。
+你的 AI 工具把你带进来的资料写成 Markdown 页面，连起相关的页面、标出每句的出处，并保持最新。
 
 <p align="center">
   <img src="./docs/assets/wenlan-updates-history-zh-Hans.animated.svg" alt="示意流程：AI 对话、文件与文件夹（含 Obsidian）、代码和网页内容进入沉淀。它把几条记忆写成新页、合并重复的页，并更新旧页，引用会对照来源核查；设成“先问我”的页会等你点头。它也会找出新关联，处理矛盾时改用较新的说法，旧的留在记录可还原。下次再问，AI 工具会引用更新后的页面。" width="100%">
 </p>
 <p>示意图依据当前的更新行为绘制；并非 App 截图。</p>
 
-- **每篇笔记都有出处：** 每个引用都能点回原文。笔记用 `[n]` 引用来源时，文澜会拿每个引用的句子对照它的来源；引用大多对不上时，不会保存该笔记。通过检查不代表内容一定正确。
-- **跟着来源更新：** 来源、记忆或引用的代码变了，依据它们的笔记会被标出来等待更新。不需要任何模型，文澜也会建议合并近似重复的笔记，并列出还没有对应笔记的 `[[链接]]`。
-- **AI 能改什么由你决定：** 你写的笔记默认是“先问我”，AI 的修改会先等你点头。每篇笔记都可以设成“直接改”或“先问我”，看得到改了什么，也能还原到之前的版本。
-- **两种方式：** “随叫”是默认，由你的 AI 工具在工作时顺手写，不用另外设置 API key。“自动”则由文澜用你选的模型在后台处理，模型可以在你的电脑上，也可以在云端。[沉淀指南](docs/steep.md)。
-- **在你的 AI 工具里：** 打 `/wenlan`，后面说你要做什么：找回之前的决定、存下一个心得，或接着上次做到的地方。快捷方式：`/recall`、`/capture`、`/handoff`、`/brief`。[插件指令](plugin/skills/README.md)。
-- **在 App 里：** 不连 AI 也能加资料、写笔记、改笔记、查回引用、审核修改建议。笔记可以包含 Mermaid 图表，由 App 画出来。
+- **有出处的文档：** 引用大多对不上来源的页面，文澜不会保存。通过检查不代表内容一定正确。
+- **跟着来源更新：** 来源、记忆或引用的代码变了，依据它们的页面会被标出来等更新。
+- **AI 能改什么由你决定：** 每一页可以设成“直接改”或“先问我”，也能还原到之前的版本。
+- **两种方式：** 你的 AI 工具边工作边写（默认），或由你选的模型在后台处理。[沉淀指南](docs/steep.md)。
+- **在你的 AI 工具里：** 打 `/wenlan`，后面说你要做什么。[全部指令](plugin/skills/README.md)。
+- **在 App 里：** 不连 AI 也能加资料、改页面、查回引用、审核修改建议。
 
-已经用 Claude Code 或 Codex 管一个笔记文件夹？继续用就好。文澜接上同一个工具，补上文件夹自己做不到的事：检查引用、来源变了会标记，而且每篇笔记 AI 能不能改由你决定。
+已经用 Claude Code 或 Codex 管一个笔记文件夹？继续用就好。文澜补上引用检查和每一页的修改控制。
 
 <a id="code-repository-wiki"></a>
 <a id="a-wiki-for-your-code-repository"></a>
@@ -186,11 +192,12 @@
 
 ## 帮代码仓库写文档
 
-在代码仓库中运行 `/wenlan wiki`（Codex 中为 `$wenlan wiki`）。你的 AI 工具会写一篇总览，再为新人需要了解的每个部分或流程各写一篇。再次运行时只补写缺少的笔记。
+在仓库里运行 `/wenlan wiki`（Codex 是 `$wenlan wiki`），AI 工具会写一篇总览，每个部分再各写一页。
 
-- **与代码绑定：** 每篇笔记都会记录它依据的代码行；代码变了，笔记会显示改了什么。
-- **以 pull request 放进仓库：** Space 上的 GitHub 按钮会把笔记以 pull request 放进仓库的 `wiki/` 文件夹，可以点按钮运行，也可以每天自动跑。每日更新可以在你的电脑上用你自己的 AI 工具跑，或在 GitHub Actions 上跑（AI 工具的密钥存为仓库 secret）。同一个 pull request 还会修正仓库文档中与代码不再相符的句子。
-- **保留你的修改：** 有人在仓库中修改过的笔记会保留那次修改。引用你的记忆或对话的笔记不会放进仓库。
+- **与代码绑定：** 每一页都记录它依据的代码行；代码变了，会显示改了什么。
+- **以 pull request 放进仓库：** 点一下按钮，或每天自动跑一次。
+- **现有文档也一起修：** 同一个 pull request 会修正仓库文档中与代码不再相符的句子。
+- **保留你的修改：** 在仓库里改过的页面会保留。引用你的记忆或对话的页面不会放进去。
 
 <a id="what-wenlan-is-not"></a>
 <a id="retrieval"></a>
