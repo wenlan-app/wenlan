@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=778fa1b7a6113674421b2aa873db798c82539ac46ee2fe10debd54342b7ecbd3 -->
+<!-- README_SYNC: source=README.md sha256=3e7a0e9c4a2ee9e36f67366c0ddd283a789fd4bac24535f7755778b3ad3e97ef -->
 
 <p align="center">
   <picture>
@@ -89,13 +89,19 @@ Más comparaciones, con Obsidian, Notion AI y herramientas de memoria: [wenlan.a
 
    Después: `wenlan connect cursor` y `wenlan sources add ~/notes` añaden más. [Más](docs/import-guide.md).
 
-2. Dile a una herramienta de IA algo que guardar. Luego pregunta en otra:
+2. Dile a una herramienta de IA lo que decidiste. Luego pregunta en otra; ya está ahí.
 
    > Guarda en Wenlan: publicamos los martes, cuando pasan las pruebas.
 
    > Pregunta a Wenlan: ¿cuándo publicamos?
 
-3. Lee y edita tus páginas en el navegador: `wenlan open`.
+   Con el [plugin](docs/setup-with-ai.md) son `/capture` y `/recall`. [Comandos](plugin/skills/README.md).
+
+3. Por la noche, Wenlan ordena lo decidido en documentos y reglas, cada uno con su fuente.
+
+   La primera vez pregunta una vez. Tras tu sí, las reglas van a los archivos de reglas de tus herramientas.
+
+4. Lee y edita tus páginas en el navegador: `wenlan open`.
 
 Opcional: la [app de escritorio](https://github.com/wenlan-app/wenlan/releases/latest) para macOS, Windows y Linux añade importaciones y conexión con un clic.
 

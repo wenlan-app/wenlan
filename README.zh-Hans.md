@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=778fa1b7a6113674421b2aa873db798c82539ac46ee2fe10debd54342b7ecbd3 -->
+<!-- README_SYNC: source=README.md sha256=3e7a0e9c4a2ee9e36f67366c0ddd283a789fd4bac24535f7755778b3ad3e97ef -->
 
 <p align="center">
   <picture>
@@ -89,13 +89,19 @@
 
    之后：`wenlan connect cursor` 再连一个工具，`wenlan sources add ~/notes` 再加一个文件夹。[更多](docs/import-guide.md)。
 
-2. 在一个 AI 工具里说一件要记住的事，再换另一个工具问：
+2. 在一个 AI 工具里说你定下的事，再换另一个工具问，马上问得到。
 
    > 存到文澜：我们每周二发版，测试过了才发。
 
    > 问文澜：我们什么时候发版？
 
-3. 在浏览器里看和改你的页面：`wenlan open`。
+   装了[插件](docs/setup-with-ai.md)，这两句就是 `/capture` 和 `/recall`。[全部指令](plugin/skills/README.md)。
+
+3. 过一晚，文澜把你定下的事整理成文档和规则，每条都附出处。
+
+   第一次会问你一次。你说好之后，规则就写进各个 AI 工具自己的规则文件。
+
+4. 在浏览器里看和改你的页面：`wenlan open`。
 
 想要的话再装：[桌面 App](https://github.com/wenlan-app/wenlan/releases/latest)（macOS、Windows、Linux）多了导入和一键连接 AI 工具。
 

@@ -87,13 +87,19 @@ More comparisons, with Obsidian, Notion AI, and memory tools: [wenlan.app/learn]
 
    Later: `wenlan connect cursor` adds another tool, `wenlan sources add ~/notes` another folder. [More](docs/import-guide.md).
 
-2. Tell one AI tool something to keep. Then ask in another:
+2. Tell one AI tool what you settled. Then ask in another; it is there right away.
 
    > Save to Wenlan: we release on Tuesdays, after the tests pass.
 
    > Ask Wenlan: when do we release?
 
-3. Read and edit your pages in your browser: `wenlan open`.
+   With the [plugin](docs/setup-with-ai.md) these are `/capture` and `/recall`. [All commands](plugin/skills/README.md).
+
+3. Overnight, Wenlan sorts what you settled into docs and rules, each with its source.
+
+   The first time, it asks you once. After your yes, the rules go into your AI tools’ own rules files.
+
+4. Read and edit your pages in your browser: `wenlan open`.
 
 Optional: the [desktop app](https://github.com/wenlan-app/wenlan/releases/latest) for macOS, Windows and Linux adds imports and one-press connections.
 
