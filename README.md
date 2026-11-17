@@ -7,7 +7,7 @@
 
 <p align="center">
   <strong>Docs, skills and rules you and your AI tools both work from, kept current.</strong><br>
-  Every doc links to its sources. Free and open source, for you and your team.
+  Bring your notes and knowledge. Every doc links to its sources. Free and open source, for you and your team.
 </p>
 
 <p align="center">

@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=25da3e9f06bde02418601ddcc6e41ca0a4f566858ad1ef52163f027ce0140bb6 -->
+<!-- README_SYNC: source=README.md sha256=87f34964cfefd93e1044b24eadf346c27c1c63509ee888f461ee88504649bf87 -->
 
 <p align="center">
   <picture>
@@ -9,7 +9,7 @@
 
 <p align="center">
   <strong>文档、技能和规则，你和 AI 工具都照着做，而且会保持最新。</strong><br>
-  每份文档都附出处。免费、开源，个人和团队都能用。
+  笔记和知识都能放进来，每份文档都附出处。免费、开源，个人和团队都能用。
 </p>
 
 <p align="center">
