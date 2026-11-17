@@ -792,7 +792,7 @@ fn docs_follow_a_page_only_when_told_and_take_fixes_from_it() {
     };
     for (files, says) in [
         (&["CHANGELOG.md"][..], "not one of the repository's docs"),
-        (&["wiki/index.md"][..], "not one of the repository's docs"),
+        (&["wenlan/index.md"][..], "not one of the repository's docs"),
         (&["docs/missing.md"][..], "is not in"),
         (&["../README.md"][..], "leaves the repository"),
         (&[][..], "name 1 to"),
