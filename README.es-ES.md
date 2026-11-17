@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=ad7a4305c2558147527e572082d63b6360621161a94c5e25c6d91d771fa8777e -->
+<!-- README_SYNC: source=README.md sha256=17f17dd41b97712f488ddcdf7ca6cc967f0a23710e544e83890197ebb48b324c -->
 
 <p align="center">
   <picture>
@@ -47,6 +47,7 @@ Cada herramienta de IA empieza de cero, y cada una quiere su propio archivo de r
 - **Memoria ordenada que lo mantiene al día.** Lo que decides en cualquier herramienta de IA se guarda y está en la siguiente. Wenlan ordena esas memorias, une las repetidas y las escribe en tus documentos, skills y reglas. Así se mantienen al día.
 - **Tú mandas.** Ves cada cambio, puedes deshacerlo y bloquear una página para que la IA te pregunte primero.
 - **El diseño que pidas.** Una página puede ser texto o una página web que tu IA dibuja con el contenido actual.
+- **Archivos primero, autoalojado, portable.** Ejecútalo en tu ordenador o en tu servidor. Las páginas son archivos Markdown y la base de datos es solo un índice de tus archivos, así que te los llevas a donde quieras.
 
 <a id="how-it-compares"></a>
 

@@ -45,6 +45,7 @@ Your AI tools each start from zero, and each wants its own rules file. Wenlan gi
 - **Organized memory keeps it current.** What you settle in any AI tool is saved and is there in the next. Wenlan sorts those memories, merges repeats, and writes them into your docs, skills and rules. That is how they stay current.
 - **You stay in charge.** See every change, undo it, and lock a page so AI asks you first.
 - **Any layout you ask for.** A page can be text, or a web page your AI draws that shows the live content.
+- **Files first, self-hosted, portable.** Run it on your own computer or server. Pages are plain Markdown files and the database is only an index of your files, so you can take them anywhere.
 
 <a id="how-it-compares"></a>
 
