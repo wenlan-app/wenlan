@@ -344,7 +344,11 @@ async fn brief_tells_a_new_user_the_next_step_even_without_a_project() {
             .await
             .expect("unresolved Space is a successful read state");
         let text = text_of(&result);
-        assert!(text.starts_with("Space not resolved."), "{text}");
+        assert!(
+            text.starts_with("No Brief to show: this folder has no Space yet. Nothing is wrong."),
+            "{text}"
+        );
+        assert!(text.contains("`wenlan init`"), "{text}");
         assert!(text.contains(counts), "{text}");
         assert!(text.contains("Next step for the user: "), "{text}");
         assert!(text.contains(next), "{text}");

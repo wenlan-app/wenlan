@@ -99,6 +99,24 @@ class ReleaseTargetTests(unittest.TestCase):
             {"include": EXPECTED[:-1]},
         )
 
+    def test_merge_queue_without_macos_changes_leaves_darwin_to_main(self) -> None:
+        self.assertEqual(
+            release_preflight_matrix(
+                event_name="merge_group",
+                ref="refs/heads/gh-readonly-queue/main/pr-847-a8108f257f70016a74ede72a829bb6e9dcc5035f",
+                head_ref="",
+                macos_allowed=False,
+            ),
+            {"include": EXPECTED[1:-1]},
+        )
+        with self.assertRaisesRegex(TargetError, "only a merge queue entry"):
+            release_preflight_matrix(
+                event_name="workflow_dispatch",
+                ref="refs/heads/main",
+                head_ref="",
+                macos_allowed=False,
+            )
+
     def test_preflight_matrix_accepts_every_ci_trigger(self) -> None:
         # A trigger added to ci.yml without a matrix here fails detect-changes
         # for every run of that event, so read the triggers from the workflow.

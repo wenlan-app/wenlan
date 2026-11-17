@@ -15,6 +15,10 @@ use std::sync::RwLock;
 
 static LOCKED: RwLock<Option<String>> = RwLock::new(None);
 static DEFAULT: RwLock<Option<String>> = RwLock::new(None);
+/// The Space the server's working folder points at (`folder_space`). Last in
+/// the chain: a strict pin, a `space` argument and `WENLAN_DEFAULT_SPACE`
+/// all win over it.
+static FOLDER: RwLock<Option<String>> = RwLock::new(None);
 
 tokio::task_local! {
     /// A strict Space pin for one MCP connection, set while it handles a
@@ -51,6 +55,7 @@ pub fn init_from_env() {
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
     *DEFAULT.write().expect("default_state write lock poisoned") = default;
+    *FOLDER.write().expect("folder_state write lock poisoned") = None;
 }
 
 /// Return the locked space slug, or `None` if `WENLAN_SPACE` was not set.
@@ -73,6 +78,24 @@ pub fn default_space() -> Option<String> {
         .read()
         .expect("default_state read lock poisoned")
         .clone()
+}
+
+/// Return the Space the server's working folder points at, when one was
+/// found (`folder_space::FolderSpaceWatch`). A connection's own pin turns it
+/// off, as it does `WENLAN_DEFAULT_SPACE`.
+pub fn folder_space() -> Option<String> {
+    if session_pin().is_some() {
+        return None;
+    }
+    FOLDER
+        .read()
+        .expect("folder_state read lock poisoned")
+        .clone()
+}
+
+/// Record (or clear) the Space the server's working folder points at.
+pub fn set_folder_space(space: Option<String>) {
+    *FOLDER.write().expect("folder_state write lock poisoned") = space;
 }
 
 /// Drop the `WENLAN_DEFAULT_SPACE` fallback for this process. Whole-library
@@ -145,6 +168,20 @@ mod tests {
         assert!(!is_locked());
         std::env::remove_var("WENLAN_DEFAULT_SPACE");
         init_from_env();
+    }
+
+    #[test]
+    fn folder_space_is_set_and_reset_with_the_environment() {
+        let _guard = ENV_LOCK.blocking_lock();
+        std::env::remove_var("WENLAN_SPACE");
+        std::env::remove_var("WENLAN_DEFAULT_SPACE");
+        init_from_env();
+        assert_eq!(folder_space(), None);
+        set_folder_space(Some("repo".into()));
+        assert_eq!(folder_space().as_deref(), Some("repo"));
+        assert!(!is_locked());
+        init_from_env();
+        assert_eq!(folder_space(), None);
     }
 
     #[test]

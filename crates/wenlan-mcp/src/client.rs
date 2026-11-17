@@ -200,6 +200,23 @@ impl WenlanClient {
         }
     }
 
+    /// The names of the registered Spaces, asked once with a short timeout
+    /// and no retry. `None` when the daemon did not answer: the caller keeps
+    /// what it knew.
+    pub async fn space_names(&self) -> Option<HashSet<String>> {
+        let response = self
+            .attach_common_headers(self.client.get(format!("{}/api/spaces", self.base_url)))
+            .timeout(Duration::from_secs(3))
+            .send()
+            .await
+            .ok()?;
+        if !response.status().is_success() {
+            return None;
+        }
+        let spaces: Vec<wenlan_types::Space> = response.json().await.ok()?;
+        Some(spaces.into_iter().map(|space| space.name).collect())
+    }
+
     /// Set the agent name to be sent as `x-agent-name` header on every request.
     pub fn with_agent_name(mut self, name: String) -> Self {
         self.agent_identity = Some(AgentIdentity::from(name));

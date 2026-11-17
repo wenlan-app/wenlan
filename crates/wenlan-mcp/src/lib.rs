@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod client;
+pub mod folder_space;
 pub mod lock_state;
 mod map_tree;
 mod query_output;

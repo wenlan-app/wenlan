@@ -3120,7 +3120,7 @@ fn ci_routing_contract_violations(
         );
     }
     let platform_condition = ci["jobs"]["test"]["if"].as_str().unwrap_or_default();
-    let expected_platform_condition = "needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.rust-ci-required == 'true' && (needs.detect-changes.outputs.macos-allowed == 'true' || needs.detect-changes.outputs.windows == 'true') && (needs.detect-changes.outputs.windows == 'true' || (github.event_name != 'pull_request' && needs.detect-changes.outputs.macos == 'true') || needs.detect-changes.outputs.m5-platform == 'true' || needs.detect-changes.outputs.nextest-config == 'true' || startsWith(github.head_ref, 'release-please--branches--') || github.event_name == 'workflow_dispatch')";
+    let expected_platform_condition = "needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.rust-ci-required == 'true' && needs.detect-changes.outputs.test-matrix-has-legs == 'true' && (needs.detect-changes.outputs.windows == 'true' || (github.event_name != 'pull_request' && needs.detect-changes.outputs.macos == 'true') || needs.detect-changes.outputs.m5-platform == 'true' || needs.detect-changes.outputs.nextest-config == 'true' || startsWith(github.head_ref, 'release-please--branches--') || github.event_name == 'workflow_dispatch')";
     if platform_condition != expected_platform_condition {
         violations.push(
             "platform test job does not derive from rust-ci-required plus its platform owner"
@@ -3186,7 +3186,17 @@ fn ci_routing_contract_violations(
         r#"include="${include//${macos},/}""#,
         r#"include="${include//${macos}/}""#,
         "fi",
+        // Frontend or ci.yml-only queue entries skip Windows (`windows-allowed`).
+        r#"if [ "${{ steps.windows-lane.outputs.allowed }}" != "true" ]; then"#,
+        r#"include="${include//,${windows}/}""#,
+        r#"include="${include//${windows}/}""#,
+        "fi",
         r#"echo "json={\"include\":[${include}]}" >> "$GITHUB_OUTPUT""#,
+        r#"if [ -n "$include" ]; then"#,
+        r#"echo "has-legs=true" >> "$GITHUB_OUTPUT""#,
+        "else",
+        r#"echo "has-legs=false" >> "$GITHUB_OUTPUT""#,
+        "fi",
     ];
     if matrix_lines != expected_matrix_lines {
         violations.push(
@@ -3231,7 +3241,7 @@ fn ci_routing_contract_violations(
     let run_fmt = "run_fmt='${{ needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.fmt-required == 'true' }}'";
     let run_clippy = "run_clippy='${{ needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.clippy-required == 'true' }}'";
     let run_macos_archive = "run_macos_archive='${{ needs.detect-changes.outputs.macos-allowed == 'true' && needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && (needs.detect-changes.outputs.workspace-platform == 'true' || needs.detect-changes.outputs.macos-archive-contract == 'true' || (needs.detect-changes.outputs.macos == 'true' && (needs.detect-changes.outputs.platform-workspace-lib-required == 'true' || needs.detect-changes.outputs.platform-cli-server-integration-required == 'true' || needs.detect-changes.outputs.macos-m4 == 'true')) || github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'release-please--branches--')) }}'";
-    let run_platform = "run_platform='${{ needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.rust-ci-required == 'true' && (needs.detect-changes.outputs.macos-allowed == 'true' || needs.detect-changes.outputs.windows == 'true') && (needs.detect-changes.outputs.windows == 'true' || (github.event_name != 'pull_request' && needs.detect-changes.outputs.macos == 'true') || needs.detect-changes.outputs.m5-platform == 'true' || needs.detect-changes.outputs.nextest-config == 'true' || startsWith(github.head_ref, 'release-please--branches--') || github.event_name == 'workflow_dispatch') }}'";
+    let run_platform = "run_platform='${{ needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.rust-ci-required == 'true' && needs.detect-changes.outputs.test-matrix-has-legs == 'true' && (needs.detect-changes.outputs.windows == 'true' || (github.event_name != 'pull_request' && needs.detect-changes.outputs.macos == 'true') || needs.detect-changes.outputs.m5-platform == 'true' || needs.detect-changes.outputs.nextest-config == 'true' || startsWith(github.head_ref, 'release-please--branches--') || github.event_name == 'workflow_dispatch') }}'";
     for (name, expected) in [
         ("run_fmt", run_fmt),
         ("run_clippy", run_clippy),
@@ -3433,12 +3443,12 @@ fn ci_routing_contract_violations(
         "mcp-platform",
         "Configure rust-lld linker (Windows MCP compile)",
     );
-    // Ordinary PRs leave the macOS leg to the merge queue (`macos-allowed`).
+    // Native legs follow `macos-allowed` and `windows-allowed`.
     let mcp_oses = ci["jobs"]["mcp-platform"]["strategy"]["matrix"]["os"]
         .as_str()
         .unwrap_or_default();
-    if mcp_oses
-        != "${{ fromJSON(needs.detect-changes.outputs.macos-allowed == 'true' && '[\"macos-15\",\"windows-2022\"]' || '[\"windows-2022\"]') }}"
+    if mcp_oses != "${{ fromJSON(needs.detect-changes.outputs.mcp-platform-os) }}"
+        || !mcp_condition.contains("needs.detect-changes.outputs.mcp-platform-os != '[]'")
         || !mcp_condition
             .contains("needs.detect-changes.outputs.trusted-release-candidate != 'true'")
         || !mcp_condition.contains("needs.detect-changes.outputs.workspace-platform == 'true'")

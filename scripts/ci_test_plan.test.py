@@ -2431,8 +2431,13 @@ class NativePlatformContractTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         workflow = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         job = workflow.split("  native-platform-contracts:\n", 1)[1].split("  conclusion:\n", 1)[0]
-        for host in ("ubuntu-24.04", "macos-15", "windows-2022"):
-            self.assertIn(host, job)
+        self.assertIn("os: ${{ fromJSON(needs.detect-changes.outputs.native-contracts-os) }}", job)
+        # The host list is built in detect-changes: Linux always, native hosts
+        # whenever their lane is allowed (scripts/ci_native_lane.py).
+        native_os = workflow.split("      - id: native-os\n", 1)[1].split("      - id: matrix\n", 1)[0]
+        self.assertIn("contracts='[\"ubuntu-24.04\"]'", native_os)
+        for host in ("macos-15", "windows-2022"):
+            self.assertIn(host, native_os)
         self.assertIn("cargo test --manifest-path scripts/platform-contracts/Cargo.toml --locked", job)
         conclusion = workflow.split("  conclusion:\n", 1)[1]
         self.assertIn("app-e2e, native-platform-contracts]", conclusion)

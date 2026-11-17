@@ -38,7 +38,8 @@ where
 }
 
 /// Return the effective space for a tool call: strict process pin, then an
-/// explicit non-empty tool argument, then the overridable process fallback.
+/// explicit non-empty tool argument, then the overridable process fallback,
+/// then the Space the server's working folder points at.
 pub fn effective_space(inbound: &Option<String>) -> Option<String> {
     if let Some(locked) = crate::lock_state::locked_space() {
         if let Some(passed) = inbound.as_ref() {
@@ -59,7 +60,7 @@ pub fn effective_space(inbound: &Option<String>) -> Option<String> {
     {
         Some(explicit)
     } else {
-        crate::lock_state::default_space()
+        crate::lock_state::default_space().or_else(crate::lock_state::folder_space)
     }
 }
 
@@ -507,6 +508,8 @@ pub struct WenlanMcpServer {
     /// This connection's own strict Space pin (a team server's member
     /// connection), applied around every call (`lock_state::with_session_pin`).
     space_pin: Option<String>,
+    /// Stdio only: keeps the working folder's Space current before each call.
+    folder_space: Option<std::sync::Arc<crate::folder_space::FolderSpaceWatch>>,
 }
 
 // ===== Parameter Structs =====
@@ -3529,7 +3532,9 @@ impl WenlanMcpServer {
 
         let output = match response.state {
             wenlan_types::BriefReadState::SpaceNotResolved => {
-                "Space not resolved. Pass `space` or configure a default Space.".to_string()
+                // A new install has no Space yet: say that nothing is wrong
+                // and what makes one, so the tool does not report a failure.
+                "No Brief to show: this folder has no Space yet. Nothing is wrong. The user can run `wenlan init` inside their repository to make one, or pass `space` to read another Space's Brief.".to_string()
             }
             wenlan_types::BriefReadState::BriefNotCreated => {
                 let mut output = format!(
@@ -5967,7 +5972,7 @@ impl WenlanMcpServer {
     ) -> Result<CallToolResult, McpError> {
         let Some(space) = effective_space(&params.space) else {
             return Ok(CallToolResult::error(vec![ContentBlock::text(
-                "Space not resolved. Pass `space` or configure a default Space.".to_string(),
+                "Nothing was saved: this folder has no Space yet. Pass `space`, or have the user run `wenlan init` inside their repository to make one.".to_string(),
             )]));
         };
         if params.summary.is_none() && params.mutations.is_empty() {
@@ -6477,7 +6482,17 @@ impl WenlanMcpServer {
             )),
             user_id,
             space_pin: None,
+            folder_space: None,
         }
+    }
+
+    /// Let the folder this server was started in pick the Space when the
+    /// caller names none, as the terminal does. For the local stdio server.
+    pub fn with_folder_space(mut self, hint: wenlan_types::folder_space::FolderSpaceHint) -> Self {
+        self.folder_space = Some(std::sync::Arc::new(
+            crate::folder_space::FolderSpaceWatch::new(hint),
+        ));
+        self
     }
 
     /// Set the tool exposure profile without changing the existing constructor
@@ -7696,6 +7711,9 @@ impl ServerHandler for WenlanMcpServer {
         }
         if let Some(refusal) = self.local_only_refusal(request.name.as_ref()) {
             return Ok(refusal);
+        }
+        if let Some(folder_space) = &self.folder_space {
+            folder_space.refresh(&self.client).await;
         }
         let tcc = ToolCallContext::new(self, request, context);
         crate::lock_state::with_session_pin(self.space_pin.clone(), self.tool_router.call(tcc))

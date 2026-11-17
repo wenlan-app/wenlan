@@ -11,7 +11,7 @@ use wenlan_mcp::{serve, token};
 #[derive(Parser)]
 #[command(
     name = "wenlan-mcp",
-    about = "MCP server for Wenlan, a studio for everything you think, learn, and build with AI",
+    about = "MCP server for Wenlan: docs, skills and rules your AI tools keep current and work from",
     version
 )]
 struct Cli {
@@ -210,13 +210,23 @@ async fn run_stdio(
         }
     });
 
+    // The folder this server was started in picks the Space when a call
+    // names none, as it does for the terminal. `git` runs here, once.
+    let folder = tokio::task::spawn_blocking(|| match std::env::current_dir() {
+        Ok(cwd) => wenlan_mcp::folder_space::hint_for(&cwd, dirs::home_dir().as_deref()),
+        Err(_) => Default::default(),
+    })
+    .await
+    .unwrap_or_default();
+
     let server = WenlanMcpServer::new_with_identity(
         client,
         TransportMode::Stdio,
         agent_name.into_identity(),
         None,
     )
-    .with_tool_profile(tool_profile);
+    .with_tool_profile(tool_profile)
+    .with_folder_space(folder);
     let service = server
         .serve(stdio())
         .await

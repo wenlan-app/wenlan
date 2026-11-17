@@ -40,7 +40,7 @@ pub struct ConnectArgs {
     pub all_tools: bool,
 }
 
-#[derive(Clone, Copy, Debug, ValueEnum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 #[value(rename_all = "kebab-case")]
 pub enum McpClient {
     /// Claude Code without the Wenlan plugin.
