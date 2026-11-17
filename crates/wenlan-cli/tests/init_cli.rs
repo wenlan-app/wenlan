@@ -210,6 +210,36 @@ fn init_does_not_tie_a_repository_that_is_not_yours_without_a_yes() {
 }
 
 #[test]
+fn init_in_a_repository_another_wenlan_keeps_says_so_and_goes_on() {
+    let (_dir, repo, home) = repository("acme-api");
+    let (host, _requests) = spawn_stub(vec![
+        ("GET /api/spaces", "[]".to_string()),
+        ("POST /api/spaces", "{}".to_string()),
+        ("GET /api/spaces/acme-api/wiki/repo", "null".to_string()),
+        (
+            "PUT /api/spaces/acme-api/wiki/repo",
+            "409:{\"error\":\"this repository's pages and rules are already kept by another Wenlan\"}"
+                .to_string(),
+        ),
+        ("GET /api/agents", "[]".to_string()),
+    ]);
+
+    let (ok, stdout, stderr) = run(&host, &repo, &home, &["init"]);
+
+    assert!(ok, "stdout: {stdout}\nstderr: {stderr}");
+    assert!(
+        stdout.contains(
+            "Not tied to the repository: its pages and rules are already kept by another Wenlan"
+        ),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("`wenlan repo bind --take-over`"),
+        "{stdout}"
+    );
+}
+
+#[test]
 fn ux_cli_4_init_outside_a_repository_names_the_command_that_fits() {
     let dir = tempfile::tempdir().expect("temp dir");
     let home = dir.path().join("home");

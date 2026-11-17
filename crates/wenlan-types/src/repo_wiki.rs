@@ -197,6 +197,10 @@ pub struct RepoWikiBinding {
     /// wrote them, by path and digest, so each is reported once.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub kept_edits: Vec<String>,
+    /// Set by `wenlan repo bind --take-over`: the next publish may replace
+    /// what another Wenlan keeps in this repository. Cleared once it has.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub take_over: bool,
 }
 
 /// Where a doc fix stands.
@@ -289,6 +293,10 @@ pub struct BindRepoWikiRequest {
     /// Leave the daily setting as it is when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub daily: Option<RepoWikiDaily>,
+    /// Publish from this Wenlan although another one keeps this repository's
+    /// pages and rules: the next publish replaces theirs.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub take_over: bool,
 }
 
 /// A repository the pages of a Space could go into.

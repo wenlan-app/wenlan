@@ -63,6 +63,11 @@ pub enum WikiCommand {
         /// the remote URL). Needed when it is not yours.
         #[arg(long, value_name = "OWNER/NAME")]
         confirm_repo: Option<String>,
+        /// Publish from this computer although another Wenlan (a teammate's,
+        /// or another computer of yours) keeps this repository's pages and
+        /// rules. The next publish replaces theirs.
+        #[arg(long)]
+        take_over: bool,
     },
     /// Write the Space's code pages into the repository and open or update
     /// the pull request.
@@ -108,6 +113,7 @@ pub async fn run(
             agent,
             on_github,
             confirm_repo,
+            take_over,
         } => {
             let repo = match repo {
                 Some(repo) => repo,
@@ -128,6 +134,7 @@ pub async fn run(
                         repo_root: repo.to_string_lossy().into_owned(),
                         folder,
                         daily,
+                        take_over,
                     },
                 )
                 .await?;
@@ -410,6 +417,7 @@ mod tests {
             doc_fixes: Vec::new(),
             doc_check: None,
             kept_edits: Vec::new(),
+            take_over: false,
         };
         let now = target(Some("pallets/itsdangerous"), None);
         let ssh = binding(Some("git@github.com:pallets/itsdangerous.git"));
