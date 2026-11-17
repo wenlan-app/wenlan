@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=9aaa672a496a392a0ad2fd4b5f33601a7758a953d06d3fea12f48b5bcd4a8c28 -->
+<!-- README_SYNC: source=README.md sha256=25da3e9f06bde02418601ddcc6e41ca0a4f566858ad1ef52163f027ce0140bb6 -->
 
 <p align="center">
   <picture>
@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <strong>Documentos, skills y reglas que tus herramientas de IA mantienen al día y usan para trabajar.</strong><br>
+  <strong>Documentos, skills y reglas con los que trabajáis tú y tus herramientas de IA, siempre al día.</strong><br>
   Cada documento enlaza a sus fuentes. Gratis y de código abierto, para ti y tu equipo.
 </p>
 

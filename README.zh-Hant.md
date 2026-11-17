@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=9aaa672a496a392a0ad2fd4b5f33601a7758a953d06d3fea12f48b5bcd4a8c28 -->
+<!-- README_SYNC: source=README.md sha256=25da3e9f06bde02418601ddcc6e41ca0a4f566858ad1ef52163f027ce0140bb6 -->
 
 <p align="center">
   <picture>
@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <strong>文件、技能和規則，你的 AI 工具幫你更新，也拿來做事。</strong><br>
+  <strong>文件、技能和規則，你和 AI 工具都照著做，而且會保持最新。</strong><br>
   每份文件都附出處。免費、開源，個人和團隊都能用。
 </p>
 
