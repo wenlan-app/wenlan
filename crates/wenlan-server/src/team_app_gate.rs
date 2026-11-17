@@ -379,17 +379,22 @@ async fn member_spaces(
         // Only Spaces this server hosts for the team: a member's entry for
         // a name that is not hosted (not hosted yet, or no longer) must not
         // open a Space of the same name that is the owner's own.
+        // The access in each is the rules' answer (`team_policy`).
         Ok(Ok(hosted)) => Ok(member
             .me(&hosted)
             .spaces
             .into_iter()
-            .filter(|space| hosted.iter().any(|(name, _)| *name == space.space))
-            .map(|space| (space.space, space.access))
+            .filter_map(|space| {
+                let is_hosted = hosted.iter().any(|(name, _)| *name == space.space);
+                crate::team_policy::access(member, &space.space, is_hosted)
+                    .map(|access| (space.space, access))
+            })
             .collect()),
         _ => Err(StatusCode::SERVICE_UNAVAILABLE.into_response()),
     }
 }
 
+/// Whether the access the rules gave a Space covers `need`.
 fn allows(access: TeamAccess, need: Need) -> bool {
     need == Need::Read || access == TeamAccess::Write
 }
