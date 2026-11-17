@@ -18,6 +18,7 @@ pub mod communities;
 pub mod conversations;
 pub mod entities;
 pub mod events;
+pub mod folder_space;
 pub mod import;
 pub mod lint;
 pub mod memory;

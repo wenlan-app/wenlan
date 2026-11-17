@@ -90,10 +90,17 @@ jobs:
       # only for platform-owned macOS and Windows behavior.
       test-matrix: ${{ steps.matrix.outputs.json }}
       # Hosted macOS runs at most five jobs at once. Ordinary PR pushes skip
-      # macOS work; the merge queue runs it in full on the commit main will
-      # become, and `conclusion` there still requires it before anything lands.
-      # Release-please and manual runs keep macOS on the PR.
+      # macOS work. The merge queue runs macOS only for macOS-specific changes
+      # (app, updater, packaging, native sources, target_os = "macos" code)
+      # and Windows only when a file that woke its filters can change native
+      # behavior; everything else is proved natively by the main push after
+      # merge (scripts/ci_native_lane.py). `conclusion` requires every lane
+      # that is allowed. Release-please, main push and manual runs keep both.
       macos-allowed: ${{ steps.macos-lane.outputs.allowed }}
+      windows-allowed: ${{ steps.windows-lane.outputs.allowed }}
+      mcp-platform-os: ${{ steps.native-os.outputs.mcp-platform-os }}
+      native-contracts-os: ${{ steps.native-os.outputs.native-contracts-os }}
+      test-matrix-has-legs: ${{ steps.matrix.outputs.has-legs }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       # This is a semantic proof, not a branch-name shortcut. The shared
@@ -936,16 +943,92 @@ jobs:
           retention-days: 30
           if-no-files-found: error
           overwrite: false
+      - name: Test native lane routing
+        run: python3 scripts/ci_native_lane.test.py
+      # Each lane reads the union of every filter that can wake a macOS or
+      # Windows job. A lane is a necessary condition only; each job still
+      # requires its own filter.
       - id: macos-lane
         env:
           EVENT_NAME: ${{ github.event_name }}
           HEAD_REF: ${{ github.head_ref }}
+          FILES_MACOS: ${{ steps.filter.outputs.macos_files }}
+          FILES_WINDOWS: ${{ steps.filter.outputs.windows_files }}
+          FILES_APP: ${{ steps.filter.outputs.app_files }}
+          FILES_NATIVE_CONTRACTS: ${{ steps.filter.outputs['native-contracts_files'] }}
+          FILES_MACOS_M4: ${{ steps.filter.outputs['macos-m4_files'] }}
+          FILES_M5_PLATFORM: ${{ steps.filter.outputs['m5-platform_files'] }}
+          FILES_NEXTEST_CONFIG: ${{ steps.filter.outputs['nextest-config_files'] }}
+          FILES_RELEASE_PREFLIGHT: ${{ steps.filter.outputs['release-preflight_files'] }}
+          FILES_RELEASE_CONTRACT: ${{ steps.filter.outputs['release-contract_files'] }}
+          FILES_MCP_PLATFORM: ${{ steps.filter.outputs['mcp-platform_files'] }}
+          FILES_WORKSPACE_PLATFORM: ${{ steps.filter.outputs['workspace-platform_files'] }}
+          FILES_MACOS_ARCHIVE_CONTRACT: ${{ steps.filter.outputs['macos-archive-contract_files'] }}
         run: |
-          if [ "$EVENT_NAME" = "pull_request" ] && [[ "$HEAD_REF" != release-please--branches--* ]]; then
-            echo "allowed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "allowed=true" >> "$GITHUB_OUTPUT"
+          python3 scripts/ci_native_lane.py --platform macos \
+            --event-name "$EVENT_NAME" --head-ref "$HEAD_REF" \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --files-json "$FILES_MACOS" --files-json "$FILES_WINDOWS" --files-json "$FILES_APP" --files-json "$FILES_NATIVE_CONTRACTS" --files-json "$FILES_MACOS_M4" --files-json "$FILES_M5_PLATFORM" --files-json "$FILES_NEXTEST_CONFIG" --files-json "$FILES_RELEASE_PREFLIGHT" --files-json "$FILES_RELEASE_CONTRACT" --files-json "$FILES_MCP_PLATFORM" --files-json "$FILES_WORKSPACE_PLATFORM" --files-json "$FILES_MACOS_ARCHIVE_CONTRACT" \
+            --github-output "$GITHUB_OUTPUT"
+      - id: windows-lane
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_REF: ${{ github.head_ref }}
+          FILES_MACOS: ${{ steps.filter.outputs.macos_files }}
+          FILES_WINDOWS: ${{ steps.filter.outputs.windows_files }}
+          FILES_APP: ${{ steps.filter.outputs.app_files }}
+          FILES_NATIVE_CONTRACTS: ${{ steps.filter.outputs['native-contracts_files'] }}
+          FILES_MACOS_M4: ${{ steps.filter.outputs['macos-m4_files'] }}
+          FILES_M5_PLATFORM: ${{ steps.filter.outputs['m5-platform_files'] }}
+          FILES_NEXTEST_CONFIG: ${{ steps.filter.outputs['nextest-config_files'] }}
+          FILES_RELEASE_PREFLIGHT: ${{ steps.filter.outputs['release-preflight_files'] }}
+          FILES_RELEASE_CONTRACT: ${{ steps.filter.outputs['release-contract_files'] }}
+          FILES_MCP_PLATFORM: ${{ steps.filter.outputs['mcp-platform_files'] }}
+          FILES_WORKSPACE_PLATFORM: ${{ steps.filter.outputs['workspace-platform_files'] }}
+          FILES_MACOS_ARCHIVE_CONTRACT: ${{ steps.filter.outputs['macos-archive-contract_files'] }}
+        run: |
+          python3 scripts/ci_native_lane.py --platform windows \
+            --event-name "$EVENT_NAME" --head-ref "$HEAD_REF" \
+            --files-json "$FILES_MACOS" --files-json "$FILES_WINDOWS" --files-json "$FILES_APP" --files-json "$FILES_NATIVE_CONTRACTS" --files-json "$FILES_MACOS_M4" --files-json "$FILES_M5_PLATFORM" --files-json "$FILES_NEXTEST_CONFIG" --files-json "$FILES_RELEASE_PREFLIGHT" --files-json "$FILES_RELEASE_CONTRACT" --files-json "$FILES_MCP_PLATFORM" --files-json "$FILES_WORKSPACE_PLATFORM" --files-json "$FILES_MACOS_ARCHIVE_CONTRACT" \
+            --github-output "$GITHUB_OUTPUT"
+      - id: darwin-preflight-lane
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_REF: ${{ github.head_ref }}
+          FILES_MACOS: ${{ steps.filter.outputs.macos_files }}
+          FILES_WINDOWS: ${{ steps.filter.outputs.windows_files }}
+          FILES_APP: ${{ steps.filter.outputs.app_files }}
+          FILES_NATIVE_CONTRACTS: ${{ steps.filter.outputs['native-contracts_files'] }}
+          FILES_MACOS_M4: ${{ steps.filter.outputs['macos-m4_files'] }}
+          FILES_M5_PLATFORM: ${{ steps.filter.outputs['m5-platform_files'] }}
+          FILES_NEXTEST_CONFIG: ${{ steps.filter.outputs['nextest-config_files'] }}
+          FILES_RELEASE_PREFLIGHT: ${{ steps.filter.outputs['release-preflight_files'] }}
+          FILES_RELEASE_CONTRACT: ${{ steps.filter.outputs['release-contract_files'] }}
+          FILES_MCP_PLATFORM: ${{ steps.filter.outputs['mcp-platform_files'] }}
+          FILES_WORKSPACE_PLATFORM: ${{ steps.filter.outputs['workspace-platform_files'] }}
+          FILES_MACOS_ARCHIVE_CONTRACT: ${{ steps.filter.outputs['macos-archive-contract_files'] }}
+        run: |
+          python3 scripts/ci_native_lane.py --platform darwin-preflight \
+            --event-name "$EVENT_NAME" --head-ref "$HEAD_REF" \
+            --files-json "$FILES_MACOS" --files-json "$FILES_WINDOWS" --files-json "$FILES_APP" --files-json "$FILES_NATIVE_CONTRACTS" --files-json "$FILES_MACOS_M4" --files-json "$FILES_M5_PLATFORM" --files-json "$FILES_NEXTEST_CONFIG" --files-json "$FILES_RELEASE_PREFLIGHT" --files-json "$FILES_RELEASE_CONTRACT" --files-json "$FILES_MCP_PLATFORM" --files-json "$FILES_WORKSPACE_PLATFORM" --files-json "$FILES_MACOS_ARCHIVE_CONTRACT" \
+            --github-output "$GITHUB_OUTPUT"
+      - id: native-os
+        env:
+          MACOS: ${{ steps.macos-lane.outputs.allowed }}
+          WINDOWS: ${{ steps.windows-lane.outputs.allowed }}
+        run: |
+          mcp='[]'
+          contracts='["ubuntu-24.04"]'
+          if [ "$MACOS" = "true" ]; then
+            mcp="$(jq -c '. + ["macos-15"]' <<<"$mcp")"
+            contracts="$(jq -c '. + ["macos-15"]' <<<"$contracts")"
           fi
+          if [ "$WINDOWS" = "true" ]; then
+            mcp="$(jq -c '. + ["windows-2022"]' <<<"$mcp")"
+            contracts="$(jq -c '. + ["windows-2022"]' <<<"$contracts")"
+          fi
+          echo "mcp-platform-os=$mcp" >> "$GITHUB_OUTPUT"
+          echo "native-contracts-os=$contracts" >> "$GITHUB_OUTPUT"
       - id: matrix
         run: |
           macos='{"os":"macos-15","label":"macos-15"}'
@@ -984,7 +1067,17 @@ jobs:
             include="${include//${macos},/}"
             include="${include//${macos}/}"
           fi
+          if [ "${{ steps.windows-lane.outputs.allowed }}" != "true" ]; then
+            # Frontend or ci.yml-only queue entries (see windows-allowed).
+            include="${include//,${windows}/}"
+            include="${include//${windows}/}"
+          fi
           echo "json={\"include\":[${include}]}" >> "$GITHUB_OUTPUT"
+          if [ -n "$include" ]; then
+            echo "has-legs=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has-legs=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Verify CI observer and ORT contracts
         run: |
           python3 scripts/ci-cache-maintenance.test.py
@@ -1068,6 +1161,7 @@ jobs:
           --event-name "$GITHUB_EVENT_NAME"
           --ref "$GITHUB_REF"
           --head-ref "$GITHUB_HEAD_REF"
+          --macos-allowed "${{ steps.darwin-preflight-lane.outputs.allowed }}"
           --github-output "$GITHUB_OUTPUT"
       - name: Test artifact download retry
         run: bash scripts/download-run-artifact.test.sh
@@ -1472,7 +1566,7 @@ jobs:
   test:
     name: test (${{ matrix.label }})
     needs: [detect-changes]
-    if: "needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.rust-ci-required == 'true' && (needs.detect-changes.outputs.macos-allowed == 'true' || needs.detect-changes.outputs.windows == 'true') && (needs.detect-changes.outputs.windows == 'true' || (github.event_name != 'pull_request' && needs.detect-changes.outputs.macos == 'true') || needs.detect-changes.outputs.m5-platform == 'true' || needs.detect-changes.outputs.nextest-config == 'true' || startsWith(github.head_ref, 'release-please--branches--') || github.event_name == 'workflow_dispatch')"
+    if: "needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.rust-ci-required == 'true' && needs.detect-changes.outputs.test-matrix-has-legs == 'true' && (needs.detect-changes.outputs.windows == 'true' || (github.event_name != 'pull_request' && needs.detect-changes.outputs.macos == 'true') || needs.detect-changes.outputs.m5-platform == 'true' || needs.detect-changes.outputs.nextest-config == 'true' || startsWith(github.head_ref, 'release-please--branches--') || github.event_name == 'workflow_dispatch')"
     runs-on: ${{ matrix.os }}
     # Pull requests keep a hard wall-clock budget. Windows needs the full
     # backstop because its Vulkan/native bootstrap plus integration suite can
@@ -1828,7 +1922,7 @@ jobs:
   mcp-platform:
     name: platform-compile (${{ matrix.os }})
     needs: [detect-changes]
-    if: "needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && (needs.detect-changes.outputs.workspace-platform == 'true' || needs.detect-changes.outputs.mcp-platform == 'true' || startsWith(github.head_ref, 'release-please--branches--') || github.event_name == 'workflow_dispatch')"
+    if: "needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.mcp-platform-os != '[]' && (needs.detect-changes.outputs.workspace-platform == 'true' || needs.detect-changes.outputs.mcp-platform == 'true' || startsWith(github.head_ref, 'release-please--branches--') || github.event_name == 'workflow_dispatch')"
     runs-on: ${{ matrix.os }}
     # Windows cache post-job cleanup can exceed the compile time budget.
     timeout-minutes: ${{ matrix.os == 'windows-2022' && 30 || 20 }}
@@ -1843,8 +1937,8 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        # Ordinary PRs leave macOS to the merge queue (see macos-allowed).
-        os: ${{ fromJSON(needs.detect-changes.outputs.macos-allowed == 'true' && '["macos-15","windows-2022"]' || '["windows-2022"]') }}
+        # Native lanes follow macos-allowed and windows-allowed.
+        os: ${{ fromJSON(needs.detect-changes.outputs.mcp-platform-os) }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master 2026-05-13
@@ -2520,6 +2614,10 @@ jobs:
         if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.ref == 'release-please--branches--main' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.repo.fork == false && github.event.pull_request.draft == false && github.event.pull_request.user.login == '7xuanlu'
         shell: bash
         run: |
+          # The release build runs `pnpm build:web`, which writes dist/web; the
+          # wenlan-server build script has already embedded it in the binary.
+          # Packaging needs an empty dist/, and dist/* is the uploaded artifact.
+          rm -rf dist
           source_date_epoch="$(git show -s --format=%ct HEAD)"
           if command -v python3 >/dev/null 2>&1; then py=python3; else py=python; fi
           "$py" scripts/package-release-artifacts.py \
@@ -2729,7 +2827,7 @@ jobs:
   windows-release-contract:
     name: windows release contract
     needs: [detect-changes]
-    if: needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.release-contract == 'true'
+    if: needs.detect-changes.outputs.windows-allowed == 'true' && needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.release-contract == 'true'
     runs-on: windows-2022
     timeout-minutes: 20
     permissions:
@@ -2884,8 +2982,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Ordinary PRs leave macOS to the merge queue (see macos-allowed).
-        os: ${{ fromJSON(needs.detect-changes.outputs.macos-allowed == 'true' && '["ubuntu-24.04","macos-15","windows-2022"]' || '["ubuntu-24.04","windows-2022"]') }}
+        # Linux always runs; native lanes follow macos-allowed and windows-allowed.
+        os: ${{ fromJSON(needs.detect-changes.outputs.native-contracts-os) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     steps:
@@ -2940,7 +3038,7 @@ jobs:
           run_fmt='${{ needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.fmt-required == 'true' }}'
           run_clippy='${{ needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.clippy-required == 'true' }}'
           run_macos_archive='${{ needs.detect-changes.outputs.macos-allowed == 'true' && needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && (needs.detect-changes.outputs.workspace-platform == 'true' || needs.detect-changes.outputs.macos-archive-contract == 'true' || (needs.detect-changes.outputs.macos == 'true' && (needs.detect-changes.outputs.platform-workspace-lib-required == 'true' || needs.detect-changes.outputs.platform-cli-server-integration-required == 'true' || needs.detect-changes.outputs.macos-m4 == 'true')) || github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'release-please--branches--')) }}'
-          run_platform='${{ needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.rust-ci-required == 'true' && (needs.detect-changes.outputs.macos-allowed == 'true' || needs.detect-changes.outputs.windows == 'true') && (needs.detect-changes.outputs.windows == 'true' || (github.event_name != 'pull_request' && needs.detect-changes.outputs.macos == 'true') || needs.detect-changes.outputs.m5-platform == 'true' || needs.detect-changes.outputs.nextest-config == 'true' || startsWith(github.head_ref, 'release-please--branches--') || github.event_name == 'workflow_dispatch') }}'
+          run_platform='${{ needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.rust-ci-required == 'true' && needs.detect-changes.outputs.test-matrix-has-legs == 'true' && (needs.detect-changes.outputs.windows == 'true' || (github.event_name != 'pull_request' && needs.detect-changes.outputs.macos == 'true') || needs.detect-changes.outputs.m5-platform == 'true' || needs.detect-changes.outputs.nextest-config == 'true' || startsWith(github.head_ref, 'release-please--branches--') || github.event_name == 'workflow_dispatch') }}'
           run_workspace_lib='${{ needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.workspace-lib-required == 'true' }}'
           run_canonical='${{ needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.canonical-acceptance-required == 'true' }}'
           run_contract='${{ needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.contract-integration-required == 'true' }}'
@@ -2952,12 +3050,12 @@ jobs:
           expect_job macos-nextest-build "$run_macos_archive" '${{ needs.macos-nextest-build.result }}'
           expect_job macos-nextest "$run_macos_archive" '${{ needs.macos-nextest.result }}'
           expect_job test "$run_platform" '${{ needs.test.result }}'
-          expect_job mcp-platform '${{ needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && (needs.detect-changes.outputs.workspace-platform == 'true' || needs.detect-changes.outputs.mcp-platform == 'true' || startsWith(github.head_ref, 'release-please--branches--') || github.event_name == 'workflow_dispatch') }}' '${{ needs.mcp-platform.result }}'
+          expect_job mcp-platform '${{ needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.mcp-platform-os != '[]' && (needs.detect-changes.outputs.workspace-platform == 'true' || needs.detect-changes.outputs.mcp-platform == 'true' || startsWith(github.head_ref, 'release-please--branches--') || github.event_name == 'workflow_dispatch') }}' '${{ needs.mcp-platform.result }}'
           expect_job canonical-acceptance "$run_canonical" '${{ needs.canonical-acceptance.result }}'
           expect_job contract-integration "$run_contract" '${{ needs.contract-integration.result }}'
           expect_job release-preflight '${{ needs.detect-changes.outputs.verified-release-merge != 'true' && (github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'release-please--branches--') || needs.detect-changes.outputs.release-preflight == 'true') }}' '${{ needs.release-preflight.result }}'
           expect_job docs '${{ needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.docs == 'true' }}' '${{ needs.docs.result }}'
-          expect_job windows-release-contract '${{ needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.release-contract == 'true' }}' '${{ needs.windows-release-contract.result }}'
+          expect_job windows-release-contract '${{ needs.detect-changes.outputs.windows-allowed == 'true' && needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.release-contract == 'true' }}' '${{ needs.windows-release-contract.result }}'
           expect_job plugin '${{ needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.plugin == 'true' }}' '${{ needs.plugin.result }}'
           expect_job plugin-rust-contract '${{ needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.plugin-rust-contract == 'true' }}' '${{ needs.plugin-rust-contract.result }}'
           expect_job npm '${{ needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.npm == 'true' }}' '${{ needs.npm.result }}'
@@ -3168,6 +3266,12 @@ jobs:
         run: pnpm build && pnpm vitest run src/__tests__/firstPaint.test.ts
         env:
           WENLAN_REQUIRE_DIST: "1"
+      # The daemon embeds dist/web (crates/wenlan-server/build.rs) and the
+      # Tauri build hook runs this build, but the merge queue skips the native
+      # jobs for frontend-only entries (scripts/ci_native_lane.py). Prove the
+      # web bundle on Linux so a src/web break cannot wait for main.
+      - name: Web bundle builds
+        run: pnpm build:web
       - name: Install Playwright Chromium
         run: bash scripts/ci-retry.sh 3 300 pnpm exec playwright install --with-deps chromium
       - name: Review e2e

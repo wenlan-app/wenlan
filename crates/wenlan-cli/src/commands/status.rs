@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-//! `wenlan status` — answer whether Wenlan is running (service, health, Steep).
+//! `wenlan status` — answer whether Wenlan is running (service, health, Steep),
+//! and, inside a git repository, which Space the folder uses.
 //! The full diagnosis (keys, models, reranker, logs) lives in `wenlan doctor`.
 
 use anyhow::Result;
@@ -39,6 +40,7 @@ pub async fn run(client: &WenlanClient, format: ResolvedFormat, quiet: bool) -> 
             println!("Wenlan runtime");
             service::print_status().await?;
             setup::print_steep_summary().await;
+            super::init::print_folder(client).await;
         }
     }
     Ok(())

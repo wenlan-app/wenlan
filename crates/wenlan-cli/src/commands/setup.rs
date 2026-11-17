@@ -34,6 +34,7 @@ pub enum ModelCommand {
         yes: bool,
     },
     /// Set the cross-encoder reranker mode (off/lite/full).
+    #[command(hide = true)]
     Reranker {
         /// Mode to persist; the daemon reads it at startup.
         mode: RerankerModeArg,

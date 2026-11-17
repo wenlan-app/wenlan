@@ -21,15 +21,15 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.21.7"   # x-release-please-version
+version = "0.22.0"   # x-release-please-version
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/wenlan-app/wenlan"
 
 [workspace.dependencies]
 # Internal crates — both path AND version required for cargo publish
-wenlan-types = { path = "crates/wenlan-types", version = "0.21.7" }
-wenlan-core  = { path = "crates/wenlan-core",  version = "0.21.7" }
+wenlan-types = { path = "crates/wenlan-types", version = "0.22.0" }
+wenlan-core  = { path = "crates/wenlan-core",  version = "0.22.0" }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -103,7 +103,7 @@ lru = "0.18.2"
 futures = "0.3"
 tempfile = "3"
 pdf-extract = "0.12.1"
-zip = { version = "2.2", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 service-manager = "0.11"
 serde_yaml = "0.9"
 sysinfo = { version = "=0.38.3", default-features = false, features = ["system"] }

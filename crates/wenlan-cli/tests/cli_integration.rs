@@ -728,7 +728,7 @@ fn top_level_help() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "a studio for everything you think, learn, and build with AI",
+            "docs, skills and rules your AI tools keep current and work from",
         ))
         .stdout(predicate::str::contains("\nDaily:\n"))
         .stdout(predicate::str::contains("\nSetup:\n"))

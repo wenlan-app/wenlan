@@ -23,7 +23,8 @@ use std::process::Command;
 use wenlan_types::repo_wiki::{
     RepoDocCheck, RepoDocCode, RepoDocFix, RepoDocFixState, RepoDocFollow, RepoDocPageLine,
     RepoWikiAgent, RepoWikiBinding, RepoWikiCandidate, RepoWikiDaily, RepoWikiPublishResult,
-    RepoWikiPublishStatus, RepoWikiRunner, DEFAULT_REPO_WIKI_FOLDER, REPO_WIKI_BRANCH,
+    RepoWikiPublishStatus, RepoWikiRunner, DEFAULT_REPO_WIKI_FOLDER, EARLIER_REPO_WIKI_FOLDER,
+    REPO_WIKI_BRANCH,
 };
 use wenlan_types::CodeBasisLocator;
 
@@ -190,6 +191,23 @@ pub fn origin_url(repo: &Path) -> Option<String> {
         .filter(|url| !url.is_empty())
 }
 
+/// The folder to use in the repository at `top` when none is named:
+/// [`DEFAULT_REPO_WIKI_FOLDER`], unless the repository has no pages there yet
+/// and still holds the ones an earlier publish wrote under
+/// [`EARLIER_REPO_WIKI_FOLDER`].
+pub fn default_folder(top: &Path) -> &'static str {
+    let published = |folder: &str| {
+        top.join(folder)
+            .join(crate::repo_wiki_ci::CODE_FILE)
+            .is_file()
+    };
+    if !published(DEFAULT_REPO_WIKI_FOLDER) && published(EARLIER_REPO_WIKI_FOLDER) {
+        EARLIER_REPO_WIKI_FOLDER
+    } else {
+        DEFAULT_REPO_WIKI_FOLDER
+    }
+}
+
 /// Bind `space` to the repository holding `repo_path` in the store at `path`,
 /// or update its folder and daily setting. `daily: None` keeps the current
 /// daily setting.
@@ -220,7 +238,7 @@ pub fn bind_at(
             Some(folder) => normalize_folder(folder)?,
             None => existing
                 .map(|index| bindings[index].folder.clone())
-                .unwrap_or_else(|| DEFAULT_REPO_WIKI_FOLDER.to_owned()),
+                .unwrap_or_else(|| default_folder(&top).to_owned()),
         };
         let binding = match existing {
             Some(index) => {
@@ -1089,7 +1107,7 @@ fn bound_origin(binding: &RepoWikiBinding) -> Result<String, WenlanError> {
         if !same_remote(bound, &remote) {
             return Err(WenlanError::Validation(format!(
                 "the repository's `origin` changed since it was bound (was {bound}, now \
-                 {remote}); nothing was pushed. Run `wenlan wiki bind` again to publish there"
+                 {remote}); nothing was pushed. Run `wenlan repo bind` again to publish there"
             )));
         }
     }

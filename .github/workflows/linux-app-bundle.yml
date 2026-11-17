@@ -2,9 +2,12 @@ name: Linux app bundle
 
 # Proves the Linux desktop app still builds, packages and opens before a
 # release has to find out. Same recipe as release.yml's app-bundle-linux job,
-# but with a throwaway updater key, and nothing here publishes. Runs when the
-# desktop app, the crates it bundles, the updater or the packaging changes,
-# or by hand. Docs-only and website-only changes skip it.
+# but with a throwaway updater key, and nothing here publishes. Runs only when
+# something that can change the Linux package changes: the desktop app, the
+# updater, the dependency graph or build scripts, or the packaging; or by
+# hand. Frontend source (src/**, vite) is proved by app-frontend's production
+# build on Linux, and crate source by the Linux test and release-preflight
+# lanes, so those alone skip this 90-minute bundle.
 on:
   pull_request:
     branches: [main]
@@ -13,11 +16,10 @@ on:
       - '.github/workflows/release.yml'
       - 'app/**'
       - '!app/eval/**'
-      - 'src/**'
-      - 'crates/**'
+      - 'crates/**/Cargo.toml'
+      - 'crates/**/build.rs'
       - 'vendor/**'
-      - 'index.html'
-      - 'vite.config.*'
+      - 'rust-toolchain.toml'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'package.json'

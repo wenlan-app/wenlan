@@ -146,7 +146,7 @@ fn the_workflow_runs_refresh_daily_with_the_chosen_tool() {
     assert!(claude.contains("CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}"));
     assert!(claude.contains("GH_TOKEN: ${{ github.token }}"));
     assert!(claude
-        .contains("run: wenlan wiki refresh --folder docs/wiki --agent claude --pull-request\n"));
+        .contains("run: wenlan repo refresh --folder docs/wiki --agent claude --pull-request\n"));
     let codex = workflow("wiki", RepoWikiAgent::Codex, 23);
     assert!(codex.contains("CODEX_API_KEY: ${{ secrets.OPENAI_API_KEY }}"));
     assert!(codex.contains("npm install --global @openai/codex"));

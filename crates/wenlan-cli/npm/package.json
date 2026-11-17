@@ -1,7 +1,7 @@
 {
   "name": "wenlan",
-  "version": "0.21.7",
-  "description": "Wenlan CLI and daemon: a studio for everything you think, learn, and build with AI. Your AI tools keep it current.",
+  "version": "0.22.0",
+  "description": "Wenlan CLI and daemon: docs, skills and rules your AI tools keep current and work from.",
   "keywords": [
     "ai-memory",
     "llm-wiki",

@@ -2379,7 +2379,7 @@ const en = {
   },
   aboutWenlan: {
     title: "About Wenlan",
-    description: "Pages, skills and rules your AI tools keep current and work from.",
+    description: "Docs, skills and rules your AI tools keep current and work from.",
     version: "Version {{version}}",
     updates: "Software updates",
     automatic: "Checks automatically while Wenlan is open.",
@@ -5795,7 +5795,7 @@ const zhHans = {
   },
   aboutWenlan: {
     title: "关于文澜",
-    description: "页面、技能和规则，你的 AI 工具帮你更新，也拿来做事。",
+    description: "文档、技能和规则，你的 AI 工具帮你更新，也拿来做事。",
     version: "版本 {{version}}",
     updates: "软件更新",
     automatic: "文澜打开时会自动检查更新。",
@@ -9186,7 +9186,7 @@ const zhHant = {
   },
   aboutWenlan: {
     title: "關於文瀾",
-    description: "頁面、技能和規則，你的 AI 工具幫你更新，也拿來做事。",
+    description: "文件、技能和規則，你的 AI 工具幫你更新，也拿來做事。",
     version: "版本 {{version}}",
     updates: "軟體更新",
     automatic: "文瀾開啟時會自動檢查更新。",

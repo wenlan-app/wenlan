@@ -8,8 +8,13 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Folder inside the repository the wiki is written to when none is named.
-pub const DEFAULT_REPO_WIKI_FOLDER: &str = "wiki";
+/// Folder inside the repository the pages are written to when none is named.
+/// Named after the tool, so a teammate can tell who writes it.
+pub const DEFAULT_REPO_WIKI_FOLDER: &str = "wenlan";
+
+/// The default folder before it was named after the tool. A repository that
+/// already holds pages there keeps it.
+pub const EARLIER_REPO_WIKI_FOLDER: &str = "wiki";
 
 /// Branch the wiki pull request is offered from. One branch per repository:
 /// while its pull request is open, every publish updates that pull request.

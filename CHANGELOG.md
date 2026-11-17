@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.22.0](https://github.com/wenlan-app/wenlan/compare/v0.21.7...v0.22.0) (2026-11-16)
+
+
+### Features
+
+* **app:** call the Wiki section Library and pin any page to the left side ([#1291](https://github.com/wenlan-app/wenlan/issues/1291)) ([97a4c95](https://github.com/wenlan-app/wenlan/commit/97a4c952c0d963726da48b020c5d3d654fc12fcb))
+* **cli:** every AI tool action from the terminal, plain refusals, and a 19-tool everyday MCP list ([#1294](https://github.com/wenlan-app/wenlan/issues/1294)) ([848e99f](https://github.com/wenlan-app/wenlan/commit/848e99fecf6ca6e0d21b33968cc71d4d32eeb9c8))
+* **cli:** one-line setup on Linux and Windows, and wenlan start / stop ([#1292](https://github.com/wenlan-app/wenlan/issues/1292)) ([c12ecd8](https://github.com/wenlan-app/wenlan/commit/c12ecd86c50d7b4ff39ce82ef466ce3f313ee1aa))
+* **cli:** shorter main help and plain help text; the public line says docs, skills and rules ([#1300](https://github.com/wenlan-app/wenlan/issues/1300)) ([dd101af](https://github.com/wenlan-app/wenlan/commit/dd101afb3b054e026176450324a11b41d899a266))
+* **cli:** start, invite, join and leave a team from the terminal ([#1290](https://github.com/wenlan-app/wenlan/issues/1290)) ([14dd05e](https://github.com/wenlan-app/wenlan/commit/14dd05e86c1efaaaec01d122dd71f60eda37efbc))
+* **relay:** keep OAuth storage in the authority Durable Object ([#1286](https://github.com/wenlan-app/wenlan/issues/1286)) ([45888d1](https://github.com/wenlan-app/wenlan/commit/45888d18e548ee496275f07206c0003408c7aa03))
+* **skills:** find and install skills from skills.sh ([#1293](https://github.com/wenlan-app/wenlan/issues/1293)) ([4c597da](https://github.com/wenlan-app/wenlan/commit/4c597dab2b8f0e3ed4d522f90c1cb62893933408))
+* **skills:** how-I-work rules from the person's pages, kept current in their AI tools ([#1287](https://github.com/wenlan-app/wenlan/issues/1287)) ([157c98a](https://github.com/wenlan-app/wenlan/commit/157c98a3b20da8dfdc80b0e8dfd0680112603062))
+* **skills:** keep a person's rules to themselves in a shared Space ([#1297](https://github.com/wenlan-app/wenlan/issues/1297)) ([4753f0e](https://github.com/wenlan-app/wenlan/commit/4753f0e0218ae8db5d323ec677d7dd744e6f36be))
+* **skills:** take in skills already on this computer ([#1295](https://github.com/wenlan-app/wenlan/issues/1295)) ([04b5b0a](https://github.com/wenlan-app/wenlan/commit/04b5b0a56c7515f260b17057a4409c2cd5da616b))
+* **team:** invite page lets members connect their AI tool without the app ([#1288](https://github.com/wenlan-app/wenlan/issues/1288)) ([c110494](https://github.com/wenlan-app/wenlan/commit/c1104947f847e57a73c8396eef9b4274d16d5ebe))
+* **web:** use Wenlan in the browser, for yourself and for team members ([#1296](https://github.com/wenlan-app/wenlan/issues/1296)) ([a2c2e77](https://github.com/wenlan-app/wenlan/commit/a2c2e77bf06c7ba9a2a11f6b787b22921250a177))
+
+
+### Bug Fixes
+
+* **ci:** clear the web build output before packaging release archives ([#1305](https://github.com/wenlan-app/wenlan/issues/1305)) ([fd783a9](https://github.com/wenlan-app/wenlan/commit/fd783a9ed93fe1654429e04b58e4a0e8ff26ef22))
+* **cli:** readable `wenlan rules` output, and the 0.22 headline in the app, MCP opening and Homebrew descriptions ([#1298](https://github.com/wenlan-app/wenlan/issues/1298)) ([5d121de](https://github.com/wenlan-app/wenlan/commit/5d121de7e50ba1c26bc54b11e1a29b56265942a2))
+* **relay:** stop grant cleanup from spending the KV list quota ([#1284](https://github.com/wenlan-app/wenlan/issues/1284)) ([78831d6](https://github.com/wenlan-app/wenlan/commit/78831d604f5d4f6d524ca2abd65be9529447e85f))
+* **release:** raise release archive size cap to 512 MiB ([#1306](https://github.com/wenlan-app/wenlan/issues/1306)) ([2815f35](https://github.com/wenlan-app/wenlan/commit/2815f35582522e55c2bea19e18be2da330241188))
+* **team:** bare /mcp opens a Space that is open to everyone ([#1289](https://github.com/wenlan-app/wenlan/issues/1289)) ([714e903](https://github.com/wenlan-app/wenlan/commit/714e903a7c4e7d0dec58e3920aad76745ac72446))
+
 ## [0.21.7](https://github.com/wenlan-app/wenlan/compare/v0.21.6...v0.21.7) (2026-11-13)
 
 

@@ -192,7 +192,7 @@ fn start_reports_a_blocking_windows_firewall() {
 }
 
 #[test]
-fn a_daemon_refusal_is_shown_as_its_own_sentence() {
+fn ux_cli_4_a_daemon_refusal_is_shown_as_its_own_sentence() {
     // The stub answers an unknown route with 404 {"error":"no such route"}.
     let (host, _requests) = common::spawn_stub(vec![("GET /nothing", String::new())]);
     let (ok, _stdout, stderr) = run(&host, &["team", "rename", "Acme"]);
