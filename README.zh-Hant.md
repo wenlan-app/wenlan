@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=05ece3cd0585e97a2cdc38bf96846e54bfb6feae1bb0e16881206c9ed4626db5 -->
+<!-- README_SYNC: source=README.md sha256=7401de81beb72b65f0360068c544a7ccb48106a9f7904c6b8fc631ca15a4f08b -->
 
 <p align="center">
   <picture>
@@ -40,29 +40,37 @@
 
 ## 為什麼用文瀾
 
-我做文瀾，是因為和 AI 一起想出來的東西散在對話、筆記和文件裡，每次開新對話又要從頭解釋。文瀾是你和 AI 工具一起想、一起學、一起做的地方：每個連上的工具用的都是同一份文件、技能和規則，你也看得到、改得了。
+每個 AI 工具都從零開始，還各要一份自己的規則檔。文瀾讓你連上的每個工具用同一份文件、技能和規則，會保持最新，你也看得到、改得了。
 
-**個人版**：下載桌面 App，或從你的 AI 工具連上。
-
-**團隊版**：團隊架一台文瀾伺服器，大家都連上去，每個人可以設成只能看或可以改。[團隊伺服器說明](docs/team-server.md)。
-
-- **文件。** 記憶、筆記和文件會整理成有出處的頁面。存下前文瀾會確認每個引用的來源真的支持那一句，引用大多對不上的頁面不會存下。改了什麼都看得到、能還原，鎖定的頁面會先問你。
-- **技能和規則。** 你習慣怎麼做事，寫一次，每個連上的 AI 工具都保持最新、照著用。可以帶進電腦上已有的技能，也能找新的來裝。
-- **記憶。** 你在一個 AI 工具裡定下的事會存下來，換到下一個工具還在，開新對話不用從頭解釋。
-- **想要什麼版面，跟 AI 說。** 任何一頁、連首頁，都可以是文字，或是 AI 幫它畫的網頁；畫面顯示的是當下的內容，改字不用重畫。
-- **帶進現有資料。** Obsidian vault、筆記、文件和 AI 對話都能帶進來。[完整清單](#what-can-i-bring-in)。
+- **有出處的文件。** 筆記、文件和 AI 對話會整理成頁面。存下前，文瀾會確認每個引用的來源支持那一句。
+- **技能和規則，寫一次就好。** 每個連上的 AI 工具都保持最新。可以帶進電腦上已有的技能，也能找新的來裝。
+- **跨工具的記憶。** 你在一個 AI 工具裡定下的事，換到下一個工具還在。
+- **你說了算。** 改了什麼都看得到、能還原；鎖定的頁面，AI 會先問你。
+- **想要什麼版面，跟 AI 說。** 一頁可以是文字，也可以是 AI 畫的網頁，顯示的是當下的內容。
 
 <a id="how-it-compares"></a>
 
-### 跟其他做法比
+### 文瀾，還是每個工具各放一份規則檔？
 
-| | Obsidian 加插件 | Claude Code 加一個資料夾 | 每個工具各一份規則檔（AGENTS.md 等） | LLM wiki 應用 | 文瀾 |
-|---|---|---|---|---|---|
-| 誰來整理 | 你自己加插件 | 你自己，每次交代 | 你自己，每個工具各寫一次 | 你另外設定的 AI | 你的 AI 工具；來源變了會更新 |
-| 設定 | 找插件、更新插件 | 自己寫指示，每次對話還要貼一份決定清單 | 每個工具一份檔案，手動複製、手動對齊 | 填模型 key 或排程 | 設定一次，不用裝或維護插件 |
-| 檢查 AI 寫的東西 | 看插件 | 你自己看它存了什麼；重複和過時的筆記要定期清 | 沒有檢查；舊規則會一直留著，直到有人發現 | 連到來源 | 存下前確認每個引用的來源支持那一句；舊版本留著 |
-| AI 能改什麼 | 看插件 | 你核准的，或在設定裡允許的 | 檔案裡的任何內容 | 它的 wiki 資料夾 | 每篇由你決定，鎖定的先問你，隨時可還原 |
-| 筆記存在哪 | 你的電腦 | 你電腦上的純文字檔；免費，很多人這樣就夠 | 每個儲存庫裡的一個檔案 | 你的電腦 | 你的檔案，純 Markdown；能接現有 vault |
+只用一個工具、一個儲存庫時，一份規則檔（AGENTS.md、CLAUDE.md、.cursor/rules）就夠了。不夠用的時候，文瀾多了這些：
+
+- **一份，每個工具都用。** 規則檔要每個工具各複製一份、手動對齊。文瀾只要寫一次。
+- **會保持最新。** 規則檔裡的舊規則會一直留著，直到有人發現。在文瀾，來源變了，你的 AI 工具會更新那一頁，舊版本也留著。
+- **不只規則。** 有出處的文件、技能和記憶，就放在規則旁邊。
+- **AI 能改什麼由你決定。** 規則檔裡的內容 AI 都能改。在文瀾每一頁由你決定，鎖定的頁面會先問你。
+
+<details>
+<summary>跟 Obsidian、單純一個資料夾、LLM wiki 應用比</summary>
+
+| | Obsidian 加插件 | Claude Code 加一個資料夾 | LLM wiki 應用 | 文瀾 |
+|---|---|---|---|---|
+| 誰來整理 | 你自己加插件 | 你自己，每次交代 | 你另外設定的 AI | 你的 AI 工具；來源變了會更新 |
+| 設定 | 找插件、更新插件 | 自己寫指示，每次對話還要貼一份決定清單 | 填模型 key 或排程 | 設定一次，不用裝或維護插件 |
+| 檢查 AI 寫的東西 | 看插件 | 你自己看它存了什麼；重複和過時的筆記要定期清 | 連到來源 | 存下前確認每個引用的來源支持那一句；舊版本留著 |
+| AI 能改什麼 | 看插件 | 你核准的，或在設定裡允許的 | 它的 wiki 資料夾 | 每篇由你決定，鎖定的先問你，隨時可還原 |
+| 筆記存在哪 | 你的電腦 | 你電腦上的純文字檔；免費，很多人這樣就夠 | 你的電腦 | 你的檔案，純 Markdown；能接現有 vault |
+
+</details>
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
@@ -78,31 +86,29 @@
 
 ## 開始使用
 
-### 1. 下載 App，或從 AI 工具開始
+**自己用。** 從你的 AI 工具開始，不用裝 App。
 
-| **下載桌面 App** | **從你的 AI 工具連接** |
-|---|---|
-| [最完整的體驗](https://github.com/wenlan-app/wenlan/releases/latest)：頁面存成你電腦上的檔案，可以匯入資料、一鍵連接 AI 工具。支援 macOS 11 以上的 Apple Silicon、Windows x64 和 Linux x64（AppImage 或 .deb，v0.22 起）。介面有英文、简体中文和繁體中文。 | 不用裝 App，自己用或團隊用都可以。在 Mac 上執行 `npx -y wenlan setup`（需要 Node.js），或執行 `brew install 7xuanlu/tap/wenlan` 再執行 `wenlan setup`；之後用 `wenlan open` 就能在瀏覽器看你的頁面。Claude Code 可以裝[插件](docs/setup-with-ai.md)。Linux 和 Windows 請看 [CLI 安裝說明](docs/setup-and-data.zh-Hant.md#installation)。 |
+1. 在終端機執行（需要 Node.js）：
 
-要加入團隊？打開架團隊伺服器的人給你的邀請連結，上面會教你怎麼連上自己的 AI 工具，不用裝 App。[團隊伺服器說明](docs/team-server.md)。
+   ```sh
+   npx -y wenlan setup
+   ```
 
-### 2. 帶進你的資料
+   Claude Code 也可以改裝[插件](docs/setup-with-ai.md)。Mac 也可以先 `brew install 7xuanlu/tap/wenlan`，再執行 `wenlan setup`。[其他安裝方式](docs/setup-and-data.zh-Hant.md#installation)。
 
-建立一篇筆記，或帶進 Obsidian vault、Logseq 圖譜、資料夾或之前的 AI 對話。[匯入教學](docs/import-guide.zh-Hant.md)。
+2. 開一個新的 AI 對話，問它：
 
-### 3. 連接你的 AI 工具
+   > /wenlan 我之前對這件事怎麼決定的？再幫我：……
 
-如果你是從 AI 工具開始的，它已經連好了，直接照下面問它就好。
+   只要記得 `/wenlan`（Codex 裡是 `$wenlan`），後面直接說你要做什麼。
 
-在 App 的設定裡，「新增工具」會找出你電腦上的 AI 工具，按「全部連接」一次設好，不用另外裝東西或更新。接著開一個新的 AI 對話，問它：
+3. 在瀏覽器裡看和改你的頁面：`wenlan open`。
 
-> /wenlan 我之前對這件事怎麼決定的？再幫我：……
+想要的話再裝：[桌面 App](https://github.com/wenlan-app/wenlan/releases/latest) 把頁面存成你電腦上的檔案，可以匯入資料、一鍵連接 AI 工具。支援 macOS 11 以上的 Apple Silicon、Windows x64 和 Linux x64。
 
-只要記得 `/wenlan`（Codex 裡是 `$wenlan`），後面直接說你要做什麼。
+**團隊用。** 架一台文瀾伺服器，每個人用自己的金鑰連上去。每個人在每個 Space 可以設成只能看或可以改，擁有者可以隨時移除成員。成員打開邀請連結，連上自己的 AI 工具就能用，不用裝 App；裝了桌面 App 的人，內容會自己同步。[團隊伺服器說明](docs/team-server.md)。
 
-支援 Claude Code、Claude Desktop、Codex、Cursor、GitHub Copilot、VS Code、Gemini CLI、Windsurf、Grok Bot 和其他 MCP 工具。[手動設定](docs/setup-with-ai.md)。
-
-匯入完成後，App 會提供「用（你的 AI 工具）寫頁面」，把資料寫成第一批帶引用的筆記，不用輸入指令。
+可以帶進 Obsidian vault、Logseq 圖譜、資料夾或之前的 AI 對話：[匯入教學](docs/import-guide.zh-Hant.md)。支援 Claude Code、Claude Desktop、Codex、Cursor、GitHub Copilot、VS Code、Gemini CLI、Windsurf、Grok Bot 和其他 MCP 工具：[手動設定](docs/setup-with-ai.md)。
 
 <a id="what-can-i-bring-in"></a>
 <a id="sources-and-imports"></a>

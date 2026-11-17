@@ -38,29 +38,37 @@
 
 ## Why Wenlan
 
-I started Wenlan because what I worked out with AI tools was scattered across chats, notes, and documents, and every new chat started from zero. Wenlan is the one place where you and your AI tools think, learn, and build: every tool you connect works from the same docs, skills, and rules, and you can read and change all of it.
+Your AI tools each start from zero, and each wants its own rules file. Wenlan gives every tool you connect the same docs, skills and rules, keeps them current, and lets you read and change all of it.
 
-**Personal:** download the desktop app, or connect from your AI tool.
-
-**Teams:** run one Wenlan server everyone connects to, with view-only or edit access for each person. [Team server guide](docs/team-server.md).
-
-- **Docs.** Memories, notes, and documents become pages with sources. Wenlan checks that each cited source supports the sentence it is cited for, and won't save a page whose citations mostly don't match. You see every change, can undo it, and pages you lock ask you first.
-- **Skills and rules.** How you like things done, written once and kept current in every AI tool you connect. Bring in the skills already on your computer, or find more to install.
-- **Memory.** What you settle in one AI tool is saved and is there in the next, so a new chat does not start from zero.
-- **Any layout you ask for.** Any page, and your home, can be text or a web page your AI draws for it. The drawing shows the live content, so you never redo it.
-- **Bring what you have.** Obsidian vaults, notes, documents, and AI chats. [Full list](#what-can-i-bring-in).
+- **Docs with sources.** Notes, documents and AI chats become pages. Before saving, Wenlan checks that each cited source supports its sentence.
+- **Skills and rules, written once.** Kept current in every AI tool you connect. Bring in the skills already on your computer, or find more to install.
+- **Memory across tools.** What you settle in one AI tool is there in the next.
+- **You stay in charge.** See every change, undo it, and lock a page so AI asks you first.
+- **Any layout you ask for.** A page can be text, or a web page your AI draws that shows the live content.
 
 <a id="how-it-compares"></a>
 
-### How it compares
+### Wenlan or a rules file per tool?
 
-| | Obsidian + plugins | Claude Code + a folder | A rules file per tool (AGENTS.md…) | LLM wiki apps | Wenlan |
-|---|---|---|---|---|---|
-| Who organizes | You, with plugins | You, by asking each time | You, by hand, once for each tool | An AI you set up | Your AI tools; updates when a source changes |
-| Setup | Find and update plugins | Your own instructions, plus a decisions file you paste in each session | One file per tool, copied and kept in step by hand | Model key or scheduled routine | Set up once; no plugins to install or maintain |
-| Checks the AI's work | Depends on the plugin | You review what it files; duplicates and stale notes wait for a cleanup | Nothing checks it; an old rule stays until someone notices | Links to sources | Checks each cited source supports its sentence before saving; keeps the old version |
-| What AI may change | Depends on the plugin | What you approve, or allow in its settings | Anything in the file | Its wiki folder | You choose per page; locked pages ask first; undo anytime |
-| Where notes live | Your computer | Plain files on your computer; free, and enough for many people | A file in each repository | Your computer | Your files, plain Markdown; works with your vault |
+A rules file (AGENTS.md, CLAUDE.md, .cursor/rules) is enough for one tool in one repository. Wenlan is for when that stops being enough:
+
+- **One copy for every tool.** A rules file is copied and kept in step by hand, once for each tool. In Wenlan you write it once.
+- **It stays current.** In a rules file, an old rule stays until someone notices. In Wenlan, your AI tools update a page when its source changes, and the old version is kept.
+- **More than rules.** Docs with sources, skills and memory sit next to the rules.
+- **You choose what AI may change.** AI can rewrite anything in a rules file. In Wenlan you choose per page, and locked pages ask you first.
+
+<details>
+<summary>Compared with Obsidian, a plain folder, and LLM wiki apps</summary>
+
+| | Obsidian + plugins | Claude Code + a folder | LLM wiki apps | Wenlan |
+|---|---|---|---|---|
+| Who organizes | You, with plugins | You, by asking each time | An AI you set up | Your AI tools; updates when a source changes |
+| Setup | Find and update plugins | Your own instructions, plus a decisions file you paste in each session | Model key or scheduled routine | Set up once; no plugins to install or maintain |
+| Checks the AI's work | Depends on the plugin | You review what it files; duplicates and stale notes wait for a cleanup | Links to sources | Checks each cited source supports its sentence before saving; keeps the old version |
+| What AI may change | Depends on the plugin | What you approve, or allow in its settings | Its wiki folder | You choose per page; locked pages ask first; undo anytime |
+| Where notes live | Your computer | Plain files on your computer; free, and enough for many people | Your computer | Your files, plain Markdown; works with your vault |
+
+</details>
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
@@ -76,31 +84,29 @@ I started Wenlan because what I worked out with AI tools was scattered across ch
 
 ## Get started
 
-### 1. Start with the app or from your AI tool
+**On your own.** Start from your AI tool. No app needed.
 
-| **Download the desktop app** | **Connect from your AI tool** |
-|---|---|
-| [The fullest experience](https://github.com/wenlan-app/wenlan/releases/latest): pages kept as files on your computer, imports, and one-click connections. macOS 11 or later on Apple Silicon, Windows x64, or Linux x64 (AppImage or .deb, from v0.22). In English, 简体中文, and 繁體中文. | No app needed, whether you use it on your own or with a team. On a Mac, run `npx -y wenlan setup` (needs Node.js), or `brew install 7xuanlu/tap/wenlan` and then `wenlan setup`; `wenlan open` then shows your pages in your browser. In Claude Code, add the [plugin](docs/setup-with-ai.md). Linux and Windows: [CLI install guide](docs/setup-and-data.md#installation). |
+1. In a terminal, run this (it needs Node.js):
 
-Joining a team? Open the invite link from whoever runs your team's server: it shows how to connect your own AI tool, with no app needed. [Team server guide](docs/team-server.md).
+   ```sh
+   npx -y wenlan setup
+   ```
 
-### 2. Bring in your material
+   In Claude Code you can add the [plugin](docs/setup-with-ai.md) instead. On a Mac, `brew install 7xuanlu/tap/wenlan` then `wenlan setup` works too. [Other ways to install](docs/setup-and-data.md#installation).
 
-Create a page, or bring in an Obsidian vault, a Logseq graph, a folder, or earlier AI chats. [Import guide](docs/import-guide.md).
+2. Start a new AI session and ask:
 
-### 3. Connect your AI tool
+   > /wenlan what did I decide about this before? Then help me: …
 
-If you started from your AI tool, it is already connected, so go straight to asking it below.
+   `/wenlan` (`$wenlan` in Codex) is the one command to remember: say what you want after it.
 
-In the App's Settings, **Add a tool** finds the AI tools on your computer and **Connect all** sets them up in one press. There is nothing else to install or keep updated. Then start a new AI session and ask:
+3. Read and edit your pages in your browser: `wenlan open`.
 
-> /wenlan what did I decide about this before? Then help me: …
+Optional: the [desktop app](https://github.com/wenlan-app/wenlan/releases/latest) keeps pages as files on your computer, imports your material, and connects your AI tools in one press. macOS 11 or later on Apple Silicon, Windows x64, or Linux x64.
 
-`/wenlan` (`$wenlan` in Codex) is the one command to remember: say what you want after it.
+**With a team.** Run one Wenlan server that everyone connects to with their own key. Each person gets view-only or edit access to each Space, and the owner can remove a person at once. Members open an invite link and connect their own AI tool, with no app needed; with the desktop app, their copy syncs by itself. [Team server guide](docs/team-server.md).
 
-Works with Claude Code, Claude Desktop, Codex, Cursor, GitHub Copilot, VS Code, Gemini CLI, Windsurf, Grok Bot, and other MCP tools. [Set one up by hand](docs/setup-with-ai.md).
-
-When an import finishes, the app offers **Write pages with** your AI tool to turn it into your first cited pages. No command needed.
+Bring in an Obsidian vault, a Logseq graph, a folder, or earlier AI chats: [Import guide](docs/import-guide.md). Works with Claude Code, Claude Desktop, Codex, Cursor, GitHub Copilot, VS Code, Gemini CLI, Windsurf, Grok Bot, and other MCP tools: [set one up by hand](docs/setup-with-ai.md).
 
 <a id="what-can-i-bring-in"></a>
 <a id="sources-and-imports"></a>

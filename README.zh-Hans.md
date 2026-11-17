@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=05ece3cd0585e97a2cdc38bf96846e54bfb6feae1bb0e16881206c9ed4626db5 -->
+<!-- README_SYNC: source=README.md sha256=7401de81beb72b65f0360068c544a7ccb48106a9f7904c6b8fc631ca15a4f08b -->
 
 <p align="center">
   <picture>
@@ -40,29 +40,37 @@
 
 ## 为什么用文澜
 
-我做文澜，是因为和 AI 一起想出来的东西散在对话、笔记和文档里，每次开新对话又要从头解释。文澜是你和 AI 工具一起想、一起学、一起做的地方：每个连上的工具用的都是同一份文件、技能和规则，你也看得到、改得了。
+每个 AI 工具都从零开始，还各要一份自己的规则文件。文澜让你连上的每个工具用同一份文档、技能和规则，会保持最新，你也看得到、改得了。
 
-**个人版**：下载桌面 App，或从你的 AI 工具连上。
-
-**团队版**：团队架一台文澜服务器，大家都连上去，每个人可以设成只能看或可以改。[团队服务器说明](docs/team-server.md)。
-
-- **文档。** 记忆、笔记和文档会整理成有出处的页面。保存前文澜会确认每个引用的来源真的支持那一句，引用大多对不上的页面不会保存。改了什么都看得到、能还原，锁定的页面会先问你。
-- **技能和规则。** 你习惯怎么做事，写一次，每个连上的 AI 工具都保持最新、照着用。可以带进电脑上已有的技能，也能找新的来装。
-- **记忆。** 你在一个 AI 工具里定下的事会存下来，换到下一个工具还在，开新对话不用从头解释。
-- **想要什么版面，跟 AI 说。** 任何一页、连首页，都可以是文字，或是 AI 帮它画的网页；画面显示的是当下的内容，改字不用重画。
-- **带进现有资料。** Obsidian 仓库、笔记、文档和 AI 对话都能带进来。[完整清单](#what-can-i-bring-in)。
+- **有出处的文档。** 笔记、文档和 AI 对话会整理成页面。保存前，文澜会确认每个引用的来源支持那一句。
+- **技能和规则，写一次就好。** 每个连上的 AI 工具都保持最新。可以带进电脑上已有的技能，也能找新的来装。
+- **跨工具的记忆。** 你在一个 AI 工具里定下的事，换到下一个工具还在。
+- **你说了算。** 改了什么都看得到、能还原；锁定的页面，AI 会先问你。
+- **想要什么版面，跟 AI 说。** 一页可以是文字，也可以是 AI 画的网页，显示的是当下的内容。
 
 <a id="how-it-compares"></a>
 
-### 跟其他做法比
+### 文澜，还是每个工具各放一份规则文件？
 
-| | Obsidian 加插件 | Claude Code 加一个文件夹 | 每个工具各一份规则文件（AGENTS.md 等） | LLM wiki 应用 | 文澜 |
-|---|---|---|---|---|---|
-| 谁来整理 | 你自己加插件 | 你自己，每次交代 | 你自己，每个工具各写一次 | 你另外设置的 AI | 你的 AI 工具；来源变了会更新 |
-| 设置 | 找插件、更新插件 | 自己写指示，每次对话还要贴一份决定清单 | 每个工具一份文件，手动复制、手动对齐 | 填模型 key 或排程 | 设置一次，不用装或维护插件 |
-| 检查 AI 写的东西 | 看插件 | 你自己看它存了什么；重复和过时的笔记要定期清 | 没有检查；旧规则会一直留着，直到有人发现 | 链接到来源 | 保存前确认每个引用的来源支持那一句；旧版本留着 |
-| AI 能改什么 | 看插件 | 你批准的，或在设置里允许的 | 文件里的任何内容 | 它的 wiki 文件夹 | 每篇由你决定，锁定的先问你，随时可还原 |
-| 笔记存在哪 | 你的电脑 | 你电脑上的纯文本文件；免费，很多人这样就够 | 每个仓库里的一个文件 | 你的电脑 | 你的文件，纯 Markdown；能接现有仓库 |
+只用一个工具、一个仓库时，一份规则文件（AGENTS.md、CLAUDE.md、.cursor/rules）就够了。不够用的时候，文澜多了这些：
+
+- **一份，每个工具都用。** 规则文件要每个工具各复制一份、手动对齐。文澜只要写一次。
+- **会保持最新。** 规则文件里的旧规则会一直留着，直到有人发现。在文澜，来源变了，你的 AI 工具会更新那一页，旧版本也留着。
+- **不只规则。** 有出处的文档、技能和记忆，就放在规则旁边。
+- **AI 能改什么由你决定。** 规则文件里的内容 AI 都能改。在文澜每一页由你决定，锁定的页面会先问你。
+
+<details>
+<summary>跟 Obsidian、单纯一个文件夹、LLM wiki 应用比</summary>
+
+| | Obsidian 加插件 | Claude Code 加一个文件夹 | LLM wiki 应用 | 文澜 |
+|---|---|---|---|---|
+| 谁来整理 | 你自己加插件 | 你自己，每次交代 | 你另外设置的 AI | 你的 AI 工具；来源变了会更新 |
+| 设置 | 找插件、更新插件 | 自己写指示，每次对话还要贴一份决定清单 | 填模型 key 或排程 | 设置一次，不用装或维护插件 |
+| 检查 AI 写的东西 | 看插件 | 你自己看它存了什么；重复和过时的笔记要定期清 | 链接到来源 | 保存前确认每个引用的来源支持那一句；旧版本留着 |
+| AI 能改什么 | 看插件 | 你批准的，或在设置里允许的 | 它的 wiki 文件夹 | 每篇由你决定，锁定的先问你，随时可还原 |
+| 笔记存在哪 | 你的电脑 | 你电脑上的纯文本文件；免费，很多人这样就够 | 你的电脑 | 你的文件，纯 Markdown；能接现有仓库 |
+
+</details>
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
@@ -78,31 +86,29 @@
 
 ## 开始使用
 
-### 1. 下载 App，或从 AI 工具开始
+**自己用。** 从你的 AI 工具开始，不用装 App。
 
-| **下载桌面 App** | **从你的 AI 工具连接** |
-|---|---|
-| [最完整的体验](https://github.com/wenlan-app/wenlan/releases/latest)：页面存成你电脑上的文件，可以导入资料、一键连接 AI 工具。支持 macOS 11 以上的 Apple Silicon、Windows x64 和 Linux x64（AppImage 或 .deb，v0.22 起）。界面有英文、简体中文和繁體中文。 | 不用装 App，自己用或团队用都可以。在 Mac 上运行 `npx -y wenlan setup`（需要 Node.js），或运行 `brew install 7xuanlu/tap/wenlan` 再运行 `wenlan setup`；之后用 `wenlan open` 就能在浏览器看你的页面。Claude Code 可以装[插件](docs/setup-with-ai.md)。Linux 和 Windows 请看 [CLI 安装说明](docs/setup-and-data.zh-Hans.md#installation)。 |
+1. 在终端运行（需要 Node.js）：
 
-要加入团队？打开架团队服务器的人给你的邀请链接，上面会教你怎么连上自己的 AI 工具，不用装 App。[团队服务器说明](docs/team-server.md)。
+   ```sh
+   npx -y wenlan setup
+   ```
 
-### 2. 带入你的资料
+   Claude Code 也可以改装[插件](docs/setup-with-ai.md)。Mac 也可以先 `brew install 7xuanlu/tap/wenlan`，再运行 `wenlan setup`。[其他安装方式](docs/setup-and-data.zh-Hans.md#installation)。
 
-新建一篇笔记，或带入 Obsidian 仓库、Logseq 图谱、文件夹或之前的 AI 对话。[导入指南](docs/import-guide.md)。
+2. 开一个新的 AI 会话，问它：
 
-### 3. 连接你的 AI 工具
+   > /wenlan 我之前对这件事怎么决定的？再帮我：……
 
-如果你是从 AI 工具开始的，它已经连好了，直接照下面问它就好。
+   只要记得 `/wenlan`（Codex 里是 `$wenlan`），后面直接说你要做什么。
 
-在 App 的设置里，“添加工具”会找出你电脑上的 AI 工具，点“全部连接”一次设好，不用另外装东西或更新。接着开一个新的 AI 会话，问它：
+3. 在浏览器里看和改你的页面：`wenlan open`。
 
-> /wenlan 我之前对这件事怎么决定的？再帮我：……
+想要的话再装：[桌面 App](https://github.com/wenlan-app/wenlan/releases/latest) 把页面存成你电脑上的文件，可以导入资料、一键连接 AI 工具。支持 macOS 11 以上的 Apple Silicon、Windows x64 和 Linux x64。
 
-只要记得 `/wenlan`（Codex 里是 `$wenlan`），后面直接说你要做什么。
+**团队用。** 架一台文澜服务器，每个人用自己的密钥连上去。每个人在每个 Space 可以设成只能看或可以改，所有者可以随时移除成员。成员打开邀请链接，连上自己的 AI 工具就能用，不用装 App；装了桌面 App 的人，内容会自己同步。[团队服务器说明](docs/team-server.md)。
 
-支持 Claude Code、Claude Desktop、Codex、Cursor、GitHub Copilot、VS Code、Gemini CLI、Windsurf、Grok Bot 和其他 MCP 工具。[手动设置](docs/setup-with-ai.md)。
-
-导入完成后，App 会提供“用（你的 AI 工具）写页面”，把资料写成第一批带引用的笔记，不用输入指令。
+可以带入 Obsidian 仓库、Logseq 图谱、文件夹或之前的 AI 对话：[导入指南](docs/import-guide.md)。支持 Claude Code、Claude Desktop、Codex、Cursor、GitHub Copilot、VS Code、Gemini CLI、Windsurf、Grok Bot 和其他 MCP 工具：[手动设置](docs/setup-with-ai.md)。
 
 <a id="what-can-i-bring-in"></a>
 <a id="sources-and-imports"></a>
