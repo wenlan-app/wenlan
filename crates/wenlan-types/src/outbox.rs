@@ -28,6 +28,9 @@ pub struct OutboxEnvelope {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(tag = "kind", content = "payload", rename_all = "snake_case")]
+// A queued envelope is read and written a handful at a time; boxing the
+// larger request would only add an allocation per envelope.
+#[allow(clippy::large_enum_variant)]
 pub enum OutboxPayload {
     BriefUpdate(BriefUpdateRequest),
     MemoryStore(StoreMemoryRequest),
