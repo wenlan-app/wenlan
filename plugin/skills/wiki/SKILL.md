@@ -1,25 +1,33 @@
 ---
 name: wiki
 description: >
-  Read this repository and keep a wiki about it in its Space, sized to the
+  Read this repository and write docs about it in its Space, sized to the
   repository: an overview that lists every page, then one page per part or
   flow a newcomer needs, each key sentence tied to the code lines it was read
   from, so Wenlan can tell when the code moved on. Writes the pages that are
   missing and leaves the rest alone; a page whose code changed is brought up
   to date by steep, not here. For a Space connected to the repository, also
   fixes sentences of the repository's own docs the code no longer agrees
-  with, or that a page those docs follow now says otherwise, for the wiki
-  pull request. Use for "build a wiki for this repo", "get to know this
-  repository", "幫這個倉庫建 wiki", "認識這個倉庫", "make the README follow
-  this page", "讓 README 跟著這頁". Invoked as `/wenlan wiki [space:<name>]`.
+  with, or that a page those docs follow now says otherwise, for the same
+  pull request. Use for "write the docs for this repo", "document this
+  repository", "get to know this repository", "build a wiki for this repo",
+  "幫這個 repo 寫文件", "認識這個倉庫", "幫這個倉庫建 wiki", "make the README
+  follow this page", "讓 README 跟著這頁". Invoked as
+  `/wenlan docs [space:<name>]`; `/wenlan wiki`, the earlier name, still
+  works.
 argument-hint: "[space:<name>]"
 allowed-tools: ["Bash", "Read", "Glob", "Grep", "mcp__plugin_wenlan_wenlan__list_pages", "mcp__plugin_wenlan_wenlan__read_page", "mcp__plugin_wenlan_wenlan__write_page", "mcp__plugin_wenlan_wenlan__page_code_basis", "mcp__plugin_wenlan_wenlan__recall", "mcp__plugin_wenlan_wenlan__doc_fix"]
 user-invocable: false
 ---
 
-# /wenlan wiki
+# /wenlan docs
 
-Read this repository and keep a wiki about it in its Space. How many pages it
+`/wenlan wiki` is the earlier name of this command and means the same. The
+steps below still say "wiki" for the set of pages, and the `wenlan wiki ...`
+terminal commands they run are the spelling every installed Wenlan
+understands (newer ones also answer to `wenlan repo ...`).
+
+Read this repository and write docs about it in its Space. How many pages it
 has depends on the repository: a small tool may need five, a large monorepo
 twenty or more. The overview page lists them all.
 Each key sentence is tied to the code lines it was read from (a code basis), so
@@ -35,7 +43,7 @@ The skill accepts one optional inline token of the form `space:<name>`. The
 bundled resolver strips it and prints the resolved Space line itself:
 
 ```bash
-raw_args="<the full argument string passed to /wenlan wiki>"
+raw_args="<the full argument string passed to /wenlan docs>"
 resolved="$("${CLAUDE_PLUGIN_ROOT}/scripts/resolve-space.sh" --cwd "$PWD" --args "$raw_args")"
 space="$(printf '%s\n' "$resolved" | cut -f1)"
 repo_root="$(git -C "$PWD" rev-parse --show-toplevel)"
@@ -46,7 +54,7 @@ commands), take the Space from the `space:<name>` token instead.
 
 If the `git rev-parse` fails, say this folder is not a git repository and stop.
 If `space` is empty, say this folder is not matched to a Space and that
-`/wenlan wiki space:<name>` names one, then stop. Do not ask a question.
+`/wenlan docs space:<name>` names one, then stop. Do not ask a question.
 
 ## 2. Plan the pages
 
@@ -229,7 +237,7 @@ read: read it again and redo the edit once.
 
 One line per planned page with its title: written, left as is, waiting for
 steep, re-pointed, or staged for review. When pages are left over for the next
-run, say how many and that `/wenlan wiki` again writes them. Then one line on
+run, say how many and that `/wenlan docs` again writes them. Then one line on
 what happens later: `/brief` names how many pages rely on code that changed,
 and `/wenlan steep` brings them up to date. When step 7 ran, one more line:
 how many docs were read and how many fixes go into the pull request, each as
