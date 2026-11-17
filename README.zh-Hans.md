@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=f3e581b2d8244952539ac7945bcacb84cbf29536347552ac53816556a4799583 -->
+<!-- README_SYNC: source=README.md sha256=778fa1b7a6113674421b2aa873db798c82539ac46ee2fe10debd54342b7ecbd3 -->
 
 <p align="center">
   <picture>
@@ -79,33 +79,23 @@
 
 **自己用。** 从你的 AI 工具开始，不用装 App。
 
-1. 安装（需要 Node.js）。装完会自动启动并常驻，不用再设置别的。
+1. 运行一行命令（需要 Node.js）。它会装好、启动文澜，并连上它找到的 AI 工具。
 
    ```sh
    npx -y wenlan setup
    ```
 
-   用 Claude Code 的话，[插件](docs/setup-with-ai.md)会帮你做完第 1、2 步。[其他安装方式](docs/setup-and-data.zh-Hans.md#installation)。
+   它会问一次要不要带入一个放笔记或文档的文件夹，按 Enter 跳过。[其他安装方式](docs/setup-and-data.zh-Hans.md#installation)。
 
-2. 连上你的 AI 工具。你用几个工具，就各运行一次。
+   之后：`wenlan connect cursor` 再连一个工具，`wenlan sources add ~/notes` 再加一个文件夹。[更多](docs/import-guide.md)。
 
-   ```sh
-   wenlan connect claude-code   # 或 codex, cursor, gemini, vscode, claude-desktop
-   ```
-
-3. 想要的话：带入一个放笔记或文档的文件夹，例如 Obsidian 仓库。[其他方式](docs/import-guide.md)。
-
-   ```sh
-   wenlan sources add ~/notes
-   ```
-
-4. 在一个 AI 工具里说一件要记住的事，再换另一个工具问：
+2. 在一个 AI 工具里说一件要记住的事，再换另一个工具问：
 
    > 存到文澜：我们每周二发版，测试过了才发。
 
    > 问文澜：我们什么时候发版？
 
-5. 在浏览器里看和改你的页面：`wenlan open`。
+3. 在浏览器里看和改你的页面：`wenlan open`。
 
 想要的话再装：[桌面 App](https://github.com/wenlan-app/wenlan/releases/latest)（macOS、Windows、Linux）多了导入和一键连接 AI 工具。
 

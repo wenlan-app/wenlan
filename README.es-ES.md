@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=f3e581b2d8244952539ac7945bcacb84cbf29536347552ac53816556a4799583 -->
+<!-- README_SYNC: source=README.md sha256=778fa1b7a6113674421b2aa873db798c82539ac46ee2fe10debd54342b7ecbd3 -->
 
 <p align="center">
   <picture>
@@ -79,33 +79,23 @@ Más comparaciones, con Obsidian, Notion AI y herramientas de memoria: [wenlan.a
 
 **Por tu cuenta.** Empieza desde tu herramienta de IA. Sin instalar la app.
 
-1. Instálalo (requiere Node.js). También arranca Wenlan y lo deja en marcha.
+1. Un comando (requiere Node.js): instala Wenlan, lo arranca y conecta tus herramientas de IA.
 
    ```sh
    npx -y wenlan setup
    ```
 
-   En Claude Code, el [plugin](docs/setup-with-ai.md) hace los pasos 1 y 2 por ti. [Otras formas de instalar](docs/setup-and-data.es-ES.md#installation).
+   Pregunta una vez si quieres traer una carpeta de notas. Enter la omite. [Otras formas de instalar](docs/setup-and-data.es-ES.md#installation).
 
-2. Conecta tu herramienta de IA. Ejecútalo una vez por cada una que uses.
+   Después: `wenlan connect cursor` y `wenlan sources add ~/notes` añaden más. [Más](docs/import-guide.md).
 
-   ```sh
-   wenlan connect claude-code   # o codex, cursor, gemini, vscode, claude-desktop
-   ```
-
-3. Opcional: trae una carpeta de notas o documentos, como una bóveda de Obsidian. [Otras formas](docs/import-guide.md).
-
-   ```sh
-   wenlan sources add ~/notes
-   ```
-
-4. Dile a una herramienta de IA algo que guardar. Luego pregunta en otra:
+2. Dile a una herramienta de IA algo que guardar. Luego pregunta en otra:
 
    > Guarda en Wenlan: publicamos los martes, cuando pasan las pruebas.
 
    > Pregunta a Wenlan: ¿cuándo publicamos?
 
-5. Lee y edita tus páginas en el navegador: `wenlan open`.
+3. Lee y edita tus páginas en el navegador: `wenlan open`.
 
 Opcional: la [app de escritorio](https://github.com/wenlan-app/wenlan/releases/latest) para macOS, Windows y Linux añade importaciones y conexión con un clic.
 

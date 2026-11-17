@@ -77,33 +77,23 @@ More comparisons, with Obsidian, Notion AI, and memory tools: [wenlan.app/learn]
 
 **On your own.** Start from your AI tool. No app needed.
 
-1. Install it (needs Node.js). This also starts Wenlan and keeps it running; nothing else to configure.
+1. Run one command (needs Node.js). It installs and starts Wenlan, and connects the AI tools it finds.
 
    ```sh
    npx -y wenlan setup
    ```
 
-   In Claude Code, the [plugin](docs/setup-with-ai.md) does steps 1 and 2 for you. [Other ways to install](docs/setup-and-data.md#installation).
+   It asks once whether to bring in a folder of notes or docs. Enter skips. [Other ways to install](docs/setup-and-data.md#installation).
 
-2. Connect your AI tool. Run it once for each tool you use.
+   Later: `wenlan connect cursor` adds another tool, `wenlan sources add ~/notes` another folder. [More](docs/import-guide.md).
 
-   ```sh
-   wenlan connect claude-code   # or codex, cursor, gemini, vscode, claude-desktop
-   ```
-
-3. Optional: bring in a folder of notes or documents, such as an Obsidian vault. [More ways](docs/import-guide.md).
-
-   ```sh
-   wenlan sources add ~/notes
-   ```
-
-4. Tell one AI tool something to keep. Then ask in another:
+2. Tell one AI tool something to keep. Then ask in another:
 
    > Save to Wenlan: we release on Tuesdays, after the tests pass.
 
    > Ask Wenlan: when do we release?
 
-5. Read and edit your pages in your browser: `wenlan open`.
+3. Read and edit your pages in your browser: `wenlan open`.
 
 Optional: the [desktop app](https://github.com/wenlan-app/wenlan/releases/latest) for macOS, Windows and Linux adds imports and one-press connections.
 
