@@ -555,10 +555,14 @@ static PAGE_LIFECYCLE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(()
 /// An AI tool (any request that is not the person's, see
 /// `memory_routes::caller_is_person`) may not archive a page holding the
 /// person's work (UX-WHO-2). Every archive is recorded in `agent_activity`.
+///
+/// A team member the team gate forwards archives in person, recorded as
+/// that member, and only a page filed in the Space the gate checked.
 pub async fn handle_archive_page(
     State(state): State<Arc<RwLock<ServerState>>>,
     headers: HeaderMap,
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
+    crate::team_actor::TeamActor(member): crate::team_actor::TeamActor,
     Path(id): Path<String>,
 ) -> Result<Json<PageRemovalResponse>, ServerError> {
     let (db, page_root) = {
@@ -569,17 +573,44 @@ pub async fn handle_archive_page(
         )
     };
     let agent = extract_agent_name(&headers, None);
-    let remover = page_remover(&headers, &agent);
+    let (remover, actor) = match &member {
+        Some(member) => {
+            member_page_in_pinned_space(&db, &id, header_space.as_deref()).await?;
+            (None, member.edited_by())
+        }
+        None => {
+            let remover = page_remover(&headers, &agent);
+            let actor = remover_actor(&remover);
+            (Some(remover), actor)
+        }
+    };
+    // A member's archive is recorded under their name in the activity log
+    // as well as in the page's history.
+    let remover = remover.unwrap_or(wenlan_core::post_write::PageRemover::Member(&actor));
     let session = crate::session_routes::extract_session_ref(&headers);
     archive_page_for(
         &db,
         page_root,
         &id,
         remover,
+        &actor,
         header_space.as_deref(),
         session.as_ref(),
     )
     .await
+}
+
+/// Who an archive or restore is recorded as (`page_history.actor`).
+fn remover_actor(remover: &wenlan_core::post_write::PageRemover<'_>) -> String {
+    match remover {
+        wenlan_core::post_write::PageRemover::Person => {
+            wenlan_core::db::page_history_actor::PERSON_ACTOR.to_string()
+        }
+        wenlan_core::post_write::PageRemover::Member(actor) => (*actor).to_string(),
+        wenlan_core::post_write::PageRemover::Ai(agent) => {
+            wenlan_core::db::page_history_actor::ai_actor(agent)
+        }
+    }
 }
 
 /// Who asks to archive or delete a page: the person only when the request
@@ -616,6 +647,7 @@ async fn archive_page_for(
     page_root: Option<std::path::PathBuf>,
     id: &str,
     remover: wenlan_core::post_write::PageRemover<'_>,
+    actor: &str,
     header_space: Option<&str>,
     session: Option<&wenlan_types::SessionRef>,
 ) -> Result<Json<PageRemovalResponse>, ServerError> {
@@ -628,6 +660,13 @@ async fn archive_page_for(
     let archived_version = wenlan_core::post_write::archive_page_as(db, id, remover, &scope)
         .await
         .map_err(|error| page_removal_error(error, id))?;
+    // Who archived it, on that version's history row. Best effort: the
+    // archive already happened, and a missing name is shown as none.
+    if let Some(version) = archived_version {
+        if let Err(error) = db.stamp_page_history_actor(id, version, actor).await {
+            tracing::warn!("[page] archived {id} but could not record who: {error}");
+        }
+    }
     // The archive's history row names the session that asked for it, as a
     // create or refresh does: that one version, so no other row written in
     // the same second is stamped. Best effort: the archive already happened.
@@ -695,7 +734,9 @@ async fn archive_page_for(
 /// ([`wenlan_types::responses::RestorePageErrorCode`]).
 pub async fn handle_restore_page(
     State(state): State<Arc<RwLock<ServerState>>>,
+    headers: HeaderMap,
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
+    crate::team_actor::TeamActor(member): crate::team_actor::TeamActor,
     view: crate::truth_guard::TruthView,
     Path(id): Path<String>,
     Json(req): Json<wenlan_types::requests::RestorePageRequest>,
@@ -709,6 +750,18 @@ pub async fn handle_restore_page(
                 .page_root()
                 .map(std::path::Path::to_path_buf),
         )
+    };
+    // A team member restores only a page filed in the Space the gate checked,
+    // and is recorded as that member.
+    let actor = match &member {
+        Some(member) => {
+            member_page_in_pinned_space(&db, &id, header_space.as_deref()).await?;
+            member.edited_by()
+        }
+        None => {
+            let agent = extract_agent_name(&headers, None);
+            remover_actor(&page_remover(&headers, &agent))
+        }
     };
     // Held through the projection below; see `PAGE_LIFECYCLE`.
     let _lifecycle = PAGE_LIFECYCLE.lock().await;
@@ -735,6 +788,17 @@ pub async fn handle_restore_page(
     )
     .await
     .map_err(restore_error)?;
+    // A replay of a restore that already landed writes nothing and answers
+    // the version it was asked at; naming anyone then would put a name on
+    // an earlier row.
+    if response.version != req.expected_version {
+        if let Err(error) = db
+            .stamp_page_history_actor(&id, response.version, &actor)
+            .await
+        {
+            tracing::warn!("[page] restored {id} but could not record who: {error}");
+        }
+    }
     if let Some(root) = page_root {
         // Use the current durable row rather than request/saved editor text.
         let projection = wenlan_core::export::knowledge::KnowledgeProjectionWrite::new(root, &db);
@@ -930,11 +994,13 @@ pub async fn handle_delete_page(
     let remover = page_remover(&headers, &agent);
     if !query.permanent {
         let session = crate::session_routes::extract_session_ref(&headers);
+        let actor = remover_actor(&remover);
         return archive_page_for(
             &db,
             page_root,
             &id,
             remover,
+            &actor,
             header_space.as_deref(),
             session.as_ref(),
         )
@@ -4778,6 +4844,9 @@ mod entity_page_guard_tests;
 #[path = "page_routes/real_folder_page_routes_test.rs"]
 mod real_folder_page_route_tests;
 
+#[cfg(test)]
+#[path = "page_routes/team_member_archive_test.rs"]
+mod team_member_archive_tests;
 #[cfg(test)]
 #[path = "page_routes/team_member_edit_test.rs"]
 mod team_member_edit_tests;

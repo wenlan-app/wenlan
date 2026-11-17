@@ -78,12 +78,29 @@ async fn stand_in(log: Log, req: Request) -> Response {
                 {"id": "b9", "space": "Beta", "title": "Beta secret"},
             ],
         }),
+        ("GET", "/api/memory/graph") => json!({
+            "entities": [{"id": "e1", "name": "Beta secret"}],
+            "relations": [], "memories": [], "memory_links": [],
+            "pages": [
+                {"id": "a1", "title": "Alpha one", "space": "Alpha", "storage_path": "/srv/a1.md", "entity_id": "e1"},
+                {"id": "a2", "title": "Alpha two", "space": "Alpha", "entity_id": null},
+                {"id": "b1", "title": "Beta secret", "space": "Beta", "entity_id": "e1"},
+            ],
+            "page_links": [
+                {"from": {"kind": "page", "id": "a1"}, "to": {"kind": "page", "id": "a2"}},
+                {"from": {"kind": "page", "id": "a1"}, "to": {"kind": "page", "id": "b1", "title": "Beta secret"}},
+                {"from": {"kind": "page", "id": "a2"}, "to": {"kind": "entity", "id": "e1"}},
+            ],
+        }),
         ("GET", "/api/pages/recent") => json!([
             {"id": format!("r-{}", pinned.clone().unwrap_or_default()), "timestamp_ms": 5},
         ]),
         ("GET", "/api/pages/recent-changes") => json!([
             {"page_id": format!("c-{}", pinned.clone().unwrap_or_default()), "changed_at_ms": 5},
         ]),
+        // A route that answers for some other page than the one named, as a
+        // list route under `/api/pages/` would.
+        ("GET", "/api/pages/alias") => json!({"page": {"id": "a2", "space": "Alpha"}}),
         ("GET", _) if path.starts_with("/api/pages/") && path.matches('/').count() == 3 => {
             let id = path.trim_start_matches("/api/pages/");
             match space_of(id) {
@@ -638,6 +655,241 @@ async fn a_member_reaches_only_their_own_spaces() {
             ok,
             &["Alpha"],
         ),
+        // Archive, restore, basis, graph (team web controls).
+        case(
+            "archive own page",
+            AlphaWriter,
+            "POST",
+            "/api/pages/a1/archive",
+            None,
+            ok,
+            &["Alpha"],
+        ),
+        case(
+            "archive another Space's page by id",
+            AlphaWriter,
+            "POST",
+            "/api/pages/b1/archive",
+            None,
+            not_found,
+            &[],
+        ),
+        case(
+            "archive own page: a query Space is dropped, the page's own is pinned",
+            AlphaWriter,
+            "POST",
+            "/api/pages/a1/archive?space=Beta",
+            None,
+            ok,
+            &["Alpha"],
+        ),
+        case(
+            "archive own page naming another Space in the body",
+            AlphaWriter,
+            "POST",
+            "/api/pages/a1/archive",
+            Some(json!({"space": "Beta"})),
+            not_found,
+            &[],
+        ),
+        case(
+            "archive as a reader",
+            AlphaReader,
+            "POST",
+            "/api/pages/a1/archive",
+            None,
+            forbidden,
+            &[],
+        ),
+        case(
+            "restore own page",
+            AlphaWriter,
+            "POST",
+            "/api/pages/a1/restore",
+            None,
+            ok,
+            &["Alpha"],
+        ),
+        case(
+            "restore another Space's page by id",
+            AlphaWriter,
+            "POST",
+            "/api/pages/b1/restore",
+            None,
+            not_found,
+            &[],
+        ),
+        case(
+            "restore own page: a query Space is dropped, the page's own is pinned",
+            AlphaWriter,
+            "POST",
+            "/api/pages/a1/restore?domain=Beta",
+            None,
+            ok,
+            &["Alpha"],
+        ),
+        case(
+            "restore own page naming another Space in the body",
+            AlphaWriter,
+            "POST",
+            "/api/pages/a1/restore",
+            Some(json!({"domain": "Beta"})),
+            not_found,
+            &[],
+        ),
+        case(
+            "restore as a reader",
+            AlphaReader,
+            "POST",
+            "/api/pages/a1/restore",
+            None,
+            forbidden,
+            &[],
+        ),
+        case(
+            "restore a page that is not there",
+            AlphaWriter,
+            "POST",
+            "/api/pages/zz/restore",
+            None,
+            not_found,
+            &[],
+        ),
+        case(
+            "delete for good stays the owner's",
+            AlphaWriter,
+            "DELETE",
+            "/api/pages/a1?permanent=true",
+            None,
+            not_found,
+            &[],
+        ),
+        case(
+            "add a basis in the same Space",
+            AlphaWriter,
+            "PUT",
+            "/api/pages/a1/basis/a2",
+            Some(json!({"version": 1})),
+            ok,
+            &["Alpha"],
+        ),
+        case(
+            "remove a basis in the same Space",
+            AlphaWriter,
+            "DELETE",
+            "/api/pages/a1/basis/a2",
+            None,
+            ok,
+            &["Alpha"],
+        ),
+        case(
+            "add a basis from another Space",
+            AlphaWriter,
+            "PUT",
+            "/api/pages/a1/basis/b1",
+            Some(json!({"version": 1})),
+            not_found,
+            &[],
+        ),
+        case(
+            "remove a basis from another Space",
+            AlphaWriter,
+            "DELETE",
+            "/api/pages/a1/basis/b1",
+            None,
+            not_found,
+            &[],
+        ),
+        case(
+            "add a basis to another Space's page",
+            AlphaWriter,
+            "PUT",
+            "/api/pages/b1/basis/a1",
+            Some(json!({"version": 1})),
+            not_found,
+            &[],
+        ),
+        case(
+            "add a basis that is not there",
+            AlphaWriter,
+            "PUT",
+            "/api/pages/a1/basis/zz",
+            Some(json!({"version": 1})),
+            not_found,
+            &[],
+        ),
+        case(
+            "add a basis whose id answers for another page",
+            AlphaWriter,
+            "PUT",
+            "/api/pages/a1/basis/alias",
+            Some(json!({"version": 1})),
+            not_found,
+            &[],
+        ),
+        case(
+            "add a basis naming another Space in the body",
+            AlphaWriter,
+            "PUT",
+            "/api/pages/a1/basis/a2",
+            Some(json!({"version": 1, "space": "Beta"})),
+            not_found,
+            &[],
+        ),
+        case(
+            "add a basis: a query Space is dropped, the page's own is pinned",
+            AlphaWriter,
+            "PUT",
+            "/api/pages/a1/basis/a2?space=Beta",
+            Some(json!({"version": 1})),
+            ok,
+            &["Alpha"],
+        ),
+        case(
+            "add a basis as a reader",
+            AlphaReader,
+            "PUT",
+            "/api/pages/a1/basis/a2",
+            Some(json!({"version": 1})),
+            not_found,
+            &[],
+        ),
+        case(
+            "remove a basis as a reader",
+            AlphaReader,
+            "DELETE",
+            "/api/pages/a1/basis/a2",
+            None,
+            not_found,
+            &[],
+        ),
+        case(
+            "the graph of a reader's Spaces",
+            AlphaReader,
+            "GET",
+            "/api/memory/graph",
+            None,
+            ok,
+            &["Alpha"],
+        ),
+        case(
+            "the graph: a query Space is dropped, only the member's are read",
+            AlphaWriter,
+            "GET",
+            "/api/memory/graph?space=Beta",
+            None,
+            ok,
+            &["Alpha"],
+        ),
+        case(
+            "lock has no row",
+            AlphaWriter,
+            "POST",
+            "/api/pages/a1/lock",
+            Some(json!({"locked": true})),
+            not_found,
+            &[],
+        ),
         // By path: not in the table, or not plain.
         case(
             "a call with no row",
@@ -706,6 +958,81 @@ async fn a_member_reaches_only_their_own_spaces() {
             assert!(!text.contains(private), "{}: {private} in {text}", case.why);
         }
     }
+}
+
+/// The graph keeps the member's pages and only the links between them: no
+/// page, title, entity or link end of another Space reaches the browser.
+#[tokio::test]
+async fn the_graph_shows_only_the_members_pages_and_their_links() {
+    let f = fixture().await;
+    let (status, answer) = call(
+        &f.state,
+        "GET",
+        &format!("{PREFIX}/api/memory/graph"),
+        &f.alpha_writer.1,
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let ids: Vec<&str> = answer["pages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|page| page["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["a1", "a2"]);
+    assert_eq!(
+        answer["page_links"],
+        json!([{"from": {"kind": "page", "id": "a1"}, "to": {"kind": "page", "id": "a2"}}])
+    );
+    for key in ["entities", "relations", "memories", "memory_links"] {
+        assert_eq!(answer[key], json!([]), "{key}");
+    }
+    // No entity id: two pages sharing a subject is not told.
+    for page in answer["pages"].as_array().unwrap() {
+        assert_eq!(page["entity_id"], Value::Null, "{page}");
+    }
+    let text = answer.to_string();
+    assert!(
+        !text.contains("b1") && !text.contains("Beta") && !text.contains("/srv/"),
+        "{text}"
+    );
+    assert_eq!(
+        f.seen()
+            .iter()
+            .map(|seen| seen.space().unwrap_or(""))
+            .collect::<Vec<_>>(),
+        ["Alpha"]
+    );
+}
+
+/// The browser's copy of the table (`src/web/team.ts` `GATE_ROWS`) names
+/// exactly these rows, so a control is never offered for a call the gate
+/// refuses, nor hidden for one it allows.
+#[test]
+fn the_browser_mirror_names_exactly_the_rows() {
+    const TEAM_TS: &str = include_str!("../../../src/web/team.ts");
+    let start = TEAM_TS
+        .find("const GATE_ROWS")
+        .expect("GATE_ROWS in team.ts");
+    let end = start + TEAM_TS[start..].find("];").unwrap();
+    let mut mirror: Vec<(String, String)> = TEAM_TS[start..end]
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.trim().trim_start_matches('[').split('"');
+            let method = parts.nth(1)?.to_string();
+            let path = parts.nth(1)?.to_string();
+            Some((method, path))
+        })
+        .collect();
+    let mut rows: Vec<(String, String)> = CALLS
+        .iter()
+        .map(|call| (call.method.to_string(), call.path.to_string()))
+        .collect();
+    mirror.sort();
+    rows.sort();
+    assert_eq!(mirror, rows);
 }
 
 /// A member's entry for a Space the server does not host for the team
@@ -877,7 +1204,7 @@ async fn every_daemon_route_without_a_row_is_not_found() {
                         .path
                         .split('/')
                         .zip(path.split('/'))
-                        .all(|(a, b)| a == b || (a == "{id}" && b.starts_with('{')))
+                        .all(|(a, b)| a == b || (a.starts_with('{') && b.starts_with('{')))
             });
         if in_table {
             allowed += 1;

@@ -2250,7 +2250,7 @@ export interface PageChangelogEntry {
   restored_from?: number | null;
 }
 
-export type PageHistoryKind = "person_edit" | "ai_edit" | "source_update";
+export type PageHistoryKind = "person_edit" | "ai_edit" | "source_update" | "archived" | "restored";
 
 /** The page a `source_update` history item is about. */
 export interface PageHistorySource {
@@ -4491,7 +4491,7 @@ export interface RetrievalEvent {
   memory_snippets: string[];
 }
 
-export type PageChangeKind = "created" | "revised" | "merged";
+export type PageChangeKind = "created" | "revised" | "merged" | "archived" | "restored";
 
 /** @deprecated Use {@link PageChangeKind} instead. */
 export type ConceptChangeKind = PageChangeKind;
