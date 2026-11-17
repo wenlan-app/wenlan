@@ -490,13 +490,28 @@ async fn main() -> anyhow::Result<ExitCode> {
         base_client
     } else if let Some(operation) = operation {
         let context = match base_client.list_spaces().await {
-            Ok(spaces) => resolve_cli_space(
-                cli.space.clone(),
-                cli.all_spaces,
-                std::env::current_dir().ok(),
-                operation,
-                &spaces.into_iter().map(|space| space.name).collect(),
-            )?,
+            Ok(spaces) => {
+                let registered = spaces.into_iter().map(|space| space.name).collect();
+                let cwd = std::env::current_dir().ok();
+                let context = resolve_cli_space(
+                    cli.space.clone(),
+                    cli.all_spaces,
+                    cwd.clone(),
+                    operation,
+                    &registered,
+                )?;
+                // In a repository Wenlan does not know, a person is told once
+                // about `wenlan init`. `repo` commands say their own.
+                let wants_hint = context.space.is_none()
+                    && !cli.all_spaces
+                    && !cli.quiet
+                    && matches!(cli.format.resolve(), output::ResolvedFormat::Table)
+                    && !matches!(&cli.command, Commands::Wiki { .. });
+                if let (true, Some(cwd)) = (wants_hint, cwd.as_deref()) {
+                    commands::init::say_once_not_set_up(cwd, &registered);
+                }
+                context
+            }
             Err(error)
                 if matches!(&cli.command, Commands::Capture { .. })
                     && base_client.is_local()

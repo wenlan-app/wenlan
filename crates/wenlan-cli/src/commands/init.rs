@@ -507,6 +507,106 @@ fn labels(tools: &[Tool]) -> String {
         .join(", ")
 }
 
+/// The file, in Wenlan's data folder, listing the repositories whose "not set
+/// up yet" line was already said (one path a line).
+const SAID_FILE: &str = "init-hints";
+
+/// Whether `cwd` is inside a git repository that has no Space of its own
+/// among `registered`. Returns the repository's top folder when so.
+fn unknown_repository(cwd: &Path, registered: &HashSet<String>) -> Option<std::path::PathBuf> {
+    let top = repo_wiki::repository_top_level(cwd).ok()?;
+    let known = folder_hint(cwd)
+        .registered(|name| registered.contains(name))
+        .is_some();
+    (!known).then_some(top)
+}
+
+/// For a command that works without a Space of its own (`recall`, `capture`,
+/// `rules`, …): in a repository Wenlan does not know, say once that
+/// `wenlan init` sets it up. Only to a person at a terminal, and never again
+/// for the same repository. Best effort: nothing here can fail the command.
+pub fn say_once_not_set_up(cwd: &Path, registered: &HashSet<String>) {
+    if !(std::io::stderr().is_terminal() && std::io::stdout().is_terminal()) {
+        return;
+    }
+    let Some(top) = unknown_repository(cwd, registered) else {
+        return;
+    };
+    let said = wenlan_core::config::data_root().join(SAID_FILE);
+    if first_time(&said, &top.to_string_lossy()) {
+        eprintln!(
+            "wenlan: this repository is not set up in Wenlan yet. `wenlan init` gives it its own Space. (Said once.)"
+        );
+    }
+}
+
+/// Record `line` in the file at `path`; `true` when it was not there before
+/// and is now. A file that cannot be written counts as "said", so a read-only
+/// data folder does not repeat the line on every command.
+fn first_time(path: &Path, line: &str) -> bool {
+    let before = std::fs::read_to_string(path).unwrap_or_default();
+    if before.lines().any(|said| said == line) {
+        return false;
+    }
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .and_then(|mut file| writeln!(file, "{line}"))
+        .is_ok()
+}
+
+/// For `wenlan repo publish` where the folder is a repository that is not
+/// tied yet: the command cannot do its work, so a person at a terminal is
+/// asked once whether to set it up now, and `init` runs on a yes. With nobody
+/// to ask the command fails and names `wenlan init`.
+/// Returns the Space to publish, or `None` when there is nothing to publish
+/// and the person has been told why: they said no, or `init` tied nothing.
+pub async fn set_up_to_publish(
+    client: &WenlanClient,
+    format: ResolvedFormat,
+    quiet: bool,
+) -> Result<Option<String>> {
+    let cwd = std::env::current_dir()?;
+    if repo_wiki::repository_top_level(&cwd).is_err() {
+        bail!(
+            "this folder is not inside a git repository. Run `wenlan repo publish` inside the repository"
+        );
+    }
+    let interactive = !quiet
+        && matches!(format, ResolvedFormat::Table)
+        && std::io::stdin().is_terminal()
+        && std::io::stdout().is_terminal();
+    if !interactive {
+        bail!(
+            "this repository is not set up in Wenlan yet. `wenlan init` sets it up; then run `wenlan repo publish` again"
+        );
+    }
+    if !ask(
+        "This repository is not set up in Wenlan yet. Set it up now?",
+        true,
+    )? {
+        println!("Nothing was changed. `wenlan init` sets it up when you want to.");
+        return Ok(None);
+    }
+    run(client, format, quiet).await?;
+    let registered: HashSet<String> = client
+        .list_spaces()
+        .await?
+        .into_iter()
+        .map(|space| space.name)
+        .collect();
+    let hint = folder_hint(&cwd);
+    let Some(space) = hint.registered(|name| registered.contains(name)) else {
+        return Ok(None);
+    };
+    let tied = client.repo_wiki_binding(space).await?.is_some();
+    Ok(tied.then(|| space.to_owned()))
+}
+
 /// For `wenlan status`: which Space this folder uses and the repository it
 /// is tied to, or the one command that sets it up. Says nothing outside a
 /// git repository, and nothing when Wenlan is not running: the lines above
@@ -553,6 +653,17 @@ pub async fn print_folder(client: &WenlanClient) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_not_set_up_line_is_said_once_for_each_repository() {
+        let dir = tempfile::tempdir().unwrap();
+        let said = dir.path().join("data").join(SAID_FILE);
+        assert!(first_time(&said, "/work/a"));
+        assert!(!first_time(&said, "/work/a"));
+        assert!(first_time(&said, "/work/b"));
+        assert!(!first_time(&said, "/work/a"));
+        assert!(!first_time(&said, "/work/b"));
+    }
 
     #[test]
     fn a_tool_with_the_wenlan_plugin_counts_as_connected() {
