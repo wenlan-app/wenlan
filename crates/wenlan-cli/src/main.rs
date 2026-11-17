@@ -134,6 +134,11 @@ enum Commands {
     },
     /// Read the working rules approved for a Space.
     Rules,
+    /// List, find and take in skills your AI tools can use (list, search, show, scan, import, install, remove).
+    Skills {
+        #[command(subcommand)]
+        command: Option<commands::skills::SkillsCmd>,
+    },
     /// Read the current Space Brief, optionally with related context.
     Brief(commands::brief::BriefArgs),
     /// List pages or open one by title; read, write, rename, move, delete or restore one (read, write, rename, delete, move, history, restore, links, lock, unlock).
@@ -260,7 +265,8 @@ const HELP_GROUPS: &[(&str, &[&str])] = &[
     (
         "More",
         &[
-            "memories", "sources", "follow", "unfollow", "follows", "spaces", "repo", "curate",
+            "skills", "memories", "sources", "follow", "unfollow", "follows", "spaces", "repo",
+            "curate",
             "lint", "models", "keys", "steep", "outbox", "export", "entities", "tool",
         ],
     ),
@@ -685,6 +691,9 @@ async fn main() -> anyhow::Result<ExitCode> {
             commands::recall::run(&client, format, cli.quiet, query, limit).await?
         }
         Commands::Rules => commands::skills::read_space_rules(&client, format, cli.quiet).await?,
+        Commands::Skills { command } => {
+            commands::skills::run_skills(&client, format, cli.quiet, command).await?
+        }
         Commands::Brief(args) => {
             commands::brief::run(
                 &client,

@@ -754,6 +754,13 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/skills/suggestions/{id}/undo` | main | yes | automatic | `none` | `handle_undo_suggestion` | SkillSuggestionActionResponse returns the library-derived suggestion and source Page title |
 | `GET` | `/api/skills/record` | main | yes | automatic | `none` | `handle_record` | Space-filtered SkillBorrowRecord carries source page titles and rule ids |
 | `POST` | `/api/skills/record` | main | no | not_applicable | `none` | — | self-report receipt contains a boolean and rule id only |
+| `GET` | `/api/skills/registry/search` | main | no | not_applicable | `none` | — | SkillSearchResponse: skills.sh results and their safety verdicts; no library text |
+| `GET` | `/api/skills/registry/preview` | main | no | not_applicable | `none` | — | SkillPreview: another author's skill files fetched from GitHub; no library text |
+| `GET` | `/api/skills/registry/installed` | main | no | not_applicable | `none` | — | InstalledSkillsResponse: SKILL.md folders Wenlan holds and the person's own additions; no Page prose |
+| `GET` | `/api/skills/registry/local` | main | no | not_applicable | `none` | — | LocalSkillsResponse: names, folders and descriptions of skills in AI tool folders; no Page prose |
+| `POST` | `/api/skills/registry/import` | main | no | not_applicable | `none` | — | SkillImportResult: skill names and refusal reasons only |
+| `POST` | `/api/skills/registry/install` | main | no | not_applicable | `none` | — | SkillInstallResult: the installed skill's record and the folders it was copied to |
+| `POST` | `/api/skills/registry/remove` | main | no | not_applicable | `none` | — | SkillRemoveResponse: the removed skill's name only |
 | `GET` | `/api/memories/{source_id}/said` | main | no | not_applicable | `none` | — | MemorySaidResponse: the transcript lines one memory came from with its conversation and thing titles, no page prose |
 | `POST` | `/api/things/{id}/map/ops` | main | no | not_applicable | `none` | — | ThingMapOpsResponse: point labels written for the map and conversation ids, no page prose |
 | `PATCH` | `/api/things/{id}` | main | no | not_applicable | `none` | — | ThingSummary: thing title, Brief status line and Space names, no page prose |
@@ -920,7 +927,7 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/research/disputes/{id}/decision` | main | no | not_applicable | `none` | — | Dispute contains original Source quotes and human decisions, no Page prose |
 | `POST` | `/api/research/source-lifecycle` | main | no | not_applicable | `none` | — | explicit retained-source status change and affected identities; no page prose |
 
-## MCP — all 59 `#[tool(` declarations
+## MCP — all 61 `#[tool(` declarations
 
 From `crates/wenlan-mcp/src/tools.rs` **in this tree**. An earlier draft listed
 `search_pages`, `get_page`, `get_page_links`, `list_pages_recent`, and
@@ -994,6 +1001,8 @@ must be demoted individually with a recorded reason. **Every MCP tool is
 | `read_source` | no | not_applicable | `none` | exact file or webpage text; rejects page sources |
 | `read_space_rules` | yes | automatic | `none` | tool handler |
 | `report_space_rule_use` | no | not_applicable | `none` | structured rule id and fixed changed_plan outcome only; no Page prose |
+| `list_skills` | no | not_applicable | `none` | held SKILL.md folders: names, scope, source and safety verdict; no Page prose |
+| `search_skills` | no | not_applicable | `none` | skills.sh results and safety verdicts; no library text |
 
 ## CLI — all 27 `Commands` variants
 
@@ -1024,6 +1033,7 @@ the projection-directory reader.
 | `wenlan recall` | yes | automatic | `none` | subcommand renderer |
 | `wenlan brief` | yes | automatic | `none` | subcommand renderer |
 | `wenlan rules` | yes | automatic | `none` | subcommand renderer |
+| `wenlan skills` | yes | automatic | `none` | subcommand renderer |
 | `wenlan pages` | yes | automatic | **`collection` + `named_page`** | enforce_projection_directory_invariant |
 | `wenlan sources` | yes | automatic | `none` | subcommand renderer |
 | `wenlan capture` | yes | automatic | `none` | subcommand renderer |

@@ -39,6 +39,7 @@ These flags control ignored, target-Mac profiling tests; they are not daemon run
 |---|---|
 | `WENLAN_TELEMETRY_DISABLED` | Set to `1` to make product telemetry unavailable: the daemon reports telemetry as unavailable and does not record or send operation counters, even when persisted consent is enabled. When unset, telemetry remains available only in non-debug builds with an initialized HTTP client. |
 | `WENLAN_DEV_STATE_DIR` | When set (non-empty), `skill_grow.rs` reads the person's existing AI-tool skill folders from `$WENLAN_DEV_STATE_DIR/ai-tools/home` and `.../ai-tools/config` instead of the real home and config folders, mirroring the app's isolated dev roots, so a dev or scratch daemon never reads real skill files. Unset in normal use. |
+| `WENLAN_DEV_SKILLS_ENDPOINTS` | Only read when `WENLAN_DATA_DIR` names a root other than the installed app's own (a test or trial daemon). When set (non-empty) to a base URL, `skill_registry_routes.rs` fetches skills from `<base>/skills-sh`, `<base>/wenlan-site`, `<base>/github-api` and `<base>/github-raw` instead of skills.sh, wenlan.app and GitHub, so a trial daemon can be driven against a local stand-in. The installed app's own run ignores it. Unset in normal use. |
 
 ## Files mirror flag (storage migration step 3)
 

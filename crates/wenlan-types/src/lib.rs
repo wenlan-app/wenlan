@@ -47,6 +47,7 @@ pub mod responses;
 pub mod session_context;
 pub mod sessions;
 pub mod shared_space;
+pub mod skill_registry;
 pub mod skills;
 pub mod source_annotations;
 pub mod sources;

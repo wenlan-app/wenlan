@@ -740,6 +740,128 @@ impl WenlanClient {
         self.get_json("/api/skills/rules", true).await
     }
 
+    /// GET /api/skills/registry/installed — the skills Wenlan holds.
+    pub async fn list_skills(
+        &self,
+    ) -> Result<wenlan_types::skill_registry::InstalledSkillsResponse> {
+        self.get_json("/api/skills/registry/installed", true).await
+    }
+
+    /// GET /api/skills/registry/search — skills.sh results with their checks.
+    pub async fn search_skills(
+        &self,
+        query: &str,
+    ) -> Result<wenlan_types::skill_registry::SkillSearchResponse> {
+        self.get_json_with_query("/api/skills/registry/search", &[("q", query)])
+            .await
+    }
+
+    /// GET /api/skills/registry/preview — every file of one skill and its
+    /// safety checks, before anything is kept.
+    pub async fn preview_skill(
+        &self,
+        source: &str,
+        skill_id: &str,
+    ) -> Result<wenlan_types::skill_registry::SkillPreview> {
+        self.get_json_with_query(
+            "/api/skills/registry/preview",
+            &[("source", source), ("skillId", skill_id)],
+        )
+        .await
+    }
+
+    /// GET /api/skills/registry/local — skills in the AI tools' own folders
+    /// that Wenlan does not hold yet.
+    pub async fn scan_local_skills(
+        &self,
+    ) -> Result<wenlan_types::skill_registry::LocalSkillsResponse> {
+        self.get_json("/api/skills/registry/local", true).await
+    }
+
+    /// POST /api/skills/registry/import, as the person.
+    pub async fn import_local_skills_as_person(
+        &self,
+        names: Vec<String>,
+    ) -> Result<wenlan_types::skill_registry::SkillImportResult> {
+        let request = wenlan_types::skill_registry::SkillImportRequest { names };
+        self.post_json_as_person("/api/skills/registry/import", &request)
+            .await
+    }
+
+    /// POST /api/skills/registry/install, as the person.
+    pub async fn install_skill_as_person(
+        &self,
+        request: &wenlan_types::skill_registry::SkillInstallRequest,
+    ) -> Result<wenlan_types::skill_registry::SkillInstallResult> {
+        self.post_json_as_person("/api/skills/registry/install", request)
+            .await
+    }
+
+    /// POST /api/skills/registry/remove, as the person.
+    pub async fn remove_skill_as_person(
+        &self,
+        name: &str,
+    ) -> Result<wenlan_types::skill_registry::SkillRemoveResponse> {
+        self.post_json_as_person(
+            "/api/skills/registry/remove",
+            &wenlan_types::skill_registry::SkillRemoveRequest {
+                name: name.to_string(),
+            },
+        )
+        .await
+    }
+
+    /// Whether this process told the daemon it is an AI tool.
+    pub fn names_an_agent(&self) -> bool {
+        self.headers.contains_key("x-agent-name")
+    }
+
+    /// GET `path` with query parameters, each value encoded.
+    async fn get_json_with_query<R: DeserializeOwned>(
+        &self,
+        path: &str,
+        query: &[(&str, &str)],
+    ) -> Result<R> {
+        let url = format!("{}{}", self.base_url, path);
+        let what = format!("GET {url} failed (is the daemon running?)");
+        let resp = self.send(self.http.get(&url).query(query), &what).await?;
+        let resp = ensure_ok(resp, &url).await?;
+        resp.json()
+            .await
+            .with_context(|| format!("parsing {path} response"))
+    }
+
+    /// POST `path` marked as the person's own request. The mark is only
+    /// honest from a terminal the person is typing in, so callers ask them
+    /// first; a process that named an AI tool cannot send it at all.
+    async fn post_json_as_person<B: Serialize, R: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<R> {
+        anyhow::ensure!(
+            !self.names_an_agent(),
+            "this is the person's to do, and this command is running as an AI tool"
+        );
+        let url = format!("{}{}", self.base_url, path);
+        // A client of its own: no default header may ride along.
+        let http = reqwest::Client::builder()
+            .build()
+            .context("building Wenlan HTTP client")?;
+        let request = http
+            .post(&url)
+            .header(
+                wenlan_types::requests::CALLER_HEADER,
+                wenlan_types::requests::PERSON_CALLER_VALUE,
+            )
+            .json(body);
+        let resp = self.send(request, &format!("POST {url} failed")).await?;
+        let resp = ensure_ok(resp, &url).await?;
+        resp.json()
+            .await
+            .with_context(|| format!("parsing {path} response"))
+    }
+
     /// GET /api/pages/{id}/sources — the memories a page was written from.
     pub async fn get_page_sources(&self, id: &str) -> Result<Vec<PageSourceWithMemory>> {
         self.get_json(&format!("/api/pages/{}/sources", id), true)

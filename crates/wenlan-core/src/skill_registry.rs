@@ -19,8 +19,14 @@ use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 
 use futures::future::BoxFuture;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use sha2::{Digest, Sha256};
+
+// The shapes every channel reads live in `wenlan-types`.
+pub use wenlan_types::skill_registry::{
+    AuditLine, InstalledSkill, LocalSkill, SafetyReport, Scope, SearchVia, SkillHit, UpdateOutcome,
+    Verdict,
+};
 
 /// Marker file in each tool-folder copy Wenlan wrote. A same-named folder
 /// without it belongs to the person and is never touched.
@@ -131,26 +137,6 @@ fn io_err(path: &Path) -> impl FnOnce(std::io::Error) -> RegistryError + '_ {
 
 // ── Search ──────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct SkillHit {
-    /// `owner/repo`.
-    pub source: String,
-    /// The id skills.sh lists; not always the folder name in the repo.
-    pub skill_id: String,
-    pub name: String,
-    pub installs: u64,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum SearchVia {
-    #[serde(rename = "skills.sh")]
-    SkillsSh,
-    #[serde(rename = "wenlan.app")]
-    WenlanApp,
-}
-
 fn encode(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for byte in value.bytes() {
@@ -247,30 +233,6 @@ pub async fn search(
 }
 
 // ── Safety checks ───────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
-#[serde(rename_all = "lowercase")]
-pub enum Verdict {
-    Pass,
-    /// At least one check warned, or no check has run yet.
-    Warn,
-    Fail,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct AuditLine {
-    pub provider: String,
-    pub status: String,
-    pub summary: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct SafetyReport {
-    pub verdict: Verdict,
-    pub audits: Vec<AuditLine>,
-}
 
 fn verdict_for(audits: &[AuditLine]) -> Verdict {
     if audits.is_empty() {
@@ -637,32 +599,6 @@ pub fn runnable_files(files: &[SkillFile]) -> Vec<String> {
 // `author/` (the author's files, untouched), `skill.json` (the record) and
 // `my-additions.md`. A folder without `.wenlan/skill.json` is not one of
 // these and is never touched.
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(tag = "kind", rename_all = "camelCase")]
-pub enum Scope {
-    /// Every Space.
-    All,
-    /// Only while working in this Space.
-    Space { name: String },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct InstalledSkill {
-    /// Folder name, in the Wenlan folder and in each tool's folder.
-    pub name: String,
-    pub source: String,
-    pub skill_id: String,
-    pub repo_path: String,
-    pub commit: String,
-    pub hash: String,
-    pub verdict: Verdict,
-    pub scope: Scope,
-    pub description: Option<String>,
-    pub installed_at: i64,
-    pub updated_at: i64,
-}
 
 /// `~/.wenlan`, the folder that holds `pages` (`<data root>` for an isolated
 /// run, so tests never reach the real one).
@@ -1113,16 +1049,6 @@ pub fn remove(root: &Path, name: &str, tool_dirs: &[PathBuf]) -> Result<(), Regi
     std::fs::remove_dir_all(&dir).map_err(io_err(&dir))
 }
 
-/// One skill whose author published a change since it was installed.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct UpdateOutcome {
-    pub name: String,
-    /// "updated", "needs_look" (the new version did not pass every check),
-    /// or "unchanged".
-    pub outcome: String,
-}
-
 /// Check one installed skill against its repository. A new version that
 /// passes every check replaces the author's files (additions kept); one that
 /// does not is left for the person to look at.
@@ -1175,15 +1101,6 @@ pub async fn refresh_one(
 // never changed, so the tool that had it keeps using it, and the copy can
 // reach the other tools.
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct LocalSkill {
-    pub name: String,
-    /// The folder it was found in.
-    pub path: String,
-    pub description: Option<String>,
-}
-
 /// A folder name that is already tool-safe, so the Wenlan copy keeps the
 /// same name and never lands beside the original as a second skill.
 fn local_name(dir: &Path) -> Option<String> {
@@ -1233,6 +1150,25 @@ pub fn scan_local(root: &Path, tool_dirs: &[PathBuf]) -> Vec<LocalSkill> {
 /// original folder is only read. No check has run on it, so it is recorded
 /// as "warn".
 pub fn import_local(root: &Path, dir: &Path, now: i64) -> Result<InstalledSkill, RegistryError> {
+    import_local_checked(root, dir, now, |_| None)
+}
+
+/// `import_local`, but a folder holding text a preview could not show in
+/// full is refused (see `hidden_from_the_person`).
+pub fn import_local_fully_shown(
+    root: &Path,
+    dir: &Path,
+    now: i64,
+) -> Result<InstalledSkill, RegistryError> {
+    import_local_checked(root, dir, now, hidden_from_the_person)
+}
+
+fn import_local_checked(
+    root: &Path,
+    dir: &Path,
+    now: i64,
+    refuse: impl Fn(&[SkillFile]) -> Option<String>,
+) -> Result<InstalledSkill, RegistryError> {
     let name = local_name(dir)
         .ok_or_else(|| RegistryError::Refused(format!("{} has no usable name", dir.display())))?;
     if dir.join(MANAGED_MARKER).exists() {
@@ -1257,6 +1193,9 @@ pub fn import_local(root: &Path, dir: &Path, now: i64) -> Result<InstalledSkill,
             "{} is too large to take in",
             dir.display()
         )));
+    }
+    if let Some(reason) = refuse(&files) {
+        return Err(RegistryError::Refused(reason));
     }
     let skill_md = files
         .iter()
@@ -1295,6 +1234,72 @@ pub fn preview_text(files: &[SkillFile]) -> BTreeMap<String, Option<String>> {
         })
         .collect()
 }
+
+/// How much of one text file a preview shows.
+pub const PREVIEW_CHARS: usize = 64 * 1024;
+
+/// One file as a preview shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShownFile {
+    pub path: String,
+    /// `None` for a file that is not text.
+    pub text: Option<String>,
+    /// The text is longer than what is shown.
+    pub cut: bool,
+}
+
+/// Each file for showing before install, and whether all of it is shown.
+pub fn preview_files(files: &[SkillFile]) -> Vec<ShownFile> {
+    files
+        .iter()
+        .map(|f| {
+            let whole = std::str::from_utf8(&f.bytes).ok();
+            let end = whole.and_then(|t| t.char_indices().nth(PREVIEW_CHARS).map(|(at, _)| at));
+            ShownFile {
+                path: f.path.clone(),
+                text: whole.map(|t| t[..end.unwrap_or(t.len())].to_string()),
+                cut: end.is_some(),
+            }
+        })
+        .collect()
+}
+
+/// Files an AI tool reads as instructions or notes; they must be text a
+/// person can be shown.
+fn must_be_readable_text(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    lower == "skill.md"
+        || [".md", ".markdown", ".mdx", ".txt"]
+            .iter()
+            .any(|ending| lower.ends_with(ending))
+}
+
+/// Why this skill holds text the person could not be shown in full, if it
+/// does: a text file longer than a preview shows, or a SKILL.md (or other
+/// notes file) that is not valid UTF-8 and so shows as "not a text file".
+/// Such a skill must not be installed or taken in, because an AI tool would
+/// read what the person never saw.
+pub fn hidden_from_the_person(files: &[SkillFile]) -> Option<String> {
+    for file in preview_files(files) {
+        if file.cut {
+            return Some(format!(
+                "{} is too long to show in full ({PREVIEW_CHARS} characters at most), so Wenlan \
+                 refuses this skill",
+                file.path
+            ));
+        }
+        if file.text.is_none() && must_be_readable_text(&file.path) {
+            return Some(format!(
+                "{} is not readable text (not valid UTF-8), so Wenlan refuses this skill",
+                file.path
+            ));
+        }
+    }
+    None
+}
+
+#[path = "skill_registry_actions.rs"]
+pub mod actions;
 
 #[cfg(test)]
 #[path = "skill_registry_tests.rs"]

@@ -722,13 +722,42 @@ and wait for evidence that people need them.
   list and on a rules page of that Space; they do not count until accepted
   (UX-SKILL-1).
   原文：決定 3：「A rules page shows two things. Under each rule, the page it came from. At the top of the page, which AI tools the rules are used in. Wording limit: say the tool is connected and the rules were delivered; never say the AI always follows them.」Qi-Xuan 以輸入「A」回答此題（2026-11-16 22:28Z–22:30Z；記錄於 `/mnt/project-files/readme-2026-11/cover-v3/2026-11-16-app-changes-from-cover.md`，決定 3）；草圖 `Main.dc.html` 右側規則頁（「用在 … 已連接，規則已送達」「來自〈…〉」「你寫的」「AI 從你的頁面整理出一條，還沒算數」「接受／不要」）。
+- **UX-SKILL-12** `shipped` Skills are reached the same way from every door.
+  The skills Wenlan holds (each with where it is used, where it came from and
+  whether it carries the person's additions) and the search of skills.sh are
+  in the app, in the terminal (`wenlan skills list`, `wenlan skills search`)
+  and in an AI tool on this computer (`list_skills`, `search_skills`). The
+  terminal also shows everything in one skill before it is installed
+  (`wenlan skills show`) and the skills the AI tools already have
+  (`wenlan skills scan`). From every door, search never lists a skill that
+  failed a safety check, and lists one with warnings only when asked.
+  原文：待 Qi-Xuan 確認。交辦內容（2026-11-17）：技能要在每個入口都能用，不只桌面 app。
+- **UX-SKILL-13** `shipped` Only the person installs, takes in or removes a
+  skill, because that puts files into every AI tool's folder or takes them
+  away. They do it in the app, or in their own terminal: `wenlan skills
+  install` shows every file, the safety checks and the files that can run,
+  then asks; `wenlan skills import` lists what it would take in, then asks;
+  `wenlan skills remove` names the skill, then asks. Only a typed `yes` goes
+  on, a skill that has not passed its checks asks once more first, and no
+  flag answers for the person; from a pipe, a script or an AI tool's shell
+  the command stops before asking. A skill cannot keep text from the person:
+  the terminal shows the skill's own text, with a visible mark in place of
+  any character that would hide, repaint or not show at all, and says when a
+  file is cut; Wenlan refuses to install or take in a skill with a text file
+  too long to show in full or a `SKILL.md` that is not readable text. An AI
+  tool can list and search but has no tool that installs, takes in or
+  removes, and Wenlan refuses such a request that does not come from the
+  person, or any such request while it listens beyond this computer. A trial
+  run on other data never reads or writes the person's real AI tool folders.
+  原文：待 Qi-Xuan 確認。交辦內容（2026-11-17）：AI 工具不能把檔案放進每個工具的資料夾，也不能替人點頭（UX-WHO-2）；終端機裡要由人明確確認，不能有 `--yes`。
 
 ## From the terminal
 
 - **UX-CLI-1** `shipped` Same things, two doors. Whatever an AI tool can do in
   Wenlan, a person can do from the terminal under the matching name
   (`write_page` is `wenlan pages write`), and `wenlan tool call` reaches any
-  tool by its own name. The terminal adds only installing, setting up and team.
+  tool by its own name. The terminal adds only installing, setting up, team,
+  and what only the person may do with skills (UX-SKILL-12, UX-SKILL-13).
   原文：「建議指令要完整，然後明確跟 MCP 的分工，有時候我還是會不太清楚區別」（2026-11-15 21:03Z）；「要的，以及你其他建議也同意。」（2026-11-15 21:36Z）。
 - **UX-CLI-2** `shipped` `wenlan --help` fits one screen: what a person needs
   in the first week, in named groups. Everything else is under

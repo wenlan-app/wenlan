@@ -389,3 +389,10 @@ main|post|/api/skills/suggestions/{id}/dismiss|wenlan_server::skill_grow::handle
 main|post|/api/skills/suggestions/{id}/undo|wenlan_server::skill_grow::handle_undo_suggestion
 main|get|/api/skills/record|wenlan_server::skill_grow::handle_record
 main|post|/api/skills/record|wenlan_server::skill_grow::handle_self_report
+main|get|/api/skills/registry/search|wenlan_server::skill_registry_routes::handle_registry_search
+main|get|/api/skills/registry/preview|wenlan_server::skill_registry_routes::handle_registry_preview
+main|get|/api/skills/registry/installed|wenlan_server::skill_registry_routes::handle_registry_installed
+main|get|/api/skills/registry/local|wenlan_server::skill_registry_routes::handle_registry_scan_local
+main|post|/api/skills/registry/import|wenlan_server::skill_registry_routes::handle_registry_import_local
+main|post|/api/skills/registry/install|wenlan_server::skill_registry_routes::handle_registry_install
+main|post|/api/skills/registry/remove|wenlan_server::skill_registry_routes::handle_registry_remove

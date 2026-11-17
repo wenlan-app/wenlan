@@ -565,3 +565,332 @@ async fn live_end_to_end() {
         .unwrap();
     assert_eq!(out.outcome, "unchanged");
 }
+
+// ── The whole actions every channel runs (`actions`) ─────────────────────
+
+const AUDIT_PASS: &str = r#"{"audits":[{"provider":"Snyk","status":"pass","summary":"ok"}]}"#;
+const AUDIT_FAIL: &str = r#"{"audits":[{"provider":"Snyk","status":"fail","summary":"bad"}]}"#;
+
+fn install_request(commit: &str) -> wenlan_types::skill_registry::SkillInstallRequest {
+    wenlan_types::skill_registry::SkillInstallRequest {
+        source: "o/r".into(),
+        skill_id: "meeting-notes".into(),
+        commit: commit.into(),
+        repo_path: "skills/meeting-notes".into(),
+        scope: Scope::All,
+    }
+}
+
+#[tokio::test]
+async fn search_checked_leaves_out_failing_skills_and_warns_on_unread_checks() {
+    let fake = Fake::default()
+        .with(
+            "https://s/api/search?q=notes&limit=30",
+            200,
+            r#"{"skills":[{"skillId":"good","name":"good","installs":3,"source":"o/r"},{"skillId":"bad","name":"bad","installs":9,"source":"o/r"},{"skillId":"unknown","name":"unknown","installs":1,"source":"o/r"}]}"#,
+        )
+        .with("https://s/api/v1/skills/audit/o/r/good", 200, AUDIT_PASS)
+        .with("https://s/api/v1/skills/audit/o/r/bad", 200, AUDIT_FAIL);
+    let found = actions::search_checked(&fake, &ep(), "notes")
+        .await
+        .unwrap();
+    assert_eq!(found.via, SearchVia::SkillsSh);
+    let shown: Vec<(&str, Verdict)> = found
+        .rows
+        .iter()
+        .map(|row| (row.hit.skill_id.as_str(), row.verdict))
+        .collect();
+    assert_eq!(
+        shown,
+        vec![("good", Verdict::Pass), ("unknown", Verdict::Warn)]
+    );
+}
+
+#[tokio::test]
+async fn preview_shows_every_file_and_refuses_a_failing_skill_before_fetching() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fake = repo_fake(SHA, SKILL_MD)
+        .with(
+            "https://api/repos/o/r/commits/HEAD",
+            200,
+            format!(r#"{{"sha":"{SHA}"}}"#),
+        )
+        .with(
+            "https://s/api/v1/skills/audit/o/r/meeting-notes",
+            200,
+            AUDIT_PASS,
+        );
+    let seen = actions::preview(&fake, &ep(), tmp.path(), "o/r", "meeting-notes")
+        .await
+        .unwrap();
+    assert_eq!(seen.commit, SHA);
+    assert_eq!(seen.repo_path, "skills/meeting-notes");
+    assert_eq!(seen.name.as_deref(), Some("Meeting Notes"));
+    assert_eq!(
+        seen.files
+            .iter()
+            .map(|f| f.path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["SKILL.md", "scripts/run.sh"]
+    );
+    assert_eq!(seen.files[0].text.as_deref(), Some(SKILL_MD));
+    assert_eq!(seen.runnable, vec!["scripts/run.sh".to_string()]);
+    assert_eq!(seen.safety.verdict, Verdict::Pass);
+    assert_eq!(
+        seen.source_url,
+        format!("https://github.com/o/r/tree/{SHA}/skills/meeting-notes")
+    );
+    assert_eq!(seen.skills_sh_url, "https://skills.sh/o/r/meeting-notes");
+    assert_eq!(seen.installed_as, None);
+
+    // Once held, the preview says under which name.
+    let (fetched, verdict) = actions::fetch_for_install(&fake, &ep(), &install_request(SHA))
+        .await
+        .unwrap();
+    actions::store_and_deliver(tmp.path(), &[], &fetched, verdict, &install_request(SHA), 5)
+        .unwrap();
+    let again = actions::preview(&fake, &ep(), tmp.path(), "o/r", "meeting-notes")
+        .await
+        .unwrap();
+    assert_eq!(again.installed_as.as_deref(), Some("meeting-notes"));
+
+    let failing = Fake::default().with(
+        "https://s/api/v1/skills/audit/o/r/meeting-notes",
+        200,
+        AUDIT_FAIL,
+    );
+    assert_eq!(
+        actions::preview(&failing, &ep(), tmp.path(), "o/r", "meeting-notes").await,
+        Err(RegistryError::FailedSafetyCheck)
+    );
+    assert_eq!(failing.seen().len(), 1, "no file was fetched");
+}
+
+#[tokio::test]
+async fn install_takes_the_commit_looked_at_and_refuses_one_that_now_fails() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("wenlan");
+    let claude = tmp.path().join("claude").join("skills");
+    let agents = tmp.path().join("agents").join("skills");
+    // The person's own same-named folder in the second tool.
+    std::fs::create_dir_all(agents.join("meeting-notes")).unwrap();
+    std::fs::write(agents.join("meeting-notes").join("SKILL.md"), "mine").unwrap();
+    let tools = vec![claude.clone(), agents.clone()];
+
+    let fake = repo_fake(SHA, SKILL_MD).with(
+        "https://s/api/v1/skills/audit/o/r/meeting-notes",
+        200,
+        AUDIT_PASS,
+    );
+    let request = install_request(SHA);
+    let (fetched, verdict) = actions::fetch_for_install(&fake, &ep(), &request)
+        .await
+        .unwrap();
+    let done = actions::store_and_deliver(&root, &tools, &fetched, verdict, &request, 42).unwrap();
+    assert_eq!(done.skill.name, "meeting-notes");
+    assert_eq!(done.skill.commit, SHA);
+    assert_eq!(done.skill.installed_at, 42);
+    assert_eq!(
+        done.tools,
+        vec![claude.join("meeting-notes").display().to_string()]
+    );
+    assert_eq!(
+        done.skipped,
+        vec![agents.join("meeting-notes").display().to_string()]
+    );
+    assert_eq!(
+        std::fs::read_to_string(agents.join("meeting-notes").join("SKILL.md")).unwrap(),
+        "mine"
+    );
+    let rows = actions::installed_rows(&root);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].skill.name, "meeting-notes");
+    assert_eq!(rows[0].additions, "");
+    set_additions(&root, "meeting-notes", "Use our template.").unwrap();
+    assert_eq!(
+        actions::installed_rows(&root)[0].additions.trim(),
+        "Use our template."
+    );
+
+    // The checks are read again at install: a skill that fails by then is
+    // refused and nothing reaches the disk.
+    let other_root = tmp.path().join("other");
+    let failing = repo_fake(SHA, SKILL_MD).with(
+        "https://s/api/v1/skills/audit/o/r/meeting-notes",
+        200,
+        AUDIT_FAIL,
+    );
+    let (fetched, verdict) = actions::fetch_for_install(&failing, &ep(), &request)
+        .await
+        .unwrap();
+    assert_eq!(
+        actions::store_and_deliver(&other_root, &tools, &fetched, verdict, &request, 43),
+        Err(RegistryError::FailedSafetyCheck)
+    );
+    assert!(actions::installed_rows(&other_root).is_empty());
+    assert!(!other_root.exists());
+}
+
+#[test]
+fn import_named_reads_only_what_the_scan_finds() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("wenlan");
+    let claude = tmp.path().join("claude").join("skills");
+    let cursor = tmp.path().join("cursor").join("skills");
+    let mine = claude.join("my-review");
+    std::fs::create_dir_all(&mine).unwrap();
+    std::fs::write(mine.join("SKILL.md"), "---\nname: mine\n---\nBody.\n").unwrap();
+    std::fs::create_dir_all(&cursor).unwrap();
+    // A folder outside every tool folder is not reachable by name or by path.
+    let outside = tmp.path().join("elsewhere").join("secret");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("SKILL.md"), "x").unwrap();
+    let tools = vec![claude.clone(), cursor.clone()];
+
+    let out = actions::import_named(
+        &root,
+        &tools,
+        vec![
+            "my-review".into(),
+            "secret".into(),
+            outside.display().to_string(),
+        ],
+        7,
+    );
+    assert_eq!(out.imported, vec!["my-review".to_string()]);
+    assert_eq!(
+        out.failed,
+        vec![
+            (
+                "secret".to_string(),
+                "not found on this computer".to_string()
+            ),
+            (
+                outside.display().to_string(),
+                "not found on this computer".to_string()
+            ),
+        ]
+    );
+    // The original stays the person's; the other tool got Wenlan's copy.
+    assert!(!mine.join(MANAGED_MARKER).exists());
+    assert!(cursor.join("my-review").join(MANAGED_MARKER).is_file());
+    assert_eq!(actions::installed_rows(&root).len(), 1);
+    // Taking it in twice says so instead of copying again.
+    let again = actions::import_named(&root, &tools, vec!["my-review".into()], 8);
+    assert!(again.imported.is_empty());
+    assert_eq!(again.failed.len(), 1);
+}
+
+#[test]
+fn tool_skill_dirs_lists_only_the_tools_on_this_computer() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("home");
+    let config = tmp.path().join("config");
+    std::fs::create_dir_all(&home).unwrap();
+    assert!(actions::tool_skill_dirs(Some(&home), Some(&config)).is_empty());
+    assert!(actions::tool_skill_dirs(None, None).is_empty());
+
+    std::fs::create_dir_all(home.join(".claude")).unwrap();
+    std::fs::create_dir_all(home.join(".codex")).unwrap();
+    std::fs::create_dir_all(home.join(".gemini")).unwrap();
+    assert_eq!(
+        actions::tool_skill_dirs(Some(&home), Some(&config)),
+        vec![
+            home.join(".claude").join("skills"),
+            // Codex and Cursor share one folder; it is listed once.
+            home.join(".agents").join("skills"),
+            home.join(".gemini").join("skills"),
+        ]
+    );
+}
+
+fn file(path: &str, bytes: impl Into<Vec<u8>>) -> SkillFile {
+    SkillFile {
+        path: path.into(),
+        bytes: bytes.into(),
+    }
+}
+
+/// UX-SKILL-13: a preview says, file by file, whether all of it is shown.
+/// Exactly the limit is whole; one character more is cut, and the cut falls
+/// on a character, never inside one.
+#[test]
+fn ux_skill_13_a_preview_marks_each_file_it_does_not_show_in_full() {
+    let whole = "字".repeat(PREVIEW_CHARS);
+    let longer = format!("{whole}!");
+    let shown = preview_files(&[
+        file("SKILL.md", whole.clone()),
+        file("long.md", longer),
+        file("logo.png", vec![0x89, 0xff, 0x00]),
+    ]);
+    assert_eq!(shown[0].text.as_deref(), Some(whole.as_str()));
+    assert!(!shown[0].cut);
+    assert_eq!(shown[1].text.as_deref(), Some(whole.as_str()));
+    assert!(shown[1].cut);
+    assert_eq!(shown[2].text, None);
+    assert!(!shown[2].cut);
+}
+
+/// UX-SKILL-13: what cannot be shown in full is named as the reason a skill
+/// is refused. A picture or other non-text file is not a reason.
+#[test]
+fn ux_skill_13_text_a_person_cannot_be_shown_is_a_reason_to_refuse() {
+    let fine = [
+        file("SKILL.md", "---\nname: a\n---\nBody.\n"),
+        file("logo.png", vec![0x89, 0xff, 0x00]),
+        file("scripts/run.sh", "echo hi\n"),
+    ];
+    assert_eq!(hidden_from_the_person(&fine), None);
+
+    let long_script = [
+        file("SKILL.md", "ok"),
+        file("scripts/run.py", "#".repeat(PREVIEW_CHARS + 1)),
+    ];
+    assert!(hidden_from_the_person(&long_script)
+        .unwrap()
+        .starts_with("scripts/run.py is too long to show in full"));
+
+    for path in ["SKILL.md", "notes/More.MD", "readme.txt"] {
+        let mut files = vec![file("SKILL.md", "ok")];
+        files.retain(|f| f.path != path);
+        files.push(file(path, b"Do this instead. \xff\xfe".to_vec()));
+        assert!(
+            hidden_from_the_person(&files)
+                .unwrap()
+                .starts_with(&format!("{path} is not readable text")),
+            "{path}"
+        );
+    }
+}
+
+/// UX-SKILL-13: the daemon's install step refuses such a skill and keeps
+/// nothing, while the app's own `store_skill` is unchanged.
+#[test]
+fn ux_skill_13_store_and_deliver_keeps_nothing_of_a_skill_with_hidden_text() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("wenlan");
+    let files = vec![file(
+        "SKILL.md",
+        format!("---\nname: Long\n---\n{}", "x".repeat(PREVIEW_CHARS)),
+    )];
+    let fetched = FetchedSkill {
+        source: "o/r".into(),
+        skill_id: "long".into(),
+        commit: "c".into(),
+        repo_path: String::new(),
+        hash: "h".into(),
+        files,
+    };
+    let request = wenlan_types::skill_registry::SkillInstallRequest {
+        source: "o/r".into(),
+        skill_id: "long".into(),
+        commit: "c".into(),
+        repo_path: String::new(),
+        scope: Scope::All,
+    };
+    let refused = actions::store_and_deliver(&root, &[], &fetched, Verdict::Pass, &request, 1);
+    assert!(
+        matches!(refused, Err(RegistryError::Refused(why)) if why.starts_with("SKILL.md is too long"))
+    );
+    assert!(!root.exists());
+}
