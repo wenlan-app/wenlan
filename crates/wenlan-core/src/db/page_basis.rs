@@ -922,6 +922,12 @@ pub struct BasisWrite {
     pub person_asked: Option<String>,
     /// The earlier version this write puts back ("restored version N").
     pub restored_from: Option<i64>,
+    /// An on-demand steep rewrite bringing a note in line with the pages it
+    /// follows. The person chose to have this note follow those pages, so on
+    /// a note that is not locked the rewrite lands on every sentence, theirs
+    /// included; the old version stays in history. A locked note still waits
+    /// as a whole-page card.
+    pub follows: bool,
 }
 
 /// One basis note as an "update from sources" run read it, recorded on the

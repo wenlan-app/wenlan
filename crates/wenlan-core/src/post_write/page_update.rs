@@ -1666,8 +1666,13 @@ async fn update_page_db_impl(
             // asked for in the conversation, carrying their words. It lands
             // as sent, and the sentences it changed or added are the
             // person's (see `authorship::VersionAuthor::PersonAsked`).
+            // The other is a note the person set to follow other pages, when
+            // it is not locked: bringing it in line with them is what they
+            // asked for (`BasisWrite::follows`).
+            let follows_unlocked = basis.follows && !current.review_required;
             let (gate, keeps_person_text) = if writer.is_machine()
                 && !person_asked_write
+                && !follows_unlocked
                 && !matches!(writer, Writer::Pipeline(PipelineStage::LinkRename))
             {
                 crate::sentences::sentence_gate(db, &current, &req.content).await?

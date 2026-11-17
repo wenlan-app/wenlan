@@ -236,11 +236,14 @@ and wait for evidence that people need them.
   ask an AI tool to change or remove your sentence, the change lands directly:
   history lists it as asked by you, with your words, and restoring an earlier
   version undoes it. The Lock still holds: a locked page still waits as a card.
+  A page you set to follow another page is the same standing ask: when that
+  page changes, the AI tool brings yours in line, your sentences included,
+  and restoring an earlier version undoes it; a locked page waits as a card.
   Such a change is not refused because the page also cites sources its Space
   can no longer read: sentences the change leaves as they were keep their
   citations as they were, and only what it changed is checked against its
   sources. A changed sentence citing an unreadable source is still refused.
-  原文：AI 改不了你的句子，只能提議；提議能一句一句收。（2026-10-31 16:11 選擇卡：AI 自己寫、沒人動過的句子直接更新，可還原；你寫的、改過的、收下的才問你；每頁一個「鎖定」。）選擇卡「只在事实变了时」（2026-10-31 21:44）：AI 只在來源和你的句子對不上、或已經過時時才對你的句子提建議；只是換個說法不提。「尽量不 review 就尽量不 review」。「都同意，請根據這去解決根本問題」（2026-11-08，回覆信任檢查清單：AI 重建你改過的頁時不蓋掉你的修改，改成一張等你收的卡；只有你能收；沒寫進去的修改要說出來）。「寧願這樣，畢竟都已經特別問我且授權了」（2026-11-09，回覆：你授權時 AI 直接改、可還原，還是變成卡片讓你按一下）。「把 wenlan 本身修復掉」（2026-11-10，回覆：你要求改一句話，卻因為那頁有 16 筆來源讀不到而整頁不讓改）。
+  原文：AI 改不了你的句子，只能提議；提議能一句一句收。（2026-10-31 16:11 選擇卡：AI 自己寫、沒人動過的句子直接更新，可還原；你寫的、改過的、收下的才問你；每頁一個「鎖定」。）選擇卡「只在事实变了时」（2026-10-31 21:44）：AI 只在來源和你的句子對不上、或已經過時時才對你的句子提建議；只是換個說法不提。「尽量不 review 就尽量不 review」。「都同意，請根據這去解決根本問題」（2026-11-08，回覆信任檢查清單：AI 重建你改過的頁時不蓋掉你的修改，改成一張等你收的卡；只有你能收；沒寫進去的修改要說出來）。「寧願這樣，畢竟都已經特別問我且授權了」（2026-11-09，回覆：你授權時 AI 直接改、可還原，還是變成卡片讓你按一下）。「把 wenlan 本身修復掉」（2026-11-10，回覆：你要求改一句話，卻因為那頁有 16 筆來源讀不到而整頁不讓改）。「想要自動改，現在不是可以讓人鎖住嗎？」（2026-11-17，回覆：跟著另一頁的頁，那頁改了是 AI 直接改、留舊版可還原，還是等你收；鎖住的頁照樣先問你）。
 - **UX-WHO-3** `shipped` Every sentence has "not right": fix it yourself or ask
   the AI; the AI's fix is still a proposal.
   原文：每一句都能按「不對」：你自己改，或讓 AI 改，AI 改的仍然是提議。
