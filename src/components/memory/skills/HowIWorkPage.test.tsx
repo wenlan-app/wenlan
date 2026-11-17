@@ -15,6 +15,8 @@ const api = vi.hoisted(() => ({
   dismiss: vi.fn(),
   undoSuggestion: vi.fn(),
   updatePage: vi.fn(),
+  delivery: vi.fn(),
+  askSuggestions: vi.fn(),
 }));
 
 vi.mock("../../../lib/tauri", () => ({
@@ -28,6 +30,8 @@ vi.mock("../../../lib/tauri", () => ({
   dismissSkillSuggestion: api.dismiss,
   undoSkillSuggestion: api.undoSuggestion,
   updatePage: api.updatePage,
+  getRulesDelivery: api.delivery,
+  listSpaceRulesSuggestions: api.askSuggestions,
 }));
 
 import { HowIWorkPage } from "./HowIWorkPage";
@@ -78,13 +82,13 @@ const suggestion: SkillSuggestion = {
   source_page: "Release flow",
 };
 
-function renderPage(onOpenPage = vi.fn()) {
+function renderPage(shown: Page = page, onOpenPage = vi.fn()) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   return {
     onOpenPage,
     ...render(
       <QueryClientProvider client={queryClient}>
-        <HowIWorkPage page={page} onOpenPage={onOpenPage} />
+        <HowIWorkPage page={shown} onOpenPage={onOpenPage} />
       </QueryClientProvider>,
     ),
   };
@@ -106,6 +110,8 @@ describe("How-I-work page", () => {
     api.dismiss.mockResolvedValue({ suggestion, applied: false, undo_available: false });
     api.undoSuggestion.mockResolvedValue({ suggestion, applied: false, undo_available: false });
     api.updatePage.mockResolvedValue({ outcome: "saved" });
+    api.delivery.mockResolvedValue([]);
+    api.askSuggestions.mockResolvedValue([]);
   });
 
   it("UX-SKILL-2 shows actions, real borrowing labels and person-edited lines without internal ids", async () => {
@@ -119,8 +125,57 @@ describe("How-I-work page", () => {
     expect(within(borrowedSection).getByText(/Recorded by Wenlan/)).toBeInTheDocument();
     expect(screen.getByText("You changed this")).toBeInTheDocument();
     expect(document.body).not.toHaveTextContent("page-source-1");
-    fireEvent.click(screen.getByRole("button", { name: "Working style" }));
+    // Every line says where it came from; an edited one still names its page.
+    fireEvent.click(screen.getByRole("button", { name: "from “Working style”" }));
     expect(onOpenPage).toHaveBeenCalledWith("page-source-1");
+    expect(screen.getByRole("button", { name: "from “Release flow”" })).toBeInTheDocument();
+  });
+
+  it("UX-SKILL-11, UX-SKILL-10: shows a rule the person wrote on the page as written by you, with no source link and no ids", async () => {
+    renderPage({ ...page, content: `${content}- Ask before changing the plan\n  - a detail, not a rule\n- [ ] a to-do, not a rule\n` });
+    const own = (await screen.findByText("Ask before changing the plan")).closest("li")!;
+    expect(within(own).getByText("written by you")).toBeInTheDocument();
+    expect(within(own).queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.queryByText(/a detail, not a rule|a to-do, not a rule/)).not.toBeInTheDocument();
+    expect(screen.getAllByText("written by you")).toHaveLength(1);
+    expect(document.body).not.toHaveTextContent("own:");
+  });
+
+  it("UX-SKILL-11, UX-SKILL-8: heads the page with the connected AI tools, saying only connected and delivered", async () => {
+    const tool = (id: string, display_name: string, more: object) => ({ id, display_name, connected: true, method: "file", state: "delivered", rule_count: 2, ...more });
+    api.delivery.mockResolvedValue([
+      tool("claude-code", "Claude Code", {}),
+      tool("opencode", "OpenCode", { state: "covered_by_another_file" }),
+      // A tool that asks Wenlan has no file: never shown as delivered.
+      tool("cursor", "Cursor", { method: "mcp", state: "on_request" }),
+      tool("odd", "Odd", { method: "mcp", state: "delivered" }),
+      tool("windsurf", "Windsurf", { state: "over_limit" }),
+      tool("gemini", "Gemini CLI", { state: "blocked", blocked_reason: "read_only" }),
+      tool("codex", "Codex", { state: "out_of_date" }),
+      tool("kiro", "Kiro", { state: "folder_missing" }),
+      tool("zed", "Zed", { connected: false, state: "not_connected" }),
+    ]);
+    renderPage();
+    const header = await screen.findByRole("region", { name: "AI tools these rules are used in" });
+    const rows = [...header.querySelectorAll(".rules-tools-row")].map((row) => row.textContent);
+    expect(rows).toEqual([
+      "Used inClaude CodeOpenCodeconnected, rules delivered",
+      "Used inCursorOddconnected",
+      "Used inCodexconnected, not delivered yet",
+      "Used inWindsurfconnected, not delivered: too long for this tool",
+      "Used inGemini CLIconnected, not delivered: its file can’t be changed safely",
+      "Used inKiroconnected, not delivered",
+    ]);
+    // A tool that is not connected is not listed, and nothing claims the AI
+    // follows or obeys the rules; no path or machine word shows.
+    expect(header).not.toHaveTextContent("Zed");
+    expect(header.textContent).not.toMatch(/follow|obey|comply|read_only|\.md|\//i);
+  });
+
+  it("UX-SKILL-11: says so plainly when no AI tool is connected", async () => {
+    api.delivery.mockResolvedValue([{ id: "zed", display_name: "Zed", connected: false, method: "file", state: "not_connected", rule_count: 0 }]);
+    renderPage();
+    expect(await screen.findByText("No AI tool connected")).toBeInTheDocument();
   });
 
   it("UX-SKILL-2 shows no borrowing section when the record is empty and Stop only adds the opt-out marker", async () => {

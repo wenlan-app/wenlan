@@ -1043,6 +1043,30 @@ export interface SkillLine {
   person_edited?: boolean;
   /** Holds for any project: AI tools read it in every Space (UX-SKILL-5). */
   general?: boolean;
+  /** The person wrote this line themselves; it counts at once (UX-SKILL-10). */
+  hand_written?: boolean;
+}
+
+/** `file`: Wenlan keeps the rules in a file the tool always reads. `mcp`:
+ *  the tool gets them only when it asks Wenlan. */
+export type RulesDeliveryMethod = "file" | "mcp";
+export type RulesDeliveryState =
+  | "delivered" | "covered_by_another_file" | "folder_missing" | "over_limit"
+  | "setting_off" | "isolated_run" | "not_connected" | "no_rules" | "out_of_date"
+  | "blocked" | "on_request";
+
+/** Where one AI tool stands with the rules used in every Space
+ *  (UX-SKILL-8). It says what Wenlan wrote, never whether the AI follows it. */
+export interface ToolRulesDelivery {
+  id: string;
+  display_name: string;
+  connected: boolean;
+  method: RulesDeliveryMethod;
+  state: RulesDeliveryState;
+  blocked_reason?: string | null;
+  /** When Wenlan last wrote its part, unix seconds; only when delivered. */
+  delivered_at?: number | null;
+  rule_count: number;
 }
 
 export interface SpaceRulesSuggestion {
@@ -1121,6 +1145,12 @@ export async function refreshSkills(): Promise<SkillsRefreshResponse> {
 
 export async function undoSpaceRules(spaceId: string): Promise<SpaceRulesActionResponse> {
   return invoke("undo_space_rules", { spaceId });
+}
+
+/** Tool by tool, whether the rules used in every Space reached it. */
+export async function getRulesDelivery(): Promise<ToolRulesDelivery[]> {
+  const response = await invoke<{ tools?: ToolRulesDelivery[] } | null>("get_rules_delivery");
+  return response?.tools ?? [];
 }
 
 export async function listSkillSuggestions(): Promise<SkillSuggestion[]> {

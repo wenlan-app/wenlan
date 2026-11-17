@@ -23,25 +23,70 @@ function parseQuotedText(raw: string): string {
   }
 }
 
-/** Read the page projection without exposing its revision bindings in the UI. */
-export function parseHowIWorkLines(content: string): SkillLine[] {
+const MANAGED_LINE = /^- \[(rule|decision|pitfall)\] (.*?) — Source: (.*) \(([^()]*)\) r(-?\d+) at (-?\d+) — Quote: (.+) <!-- wenlan-rule:([^>]+) -->$/u;
+const BULLET = /^( {0,3})[-*+] +(.*)$/u;
+const TAGGED = /^\[(rule|decision|pitfall)\]\s*/iu;
+
+/** Read the page projection without exposing its revision bindings in the UI.
+ *  A managed line names the page it came from. A plain top-level bullet is a
+ *  rule the person wrote themselves (UX-SKILL-10), read as the daemon reads
+ *  it (`skill_grow::person_rule_lines`): outside code blocks, not a to-do
+ *  box, a rule unless it opens with `[decision]` or `[pitfall]`. The daemon
+ *  also checks who wrote each bullet; the page text alone cannot, so a
+ *  bullet someone else added shows the same here. */
+export function parseHowIWorkLines(content: string, page?: Pick<Page, "id" | "title">): SkillLine[] {
   const lines: SkillLine[] = [];
+  const seen = new Set<string>();
+  let fence: string | null = null;
+  let listIndent: number | null = null;
   for (const raw of content.split(/\r?\n/u)) {
-    if (!raw.includes(RULE_MARKER)) continue;
-    const match = /^- \[(rule|decision|pitfall)\] (.*?) — Source: (.*) \(([^()]*)\) r(-?\d+) at (-?\d+) — Quote: (.+) <!-- wenlan-rule:([^>]+) -->$/u.exec(raw);
-    if (!match) continue;
-    const [, kind, text, sourceTitle, sourcePageId, sourceRevision, sourceRevisionAt, quoted, id] = match;
-    const sourceQuote = parseQuotedText(quoted);
+    const trimmed = raw.trimStart();
+    const opens = ["```", "~~~"].find((mark) => trimmed.startsWith(mark));
+    if (opens) { fence = fence === null ? opens : fence === opens ? null : fence; continue; }
+    if (fence !== null) continue;
+    if (raw.includes(RULE_MARKER)) {
+      const match = MANAGED_LINE.exec(raw);
+      if (!match) continue;
+      const [, kind, text, sourceTitle, sourcePageId, sourceRevision, sourceRevisionAt, quoted, id] = match;
+      const sourceQuote = parseQuotedText(quoted);
+      lines.push({
+        id,
+        kind: kind as SkillLineKind,
+        text,
+        source_page_id: sourcePageId,
+        source_page_title: sourceTitle,
+        source_revision: Number(sourceRevision),
+        source_revision_at: Number(sourceRevisionAt),
+        source_quote: sourceQuote,
+        person_edited: text !== sourceQuote,
+      });
+      continue;
+    }
+    if (trimmed.startsWith("#")) { listIndent = null; continue; }
+    const bullet = BULLET.exec(raw);
+    if (!bullet) continue;
+    const indent = bullet[1].length;
+    if (listIndent !== null && indent >= listIndent + 2) continue;
+    listIndent = indent;
+    const item = bullet[2].trim();
+    if (/^\[[ xX]\]/u.test(item)) continue;
+    const tag = TAGGED.exec(item);
+    const kind = (tag?.[1].toLowerCase() ?? "rule") as SkillLineKind;
+    const text = (tag ? item.slice(tag[0].length) : item).split(/\s+/u).filter(Boolean).join(" ");
+    const key = text.toLowerCase();
+    if (!text || seen.has(key)) continue;
+    seen.add(key);
     lines.push({
-      id,
-      kind: kind as SkillLineKind,
+      id: `own:${lines.length}:${key}`,
+      kind,
       text,
-      source_page_id: sourcePageId,
-      source_page_title: sourceTitle,
-      source_revision: Number(sourceRevision),
-      source_revision_at: Number(sourceRevisionAt),
-      source_quote: sourceQuote,
-      person_edited: text !== sourceQuote,
+      source_page_id: page?.id ?? "",
+      source_page_title: page?.title ?? "",
+      source_revision: 0,
+      source_revision_at: 0,
+      source_quote: text,
+      person_edited: true,
+      hand_written: true,
     });
   }
   return lines;

@@ -17,9 +17,12 @@ import "./howIWork.css";
 type Props = {
   readonly space: Pick<Space, "id" | "name">;
   readonly onOpenPage: (pageId: string) => void;
+  /** `pending`: the same ask on a rules page or the Rules list, as a quiet
+   *  box that only says the lines came from pages and do not count yet. */
+  readonly variant?: "ask" | "pending";
 };
 
-export function SpaceRulesAsk({ space, onOpenPage }: Props) {
+export function SpaceRulesAsk({ space, onOpenPage, variant = "ask" }: Props) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [hidden, setHidden] = useState(false);
@@ -67,10 +70,16 @@ export function SpaceRulesAsk({ space, onOpenPage }: Props) {
   const failed = accept.isError || decline.isError;
 
   return (
-    <section className="space-rules-ask" aria-labelledby={`space-rules-ask-${space.id}`} data-testid="space-rules-ask">
-      <p className="space-rules-ask-crumb">{t("howIWork.ask.crumb", { space: space.name })}</p>
-      <h2 id={`space-rules-ask-${space.id}`}>{t("howIWork.ask.title", { space: space.name })}</h2>
-      <p className="space-rules-ask-subtitle">{t("howIWork.ask.subtitle", { space: space.name })}</p>
+    <section className={variant === "pending" ? "rules-pending" : "space-rules-ask"} aria-labelledby={`space-rules-ask-${space.id}`} data-testid="space-rules-ask">
+      {variant === "pending" ? (
+        <p className="rules-pending-label" id={`space-rules-ask-${space.id}`}>{t("howIWork.pending.label", { count: suggestion.lines.length, space: space.name })}</p>
+      ) : (
+        <>
+          <p className="space-rules-ask-crumb">{t("howIWork.ask.crumb", { space: space.name })}</p>
+          <h2 id={`space-rules-ask-${space.id}`}>{t("howIWork.ask.title", { space: space.name })}</h2>
+          <p className="space-rules-ask-subtitle">{t("howIWork.ask.subtitle", { space: space.name })}</p>
+        </>
+      )}
       <HowIWorkLines lines={suggestion.lines} onOpenPage={onOpenPage} showEdited={false} />
       <label className="space-rules-ask-all">
         <input type="checkbox" checked={allSpaces} disabled={busy} onChange={(event) => setAllSpaces(event.target.checked)} />
@@ -78,10 +87,10 @@ export function SpaceRulesAsk({ space, onOpenPage }: Props) {
       </label>
       <div className="how-i-work-actions">
         <button className="how-i-work-primary" disabled={busy} onClick={() => accept.mutate()} type="button">
-          {t("howIWork.ask.accept")}
+          {t(variant === "pending" ? "howIWork.pending.accept" : "howIWork.ask.accept")}
         </button>
         <button className="how-i-work-secondary" disabled={busy} onClick={() => decline.mutate()} type="button">
-          {t("howIWork.ask.decline")}
+          {t(variant === "pending" ? "howIWork.pending.decline" : "howIWork.ask.decline")}
         </button>
       </div>
       {failed ? <p className="how-i-work-error" role="alert">{t("howIWork.ask.failed")}</p> : null}

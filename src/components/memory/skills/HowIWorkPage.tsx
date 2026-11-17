@@ -19,6 +19,7 @@ import {
   type SkillSuggestion,
 } from "../../../lib/tauri";
 import { HowIWorkLines } from "./HowIWorkLines";
+import { RulesToolsHeader } from "./RulesToolsHeader";
 import {
   HOW_I_WORK_QUERY_KEYS,
   howIWorkSpaceName,
@@ -45,7 +46,7 @@ export function HowIWorkPage({ page, onOpenPage }: Props) {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
   const spaceName = howIWorkSpaceName(page);
-  const lines = useMemo(() => parseHowIWorkLines(page.content), [page.content]);
+  const lines = useMemo(() => parseHowIWorkLines(page.content, page), [page]);
   const stopped = rulesPageStopped(page.content);
   const [writeBusy, setWriteBusy] = useState(false);
   const [writeError, setWriteError] = useState(false);
@@ -153,6 +154,7 @@ export function HowIWorkPage({ page, onOpenPage }: Props) {
 
   return (
     <section className="how-i-work-page" data-testid="how-i-work-page">
+      <RulesToolsHeader />
       {enabled.data === true ? (
         <div className="how-i-work-page-actions" aria-label={t("howIWork.page.actionsLabel")}>
           <button className="how-i-work-quiet-action" disabled={actionBusy} onClick={() => refresh.mutate()} type="button">

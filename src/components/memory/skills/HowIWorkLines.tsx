@@ -56,7 +56,7 @@ export function HowIWorkLines({ lines, onOpenPage, onEditLine, showEdited = true
                     }
                   }}
                 />
-              ) : onEditLine ? (
+              ) : onEditLine && !line.hand_written ? (
                 <button
                   aria-label={t("howIWork.page.editLine", { line: line.text })}
                   className="how-i-work-line-text how-i-work-line-edit"
@@ -68,18 +68,16 @@ export function HowIWorkLines({ lines, onOpenPage, onEditLine, showEdited = true
               ) : (
                 <p className="how-i-work-line-text">{line.text}</p>
               )}
-              {showEdited && line.person_edited ? (
-                <p className="how-i-work-line-source">
-                  {t("howIWork.page.youChanged")}
-                  {line.general ? <span className="how-i-work-line-general"><span aria-hidden="true">·</span>{t("howIWork.general")}</span> : null}
-                </p>
-              ) : (
-                <p className="how-i-work-line-source">
-                  {t("howIWork.sourcePrefix")}{" "}
-                  <button type="button" onClick={() => onOpenPage(line.source_page_id)}>{source}</button>
-                  {line.general ? <span className="how-i-work-line-general"><span aria-hidden="true">·</span>{t("howIWork.general")}</span> : null}
-                </p>
-              )}
+              <p className="how-i-work-line-source">
+                {/* Where the line came from: a page, or the person's own hand. */}
+                {line.hand_written ? (
+                  <span>{t("howIWork.writtenByYou")}</span>
+                ) : (
+                  <button type="button" onClick={() => onOpenPage(line.source_page_id)}>{t("howIWork.from", { title: source })}</button>
+                )}
+                {showEdited && line.person_edited && !line.hand_written ? <span className="how-i-work-line-note">{t("howIWork.page.youChanged")}</span> : null}
+                {line.general ? <span className="how-i-work-line-general"><span aria-hidden="true">·</span>{t("howIWork.general")}</span> : null}
+              </p>
             </div>
           </li>
         );

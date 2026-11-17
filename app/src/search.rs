@@ -4306,6 +4306,17 @@ pub async fn decline_space_rules(
         .await
 }
 
+/// Tool by tool, whether the rules used in every Space reached each
+/// connected AI tool (UX-SKILL-8). It says what Wenlan wrote, never whether
+/// the AI follows it.
+#[tauri::command]
+pub async fn get_rules_delivery(
+    state: tauri::State<'_, State>,
+) -> Result<RulesDeliveryResponse, String> {
+    let client = daemon_client(&state).await;
+    client.get_json_as_person("/api/skills/delivery").await
+}
+
 #[tauri::command]
 pub async fn refresh_skills(
     state: tauri::State<'_, State>,
