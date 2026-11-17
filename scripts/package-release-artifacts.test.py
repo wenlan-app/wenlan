@@ -130,6 +130,29 @@ class PackageReleaseArtifactsTests(unittest.TestCase):
                     {path.name: path.read_bytes() for path in second},
                 )
 
+    def test_budget_is_each_targets_share_of_the_bundle_cap(self) -> None:
+        targets = len(release_matrix()["include"])
+        self.assertEqual(
+            PACKAGE.per_target_budget_bytes(), PACKAGE.MAX_ARCHIVE_BYTES // targets
+        )
+        # 0.22.0 archives were 98-111 MB per target; the share must hold them.
+        self.assertGreater(PACKAGE.per_target_budget_bytes(), 111_000_000)
+
+    def test_archives_over_the_target_budget_fail_closed(self) -> None:
+        target = "x86_64-unknown-linux-gnu"
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            binary_dir = self.make_binary_dir(root, target)
+            original = PACKAGE.MAX_ARCHIVE_BYTES
+            PACKAGE.MAX_ARCHIVE_BYTES = 8
+            try:
+                with self.assertRaisesRegex(ArchiveError, "release bundle cap"):
+                    PACKAGE.package_target(
+                        target, binary_dir, root / "dist", 1_700_000_000
+                    )
+            finally:
+                PACKAGE.MAX_ARCHIVE_BYTES = original
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -851,6 +851,8 @@ jobs:
               - 'scripts/setup-msvc-ninja-windows.test.ps1'
               - 'scripts/release_targets.py'
               - 'scripts/release_targets.test.py'
+              - 'scripts/package-release-artifacts.py'
+              - 'scripts/release_archive.py'
               - 'scripts/build-release-binaries.sh'
               - 'scripts/build-release-binaries.test.sh'
               - '.github/workflows/ci.yml'
@@ -2610,6 +2612,22 @@ jobs:
             throw "incomplete Windows cache layout: host=$hostCount target=$targetCount"
           }
           Write-Host "Windows cache layout receipt: marker=present host_deps=$hostCount target_deps=$targetCount"
+      - name: Rehearse release archive packaging
+        # Same packaging and size budget as the release PR, on every other
+        # preflight run, so a build change that breaks packaging or outgrows
+        # the release bundle cap fails on its own PR. Nothing is uploaded.
+        if: "!(github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.ref == 'release-please--branches--main' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.repo.fork == false && github.event.pull_request.draft == false && github.event.pull_request.user.login == '7xuanlu')"
+        shell: bash
+        run: |
+          rm -rf dist
+          source_date_epoch="$(git show -s --format=%ct HEAD)"
+          if command -v python3 >/dev/null 2>&1; then py=python3; else py=python; fi
+          "$py" scripts/package-release-artifacts.py \
+            --target "${{ matrix.target }}" \
+            --binary-dir "target/${{ matrix.target }}/release" \
+            --output-dir dist \
+            --source-date-epoch "$source_date_epoch"
+          rm -rf dist
       - name: Package canonical release candidate archives
         if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.ref == 'release-please--branches--main' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.repo.fork == false && github.event.pull_request.draft == false && github.event.pull_request.user.login == '7xuanlu'
         shell: bash
