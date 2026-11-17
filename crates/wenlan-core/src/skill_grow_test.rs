@@ -829,3 +829,44 @@ fn ux_skill_10_only_the_persons_own_versions_bring_in_a_rule() {
         assert!(!version_is_the_persons_own(other), "{other}");
     }
 }
+
+#[test]
+fn ux_skill_10_a_space_named_rules_does_not_take_pages_from_the_persons_rules_folder() {
+    use crate::space_folders::{layout, plan, LayoutInput, Placement, Record, Step};
+    let layout = layout(&LayoutInput {
+        spaces: vec!["Rules".into(), "Work".into()],
+        top_folders: vec!["Rules".into(), "Work".into()],
+        ..Default::default()
+    });
+    let page = |id: &str, file: &str| Placement {
+        id: id.into(),
+        file: file.into(),
+        space: None,
+    };
+    // Both pages were made in no Space and recorded at the top.
+    let record = Record {
+        format: 1,
+        placed: [("rule", ""), ("note", "")]
+            .map(|(id, at)| (id.to_string(), at.to_string()))
+            .into_iter()
+            .collect(),
+    };
+    let steps = plan(
+        &[
+            page("rule", "Rules/how-we-work.md"),
+            page("note", "Work/idea.md"),
+        ],
+        &layout,
+        &Default::default(),
+        &record,
+        &[],
+    );
+    assert_eq!(
+        steps,
+        vec![Step::SetSpace {
+            id: "note".into(),
+            space: "Work".into()
+        }],
+        "a page in the Rules folder is not moved into the Space named Rules"
+    );
+}

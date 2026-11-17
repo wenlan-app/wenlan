@@ -432,6 +432,16 @@ pub fn plan(
                 if want.is_empty() {
                     match owner(dir, layout) {
                         None => keep(),
+                        // In the folder the person keeps their rules in,
+                        // which a Space named Rules now shares: it was not
+                        // dragged there, and stays a page in no Space.
+                        Some(now)
+                            if layout
+                                .get(&now)
+                                .is_some_and(|f| crate::skill_grow::has_rules_folder(f)) =>
+                        {
+                            continue
+                        }
                         // Put at the top, then dragged into a personal
                         // Space's folder: that Space.
                         Some(now) if at_top && personal(&Some(now.clone())) => Step::SetSpace {

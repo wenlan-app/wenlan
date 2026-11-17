@@ -667,12 +667,6 @@ impl OwnRulePages {
         }
         let layout = wenlan_core::space_folders::current_layout(db, root).await?;
         for (id, (file, person_note)) in files {
-            // The Space's own folder (or its team's) is not a folder the
-            // person named: only the folders inside it count.
-            let placed = wenlan_core::space_folders::placed(&file, &layout);
-            if !skill_grow::has_rules_folder(&placed.inside) {
-                continue;
-            }
             let Some(page) = db.get_page(&id).await? else {
                 continue;
             };
@@ -682,13 +676,31 @@ impl OwnRulePages {
             {
                 continue;
             }
-            let space = page
+            let own_space = page
                 .space
                 .as_deref()
                 .map(str::trim)
                 .filter(|name| !name.is_empty() && *name != "uncategorized")
-                .map(str::to_string)
-                .or(placed.space);
+                .map(str::to_string);
+            // The Space's own folder (or its team's) is not a folder the
+            // person named: only the folders inside it count.
+            let mut placed = wenlan_core::space_folders::placed(&file, &layout);
+            // Unless a Space that happens to be named Rules now sits on the
+            // folder the person keeps their rules in: for a page that is not
+            // in that Space the folder still means rules, as it did before
+            // the Space was made.
+            let on_a_rules_folder = placed.space.as_ref().is_some_and(|space| {
+                layout.get(space).is_some_and(|folder| {
+                    !folder.contains('/') && skill_grow::has_rules_folder(folder)
+                })
+            });
+            if own_space.is_none() && on_a_rules_folder {
+                placed = wenlan_core::space_folders::placed(&file, &Default::default());
+            }
+            if !skill_grow::has_rules_folder(&placed.inside) {
+                continue;
+            }
+            let space = own_space.or(placed.space);
             // A file in a team's folder but in none of its Spaces has no
             // Space to give rules to, and is never the person's general one.
             if space.is_none() && placed.team_only {

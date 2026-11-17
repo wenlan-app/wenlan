@@ -2216,3 +2216,67 @@ async fn ux_skill_10_many_saves_in_a_row_do_not_queue_a_sync_each() {
         .unwrap()
         .contains("- First"));
 }
+
+#[tokio::test]
+async fn ux_skill_10_a_space_named_rules_does_not_silence_the_persons_rules_folder() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(true).await;
+    wenlan_core::space_folders::turn_on(&scratch.pages).unwrap();
+    write_page_in_folder(
+        &scratch,
+        1,
+        None,
+        "Rules",
+        "How we work",
+        "- Answer in plain words\n",
+        "publish",
+    )
+    .await;
+    sync_rules_files_in(&scratch.db, Some(&scratch.pages), &scratch.skill_dirs()).await;
+    let general = scratch.data.join("AGENTS.md");
+    assert!(std::fs::read_to_string(&general)
+        .unwrap()
+        .contains("Answer in plain words"));
+
+    // A Space that happens to be named like the folder, in another case.
+    scratch.db.create_space("rules", None, false).await.unwrap();
+    sync_rules_files_in(&scratch.db, Some(&scratch.pages), &scratch.skill_dirs()).await;
+    assert_eq!(
+        texts(&read_rules_as_codex(&scratch, None).await),
+        vec!["Answer in plain words"],
+        "the page is in no Space: its rules still hold everywhere"
+    );
+    assert!(std::fs::read_to_string(&general)
+        .unwrap()
+        .contains("Answer in plain words"));
+
+    // A page that is in that Space sits in the Space's own folder, which is
+    // not a rules folder; one in a Rules folder inside it is.
+    write_page_in_folder(
+        &scratch,
+        2,
+        Some("rules"),
+        "Rules",
+        "Plain",
+        "- Not a rule\n",
+        "publish",
+    )
+    .await;
+    write_page_in_folder(
+        &scratch,
+        3,
+        Some("rules"),
+        "Rules/Rules",
+        "Inner",
+        "- A rule of this Space\n",
+        "publish",
+    )
+    .await;
+    assert_eq!(
+        texts(&read_rules_as_codex(&scratch, Some("rules")).await),
+        vec!["A rule of this Space", "Answer in plain words"]
+    );
+}
