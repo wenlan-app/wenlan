@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=6a3746cbc4c8febd2bcc8554b4bb74f383862ff62c2372589d9d6c5ca58fb194 -->
+<!-- README_SYNC: source=README.md sha256=68541013432cdb2f734f25767882905f29693ff410202bdb10dbd4cd5d60f2dd -->
 
 <p align="center">
   <picture>
@@ -220,7 +220,7 @@ Conecta tus herramientas de IA y pregunta por la pull request diaria. Con el plu
 
 ## Para lectores técnicos
 
-**Una base de conocimiento local.** La app, la CLI y las herramientas de IA conectadas leen y escriben a través del servicio local de Wenlan. Las páginas son archivos Markdown; las memorias, relaciones e índices de búsqueda viven en libSQL local. El servicio, la CLI y el servidor MCP están escritos en Rust; la app de escritorio usa Tauri con React y TypeScript.
+**Una base de conocimiento local.** La app, la CLI y las herramientas de IA conectadas leen y escriben a través del servicio local de Wenlan. Las páginas son archivos Markdown; las memorias, relaciones e índices de búsqueda viven en libSQL local. El servicio, la CLI y el servidor MCP están escritos en Rust; la app de escritorio usa Tauri con React y TypeScript. Un servidor de equipo ejecuta el mismo servicio en una máquina compartida, y el Wenlan de cada miembro sincroniza con él las páginas compartidas.
 
 <p align="center">
   <img src="./docs/assets/wenlan-architecture-es-ES.png" alt="Vista de la arquitectura: la app y las herramientas de IA comparten una base de conocimiento local, con modelos opcionales para la organización en segundo plano." width="100%">
@@ -283,6 +283,7 @@ Al importar una bóveda de Obsidian de 10.000 notas en 0.20.2 (notas inventadas,
 - [Archivos locales, copias y uso sin conexión](docs/setup-and-data.es-ES.md)
 - [Privacidad](docs/PRIVACY.md)
 - [Diagnóstico e incidencias](https://wenlan.app/docs/diagnostics-and-issue-reports)
+- [Servidor de equipo](docs/team-server.md)
 - [Novedades de cada versión](CHANGELOG.md)
 - [Índice completo de documentación](docs/README.md)
 

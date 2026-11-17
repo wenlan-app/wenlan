@@ -207,7 +207,7 @@ It connects your AI tools and asks once about a daily pull request. With the plu
 
 ## For technical readers
 
-**One local knowledge base.** The app, CLI, and connected AI tools read and write through Wenlan’s local service. Pages are Markdown files; memories, relationships, and search indexes live in local libSQL. The service, CLI, and MCP server are written in Rust; the desktop app uses Tauri with React and TypeScript.
+**One local knowledge base.** The app, CLI, and connected AI tools read and write through Wenlan’s local service. Pages are Markdown files; memories, relationships, and search indexes live in local libSQL. The service, CLI, and MCP server are written in Rust; the desktop app uses Tauri with React and TypeScript. A team server runs the same service on a shared machine, and each member's Wenlan syncs the shared pages with it.
 
 <p align="center">
   <img src="./docs/assets/wenlan-architecture.png" alt="Architecture overview: App and AI tools share a local knowledge base, with optional background enrichment models." width="100%">
@@ -270,6 +270,7 @@ Importing a 10,000-note Obsidian vault in 0.20.2 (invented notes, M2 Pro Mac wit
 - [Local files, backups, and offline use](docs/setup-and-data.md)
 - [Privacy](docs/PRIVACY.md)
 - [Doctor and issue reports](https://wenlan.app/docs/diagnostics-and-issue-reports)
+- [Team server](docs/team-server.md)
 - [What's new in each release](CHANGELOG.md)
 - [Full documentation index](docs/README.md)
 

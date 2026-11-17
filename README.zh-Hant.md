@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=6a3746cbc4c8febd2bcc8554b4bb74f383862ff62c2372589d9d6c5ca58fb194 -->
+<!-- README_SYNC: source=README.md sha256=68541013432cdb2f734f25767882905f29693ff410202bdb10dbd4cd5d60f2dd -->
 
 <p align="center">
   <picture>
@@ -221,7 +221,7 @@ wenlan init
 
 ## 給技術讀者
 
-**共用本地知識庫。** App、CLI 與連上的 AI 工具透過文瀾的本地服務讀寫。筆記以 Markdown 檔保存；記憶、關係與搜尋索引存在本地 libSQL。本地服務、CLI 和 MCP server 用 Rust 寫成；桌面 app 用 Tauri，介面是 React 和 TypeScript。
+**共用本地知識庫。** App、CLI 與連上的 AI 工具透過文瀾的本地服務讀寫。頁面以 Markdown 檔保存；記憶、關係與搜尋索引存在本地 libSQL。本地服務、CLI 和 MCP server 用 Rust 寫成；桌面 app 用 Tauri，介面是 React 和 TypeScript。團隊伺服器是在一台共用機器上跑同一個服務，每位成員的文瀾和它同步共用的頁面。
 
 <p align="center">
   <img src="./docs/assets/wenlan-architecture-zh-Hant.png" alt="架構示意：App 與 AI 工具共用本地知識庫，背景整理模型為選配。" width="100%">
@@ -284,6 +284,7 @@ wenlan init
 - [本地檔案、備份與離線使用](docs/setup-and-data.zh-Hant.md)
 - [隱私](docs/PRIVACY.md)
 - [Doctor 與問題回報](https://wenlan.app/docs/diagnostics-and-issue-reports)
+- [團隊伺服器](docs/team-server.md)
 - [每次發佈的更新紀錄](CHANGELOG.md)
 - [完整文件索引](docs/README.md)
 
