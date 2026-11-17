@@ -45,6 +45,8 @@ export type ReviewItem =
       agent: string | null;
       /** Why a page revision needs review ("authored", "locked", "background", "owned"). */
       reviewReason?: string | null;
+      /** With reviewReason "follows": the page this one follows. */
+      followsTitle?: string | null;
       timestampMs: number | null;
     }
   | {
@@ -199,6 +201,7 @@ export function useReviewQueue(enabled: boolean = true, scope: "default" | "note
           content: item.revision_content,
           agent: sharedWriter(item.edited_by, shares.data, t) ?? agentDisplayName(item.source_agent),
           reviewReason: item.review_reason ?? null,
+          followsTitle: item.follows_title ?? null,
           timestampMs: item.last_modified ? item.last_modified * 1000 : null,
         }),
       ),

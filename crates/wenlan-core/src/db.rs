@@ -47709,6 +47709,11 @@ impl MemoryDB {
                     .map(str::to_string)
             });
             let review_reason = revision_review_reason(structured_fields.as_ref());
+            let follows_title = structured_fields
+                .as_ref()
+                .and_then(|fields| fields.get("follows_title"))
+                .and_then(|title| title.as_str())
+                .map(str::to_string);
             let edited_by = structured_fields
                 .as_ref()
                 .and_then(|v| v.get("edited_by"))
@@ -47756,6 +47761,7 @@ impl MemoryDB {
                 target_kind: revision_target_kind(row.get::<i64>(6).unwrap_or(0)),
                 grounded_in,
                 review_reason,
+                follows_title,
                 edited_by,
             });
         }
@@ -47892,6 +47898,11 @@ impl MemoryDB {
                     .map(str::to_string)
             });
             let review_reason = revision_review_reason(structured_fields.as_ref());
+            let follows_title = structured_fields
+                .as_ref()
+                .and_then(|fields| fields.get("follows_title"))
+                .and_then(|title| title.as_str())
+                .map(str::to_string);
             let edited_by = structured_fields
                 .as_ref()
                 .and_then(|v| v.get("edited_by"))
@@ -47939,6 +47950,7 @@ impl MemoryDB {
                 target_kind: revision_target_kind(row.get::<i64>(6).unwrap_or(0)),
                 grounded_in,
                 review_reason,
+                follows_title,
                 edited_by,
             });
         }

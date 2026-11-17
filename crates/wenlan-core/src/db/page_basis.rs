@@ -949,6 +949,10 @@ pub struct StagedBasisMark {
     pub basis_page_id: String,
     pub version: i64,
     pub incarnation: String,
+    /// The write brought a note in line with a page it follows
+    /// (`BasisWrite::follows`), so the card can say which page changed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub follows: bool,
 }
 
 /// A basis note's current text, as context for an "update from sources" run.
@@ -1552,6 +1556,7 @@ impl MemoryDB {
                 basis_page_id: basis_page_id.clone(),
                 version: *version,
                 incarnation: basis.incarnation,
+                follows: false,
             });
         }
         Ok(staged)

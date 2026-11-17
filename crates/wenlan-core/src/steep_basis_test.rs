@@ -183,6 +183,16 @@ async fn a_locked_note_gets_a_revision_card_and_the_page_waits() {
     .await
     .unwrap();
     assert_eq!(done.outcome, "review_card");
+    // The card says which page changed, not only that the note is locked.
+    let card = db
+        .list_pending_revisions(10)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|card| card.target_source_id == "intro")
+        .expect("the card is listed");
+    assert_eq!(card.review_reason.as_deref(), Some("follows"));
+    assert_eq!(card.follows_title.as_deref(), Some("Positioning"));
     let after = db.get_page("intro").await.unwrap().unwrap();
     assert_eq!(
         after.content, CITER_V1,

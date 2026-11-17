@@ -96,6 +96,19 @@ describe("NoteReviewNotice with a basis", () => {
     expect(notice).toHaveClass("note-review-notice--attention");
   });
 
+  it("asks once when a revision card already brings in the change", async () => {
+    vi.mocked(listPendingRevisions).mockResolvedValue([{
+      target_source_id: "page-1", revision_source_id: "mem_card", revision_content: "New body",
+      source_agent: "claude-code", last_modified: 1_760_000_000, target_kind: "page",
+      review_reason: "follows", follows_title: "Pricing",
+    }]);
+    renderNotice({ ...basePage, review_required: true, basis: [pending()] });
+
+    await screen.findByText(/1 item needs review/);
+    expect(screen.queryByText(/has an update to confirm/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Confirm no impact" })).toBeNull();
+  });
+
   it("draws no empty review row above the basis lines", async () => {
     const { container } = renderNotice({ ...basePage, basis: [pending()] });
 
