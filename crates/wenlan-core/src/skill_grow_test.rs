@@ -475,22 +475,133 @@ fn ux_skill_8_tool_rules_block_is_added_replaced_and_taken_out_again() {
     assert!(block.contains("- Discuss first.\n"));
 
     let mine = "# Mine\n\nUse pnpm.\n";
-    let with = upsert_tool_rules_block(mine, Some(&block));
+    let with = upsert_tool_rules_block(mine, Some(&block)).unwrap();
     assert!(with.starts_with("# Mine\n\nUse pnpm.\n\n<!-- WENLAN:RULES:START -->"));
     let edited = format!("{with}\nAfter.\n");
     let second = [line(SkillLineKind::Rule, "b", "Answer first.", "q")];
-    let replaced = upsert_tool_rules_block(&edited, tool_rules_block(&second).as_deref());
+    let replaced = upsert_tool_rules_block(&edited, tool_rules_block(&second).as_deref()).unwrap();
     assert!(replaced.contains("- Answer first.") && !replaced.contains("Discuss first."));
     assert!(replaced.contains("Use pnpm.") && replaced.contains("After."));
     assert_eq!(replaced.matches(TOOL_RULES_START).count(), 1);
 
-    assert_eq!(upsert_tool_rules_block(&with, None), mine);
+    assert_eq!(upsert_tool_rules_block(&with, None).unwrap(), mine);
     assert_eq!(
-        upsert_tool_rules_block(&replaced, None),
+        upsert_tool_rules_block(&replaced, None).unwrap(),
         "# Mine\n\nUse pnpm.\n\nAfter.\n"
     );
-    assert_eq!(upsert_tool_rules_block(&format!("{block}\n"), None), "");
-    assert_eq!(upsert_tool_rules_block(mine, None), mine);
+    assert_eq!(
+        upsert_tool_rules_block(&format!("{block}\n"), None).unwrap(),
+        ""
+    );
+    assert_eq!(upsert_tool_rules_block(mine, None).unwrap(), mine);
+}
+
+fn one_rule_block() -> String {
+    tool_rules_block(&[line(SkillLineKind::Rule, "a", "Discuss first.", "q")]).unwrap()
+}
+
+#[test]
+fn ux_skill_8_half_or_doubled_markers_leave_the_text_alone() {
+    let block = one_rule_block();
+    let pair = format!("{TOOL_RULES_START}\n- old\n{TOOL_RULES_END}\n");
+    for (text, reason) in [
+        (
+            format!("# Mine\n{TOOL_RULES_START}\nmy notes below\nmore notes\n"),
+            "start_marker_without_end",
+        ),
+        (
+            format!("# Mine\n{TOOL_RULES_END}\nmy notes\n"),
+            "end_marker_without_start",
+        ),
+        (
+            format!("{TOOL_RULES_END}\nmine\n{TOOL_RULES_START}\n"),
+            "end_marker_before_start",
+        ),
+        (format!("{pair}\nmine\n\n{pair}"), "more_than_one_part"),
+        (format!("{TOOL_RULES_START}\n{pair}"), "more_than_one_part"),
+    ] {
+        assert_eq!(upsert_tool_rules_block(&text, Some(&block)), Err(reason));
+        assert_eq!(upsert_tool_rules_block(&text, None), Err(reason));
+    }
+}
+
+#[test]
+fn ux_skill_8_a_marker_quoted_in_a_sentence_or_a_code_fence_is_the_persons_text() {
+    let block = one_rule_block();
+    let prose = format!(
+        "Wenlan keeps its part after `{TOOL_RULES_START}` in this file.\n\
+         It ends at {TOOL_RULES_END} they say.\n"
+    );
+    let fenced = format!(
+        "# Notes\n\n```md\n{TOOL_RULES_START}\nan example of mine\n{TOOL_RULES_END}\n```\n\
+         \n1. In a list:\n   ~~~\n   {TOOL_RULES_START}\n   ~~~\n"
+    );
+    for mine in [prose, fenced] {
+        assert!(!holds_tool_rules_block(&mine));
+        assert_eq!(upsert_tool_rules_block(&mine, None).unwrap(), mine);
+        let with = upsert_tool_rules_block(&mine, Some(&block)).unwrap();
+        assert_eq!(with, format!("{mine}\n{block}\n"));
+        // A second pass changes nothing and taking it out gives the text back.
+        assert_eq!(upsert_tool_rules_block(&with, Some(&block)).unwrap(), with);
+        assert_eq!(upsert_tool_rules_block(&with, None).unwrap(), mine);
+    }
+    // A fence left open would swallow the part, so nothing is added.
+    let open = "# Notes\n\n```\nnever closed\n";
+    assert_eq!(
+        upsert_tool_rules_block(open, Some(&block)),
+        Err("part_would_not_read_back")
+    );
+}
+
+#[test]
+fn ux_skill_8_line_endings_last_line_and_byte_order_mark_stay_the_persons() {
+    let block = one_rule_block();
+    let crlf_block = block.replace('\n', "\r\n");
+
+    let crlf = "# Mine\r\n\r\nUse pnpm.\r\n";
+    let with = upsert_tool_rules_block(crlf, Some(&block)).unwrap();
+    assert_eq!(with, format!("{crlf}\r\n{crlf_block}\r\n"));
+    assert!(!with.replace("\r\n", "").contains('\n'));
+    assert_eq!(upsert_tool_rules_block(&with, None).unwrap(), crlf);
+
+    // Text the person adds on both sides is kept byte for byte.
+    let around = format!("Top.\r\n\r\n{crlf_block}\r\n\r\nmixed\nlines  \r\n\tend");
+    let second = tool_rules_block(&[line(SkillLineKind::Rule, "b", "Answer first.", "q")])
+        .unwrap()
+        .replace('\n', "\r\n");
+    let replaced = upsert_tool_rules_block(&around, Some(&second.replace("\r\n", "\n"))).unwrap();
+    assert_eq!(
+        replaced,
+        format!("Top.\r\n\r\n{second}\r\n\r\nmixed\nlines  \r\n\tend")
+    );
+
+    let no_newline = "# Mine\n\nlast line";
+    let with = upsert_tool_rules_block(no_newline, Some(&block)).unwrap();
+    assert_eq!(with, format!("{no_newline}\n\n{block}"));
+    assert_eq!(upsert_tool_rules_block(&with, None).unwrap(), no_newline);
+
+    let spaces = "mine  \n\n\n";
+    let with = upsert_tool_rules_block(spaces, Some(&block)).unwrap();
+    assert!(with.starts_with(spaces));
+    assert_eq!(upsert_tool_rules_block(&with, None).unwrap(), spaces);
+
+    for bom in ["\u{feff}# Mine\n", "\u{feff}"] {
+        let with = upsert_tool_rules_block(bom, Some(&block)).unwrap();
+        assert!(with.starts_with(bom) && holds_tool_rules_block(&with));
+        assert_eq!(upsert_tool_rules_block(&with, Some(&block)).unwrap(), with);
+        assert_eq!(upsert_tool_rules_block(&with, None).unwrap(), bom);
+    }
+}
+
+#[test]
+fn ux_skill_8_lines_in_fenced_code_are_not_read_as_lines_of_the_file() {
+    let text =
+        "@one.md\n```\n@two.md\n```\n> ~~~~\n> @three.md\n> ~~~\n> @four.md\n> ~~~~\n@five.md";
+    let lines: Vec<&str> = lines_outside_code_fences(text)
+        .into_iter()
+        .map(|(_, line)| line)
+        .collect();
+    assert_eq!(lines, ["@one.md", "@five.md"]);
 }
 
 #[test]

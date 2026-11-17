@@ -883,29 +883,210 @@ pub fn is_wenlan_rules_text(text: &str) -> bool {
     false
 }
 
+/// A code fence opener or closer on `line`: its character and length. The
+/// line may sit in a quote or a list item, so a fence the person indented or
+/// quoted still counts; reading too much as a fence only ever leaves a file
+/// alone.
+fn code_fence(line: &str) -> Option<(char, usize, &str)> {
+    let mut rest = line.trim_start_matches(|c: char| c.is_whitespace() || c == '>');
+    for marker in ["- ", "* ", "+ "] {
+        if let Some(inner) = rest.strip_prefix(marker) {
+            rest = inner.trim_start();
+            break;
+        }
+    }
+    let digits = rest.chars().take_while(char::is_ascii_digit).count();
+    if digits > 0 {
+        if let Some(inner) = rest[digits..]
+            .strip_prefix(". ")
+            .or_else(|| rest[digits..].strip_prefix(") "))
+        {
+            rest = inner.trim_start();
+        }
+    }
+    let fence = rest.chars().next().filter(|c| *c == '`' || *c == '~')?;
+    let length = rest.chars().take_while(|c| *c == fence).count();
+    (length >= 3).then(|| (fence, length, &rest[length..]))
+}
+
+/// Every line of `text` outside fenced code, with the byte range of its
+/// content (no line ending). A fence left open runs to the end.
+pub fn lines_outside_code_fences(text: &str) -> Vec<(std::ops::Range<usize>, &str)> {
+    let mut lines = Vec::new();
+    let mut open: Option<(char, usize)> = None;
+    let mut at = 0;
+    for raw in text.split_inclusive('\n') {
+        let line = raw.strip_suffix('\n').unwrap_or(raw);
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        let range = at..at + line.len();
+        at += raw.len();
+        match (open, code_fence(line)) {
+            (Some((fence, length)), Some((closer, closer_length, tail)))
+                if closer == fence && closer_length >= length && tail.trim().is_empty() =>
+            {
+                open = None;
+            }
+            (Some(_), _) => {}
+            (None, Some((fence, length, tail))) if fence != '`' || !tail.contains('`') => {
+                open = Some((fence, length));
+            }
+            (None, _) => lines.push((range, line)),
+        }
+    }
+    lines
+}
+
+/// Where Wenlan's part sits in a tool's file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ToolRulesMarks {
+    None,
+    /// From the first byte of the START line to the last of the END line.
+    One(std::ops::Range<usize>),
+    /// The markers are not one START followed by one END. The file may hold
+    /// the person's own text between or after them, so it is left alone.
+    Broken(&'static str),
+}
+
+/// A marker counts only alone on its line and outside fenced code: a marker
+/// the person quotes in a sentence or an example is their text.
+fn tool_rules_marks(text: &str) -> ToolRulesMarks {
+    let mut starts = Vec::new();
+    let mut ends = Vec::new();
+    for (range, line) in lines_outside_code_fences(text) {
+        let line = line.trim().trim_start_matches('\u{feff}');
+        if line == TOOL_RULES_START {
+            starts.push(range);
+        } else if line == TOOL_RULES_END {
+            ends.push(range);
+        }
+    }
+    match (starts.as_slice(), ends.as_slice()) {
+        ([], []) => ToolRulesMarks::None,
+        ([start], [end]) if start.start < end.start => {
+            // A byte-order mark before the START line stays the file's own.
+            let from = start.start + text[start.clone()].len()
+                - text[start.clone()].trim_start_matches('\u{feff}').len();
+            ToolRulesMarks::One(from..end.end)
+        }
+        ([_], [_]) => ToolRulesMarks::Broken("end_marker_before_start"),
+        ([_], []) => ToolRulesMarks::Broken("start_marker_without_end"),
+        ([], [_]) => ToolRulesMarks::Broken("end_marker_without_start"),
+        _ => ToolRulesMarks::Broken("more_than_one_part"),
+    }
+}
+
+/// Whether `text` holds exactly one part of Wenlan's.
+pub fn holds_tool_rules_block(text: &str) -> bool {
+    matches!(tool_rules_marks(text), ToolRulesMarks::One(_))
+}
+
+/// The line ending most lines of `text` have; `\n` when it has none.
+fn dominant_line_ending(text: &str) -> &'static str {
+    let crlf = text.matches("\r\n").count();
+    let lf = text.matches('\n').count() - crlf;
+    if crlf > lf {
+        "\r\n"
+    } else {
+        "\n"
+    }
+}
+
+fn strip_line_ending(text: &str) -> Option<&str> {
+    text.strip_suffix("\r\n")
+        .or_else(|| text.strip_suffix('\n'))
+}
+
+fn skip_line_ending(text: &str) -> Option<&str> {
+    text.strip_prefix("\r\n")
+        .or_else(|| text.strip_prefix('\n'))
+}
+
 /// `text` with Wenlan's block replaced by `block`, appended when it has none,
-/// or taken out when `block` is `None`. Text outside the markers is kept as
-/// it is.
-pub fn upsert_tool_rules_block(text: &str, block: Option<&str>) -> String {
-    let found = match (text.find(TOOL_RULES_START), text.find(TOOL_RULES_END)) {
-        (Some(start), Some(end)) if start < end => Some((start, end + TOOL_RULES_END.len())),
-        _ => None,
+/// or taken out when `block` is `None`. Every byte outside Wenlan's part
+/// stays as it is: the file's own line endings (the block takes the ones
+/// most of the file has), its last line with or without an ending, and a
+/// byte-order mark. Taking the part out also takes out the blank line and
+/// line ending that adding it put in.
+///
+/// `Err` names why the file must be left exactly as it is: its markers are
+/// not one START followed by one END, each alone on a line outside fenced
+/// code, or a change would not leave it that way.
+pub fn upsert_tool_rules_block(text: &str, block: Option<&str>) -> Result<String, &'static str> {
+    let marks = tool_rules_marks(text);
+    let outside = match &marks {
+        ToolRulesMarks::One(range) => format!("{}{}", &text[..range.start], &text[range.end..]),
+        _ => text.to_string(),
     };
-    match (found, block) {
-        (Some((start, end)), Some(block)) => format!("{}{block}{}", &text[..start], &text[end..]),
-        (Some((start, end)), None) => {
-            let before = text[..start].trim_end();
-            let after = text[end..].trim_start();
-            match (before.is_empty(), after.is_empty()) {
-                (true, true) => String::new(),
-                (true, false) => after.to_string(),
-                (false, true) => format!("{before}\n"),
-                (false, false) => format!("{before}\n\n{after}"),
+    let ending = if outside.contains('\n') {
+        dominant_line_ending(&outside)
+    } else {
+        dominant_line_ending(text)
+    };
+    let block = block.map(|block| block.replace('\n', ending));
+    let updated = match (marks, &block) {
+        (ToolRulesMarks::Broken(reason), _) => return Err(reason),
+        (ToolRulesMarks::One(range), Some(block)) => {
+            format!("{}{block}{}", &text[..range.start], &text[range.end..])
+        }
+        (ToolRulesMarks::One(range), None) => {
+            let (mut before, after) = (&text[..range.start], &text[range.end..]);
+            let after = match skip_line_ending(after) {
+                // The block ended the file: the blank line before it goes too.
+                None if after.is_empty() => {
+                    for _ in 0..2 {
+                        before = strip_line_ending(before).unwrap_or(before);
+                    }
+                    after
+                }
+                // The block was the last line: the blank line before it goes.
+                Some("") => {
+                    let blank = strip_line_ending(before).and_then(strip_line_ending);
+                    if blank.is_some() {
+                        before = strip_line_ending(before).unwrap_or(before);
+                        ""
+                    } else if before.trim_start_matches('\u{feff}').is_empty() {
+                        ""
+                    } else {
+                        after
+                    }
+                }
+                // Text follows: one blank line between the two is enough.
+                Some(rest) => {
+                    let blank_before = before.trim_start_matches('\u{feff}').is_empty()
+                        || strip_line_ending(before)
+                            .is_some_and(|b| strip_line_ending(b).is_some());
+                    match skip_line_ending(rest) {
+                        Some(closer) if blank_before => closer,
+                        _ => rest,
+                    }
+                }
+                None => after,
+            };
+            format!("{before}{after}")
+        }
+        (ToolRulesMarks::None, Some(block)) => {
+            let body = text.trim_start_matches('\u{feff}');
+            if body.is_empty() {
+                format!("{text}{block}{ending}")
+            } else if strip_line_ending(text).is_some() {
+                format!("{text}{ending}{block}{ending}")
+            } else {
+                format!("{text}{ending}{ending}{block}")
             }
         }
-        (None, Some(block)) if text.trim().is_empty() => format!("{block}\n"),
-        (None, Some(block)) => format!("{}\n\n{block}\n", text.trim_end()),
-        (None, None) => text.to_string(),
+        (ToolRulesMarks::None, None) => return Ok(text.to_string()),
+    };
+    // What comes out must read back the same way, or the next pass would
+    // add a second part or cut the person's text.
+    let reads_back = match (tool_rules_marks(&updated), &block) {
+        (ToolRulesMarks::One(range), Some(block)) => &updated[range] == block.as_str(),
+        (ToolRulesMarks::None, None) => true,
+        _ => false,
+    };
+    if reads_back {
+        Ok(updated)
+    } else {
+        Err("part_would_not_read_back")
     }
 }
 

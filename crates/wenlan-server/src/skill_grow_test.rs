@@ -187,7 +187,9 @@ impl Scratch {
             config: Some(self.config.clone()),
             codex_home: None,
             copilot_home: None,
+            xdg_config_home: None,
             tool_files: true,
+            tool_files_record: Some(self.data.join("tool-rules-files.json")),
         }
     }
 }
@@ -2618,9 +2620,11 @@ async fn ux_skill_8_kiro_gets_a_file_of_wenlans_own_and_the_persons_files_are_le
     std::fs::write(&file, own).unwrap();
     sync_tools(&scratch).await;
     assert_eq!(read(&file), own);
+    let tools = delivery(&scratch).await;
+    assert_eq!(state_of(&tools, "kiro"), RulesDeliveryState::Blocked);
     assert_eq!(
-        state_of(&delivery(&scratch).await, "kiro"),
-        RulesDeliveryState::OutOfDate
+        row(&tools, "kiro").blocked_reason.as_deref(),
+        Some("not_wenlans_file")
     );
     turn_off(&scratch, "kiro").await;
     sync_tools(&scratch).await;
@@ -2876,11 +2880,7 @@ async fn ux_skill_8_delivery_reports_each_tool_from_the_files_as_they_are() {
     );
     assert_eq!(delivered.state, RulesDeliveryState::Delivered);
     assert_eq!(delivered.rule_count, 1);
-    let written = std::fs::metadata(&codex).unwrap().modified().unwrap();
-    assert_eq!(
-        delivered.delivered_at,
-        Some(chrono::DateTime::<chrono::Utc>::from(written).timestamp())
-    );
+    assert!(delivered.delivered_at.is_some() && delivered.blocked_reason.is_none());
     assert_eq!(
         serde_json::to_value(delivered).unwrap(),
         serde_json::json!({
@@ -2967,4 +2967,619 @@ async fn ux_skill_8_delivery_reports_each_tool_from_the_files_as_they_are() {
         state_of(&tools, "claude-code"),
         RulesDeliveryState::NotConnected
     );
+}
+
+// ── UX-SKILL-8: a file Wenlan cannot safely change is left alone ───────
+
+const PART_END: &str = "<!-- WENLAN:RULES:END -->";
+
+/// Codex connected and installed, with `text` as the person's own file.
+async fn scratch_with_codex_file(text: &[u8]) -> (Scratch, PathBuf) {
+    let (scratch, _) = scratch_with_own_rule(&["codex"]).await;
+    let codex = scratch.home.join(".codex/AGENTS.md");
+    tool_folder_for(&codex);
+    std::fs::write(&codex, text).unwrap();
+    (scratch, codex)
+}
+
+fn blocked_reason(tools: &[ToolRulesDelivery], id: &str) -> Option<String> {
+    let row = row(tools, id);
+    assert_eq!(
+        row.state,
+        RulesDeliveryState::Blocked,
+        "{id} is not blocked"
+    );
+    assert_eq!(row.delivered_at, None);
+    row.blocked_reason.clone()
+}
+
+/// The file stays byte for byte the same over two syncs with the tool
+/// connected and one with it turned off, and is shown as blocked for `reason`.
+async fn assert_left_alone(scratch: &Scratch, file: &Path, reason: &str) {
+    let before = std::fs::read(file).unwrap();
+    for _ in 0..2 {
+        sync_tools(scratch).await;
+        assert_eq!(std::fs::read(file).unwrap(), before);
+    }
+    assert_eq!(
+        blocked_reason(&delivery(scratch).await, "codex").as_deref(),
+        Some(reason)
+    );
+    turn_off(scratch, "codex").await;
+    sync_tools(scratch).await;
+    assert_eq!(std::fs::read(file).unwrap(), before);
+}
+
+#[tokio::test]
+async fn ux_skill_8_a_start_marker_with_no_end_leaves_the_notes_below_it_alone() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let mine = format!("# Mine\n\n{PART_START}\nmy own notes below\n\n## More of mine\n- keep\n");
+    let (scratch, codex) = scratch_with_codex_file(mine.as_bytes()).await;
+    assert_left_alone(&scratch, &codex, "start_marker_without_end").await;
+    assert_eq!(
+        read(&codex).matches(PART_START).count(),
+        1,
+        "no second part"
+    );
+}
+
+#[tokio::test]
+async fn ux_skill_8_an_end_marker_alone_or_two_parts_block_the_file() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let orphan_end = format!("# Mine\n{PART_END}\nmy notes\n");
+    let (scratch, codex) = scratch_with_codex_file(orphan_end.as_bytes()).await;
+    assert_left_alone(&scratch, &codex, "end_marker_without_start").await;
+
+    let pair = format!("{PART_START}\n- an old line\n{PART_END}\n");
+    let two = format!("# Mine\n\n{pair}\nbetween, mine\n\n{pair}");
+    let (scratch, codex) = scratch_with_codex_file(two.as_bytes()).await;
+    assert_left_alone(&scratch, &codex, "more_than_one_part").await;
+
+    let backwards = format!("{PART_END}\nmine\n{PART_START}\n");
+    let (scratch, codex) = scratch_with_codex_file(backwards.as_bytes()).await;
+    assert_left_alone(&scratch, &codex, "end_marker_before_start").await;
+}
+
+#[tokio::test]
+async fn ux_skill_8_a_marker_quoted_in_a_sentence_or_a_code_fence_stays_the_persons_text() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let mine = format!(
+        "# Notes on Wenlan\n\nIts part starts at `{PART_START}` and ends at {PART_END} here.\n\n\
+         ```md\n{PART_START}\nmy example, not Wenlan's\n{PART_END}\n```\n\nAfter the example.\n"
+    );
+    let (scratch, codex) = scratch_with_codex_file(mine.as_bytes()).await;
+
+    sync_tools(&scratch).await;
+    let with = read(&codex);
+    assert!(
+        with.starts_with(&mine),
+        "every byte of the person's is kept"
+    );
+    assert!(with[mine.len()..].contains(OWN_RULE));
+    assert!(with.contains("my example, not Wenlan's"));
+    assert_eq!(
+        state_of(&delivery(&scratch).await, "codex"),
+        RulesDeliveryState::Delivered
+    );
+    sync_tools(&scratch).await;
+    assert_eq!(read(&codex), with, "a second pass adds nothing");
+
+    turn_off(&scratch, "codex").await;
+    sync_tools(&scratch).await;
+    assert_eq!(read(&codex), mine);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn ux_skill_8_a_link_to_nothing_is_blocked_and_stays_a_link() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let (scratch, _) = scratch_with_own_rule(&["codex", "windsurf"]).await;
+    let codex = scratch.home.join(".codex/AGENTS.md");
+    tool_folder_for(&codex);
+    let nowhere = scratch.home.join("dotfiles/AGENTS.md");
+    std::os::unix::fs::symlink(&nowhere, &codex).unwrap();
+    // A folder on the way that leads nowhere is no place to make a file.
+    let memories = scratch.home.join(".codeium/windsurf/memories");
+    tool_folder_for(&memories);
+    std::os::unix::fs::symlink(scratch.home.join("gone"), &memories).unwrap();
+
+    for _ in 0..2 {
+        sync_tools(&scratch).await;
+        assert!(is_symlink(&codex), "the link is still a link");
+        assert_eq!(std::fs::read_link(&codex).unwrap(), nowhere);
+        assert!(!nowhere.exists() && !scratch.home.join("dotfiles").exists());
+        assert!(is_symlink(&memories) && !scratch.home.join("gone").exists());
+    }
+    let tools = delivery(&scratch).await;
+    assert_eq!(
+        blocked_reason(&tools, "codex").as_deref(),
+        Some("broken_link")
+    );
+    assert_eq!(
+        blocked_reason(&tools, "windsurf").as_deref(),
+        Some("folder_not_usable")
+    );
+    turn_off(&scratch, "codex").await;
+    sync_tools(&scratch).await;
+    assert!(is_symlink(&codex));
+}
+
+#[tokio::test]
+async fn ux_skill_8_a_read_only_file_is_left_alone() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let (scratch, codex) = scratch_with_codex_file(b"# Mine\n").await;
+    let set_read_only = |on: bool| {
+        let mut permissions = std::fs::metadata(&codex).unwrap().permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        permissions.set_readonly(on);
+        std::fs::set_permissions(&codex, permissions).unwrap();
+    };
+    set_read_only(true);
+    let before = std::fs::metadata(&codex).unwrap().permissions();
+
+    for _ in 0..2 {
+        sync_tools(&scratch).await;
+        assert_eq!(read(&codex), "# Mine\n");
+        assert_eq!(std::fs::metadata(&codex).unwrap().permissions(), before);
+    }
+    assert_eq!(
+        blocked_reason(&delivery(&scratch).await, "codex").as_deref(),
+        Some("read_only")
+    );
+    let folder = codex.parent().unwrap();
+    assert_eq!(
+        std::fs::read_dir(folder).unwrap().count(),
+        1,
+        "nothing was left beside it"
+    );
+
+    // Writable again: the next pass writes, and taking the part out of a
+    // file made read-only meanwhile is blocked too.
+    set_read_only(false);
+    sync_tools(&scratch).await;
+    let with = read(&codex);
+    assert!(with.contains(OWN_RULE));
+    set_read_only(true);
+    turn_off(&scratch, "codex").await;
+    sync_tools(&scratch).await;
+    assert_eq!(read(&codex), with);
+    set_read_only(false);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn ux_skill_8_a_rewritten_file_keeps_its_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let (scratch, codex) = scratch_with_codex_file(b"# Mine, private\n").await;
+    let mode = |file: &Path| std::fs::metadata(file).unwrap().permissions().mode() & 0o7777;
+    std::fs::set_permissions(&codex, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+    sync_tools(&scratch).await;
+    assert!(read(&codex).contains(OWN_RULE));
+    assert_eq!(mode(&codex), 0o600);
+    turn_off(&scratch, "codex").await;
+    sync_tools(&scratch).await;
+    assert_eq!(read(&codex), "# Mine, private\n");
+    assert_eq!(mode(&codex), 0o600);
+}
+
+#[tokio::test]
+async fn ux_skill_8_a_crlf_file_keeps_its_line_endings_and_every_byte_outside_the_part() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let mine = "# Mine\r\n\r\nUse pnpm.  \r\n\ttabbed\r\n";
+    let (scratch, codex) = scratch_with_codex_file(mine.as_bytes()).await;
+
+    sync_tools(&scratch).await;
+    let with = read(&codex);
+    assert!(with.starts_with(mine));
+    assert!(with.contains(&format!("- {OWN_RULE}\r\n")));
+    assert!(
+        !with.replace("\r\n", "").contains('\n'),
+        "Wenlan's part takes the file's line endings"
+    );
+
+    // The person writes after the part; a new rule changes only the part.
+    let after = "\r\nAfter, mine.\r\none bare\nline";
+    std::fs::write(&codex, format!("{with}{after}")).unwrap();
+    let tail_from = |text: &str| text[text.find(PART_END).unwrap()..].to_string();
+    sync_tools(&scratch).await;
+    let again = read(&codex);
+    assert_eq!(again, format!("{with}{after}"), "already in line");
+    assert_eq!(tail_from(&again), format!("{PART_END}\r\n{after}"));
+
+    turn_off(&scratch, "codex").await;
+    sync_tools(&scratch).await;
+    let left = read(&codex);
+    assert!(left.starts_with(mine) && left.ends_with("After, mine.\r\none bare\nline"));
+    assert!(!left.contains(PART_START));
+}
+
+#[tokio::test]
+async fn ux_skill_8_a_last_line_without_an_ending_and_a_byte_order_mark_are_kept() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    for mine in [
+        "# Mine\n\nlast line",
+        "\u{feff}# Mine\n",
+        "\u{feff}",
+        "",
+        "  \n",
+    ] {
+        let (scratch, codex) = scratch_with_codex_file(mine.as_bytes()).await;
+        sync_tools(&scratch).await;
+        let with = read(&codex);
+        assert!(
+            with.starts_with(mine) && with.contains(OWN_RULE),
+            "{mine:?}"
+        );
+        assert_eq!(
+            with.ends_with('\n'),
+            mine.is_empty() || mine == "\u{feff}" || mine.ends_with('\n'),
+            "{mine:?}: no line ending added to the person's last line"
+        );
+        assert_eq!(
+            state_of(&delivery(&scratch).await, "codex"),
+            RulesDeliveryState::Delivered
+        );
+        turn_off(&scratch, "codex").await;
+        sync_tools(&scratch).await;
+        // The file was the person's before Wenlan wrote: it stays, even
+        // with nothing in it.
+        assert_eq!(std::fs::read(&codex).unwrap(), mine.as_bytes(), "{mine:?}");
+    }
+}
+
+#[tokio::test]
+async fn ux_skill_8_only_a_file_wenlan_made_goes_when_its_part_is_all_it_holds() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let (scratch, _) = scratch_with_own_rule(&["codex", "windsurf", "kiro"]).await;
+    let codex = scratch.home.join(".codex/AGENTS.md");
+    let windsurf = scratch
+        .home
+        .join(".codeium/windsurf/memories/global_rules.md");
+    let kiro = scratch.home.join(".kiro/steering/wenlan-rules.md");
+    tool_folder_for(&codex);
+    std::fs::create_dir_all(scratch.home.join(".codeium/windsurf")).unwrap();
+    std::fs::create_dir_all(scratch.home.join(".kiro")).unwrap();
+
+    // Wenlan makes all three files, and two of the folders.
+    sync_tools(&scratch).await;
+    assert!(read(&codex).starts_with(PART_START));
+    assert!(read(&windsurf).starts_with(PART_START) && kiro.exists());
+    // The person puts a file of their own beside Windsurf's.
+    std::fs::write(windsurf.with_file_name("mine.md"), "mine\n").unwrap();
+
+    for tool in ["codex", "windsurf", "kiro"] {
+        turn_off(&scratch, tool).await;
+    }
+    sync_tools(&scratch).await;
+    assert!(!codex.exists() && codex.parent().unwrap().is_dir());
+    assert!(!windsurf.exists());
+    assert!(
+        windsurf.parent().unwrap().is_dir(),
+        "a folder with the person's file in it stays"
+    );
+    assert!(!kiro.exists());
+    assert!(
+        !kiro.parent().unwrap().exists() && scratch.home.join(".kiro").is_dir(),
+        "the empty folder Wenlan made goes; the tool's own stays"
+    );
+
+    // Without Wenlan's record nobody knows who made the file: it stays.
+    for tool in ["codex", "kiro"] {
+        scratch
+            .db
+            .update_agent(tool, None, None, Some(true), None, None)
+            .await
+            .unwrap();
+    }
+    sync_tools(&scratch).await;
+    assert!(read(&codex).starts_with(PART_START) && kiro.exists());
+    std::fs::remove_file(scratch.data.join("tool-rules-files.json")).unwrap();
+    turn_off(&scratch, "codex").await;
+    turn_off(&scratch, "kiro").await;
+    sync_tools(&scratch).await;
+    assert_eq!(read(&codex), "", "left empty, not removed");
+    assert!(!kiro.exists(), "a file that is all Wenlan's own still goes");
+    assert!(kiro.parent().unwrap().is_dir(), "its folder stays");
+}
+
+#[tokio::test]
+async fn ux_skill_8_an_import_line_shown_in_fenced_code_brings_nothing_in() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let (scratch, _) = scratch_with_own_rule(&["codex", "claude-code"]).await;
+    let codex = scratch.home.join(".codex/AGENTS.md");
+    let claude = scratch.home.join(".claude/CLAUDE.md");
+    tool_folder_for(&codex);
+    tool_folder_for(&claude);
+    let mine = "How to share a file:\n\n```\n@~/.codex/AGENTS.md\n```\n";
+    std::fs::write(&claude, mine).unwrap();
+
+    sync_tools(&scratch).await;
+    let text = read(&claude);
+    assert!(text.starts_with(mine) && text.contains(OWN_RULE));
+    let tools = delivery(&scratch).await;
+    assert_eq!(
+        state_of(&tools, "claude-code"),
+        RulesDeliveryState::Delivered
+    );
+
+    // The same line outside the fence does bring the file in.
+    std::fs::write(&claude, format!("{text}\n@~/.codex/AGENTS.md\n")).unwrap();
+    sync_tools(&scratch).await;
+    assert!(!read(&claude).contains(PART_START));
+    assert_eq!(
+        state_of(&delivery(&scratch).await, "claude-code"),
+        RulesDeliveryState::CoveredByAnotherFile
+    );
+}
+
+#[tokio::test]
+async fn ux_skill_8_a_file_changed_since_it_was_planned_is_left_for_the_next_pass() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let (scratch, codex) = scratch_with_codex_file(b"# Mine\n").await;
+    let dirs = scratch.skill_dirs();
+    let (general, _) = rules_by_layer(&scratch.db, Some(&scratch.pages))
+        .await
+        .unwrap();
+    let connected = connected_rules_tools(&scratch.db).await.unwrap();
+
+    // The person saves between the plan and the write.
+    let plans = plan_tool_rules(&dirs, &connected, &general);
+    std::fs::write(&codex, "# Mine\n\nA line saved just now.\n").unwrap();
+    apply_tool_rules(&dirs, plans);
+    assert_eq!(read(&codex), "# Mine\n\nA line saved just now.\n");
+    assert_eq!(
+        std::fs::read_dir(codex.parent().unwrap()).unwrap().count(),
+        1
+    );
+    assert_eq!(
+        state_of(&delivery(&scratch).await, "codex"),
+        RulesDeliveryState::OutOfDate
+    );
+
+    // The same for a file that appeared where none was, and one that went.
+    std::fs::remove_file(&codex).unwrap();
+    let plans = plan_tool_rules(&dirs, &connected, &general);
+    std::fs::write(&codex, "Just made.\n").unwrap();
+    apply_tool_rules(&dirs, plans);
+    assert_eq!(read(&codex), "Just made.\n");
+
+    // The next pass plans from what the file holds now.
+    sync_tools(&scratch).await;
+    let text = read(&codex);
+    assert!(text.starts_with("Just made.\n") && text.contains(OWN_RULE));
+
+    // Taking the part out is held back the same way.
+    turn_off(&scratch, "codex").await;
+    let plans = plan_tool_rules(&dirs, &HashSet::new(), &general);
+    let edited = format!("{text}\nAdded while Wenlan planned.\n");
+    std::fs::write(&codex, &edited).unwrap();
+    apply_tool_rules(&dirs, plans);
+    assert_eq!(read(&codex), edited);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn ux_skill_8_a_file_two_tools_share_takes_the_smallest_limit_of_the_two() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let (scratch, _) = scratch_with_own_rule(&["codex", "windsurf"]).await;
+    let codex = scratch.home.join(".codex/AGENTS.md");
+    let windsurf = scratch
+        .home
+        .join(".codeium/windsurf/memories/global_rules.md");
+    tool_folder_for(&codex);
+    tool_folder_for(&windsurf);
+    // Codex has no limit of its own; Windsurf reads 6,000 characters.
+    let mine = format!("{}\n", "字".repeat(5_990));
+    std::fs::write(&codex, &mine).unwrap();
+    std::os::unix::fs::symlink(&codex, &windsurf).unwrap();
+
+    sync_tools(&scratch).await;
+    assert_eq!(read(&codex), mine, "Windsurf could not read all of it");
+    let tools = delivery(&scratch).await;
+    assert_eq!(state_of(&tools, "codex"), RulesDeliveryState::OverLimit);
+    assert_eq!(state_of(&tools, "windsurf"), RulesDeliveryState::OverLimit);
+
+    // Only Codex reads it now: no limit holds.
+    turn_off(&scratch, "windsurf").await;
+    sync_tools(&scratch).await;
+    assert!(read(&codex).starts_with(&mine) && read(&codex).contains(OWN_RULE));
+    assert_eq!(
+        state_of(&delivery(&scratch).await, "codex"),
+        RulesDeliveryState::Delivered
+    );
+    assert!(is_symlink(&windsurf));
+}
+
+#[tokio::test]
+async fn ux_skill_8_delivery_says_blocked_covered_and_when_only_as_they_are() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let (scratch, _) =
+        scratch_with_own_rule(&["codex", "claude-code", "kiro", "zed", "opencode"]).await;
+    let codex = scratch.home.join(".codex/AGENTS.md");
+    let claude = scratch.home.join(".claude/CLAUDE.md");
+    let kiro = scratch.home.join(".kiro/steering/wenlan-rules.md");
+    let zed = zed_file(&scratch);
+    for file in [&codex, &claude, &kiro, &zed] {
+        tool_folder_for(file);
+    }
+    std::fs::create_dir_all(scratch.home.join(".config/opencode")).unwrap();
+    std::fs::write(&claude, "@~/.codex/AGENTS.md\n").unwrap();
+    // A file of the person's own where Wenlan's would go, and one that is
+    // not text.
+    std::fs::write(&kiro, "# My own steering notes\n").unwrap();
+    std::fs::write(&zed, [0xff, 0xfe, 0x00, 0x41]).unwrap();
+
+    // Before any sync nothing holds the rules, so nothing covers anything.
+    let tools = delivery(&scratch).await;
+    assert_eq!(state_of(&tools, "codex"), RulesDeliveryState::OutOfDate);
+    assert_eq!(
+        state_of(&tools, "claude-code"),
+        RulesDeliveryState::OutOfDate
+    );
+    assert_eq!(
+        blocked_reason(&tools, "kiro").as_deref(),
+        Some("not_wenlans_file")
+    );
+    assert_eq!(blocked_reason(&tools, "zed").as_deref(), Some("not_text"));
+    assert_eq!(
+        serde_json::to_value(row(&tools, "kiro")).unwrap()["state"],
+        serde_json::json!("blocked")
+    );
+    assert_eq!(
+        serde_json::to_value(row(&tools, "kiro")).unwrap()["blocked_reason"],
+        serde_json::json!("not_wenlans_file")
+    );
+
+    sync_tools(&scratch).await;
+    assert_eq!(read(&kiro), "# My own steering notes\n");
+    assert_eq!(std::fs::read(&zed).unwrap(), [0xff, 0xfe, 0x00, 0x41]);
+    let tools = delivery(&scratch).await;
+    assert_eq!(state_of(&tools, "codex"), RulesDeliveryState::Delivered);
+    assert_eq!(
+        state_of(&tools, "claude-code"),
+        RulesDeliveryState::CoveredByAnotherFile
+    );
+    // OpenCode falls back to Claude's file, which holds no part of its own.
+    assert_eq!(state_of(&tools, "opencode"), RulesDeliveryState::OnRequest);
+    assert_eq!(blocked_reason(&tools, "zed").as_deref(), Some("not_text"));
+
+    // The covering file lost its part by hand: no longer covered.
+    let with = read(&codex);
+    std::fs::write(&codex, "").unwrap();
+    let tools = delivery(&scratch).await;
+    assert_eq!(
+        state_of(&tools, "claude-code"),
+        RulesDeliveryState::OutOfDate
+    );
+    std::fs::write(&codex, &with).unwrap();
+
+    // The time is the one Wenlan noted when it wrote, not the file's own.
+    let noted = row(&delivery(&scratch).await, "codex")
+        .delivered_at
+        .unwrap();
+    let long_ago = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
+    std::fs::File::options()
+        .write(true)
+        .open(&codex)
+        .unwrap()
+        .set_modified(long_ago)
+        .unwrap();
+    assert_eq!(
+        row(&delivery(&scratch).await, "codex").delivered_at,
+        Some(noted)
+    );
+    assert!((chrono::Utc::now().timestamp() - noted).abs() < 600);
+    // No record: delivered, and no time is made up.
+    std::fs::remove_file(scratch.data.join("tool-rules-files.json")).unwrap();
+    let tools = delivery(&scratch).await;
+    assert_eq!(state_of(&tools, "codex"), RulesDeliveryState::Delivered);
+    assert_eq!(row(&tools, "codex").delivered_at, None);
+}
+
+#[tokio::test]
+async fn ux_skill_8_opencode_and_zed_follow_the_xdg_config_folder_and_never_from_an_isolated_run() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let (scratch, _) = scratch_with_own_rule(&["zed", "opencode"]).await;
+    let xdg = scratch.home.join("xdg");
+    let dirs = SkillDirs {
+        xdg_config_home: Some(xdg.clone()),
+        ..scratch.skill_dirs()
+    };
+    let opencode = xdg.join("opencode/AGENTS.md");
+    tool_folder_for(&opencode);
+    std::fs::write(&opencode, "# Mine\n").unwrap();
+    // Zed follows the variable on Linux only.
+    let zed = if cfg!(any(windows, target_os = "macos")) {
+        zed_file(&scratch)
+    } else {
+        xdg.join("zed/AGENTS.md")
+    };
+    tool_folder_for(&zed);
+    // The default places exist too and must not be the ones written.
+    let default_opencode = scratch.home.join(".config/opencode/AGENTS.md");
+    tool_folder_for(&default_opencode);
+    std::fs::write(&default_opencode, "# Old place\n").unwrap();
+
+    sync_rules_files_in(&scratch.db, Some(&scratch.pages), &dirs).await;
+    assert!(read(&opencode).contains(OWN_RULE) && read(&zed).contains(OWN_RULE));
+    assert_eq!(read(&default_opencode), "# Old place\n");
+    let tools = delivery_in(&scratch, &dirs).await;
+    assert_eq!(
+        row(&tools, "opencode").path.as_deref(),
+        Some(opencode.to_string_lossy().as_ref())
+    );
+    assert_eq!(state_of(&tools, "opencode"), RulesDeliveryState::Delivered);
+
+    // A run on other data takes none of the overrides and writes no tool
+    // file of the person's.
+    let dev = scratch.data.join("dev-state");
+    let _env = EnvGuard::set(&[
+        ("WENLAN_DEV_STATE_DIR", &dev),
+        ("XDG_CONFIG_HOME", &xdg),
+        ("CODEX_HOME", &xdg),
+        ("COPILOT_HOME", &xdg),
+    ]);
+    let isolated = SkillDirs::system();
+    assert!(isolated.home.as_deref().unwrap().starts_with(&dev));
+    assert_eq!(
+        (
+            isolated.xdg_config_home,
+            isolated.codex_home,
+            isolated.copilot_home
+        ),
+        (None, None, None)
+    );
+    assert!(isolated
+        .tool_files_record
+        .as_deref()
+        .unwrap()
+        .starts_with(&dev));
+    drop(_env);
+    // This test run is itself on other data: the real folders are named but
+    // never read or written.
+    assert!(!SkillDirs::system().tool_files);
 }

@@ -39,6 +39,7 @@ const MAX_PAGES_PER_SPACE: usize = 80;
 const MAX_UNMANAGED_SKILLS: usize = 40;
 const MAX_NIGHTLY_MODEL_CALLS: usize = 8;
 const MANAGED_MARKER: &str = ".wenlan-managed";
+const TOOL_FILES_RECORD: &str = "tool-rules-files.json";
 static SKILLS_MUTATION_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static NIGHTLY_RUNNING: AtomicBool = AtomicBool::new(false);
 
@@ -99,8 +100,14 @@ struct SkillDirs {
     codex_home: Option<PathBuf>,
     /// A non-empty `COPILOT_HOME`, the same for Copilot's `~/.copilot`.
     copilot_home: Option<PathBuf>,
+    /// A non-empty, absolute `XDG_CONFIG_HOME`: where OpenCode, and Zed on
+    /// Linux, keep their settings instead of `~/.config`.
+    xdg_config_home: Option<PathBuf>,
     /// Whether the tools' own always-read files under `home` may be written.
     tool_files: bool,
+    /// Wenlan's own note, under its data root, of when it last wrote its
+    /// part of each tool's file and whether it made the file.
+    tool_files_record: Option<PathBuf>,
 }
 
 impl SkillDirs {
@@ -117,7 +124,9 @@ impl SkillDirs {
                 config: Some(root.join("config")),
                 codex_home: None,
                 copilot_home: None,
+                xdg_config_home: None,
                 tool_files: true,
+                tool_files_record: Some(root.join(TOOL_FILES_RECORD)),
             };
         }
         let folder_from = |name: &str| {
@@ -130,7 +139,9 @@ impl SkillDirs {
             config: dirs::config_dir(),
             codex_home: folder_from("CODEX_HOME"),
             copilot_home: folder_from("COPILOT_HOME"),
+            xdg_config_home: folder_from("XDG_CONFIG_HOME").filter(|folder| folder.is_absolute()),
             tool_files: wenlan_core::config::may_write_tool_files(),
+            tool_files_record: Some(wenlan_core::config::data_root().join(TOOL_FILES_RECORD)),
         }
     }
 
@@ -140,6 +151,9 @@ impl SkillDirs {
             config_dir: self.config.as_deref(),
             codex_home: self.codex_home.as_deref(),
             copilot_home: self.copilot_home.as_deref(),
+            xdg_config_home: self.xdg_config_home.as_deref(),
+            // Zed follows it on Linux; on macOS it always uses `~/.config`.
+            zed_follows_xdg: cfg!(not(any(windows, target_os = "macos"))),
             windows: cfg!(windows),
         }
     }
@@ -1058,10 +1072,12 @@ fn sync_rules_layer(home: &Path, folder: &Path, files: &[(&'static str, String)]
 
 /// A file `text` pulls in with an `@path` line, as Claude Code's `CLAUDE.md`
 /// does with `@AGENTS.md`. Only asked of a tool whose file format has them.
+/// An `@` line the person shows inside fenced code brings nothing in.
 fn imported_files(file: &Path, home: &Path, text: &str) -> Vec<PathBuf> {
     let folder = file.parent().unwrap_or(home);
-    text.lines()
-        .filter_map(|line| line.trim().strip_prefix('@'))
+    skill_grow::lines_outside_code_fences(text)
+        .into_iter()
+        .filter_map(|(_, line)| line.trim().strip_prefix('@'))
         .filter(|path| !path.is_empty() && !path.contains(char::is_whitespace))
         .map(|path| match path.strip_prefix("~/") {
             Some(rest) => home.join(rest),
@@ -1091,6 +1107,114 @@ fn canonical_target(path: &Path) -> PathBuf {
     path.to_path_buf()
 }
 
+/// What is at a tool's file right now.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ToolFileNow {
+    /// No file, and nothing in the way of making one.
+    Missing,
+    Text(String),
+    /// Something Wenlan cannot safely read or put a file in place of, with a
+    /// short reason. It is never replaced.
+    Blocked(&'static str),
+}
+
+/// Read the file at `target`, a path [`canonical_target`] gave. Only a plain
+/// "there is no file" counts as missing: a link that leads nowhere, a folder,
+/// a file that is not text and a file that cannot be read are all left.
+fn read_tool_file(target: &Path) -> ToolFileNow {
+    use std::io::ErrorKind::NotFound;
+    let metadata = match std::fs::symlink_metadata(target) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == NotFound => {
+            // A folder on the way that is a link to nowhere is not "no file".
+            let mut folder = target.parent();
+            while let Some(dir) = folder {
+                match std::fs::symlink_metadata(dir) {
+                    Ok(_) if dir.is_dir() => return ToolFileNow::Missing,
+                    Ok(_) => return ToolFileNow::Blocked("folder_not_usable"),
+                    Err(error) if error.kind() == NotFound => folder = dir.parent(),
+                    Err(_) => return ToolFileNow::Blocked("not_readable"),
+                }
+            }
+            return ToolFileNow::Missing;
+        }
+        Err(_) => return ToolFileNow::Blocked("not_readable"),
+    };
+    // Every link that leads somewhere was followed to get `target`.
+    if metadata.file_type().is_symlink() {
+        return ToolFileNow::Blocked("broken_link");
+    }
+    if !metadata.is_file() {
+        return ToolFileNow::Blocked("not_a_file");
+    }
+    match std::fs::read(target) {
+        Ok(bytes) => match String::from_utf8(bytes) {
+            Ok(text) => ToolFileNow::Text(text),
+            Err(_) => ToolFileNow::Blocked("not_text"),
+        },
+        Err(error) if error.kind() == NotFound => ToolFileNow::Missing,
+        Err(_) => ToolFileNow::Blocked("not_readable"),
+    }
+}
+
+/// Whether the person made the file at `target` read-only. Such a file is
+/// left alone on every platform.
+fn is_read_only(target: &Path) -> bool {
+    std::fs::metadata(target).is_ok_and(|metadata| metadata.permissions().readonly())
+}
+
+/// What Wenlan noted about one tool file it wrote.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, Deserialize)]
+struct ToolFileRecord {
+    /// When Wenlan last wrote its part (Unix seconds).
+    written_at: i64,
+    /// Wenlan made the file: there was none when it first wrote.
+    #[serde(default)]
+    created_file: bool,
+    /// Wenlan also made the folder the file is in.
+    #[serde(default)]
+    created_folder: bool,
+}
+
+type ToolFileRecords = std::collections::BTreeMap<String, ToolFileRecord>;
+
+/// Wenlan's note of the tool files it wrote. No note, or one that cannot be
+/// read, means nothing is known: no time is reported and no file is removed.
+fn read_tool_file_records(dirs: &SkillDirs) -> ToolFileRecords {
+    dirs.tool_files_record
+        .as_deref()
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+fn write_tool_file_records(dirs: &SkillDirs, records: &ToolFileRecords) {
+    let Some(path) = dirs.tool_files_record.as_deref() else {
+        return;
+    };
+    let result = serde_json::to_string_pretty(records)
+        .map_err(|e| ServerError::Internal(e.to_string()))
+        .and_then(|text| {
+            path.parent()
+                .map_or(Ok(()), std::fs::create_dir_all)
+                .map_err(|e| ServerError::Internal(e.to_string()))?;
+            let staged = staged_file(path, &text)?;
+            std::fs::rename(&staged, path).map_err(|e| {
+                let _ = std::fs::remove_file(&staged);
+                ServerError::Internal(e.to_string())
+            })
+        });
+    if let Err(error) = result {
+        tracing::warn!(path = %path.display(), %error, "[skills] tool rules record not saved");
+    }
+}
+
+/// Whether `text` holds what Wenlan writes: its one marked part, or a whole
+/// file of its own.
+fn holds_wenlans_part(text: &str) -> bool {
+    skill_grow::holds_tool_rules_block(text) || skill_grow::is_wenlan_rules_text(text)
+}
+
 /// What Wenlan does about one tool's always-read file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ToolRulesOutcome {
@@ -1105,9 +1229,11 @@ enum ToolRulesOutcome {
     OverLimit,
     /// The tool has no file of its own and Wenlan must not make one.
     NoFile,
-    /// The file could not be read, or a file of the person's own is where
-    /// Wenlan's would go.
-    Blocked,
+    /// Wenlan cannot safely change the file, so it is left exactly as it is:
+    /// it cannot be read, is a link to nothing, is read-only, has markers
+    /// that are not one START then one END, or is a file of the person's own
+    /// where Wenlan's would go. The reason is a short machine word.
+    Blocked(&'static str),
     /// Nothing to keep there: not connected, or no rules.
     NotWanted,
 }
@@ -1115,6 +1241,7 @@ enum ToolRulesOutcome {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ToolFileChange {
     Write(String),
+    /// Take the file away: only a file Wenlan made that holds nothing else.
     Remove,
 }
 
@@ -1129,6 +1256,30 @@ struct ToolRulesPlan {
     /// What brings the file in line. `None` when it already is, and for a
     /// later tool of a shared file, whose change the first tool carries.
     change: Option<ToolFileChange>,
+    /// The file as it was when this was planned (`None`: no file). A change
+    /// is made only while the file still reads the same.
+    seen: Option<String>,
+    /// The file that holds the rules for this tool when `Covered`.
+    covered_by: Option<PathBuf>,
+}
+
+/// One file's part of a plan.
+struct ToolFilePlan {
+    outcome: ToolRulesOutcome,
+    change: Option<ToolFileChange>,
+    seen: Option<String>,
+    covered_by: Option<PathBuf>,
+}
+
+impl ToolFilePlan {
+    fn untouched(outcome: ToolRulesOutcome) -> Self {
+        Self {
+            outcome,
+            change: None,
+            seen: None,
+            covered_by: None,
+        }
+    }
 }
 
 /// The canonical ids of the connected tools that have an always-read file.
@@ -1145,15 +1296,18 @@ async fn connected_rules_tools(db: &MemoryDB) -> Result<HashSet<&'static str>, S
 
 /// Decide, without writing anything, what each tool's always-read file should
 /// hold. A file reached through a link is planned where the link points, and
-/// tools that share one file share one plan. A file another kept file already
-/// covers (one it imports) gets no second copy. A tool that is not connected,
-/// no general rules, or the setting off takes Wenlan's part out.
+/// tools that share one file share one plan, under the smallest limit any of
+/// them has. A file another kept file already covers (one it imports) gets
+/// no second copy. A tool that is not connected, no general rules, or the
+/// setting off takes Wenlan's part out. A file Wenlan cannot safely change
+/// is planned to stay exactly as it is.
 fn plan_tool_rules(
     dirs: &SkillDirs,
     connected: &HashSet<&'static str>,
     general: &[SkillLine],
 ) -> Vec<ToolRulesPlan> {
     let roots = dirs.rules_roots();
+    let records = read_tool_file_records(dirs);
     let block = skill_grow::tool_rules_block(general);
     let files: Vec<(RulesLocation, PathBuf, Option<PathBuf>)> = GLOBAL_RULES_TOOLS
         .iter()
@@ -1174,137 +1328,350 @@ fn plan_tool_rules(
         .filter_map(|(_, _, target)| target.as_deref())
         .collect();
     let mut kept: HashSet<PathBuf> = HashSet::new();
-    let mut decided: HashMap<PathBuf, (ToolRulesOutcome, bool)> = HashMap::new();
+    let mut decided: HashMap<PathBuf, (ToolRulesOutcome, bool, Option<PathBuf>)> = HashMap::new();
     let mut plans = Vec::new();
     for (location, path, target) in &files {
-        let plan = |target: &Path, outcome, in_line, change| ToolRulesPlan {
-            tool: location.tool,
-            target: target.to_path_buf(),
-            outcome,
-            in_line,
-            change,
-        };
         let Some(target) = target else {
-            plans.push(plan(path, ToolRulesOutcome::FolderMissing, true, None));
+            plans.push(ToolRulesPlan {
+                tool: location.tool,
+                target: path.clone(),
+                outcome: ToolRulesOutcome::FolderMissing,
+                in_line: true,
+                change: None,
+                seen: None,
+                covered_by: None,
+            });
             continue;
         };
-        if let Some((outcome, in_line)) = decided.get(target) {
+        if let Some((outcome, in_line, covered_by)) = decided.get(target) {
             // The same file as an earlier tool's: one part serves both.
-            plans.push(plan(target, *outcome, *in_line, None));
+            plans.push(ToolRulesPlan {
+                tool: location.tool,
+                target: target.clone(),
+                outcome: *outcome,
+                in_line: *in_line,
+                change: None,
+                seen: None,
+                covered_by: covered_by.clone(),
+            });
             continue;
         }
         let wanted = connected_targets.contains(target.as_path());
-        let (mut outcome, change) = match location.kind {
+        // Every connected tool that reads this file must be able to read all
+        // of it, so the smallest limit among them holds.
+        let max_chars = files
+            .iter()
+            .filter(|(other, _, other_target)| {
+                other_target.as_ref() == Some(target) && connected.contains(other.tool)
+            })
+            .filter_map(|(other, _, _)| other.max_chars)
+            .min();
+        let record = records.get(target.to_string_lossy().as_ref());
+        let mut file = match location.kind {
             RulesFileKind::Block => plan_block(
                 dirs,
                 location,
+                max_chars,
                 target,
                 block.as_deref().filter(|_| wanted),
                 &kept,
+                record.is_some_and(|record| record.created_file),
             ),
             RulesFileKind::OwnedFile => {
                 let file = skill_grow::tool_rules_owned_file(general, location.front_matter);
                 plan_owned_file(target, file.filter(|_| wanted))
             }
         };
-        if outcome == ToolRulesOutcome::NoFile {
+        if file.outcome == ToolRulesOutcome::NoFile {
             let fallback = location.falls_back_to.and_then(|tool| {
                 files
                     .iter()
                     .find(|(other, _, _)| other.tool == tool)
                     .and_then(|(_, _, target)| target.as_ref())
             });
-            if fallback.is_some_and(|file| kept.contains(file)) {
-                outcome = ToolRulesOutcome::Covered;
+            if let Some(fallback) = fallback.filter(|file| kept.contains(*file)) {
+                file.outcome = ToolRulesOutcome::Covered;
+                file.covered_by = Some(fallback.clone());
             }
         }
-        if outcome == ToolRulesOutcome::Kept {
+        if file.outcome == ToolRulesOutcome::Kept {
             kept.insert(target.clone());
         }
-        decided.insert(target.clone(), (outcome, change.is_none()));
-        plans.push(plan(target, outcome, change.is_none(), change));
+        let in_line = file.change.is_none();
+        decided.insert(
+            target.clone(),
+            (file.outcome, in_line, file.covered_by.clone()),
+        );
+        plans.push(ToolRulesPlan {
+            tool: location.tool,
+            target: target.clone(),
+            outcome: file.outcome,
+            in_line,
+            change: file.change,
+            seen: file.seen,
+            covered_by: file.covered_by,
+        });
     }
     plans
 }
 
 /// Plan Wenlan's marked part of the person's own file at `target`. Only the
-/// part between Wenlan's markers is ever planned to change.
+/// part between Wenlan's markers is ever planned to change, and a file whose
+/// markers are not one START then one END is planned to stay as it is.
 fn plan_block(
     dirs: &SkillDirs,
     location: &RulesLocation,
+    max_chars: Option<usize>,
     target: &Path,
     block: Option<&str>,
     kept: &HashSet<PathBuf>,
-) -> (ToolRulesOutcome, Option<ToolFileChange>) {
-    let (current, exists) = match std::fs::read_to_string(target) {
-        Ok(text) => (text, true),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => (String::new(), false),
-        Err(error) => {
-            tracing::warn!(path = %target.display(), %error, "[skills] tool rules file not read");
-            return (ToolRulesOutcome::Blocked, None);
+    wenlan_made_the_file: bool,
+) -> ToolFilePlan {
+    let (current, exists) = match read_tool_file(target) {
+        ToolFileNow::Text(text) => (text, true),
+        ToolFileNow::Missing => (String::new(), false),
+        ToolFileNow::Blocked(reason) => {
+            return ToolFilePlan::untouched(ToolRulesOutcome::Blocked(reason));
         }
     };
+    let seen = exists.then(|| current.clone());
+    let blocked = |reason| ToolFilePlan {
+        seen: seen.clone(),
+        ..ToolFilePlan::untouched(ToolRulesOutcome::Blocked(reason))
+    };
     let mut outcome = ToolRulesOutcome::NotWanted;
+    let mut covered_by = None;
     let mut wanted = None;
     if let Some(block) = block {
-        let covered = location.at_imports
-            && dirs.home.as_deref().is_some_and(|home| {
+        if location.at_imports {
+            covered_by = dirs.home.as_deref().and_then(|home| {
                 imported_files(target, home, &current)
-                    .iter()
-                    .any(|file| kept.contains(file))
+                    .into_iter()
+                    .find(|file| kept.contains(file))
             });
-        let too_long = |text: &str| {
-            location
-                .max_chars
-                .is_some_and(|max| text.chars().count() > max)
-        };
-        outcome = if covered {
+        }
+        outcome = if covered_by.is_some() {
             ToolRulesOutcome::Covered
         } else if !exists && !location.create_file {
             ToolRulesOutcome::NoFile
-        } else if too_long(&skill_grow::upsert_tool_rules_block(&current, Some(block))) {
-            ToolRulesOutcome::OverLimit
         } else {
-            wanted = Some(block);
-            ToolRulesOutcome::Kept
+            match skill_grow::upsert_tool_rules_block(&current, Some(block)) {
+                Err(reason) => return blocked(reason),
+                Ok(text) if max_chars.is_some_and(|max| text.chars().count() > max) => {
+                    ToolRulesOutcome::OverLimit
+                }
+                Ok(_) => {
+                    wanted = Some(block);
+                    ToolRulesOutcome::Kept
+                }
+            }
         };
     }
-    let updated = skill_grow::upsert_tool_rules_block(&current, wanted);
+    let updated = match skill_grow::upsert_tool_rules_block(&current, wanted) {
+        Ok(updated) => updated,
+        Err(reason) => return blocked(reason),
+    };
     let change = if updated == current {
         None
-    } else if updated.is_empty() {
-        // Only Wenlan's block was in it.
+    } else if is_read_only(target) {
+        return blocked("read_only");
+    } else if updated.is_empty() && wenlan_made_the_file {
+        // Wenlan made the file and only its part was in it.
         Some(ToolFileChange::Remove)
     } else {
+        // A file Wenlan did not make stays, even with nothing left in it.
         Some(ToolFileChange::Write(updated))
     };
-    (outcome, change)
+    ToolFilePlan {
+        outcome,
+        change,
+        seen,
+        covered_by,
+    }
 }
 
 /// Plan a whole file of Wenlan's own at `target`. A file there that Wenlan
 /// did not write is the person's and is never changed or removed.
-fn plan_owned_file(
-    target: &Path,
-    file: Option<String>,
-) -> (ToolRulesOutcome, Option<ToolFileChange>) {
-    let exists = std::fs::symlink_metadata(target).is_ok();
-    let ours = exists && is_wenlan_rules_file(target);
-    match file {
-        Some(_) if exists && !ours => (ToolRulesOutcome::Blocked, None),
-        Some(file) => {
-            let same = ours && read_regular_nofollow(target).is_ok_and(|now| now == file);
-            let change = (!same).then_some(ToolFileChange::Write(file));
-            (ToolRulesOutcome::Kept, change)
+fn plan_owned_file(target: &Path, file: Option<String>) -> ToolFilePlan {
+    let now = match read_tool_file(target) {
+        ToolFileNow::Blocked(reason) => {
+            return ToolFilePlan::untouched(ToolRulesOutcome::Blocked(reason));
         }
+        ToolFileNow::Missing => None,
+        ToolFileNow::Text(text) => Some(text),
+    };
+    let ours = now.as_deref().is_some_and(skill_grow::is_wenlan_rules_text);
+    let (outcome, change) = match file {
+        Some(_) if now.is_some() && !ours => (ToolRulesOutcome::Blocked("not_wenlans_file"), None),
+        Some(file) if now.as_deref() == Some(file.as_str()) => (ToolRulesOutcome::Kept, None),
+        Some(file) => (ToolRulesOutcome::Kept, Some(ToolFileChange::Write(file))),
         None if ours => (ToolRulesOutcome::NotWanted, Some(ToolFileChange::Remove)),
         None => (ToolRulesOutcome::NotWanted, None),
+    };
+    if change.is_some() && now.is_some() && is_read_only(target) {
+        return ToolFilePlan {
+            seen: now,
+            ..ToolFilePlan::untouched(ToolRulesOutcome::Blocked("read_only"))
+        };
+    }
+    ToolFilePlan {
+        outcome,
+        change,
+        seen: now,
+        covered_by: None,
+    }
+}
+
+/// How one planned change ended.
+enum ToolFileApplied {
+    Done {
+        created_folder: bool,
+    },
+    /// The file no longer reads as it did when the change was planned, so it
+    /// was left; the next pass plans from what it holds now.
+    ChangedSincePlan,
+}
+
+/// Make one planned change, if the file still reads as it did when planned.
+/// A rewritten file keeps its permissions and, where the system allows, its
+/// owner.
+fn apply_tool_file_change(
+    target: &Path,
+    seen: Option<&str>,
+    change: &ToolFileChange,
+) -> Result<ToolFileApplied, ServerError> {
+    let internal = |error: std::io::Error| ServerError::Internal(error.to_string());
+    let reads_as_planned = || match (read_tool_file(target), seen) {
+        (ToolFileNow::Missing, None) => true,
+        (ToolFileNow::Text(now), Some(seen)) => now == seen,
+        _ => false,
+    };
+    let text = match change {
+        ToolFileChange::Remove => {
+            if !reads_as_planned() {
+                return Ok(ToolFileApplied::ChangedSincePlan);
+            }
+            std::fs::remove_file(target).map_err(internal)?;
+            return Ok(ToolFileApplied::Done {
+                created_folder: false,
+            });
+        }
+        ToolFileChange::Write(text) => text,
+    };
+    let folder = target
+        .parent()
+        .ok_or_else(|| ServerError::Internal("tool rules file has no folder".into()))?;
+    let created_folder = std::fs::symlink_metadata(folder).is_err();
+    std::fs::create_dir_all(folder).map_err(internal)?;
+    let give_up = |staged: Option<&Path>| {
+        if let Some(staged) = staged {
+            let _ = std::fs::remove_file(staged);
+        }
+        if created_folder {
+            // Only an empty folder goes.
+            let _ = std::fs::remove_dir(folder);
+        }
+    };
+    let staged = staged_file(target, text).inspect_err(|_| give_up(None))?;
+    if let Ok(metadata) = std::fs::metadata(target) {
+        if let Err(error) = std::fs::set_permissions(&staged, metadata.permissions()) {
+            give_up(Some(&staged));
+            return Err(internal(error));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let _ = std::os::unix::fs::chown(&staged, Some(metadata.uid()), Some(metadata.gid()));
+        }
+    }
+    // Read again right before the swap: what the person saved meanwhile wins.
+    if !reads_as_planned() {
+        give_up(Some(&staged));
+        return Ok(ToolFileApplied::ChangedSincePlan);
+    }
+    std::fs::rename(&staged, target).map_err(|error| {
+        give_up(Some(&staged));
+        internal(error)
+    })?;
+    Ok(ToolFileApplied::Done { created_folder })
+}
+
+/// Make the changes [`plan_tool_rules`] decided, and note in Wenlan's own
+/// record what was written. A change that fails or is skipped leaves the
+/// file as it is; a file that counted on it (its part taken out because the
+/// other file would hold the rules) is left as it is too.
+fn apply_tool_rules(dirs: &SkillDirs, plans: Vec<ToolRulesPlan>) {
+    let mut records = read_tool_file_records(dirs);
+    let before = records.clone();
+    let mut not_done: HashSet<PathBuf> = HashSet::new();
+    for plan in plans {
+        let Some(change) = plan.change else {
+            continue;
+        };
+        let target = plan.target;
+        if plan
+            .covered_by
+            .as_ref()
+            .is_some_and(|file| not_done.contains(file))
+        {
+            not_done.insert(target);
+            continue;
+        }
+        let created_folder = match apply_tool_file_change(&target, plan.seen.as_deref(), &change) {
+            Ok(ToolFileApplied::Done { created_folder }) => created_folder,
+            Ok(ToolFileApplied::ChangedSincePlan) => {
+                tracing::debug!(path = %target.display(), "[skills] tool rules file changed since planned; left for the next pass");
+                not_done.insert(target);
+                continue;
+            }
+            Err(error) => {
+                tracing::warn!(path = %target.display(), %error, "[skills] tool rules file not updated");
+                not_done.insert(target);
+                continue;
+            }
+        };
+        let key = target.to_string_lossy().into_owned();
+        // What Wenlan made stays known as its own only while the file it
+        // found still held its part.
+        let earlier = records
+            .remove(&key)
+            .filter(|_| plan.seen.as_deref().is_some_and(holds_wenlans_part));
+        match change {
+            ToolFileChange::Write(text) if holds_wenlans_part(&text) => {
+                records.insert(
+                    key,
+                    ToolFileRecord {
+                        written_at: chrono::Utc::now().timestamp(),
+                        created_file: plan.seen.is_none()
+                            || earlier.as_ref().is_some_and(|record| record.created_file),
+                        created_folder: created_folder
+                            || earlier.as_ref().is_some_and(|record| record.created_folder),
+                    },
+                );
+            }
+            // Wenlan's part was taken out; the rest is the person's.
+            ToolFileChange::Write(_) => {}
+            ToolFileChange::Remove => {
+                // A folder goes only when Wenlan's record says it made it,
+                // and only when it is empty.
+                if earlier.is_some_and(|record| record.created_folder) {
+                    if let Some(folder) = target.parent() {
+                        let _ = std::fs::remove_dir(folder);
+                    }
+                }
+            }
+        }
+    }
+    if records != before {
+        write_tool_file_records(dirs, &records);
     }
 }
 
 /// Keep the general rules in each connected tool's own always-read file, so
 /// the tool has them without having to ask: Wenlan's marked part of the
 /// person's file, or a file of Wenlan's own where the tool reads a folder.
-/// [`plan_tool_rules`] decides; this only writes what it decided.
+/// [`plan_tool_rules`] decides; [`apply_tool_rules`] only writes what it
+/// decided. The file work runs off the async runtime.
 async fn sync_tool_rules(db: &MemoryDB, dirs: &SkillDirs, general: &[SkillLine]) {
     if !dirs.tool_files {
         return;
@@ -1316,28 +1683,14 @@ async fn sync_tool_rules(db: &MemoryDB, dirs: &SkillDirs, general: &[SkillLine])
             return;
         }
     };
-    for plan in plan_tool_rules(dirs, &connected, general) {
-        let target = &plan.target;
-        let result = match plan.change {
-            None => continue,
-            Some(ToolFileChange::Remove) => {
-                std::fs::remove_file(target).map_err(|e| ServerError::Internal(e.to_string()))
-            }
-            Some(ToolFileChange::Write(text)) => target
-                .parent()
-                .map_or(Ok(()), std::fs::create_dir_all)
-                .map_err(|e| ServerError::Internal(e.to_string()))
-                .and_then(|()| staged_file(target, &text))
-                .and_then(|staged| {
-                    std::fs::rename(&staged, target).map_err(|e| {
-                        let _ = std::fs::remove_file(&staged);
-                        ServerError::Internal(e.to_string())
-                    })
-                }),
-        };
-        if let Err(error) = result {
-            tracing::warn!(path = %target.display(), %error, "[skills] tool rules file not updated");
-        }
+    let (dirs, general) = (dirs.clone(), general.to_vec());
+    let done = tokio::task::spawn_blocking(move || {
+        let plans = plan_tool_rules(&dirs, &connected, &general);
+        apply_tool_rules(&dirs, plans);
+    })
+    .await;
+    if let Err(error) = done {
+        tracing::warn!(%error, "[skills] tool rules sync did not finish");
     }
 }
 
@@ -1374,7 +1727,8 @@ async fn rules_by_layer(
 }
 
 /// Report, for every AI tool, how the rules used in every Space reach it,
-/// worked out now from the files as they are. Nothing is written.
+/// worked out now from the files as they are. Nothing is written. The file
+/// reads run off the async runtime.
 async fn rules_delivery(
     db: &MemoryDB,
     page_root: Option<&Path>,
@@ -1389,11 +1743,22 @@ async fn rules_delivery(
         .filter_map(|agent| rules_location(&agent.name, cfg!(windows)))
         .map(|location| location.tool)
         .collect();
-    // A run that may not write the tools' files does not read them either.
-    let plans = if dirs.tool_files {
-        plan_tool_rules(dirs, &connected, &general)
-    } else {
-        Vec::new()
+    let (plans, records, enabled) = {
+        let (dirs, connected) = (dirs.clone(), connected.clone());
+        tokio::task::spawn_blocking(move || {
+            // A run that may not write the tools' files does not read them either.
+            let (plans, records) = if dirs.tool_files {
+                (
+                    plan_tool_rules(&dirs, &connected, &general),
+                    read_tool_file_records(&dirs),
+                )
+            } else {
+                Default::default()
+            };
+            (plans, records, feature_enabled())
+        })
+        .await
+        .map_err(|error| ServerError::Internal(error.to_string()))?
     };
     let roots = dirs.rules_roots();
     let display_name = |id: &str| {
@@ -1405,17 +1770,25 @@ async fn rules_delivery(
             .unwrap_or_else(|| id.to_string())
     };
     let nothing_to_write = || {
-        if feature_enabled() {
+        if enabled {
             RulesDeliveryState::NoRules
         } else {
             RulesDeliveryState::SettingOff
         }
+    };
+    // A file holds the rules only when it reads, on disk, as Wenlan would
+    // write it now.
+    let holds_them_now = |file: &Path| {
+        plans.iter().any(|plan| {
+            plan.target == file && plan.outcome == ToolRulesOutcome::Kept && plan.in_line
+        })
     };
     let mut tools = Vec::new();
     for tool in GLOBAL_RULES_TOOLS {
         let plan = plans.iter().find(|plan| plan.tool == tool);
         let is_connected = connected.contains(tool);
         let mut delivered_at = None;
+        let mut blocked_reason = None;
         let state = match plan.map(|plan| (plan.outcome, plan.in_line)) {
             _ if !is_connected => RulesDeliveryState::NotConnected,
             _ if !dirs.tool_files => RulesDeliveryState::IsolatedRun,
@@ -1424,16 +1797,27 @@ async fn rules_delivery(
             None | Some((ToolRulesOutcome::NoFile, _)) => RulesDeliveryState::OnRequest,
             Some((ToolRulesOutcome::FolderMissing, _)) => RulesDeliveryState::FolderMissing,
             Some((ToolRulesOutcome::OverLimit, _)) => RulesDeliveryState::OverLimit,
-            Some((ToolRulesOutcome::Covered, _)) => RulesDeliveryState::CoveredByAnotherFile,
+            Some((ToolRulesOutcome::Blocked(reason), _)) => {
+                blocked_reason = Some(reason.to_string());
+                RulesDeliveryState::Blocked
+            }
+            Some((ToolRulesOutcome::Covered, true))
+                if plan
+                    .and_then(|plan| plan.covered_by.as_deref())
+                    .is_some_and(holds_them_now) =>
+            {
+                RulesDeliveryState::CoveredByAnotherFile
+            }
             Some((ToolRulesOutcome::Kept, true)) => {
+                // The time Wenlan noted when it wrote, never the file's own:
+                // the person's edits move that one.
                 delivered_at = plan
-                    .and_then(|plan| std::fs::metadata(&plan.target).ok())
-                    .and_then(|metadata| metadata.modified().ok())
-                    .map(|at| chrono::DateTime::<chrono::Utc>::from(at).timestamp());
+                    .and_then(|plan| records.get(plan.target.to_string_lossy().as_ref()))
+                    .map(|record| record.written_at);
                 RulesDeliveryState::Delivered
             }
             Some((
-                ToolRulesOutcome::Kept | ToolRulesOutcome::Blocked | ToolRulesOutcome::NotWanted,
+                ToolRulesOutcome::Kept | ToolRulesOutcome::Covered | ToolRulesOutcome::NotWanted,
                 _,
             )) => RulesDeliveryState::OutOfDate,
         };
@@ -1452,6 +1836,7 @@ async fn rules_delivery(
             },
             path: path.map(|path| path.to_string_lossy().into_owned()),
             state,
+            blocked_reason,
             delivered_at,
             rule_count,
         });
@@ -1476,6 +1861,7 @@ async fn rules_delivery(
             } else {
                 RulesDeliveryState::OnRequest
             },
+            blocked_reason: None,
             delivered_at: None,
             rule_count,
         });

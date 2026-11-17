@@ -142,8 +142,8 @@ pub enum RulesDeliveryMethod {
 pub enum RulesDeliveryState {
     /// The file holds exactly what Wenlan would write now.
     Delivered,
-    /// Another file the tool reads already holds them: one the tool's file
-    /// brings in, or the file the tool falls back to.
+    /// Another file the tool reads holds them on disk right now: one the
+    /// tool's file brings in, or the file the tool falls back to.
     CoveredByAnotherFile,
     /// The tool's own folder is not on this computer; nothing was written.
     FolderMissing,
@@ -157,9 +157,12 @@ pub enum RulesDeliveryState {
     NotConnected,
     /// There is no rule used in every Space to write.
     NoRules,
-    /// The file does not hold what Wenlan would write now: the next sync has
-    /// not run yet, or the file could not be read or written.
+    /// The file does not hold what Wenlan would write now and the next sync
+    /// has not run yet.
     OutOfDate,
+    /// Wenlan cannot safely change the file and leaves it exactly as it is;
+    /// `blocked_reason` says why.
+    Blocked,
     /// No file is written for this tool; it gets the rules when it asks.
     OnRequest,
 }
@@ -176,7 +179,16 @@ pub struct ToolRulesDelivery {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
     pub state: RulesDeliveryState,
-    /// When the file was last written (Unix seconds), only when `delivered`.
+    /// Why the file is left alone, as a short machine word, only when
+    /// `blocked`: `start_marker_without_end`, `end_marker_without_start`,
+    /// `end_marker_before_start`, `more_than_one_part`,
+    /// `part_would_not_read_back`, `broken_link`, `folder_not_usable`,
+    /// `not_a_file`, `not_text`, `not_readable`, `read_only`,
+    /// `not_wenlans_file`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocked_reason: Option<String>,
+    /// When Wenlan last wrote its part (Unix seconds), from Wenlan's own
+    /// record, only when `delivered`. Left out when Wenlan has no record.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delivered_at: Option<i64>,
     /// How many rules used in every Space Wenlan writes into a tool's file.

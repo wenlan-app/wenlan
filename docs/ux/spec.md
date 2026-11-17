@@ -618,23 +618,37 @@ and wait for evidence that people need them.
   OpenCode's and Zed's `AGENTS.md`. Kiro reads every file of a folder, so
   there the rules are a file of Wenlan's own, `wenlan-rules.md`, and no file
   of the person's is touched. Wenlan changes only
-  its part and never the person's own text around it, and never makes a
+  its part and never the person's own text around it: the file keeps its
+  line endings, its last line as it was, and its permissions. Wenlan's part
+  is what sits between its two marker lines, one start then one end, each
+  alone on a line and not inside a code example. A file Wenlan cannot safely
+  change is left exactly as it is and shown as blocked, with the reason: a
+  marker without its pair or more than one pair, a link that leads nowhere,
+  a file that is read-only, not text or unreadable, or a file of the
+  person's own where Wenlan's would go. A file the person saved while Wenlan
+  was working is left for the next pass. Wenlan never makes a
   tool's folder: a tool that is not on the computer gets nothing. Only the
   installed app does this: a test or trial run on other data never writes these files. The person is not asked
   again: the one answer of UX-SKILL-1 covers it, and a rule the person wrote
   themselves for every Space (UX-SKILL-10) needs no answer. When the lines
   change the part follows; with the tool disconnected or no such lines left,
   the part is taken out, and with the setting off only the rules the person
-  wrote themselves stay in it. A file two tools share, or two names that
-  reach one file, gets one part, kept while either tool is connected. A file
+  wrote themselves stay in it. A file is removed only when Wenlan made it
+  and nothing but Wenlan's part is in it; a file the person had first stays,
+  even empty. A file two tools share, or two names that
+  reach one file, gets one part, kept while either tool is connected, under
+  the smallest limit any connected tool reading it has. A file
   that another one already brings in gets no second copy; only Claude Code's
-  and Gemini's files can bring one in. When OpenCode has no `AGENTS.md` of
+  and Gemini's files can bring one in, and a line shown inside a code example
+  brings nothing in. When OpenCode has no `AGENTS.md` of
   its own Wenlan makes none, because OpenCode then reads Claude Code's file,
   and the part there covers it. When the person's text and the part together
   would pass the 6,000 characters Windsurf reads, the part is left out. Every
   other tool (Cursor, Claude Desktop, ChatGPT and the rest) has no such file
   Wenlan can write and gets the rules only when it asks Wenlan. Wenlan can
-  say, tool by tool, which of these holds and when the file was written; it
+  say, tool by tool, which of these holds and when Wenlan last wrote its
+  part (from Wenlan's own note, not the file's date); a tool is shown as
+  covered by another file only while that file holds the part. It
   says what is in the file, not that the AI followed it.
   原文：「為啥要外掛？直接把我們的規則同步過去工具，工具就會讀啊？」（2026-11-15 23:28Z）；「要有信心，馬上就要做了」（2026-11-17 05:01Z）。
 - **UX-SKILL-9** `shipped` In a Space shared with teammates, each person's

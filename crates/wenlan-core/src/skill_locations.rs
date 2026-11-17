@@ -75,6 +75,11 @@ pub enum RulesBase {
     /// `COPILOT_HOME`, else `~/.copilot`.
     CopilotHome,
     ConfigDir,
+    /// `XDG_CONFIG_HOME`, else `~/.config`, on every platform.
+    XdgConfigHome,
+    /// Zed's settings root off Windows: `XDG_CONFIG_HOME` where Zed follows
+    /// it (Linux), else `~/.config`.
+    ZedConfigHome,
 }
 
 /// How Wenlan's rules sit in the tool's file.
@@ -122,6 +127,11 @@ pub struct RulesRoots<'a> {
     pub codex_home: Option<&'a Path>,
     /// A non-empty `COPILOT_HOME`.
     pub copilot_home: Option<&'a Path>,
+    /// A non-empty, absolute `XDG_CONFIG_HOME`.
+    pub xdg_config_home: Option<&'a Path>,
+    /// Whether Zed on this platform follows `XDG_CONFIG_HOME`. It does on
+    /// Linux; on macOS it always uses `~/.config`.
+    pub zed_follows_xdg: bool,
     pub windows: bool,
 }
 
@@ -132,6 +142,8 @@ impl<'a> RulesRoots<'a> {
             config_dir: None,
             codex_home: None,
             copilot_home: None,
+            xdg_config_home: None,
+            zed_follows_xdg: false,
             windows: false,
         }
     }
@@ -213,8 +225,8 @@ pub fn rules_location(tool: &str, windows: bool) -> Option<RulesLocation> {
             falls_back_to: Some("claude-code"),
             ..block(
                 "opencode",
-                RulesBase::Home,
-                &[".config", "opencode"],
+                RulesBase::XdgConfigHome,
+                &["opencode"],
                 &["AGENTS.md"],
             )
         },
@@ -229,9 +241,10 @@ pub fn rules_location(tool: &str, windows: bool) -> Option<RulesLocation> {
             )
         },
         // Zed keeps its settings folder at `~/.config/zed` on macOS and
-        // Linux and at `%APPDATA%\Zed` on Windows.
+        // Linux (under `XDG_CONFIG_HOME` on Linux when that is set) and at
+        // `%APPDATA%\Zed` on Windows.
         "zed" if windows => block("zed", RulesBase::ConfigDir, &["Zed"], &["AGENTS.md"]),
-        "zed" => block("zed", RulesBase::Home, &[".config", "zed"], &["AGENTS.md"]),
+        "zed" => block("zed", RulesBase::ZedConfigHome, &["zed"], &["AGENTS.md"]),
         _ => return None,
     })
 }
@@ -251,6 +264,14 @@ impl RulesLocation {
                 None => roots.home?.join(".copilot"),
             },
             RulesBase::ConfigDir => roots.config_dir?.to_path_buf(),
+            RulesBase::XdgConfigHome => match roots.xdg_config_home {
+                Some(dir) => dir.to_path_buf(),
+                None => roots.home?.join(".config"),
+            },
+            RulesBase::ZedConfigHome => match roots.xdg_config_home {
+                Some(dir) if roots.zed_follows_xdg => dir.to_path_buf(),
+                _ => roots.home?.join(".config"),
+            },
         };
         let tool_folder = self.folder.iter().fold(base, |p, part| p.join(part));
         let path = self
@@ -402,6 +423,39 @@ mod tests {
         assert_eq!(
             rules_path("claude-code", &roots),
             home.join(".claude/CLAUDE.md")
+        );
+    }
+
+    #[test]
+    fn ux_skill_8_opencode_and_zed_follow_the_xdg_config_folder() {
+        let home = Path::new("/home/me");
+        let xdg = RulesRoots {
+            xdg_config_home: Some(Path::new("/cfg")),
+            zed_follows_xdg: true,
+            ..RulesRoots::under_home(home)
+        };
+        assert_eq!(
+            rules_path("opencode", &xdg),
+            Path::new("/cfg/opencode/AGENTS.md")
+        );
+        assert_eq!(rules_path("zed", &xdg), Path::new("/cfg/zed/AGENTS.md"));
+        // Zed on macOS keeps `~/.config` whatever the variable says.
+        let mac = RulesRoots {
+            zed_follows_xdg: false,
+            ..xdg
+        };
+        assert_eq!(
+            rules_path("zed", &mac),
+            Path::new("/home/me/.config/zed/AGENTS.md")
+        );
+        assert_eq!(
+            rules_path("opencode", &mac),
+            Path::new("/cfg/opencode/AGENTS.md")
+        );
+        // Nothing else moves with it.
+        assert_eq!(
+            rules_path("claude-code", &xdg),
+            Path::new("/home/me/.claude/CLAUDE.md")
         );
     }
 
