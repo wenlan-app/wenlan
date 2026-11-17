@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=793947e7a55b1643c26dd8cebaf4b2103650f2778ea694b831ae6c1f59436a57 -->
+<!-- README_SYNC: source=README.md sha256=ad7a4305c2558147527e572082d63b6360621161a94c5e25c6d91d771fa8777e -->
 
 <p align="center">
   <picture>
@@ -44,7 +44,7 @@ Cada herramienta de IA empieza de cero, y cada una quiere su propio archivo de r
 
 - **Documentos con fuentes.** Notas, documentos y chats de IA se convierten en páginas. Antes de guardar, Wenlan comprueba que cada fuente citada respalda su frase.
 - **Skills y reglas, escritas una vez.** Al día en cada herramienta de IA que conectes. Trae las skills que ya tienes en tu ordenador o busca otras para instalar.
-- **Memoria que lo mantiene al día.** Lo que decides en cualquier herramienta de IA se guarda y está en la siguiente. Esa memoria es lo que mantiene al día tus documentos, skills y reglas.
+- **Memoria ordenada que lo mantiene al día.** Lo que decides en cualquier herramienta de IA se guarda y está en la siguiente. Wenlan ordena esas memorias, une las repetidas y las escribe en tus documentos, skills y reglas. Así se mantienen al día.
 - **Tú mandas.** Ves cada cambio, puedes deshacerlo y bloquear una página para que la IA te pregunte primero.
 - **El diseño que pidas.** Una página puede ser texto o una página web que tu IA dibuja con el contenido actual.
 

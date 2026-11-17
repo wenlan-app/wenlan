@@ -42,7 +42,7 @@ Your AI tools each start from zero, and each wants its own rules file. Wenlan gi
 
 - **Docs with sources.** Notes, documents and AI chats become pages. Before saving, Wenlan checks that each cited source supports its sentence.
 - **Skills and rules, written once.** Kept current in every AI tool you connect. Bring in the skills already on your computer, or find more to install.
-- **Memory that keeps it current.** What you settle in any AI tool is saved, and is there in the next. That memory is what lets your docs, skills and rules stay current.
+- **Organized memory keeps it current.** What you settle in any AI tool is saved and is there in the next. Wenlan sorts those memories, merges repeats, and writes them into your docs, skills and rules. That is how they stay current.
 - **You stay in charge.** See every change, undo it, and lock a page so AI asks you first.
 - **Any layout you ask for.** A page can be text, or a web page your AI draws that shows the live content.
 
