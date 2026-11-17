@@ -515,61 +515,183 @@ async fn resolved_space(
         .ok_or_else(|| ServerError::NotFound(format!("Space {name:?} not found")))
 }
 
-/// A page of the person's own in a folder named Rules, with the rules they
-/// wrote on it (UX-SKILL-10).
+/// A page in a folder named Rules, with the rules the person wrote on it
+/// themselves (UX-SKILL-10).
 struct OwnRulePage {
     id: String,
-    /// The Space the page is in; `None` for a page in no Space.
+    /// The Space the page gives rules for; `None` for a page in no Space
+    /// and outside every Space's folder, whose rules hold everywhere.
     space: Option<String>,
     version: i64,
     file: String,
     lines: Vec<SkillLine>,
+    /// Every plain bullet on the page is the person's own.
+    all_own: bool,
 }
 
 /// The person's own rules pages, read once for a whole pass.
 #[derive(Default)]
 struct OwnRulePages {
+    /// The pages folder they were read from; also names the trace cache.
+    root: Option<PathBuf>,
     pages: Vec<OwnRulePage>,
 }
 
+/// The file `state.json` records for each page, with whether the page began
+/// as a note the person put in the folder. Read off the async runtime: the
+/// state file grows with the library.
+async fn page_files(db: &MemoryDB, root: &Path) -> HashMap<String, (String, bool)> {
+    let writer = wenlan_core::export::knowledge::KnowledgeWriter::new(root.to_path_buf(), db);
+    tokio::task::spawn_blocking(move || writer.page_files_with_person_notes())
+        .await
+        .unwrap_or_default()
+}
+
+/// One traced page: what the trace was made from, and its result.
+struct TracedPage {
+    version: i64,
+    title: String,
+    person_note: bool,
+    lines: Vec<SkillLine>,
+}
+
+/// Traces by pages folder and page id. A trace reads the page's whole
+/// history, and is the same until the page has a new version.
+static TRACED: std::sync::Mutex<Option<HashMap<(PathBuf, String), TracedPage>>> =
+    std::sync::Mutex::new(None);
+
+/// History read for one trace.
+const RULES_PAGE_HISTORY_DEPTH: i64 = 2_000;
+
+/// The bullets on `page` the person wrote themselves: each is traced to the
+/// version that first brought its text in, and counts only when that version
+/// was the person's own. A version an AI tool or a teammate wrote, AI text
+/// the person accepted (a revision, or one sentence), and a version whose
+/// writer is not known give no rule, and do not take away a bullet the
+/// person wrote before or after. `person_note` says the page began as a note
+/// the person put in the folder, whose first version is recorded as a
+/// tool's. A page with no plain bullet costs no history read.
+async fn person_lines_of(
+    db: &MemoryDB,
+    root: Option<&Path>,
+    page: &wenlan_types::Page,
+    person_note: bool,
+) -> Result<Vec<SkillLine>, ServerError> {
+    let mut input = SkillPageInput {
+        id: page.id.clone(),
+        title: page.title.clone(),
+        revision: page.version,
+        revision_at: 0,
+        text: page.content.clone(),
+    };
+    if skill_grow::person_rule_lines(&input).is_empty() {
+        return Ok(Vec::new());
+    }
+    let key = root.map(|root| (root.to_path_buf(), page.id.clone()));
+    if let Some(key) = &key {
+        let cache = TRACED
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(found) = cache.as_ref().and_then(|cache| cache.get(key)).filter(|t| {
+            t.version == page.version && t.title == page.title && t.person_note == person_note
+        }) {
+            return Ok(found.lines.clone());
+        }
+    }
+    let mut history = db
+        .list_page_history(&page.id, RULES_PAGE_HISTORY_DEPTH)
+        .await?;
+    history.reverse();
+    let accepted: HashSet<i64> = db
+        .sentence_accept_versions(&page.id)
+        .await?
+        .into_iter()
+        .collect();
+    let versions: Vec<(bool, &str)> = history
+        .iter()
+        .map(|version| {
+            let own = !accepted.contains(&version.version)
+                && (skill_grow::version_is_the_persons_own(&version.edited_by)
+                    || (person_note && version.edited_by == "agent_create"));
+            (own, version.content.as_str())
+        })
+        .collect();
+    input.revision_at = history.last().map_or(0, |version| version.created_at);
+    let lines = skill_grow::person_rule_lines_through_history(&input, &versions);
+    if let Some(key) = key {
+        TRACED
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get_or_insert_with(HashMap::new)
+            .insert(
+                key,
+                TracedPage {
+                    version: page.version,
+                    title: page.title.clone(),
+                    person_note,
+                    lines: lines.clone(),
+                },
+            );
+    }
+    Ok(lines)
+}
+
 impl OwnRulePages {
-    /// Every active page whose file sits in a folder named Rules and whose
-    /// every version the person wrote themselves. A page an AI tool or a
-    /// teammate ever wrote, one under review, and one marked not for AI
-    /// tools are left out. No pages folder, no such pages.
+    /// For a reader that wants only what Wenlan derived from pages.
+    fn none() -> Self {
+        Self::default()
+    }
+
+    /// Every active page whose file sits in a folder named Rules, with the
+    /// bullets the person wrote on it themselves. A page under review and
+    /// one marked not for AI tools are left out. A page gives rules for its
+    /// Space; a page with no Space gives them for the Space whose folder
+    /// holds its file, and only a page outside every Space's folder holds
+    /// for every Space. No pages folder, no such pages.
     async fn load(db: &MemoryDB, page_root: Option<&Path>) -> Result<Self, ServerError> {
         let Some(root) = page_root else {
             return Ok(Self::default());
         };
-        let mut files: Vec<(String, (String, bool))> =
-            wenlan_core::export::knowledge::KnowledgeWriter::new(root.to_path_buf(), db)
-                .page_files_with_person_notes()
-                .into_iter()
-                .filter(|(_, (file, _))| skill_grow::in_rules_folder(file, None))
-                .collect();
+        let mut files: Vec<(String, (String, bool))> = page_files(db, root)
+            .await
+            .into_iter()
+            .filter(|(_, (file, _))| skill_grow::may_be_in_rules_folder(file))
+            .collect();
         files.sort();
-        let space_folders = wenlan_core::space_folders::is_on(root);
         let mut pages = Vec::new();
+        if files.is_empty() {
+            return Ok(Self {
+                root: Some(root.to_path_buf()),
+                pages,
+            });
+        }
+        let layout = wenlan_core::space_folders::current_layout(db, root).await?;
         for (id, (file, person_note)) in files {
+            // The Space's own folder (or its team's) is not a folder the
+            // person named: only the folders inside it count.
+            let placed = wenlan_core::space_folders::placed(&file, &layout);
+            if !skill_grow::has_rules_folder(&placed.inside) {
+                continue;
+            }
             let Some(page) = db.get_page(&id).await? else {
                 continue;
             };
+            if page.status != "active"
+                || page.review_required
+                || skill_grow::page_is_not_for_ai_tools(&page.content)
+            {
+                continue;
+            }
             let space = page
                 .space
                 .as_deref()
                 .map(str::trim)
-                .filter(|name| !name.is_empty())
-                .map(str::to_string);
-            // A Space named Rules keeps its pages in a folder of that name.
-            let own_folder = space
-                .as_deref()
-                .filter(|_| space_folders)
-                .map(wenlan_core::space_folders::folder_name);
-            if page.status != "active"
-                || page.review_required
-                || skill_grow::page_is_not_for_ai_tools(&page.content)
-                || !skill_grow::in_rules_folder(&file, own_folder.as_deref())
-            {
+                .filter(|name| !name.is_empty() && *name != "uncategorized")
+                .map(str::to_string)
+                .or(placed.space);
+            // A file in a team's folder but in none of its Spaces has no
+            // Space to give rules to, and is never the person's general one.
+            if space.is_none() && placed.team_only {
                 continue;
             }
             let Some(page) = wenlan_core::truth_adapter::filter_page(
@@ -581,34 +703,22 @@ impl OwnRulePages {
             else {
                 continue;
             };
-            let writers = db.page_history_writers(&page.id).await?;
-            // A note the person put in the folder themselves is recorded as
-            // made by a tool (`agent_create`); the folder's own record says
-            // it was theirs.
-            if writers.is_empty()
-                || !writers.iter().all(|writer| {
-                    skill_grow::version_is_the_persons_own(writer)
-                        || (person_note && writer == "agent_create")
-                })
-            {
-                continue;
-            }
-            let revision_at = db
-                .get_page_history_at(&page.id, page.version)
-                .await?
-                .map_or(0, |revision| revision.created_at);
-            let mut lines = skill_grow::person_rule_lines(&SkillPageInput {
-                id: page.id.clone(),
-                title: page.title.clone(),
-                revision: page.version,
-                revision_at,
-                text: page.content.clone(),
-            });
-            // A page in no Space holds for every Space.
+            let mut lines = person_lines_of(db, Some(root), &page, person_note).await?;
             for line in &mut lines {
                 line.general = space.is_none();
             }
+            let all_own = !lines.is_empty()
+                && lines.len()
+                    == skill_grow::person_rule_lines(&SkillPageInput {
+                        id: page.id.clone(),
+                        title: page.title.clone(),
+                        revision: page.version,
+                        revision_at: 0,
+                        text: page.content.clone(),
+                    })
+                    .len();
             pages.push(OwnRulePage {
+                all_own,
                 id: page.id,
                 space,
                 version: page.version,
@@ -616,11 +726,19 @@ impl OwnRulePages {
                 lines,
             });
         }
-        Ok(Self { pages })
+        Ok(Self {
+            root: Some(root.to_path_buf()),
+            pages,
+        })
     }
 
+    /// A page whose every bullet is the person's own already counts, so the
+    /// model is not asked to suggest it back. A page with a bullet that is
+    /// not theirs (an AI tool's, a teammate's) still goes to the model.
     fn holds(&self, page_id: &str) -> bool {
-        self.pages.iter().any(|page| page.id == page_id)
+        self.pages
+            .iter()
+            .any(|page| page.id == page_id && page.all_own)
     }
 
     /// The lines of the pages in `space` (`None`: the pages in no Space).
@@ -648,48 +766,6 @@ impl OwnRulePages {
             .map(|byte| format!("{byte:02x}"))
             .collect()
     }
-}
-
-/// History read for the bullets a person added to a "How I work" page.
-const RULES_PAGE_HISTORY_DEPTH: i64 = 2_000;
-
-/// The plain bullets the person added to the Space's "How I work" page
-/// themselves. Wenlan and AI tools write that page too, so each bullet is
-/// traced to the version that brought it in; a page any teammate wrote gives
-/// none (UX-SKILL-9).
-async fn rules_page_person_lines(
-    db: &MemoryDB,
-    page: &wenlan_types::Page,
-) -> Result<Vec<SkillLine>, ServerError> {
-    let mut history = db
-        .list_page_history(&page.id, RULES_PAGE_HISTORY_DEPTH)
-        .await?;
-    if history
-        .iter()
-        .any(|version| wenlan_core::shared_space::shared_writer(&version.edited_by).is_some())
-    {
-        return Ok(Vec::new());
-    }
-    history.reverse();
-    let versions: Vec<(bool, &str)> = history
-        .iter()
-        .map(|version| {
-            (
-                skill_grow::version_is_the_persons_own(&version.edited_by),
-                version.content.as_str(),
-            )
-        })
-        .collect();
-    Ok(skill_grow::person_rule_lines_through_history(
-        &SkillPageInput {
-            id: page.id.clone(),
-            title: page.title.clone(),
-            revision: page.version,
-            revision_at: history.last().map_or(0, |version| version.created_at),
-            text: page.content.clone(),
-        },
-        &versions,
-    ))
 }
 
 /// The Space's "How I work" page when AI tools may read it: accepted, still
@@ -740,7 +816,7 @@ async fn read_rules_for_space(
     let mut lines = own.lines_in(Some(&space.name));
     let mut rules_page_id = None;
     if let Some((state, page)) = readable_rules_page(db, space).await? {
-        lines.extend(rules_page_person_lines(db, &page).await?);
+        lines.extend(person_lines_of(db, own.root.as_deref(), &page, false).await?);
         if feature_enabled() {
             let reconciled = skill_grow::reconcile_rules_page(
                 &space.name,
@@ -1145,20 +1221,123 @@ async fn sync_rules_files_locked(db: &MemoryDB, page_root: Option<&Path>, dirs: 
 }
 
 /// Whether a write to page `id` can change the rules AI tools are told: it
-/// is a Space's "How I work" page, or its file sits in a folder named Rules.
-/// A cheap test, wider than the real one; the sync decides the rest.
+/// is a Space's "How I work" page, or some folder above its file is named
+/// Rules. A cheap test, wider than the real one; the sync decides the rest.
 async fn may_hold_own_rules(db: &MemoryDB, page_root: Option<&Path>, id: &str) -> bool {
-    let in_folder = page_root.is_some_and(|root| {
-        wenlan_core::export::knowledge::KnowledgeWriter::new(root.to_path_buf(), db)
-            .page_filename(id)
-            .is_some_and(|file| skill_grow::in_rules_folder(&file, None))
+    if let Some(root) = page_root {
+        let writer = wenlan_core::export::knowledge::KnowledgeWriter::new(root.to_path_buf(), db);
+        let page_id = id.to_string();
+        let file = tokio::task::spawn_blocking(move || writer.page_filename(&page_id))
+            .await
+            .ok()
+            .flatten();
+        if file.is_some_and(|file| skill_grow::may_be_in_rules_folder(&file)) {
+            return true;
+        }
+    }
+    db.space_rules_states().await.is_ok_and(|states| {
+        states
+            .iter()
+            .any(|state| state.rules_page_id.as_deref() == Some(id))
+    })
+}
+
+/// One library's background sync: whether a run is going, and the newest
+/// request no run has taken yet.
+#[derive(Default)]
+struct BackgroundSync {
+    wanted: Option<(Arc<MemoryDB>, Option<PathBuf>)>,
+}
+
+/// Background syncs by library (the database's address), so two libraries in
+/// one process, as in tests, never wait on each other's run. An entry is
+/// there exactly while a run is going.
+static BACKGROUND_SYNCS: std::sync::Mutex<Option<HashMap<usize, BackgroundSync>>> =
+    std::sync::Mutex::new(None);
+#[cfg(test)]
+static BACKGROUND_SYNC_RUNS: std::sync::Mutex<Option<HashMap<usize, usize>>> =
+    std::sync::Mutex::new(None);
+
+fn with_background_syncs<T>(act: impl FnOnce(&mut HashMap<usize, BackgroundSync>) -> T) -> T {
+    let mut syncs = BACKGROUND_SYNCS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    act(syncs.get_or_insert_with(HashMap::new))
+}
+
+/// Ends a run's entry when its task is dropped before it finished (the
+/// runtime shut down), so a later request starts a new run.
+struct BackgroundSyncRun {
+    library: usize,
+    finished: bool,
+}
+
+impl Drop for BackgroundSyncRun {
+    fn drop(&mut self) {
+        if !self.finished {
+            with_background_syncs(|syncs| syncs.remove(&self.library));
+        }
+    }
+}
+
+/// Bring the rules files up to date in the background. One sync runs at a
+/// time; requests that arrive meanwhile become one more run after it, not a
+/// queue, so many saves in a row cost two syncs and the files still end at
+/// the latest state. Needs a Tokio runtime; without one nothing happens.
+pub(crate) fn request_rules_sync(db: Arc<MemoryDB>, page_root: Option<PathBuf>) {
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
+    let library = Arc::as_ptr(&db) as usize;
+    let already_running = with_background_syncs(|syncs| {
+        let running = syncs.contains_key(&library);
+        syncs.entry(library).or_default().wanted = Some((db, page_root));
+        running
     });
-    in_folder
-        || db.space_rules_states().await.is_ok_and(|states| {
-            states
-                .iter()
-                .any(|state| state.rules_page_id.as_deref() == Some(id))
-        })
+    if already_running {
+        return;
+    }
+    let run = BackgroundSyncRun {
+        library,
+        finished: false,
+    };
+    runtime.spawn(async move {
+        // The whole guard lives in the task, not only its flag.
+        let mut run = run;
+        loop {
+            // Taking the request and ending the run are one step, so a
+            // request is either seen here or starts a run of its own.
+            let next = with_background_syncs(|syncs| {
+                let next = syncs.get_mut(&library).and_then(|sync| sync.wanted.take());
+                if next.is_none() {
+                    syncs.remove(&library);
+                }
+                next
+            });
+            let Some((db, root)) = next else {
+                run.finished = true;
+                break;
+            };
+            sync_rules_files_quietly(&db, root.as_deref()).await;
+            #[cfg(test)]
+            {
+                *BACKGROUND_SYNC_RUNS
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .get_or_insert_with(HashMap::new)
+                    .entry(library)
+                    .or_default() += 1;
+            }
+        }
+    });
+}
+
+/// For a route that changed some page without naming it (an accepted
+/// revision): ask for a sync, in the background.
+pub(crate) async fn rules_may_have_changed(state: &SharedState) {
+    if let Ok((db, root)) = db_and_page_root(state).await {
+        request_rules_sync(db, root);
+    }
 }
 
 /// Held by a route that writes, moves or removes a page. When the route
@@ -1207,7 +1386,7 @@ impl Drop for RulesPageWrite {
                 return;
             };
             if before || may_hold_own_rules(&db, root.as_deref(), &page_id).await {
-                sync_rules_files_quietly(&db, root.as_deref()).await;
+                request_rules_sync(db, root);
             }
         });
     }
@@ -1216,25 +1395,28 @@ impl Drop for RulesPageWrite {
 /// The scheduler's catch-up for what no route saw: a file the person edited,
 /// added, moved or deleted in the pages folder. The files are written again
 /// when `edited` says the watcher took in an edit, or when the set of the
-/// person's own rules pages is not what it was at the last call.
+/// person's own rules pages is not what it was at the last call. When that
+/// set cannot be read, an edit still asks for the sync.
 pub(crate) async fn sync_rules_files_after_file_changes(
     db: &MemoryDB,
     page_root: &Path,
     edited: bool,
 ) {
     static LAST: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
-    let signature = match OwnRulePages::load(db, Some(page_root)).await {
-        Ok(own) => own.signature(),
+    let changed = match OwnRulePages::load(db, Some(page_root)).await {
+        Ok(own) => {
+            let signature = own.signature();
+            let mut last = LAST.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let changed = last.as_deref() != Some(signature.as_str());
+            *last = Some(signature);
+            changed
+        }
         Err(error) => {
             tracing::warn!(%error, "[skills] own rules pages not read");
-            return;
+            // Not remembered: the next pass compares again.
+            *LAST.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+            false
         }
-    };
-    let changed = {
-        let mut last = LAST.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let changed = last.as_deref() != Some(signature.as_str());
-        *last = Some(signature);
-        changed
     };
     if edited || changed {
         sync_rules_files_quietly(db, Some(page_root)).await;
@@ -2095,33 +2277,41 @@ pub async fn handle_suggestions(
         return Ok(Json(Vec::new()));
     }
     let mut suggestions = Vec::new();
-    for item in db.skill_suggestions().await?.into_iter().filter(|item| {
-        matches!(
-            item.status,
-            SuggestionStatus::Pending | SuggestionStatus::Applying
-        )
-    }) {
-        if approved_rule(&db, &item.suggestion.source_rule_id)
-            .await?
-            .is_some()
-        {
+    let pending: Vec<_> = db
+        .skill_suggestions()
+        .await?
+        .into_iter()
+        .filter(|item| {
+            matches!(
+                item.status,
+                SuggestionStatus::Pending | SuggestionStatus::Applying
+            )
+        })
+        .collect();
+    if pending.is_empty() {
+        return Ok(Json(suggestions));
+    }
+    // Read once for all of them.
+    let approved = approved_rule_ids(&db).await?;
+    for item in pending {
+        if approved.contains(&item.suggestion.source_rule_id) {
             suggestions.push(item.suggestion);
         }
     }
     Ok(Json(suggestions))
 }
 
-async fn approved_rule(db: &MemoryDB, rule_id: &str) -> Result<Option<SkillLine>, ServerError> {
-    // A suggestion for an existing skill names a line derived from pages,
-    // never one of the person's own rules pages.
-    let own = OwnRulePages::default();
+/// The ids of every line AI tools are told now. A suggestion for an
+/// existing skill names a line derived from pages, never one from the
+/// person's own rules pages, so those are not read here.
+async fn approved_rule_ids(db: &MemoryDB) -> Result<HashSet<String>, ServerError> {
+    let own = OwnRulePages::none();
+    let mut ids = HashSet::new();
     for space in db.list_spaces().await? {
         let response = read_rules_for_space(db, &own, &space).await?;
-        if let Some(line) = response.lines.into_iter().find(|line| line.id == rule_id) {
-            return Ok(Some(line));
-        }
+        ids.extend(response.lines.into_iter().map(|line| line.id));
     }
-    Ok(None)
+    Ok(ids)
 }
 
 fn validated_skill_path(stored: &StoredSkillSuggestion) -> Result<PathBuf, ServerError> {
@@ -2253,9 +2443,9 @@ pub async fn handle_apply_suggestion(
     ) {
         return Err(ServerError::Conflict("suggestion is not pending".into()));
     }
-    if approved_rule(&db, &stored.suggestion.source_rule_id)
+    if !approved_rule_ids(&db)
         .await?
-        .is_none()
+        .contains(&stored.suggestion.source_rule_id)
     {
         return Err(ServerError::Conflict(
             "the approved source rule is no longer available".into(),

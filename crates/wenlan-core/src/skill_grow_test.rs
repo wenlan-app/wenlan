@@ -582,19 +582,105 @@ fn ux_skill_10_a_bullet_the_person_wrote_is_a_rule_without_a_model() {
 
 #[test]
 fn ux_skill_10_a_rules_folder_is_named_in_any_language_at_any_depth() {
-    assert!(in_rules_folder("Rules/git.md", None));
-    assert!(in_rules_folder("work/rules/git.md", None));
-    assert!(in_rules_folder("規則/提交.md", None));
-    assert!(in_rules_folder("筆記/规则/提交.md", None));
-    assert!(in_rules_folder("a\\RULES\\b.md", None));
-    assert!(!in_rules_folder("Rules.md", None));
-    assert!(!in_rules_folder("My Rules/git.md", None));
-    assert!(!in_rules_folder("git.md", None));
-    // A Space named Rules keeps its pages in a folder of that name: that
-    // folder is the Space, not a rules folder.
-    assert!(!in_rules_folder("Rules/git.md", Some("Rules")));
-    assert!(in_rules_folder("Rules/Rules/git.md", Some("Rules")));
-    assert!(in_rules_folder("Work/Rules/git.md", Some("Work")));
+    assert!(may_be_in_rules_folder("Rules/git.md"));
+    assert!(may_be_in_rules_folder("work/rules/git.md"));
+    assert!(may_be_in_rules_folder("規則/提交.md"));
+    assert!(may_be_in_rules_folder("筆記/规则/提交.md"));
+    assert!(may_be_in_rules_folder("a\\RULES\\b.md"));
+    assert!(!may_be_in_rules_folder("Rules.md"));
+    assert!(!may_be_in_rules_folder("My Rules/git.md"));
+    assert!(!may_be_in_rules_folder("git.md"));
+    assert!(has_rules_folder("Rules") && has_rules_folder("a/rules/b"));
+    assert!(!has_rules_folder("") && !has_rules_folder("Rules 2"));
+}
+
+#[test]
+fn ux_skill_10_a_space_or_team_folder_named_rules_is_not_a_rules_folder() {
+    use crate::space_folders::{layout, placed, LayoutInput};
+    let teams = [
+        ("Handbook".to_string(), Some("Rules".to_string())),
+        ("Ops".to_string(), Some("Acme".to_string())),
+    ]
+    .into_iter()
+    .collect();
+    let layout = layout(&LayoutInput {
+        // Two Spaces whose names differ only in case share no folder: the
+        // second gets "rules 2". "work" is spelled in lower case on disk.
+        spaces: ["Rules", "rules", "Work", "Handbook", "Ops"]
+            .map(String::from)
+            .to_vec(),
+        teams,
+        top_folders: vec!["work".into()],
+        skip: Vec::new(),
+    });
+    let rules_in = |file: &str| {
+        let at = placed(file, &layout);
+        (has_rules_folder(&at.inside), at.space, at.team_only)
+    };
+    let space = |name: &str| Some(name.to_string());
+
+    // The Space's own folder is the Space, in whatever case it is spelled.
+    assert_eq!(rules_in("Rules/git.md"), (false, space("Rules"), false));
+    assert_eq!(rules_in("RULES/git.md"), (false, space("Rules"), false));
+    assert_eq!(
+        rules_in("Rules/Rules/git.md"),
+        (true, space("Rules"), false)
+    );
+    let second = layout["rules"].clone();
+    assert_ne!(second, "Rules");
+    assert_eq!(
+        rules_in(&format!("{second}/git.md")),
+        (false, space("rules"), false)
+    );
+    // The folder as spelled on disk is still the Space's.
+    assert_eq!(rules_in("work/Rules/git.md"), (true, space("Work"), false));
+    assert_eq!(rules_in("Work/notes/git.md"), (false, space("Work"), false));
+    // A team Space is <team>/<space>; a team named Rules is not a rules
+    // folder, and a file in the team's folder but in no Space has no Space.
+    let team = layout["Handbook"].split('/').next().unwrap().to_string();
+    assert_eq!(
+        rules_in(&format!("{team}/Handbook/git.md")),
+        (false, space("Handbook"), false)
+    );
+    assert_eq!(
+        rules_in(&format!("{team}/Handbook/規則/git.md")),
+        (true, space("Handbook"), false)
+    );
+    assert_eq!(rules_in(&format!("{team}/git.md")), (false, None, true));
+    assert_eq!(
+        rules_in("Acme/Ops/Rules/git.md"),
+        (true, space("Ops"), false)
+    );
+    assert_eq!(rules_in("Acme/Rules/git.md"), (true, None, true));
+    // Outside every Space's folder.
+    assert_eq!(rules_in("筆記/規則/git.md"), (true, None, false));
+}
+
+#[test]
+fn ux_skill_10_a_bullet_may_be_indented_and_run_over_lines() {
+    let text = "Intro.\n\n\
+        \x20\x20- Indented a little is still a rule\n\
+        \x20\x20- A rule that runs on\n\
+        \x20\x20\x20\x20over a second line\n\
+        \x20\x20\x20\x20- a detail under it\n\
+        \x20\x20- Cite the page — Source: the handbook, always\n\
+        \n\
+        ## Next\n\n\
+        \x20\x20\x20- Three spaces after a heading\n\
+        \x20\x20\x20\x20- four spaces is code or a detail\n\
+        - [rule] Once managed — Source: Page (p) r1 at 1 — Quote: \"Once managed\"\n";
+    let lines = person_rule_lines(&page("Mine", text, 1, 1));
+    let got: Vec<&str> = lines.iter().map(|line| line.text.as_str()).collect();
+    assert_eq!(
+        got,
+        vec![
+            "Indented a little is still a rule",
+            "A rule that runs on over a second line",
+            "Cite the page — Source: the handbook, always",
+            "Three spaces after a heading",
+            "Once managed",
+        ]
+    );
 }
 
 #[test]
@@ -620,6 +706,21 @@ fn ux_skill_10_on_the_how_i_work_page_only_a_bullet_the_person_added_counts() {
     // A bullet the person took out and an AI tool put back is not theirs.
     let back = person_rule_lines_through_history(&page, &[(true, &v2), (true, v1), (false, &v4)]);
     assert!(back.is_empty());
+
+    // A version whose writer is not known (an old label) gives no rule, and
+    // does not spoil the bullet the person wrote after it; an AI tool's
+    // later rewrite of other lines does not take that bullet away.
+    let legacy = "- From before history was kept\n";
+    let mine = format!("{legacy}- Stand-up is at ten\n");
+    let ai = "- Reworded by a tool\n- Stand-up is at ten\n- Added by a tool\n".to_string();
+    let page = super::SkillPageInput {
+        text: ai.clone(),
+        ..page
+    };
+    let lines =
+        person_rule_lines_through_history(&page, &[(false, legacy), (true, &mine), (false, &ai)]);
+    let texts: Vec<&str> = lines.iter().map(|line| line.text.as_str()).collect();
+    assert_eq!(texts, vec!["Stand-up is at ten"]);
 }
 
 #[test]
@@ -675,6 +776,17 @@ fn ux_skill_10_refresh_keeps_what_the_person_wrote_on_the_page() {
         false,
     );
     assert_eq!(again.body, refreshed.body);
+    // A blank line the person put above the heading adds no second heading.
+    let padded = format!("\n\n{}", refreshed.body);
+    let from_padded = reconcile_rules_page(
+        "Wenlan",
+        &refreshed.lines,
+        &refreshed.lines,
+        &[],
+        Some(&padded),
+        false,
+    );
+    assert_eq!(from_padded.body, refreshed.body);
     // A page with nothing of the person's own is written as before.
     let plain = reconcile_rules_page(
         "Wenlan",
@@ -685,4 +797,35 @@ fn ux_skill_10_refresh_keeps_what_the_person_wrote_on_the_page() {
         false,
     );
     assert_eq!(plain.body, first.body);
+}
+
+#[test]
+fn ux_skill_10_only_the_persons_own_versions_bring_in_a_rule() {
+    for own in [
+        "person_create",
+        "manual_edit",
+        "fs_edit",
+        "publish",
+        "restore",
+        "own_device",
+        "title_rename",
+        "space_move",
+    ] {
+        assert!(version_is_the_persons_own(own), "{own}");
+    }
+    for other in [
+        "agent_create",
+        "agent_refresh",
+        "revision_accept",
+        "shared_person:member-b",
+        "shared_ai:member-b",
+        "own_device_ai",
+        // Old labels that do not say who wrote the version.
+        "create",
+        "migration_87",
+        "legacy_authored",
+        "distill",
+    ] {
+        assert!(!version_is_the_persons_own(other), "{other}");
+    }
 }

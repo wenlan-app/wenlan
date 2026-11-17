@@ -631,17 +631,22 @@ and wait for evidence that people need them.
   原文：「我們這改動包含團隊了嗎？」「可以下個 PR 繼續開搞」（2026-11-15 23:30Z）。
 - **UX-SKILL-10** `shipped` A rule the person writes themselves counts at
   once, with no model and no accept. On a page in a folder named Rules (規則,
-  规则; any depth, any app language), each top-level bullet is a rule, or a
-  decision or pitfall when it starts with `[decision]` or `[pitfall]`, as long
-  as the person wrote every version of that page. A page an AI tool or a
-  teammate ever wrote does not count this way and still goes through the ask
-  (UX-SKILL-1, UX-SKILL-9). A plain bullet the person adds to a "How I work"
-  page counts the same way, and the nightly update keeps it on the page. AI
-  tools are told these rules first, `wenlan rules` prints them as "written by
-  you" with the page, and the files of UX-SKILL-6, UX-SKILL-7 and UX-SKILL-8
-  follow when the page is saved. A page in a Space gives rules for that Space
-  only; a page in no Space gives rules used in every Space. The setting and a
-  No do not silence them; `#not-for-ai-tools` on the page does.
+  规则; any depth, any app language), each top-level bullet the person wrote is
+  a rule, or a decision or pitfall when it starts with `[decision]` or
+  `[pitfall]`. It is decided bullet by bullet: a bullet counts when the person
+  wrote it. A bullet an AI tool or a teammate wrote, and AI text the person
+  only accepted, do not count this way and still go through the ask
+  (UX-SKILL-1, UX-SKILL-9); when an AI tool later changes other lines of the
+  page, the person's own bullets still count. A plain bullet the person adds
+  to a "How I work" page counts the same way, and the nightly update keeps it
+  on the page. `wenlan rules` prints these rules as "written by you" with the
+  page; a Space's own are listed before the lines Wenlan took from its pages.
+  The files of UX-SKILL-6 and UX-SKILL-8 follow when the page is saved; the
+  repository's `AGENTS.md` (UX-SKILL-7) gets them at the next wiki pull
+  request. A page in a Space, or in a Space's folder, gives rules for that
+  Space only; a page in no Space and outside every Space's folder gives rules
+  used in every Space. The setting and a No do not silence them;
+  `#not-for-ai-tools` on the page does.
   原文：決定 4：「A rule the person writes themselves counts at once. AI tools get it and `wenlan rules` prints it, with no model needed. Rules the AI derives from pages still need the person's accept.」Qi-Xuan 以輸入「A」回答此題（2026-11-16 22:30Z；題目與決定記錄於 `/mnt/project-files/readme-2026-11/cover-v3/2026-11-16-app-changes-from-cover.md`，決定 4）。
 
 ## From the terminal

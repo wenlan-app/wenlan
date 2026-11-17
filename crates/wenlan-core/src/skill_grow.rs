@@ -381,22 +381,25 @@ fn current_rule_line(raw: &str, id: &str) -> Option<(SkillLineKind, String)> {
 /// any app language. ASCII case does not matter.
 pub const RULES_FOLDER_NAMES: [&str; 3] = ["Rules", "規則", "规则"];
 
-/// Whether the page file `file` (relative to the pages folder) sits in a
-/// folder named Rules, at any depth. `own_space_folder` is the folder the
-/// page's Space keeps its pages in, when Spaces have folders of their own:
-/// that first folder is the Space's name, not a folder the person named.
-pub fn in_rules_folder(file: &str, own_space_folder: Option<&str>) -> bool {
-    let mut folders: Vec<&str> = file
-        .split(['/', '\\'])
+/// Whether the folder path `dir` (relative, `/` or `\\` between folders) has
+/// a folder named Rules at any depth. Pass the path with the Space's own
+/// folder already taken off (`space_folders::placed`): a Space or team that
+/// happens to be named Rules is not a rules folder.
+pub fn has_rules_folder(dir: &str) -> bool {
+    dir.split(['/', '\\'])
         .filter(|part| !part.is_empty())
-        .collect();
-    folders.pop();
-    let skip = usize::from(own_space_folder.is_some_and(|own| folders.first() == Some(&own)));
-    folders.iter().skip(skip).any(|folder| {
-        RULES_FOLDER_NAMES
-            .iter()
-            .any(|name| folder.eq_ignore_ascii_case(name))
-    })
+        .any(|folder| {
+            RULES_FOLDER_NAMES
+                .iter()
+                .any(|name| folder.eq_ignore_ascii_case(name))
+        })
+}
+
+/// A cheap first test on a page file's path: some folder above it is named
+/// Rules. Wider than the real test, which also needs the Spaces' folders.
+pub fn may_be_in_rules_folder(file: &str) -> bool {
+    let dir = file.rsplit_once(['/', '\\']).map_or("", |(dir, _)| dir);
+    has_rules_folder(dir)
 }
 
 /// Whether a page version with this `page_history.edited_by` is the person's
@@ -416,16 +419,51 @@ pub fn version_is_the_persons_own(edited_by: &str) -> bool {
 
 const RULE_MARKER_START: &str = "<!-- wenlan-rule:";
 
+/// The text after a list marker when `line` opens a bullet, with how far
+/// the marker is indented.
+fn bullet(line: &str) -> Option<(usize, &str)> {
+    let rest = line.trim_start_matches(' ');
+    let indent = line.len() - rest.len();
+    ["- ", "* ", "+ "]
+        .into_iter()
+        .find_map(|marker| rest.strip_prefix(marker))
+        .map(|text| (indent, text))
+}
+
+/// A line that cannot carry on the bullet above it.
+fn starts_a_block(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    let numbered = {
+        let digits = trimmed.chars().take_while(char::is_ascii_digit).count();
+        digits > 0 && (trimmed[digits..].starts_with(". ") || trimmed[digits..].starts_with(") "))
+    };
+    trimmed.is_empty()
+        || numbered
+        || bullet(line).is_some()
+        || ["#", "```", "~~~", ">", "|", "<!--", "---", "***"]
+            .iter()
+            .any(|lead| trimmed.starts_with(lead))
+}
+
 /// The rules a person wrote themselves on `page`: its top-level bullets that
-/// carry no Wenlan marker and sit outside code blocks. A bullet is a rule
-/// unless it opens with `[decision]` or `[pitfall]`. No model reads them and
-/// the sentence filters for model quotes do not apply: the person's own words
+/// carry no Wenlan marker and sit outside code blocks. A bullet may be
+/// indented up to three spaces and may run on over the next lines; a bullet
+/// under another bullet is a detail, not a rule. A bullet is a rule unless
+/// it opens with `[decision]` or `[pitfall]`. No model reads them and the
+/// sentence filters for model quotes do not apply: the person's own words
 /// are kept as written. A bullet holding a provider token is left out.
 pub fn person_rule_lines(page: &SkillPageInput) -> Vec<SkillLine> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
     let mut fence: Option<&str> = None;
-    for raw in page.text.lines() {
+    // Indent of the top-level bullets of the list being read, if any.
+    let mut list: Option<usize> = None;
+    let mut blank_before = false;
+    let lines: Vec<&str> = page.text.lines().collect();
+    let mut at = 0;
+    while at < lines.len() {
+        let raw = lines[at];
+        at += 1;
         let trimmed = raw.trim_start();
         if let Some(open) = ["```", "~~~"].into_iter().find(|f| trimmed.starts_with(f)) {
             match fence {
@@ -435,21 +473,43 @@ pub fn person_rule_lines(page: &SkillPageInput) -> Vec<SkillLine> {
             }
             continue;
         }
-        if fence.is_some() || raw.contains(RULE_MARKER_START) {
+        if fence.is_some() {
             continue;
         }
-        let Some(item) = ["- ", "* ", "+ "]
-            .into_iter()
-            .find_map(|bullet| raw.strip_prefix(bullet))
-        else {
+        if trimmed.is_empty() {
+            blank_before = true;
+            continue;
+        }
+        let Some((indent, item)) = bullet(raw) else {
+            // A heading, or a new paragraph at the margin, ends the list.
+            if trimmed.starts_with('#') || (blank_before && !raw.starts_with(' ')) {
+                list = None;
+            }
+            blank_before = false;
             continue;
         };
-        let item = item.trim();
+        blank_before = false;
+        let top_level = indent <= 3 && list.is_none_or(|base| indent < base + 2);
+        if !top_level {
+            continue;
+        }
+        list = Some(indent);
+        if raw.contains(RULE_MARKER_START) {
+            continue;
+        }
+        // The bullet's own following lines belong to it.
+        let mut whole = item.trim().to_string();
+        while at < lines.len() && !starts_a_block(lines[at]) {
+            whole.push(' ');
+            whole.push_str(lines[at].trim());
+            at += 1;
+        }
+        let item = whole.as_str();
         // A to-do box is a task, not a rule.
         if ["[ ]", "[x]", "[X]"].iter().any(|b| item.starts_with(b)) {
             continue;
         }
-        let (kind, text) = [
+        let tagged = [
             ("[rule]", SkillLineKind::Rule),
             ("[decision]", SkillLineKind::Decision),
             ("[pitfall]", SkillLineKind::Pitfall),
@@ -459,10 +519,15 @@ pub fn person_rule_lines(page: &SkillPageInput) -> Vec<SkillLine> {
             item.get(..tag.len())
                 .filter(|lead| lead.eq_ignore_ascii_case(tag))
                 .map(|_| (kind, &item[tag.len()..]))
-        })
-        .unwrap_or((SkillLineKind::Rule, item));
-        // A managed line whose marker the person removed keeps only its text.
-        let text = text.split(" — Source: ").next().unwrap_or(text);
+        });
+        let (kind, text) = tagged.unwrap_or((SkillLineKind::Rule, item));
+        // A managed line whose marker the person removed keeps only its
+        // text. Only that exact shape is cut: a sentence of the person's own
+        // that happens to say "Source:" is kept whole.
+        let text = match text.split_once(" — Source: ") {
+            Some((before, after)) if tagged.is_some() && after.contains(" — Quote: ") => before,
+            _ => text,
+        };
         let text = one_line(text, 500);
         if normalized(&text).is_empty()
             || STANDALONE_SECRET.is_match(&text)
@@ -488,11 +553,13 @@ pub fn person_rule_lines(page: &SkillPageInput) -> Vec<SkillLine> {
     out
 }
 
-/// The same, for a page Wenlan or an AI tool also writes (a Space's "How I
-/// work" page): only the bullets a person's own save brought in. `versions`
-/// is the page's whole history, oldest first, each with whether a person
-/// wrote it. A bullet an AI tool added never counts, also after the person
-/// saved the page again: having seen it does not make it theirs.
+/// The same, traced through the page's history: only the bullets whose
+/// text a version of the person's own first brought in. `versions` is the
+/// page's history, oldest first, each with whether the person wrote it. A
+/// bullet an AI tool, a teammate or an unknown writer added never counts,
+/// also after the person saved the page again: having seen it does not make
+/// it theirs. A later version by someone else that leaves the person's
+/// bullet as it is does not take it away.
 pub fn person_rule_lines_through_history(
     page: &SkillPageInput,
     versions: &[(bool, &str)],
@@ -526,10 +593,23 @@ pub fn person_rule_lines_through_history(
 /// neither the page's heading and opening note nor a managed line.
 fn unmanaged_rest(body: &str) -> String {
     let mut rest: Vec<&str> = Vec::new();
-    for (index, raw) in body.lines().enumerate() {
-        let opening = (index == 0 && raw.starts_with("# How I work — "))
-            || (index <= 2 && raw.starts_with("These are this Space's approved working rules."));
-        if opening || raw.contains(RULE_MARKER_START) {
+    // The heading and the note are the first two lines with text, wherever
+    // blank lines put them.
+    let mut opening = 0;
+    for raw in body.lines() {
+        if opening < 2 && !raw.trim().is_empty() {
+            let wanted = if opening == 0 {
+                "# How I work — "
+            } else {
+                "These are this Space's approved working rules."
+            };
+            if raw.starts_with(wanted) {
+                opening += 1;
+                continue;
+            }
+            opening = 2;
+        }
+        if raw.contains(RULE_MARKER_START) {
             continue;
         }
         rest.push(raw);

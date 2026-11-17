@@ -302,6 +302,59 @@ fn owner(dir: &str, layout: &BTreeMap<String, String>) -> Option<String> {
         .map(|(space, _)| space.clone())
 }
 
+/// Where a page file sits among the Spaces' folders.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Placed {
+    /// The Space whose folder holds the file (the deepest one).
+    pub space: Option<String>,
+    /// The file is under a team's folder but in none of its Spaces'.
+    pub team_only: bool,
+    /// The file's folders inside that Space's (or team's) folder; all of
+    /// them when no Space folder holds it.
+    pub inside: String,
+}
+
+/// Where `file` (relative to the pages folder) sits in `layout`, comparing
+/// names as the file system does.
+pub fn placed(file: &str, layout: &BTreeMap<String, String>) -> Placed {
+    let dir = dir_of(file);
+    if let Some(space) = owner(dir, layout) {
+        return Placed {
+            space: Some(space),
+            team_only: false,
+            inside: outside_spaces(dir, layout).to_string(),
+        };
+    }
+    let team = layout
+        .values()
+        .filter_map(|folder| folder.split_once('/').map(|(team, _)| team))
+        .find_map(|team| under(dir, team));
+    Placed {
+        space: None,
+        team_only: team.is_some(),
+        inside: team.unwrap_or(dir).to_string(),
+    }
+}
+
+/// Every Space's folder now, by Space name; empty while Spaces do not keep
+/// their pages in folders of their own.
+pub async fn current_layout(
+    db: &MemoryDB,
+    root: &Path,
+) -> Result<BTreeMap<String, String>, WenlanError> {
+    if !is_on(root) {
+        return Ok(BTreeMap::new());
+    }
+    let input = layout_input(
+        db,
+        root,
+        &crate::shared_space::settings_path(),
+        &vault_folders(),
+    )
+    .await?;
+    Ok(layout(&input))
+}
+
 fn join(folder: &str, rest: &str) -> String {
     match (folder.is_empty(), rest.is_empty()) {
         (true, _) => rest.to_string(),

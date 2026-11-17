@@ -1883,6 +1883,23 @@ async fn ux_skill_10_a_page_an_ai_wrote_still_needs_the_yes() {
     assert_eq!(texts(&after), vec!["Use the merge queue", RULE_TEXT]);
     assert!(after.lines[0].hand_written && !after.lines[1].hand_written);
 
+    // An AI tool then rewrites the person's own page: their bullet still
+    // counts, the tool's does not.
+    let git = "page_00000000-0000-4000-8000-000000000002";
+    scratch
+        .db
+        .update_page_content(
+            git,
+            "- Use the merge queue\n- Deploy on Fridays\n",
+            &[],
+            "agent_refresh",
+        )
+        .await
+        .unwrap();
+    let mixed = read_rules_as_codex(&scratch, Some("Project")).await;
+    assert!(texts(&mixed).contains(&"Use the merge queue"));
+    assert!(!texts(&mixed).contains(&"Deploy on Fridays"));
+
     // On the "How I work" page, a bullet an AI tool adds is not a rule; one
     // the person adds is, also after the person saved over the AI's bullet.
     let rules_page = accepted.rules_page_id.unwrap();
@@ -1959,13 +1976,15 @@ async fn ux_skill_9_a_teammates_hand_written_page_gives_no_rule_here() {
         .unwrap();
 
     sync_rules_files_in(&scratch.db, Some(&scratch.pages), &scratch.skill_dirs()).await;
-    assert!(read_rules_as_codex(&scratch, Some("Team"))
-        .await
-        .lines
-        .is_empty());
+    assert_eq!(
+        texts(&read_rules_as_codex(&scratch, Some("Team")).await),
+        vec!["Use the merge queue"],
+        "only the bullet this person wrote; nothing a teammate wrote"
+    );
     assert!(read_rules_as_codex(&scratch, None).await.lines.is_empty());
     assert!(!scratch.data.join("AGENTS.md").exists());
-    assert!(!scratch.data.join("spaces").join("Team").exists());
+    let own = std::fs::read_to_string(scratch.data.join("spaces/Team/AGENTS.md")).unwrap();
+    assert!(!own.contains("squash") && !own.contains("Fridays"));
 }
 
 #[tokio::test]
@@ -2020,4 +2039,180 @@ async fn ux_skill_1_a_no_still_delivers_hand_written_rules() {
     let own = std::fs::read_to_string(scratch.data.join("spaces/Project/AGENTS.md")).unwrap();
     assert!(own.contains("- Use the merge queue (written by you in \"Git\")"));
     assert!(!own.contains(RULE_TEXT));
+}
+
+#[tokio::test]
+async fn ux_skill_10_ai_text_the_person_accepted_as_one_sentence_is_not_hand_written() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(true).await;
+    scratch
+        .db
+        .create_space("Project", None, false)
+        .await
+        .unwrap();
+    let id = write_page_in_folder(
+        &scratch,
+        1,
+        Some("Project"),
+        "Rules",
+        "Git",
+        "- Use the merge queue\n- Ask before deleting data\n",
+        "publish",
+    )
+    .await;
+    // An AI tool adds a line, then proposes a new wording for it.
+    scratch
+        .db
+        .update_page_content(
+            &id,
+            "- Use the merge queue\n- Ask before deleting data\n- A tool wrote this line\n",
+            &[],
+            "agent_refresh",
+        )
+        .await
+        .unwrap();
+    let page = scratch.db.get_page(&id).await.unwrap().unwrap();
+    let first = wenlan_core::authorship::sentence_units(&page.content)
+        .into_iter()
+        .find(|unit| page.content[unit.start..unit.end].contains("A tool wrote"))
+        .unwrap()
+        .hash;
+    let proposal = wenlan_core::sentences::propose_sentence(
+        &scratch.db,
+        &id,
+        &wenlan_types::authorship::SentenceProposeRequest {
+            sentence_hash: first,
+            text: "- Push straight to main".into(),
+            why: None,
+            reason: None,
+            expected_version: Some(page.version),
+        },
+        "claude-code",
+    )
+    .await
+    .unwrap();
+    wenlan_core::sentences::accept_sentence_proposal(
+        &scratch.db,
+        &id,
+        &proposal.id,
+        None,
+        Some(&scratch.pages),
+    )
+    .await
+    .unwrap();
+    let page = scratch.db.get_page(&id).await.unwrap().unwrap();
+    assert!(
+        page.content.contains("Push straight to main"),
+        "{}",
+        page.content
+    );
+    assert_eq!(
+        texts(&read_rules_as_codex(&scratch, Some("Project")).await),
+        vec!["Use the merge queue", "Ask before deleting data"],
+        "the accepted sentence was an AI tool's; the person's own bullets stay"
+    );
+}
+
+#[tokio::test]
+async fn ux_skill_10_a_note_put_in_a_spaces_folder_gives_rules_for_that_space_only() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(true).await;
+    for name in ["Work", "Home"] {
+        scratch.db.create_space(name, None, false).await.unwrap();
+    }
+    scratch.db.register_trusted_agent("codex").await.unwrap();
+    let codex_file = scratch.home.join(".codex/AGENTS.md");
+    std::fs::create_dir_all(codex_file.parent().unwrap()).unwrap();
+    wenlan_core::space_folders::turn_on(&scratch.pages).unwrap();
+    // The Space's folder as the person spelled it on disk.
+    for (file, body) in [
+        ("work/Rules/standup.md", "- Stand-up is at ten\n"),
+        ("Rules/everywhere.md", "- Answer in plain words\n"),
+    ] {
+        let path = scratch.pages.join(file);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, body).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(60))
+            .unwrap();
+    }
+    let stats =
+        wenlan_core::sources::page_watcher::sync_filesystem_edits(&scratch.db, &scratch.pages)
+            .await
+            .unwrap();
+    assert_eq!(stats.adopted, 2, "{stats:?}");
+    sync_rules_files_in(&scratch.db, Some(&scratch.pages), &scratch.skill_dirs()).await;
+
+    assert_eq!(
+        texts(&read_rules_as_codex(&scratch, Some("Work")).await),
+        vec!["Stand-up is at ten", "Answer in plain words"]
+    );
+    assert_eq!(
+        texts(&read_rules_as_codex(&scratch, Some("Home")).await),
+        vec!["Answer in plain words"],
+        "a note in Work's folder is Work's, though the note itself names no Space"
+    );
+    assert_eq!(
+        texts(&read_rules_as_codex(&scratch, None).await),
+        vec!["Answer in plain words"]
+    );
+    let codex = std::fs::read_to_string(&codex_file).unwrap();
+    assert!(codex.contains("Answer in plain words") && !codex.contains("Stand-up"));
+    assert!(
+        std::fs::read_to_string(scratch.data.join("spaces/Work/AGENTS.md"))
+            .unwrap()
+            .contains("Stand-up is at ten")
+    );
+}
+
+#[tokio::test]
+async fn ux_skill_10_many_saves_in_a_row_do_not_queue_a_sync_each() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(true).await;
+    write_page_in_folder(&scratch, 1, None, "Rules", "Mine", "- First\n", "publish").await;
+    let general = scratch.data.join("AGENTS.md");
+    let library = Arc::as_ptr(&scratch.db) as usize;
+    let running = move || with_background_syncs(|syncs| syncs.contains_key(&library));
+    let runs = move || {
+        BACKGROUND_SYNC_RUNS
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|runs| runs.get(&library).copied())
+            .unwrap_or(0)
+    };
+    {
+        // While one sync is held up, twenty more saves ask for one each.
+        let held = SKILLS_MUTATION_LOCK.lock().await;
+        for _ in 0..20 {
+            request_rules_sync(scratch.db.clone(), Some(scratch.pages.clone()));
+            tokio::task::yield_now().await;
+        }
+        assert!(running());
+        drop(held);
+    }
+    for _ in 0..400 {
+        if !running() && general.exists() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    assert!(!running(), "the background sync never finished");
+    let runs = runs();
+    assert!((1..=2).contains(&runs), "{runs} syncs for twenty requests");
+    assert!(std::fs::read_to_string(&general)
+        .unwrap()
+        .contains("- First"));
 }
