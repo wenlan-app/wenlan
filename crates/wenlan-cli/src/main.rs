@@ -222,6 +222,12 @@ enum Commands {
         #[command(subcommand)]
         command: commands::wiki::WikiCommand,
     },
+    /// Make a page or a repo file follow a page, so it keeps up when that page changes.
+    Follow(commands::follow::FollowArgs),
+    /// Stop a page or a repo file following a page.
+    Unfollow(commands::follow::UnfollowArgs),
+    /// Show what follows which page, and what is waiting to catch up.
+    Follows(commands::follow::FollowsArgs),
     /// Call any Wenlan tool an AI tool can call, by the same name (list, show, call).
     Tool {
         #[command(subcommand)]
@@ -240,7 +246,8 @@ const HELP_GROUPS: &[(&str, &[&str])] = &[
     (
         "Daily",
         &[
-            "brief", "capture", "recall", "rules", "pages", "memories", "sources",
+            "brief", "capture", "recall", "rules", "pages", "memories", "sources", "follow",
+            "unfollow", "follows",
         ],
     ),
     (
@@ -353,6 +360,9 @@ async fn main() -> anyhow::Result<ExitCode> {
     let tool_backed = matches!(
         &cli.command,
         Commands::Tool { .. }
+            | Commands::Follow(_)
+            | Commands::Unfollow(_)
+            | Commands::Follows(_)
             | Commands::Pages {
                 action: Some(commands::pages::PagesAction::Tool(_)),
                 ..
@@ -381,6 +391,18 @@ async fn main() -> anyhow::Result<ExitCode> {
         let (format, quiet) = (cli.format.resolve(), cli.quiet);
         let ok = match cli.command {
             Commands::Tool { cmd } => commands::tool::run(cmd, &caller, format, quiet)?,
+            Commands::Follow(args) => {
+                commands::follow::run_follow(args, &caller, format, quiet)?;
+                true
+            }
+            Commands::Unfollow(args) => {
+                commands::follow::run_unfollow(args, &caller, format, quiet)?;
+                true
+            }
+            Commands::Follows(args) => {
+                commands::follow::run_follows(args, &caller, format, quiet)?;
+                true
+            }
             Commands::Pages {
                 action: Some(commands::pages::PagesAction::Tool(action)),
                 ..
@@ -583,7 +605,10 @@ async fn main() -> anyhow::Result<ExitCode> {
         }
         Commands::Background { command } => commands::service::run_background(command).await?,
         Commands::Restart => commands::service::restart().await?,
-        Commands::Tool { .. } => {
+        Commands::Tool { .. }
+        | Commands::Follow(_)
+        | Commands::Unfollow(_)
+        | Commands::Follows(_) => {
             unreachable!("tool commands return before a daemon client is made")
         }
         Commands::Doctor { repair } => commands::setup::run_doctor(repair).await?,

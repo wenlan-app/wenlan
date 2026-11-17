@@ -77,8 +77,10 @@ pub enum PageToolAction {
         page: String,
     },
     /// Make a page follow another page, or check or stop it (the page_basis tool).
+    /// `wenlan follow` is the short way.
     /// When the other page changes, steep brings this one in line; a locked
     /// page waits for your review.
+    #[command(hide = true)]
     Basis {
         /// mark: follow it; diff: what it said then and says now; confirm: this
         /// page still holds; remove: stop following.
@@ -202,7 +204,7 @@ pub fn pick_page(pages: &[Value], wanted: &str) -> Result<String> {
     }
 }
 
-fn resolve_page(session: &mut Session, caller: &Caller, wanted: &str) -> Result<String> {
+pub(super) fn resolve_page(session: &mut Session, caller: &Caller, wanted: &str) -> Result<String> {
     if looks_like_page_id(wanted) {
         return Ok(wanted.to_string());
     }
@@ -271,7 +273,7 @@ fn ensure_folder(session: &mut Session, folder: &str) -> Result<()> {
     Ok(())
 }
 
-fn read_page(session: &mut Session, page_id: &str) -> Result<Value> {
+pub(super) fn read_page(session: &mut Session, page_id: &str) -> Result<Value> {
     let answer = session.call_json("read_page", json!({ "page_id": page_id }))?;
     answer
         .get("page")
@@ -279,13 +281,13 @@ fn read_page(session: &mut Session, page_id: &str) -> Result<Value> {
         .ok_or_else(|| anyhow!("read_page returned no page for {page_id}"))
 }
 
-fn version_of(page: &Value) -> Result<i64> {
+pub(super) fn version_of(page: &Value) -> Result<i64> {
     page.get("version")
         .and_then(Value::as_i64)
         .ok_or_else(|| anyhow!("the page has no version"))
 }
 
-fn title_of(page: &Value) -> &str {
+pub(super) fn title_of(page: &Value) -> &str {
     page.get("title").and_then(Value::as_str).unwrap_or("")
 }
 

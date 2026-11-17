@@ -73,7 +73,8 @@ pub enum WikiCommand {
     Unbind,
     /// Make docs of the bound repository follow a page of the Space: when
     /// the page changes, the AI tool suggests fixes to them for the wiki
-    /// pull request.
+    /// pull request. `wenlan follow README.md <page>` is the short way.
+    #[command(hide = true)]
     Follow {
         /// The page the docs follow (its id).
         #[arg(long)]
@@ -83,6 +84,7 @@ pub enum WikiCommand {
         files: Vec<String>,
     },
     /// Stop the docs following a page.
+    #[command(hide = true)]
     Unfollow {
         /// The page the docs follow (its id).
         #[arg(long)]
