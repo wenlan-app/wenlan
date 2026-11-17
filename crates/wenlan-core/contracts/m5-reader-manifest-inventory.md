@@ -1037,6 +1037,9 @@ the projection-directory reader.
 | `wenlan repo` | yes | automatic | `none` | subcommand renderer |
 | `wenlan team` | yes | automatic | `none` | subcommand renderer |
 | `wenlan sweep` | yes | automatic | `none` | subcommand renderer |
+| `wenlan follow` | yes | automatic | `none` | subcommand renderer |
+| `wenlan unfollow` | yes | automatic | `none` | subcommand renderer |
+| `wenlan follows` | yes | automatic | `none` | subcommand renderer |
 
 ## Projection, export, internal
 
