@@ -186,7 +186,13 @@ function DetailPane({ row, onBack }: { readonly row: SkillSearchRow; readonly on
   const data = preview.data;
   const warn = data?.safety.verdict === "warn";
   const blocked = data ? cannotInstallReason(data, t) : null;
-  const canInstall = !!data && blocked === null && !install.isPending && (where === "all" || spaceName !== "") && (!warn || warnOk);
+  // A refusal shown under the button means pressing it again would only be
+  // refused again, so the button is off while that block is on the screen.
+  // Changing where the skill goes, or the warning tick, takes the block away.
+  const refused = install.isError;
+  const resetInstall = install.reset;
+  const clearRefusal = () => { if (refused) resetInstall(); };
+  const canInstall = !!data && blocked === null && !refused && !install.isPending && (where === "all" || spaceName !== "") && (!warn || warnOk);
   return (
     <div className="find-skills-detail">
       <div className="find-skills-detail-main">
@@ -233,15 +239,15 @@ function DetailPane({ row, onBack }: { readonly row: SkillSearchRow; readonly on
         <fieldset className="find-skills-where">
           <legend className="sr-only">{t("findSkills.installWhere")}</legend>
           <label className="find-skills-choice" data-selected={where === "all" ? "true" : undefined}>
-            <input type="radio" name="skill-where" checked={where === "all"} onChange={() => setWhere("all")} />
+            <input type="radio" name="skill-where" checked={where === "all"} onChange={() => { clearRefusal(); setWhere("all"); }} />
             <span><span>{t("findSkills.allSpaces")}</span><span className="find-skills-muted">{t("findSkills.allSpacesHint")}</span></span>
           </label>
           <label className="find-skills-choice" data-selected={where === "space" ? "true" : undefined}>
-            <input type="radio" name="skill-where" checked={where === "space"} onChange={() => setWhere("space")} />
+            <input type="radio" name="skill-where" checked={where === "space"} onChange={() => { clearRefusal(); setWhere("space"); }} />
             <span><span>{t("findSkills.oneSpace")}</span><span className="find-skills-muted">{t("findSkills.oneSpaceHint")}</span></span>
           </label>
           {where === "space" && (
-            <select aria-label={t("findSkills.pickSpace")} value={spaceName} onChange={(event) => setSpaceName(event.target.value)}>
+            <select aria-label={t("findSkills.pickSpace")} value={spaceName} onChange={(event) => { clearRefusal(); setSpaceName(event.target.value); }}>
               <option value="">{t("findSkills.pickSpace")}</option>
               {(spaces.data ?? []).map((space) => <option key={space.id} value={space.name}>{space.name}</option>)}
             </select>
@@ -249,17 +255,17 @@ function DetailPane({ row, onBack }: { readonly row: SkillSearchRow; readonly on
         </fieldset>
         {warn && (
           <label className="find-skills-toggle">
-            <input type="checkbox" checked={warnOk} onChange={(event) => setWarnOk(event.target.checked)} />
+            <input type="checkbox" checked={warnOk} onChange={(event) => { clearRefusal(); setWarnOk(event.target.checked); }} />
             {t("findSkills.warnConfirm")}
           </label>
         )}
-        <button type="button" className="find-skills-install" disabled={!canInstall} aria-describedby={blocked ? "find-skills-blocked" : undefined} onClick={() => data && install.mutate(data)}>
+        <button type="button" className="find-skills-install" disabled={!canInstall} aria-describedby={blocked ? "find-skills-blocked" : refused ? "find-skills-refused" : undefined} onClick={() => data && install.mutate(data)}>
           {install.isPending ? t("findSkills.installing") : data?.installedAs ? t("findSkills.reinstall") : t("findSkills.install")}
         </button>
         {blocked && <p className="find-skills-note">{t("findSkills.cannotInstall")}</p>}
         {done && <p role="status">{done}</p>}
         {install.isError && (
-          <div className="find-skills-refusal" role="alert">
+          <div className="find-skills-refusal" id="find-skills-refused" role="alert">
             <p className="find-skills-refusal-lead">{t("findSkills.installFailedLead")}</p>
             <p>{refusalText(install.error, t)}</p>
           </div>

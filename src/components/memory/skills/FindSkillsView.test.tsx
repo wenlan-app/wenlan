@@ -193,6 +193,29 @@ describe("FindSkillsView", () => {
     expect(refused.textContent).not.toContain("WENLAN_BIND_ADDR");
   });
 
+  it("UX-SKILL-13: Install is off while a refusal is shown under it", async () => {
+    tauri.installSkill.mockRejectedValue(new Error("skills_need_the_person: only the person can install, take in or remove a skill. Ask them"));
+    await openPreview(shown);
+    await screen.findByText("Read it all.");
+    const install = screen.getByRole("button", { name: "Install" }) as HTMLButtonElement;
+    expect(install.disabled).toBe(false);
+    fireEvent.click(install);
+    const refused = await screen.findByRole("alert");
+    expect(refused.textContent).toContain("Only you, at this computer, can install, take in or remove skills.");
+    // Off for real, not only in looks, and it says why to a screen reader.
+    expect(install.disabled).toBe(true);
+    expect(install.getAttribute("aria-describedby")).toBe(refused.id);
+    fireEvent.click(install);
+    expect(tauri.installSkill).toHaveBeenCalledTimes(1);
+    // Choosing again where it goes takes the refusal away; the button comes
+    // back once the choice is complete.
+    fireEvent.click(screen.getByLabelText(/One Space only/));
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(install.disabled).toBe(true);
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "Clinic" } });
+    expect(install.disabled).toBe(false);
+  });
+
   it("UX-SKILL-13: a refused take-in or removal says why, and a reason Wenlan has no words for comes through as it is", async () => {
     tauri.scanLocalSkills.mockResolvedValue([{ name: "my-review", path: "/h/.claude/skills/my-review", description: null }]);
     tauri.importLocalSkills.mockRejectedValue(new Error("skills_need_the_person: only the person can install, take in or remove a skill. Ask them"));

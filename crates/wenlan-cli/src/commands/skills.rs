@@ -15,7 +15,7 @@ use wenlan_types::{
     SpaceRulesResponse,
 };
 
-use wenlan_core::skill_registry::printable;
+use wenlan_core::skill_registry::{printable, without_leading_bom};
 
 use crate::client::WenlanClient;
 use crate::output::{print_json, ResolvedFormat};
@@ -287,7 +287,9 @@ fn preview_for_a_person(preview: &SkillPreview) -> String {
         out.push_str(&format!("\n----- {} -----\n", one_line(&file.path)));
         match file.text.as_deref() {
             Some(text) => {
-                let text = printable(text);
+                // A byte-order mark at the very start is no part of what the
+                // file says: left out, as the daemon's preview leaves it out.
+                let text = printable(without_leading_bom(text));
                 out.push_str(&text);
                 if !text.ends_with('\n') {
                     out.push('\n');
@@ -1140,6 +1142,26 @@ mod tests {
             "{text}"
         );
         assert_eq!(printable("tab\tand\nline"), "tab\tand\nline");
+    }
+
+    /// UX-SKILL-12: a byte-order mark at the very start of a file is left
+    /// out, as the daemon's preview leaves it out: not printed raw and not
+    /// as `<U+FEFF>`. One anywhere else is still written out.
+    #[test]
+    fn ux_skill_12_a_leading_byte_order_mark_is_not_printed() {
+        let text = preview_for_a_person(&preview(
+            Verdict::Pass,
+            1,
+            "\u{feff}---\nname: Meeting Notes\n---\nRead\u{feff} it all.\n",
+        ));
+        assert!(
+            text.contains(
+                "----- SKILL.md -----\n---\nname: Meeting Notes\n---\nRead<U+FEFF> it all.\n"
+            ),
+            "{text}"
+        );
+        assert_eq!(text.matches("<U+FEFF>").count(), 1, "{text}");
+        assert!(!text.contains('\u{feff}'), "{text:?}");
     }
 
     /// UX-SKILL-13: characters that take no room on the screen (the tag

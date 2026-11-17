@@ -363,9 +363,16 @@ fn raw_url(endpoints: &Endpoints, source: &str, commit: &str, path: &str) -> Str
     )
 }
 
-/// The `name:` in a SKILL.md's front matter.
+/// A file's text without the byte-order mark some editors put at its very
+/// start. Only what Wenlan reads from the text skips the mark; the bytes it
+/// keeps and delivers are the author's.
+pub fn without_leading_bom(text: &str) -> &str {
+    text.strip_prefix('\u{FEFF}').unwrap_or(text)
+}
+
+/// One field (`name:`, `description:`) of a SKILL.md's front matter.
 pub fn front_matter_field(skill_md: &str, field: &str) -> Option<String> {
-    let rest = skill_md.strip_prefix("---")?;
+    let rest = without_leading_bom(skill_md).strip_prefix("---")?;
     let end = rest.find("\n---")?;
     let yaml: serde_yaml::Value = serde_yaml::from_str(&rest[..end]).ok()?;
     yaml.get(field)?.as_str().map(|s| s.trim().to_string())
@@ -749,9 +756,11 @@ pub fn read_additions(root: &Path, name: &str) -> String {
 /// for one Space, and the person's additions at the end.
 pub fn compose_skill_md(author: &str, scope: &Scope, additions: &str) -> String {
     let mut out = String::new();
-    let (front, body) = match author.strip_prefix("---").and_then(|rest| {
+    // A byte-order mark before the front matter stays where it is.
+    let mark = author.len() - without_leading_bom(author).len();
+    let (front, body) = match author[mark..].strip_prefix("---").and_then(|rest| {
         rest.find("\n---").map(|end| {
-            let close = 3 + end + 4;
+            let close = mark + 3 + end + 4;
             let close = author[close..]
                 .find('\n')
                 .map(|n| close + n + 1)
@@ -1295,15 +1304,17 @@ pub fn printable(text: &str) -> String {
 
 /// One file's text as a preview shows it, and how many characters were
 /// written out as `<U+XXXX>` marks. It is [`printable`] with the two things
-/// an ordinary text file may hold left alone: a byte-order mark at the very
-/// start, and the carriage return of a Windows line ending.
+/// an ordinary text file may hold set apart: a byte-order mark at the very
+/// start is left out (it is no part of what the file says, and every door
+/// shows the text without it, neither raw nor as a mark), and the carriage
+/// return of a Windows line ending is left alone.
 fn shown_text(text: &str) -> (String, usize) {
+    let text = without_leading_bom(text);
     let mut out = String::with_capacity(text.len());
     let mut marked = 0;
-    let mut chars = text.chars().enumerate().peekable();
-    while let Some((at, c)) = chars.next() {
-        let ordinary = (at == 0 && c == '\u{FEFF}')
-            || (c == '\r' && chars.peek().is_some_and(|(_, next)| *next == '\n'));
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        let ordinary = c == '\r' && chars.peek().is_some_and(|next| *next == '\n');
         if needs_a_mark(c) && !ordinary {
             push_mark(&mut out, c);
             marked += 1;

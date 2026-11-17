@@ -964,9 +964,9 @@ fn ux_skill_13_characters_that_hide_or_reorder_text_are_a_reason_to_refuse() {
 
 /// UX-SKILL-12: every door shows the same text, so the marking is done here:
 /// a character that would not show is written out as `<U+XXXX>` and counted.
-/// A byte-order mark at the very start and a Windows line ending are an
-/// ordinary file's and are left alone; ordinary writing in any language is
-/// too.
+/// A byte-order mark at the very start is an ordinary file's and is left
+/// out of what is shown; a Windows line ending and ordinary writing in any
+/// language are left alone.
 #[test]
 fn ux_skill_12_a_preview_writes_out_each_character_that_would_not_show() {
     let shown = preview_files(&[
@@ -980,7 +980,7 @@ fn ux_skill_12_a_preview_writes_out_each_character_that_would_not_show() {
     assert_eq!(
         shown[0].text.as_deref(),
         Some(
-            "\u{feff}one<U+200B>two<U+200C>three<U+200D>four<U+2060>five<U+FEFF>six<U+00AD>seven\r\nlast<U+000D>line<U+001B>[8m"
+            "one<U+200B>two<U+200C>three<U+200D>four<U+2060>five<U+FEFF>six<U+00AD>seven\r\nlast<U+000D>line<U+001B>[8m"
         )
     );
     assert_eq!(shown[0].marked, 8);
@@ -990,13 +990,162 @@ fn ux_skill_12_a_preview_writes_out_each_character_that_would_not_show() {
     );
     assert_eq!(shown[1].marked, 0);
     assert_eq!((shown[2].text.as_deref(), shown[2].marked), (None, 0));
-    // The terminal's own filter is the same one, and marks every such
-    // character, the start-of-file mark included.
+    // The terminal's own filter is the same one. Given text that still
+    // opens with the start-of-file mark it marks that too, so a file's text
+    // goes through `without_leading_bom` first, as the preview's does.
+    assert_eq!(
+        printable(without_leading_bom("\u{feff}a\u{200b}b\tc\n")),
+        "a<U+200B>b\tc\n"
+    );
     assert_eq!(
         printable("\u{feff}a\u{200b}b\tc\n"),
         "<U+FEFF>a<U+200B>b\tc\n"
     );
     assert!(is_invisible('\u{e0041}') && !is_invisible('字'));
+}
+
+/// UX-SKILL-12: a SKILL.md saved with a byte-order mark at its very start is
+/// read like any other: its name and description are found, from the network
+/// and from a folder on this computer, the preview shows its text without
+/// the mark (not raw, not as `<U+FEFF>`), and the file kept and delivered is
+/// still the author's bytes, mark included.
+#[tokio::test]
+async fn ux_skill_12_a_leading_byte_order_mark_does_not_hide_the_front_matter() {
+    let with_mark = format!("\u{feff}{SKILL_MD}");
+    assert!(with_mark.as_bytes().starts_with(&[0xef, 0xbb, 0xbf]));
+    assert_eq!(
+        front_matter_field(&with_mark, "name").as_deref(),
+        Some("Meeting Notes")
+    );
+    assert_eq!(
+        front_matter_field(&with_mark, "description").as_deref(),
+        Some("Turn transcripts into decisions.")
+    );
+    assert_eq!(
+        folder_name(&with_mark, "fallback").as_deref(),
+        Some("meeting-notes")
+    );
+    // Only the one mark at the very start is set aside.
+    assert_eq!(
+        front_matter_field(&format!("\u{feff}{with_mark}"), "name"),
+        None
+    );
+    assert_eq!(front_matter_field(&format!("\n{with_mark}"), "name"), None);
+
+    // From the network.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("wenlan");
+    let fake = repo_fake(SHA, &with_mark)
+        .with(
+            "https://api/repos/o/r/commits/HEAD",
+            200,
+            format!(r#"{{"sha":"{SHA}"}}"#),
+        )
+        .with(
+            "https://s/api/v1/skills/audit/o/r/meeting-notes",
+            200,
+            AUDIT_PASS,
+        );
+    let seen = actions::preview(&fake, &ep(), &root, "o/r", "meeting-notes")
+        .await
+        .unwrap();
+    assert_eq!(seen.name.as_deref(), Some("Meeting Notes"));
+    assert_eq!(
+        seen.description.as_deref(),
+        Some("Turn transcripts into decisions.")
+    );
+    assert_eq!(seen.cannot_install, None);
+    // Shown without the mark, and not counted as a character written out.
+    assert_eq!(seen.files[0].text.as_deref(), Some(SKILL_MD));
+    assert_eq!(seen.files[0].marked, 0);
+    // The terminal prints the preview's text through its own filter: the
+    // same words, no `<U+FEFF>`.
+    assert_eq!(printable(seen.files[0].text.as_deref().unwrap()), SKILL_MD);
+
+    let fetched = fetch_skill(&fake, &ep(), "o/r", "meeting-notes", SHA, None)
+        .await
+        .unwrap();
+    let tools = vec![tmp.path().join("claude/skills")];
+    std::fs::create_dir_all(&tools[0]).unwrap();
+    let request = wenlan_types::skill_registry::SkillInstallRequest {
+        source: "o/r".into(),
+        skill_id: "meeting-notes".into(),
+        commit: SHA.into(),
+        repo_path: "skills/meeting-notes".into(),
+        scope: Scope::All,
+    };
+    let kept =
+        actions::store_and_deliver(&root, &tools, &fetched, Verdict::Pass, &request, 1).unwrap();
+    assert_eq!(kept.skill.name, "meeting-notes");
+    assert_eq!(
+        kept.skill.description.as_deref(),
+        Some("Turn transcripts into decisions.")
+    );
+    let authors = root
+        .join("skills/meeting-notes")
+        .join(META_DIR)
+        .join(AUTHOR_DIR)
+        .join("SKILL.md");
+    for copy in [
+        authors,
+        root.join("skills/meeting-notes/SKILL.md"),
+        tools[0].join("meeting-notes/SKILL.md"),
+    ] {
+        assert_eq!(
+            std::fs::read(&copy).unwrap(),
+            with_mark.as_bytes(),
+            "{} is not the author's file",
+            copy.display()
+        );
+    }
+
+    // For one Space, the line Wenlan adds goes after the front matter, and
+    // the mark stays first.
+    let for_space = compose_skill_md(
+        &with_mark,
+        &Scope::Space {
+            name: "Clinic".into(),
+        },
+        "",
+    );
+    assert!(
+        for_space.starts_with(
+            "\u{feff}---\nname: Meeting Notes\ndescription: Turn transcripts into decisions.\n---\n\n> Use this skill only"
+        ),
+        "{for_space:?}"
+    );
+    assert_eq!(
+        front_matter_field(&for_space, "name").as_deref(),
+        Some("Meeting Notes")
+    );
+    assert_eq!(compose_skill_md(&with_mark, &Scope::All, ""), with_mark);
+
+    // From a folder on this computer.
+    let local_tools = tmp.path().join("agents/skills");
+    let local = local_tools.join("local-bom");
+    std::fs::create_dir_all(&local).unwrap();
+    let local_md = "\u{feff}---\nname: local-bom\ndescription: Mine, with a mark.\n---\nBody.\n";
+    std::fs::write(local.join("SKILL.md"), local_md).unwrap();
+    let found = scan_local(&root, std::slice::from_ref(&local_tools));
+    assert_eq!(
+        found
+            .iter()
+            .map(|skill| (skill.name.as_str(), skill.description.as_deref()))
+            .collect::<Vec<_>>(),
+        vec![("local-bom", Some("Mine, with a mark."))]
+    );
+    let taken = import_local_fully_shown(&root, &local, 2).unwrap();
+    assert_eq!(taken.description.as_deref(), Some("Mine, with a mark."));
+    let taken_copy = root
+        .join("skills/local-bom")
+        .join(META_DIR)
+        .join(AUTHOR_DIR)
+        .join("SKILL.md");
+    assert_eq!(std::fs::read(taken_copy).unwrap(), local_md.as_bytes());
+    assert_eq!(
+        std::fs::read(local.join("SKILL.md")).unwrap(),
+        local_md.as_bytes()
+    );
 }
 
 /// UX-SKILL-13: a skill with hidden characters is refused before anything is

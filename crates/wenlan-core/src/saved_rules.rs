@@ -66,11 +66,51 @@ fn squashed(name: &str) -> String {
         .collect()
 }
 
+/// The words the app prints for the terminal, the person and Wenlan itself
+/// in Traditional and Simplified Chinese (`src/i18n/resources.ts`:
+/// `howIWork.saved.fromTerminal`, the `you` and `wenlan` labels), with the
+/// near forms a tool could pick instead. A tool that named itself one of
+/// these would be listed in words that read as the terminal's own line or
+/// the person's. A test below reads that file, so a reworded label that is
+/// missing here fails.
+const RESERVED_IN_CHINESE: &[&str] = &[
+    // The terminal.
+    "終端機",
+    "終端",
+    "终端",
+    "终端机",
+    "命令列",
+    "命令行",
+    // The person.
+    "你",
+    "妳",
+    "您",
+    "我",
+    "自己",
+    "你自己",
+    "我自己",
+    "本人",
+    "使用者",
+    "用戶",
+    "用户",
+    "你寫的",
+    "你写的",
+    // Wenlan itself.
+    "文瀾",
+    "文澜",
+    "文瀾app",
+    "文澜app",
+];
+
 /// Names no AI tool may be listed under: they read as the person, the
-/// terminal or Wenlan itself.
+/// terminal or Wenlan itself, in any language the app is shown in.
 fn reads_as_someone_else(label: &str) -> bool {
+    let squashed = squashed(label);
+    if RESERVED_IN_CHINESE.contains(&squashed.as_str()) {
+        return true;
+    }
     matches!(
-        squashed(label).as_str(),
+        squashed.as_str(),
         "terminal"
             | "theterminal"
             | "aterminal"
@@ -81,6 +121,7 @@ fn reads_as_someone_else(label: &str) -> bool {
             | "wenlanapp"
             | "thewenlanapp"
             | "you"
+            | "yours"
             | "me"
             | "i"
             | "myself"
@@ -382,7 +423,8 @@ mod tests {
         // into another's prefixed one.
         assert_eq!(saver(Some("Codex"), None).id, "codex");
         assert_eq!(saver(Some("tool:terminal"), None).id, "tool:tool:terminal");
-        // A name in another script is a tool's name like any other.
+        // A name in another script is a tool's name like any other, even one
+        // that holds a reserved word inside it.
         let named = saver(Some("文瀾助手"), None);
         assert_eq!(
             (named.id.as_str(), named.label.as_str()),
@@ -407,6 +449,112 @@ mod tests {
             "x--y",
             "only letters, digits and a few marks"
         );
+    }
+
+    /// UX-SKILL-14: the words the app prints for the terminal, the person and
+    /// Wenlan in Chinese are no tool's name either. In zh-Hant the terminal's
+    /// rule reads `從終端機存的`; a tool listed as `終端機` would read
+    /// `從 終端機 存的`, the same but for two spaces.
+    #[test]
+    fn ux_skill_14_a_tool_cannot_take_the_terminals_label_in_chinese() {
+        for name in [
+            "終端機",
+            "终端",
+            "終端",
+            "终端机",
+            "你",
+            "您",
+            "我",
+            "文瀾",
+            "文澜",
+            "Wenlan",
+            " 終端機 ",
+            "終 端 機",
+            "\u{3000}終端機\u{3000}",
+            "終端機\u{200b}",
+            "-你-",
+            "文瀾 App",
+            "文澜_app",
+        ] {
+            let tool = saver(Some(name), None);
+            assert!(!tool.is_terminal() && !tool.is_person_in_app(), "{name}");
+            assert_eq!(
+                tool.id,
+                format!("tool:{}", tool_id(name)),
+                "{name}: kept apart from the terminal's saves and count"
+            );
+            assert!(
+                tool.label.starts_with("an AI tool that calls itself \""),
+                "{name}: {}",
+                tool.label
+            );
+            assert_eq!(
+                wenlan_types::SavedBy::from_saved_from(&tool.label).kind,
+                wenlan_types::SavedByKind::SelfNamed,
+                "{name}"
+            );
+            // A known display name does not get it there either.
+            let dressed = saver(Some("helper"), Some(name));
+            assert_eq!(
+                dressed.label, "an AI tool that calls itself \"helper\"",
+                "{name}"
+            );
+        }
+        // It still cannot remove the terminal's rules.
+        let by_terminal = record("terminal", 1);
+        assert!(removal_refusal(&saver(Some("終端機"), None), &by_terminal).is_some());
+        // A longer name that only holds such a word is an ordinary tool's.
+        for name in ["終端機助手", "我的工具", "文瀾助手", "你好"] {
+            let tool = saver(Some(name), None);
+            assert_eq!((tool.id.as_str(), tool.label.as_str()), (name, name));
+        }
+    }
+
+    /// UX-SKILL-14: the reserved words are the ones the app prints. This reads
+    /// the app's own strings, so a label reworded there and not here fails.
+    #[test]
+    fn ux_skill_14_reserved_names_match_the_words_the_app_prints() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../src/i18n/resources.ts");
+        let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{path}: {e}"));
+        // Every value written as `key: "value"` or `"key": "value"`.
+        let values = |key: &str| -> Vec<String> {
+            let mut out = Vec::new();
+            for opening in [format!("\"{key}\": \""), format!(" {key}: \"")] {
+                for (at, _) in text.match_indices(&opening) {
+                    let rest = &text[at + opening.len()..];
+                    out.push(rest[..rest.find('"').unwrap()].to_string());
+                }
+            }
+            out
+        };
+        // The terminal's lines: each Chinese one holds a reserved word for it.
+        let mut terminal_lines = 0;
+        for key in ["fromTerminal", "ruleSavedTerminal", "ruleRemovedTerminal"] {
+            for line in values(key).iter().filter(|line| !line.is_ascii()) {
+                terminal_lines += 1;
+                let word = ["終端機", "终端"]
+                    .into_iter()
+                    .find(|word| line.contains(word))
+                    .unwrap_or_else(|| panic!("{key} {line:?} names the terminal in a new word"));
+                assert!(reads_as_someone_else(word), "{word}");
+            }
+        }
+        assert_eq!(terminal_lines, 6, "three lines in each Chinese locale");
+        // The person and Wenlan, where the app prints the bare word.
+        let mut bare = Vec::new();
+        for key in ["you", "wenlan"] {
+            bare.extend(values(key).into_iter().filter(|word| !word.contains("{{")));
+        }
+        for word in ["你", "文瀾", "文澜", "You", "Wenlan"] {
+            assert!(bare.iter().any(|found| found == word), "{word} not found");
+        }
+        for word in &bare {
+            let tool = saver(Some(word), None);
+            assert!(
+                tool.id.starts_with(SELF_NAMED_TOOL_ID_PREFIX),
+                "{word:?} is printed by the app for the person or Wenlan, and a tool can take it"
+            );
+        }
     }
 
     /// UX-SKILL-14: every Space only when asked for by name, never over a

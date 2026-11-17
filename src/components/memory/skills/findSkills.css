@@ -42,7 +42,9 @@
 .find-skills-choice > span { display: flex; flex-direction: column; gap: 2px; }
 .find-skills-where select { height: var(--mem-control-height); border-radius: var(--mem-control-radius); border: 1px solid var(--mem-control-border); background: var(--mem-bg); color: var(--mem-text); font: inherit; padding: 0 8px; }
 .find-skills-install { height: 44px; border: 0; border-radius: var(--mem-control-radius); background: var(--mem-accent-indigo); color: var(--mem-text-on-accent); font: inherit; font-weight: 600; font-size: 15px; cursor: pointer; }
-.find-skills-install:disabled { opacity: 0.5; cursor: default; }
+/* Off: the plain control colours, so it does not read as the page's one
+   action beside a reason it cannot be pressed. */
+.find-skills-install:disabled { border: 1px solid var(--mem-control-border); background: transparent; color: var(--mem-text-secondary); opacity: 0.7; cursor: not-allowed; }
 .find-skills-installed { display: flex; flex-direction: column; gap: 12px; }
 .find-skills-installed-row { display: flex; flex-direction: column; gap: 10px; padding: 14px 18px; border-radius: var(--mem-r-10); background: var(--mem-card-surface); }
 .find-skills-installed-head { display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; }

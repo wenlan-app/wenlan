@@ -765,7 +765,7 @@ and wait for evidence that people need them.
   removes, and Wenlan refuses such a request that does not come from the
   person, or any such request while it listens beyond this computer. A trial
   run on other data never reads or writes the person's real AI tool folders.
-  Pending owner confirmation (2026-11-17): Wenlan also refuses to install or take in a skill with a text file that holds tag characters (U+E0000 to U+E007F) or direction override or isolate controls (U+202A to U+202E, U+2066 to U+2069); the app's preview writes out every other character that would not show as the same visible mark the terminal prints and says how many there are, a byte-order mark at the very start of a file is left alone, and the installed file is always the author's own.
+  Pending owner confirmation (2026-11-17): Wenlan also refuses to install or take in a skill with a text file that holds tag characters (U+E0000 to U+E007F) or direction override or isolate controls (U+202A to U+202E, U+2066 to U+2069); the app's preview writes out every other character that would not show as the same visible mark the terminal prints and says how many there are, a byte-order mark at the very start of a file is not shown, in the app or in the terminal, and does not keep the skill's name and description from being read, and the installed file is always the author's own, that mark included.
   原文：待 Qi-Xuan 確認。交辦內容（2026-11-17）：AI 工具不能把檔案放進每個工具的資料夾，也不能替人點頭（UX-WHO-2）；終端機裡要由人明確確認，不能有 `--yes`。看不見字元的補充（2026-11-17 交辦，實測發現 6b）：標籤字元和改變文字方向的控制字元直接拒絕，其他看不見的字元在 app 預覽裡標出來；英文字句待 Qi-Xuan 確認。
 - **UX-SKILL-14** `shipped` When the person explicitly asks for a rule to be
   saved, it counts at once, with no model and no accept. They ask in an AI
@@ -779,7 +779,8 @@ and wait for evidence that people need them.
   "saved from the terminal") and never "written by you". The tool's name is
   what the tool reported about itself, and "the terminal" means only that
   the `wenlan` command was run with no tool name: Wenlan cannot tell who ran
-  it. A tool that calls itself the terminal, you or Wenlan is listed as an
+  it. A tool that calls itself the terminal, you or Wenlan, in English or in
+  the app's Chinese words for them (`終端機`, `你`, `文瀾`), is listed as an
   AI tool with that name in quotes. One save is one rule of one line, at
   most 300 characters, and carries the person's own words, which the page's
   history keeps. The rule is a plain sentence: Wenlan refuses one that an AI
