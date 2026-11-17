@@ -587,20 +587,36 @@ async function startForThisSession(dir, overrides = {}) {
   );
 }
 
+const START_FOR_THIS_SESSION = "start-for-this-session";
+
+// What `npx wenlan setup` runs, in order. The settings are written first
+// (`--config-only`), then Wenlan is started, and only then does `setup
+// --finish` connect the AI tools and offer to bring a folder in: that last
+// part needs Wenlan running. A person who asked for `--config-only`
+// themselves gets no finish step.
+function setupSteps(setupArgs, hasServiceManager) {
+  const chosen = setupArgs.length ? setupArgs : ["--basic"];
+  const configOnly = chosen.includes("--config-only");
+  const steps = [["setup", ...chosen, ...(configOnly ? [] : ["--config-only"])]];
+  steps.push(hasServiceManager ? ["background", "on"] : START_FOR_THIS_SESSION);
+  steps.push(["status", "--format", "table"]);
+  if (!configOnly) steps.push(["setup", "--finish"]);
+  return steps;
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const dir = await installBinaries();
   const wenlan = path.join(dir, targetFor(process.platform, process.arch).binaries[0]);
 
   if (args[0] === "setup") {
-    const setupArgs = args.slice(1);
-    run(wenlan, ["setup", ...(setupArgs.length ? setupArgs : ["--basic"])]);
-    if (hasUserServiceManager()) {
-      run(wenlan, ["background", "on"]);
-    } else {
-      await startForThisSession(dir);
+    for (const step of setupSteps(args.slice(1), hasUserServiceManager())) {
+      if (step === START_FOR_THIS_SESSION) {
+        await startForThisSession(dir);
+      } else {
+        run(wenlan, step);
+      }
     }
-    run(wenlan, ["status", "--format", "table"]);
     printPathHint(dir);
     return;
   }
@@ -631,6 +647,8 @@ module.exports = {
   installBinaries,
   latestTag,
   hasUserServiceManager,
+  setupSteps,
+  START_FOR_THIS_SESSION,
   startForThisSession,
   request,
   readStamp,

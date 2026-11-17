@@ -278,6 +278,7 @@ async fn pair_ref(
 pub async fn handle_mark_basis(
     State(state): State<Arc<RwLock<ServerState>>>,
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
+    crate::team_actor::TeamActor(member): crate::team_actor::TeamActor,
     headers: HeaderMap,
     Path((id, basis_id)): Path<(String, String)>,
     Json(req): Json<BasisVersionRequest>,
@@ -285,17 +286,16 @@ pub async fn handle_mark_basis(
     let db = open_db(&state).await?;
     let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
     require_pair_visible(&db, &MUTATION_GRANT, &scope, &id, &basis_id).await?;
+    // A team member is recorded as themselves, never as the owner.
+    let actor = member
+        .as_ref()
+        .map(|member| member.edited_by())
+        .unwrap_or_else(|| actor_from(&headers));
     // Checked again inside the mark: a note moved out of a locked caller's
     // Space after the check above is not marked.
     let space_guard = (scope != wenlan_core::read_scope::ReadScope::Global).then(|| scope.clone());
     let entry = db
-        .mark_page_basis_in(
-            &id,
-            &basis_id,
-            req.version,
-            &actor_from(&headers),
-            space_guard.as_ref(),
-        )
+        .mark_page_basis_in(&id, &basis_id, req.version, &actor, space_guard.as_ref())
         .await
         .map_err(basis_error)?;
     Ok(Json(pair_ref(&db, &MUTATION_GRANT, &scope, entry).await?))

@@ -31,6 +31,12 @@ the token-based `steep` actions may commit or release it.
   change details. If the page remains accurate, call `still_accurate`; if not,
   update only what conflicts and stop relying on deleted files. Code is not a
   numbered memory source, so don't attach `[n]` citations to code-only claims.
+- `stale_reason="basis_changed"`: a page this one follows changed. The
+  claim's `bases` show each followed page now (`content`) and, when it
+  changed, what this page last agreed with (`before`). Change only the
+  sentences that no longer agree with it and keep the rest as it is. A
+  sentence taken from a followed page needs no `[n]`. If the page still
+  agrees, call `still_accurate`.
 - Newly attached sources: integrate them with the page's existing content
   and citations.
 
@@ -38,9 +44,8 @@ For a rewrite, use the main model and only the claim's numbered sources. Keep
 the title, language and headings. Cite every factual sentence as `[n]`. Keep
 the page's own authored lines verbatim when `plan="review_card"` identifies
 them. Preserve a Mermaid diagram unless its content changed; fix invalid
-diagrams reported in `warnings`. A page that relies on other pages is marked
-`needs_you`; follow the claim's note, leave it unchanged, and report that the
-user should use Wenlan's **Update from sources** action.
+diagrams reported in `warnings`. A page that follows other pages keeps
+what they say; a locked one gets `plan="review_card"`.
 
 Commit with `steep(action="commit", token=..., content=...)`. A citation
 refusal may be fixed and retried once with the same token; otherwise release

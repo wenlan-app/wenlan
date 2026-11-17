@@ -7,7 +7,7 @@ description: >
   review protections. Use for "steep", "沉澱", "整理我的資料", or updates
   to existing notes. Invoked through `/wenlan steep [complete request]`.
 argument-hint: "[complete request]"
-allowed-tools: ["Read", "Bash", "Agent", "mcp__plugin_wenlan_wenlan__steep", "mcp__plugin_wenlan_wenlan__read_page", "mcp__plugin_wenlan_wenlan__list_pages", "mcp__plugin_wenlan_wenlan__write_page", "mcp__plugin_wenlan_wenlan__restore_page_version", "mcp__plugin_wenlan_wenlan__recall", "mcp__plugin_wenlan_wenlan__list_folders", "mcp__plugin_wenlan_wenlan__create_folder", "mcp__plugin_wenlan_wenlan__move_page", "mcp__plugin_wenlan_wenlan__set_page_space", "mcp__plugin_wenlan_wenlan__get_page_links", "mcp__plugin_wenlan_wenlan__list_entities", "mcp__plugin_wenlan_wenlan__read_entity", "mcp__plugin_wenlan_wenlan__capture", "mcp__plugin_wenlan_wenlan__create_entity", "mcp__plugin_wenlan_wenlan__create_relation", "mcp__plugin_wenlan_wenlan__lint", "mcp__plugin_wenlan_wenlan__lint_repair_prepare", "mcp__plugin_wenlan_wenlan__lint_repair_apply", "mcp__plugin_wenlan_wenlan__lint_repair_verify", "mcp__plugin_wenlan_wenlan__distill", "mcp__plugin_wenlan_wenlan__list_refinements", "mcp__plugin_wenlan_wenlan__reject_refinement"]
+allowed-tools: ["Read", "Bash", "Agent", "mcp__plugin_wenlan_wenlan__steep", "mcp__plugin_wenlan_wenlan__read_page", "mcp__plugin_wenlan_wenlan__list_pages", "mcp__plugin_wenlan_wenlan__write_page", "mcp__plugin_wenlan_wenlan__restore_page_version", "mcp__plugin_wenlan_wenlan__page_basis", "mcp__plugin_wenlan_wenlan__recall", "mcp__plugin_wenlan_wenlan__list_folders", "mcp__plugin_wenlan_wenlan__create_folder", "mcp__plugin_wenlan_wenlan__move_page", "mcp__plugin_wenlan_wenlan__set_page_space", "mcp__plugin_wenlan_wenlan__get_page_links", "mcp__plugin_wenlan_wenlan__list_entities", "mcp__plugin_wenlan_wenlan__read_entity", "mcp__plugin_wenlan_wenlan__capture", "mcp__plugin_wenlan_wenlan__create_entity", "mcp__plugin_wenlan_wenlan__create_relation", "mcp__plugin_wenlan_wenlan__lint", "mcp__plugin_wenlan_wenlan__lint_repair_prepare", "mcp__plugin_wenlan_wenlan__lint_repair_apply", "mcp__plugin_wenlan_wenlan__lint_repair_verify", "mcp__plugin_wenlan_wenlan__distill", "mcp__plugin_wenlan_wenlan__list_refinements", "mcp__plugin_wenlan_wenlan__reject_refinement"]
 user-invocable: false
 ---
 
@@ -71,6 +71,16 @@ do the work in an order that preserves its evidence and protections. Do not
 load every reference by default. A plain request to organize or tidy existing
 knowledge is a goal for this workflow; do not route it to a separate organize
 or distill workflow.
+
+## A page that follows another page
+
+When the user asks for one page to follow another ("讓對外介紹跟著定位頁",
+"make the intro follow the positioning page"), read both pages and call
+`page_basis(action="mark", page_id=<the follower>, basis_page_id=<the page
+it follows>, version=<that page's page.version>)`. Say what was set: when
+the followed page changes, steep updates the follower; a locked page gets a
+revision card instead. `action="remove"` stops it. Set one up only when the
+user asks.
 
 ## Automatic and on-demand work
 

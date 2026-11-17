@@ -7,8 +7,19 @@ import argparse
 import sys
 from pathlib import Path
 
-from release_archive import ArchiveError, create_tar_gz, create_zip
-from release_targets import TargetError, release_assets, require_target
+from release_archive import MAX_ARCHIVE_BYTES, ArchiveError, create_tar_gz, create_zip
+from release_targets import TargetError, release_assets, release_matrix, require_target
+
+
+def per_target_budget_bytes() -> int:
+    """Each target's share of the validated release bundle size cap.
+
+    The release queue proof rejects the bundle of every target's archives when
+    it exceeds MAX_ARCHIVE_BYTES. Checking each target's share at packaging
+    time surfaces growth on the pull request that causes it.
+    """
+
+    return MAX_ARCHIVE_BYTES // len(release_matrix()["include"])
 
 
 def package_target(
@@ -39,6 +50,14 @@ def package_target(
         else:
             raise ArchiveError(f"unsupported canonical archive {asset['archive']!r}")
         outputs.append(output)
+    total = sum(output.stat().st_size for output in outputs)
+    budget = per_target_budget_bytes()
+    if total > budget:
+        raise ArchiveError(
+            f"{target} release archives total {total} bytes, over this target's "
+            f"{budget}-byte share of the {MAX_ARCHIVE_BYTES}-byte release bundle cap "
+            "(scripts/release_archive.py MAX_ARCHIVE_BYTES)"
+        )
     return outputs
 
 

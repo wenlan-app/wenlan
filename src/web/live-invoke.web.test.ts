@@ -19,3 +19,19 @@ describe("production browser adapter", () => {
     await expect(liveInvoke("page_review_supported")).rejects.toThrow("desktop app");
   });
 });
+
+describe("pageFromWire", () => {
+  it("folds the pages a page relies on into it, as the desktop app does", async () => {
+    const { pageFromWire } = await import("./live-invoke");
+    const page = pageFromWire({
+      page: { id: "p1" },
+      basis: [{ page_id: "b1", state: "ok" }],
+      code_basis: [{ file: "a.rs" }],
+    }) as Record<string, unknown>;
+    expect(page.basis).toEqual([{ page_id: "b1", state: "ok" }]);
+    expect(page.code_basis).toEqual([{ file: "a.rs" }]);
+    expect(pageFromWire({ page: { id: "p2", basis: [] }, basis: [{ page_id: "x" }] })).toEqual({ id: "p2", basis: [] });
+    expect(pageFromWire({ page: null })).toBeNull();
+    expect(pageFromWire({})).toBeNull();
+  });
+});

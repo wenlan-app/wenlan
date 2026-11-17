@@ -44,17 +44,17 @@ describe("Appearance for a team member", () => {
     await waitFor(() => expect(listThemes).toHaveBeenCalled());
   });
 
-  it("a member keeps the built-in themes and never asks for the owner's theme files", async () => {
+  it("a member gets custom themes from this browser, not the owner's theme files", async () => {
     vi.stubGlobal("__WENLAN_WEB__", true);
     window.history.pushState({}, "", "/app");
     resetTeamMeForTests();
     renderSection();
     expect(await screen.findByText(i18n.t("appearance.themes"))).toBeInTheDocument();
     expect(screen.getAllByText(i18n.t("appearance.builtIn")).length).toBeGreaterThan(0);
-    expect(screen.queryByText(i18n.t("appearance.newTheme"))).toBeNull();
+    expect(await screen.findByText(i18n.t("appearance.newTheme"))).toBeInTheDocument();
     expect(screen.queryByText(i18n.t("appearance.askAi"))).toBeNull();
     expect(screen.queryByText(i18n.t("appearance.loadFailed"))).toBeNull();
     expect(screen.queryByTestId("home-look")).toBeNull();
-    expect(listThemes).not.toHaveBeenCalled();
+    await waitFor(() => expect(listThemes).toHaveBeenCalled());
   });
 });

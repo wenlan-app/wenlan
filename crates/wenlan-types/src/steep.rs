@@ -31,6 +31,10 @@ pub const STEEP_REASON_CODE_CHANGED: &str = "code_changed";
 /// `stale_reason` of a work item whose cited code changed and still needs a
 /// small model's judgement of whether the note is affected.
 pub const STEEP_REASON_CODE_CHECK: &str = "code_check";
+/// `stale_reason` of a work item that relies on another page, and that page
+/// changed since this one last agreed with it: bring it in line with what the
+/// other page says now.
+pub const STEEP_REASON_BASIS_CHANGED: &str = "basis_changed";
 
 /// `action` of a commit: write (or stage) the rewritten body.
 pub const STEEP_ACTION_REWRITE: &str = "rewrite";
@@ -128,8 +132,26 @@ pub struct SteepClaimResponse {
     /// For `judge`: one question per changed piece of code.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub code_checks: Vec<SteepCodeCheck>,
+    /// The other pages this note relies on, as they read now. Context for the
+    /// rewrite, not numbered sources.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bases: Vec<SteepBasis>,
     /// Plain words on what to do, or why the note needs the user.
     pub note: String,
+}
+
+/// A page a claimed note relies on. When it changed since the note last
+/// agreed with it, `before` is the text the note agreed with.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SteepBasis {
+    pub page_id: String,
+    pub title: String,
+    pub version: i64,
+    /// The page as it reads now.
+    pub content: String,
+    /// The text the note last agreed with; absent when nothing changed since.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub before: Option<String>,
 }
 
 /// Code a `code_changed` note relies on, as it reads now. It is context for
@@ -237,10 +259,11 @@ mod tests {
             code: Vec::new(),
             judge_instructions: None,
             code_checks: Vec::new(),
+            bases: Vec::new(),
             note: String::new(),
         };
         let json = serde_json::to_value(&claim).unwrap();
-        for absent in ["code", "judge_instructions", "code_checks"] {
+        for absent in ["code", "judge_instructions", "code_checks", "bases"] {
             assert!(json.get(absent).is_none(), "{absent}");
         }
         let back: SteepClaimResponse = serde_json::from_value(json).unwrap();

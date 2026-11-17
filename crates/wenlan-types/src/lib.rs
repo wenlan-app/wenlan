@@ -129,8 +129,8 @@ pub use skills::{
 pub use sources::{MemoryType, RawDocument, SourceType, StabilityTier, SyncStatus};
 pub use space_context::{WriteOutcome, WriteSpaceSource, WriteSpaceTarget};
 pub use steep::{
-    SteepClaimRequest, SteepClaimResponse, SteepCommitRequest, SteepCommitResponse, SteepSource,
-    SteepWorkItem, SteepWorklistResponse,
+    SteepBasis, SteepClaimRequest, SteepClaimResponse, SteepCommitRequest, SteepCommitResponse,
+    SteepSource, SteepWorkItem, SteepWorklistResponse,
 };
 pub use steep_new::{
     steep_short_id, SteepExistingPage, SteepNewClaimRequest, SteepNewClaimResponse,

@@ -602,6 +602,7 @@ fn publish_with_no_selected_pages_does_nothing() {
         doc_fixes: Vec::new(),
         doc_check: None,
         kept_edits: Vec::new(),
+        follows: Vec::new(),
         take_over: false,
     };
     let result = publish(PublishInput {
@@ -646,6 +647,7 @@ fn daily_is_due_once_a_day_after_its_hour() {
         doc_fixes: Vec::new(),
         doc_check: None,
         kept_edits: Vec::new(),
+        follows: Vec::new(),
         take_over: false,
     };
     let before = chrono::Local
@@ -736,7 +738,213 @@ fn readme_fix(old: &str, new: &str) -> DocFixRequest {
             line_start: 5,
             line_end: 5,
         }],
+        page: None,
     }
+}
+
+/// A fix to README.md from the followed page `page_positioning`.
+fn page_fix(old: &str, new: &str, quote: &str) -> DocFixRequest {
+    DocFixRequest {
+        path: "README.md".into(),
+        old_text: old.into(),
+        new_text: new.into(),
+        reason: "The positioning page now says Node 20.".into(),
+        code: Vec::new(),
+        page: Some(RepoDocPageLine {
+            page_id: "page_positioning".into(),
+            version: 3,
+            quote: quote.into(),
+        }),
+    }
+}
+
+#[test]
+fn docs_follow_a_page_only_when_told_and_take_fixes_from_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let (origin, clone) = repo_with_readme(dir.path());
+    let store = dir.path().join("data/repo-wiki.json");
+    bind_at(&store, "site", &clone, None, None).unwrap();
+
+    // Not followed yet: a fix from the page is refused.
+    let refused = suggest_doc_fix_at(
+        &store,
+        "site",
+        page_fix(
+            "Node 18 or later",
+            "Node 20 or later",
+            "  We support Node 20. ",
+        ),
+        1,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(refused.contains("does not follow page"), "{refused}");
+
+    // Only the repository's own docs, present in the working copy, can follow.
+    let follow = |files: &[&str]| {
+        follow_page_at(
+            &store,
+            "site",
+            "page_positioning",
+            files.iter().map(|file| (*file).to_owned()).collect(),
+            4,
+        )
+    };
+    for (files, says) in [
+        (&["CHANGELOG.md"][..], "not one of the repository's docs"),
+        (&["wenlan/index.md"][..], "not one of the repository's docs"),
+        (&["docs/missing.md"][..], "is not in"),
+        (&["../README.md"][..], "leaves the repository"),
+        (&[][..], "name 1 to"),
+    ] {
+        let error = follow(files).unwrap_err().to_string();
+        assert!(error.contains(says), "{files:?}: {error}");
+    }
+    let made = follow(&["README.md", "./README.md"]).unwrap();
+    assert_eq!(made.files, ["README.md"]);
+    assert_eq!(made.followed_version, None);
+    assert!(follow_page_at(
+        &store,
+        "nope",
+        "page_positioning",
+        vec!["README.md".into()],
+        4
+    )
+    .unwrap_err()
+    .to_string()
+    .contains("not connected"));
+
+    // Code and a page together, or an empty quote, are refused.
+    let mut both = page_fix(
+        "Node 18 or later",
+        "Node 20 or later",
+        "We support Node 20.",
+    );
+    both.code = readme_fix("x", "y").code;
+    assert!(suggest_doc_fix_at(&store, "site", both, 1)
+        .unwrap_err()
+        .to_string()
+        .contains("not both"));
+    assert!(suggest_doc_fix_at(
+        &store,
+        "site",
+        page_fix("Node 18 or later", "Node 20 or later", "   "),
+        1
+    )
+    .unwrap_err()
+    .to_string()
+    .contains("page.quote"));
+
+    let (fix, open) = suggest_doc_fix_at(
+        &store,
+        "site",
+        page_fix(
+            "Node 18 or later",
+            "Node 20 or later",
+            "  We support Node 20. ",
+        ),
+        5,
+    )
+    .unwrap();
+    assert_eq!(open, 1);
+    let line = fix.page.clone().unwrap();
+    assert_eq!(line.quote, "We support Node 20.", "quote is trimmed");
+    assert!(fix.code.is_empty());
+
+    // The followed version moves only when an AI tool says it caught up.
+    assert_eq!(
+        mark_followed_at(&store, "site", "page_positioning", 3)
+            .unwrap()
+            .followed_version,
+        Some(3)
+    );
+    // Following again changes the files but keeps the version.
+    assert_eq!(follow(&["README.md"]).unwrap().followed_version, Some(3));
+    assert!(mark_followed_at(&store, "site", "page_other", 1)
+        .unwrap_err()
+        .to_string()
+        .contains("no docs follow"));
+
+    // The pull request names the page's line the fix rests on.
+    let worktree = dir.path().join("data/repo-wiki/site");
+    let binding = binding_at(&store, "site").unwrap().unwrap();
+    let code_bases = HashMap::new();
+    let anchors = CodeAnchors::new();
+    let concept_paths = ConceptPathMap::new();
+    let published = publish(publish_input(
+        &binding,
+        vec![],
+        &code_bases,
+        &anchors,
+        &concept_paths,
+        &worktree,
+    ))
+    .unwrap();
+    assert_eq!(published.result.doc_fixes, 1);
+    let readme = sh(&origin, &["show", &format!("{REPO_WIKI_BRANCH}:README.md")]);
+    assert!(readme.contains("Requires Node 20 or later."), "{readme}");
+
+    // Unfollowing keeps the fix already found; the binding forgets the page.
+    assert!(unfollow_page_at(&store, "site", "page_positioning").unwrap());
+    assert!(!unfollow_page_at(&store, "site", "page_positioning").unwrap());
+    let binding = binding_at(&store, "site").unwrap().unwrap();
+    assert!(binding.follows.is_empty());
+    assert_eq!(binding.doc_fixes.len(), 1);
+}
+
+#[test]
+fn a_pull_request_names_the_line_of_the_page_a_fix_follows() {
+    let binding = RepoWikiBinding {
+        space: "site".into(),
+        repo_root: "/r".into(),
+        folder: "wiki".into(),
+        remote_url: None,
+        daily: None,
+        last_publish: None,
+        last_daily_run: None,
+        doc_fixes: Vec::new(),
+        doc_check: None,
+        kept_edits: Vec::new(),
+        follows: Vec::new(),
+        take_over: false,
+    };
+    let fix = RepoDocFix {
+        id: "fix_1".into(),
+        path: "README.md".into(),
+        old_text: "a".into(),
+        new_text: "b".into(),
+        reason: "The page now calls it a studio.".into(),
+        code: Vec::new(),
+        page: Some(RepoDocPageLine {
+            page_id: "page_positioning".into(),
+            version: 2,
+            quote: "A studio for \"everything\"\n you think".into(),
+        }),
+        state: RepoDocFixState::Pending,
+        found_at: 1,
+    };
+    let body = pr_body_for_test(&binding, vec![&fix]);
+    assert!(
+        body.contains("no longer matches the page the doc follows"),
+        "{body}"
+    );
+    assert!(
+        body.contains("(the page it follows says: \"A studio for 'everything' you think\")"),
+        "{body}"
+    );
+    assert!(
+        !body.contains("page_positioning"),
+        "no page id in public text: {body}"
+    );
+}
+
+#[test]
+fn a_quote_counts_when_only_white_space_differs() {
+    let page = "# Positioning\n\n- Banner:   A studio for everything\n  you think.\n";
+    assert!(page_has_quote(page, "A studio for everything you think."));
+    assert!(page_has_quote(page, "  Banner: A studio "));
+    assert!(!page_has_quote(page, "A studio for nothing"));
+    assert!(!page_has_quote(page, "   "));
 }
 
 /// `repo_with_origin` plus a README pushed to `main`.

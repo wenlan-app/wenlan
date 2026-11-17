@@ -253,6 +253,41 @@ pub async fn build_page_history(
         .collect();
     let mut items = fold_save_runs(items, &own, &keep);
 
+    // Archives and restores, with who did them when that was recorded. A
+    // restore already has its changelog entry; an archive has only its
+    // history row.
+    let lifecycle = db.page_lifecycle_rows(page_id).await?;
+    for item in &mut items {
+        if item.edited_by.as_deref() == Some("restore") {
+            item.kind = PageHistoryKind::Restored;
+            item.edited_by = lifecycle
+                .iter()
+                .find(|(version, marker, _, _)| {
+                    Some(*version) == item.version && marker == "restore"
+                })
+                .and_then(|(_, _, _, actor)| actor.clone());
+        }
+    }
+    for (version, marker, at, actor) in &lifecycle {
+        if marker != "archive" {
+            continue;
+        }
+        items.push(PageHistoryItem {
+            kind: PageHistoryKind::Archived,
+            at: *at,
+            version: Some(*version),
+            edited_by: actor.clone(),
+            agent: None,
+            delta_summary: None,
+            text: None,
+            source: None,
+            changed_sentences: None,
+            person_asked: None,
+            restored_from: None,
+            first_version: None,
+        });
+    }
+
     for basis in db.list_page_basis(page_id).await? {
         if !visible_bases.contains(&basis.basis_page_id) {
             continue;

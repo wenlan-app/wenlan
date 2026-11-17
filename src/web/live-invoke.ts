@@ -6,6 +6,7 @@ import { daemonMeetsFloor } from "../lib/daemonVersion";
 import type { RenamePageResponse, RestorePageResponse } from "../lib/tauri";
 import { archiveFixturePage, restoreFixturePage } from "../../e2e/tauriMock/pageRestore";
 import { isWebBuild } from "./runtime";
+import { MEMBER_THEME_COMMANDS } from "./memberThemes";
 import { isTeamMemberMode, readTeamKey, teamCallAllowed, TeamCallUnavailable, TEAM_GATE_PREFIX } from "./team";
 
 declare const __WENLAN_SOURCE_PREVIEW__: boolean;
@@ -440,6 +441,22 @@ function searchPagesVia(a: any, headers?: Record<string, string>): Promise<unkno
   ).then((r) => r.pages ?? r);
 }
 
+/**
+ * The page object of a `GET /api/pages/{id}` answer, with the lists that
+ * ride beside it (the pages and code it relies on, selection impacts)
+ * folded in, as the desktop app's `page_from_wire` does. A field the page
+ * already carries wins.
+ */
+export function pageFromWire(wire: any): unknown {
+  const page = wire?.page;
+  if (!page || typeof page !== "object") return null;
+  const folded: Record<string, unknown> = { ...page };
+  for (const key of ["selection_impacts", "basis", "code_basis"]) {
+    if (wire[key] != null && folded[key] === undefined) folded[key] = wire[key];
+  }
+  return folded;
+}
+
 async function getPageVia(a: any, headers?: Record<string, string>): Promise<unknown> {
   const id = String(a.id);
   const previewPage = PREVIEW_AUTHORED_PAGES.get(id);
@@ -447,7 +464,7 @@ async function getPageVia(a: any, headers?: Record<string, string>): Promise<unk
   if (PREVIEW_DELETED_PAGE_IDS.has(id)) return null;
   try {
     const wire = await get(`/api/pages/${enc(a.id)}`, headers);
-    return wire?.page ?? null;
+    return pageFromWire(wire);
   } catch (e) {
     if (e instanceof HttpError && e.status === 404) return null;
     throw e;
@@ -1877,9 +1894,6 @@ const TEAM_LOCAL_ANSWERS: Record<string, () => unknown> = {
   // A page's links can name pages in Spaces the member cannot open, so the
   // gate has no row for them; the page shows none instead of an error.
   get_page_links: () => ({ outbound: [], inbound: [] }),
-  // The knowledge graph holds the owner's whole library, so a member gets an
-  // empty one and the page panel says it has no connections to show.
-  get_knowledge_graph_cmd: () => ({ entities: [], relations: [], memories: [], memory_links: [], pages: [], page_links: [] }),
   // Search finds pages only: memories, topics and conversations are the owner's.
   search: () => [],
   search_entities_cmd: () => [],
@@ -1888,6 +1902,8 @@ const TEAM_LOCAL_ANSWERS: Record<string, () => unknown> = {
 
 export async function liveInvoke(cmd: string, args?: Args): Promise<unknown> {
   if (isTeamMemberMode() && cmd in TEAM_LOCAL_ANSWERS) return TEAM_LOCAL_ANSWERS[cmd]();
+  // A member's custom themes live in this browser only; no server call.
+  if (isTeamMemberMode() && cmd in MEMBER_THEME_COMMANDS) return MEMBER_THEME_COMMANDS[cmd](args ?? {});
   if (isWebBuild() && (NATIVE_ONLY_COMMANDS.has(cmd) || PREVIEW_ONLY_HANDLERS.has(cmd) || cmd in DEFAULTS)) {
     throw unsupportedWebCommand(cmd);
   }

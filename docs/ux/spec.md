@@ -708,6 +708,24 @@ and wait for evidence that people need them.
   with nobody to ask, the daily run stays off and the command that turns it
   on is named. It never ties a repository that is not yours without a yes.
   原文：「跟空間啥的一起思考呢？」（2026-11-16 08:15Z）；「對 還有意思是指 讓他們進到 repo 後就可以下指令不用 wenlan repo 動作」（2026-11-16 08:30Z）；「那這樣 wenlan space 還有存在必要？」「還是說要怎麼整合整併」（2026-11-16 08:33Z）；「繼續推進」（2026-11-16 08:35Z）；「感覺可以」（2026-11-16，答「讓 init 多問一句『要不要每天自動開 PR』，預設是要」）。
+- **UX-CLI-6** `shipped` One command sets Wenlan up. `wenlan setup` (and
+  `npx wenlan setup`) writes the settings, connects every AI tool it finds on
+  this computer without asking, asks once whether to bring a folder in (Enter
+  skips), and says what to try; the one thing left by hand is restarting the
+  AI tools. A tool that already has Wenlan, through its plugin or an earlier
+  run, is left as it is. It works the same outside a repository; inside one
+  it names `wenlan init` and ties nothing. `--config-only` connects nothing
+  and asks nothing.
+  原文：「裝完的流程，是要那些需要人手動做，哪些是自動設好，要絲滑的體驗 dx ux」（2026-11-17 06:11Z）；「要的，另外想問如果不在 repo 內的情況，不知是否已考慮過」（2026-11-17 06:24Z）。
+- **UX-CLI-7** `shipped` In a repository Wenlan does not know, the terminal
+  asks only when the command cannot do its work without setup:
+  `wenlan repo publish` asks a person once "Set it up now?" and, on a yes,
+  sets the repository up and goes on. A command that works anyway (`recall`,
+  `capture`, `rules`, …) says one line about `wenlan init` the first time in
+  that repository and never again. An AI tool or a script is never asked and
+  is not shown the line; a command that cannot go on fails and names
+  `wenlan init`.
+  原文：「怎樣更好的 DX UX」（2026-11-17 05:28Z）；「沒問題，那繼續」（2026-11-17 06:45Z）。
 
 ## Adding to Wenlan
 

@@ -11,8 +11,8 @@ use clap::{Subcommand, ValueEnum};
 use std::path::{Path, PathBuf};
 use wenlan_core::repo_wiki::{self, PublishTarget};
 use wenlan_types::repo_wiki::{
-    BindRepoWikiRequest, RepoWikiAgent, RepoWikiBinding, RepoWikiDaily, RepoWikiPublishResult,
-    RepoWikiPublishStatus, RepoWikiRunner,
+    BindRepoWikiRequest, RepoDocsRequest, RepoWikiAgent, RepoWikiBinding, RepoWikiDaily,
+    RepoWikiPublishResult, RepoWikiPublishStatus, RepoWikiRunner,
 };
 
 use crate::client::WenlanClient;
@@ -76,6 +76,25 @@ pub enum WikiCommand {
     Status,
     /// Stop putting this Space's pages into its repository.
     Unbind,
+    /// Make docs of the bound repository follow a page of the Space: when
+    /// the page changes, the AI tool suggests fixes to them for the wiki
+    /// pull request. `wenlan follow README.md <page>` is the short way.
+    #[command(hide = true)]
+    Follow {
+        /// The page the docs follow (its id).
+        #[arg(long)]
+        page: String,
+        /// Docs relative to the repository root, such as README.md.
+        #[arg(required = true)]
+        files: Vec<String>,
+    },
+    /// Stop the docs following a page.
+    #[command(hide = true)]
+    Unfollow {
+        /// The page the docs follow (its id).
+        #[arg(long)]
+        page: String,
+    },
     /// Check the wiki folder of this checkout against the code: fix line
     /// numbers that moved and have an AI tool rewrite pages whose code
     /// changed. Works without Wenlan running; the GitHub Actions workflow
@@ -100,10 +119,34 @@ pub async fn run(
     space: Option<&str>,
     command: WikiCommand,
 ) -> Result<()> {
-    let Some(space) = space else {
-        bail!(
-            "no Space for this folder; run it inside a repository matched to a Space, or pass --space"
-        );
+    // `publish` in a repository that is not set up cannot do its work: a
+    // person is asked once whether to set it up now (see `set_up_to_publish`).
+    let set_up;
+    let space = match (space, &command) {
+        (Some(space), WikiCommand::Publish)
+            if client.repo_wiki_binding(space).await?.is_none() =>
+        {
+            match super::init::set_up_to_publish(client, format, quiet).await? {
+                Some(space) => {
+                    set_up = space;
+                    set_up.as_str()
+                }
+                None => return Ok(()),
+            }
+        }
+        (Some(space), _) => space,
+        (None, WikiCommand::Publish) => {
+            match super::init::set_up_to_publish(client, format, quiet).await? {
+                Some(space) => {
+                    set_up = space;
+                    set_up.as_str()
+                }
+                None => return Ok(()),
+            }
+        }
+        (None, _) => bail!(
+            "no Space for this folder yet. Inside a git repository, `wenlan init` sets one up; or pass --space"
+        ),
     };
     match command {
         WikiCommand::Bind {
@@ -166,6 +209,49 @@ pub async fn run(
         },
         WikiCommand::Refresh(_) | WikiCommand::Workflow(_) => {
             unreachable!("offline wiki commands run before the daemon is reached")
+        }
+        WikiCommand::Follow { page, files } => {
+            let reply = client
+                .repo_wiki_docs(
+                    space,
+                    &RepoDocsRequest::Follow {
+                        page_id: page,
+                        files,
+                    },
+                )
+                .await?;
+            if !quiet {
+                match format {
+                    ResolvedFormat::Json => print_json(&reply)?,
+                    ResolvedFormat::Table => {
+                        if let Some(follow) = &reply.follow {
+                            println!(
+                                "{} now follow page {}.",
+                                follow.files.join(", "),
+                                follow.page_id
+                            );
+                        }
+                    }
+                }
+            }
+            Ok(())
+        }
+        WikiCommand::Unfollow { page } => {
+            let reply = client
+                .repo_wiki_docs(
+                    space,
+                    &RepoDocsRequest::Unfollow {
+                        page_id: page.clone(),
+                    },
+                )
+                .await?;
+            if !quiet {
+                match format {
+                    ResolvedFormat::Json => print_json(&reply)?,
+                    ResolvedFormat::Table => println!("No docs follow page {page} any more."),
+                }
+            }
+            Ok(())
         }
         WikiCommand::Unbind => {
             let removed = client.unbind_repo_wiki(space).await?;
@@ -290,6 +376,17 @@ fn print_binding(format: ResolvedFormat, quiet: bool, binding: &RepoWikiBinding)
             }
         ),
         _ => println!("  daily: off"),
+    }
+    for follow in &binding.follows {
+        println!(
+            "  follows page {}: {}{}",
+            follow.page_id,
+            follow.files.join(", "),
+            match follow.followed_version {
+                Some(version) => format!(" (up to version {version})"),
+                None => " (not run yet)".to_owned(),
+            }
+        );
     }
     if let Some(last) = &binding.last_publish {
         println!("  last publish: {}", describe_publish(last));
@@ -417,6 +514,7 @@ mod tests {
             doc_fixes: Vec::new(),
             doc_check: None,
             kept_edits: Vec::new(),
+            follows: Vec::new(),
             take_over: false,
         };
         let now = target(Some("pallets/itsdangerous"), None);

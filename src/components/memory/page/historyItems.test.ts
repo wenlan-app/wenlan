@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import type { TFunction } from "i18next";
 import { i18n } from "../../../i18n";
+import type { SharedStatus } from "../../../lib/tauri";
 import { historyItemLabel, historyRows } from "./historyItems";
 
 const tFor = (lng: "en" | "zh-Hans" | "zh-Hant") => i18n.getFixedT(lng) as unknown as TFunction;
@@ -44,5 +45,30 @@ describe("UX-HIST-1 putting an earlier version back is listed as restored versio
     expect(historyItemLabel(tFor("en"), item)).toBe("Restored version 3");
     expect(historyItemLabel(tFor("zh-Hans"), item)).toBe("还原成第 3 版");
     expect(historyItemLabel(tFor("zh-Hant"), item)).toBe("還原成第 3 版");
+  });
+});
+
+describe("an archive or a restore says who did it, or reads whole without a name", () => {
+  const shares = [{
+    kind: "space", target: "Product", folder: "", host: "https://team.example.com", read_only: false, hosted: true,
+    members: [{ id: "amy", name: "Amy" }],
+  }] as unknown as SharedStatus[];
+  const row = (kind: "archived" | "restored", edited_by: string | null) =>
+    ({ kind, at: 1_700_000_000, version: 3, edited_by });
+
+  it("names a member, you, or an AI tool", () => {
+    expect(historyItemLabel(tFor("en"), row("archived", "shared_person:amy"), shares)).toBe("Amy archived this page");
+    expect(historyItemLabel(tFor("en"), row("restored", "manual_edit"), shares)).toBe("You restored this page");
+    expect(historyItemLabel(tFor("zh-Hant"), row("archived", "manual_edit"), shares)).toBe("你封存了這篇筆記");
+    expect(historyItemLabel(tFor("zh-Hans"), row("restored", "shared_person:amy"), shares)).toBe("Amy恢复了这篇笔记");
+    expect(historyItemLabel(tFor("en"), row("archived", "ai:claude-code"))).toBe("Claude Code archived this page");
+  });
+
+  it("an old row with nobody recorded is a full sentence with no blank", () => {
+    expect(historyItemLabel(tFor("en"), row("archived", null))).toBe("This page was archived");
+    expect(historyItemLabel(tFor("en"), row("restored", null))).toBe("This page was restored");
+    expect(historyItemLabel(tFor("zh-Hant"), row("archived", null))).toBe("這篇筆記已封存");
+    expect(historyItemLabel(tFor("zh-Hant"), row("restored", null))).toBe("這篇筆記已還原");
+    expect(historyItemLabel(tFor("zh-Hans"), row("archived", null))).toBe("这篇笔记已归档");
   });
 });

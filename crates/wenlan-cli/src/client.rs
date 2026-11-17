@@ -1028,6 +1028,24 @@ impl WenlanClient {
             .unwrap_or(false))
     }
 
+    /// `POST /api/spaces/{space}/wiki/docs`: record a doc fix, or change
+    /// which docs follow a page.
+    pub async fn repo_wiki_docs(
+        &self,
+        space: &str,
+        req: &wenlan_types::repo_wiki::RepoDocsRequest,
+    ) -> Result<wenlan_types::repo_wiki::RepoDocsReply> {
+        let url = self.space_wiki_url(space, "docs")?;
+        let resp = self
+            .send(
+                self.http.post(&url).json(req),
+                &format!("POST {url} failed"),
+            )
+            .await?;
+        let resp = ensure_daemon_success(resp, &url).await?;
+        resp.json().await.context("parsing wiki docs response")
+    }
+
     /// `POST /api/spaces/{space}/wiki/publish`: write the Space's code pages
     /// into its repository and open or update the pull request.
     pub async fn publish_repo_wiki(

@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { useTeamAccess } from "../../../web/teamAccess";
 import { PageIcon } from "../assets/PageIcon";
 import { listPages, searchPages, type BasisRef, type Page } from "../../../lib/tauri";
 import { OverflowMenu } from "./OverflowMenu";
@@ -32,6 +33,9 @@ export default function PageInfoNotes({
   onUnmarkBasis,
 }: PageInfoNotesProps) {
   const { t } = useTranslation();
+  // A team member may rely only on notes of the same Space; the server
+  // refuses any other, so the picker does not offer them.
+  const sameSpaceOnly = useTeamAccess().member;
   const [picking, setPicking] = useState(false);
   const [search, setSearch] = useState("");
   const [failed, setFailed] = useState(false);
@@ -62,7 +66,7 @@ export default function PageInfoNotes({
       && !taken.has(page.id)
       && page.creation_kind !== "entity"
       // A note in no Space is reachable only from no Space, as for `[[`.
-      && ((page.space ?? null) === space || !!page.space);
+      && ((page.space ?? null) === space || (!!page.space && !sameSpaceOnly));
   }).sort((a, b) => Number((a.space ?? null) !== space) - Number((b.space ?? null) !== space));
 
   const add = (target: string) => {

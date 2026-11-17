@@ -52,7 +52,7 @@ enum Commands {
     Status,
     /// Open Wenlan's personal browser UI.
     Open,
-    /// Guided setup: get Wenlan running, optionally with a local model or an Anthropic key.
+    /// Set Wenlan up and connect the AI tools on this computer; optionally a local model or an Anthropic key.
     Setup {
         /// Set up without a model or API key.
         #[arg(long)]
@@ -66,6 +66,12 @@ enum Commands {
         /// Skip confirmation prompts where possible.
         #[arg(short = 'y', long)]
         yes: bool,
+        /// Write the settings only: connect no AI tool and ask nothing.
+        #[arg(long)]
+        config_only: bool,
+        /// Only what follows the settings; the installer runs it once Wenlan has started.
+        #[arg(long, hide = true, conflicts_with_all = ["basic", "model", "anthropic_api_key_env", "config_only"])]
+        finish: bool,
     },
     /// Set this repository up: a Space named after it, tied to it, and your AI tools connected.
     Init,
@@ -222,6 +228,12 @@ enum Commands {
         #[command(subcommand)]
         command: commands::wiki::WikiCommand,
     },
+    /// Make a page or a repo file follow a page, so it keeps up when that page changes.
+    Follow(commands::follow::FollowArgs),
+    /// Stop a page or a repo file following a page.
+    Unfollow(commands::follow::UnfollowArgs),
+    /// Show what follows which page, and what is waiting to catch up.
+    Follows(commands::follow::FollowsArgs),
     /// Call any Wenlan tool an AI tool can call, by the same name (list, show, call).
     Tool {
         #[command(subcommand)]
@@ -240,7 +252,8 @@ const HELP_GROUPS: &[(&str, &[&str])] = &[
     (
         "Daily",
         &[
-            "brief", "capture", "recall", "rules", "pages", "memories", "sources",
+            "brief", "capture", "recall", "rules", "pages", "memories", "sources", "follow",
+            "unfollow", "follows",
         ],
     ),
     (
@@ -353,6 +366,9 @@ async fn main() -> anyhow::Result<ExitCode> {
     let tool_backed = matches!(
         &cli.command,
         Commands::Tool { .. }
+            | Commands::Follow(_)
+            | Commands::Unfollow(_)
+            | Commands::Follows(_)
             | Commands::Pages {
                 action: Some(commands::pages::PagesAction::Tool(_)),
                 ..
@@ -381,6 +397,18 @@ async fn main() -> anyhow::Result<ExitCode> {
         let (format, quiet) = (cli.format.resolve(), cli.quiet);
         let ok = match cli.command {
             Commands::Tool { cmd } => commands::tool::run(cmd, &caller, format, quiet)?,
+            Commands::Follow(args) => {
+                commands::follow::run_follow(args, &caller, format, quiet)?;
+                true
+            }
+            Commands::Unfollow(args) => {
+                commands::follow::run_unfollow(args, &caller, format, quiet)?;
+                true
+            }
+            Commands::Follows(args) => {
+                commands::follow::run_follows(args, &caller, format, quiet)?;
+                true
+            }
             Commands::Pages {
                 action: Some(commands::pages::PagesAction::Tool(action)),
                 ..
@@ -462,13 +490,28 @@ async fn main() -> anyhow::Result<ExitCode> {
         base_client
     } else if let Some(operation) = operation {
         let context = match base_client.list_spaces().await {
-            Ok(spaces) => resolve_cli_space(
-                cli.space.clone(),
-                cli.all_spaces,
-                std::env::current_dir().ok(),
-                operation,
-                &spaces.into_iter().map(|space| space.name).collect(),
-            )?,
+            Ok(spaces) => {
+                let registered = spaces.into_iter().map(|space| space.name).collect();
+                let cwd = std::env::current_dir().ok();
+                let context = resolve_cli_space(
+                    cli.space.clone(),
+                    cli.all_spaces,
+                    cwd.clone(),
+                    operation,
+                    &registered,
+                )?;
+                // In a repository Wenlan does not know, a person is told once
+                // about `wenlan init`. `repo` commands say their own.
+                let wants_hint = context.space.is_none()
+                    && !cli.all_spaces
+                    && !cli.quiet
+                    && matches!(cli.format.resolve(), output::ResolvedFormat::Table)
+                    && !matches!(&cli.command, Commands::Wiki { .. });
+                if let (true, Some(cwd)) = (wants_hint, cwd.as_deref()) {
+                    commands::init::say_once_not_set_up(cwd, &registered);
+                }
+                context
+            }
             Err(error)
                 if matches!(&cli.command, Commands::Capture { .. })
                     && base_client.is_local()
@@ -565,13 +608,20 @@ async fn main() -> anyhow::Result<ExitCode> {
             model,
             anthropic_api_key_env,
             yes,
+            config_only,
+            finish,
         } => {
-            commands::setup::run_setup(commands::setup::SetupArgs {
-                basic,
-                model,
-                anthropic_api_key_env,
-                yes,
-            })
+            commands::setup::run_setup(
+                &client,
+                commands::setup::SetupArgs {
+                    basic,
+                    model,
+                    anthropic_api_key_env,
+                    yes,
+                    config_only,
+                    finish,
+                },
+            )
             .await?
         }
         Commands::Init => commands::init::run(&client, format, cli.quiet).await?,
@@ -583,7 +633,10 @@ async fn main() -> anyhow::Result<ExitCode> {
         }
         Commands::Background { command } => commands::service::run_background(command).await?,
         Commands::Restart => commands::service::restart().await?,
-        Commands::Tool { .. } => {
+        Commands::Tool { .. }
+        | Commands::Follow(_)
+        | Commands::Unfollow(_)
+        | Commands::Follows(_) => {
             unreachable!("tool commands return before a daemon client is made")
         }
         Commands::Doctor { repair } => commands::setup::run_doctor(repair).await?,
@@ -608,7 +661,9 @@ async fn main() -> anyhow::Result<ExitCode> {
         Commands::Models { command } => commands::setup::run_model(command).await?,
         Commands::Keys { command } => commands::setup::run_key(command).await?,
         Commands::Steep { command } => commands::setup::run_enrichment(command).await?,
-        Commands::Connect(args) => commands::mcp::run_connect(&client, args, cli.quiet).await?,
+        Commands::Connect(args) => {
+            commands::mcp::run_connect(&client, args, cli.quiet).await?;
+        }
         Commands::Recall { query, limit } => {
             commands::recall::run(&client, format, cli.quiet, query, limit).await?
         }

@@ -34,3 +34,10 @@ export function PageLockSwitch({ locked, pending, disabled, onChange }: {
     <p id={hintId} className="page-lock-hint">{t(locked ? "pageLock.onHint" : "pageLock.offHint")}</p>
   </section>;
 }
+
+/** A team member sees that the page is locked, with no switch: the lock is
+ *  the owner's. Nothing is shown when the page is not locked. */
+export function PageLockedNotice() {
+  const { t } = useTranslation();
+  return <p className="page-lock page-lock-hint" data-testid="page-locked-notice">{t("pageLock.lockedNotice")}</p>;
+}
