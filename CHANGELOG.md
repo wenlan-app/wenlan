@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.22.1](https://github.com/wenlan-app/wenlan/compare/v0.22.0...v0.22.1) (2026-11-17)
+
+
+### Features
+
+* **cli:** in a repository Wenlan does not know, ask only when the command needs it ([#1315](https://github.com/wenlan-app/wenlan/issues/1315)) ([e7c93c0](https://github.com/wenlan-app/wenlan/commit/e7c93c0c6f75b6e6b3da15eaae6995ddc24f258e))
+* **cli:** wenlan init sets a repository up in one step; wenlan wiki is now wenlan repo ([#1304](https://github.com/wenlan-app/wenlan/issues/1304)) ([93a008b](https://github.com/wenlan-app/wenlan/commit/93a008bcc5bb347bf4cba1b4719ca6c5cab39b29))
+* **cli:** wenlan setup connects the AI tools it finds and leaves nothing to do by hand ([#1314](https://github.com/wenlan-app/wenlan/issues/1314)) ([a3bd5fc](https://github.com/wenlan-app/wenlan/commit/a3bd5fcda80289257328673a1c7b12608a6f788a))
+* docs and pages follow a page of the Space ([#1301](https://github.com/wenlan-app/wenlan/issues/1301)) ([f0cd66f](https://github.com/wenlan-app/wenlan/commit/f0cd66fd9a3371304f6d83378c3ba15672db43c8))
+* **plugin:** /wenlan docs writes a repository's docs; /wenlan wiki still works ([#1317](https://github.com/wenlan-app/wenlan/issues/1317)) ([cfc4219](https://github.com/wenlan-app/wenlan/commit/cfc42196379d9e91d79b4236089794177d7e0207))
+* **repo:** rules reach AGENTS.md without pages, and one Wenlan publishes a repository ([#1311](https://github.com/wenlan-app/wenlan/issues/1311)) ([e998cb4](https://github.com/wenlan-app/wenlan/commit/e998cb494a3e33b6842eed70b1fa9f35ebd541a6))
+* **skills:** hand-written rules count at once and reach ten AI tools' own files ([#1313](https://github.com/wenlan-app/wenlan/issues/1313)) ([e75804c](https://github.com/wenlan-app/wenlan/commit/e75804c586c74a732a23904e29a780c55578d72e))
+* **team-web:** members archive, restore, link a basis and see the graph; changes name the right person ([#1303](https://github.com/wenlan-app/wenlan/issues/1303)) ([8db8934](https://github.com/wenlan-app/wenlan/commit/8db8934d833dc9ba263a23201797f500345b3d2e))
+
+
+### Bug Fixes
+
+* **deps:** bump zip to 9.5.1 for the zip cloaking advisory ([#1312](https://github.com/wenlan-app/wenlan/issues/1312)) ([1c5eb18](https://github.com/wenlan-app/wenlan/commit/1c5eb18a2a2e086a087f53d498cad96bf5aa03b4))
+* **deps:** patch security advisories in Rust and JavaScript dependencies ([#1302](https://github.com/wenlan-app/wenlan/issues/1302)) ([5d4f296](https://github.com/wenlan-app/wenlan/commit/5d4f296c9bdfed64548f4213a083bc9785725128))
+
 ## [0.22.0](https://github.com/wenlan-app/wenlan/compare/v0.21.7...v0.22.0) (2026-11-16)
 
 
