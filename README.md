@@ -190,7 +190,7 @@ cd your-repo
 wenlan init
 ```
 
-It connects your AI tools and asks once about a daily pull request. The plugin writes the docs right away.
+It connects your AI tools and asks once about a daily pull request. With the plugin, `/wenlan docs` writes them now.
 
 - **Tied to the code:** Each key sentence points to the code lines behind it. You see when they change.
 - **As a pull request:** Pages go into the repository as a pull request, when you press the button or daily.

@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=2c3a821b8972c403bd707b6930e5de4a737709b00648d1390bc6d5618bf9b322 -->
+<!-- README_SYNC: source=README.md sha256=9032d25d7d9093947a3a63292d0cf6ac20f855cddf2050665cc5fae8dfba3b39 -->
 
 <p align="center">
   <picture>
@@ -203,7 +203,7 @@ cd your-repo
 wenlan init
 ```
 
-Conecta tus herramientas de IA y pregunta por la pull request diaria. El plugin los escribe ya.
+Conecta tus herramientas de IA y pregunta por la pull request diaria. Con el plugin, `/wenlan docs` los escribe ya.
 
 - **Ligada al código:** Cada frase clave apunta a las líneas de código de las que salió. Si cambian, lo ves.
 - **Como pull request:** Las páginas entran en el repositorio como pull request, al pulsar el botón o a diario.

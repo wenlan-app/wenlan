@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=2c3a821b8972c403bd707b6930e5de4a737709b00648d1390bc6d5618bf9b322 -->
+<!-- README_SYNC: source=README.md sha256=9032d25d7d9093947a3a63292d0cf6ac20f855cddf2050665cc5fae8dfba3b39 -->
 
 <p align="center">
   <picture>
@@ -204,7 +204,7 @@ cd your-repo
 wenlan init
 ```
 
-它会连上找到的 AI 工具，并问一次要不要每天开 pull request。装了插件，可以马上写出文档。
+它会连上找到的 AI 工具，并问一次要不要每天开 pull request。装了插件，打 `/wenlan docs` 马上写出文档。
 
 - **对得回代码：** 每句重点都标出它依据的代码行；代码变了，你看得到。
 - **以 pull request 放进仓库：** 点一下按钮，或每天自动跑一次。
