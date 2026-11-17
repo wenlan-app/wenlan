@@ -55869,6 +55869,7 @@ impl MemoryDB {
             && link_reason != "citation_backfill"
             && link_reason != "agent_refresh"
             && link_reason != crate::post_write::PERSON_ASKED
+            && link_reason != crate::skill_grow::RULE_SAVE
             && link_reason != "link_rename"
             && consume_revision_id.is_none()
         {

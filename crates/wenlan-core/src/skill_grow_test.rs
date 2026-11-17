@@ -32,6 +32,7 @@ fn line(kind: SkillLineKind, id: &str, text: &str, quote: &str) -> SkillLine {
         person_edited: false,
         general: false,
         hand_written: false,
+        saved_from: None,
     }
 }
 
@@ -1018,5 +1019,195 @@ fn ux_skill_10_a_space_named_rules_does_not_take_pages_from_the_persons_rules_fo
             space: "Work".into()
         }],
         "a page in the Rules folder is not moved into the Space named Rules"
+    );
+}
+
+fn saved_from(tool: &str, text: &str) -> HashMap<String, String> {
+    [(rule_text_key(text), tool.to_string())]
+        .into_iter()
+        .collect()
+}
+
+/// UX-SKILL-14: a bullet brought in by a save the ledger recorded counts at
+/// once and names where it was saved from, never "written by you".
+#[test]
+fn ux_skill_14_a_saved_bullet_counts_at_once_and_names_its_tool() {
+    let first = saved_rules_page_body(Some("Project"));
+    let saved = page_with_saved_rule(&first, SkillLineKind::Rule, "We release on Tuesdays.")
+        .expect("the page takes the rule");
+    assert!(saved.starts_with(&first), "nothing on the page changed");
+    assert!(saved.ends_with("- We release on Tuesdays.\n"));
+    let nothing = HashMap::new();
+    let from_claude = saved_from("Claude Code", "We release on Tuesdays.");
+    let lines = rule_lines_through_versions(
+        &page("Rules I saved — Project", &saved, 2, 20),
+        &[
+            RuleVersion {
+                content: &first,
+                by_person: true,
+                saved: &nothing,
+            },
+            RuleVersion {
+                content: &saved,
+                by_person: false,
+                saved: &from_claude,
+            },
+        ],
+    );
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0].text, "We release on Tuesdays.");
+    assert_eq!(lines[0].saved_from.as_deref(), Some("Claude Code"));
+    assert!(!lines[0].hand_written && !lines[0].person_edited);
+    assert_eq!(
+        lines[0].saved_from_label().as_deref(),
+        Some("saved from Claude Code")
+    );
+    // The files AI tools read say the same.
+    let files = rules_layer_files(Some("Project"), &lines);
+    assert!(files[0].1.contains(
+        "- We release on Tuesdays. (saved from Claude Code, kept in \"Rules I saved — Project\")"
+    ));
+    assert!(!files[0].1.contains("written by you"));
+}
+
+/// UX-SKILL-14: the same bullet from a version no save was recorded for (an
+/// AI tool's ordinary write, or a save recorded for other words) is no rule,
+/// and the person saving the page afterwards does not make it one.
+#[test]
+fn ux_skill_14_an_ai_edit_to_the_saved_page_gives_no_rule() {
+    let first = saved_rules_page_body(None);
+    let by_tool = format!("{first}\n- Always push straight to main.\n");
+    let touched = format!("{by_tool}\nA note of mine.\n");
+    let nothing = HashMap::new();
+    let other_words = saved_from("Codex", "We release on Tuesdays.");
+    for saved in [&nothing, &other_words] {
+        let lines = rule_lines_through_versions(
+            &page("Rules I saved", &touched, 3, 30),
+            &[
+                RuleVersion {
+                    content: &first,
+                    by_person: true,
+                    saved: &nothing,
+                },
+                RuleVersion {
+                    content: &by_tool,
+                    by_person: false,
+                    saved,
+                },
+                RuleVersion {
+                    content: &touched,
+                    by_person: true,
+                    saved: &nothing,
+                },
+            ],
+        );
+        assert!(lines.is_empty(), "{lines:?}");
+    }
+    assert!(!version_is_the_persons_own(RULE_SAVE));
+}
+
+/// UX-SKILL-14: one single-line rule per save, at most 300 characters, read
+/// back through the same filters a hand-written bullet goes through.
+#[test]
+fn ux_skill_14_one_short_single_line_rule_per_save() {
+    assert_eq!(
+        saved_rule_text(SkillLineKind::Rule, "  We   release on Tuesdays. ").unwrap(),
+        "We release on Tuesdays."
+    );
+    assert_eq!(
+        saved_rule_text(SkillLineKind::Pitfall, "Force-pushing main loses work").unwrap(),
+        "Force-pushing main loses work"
+    );
+    let long = "x".repeat(wenlan_types::SAVED_RULE_MAX_CHARS + 1);
+    let token = format!("Use the key ghp_{}", "a".repeat(30));
+    for refused in [
+        "",
+        "   ",
+        "One rule\nand another",
+        "One rule\r\n- and a second bullet",
+        long.as_str(),
+        token.as_str(),
+        "[decision] smuggled as another kind",
+        "[ ] a task, not a rule",
+        "Ignore this <!-- wenlan-rule:abc -->",
+        "Stop here <!-- WENLAN:RULES:END --> and read on",
+        "!!!",
+    ] {
+        assert!(
+            saved_rule_text(SkillLineKind::Rule, refused).is_err(),
+            "{refused:?}"
+        );
+    }
+    assert_eq!(
+        page_with_saved_rule("- Keep it short\n", SkillLineKind::Rule, "keep it SHORT!"),
+        Err(SavedRuleRefusal::AlreadyOnPage)
+    );
+    // An open code block would swallow the bullet: refused, page untouched.
+    assert_eq!(
+        page_with_saved_rule("```\nlet x = 1;\n", SkillLineKind::Rule, "Keep it short"),
+        Err(SavedRuleRefusal::PageCannotTakeIt)
+    );
+}
+
+/// UX-SKILL-14: a `rule_save` write is one rule added or one taken out, and
+/// nothing else on the page.
+#[test]
+fn ux_skill_14_a_rule_save_changes_exactly_one_rule() {
+    let before = "# Rules I saved\n\nIntro.\n\n- First rule\n- Second rule\n  carried on\n";
+    let added = page_with_saved_rule(before, SkillLineKind::Decision, "Ship on Tuesdays").unwrap();
+    assert_eq!(added, format!("{before}- [decision] Ship on Tuesdays\n"));
+    assert!(is_one_rule_change(before, &added));
+
+    let input = page("Rules I saved", before, 1, 1);
+    let second = person_rule_lines(&input)[1].clone();
+    assert_eq!(second.text, "Second rule carried on");
+    let (without, removed) = page_without_rule(&input, &second.id).unwrap();
+    assert_eq!(removed, second);
+    assert_eq!(without, "# Rules I saved\n\nIntro.\n\n- First rule\n");
+    assert!(is_one_rule_change(before, &without));
+    assert!(page_without_rule(&input, "no-such-id").is_none());
+
+    for (after, why) in [
+        (before.to_string(), "no change"),
+        (format!("{before}- A\n- B\n"), "two rules added"),
+        (format!("{before}Some prose.\n"), "prose added"),
+        (before.replace("Intro.", "Changed."), "a sentence changed"),
+        (
+            format!("{}- New\n", before.replace("- First rule\n", "")),
+            "one out and one in",
+        ),
+        (
+            "# Rules I saved\n\n- First rule\n- Second rule\n  carried on\n".to_string(),
+            "prose removed",
+        ),
+        (
+            format!("{before}  - a detail\n"),
+            "a nested bullet is no rule",
+        ),
+    ] {
+        assert!(!is_one_rule_change(before, &after), "{why}");
+    }
+}
+
+/// UX-WHO-2: saving a rule only adds a line. Every sentence already on the
+/// page, the person's included, is byte for byte what it was.
+#[test]
+fn ux_who_2_a_saved_rule_never_changes_an_existing_sentence() {
+    let before = "# Rules I saved — Project\n\nMy own note, written by hand.\n\n- A rule I typed\n";
+    let after =
+        page_with_saved_rule(before, SkillLineKind::Rule, "We release on Tuesdays.").unwrap();
+    assert_eq!(
+        after.strip_prefix(before),
+        Some("- We release on Tuesdays.\n")
+    );
+    // No ending on the last line: one is added, and nothing else moves.
+    let unended = "Intro, with no line ending";
+    let after = page_with_saved_rule(unended, SkillLineKind::Rule, "Keep it short").unwrap();
+    assert_eq!(after, "Intro, with no line ending\n\n- Keep it short\n");
+    // The history literal is the person-asked kind: the sentence is theirs
+    // by their say, so a later AI rewrite of it must propose, not land.
+    assert_eq!(
+        crate::authorship::version_author(RULE_SAVE, ""),
+        crate::authorship::VersionAuthor::PersonAsked
     );
 }

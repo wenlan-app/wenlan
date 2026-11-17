@@ -45,6 +45,110 @@ pub struct SkillLine {
     /// counts at once, with no model and no accept.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub hand_written: bool,
+    /// The person asked for this rule to be saved, in an AI tool or with
+    /// `wenlan rules add`: where the save came from, the tool's name or
+    /// [`SAVED_FROM_TERMINAL`]. It counts at once like a hand-written rule,
+    /// and is never shown as written by the person: Wenlan cannot prove who
+    /// spoke, only where the save came from (UX-SKILL-14).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saved_from: Option<String>,
+}
+
+/// `SkillLine::saved_from` for a save that named no AI tool.
+pub const SAVED_FROM_TERMINAL: &str = "terminal";
+
+/// The longest rule one save may carry, in characters.
+pub const SAVED_RULE_MAX_CHARS: usize = 300;
+
+/// How many rules one tool may save in a day.
+pub const SAVED_RULES_PER_TOOL_PER_DAY: usize = 10;
+
+impl SkillLine {
+    /// "saved from Claude Code" / "saved from the terminal", for a rule the
+    /// person asked to be saved; `None` for every other line.
+    pub fn saved_from_label(&self) -> Option<String> {
+        self.saved_from.as_deref().map(saved_from_label)
+    }
+}
+
+/// How a `saved_from` value reads in a sentence.
+pub fn saved_from_label(saved_from: &str) -> String {
+    if saved_from == SAVED_FROM_TERMINAL {
+        "saved from the terminal".to_string()
+    } else {
+        format!("saved from {saved_from}")
+    }
+}
+
+/// `POST /api/skills/rules`: save one rule the person explicitly asked for.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SaveRuleRequest {
+    /// The rule, one line, at most [`SAVED_RULE_MAX_CHARS`] characters.
+    pub text: String,
+    /// `rule` when left out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<SkillLineKind>,
+    /// The Space the rule is for. The `x-wenlan-space` header says the same.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub space: Option<String>,
+    /// Save it for every Space. Never assumed: with neither this nor a Space
+    /// the save is refused.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub every_space: bool,
+    /// The person's own words asking for the save. Kept in the page's history.
+    pub person_asked: String,
+}
+
+/// What a save or a removal did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SavedRuleStatus {
+    /// The rule counts now; AI tools are told it from now on.
+    Saved,
+    /// The rule is no longer told to AI tools.
+    Removed,
+    /// The page is locked: the change waits as a card for the person to
+    /// accept in the Wenlan app, and nothing changed yet.
+    Waiting,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SaveRuleResponse {
+    pub status: SavedRuleStatus,
+    /// The saved rule's id, as rules lists carry it and removing takes it;
+    /// absent while waiting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule_id: Option<String>,
+    /// The Space the rule is for; empty for a rule used in every Space.
+    pub space_name: String,
+    /// The "Rules I saved" page that holds it.
+    pub page_id: String,
+    pub page_title: String,
+    /// Where the save came from, as rules lists show it.
+    pub saved_from: String,
+    /// The card to accept in the Wenlan app, while waiting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revision_card_id: Option<String>,
+    /// One sentence for the person: what was saved and where.
+    pub message: String,
+}
+
+/// `POST /api/skills/rules/{id}/remove`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoveRuleRequest {
+    /// The person's own words asking for the removal.
+    pub person_asked: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoveRuleResponse {
+    pub status: SavedRuleStatus,
+    pub id: String,
+    pub page_id: String,
+    pub page_title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revision_card_id: Option<String>,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -198,4 +302,46 @@ pub struct ToolRulesDelivery {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RulesDeliveryResponse {
     pub tools: Vec<ToolRulesDelivery>,
+}
+
+#[cfg(test)]
+mod saved_rule_tests {
+    use super::*;
+
+    #[test]
+    fn ux_skill_14_a_line_without_saved_from_still_reads_and_stays_small() {
+        // Lines written before the field existed carry none.
+        let old = r#"{"id":"a","kind":"rule","text":"t","source_page_id":"p",
+            "source_page_title":"T","source_revision":1,"source_revision_at":0,
+            "source_quote":"t"}"#;
+        let line: SkillLine = serde_json::from_str(old).unwrap();
+        assert_eq!(line.saved_from, None);
+        assert_eq!(line.saved_from_label(), None);
+        assert!(!serde_json::to_string(&line).unwrap().contains("saved_from"));
+    }
+
+    #[test]
+    fn ux_skill_14_the_label_names_the_tool_or_the_terminal_never_the_person() {
+        assert_eq!(saved_from_label("Claude Code"), "saved from Claude Code");
+        assert_eq!(
+            saved_from_label(SAVED_FROM_TERMINAL),
+            "saved from the terminal"
+        );
+        for label in [
+            saved_from_label("Codex"),
+            saved_from_label(SAVED_FROM_TERMINAL),
+        ] {
+            assert!(!label.contains("written by you"), "{label}");
+        }
+    }
+
+    #[test]
+    fn ux_skill_14_a_save_request_never_means_every_space_by_default() {
+        let request: SaveRuleRequest =
+            serde_json::from_str(r#"{"text":"We release on Tuesdays","person_asked":"save it"}"#)
+                .unwrap();
+        assert!(!request.every_space);
+        assert_eq!(request.space, None);
+        assert_eq!(request.kind, None);
+    }
 }

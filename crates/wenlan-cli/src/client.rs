@@ -740,6 +740,30 @@ impl WenlanClient {
         self.get_json("/api/skills/rules", true).await
     }
 
+    /// POST /api/skills/rules — save one rule the person asked for. Sent as
+    /// this process is: under a tool's name it is that tool's save, with
+    /// none it is the terminal's.
+    pub async fn save_rule(
+        &self,
+        request: &wenlan_types::SaveRuleRequest,
+    ) -> Result<wenlan_types::SaveRuleResponse> {
+        self.post_json("/api/skills/rules", request).await
+    }
+
+    /// POST /api/skills/rules/{id}/remove — take a saved rule out.
+    pub async fn remove_rule(
+        &self,
+        id: &str,
+        request: &wenlan_types::RemoveRuleRequest,
+    ) -> Result<wenlan_types::RemoveRuleResponse> {
+        anyhow::ensure!(
+            !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric()),
+            "that is not a rule id; `wenlan rules` prints each saved rule's id"
+        );
+        self.post_json(&format!("/api/skills/rules/{id}/remove"), request)
+            .await
+    }
+
     /// GET /api/skills/registry/installed — the skills Wenlan holds.
     pub async fn list_skills(
         &self,

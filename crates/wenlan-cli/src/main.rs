@@ -132,8 +132,11 @@ enum Commands {
         #[arg(short, long, default_value_t = 10)]
         limit: usize,
     },
-    /// Read the working rules approved for a Space.
-    Rules,
+    /// Read the working rules for a Space, or save and remove one of your own (add, remove).
+    Rules {
+        #[command(subcommand)]
+        command: Option<commands::skills::RulesCmd>,
+    },
     /// List, find and take in skills your AI tools can use (list, search, show, scan, import, install, remove).
     Skills {
         #[command(subcommand)]
@@ -485,7 +488,7 @@ async fn main() -> anyhow::Result<ExitCode> {
     );
     let is_outbox = matches!(&cli.command, Commands::Outbox { .. });
     let operation = match &cli.command {
-        Commands::Recall { .. } | Commands::Memories { .. } | Commands::Rules => {
+        Commands::Recall { .. } | Commands::Memories { .. } | Commands::Rules { .. } => {
             Some(CliSpaceOperation::Read)
         }
         Commands::Brief(args) if !args.is_update() => Some(CliSpaceOperation::Read),
@@ -690,7 +693,10 @@ async fn main() -> anyhow::Result<ExitCode> {
         Commands::Recall { query, limit } => {
             commands::recall::run(&client, format, cli.quiet, query, limit).await?
         }
-        Commands::Rules => commands::skills::read_space_rules(&client, format, cli.quiet).await?,
+        Commands::Rules { command } => {
+            commands::skills::run_rules(&client, format, cli.quiet, command, cli.space.is_some())
+                .await?
+        }
         Commands::Skills { command } => {
             commands::skills::run_skills(&client, format, cli.quiet, command).await?
         }

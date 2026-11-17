@@ -292,7 +292,7 @@ wenlan connect cursor --dry-run
 wenlan connect cursor --all-tools
 ```
 
-The client is given the 21 everyday tools: reading and searching, the approved working rules, the skills Wenlan holds and the search for more, saving, writing and reshaping pages, and writing pages on demand. A client loads every listed tool into each conversation, and the full list of 61 is more than twice the size. `--all-tools` lists them all (health checks and repairs, review queues, entities, folders, version history); without it they are still one `wenlan tool call <name>` away in a terminal.
+The client is given the 23 everyday tools: reading and searching, the approved working rules and saving one the person asks for, the skills Wenlan holds and the search for more, saving, writing and reshaping pages, and writing pages on demand. A client loads every listed tool into each conversation, and the full list of 63 is more than twice the size. `--all-tools` lists them all (health checks and repairs, review queues, entities, folders, version history); without it they are still one `wenlan tool call <name>` away in a terminal.
 
 Supported clients: `claude-code`, `codex`, `gemini`, `cursor`, `claude-desktop`, `vscode`.
 
@@ -465,11 +465,40 @@ wenlan brief show [OPTIONS] --version <VERSION>
 
 ### `wenlan rules`
 
-Read the working rules approved for a Space.
+Read the working rules for a Space, or save and remove one of your own (add, remove).
 
 ```text
-wenlan rules [OPTIONS]
+wenlan rules [OPTIONS] [COMMAND]
 ```
+
+#### `wenlan rules add`
+
+Save a rule your AI tools follow from now on (what an AI tool does with add_rule).
+
+```text
+wenlan rules add [OPTIONS] <TEXT>
+```
+
+Arguments:
+
+- `<TEXT>`: The rule, as one sentence.
+
+Options:
+
+- `--every-space`: Save it for every Space instead of this one. Not with --space.
+- `--kind <KIND>`: Save it as a decision or a pitfall instead of a rule. Possible values: `rule`, `decision`, `pitfall`.
+
+#### `wenlan rules remove`
+
+Remove a rule saved this way, by the id `wenlan rules` prints (remove_rule).
+
+```text
+wenlan rules remove [OPTIONS] <ID>
+```
+
+Arguments:
+
+- `<ID>`: The rule's id, as `wenlan rules` prints it.
 
 ### `wenlan skills`
 

@@ -4,7 +4,7 @@
 //! Models only nominate exact spans. This module binds every accepted line to
 //! an immutable page revision and independently rejects polarity changes.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 use regex::Regex;
@@ -338,6 +338,7 @@ pub fn parse_grow(raw: &str, pages: &[SkillPageInput]) -> Vec<SkillLine> {
             person_edited: false,
             general: candidate.general,
             hand_written: false,
+            saved_from: None,
         });
     }
     out
@@ -453,6 +454,15 @@ fn starts_a_block(line: &str) -> bool {
 /// sentence filters for model quotes do not apply: the person's own words
 /// are kept as written. A bullet holding a provider token is left out.
 pub fn person_rule_lines(page: &SkillPageInput) -> Vec<SkillLine> {
+    rule_bullets(page)
+        .into_iter()
+        .map(|(line, _)| line)
+        .collect()
+}
+
+/// Each such rule with the lines of the page it takes up (the bullet and the
+/// lines that carry it on), counted from 0.
+fn rule_bullets(page: &SkillPageInput) -> Vec<(SkillLine, std::ops::Range<usize>)> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
     let mut fence: Option<&str> = None;
@@ -498,6 +508,7 @@ pub fn person_rule_lines(page: &SkillPageInput) -> Vec<SkillLine> {
             continue;
         }
         // The bullet's own following lines belong to it.
+        let first = at - 1;
         let mut whole = item.trim().to_string();
         while at < lines.len() && !starts_a_block(lines[at]) {
             whole.push(' ');
@@ -536,19 +547,23 @@ pub fn person_rule_lines(page: &SkillPageInput) -> Vec<SkillLine> {
         {
             continue;
         }
-        out.push(SkillLine {
-            id: line_id(kind, &page.id, 0, &text),
-            kind,
-            source_quote: text.clone(),
-            text,
-            source_page_id: page.id.clone(),
-            source_page_title: one_line(&page.title, 180),
-            source_revision: page.revision,
-            source_revision_at: page.revision_at,
-            person_edited: true,
-            general: false,
-            hand_written: true,
-        });
+        out.push((
+            SkillLine {
+                id: line_id(kind, &page.id, 0, &text),
+                kind,
+                source_quote: text.clone(),
+                text,
+                source_page_id: page.id.clone(),
+                source_page_title: one_line(&page.title, 180),
+                source_revision: page.revision,
+                source_revision_at: page.revision_at,
+                person_edited: true,
+                general: false,
+                hand_written: true,
+                saved_from: None,
+            },
+            first..at,
+        ));
     }
     out
 }
@@ -564,6 +579,46 @@ pub fn person_rule_lines_through_history(
     page: &SkillPageInput,
     versions: &[(bool, &str)],
 ) -> Vec<SkillLine> {
+    let nothing_saved = HashMap::new();
+    let versions: Vec<RuleVersion<'_>> = versions
+        .iter()
+        .map(|(by_person, content)| RuleVersion {
+            content,
+            by_person: *by_person,
+            saved: &nothing_saved,
+        })
+        .collect();
+    rule_lines_through_versions(page, &versions)
+}
+
+/// One version of a page, as the trace of its rules reads it.
+#[derive(Debug, Clone, Copy)]
+pub struct RuleVersion<'a> {
+    pub content: &'a str,
+    /// The person wrote this version themselves.
+    pub by_person: bool,
+    /// The rules this version may bring in as ones the person asked to be
+    /// saved (UX-SKILL-14): [`rule_text_key`] of the rule, and where the
+    /// save came from. A bullet of this version that is not named here, and
+    /// that the person did not write, gives no rule.
+    pub saved: &'a HashMap<String, String>,
+}
+
+/// What a rule's text is matched by: letters and digits only, lower case.
+pub fn rule_text_key(text: &str) -> String {
+    normalized(&one_line(text, 500))
+}
+
+/// The rules on `page` that count at once, traced through its history,
+/// oldest version first. A bullet counts when the version that first
+/// brought its text in was the person's own (a hand-written rule), or was a
+/// save the person asked for that names this very text (a saved rule, with
+/// where it was saved from). Every other bullet gives no rule, whoever
+/// saved the page afterwards.
+pub fn rule_lines_through_versions(
+    page: &SkillPageInput,
+    versions: &[RuleVersion<'_>],
+) -> Vec<SkillLine> {
     let texts = |content: &str| -> HashSet<String> {
         person_rule_lines(&SkillPageInput {
             text: content.to_string(),
@@ -573,20 +628,233 @@ pub fn person_rule_lines_through_history(
         .map(|line| normalized(&line.text))
         .collect()
     };
-    let mut owned: HashSet<String> = HashSet::new();
+    // `None`: the person wrote it. `Some`: saved, and where from.
+    let mut owned: HashMap<String, Option<String>> = HashMap::new();
     let mut before: HashSet<String> = HashSet::new();
-    for (by_person, content) in versions {
-        let now = texts(content);
-        owned.retain(|text| now.contains(text));
-        if *by_person {
-            owned.extend(now.difference(&before).cloned());
+    for version in versions {
+        let now = texts(version.content);
+        owned.retain(|text, _| now.contains(text));
+        for text in now.difference(&before) {
+            if version.by_person {
+                owned.insert(text.clone(), None);
+            } else if let Some(from) = version.saved.get(text) {
+                owned.insert(text.clone(), Some(from.clone()));
+            }
         }
         before = now;
     }
     person_rule_lines(page)
         .into_iter()
-        .filter(|line| owned.contains(&normalized(&line.text)))
+        .filter_map(|mut line| {
+            let saved_from = owned.get(&normalized(&line.text))?.clone();
+            if saved_from.is_some() {
+                line.hand_written = false;
+                line.person_edited = false;
+                line.saved_from = saved_from;
+            }
+            Some(line)
+        })
         .collect()
+}
+
+/// The `page_history.edited_by` of a save or a removal the person asked for
+/// (UX-SKILL-14). Only `post_write::PageWrite::RuleSave` records it, and
+/// that write is refused unless it adds or removes exactly one rule.
+pub const RULE_SAVE: &str = "rule_save";
+
+/// The page that holds the rules the person asked to be saved, one per
+/// Space and one for the rules used in every Space.
+pub const SAVED_RULES_TITLE: &str = "Rules I saved";
+
+pub fn saved_rules_title(space: Option<&str>) -> String {
+    match space {
+        Some(space) => format!("{SAVED_RULES_TITLE} — {space}"),
+        None => SAVED_RULES_TITLE.to_string(),
+    }
+}
+
+/// The page as Wenlan makes it, before its first rule.
+pub fn saved_rules_page_body(space: Option<&str>) -> String {
+    let scope = match space {
+        Some(_) => "They are used in this Space.",
+        None => "They are used in every Space.",
+    };
+    format!(
+        "# {}\n\nRules I asked an AI tool, or the `wenlan` command, to save. Each one counts \
+         at once and my AI tools are told it. {scope} Delete a line to remove its rule.\n",
+        saved_rules_title(space)
+    )
+}
+
+fn probe(text: &str) -> SkillPageInput {
+    SkillPageInput {
+        id: String::new(),
+        title: String::new(),
+        revision: 0,
+        revision_at: 0,
+        text: text.to_string(),
+    }
+}
+
+fn saved_rule_bullet(kind: SkillLineKind, text: &str) -> String {
+    match kind {
+        SkillLineKind::Rule => format!("- {text}"),
+        SkillLineKind::Decision | SkillLineKind::Pitfall => {
+            format!("- [{}] {text}", kind.as_str())
+        }
+    }
+}
+
+/// Check one rule a save carries and return it as it will be kept: one
+/// line, at most [`wenlan_types::SAVED_RULE_MAX_CHARS`] characters, and one
+/// that reads back from a page as exactly this rule (so the same filters a
+/// hand-written bullet goes through apply, and no tag, to-do box, marker or
+/// provider token rides in).
+pub fn saved_rule_text(kind: SkillLineKind, text: &str) -> Result<String, String> {
+    if text.contains(['\n', '\r']) {
+        return Err("a rule is one line; save each rule on its own".into());
+    }
+    let text = one_line(text, usize::MAX);
+    if text.is_empty() {
+        return Err("the rule has no text".into());
+    }
+    let max = wenlan_types::SAVED_RULE_MAX_CHARS;
+    if text.chars().count() > max {
+        return Err(format!("a rule is at most {max} characters"));
+    }
+    if text.chars().any(char::is_control) {
+        return Err("a rule cannot hold control characters".into());
+    }
+    if STANDALONE_SECRET.is_match(&text) {
+        return Err("the rule holds what looks like a key or token; it was not saved".into());
+    }
+    let read_back = person_rule_lines(&probe(&saved_rule_bullet(kind, &text)));
+    match read_back.as_slice() {
+        [line] if line.kind == kind && line.text == text => Ok(text),
+        _ => Err(
+            "the text cannot be kept as one rule: write it as a plain sentence, with no \
+             leading tag, checkbox, list marker or comment"
+                .into(),
+        ),
+    }
+}
+
+/// Why a page could not take a saved rule.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SavedRuleRefusal {
+    /// The text is not one rule; the reason, for the caller.
+    NotARule(String),
+    /// The page already has this sentence as a bullet.
+    AlreadyOnPage,
+    /// The page as it stands would not read the new bullet back as a rule
+    /// (an open code block at its end, for one).
+    PageCannotTakeIt,
+}
+
+/// `body` with one rule added as its last line. Nothing that is already on
+/// the page changes.
+pub fn page_with_saved_rule(
+    body: &str,
+    kind: SkillLineKind,
+    text: &str,
+) -> Result<String, SavedRuleRefusal> {
+    let text = saved_rule_text(kind, text).map_err(SavedRuleRefusal::NotARule)?;
+    let key = normalized(&text);
+    if person_rule_lines(&probe(body))
+        .iter()
+        .any(|line| normalized(&line.text) == key)
+    {
+        return Err(SavedRuleRefusal::AlreadyOnPage);
+    }
+    let mut out = body.to_string();
+    if !out.is_empty() && !out.ends_with('\n') {
+        out.push('\n');
+    }
+    // A bullet right under a paragraph would read as part of it.
+    let line_count = out.lines().count();
+    let after_a_bullet = out
+        .lines()
+        .last()
+        .is_some_and(|last| bullet(last).is_some() || last.trim().is_empty())
+        // The last line carries a rule on from the line above it.
+        || rule_bullets(&probe(&out))
+            .last()
+            .is_some_and(|(_, span)| span.end == line_count);
+    if !out.is_empty() && !after_a_bullet {
+        out.push('\n');
+    }
+    out.push_str(&saved_rule_bullet(kind, &text));
+    out.push('\n');
+    let reads_back = person_rule_lines(&probe(&out))
+        .iter()
+        .any(|line| line.kind == kind && line.text == text);
+    if !reads_back || !is_one_rule_change(body, &out) {
+        return Err(SavedRuleRefusal::PageCannotTakeIt);
+    }
+    Ok(out)
+}
+
+/// `page` without the rule `line_id` names, and that rule. Only the bullet's
+/// own lines go. `None` when the page has no such rule.
+pub fn page_without_rule(page: &SkillPageInput, line_id: &str) -> Option<(String, SkillLine)> {
+    let (line, span) = rule_bullets(page)
+        .into_iter()
+        .find(|(line, _)| line.id == line_id)?;
+    let mut out = String::with_capacity(page.text.len());
+    for (at, raw) in page.text.split_inclusive('\n').enumerate() {
+        if !span.contains(&at) {
+            out.push_str(raw);
+        }
+    }
+    is_one_rule_change(&page.text, &out).then_some((out, line))
+}
+
+/// Whether `after` is `before` with exactly one rule added, or exactly one
+/// taken out, and every other line as it was. This is all a
+/// [`RULE_SAVE`] write may do.
+pub fn is_one_rule_change(before: &str, after: &str) -> bool {
+    let old: Vec<&str> = before.lines().collect();
+    let new: Vec<&str> = after.lines().collect();
+    let rules = |text: &str| person_rule_lines(&probe(text)).len();
+    let (short, long) = if new.len() > old.len() {
+        (&old, &new)
+    } else {
+        (&new, &old)
+    };
+    if short.len() == long.len() {
+        return false;
+    }
+    let head = short
+        .iter()
+        .zip(long.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let tail = short[head..]
+        .iter()
+        .rev()
+        .zip(long.iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+    if head + tail != short.len() {
+        return false;
+    }
+    let changed = &long[head..long.len() - tail];
+    if new.len() > old.len() {
+        // One bullet at the margin, with at most blank lines around it.
+        let mut written = changed.iter().filter(|line| !line.trim().is_empty());
+        let one_bullet = written
+            .next()
+            .is_some_and(|line| bullet(line).is_some_and(|(indent, _)| indent == 0))
+            && written.next().is_none();
+        one_bullet && rules(after) == rules(before) + 1
+    } else {
+        // One bullet and the lines that carry it on.
+        let one_bullet = changed
+            .first()
+            .is_some_and(|line| bullet(line).is_some_and(|(indent, _)| indent <= 3))
+            && changed[1..].iter().all(|line| !starts_a_block(line));
+        one_bullet && rules(after) + 1 == rules(before)
+    }
 }
 
 /// What the person wrote on the rules page themselves: every line that is
@@ -1099,6 +1367,11 @@ fn rules_file_item(line: &SkillLine) -> String {
         .join(" ");
     if line.hand_written {
         format!("- {text} (written by you in \"{title}\")\n")
+    } else if let Some(saved) = line.saved_from_label() {
+        // Never "written by you": Wenlan knows where a save came from, not
+        // who spoke (UX-SKILL-14).
+        let saved: String = saved.split_whitespace().collect::<Vec<_>>().join(" ");
+        format!("- {text} ({saved}, kept in \"{title}\")\n")
     } else {
         format!("- {text} (from \"{title}\")\n")
     }

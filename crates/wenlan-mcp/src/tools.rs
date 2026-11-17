@@ -139,8 +139,8 @@ impl ToolProfile {
 
 const QUERY_ONLY_TOOL_NAMES: &[&str] = &["brief", "recall", "get_page_sources", "read_space_rules"];
 /// What the `daily` profile lists: reading, saving, writing and reshaping
-/// pages, the approved working rules, the skills Wenlan holds and the search
-/// for more, and writing pages on demand. Left out are the review queues, health
+/// pages, the approved working rules and saving one the person asks for,
+/// the skills Wenlan holds and the search for more, and writing pages on demand. Left out are the review queues, health
 /// checks and repairs, entities, folders, version history, reliance tracking
 /// and the organize and research runs; a person reaches those with
 /// `wenlan connect <client> --all-tools` or `wenlan tool call` in a terminal.
@@ -152,6 +152,8 @@ pub const DAILY_TOOL_NAMES: &[&str] = &[
     "get_page_sources",
     "read_space_rules",
     "report_space_rule_use",
+    "add_rule",
+    "remove_rule",
     "list_skills",
     "search_skills",
     "capture",
@@ -202,9 +204,10 @@ const WEB_WRITE_LIFTED_TOOL_NAMES: &[&str] = &["forget", "rename_page", "delete_
 /// `thing_map`'s, then by the four folder and link tool descriptions, then by
 /// `list_entities` and `read_entity`, then the exact-source read description, then by `theme`'s,
 /// then by `keep_original`'s, then by `set_page_space`'s, then by `restore_page_version`'s (347), then by the two page-look tools,
-/// then by `list_skills`'s (322) and `search_skills`'s (399).
+/// then by `list_skills`'s (322) and `search_skills`'s (399),
+/// then by `add_rule`'s (611) and `remove_rule`'s (435).
 #[cfg(test)]
-const DESCRIPTION_BUDGET_CHARS: usize = 21983;
+const DESCRIPTION_BUDGET_CHARS: usize = 23029;
 const QUERY_ONLY_REFUSAL_MESSAGE: &str =
     "This tool is not available in the query-only profile. Allowed tools: brief, recall, get_page_sources, read_space_rules.";
 const WEB_WRITE_REFUSAL_MESSAGE: &str =
@@ -1739,6 +1742,48 @@ pub struct ReadSpaceRulesParams {
     pub space: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SavedRuleKind {
+    Rule,
+    Decision,
+    Pitfall,
+}
+
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
+pub struct AddRuleParams {
+    #[schemars(
+        description = "The rule, as one sentence of at most 300 characters. One rule per call."
+    )]
+    pub text: String,
+    #[schemars(
+        description = "The user's own words asking you to save this rule, quoted exactly. Required."
+    )]
+    pub person_asked: String,
+    #[schemars(
+        description = "Space the rule is for. If omitted, WENLAN_SPACE then the configured default is used; with none, the save is refused."
+    )]
+    pub space: Option<String>,
+    #[schemars(
+        description = "true saves the rule for every Space. Only when the user said so; never assumed. Default false."
+    )]
+    #[serde(default)]
+    pub every_space: Option<bool>,
+    #[schemars(description = "rule (default), decision or pitfall.")]
+    #[serde(default)]
+    pub kind: Option<SavedRuleKind>,
+}
+
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
+pub struct RemoveRuleParams {
+    #[schemars(description = "The saved rule's id, as read_space_rules returns it.")]
+    pub rule_id: String,
+    #[schemars(
+        description = "The user's own words asking you to remove this rule, quoted exactly. Required."
+    )]
+    pub person_asked: String,
+}
+
 #[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 pub struct ListSkillsParams {}
 
@@ -3069,6 +3114,90 @@ impl WenlanMcpServer {
         let response: serde_json::Value = try_call!(
             self.client.post("/api/skills/record", &request),
             "report_space_rule_use"
+        );
+        query_success(response)
+    }
+
+    /// What `add_rule` sends: the same request `wenlan rules add` sends
+    /// (UX-CLI-1). A rule is for every Space only when the flag says so;
+    /// otherwise for the Space this connection resolves, sent in the body.
+    pub fn save_rule_request(
+        params: AddRuleParams,
+        space: Option<String>,
+    ) -> wenlan_types::SaveRuleRequest {
+        let every_space = params.every_space.unwrap_or(false);
+        wenlan_types::SaveRuleRequest {
+            text: params.text,
+            kind: params.kind.map(|kind| match kind {
+                SavedRuleKind::Rule => wenlan_types::SkillLineKind::Rule,
+                SavedRuleKind::Decision => wenlan_types::SkillLineKind::Decision,
+                SavedRuleKind::Pitfall => wenlan_types::SkillLineKind::Pitfall,
+            }),
+            space: if every_space { None } else { space },
+            every_space,
+            person_asked: params.person_asked,
+        }
+    }
+
+    /// Save one rule the person explicitly asked for (UX-SKILL-14). The
+    /// daemon decides everything that matters: one line, the Space, the
+    /// day's count, and what the lists will call it.
+    pub async fn add_rule_impl(&self, params: AddRuleParams) -> Result<CallToolResult, McpError> {
+        if let Some(refusal) = self.local_only_refusal("add_rule") {
+            return Ok(refusal);
+        }
+        if params.text.trim().is_empty() {
+            return Err(McpError::invalid_params("text is required", None));
+        }
+        if params.person_asked.trim().is_empty() {
+            return Err(McpError::invalid_params(
+                "person_asked is required: quote the user's own words asking to save this rule",
+                None,
+            ));
+        }
+        if params.every_space.unwrap_or(false) && crate::lock_state::locked_space().is_some() {
+            return Ok(CallToolResult::error(vec![ContentBlock::text(
+                "This connection is limited to one Space, so it cannot save a rule for every \
+                 Space. Nothing was saved. Save it for this Space, or ask the person to run \
+                 `wenlan rules add \"<rule>\" --every-space` in a terminal."
+                    .to_string(),
+            )]));
+        }
+        let space = effective_space(&params.space);
+        let request = Self::save_rule_request(params, space);
+        let response: wenlan_types::SaveRuleResponse =
+            try_call!(self.client.post("/api/skills/rules", &request), "add_rule");
+        query_success(response)
+    }
+
+    /// Remove one saved rule the person explicitly asked to remove.
+    pub async fn remove_rule_impl(
+        &self,
+        params: RemoveRuleParams,
+    ) -> Result<CallToolResult, McpError> {
+        if let Some(refusal) = self.local_only_refusal("remove_rule") {
+            return Ok(refusal);
+        }
+        let id = params.rule_id.trim();
+        if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric()) {
+            return Err(McpError::invalid_params(
+                "rule_id must be a rule id as read_space_rules returns it",
+                None,
+            ));
+        }
+        if params.person_asked.trim().is_empty() {
+            return Err(McpError::invalid_params(
+                "person_asked is required: quote the user's own words asking to remove this rule",
+                None,
+            ));
+        }
+        let request = wenlan_types::RemoveRuleRequest {
+            person_asked: params.person_asked,
+        };
+        let response: wenlan_types::RemoveRuleResponse = try_call!(
+            self.client
+                .post(&format!("/api/skills/rules/{id}/remove"), &request),
+            "remove_rule"
         );
         query_success(response)
     }
@@ -7298,6 +7427,40 @@ impl WenlanMcpServer {
     }
 
     #[tool(
+        description = "Save one working rule the user dictated. Call ONLY when the user explicitly asked, in this conversation, to save a rule (\"save this as a rule: we release on Tuesdays\"). Never on your own judgment and never for a rule you worked out yourself: suggest it and let them ask. Put their own words in person_asked. One rule per call, one sentence. It counts at once, with no accept: the user's AI tools are told it from now on and it is listed as saved from this tool. It is for the resolved Space; set every_space only if the user said every Space. Afterwards tell the user what was saved and where. Local stdio only.",
+        annotations(
+            title = "Save a rule",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn add_rule(
+        &self,
+        Parameters(params): Parameters<AddRuleParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.add_rule_impl(params).await
+    }
+
+    #[tool(
+        description = "Remove one rule saved with add_rule or `wenlan rules add`. Call ONLY when the user explicitly asked, in this conversation, to remove that rule. Pass its rule id from read_space_rules and the user's own words in person_asked. One rule per call. AI tools stop being told it at once; the page's history keeps it. Afterwards tell the user what was removed. A rule the user wrote on a page by hand is not removed this way. Local stdio only.",
+        annotations(
+            title = "Remove a saved rule",
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn remove_rule(
+        &self,
+        Parameters(params): Parameters<RemoveRuleParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.remove_rule_impl(params).await
+    }
+
+    #[tool(
         description = "List the skills Wenlan holds and copies into every AI tool's skills folder: name, description, scope (every Space or one), source, safety verdict and the person's own additions. Read-only: only the person installs, takes in or removes a skill, in the Wenlan app or with `wenlan skills` in their terminal. Local stdio only.",
         annotations(
             title = "List skills",
@@ -7775,6 +7938,10 @@ fn web_write_description(name: &str) -> Option<&'static str> {
 }
 
 const LOCAL_ONLY_TOOL_NAMES: &[&str] = &[
+    // A saved rule is written into the always-read files of the AI tools
+    // on this computer.
+    "add_rule",
+    "remove_rule",
     // The person's own skills folders, and a search this computer makes.
     "list_skills",
     "search_skills",
@@ -15739,6 +15906,8 @@ mod tests {
             ("check_reply", (false, false, false)),
             ("read_page", (true, false, false)),
             ("read_space_rules", (true, false, false)),
+            ("add_rule", (false, false, false)),
+            ("remove_rule", (false, true, false)),
             ("list_skills", (true, false, false)),
             ("search_skills", (true, false, true)),
             ("read_source", (false, false, false)),
@@ -16128,6 +16297,8 @@ mod tests {
             "read_page_look",
             "read_space_rules",
             "report_space_rule_use",
+            "add_rule",
+            "remove_rule",
             "list_skills",
             "search_skills",
             "set_page_look",
@@ -16289,3 +16460,7 @@ mod tests {
 #[cfg(test)]
 #[path = "skills_tool_tests.rs"]
 mod skills_tool_tests;
+
+#[cfg(test)]
+#[path = "rules_tool_tests.rs"]
+mod rules_tool_tests;

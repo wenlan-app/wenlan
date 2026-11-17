@@ -772,6 +772,7 @@ async fn existing_skill_suggestions_are_person_only_positional_and_undo_conflict
         person_edited: false,
         general: false,
         hand_written: false,
+        saved_from: None,
     };
     let rules_body = skill_grow::reconcile_rules_page(
         &space.name,
@@ -3582,6 +3583,753 @@ async fn ux_skill_8_opencode_and_zed_follow_the_xdg_config_folder_and_never_from
     // This test run is itself on other data: the real folders are named but
     // never read or written.
     assert!(!SkillDirs::system().tool_files);
+}
+
+// ── UX-SKILL-14: "save this as a rule" ─────────────────────────────────────
+
+fn caller(tool: Option<&'static str>, space: Option<&'static str>) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    if let Some(tool) = tool {
+        headers.insert("x-agent-name", HeaderValue::from_static(tool));
+    }
+    if let Some(space) = space {
+        headers.insert(
+            crate::space_header::HEADER_NAME,
+            HeaderValue::from_static(space),
+        );
+    }
+    headers
+}
+
+fn save_request(text: &str, every_space: bool) -> wenlan_types::SaveRuleRequest {
+    wenlan_types::SaveRuleRequest {
+        text: text.into(),
+        kind: None,
+        space: None,
+        every_space,
+        person_asked: format!("save this as a rule: {text}"),
+    }
+}
+
+async fn save_rule(
+    scratch: &Scratch,
+    headers: &HeaderMap,
+    request: wenlan_types::SaveRuleRequest,
+) -> Result<wenlan_types::SaveRuleResponse, ServerError> {
+    saved_rules::save_rule_in(
+        &scratch.shared,
+        headers,
+        None,
+        request,
+        scratch.skill_dirs(),
+        true,
+    )
+    .await
+}
+
+async fn remove_rule(
+    scratch: &Scratch,
+    headers: &HeaderMap,
+    id: &str,
+) -> Result<wenlan_types::RemoveRuleResponse, ServerError> {
+    saved_rules::remove_rule_in(
+        &scratch.shared,
+        headers,
+        None,
+        id,
+        wenlan_types::RemoveRuleRequest {
+            person_asked: "remove that rule".into(),
+        },
+        scratch.skill_dirs(),
+        true,
+    )
+    .await
+}
+
+fn refusal_text(error: ServerError) -> String {
+    match error {
+        ServerError::Structured { body, .. } => body["error"].as_str().unwrap().to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// UX-SKILL-14: a rule the person asked an AI tool, or the terminal, to
+/// save counts at once: no model, no accept, and the Settings switch off.
+/// Every list says where it was saved from and never "written by you".
+#[tokio::test]
+async fn ux_skill_14_a_saved_rule_counts_at_once_and_names_its_tool() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    // The setting is off: nothing Wenlan derives from pages is told.
+    let scratch = Scratch::new(false).await;
+    let project = scratch
+        .db
+        .create_space("Project", None, false)
+        .await
+        .unwrap();
+    scratch.db.register_trusted_agent("codex").await.unwrap();
+    let codex_file = scratch.home.join(".codex/AGENTS.md");
+    std::fs::create_dir_all(codex_file.parent().unwrap()).unwrap();
+
+    let from_codex = save_rule(
+        &scratch,
+        &caller(Some("codex"), Some("Project")),
+        save_request("We release on Tuesdays.", false),
+    )
+    .await
+    .unwrap();
+    assert_eq!(from_codex.status, wenlan_types::SavedRuleStatus::Saved);
+    assert_eq!(from_codex.space_name, "Project");
+    assert_eq!(from_codex.page_title, "Rules I saved — Project");
+    assert_eq!(from_codex.saved_from, "ChatGPT / Codex");
+    assert!(from_codex.message.contains("saved from ChatGPT / Codex"));
+    let rule_id = from_codex.rule_id.clone().expect("a saved rule has an id");
+
+    let in_project = read_rules_as_codex(&scratch, Some("Project")).await;
+    assert_eq!(texts(&in_project), vec!["We release on Tuesdays."]);
+    let line = &in_project.lines[0];
+    assert_eq!(line.id, rule_id);
+    assert_eq!(line.saved_from.as_deref(), Some("ChatGPT / Codex"));
+    assert!(!line.hand_written, "never shown as written by the person");
+    assert!(!line.general);
+    assert_eq!(line.source_page_id, from_codex.page_id);
+    assert!(
+        texts(&read_rules_as_codex(&scratch, None).await).is_empty(),
+        "a Space's rule is not told where no Space is named"
+    );
+
+    // The page is an ordinary page in the Space, and its history keeps the
+    // tool and the person's words under the literal only this route writes.
+    let page = scratch
+        .db
+        .get_page(&from_codex.page_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(page.space.as_deref(), Some("Project"));
+    let history = scratch.db.list_page_history(&page.id, 10).await.unwrap();
+    assert_eq!(history[0].edited_by, skill_grow::RULE_SAVE);
+    let changelog = page.changelog.clone().unwrap_or_default();
+    assert!(changelog.contains("\"person_asked\":\"save this as a rule: We release on Tuesdays.\""));
+    assert!(changelog.contains("\"agent\":\"codex\""));
+    let ledger = scratch.db.saved_rules_pages().await.unwrap();
+    assert_eq!(ledger.len(), 1);
+    assert_eq!(ledger[0].space_id, project.id);
+    assert_eq!(ledger[0].saves[0].version, Some(page.version));
+
+    // From the terminal, for every Space, only because the flag says so.
+    let from_terminal = save_rule(
+        &scratch,
+        &caller(None, Some("Project")),
+        save_request("Answer in plain words.", true),
+    )
+    .await
+    .unwrap();
+    assert_eq!(from_terminal.saved_from, wenlan_types::SAVED_FROM_TERMINAL);
+    assert_eq!(from_terminal.space_name, "");
+    assert_eq!(from_terminal.page_title, "Rules I saved");
+    let everywhere = read_rules_as_codex(&scratch, None).await;
+    assert_eq!(texts(&everywhere), vec!["Answer in plain words."]);
+    assert!(everywhere.lines[0].general);
+    assert_eq!(
+        everywhere.lines[0].saved_from_label().as_deref(),
+        Some("saved from the terminal")
+    );
+    assert_eq!(
+        texts(&read_rules_as_codex(&scratch, Some("Project")).await),
+        vec!["We release on Tuesdays.", "Answer in plain words."]
+    );
+
+    // The files follow before the save answers.
+    let own = std::fs::read_to_string(scratch.data.join("spaces/Project/AGENTS.md")).unwrap();
+    assert!(own.contains(
+        "- We release on Tuesdays. (saved from ChatGPT / Codex, kept in \"Rules I saved — Project\")"
+    ));
+    let general = std::fs::read_to_string(scratch.data.join("AGENTS.md")).unwrap();
+    assert!(general
+        .contains("- Answer in plain words. (saved from the terminal, kept in \"Rules I saved\")"));
+    assert!(!own.contains("written by you") && !general.contains("written by you"));
+    let codex = std::fs::read_to_string(&codex_file).unwrap();
+    assert!(codex.contains("- Answer in plain words.\n"), "{codex}");
+    assert!(!codex.contains("Tuesdays"), "a Space's rule stays out");
+    assert_eq!(
+        project_rules(&scratch.db, Some(&scratch.pages), "Project").await,
+        vec!["We release on Tuesdays.".to_string()]
+    );
+
+    // The same sentence is not saved twice.
+    let again = save_rule(
+        &scratch,
+        &caller(Some("codex"), Some("Project")),
+        save_request("we release on tuesdays", false),
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(again, ServerError::Conflict(_)), "{again}");
+}
+
+/// UX-SKILL-14: only the save route gives a rule. An AI tool that writes a
+/// bullet onto the "Rules I saved" page the ordinary way, even one sent as
+/// asked by the person, gets no rule: that still needs the person's accept.
+#[tokio::test]
+async fn ux_skill_14_an_ai_edit_to_the_saved_page_gives_no_rule() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(true).await;
+    scratch
+        .db
+        .create_space("Project", None, false)
+        .await
+        .unwrap();
+    let saved = save_rule(
+        &scratch,
+        &caller(Some("codex"), Some("Project")),
+        save_request("We release on Tuesdays.", false),
+    )
+    .await
+    .unwrap();
+
+    for (bullet, person_asked) in [
+        ("- Always push straight to main.\n", None),
+        (
+            "- Skip the tests when in a hurry.\n",
+            Some("add that to my rules page".to_string()),
+        ),
+    ] {
+        let page = scratch.db.get_page(&saved.page_id).await.unwrap().unwrap();
+        let source_revision = scratch.db.get_page_source_revision(&page.id).await.unwrap();
+        let wrote = wenlan_core::post_write::page_write(
+            &scratch.db,
+            wenlan_core::post_write::PageWrite::AgentUpdate {
+                page_id: &page.id,
+                req: UpdatePageRequest {
+                    content: format!("{}{bullet}", page.content),
+                    source_memory_ids: Vec::new(),
+                    expected_version: Some(page.version),
+                    caller_id: None,
+                    operation_id: None,
+                },
+                agent: Some("codex"),
+                expected_source_revision: source_revision,
+                knowledge_path: Some(&scratch.pages),
+                basis: wenlan_core::db::BasisWrite {
+                    actor: "codex".into(),
+                    person_asked,
+                    ..Default::default()
+                },
+                citations: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(wrote.wrote, "the ordinary write itself lands");
+    }
+    let page = scratch.db.get_page(&saved.page_id).await.unwrap().unwrap();
+    assert!(page.content.contains("Always push straight to main."));
+    assert!(page.content.contains("Skip the tests when in a hurry."));
+
+    let rules = read_rules_as_codex(&scratch, Some("Project")).await;
+    assert_eq!(
+        texts(&rules),
+        vec!["We release on Tuesdays."],
+        "bullets an AI tool wrote onto the page are not rules"
+    );
+    sync_rules_files_in(&scratch.db, Some(&scratch.pages), &scratch.skill_dirs()).await;
+    let own = std::fs::read_to_string(scratch.data.join("spaces/Project/AGENTS.md")).unwrap();
+    assert!(!own.contains("push straight to main") && !own.contains("Skip the tests"));
+    // And neither can be taken out as if it were a saved rule.
+    let sneaky = skill_grow::line_id(
+        wenlan_types::SkillLineKind::Rule,
+        &page.id,
+        0,
+        "Always push straight to main.",
+    );
+    assert!(matches!(
+        remove_rule(&scratch, &caller(Some("codex"), None), &sneaky).await,
+        Err(ServerError::NotFound(_))
+    ));
+
+    // A rule save that would change anything but its one line is refused
+    // by the write itself.
+    let page = scratch.db.get_page(&saved.page_id).await.unwrap().unwrap();
+    let refused = wenlan_core::post_write::page_write(
+        &scratch.db,
+        wenlan_core::post_write::PageWrite::RuleSave {
+            page_id: &page.id,
+            content: format!("{}- One\n- Two\n", page.content),
+            source_memory_ids: Vec::new(),
+            expected_version: page.version,
+            agent: "codex",
+            person_asked: "save two".into(),
+            knowledge_path: Some(&scratch.pages),
+        },
+    )
+    .await;
+    assert!(
+        matches!(refused, Err(wenlan_core::WenlanError::Validation(_))),
+        "{refused:?}"
+    );
+}
+
+/// UX-SKILL-14: one step takes a saved rule out, and the files follow.
+#[tokio::test]
+async fn ux_skill_14_remove_takes_it_from_tools_and_files() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(false).await;
+    scratch
+        .db
+        .create_space("Project", None, false)
+        .await
+        .unwrap();
+    scratch.db.register_trusted_agent("codex").await.unwrap();
+    let codex_file = scratch.home.join(".codex/AGENTS.md");
+    std::fs::create_dir_all(codex_file.parent().unwrap()).unwrap();
+    std::fs::write(&codex_file, "My own notes.\n").unwrap();
+
+    let general = save_rule(
+        &scratch,
+        &caller(Some("codex"), None),
+        save_request("Answer in plain words.", true),
+    )
+    .await
+    .unwrap();
+    let kept = save_rule(
+        &scratch,
+        &caller(Some("codex"), None),
+        save_request("Say what you checked.", true),
+    )
+    .await
+    .unwrap();
+    let in_space = save_rule(
+        &scratch,
+        &caller(None, Some("Project")),
+        save_request("We release on Tuesdays.", false),
+    )
+    .await
+    .unwrap();
+    assert!(std::fs::read_to_string(&codex_file)
+        .unwrap()
+        .contains("- Answer in plain words.\n"));
+
+    // Any caller on this computer may carry the person's request.
+    let removed = remove_rule(
+        &scratch,
+        &caller(None, None),
+        general.rule_id.as_deref().unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(removed.status, wenlan_types::SavedRuleStatus::Removed);
+    assert_eq!(removed.page_title, "Rules I saved");
+    assert_eq!(
+        texts(&read_rules_as_codex(&scratch, None).await),
+        vec!["Say what you checked."]
+    );
+    let codex = std::fs::read_to_string(&codex_file).unwrap();
+    assert!(!codex.contains("Answer in plain words."), "{codex}");
+    assert!(codex.contains("- Say what you checked.\n"));
+    assert!(
+        codex.starts_with("My own notes.\n"),
+        "the person's text stays"
+    );
+    let layer = std::fs::read_to_string(scratch.data.join("AGENTS.md")).unwrap();
+    assert!(!layer.contains("Answer in plain words."));
+    // The page lost that one line only, and its history keeps it.
+    let page = scratch
+        .db
+        .get_page(&general.page_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!page.content.contains("Answer in plain words."));
+    assert!(page.content.contains("- Say what you checked.\n"));
+    let history = scratch.db.list_page_history(&page.id, 10).await.unwrap();
+    assert_eq!(history[0].edited_by, skill_grow::RULE_SAVE);
+    assert!(history[1].content.contains("Answer in plain words."));
+
+    // Gone means gone: a second removal finds nothing.
+    assert!(matches!(
+        remove_rule(
+            &scratch,
+            &caller(None, None),
+            general.rule_id.as_deref().unwrap()
+        )
+        .await,
+        Err(ServerError::NotFound(_))
+    ));
+    // The last rule of a scope takes its files with it.
+    remove_rule(
+        &scratch,
+        &caller(Some("codex"), None),
+        kept.rule_id.as_deref().unwrap(),
+    )
+    .await
+    .unwrap();
+    assert!(!scratch.data.join("AGENTS.md").exists());
+    assert_eq!(
+        std::fs::read_to_string(&codex_file).unwrap(),
+        "My own notes.\n"
+    );
+    remove_rule(
+        &scratch,
+        &caller(None, None),
+        in_space.rule_id.as_deref().unwrap(),
+    )
+    .await
+    .unwrap();
+    assert!(!scratch.data.join("spaces/Project/AGENTS.md").exists());
+    assert!(texts(&read_rules_as_codex(&scratch, Some("Project")).await).is_empty());
+}
+
+/// UX-SKILL-14: a rule is never general by default. No Space and no
+/// every-Space flag is refused, and so is anyone who is not the person's own
+/// tool on this computer.
+#[tokio::test]
+async fn ux_skill_14_no_space_without_every_space_is_refused() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(true).await;
+    scratch
+        .db
+        .create_space("Project", None, false)
+        .await
+        .unwrap();
+
+    let refused = save_rule(
+        &scratch,
+        &caller(Some("codex"), None),
+        save_request("We release on Tuesdays.", false),
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(refused, ServerError::ValidationError(_)));
+    assert!(refusal_text(refused).contains(saved_rules::RULE_NEEDS_A_SPACE));
+
+    let unknown = save_rule(
+        &scratch,
+        &caller(Some("codex"), Some("No such Space")),
+        save_request("We release on Tuesdays.", false),
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(unknown, ServerError::NotFound(_)), "{unknown}");
+
+    // The person's words are required, and one rule is one line.
+    for (text, asked) in [
+        ("We release on Tuesdays.", "   "),
+        ("One rule\nand a second", "save these"),
+        ("", "save it"),
+    ] {
+        let refused = save_rule(
+            &scratch,
+            &caller(Some("codex"), Some("Project")),
+            wenlan_types::SaveRuleRequest {
+                text: text.into(),
+                person_asked: asked.into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(refused, ServerError::ValidationError(_)),
+            "{text:?} {asked:?}"
+        );
+    }
+
+    // A team member acting through the team server, and any caller while
+    // Wenlan listens beyond this computer.
+    let member = crate::team_actor::ActingMember {
+        id: "member-1".into(),
+        name: "Ana".into(),
+    };
+    let as_member = saved_rules::save_rule_in(
+        &scratch.shared,
+        &caller(None, Some("Project")),
+        Some(member.clone()),
+        save_request("We release on Tuesdays.", false),
+        scratch.skill_dirs(),
+        true,
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(as_member, ServerError::AgentDisabled(_)));
+    assert!(refusal_text(as_member).contains(saved_rules::TEAM_MEMBERS_CANNOT_SAVE_RULES));
+    let member_removes = saved_rules::remove_rule_in(
+        &scratch.shared,
+        &caller(None, None),
+        Some(member),
+        "abc",
+        wenlan_types::RemoveRuleRequest {
+            person_asked: "remove it".into(),
+        },
+        scratch.skill_dirs(),
+        true,
+    )
+    .await;
+    assert!(matches!(member_removes, Err(ServerError::AgentDisabled(_))));
+    let from_afar = saved_rules::save_rule_in(
+        &scratch.shared,
+        &caller(Some("codex"), Some("Project")),
+        None,
+        save_request("We release on Tuesdays.", false),
+        scratch.skill_dirs(),
+        false,
+    )
+    .await
+    .unwrap_err();
+    assert!(refusal_text(from_afar).contains(saved_rules::RULES_NEED_THIS_COMPUTER));
+
+    assert!(
+        scratch.db.saved_rules_pages().await.unwrap().is_empty(),
+        "nothing was saved and no page was made"
+    );
+    assert!(texts(&read_rules_as_codex(&scratch, Some("Project")).await).is_empty());
+    assert!(texts(&read_rules_as_codex(&scratch, None).await).is_empty());
+}
+
+/// UX-SKILL-14: ten saves a day from one tool; the eleventh is refused and
+/// changes nothing. Another tool still has its own ten.
+#[tokio::test]
+async fn ux_skill_14_the_eleventh_save_in_a_day_is_refused() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(true).await;
+    scratch
+        .db
+        .create_space("Project", None, false)
+        .await
+        .unwrap();
+    let codex = caller(Some("codex"), Some("Project"));
+    for number in 1..=wenlan_types::SAVED_RULES_PER_TOOL_PER_DAY {
+        save_rule(
+            &scratch,
+            &codex,
+            save_request(&format!("Rule number {number} holds."), false),
+        )
+        .await
+        .unwrap();
+    }
+    let eleventh = save_rule(
+        &scratch,
+        &codex,
+        save_request("Rule number eleven holds.", false),
+    )
+    .await
+    .unwrap_err();
+    match &eleventh {
+        ServerError::Structured { status, .. } => {
+            assert_eq!(*status, axum::http::StatusCode::TOO_MANY_REQUESTS);
+        }
+        other => panic!("expected a 429, got {other}"),
+    }
+    assert!(refusal_text(eleventh).starts_with("rule_save_refused: 10 rules were already saved"));
+    let rules = read_rules_as_codex(&scratch, Some("Project")).await;
+    assert_eq!(rules.lines.len(), 10);
+    assert!(!texts(&rules).contains(&"Rule number eleven holds."));
+
+    // Removing one does not hand the save back: the count is of saves.
+    remove_rule(&scratch, &codex, &rules.lines[0].id)
+        .await
+        .unwrap();
+    assert!(save_rule(
+        &scratch,
+        &codex,
+        save_request("Rule number eleven holds.", false)
+    )
+    .await
+    .is_err());
+    // Another tool, and the terminal, count on their own.
+    save_rule(
+        &scratch,
+        &caller(Some("claude-code"), Some("Project")),
+        save_request("Rule number eleven holds.", false),
+    )
+    .await
+    .unwrap();
+    save_rule(
+        &scratch,
+        &caller(None, Some("Project")),
+        save_request("Rule number twelve holds.", false),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        read_rules_as_codex(&scratch, Some("Project"))
+            .await
+            .lines
+            .len(),
+        11
+    );
+}
+
+/// UX-SKILL-14: the Lock holds. A save to a locked page waits as a card and
+/// says so; a locked page tells AI tools nothing. `#not-for-ai-tools`
+/// silences the page too, and the save says so.
+#[tokio::test]
+async fn ux_skill_14_a_locked_page_takes_a_card_and_the_mark_silences_it() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(true).await;
+    scratch
+        .db
+        .create_space("Project", None, false)
+        .await
+        .unwrap();
+    let codex = caller(Some("codex"), Some("Project"));
+    let first = save_rule(
+        &scratch,
+        &codex,
+        save_request("We release on Tuesdays.", false),
+    )
+    .await
+    .unwrap();
+    scratch
+        .db
+        .set_page_review_required(&first.page_id, true)
+        .await
+        .unwrap();
+    assert!(
+        texts(&read_rules_as_codex(&scratch, Some("Project")).await).is_empty(),
+        "a locked page is not told to AI tools"
+    );
+
+    let before = scratch.db.get_page(&first.page_id).await.unwrap().unwrap();
+    let waiting = save_rule(&scratch, &codex, save_request("Tag every release.", false))
+        .await
+        .unwrap();
+    assert_eq!(waiting.status, wenlan_types::SavedRuleStatus::Waiting);
+    assert!(waiting.rule_id.is_none());
+    let card = waiting.revision_card_id.clone().expect("a card to accept");
+    assert!(waiting.message.starts_with("Not saved yet"));
+    let after = scratch.db.get_page(&first.page_id).await.unwrap().unwrap();
+    assert_eq!(after.content, before.content, "the page is as it was");
+    assert_eq!(after.version, before.version);
+
+    // The person accepts the card and unlocks: the rule counts, and is
+    // still listed as saved from the tool, not as theirs.
+    wenlan_core::post_write::accept_pending_revision_with_knowledge_path(
+        &scratch.db,
+        &card,
+        "human",
+        Some(&scratch.pages),
+    )
+    .await
+    .unwrap();
+    scratch
+        .db
+        .set_page_review_required(&first.page_id, false)
+        .await
+        .unwrap();
+    let rules = read_rules_as_codex(&scratch, Some("Project")).await;
+    assert_eq!(
+        texts(&rules),
+        vec!["We release on Tuesdays.", "Tag every release."]
+    );
+    assert!(rules
+        .lines
+        .iter()
+        .all(|line| line.saved_from.as_deref() == Some("ChatGPT / Codex") && !line.hand_written));
+
+    // The person marks the page: its rules stop, and a new save says so.
+    let page = scratch.db.get_page(&first.page_id).await.unwrap().unwrap();
+    person_saves(
+        &scratch,
+        &page.id,
+        &format!("{}\n#not-for-ai-tools\n", page.content),
+    )
+    .await;
+    assert!(texts(&read_rules_as_codex(&scratch, Some("Project")).await).is_empty());
+    let silenced = save_rule(
+        &scratch,
+        &codex,
+        save_request("Write the changelog.", false),
+    )
+    .await
+    .unwrap();
+    assert_eq!(silenced.status, wenlan_types::SavedRuleStatus::Saved);
+    assert!(silenced.message.contains("#not-for-ai-tools"));
+    assert!(texts(&read_rules_as_codex(&scratch, Some("Project")).await).is_empty());
+}
+
+/// UX-WHO-2: a save adds its one line and leaves every sentence already on
+/// the page, the person's own included, exactly as it was. A bullet the
+/// person types on that page themselves is theirs, shown as written by them.
+#[tokio::test]
+async fn ux_who_2_a_saved_rule_never_changes_an_existing_sentence() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(true).await;
+    scratch
+        .db
+        .create_space("Project", None, false)
+        .await
+        .unwrap();
+    let codex = caller(Some("codex"), Some("Project"));
+    let first = save_rule(
+        &scratch,
+        &codex,
+        save_request("We release on Tuesdays.", false),
+    )
+    .await
+    .unwrap();
+    let page = scratch.db.get_page(&first.page_id).await.unwrap().unwrap();
+    let mine = format!(
+        "{}\nA sentence I wrote myself, with a typo I like.\n\n- A rule I typed here\n",
+        page.content
+    );
+    person_saves(&scratch, &page.id, &mine).await;
+
+    save_rule(&scratch, &codex, save_request("Tag every release.", false))
+        .await
+        .unwrap();
+    let after = scratch.db.get_page(&first.page_id).await.unwrap().unwrap();
+    assert_eq!(
+        after.content.strip_prefix(mine.as_str()),
+        Some("- Tag every release.\n"),
+        "everything that was on the page is byte for byte what it was"
+    );
+    let rules = read_rules_as_codex(&scratch, Some("Project")).await;
+    assert_eq!(
+        rules
+            .lines
+            .iter()
+            .map(|line| (
+                line.text.as_str(),
+                line.hand_written,
+                line.saved_from.is_some()
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            ("We release on Tuesdays.", false, true),
+            ("A rule I typed here", true, false),
+            ("Tag every release.", false, true),
+        ]
+    );
+    // Removing a saved rule leaves the person's text alone too.
+    remove_rule(&scratch, &codex, first.rule_id.as_deref().unwrap())
+        .await
+        .unwrap();
+    let after = scratch.db.get_page(&first.page_id).await.unwrap().unwrap();
+    assert!(after
+        .content
+        .contains("A sentence I wrote myself, with a typo I like.\n\n- A rule I typed here\n"));
+    assert!(!after.content.contains("We release on Tuesdays."));
 }
 
 #[tokio::test]

@@ -10,7 +10,10 @@ use wenlan_types::skill_registry::{
     InstalledSkillsResponse, LocalSkillsResponse, Scope, SkillImportResult, SkillInstallRequest,
     SkillInstallResult, SkillPreview, SkillRemoveResponse, SkillSearchResponse, Verdict,
 };
-use wenlan_types::{SkillLineKind, SpaceRulesResponse};
+use wenlan_types::{
+    RemoveRuleRequest, RemoveRuleResponse, SaveRuleRequest, SaveRuleResponse, SkillLineKind,
+    SpaceRulesResponse,
+};
 
 use crate::client::WenlanClient;
 use crate::output::{print_json, ResolvedFormat};
@@ -644,6 +647,120 @@ async fn remove(
     show(format, quiet, &removed, removed_for_a_person)
 }
 
+/// `wenlan rules`: read the rules, or save and remove one of your own.
+#[derive(Subcommand, Debug)]
+pub enum RulesCmd {
+    /// Save a rule your AI tools follow from now on (what an AI tool does with add_rule).
+    Add {
+        /// The rule, as one sentence.
+        text: String,
+        /// Save it for every Space instead of this one. Not with --space.
+        #[arg(long)]
+        every_space: bool,
+        /// Save it as a decision or a pitfall instead of a rule.
+        #[arg(long, value_enum)]
+        kind: Option<RuleKind>,
+    },
+    /// Remove a rule saved this way, by the id `wenlan rules` prints (remove_rule).
+    Remove {
+        /// The rule's id, as `wenlan rules` prints it.
+        id: String,
+    },
+}
+
+#[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuleKind {
+    Rule,
+    Decision,
+    Pitfall,
+}
+
+impl From<RuleKind> for SkillLineKind {
+    fn from(kind: RuleKind) -> Self {
+        match kind {
+            RuleKind::Rule => Self::Rule,
+            RuleKind::Decision => Self::Decision,
+            RuleKind::Pitfall => Self::Pitfall,
+        }
+    }
+}
+
+/// The words a save from the terminal carries as the person's: the command
+/// as it was typed, cut to what the daemon keeps.
+fn typed_command(words: &[&str]) -> String {
+    let mut typed = String::from("wenlan rules");
+    for word in words {
+        typed.push(' ');
+        if word.contains(char::is_whitespace) {
+            typed.push_str(&format!("{word:?}"));
+        } else {
+            typed.push_str(word);
+        }
+    }
+    typed.chars().take(500).collect()
+}
+
+/// What `wenlan rules add` sends: the same request an AI tool's `add_rule`
+/// sends (UX-CLI-1). The Space travels as the connection's Space, as for
+/// every other command; every Space only by its own flag.
+pub fn save_rule_request(text: &str, every_space: bool, kind: Option<RuleKind>) -> SaveRuleRequest {
+    let mut words = vec!["add", text];
+    if every_space {
+        words.push("--every-space");
+    }
+    SaveRuleRequest {
+        text: text.to_string(),
+        kind: kind.map(Into::into),
+        space: None,
+        every_space,
+        person_asked: typed_command(&words),
+    }
+}
+
+pub async fn run_rules(
+    client: &WenlanClient,
+    format: ResolvedFormat,
+    quiet: bool,
+    command: Option<RulesCmd>,
+    space_was_named: bool,
+) -> Result<()> {
+    match command {
+        None => read_space_rules(client, format, quiet).await,
+        Some(RulesCmd::Add {
+            text,
+            every_space,
+            kind,
+        }) => {
+            if every_space && space_was_named {
+                bail!("a rule is for one Space (--space) or for every Space (--every-space), not both");
+            }
+            let saved = client
+                .save_rule(&save_rule_request(&text, every_space, kind))
+                .await?;
+            show(format, quiet, &saved, saved_for_a_person)
+        }
+        Some(RulesCmd::Remove { id }) => {
+            let removed = client
+                .remove_rule(
+                    &id,
+                    &RemoveRuleRequest {
+                        person_asked: typed_command(&["remove", &id]),
+                    },
+                )
+                .await?;
+            show(format, quiet, &removed, removed_rule_for_a_person)
+        }
+    }
+}
+
+fn saved_for_a_person(saved: &SaveRuleResponse) -> String {
+    format!("{}\n", saved.message)
+}
+
+fn removed_rule_for_a_person(removed: &RemoveRuleResponse) -> String {
+    format!("{}\n", removed.message)
+}
+
 pub async fn read_space_rules(
     client: &WenlanClient,
     format: ResolvedFormat,
@@ -697,6 +814,17 @@ fn rules_for_a_person(response: &SpaceRulesResponse) -> String {
         } else {
             ""
         };
+        // A rule the person asked to be saved says where the save came
+        // from, never that they wrote it, and how to take it out
+        // (UX-SKILL-14).
+        if let Some(saved) = line.saved_from_label().map(|label| printable(&label)) {
+            out.push_str(&format!(
+                "  {saved}, kept in \"{}\"{scope}\n  to remove it: wenlan rules remove {}\n",
+                printable(&line.source_page_title),
+                printable(&line.id)
+            ));
+            continue;
+        }
         // A rule the person wrote themselves says so (UX-SKILL-10).
         let source = if line.hand_written {
             "written by you in"
@@ -733,6 +861,7 @@ mod tests {
             person_edited: false,
             general,
             hand_written: false,
+            saved_from: None,
         }
     }
 
@@ -745,6 +874,7 @@ mod tests {
             lines: vec![
                 SkillLine {
                     hand_written: true,
+                    saved_from: None,
                     person_edited: true,
                     ..line("Use the merge queue.", "Git", false)
                 },

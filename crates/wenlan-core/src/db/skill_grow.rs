@@ -10,6 +10,37 @@ const SPACE_PREFIX: &str = "space:";
 const SUGGESTION_PREFIX: &str = "suggestion:";
 const FILE_PREFIX: &str = "file:";
 const NIGHT_BUDGET_KEY: &str = "night_budget";
+const SAVED_RULES_PREFIX: &str = "saved-rules:";
+
+/// One rule the person asked to be saved (UX-SKILL-14). Kept after the rule
+/// is removed: it is the record of a save, and the day's count reads it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SavedRule {
+    /// The rule as saved, without its `[decision]` or `[pitfall]` tag.
+    pub text: String,
+    /// The tool the save came from, or `terminal`: what rules lists show.
+    pub tool: String,
+    /// The caller's own name for itself, which the day's count is kept by.
+    #[serde(default)]
+    pub tool_id: String,
+    pub person_asked: String,
+    pub at: i64,
+    /// The page version this save made. `None` while the save waits as a
+    /// card on a locked page; the version that accepts the card then brings
+    /// the rule in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<i64>,
+}
+
+/// The "Rules I saved" page of one scope: a Space, or every Space.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SavedRulesPage {
+    /// The Space's id; empty for the rules used in every Space.
+    pub space_id: String,
+    pub page_id: String,
+    #[serde(default)]
+    pub saves: Vec<SavedRule>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -168,6 +199,21 @@ impl MemoryDB {
 
     pub async fn set_space_rules_state(&self, state: &SpaceRulesState) -> Result<(), WenlanError> {
         self.set_skill_ledger(&format!("{SPACE_PREFIX}{}", state.space_id), state)
+            .await
+    }
+
+    /// Every "Rules I saved" page the ledger knows, one per scope.
+    pub async fn saved_rules_pages(&self) -> Result<Vec<SavedRulesPage>, WenlanError> {
+        Ok(self
+            .skill_ledger_rows::<SavedRulesPage>(SAVED_RULES_PREFIX)
+            .await?
+            .into_iter()
+            .map(|(_, page)| page)
+            .collect())
+    }
+
+    pub async fn set_saved_rules_page(&self, page: &SavedRulesPage) -> Result<(), WenlanError> {
+        self.set_skill_ledger(&format!("{SAVED_RULES_PREFIX}{}", page.space_id), page)
             .await
     }
 

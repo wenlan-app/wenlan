@@ -243,7 +243,12 @@ and wait for evidence that people need them.
   can no longer read: sentences the change leaves as they were keep their
   citations as they were, and only what it changed is checked against its
   sources. A changed sentence citing an unreadable source is still refused.
-  原文：AI 改不了你的句子，只能提議；提議能一句一句收。（2026-10-31 16:11 選擇卡：AI 自己寫、沒人動過的句子直接更新，可還原；你寫的、改過的、收下的才問你；每頁一個「鎖定」。）選擇卡「只在事实变了时」（2026-10-31 21:44）：AI 只在來源和你的句子對不上、或已經過時時才對你的句子提建議；只是換個說法不提。「尽量不 review 就尽量不 review」。「都同意，請根據這去解決根本問題」（2026-11-08，回覆信任檢查清單：AI 重建你改過的頁時不蓋掉你的修改，改成一張等你收的卡；只有你能收；沒寫進去的修改要說出來）。「寧願這樣，畢竟都已經特別問我且授權了」（2026-11-09，回覆：你授權時 AI 直接改、可還原，還是變成卡片讓你按一下）。「把 wenlan 本身修復掉」（2026-11-10，回覆：你要求改一句話，卻因為那頁有 16 筆來源讀不到而整頁不讓改）。「想要自動改，現在不是可以讓人鎖住嗎？」（2026-11-17，回覆：跟著另一頁的頁，那頁改了是 AI 直接改、留舊版可還原，還是等你收；鎖住的頁照樣先問你）。
+  Saving a rule you asked for (UX-SKILL-14) is not a change to your
+  sentences: it adds one new line to the "Rules I saved" page, or takes one
+  saved line out, and never changes or removes a sentence that was already
+  there. It is not the AI nodding for you either: it lands only where you
+  asked in so many words, and the Lock still holds.
+  原文：AI 改不了你的句子，只能提議；提議能一句一句收。（2026-10-31 16:11 選擇卡：AI 自己寫、沒人動過的句子直接更新，可還原；你寫的、改過的、收下的才問你；每頁一個「鎖定」。）選擇卡「只在事实变了时」（2026-10-31 21:44）：AI 只在來源和你的句子對不上、或已經過時時才對你的句子提建議；只是換個說法不提。「尽量不 review 就尽量不 review」。「都同意，請根據這去解決根本問題」（2026-11-08，回覆信任檢查清單：AI 重建你改過的頁時不蓋掉你的修改，改成一張等你收的卡；只有你能收；沒寫進去的修改要說出來）。「寧願這樣，畢竟都已經特別問我且授權了」（2026-11-09，回覆：你授權時 AI 直接改、可還原，還是變成卡片讓你按一下）。「把 wenlan 本身修復掉」（2026-11-10，回覆：你要求改一句話，卻因為那頁有 16 筆來源讀不到而整頁不讓改）。「想要自動改，現在不是可以讓人鎖住嗎？」（2026-11-17，回覆：跟著另一頁的頁，那頁改了是 AI 直接改、留舊版可還原，還是等你收；鎖住的頁照樣先問你）。存成規則的補充（2026-11-17）：選擇卡 08:29Z，見 UX-SKILL-14；這段補充的英文字句待 Qi-Xuan 確認。
 - **UX-WHO-3** `shipped` Every sentence has "not right": fix it yourself or ask
   the AI; the AI's fix is still a proposal.
   原文：每一句都能按「不對」：你自己改，或讓 AI 改，AI 改的仍然是提議。
@@ -690,13 +695,15 @@ and wait for evidence that people need them.
   to a "How I work" page counts the same way, and the nightly update keeps it
   on the page. `wenlan rules` prints these rules as "written by you" with the
   page; a Space's own are listed before the lines Wenlan took from its pages.
+  A rule the person asked to be saved (UX-SKILL-14) counts at once too, but
+  it is never listed as "written by you": it says where it was saved from.
   The files of UX-SKILL-6 and UX-SKILL-8 follow when the page is saved; the
   repository's `AGENTS.md` (UX-SKILL-7) gets them at the next wiki pull
   request. A page in a Space, or in a Space's folder, gives rules for that
   Space only; a page in no Space and outside every Space's folder gives rules
   used in every Space. The setting and a No do not silence them;
   `#not-for-ai-tools` on the page does.
-  原文：決定 4：「A rule the person writes themselves counts at once. AI tools get it and `wenlan rules` prints it, with no model needed. Rules the AI derives from pages still need the person's accept.」Qi-Xuan 以輸入「A」回答此題（2026-11-16 22:30Z；題目與決定記錄於 `/mnt/project-files/readme-2026-11/cover-v3/2026-11-16-app-changes-from-cover.md`，決定 4）。
+  原文：決定 4：「A rule the person writes themselves counts at once. AI tools get it and `wenlan rules` prints it, with no model needed. Rules the AI derives from pages still need the person's accept.」Qi-Xuan 以輸入「A」回答此題（2026-11-16 22:30Z；題目與決定記錄於 `/mnt/project-files/readme-2026-11/cover-v3/2026-11-16-app-changes-from-cover.md`，決定 4）。存成規則的補充（2026-11-17）：見 UX-SKILL-14；這句補充的英文字句待 Qi-Xuan 確認。
 - **UX-SKILL-11** `shipped` A rules page shows two things. Under each rule,
   where it came from: a link "from" the page it was taken from, or "written
   by you" for a rule the person wrote themselves (UX-SKILL-10). Who wrote a
@@ -750,6 +757,31 @@ and wait for evidence that people need them.
   person, or any such request while it listens beyond this computer. A trial
   run on other data never reads or writes the person's real AI tool folders.
   原文：待 Qi-Xuan 確認。交辦內容（2026-11-17）：AI 工具不能把檔案放進每個工具的資料夾，也不能替人點頭（UX-WHO-2）；終端機裡要由人明確確認，不能有 `--yes`。
+- **UX-SKILL-14** `shipped` When the person explicitly asks for a rule to be
+  saved, it counts at once, with no model and no accept. They ask in an AI
+  tool on this computer ("save this as a rule: ...", which the tool does with
+  `add_rule`) or type `wenlan rules add "<rule>"`; both do the same thing.
+  The rule is kept as one line on a page named "Rules I saved", one per
+  Space and one for every Space, and the person's AI tools are told it from
+  then on: `wenlan rules`, `read_space_rules`, and the files of UX-SKILL-6
+  and UX-SKILL-8 all follow. Wenlan cannot know who spoke, so every place
+  that lists the rule says where it was saved from ("saved from Codex",
+  "saved from the terminal") and never "written by you". One save is one
+  rule of one line, at most 300 characters, and carries the person's own
+  words, which the page's history keeps. It is for the Space the tool or the
+  terminal is working in; for every Space only when asked in so many words
+  (`every_space`, `--every-space`), and with no Space and no such ask it is
+  refused. One tool saves at most ten rules a day. Taking a saved rule out is
+  one step, `wenlan rules remove <id>` or `remove_rule` with the person's
+  words, and the files follow. Only a save counts this way: a line an AI tool
+  adds to that page by an ordinary edit gives no rule, and rules Wenlan takes
+  from pages still need the person's accept (UX-SKILL-1). The setting and a
+  No do not silence a saved rule; `#not-for-ai-tools` on the page does, and
+  on a locked page the save waits as a card the person accepts. A teammate's
+  connection cannot save or remove a rule, the page is not sent to the
+  others in a team Space, and Wenlan refuses a save or a removal while it
+  listens beyond this computer.
+  原文：選擇卡（2026-11-17 08:29Z）：人在 AI 工具或用 `wenlan` 明確說「存成規則」時立即算數；規則清單顯示是從哪個工具存的；一步就能移除；AI 自己整理出來的規則仍要人點頭。細節（每次一條、最多 300 字、每個工具每天十條、沒有 Space 也沒說每個 Space 就拒絕、AI 工具也能用 `remove_rule`、團隊成員暫不開放）待 Qi-Xuan 確認。
 
 ## From the terminal
 
@@ -758,6 +790,8 @@ and wait for evidence that people need them.
   (`write_page` is `wenlan pages write`), and `wenlan tool call` reaches any
   tool by its own name. The terminal adds only installing, setting up, team,
   and what only the person may do with skills (UX-SKILL-12, UX-SKILL-13).
+  Saving and removing a rule is one of the same things: `wenlan rules add`
+  is `add_rule` and `wenlan rules remove` is `remove_rule` (UX-SKILL-14).
   原文：「建議指令要完整，然後明確跟 MCP 的分工，有時候我還是會不太清楚區別」（2026-11-15 21:03Z）；「要的，以及你其他建議也同意。」（2026-11-15 21:36Z）。
 - **UX-CLI-2** `shipped` `wenlan --help` fits one screen: what a person needs
   in the first week, in named groups. Everything else is under
