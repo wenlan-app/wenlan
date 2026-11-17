@@ -38,25 +38,24 @@
 
 ## Why Wenlan
 
-Your AI tools each start from zero, and each wants its own rules file. Wenlan gives every tool you connect the same docs, skills and rules, keeps them current, and lets you read and change all of it.
+Every AI tool starts from zero and wants its own rules file. Wenlan gives them all one shared set.
 
-- **Docs with sources.** Notes, documents and AI chats become pages. Before saving, Wenlan checks that each cited source supports its sentence.
-- **Skills and rules, written once.** Kept current in every AI tool you connect. Bring in the skills already on your computer, or find more to install.
-- **Organized memory keeps it current.** What you settle in any AI tool is saved and is there in the next. Wenlan organizes those memories into knowledge and topic pages, merging repeats. That is how your docs, skills and rules stay current.
+- **Docs with sources.** Wenlan checks that each cited source supports its sentence before saving.
+- **Skills and rules, written once.** Every AI tool you connect gets the current version.
+- **Organized memory.** What you settle becomes knowledge and topic pages, so it all stays current.
 - **You stay in charge.** See every change, undo it, and lock a page so AI asks you first.
-- **Any layout you ask for.** A page can be text, or a web page your AI draws that shows the live content.
-- **Files first, self-hosted, portable.** Run it on your own computer or server. Pages are plain Markdown files and the database is only an index of your files, so you can take them anywhere.
+- **Any layout you ask for.** A page can be text, or a web page your AI draws.
+- **Files first, self-hosted, portable.** Plain Markdown files; the database is only an index.
 
 <a id="how-it-compares"></a>
 
 ### Wenlan or a rules file per tool?
 
-A rules file (AGENTS.md, CLAUDE.md, .cursor/rules) is enough for one tool in one repository. Wenlan is for when that stops being enough:
+A rules file (AGENTS.md, CLAUDE.md, .cursor/rules) is enough for one tool in one repository. Beyond that:
 
-- **One copy for every tool.** A rules file is copied and kept in step by hand, once for each tool. In Wenlan you write it once.
-- **It stays current.** In a rules file, an old rule stays until someone notices. In Wenlan, your AI tools update a page when its source changes, and the old version is kept.
-- **More than rules.** Docs with sources, skills and memory sit next to the rules.
-- **You choose what AI may change.** AI can rewrite anything in a rules file. In Wenlan you choose per page, and locked pages ask you first.
+- **One copy for every tool.** No more copying a file per tool and keeping them in step by hand.
+- **Old rules don't linger.** Your AI tools update a page when its source changes.
+- **More than rules.** Docs, skills and memory sit next to them.
 
 More comparisons, with Obsidian, Notion AI, and memory tools: [wenlan.app/learn](https://wenlan.app/learn).
 
@@ -82,21 +81,24 @@ More comparisons, with Obsidian, Notion AI, and memory tools: [wenlan.app/learn]
    npx -y wenlan setup
    ```
 
-   In Claude Code you can add the [plugin](docs/setup-with-ai.md) instead. On a Mac, `brew install 7xuanlu/tap/wenlan` then `wenlan setup` works too. [Other ways to install](docs/setup-and-data.md#installation).
+   Or: the [Claude Code plugin](docs/setup-with-ai.md), `brew install 7xuanlu/tap/wenlan`, or [another way](docs/setup-and-data.md#installation).
 
 2. Start a new AI session and ask:
 
    > /wenlan what did I decide about this before? Then help me: …
 
-   `/wenlan` (`$wenlan` in Codex) is the one command to remember: say what you want after it.
-
 3. Read and edit your pages in your browser: `wenlan open`.
 
-Optional: the [desktop app](https://github.com/wenlan-app/wenlan/releases/latest) keeps pages as files on your computer, imports your material, and connects your AI tools in one press. macOS 11 or later on Apple Silicon, Windows x64, or Linux x64.
+Optional: the [desktop app](https://github.com/wenlan-app/wenlan/releases/latest) for macOS, Windows and Linux adds imports and one-press connections.
 
-**With a team.** Run one Wenlan server that everyone connects to with their own key. Each person gets view-only or edit access to each Space, and the owner can remove a person at once. Members open an invite link and connect their own AI tool, with no app needed; with the desktop app, their copy syncs by itself. [Team server guide](docs/team-server.md).
+**With a team.** Run one Wenlan server. [Team server guide](docs/team-server.md).
 
-Bring in an Obsidian vault, a Logseq graph, a folder, or earlier AI chats: [Import guide](docs/import-guide.md). Works with Claude Code, Claude Desktop, Codex, Cursor, GitHub Copilot, VS Code, Gemini CLI, Windsurf, Grok Bot, and other MCP tools: [set one up by hand](docs/setup-with-ai.md).
+- Each person connects with their own key, with view-only or edit access to each Space.
+- Members join from an invite link with their own AI tool. Desktop apps sync by themselves.
+
+Bring in Obsidian vaults, Logseq graphs, folders, or earlier AI chats: [Import guide](docs/import-guide.md).
+
+Works with Claude Code, Codex, Cursor, GitHub Copilot, Gemini CLI, and other MCP tools: [setup guide](docs/setup-with-ai.md).
 
 <a id="what-can-i-bring-in"></a>
 <a id="sources-and-imports"></a>

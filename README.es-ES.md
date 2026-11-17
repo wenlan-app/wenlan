@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=2adbc39aae61d7a45a20d3c278039dca0f063f24160ddf51b09d369609d7ab45 -->
+<!-- README_SYNC: source=README.md sha256=71cb4fe8becb56e8c7e97ab1d94f3eceb58451ab7b16500e173ceeb47435d0ef -->
 
 <p align="center">
   <picture>
@@ -40,25 +40,24 @@
 
 ## Por qué Wenlan
 
-Cada herramienta de IA empieza de cero, y cada una quiere su propio archivo de reglas. Wenlan da a todas las que conectas los mismos documentos, skills y reglas, los mantiene al día y te deja leerlo y cambiarlo todo.
+Cada herramienta de IA empieza de cero y quiere su propio archivo de reglas. Wenlan les da uno común.
 
-- **Documentos con fuentes.** Notas, documentos y chats de IA se convierten en páginas. Antes de guardar, Wenlan comprueba que cada fuente citada respalda su frase.
-- **Skills y reglas, escritas una vez.** Al día en cada herramienta de IA que conectes. Trae las skills que ya tienes en tu ordenador o busca otras para instalar.
-- **Memoria ordenada que lo mantiene al día.** Lo que decides en cualquier herramienta de IA se guarda y está en la siguiente. Wenlan ordena esas memorias en páginas de conocimiento y de temas, y une las repetidas. Así se mantienen al día tus documentos, skills y reglas.
-- **Tú mandas.** Ves cada cambio, puedes deshacerlo y bloquear una página para que la IA te pregunte primero.
-- **El diseño que pidas.** Una página puede ser texto o una página web que tu IA dibuja con el contenido actual.
-- **Archivos primero, autoalojado, portable.** Ejecútalo en tu ordenador o en tu servidor. Las páginas son archivos Markdown y la base de datos es solo un índice de tus archivos, así que te los llevas a donde quieras.
+- **Documentos con fuentes.** Wenlan comprueba que cada fuente citada respalda su frase.
+- **Skills y reglas, escritas una vez.** Cada herramienta que conectas recibe la versión actual.
+- **Memoria ordenada.** Lo que decides pasa a páginas de conocimiento y temas, siempre al día.
+- **Tú mandas.** Ves cada cambio, lo deshaces y bloqueas una página para que la IA pregunte.
+- **El diseño que pidas.** Una página puede ser texto o una página web que dibuja tu IA.
+- **Archivos primero, autoalojado, portable.** Archivos Markdown; la base de datos es solo un índice.
 
 <a id="how-it-compares"></a>
 
 ### ¿Wenlan o un archivo de reglas por herramienta?
 
-Un archivo de reglas (AGENTS.md, CLAUDE.md, .cursor/rules) basta para una herramienta en un repositorio. Wenlan es para cuando deja de bastar:
+Un archivo de reglas (AGENTS.md, CLAUDE.md…) basta para una herramienta y un repositorio. Más allá:
 
-- **Una copia para todas las herramientas.** Un archivo de reglas se copia y se sincroniza a mano, una vez por herramienta. En Wenlan lo escribes una vez.
-- **Se mantiene al día.** En un archivo de reglas, una regla vieja sigue ahí hasta que alguien la ve. En Wenlan, tus herramientas de IA actualizan una página cuando cambia su fuente, y se conserva la versión anterior.
-- **Más que reglas.** Documentos con fuentes, skills y memoria están junto a las reglas.
-- **Tú eliges qué puede cambiar la IA.** La IA puede reescribir cualquier cosa de un archivo de reglas. En Wenlan eliges por página, y las bloqueadas te preguntan primero.
+- **Una copia para todas.** Sin copiar un archivo por herramienta ni sincronizarlos a mano.
+- **Las reglas viejas no se quedan.** Tus herramientas de IA actualizan la página si cambia su fuente.
+- **Más que reglas.** Documentos, skills y memoria están al lado.
 
 Más comparaciones, con Obsidian, Notion AI y herramientas de memoria: [wenlan.app/learn](https://wenlan.app/learn).
 
@@ -84,21 +83,24 @@ Más comparaciones, con Obsidian, Notion AI y herramientas de memoria: [wenlan.a
    npx -y wenlan setup
    ```
 
-   En Claude Code puedes añadir el [plugin](docs/setup-with-ai.md) en su lugar. En un Mac también sirve `brew install 7xuanlu/tap/wenlan` y después `wenlan setup`. [Otras formas de instalar](docs/setup-and-data.es-ES.md#installation).
+   O: el [plugin de Claude Code](docs/setup-with-ai.md), `brew install 7xuanlu/tap/wenlan` u [otra forma](docs/setup-and-data.es-ES.md#installation).
 
 2. Inicia una nueva sesión de IA y pide:
 
    > /wenlan ¿qué decidí antes sobre esto? Luego ayúdame con: …
 
-   `/wenlan` (`$wenlan` en Codex) es el único comando que hay que recordar: después, di lo que quieres.
-
 3. Lee y edita tus páginas en el navegador: `wenlan open`.
 
-Opcional: la [app de escritorio](https://github.com/wenlan-app/wenlan/releases/latest) guarda tus páginas como archivos en tu ordenador, importa tu material y conecta tus herramientas de IA con un clic. macOS 11 o posterior en Apple Silicon, Windows x64 o Linux x64.
+Opcional: la [app de escritorio](https://github.com/wenlan-app/wenlan/releases/latest) para macOS, Windows y Linux añade importaciones y conexión con un clic.
 
-**En equipo.** Un servidor de Wenlan al que cada persona se conecta con su propia clave. Cada persona tiene acceso de solo lectura o de edición en cada Space, y quien lo gestiona puede quitar a alguien al momento. Los miembros abren un enlace de invitación y conectan su propia herramienta de IA, sin instalar la app; con la app de escritorio, su copia se sincroniza sola. [Guía del servidor de equipo](docs/team-server.md).
+**En equipo.** Un servidor de Wenlan para todos. [Guía del servidor de equipo](docs/team-server.md).
 
-Trae una bóveda de Obsidian, un grafo de Logseq, una carpeta o chats de IA anteriores: [guía de importación](docs/import-guide.md). Funciona con Claude Code, Claude Desktop, Codex, Cursor, GitHub Copilot, VS Code, Gemini CLI, Windsurf, Grok Bot y otras herramientas MCP: [configurar una a mano](docs/setup-with-ai.md).
+- Cada persona se conecta con su propia clave, con acceso de lectura o edición en cada Space.
+- Los miembros entran con un enlace de invitación y su propia IA. La app se sincroniza sola.
+
+Trae bóvedas de Obsidian, grafos de Logseq, carpetas o chats de IA anteriores: [guía de importación](docs/import-guide.md).
+
+Funciona con Claude Code, Codex, Cursor, Copilot, Gemini CLI y otras herramientas MCP: [guía](docs/setup-with-ai.md).
 
 <a id="what-can-i-bring-in"></a>
 <a id="sources-and-imports"></a>
