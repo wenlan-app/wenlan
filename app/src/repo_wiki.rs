@@ -63,6 +63,7 @@ pub async fn bind_repo_wiki(
         repo_root,
         folder,
         daily,
+        take_over: false,
     };
     client(&state)
         .await

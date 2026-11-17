@@ -220,7 +220,7 @@ fn agents_block_is_appended_then_replaced_in_place() {
     assert_eq!(second.matches(AGENTS_START).count(), 1);
     assert_eq!(
         upsert_agents_block("", "wiki"),
-        format!("{}\n", agents_block("wiki", &[]))
+        format!("{}\n", agents_block(Some("wiki"), &[], None))
     );
 }
 
@@ -384,6 +384,7 @@ fn publish_pushes_the_wiki_branch_without_touching_the_working_copy() {
     let publish_once = |pages: Vec<Page>| {
         publish(PublishInput {
             rules: Vec::new(),
+            publisher: "me".to_string(),
             binding: &binding,
             pages,
             left_out,
@@ -563,6 +564,7 @@ fn publish_refuses_a_folder_holding_files_wenlan_did_not_write() {
     )]);
     let error = publish(PublishInput {
         rules: Vec::new(),
+        publisher: "me".to_string(),
         binding: &binding,
         pages: vec![page("p1", "Module map", "x")],
         left_out: 0,
@@ -600,9 +602,11 @@ fn publish_with_no_selected_pages_does_nothing() {
         doc_fixes: Vec::new(),
         doc_check: None,
         kept_edits: Vec::new(),
+        take_over: false,
     };
     let result = publish(PublishInput {
         rules: Vec::new(),
+        publisher: "me".to_string(),
         binding: &binding,
         pages: vec![],
         left_out: 4,
@@ -642,6 +646,7 @@ fn daily_is_due_once_a_day_after_its_hour() {
         doc_fixes: Vec::new(),
         doc_check: None,
         kept_edits: Vec::new(),
+        take_over: false,
     };
     let before = chrono::Local
         .with_ymd_and_hms(2026, 10, 24, 8, 59, 0)
@@ -759,6 +764,7 @@ fn publish_input<'a>(
 ) -> PublishInput<'a> {
     PublishInput {
         rules: Vec::new(),
+        publisher: "me".to_string(),
         binding,
         pages,
         left_out: 0,
@@ -1012,6 +1018,7 @@ fn a_page_file_edited_in_the_repository_is_found_and_kept() {
     // Not taken back: the edit stays and nothing is offered.
     let kept = publish(PublishInput {
         rules: Vec::new(),
+        publisher: "me".to_string(),
         prepared: Some(prepared),
         ..publish_input(
             &binding,
@@ -1032,6 +1039,7 @@ fn a_page_file_edited_in_the_repository_is_found_and_kept() {
     seen.kept_edits = kept.kept_edits.clone().unwrap();
     let again = publish(PublishInput {
         rules: Vec::new(),
+        publisher: "me".to_string(),
         prepared: Some(prepare(&seen, &worktree).unwrap()),
         ..publish_input(
             &seen,
@@ -1054,6 +1062,7 @@ fn a_page_file_edited_in_the_repository_is_found_and_kept() {
     taken[0].version = 2;
     let back = publish(PublishInput {
         rules: Vec::new(),
+        publisher: "me".to_string(),
         taken_back: BTreeSet::from([page_file.clone()]),
         took_back: 1,
         prepared: Some(prepared),
@@ -1251,6 +1260,7 @@ fn edits_people_push_to_the_wiki_branch_survive_the_next_publish() {
     changed[0].title = "Module map".into();
     let next = publish(PublishInput {
         rules: Vec::new(),
+        publisher: "me".to_string(),
         prepared: Some(prepared),
         ..publish_input(
             &binding,
@@ -1417,4 +1427,187 @@ fn a_repository_that_already_holds_pages_under_wiki_keeps_that_folder() {
     )
     .unwrap();
     assert_eq!(default_folder(top), "wenlan");
+}
+
+#[test]
+fn ux_skill_7_project_rules_reach_agents_md_without_any_wiki_page() {
+    let dir = tempfile::tempdir().unwrap();
+    let (origin, clone) = repo_with_origin(dir.path());
+    let store = dir.path().join("data/repo-wiki.json");
+    let binding = bind_at(&store, "site", &clone, None, None).unwrap();
+    let published = publish(PublishInput {
+        rules: vec!["Run the affected tests before a push.".to_string()],
+        publisher: "me".to_string(),
+        binding: &binding,
+        pages: vec![],
+        left_out: 0,
+        code_bases: &HashMap::new(),
+        anchors: &CodeAnchors::new(),
+        concept_paths: &ConceptPathMap::new(),
+        worktree: dir.path().join("data/repo-wiki/site"),
+        gh: None,
+        now: 1,
+        prepared: None,
+        taken_back: BTreeSet::new(),
+        took_back: 0,
+    })
+    .unwrap();
+    assert_eq!(published.result.status, RepoWikiPublishStatus::Pushed);
+    assert_eq!(published.result.pages, 0);
+    let agents = sh(&origin, &["show", &format!("{REPO_WIKI_BRANCH}:AGENTS.md")]);
+    assert!(
+        agents.contains(
+            "<!-- WENLAN:START -->\n<!-- wenlan-publisher: me -->\n## Rules for this project\n\n- Run the affected tests before a push.\n<!-- WENLAN:END -->"
+        ),
+        "{agents}"
+    );
+    // No folder of pages, and nothing that points at one.
+    assert!(!agents.contains("## Wiki"), "{agents}");
+    let files = sh(&origin, &["ls-tree", "-r", "--name-only", REPO_WIKI_BRANCH]);
+    assert!(!files.contains("wenlan/"), "{files}");
+    assert!(!files.contains(".gitattributes"), "{files}");
+}
+
+#[test]
+fn the_rules_block_stands_alone_or_after_the_wiki_pointer() {
+    let rules = vec!["Use pnpm.".to_string()];
+    let alone = upsert_agents_rules_block("# Agents\n", &rules);
+    assert_eq!(
+        alone,
+        "# Agents\n\n<!-- WENLAN:START -->\n## Rules for this project\n\n- Use pnpm.\n<!-- WENLAN:END -->\n"
+    );
+    // Pages arrive later: the same block gains the pointer above the rules.
+    let both = upsert_agents_block_with_rules(&alone, "wenlan", &rules);
+    assert!(both.contains("`wenlan/index.md`"));
+    assert!(both.contains("wins.\n\n## Rules for this project\n\n- Use pnpm.\n<!-- WENLAN:END -->"));
+    assert_eq!(both.matches(AGENTS_START).count(), 1);
+}
+
+/// Two people, each with their own Wenlan, tied to one repository.
+#[test]
+fn a_second_wenlan_does_not_replace_what_another_keeps_in_the_repository() {
+    let dir = tempfile::tempdir().unwrap();
+    let (origin, clone_a) = repo_with_origin(dir.path());
+    let clone_b = dir.path().join("work-b");
+    let output = Command::new("git")
+        .args(["clone", "--quiet"])
+        .arg(&origin)
+        .arg(&clone_b)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    sh(&clone_b, &["config", "user.name", "B"]);
+    sh(&clone_b, &["config", "user.email", "b@example.com"]);
+    sh(&clone_b, &["config", "commit.gpgsign", "false"]);
+    let clone_b = std::fs::canonicalize(clone_b).unwrap();
+
+    let lib = "fn a() {}\nfn b() {}\nfn c() {}\n";
+    let run = |who: &str, clone: &Path, id: &str, title: &str, rule: &str| {
+        let store = dir.path().join(format!("data-{who}/repo-wiki.json"));
+        let binding = match binding_at(&store, "site").unwrap() {
+            Some(binding) => binding,
+            None => bind_at(&store, "site", clone, None, None).unwrap(),
+        };
+        let code_bases = HashMap::from([(
+            id.to_string(),
+            vec![locator(&binding.repo_root, "src/lib.rs", 1, 2)],
+        )]);
+        let published = publish(PublishInput {
+            rules: vec![rule.to_string()],
+            publisher: publisher_id_at(&store).unwrap(),
+            binding: &binding,
+            pages: vec![page(id, title, "Body.")],
+            left_out: 0,
+            code_bases: &code_bases,
+            anchors: &anchors_for(&code_bases, &[("src/lib.rs", lib)]),
+            concept_paths: &ConceptPathMap::new(),
+            worktree: dir.path().join(format!("data-{who}/repo-wiki/site")),
+            gh: None,
+            now: 1,
+            prepared: None,
+            taken_back: BTreeSet::new(),
+            took_back: 0,
+        })?;
+        record_publish_at(&store, "site", &published).unwrap();
+        Ok::<_, WenlanError>(published.result.status)
+    };
+    let holds = |tree: &str| {
+        let files = sh(&origin, &["ls-tree", "-r", "--name-only", tree]);
+        let agents = sh(&origin, &["show", &format!("{tree}:AGENTS.md")]);
+        (
+            files.contains("wenlan/pages/page-from-a.md"),
+            files.contains("wenlan/pages/page-from-b.md"),
+            agents.contains("- Rule from A."),
+            agents.contains("- Rule from B."),
+        )
+    };
+    let only_a = (true, false, true, false);
+
+    // A's pull request is open: B's publish stops, and the branch is A's.
+    assert_eq!(
+        run("a", &clone_a, "pa", "Page from A", "Rule from A.").unwrap(),
+        RepoWikiPublishStatus::Pushed
+    );
+    let refused = run("b", &clone_b, "pb", "Page from B", "Rule from B.").unwrap_err();
+    assert!(matches!(refused, WenlanError::Conflict(_)), "{refused}");
+    let message = refused.to_string();
+    assert!(
+        message.contains("already kept by another Wenlan"),
+        "{message}"
+    );
+    assert!(
+        message.contains("`wenlan repo bind --take-over`"),
+        "{message}"
+    );
+    assert_eq!(holds(REPO_WIKI_BRANCH), only_a);
+    // A keeps publishing its own.
+    assert!(run("a", &clone_a, "pa", "Page from A", "Rule from A.").is_ok());
+
+    // A's pull request is merged: B still stops, and nothing of A's goes.
+    sh(&clone_a, &["fetch", "--quiet", "origin"]);
+    sh(
+        &clone_a,
+        &[
+            "merge",
+            "--quiet",
+            "--ff-only",
+            &format!("origin/{REPO_WIKI_BRANCH}"),
+        ],
+    );
+    sh(&clone_a, &["push", "--quiet", "origin", "main"]);
+    sh(&origin, &["branch", "-D", REPO_WIKI_BRANCH]);
+    assert!(run("b", &clone_b, "pb", "Page from B", "Rule from B.").is_err());
+    assert_eq!(holds("main"), only_a);
+    // A's next publish works though the merged branch is gone from the remote.
+    assert!(run("a", &clone_a, "pa", "Page from A", "Rule from A.").is_ok());
+    // B sees it in the working copy too, before any publish, once pulled.
+    sh(&clone_b, &["pull", "--quiet", "origin", "main"]);
+    let b_store = dir.path().join("data-b/repo-wiki.json");
+    let b_id = publisher_id_at(&b_store).unwrap();
+    assert!(working_copy_kept_by_another(&clone_b, &b_id));
+    let a_id = publisher_id_at(&dir.path().join("data-a/repo-wiki.json")).unwrap();
+    assert!(!working_copy_kept_by_another(&clone_a, &a_id));
+
+    // B takes the repository over on purpose: one publish, then the mark is gone.
+    set_take_over_at(&b_store, "site", true).unwrap();
+    assert_eq!(
+        run("b", &clone_b, "pb", "Page from B", "Rule from B.").unwrap(),
+        RepoWikiPublishStatus::Pushed
+    );
+    assert_eq!(holds(REPO_WIKI_BRANCH), (false, true, false, true));
+    assert!(!binding_at(&b_store, "site").unwrap().unwrap().take_over);
+    // Now it is A who is told.
+    assert!(run("a", &clone_a, "pa", "Page from A", "Rule from A.").is_err());
+}
+
+#[test]
+fn a_block_from_before_publishers_were_named_is_ours_only_after_we_published() {
+    assert_eq!(keeper(None, "me"), Keeper::Nobody);
+    assert_eq!(keeper(Some("# Agents\n"), "me"), Keeper::Nobody);
+    let old = upsert_agents_block("", "wiki");
+    assert_eq!(keeper(Some(&old), "me"), Keeper::Unnamed);
+    let mine = upsert_block("", &agents_block(None, &[], Some("me")));
+    assert_eq!(block_publisher(&mine).as_deref(), Some("me"));
+    assert_eq!(keeper(Some(&mine), "me"), Keeper::Ours);
+    assert_eq!(keeper(Some(&mine), "you"), Keeper::Another);
 }
