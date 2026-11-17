@@ -100,10 +100,34 @@ pub async fn run(
     space: Option<&str>,
     command: WikiCommand,
 ) -> Result<()> {
-    let Some(space) = space else {
-        bail!(
-            "no Space for this folder; run it inside a repository matched to a Space, or pass --space"
-        );
+    // `publish` in a repository that is not set up cannot do its work: a
+    // person is asked once whether to set it up now (see `set_up_to_publish`).
+    let set_up;
+    let space = match (space, &command) {
+        (Some(space), WikiCommand::Publish)
+            if client.repo_wiki_binding(space).await?.is_none() =>
+        {
+            match super::init::set_up_to_publish(client, format, quiet).await? {
+                Some(space) => {
+                    set_up = space;
+                    set_up.as_str()
+                }
+                None => return Ok(()),
+            }
+        }
+        (Some(space), _) => space,
+        (None, WikiCommand::Publish) => {
+            match super::init::set_up_to_publish(client, format, quiet).await? {
+                Some(space) => {
+                    set_up = space;
+                    set_up.as_str()
+                }
+                None => return Ok(()),
+            }
+        }
+        (None, _) => bail!(
+            "no Space for this folder yet. Inside a git repository, `wenlan init` sets one up; or pass --space"
+        ),
     };
     match command {
         WikiCommand::Bind {

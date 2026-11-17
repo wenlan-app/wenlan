@@ -664,6 +664,15 @@ and wait for evidence that people need them.
   it names `wenlan init` and ties nothing. `--config-only` connects nothing
   and asks nothing.
   原文：「裝完的流程，是要那些需要人手動做，哪些是自動設好，要絲滑的體驗 dx ux」（2026-11-17 06:11Z）；「要的，另外想問如果不在 repo 內的情況，不知是否已考慮過」（2026-11-17 06:24Z）。
+- **UX-CLI-7** `shipped` In a repository Wenlan does not know, the terminal
+  asks only when the command cannot do its work without setup:
+  `wenlan repo publish` asks a person once "Set it up now?" and, on a yes,
+  sets the repository up and goes on. A command that works anyway (`recall`,
+  `capture`, `rules`, …) says one line about `wenlan init` the first time in
+  that repository and never again. An AI tool or a script is never asked and
+  is not shown the line; a command that cannot go on fails and names
+  `wenlan init`.
+  原文：「怎樣更好的 DX UX」（2026-11-17 05:28Z）；「沒問題，那繼續」（2026-11-17 06:45Z）。
 
 ## Adding to Wenlan
 

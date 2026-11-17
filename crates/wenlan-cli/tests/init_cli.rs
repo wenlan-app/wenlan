@@ -240,6 +240,55 @@ fn init_in_a_repository_another_wenlan_keeps_says_so_and_goes_on() {
 }
 
 #[test]
+fn ux_cli_7_publish_in_a_repository_that_is_not_set_up_names_init_and_changes_nothing() {
+    // No Space for the folder at all.
+    let (_dir, repo, home) = repository("acme-api");
+    let (host, requests) = spawn_stub(vec![("GET /api/spaces", "[]".to_string())]);
+    let (ok, stdout, stderr) = run(&host, &repo, &home, &["repo", "publish"]);
+    assert!(!ok, "stdout: {stdout}\nstderr: {stderr}");
+    assert!(
+        stderr.contains(
+            "this repository is not set up in Wenlan yet. `wenlan init` sets it up; then run `wenlan repo publish` again"
+        ),
+        "{stderr}"
+    );
+    let served: Vec<String> = requests.try_iter().map(|(route, _)| route).collect();
+    assert!(
+        served.iter().all(|route| route.starts_with("GET ")),
+        "nobody was there to ask, yet something was written: {served:?}"
+    );
+
+    // A Space named after the folder, not tied to the repository yet.
+    let (_dir, repo, home) = repository("acme-api");
+    let (host, requests) = spawn_stub(vec![
+        ("GET /api/spaces", json!([space("acme-api")]).to_string()),
+        ("GET /api/spaces/acme-api/wiki/repo", "null".to_string()),
+    ]);
+    let (ok, stdout, stderr) = run(&host, &repo, &home, &["repo", "publish"]);
+    assert!(!ok, "stdout: {stdout}\nstderr: {stderr}");
+    assert!(stderr.contains("`wenlan init` sets it up"), "{stderr}");
+    let served: Vec<String> = requests.try_iter().map(|(route, _)| route).collect();
+    assert!(
+        served.iter().all(|route| route.starts_with("GET ")),
+        "{served:?}"
+    );
+}
+
+#[test]
+fn ux_cli_7_a_command_that_works_without_setup_says_nothing_to_a_script() {
+    let (_dir, repo, home) = repository("acme-api");
+    let (host, _requests) = spawn_stub(vec![
+        ("GET /api/spaces", "[]".to_string()),
+        ("GET /api/space-rules", "[]".to_string()),
+    ]);
+    let (_ok, stdout, stderr) = run(&host, &repo, &home, &["rules"]);
+    assert!(
+        !stdout.contains("wenlan init") && !stderr.contains("wenlan init"),
+        "stdout: {stdout}\nstderr: {stderr}"
+    );
+}
+
+#[test]
 fn ux_cli_4_init_outside_a_repository_names_the_command_that_fits() {
     let dir = tempfile::tempdir().expect("temp dir");
     let home = dir.path().join("home");
