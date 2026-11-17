@@ -216,6 +216,7 @@ async fn charge_model_call(
 
 async fn pages_for_space(
     db: &MemoryDB,
+    own: &OwnRulePages,
     space: &wenlan_types::Space,
     rules_page_id: Option<&str>,
 ) -> Result<Vec<SkillPageInput>, ServerError> {
@@ -232,6 +233,9 @@ async fn pages_for_space(
     for page in pages
         .into_iter()
         .filter(|page| Some(page.id.as_str()) != rules_page_id)
+        // The person's own rules already count; the model is not asked to
+        // suggest them back (UX-SKILL-10).
+        .filter(|page| !own.holds(&page.id))
         .filter(|page| !page.review_required)
         .filter(|page| !skill_grow::page_is_not_for_ai_tools(&page.content))
         .take(MAX_PAGES_PER_SPACE)
@@ -511,33 +515,203 @@ async fn resolved_space(
         .ok_or_else(|| ServerError::NotFound(format!("Space {name:?} not found")))
 }
 
-async fn read_rules_for_space(
+/// A page of the person's own in a folder named Rules, with the rules they
+/// wrote on it (UX-SKILL-10).
+struct OwnRulePage {
+    id: String,
+    /// The Space the page is in; `None` for a page in no Space.
+    space: Option<String>,
+    version: i64,
+    file: String,
+    lines: Vec<SkillLine>,
+}
+
+/// The person's own rules pages, read once for a whole pass.
+#[derive(Default)]
+struct OwnRulePages {
+    pages: Vec<OwnRulePage>,
+}
+
+impl OwnRulePages {
+    /// Every active page whose file sits in a folder named Rules and whose
+    /// every version the person wrote themselves. A page an AI tool or a
+    /// teammate ever wrote, one under review, and one marked not for AI
+    /// tools are left out. No pages folder, no such pages.
+    async fn load(db: &MemoryDB, page_root: Option<&Path>) -> Result<Self, ServerError> {
+        let Some(root) = page_root else {
+            return Ok(Self::default());
+        };
+        let mut files: Vec<(String, (String, bool))> =
+            wenlan_core::export::knowledge::KnowledgeWriter::new(root.to_path_buf(), db)
+                .page_files_with_person_notes()
+                .into_iter()
+                .filter(|(_, (file, _))| skill_grow::in_rules_folder(file, None))
+                .collect();
+        files.sort();
+        let space_folders = wenlan_core::space_folders::is_on(root);
+        let mut pages = Vec::new();
+        for (id, (file, person_note)) in files {
+            let Some(page) = db.get_page(&id).await? else {
+                continue;
+            };
+            let space = page
+                .space
+                .as_deref()
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .map(str::to_string);
+            // A Space named Rules keeps its pages in a folder of that name.
+            let own_folder = space
+                .as_deref()
+                .filter(|_| space_folders)
+                .map(wenlan_core::space_folders::folder_name);
+            if page.status != "active"
+                || page.review_required
+                || skill_grow::page_is_not_for_ai_tools(&page.content)
+                || !skill_grow::in_rules_folder(&file, own_folder.as_deref())
+            {
+                continue;
+            }
+            let Some(page) = wenlan_core::truth_adapter::filter_page(
+                db,
+                &wenlan_core::truth_contract::TruthGrant::Automatic,
+                Some(page),
+            )
+            .await?
+            else {
+                continue;
+            };
+            let writers = db.page_history_writers(&page.id).await?;
+            // A note the person put in the folder themselves is recorded as
+            // made by a tool (`agent_create`); the folder's own record says
+            // it was theirs.
+            if writers.is_empty()
+                || !writers.iter().all(|writer| {
+                    skill_grow::version_is_the_persons_own(writer)
+                        || (person_note && writer == "agent_create")
+                })
+            {
+                continue;
+            }
+            let revision_at = db
+                .get_page_history_at(&page.id, page.version)
+                .await?
+                .map_or(0, |revision| revision.created_at);
+            let mut lines = skill_grow::person_rule_lines(&SkillPageInput {
+                id: page.id.clone(),
+                title: page.title.clone(),
+                revision: page.version,
+                revision_at,
+                text: page.content.clone(),
+            });
+            // A page in no Space holds for every Space.
+            for line in &mut lines {
+                line.general = space.is_none();
+            }
+            pages.push(OwnRulePage {
+                id: page.id,
+                space,
+                version: page.version,
+                file,
+                lines,
+            });
+        }
+        Ok(Self { pages })
+    }
+
+    fn holds(&self, page_id: &str) -> bool {
+        self.pages.iter().any(|page| page.id == page_id)
+    }
+
+    /// The lines of the pages in `space` (`None`: the pages in no Space).
+    fn lines_in(&self, space: Option<&str>) -> Vec<SkillLine> {
+        self.pages
+            .iter()
+            .filter(|page| page.space.as_deref() == space)
+            .flat_map(|page| page.lines.iter().cloned())
+            .collect()
+    }
+
+    /// Changes whenever a page joins, leaves, moves or is saved.
+    fn signature(&self) -> String {
+        let mut hasher = Sha256::new();
+        for page in &self.pages {
+            hasher.update(page.id.as_bytes());
+            hasher.update(page.version.to_be_bytes());
+            hasher.update(page.file.as_bytes());
+            hasher.update(page.space.as_deref().unwrap_or_default().as_bytes());
+            hasher.update([0]);
+        }
+        hasher
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
+}
+
+/// History read for the bullets a person added to a "How I work" page.
+const RULES_PAGE_HISTORY_DEPTH: i64 = 2_000;
+
+/// The plain bullets the person added to the Space's "How I work" page
+/// themselves. Wenlan and AI tools write that page too, so each bullet is
+/// traced to the version that brought it in; a page any teammate wrote gives
+/// none (UX-SKILL-9).
+async fn rules_page_person_lines(
+    db: &MemoryDB,
+    page: &wenlan_types::Page,
+) -> Result<Vec<SkillLine>, ServerError> {
+    let mut history = db
+        .list_page_history(&page.id, RULES_PAGE_HISTORY_DEPTH)
+        .await?;
+    if history
+        .iter()
+        .any(|version| wenlan_core::shared_space::shared_writer(&version.edited_by).is_some())
+    {
+        return Ok(Vec::new());
+    }
+    history.reverse();
+    let versions: Vec<(bool, &str)> = history
+        .iter()
+        .map(|version| {
+            (
+                skill_grow::version_is_the_persons_own(&version.edited_by),
+                version.content.as_str(),
+            )
+        })
+        .collect();
+    Ok(skill_grow::person_rule_lines_through_history(
+        &SkillPageInput {
+            id: page.id.clone(),
+            title: page.title.clone(),
+            revision: page.version,
+            revision_at: history.last().map_or(0, |version| version.created_at),
+            text: page.content.clone(),
+        },
+        &versions,
+    ))
+}
+
+/// The Space's "How I work" page when AI tools may read it: accepted, still
+/// in the Space, not under review and not stopped.
+async fn readable_rules_page(
     db: &MemoryDB,
     space: &wenlan_types::Space,
-) -> Result<SpaceRulesResponse, ServerError> {
-    let empty = || SpaceRulesResponse {
-        space_id: space.id.clone(),
-        space_name: space.name.clone(),
-        rules_page_id: None,
-        lines: Vec::new(),
-    };
-    if !feature_enabled() {
-        return Ok(empty());
-    }
+) -> Result<Option<(SpaceRulesState, wenlan_types::Page)>, ServerError> {
     let Some(state) = db.space_rules_state(&space.id).await? else {
-        return Ok(empty());
+        return Ok(None);
     };
     if state.status != SpaceRulesStatus::Accepted {
-        return Ok(empty());
+        return Ok(None);
     }
     let Some(page_id) = state.rules_page_id.as_deref() else {
-        return Ok(empty());
+        return Ok(None);
     };
     let Some(page) = db.get_page(page_id).await? else {
-        return Ok(empty());
+        return Ok(None);
     };
     if !page_belongs_to_space(db, &page, &space.id).await? {
-        return Ok(empty());
+        return Ok(None);
     }
     let Some(page) = wenlan_core::truth_adapter::filter_page(
         db,
@@ -546,29 +720,65 @@ async fn read_rules_for_space(
     )
     .await?
     else {
-        return Ok(empty());
+        return Ok(None);
     };
     if page.review_required || skill_grow::page_is_not_for_ai_tools(&page.content) {
-        return Ok(empty());
+        return Ok(None);
     }
-    let reconciled = skill_grow::reconcile_rules_page(
-        &space.name,
-        &state.lines,
-        &state.lines,
-        &state.deleted_fingerprints,
-        Some(&page.content),
-        last_page_edit_is_person(&page),
-    );
-    let mut lines = eligible_lines(db, &space.id, &reconciled.lines).await?;
-    // Checked on every read too, so a line approved as general before its
-    // page turned out to be a teammate's stops being one at once.
-    keep_general_to_own_pages(db, &mut lines).await?;
+    Ok(Some((state, page)))
+}
+
+/// What AI tools are told in `space`. The person's own rules come first and
+/// need neither a model, the accept, nor the setting (UX-SKILL-10); the lines
+/// Wenlan derived from pages follow, only once accepted and with the setting
+/// on.
+async fn read_rules_for_space(
+    db: &MemoryDB,
+    own: &OwnRulePages,
+    space: &wenlan_types::Space,
+) -> Result<SpaceRulesResponse, ServerError> {
+    let mut lines = own.lines_in(Some(&space.name));
+    let mut rules_page_id = None;
+    if let Some((state, page)) = readable_rules_page(db, space).await? {
+        lines.extend(rules_page_person_lines(db, &page).await?);
+        if feature_enabled() {
+            let reconciled = skill_grow::reconcile_rules_page(
+                &space.name,
+                &state.lines,
+                &state.lines,
+                &state.deleted_fingerprints,
+                Some(&page.content),
+                last_page_edit_is_person(&page),
+            );
+            let mut derived = eligible_lines(db, &space.id, &reconciled.lines).await?;
+            // Checked on every read too, so a line approved as general before its
+            // page turned out to be a teammate's stops being one at once.
+            keep_general_to_own_pages(db, &mut derived).await?;
+            lines.extend(derived);
+            rules_page_id = Some(page.id);
+        }
+    }
+    // The same sentence is told once; the person's own wording comes first.
+    let mut seen = HashSet::new();
+    lines.retain(|line| seen.insert(line.text.trim().to_lowercase()));
     Ok(SpaceRulesResponse {
         space_id: space.id.clone(),
         space_name: space.name.clone(),
-        rules_page_id: Some(page.id),
+        rules_page_id,
         lines,
     })
+}
+
+/// The pages folder and database of a request, read without holding the
+/// state lock across an await.
+async fn db_and_page_root(
+    state: &SharedState,
+) -> Result<(Arc<MemoryDB>, Option<PathBuf>), ServerError> {
+    let state = state.read().await;
+    Ok((
+        state.db.clone().ok_or(ServerError::DbNotInitialized)?,
+        state.lint_config.page_root().map(Path::to_path_buf),
+    ))
 }
 
 pub async fn handle_read_rules(
@@ -576,16 +786,12 @@ pub async fn handle_read_rules(
     headers: HeaderMap,
     Query(query): Query<RulesQuery>,
 ) -> Result<Json<SpaceRulesResponse>, ServerError> {
-    let db = state
-        .read()
-        .await
-        .db
-        .clone()
-        .ok_or(ServerError::DbNotInitialized)?;
+    let (db, page_root) = db_and_page_root(&state).await?;
+    let own = OwnRulePages::load(&db, page_root.as_deref()).await?;
     let tool = crate::memory_routes::extract_agent_name(&headers, None);
     if no_space_named(&headers, query.space.as_deref()) {
         // No Space: only the general lines, read from every accepted Space.
-        let general = general_lines(&db, None).await?;
+        let general = general_lines(&db, &own, None).await?;
         record_general_reads(&db, &tool, &general).await?;
         return Ok(Json(SpaceRulesResponse {
             space_id: String::new(),
@@ -595,13 +801,13 @@ pub async fn handle_read_rules(
         }));
     }
     let space = resolved_space(&db, &headers, query.space.as_deref()).await?;
-    let mut response = read_rules_for_space(&db, &space).await?;
+    let mut response = read_rules_for_space(&db, &own, &space).await?;
     if feature_enabled() && !response.lines.is_empty() {
         db.record_skill_rules_read(&tool, &space.id, &response.lines)
             .await?;
     }
     // General lines from other Spaces apply here too (UX-SKILL-5).
-    let general = general_lines(&db, Some(&space.id)).await?;
+    let general = general_lines(&db, &own, Some(&space.id)).await?;
     let known: HashSet<String> = response
         .lines
         .iter()
@@ -632,23 +838,28 @@ fn no_space_named(headers: &HeaderMap, query_space: Option<&str>) -> bool {
             .is_none()
 }
 
-/// Approved general lines of every accepted Space other than `except`, each
-/// still checked against its own Space's rules page, with that Space's id.
-/// The same sentence from two Spaces is listed once.
+/// The rules the person wrote on their own pages in no Space (listed under an
+/// empty Space id), then the approved general lines of every accepted Space
+/// other than `except`, each still checked against its own Space's rules
+/// page, with that Space's id. The same sentence from two places is listed
+/// once.
 async fn general_lines(
     db: &MemoryDB,
+    own: &OwnRulePages,
     except: Option<&str>,
 ) -> Result<Vec<(String, SkillLine)>, ServerError> {
-    if !feature_enabled() {
-        return Ok(Vec::new());
-    }
     let mut seen = HashSet::new();
     let mut out = Vec::new();
+    for line in own.lines_in(None) {
+        if seen.insert(line.text.trim().to_lowercase()) {
+            out.push((String::new(), line));
+        }
+    }
     for space in db.list_spaces().await? {
         if Some(space.id.as_str()) == except {
             continue;
         }
-        for line in read_rules_for_space(db, &space).await?.lines {
+        for line in read_rules_for_space(db, own, &space).await?.lines {
             if line.general && seen.insert(line.text.trim().to_lowercase()) {
                 out.push((space.id.clone(), line));
             }
@@ -662,6 +873,9 @@ async fn record_general_reads(
     tool: &str,
     lines: &[(String, SkillLine)],
 ) -> Result<(), ServerError> {
+    if !feature_enabled() {
+        return Ok(());
+    }
     let mut by_space: HashMap<&str, Vec<SkillLine>> = HashMap::new();
     for (space_id, line) in lines {
         by_space.entry(space_id).or_default().push(line.clone());
@@ -827,21 +1041,31 @@ async fn sync_tool_rules(db: &MemoryDB, dirs: &SkillDirs, general: &[SkillLine])
 /// `spaces/<Space>/AGENTS.md` for each Space's own, each a short main file
 /// plus appendix files. The files always say what `read_space_rules` would
 /// answer right now, so a Stop, the setting turned off, a deleted line or an
-/// Undo empties them the same way.
-async fn sync_rules_files(db: &MemoryDB, dirs: &SkillDirs) -> Result<(), ServerError> {
+/// Undo takes lines out of them the same way.
+async fn sync_rules_files(
+    db: &MemoryDB,
+    page_root: Option<&Path>,
+    dirs: &SkillDirs,
+) -> Result<(), ServerError> {
     let home = wenlan_core::config::wenlan_home();
+    let own = OwnRulePages::load(db, page_root).await?;
     let mut general = Vec::new();
     let mut seen = HashSet::new();
+    for line in own.lines_in(None) {
+        if seen.insert(line.text.trim().to_lowercase()) {
+            general.push(line);
+        }
+    }
     let mut layers: HashMap<String, (String, Vec<SkillLine>)> = HashMap::new();
     for space in db.list_spaces().await? {
         let folder = wenlan_core::space_folders::folder_name(&space.name);
-        let own = &mut layers
+        let layer = &mut layers
             .entry(folder)
             .or_insert_with(|| (space.name.clone(), Vec::new()))
             .1;
-        for line in read_rules_for_space(db, &space).await?.lines {
+        for line in read_rules_for_space(db, &own, &space).await?.lines {
             if !line.general {
-                own.push(line);
+                layer.push(line);
             } else if seen.insert(line.text.trim().to_lowercase()) {
                 general.push(line);
             }
@@ -872,11 +1096,18 @@ async fn sync_rules_files(db: &MemoryDB, dirs: &SkillDirs) -> Result<(), ServerE
 
 /// The Space's own approved rules as plain sentences, for the repository
 /// copy. General lines are the person's habits and stay out.
-pub(crate) async fn project_rules(db: &MemoryDB, space: &str) -> Vec<String> {
+pub(crate) async fn project_rules(
+    db: &MemoryDB,
+    page_root: Option<&Path>,
+    space: &str,
+) -> Vec<String> {
     let lines = match db.get_space(space).await {
-        Ok(Some(space)) => read_rules_for_space(db, &space)
-            .await
-            .map(|rules| rules.lines),
+        Ok(Some(space)) => match OwnRulePages::load(db, page_root).await {
+            Ok(own) => read_rules_for_space(db, &own, &space)
+                .await
+                .map(|rules| rules.lines),
+            Err(error) => Err(error),
+        },
         Ok(None) => return Vec::new(),
         Err(error) => Err(error.into()),
     };
@@ -893,23 +1124,120 @@ pub(crate) async fn project_rules(db: &MemoryDB, space: &str) -> Vec<String> {
 }
 
 /// Same, for callers that must not fail because a file could not be written.
-pub(crate) async fn sync_rules_files_quietly(db: &MemoryDB) {
+///
+/// It takes the skills lock itself: never call it while holding that lock.
+pub(crate) async fn sync_rules_files_quietly(db: &MemoryDB, page_root: Option<&Path>) {
     let _serial = SKILLS_MUTATION_LOCK.lock().await;
-    if let Err(error) = sync_rules_files(db, &SkillDirs::system()).await {
-        tracing::warn!(%error, "[skills] rules files not updated");
-    }
+    sync_rules_files_locked(db, page_root, &SkillDirs::system()).await;
 }
 
 /// Same, with the tool folders given: for a caller that holds its own.
 #[cfg(test)]
-async fn sync_rules_files_in(db: &MemoryDB, dirs: &SkillDirs) {
+async fn sync_rules_files_in(db: &MemoryDB, page_root: Option<&Path>, dirs: &SkillDirs) {
     let _serial = SKILLS_MUTATION_LOCK.lock().await;
-    sync_rules_files_locked(db, dirs).await;
+    sync_rules_files_locked(db, page_root, dirs).await;
 }
 
-async fn sync_rules_files_locked(db: &MemoryDB, dirs: &SkillDirs) {
-    if let Err(error) = sync_rules_files(db, dirs).await {
+async fn sync_rules_files_locked(db: &MemoryDB, page_root: Option<&Path>, dirs: &SkillDirs) {
+    if let Err(error) = sync_rules_files(db, page_root, dirs).await {
         tracing::warn!(%error, "[skills] rules files not updated");
+    }
+}
+
+/// Whether a write to page `id` can change the rules AI tools are told: it
+/// is a Space's "How I work" page, or its file sits in a folder named Rules.
+/// A cheap test, wider than the real one; the sync decides the rest.
+async fn may_hold_own_rules(db: &MemoryDB, page_root: Option<&Path>, id: &str) -> bool {
+    let in_folder = page_root.is_some_and(|root| {
+        wenlan_core::export::knowledge::KnowledgeWriter::new(root.to_path_buf(), db)
+            .page_filename(id)
+            .is_some_and(|file| skill_grow::in_rules_folder(&file, None))
+    });
+    in_folder
+        || db.space_rules_states().await.is_ok_and(|states| {
+            states
+                .iter()
+                .any(|state| state.rules_page_id.as_deref() == Some(id))
+        })
+}
+
+/// Held by a route that writes, moves or removes a page. When the route
+/// ends, however it ends, and the page was a rules page before or is one
+/// now, the rules files are brought up to date in the background, so a rule
+/// the person just wrote reaches their AI tools at once (UX-SKILL-10). The
+/// page save never waits for it.
+pub(crate) struct RulesPageWrite {
+    state: SharedState,
+    page_id: Option<String>,
+    before: bool,
+}
+
+impl RulesPageWrite {
+    /// `page_id` is `None` for a route that creates the page; it then names
+    /// the page with [`Self::page`].
+    pub(crate) async fn begin(state: &SharedState, page_id: Option<&str>) -> Self {
+        let before = match (page_id, db_and_page_root(state).await) {
+            (Some(id), Ok((db, root))) => may_hold_own_rules(&db, root.as_deref(), id).await,
+            _ => false,
+        };
+        Self {
+            state: state.clone(),
+            page_id: page_id.map(str::to_string),
+            before,
+        }
+    }
+
+    pub(crate) fn page(&mut self, page_id: &str) {
+        self.page_id = Some(page_id.to_string());
+    }
+}
+
+impl Drop for RulesPageWrite {
+    fn drop(&mut self) {
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let Some(page_id) = self.page_id.take() else {
+            return;
+        };
+        let state = self.state.clone();
+        let before = self.before;
+        runtime.spawn(async move {
+            let Ok((db, root)) = db_and_page_root(&state).await else {
+                return;
+            };
+            if before || may_hold_own_rules(&db, root.as_deref(), &page_id).await {
+                sync_rules_files_quietly(&db, root.as_deref()).await;
+            }
+        });
+    }
+}
+
+/// The scheduler's catch-up for what no route saw: a file the person edited,
+/// added, moved or deleted in the pages folder. The files are written again
+/// when `edited` says the watcher took in an edit, or when the set of the
+/// person's own rules pages is not what it was at the last call.
+pub(crate) async fn sync_rules_files_after_file_changes(
+    db: &MemoryDB,
+    page_root: &Path,
+    edited: bool,
+) {
+    static LAST: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+    let signature = match OwnRulePages::load(db, Some(page_root)).await {
+        Ok(own) => own.signature(),
+        Err(error) => {
+            tracing::warn!(%error, "[skills] own rules pages not read");
+            return;
+        }
+    };
+    let changed = {
+        let mut last = LAST.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let changed = last.as_deref() != Some(signature.as_str());
+        *last = Some(signature);
+        changed
+    };
+    if edited || changed {
+        sync_rules_files_quietly(db, Some(page_root)).await;
     }
 }
 
@@ -1285,6 +1613,7 @@ async fn refresh_unlocked(
         .into_iter()
         .map(|state| (state.space_id.clone(), state))
         .collect();
+    let own = OwnRulePages::load(&db, page_root.as_deref()).await?;
     let mut report = SkillsRefreshResponse::default();
     let now = chrono::Utc::now().timestamp();
     let today = chrono::Local::now().date_naive().to_string();
@@ -1321,6 +1650,7 @@ async fn refresh_unlocked(
         }
         let pages = match pages_for_space(
             &db,
+            &own,
             &space,
             previous
                 .as_ref()
@@ -1407,7 +1737,7 @@ async fn refresh_unlocked(
         refresh_existing_skill_suggestions(&db, model, &dirs, &approved, &mut budget).await?;
     report.suggestions += suggestions;
     report.model_calls += calls;
-    sync_rules_files_locked(&db, &dirs).await;
+    sync_rules_files_locked(&db, page_root.as_deref(), &dirs).await;
     Ok(report)
 }
 
@@ -1453,12 +1783,28 @@ pub fn spawn_nightly_if_idle(shared: SharedState, model: Arc<dyn LlmProvider>) {
     });
 }
 
+/// "Update now" with no model: write the rules files from what already
+/// counts, and say that no model was asked.
+async fn refresh_without_model(
+    shared: &SharedState,
+    dirs: SkillDirs,
+) -> Result<SkillsRefreshResponse, ServerError> {
+    let (db, page_root) = db_and_page_root(shared).await?;
+    let _serial = SKILLS_MUTATION_LOCK.lock().await;
+    sync_rules_files_locked(&db, page_root.as_deref(), &dirs).await;
+    Ok(SkillsRefreshResponse::default())
+}
+
 pub async fn handle_refresh(
     State(state): State<SharedState>,
 ) -> Result<Json<SkillsRefreshResponse>, ServerError> {
-    let group = crate::things_intake::group_model(&state)
-        .await
-        .ok_or_else(|| ServerError::Conflict("no grouping model is available".into()))?;
+    let Some(group) = crate::things_intake::group_model(&state).await else {
+        // No model: nothing new can be suggested from pages, but the rules
+        // the person wrote themselves need none (UX-SKILL-10).
+        return Ok(Json(
+            refresh_without_model(&state, SkillDirs::system()).await?,
+        ));
+    };
     Ok(Json(
         refresh_with(&state, group.as_ref(), SkillDirs::system()).await?,
     ))
@@ -1554,7 +1900,7 @@ pub async fn handle_accept_space_rules(
     if !scope.this_space_only {
         record_library_answer(true)?;
     }
-    sync_rules_files_locked(&db, &SkillDirs::system()).await;
+    sync_rules_files_locked(&db, page_root.as_deref(), &SkillDirs::system()).await;
     Ok(Json(SpaceRulesActionResponse {
         space_id: id,
         status: "accepted".into(),
@@ -1642,12 +1988,7 @@ pub async fn handle_decline_space_rules(
 ) -> Result<Json<SpaceRulesActionResponse>, ServerError> {
     crate::memory_routes::require_person_to_accept(&headers)?;
     let _serial = SKILLS_MUTATION_LOCK.lock().await;
-    let db = state
-        .read()
-        .await
-        .db
-        .clone()
-        .ok_or(ServerError::DbNotInitialized)?;
+    let (db, page_root) = db_and_page_root(&state).await?;
     let (mut rules, _) = state_and_space(&db, &id).await?;
     if rules.status != SpaceRulesStatus::Suggested {
         return Err(ServerError::Conflict(
@@ -1667,7 +2008,7 @@ pub async fn handle_decline_space_rules(
         db.set_space_rules_state(&rules).await?;
         record_library_answer(false)?;
     }
-    sync_rules_files_locked(&db, &SkillDirs::system()).await;
+    sync_rules_files_locked(&db, page_root.as_deref(), &SkillDirs::system()).await;
     Ok(Json(SpaceRulesActionResponse {
         space_id: id,
         status: "declined".into(),
@@ -1730,7 +2071,7 @@ pub async fn handle_undo_space_rules(
     rules.deleted_fingerprints = undo.before_deleted_fingerprints;
     rules.undo = None;
     db.set_space_rules_state(&rules).await?;
-    sync_rules_files_locked(&db, &SkillDirs::system()).await;
+    sync_rules_files_locked(&db, page_root.as_deref(), &SkillDirs::system()).await;
     Ok(Json(SpaceRulesActionResponse {
         space_id: id,
         status: "undone".into(),
@@ -1771,8 +2112,11 @@ pub async fn handle_suggestions(
 }
 
 async fn approved_rule(db: &MemoryDB, rule_id: &str) -> Result<Option<SkillLine>, ServerError> {
+    // A suggestion for an existing skill names a line derived from pages,
+    // never one of the person's own rules pages.
+    let own = OwnRulePages::default();
     for space in db.list_spaces().await? {
-        let response = read_rules_for_space(db, &space).await?;
+        let response = read_rules_for_space(db, &own, &space).await?;
         if let Some(line) = response.lines.into_iter().find(|line| line.id == rule_id) {
             return Ok(Some(line));
         }
@@ -2247,19 +2591,15 @@ pub async fn handle_self_report(
     if !feature_enabled() {
         return Ok(Json(serde_json::json!({ "recorded": false })));
     }
-    let db = state
-        .read()
-        .await
-        .db
-        .clone()
-        .ok_or(ServerError::DbNotInitialized)?;
+    let (db, page_root) = db_and_page_root(&state).await?;
+    let own = OwnRulePages::load(&db, page_root.as_deref()).await?;
     // A general line is recorded under its own Space, including when it was
     // read with no Space at all.
     let (space_id, own_lines) = if no_space_named(&headers, Some(&request.space)) {
         (None, Vec::new())
     } else {
         let space = resolved_space(&db, &headers, Some(&request.space)).await?;
-        let lines = read_rules_for_space(&db, &space).await?.lines;
+        let lines = read_rules_for_space(&db, &own, &space).await?.lines;
         (Some(space.id), lines)
     };
     let (owner, line) = match own_lines
@@ -2267,7 +2607,7 @@ pub async fn handle_self_report(
         .find(|line| line.id == request.rule_id)
     {
         Some(line) => (space_id.clone().unwrap_or_default(), line),
-        None => general_lines(&db, space_id.as_deref())
+        None => general_lines(&db, &own, space_id.as_deref())
             .await?
             .into_iter()
             .find(|(_, line)| line.id == request.rule_id)

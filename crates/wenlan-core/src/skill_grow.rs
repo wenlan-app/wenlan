@@ -337,6 +337,7 @@ pub fn parse_grow(raw: &str, pages: &[SkillPageInput]) -> Vec<SkillLine> {
             source_quote: quote,
             person_edited: false,
             general: candidate.general,
+            hand_written: false,
         });
     }
     out
@@ -376,9 +377,175 @@ fn current_rule_line(raw: &str, id: &str) -> Option<(SkillLineKind, String)> {
     Some((kind, one_line(text, 500)))
 }
 
+/// The folder names that make a page of the person's own a rules page, in
+/// any app language. ASCII case does not matter.
+pub const RULES_FOLDER_NAMES: [&str; 3] = ["Rules", "規則", "规则"];
+
+/// Whether the page file `file` (relative to the pages folder) sits in a
+/// folder named Rules, at any depth. `own_space_folder` is the folder the
+/// page's Space keeps its pages in, when Spaces have folders of their own:
+/// that first folder is the Space's name, not a folder the person named.
+pub fn in_rules_folder(file: &str, own_space_folder: Option<&str>) -> bool {
+    let mut folders: Vec<&str> = file
+        .split(['/', '\\'])
+        .filter(|part| !part.is_empty())
+        .collect();
+    folders.pop();
+    let skip = usize::from(own_space_folder.is_some_and(|own| folders.first() == Some(&own)));
+    folders.iter().skip(skip).any(|folder| {
+        RULES_FOLDER_NAMES
+            .iter()
+            .any(|name| folder.eq_ignore_ascii_case(name))
+    })
+}
+
+/// Whether a page version with this `page_history.edited_by` is the person's
+/// own writing here: typed in the app or in the file, a draft they
+/// published, or Wenlan only moving or renaming the page. A version an AI
+/// tool wrote, one a teammate wrote, AI text the person accepted, and any
+/// writer this code does not know are not.
+pub fn version_is_the_persons_own(edited_by: &str) -> bool {
+    use crate::authorship::{version_author, VersionAuthor};
+    crate::shared_space::shared_writer(edited_by).is_none()
+        && edited_by != "revision_accept"
+        && matches!(
+            version_author(edited_by, ""),
+            VersionAuthor::Person | VersionAuthor::System
+        )
+}
+
+const RULE_MARKER_START: &str = "<!-- wenlan-rule:";
+
+/// The rules a person wrote themselves on `page`: its top-level bullets that
+/// carry no Wenlan marker and sit outside code blocks. A bullet is a rule
+/// unless it opens with `[decision]` or `[pitfall]`. No model reads them and
+/// the sentence filters for model quotes do not apply: the person's own words
+/// are kept as written. A bullet holding a provider token is left out.
+pub fn person_rule_lines(page: &SkillPageInput) -> Vec<SkillLine> {
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    let mut fence: Option<&str> = None;
+    for raw in page.text.lines() {
+        let trimmed = raw.trim_start();
+        if let Some(open) = ["```", "~~~"].into_iter().find(|f| trimmed.starts_with(f)) {
+            match fence {
+                None => fence = Some(open),
+                Some(current) if current == open => fence = None,
+                Some(_) => {}
+            }
+            continue;
+        }
+        if fence.is_some() || raw.contains(RULE_MARKER_START) {
+            continue;
+        }
+        let Some(item) = ["- ", "* ", "+ "]
+            .into_iter()
+            .find_map(|bullet| raw.strip_prefix(bullet))
+        else {
+            continue;
+        };
+        let item = item.trim();
+        // A to-do box is a task, not a rule.
+        if ["[ ]", "[x]", "[X]"].iter().any(|b| item.starts_with(b)) {
+            continue;
+        }
+        let (kind, text) = [
+            ("[rule]", SkillLineKind::Rule),
+            ("[decision]", SkillLineKind::Decision),
+            ("[pitfall]", SkillLineKind::Pitfall),
+        ]
+        .into_iter()
+        .find_map(|(tag, kind)| {
+            item.get(..tag.len())
+                .filter(|lead| lead.eq_ignore_ascii_case(tag))
+                .map(|_| (kind, &item[tag.len()..]))
+        })
+        .unwrap_or((SkillLineKind::Rule, item));
+        // A managed line whose marker the person removed keeps only its text.
+        let text = text.split(" — Source: ").next().unwrap_or(text);
+        let text = one_line(text, 500);
+        if normalized(&text).is_empty()
+            || STANDALONE_SECRET.is_match(&text)
+            || text.contains(TOOL_RULES_END)
+            || !seen.insert(normalized(&text))
+        {
+            continue;
+        }
+        out.push(SkillLine {
+            id: line_id(kind, &page.id, 0, &text),
+            kind,
+            source_quote: text.clone(),
+            text,
+            source_page_id: page.id.clone(),
+            source_page_title: one_line(&page.title, 180),
+            source_revision: page.revision,
+            source_revision_at: page.revision_at,
+            person_edited: true,
+            general: false,
+            hand_written: true,
+        });
+    }
+    out
+}
+
+/// The same, for a page Wenlan or an AI tool also writes (a Space's "How I
+/// work" page): only the bullets a person's own save brought in. `versions`
+/// is the page's whole history, oldest first, each with whether a person
+/// wrote it. A bullet an AI tool added never counts, also after the person
+/// saved the page again: having seen it does not make it theirs.
+pub fn person_rule_lines_through_history(
+    page: &SkillPageInput,
+    versions: &[(bool, &str)],
+) -> Vec<SkillLine> {
+    let texts = |content: &str| -> HashSet<String> {
+        person_rule_lines(&SkillPageInput {
+            text: content.to_string(),
+            ..page.clone()
+        })
+        .iter()
+        .map(|line| normalized(&line.text))
+        .collect()
+    };
+    let mut owned: HashSet<String> = HashSet::new();
+    let mut before: HashSet<String> = HashSet::new();
+    for (by_person, content) in versions {
+        let now = texts(content);
+        owned.retain(|text| now.contains(text));
+        if *by_person {
+            owned.extend(now.difference(&before).cloned());
+        }
+        before = now;
+    }
+    person_rule_lines(page)
+        .into_iter()
+        .filter(|line| owned.contains(&normalized(&line.text)))
+        .collect()
+}
+
+/// What the person wrote on the rules page themselves: every line that is
+/// neither the page's heading and opening note nor a managed line.
+fn unmanaged_rest(body: &str) -> String {
+    let mut rest: Vec<&str> = Vec::new();
+    for (index, raw) in body.lines().enumerate() {
+        let opening = (index == 0 && raw.starts_with("# How I work — "))
+            || (index <= 2 && raw.starts_with("These are this Space's approved working rules."));
+        if opening || raw.contains(RULE_MARKER_START) {
+            continue;
+        }
+        rest.push(raw);
+    }
+    let first = rest.iter().position(|line| !line.trim().is_empty());
+    let last = rest.iter().rposition(|line| !line.trim().is_empty());
+    match (first, last) {
+        (Some(first), Some(last)) => rest[first..=last].join("\n"),
+        _ => String::new(),
+    }
+}
+
 /// Preserve person edits, remember deletions, and add only grounded lines not
-/// previously deleted. Markerless prose is left on the page but is not exposed
-/// as an approved rule because it has no source revision binding.
+/// previously deleted. Everything else on the page (the person's own bullets
+/// and prose) is carried under the managed lines exactly as written; its
+/// plain bullets are read by `person_rule_lines_through_history`.
 pub fn reconcile_rules_page(
     space: &str,
     candidates: &[SkillLine],
@@ -422,6 +589,12 @@ pub fn reconcile_rules_page(
     );
     for line in &lines {
         body.push_str(&render_rule_line(line));
+        body.push('\n');
+    }
+    let rest = current_body.map(unmanaged_rest).unwrap_or_default();
+    if !rest.is_empty() {
+        body.push('\n');
+        body.push_str(&rest);
         body.push('\n');
     }
     let mut deleted_fingerprints: Vec<_> = deleted.into_iter().collect();
@@ -613,7 +786,11 @@ fn rules_file_item(line: &SkillLine) -> String {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ");
-    format!("- {text} (from \"{title}\")\n")
+    if line.hand_written {
+        format!("- {text} (written by you in \"{title}\")\n")
+    } else {
+        format!("- {text} (from \"{title}\")\n")
+    }
 }
 
 fn rules_appendix(heading: &str, lines: &[&SkillLine]) -> String {

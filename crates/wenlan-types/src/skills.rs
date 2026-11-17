@@ -41,6 +41,10 @@ pub struct SkillLine {
     /// line still lives on, and is checked against, its own Space's page.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub general: bool,
+    /// The person wrote this line themselves on a page of their own. It
+    /// counts at once, with no model and no accept.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hand_written: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -562,7 +562,9 @@ and wait for evidence that people need them.
   for candidates; the ask leaves every Space's page at once. Cleared, the
   answer is for this Space only and other Spaces still ask. One Settings switch
   changes the answer later. Suggested edits to the person's own skills are still
-  asked one by one.
+  asked one by one. The ask, a No and the switch are about what Wenlan takes
+  from pages; a rule the person wrote themselves needs none of them
+  (UX-SKILL-10).
   原文：「可以」（2026-11-15 17:33Z，回覆[草圖](https://claude.ai/artifact/EqEaFuewDn2qBRyBrG7eHn)與「put the first ask at the top of the Space page, asked only once?」）；「而且儘量不用一直問用戶，或著第一次問，後面就不問了」（2026-11-15 20:21Z）；「第一次在空間那的改動，要有選項以後都自動，勾掉就是不要」（2026-11-15 21:24Z）。
 - **UX-SKILL-2** `shipped` The accepted "How I work" page is an ordinary
   Wenlan page with Update now, Undo last night and Stop. It shows its grounded
@@ -595,8 +597,9 @@ and wait for evidence that people need them.
   main file plus appendix files it names for when the work needs them. Every
   line names the page it comes from. The files say what the AI tools would be
   told right then, so Stop, the setting turned off, a deleted line and Undo
-  take them away the same way. Wenlan never changes or removes a file there
-  that it did not write.
+  take them away the same way; with the setting off, the rules the person
+  wrote themselves stay (UX-SKILL-10). Wenlan never changes or removes a file
+  there that it did not write.
   原文：「現在只想要把這層整合好再 .wenlan」（2026-11-15 22:20Z）；「AGENTS 檔案可以分層 不論是個人還是空間/專案/repo」（2026-11-15 22:39Z）。
 - **UX-SKILL-7** `shipped` For a Space connected to a repository, the wiki
   pull request also puts that Space's own rules (rules only, not decisions or
@@ -612,9 +615,11 @@ and wait for evidence that people need them.
   Codex's `AGENTS.md`), in one part marked as Wenlan's. Wenlan changes only
   that part and never the person's own text around it. Only the installed
   app does this: a test or trial run on other data never writes these files. The person is not asked
-  again: the one answer of UX-SKILL-1 covers it. When the lines change the
-  part follows; with the setting off, the tool disconnected, or no such lines
-  left, the part is taken out. A file that another one already brings in gets
+  again: the one answer of UX-SKILL-1 covers it, and a rule the person wrote
+  themselves for every Space (UX-SKILL-10) needs no answer. When the lines
+  change the part follows; with the tool disconnected or no such lines left,
+  the part is taken out, and with the setting off only the rules the person
+  wrote themselves stay in it. A file that another one already brings in gets
   no second copy.
   原文：「為啥要外掛？直接把我們的規則同步過去工具，工具就會讀啊？」（2026-11-15 23:28Z）。
 - **UX-SKILL-9** `shipped` In a Space shared with teammates, each person's
@@ -624,6 +629,20 @@ and wait for evidence that people need them.
   person's own AI tools' files. Rules for the whole team go through the
   repo's `AGENTS.md` in a PR (UX-SKILL-7).
   原文：「我們這改動包含團隊了嗎？」「可以下個 PR 繼續開搞」（2026-11-15 23:30Z）。
+- **UX-SKILL-10** `shipped` A rule the person writes themselves counts at
+  once, with no model and no accept. On a page in a folder named Rules (規則,
+  规则; any depth, any app language), each top-level bullet is a rule, or a
+  decision or pitfall when it starts with `[decision]` or `[pitfall]`, as long
+  as the person wrote every version of that page. A page an AI tool or a
+  teammate ever wrote does not count this way and still goes through the ask
+  (UX-SKILL-1, UX-SKILL-9). A plain bullet the person adds to a "How I work"
+  page counts the same way, and the nightly update keeps it on the page. AI
+  tools are told these rules first, `wenlan rules` prints them as "written by
+  you" with the page, and the files of UX-SKILL-6, UX-SKILL-7 and UX-SKILL-8
+  follow when the page is saved. A page in a Space gives rules for that Space
+  only; a page in no Space gives rules used in every Space. The setting and a
+  No do not silence them; `#not-for-ai-tools` on the page does.
+  原文：決定 4：「A rule the person writes themselves counts at once. AI tools get it and `wenlan rules` prints it, with no model needed. Rules the AI derives from pages still need the person's accept.」Qi-Xuan 以輸入「A」回答此題（2026-11-16 22:30Z；題目與決定記錄於 `/mnt/project-files/readme-2026-11/cover-v3/2026-11-16-app-changes-from-cover.md`，決定 4）。
 
 ## From the terminal
 

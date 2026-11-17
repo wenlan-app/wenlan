@@ -233,6 +233,28 @@ impl MemoryDB {
             .await
     }
 
+    /// Every distinct writer in a page's history (`page_history.edited_by`),
+    /// however long the history is.
+    pub async fn page_history_writers(&self, page_id: &str) -> Result<Vec<String>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT DISTINCT edited_by FROM page_history WHERE page_id = ?1 ORDER BY edited_by",
+                libsql::params![page_id],
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("page_history_writers: {e}")))?;
+        let mut out = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("page_history_writers row: {e}")))?
+        {
+            out.push(row.get::<String>(0).unwrap_or_default());
+        }
+        Ok(out)
+    }
+
     pub async fn record_skill_rules_read(
         &self,
         tool: &str,

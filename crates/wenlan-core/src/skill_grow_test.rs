@@ -31,6 +31,7 @@ fn line(kind: SkillLineKind, id: &str, text: &str, quote: &str) -> SkillLine {
         source_quote: quote.into(),
         person_edited: false,
         general: false,
+        hand_written: false,
     }
 }
 
@@ -515,4 +516,173 @@ fn a_quote_cut_before_its_sentence_ends_or_pointing_outside_itself_is_dropped() 
     assert!(!points_outside_itself(
         "Always inspect the rendered output before claiming success."
     ));
+}
+
+#[test]
+fn ux_skill_10_a_bullet_the_person_wrote_is_a_rule_without_a_model() {
+    let token = format!("ghp_{}", "a".repeat(32));
+    let text = format!(
+        "# My rules\n\nSome prose that is not a rule.\n\n\
+         - Use the merge queue\n\
+         * [decision] We ship on Tuesdays\n\
+         - [Pitfall] Renaming a folder by hand loses its history\n\
+         - 不要用表情符號\n\
+         - [ ] buy milk\n\
+         - [x] done already\n\
+         - Use the merge queue\n\
+         - Never paste {token} anywhere\n\
+         - [rule] A managed line — Source: Page (p) r1 at 1 — Quote: \"x\" <!-- wenlan-rule:abc -->\n\
+         \x20 - a nested bullet is a detail, not a rule\n\
+         ```\n- a bullet inside code\n```\n\
+         1. a numbered step\n"
+    );
+    let page = page("My rules", &text, 4, 1_800_000_000);
+    let lines = person_rule_lines(&page);
+
+    let got: Vec<(SkillLineKind, &str)> = lines
+        .iter()
+        .map(|line| (line.kind, line.text.as_str()))
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            (SkillLineKind::Rule, "Use the merge queue"),
+            (SkillLineKind::Decision, "We ship on Tuesdays"),
+            (
+                SkillLineKind::Pitfall,
+                "Renaming a folder by hand loses its history"
+            ),
+            (SkillLineKind::Rule, "不要用表情符號"),
+        ]
+    );
+    for line in &lines {
+        assert!(line.hand_written && line.person_edited && !line.general);
+        assert_eq!(line.source_page_id, "page-source-1");
+        assert_eq!(line.source_page_title, "My rules");
+        assert_eq!(line.source_revision, 4);
+    }
+    // The id does not move when the page is saved again.
+    let later = person_rule_lines(&SkillPageInput {
+        revision: 9,
+        ..page.clone()
+    });
+    assert_eq!(later[0].id, lines[0].id);
+    // The sentence filters for model quotes do not apply to a person's words.
+    let short = person_rule_lines(&SkillPageInput {
+        text: "- it must stay small\n- and so on".into(),
+        ..page.clone()
+    });
+    assert_eq!(short.len(), 2);
+
+    let files = rules_layer_files(None, &lines);
+    assert!(files[0]
+        .1
+        .contains("- Use the merge queue (written by you in \"My rules\")"));
+}
+
+#[test]
+fn ux_skill_10_a_rules_folder_is_named_in_any_language_at_any_depth() {
+    assert!(in_rules_folder("Rules/git.md", None));
+    assert!(in_rules_folder("work/rules/git.md", None));
+    assert!(in_rules_folder("規則/提交.md", None));
+    assert!(in_rules_folder("筆記/规则/提交.md", None));
+    assert!(in_rules_folder("a\\RULES\\b.md", None));
+    assert!(!in_rules_folder("Rules.md", None));
+    assert!(!in_rules_folder("My Rules/git.md", None));
+    assert!(!in_rules_folder("git.md", None));
+    // A Space named Rules keeps its pages in a folder of that name: that
+    // folder is the Space, not a rules folder.
+    assert!(!in_rules_folder("Rules/git.md", Some("Rules")));
+    assert!(in_rules_folder("Rules/Rules/git.md", Some("Rules")));
+    assert!(in_rules_folder("Work/Rules/git.md", Some("Work")));
+}
+
+#[test]
+fn ux_skill_10_on_the_how_i_work_page_only_a_bullet_the_person_added_counts() {
+    let v1 = "# How I work — Wenlan\n\n- [rule] Managed — Source: P (p) r1 at 1 — Quote: \"Managed\" <!-- wenlan-rule:abc -->\n";
+    let v2 = format!("{v1}\n- Mine: use the merge queue\n");
+    let v3 = format!("{v2}- An AI tool slipped this in\n");
+    let v4 = format!("{v3}- Mine again: verify before done\n");
+    let page = page("How I work — Wenlan", &v4, 4, 1_800_000_000);
+    let lines = person_rule_lines_through_history(
+        &page,
+        &[(false, v1), (true, &v2), (false, &v3), (true, &v4)],
+    );
+    let texts: Vec<&str> = lines.iter().map(|line| line.text.as_str()).collect();
+    assert_eq!(
+        texts,
+        vec![
+            "Mine: use the merge queue",
+            "Mine again: verify before done"
+        ],
+        "an AI tool's bullet never counts, also after the person saved again"
+    );
+    // A bullet the person took out and an AI tool put back is not theirs.
+    let back = person_rule_lines_through_history(&page, &[(true, &v2), (true, v1), (false, &v4)]);
+    assert!(back.is_empty());
+}
+
+#[test]
+fn ux_skill_10_refresh_keeps_what_the_person_wrote_on_the_page() {
+    let managed = line(
+        SkillLineKind::Rule,
+        "rule-1",
+        "Verify the rendered result.",
+        "Verify the rendered result.",
+    );
+    let first = reconcile_rules_page(
+        "Wenlan",
+        std::slice::from_ref(&managed),
+        &[],
+        &[],
+        None,
+        false,
+    );
+    assert!(first.body.ends_with("<!-- wenlan-rule:rule-1 -->\n"));
+    let edited = format!(
+        "{}\n## Mine\n\n- Use the merge queue\nA note to myself.\n",
+        first.body
+    );
+    let newer = line(
+        SkillLineKind::Pitfall,
+        "rule-2",
+        "A new grounded line.",
+        "A new grounded line.",
+    );
+    let refreshed = reconcile_rules_page(
+        "Wenlan",
+        &[managed.clone(), newer],
+        &first.lines,
+        &[],
+        Some(&edited),
+        true,
+    );
+    assert!(refreshed
+        .body
+        .contains("## Mine\n\n- Use the merge queue\nA note to myself.\n"));
+    assert!(refreshed.body.contains("wenlan-rule:rule-2"));
+    assert_eq!(refreshed.lines.len(), 2, "managed lines are unchanged");
+    let mine = refreshed.body.find("## Mine").unwrap();
+    assert!(refreshed.body.find("wenlan-rule:rule-2").unwrap() < mine);
+
+    // Running it again changes nothing.
+    let again = reconcile_rules_page(
+        "Wenlan",
+        &refreshed.lines,
+        &refreshed.lines,
+        &[],
+        Some(&refreshed.body),
+        false,
+    );
+    assert_eq!(again.body, refreshed.body);
+    // A page with nothing of the person's own is written as before.
+    let plain = reconcile_rules_page(
+        "Wenlan",
+        &first.lines,
+        &first.lines,
+        &[],
+        Some(&first.body),
+        false,
+    );
+    assert_eq!(plain.body, first.body);
 }

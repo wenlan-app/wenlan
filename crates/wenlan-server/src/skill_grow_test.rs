@@ -500,11 +500,13 @@ async fn suggests_then_person_accepts_and_reads_one_space_scoped_rules_page() {
         )
         .await
         .unwrap();
-    assert!(read_rules_for_space(&scratch.db, &research)
-        .await
-        .unwrap()
-        .lines
-        .is_empty());
+    assert!(
+        read_rules_for_space(&scratch.db, &OwnRulePages::default(), &research)
+            .await
+            .unwrap()
+            .lines
+            .is_empty()
+    );
     let source = scratch.db.get_page(&source_page_id).await.unwrap().unwrap();
     scratch
         .db
@@ -527,11 +529,13 @@ async fn suggests_then_person_accepts_and_reads_one_space_scoped_rules_page() {
         )
         .await
         .unwrap();
-    assert!(read_rules_for_space(&scratch.db, &research)
-        .await
-        .unwrap()
-        .lines
-        .is_empty());
+    assert!(
+        read_rules_for_space(&scratch.db, &OwnRulePages::default(), &research)
+            .await
+            .unwrap()
+            .lines
+            .is_empty()
+    );
     let rules_page = scratch.db.get_page(&rules_page_id).await.unwrap().unwrap();
     scratch
         .db
@@ -763,6 +767,7 @@ async fn existing_skill_suggestions_are_person_only_positional_and_undo_conflict
         source_quote: "Use the merge queue because required checks run there.".into(),
         person_edited: false,
         general: false,
+        hand_written: false,
     };
     let rules_body = skill_grow::reconcile_rules_page(
         &space.name,
@@ -1341,7 +1346,7 @@ async fn ux_skill_6_approved_rules_are_written_as_layered_files_and_follow_the_s
         Ok(())
     })
     .unwrap();
-    sync_rules_files_quietly(&scratch.db).await;
+    sync_rules_files_quietly(&scratch.db, Some(&scratch.pages)).await;
     assert!(!general_file.exists() && !project_file.exists());
     assert_eq!(std::fs::read_to_string(&own).unwrap(), "my own notes\n");
 
@@ -1352,7 +1357,7 @@ async fn ux_skill_6_approved_rules_are_written_as_layered_files_and_follow_the_s
         Ok(())
     })
     .unwrap();
-    sync_rules_files_quietly(&scratch.db).await;
+    sync_rules_files_quietly(&scratch.db, Some(&scratch.pages)).await;
     assert_eq!(std::fs::read_to_string(&general_file).unwrap(), "# mine\n");
     assert!(project_file.exists());
 }
@@ -1410,7 +1415,7 @@ async fn ux_skill_8_general_rules_are_kept_in_each_connected_tools_own_file() {
         "# Mine\n\nUse pnpm.\n",
         "a run on scratch data never writes the person's tool files by itself"
     );
-    sync_rules_files_in(&scratch.db, &scratch.skill_dirs()).await;
+    sync_rules_files_in(&scratch.db, Some(&scratch.pages), &scratch.skill_dirs()).await;
 
     let codex = std::fs::read_to_string(&codex_file).unwrap();
     assert!(codex.starts_with("# Mine\n\nUse pnpm.\n\n<!-- WENLAN:RULES:START -->"));
@@ -1428,7 +1433,7 @@ async fn ux_skill_8_general_rules_are_kept_in_each_connected_tools_own_file() {
         .update_agent("claude-code", None, None, Some(false), None, None)
         .await
         .unwrap();
-    sync_rules_files_in(&scratch.db, &scratch.skill_dirs()).await;
+    sync_rules_files_in(&scratch.db, Some(&scratch.pages), &scratch.skill_dirs()).await;
     assert!(!claude_file.exists());
     assert!(std::fs::read_to_string(&codex_file)
         .unwrap()
@@ -1443,7 +1448,7 @@ async fn ux_skill_8_general_rules_are_kept_in_each_connected_tools_own_file() {
     };
     // Off takes Wenlan's part out and leaves the person's text as it was.
     set(false);
-    sync_rules_files_in(&scratch.db, &scratch.skill_dirs()).await;
+    sync_rules_files_in(&scratch.db, Some(&scratch.pages), &scratch.skill_dirs()).await;
     assert_eq!(
         std::fs::read_to_string(&codex_file).unwrap(),
         "# Mine\n\nUse pnpm.\n"
@@ -1453,7 +1458,7 @@ async fn ux_skill_8_general_rules_are_kept_in_each_connected_tools_own_file() {
     // A file that already brings in a written one gets no second copy.
     std::fs::write(&claude_file, "@~/.codex/AGENTS.md\n").unwrap();
     set(true);
-    sync_rules_files_in(&scratch.db, &scratch.skill_dirs()).await;
+    sync_rules_files_in(&scratch.db, Some(&scratch.pages), &scratch.skill_dirs()).await;
     assert!(std::fs::read_to_string(&codex_file)
         .unwrap()
         .contains(GENERAL_QUOTE));
@@ -1544,4 +1549,475 @@ async fn ux_skill_9_a_teammates_page_never_gives_this_person_a_general_rule() {
     scratch.db.set_space_rules_state(&state).await.unwrap();
     assert!(!read(Some("Habits")).await.lines[0].general);
     assert!(read(None).await.lines.is_empty());
+}
+
+/// A page the person writes in the app, in `folder` of the pages folder,
+/// published as `by` (`"publish"` is the person here).
+async fn write_page_in_folder(
+    scratch: &Scratch,
+    number: u32,
+    space: Option<&str>,
+    folder: &str,
+    title: &str,
+    content: &str,
+    by: &str,
+) -> String {
+    let id = format!("page_00000000-0000-4000-8000-{number:012x}");
+    std::fs::create_dir_all(scratch.pages.join(folder)).unwrap();
+    let draft = scratch
+        .db
+        .create_page_draft_with_id_in_registered_space_and_folder(
+            &id, title, content, space, folder,
+        )
+        .await
+        .unwrap();
+    let wenlan_core::pages::PageDraftPublishOutcome::Published(page) = scratch
+        .db
+        .publish_page_draft_by(&id, draft.version, by)
+        .await
+        .unwrap()
+    else {
+        panic!("publish")
+    };
+    wenlan_core::export::knowledge::KnowledgeProjectionWrite::new(
+        scratch.pages.clone(),
+        &scratch.db,
+    )
+    .write_page_gated(&scratch.db, &page)
+    .await
+    .unwrap();
+    id
+}
+
+async fn person_saves(scratch: &Scratch, id: &str, content: &str) {
+    let page = scratch.db.get_page(id).await.unwrap().unwrap();
+    let saved = wenlan_core::post_write::update_page_preserving_sources(
+        &scratch.db,
+        id,
+        UpdatePageRequest {
+            content: content.into(),
+            source_memory_ids: Vec::new(),
+            expected_version: Some(page.version),
+            caller_id: None,
+            operation_id: None,
+        },
+        "manual_edit",
+        Some(&scratch.pages),
+    )
+    .await
+    .unwrap();
+    assert!(saved.wrote);
+}
+
+async fn read_rules_as_codex(scratch: &Scratch, space: Option<&str>) -> SpaceRulesResponse {
+    let mut headers = HeaderMap::new();
+    headers.insert("x-agent-name", HeaderValue::from_static("codex"));
+    handle_read_rules(
+        axum::extract::State(scratch.shared.clone()),
+        headers,
+        Query(RulesQuery {
+            space: space.map(str::to_string),
+        }),
+    )
+    .await
+    .unwrap()
+    .0
+}
+
+fn texts(response: &SpaceRulesResponse) -> Vec<&str> {
+    response
+        .lines
+        .iter()
+        .map(|line| line.text.as_str())
+        .collect()
+}
+
+#[tokio::test]
+async fn ux_skill_10_hand_written_rules_reach_tools_with_no_model_and_no_yes() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(true).await;
+    let project = scratch
+        .db
+        .create_space("Project", None, false)
+        .await
+        .unwrap();
+    scratch.db.register_trusted_agent("codex").await.unwrap();
+    let codex_file = scratch.home.join(".codex/AGENTS.md");
+    std::fs::create_dir_all(codex_file.parent().unwrap()).unwrap();
+
+    let git = write_page_in_folder(
+        &scratch,
+        1,
+        Some("Project"),
+        "Rules",
+        "Git",
+        "How we use git.\n\n- Use the merge queue\n- [pitfall] Force-pushing main loses work\n",
+        "publish",
+    )
+    .await;
+    // A rules page in no Space, in a folder named in another language.
+    write_page_in_folder(
+        &scratch,
+        2,
+        None,
+        "筆記/規則",
+        "習慣",
+        "- 回答用白話\n",
+        "publish",
+    )
+    .await;
+    // The same words outside a Rules folder are an ordinary page.
+    write_page_in_folder(
+        &scratch,
+        3,
+        Some("Project"),
+        "Notes",
+        "Ideas",
+        "- Rewrite everything in one go\n",
+        "publish",
+    )
+    .await;
+
+    // "Update now" with no model answers OK and asks no model.
+    let report = refresh_without_model(&scratch.shared, scratch.skill_dirs())
+        .await
+        .unwrap();
+    assert_eq!(report.model_calls, 0);
+    assert!(
+        scratch
+            .db
+            .space_rules_state(&project.id)
+            .await
+            .unwrap()
+            .is_none(),
+        "nothing was suggested or accepted"
+    );
+
+    let in_project = read_rules_as_codex(&scratch, Some("Project")).await;
+    assert_eq!(
+        texts(&in_project),
+        vec![
+            "Use the merge queue",
+            "Force-pushing main loses work",
+            "回答用白話"
+        ]
+    );
+    assert!(in_project.lines.iter().all(|line| line.hand_written));
+    assert_eq!(in_project.lines[0].source_page_title, "Git");
+    assert_eq!(in_project.lines[0].source_page_id, git);
+    assert!(!in_project.lines[0].general && in_project.lines[2].general);
+    assert_eq!(
+        in_project.lines[1].kind,
+        wenlan_types::SkillLineKind::Pitfall
+    );
+    assert_eq!(
+        texts(&read_rules_as_codex(&scratch, None).await),
+        vec!["回答用白話"],
+        "a rules page in no Space is used everywhere; a Space's own stays there"
+    );
+
+    let project_dir = scratch.data.join("spaces").join("Project");
+    let own = std::fs::read_to_string(project_dir.join("AGENTS.md")).unwrap();
+    assert!(own.contains("- Use the merge queue (written by you in \"Git\")"));
+    assert!(!own.contains("Rewrite everything"));
+    assert!(std::fs::read_to_string(project_dir.join("pitfalls.md"))
+        .unwrap()
+        .contains("Force-pushing main loses work"));
+    let general = std::fs::read_to_string(scratch.data.join("AGENTS.md")).unwrap();
+    assert!(general.contains("- 回答用白話 (written by you in \"習慣\")"));
+    assert!(std::fs::read_to_string(&codex_file)
+        .unwrap()
+        .contains("- 回答用白話\n"));
+    assert_eq!(
+        project_rules(&scratch.db, Some(&scratch.pages), "Project").await,
+        vec!["Use the merge queue".to_string()],
+        "the repository copy gets the Space's own rules"
+    );
+
+    // A changed line follows the page at the next write, and the route's
+    // own trigger does it without being asked.
+    let guard = RulesPageWrite::begin(&scratch.shared, Some(&git)).await;
+    person_saves(&scratch, &git, "- Rebase before you merge\n").await;
+    drop(guard);
+    let mut own = String::new();
+    for _ in 0..100 {
+        own = std::fs::read_to_string(project_dir.join("AGENTS.md")).unwrap_or_default();
+        if own.contains("Rebase before you merge") {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(own.contains("- Rebase before you merge (written by you in \"Git\")"));
+    assert!(!own.contains("Use the merge queue"));
+    assert!(!project_dir.join("pitfalls.md").exists());
+
+    // The page's own mark is the one way to keep it from AI tools.
+    person_saves(
+        &scratch,
+        &git,
+        "#not-for-ai-tools\n\n- Rebase before you merge\n",
+    )
+    .await;
+    sync_rules_files_in(&scratch.db, Some(&scratch.pages), &scratch.skill_dirs()).await;
+    assert!(!project_dir.join("AGENTS.md").exists());
+    assert_eq!(
+        texts(&read_rules_as_codex(&scratch, Some("Project")).await),
+        vec!["回答用白話"]
+    );
+}
+
+#[tokio::test]
+async fn ux_skill_10_a_file_the_person_puts_in_a_rules_folder_counts_at_the_next_pass() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    // The setting off does not silence what the person wrote themselves.
+    let scratch = Scratch::new(false).await;
+    std::fs::create_dir_all(scratch.pages.join("rules")).unwrap();
+    std::fs::write(
+        scratch.pages.join("rules/testing.md"),
+        "# Testing\n\n- Run the smallest test first\n",
+    )
+    .unwrap();
+    // A note becomes a page once the editor has stopped saving it.
+    std::fs::File::options()
+        .write(true)
+        .open(scratch.pages.join("rules/testing.md"))
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(60))
+        .unwrap();
+    let stats =
+        wenlan_core::sources::page_watcher::sync_filesystem_edits(&scratch.db, &scratch.pages)
+            .await
+            .unwrap();
+    assert_eq!(stats.adopted, 1, "{stats:?}");
+    sync_rules_files_after_file_changes(&scratch.db, &scratch.pages, false).await;
+
+    assert_eq!(
+        texts(&read_rules_as_codex(&scratch, None).await),
+        vec!["Run the smallest test first"]
+    );
+    assert!(std::fs::read_to_string(scratch.data.join("AGENTS.md"))
+        .unwrap()
+        .contains("- Run the smallest test first (written by you in \"testing\")"));
+}
+
+#[tokio::test]
+async fn ux_skill_10_a_page_an_ai_wrote_still_needs_the_yes() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(true).await;
+    let project = scratch
+        .db
+        .create_space("Project", None, false)
+        .await
+        .unwrap();
+    // The person started the page; an AI tool then rewrote it.
+    let ai_page = write_page_in_folder(
+        &scratch,
+        1,
+        Some("Project"),
+        "Rules",
+        "Checks",
+        "- Placeholder to fill in\n",
+        "publish",
+    )
+    .await;
+    scratch
+        .db
+        .update_page_content(
+            &ai_page,
+            &format!("- {SOURCE_QUOTE}\n"),
+            &[],
+            "agent_refresh",
+        )
+        .await
+        .unwrap();
+    write_page_in_folder(
+        &scratch,
+        2,
+        Some("Project"),
+        "Rules",
+        "Git",
+        "- Use the merge queue\n",
+        "publish",
+    )
+    .await;
+
+    sync_rules_files_in(&scratch.db, Some(&scratch.pages), &scratch.skill_dirs()).await;
+    assert_eq!(
+        texts(&read_rules_as_codex(&scratch, Some("Project")).await),
+        vec!["Use the merge queue"],
+        "the AI tool's page gives no rule by itself"
+    );
+
+    let model = GrowModel::new();
+    assert_eq!(refresh(&scratch, &model).await.suggestions, 1);
+    let prompts = model.prompts.lock().unwrap().join("\n");
+    assert!(prompts.contains(SOURCE_QUOTE));
+    assert!(
+        !prompts.contains("Use the merge queue"),
+        "the person's own rules are not sent to the model to be suggested back"
+    );
+    assert_eq!(
+        texts(&read_rules_as_codex(&scratch, Some("Project")).await),
+        vec!["Use the merge queue"],
+        "a suggestion is not a rule until the person says yes"
+    );
+    let accepted = handle_accept_space_rules(
+        axum::extract::State(scratch.shared.clone()),
+        person_headers(),
+        AxumPath(project.id.clone()),
+        Query(SpaceAnswerScope::default()),
+    )
+    .await
+    .unwrap()
+    .0;
+    let after = read_rules_as_codex(&scratch, Some("Project")).await;
+    assert_eq!(texts(&after), vec!["Use the merge queue", RULE_TEXT]);
+    assert!(after.lines[0].hand_written && !after.lines[1].hand_written);
+
+    // On the "How I work" page, a bullet an AI tool adds is not a rule; one
+    // the person adds is, also after the person saved over the AI's bullet.
+    let rules_page = accepted.rules_page_id.unwrap();
+    let body = scratch
+        .db
+        .get_page(&rules_page)
+        .await
+        .unwrap()
+        .unwrap()
+        .content;
+    scratch
+        .db
+        .update_page_content(
+            &rules_page,
+            &format!("{body}\n- Skip review when in a hurry\n"),
+            &[],
+            "agent_refresh",
+        )
+        .await
+        .unwrap();
+    let with_ai = read_rules_as_codex(&scratch, Some("Project")).await;
+    assert!(!texts(&with_ai).contains(&"Skip review when in a hurry"));
+    person_saves(
+        &scratch,
+        &rules_page,
+        &format!("{body}\n- Skip review when in a hurry\n- Ask before deleting data\n"),
+    )
+    .await;
+    let with_mine = read_rules_as_codex(&scratch, Some("Project")).await;
+    assert!(texts(&with_mine).contains(&"Ask before deleting data"));
+    assert!(!texts(&with_mine).contains(&"Skip review when in a hurry"));
+    assert!(texts(&with_mine).contains(&RULE_TEXT));
+}
+
+#[tokio::test]
+async fn ux_skill_9_a_teammates_hand_written_page_gives_no_rule_here() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(true).await;
+    scratch.db.create_space("Team", None, false).await.unwrap();
+    // A teammate wrote the whole page.
+    write_page_in_folder(
+        &scratch,
+        1,
+        Some("Team"),
+        "Rules",
+        "Theirs",
+        "- Always squash commits\n",
+        "shared_person:member-b",
+    )
+    .await;
+    // This person wrote the page; a teammate edited it afterwards.
+    let mixed = write_page_in_folder(
+        &scratch,
+        2,
+        Some("Team"),
+        "Rules",
+        "Ours",
+        "- Use the merge queue\n",
+        "publish",
+    )
+    .await;
+    scratch
+        .db
+        .update_page_content(
+            &mixed,
+            "- Use the merge queue\n- Never work on Fridays\n",
+            &[],
+            "shared_person:member-b",
+        )
+        .await
+        .unwrap();
+
+    sync_rules_files_in(&scratch.db, Some(&scratch.pages), &scratch.skill_dirs()).await;
+    assert!(read_rules_as_codex(&scratch, Some("Team"))
+        .await
+        .lines
+        .is_empty());
+    assert!(read_rules_as_codex(&scratch, None).await.lines.is_empty());
+    assert!(!scratch.data.join("AGENTS.md").exists());
+    assert!(!scratch.data.join("spaces").join("Team").exists());
+}
+
+#[tokio::test]
+async fn ux_skill_1_a_no_still_delivers_hand_written_rules() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(true).await;
+    let project = scratch
+        .db
+        .create_space("Project", None, false)
+        .await
+        .unwrap();
+    create_person_page(
+        &scratch.db,
+        &scratch.pages,
+        "Project",
+        "Checks",
+        SOURCE_QUOTE,
+    )
+    .await;
+    write_page_in_folder(
+        &scratch,
+        1,
+        Some("Project"),
+        "Rules",
+        "Git",
+        "- Use the merge queue\n",
+        "publish",
+    )
+    .await;
+    let model = GrowModel::new();
+    assert_eq!(refresh(&scratch, &model).await.suggestions, 1);
+
+    let _ = handle_decline_space_rules(
+        axum::extract::State(scratch.shared.clone()),
+        person_headers(),
+        AxumPath(project.id.clone()),
+        Query(SpaceAnswerScope::default()),
+    )
+    .await
+    .unwrap();
+    assert!(!wenlan_core::config::load_config().skills_from_library);
+
+    sync_rules_files_in(&scratch.db, Some(&scratch.pages), &scratch.skill_dirs()).await;
+    assert_eq!(
+        texts(&read_rules_as_codex(&scratch, Some("Project")).await),
+        vec!["Use the merge queue"],
+        "the no is about what Wenlan derives, not what the person wrote"
+    );
+    let own = std::fs::read_to_string(scratch.data.join("spaces/Project/AGENTS.md")).unwrap();
+    assert!(own.contains("- Use the merge queue (written by you in \"Git\")"));
+    assert!(!own.contains(RULE_TEXT));
 }
