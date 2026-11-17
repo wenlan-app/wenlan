@@ -170,6 +170,7 @@ Your AI tool turns what you bring in into linked, cited Markdown pages and keeps
 - **Kept current:** When a source, memory, or cited code changes, pages relying on it are flagged.
 - **You decide what AI may change:** Set a page to **Allowed** or **Ask me first**, and restore any earlier version.
 - **Two ways to run it:** your AI tool as it works (default), or a background model you pick. [Steep guide](docs/steep.md).
+- **Skills:** Take in the skills you already have, or find new ones. Wenlan suggests edits; you decide.
 - **In your AI tool:** name Wenlan and ask in plain words. The plugin adds `/wenlan`. [Commands](plugin/skills/README.md).
 - **In the app:** add material, edit pages, follow citations, and review changes without connecting an AI.
 

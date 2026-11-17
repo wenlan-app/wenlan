@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=3e7a0e9c4a2ee9e36f67366c0ddd283a789fd4bac24535f7755778b3ad3e97ef -->
+<!-- README_SYNC: source=README.md sha256=2c3a821b8972c403bd707b6930e5de4a737709b00648d1390bc6d5618bf9b322 -->
 
 <p align="center">
   <picture>
@@ -183,6 +183,7 @@ Tu IA convierte lo que traes en páginas Markdown enlazadas y con citas, y las m
 - **Al día:** Si cambia una fuente, una memoria o el código citado, se marcan las páginas afectadas.
 - **Tú decides qué cambia la IA:** **Allowed** o **Ask me first** por página, y restauras cualquier versión.
 - **Dos formas:** tu IA mientras trabaja (por defecto) o un modelo en segundo plano. [Guía de Steep](docs/steep.md).
+- **Skills:** Trae las que ya tienes o busca nuevas. Wenlan sugiere cambios; tú decides.
 - **En tu herramienta de IA:** nombra Wenlan y pide. El plugin añade `/wenlan`. [Comandos](plugin/skills/README.md).
 - **En la app:** añade material, edita páginas, sigue las citas y revisa cambios sin conectar ninguna IA.
 
