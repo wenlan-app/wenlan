@@ -611,17 +611,32 @@ and wait for evidence that people need them.
   原文：「空間如果是 repo，那就直接對應上了」（2026-11-15 22:26Z）；「原本說就會寫 wiki folders 這點也要看要不要一起修改？」（2026-11-15 22:51Z）。
 - **UX-SKILL-8** `shipped` The rules used in every Space (rules only, not
   decisions or pitfalls) are also kept in
-  each connected AI tool's own always-read file (Claude Code's `CLAUDE.md`,
-  Codex's `AGENTS.md`), in one part marked as Wenlan's. Wenlan changes only
-  that part and never the person's own text around it. Only the installed
-  app does this: a test or trial run on other data never writes these files. The person is not asked
+  each connected AI tool's own always-read file, in one part marked as
+  Wenlan's: Claude Code's `CLAUDE.md`, Codex's `AGENTS.md`, the `GEMINI.md`
+  Gemini CLI and Antigravity both read, the `copilot-instructions.md` Copilot
+  CLI and Copilot in VS Code both read, Windsurf's `global_rules.md`,
+  OpenCode's and Zed's `AGENTS.md`. Kiro reads every file of a folder, so
+  there the rules are a file of Wenlan's own, `wenlan-rules.md`, and no file
+  of the person's is touched. Wenlan changes only
+  its part and never the person's own text around it, and never makes a
+  tool's folder: a tool that is not on the computer gets nothing. Only the
+  installed app does this: a test or trial run on other data never writes these files. The person is not asked
   again: the one answer of UX-SKILL-1 covers it, and a rule the person wrote
   themselves for every Space (UX-SKILL-10) needs no answer. When the lines
   change the part follows; with the tool disconnected or no such lines left,
   the part is taken out, and with the setting off only the rules the person
-  wrote themselves stay in it. A file that another one already brings in gets
-  no second copy.
-  原文：「為啥要外掛？直接把我們的規則同步過去工具，工具就會讀啊？」（2026-11-15 23:28Z）。
+  wrote themselves stay in it. A file two tools share, or two names that
+  reach one file, gets one part, kept while either tool is connected. A file
+  that another one already brings in gets no second copy; only Claude Code's
+  and Gemini's files can bring one in. When OpenCode has no `AGENTS.md` of
+  its own Wenlan makes none, because OpenCode then reads Claude Code's file,
+  and the part there covers it. When the person's text and the part together
+  would pass the 6,000 characters Windsurf reads, the part is left out. Every
+  other tool (Cursor, Claude Desktop, ChatGPT and the rest) has no such file
+  Wenlan can write and gets the rules only when it asks Wenlan. Wenlan can
+  say, tool by tool, which of these holds and when the file was written; it
+  says what is in the file, not that the AI followed it.
+  原文：「為啥要外掛？直接把我們的規則同步過去工具，工具就會讀啊？」（2026-11-15 23:28Z）；「要有信心，馬上就要做了」（2026-11-17 05:01Z）。
 - **UX-SKILL-9** `shipped` In a Space shared with teammates, each person's
   "How I work" page stays on their own computer and is not sent to the
   others. A page a teammate wrote can still give that Space a rule, but never

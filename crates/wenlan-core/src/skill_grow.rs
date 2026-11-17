@@ -807,30 +807,80 @@ pub const RULES_MAIN_FILE_MAX: usize = 30;
 pub const TOOL_RULES_START: &str = "<!-- WENLAN:RULES:START -->";
 pub const TOOL_RULES_END: &str = "<!-- WENLAN:RULES:END -->";
 
-/// The block for a tool's own file: the rules used in every Space, one per
-/// line. `None` when there are none.
-pub fn tool_rules_block(lines: &[SkillLine]) -> Option<String> {
+/// The sentences a tool's own file gets: the rules used in every Space, each
+/// on one line.
+pub fn tool_rules(lines: &[SkillLine]) -> Vec<String> {
     // Only rules: a decision or a pitfall read as a bare order misleads.
-    let rules = lines
+    lines
         .iter()
         .filter(|line| line.kind == SkillLineKind::Rule)
         .map(|line| line.text.split_whitespace().collect::<Vec<_>>().join(" "))
         .filter(|text| !text.is_empty() && !text.contains(TOOL_RULES_END))
         .take(RULES_MAIN_FILE_MAX)
-        .collect::<Vec<_>>();
+        .collect()
+}
+
+const TOOL_RULES_INTRO: &str = "Kept by Wenlan from my own pages. What I ask for in a \
+     conversation wins over these.";
+
+/// The block for a tool's own file: the rules used in every Space, one per
+/// line. `None` when there are none.
+pub fn tool_rules_block(lines: &[SkillLine]) -> Option<String> {
+    let rules = tool_rules(lines);
     if rules.is_empty() {
         return None;
     }
     let mut block = format!(
-        "{TOOL_RULES_START}\n## How I work\n\nKept by Wenlan from my own pages. What I ask for in a \
-         conversation wins over these. Wenlan rewrites this part; change the pages, not \
-         these lines.\n\n"
+        "{TOOL_RULES_START}\n## How I work\n\n{TOOL_RULES_INTRO} Wenlan rewrites this part; \
+         change the pages, not these lines.\n\n"
     );
     for rule in rules {
         block.push_str(&format!("- {rule}\n"));
     }
     block.push_str(TOOL_RULES_END);
     Some(block)
+}
+
+/// The same rules as a whole file of Wenlan's own, for a tool that reads
+/// every file of a folder. `front_matter` is what the tool needs first in the
+/// file; Wenlan's managed mark is the line right after it. `None` when there
+/// are no rules.
+pub fn tool_rules_owned_file(lines: &[SkillLine], front_matter: Option<&str>) -> Option<String> {
+    let rules = tool_rules(lines);
+    if rules.is_empty() {
+        return None;
+    }
+    let mut file = format!(
+        "{}{RULES_FILE_MARK}\n# How I work\n\n{TOOL_RULES_INTRO}\n\n",
+        front_matter.unwrap_or_default()
+    );
+    for rule in rules {
+        file.push_str(&format!("- {rule}\n"));
+    }
+    Some(file)
+}
+
+/// Whether `text` is a rules file Wenlan wrote: its first line, or the first
+/// line after a front-matter block, is the managed mark.
+pub fn is_wenlan_rules_text(text: &str) -> bool {
+    if text.starts_with(RULES_FILE_MARK) {
+        return true;
+    }
+    let Some(rest) = text
+        .strip_prefix("---\n")
+        .or_else(|| text.strip_prefix("---\r\n"))
+    else {
+        return false;
+    };
+    let mut after = rest;
+    while !after.is_empty() {
+        let (line, tail) = after.split_once('\n').unwrap_or((after, ""));
+        after = tail;
+        if line.trim_end() == "---" {
+            return after.starts_with(RULES_FILE_MARK);
+        }
+    }
+    false
 }
 
 /// `text` with Wenlan's block replaced by `block`, appended when it has none,

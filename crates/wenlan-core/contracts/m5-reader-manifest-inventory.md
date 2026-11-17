@@ -743,6 +743,7 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `GET` | `/api/sessions/{id}/lines` | main | no | not_applicable | `none` | — | ConversationLinesResponse: one AI tool transcript's lines with its conversation and thing titles, no page prose |
 | `POST` | `/api/skills/refresh` | main | no | not_applicable | `none` | — | SkillsRefreshResponse contains counts only |
 | `GET` | `/api/skills/rules` | main | yes | automatic | `none` | `handle_read_rules` | approved Space rule lines and source page titles; only accepted, eligible rules are returned |
+| `GET` | `/api/skills/delivery` | main | no | not_applicable | `none` | — | RulesDeliveryResponse: AI tool names, file paths, states, a time and a count; no rule or page text |
 | `GET` | `/api/skills/spaces/suggestions` | main | yes | automatic | `none` | `handle_space_suggestions` | candidate rule lines and Space names awaiting person acceptance |
 | `POST` | `/api/skills/spaces/{id}/accept` | main | no | not_applicable | `none` | — | person acceptance receipt contains status and rules page id only |
 | `POST` | `/api/skills/spaces/{id}/decline` | main | no | not_applicable | `none` | — | person decline receipt contains status only |
@@ -1889,7 +1890,7 @@ carrying the authority of agreement.
 | `server/sentence_routes.rs::handle_reject_sentence_proposal` | `pub` | no | no | — | `server/sentence_routes.rs::require_visible_page` |
 | `server/sentence_routes.rs::handle_revert_sentences` | `pub` | no | no | — | `server/sentence_routes.rs::require_visible_page` |
 | `server/skill_grow.rs::eligible_lines` | `private` | no | no | `server/skill_grow.rs::accept_space`, `server/skill_grow.rs::handle_space_suggestions`, `server/skill_grow.rs::process_space`, `server/skill_grow.rs::read_rules_for_space` | `server/skill_grow.rs::source_line_is_eligible` |
-| `server/skill_grow.rs::read_rules_for_space` | `private` | no | no | `server/skill_grow.rs::approved_rule_ids`, `server/skill_grow.rs::general_lines`, `server/skill_grow.rs::handle_read_rules`, `server/skill_grow.rs::handle_self_report`, `server/skill_grow.rs::project_rules`, `server/skill_grow.rs::sync_rules_files` | `server/skill_grow.rs::readable_rules_page` |
+| `server/skill_grow.rs::read_rules_for_space` | `private` | no | no | `server/skill_grow.rs::approved_rule_ids`, `server/skill_grow.rs::general_lines`, `server/skill_grow.rs::handle_read_rules`, `server/skill_grow.rs::handle_self_report`, `server/skill_grow.rs::project_rules`, `server/skill_grow.rs::rules_by_layer` | `server/skill_grow.rs::readable_rules_page` |
 | `server/skill_grow.rs::refresh_with` | `private` | no | no | `server/skill_grow.rs::handle_refresh`, `server/skill_grow.rs::run_nightly_if_due` | `server/skill_grow.rs::refresh_unlocked` |
 | `server/source_lifecycle_routes.rs::write` | `private` | yes | no | — | `core/db/citation_provenance.rs::set_source_lifecycle` |
 | `server/source_routes.rs::sync_directory_source` | `pub(crate)` | no | no | `server/scheduler.rs::sync_directory_sources_in_scope`, `server/source_routes.rs::handle_sync_source` | `core/db.rs::rebind_source_id_with_source_page` |

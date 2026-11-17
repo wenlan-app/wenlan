@@ -378,6 +378,7 @@ main|post|/api/team/membership|wenlan_server::team_routes::handle_remember_membe
 main|delete|/api/team/membership|wenlan_server::team_routes::handle_forget_membership
 main|post|/api/skills/refresh|wenlan_server::skill_grow::handle_refresh
 main|get|/api/skills/rules|wenlan_server::skill_grow::handle_read_rules
+main|get|/api/skills/delivery|wenlan_server::skill_grow::handle_rules_delivery
 main|get|/api/skills/spaces/suggestions|wenlan_server::skill_grow::handle_space_suggestions
 main|post|/api/skills/spaces/{id}/accept|wenlan_server::skill_grow::handle_accept_space_rules
 main|post|/api/skills/spaces/{id}/decline|wenlan_server::skill_grow::handle_decline_space_rules

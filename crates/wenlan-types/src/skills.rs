@@ -124,3 +124,66 @@ pub struct SpaceRulesActionResponse {
     pub rules_page_id: Option<String>,
     pub undo_available: bool,
 }
+
+/// How the rules used in every Space reach one AI tool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RulesDeliveryMethod {
+    /// Wenlan keeps them in a file the tool reads in every conversation.
+    File,
+    /// The tool gets them only when it asks Wenlan through MCP.
+    Mcp,
+}
+
+/// Where one AI tool stands, worked out when asked from the file as it is.
+/// It says what Wenlan wrote, never whether the AI follows it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RulesDeliveryState {
+    /// The file holds exactly what Wenlan would write now.
+    Delivered,
+    /// Another file the tool reads already holds them: one the tool's file
+    /// brings in, or the file the tool falls back to.
+    CoveredByAnotherFile,
+    /// The tool's own folder is not on this computer; nothing was written.
+    FolderMissing,
+    /// The person's text plus Wenlan's part is more than the tool reads.
+    OverLimit,
+    /// The setting is off and the person wrote no rule for every Space.
+    SettingOff,
+    /// A dev, test or demo run on other data never writes the tools' files.
+    IsolatedRun,
+    /// The tool is not connected, or was turned off.
+    NotConnected,
+    /// There is no rule used in every Space to write.
+    NoRules,
+    /// The file does not hold what Wenlan would write now: the next sync has
+    /// not run yet, or the file could not be read or written.
+    OutOfDate,
+    /// No file is written for this tool; it gets the rules when it asks.
+    OnRequest,
+}
+
+/// One AI tool's row of `GET /api/skills/delivery`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolRulesDelivery {
+    pub id: String,
+    pub display_name: String,
+    /// Connected and not turned off.
+    pub connected: bool,
+    pub method: RulesDeliveryMethod,
+    /// The tool's always-read file, when the method is `file`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    pub state: RulesDeliveryState,
+    /// When the file was last written (Unix seconds), only when `delivered`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivered_at: Option<i64>,
+    /// How many rules used in every Space Wenlan writes into a tool's file.
+    pub rule_count: usize,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RulesDeliveryResponse {
+    pub tools: Vec<ToolRulesDelivery>,
+}

@@ -494,6 +494,45 @@ fn ux_skill_8_tool_rules_block_is_added_replaced_and_taken_out_again() {
 }
 
 #[test]
+fn ux_skill_8_a_whole_file_of_wenlans_keeps_its_mark_after_the_tools_front_matter() {
+    let front = "---\ninclusion: always\n---\n";
+    assert_eq!(tool_rules_owned_file(&[], Some(front)), None);
+    let rules = [
+        line(SkillLineKind::Rule, "a", "Discuss\nfirst.", "q"),
+        line(SkillLineKind::Decision, "b", "We chose SQLite.", "q"),
+    ];
+    let file = tool_rules_owned_file(&rules, Some(front)).unwrap();
+    assert!(
+        file.starts_with(&format!("{front}{RULES_FILE_MARK}\n# How I work\n")),
+        "the tool's front matter comes first, then Wenlan's mark"
+    );
+    assert!(file.ends_with("- Discuss first.\n"));
+    assert!(
+        !file.contains("SQLite"),
+        "only rules, as in the marked part"
+    );
+    assert!(is_wenlan_rules_text(&file));
+    // The mark is still found when the person changed the front matter, or
+    // an editor saved the file with Windows line ends.
+    assert!(is_wenlan_rules_text(&file.replace("always", "manual")));
+    assert!(is_wenlan_rules_text(&file.replace('\n', "\r\n")));
+    let plain = tool_rules_owned_file(&rules, None).unwrap();
+    assert!(plain.starts_with(RULES_FILE_MARK) && is_wenlan_rules_text(&plain));
+
+    // A file of the person's own is never taken for Wenlan's.
+    for own in [
+        String::new(),
+        "# My steering\n".to_string(),
+        "---\ninclusion: always\n---\n# My steering\n".to_string(),
+        format!("---\ninclusion: always\n# never closed\n{RULES_FILE_MARK}\n"),
+        format!("# Mine\n{RULES_FILE_MARK}\n"),
+        format!("---\ninclusion: always\n---\n\n# Mine\n{RULES_FILE_MARK}\n"),
+    ] {
+        assert!(!is_wenlan_rules_text(&own), "{own:?}");
+    }
+}
+
+#[test]
 fn a_quote_cut_before_its_sentence_ends_or_pointing_outside_itself_is_dropped() {
     let source =
         "Skipping the review, even for small tasks, leaves real defects behind \u{2014} one \
