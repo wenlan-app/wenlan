@@ -62,6 +62,16 @@ load every reference by default. A plain request to organize or tidy existing
 knowledge is a goal for this workflow; do not route it to a separate organize
 or distill workflow.
 
+## A page that follows another page
+
+When the user asks for one page to follow another ("讓對外介紹跟著定位頁",
+"make the intro follow the positioning page"), read both pages and call
+`page_basis(action="mark", page_id=<the follower>, basis_page_id=<the page
+it follows>, version=<that page's page.version>)`. Say what was set: when
+the followed page changes, steep updates the follower; a locked page gets a
+revision card instead. `action="remove"` stops it. Set one up only when the
+user asks.
+
 ## Automatic and on-demand work
 
 Wenlan may run eligible enrichment and evidence-based page maintenance in the

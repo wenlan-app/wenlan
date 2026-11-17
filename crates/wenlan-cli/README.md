@@ -706,6 +706,44 @@ Options:
 - `--file <FILE>`: Read the text from this file instead of stdin.
 - `--create-only`: Refuse if this link is already saved instead of replacing it.
 
+### `wenlan follow`
+
+Make a page or a repo file follow a page, so it keeps up when that page changes.
+
+```text
+wenlan follow [OPTIONS] <WHAT> <PAGE>
+```
+
+Arguments:
+
+- `<WHAT>`: What follows: a page (its title, part of it, or its id) or a file of this repository such as README.md.
+- `<PAGE>`: The page it follows: its title, part of it, or its id.
+
+### `wenlan unfollow`
+
+Stop a page or a repo file following a page.
+
+```text
+wenlan unfollow [OPTIONS] <WHAT> [PAGE]
+```
+
+Arguments:
+
+- `<WHAT>`: The page or file that stops following.
+- `[PAGE]`: The page it follows. Needed only when it follows more than one.
+
+### `wenlan follows`
+
+Show what follows which page, and what is waiting to catch up.
+
+```text
+wenlan follows [OPTIONS] [PAGE]
+```
+
+Arguments:
+
+- `[PAGE]`: Show what this page follows. Leave out to list the files that follow a page and the pages waiting to catch up.
+
 **Setup**
 
 ### `wenlan setup`

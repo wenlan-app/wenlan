@@ -653,6 +653,9 @@ pub const CLI_READERS: &[CliReader] = &[
     CliReader { subcommand: "wenlan repo", page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "subcommand renderer" },
     CliReader { subcommand: "wenlan team", page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "subcommand renderer" },
     CliReader { subcommand: "wenlan sweep", page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "subcommand renderer" },
+    CliReader { subcommand: "wenlan follow", page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "subcommand renderer" },
+    CliReader { subcommand: "wenlan unfollow", page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "subcommand renderer" },
+    CliReader { subcommand: "wenlan follows", page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "subcommand renderer" },
 ];
 
 /// Look up a registered HTTP reader by its runtime identity.

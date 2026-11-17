@@ -536,6 +536,39 @@ pub async fn steep_update_page(
     knowledge_path: Option<&Path>,
     citations: Option<(String, String)>,
 ) -> Result<WriteResult, WenlanError> {
+    steep_update_page_with_bases(
+        db,
+        page_id,
+        req,
+        agent,
+        space_guard,
+        expected_source_revision,
+        code_rewrite,
+        knowledge_path,
+        citations,
+        Vec::new(),
+    )
+    .await
+}
+
+/// [`steep_update_page`] for a note that relies on other pages: `marks` are
+/// those pages as `(page id, version)` the rewrite read. A direct write
+/// confirms each one still at that version in the write's own transaction; a
+/// revision card carries them and confirms them when it is accepted. Marks
+/// ride only an agent's edit (`code_rewrite` is `Some(false)`).
+#[allow(clippy::too_many_arguments)]
+pub async fn steep_update_page_with_bases(
+    db: &MemoryDB,
+    page_id: &str,
+    req: UpdatePageRequest,
+    agent: Option<&str>,
+    space_guard: Option<crate::read_scope::ReadScope>,
+    expected_source_revision: i64,
+    code_rewrite: Option<bool>,
+    knowledge_path: Option<&Path>,
+    citations: Option<(String, String)>,
+    marks: Vec<(String, i64)>,
+) -> Result<WriteResult, WenlanError> {
     let edited_by = match code_rewrite {
         Some(false) => "agent_refresh",
         _ => "re_distill",
@@ -557,6 +590,7 @@ pub async fn steep_update_page(
         &BasisWrite {
             actor: agent.unwrap_or("unknown").to_string(),
             space_guard,
+            marks,
             ..BasisWrite::default()
         },
     )
