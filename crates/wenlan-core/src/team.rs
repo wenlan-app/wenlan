@@ -122,6 +122,9 @@ pub struct Invite {
 pub enum CredentialKind {
     LegacyKey,
     ToolKey,
+    /// A browser's session cookie. The session itself lives in the server
+    /// process; core only names the kind.
+    BrowserSession,
 }
 
 /// Which credential matched: the member's legacy key, or one of their tool
@@ -130,6 +133,7 @@ pub enum CredentialKind {
 pub enum Credential {
     LegacyKey,
     ToolKey { id: String },
+    BrowserSession,
 }
 
 impl Credential {
@@ -137,6 +141,7 @@ impl Credential {
         match self {
             Credential::LegacyKey => CredentialKind::LegacyKey,
             Credential::ToolKey { .. } => CredentialKind::ToolKey,
+            Credential::BrowserSession => CredentialKind::BrowserSession,
         }
     }
 }
@@ -820,6 +825,13 @@ pub fn remove_member(path: &Path, id: &str) -> Result<Member, WenlanError> {
         }
         Ok(member.clone())
     })
+}
+
+/// The member with this id as the file now says, removed or not; `None`
+/// when there is no such member. A browser session names its member by id,
+/// and the caller checks [`Member::is_active`] on every request.
+pub fn member_by_id(path: &Path, id: &str) -> Result<Option<Member>, WenlanError> {
+    Ok(read_team(path)?.members.into_iter().find(|m| m.id == id))
 }
 
 /// The active member whose legacy key or non-revoked tool key this is, and

@@ -198,6 +198,7 @@ async fn fixture() -> Fixture {
             settings_path,
             daemon_url: format!("http://127.0.0.1:{port}"),
             mcp: Arc::default(),
+            sessions: Arc::default(),
         },
         _dir: dir,
         log,
@@ -1724,6 +1725,7 @@ async fn a_member_uses_folders_through_the_gate_and_a_real_daemon() {
         settings_path,
         daemon_url: format!("http://127.0.0.1:{port}"),
         mcp: Arc::default(),
+        sessions: Arc::default(),
     };
     let folders = |answer: &Value| -> Vec<String> {
         answer["folders"]
