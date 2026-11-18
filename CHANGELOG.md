@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.22.2](https://github.com/wenlan-app/wenlan/compare/v0.22.1...v0.22.2) (2026-11-18)
+
+
+### Features
+
+* **app:** sidebar with fixed Docs, Skills and Rules sections, list pages, and rule sources ([#1320](https://github.com/wenlan-app/wenlan/issues/1320)) ([0d78242](https://github.com/wenlan-app/wenlan/commit/0d782424a0dd3b22323aa28c0091ff7be0757596))
+* **cli:** wenlan --help shows ten commands; everything else is under wenlan help all ([#1321](https://github.com/wenlan-app/wenlan/issues/1321)) ([da572bc](https://github.com/wenlan-app/wenlan/commit/da572bc9e3ef518af246b279bad2e52fac605bd5))
+* **cli:** wenlan init ties a team's repository without an extra step ([#1326](https://github.com/wenlan-app/wenlan/issues/1326)) ([ae1ae96](https://github.com/wenlan-app/wenlan/commit/ae1ae9646174d5d5d1edf5b60d7fcf81e4245521))
+* **team:** browser sessions behind the credential table ([#1325](https://github.com/wenlan-app/wenlan/issues/1325)) ([19b1b1e](https://github.com/wenlan-app/wenlan/commit/19b1b1e914f679b86ed0a23bd04b3bee548913a3))
+* **team:** folders for team members on the web ([#1319](https://github.com/wenlan-app/wenlan/issues/1319)) ([449b394](https://github.com/wenlan-app/wenlan/commit/449b39414dba9c5f39d9d9d502dde9671111632e))
+* **team:** tool keys, credential route table and compromise reset ([#1324](https://github.com/wenlan-app/wenlan/issues/1324)) ([f9e45ae](https://github.com/wenlan-app/wenlan/commit/f9e45ae0e36e34b96d888e15560a49f2e9494fa6))
+
+
+### Bug Fixes
+
+* **ci:** fetch Windows ONNX Runtime 1.23.2 from NuGet ([#1322](https://github.com/wenlan-app/wenlan/issues/1322)) ([3299b63](https://github.com/wenlan-app/wenlan/commit/3299b6392e43b7ff9f3438dcf51f29617aec7a1b))
+* **steep:** pages that follow a page update, and say which page changed ([#1318](https://github.com/wenlan-app/wenlan/issues/1318)) ([3a29b41](https://github.com/wenlan-app/wenlan/commit/3a29b4186b27f07604872b2eb9e6c1fb2ff1bdb0))
+
 ## [0.22.1](https://github.com/wenlan-app/wenlan/compare/v0.22.0...v0.22.1) (2026-11-17)
 
 
