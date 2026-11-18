@@ -2336,6 +2336,8 @@ export interface PageChangelogEntry {
   person_asked?: string | null;
   /** The earlier version this one put back. */
   restored_from?: number | null;
+  /** The whole page text at this version, with `includeText` (UX-HIST-2). */
+  text?: string | null;
 }
 
 export type PageHistoryKind = "person_edit" | "ai_edit" | "source_update" | "archived" | "restored";

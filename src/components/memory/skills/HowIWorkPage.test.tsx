@@ -143,7 +143,7 @@ describe("How-I-work page", () => {
     const menu = await openMenu();
     expect(within(menu).getByRole("menuitem", { name: "Update now" })).toBeInTheDocument();
     expect(within(menu).getByRole("menuitem", { name: "Undo last night" })).toBeInTheDocument();
-    expect(within(menu).getByRole("menuitem", { name: /^Stop/ })).toBeInTheDocument();
+    expect(within(menu).getByRole("menuitem", { name: "Stop" })).toBeInTheDocument();
     // No row of buttons is left in the page body.
     expect(screen.queryByRole("button", { name: "Update now" })).not.toBeInTheDocument();
     const borrowed = await screen.findByRole("heading", { name: "AI tools borrowed this week" });
@@ -274,14 +274,14 @@ describe("How-I-work page", () => {
     renderPage();
     const menu = await openMenu();
     expect(screen.queryByRole("heading", { name: "AI tools borrowed this week" })).not.toBeInTheDocument();
-    fireEvent.click(within(menu).getByRole("menuitem", { name: /^Stop/ }));
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Stop" }));
     await waitFor(() => expect(api.updatePage).toHaveBeenCalled());
     const request = api.updatePage.mock.calls[0][0];
     expect(request.content).toContain("<!-- wenlan:not-for-ai-tools -->");
     expect(request.content).toContain("<!-- wenlan-rule:rule-1 -->");
   });
 
-  it("UX-SKILL-11: each tool chip shows its logo or a short badge, and keyboard focus opens a card with its state, rule count and delivered time", async () => {
+  it("UX-SKILL-11: each tool chip shows its logo or a short badge, and keyboard focus opens a card with its state, its rules across all Spaces and delivered time", async () => {
     api.delivery.mockResolvedValue([
       tool("claude-code", "Claude Code", { delivered_at: now - 7200, rule_count: 3 }),
       tool("windsurf", "Windsurf", { state: "over_limit" }),
@@ -301,7 +301,7 @@ describe("How-I-work page", () => {
     expect(card).not.toBeVisible();
     fireEvent.focus(claude);
     expect(card).toBeVisible();
-    expect(card).toHaveTextContent("Claude Codeconnected, rules delivered3 rules delivered · 2h ago");
+    expect(card).toHaveTextContent("Claude Codeconnected, rules delivered3 rules delivered, across all Spaces · 2h ago");
     fireEvent.keyDown(claude, { key: "Escape" });
     expect(card).not.toBeVisible();
     fireEvent.blur(claude);
@@ -310,49 +310,131 @@ describe("How-I-work page", () => {
     const windsurfCard = screen.getByRole("tooltip");
     expect(windsurfCard).toHaveTextContent(/^Windsurfconnected, too long to deliver$/);
     expect(windsurfCard.querySelector(".rules-tools-dot")).toHaveAttribute("data-dot", "problem");
+    // Escape closes a card the pointer opened, wherever the focus is.
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    fireEvent.mouseLeave(windsurf.parentElement!);
+    fireEvent.mouseEnter(windsurf.parentElement!);
+    // The pointer moving into the card stays inside the chip's item.
+    expect(windsurf.parentElement!.contains(screen.getByRole("tooltip"))).toBe(true);
     fireEvent.mouseLeave(windsurf.parentElement!);
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
     expect(document.querySelector(".rules-tools")!.textContent).not.toMatch(/follow|obey/i);
   });
 
+  it("UX-SKILL-11: a click or tap pins a chip's card: the click after a hover keeps it open, the next click or a press elsewhere closes it", async () => {
+    api.delivery.mockResolvedValue([tool("claude-code", "Claude Code", {}), tool("windsurf", "Windsurf", { state: "over_limit" })]);
+    renderPage();
+    const claude = await screen.findByRole("button", { name: "Claude Code" });
+    const item = claude.parentElement!;
+    // A mouse: enter, then click. The card the hover opened stays.
+    fireEvent.mouseEnter(item);
+    fireEvent.click(claude);
+    expect(screen.getByRole("tooltip")).toBeVisible();
+    fireEvent.mouseLeave(item);
+    expect(screen.getByRole("tooltip")).toBeVisible();
+    expect(claude).toHaveAttribute("data-pinned", "true");
+    fireEvent.click(claude);
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    // A tap with no hover pins it open; a press elsewhere closes it.
+    fireEvent.click(claude);
+    expect(screen.getByRole("tooltip")).toBeVisible();
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+  });
+
+  it("UX-SKILL-11: the dots differ in shape as well as colour: a check when delivered, a ring when connected, an exclamation mark when not delivered", async () => {
+    api.delivery.mockResolvedValue([
+      tool("claude-code", "Claude Code", {}),
+      tool("cursor", "Cursor", { method: "mcp", state: "on_request" }),
+      tool("windsurf", "Windsurf", { state: "over_limit" }),
+    ]);
+    api.rules.mockResolvedValue(told([daemonLine("rule-1", "Discuss the approach before writing code", { source_page_id: "page-source-1", general: true })]));
+    renderPage();
+    await screen.findByRole("button", { name: "Windsurf" });
+    const marks = Object.fromEntries([...document.querySelectorAll(".rules-tools-chip .rules-tools-dot")].map((dot) => [dot.getAttribute("data-dot"), dot.innerHTML]));
+    expect(Object.keys(marks)).toEqual(["delivered", "connected", "problem"]);
+    expect(new Set(Object.values(marks)).size).toBe(3);
+    expect(marks.delivered).toContain("rules-tools-dot-glyph");
+    expect(marks.problem).toContain("rules-tools-dot-glyph");
+    expect(marks.connected).not.toContain("rules-tools-dot-glyph");
+  });
+
+  const entry = (version: number, at: number, edited_by: string, text: string) => ({ version, at, edited_by, text });
+
   it("UX-SKILL-2: under the title, says You edited, how many source pages the AI updated it from, and when, from the page's history", async () => {
     api.revisions.mockResolvedValue({ page_id: page.id, current_version: 3, user_edited: true, entries: [
-      { version: 1, at: now - 86400 * 3, edited_by: "agent_create" },
-      { version: 2, at: now - 7200, edited_by: "agent_refresh" },
-      { version: 3, at: now - 60, edited_by: "user" },
+      entry(1, now - 86400 * 3, "agent_create", "v1"),
+      entry(2, now - 7200, "agent_refresh", "v2"),
+      entry(3, now - 60, "manual_edit", "v3"),
     ] });
     renderPage({ ...page, user_edited: true });
     const status = await screen.findByTestId("how-i-work-status");
     // Two managed lines, from two different pages; the time is the AI's
     // last rules write, not the person's later edit.
     await waitFor(() => expect(status).toHaveTextContent("You edited·AI updated it from 2 sources·2h ago"));
-    expect(status.querySelector("[data-part='when']")).toHaveAttribute("data-from", "history");
+    expect(api.revisions).toHaveBeenCalledWith(page.id, true);
   });
 
-  it("UX-SKILL-2: the status line shows only what is true, falls back to the page's modified time, and is gone when nothing is", async () => {
-    api.revisions.mockRejectedValue(new Error("older daemon"));
-    const oneSource = content.replace("(page-source-2)", "(page-source-1)");
-    const first = renderPage({ ...page, content: oneSource });
+  it("UX-SKILL-2: a teammate's edit, Stop and Undo last night do not read You edited, and an undone night names the write that still stands", async () => {
+    api.revisions.mockResolvedValue({ page_id: page.id, current_version: 5, user_edited: true, entries: [
+      entry(1, now - 86400 * 2, "agent_refresh", "v1"),
+      entry(2, now - 86400, "shared_person:member-2", "v2"),
+      entry(3, now - 7200, "agent_refresh", "v3"),
+      // Undo last night: the text from before that night's write.
+      entry(4, now - 3600, "manual_edit", "v2"),
+      entry(5, now - 60, "manual_edit", "v2\n<!-- wenlan:not-for-ai-tools -->"),
+    ] });
+    renderPage({ ...page, user_edited: true, human_edited_at: now - 60 });
     const status = await screen.findByTestId("how-i-work-status");
-    await waitFor(() => expect(status.querySelector("[data-part='when']")).toHaveAttribute("data-from", "modified"));
-    expect(status).toHaveTextContent(/^AI updated it from 1 source·/);
+    await waitFor(() => expect(status).toHaveTextContent(/^AI updated it from 2 sources·2d ago$/));
     expect(status).not.toHaveTextContent("You edited");
+  });
+
+  it("UX-SKILL-2: without the page's history the line names no time and no edit, never the page's modified time, and is gone when nothing is true", async () => {
+    let answer: (value: unknown) => void = () => undefined;
+    api.revisions.mockReturnValue(new Promise((resolve) => { answer = resolve; }));
+    const oneSource = content.replace("(page-source-2)", "(page-source-1)");
+    const first = renderPage({ ...page, content: oneSource, user_edited: true, human_edited_at: now - 5, last_modified: new Date().toISOString() });
+    const status = await screen.findByTestId("how-i-work-status");
+    // While the history loads: the AI part alone.
+    expect(status).toHaveTextContent(/^AI updated it from 1 source$/);
+    answer({ page_id: page.id, current_version: 3, user_edited: true, entries: [entry(1, now - 7200, "agent_refresh", "v1")] });
+    await waitFor(() => expect(status).toHaveTextContent(/^AI updated it from 1 source·2h ago$/));
     first.unmount();
+    // A daemon that cannot answer: still no time.
+    api.revisions.mockRejectedValue(new Error("older daemon"));
+    const second = renderPage({ ...page, version: 8, content: oneSource, last_modified: new Date().toISOString() });
+    await waitFor(() => expect(api.revisions).toHaveBeenCalledTimes(2));
+    expect(await screen.findByTestId("how-i-work-status")).toHaveTextContent(/^AI updated it from 1 source$/);
+    second.unmount();
     // Only the person's own bullets, never edited by them: no line at all.
     renderPage({ ...page, version: 9, content: "# How I work — Wenlan\n\nThese are this Space's approved working rules.\n\n- Keep commits small\n" });
     await screen.findByText("Keep commits small");
     expect(screen.queryByTestId("how-i-work-status")).not.toBeInTheDocument();
   });
 
-  it("UX-SKILL-2: the status line in Traditional Chinese", async () => {
-    await i18n.changeLanguage("zh-Hant");
+  it("UX-SKILL-2: the status line in Traditional and Simplified Chinese", async () => {
+    api.revisions.mockResolvedValue({ page_id: page.id, current_version: 2, user_edited: true, entries: [entry(1, now - 7200, "agent_refresh", "v1"), entry(2, now - 30, "manual_edit", "v2")] });
     try {
-      renderPage({ ...page, human_edited_at: now - 30 });
-      const status = await screen.findByTestId("how-i-work-status");
-      await waitFor(() => expect(status).toHaveTextContent(/^你改過·AI 依 2 個來源更新·/));
+      await i18n.changeLanguage("zh-Hant");
+      const first = renderPage();
+      await waitFor(async () => expect(await screen.findByTestId("how-i-work-status")).toHaveTextContent(/^你改過·AI 依 2 個來源更新·2 ?小時前$/));
+      first.unmount();
+      await i18n.changeLanguage("zh-Hans");
+      renderPage({ ...page, version: 5 });
+      await waitFor(async () => expect(await screen.findByTestId("how-i-work-status")).toHaveTextContent(/^你改过·AI 根据 2 个来源更新·2 ?小时前$/));
     } finally {
       await i18n.changeLanguage("en");
     }
+  });
+
+  it("UX-SKILL-2: Update now reads the page's history again", async () => {
+    renderPage();
+    await waitFor(() => expect(api.revisions).toHaveBeenCalledTimes(1));
+    const menu = await openMenu();
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Update now" }));
+    await waitFor(() => expect(api.revisions).toHaveBeenCalledTimes(2));
   });
 
   it("UX-SKILL-2: the … menu greys out Undo last night while no Space can be undone, shows the Stop sentence under Stop, and works from the keyboard", async () => {
@@ -363,8 +445,8 @@ describe("How-I-work page", () => {
     fireEvent.click(trigger);
     const menu = screen.getByRole("menu");
     expect(within(menu).getByRole("menuitem", { name: "Undo last night" })).toBeDisabled();
-    const stop = within(menu).getByRole("menuitem", { name: /^Stop/ });
-    expect(stop).toHaveTextContent("StopStop means AI tools can’t read this page right away. The page stays here, and you can start it again later.");
+    const stop = within(menu).getByRole("menuitem", { name: "Stop" });
+    expect(stop).toHaveAccessibleDescription("Stop means AI tools can’t read this page right away. The page stays here, and you can start it again later.");
     // The sentence is in the menu only, not in the page body.
     expect(document.querySelectorAll(".how-i-work-stop-note")).toHaveLength(0);
     expect(within(menu).getByRole("menuitem", { name: "Update now" })).toHaveFocus();
@@ -388,11 +470,12 @@ describe("How-I-work page", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("That change didn’t finish. Nothing else was changed.");
   });
 
-  it("UX-SKILL-2: a stopped page offers Start in the menu, with the stopped sentence under it", async () => {
+  it("UX-SKILL-2: a stopped page says so on the page and offers Start in the menu, with the stopped sentence under it", async () => {
     renderPage({ ...page, content: content.replace("\n\n", "\n\n<!-- wenlan:not-for-ai-tools -->\n\n") });
+    expect(await screen.findByTestId("how-i-work-stopped")).toHaveTextContent("AI tools can’t read this page. The page is still here; press Start when you want to use it again.");
     const menu = await openMenu();
-    const start = within(menu).getByRole("menuitem", { name: /^Start/ });
-    expect(start).toHaveTextContent("AI tools can’t read this page. The page is still here; press Start when you want to use it again.");
+    const start = within(menu).getByRole("menuitem", { name: "Start" });
+    expect(start).toHaveAccessibleDescription("AI tools can’t read this page. The page is still here; press Start when you want to use it again.");
     fireEvent.click(start);
     await waitFor(() => expect(api.updatePage).toHaveBeenCalled());
     expect(api.updatePage.mock.calls[0][0].content).not.toContain("<!-- wenlan:not-for-ai-tools -->");

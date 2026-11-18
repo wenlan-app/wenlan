@@ -28,11 +28,11 @@ import { RulesToolsHeader, usePageRules } from "./RulesToolsHeader";
 import {
   HOW_I_WORK_QUERY_KEYS,
   howIWorkSpaceName,
-  lastRulesWrite,
   maintainedSourceCount,
   pageGivesGeneralRules,
   parseHowIWorkLines,
   replaceHowIWorkLine,
+  readRulesPageHistory,
   rulesPageStopped,
   setRulesPageStopped,
   visibleSourceTitle,
@@ -49,46 +49,35 @@ type Props = {
   readonly titleActionsHost?: HTMLElement | null;
 };
 
-/** When the page's rules were last written, and what says so: the page's
- *  history when it is loaded, else the page's own modified time. */
-export type RulesUpdatedAt = { readonly at: number; readonly from: "history" | "modified" } | null;
-
-export function rulesUpdatedAt(page: Pick<Page, "last_modified">, history: readonly { at: number; edited_by: string }[] | undefined): RulesUpdatedAt {
-  if (history) {
-    const at = lastRulesWrite(history);
-    return at === null ? null : { at, from: "history" };
-  }
-  const modified = Date.parse(page.last_modified) / 1000;
-  return Number.isFinite(modified) ? { at: Math.floor(modified), from: "modified" } : null;
-}
-
 /** One quiet line under the title: "You edited · AI updated it from N
  *  sources · 2h ago", each part only when it is true, and nothing at all
- *  when none is. The time belongs to the AI's update and shows only with
- *  it. */
+ *  when none is. Who edited and when Wenlan's rules write was come only from
+ *  the page's history (`readRulesPageHistory`): while it loads, or when it
+ *  cannot be read, the line names neither, never a guess from the page's
+ *  modified time. */
 function HowIWorkStatus({ page, lines }: { readonly page: Page; readonly lines: readonly SkillLine[] }) {
   const { t, i18n } = useTranslation();
   const history = useQuery({
-    queryKey: ["page-revisions", page.id],
-    queryFn: () => getPageRevisions(page.id),
+    queryKey: ["page-revisions-text", page.id],
+    queryFn: () => getPageRevisions(page.id, true),
     staleTime: 30_000,
     retry: false,
   });
   const locale = i18n.resolvedLanguage ?? i18n.language;
-  const youEdited = page.user_edited === true || Boolean(page.human_edited_at);
+  const read = history.data ? readRulesPageHistory(history.data.entries) : null;
   const sources = maintainedSourceCount(lines);
-  const updated = sources > 0 ? rulesUpdatedAt(page, history.data?.entries) : null;
-  const parts: { key: string; text: string; from?: string }[] = [];
-  if (youEdited) parts.push({ key: "you", text: t("howIWork.page.status.youEdited") });
+  const at = sources > 0 ? read?.rulesWrittenAt ?? null : null;
+  const parts: { key: string; text: string }[] = [];
+  if (read?.youEdited) parts.push({ key: "you", text: t("howIWork.page.status.youEdited") });
   if (sources > 0) parts.push({ key: "ai", text: t("howIWork.page.status.aiUpdated", { count: sources }) });
-  if (updated) parts.push({ key: "when", text: locale.startsWith("en") ? formatTimeAgo(updated.at) : formatTimeAgo(updated.at, locale), from: updated.from });
+  if (at !== null) parts.push({ key: "when", text: locale.startsWith("en") ? formatTimeAgo(at) : formatTimeAgo(at, locale) });
   if (parts.length === 0) return null;
   return (
     <p className="how-i-work-status" data-testid="how-i-work-status">
       {parts.map((part, index) => (
-        <span key={part.key} data-part={part.key} data-from={part.from}>
+        <span key={part.key} data-part={part.key}>
           {index > 0 ? <span className="how-i-work-status-sep" aria-hidden="true">·</span> : null}
-          {part.key === "when" ? <time dateTime={new Date(updated!.at * 1000).toISOString()}>{part.text}</time> : part.text}
+          {part.key === "when" && at !== null ? <time dateTime={new Date(at * 1000).toISOString()}>{part.text}</time> : part.text}
         </span>
       ))}
     </p>
@@ -140,11 +129,18 @@ export function HowIWorkPage({ page, onOpenPage, titleActionsHost }: Props) {
     retry: false,
   });
 
+  // A write changes who edited the page and which rules write stands.
+  const readHistoryAgain = () => {
+    void queryClient.invalidateQueries({ queryKey: ["page-revisions", page.id] });
+    void queryClient.invalidateQueries({ queryKey: ["page-revisions-text", page.id] });
+  };
+
   const refresh = useMutation({
     mutationFn: refreshSkills,
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["page", page.id] });
       void queryClient.invalidateQueries({ queryKey: ["pages"] });
+      readHistoryAgain();
       void queryClient.invalidateQueries({ queryKey: HOW_I_WORK_QUERY_KEYS.skillSuggestions });
       void queryClient.invalidateQueries({ queryKey: HOW_I_WORK_QUERY_KEYS.records(spaceName) });
     },
@@ -157,6 +153,7 @@ export function HowIWorkPage({ page, onOpenPage, titleActionsHost }: Props) {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["page", page.id] });
       void queryClient.invalidateQueries({ queryKey: ["pages"] });
+      readHistoryAgain();
     },
   });
   const suggestionAction = useMutation({
@@ -188,6 +185,7 @@ export function HowIWorkPage({ page, onOpenPage, titleActionsHost }: Props) {
       if (outcome.outcome !== "saved") throw new Error(outcome.outcome);
       await queryClient.invalidateQueries({ queryKey: ["page", page.id] });
       void queryClient.invalidateQueries({ queryKey: ["pages"] });
+      readHistoryAgain();
       return true;
     } catch {
       setWriteError(true);
@@ -243,6 +241,7 @@ export function HowIWorkPage({ page, onOpenPage, titleActionsHost }: Props) {
       {titleActionsHost ? createPortal(menu, titleActionsHost) : null}
       <div className="how-i-work-head">
         <HowIWorkStatus page={page} lines={lines} />
+        {stopped ? <p className="how-i-work-stopped-note" data-testid="how-i-work-stopped">{t("howIWork.page.stoppedNote")}</p> : null}
         <RulesToolsHeader delivers={delivers} />
       </div>
       {recentRecords.length > 0 ? (

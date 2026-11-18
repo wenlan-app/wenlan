@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { forwardRef, useEffect, useRef } from "react";
+import { forwardRef, useEffect, useMemo, useRef } from "react";
 import { GearSix, SidebarSimple, SignOut } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 import IdentityCard from "./IdentityCard";
@@ -101,7 +101,9 @@ export default function Sidebar({
   const web = isWebBuild();
   const teamMember = isTeamMemberMode();
   const { t } = useTranslation();
-  const pinnedPages = usePinnedPages();
+  // A pinned "How I work" page reads as it does in Recent: with its Space.
+  const storedPins = usePinnedPages();
+  const pinnedPages = useMemo(() => storedPins.map((pinned) => ({ ...pinned, title: howIWorkPageTitle(pinned, t) })), [storedPins, t]);
   const sections = useSectionPages();
   const recentPages = useRecentSectionPages(sections.pages, SIDEBAR_RECENT_LISTED, sections.sectionOf)
     .map((recent) => ({ ...recent, title: howIWorkPageTitle(recent.page, t) }));

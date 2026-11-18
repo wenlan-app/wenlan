@@ -594,12 +594,18 @@ and wait for evidence that people need them.
 - **UX-SKILL-2** `shipped` The accepted "How I work" page is an ordinary
   Wenlan page with Update now, Undo last night and Stop. They sit in a "…"
   menu at the right end of the title row, with Stop's explanation under
-  Stop; the page body has no row of buttons. The page is titled "How I
-  work", with no Space after it, wherever it is listed. Under the title one
-  quiet line says only what is true: "You edited", "AI updated it from N
-  sources" (N the distinct pages its maintained lines come from) and when
-  Wenlan last wrote its rules; with none of these the line is absent. Owner's
-  2026-11-18 approval of sketch rules-page-v2 (選擇卡「照草圖做」). It shows its grounded
+  Stop; the page body has no row of buttons, and a stopped page says so in a
+  short line on the page as well. The page's own heading is "How I work",
+  with no Space after it; every tab and list that names it (Recent, Pinned,
+  the Rules list, search, the tray) adds its Space ("How I work · Wenlan"),
+  so two Spaces' pages are never confused. Under the title one quiet line
+  says only what is true, from the page's history: "You edited" when the
+  person edited the page themselves (not a teammate, and not Stop, Start or
+  Undo), "AI updated it from N sources" (N the distinct pages its maintained
+  lines come from) and when Wenlan's rules write that still stands was made;
+  with none of these the line is absent, and without the history it names no
+  time. Owner's 2026-11-18 approval of sketch rules-page-v2 (選擇卡「照草圖做」);
+  the Space kept in lists follows the 2026-11-18 review. It shows its grounded
   lines without internal ids or paths; a person's edited line says "You changed
   this". Above them, real examples from this week say whether an AI tool
   reported changing its approach or Wenlan recorded the read, with no counts.
@@ -737,10 +743,12 @@ and wait for evidence that people need them.
   delivered (not yet, too long for the tool, or a file Wenlan cannot
   change). Following the owner's 2026-11-18 approval of sketch
   rules-page-v2, this is one row, "Used in" and a small chip per tool with
-  its logo (or a short badge when Wenlan has none) and a dot: filled for
-  delivered, hollow for connected only, amber when not delivered; hovering
-  or focusing a chip shows that sentence, and once delivered how many rules
-  and when. A rule carries no tag; only a decision or a pitfall says what it
+  its logo in its brand colour (the theme's text colour where that colour
+  would not read; a short badge when Wenlan has no logo) and a mark that
+  differs in shape as well as colour: a check for delivered, a hollow ring
+  for connected only, an exclamation mark when not delivered. Hovering,
+  focusing or clicking a chip shows that sentence, and once delivered how
+  many rules the tool holds across all Spaces and when. A rule carries no tag; only a decision or a pitfall says what it
   is. A page whose rules are for its own Space only, a stopped page and
   a `#not-for-ai-tools` page say "connected" for every connected tool. A
   tool that is not connected is not listed. It says connected and delivered

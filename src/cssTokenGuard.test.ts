@@ -133,6 +133,7 @@ describe("component color literal guard", () => {
     "src/lib/graph/atlas.ts", // canvas default when sigma passes no color
     "src/components/memory/page/look/lookDocument.ts", // fallbacks for unset tokens in a look frame, which cannot read the app's CSS
     "src/web/memberThemes.ts", // the built-in theme colors themselves, kept equal to wenlan-core's table by memberThemes.test.ts
+    "src/components/memory/skills/toolLogos.ts", // other companies' brand colours for their logos, checked for contrast by howIWorkModel.test.ts
   ]);
 
   it("components take colors from index.css tokens", () => {

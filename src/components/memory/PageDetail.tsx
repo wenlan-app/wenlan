@@ -150,7 +150,7 @@ import { ConcurrentEditLine, markConcurrentEditSeen, unseenConcurrentEdit } from
 import { pageShare, sharedWriter, spaceShare, useShares } from "./sharing/sharing";
 import { HowIWorkPage } from "./skills/HowIWorkPage";
 import { RulesFolderPageHead } from "./skills/RulesToolsHeader";
-import { howIWorkPageTitle, isHowIWorkPage } from "./skills/howIWorkModel";
+import { howIWorkHeading, howIWorkPageTitle, isHowIWorkPage } from "./skills/howIWorkModel";
 
 interface PageDetailProps {
   pageId: string;
@@ -2315,7 +2315,8 @@ export default function PageDetail({
   }
 
   const howIWorkPage = isHowIWorkPage(page);
-  const visiblePageTitle = howIWorkPageTitle(page, t);
+  // A "How I work" page is headed plainly; its tab and lists name its Space.
+  const visiblePageTitle = howIWorkHeading(page, t);
   const sourceCount = pageSources?.length ?? page.source_memory_ids.length;
   const basisRefs = page.basis ?? [];
   // A note that relies on other notes is not rebuilt by itself: the daemon says

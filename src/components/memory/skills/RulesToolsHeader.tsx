@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useId, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import {
@@ -81,9 +81,29 @@ export function toolDot(standing: ToolStanding): ToolDot {
 function ToolMark({ id, badge }: { readonly id: string; readonly badge: string }) {
   const logo = TOOL_LOGOS[id];
   if (!logo) return <span className="rules-tools-badge" aria-hidden="true">{badge}</span>;
+  // The brand colour in a theme where it reads on the chip; the theme's
+  // text colour otherwise (the CSS falls back when a variable is unset).
+  const colours = {
+    ...(logo.light ? { "--logo-light": logo.light } : {}),
+    ...(logo.dark ? { "--logo-dark": logo.dark } : {}),
+  } as CSSProperties;
   return (
-    <svg className="rules-tools-logo" aria-hidden="true" focusable="false" viewBox={logo.viewBox} fill="currentColor" data-logo={id}>
+    <svg className="rules-tools-logo" aria-hidden="true" focusable="false" viewBox={logo.viewBox} fill="currentColor" data-logo={id} style={colours}>
       {logo.paths.map((path, index) => <path key={index} d={path.d} fillRule={path.evenOdd ? "evenodd" : undefined} clipRule={path.evenOdd ? "evenodd" : undefined} />)}
+    </svg>
+  );
+}
+
+/** The dot carries a mark as well as a colour, so the states differ for a
+ *  person who cannot tell sage from amber: a check when delivered, an
+ *  exclamation mark when not, a hollow ring when only connected. */
+function ToolDotMark({ dot }: { readonly dot: ToolDot }) {
+  return (
+    <svg className="rules-tools-dot" data-dot={dot} aria-hidden="true" focusable="false" viewBox="0 0 12 12">
+      {dot === "connected" ? <circle cx="6" cy="6" r="4.6" fill="none" stroke="currentColor" strokeWidth="1.5" />
+        : <circle cx="6" cy="6" r="6" fill="currentColor" />}
+      {dot === "delivered" ? <path className="rules-tools-dot-glyph" d="M3.4 6.2 5.2 8l3.4-3.6" fill="none" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /> : null}
+      {dot === "problem" ? <path className="rules-tools-dot-glyph" d="M6 3.2v3.4M6 8.6v.1" fill="none" strokeWidth="1.6" strokeLinecap="round" /> : null}
     </svg>
   );
 }
@@ -91,38 +111,90 @@ function ToolMark({ id, badge }: { readonly id: string; readonly badge: string }
 type ShownTool = { readonly tool: ToolRulesDelivery; readonly standing: ToolStanding; readonly badge: string };
 
 /** One tool: its logo (or a short badge), its name and a dot. Hover or
- *  keyboard focus opens a small card with the tool's name, what Wenlan can
- *  say about it, and, once delivered, how many rules and when. */
+ *  keyboard focus shows a small card with the tool's name, what Wenlan can
+ *  say about it, and, once delivered, how many rules it holds across all
+ *  Spaces and when. A click or a tap pins the card open until the next click
+ *  or a press elsewhere; Escape closes it however it opened. The pointer can
+ *  move into the card, and the card stays inside the window. */
 function ToolChip({ shown }: { readonly shown: ShownTool }) {
   const { t, i18n } = useTranslation();
-  const [open, setOpen] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const [pinned, setPinned] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
+  const [shift, setShift] = useState(0);
+  const itemRef = useRef<HTMLSpanElement>(null);
+  const surfaceRef = useRef<HTMLSpanElement>(null);
   const cardId = useId();
   const { tool, standing, badge } = shown;
+  const open = !dismissed && (hovered || focused || pinned);
   const dot = toolDot(standing);
   const locale = i18n.resolvedLanguage ?? i18n.language;
   const delivered = standing === "delivered";
   const when = delivered && tool.delivered_at ? (locale.startsWith("en") ? formatTimeAgo(tool.delivered_at) : formatTimeAgo(tool.delivered_at, locale)) : null;
+  // The daemon counts the rules in the tool's file, from every Space.
   const count = delivered && tool.rule_count > 0 ? t("howIWork.tools.rulesDelivered", { count: tool.rule_count }) : null;
   const detail = [count, when].filter(Boolean).join(" · ");
+
+  useEffect(() => {
+    if (!open) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.stopPropagation();
+      setPinned(false);
+      setDismissed(true);
+    };
+    const unpinOutside = (event: Event) => {
+      if (event.target instanceof Node && itemRef.current?.contains(event.target)) return;
+      setPinned(false);
+    };
+    document.addEventListener("keydown", closeOnEscape, true);
+    document.addEventListener("pointerdown", unpinOutside, true);
+    return () => {
+      document.removeEventListener("keydown", closeOnEscape, true);
+      document.removeEventListener("pointerdown", unpinOutside, true);
+    };
+  }, [open]);
+
+  // Keep the card inside the window: move it left by what would spill.
+  useLayoutEffect(() => {
+    if (!open) { setShift(0); return; }
+    const rect = surfaceRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const left = rect.left - shift;
+    const right = rect.right - shift;
+    const room = window.innerWidth - 8;
+    const next = right > room ? Math.max(room - right, 8 - left) : 0;
+    if (Math.abs(next - shift) > 0.5) setShift(next);
+  }, [open, shift]);
+
   return (
-    <span className="rules-tools-item" data-standing={standing} onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
+    <span
+      className="rules-tools-item"
+      data-standing={standing}
+      ref={itemRef}
+      onMouseEnter={() => { setHovered(true); setDismissed(false); }}
+      onMouseLeave={() => { setHovered(false); setDismissed(false); }}
+    >
       <button
         type="button"
         className="rules-tools-chip"
         aria-describedby={cardId}
-        onFocus={() => setOpen(true)}
-        onBlur={() => setOpen(false)}
-        onClick={() => setOpen((value) => !value)}
-        onKeyDown={(event) => { if (event.key === "Escape" && open) { event.stopPropagation(); setOpen(false); } }}
+        data-pinned={pinned ? "true" : undefined}
+        onFocus={() => { setFocused(true); setDismissed(false); }}
+        onBlur={() => { setFocused(false); setDismissed(false); }}
+        onClick={() => { setDismissed(false); setPinned((value) => !value); }}
       >
         <ToolMark id={tool.id} badge={badge} />
         <span className="rules-tools-name">{tool.display_name}</span>
-        <span className="rules-tools-dot" data-dot={dot} aria-hidden="true" />
+        <ToolDotMark dot={dot} />
       </button>
-      <span className="rules-tools-card mem-popover-surface" id={cardId} role="tooltip" hidden={!open}>
-        <span className="rules-tools-card-head"><ToolMark id={tool.id} badge={badge} />{tool.display_name}</span>
-        <span className="rules-tools-card-state" data-dot={dot}><span className="rules-tools-dot" data-dot={dot} aria-hidden="true" /><span className="rules-tools-card-state-text">{t(`howIWork.tools.${standing}`)}</span></span>
-        {detail ? <span className="rules-tools-card-detail">{detail}</span> : null}
+      <span className="rules-tools-card" id={cardId} role="tooltip" hidden={!open} style={shift ? { transform: `translateX(${shift}px)` } : undefined}>
+        <span className="rules-tools-card-surface mem-popover-surface" ref={surfaceRef}>
+          <span className="rules-tools-card-head"><ToolMark id={tool.id} badge={badge} />{tool.display_name}</span>
+          <span className="rules-tools-card-state" data-dot={dot}><ToolDotMark dot={dot} /><span className="rules-tools-card-state-text">{t(`howIWork.tools.${standing}`)}</span></span>
+          {detail ? <span className="rules-tools-card-detail">{detail}</span> : null}
+        </span>
       </span>
     </span>
   );

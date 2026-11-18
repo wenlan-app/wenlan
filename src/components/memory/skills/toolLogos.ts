@@ -3,17 +3,29 @@
 // copied, unchanged, from openly licensed icon sets; each entry names its
 // source. See TOOL_LOGOS_NOTICE.md beside this file. Generated once from
 // simple-icons 16.38.0 (CC0-1.0) and @lobehub/icons-static-svg 1.103.0 (MIT).
-// Drawn in currentColor so they follow the theme.
+// Drawn in the brand colour where it reads on the chip, else in the theme's
+// text colour (currentColor).
 
 export type ToolLogo = {
   readonly viewBox: string;
   readonly paths: readonly { readonly d: string; readonly evenOdd?: true }[];
   readonly source: "simple-icons" | "lobehub";
+  /** The brand's own colour (see TOOL_LOGOS_NOTICE.md). */
+  readonly brand: string;
+  /** The colour drawn on the light and the dark chip: the brand colour where
+   *  it has at least 3:1 contrast with the chip (#FFFFFF light, #202430
+   *  dark), else null, which draws it in the theme's text colour. Black and
+   *  near-black brands are null in both. */
+  readonly light: string | null;
+  readonly dark: string | null;
 };
 
 export const TOOL_LOGOS: Readonly<Record<string, ToolLogo>> = {
   // simple-icons: claudecode
   "claude-code": {
+    brand: "#D97757",
+    light: "#D97757",
+    dark: "#D97757",
     viewBox: "0 0 24 24",
     source: "simple-icons",
     paths: [
@@ -22,6 +34,9 @@ export const TOOL_LOGOS: Readonly<Record<string, ToolLogo>> = {
   },
   // simple-icons: claude
   "claude-desktop": {
+    brand: "#D97757",
+    light: "#D97757",
+    dark: "#D97757",
     viewBox: "0 0 24 24",
     source: "simple-icons",
     paths: [
@@ -30,6 +45,9 @@ export const TOOL_LOGOS: Readonly<Record<string, ToolLogo>> = {
   },
   // simple-icons: cursor
   "cursor": {
+    brand: "#000000",
+    light: null,
+    dark: null,
     viewBox: "0 0 24 24",
     source: "simple-icons",
     paths: [
@@ -38,6 +56,9 @@ export const TOOL_LOGOS: Readonly<Record<string, ToolLogo>> = {
   },
   // simple-icons: windsurf
   "windsurf": {
+    brand: "#0B100F",
+    light: null,
+    dark: null,
     viewBox: "0 0 24 24",
     source: "simple-icons",
     paths: [
@@ -46,6 +67,9 @@ export const TOOL_LOGOS: Readonly<Record<string, ToolLogo>> = {
   },
   // simple-icons: githubcopilot
   "copilot-cli": {
+    brand: "#000000",
+    light: null,
+    dark: null,
     viewBox: "0 0 24 24",
     source: "simple-icons",
     paths: [
@@ -54,6 +78,9 @@ export const TOOL_LOGOS: Readonly<Record<string, ToolLogo>> = {
   },
   // simple-icons: zedindustries
   "zed": {
+    brand: "#084CCF",
+    light: "#084CCF",
+    dark: null,
     viewBox: "0 0 24 24",
     source: "simple-icons",
     paths: [
@@ -62,6 +89,9 @@ export const TOOL_LOGOS: Readonly<Record<string, ToolLogo>> = {
   },
   // simple-icons: opencode
   "opencode": {
+    brand: "#000000",
+    light: null,
+    dark: null,
     viewBox: "0 0 24 24",
     source: "simple-icons",
     paths: [
@@ -70,6 +100,9 @@ export const TOOL_LOGOS: Readonly<Record<string, ToolLogo>> = {
   },
   // simple-icons: kimi
   "kimi-code": {
+    brand: "#000000",
+    light: null,
+    dark: null,
     viewBox: "0 0 24 24",
     source: "simple-icons",
     paths: [
@@ -78,6 +111,9 @@ export const TOOL_LOGOS: Readonly<Record<string, ToolLogo>> = {
   },
   // simple-icons: kimi
   "kimi-desktop": {
+    brand: "#000000",
+    light: null,
+    dark: null,
     viewBox: "0 0 24 24",
     source: "simple-icons",
     paths: [
@@ -86,6 +122,9 @@ export const TOOL_LOGOS: Readonly<Record<string, ToolLogo>> = {
   },
   // simple-icons: raycast
   "raycast": {
+    brand: "#FF6363",
+    light: null,
+    dark: "#FF6363",
     viewBox: "0 0 24 24",
     source: "simple-icons",
     paths: [
@@ -94,6 +133,9 @@ export const TOOL_LOGOS: Readonly<Record<string, ToolLogo>> = {
   },
   // simple-icons: obsidian
   "obsidian": {
+    brand: "#7C3AED",
+    light: "#7C3AED",
+    dark: null,
     viewBox: "0 0 24 24",
     source: "simple-icons",
     paths: [
@@ -102,6 +144,9 @@ export const TOOL_LOGOS: Readonly<Record<string, ToolLogo>> = {
   },
   // simple-icons: logseq
   "logseq": {
+    brand: "#85C8C8",
+    light: null,
+    dark: "#85C8C8",
     viewBox: "0 0 24 24",
     source: "simple-icons",
     paths: [
@@ -110,6 +155,9 @@ export const TOOL_LOGOS: Readonly<Record<string, ToolLogo>> = {
   },
   // @lobehub/icons-static-svg: codex
   "codex": {
+    brand: "#000000",
+    light: null,
+    dark: null,
     viewBox: "0 0 24 24",
     source: "lobehub",
     paths: [
@@ -118,6 +166,9 @@ export const TOOL_LOGOS: Readonly<Record<string, ToolLogo>> = {
   },
   // @lobehub/icons-static-svg: kiro
   "kiro": {
+    brand: "#9046FF",
+    light: "#9046FF",
+    dark: "#9046FF",
     viewBox: "0 0 24 24",
     source: "lobehub",
     paths: [
@@ -126,6 +177,9 @@ export const TOOL_LOGOS: Readonly<Record<string, ToolLogo>> = {
   },
   // @lobehub/icons-static-svg: antigravity
   "antigravity": {
+    brand: "#3186FF",
+    light: "#3186FF",
+    dark: "#3186FF",
     viewBox: "0 0 24 24",
     source: "lobehub",
     paths: [
@@ -134,6 +188,9 @@ export const TOOL_LOGOS: Readonly<Record<string, ToolLogo>> = {
   },
   // @lobehub/icons-static-svg: geminicli
   "gemini-cli": {
+    brand: "#207CFE",
+    light: "#207CFE",
+    dark: "#207CFE",
     viewBox: "0 0 24 24",
     source: "lobehub",
     paths: [
@@ -143,6 +200,9 @@ export const TOOL_LOGOS: Readonly<Record<string, ToolLogo>> = {
   },
   // @lobehub/icons-static-svg: openai
   "chatgpt": {
+    brand: "#000000",
+    light: null,
+    dark: null,
     viewBox: "0 0 24 24",
     source: "lobehub",
     paths: [
@@ -151,6 +211,9 @@ export const TOOL_LOGOS: Readonly<Record<string, ToolLogo>> = {
   },
   // @lobehub/icons-static-svg: openai
   "openai-mcp": {
+    brand: "#000000",
+    light: null,
+    dark: null,
     viewBox: "0 0 24 24",
     source: "lobehub",
     paths: [

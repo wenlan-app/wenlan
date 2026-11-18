@@ -7,6 +7,7 @@ import type { ComponentProps } from "react";
 import { useState } from "react";
 import { i18n } from "../../i18n";
 import Sidebar, { SidebarToggleButton } from "./Sidebar";
+import { pinPage } from "./navigation/pinnedPages";
 vi.mock("./IdentityCard", () => ({
   default: ({ onOpenAbout, onOpenDetail, onOpenSettings }: {
     readonly onOpenAbout?: () => void;
@@ -49,6 +50,16 @@ describe("Sidebar workspace", () => {
   beforeEach(async () => {
     localStorage.clear();
     await i18n.changeLanguage("en");
+  });
+
+  it("UX-SKILL-2: lists each Space's pinned How I work page with its Space, so two are never confused", () => {
+    pinPage({ id: "rules-a", title: "How I work — Wenlan" });
+    pinPage({ id: "rules-b", title: "How I work — Client" });
+    pinPage({ id: "doc", title: "Pricing" });
+    renderSidebar({ onOpenPinnedPage: vi.fn() });
+    expect(screen.getByText("How I work · Wenlan")).toBeInTheDocument();
+    expect(screen.getByText("How I work · Client")).toBeInTheDocument();
+    expect(screen.getByText("Pricing")).toBeInTheDocument();
   });
 
   it("hides native service and account controls but keeps Settings reachable in the production web build", async () => {

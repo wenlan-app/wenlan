@@ -102,6 +102,11 @@ export function sectionsLibrary(lang: string | null): { pages: Page[]; folders: 
     ...page("sec-rule-how", "How I work — Wenlan", "How I work — Wenlan.md", 1, "", "Wenlan"),
     content: `# How I work — Wenlan\n\nThese are this Space's approved working rules.\n\n${managed.join("\n")}\n- ${copy.ownLine}\n`,
   });
+  // A second Space's page, stopped: lists name each page with its Space.
+  pages.push({
+    ...page("sec-rule-how-client", "How I work — Client", "How I work — Client.md", 2, "", "Client"),
+    content: `# How I work — Client\n\n<!-- wenlan:not-for-ai-tools -->\n\nThese are this Space's approved working rules.\n\n${managed[1]}\n`,
+  });
   // The page the daemon keeps saved rules on: an ordinary page in no Rules
   // folder. The daemon's rules answer names it by id (`get_space_rules`).
   const savedLines = copy.saved.filter((_, index) => !removedSaved.has(`sec-saved-${index}`)).map((item) => `- ${item.text}`);

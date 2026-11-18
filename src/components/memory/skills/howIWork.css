@@ -260,6 +260,13 @@
   margin: 0 7px;
 }
 
+/* A stopped page says so on the page, not only in the menu. */
+.how-i-work-stopped-note {
+  margin: 0;
+  color: var(--mem-status-warning-text);
+  font: 13px/1.5 var(--mem-font-body);
+}
+
 /* The "…" at the right end of the title row. */
 .how-i-work-title-actions {
   display: inline-flex;
@@ -496,7 +503,8 @@
 }
 
 .rules-tools-chip:hover,
-.rules-tools-chip:focus-visible {
+.rules-tools-chip:focus-visible,
+.rules-tools-chip[data-pinned="true"] {
   background: var(--mem-detail-surface-raised);
 }
 
@@ -505,12 +513,18 @@
   outline-offset: 2px;
 }
 
+/* Brand colour where it reads on the chip in this theme, else the theme's
+   own text colour (toolLogos.ts says which). */
 .rules-tools-logo {
   display: block;
   flex: none;
   width: 14px;
   height: 14px;
-  color: var(--mem-text-secondary);
+  color: var(--logo-dark, var(--mem-text));
+}
+
+:root[data-theme="light"] .rules-tools-logo {
+  color: var(--logo-light, var(--mem-text));
 }
 
 .rules-tools-badge {
@@ -527,36 +541,44 @@
   letter-spacing: -0.02em;
 }
 
+/* Each state has its own mark, not only its own colour. */
 .rules-tools-dot {
-  display: inline-block;
+  display: block;
   flex: none;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
+  width: 11px;
+  height: 11px;
 }
 
-.rules-tools-dot[data-dot="delivered"] { background: var(--mem-accent-sage); }
-.rules-tools-dot[data-dot="connected"] { background: transparent; box-shadow: inset 0 0 0 1.5px var(--mem-text-tertiary); }
-.rules-tools-dot[data-dot="problem"] { background: var(--mem-accent-amber); }
+.rules-tools-dot[data-dot="delivered"] { color: var(--mem-accent-sage); }
+.rules-tools-dot[data-dot="connected"] { color: var(--mem-text-tertiary); }
+.rules-tools-dot[data-dot="problem"] { color: var(--mem-accent-amber); }
+.rules-tools-dot-glyph { stroke: var(--mem-surface); }
 
-/* The small card a chip opens on hover or keyboard focus. */
+/* The small card a chip opens on hover, focus or a click. Its top padding
+   is see-through and part of the card, so the pointer can move from the
+   chip into the card without leaving it. */
 .rules-tools-card {
   position: absolute;
   z-index: 30;
-  top: calc(100% + 8px);
+  top: 100%;
   left: 0;
+  display: block;
+  padding-top: 8px;
+}
+
+.rules-tools-card[hidden] { display: none; }
+
+.rules-tools-card-surface {
   display: grid;
   gap: 6px;
   width: max-content;
   min-width: 220px;
-  max-width: 330px;
+  max-width: min(330px, calc(100vw - 16px));
   padding: 12px 14px 13px;
   color: var(--mem-text);
   font: 13px/1.5 var(--mem-font-body);
   white-space: normal;
 }
-
-.rules-tools-card[hidden] { display: none; }
 
 .rules-tools-card-head {
   display: flex;
@@ -578,7 +600,7 @@
 .rules-tools-card-state[data-dot="problem"] { color: var(--mem-status-warning-text); }
 
 .rules-tools-card-detail {
-  margin-left: 15px;
+  margin-left: 19px;
   color: var(--mem-text-tertiary);
   font-size: 12.5px;
 }

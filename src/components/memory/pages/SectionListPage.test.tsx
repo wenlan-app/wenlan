@@ -90,7 +90,7 @@ describe("section list page", () => {
   it("UX-FIND-4: Skills and Rules list their pages wherever the file is, with no folder cards", async () => {
     setup({ section: "rules" });
     expect(await screen.findByRole("heading", { level: 1, name: "Rules" })).toBeInTheDocument();
-    expect((await screen.findAllByRole("button", { name: /^Open / })).map((row) => row.getAttribute("aria-label"))).toEqual(["Open Git rules", "Open How I work"]);
+    expect((await screen.findAllByRole("button", { name: /^Open / })).map((row) => row.getAttribute("aria-label"))).toEqual(["Open Git rules", "Open How I work · Wenlan"]);
     expect(screen.queryByRole("list", { name: "Folders" })).not.toBeInTheDocument();
   });
 
@@ -194,7 +194,7 @@ describe("section list page", () => {
     vi.mocked(knowledgeFoldersList).mockResolvedValue({ folders: [{ path: "Rules", name: "Rules", parent_path: "" }], truncated: false });
     const handlers = setup({ section: "rules" });
     const user = userEvent.setup();
-    await screen.findByRole("button", { name: "Open How I work" });
+    await screen.findByRole("button", { name: "Open How I work · Wenlan" });
     // The Space's page is a Docs page, so it is not listed under Rules.
     await waitFor(() => expect(screen.queryByRole("button", { name: "Open Plan" })).not.toBeInTheDocument());
     await user.click(screen.getByRole("button", { name: "New" }));
