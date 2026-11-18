@@ -67,6 +67,10 @@ pub(crate) enum Strip {
     Health,
     /// The Space list: only the member's Spaces stay, and no private keys.
     MemberSpaces,
+    /// Folders as the member sees them: the daemon answers a member's
+    /// folder call with paths under their Space's name, never the
+    /// server's, so a folder's `path` stays; every other private key goes.
+    MemberFolders,
 }
 
 /// One call a member's browser may make.
@@ -98,6 +102,9 @@ pub(crate) enum Rows {
     /// The knowledge graph: its pages and the links between them, put
     /// together across Spaces. Nothing else of the graph is sent on.
     Graph,
+    /// `{ "folders": [...] }`, each folder's path starting with its Space's
+    /// name (as a member sees folders), put together across Spaces.
+    Folders,
 }
 
 /// The calls. Owner-only calls (config, team admin, shared folders,
@@ -143,7 +150,9 @@ pub(crate) const CALLS: &[Call] = &[
     Call {
         method: "GET",
         path: "/api/pages/recent-changes",
-        space: SpaceFrom::MemberSpaces,
+        // One Space's changes when the page asks for one (a Space's page,
+        // and each Space on the home page, labels them with it).
+        space: SpaceFrom::QueryOrMember,
         need: Need::Read,
         strip: Strip::Private,
         query: &["limit"],
@@ -269,6 +278,37 @@ pub(crate) const CALLS: &[Call] = &[
         method: "DELETE",
         path: "/api/pages/{id}/basis/{basis_id}",
         space: SpaceFrom::PagePair,
+        need: Need::Write,
+        strip: Strip::Private,
+        query: &[],
+        rows: Rows::One,
+    },
+    // Folders, while the owner keeps each Space in a folder of its own: a
+    // member sees each of their Spaces as a top folder (paths as they see
+    // them, never the server's), makes folders inside a Space they can
+    // edit, and moves its pages between them.
+    Call {
+        method: "GET",
+        path: "/api/knowledge/folders",
+        space: SpaceFrom::MemberSpaces,
+        need: Need::Read,
+        strip: Strip::MemberFolders,
+        query: &[],
+        rows: Rows::Folders,
+    },
+    Call {
+        method: "POST",
+        path: "/api/knowledge/folders",
+        space: SpaceFrom::Body,
+        need: Need::Write,
+        strip: Strip::MemberFolders,
+        query: &[],
+        rows: Rows::One,
+    },
+    Call {
+        method: "POST",
+        path: "/api/pages/{id}/move",
+        space: SpaceFrom::Page,
         need: Need::Write,
         strip: Strip::Private,
         query: &[],
@@ -536,6 +576,31 @@ pub(crate) fn strip_private(value: &mut Value) {
     }
 }
 
+/// [`strip_private`], keeping the `path` of the folder an answer names
+/// (`{"path": …}`) and of each folder in a list (`{"folders": [{"path": …}]}`).
+fn strip_private_keeping_folder_paths(value: &mut Value) {
+    fn take_path(value: &mut Value) -> Option<Value> {
+        value.as_object_mut()?.remove("path")
+    }
+    fn put_path(value: &mut Value, path: Option<Value>) {
+        if let (Some(map), Some(Value::String(path))) = (value.as_object_mut(), path) {
+            map.insert("path".into(), Value::String(path));
+        }
+    }
+    let own = take_path(value);
+    let listed: Vec<Option<Value>> = match value.get_mut("folders") {
+        Some(Value::Array(folders)) => folders.iter_mut().map(take_path).collect(),
+        _ => Vec::new(),
+    };
+    strip_private(value);
+    put_path(value, own);
+    if let Some(Value::Array(folders)) = value.get_mut("folders") {
+        for (folder, path) in folders.iter_mut().zip(listed) {
+            put_path(folder, path);
+        }
+    }
+}
+
 fn row_space(row: &Value) -> Option<&str> {
     row.get("space")
         .or_else(|| row.get("domain"))
@@ -780,6 +845,18 @@ pub(super) async fn handle(
         }
         None => merge(call, &query, window, answers),
     };
+    // Every folder starts with its Space's name: folders of a Space not the
+    // member's go.
+    if call.rows == Rows::Folders {
+        if let Some(Value::Array(folders)) = value.get_mut("folders") {
+            folders.retain(|row| {
+                row.get("path")
+                    .and_then(Value::as_str)
+                    .and_then(|path| path.split('/').next())
+                    .is_some_and(|space| spaces.contains_key(space))
+            });
+        }
+    }
     // Every page row names its Space: rows of a Space not the member's go.
     if call.rows == Rows::Pages {
         if let Some(Value::Array(pages)) = value.get_mut("pages") {
@@ -841,6 +918,7 @@ pub(super) async fn handle(
             strip_private(&mut value);
         }
         Strip::Private => strip_private(&mut value),
+        Strip::MemberFolders => strip_private_keeping_folder_paths(&mut value),
     }
     json(StatusCode::OK, &value)
 }
@@ -894,6 +972,15 @@ fn merge(
             }
             first["pages"] = Value::Array(pages);
             first
+        }
+        Rows::Folders => {
+            let mut folders = Vec::new();
+            for mut answer in answers {
+                if let Some(Value::Array(list)) = answer.get_mut("folders").map(Value::take) {
+                    folders.extend(list);
+                }
+            }
+            serde_json::json!({ "folders": folders, "truncated": false })
         }
         Rows::Graph => {
             let mut pages: Vec<Value> = Vec::new();

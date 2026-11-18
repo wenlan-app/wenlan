@@ -730,13 +730,16 @@ fn top_level_help() {
         .stdout(predicate::str::contains(
             "docs, skills and rules your AI tools keep current and work from",
         ))
+        .stdout(predicate::str::contains("\nStart:\n"))
         .stdout(predicate::str::contains("\nDaily:\n"))
-        .stdout(predicate::str::contains("\nSetup:\n"))
         .stdout(predicate::str::contains("\nTeam:\n"))
         .stdout(predicate::str::contains(
-            "\nMore commands: wenlan help all (",
+            "\nEverything else: wenlan help all\n",
         ))
-        .stdout(predicate::str::contains("\n  start "))
+        .stdout(predicate::str::contains("\n  setup "))
+        .stdout(predicate::str::contains("\n  init "))
+        .stdout(predicate::str::contains("\n  start ").not())
+        .stdout(predicate::str::contains("\nOptions:").not())
         .stdout(predicate::str::contains("\n  steep ").not())
         .stdout(predicate::str::contains("\n  search ").not())
         .stdout(predicate::str::contains("\n  sweep ").not())

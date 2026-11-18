@@ -16,6 +16,10 @@
 //! {"format":1,"members":[{"id":…,"name":…,"key_sha256":…,"spaces":{"<Space>":"write"},"added_at":…}]}
 //! ```
 //!
+//! A member may also carry `identities`, tool `keys` and an `invite`; the
+//! first write of any of those (or of a member with no `key_sha256`) makes
+//! the file format 2, after copying the format 1 file to `team.json.v1.bak`.
+//!
 //! Only a key's sha256 is kept: a key is shown once, when it is made. A
 //! removed member stays listed with `removed_at`, so the Space's history
 //! keeps their name; their key no longer matches.
@@ -31,8 +35,17 @@ use wenlan_types::team::{
 use crate::error::WenlanError;
 use crate::shared_space::{self, version, Scope, SpaceMember};
 
-/// The file format this code reads and writes.
+/// The format of a file nobody has used a newer feature in: every member
+/// has a legacy key and none of the newer fields. Today's code reads only
+/// this one.
 pub const FORMAT: u32 = 1;
+/// The format written once any member has no legacy key or carries
+/// identities, tool keys or an invite. The current file is kept first as
+/// [`V1_BACKUP_FILE`]. This code reads [`FORMAT`] and this; anything newer
+/// is refused.
+pub const FORMAT_V2: u32 = 2;
+/// The copy of a format 1 file, made once before the first format 2 write.
+pub const V1_BACKUP_FILE: &str = "team.json.v1.bak";
 /// The member list, under the data root.
 pub const TEAM_FILE: &str = "team.json";
 /// Hosted Spaces' folders, under the data root.
@@ -42,7 +55,10 @@ pub const SPACES_DIR: &str = "team-spaces";
 pub struct Member {
     pub id: String,
     pub name: String,
-    pub key_sha256: String,
+    /// The legacy member key's SHA-256. Absent only for a member who truly
+    /// has no legacy key (which makes the file format 2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_sha256: Option<String>,
     #[serde(default)]
     pub spaces: BTreeMap<String, TeamAccess>,
     pub added_at: String,
@@ -52,6 +68,15 @@ pub struct Member {
     /// the owner is the person at the server's own computer.
     #[serde(default, skip_serializing_if = "TeamRole::is_member")]
     pub role: TeamRole,
+    /// Accounts at an identity provider linked to this member.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub identities: Vec<Identity>,
+    /// Keys for AI tools: they reach `/mcp` and nothing else.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub keys: Vec<ToolKey>,
+    /// An invite not yet redeemed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invite: Option<Invite>,
     /// The Spaces everyone on the team has ([`TeamFile::everyone`]), filled
     /// in when the list is read. Their own entry for a Space wins.
     #[serde(skip)]
@@ -61,7 +86,85 @@ pub struct Member {
     pub team: Option<TeamInfo>,
 }
 
+/// A provider account linked to a member. Who it is is `(issuer, subject)`;
+/// the email is for display only and never a key.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Identity {
+    pub issuer: String,
+    pub subject: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    pub linked_at: String,
+}
+
+/// A member's key for AI tools. Only its SHA-256 is kept.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolKey {
+    pub id: String,
+    pub name: String,
+    pub sha256: String,
+    pub created_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revoked_at: Option<String>,
+}
+
+/// A one-time invite token (its SHA-256), optionally for one email.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Invite {
+    pub token_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    pub expires_at: String,
+}
+
+/// What kind of credential a request presented.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CredentialKind {
+    LegacyKey,
+    ToolKey,
+}
+
+/// Which credential matched: the member's legacy key, or one of their tool
+/// keys (by its id).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Credential {
+    LegacyKey,
+    ToolKey { id: String },
+}
+
+impl Credential {
+    pub fn kind(&self) -> CredentialKind {
+        match self {
+            Credential::LegacyKey => CredentialKind::LegacyKey,
+            Credential::ToolKey { .. } => CredentialKind::ToolKey,
+        }
+    }
+}
+
+/// An authenticated request: the active member and what they presented.
+/// Dereferences to the member.
+#[derive(Debug, Clone)]
+pub struct Authenticated {
+    pub member: Member,
+    pub credential: Credential,
+}
+
+impl std::ops::Deref for Authenticated {
+    type Target = Member;
+    fn deref(&self) -> &Member {
+        &self.member
+    }
+}
+
 impl Member {
+    /// Whether this member needs the format 2 file.
+    fn needs_v2(&self) -> bool {
+        self.key_sha256.is_none()
+            || !self.identities.is_empty()
+            || !self.keys.is_empty()
+            || self.invite.is_some()
+    }
+
     pub fn is_active(&self) -> bool {
         self.removed_at.is_none()
     }
@@ -206,9 +309,9 @@ pub fn read_team(path: &Path) -> Result<TeamFile, WenlanError> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => TeamFile::default(),
         Err(error) => return Err(error.into()),
     };
-    if file.format != FORMAT {
+    if file.format != FORMAT && file.format != FORMAT_V2 {
         return Err(WenlanError::Validation(format!(
-            "{} is format {}; this Wenlan reads format {FORMAT}",
+            "{} is format {}; this Wenlan reads formats {FORMAT} and {FORMAT_V2}",
             path.display(),
             file.format
         )));
@@ -274,10 +377,25 @@ fn change_team<T>(
         .open(path.with_extension("lock"))?;
     fs2::FileExt::lock_exclusive(&lock)?;
     let mut file = read_team(path)?;
+    let read_format = file.format;
     if file.id.is_none() {
         file.id = Some(uuid::Uuid::new_v4().simple().to_string());
     }
     let out = change(&mut file)?;
+    // A file stays format 1 until something only format 2 can hold is in it;
+    // today's code cannot read a member without a legacy key, so the format 1
+    // file is kept once, before the first such write.
+    if file.members.iter().any(Member::needs_v2) {
+        file.format = FORMAT_V2;
+    }
+    if file.format == FORMAT_V2 && read_format == FORMAT && path.is_file() {
+        let mut name = path.as_os_str().to_owned();
+        name.push(".v1.bak");
+        let backup = PathBuf::from(name);
+        if !backup.exists() {
+            std::fs::copy(path, &backup)?;
+        }
+    }
     let mut tmp = tempfile::NamedTempFile::new_in(parent)?;
     tmp.write_all(serde_json::to_string_pretty(&file)?.as_bytes())?;
     tmp.flush()?;
@@ -407,18 +525,21 @@ pub fn set_owner_hash(path: &Path, name: &str, hash: &str) -> Result<Member, Wen
             .find(|member| member.role == TeamRole::Owner && member.is_active())
         {
             Some(owner) => {
-                owner.key_sha256 = hash.to_string();
+                owner.key_sha256 = Some(hash.to_string());
                 owner.clone()
             }
             None => {
                 let owner = Member {
                     id: uuid::Uuid::new_v4().simple().to_string(),
                     name,
-                    key_sha256: hash.to_string(),
+                    key_sha256: Some(hash.to_string()),
                     spaces: BTreeMap::new(),
                     added_at: now(),
                     removed_at: None,
                     role: TeamRole::Owner,
+                    identities: Vec::new(),
+                    keys: Vec::new(),
+                    invite: None,
                     everyone: BTreeMap::new(),
                     team: None,
                 };
@@ -438,7 +559,12 @@ pub fn set_owner_hash(path: &Path, name: &str, hash: &str) -> Result<Member, Wen
 pub fn is_owner_hash(path: &Path, hash: &str) -> Result<bool, WenlanError> {
     let hash = hash.trim();
     Ok(read_team(path)?.members.iter().any(|member| {
-        member.role == TeamRole::Owner && member.is_active() && same_hash(&member.key_sha256, hash)
+        member.role == TeamRole::Owner
+            && member.is_active()
+            && member
+                .key_sha256
+                .as_deref()
+                .is_some_and(|own| same_hash(own, hash))
     }))
 }
 
@@ -516,11 +642,14 @@ pub fn add_member(
     let mut member = Member {
         id: uuid::Uuid::new_v4().simple().to_string(),
         name,
-        key_sha256: key_hash(&key),
+        key_sha256: Some(key_hash(&key)),
         spaces: access_map(spaces),
         added_at: now(),
         removed_at: None,
         role: TeamRole::Member,
+        identities: Vec::new(),
+        keys: Vec::new(),
+        invite: None,
         everyone: BTreeMap::new(),
         team: None,
     };
@@ -592,7 +721,85 @@ pub fn new_member_key(path: &Path, id: &str) -> Result<(Member, String), WenlanE
         if !member.is_active() {
             return Err(WenlanError::Validation(format!("member {id} was removed")));
         }
-        member.key_sha256 = key_hash(&key);
+        member.key_sha256 = Some(key_hash(&key));
+        Ok(member.clone())
+    })?;
+    Ok((member, key))
+}
+
+/// A new tool key: `wlt_` and 64 hex digits from 32 random bytes.
+fn new_tool_key() -> Result<String, WenlanError> {
+    let mut bytes = [0u8; 32];
+    getrandom::fill(&mut bytes)
+        .map_err(|error| WenlanError::Generic(format!("no random bytes for a key: {error}")))?;
+    Ok(format!("wlt_{}", hex::encode(bytes)))
+}
+
+fn find_active<'a>(file: &'a mut TeamFile, id: &str) -> Result<&'a mut Member, WenlanError> {
+    let member = find_mut(file, id)?;
+    if !member.is_active() {
+        return Err(WenlanError::Validation(format!("member {id} was removed")));
+    }
+    Ok(member)
+}
+
+/// Gives a member a key for their AI tools; it reaches `/mcp` only. Returns
+/// the key's id and the key, which is not kept.
+pub fn issue_tool_key(
+    path: &Path,
+    member_id: &str,
+    name: &str,
+) -> Result<(String, String), WenlanError> {
+    let name = clean_name(name)?;
+    let key = new_tool_key()?;
+    let id = uuid::Uuid::new_v4().simple().to_string();
+    change_team(path, |file| {
+        let member = find_active(file, member_id)?;
+        member.keys.push(ToolKey {
+            id: id.clone(),
+            name,
+            sha256: key_hash(&key),
+            created_at: now(),
+            revoked_at: None,
+        });
+        Ok(())
+    })?;
+    Ok((id, key))
+}
+
+/// Revokes one of a member's tool keys; it stops working at the next request.
+pub fn revoke_tool_key(path: &Path, member_id: &str, key_id: &str) -> Result<(), WenlanError> {
+    change_team(path, |file| {
+        let member = find_mut(file, member_id)?;
+        let key = member
+            .keys
+            .iter_mut()
+            .find(|key| key.id == key_id)
+            .ok_or_else(|| WenlanError::NotFound(format!("key {key_id}")))?;
+        if key.revoked_at.is_none() {
+            key.revoked_at = Some(now());
+        }
+        Ok(())
+    })
+}
+
+/// A member's account was stolen: every tool key is revoked, every linked
+/// identity and the pending invite are dropped, and a fresh legacy key is
+/// made (the old one stops working). The member's id, and so their history,
+/// stays. Works on the owner too.
+pub fn reset_compromised(path: &Path, member_id: &str) -> Result<(Member, String), WenlanError> {
+    let key = new_key();
+    let member = change_team(path, |file| {
+        let member = find_active(file, member_id)?;
+        let at = now();
+        for tool_key in &mut member.keys {
+            if tool_key.revoked_at.is_none() {
+                tool_key.revoked_at = Some(at.clone());
+            }
+        }
+        member.identities.clear();
+        member.invite = None;
+        member.key_sha256 = Some(key_hash(&key));
         Ok(member.clone())
     })?;
     Ok((member, key))
@@ -615,21 +822,37 @@ pub fn remove_member(path: &Path, id: &str) -> Result<Member, WenlanError> {
     })
 }
 
-/// The active member whose key this is.
-pub fn authenticate(path: &Path, key: &str) -> Result<Option<Member>, WenlanError> {
+/// The active member whose legacy key or non-revoked tool key this is, and
+/// which of the two it was.
+pub fn authenticate(path: &Path, key: &str) -> Result<Option<Authenticated>, WenlanError> {
     let key = key.trim();
     if !wenlan_types::team::is_team_key(key) {
         return Ok(None);
     }
     let hash = key_hash(key);
     let file = read_team(path)?;
-    // Checked against every member in constant time, so the time taken does
-    // not say how much of a hash matched or which member it was.
+    // Checked against every key of every member in constant time, so the
+    // time taken does not say how much of a hash matched or which member or
+    // key it was.
     let mut found = None;
     for member in file.members {
-        let same = same_hash(&member.key_sha256, &hash);
-        if same && member.is_active() {
-            found = Some(member);
+        let mut credential = None;
+        if let Some(own) = &member.key_sha256 {
+            if same_hash(own, &hash) {
+                credential = Some(Credential::LegacyKey);
+            }
+        }
+        for tool_key in &member.keys {
+            if same_hash(&tool_key.sha256, &hash) && tool_key.revoked_at.is_none() {
+                credential = Some(Credential::ToolKey {
+                    id: tool_key.id.clone(),
+                });
+            }
+        }
+        if let Some(credential) = credential {
+            if member.is_active() {
+                found = Some(Authenticated { member, credential });
+            }
         }
     }
     Ok(found)

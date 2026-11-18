@@ -1,6 +1,7 @@
 import type { WikiInventoryScope, PageProjectionIssue } from "../pages/pageInventory";
 import type { IndexedFileInfo } from "../../../lib/tauri";
 import type { SettingsSection } from "../settings/SettingsSidebar";
+import type { PageSection } from "../pages/pageSections";
 
 export type View =
   | { readonly kind: "activity" }
@@ -23,10 +24,12 @@ export type View =
     /** Stable across autosaves and history; distinct for each new draft intent. */
     readonly sessionKey?: number;
   }
-  | { readonly kind: "pages"; readonly inventoryScope?: WikiInventoryScope }
+  /** The list page of one section (Docs when none is named); with a folder
+   *  scope, that folder inside Docs. */
+  | { readonly kind: "pages"; readonly section?: PageSection; readonly inventoryScope?: WikiInventoryScope }
   | { readonly kind: "recaps" }
   | { readonly kind: "settings"; readonly section?: SettingsSection }
-  /** Library › Skills: find and install other people's skills (skills.sh). */
+  /** Skills › Find skills: find and install other people's skills (skills.sh). */
   | { readonly kind: "skills" }
   | { readonly kind: "sources" }
   | { readonly kind: "source-document"; readonly file: IndexedFileInfo }
@@ -35,7 +38,12 @@ export type View =
   | { readonly kind: "stream" }
   | { readonly kind: "thing"; readonly thingId: string };
 
-export type GlobalNavigation = "home" | "memories" | "pages" | "entities" | "spaces" | "graph" | "sources";
+/** `pages` is the Docs section; Skills and Rules are its two siblings. */
+export type GlobalNavigation = "home" | "memories" | "pages" | "skills" | "rules" | "entities" | "spaces" | "graph" | "sources";
+
+export function navigationForSection(section: PageSection | undefined): GlobalNavigation {
+  return section === "skills" ? "skills" : section === "rules" ? "rules" : "pages";
+}
 
 function assertNever(value: never): never {
   throw new TypeError(`Unsupported view: ${String(value)}`);
@@ -53,12 +61,16 @@ export function activeNavigationForView(view: View): GlobalNavigation | null {
     case "recaps":
     case "stream":
       return "memories";
+    // An open page lights its own section once the shell knows the page
+    // (see Main); until then it counts as Docs.
     case "distill-review":
     case "page":
     case "page-draft":
-    case "pages":
-    case "skills":
       return "pages";
+    case "pages":
+      return navigationForSection(view.section);
+    case "skills":
+      return "skills";
     // The topic list opens from the graph, so the graph stays lit there.
     case "entities":
       return "graph";

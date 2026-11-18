@@ -27,7 +27,7 @@ test("export chooses a retained version and labels pending and unavailable entri
       return original(command,args);
     };
   });
-  await openPrimaryDestination(page,"Library"); await openWikiNote(page,note.title);
+  await openPrimaryDestination(page,"Docs"); await openWikiNote(page,note.title);
   await page.getByRole("button",{name:"Page actions"}).click(); await page.getByRole("menuitem",{name:"Export…"}).click();
   const select=page.getByLabel("Version"); await expect(select).toHaveValue("current");
   await expect(page.getByRole("option",{name:/Pending draft.*not adopted/})).toBeAttached();

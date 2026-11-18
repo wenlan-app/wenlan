@@ -3,13 +3,13 @@ import { saveOpenPage } from "./helpers/pageReading";
 import { expect, test, type Page } from "@playwright/test";
 import { collectBrowserErrors, installTauriMock } from "./tauriMock";
 import { createReviewDecisionFixture } from "./fixtures/reviewDecisions";
-import { openWikiNote } from "./helpers/wikiWorkspace";
+import { findWikiNote, openWikiNote } from "./helpers/wikiWorkspace";
 
 async function openFixturePage(page: Page): Promise<void> {
   await page.goto("/");
   const navigation = page.getByRole("navigation", { name: "Primary navigation" });
-  await navigation.getByRole("button", { name: "Library", exact: true }).click();
-  await expect(page.getByRole("heading", { level: 1, name: "Open a page" })).toBeVisible();
+  await navigation.getByRole("button", { name: "Docs", exact: true }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Docs", exact: true })).toBeVisible();
   await openWikiNote(page, "Fixture architecture");
   await expect(page.getByRole("heading", { level: 1, name: "Fixture architecture" })).toBeVisible();
   await saveOpenPage(page);
@@ -28,8 +28,8 @@ test("deletes a Wiki Page and removes it from the inventory", async ({ page }) =
 
   await requestDelete(page);
 
-  await expect(page.getByRole("heading", { level: 1, name: "Open a page" })).toBeVisible();
-  await expect(page.locator(".wiki-workspace-directory").getByText("Fixture architecture", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("heading", { level: 1, name: "Docs", exact: true })).toBeVisible();
+  expect(await findWikiNote(page, "Fixture architecture")).toBeNull();
   expect(browserErrors.pageErrors).toEqual([]);
   expect(browserErrors.consoleErrors).toEqual([]);
 });
@@ -46,8 +46,8 @@ test("keeps a failed Wiki Page deletion visible and retryable", async ({ page })
   await expect(page.getByRole("heading", { level: 1, name: "Fixture architecture" })).toBeVisible();
 
   await requestDelete(page);
-  await expect(page.getByRole("heading", { level: 1, name: "Open a page" })).toBeVisible();
-  await expect(page.locator(".wiki-workspace-directory").getByText("Fixture architecture", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("heading", { level: 1, name: "Docs", exact: true })).toBeVisible();
+  expect(await findWikiNote(page, "Fixture architecture")).toBeNull();
   expect(browserErrors.pageErrors).toEqual([]);
   expect(browserErrors.consoleErrors).toEqual([]);
 });

@@ -68,7 +68,25 @@ async function http(
       text,
     );
   }
-  return text ? JSON.parse(text) : null;
+  const parsed = text ? JSON.parse(text) : null;
+  return team ? withSpacePaths(parsed) : parsed;
+}
+
+/**
+ * A member never gets a path on the server: the gate drops `storage_path`
+ * and the daemon adds `space_path`, the file as the member sees it (each
+ * Space a top folder). Put it where the file tree reads a page's place.
+ */
+function withSpacePaths(value: any): any {
+  if (Array.isArray(value)) return value.map(withSpacePaths);
+  if (!value || typeof value !== "object") return value;
+  const out: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (key === "space_path") continue;
+    out[key] = withSpacePaths(item);
+  }
+  if ("space_path" in value) out.storage_path = value.space_path ?? null;
+  return out;
 }
 const get = (p: string, headers?: Record<string, string>) => http("GET", p, undefined, headers);
 const post = (p: string, b: unknown = {}, headers?: Record<string, string>) => http("POST", p, b, headers);
@@ -593,6 +611,9 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
     post("/api/knowledge/folders", {
       parent_path: a.parentPath,
       name: a.name,
+      // A member's folders start with their Space's name; the gate checks
+      // they may edit that Space.
+      ...(isTeamMemberMode() ? { space: String(a.parentPath ?? "").split("/")[0] } : undefined),
     }),
   // --- pages (mirrors search.rs exactly) ---
   get_page: (a) => getPageVia(a),
@@ -901,9 +922,11 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
     get(`/api/pages/recent${qs({ limit: a?.limit, since_ms: a?.sinceMs })}`).then(
       (r) => r.pages ?? r,
     ),
+  // A member's browser names the Space in the query: the gate drops the
+  // header, and a header cannot carry a Space named in Chinese.
   list_recent_changes: (a) =>
     get(
-      `/api/pages/recent-changes${qs({ limit: a?.limit })}`,
+      `/api/pages/recent-changes${qs({ limit: a?.limit, space: isTeamMemberMode() ? a?.space : undefined })}`,
       a?.space ? { "x-wenlan-space": a.space } : undefined,
     ).then((r) => r.changes ?? r),
   get_page_sources: (a) => get(`/api/pages/${enc(a.pageId)}/sources`).then((r) => r?.sources ?? r),
@@ -1362,6 +1385,8 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
     requireSourcePreview();
     return http("POST", `/api/skills/suggestions/${enc(String(a.suggestionId))}/undo`, undefined, AS_PERSON);
   },
+  get_rules_delivery: () => get("/api/skills/delivery", AS_PERSON),
+  get_space_rules: (a) => get(`/api/skills/rules${qs({ space: a.space })}`, AS_PERSON),
   list_skill_borrow_records: (a) =>
     get(`/api/skills/record${qs({ space: a.space })}`),
   create_space: (a) => { requireSourcePreview(); return post("/api/spaces", { name: a.name, description: a.description }); },
@@ -1889,7 +1914,6 @@ function unsupportedWebCommand(command: string): Error {
  * instead of a "could not load" message for a part a member does not have.
  */
 const TEAM_LOCAL_ANSWERS: Record<string, () => unknown> = {
-  knowledge_folders_list: () => ({ folders: [], truncated: false }),
   list_shares: () => [],
   // A page's links can name pages in Spaces the member cannot open, so the
   // gate has no row for them; the page shows none instead of an error.

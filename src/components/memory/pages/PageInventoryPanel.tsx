@@ -103,7 +103,8 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
   const pinnedPages = usePinnedPages();
   // A team member's server keeps no folders and lets no one archive or
   // delete: those stay with the owner, so the list only opens and pins.
-  const member = useTeamAccess().member;
+  const teamAccess = useTeamAccess();
+  const member = teamAccess.member;
   const allPages = useMemo(() => collectPageInventory(active.data ?? [], drafts.data ?? []), [active.data, drafts.data]);
   const pages = useMemo(() => allPages.filter(page => scope.inScope(page.space)), [allPages, scope]);
   // A folder holding only the other side's pages stays out of sight; on a
@@ -137,13 +138,20 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
     });
   }, [selectedPath]);
   const hasFilter = !fileTree && !!filter.trim();
-  const canCreate = !exampleWiki && !member && !!folders.data && !folders.data.truncated;
+  // A member makes folders only where the owner keeps each Space in a
+  // folder of its own (the server then lists their Spaces as top folders),
+  // and only inside a Space they can edit.
+  const memberSpaces = member ? (folders.data?.folders ?? []).filter(folder => folder.parent_path === "" && teamAccess.canEdit(folder.path)).map(folder => folder.path) : [];
+  const canCreate = !exampleWiki && (!member || memberSpaces.length > 0) && !!folders.data && !folders.data.truncated;
   const folderUnavailable = folders.isError || !!folders.data?.truncated;
   const createStateRef = useRef({ canCreate, createPending, creating });
   const requestedCreatePath = (fileTree ? creationPath : selectedPath) ?? "";
-  const defaultCreatePath = requestedCreatePath === "" || folders.data?.folders.some(folder => folder.path === requestedCreatePath)
+  const ownerCreatePath = requestedCreatePath === "" || folders.data?.folders.some(folder => folder.path === requestedCreatePath)
     ? requestedCreatePath
     : "";
+  const defaultCreatePath = member
+    ? (memberSpaces.includes(ownerCreatePath.split("/")[0]) ? ownerCreatePath : memberSpaces[0] ?? "")
+    : ownerCreatePath;
   const defaultCreatePathRef = useRef(defaultCreatePath);
   createStateRef.current = { canCreate, createPending, creating };
   defaultCreatePathRef.current = defaultCreatePath;
@@ -304,7 +312,7 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
       <div className="notes-inventory-collection-row" data-active={folderActive ? "true" : undefined} style={{ marginLeft: depth * 14 }}>
         {canExpand ? <button type="button" className="notes-inventory-disclosure" aria-label={t(open ? "pages.inventory.collapse" : "pages.inventory.expand", { name: folder.name })} aria-expanded={open} aria-controls={listId} onClick={() => toggleFolder(folder.path)}><CaretRight aria-hidden="true" size={12}/></button> : <span className="notes-inventory-disclosure-spacer" aria-hidden="true"/>}
         <button type="button" className="notes-inventory-scope" data-active={folderActive ? "true" : undefined} aria-current={!fileTree && selectedPath === folder.path ? "page" : undefined} onClick={() => selectFolder(folder.path)} disabled={!fileTree && !onBrowse}><Folder aria-hidden="true" size={16}/><span>{folder.name}</span></button>
-        {fileTree && <button type="button" className="notes-inventory-folder-action" aria-label={t("pages.folders.newFolderIn", { name: folder.name })} title={t("pages.folders.newFolderIn", { name: folder.name })} disabled={!canCreate || createPending || creating} onClick={event => openCreateFolderFormAt(folder.path, event.currentTarget)}><FolderPlus aria-hidden="true" size={14}/></button>}
+        {fileTree && (!member || memberSpaces.includes(folder.path.split("/")[0])) && <button type="button" className="notes-inventory-folder-action" aria-label={t("pages.folders.newFolderIn", { name: folder.name })} title={t("pages.folders.newFolderIn", { name: folder.name })} disabled={!canCreate || createPending || creating} onClick={event => openCreateFolderFormAt(folder.path, event.currentTarget)}><FolderPlus aria-hidden="true" size={14}/></button>}
       </div>
       {fileTree && creating && folderFormParentPath === folder.path && folderCreateForm}
       {open && <ul id={listId} className="notes-inventory-collections">{children.map(child => renderFolder(child, depth + 1))}{noteChildren.length > 0 && <li><ul className="notes-page-list notes-inventory-pages" style={{ paddingLeft: depth * 14 }}>{noteChildren.map(renderPage)}</ul></li>}</ul>}

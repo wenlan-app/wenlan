@@ -10,7 +10,7 @@ test("draft inspector toggles without leaving the draft or losing autosaved cont
   const runtime = await installTauriMock(page, { locale: "en", rawActions: [] });
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto("/");
-  await openPrimaryDestination(page, "Library");
+  await openPrimaryDestination(page, "Docs");
   await page.locator(".note-tab-create").click();
 
   const title = page.getByRole("textbox", { name: "Title", exact: true });
@@ -46,7 +46,7 @@ test("typing over the title line renames the page once the writer leaves it", as
   const runtime = await installTauriMock(page, { locale: "en", rawActions: [] });
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto("/");
-  await openPrimaryDestination(page, "Library");
+  await openPrimaryDestination(page, "Docs");
   await openWikiNote(page, "Fixture architecture");
 
   const editor = page.getByRole("textbox", { name: "Page editor", exact: true });

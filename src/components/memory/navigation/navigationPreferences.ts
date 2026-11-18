@@ -11,15 +11,17 @@ export type SidebarPreferences = { readonly visible: boolean; readonly mode: Sid
 export const NAVIGATION_PREFERENCE_KEY = "wenlan-navigation-v1";
 export const SIDEBAR_PREFERENCE_KEY = "wenlan-sidebar-collapsed";
 export const LEGACY_SIDEBAR_PREFERENCE_KEY = "origin-sidebar-collapsed";
-// Home is where the app opens (what you're working on); the Wiki holds every
-// page; Spaces split the work by project; then the graph. All of them sit on
-// the left, with no More menu. Topics have no entry: few open them on their
-// own (Qi-Xuan 2026-11-09 19:37 PT), so their list opens from the graph. Memories have no page of their own: you meet them through
-// search and the things they belong to. Sources have none either: a source is
-// what a sentence cites, read from the page that cites it, and the list of
-// added files and links lives in Settings → Sources.
+// The left side's fixed rows, after Search: Home is where the app opens (what
+// you're working on); Spaces split the work by project; Docs, Skills and
+// Rules are the three sections every page falls into; the graph comes last.
+// The order never changes and nothing nests under a row (UX-FIND-4). Topics
+// have no entry: few open them on their own (Qi-Xuan 2026-11-09 19:37 PT), so
+// their list opens from the graph. Memories have no page of their own: you
+// meet them through search and the things they belong to. Sources have none
+// either: a source is what a sentence cites, read from the page that cites
+// it, and the list of added files and links lives in Settings → Sources.
 export const NAVIGATION_DESTINATION_ORDER: readonly NavigationDestination[] = [
-  "home", "pages", "spaces", "graph",
+  "home", "spaces", "pages", "skills", "rules", "graph",
 ];
 export const REQUIRED_NAVIGATION_DESTINATIONS: readonly NavigationDestination[] = NAVIGATION_DESTINATION_ORDER;
 export const DEFAULT_VISIBLE_NAVIGATION: readonly NavigationDestination[] = REQUIRED_NAVIGATION_DESTINATIONS;

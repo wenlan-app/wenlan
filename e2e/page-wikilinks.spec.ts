@@ -56,7 +56,7 @@ async function openSourcePage(page: Page, delays?: Record<string, number>) {
     };
   }, { sourceId: SOURCE_ID, targetId: TARGET_ID });
   await page.goto("/");
-  await openPrimaryDestination(page, "Library");
+  await openPrimaryDestination(page, "Docs");
   await openWikiNote(page, SOURCE_TITLE);
   const editor = page.getByRole("textbox", { name: "Page editor", exact: true });
   await expect(editor).toBeVisible();

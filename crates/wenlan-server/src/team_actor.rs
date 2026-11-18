@@ -87,9 +87,11 @@ pub(crate) fn from_headers(headers: &HeaderMap) -> Option<ActingMember> {
     if !wenlan_core::shared_space::version::is_safe_id(&id) {
         return None;
     }
+    // UTF-8, not `to_str` (visible ASCII only): a member named 王小明
+    // keeps their name.
     let name = headers
         .get(MEMBER_NAME_HEADER)
-        .and_then(|value| value.to_str().ok())
+        .and_then(|value| std::str::from_utf8(value.as_bytes()).ok())
         .unwrap_or_default()
         .trim()
         .to_string();
@@ -142,6 +144,13 @@ mod tests {
         let mut no_secret = headers(secret(), "person", "m-amy");
         no_secret.remove(SECRET_HEADER);
         assert!(from_headers(&no_secret).is_none());
+    }
+
+    #[test]
+    fn a_member_named_in_chinese_keeps_their_name() {
+        let mut map = headers(secret(), "person", "m-wang");
+        map.insert(MEMBER_NAME_HEADER, HeaderValue::from_str("王小明").unwrap());
+        assert_eq!(from_headers(&map).unwrap().name, "王小明");
     }
 
     #[test]

@@ -391,14 +391,16 @@ fn ux_cli_2_help_keeps_advanced_commands_on_a_second_page() {
     let mcp = stand_in(dir.path(), &[]);
     cli(&mcp).arg("--help").assert().success().stdout(
         predicate::str::contains("wenlan help all")
-            .and(predicate::str::contains("\n  start "))
+            .and(predicate::str::contains("\n  init "))
+            .and(predicate::str::contains("\n  start ").not())
             .and(predicate::str::contains("\n  models ").not()),
     );
-    cli(&mcp)
-        .args(["help", "all"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("\n  models ").and(predicate::str::contains("\n  tool ")));
+    cli(&mcp).args(["help", "all"]).assert().success().stdout(
+        predicate::str::contains("\n  models ")
+            .and(predicate::str::contains("\n  tool "))
+            .and(predicate::str::contains("\n  start "))
+            .and(predicate::str::contains("\nOptions:")),
+    );
     // Earlier names keep working after a rename.
     cli(&mcp)
         .args(["team", "host", "--help"])

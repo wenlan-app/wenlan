@@ -3,6 +3,6 @@ import { useQuery } from "@tanstack/react-query";
 import { knowledgeFoldersList } from "../../../lib/tauri";
 
 export const KNOWLEDGE_FOLDERS_QUERY_KEY = ["knowledge-folders"] as const;
-export function useKnowledgeFolders() {
-  return useQuery({ queryKey: KNOWLEDGE_FOLDERS_QUERY_KEY, queryFn: knowledgeFoldersList, staleTime: 30_000, retry: false });
+export function useKnowledgeFolders({ enabled = true }: { readonly enabled?: boolean } = {}) {
+  return useQuery({ queryKey: KNOWLEDGE_FOLDERS_QUERY_KEY, queryFn: () => knowledgeFoldersList(), staleTime: 30_000, retry: false, enabled });
 }
