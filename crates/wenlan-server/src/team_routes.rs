@@ -938,6 +938,11 @@ fn team_router(state: TeamState) -> axum::Router {
     let sign_in = axum::Router::new()
         .route("/auth/start/{provider}", get(auth::start))
         .route("/auth/callback/{provider}", get(auth::callback))
+        // A token and nothing else: a small body.
+        .route(
+            "/auth/invite/{provider}",
+            post(auth::invite).layer(DefaultBodyLimit::max(1024)),
+        )
         .merge(auth_checked)
         .layer(middleware::from_fn_with_state(state.clone(), auth::guard))
         .layer(middleware::from_fn(auth::headers));
@@ -995,6 +1000,7 @@ struct JoinPageStrings {
     copy_failed: &'static str,
     private: &'static str,
     expired: &'static str,
+    sign_in_google: &'static str,
 }
 
 const JOIN_PAGE_EN: JoinPageStrings = JoinPageStrings {
@@ -1019,6 +1025,7 @@ const JOIN_PAGE_EN: JoinPageStrings = JoinPageStrings {
     copy_failed: "Couldn't copy. Select the text above and copy it yourself.",
     private: "Keep this private. It lets an AI tool act as you.",
     expired: "This link no longer works. Ask whoever invited you for a new one.",
+    sign_in_google: "Sign in with Google",
 };
 
 const JOIN_PAGE_ZH_HANS: JoinPageStrings = JoinPageStrings {
@@ -1044,6 +1051,7 @@ const JOIN_PAGE_ZH_HANS: JoinPageStrings = JoinPageStrings {
     copy_failed: "未能复制。请选中上面的文字并手动复制。",
     private: "请妥善保管。AI 工具可以用它以你的身份操作。",
     expired: "这个链接已经失效。请让邀请你的人重新发一个。",
+    sign_in_google: "用 Google 登录",
 };
 
 const JOIN_PAGE_ZH_HANT: JoinPageStrings = JoinPageStrings {
@@ -1068,6 +1076,7 @@ const JOIN_PAGE_ZH_HANT: JoinPageStrings = JoinPageStrings {
     copy_failed: "未能複製。請選取上面的文字並手動複製。",
     private: "請妥善保管。AI 工具可以用它以你的身分操作。",
     expired: "這個連結已經失效。請讓邀請你的人重新傳一個。",
+    sign_in_google: "用 Google 登入",
 };
 
 fn join_page_strings(headers: &HeaderMap) -> &'static JoinPageStrings {
@@ -1241,6 +1250,16 @@ pre { max-width:100%; margin:0; padding:12px; overflow:auto; border-radius:8px; 
   let snippets = null;
   let readOnly = false;
 
+  // An invite link (#inv_…) is read once and taken out of the address bar
+  // and history at once; it is then sent in a request body, never a URL.
+  let invite = null;
+  if (window.location.hash.slice(1).startsWith('inv_')) {
+    invite = window.location.hash.slice(1);
+    window.history.replaceState(null, '', window.location.pathname + window.location.search);
+    accept.textContent = text.sign_in_google;
+    connect.parentElement.hidden = true;
+  }
+
   const fail = () => {
     setup.hidden = true;
     error.hidden = false;
@@ -1251,6 +1270,26 @@ pre { max-width:100%; margin:0; padding:12px; overflow:auto; border-radius:8px; 
   // Accept: open Wenlan here, in this browser. The key is checked first,
   // then kept for this address only, and the page moves to /app.
   accept.addEventListener('click', async () => {
+    if (invite) {
+      accept.disabled = true;
+      error.hidden = true;
+      try {
+        const response = await fetch('/auth/invite/google', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: invite }),
+          credentials: 'same-origin',
+          cache: 'no-store',
+          referrerPolicy: 'no-referrer'
+        });
+        if (!response.ok) throw new Error('invite refused');
+        const started = await response.json();
+        window.location.assign(started.url);
+      } catch (_) {
+        fail();
+      }
+      return;
+    }
     const key = window.location.hash.slice(1);
     if (!key) {
       fail();
@@ -1613,8 +1652,8 @@ enum RouteClass {
     App,
     /// `/auth/logout`: ends a browser session, so only a browser has one.
     Logout,
-    /// `/auth/start/*` and `/auth/callback/*`: sign-in, before anyone has a
-    /// credential. They are not behind [`require_member`]; the row is here
+    /// `/auth/start/*`, `/auth/callback/*` and `/auth/invite/*`: sign-in,
+    /// before anyone has a credential. They are not behind [`require_member`]; the row is here
     /// so every `/auth` path is in this table.
     AuthPublic,
     /// `/auth/link/*`: start linking a provider account to the caller.
@@ -1635,7 +1674,7 @@ fn route_class(path: &str) -> RouteClass {
         RouteClass::App
     } else if path == "/auth/logout" {
         RouteClass::Logout
-    } else if under("/auth/start") || under("/auth/callback") {
+    } else if under("/auth/start") || under("/auth/callback") || under("/auth/invite") {
         RouteClass::AuthPublic
     } else if under("/auth/link") {
         RouteClass::AuthLink
@@ -1773,8 +1812,12 @@ async fn team_admin(
         .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'_' | b'-'));
     // Handled here, not passed on: the team's own file is this server's.
     if plain && method.as_str() == "POST" {
-        if let ["", "members", id, "compromised"] = rest.split('/').collect::<Vec<_>>().as_slice() {
-            return reset_compromised(&state, id).await;
+        match rest.split('/').collect::<Vec<_>>().as_slice() {
+            ["", "members", id, "compromised"] => return reset_compromised(&state, id).await,
+            ["", "members", id, "invite"] => return reissue_invite(&state, id).await,
+            ["", "members", id, "approve"] => return approve_pending(&state, id).await,
+            ["", "invites"] => return create_invite(&state, req).await,
+            _ => {}
         }
     }
     let removed_member = match rest.split('/').collect::<Vec<_>>().as_slice() {
@@ -1889,6 +1932,104 @@ async fn reset_compromised(state: &TeamState, id: &str) -> Response {
             (StatusCode::BAD_REQUEST, what).into_response()
         }
         _ => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
+}
+
+/// The address invite links use: `WENLAN_TEAM_URL`, else the team's saved
+/// one. `None` when there is none, or it cannot hold a link.
+async fn invite_base_url(state: &TeamState) -> Option<String> {
+    let path = state.team_path.clone();
+    let saved = tokio::task::spawn_blocking(move || team::read_team(&path).ok()?.url)
+        .await
+        .ok()
+        .flatten();
+    let url = env_value(TEAM_URL_ENV).or(saved)?;
+    remote::check_url(url.trim()).ok()
+}
+
+fn invite_answer(member: Member, token: &str, base: &str) -> Response {
+    let link = wenlan_types::team::invite_link(base, token);
+    // A link is shown once and must never be cached.
+    let mut response = Json(wenlan_types::team::TeamInviteLink {
+        member: member.to_wire(),
+        link,
+    })
+    .into_response();
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+}
+
+fn invite_failure(error: wenlan_core::error::WenlanError) -> Response {
+    use wenlan_core::error::WenlanError as E;
+    match error {
+        E::NotFound(what) => (StatusCode::NOT_FOUND, what).into_response(),
+        E::Validation(what) => (StatusCode::BAD_REQUEST, what).into_response(),
+        E::Conflict(what) => (StatusCode::CONFLICT, what).into_response(),
+        _ => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
+}
+
+/// `POST /team/v1/admin/invites` `{name, email?, spaces}`: a member with no
+/// key and a link, `<team address>/join#inv_<token>`, for the owner to give
+/// them. The link is in this answer only. Nothing is sent to anyone.
+async fn create_invite(state: &TeamState, req: Request) -> Response {
+    let Ok(body) = axum::body::to_bytes(req.into_body(), 64 * 1024).await else {
+        return (StatusCode::BAD_REQUEST, "the request is too large").into_response();
+    };
+    let Ok(invite) = serde_json::from_slice::<wenlan_types::team::TeamInviteRequest>(&body) else {
+        return (StatusCode::BAD_REQUEST, "not an invite request").into_response();
+    };
+    // The member is made only when there is an address to put in the link.
+    let Some(base) = invite_base_url(state).await else {
+        return (
+            StatusCode::CONFLICT,
+            "set the address people reach this server at (WENLAN_TEAM_URL) first",
+        )
+            .into_response();
+    };
+    let path = state.team_path.clone();
+    let made = tokio::task::spawn_blocking(move || {
+        team::create_invited_member(&path, &invite.name, invite.email.as_deref(), &invite.spaces)
+    })
+    .await;
+    match made {
+        Ok(Ok((member, token))) => invite_answer(member, &token, &base),
+        Ok(Err(error)) => invite_failure(error),
+        Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
+}
+
+/// `POST /team/v1/admin/members/{id}/invite`: a new link for a member; the
+/// old one stops working.
+async fn reissue_invite(state: &TeamState, id: &str) -> Response {
+    let Some(base) = invite_base_url(state).await else {
+        return (
+            StatusCode::CONFLICT,
+            "set the address people reach this server at (WENLAN_TEAM_URL) first",
+        )
+            .into_response();
+    };
+    let path = state.team_path.clone();
+    let id = id.to_string();
+    match tokio::task::spawn_blocking(move || team::reissue_invite(&path, &id)).await {
+        Ok(Ok((member, token))) => invite_answer(member, &token, &base),
+        Ok(Err(error)) => invite_failure(error),
+        Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
+}
+
+/// `POST /team/v1/admin/members/{id}/approve`: the owner lets in the account
+/// that used this member's invite with an email the provider does not vouch
+/// for.
+async fn approve_pending(state: &TeamState, id: &str) -> Response {
+    let path = state.team_path.clone();
+    let id = id.to_string();
+    match tokio::task::spawn_blocking(move || team::approve_pending(&path, &id)).await {
+        Ok(Ok(member)) => Json(member.to_wire()).into_response(),
+        Ok(Err(error)) => invite_failure(error),
+        Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
     }
 }
 

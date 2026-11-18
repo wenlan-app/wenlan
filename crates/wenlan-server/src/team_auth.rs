@@ -30,6 +30,14 @@
 //!   [`REAUTH_WINDOW`] with an account already theirs). An account on
 //!   another member is refused. An email that happens to match changes
 //!   nothing.
+//! - **Invite**: the browser's invite token (sent in a POST body, never in a
+//!   URL) is bound to the transaction by its hash. The callback hands the
+//!   account to core's `redeem_invite_hash`, which does every check and the
+//!   change in one lock: the member gets the account and a new session
+//!   (Google accounts with a Gmail address or a company domain, `hd`, are
+//!   trusted to own the invited email), or waits for the owner's approval
+//!   when the email matches but the provider does not vouch for it. A wrong
+//!   email names the invited one masked (`a***@example.com`).
 //! - **Reauth**: succeeds only when the account is already one of this
 //!   member's, and the provider says the member authenticated just now
 //!   (`max_age=0` and the id token's `auth_time`). It sets the new
@@ -222,6 +230,9 @@ pub(crate) enum Purpose {
     Link { member_id: String },
     /// This member proves themselves again with an account already theirs.
     Reauth { member_id: String },
+    /// Someone with an invite link signs in to become the member it is for.
+    /// Only the token's hash is kept here.
+    Invite { token_hash: String },
 }
 
 struct Transaction {
@@ -478,6 +489,49 @@ fn client_for(
     .set_redirect_uri(redirect))
 }
 
+/// The account an id token proved.
+struct Account {
+    issuer: String,
+    subject: String,
+    email: Option<String>,
+    auth_time: Option<DateTime<Utc>>,
+    /// The id token carries a `hd` (hosted domain) claim: a company account.
+    hosted_domain: bool,
+}
+
+/// How far to believe a Google account owns its email now: a Gmail address
+/// or an account of a company domain (`hd`) does; Google's "verified" on
+/// any other address does not show the person still owns the mailbox.
+fn google_email_trust(email: &str, hosted_domain: bool) -> team::EmailTrust {
+    let lower = email.trim().to_ascii_lowercase();
+    let gmail = lower.ends_with("@gmail.com") || lower.ends_with("@googlemail.com");
+    if hosted_domain || gmail {
+        team::EmailTrust::Trusted
+    } else {
+        team::EmailTrust::Untrusted
+    }
+}
+
+/// Whether the (already verified) id token has a non-empty `hd` claim.
+fn has_hosted_domain(id_token: &str) -> bool {
+    use base64::Engine;
+    id_token
+        .split('.')
+        .nth(1)
+        .and_then(|payload| {
+            base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(payload)
+                .ok()
+        })
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .and_then(|claims| {
+            claims
+                .get("hd")
+                .and_then(|hd| hd.as_str().map(str::to_owned))
+        })
+        .is_some_and(|hd| !hd.trim().is_empty())
+}
+
 // ===== Answers =====
 
 /// Why a sign-in did not complete. A label is logged, never a value.
@@ -528,6 +582,37 @@ fn set_cookie(response: &mut Response, value: &str) {
         header::SET_COOKIE,
         HeaderValue::from_str(value).expect("cookie values are visible ASCII"),
     );
+}
+
+/// A plain-text page that ends this browser's login too.
+fn plain_page(status: StatusCode, message: String) -> Response {
+    let mut response = (status, message).into_response();
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/plain; charset=utf-8"),
+    );
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    set_cookie(&mut response, &clear_login_cookie());
+    response
+}
+
+fn refusal_message(reason: &team::InviteRefusal) -> String {
+    use team::InviteRefusal::*;
+    match reason {
+        Unknown => "This invite does not work. Ask the owner of the team for a new link.".into(),
+        Expired => "This invite has expired. Ask the owner of the team for a new link.".into(),
+        Used => {
+            "This invite has already been used. Ask the owner of the team for a new link.".into()
+        }
+        IdentityTaken => "This account already belongs to another member of this team.".into(),
+        EmailMismatch { invited } => format!(
+            "This invite is for {invited}. Go back to the link and sign in with that account."
+        ),
+    }
 }
 
 impl Failure {
@@ -788,6 +873,47 @@ pub(super) async fn reauth(
     .await
 }
 
+/// `POST /auth/invite/{provider}` with `{"token": "inv_…"}`: someone with an
+/// invite link starts signing in as the member it is for. The token travels
+/// in the body only. A token that cannot work (unknown, expired, used) is
+/// told so here, before the provider is bothered; the callback checks it
+/// all again in one lock.
+pub(super) async fn invite(
+    State(state): State<TeamState>,
+    UrlPath(provider): UrlPath<String>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    if !same_origin(&state, &headers).await {
+        return text(StatusCode::FORBIDDEN, "origin not allowed");
+    }
+    #[derive(Deserialize)]
+    struct Body {
+        token: String,
+    }
+    let token = match serde_json::from_slice::<Body>(&body) {
+        Ok(Body { token }) if wenlan_types::team::is_invite_token(token.trim()) => {
+            token.trim().to_string()
+        }
+        _ => return text(StatusCode::BAD_REQUEST, "this is not an invite"),
+    };
+    let token_hash = team::invite_token_sha256(&token);
+    let path = state.team_path.clone();
+    let hash = token_hash.clone();
+    match blocking(move || team::invite_usable(&path, &hash)).await {
+        Ok(true) => {}
+        Ok(false) => {
+            return (
+                StatusCode::GONE,
+                Json(serde_json::json!({ "error": "invite_unusable" })),
+            )
+                .into_response()
+        }
+        Err(_) => return Failure::Unavailable("the member list cannot be read").into_response(),
+    }
+    started(&state, &provider, Purpose::Invite { token_hash }, &headers).await
+}
+
 // ===== The callback =====
 
 /// `GET /auth/callback/{provider}`. The query holds the one-time `code`; it
@@ -846,8 +972,13 @@ async fn finish(
         .filter(|code| !code.is_empty())
         .ok_or(Failure::Refused("no code returned"))?;
 
-    let (issuer, subject, email, auth_time) =
-        verified_account(state, provider, &origin, &tx, code).await?;
+    let Account {
+        issuer,
+        subject,
+        email,
+        auth_time,
+        hosted_domain,
+    } = verified_account(state, provider, &origin, &tx, code).await?;
 
     let member_id = match &tx.purpose {
         Purpose::SignIn => {
@@ -876,6 +1007,40 @@ async fn finish(
                     _ => Failure::Refused("the account cannot be linked"),
                 })?
                 .id
+        }
+        Purpose::Invite { token_hash } => {
+            let email = email.ok_or(Failure::Refused("no email"))?;
+            let trust = if provider.name == "google" {
+                google_email_trust(&email, hosted_domain)
+            } else {
+                team::EmailTrust::Untrusted
+            };
+            let identity = Identity {
+                issuer: issuer.clone(),
+                subject: subject.clone(),
+                email: Some(email.clone()),
+                linked_at: String::new(),
+            };
+            let path = state.team_path.clone();
+            let hash = token_hash.clone();
+            let outcome =
+                blocking(move || team::redeem_invite_hash(&path, &hash, identity, &[email], trust))
+                    .await
+                    .map_err(|_| Failure::Unavailable("the invite cannot be used"))?;
+            match outcome {
+                team::InviteOutcome::Linked(member) => member.id,
+                team::InviteOutcome::PendingApproval(_) => {
+                    tracing::info!("[team] an invited account waits for the owner's approval");
+                    return Ok(plain_page(
+                        StatusCode::OK,
+                        "Thanks. The owner of this team needs to approve you before you can sign in. Ask them, then come back and sign in.".into(),
+                    ));
+                }
+                team::InviteOutcome::Refused(reason) => {
+                    tracing::info!("[team] an invite was refused");
+                    return Ok(plain_page(StatusCode::FORBIDDEN, refusal_message(&reason)));
+                }
+            }
         }
         Purpose::Reauth { member_id } => {
             // Only the session of the member who asked can sign in again.
@@ -934,7 +1099,7 @@ async fn verified_account(
     origin: &str,
     tx: &Transaction,
     code: &str,
-) -> Result<(String, String, Option<String>, Option<DateTime<Utc>>), Failure> {
+) -> Result<Account, Failure> {
     let http = state.auth.http()?;
     let meta = state.auth.metadata(provider, false).await?;
     match exchange(http, &meta, provider, origin, tx, code).await {
@@ -956,7 +1121,7 @@ async fn exchange(
     origin: &str,
     tx: &Transaction,
     code: &str,
-) -> Result<(String, String, Option<String>, Option<DateTime<Utc>>), Failure> {
+) -> Result<Account, Failure> {
     let client = client_for(meta, provider, origin)?;
     let token = client
         .exchange_code(AuthorizationCode::new(code.to_string()))
@@ -976,12 +1141,14 @@ async fn exchange(
     if email.is_none() {
         return Err(Failure::Refused("no email"));
     }
-    Ok((
-        claims.issuer().as_str().to_string(),
-        claims.subject().as_str().to_string(),
+    Ok(Account {
+        issuer: claims.issuer().as_str().to_string(),
+        subject: claims.subject().as_str().to_string(),
         email,
-        claims.auth_time(),
-    ))
+        auth_time: claims.auth_time(),
+        // The signature was checked above, so the payload is the provider's.
+        hosted_domain: has_hosted_domain(&id_token.to_string()),
+    })
 }
 
 #[cfg(test)]

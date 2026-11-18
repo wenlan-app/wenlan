@@ -44,6 +44,8 @@ fs2 = { workspace = true }
 sha2 = "0.10"
 hex = { workspace = true }
 getrandom = "0.3"
+# Reads the `hd` claim of an id token whose signature was already checked.
+base64 = "0.22"
 file-rotate = "0.8"
 tracing-throttle = "0.4"
 dom_query = "=0.27.0"
@@ -70,7 +72,6 @@ async-trait = { workspace = true }
 hex = { workspace = true }
 # Signs the fake identity provider's id tokens in the sign-in tests.
 ring = "0.17"
-base64 = "0.22"
 hmac = { workspace = true }
 libsql = { workspace = true }
 sha2 = { workspace = true }

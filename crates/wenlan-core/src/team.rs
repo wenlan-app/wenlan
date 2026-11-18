@@ -115,6 +115,11 @@ pub struct Invite {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
     pub expires_at: String,
+    /// The account that used the invite but waits for the owner's approval
+    /// ([`approve_pending`]). While it is set the token is spent: it cannot
+    /// be used again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending: Option<Identity>,
 }
 
 /// What kind of credential a request presented.
@@ -892,6 +897,321 @@ pub fn link_identity(
             Some(known) => known.email = identity.email.clone(),
             None => member.identities.push(identity.clone()),
         }
+        Ok(member.clone())
+    })
+}
+
+// ===== Sign-in invites =====
+
+/// How long an invite works.
+pub const INVITE_DAYS: i64 = 7;
+
+/// How much the signed-in email proves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EmailTrust {
+    /// The provider vouches the person owns the mailbox now (a Gmail
+    /// address, or an account of a company domain).
+    Trusted,
+    /// The provider calls the email verified but that does not show the
+    /// person owns it now: a matching email waits for the owner's approval.
+    Untrusted,
+}
+
+/// What redeeming an invite came to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InviteOutcome {
+    /// The account is linked to the member and the invite is gone.
+    Linked(Member),
+    /// The account is kept on the member as waiting; the owner approves it
+    /// ([`approve_pending`]). The invite cannot be used again.
+    PendingApproval(Member),
+    /// Nothing changed.
+    Refused(InviteRefusal),
+}
+
+/// Why an invite was refused.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InviteRefusal {
+    /// No live invite has this token, or its member is gone.
+    Unknown,
+    /// Older than [`INVITE_DAYS`]. The owner can send a new one.
+    Expired,
+    /// Already used (it may be waiting for the owner's approval).
+    Used,
+    /// The account belongs to another member.
+    IdentityTaken,
+    /// The invite is for another address; this one is the invite's, with
+    /// all but the first letter of its name hidden.
+    EmailMismatch { invited: String },
+}
+
+/// A new invite token: `inv_` and 64 hex digits from 32 random bytes.
+fn new_invite_token() -> Result<String, WenlanError> {
+    let mut bytes = [0u8; 32];
+    getrandom::fill(&mut bytes)
+        .map_err(|error| WenlanError::Generic(format!("no random bytes for an invite: {error}")))?;
+    Ok(format!("inv_{}", hex::encode(bytes)))
+}
+
+/// The SHA-256 the server keeps of an invite token (lowercase hex).
+pub fn invite_token_sha256(token: &str) -> String {
+    key_hash(token)
+}
+
+/// `a***@example.com` for `amy@example.com`: enough to tell which address
+/// was meant, not enough to learn it.
+pub fn mask_email(email: &str) -> String {
+    match email.trim().split_once('@') {
+        Some((name, domain)) => {
+            let first: String = name.chars().take(1).collect();
+            format!("{first}***@{domain}")
+        }
+        None => "***".to_string(),
+    }
+}
+
+fn clean_email(email: Option<&str>) -> Result<Option<String>, WenlanError> {
+    let Some(email) = email.map(str::trim).filter(|email| !email.is_empty()) else {
+        return Ok(None);
+    };
+    let plausible = email.len() <= 254
+        && !email.chars().any(|c| c.is_whitespace() || c.is_control())
+        && email
+            .split_once('@')
+            .is_some_and(|(name, domain)| !name.is_empty() && domain.contains('.'));
+    if !plausible {
+        return Err(WenlanError::Validation(
+            "that is not an email address".into(),
+        ));
+    }
+    Ok(Some(email.to_string()))
+}
+
+fn make_invite(email: Option<String>) -> Result<(Invite, String), WenlanError> {
+    let token = new_invite_token()?;
+    let expires_at = (chrono::Utc::now() + chrono::Duration::days(INVITE_DAYS))
+        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let invite = Invite {
+        token_sha256: key_hash(&token),
+        email,
+        expires_at,
+        pending: None,
+    };
+    Ok((invite, token))
+}
+
+/// Adds a member who has no key yet and will sign in with their own account:
+/// the member and an invite token, which is not kept (only its hash is).
+/// With an `email`, only an account with that address may use the invite.
+pub fn create_invited_member(
+    path: &Path,
+    name: &str,
+    email: Option<&str>,
+    spaces: &[TeamSpaceAccess],
+) -> Result<(Member, String), WenlanError> {
+    let name = clean_name(name)?;
+    let email = clean_email(email)?;
+    let (invite, token) = make_invite(email)?;
+    let mut member = Member {
+        id: uuid::Uuid::new_v4().simple().to_string(),
+        name,
+        key_sha256: None,
+        spaces: access_map(spaces),
+        added_at: now(),
+        removed_at: None,
+        role: TeamRole::Member,
+        identities: Vec::new(),
+        keys: Vec::new(),
+        invite: Some(invite),
+        everyone: BTreeMap::new(),
+        team: None,
+    };
+    change_team(path, |file| {
+        member.everyone = file.everyone.clone();
+        member.team = file.info();
+        file.members.push(member.clone());
+        Ok(())
+    })?;
+    Ok((member, token))
+}
+
+/// A new invite for a member, in place of any they have: the old token (and
+/// an account waiting for approval) is gone. Not for the owner.
+pub fn reissue_invite(path: &Path, member_id: &str) -> Result<(Member, String), WenlanError> {
+    change_team(path, |file| {
+        let member = find_active(file, member_id)?;
+        if member.role == TeamRole::Owner {
+            return Err(WenlanError::Validation(
+                "the team's owner is not invited".into(),
+            ));
+        }
+        let email = member.invite.as_ref().and_then(|i| i.email.clone());
+        let (invite, token) = make_invite(email)?;
+        member.invite = Some(invite);
+        Ok((member.clone(), token))
+    })
+}
+
+/// The member holding the invite with this hash, compared in constant time
+/// against every invite so the time says nothing about which one.
+fn invite_holder<'a>(file: &'a mut TeamFile, token_hash: &str) -> Option<&'a mut Member> {
+    let mut found = None;
+    for (index, member) in file.members.iter().enumerate() {
+        if let Some(invite) = &member.invite {
+            if same_hash(&invite.token_sha256, token_hash) {
+                found = Some(index);
+            }
+        }
+    }
+    found.map(|index| &mut file.members[index])
+}
+
+fn invite_expired(invite: &Invite) -> bool {
+    chrono::DateTime::parse_from_rfc3339(&invite.expires_at)
+        .map(|at| at <= chrono::Utc::now())
+        .unwrap_or(true)
+}
+
+/// Whether the invite with this token hash can still be used right now:
+/// there, not expired, not spent, its member active.
+pub fn invite_usable(path: &Path, token_hash: &str) -> Result<bool, WenlanError> {
+    let mut file = read_team(path)?;
+    Ok(invite_holder(&mut file, token_hash).is_some_and(|member| {
+        member.is_active()
+            && member
+                .invite
+                .as_ref()
+                .is_some_and(|i| i.pending.is_none() && !invite_expired(i))
+    }))
+}
+
+/// Uses an invite token for the signed-in account `identity`.
+/// `verified_emails` are the addresses the provider vouches for as the
+/// account's; `trust` says how far to believe them (see [`EmailTrust`]).
+/// See [`redeem_invite_hash`].
+pub fn redeem_invite(
+    path: &Path,
+    token: &str,
+    identity: Identity,
+    verified_emails: &[String],
+    trust: EmailTrust,
+) -> Result<InviteOutcome, WenlanError> {
+    redeem_invite_hash(
+        path,
+        &invite_token_sha256(token),
+        identity,
+        verified_emails,
+        trust,
+    )
+}
+
+/// [`redeem_invite`] for a token already hashed. Everything is checked and
+/// changed in one change under the file's lock, so two people using one
+/// invite at once cannot both succeed: the token's hash (in constant time),
+/// that it has not expired nor been used, that its member is active, that
+/// no other active member holds this `(issuer, subject)`, and, when the
+/// invite names an email, that one of the verified addresses is it
+/// (compared without regard to case). An invite without an email works for
+/// whoever holds it. A matching email that is not trusted leaves the member
+/// waiting for the owner ([`InviteOutcome::PendingApproval`]).
+pub fn redeem_invite_hash(
+    path: &Path,
+    token_hash: &str,
+    mut identity: Identity,
+    verified_emails: &[String],
+    trust: EmailTrust,
+) -> Result<InviteOutcome, WenlanError> {
+    use InviteOutcome::Refused;
+    use InviteRefusal as No;
+    if identity.issuer.trim().is_empty() || identity.subject.trim().is_empty() {
+        return Err(WenlanError::Validation(
+            "an identity needs an issuer and a subject".into(),
+        ));
+    }
+    identity.linked_at = now();
+    change_team(path, |file| {
+        let (issuer, subject) = (identity.issuer.clone(), identity.subject.clone());
+        let held_elsewhere = |file: &TeamFile, member_id: &str| {
+            file.members.iter().any(|other| {
+                other.id != member_id && other.is_active() && has_identity(other, &issuer, &subject)
+            })
+        };
+        let Some(holder) = invite_holder(file, token_hash) else {
+            return Ok(Refused(No::Unknown));
+        };
+        let member_id = holder.id.clone();
+        let Some(invite) = holder.invite.clone().filter(|_| holder.is_active()) else {
+            return Ok(Refused(No::Unknown));
+        };
+        if invite_expired(&invite) {
+            return Ok(Refused(No::Expired));
+        }
+        if invite.pending.is_some() {
+            return Ok(Refused(No::Used));
+        }
+        if held_elsewhere(file, &member_id) {
+            return Ok(Refused(No::IdentityTaken));
+        }
+        if let Some(invited) = &invite.email {
+            let matches = verified_emails
+                .iter()
+                .any(|email| email.trim().eq_ignore_ascii_case(invited));
+            if !matches {
+                return Ok(Refused(No::EmailMismatch {
+                    invited: mask_email(invited),
+                }));
+            }
+        }
+        let waits = invite.email.is_some() && trust == EmailTrust::Untrusted;
+        let member = find_active(file, &member_id)?;
+        if waits {
+            if let Some(invite) = member.invite.as_mut() {
+                invite.pending = Some(identity.clone());
+            }
+            Ok(InviteOutcome::PendingApproval(member.clone()))
+        } else {
+            match member
+                .identities
+                .iter_mut()
+                .find(|i| i.issuer == identity.issuer && i.subject == identity.subject)
+            {
+                Some(known) => known.email = identity.email.clone(),
+                None => member.identities.push(identity.clone()),
+            }
+            member.invite = None;
+            Ok(InviteOutcome::Linked(member.clone()))
+        }
+    })
+}
+
+/// The owner approves the account waiting on a member's invite: it is
+/// linked and the invite is gone. Refused ([`WenlanError::Conflict`]) when
+/// another active member has that account by now.
+pub fn approve_pending(path: &Path, member_id: &str) -> Result<Member, WenlanError> {
+    change_team(path, |file| {
+        let pending = find_active(file, member_id)?
+            .invite
+            .as_ref()
+            .and_then(|invite| invite.pending.clone())
+            .ok_or_else(|| WenlanError::Validation("nobody is waiting for approval".into()))?;
+        let taken = file.members.iter().any(|other| {
+            other.id != member_id
+                && other.is_active()
+                && has_identity(other, &pending.issuer, &pending.subject)
+        });
+        if taken {
+            return Err(WenlanError::Conflict(
+                "that account is linked to another member".into(),
+            ));
+        }
+        let member = find_active(file, member_id)?;
+        if !has_identity(member, &pending.issuer, &pending.subject) {
+            member.identities.push(Identity {
+                linked_at: now(),
+                ..pending
+            });
+        }
+        member.invite = None;
         Ok(member.clone())
     })
 }
