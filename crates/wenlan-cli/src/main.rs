@@ -269,8 +269,7 @@ const HELP_GROUPS: &[(&str, &[&str])] = &[
         "More",
         &[
             "skills", "memories", "sources", "follow", "unfollow", "follows", "spaces", "repo",
-            "curate",
-            "lint", "models", "keys", "steep", "outbox", "export", "entities", "tool",
+            "curate", "lint", "models", "keys", "steep", "outbox", "export", "entities", "tool",
         ],
     ),
 ];

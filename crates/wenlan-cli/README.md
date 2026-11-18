@@ -500,98 +500,6 @@ Arguments:
 
 - `<ID>`: The rule's id, as `wenlan rules` prints it.
 
-### `wenlan skills`
-
-List, find and take in skills your AI tools can use (list, search, show, scan, import, install, remove).
-
-```text
-wenlan skills [OPTIONS] [COMMAND]
-```
-
-#### `wenlan skills list`
-
-List the skills Wenlan holds (what an AI tool gets from list_skills).
-
-```text
-wenlan skills list [OPTIONS]
-```
-
-#### `wenlan skills search`
-
-Search skills.sh (what an AI tool gets from search_skills).
-
-```text
-wenlan skills search [OPTIONS] <QUERY>...
-```
-
-Arguments:
-
-- `<QUERY>...`: What your AI tools should be able to do.
-
-Options:
-
-- `--warnings`: Also show skills whose safety checks warned or have not run.
-
-#### `wenlan skills show`
-
-Show everything in one skill and its safety checks, before installing.
-
-```text
-wenlan skills show [OPTIONS] <SKILL>
-```
-
-Arguments:
-
-- `<SKILL>`: The skill as search prints it: owner/repo/skill.
-
-#### `wenlan skills scan`
-
-List skills already in your AI tools' folders that Wenlan does not hold.
-
-```text
-wenlan skills scan [OPTIONS]
-```
-
-#### `wenlan skills import`
-
-Take skills from your AI tools' folders into Wenlan. Asks you first.
-
-```text
-wenlan skills import [OPTIONS] [NAMES]...
-```
-
-Arguments:
-
-- `[NAMES]...`: Names from `wenlan skills scan`. Omit to take all of them.
-
-#### `wenlan skills install`
-
-Install a skill from skills.sh. Shows it and asks you first.
-
-```text
-wenlan skills install [OPTIONS] <SKILL>
-```
-
-Arguments:
-
-- `<SKILL>`: The skill as search prints it: owner/repo/skill.
-
-Options:
-
-- `--only-in <SPACE>`: Use it only while working in this Space instead of everywhere.
-
-#### `wenlan skills remove`
-
-Remove a skill from Wenlan and from the AI tools it was copied to. Asks you first.
-
-```text
-wenlan skills remove [OPTIONS] <NAME>
-```
-
-Arguments:
-
-- `<NAME>`: The skill's name as `wenlan skills list` prints it.
-
 ### `wenlan pages`
 
 List pages or open one by title; read, write, rename, move, delete or restore one (read, write, rename, delete, move, history, restore, links, lock, unlock).
@@ -964,6 +872,98 @@ wenlan restart [OPTIONS]
 ```
 
 **More**
+
+### `wenlan skills`
+
+List, find and take in skills your AI tools can use (list, search, show, scan, import, install, remove).
+
+```text
+wenlan skills [OPTIONS] [COMMAND]
+```
+
+#### `wenlan skills list`
+
+List the skills Wenlan holds (what an AI tool gets from list_skills).
+
+```text
+wenlan skills list [OPTIONS]
+```
+
+#### `wenlan skills search`
+
+Search skills.sh (what an AI tool gets from search_skills).
+
+```text
+wenlan skills search [OPTIONS] <QUERY>...
+```
+
+Arguments:
+
+- `<QUERY>...`: What your AI tools should be able to do.
+
+Options:
+
+- `--warnings`: Also show skills whose safety checks warned or have not run.
+
+#### `wenlan skills show`
+
+Show everything in one skill and its safety checks, before installing.
+
+```text
+wenlan skills show [OPTIONS] <SKILL>
+```
+
+Arguments:
+
+- `<SKILL>`: The skill as search prints it: owner/repo/skill.
+
+#### `wenlan skills scan`
+
+List skills already in your AI tools' folders that Wenlan does not hold.
+
+```text
+wenlan skills scan [OPTIONS]
+```
+
+#### `wenlan skills import`
+
+Take skills from your AI tools' folders into Wenlan. Asks you first.
+
+```text
+wenlan skills import [OPTIONS] [NAMES]...
+```
+
+Arguments:
+
+- `[NAMES]...`: Names from `wenlan skills scan`. Omit to take all of them.
+
+#### `wenlan skills install`
+
+Install a skill from skills.sh. Shows it and asks you first.
+
+```text
+wenlan skills install [OPTIONS] <SKILL>
+```
+
+Arguments:
+
+- `<SKILL>`: The skill as search prints it: owner/repo/skill.
+
+Options:
+
+- `--only-in <SPACE>`: Use it only while working in this Space instead of everywhere.
+
+#### `wenlan skills remove`
+
+Remove a skill from Wenlan and from the AI tools it was copied to. Asks you first.
+
+```text
+wenlan skills remove [OPTIONS] <NAME>
+```
+
+Arguments:
+
+- `<NAME>`: The skill's name as `wenlan skills list` prints it.
 
 ### `wenlan memories`
 
