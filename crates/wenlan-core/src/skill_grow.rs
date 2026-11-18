@@ -337,6 +337,7 @@ pub fn parse_grow(raw: &str, pages: &[SkillPageInput]) -> Vec<SkillLine> {
             source_quote: quote,
             person_edited: false,
             general: candidate.general,
+            hand_written: false,
         });
     }
     out
@@ -376,9 +377,255 @@ fn current_rule_line(raw: &str, id: &str) -> Option<(SkillLineKind, String)> {
     Some((kind, one_line(text, 500)))
 }
 
+/// The folder names that make a page of the person's own a rules page, in
+/// any app language. ASCII case does not matter.
+pub const RULES_FOLDER_NAMES: [&str; 3] = ["Rules", "規則", "规则"];
+
+/// Whether the folder path `dir` (relative, `/` or `\\` between folders) has
+/// a folder named Rules at any depth. Pass the path with the Space's own
+/// folder already taken off (`space_folders::placed`): a Space or team that
+/// happens to be named Rules is not a rules folder.
+pub fn has_rules_folder(dir: &str) -> bool {
+    dir.split(['/', '\\'])
+        .filter(|part| !part.is_empty())
+        .any(|folder| {
+            RULES_FOLDER_NAMES
+                .iter()
+                .any(|name| folder.eq_ignore_ascii_case(name))
+        })
+}
+
+/// A cheap first test on a page file's path: some folder above it is named
+/// Rules. Wider than the real test, which also needs the Spaces' folders.
+pub fn may_be_in_rules_folder(file: &str) -> bool {
+    let dir = file.rsplit_once(['/', '\\']).map_or("", |(dir, _)| dir);
+    has_rules_folder(dir)
+}
+
+/// Whether a page version with this `page_history.edited_by` is the person's
+/// own writing here: typed in the app or in the file, a draft they
+/// published, or Wenlan only moving or renaming the page. A version an AI
+/// tool wrote, one a teammate wrote, AI text the person accepted, and any
+/// writer this code does not know are not.
+pub fn version_is_the_persons_own(edited_by: &str) -> bool {
+    use crate::authorship::{version_author, VersionAuthor};
+    crate::shared_space::shared_writer(edited_by).is_none()
+        && edited_by != "revision_accept"
+        && matches!(
+            version_author(edited_by, ""),
+            VersionAuthor::Person | VersionAuthor::System
+        )
+}
+
+const RULE_MARKER_START: &str = "<!-- wenlan-rule:";
+
+/// The text after a list marker when `line` opens a bullet, with how far
+/// the marker is indented.
+fn bullet(line: &str) -> Option<(usize, &str)> {
+    let rest = line.trim_start_matches(' ');
+    let indent = line.len() - rest.len();
+    ["- ", "* ", "+ "]
+        .into_iter()
+        .find_map(|marker| rest.strip_prefix(marker))
+        .map(|text| (indent, text))
+}
+
+/// A line that cannot carry on the bullet above it.
+fn starts_a_block(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    let numbered = {
+        let digits = trimmed.chars().take_while(char::is_ascii_digit).count();
+        digits > 0 && (trimmed[digits..].starts_with(". ") || trimmed[digits..].starts_with(") "))
+    };
+    trimmed.is_empty()
+        || numbered
+        || bullet(line).is_some()
+        || ["#", "```", "~~~", ">", "|", "<!--", "---", "***"]
+            .iter()
+            .any(|lead| trimmed.starts_with(lead))
+}
+
+/// The rules a person wrote themselves on `page`: its top-level bullets that
+/// carry no Wenlan marker and sit outside code blocks. A bullet may be
+/// indented up to three spaces and may run on over the next lines; a bullet
+/// under another bullet is a detail, not a rule. A bullet is a rule unless
+/// it opens with `[decision]` or `[pitfall]`. No model reads them and the
+/// sentence filters for model quotes do not apply: the person's own words
+/// are kept as written. A bullet holding a provider token is left out.
+pub fn person_rule_lines(page: &SkillPageInput) -> Vec<SkillLine> {
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    let mut fence: Option<&str> = None;
+    // Indent of the top-level bullets of the list being read, if any.
+    let mut list: Option<usize> = None;
+    let mut blank_before = false;
+    let lines: Vec<&str> = page.text.lines().collect();
+    let mut at = 0;
+    while at < lines.len() {
+        let raw = lines[at];
+        at += 1;
+        let trimmed = raw.trim_start();
+        if let Some(open) = ["```", "~~~"].into_iter().find(|f| trimmed.starts_with(f)) {
+            match fence {
+                None => fence = Some(open),
+                Some(current) if current == open => fence = None,
+                Some(_) => {}
+            }
+            continue;
+        }
+        if fence.is_some() {
+            continue;
+        }
+        if trimmed.is_empty() {
+            blank_before = true;
+            continue;
+        }
+        let Some((indent, item)) = bullet(raw) else {
+            // A heading, or a new paragraph at the margin, ends the list.
+            if trimmed.starts_with('#') || (blank_before && !raw.starts_with(' ')) {
+                list = None;
+            }
+            blank_before = false;
+            continue;
+        };
+        blank_before = false;
+        let top_level = indent <= 3 && list.is_none_or(|base| indent < base + 2);
+        if !top_level {
+            continue;
+        }
+        list = Some(indent);
+        if raw.contains(RULE_MARKER_START) {
+            continue;
+        }
+        // The bullet's own following lines belong to it.
+        let mut whole = item.trim().to_string();
+        while at < lines.len() && !starts_a_block(lines[at]) {
+            whole.push(' ');
+            whole.push_str(lines[at].trim());
+            at += 1;
+        }
+        let item = whole.as_str();
+        // A to-do box is a task, not a rule.
+        if ["[ ]", "[x]", "[X]"].iter().any(|b| item.starts_with(b)) {
+            continue;
+        }
+        let tagged = [
+            ("[rule]", SkillLineKind::Rule),
+            ("[decision]", SkillLineKind::Decision),
+            ("[pitfall]", SkillLineKind::Pitfall),
+        ]
+        .into_iter()
+        .find_map(|(tag, kind)| {
+            item.get(..tag.len())
+                .filter(|lead| lead.eq_ignore_ascii_case(tag))
+                .map(|_| (kind, &item[tag.len()..]))
+        });
+        let (kind, text) = tagged.unwrap_or((SkillLineKind::Rule, item));
+        // A managed line whose marker the person removed keeps only its
+        // text. Only that exact shape is cut: a sentence of the person's own
+        // that happens to say "Source:" is kept whole.
+        let text = match text.split_once(" — Source: ") {
+            Some((before, after)) if tagged.is_some() && after.contains(" — Quote: ") => before,
+            _ => text,
+        };
+        let text = one_line(text, 500);
+        if normalized(&text).is_empty()
+            || STANDALONE_SECRET.is_match(&text)
+            || text.contains(TOOL_RULES_END)
+            || !seen.insert(normalized(&text))
+        {
+            continue;
+        }
+        out.push(SkillLine {
+            id: line_id(kind, &page.id, 0, &text),
+            kind,
+            source_quote: text.clone(),
+            text,
+            source_page_id: page.id.clone(),
+            source_page_title: one_line(&page.title, 180),
+            source_revision: page.revision,
+            source_revision_at: page.revision_at,
+            person_edited: true,
+            general: false,
+            hand_written: true,
+        });
+    }
+    out
+}
+
+/// The same, traced through the page's history: only the bullets whose
+/// text a version of the person's own first brought in. `versions` is the
+/// page's history, oldest first, each with whether the person wrote it. A
+/// bullet an AI tool, a teammate or an unknown writer added never counts,
+/// also after the person saved the page again: having seen it does not make
+/// it theirs. A later version by someone else that leaves the person's
+/// bullet as it is does not take it away.
+pub fn person_rule_lines_through_history(
+    page: &SkillPageInput,
+    versions: &[(bool, &str)],
+) -> Vec<SkillLine> {
+    let texts = |content: &str| -> HashSet<String> {
+        person_rule_lines(&SkillPageInput {
+            text: content.to_string(),
+            ..page.clone()
+        })
+        .iter()
+        .map(|line| normalized(&line.text))
+        .collect()
+    };
+    let mut owned: HashSet<String> = HashSet::new();
+    let mut before: HashSet<String> = HashSet::new();
+    for (by_person, content) in versions {
+        let now = texts(content);
+        owned.retain(|text| now.contains(text));
+        if *by_person {
+            owned.extend(now.difference(&before).cloned());
+        }
+        before = now;
+    }
+    person_rule_lines(page)
+        .into_iter()
+        .filter(|line| owned.contains(&normalized(&line.text)))
+        .collect()
+}
+
+/// What the person wrote on the rules page themselves: every line that is
+/// neither the page's heading and opening note nor a managed line.
+fn unmanaged_rest(body: &str) -> String {
+    let mut rest: Vec<&str> = Vec::new();
+    // The heading and the note are the first two lines with text, wherever
+    // blank lines put them.
+    let mut opening = 0;
+    for raw in body.lines() {
+        if opening < 2 && !raw.trim().is_empty() {
+            let wanted = if opening == 0 {
+                "# How I work — "
+            } else {
+                "These are this Space's approved working rules."
+            };
+            if raw.starts_with(wanted) {
+                opening += 1;
+                continue;
+            }
+            opening = 2;
+        }
+        if raw.contains(RULE_MARKER_START) {
+            continue;
+        }
+        rest.push(raw);
+    }
+    let first = rest.iter().position(|line| !line.trim().is_empty());
+    let last = rest.iter().rposition(|line| !line.trim().is_empty());
+    match (first, last) {
+        (Some(first), Some(last)) => rest[first..=last].join("\n"),
+        _ => String::new(),
+    }
+}
+
 /// Preserve person edits, remember deletions, and add only grounded lines not
-/// previously deleted. Markerless prose is left on the page but is not exposed
-/// as an approved rule because it has no source revision binding.
+/// previously deleted. Everything else on the page (the person's own bullets
+/// and prose) is carried under the managed lines exactly as written; its
+/// plain bullets are read by `person_rule_lines_through_history`.
 pub fn reconcile_rules_page(
     space: &str,
     candidates: &[SkillLine],
@@ -422,6 +669,12 @@ pub fn reconcile_rules_page(
     );
     for line in &lines {
         body.push_str(&render_rule_line(line));
+        body.push('\n');
+    }
+    let rest = current_body.map(unmanaged_rest).unwrap_or_default();
+    if !rest.is_empty() {
+        body.push('\n');
+        body.push_str(&rest);
         body.push('\n');
     }
     let mut deleted_fingerprints: Vec<_> = deleted.into_iter().collect();
@@ -554,24 +807,32 @@ pub const RULES_MAIN_FILE_MAX: usize = 30;
 pub const TOOL_RULES_START: &str = "<!-- WENLAN:RULES:START -->";
 pub const TOOL_RULES_END: &str = "<!-- WENLAN:RULES:END -->";
 
-/// The block for a tool's own file: the rules used in every Space, one per
-/// line. `None` when there are none.
-pub fn tool_rules_block(lines: &[SkillLine]) -> Option<String> {
+/// The sentences a tool's own file gets: the rules used in every Space, each
+/// on one line.
+pub fn tool_rules(lines: &[SkillLine]) -> Vec<String> {
     // Only rules: a decision or a pitfall read as a bare order misleads.
-    let rules = lines
+    lines
         .iter()
         .filter(|line| line.kind == SkillLineKind::Rule)
         .map(|line| line.text.split_whitespace().collect::<Vec<_>>().join(" "))
         .filter(|text| !text.is_empty() && !text.contains(TOOL_RULES_END))
         .take(RULES_MAIN_FILE_MAX)
-        .collect::<Vec<_>>();
+        .collect()
+}
+
+const TOOL_RULES_INTRO: &str = "Kept by Wenlan from my own pages. What I ask for in a \
+     conversation wins over these.";
+
+/// The block for a tool's own file: the rules used in every Space, one per
+/// line. `None` when there are none.
+pub fn tool_rules_block(lines: &[SkillLine]) -> Option<String> {
+    let rules = tool_rules(lines);
     if rules.is_empty() {
         return None;
     }
     let mut block = format!(
-        "{TOOL_RULES_START}\n## How I work\n\nKept by Wenlan from my own pages. What I ask for in a \
-         conversation wins over these. Wenlan rewrites this part; change the pages, not \
-         these lines.\n\n"
+        "{TOOL_RULES_START}\n## How I work\n\n{TOOL_RULES_INTRO} Wenlan rewrites this part; \
+         change the pages, not these lines.\n\n"
     );
     for rule in rules {
         block.push_str(&format!("- {rule}\n"));
@@ -580,29 +841,252 @@ pub fn tool_rules_block(lines: &[SkillLine]) -> Option<String> {
     Some(block)
 }
 
-/// `text` with Wenlan's block replaced by `block`, appended when it has none,
-/// or taken out when `block` is `None`. Text outside the markers is kept as
-/// it is.
-pub fn upsert_tool_rules_block(text: &str, block: Option<&str>) -> String {
-    let found = match (text.find(TOOL_RULES_START), text.find(TOOL_RULES_END)) {
-        (Some(start), Some(end)) if start < end => Some((start, end + TOOL_RULES_END.len())),
-        _ => None,
+/// The same rules as a whole file of Wenlan's own, for a tool that reads
+/// every file of a folder. `front_matter` is what the tool needs first in the
+/// file; Wenlan's managed mark is the line right after it. `None` when there
+/// are no rules.
+pub fn tool_rules_owned_file(lines: &[SkillLine], front_matter: Option<&str>) -> Option<String> {
+    let rules = tool_rules(lines);
+    if rules.is_empty() {
+        return None;
+    }
+    let mut file = format!(
+        "{}{RULES_FILE_MARK}\n# How I work\n\n{TOOL_RULES_INTRO}\n\n",
+        front_matter.unwrap_or_default()
+    );
+    for rule in rules {
+        file.push_str(&format!("- {rule}\n"));
+    }
+    Some(file)
+}
+
+/// Whether `text` is a rules file Wenlan wrote: its first line, or the first
+/// line after a front-matter block, is the managed mark.
+pub fn is_wenlan_rules_text(text: &str) -> bool {
+    if text.starts_with(RULES_FILE_MARK) {
+        return true;
+    }
+    let Some(rest) = text
+        .strip_prefix("---\n")
+        .or_else(|| text.strip_prefix("---\r\n"))
+    else {
+        return false;
     };
-    match (found, block) {
-        (Some((start, end)), Some(block)) => format!("{}{block}{}", &text[..start], &text[end..]),
-        (Some((start, end)), None) => {
-            let before = text[..start].trim_end();
-            let after = text[end..].trim_start();
-            match (before.is_empty(), after.is_empty()) {
-                (true, true) => String::new(),
-                (true, false) => after.to_string(),
-                (false, true) => format!("{before}\n"),
-                (false, false) => format!("{before}\n\n{after}"),
+    let mut after = rest;
+    while !after.is_empty() {
+        let (line, tail) = after.split_once('\n').unwrap_or((after, ""));
+        after = tail;
+        if line.trim_end() == "---" {
+            return after.starts_with(RULES_FILE_MARK);
+        }
+    }
+    false
+}
+
+/// A code fence opener or closer on `line`: its character and length. The
+/// line may sit in a quote or a list item, so a fence the person indented or
+/// quoted still counts; reading too much as a fence only ever leaves a file
+/// alone.
+fn code_fence(line: &str) -> Option<(char, usize, &str)> {
+    let mut rest = line.trim_start_matches(|c: char| c.is_whitespace() || c == '>');
+    for marker in ["- ", "* ", "+ "] {
+        if let Some(inner) = rest.strip_prefix(marker) {
+            rest = inner.trim_start();
+            break;
+        }
+    }
+    let digits = rest.chars().take_while(char::is_ascii_digit).count();
+    if digits > 0 {
+        if let Some(inner) = rest[digits..]
+            .strip_prefix(". ")
+            .or_else(|| rest[digits..].strip_prefix(") "))
+        {
+            rest = inner.trim_start();
+        }
+    }
+    let fence = rest.chars().next().filter(|c| *c == '`' || *c == '~')?;
+    let length = rest.chars().take_while(|c| *c == fence).count();
+    (length >= 3).then(|| (fence, length, &rest[length..]))
+}
+
+/// Every line of `text` outside fenced code, with the byte range of its
+/// content (no line ending). A fence left open runs to the end.
+pub fn lines_outside_code_fences(text: &str) -> Vec<(std::ops::Range<usize>, &str)> {
+    let mut lines = Vec::new();
+    let mut open: Option<(char, usize)> = None;
+    let mut at = 0;
+    for raw in text.split_inclusive('\n') {
+        let line = raw.strip_suffix('\n').unwrap_or(raw);
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        let range = at..at + line.len();
+        at += raw.len();
+        match (open, code_fence(line)) {
+            (Some((fence, length)), Some((closer, closer_length, tail)))
+                if closer == fence && closer_length >= length && tail.trim().is_empty() =>
+            {
+                open = None;
+            }
+            (Some(_), _) => {}
+            (None, Some((fence, length, tail))) if fence != '`' || !tail.contains('`') => {
+                open = Some((fence, length));
+            }
+            (None, _) => lines.push((range, line)),
+        }
+    }
+    lines
+}
+
+/// Where Wenlan's part sits in a tool's file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ToolRulesMarks {
+    None,
+    /// From the first byte of the START line to the last of the END line.
+    One(std::ops::Range<usize>),
+    /// The markers are not one START followed by one END. The file may hold
+    /// the person's own text between or after them, so it is left alone.
+    Broken(&'static str),
+}
+
+/// A marker counts only alone on its line and outside fenced code: a marker
+/// the person quotes in a sentence or an example is their text.
+fn tool_rules_marks(text: &str) -> ToolRulesMarks {
+    let mut starts = Vec::new();
+    let mut ends = Vec::new();
+    for (range, line) in lines_outside_code_fences(text) {
+        let line = line.trim().trim_start_matches('\u{feff}');
+        if line == TOOL_RULES_START {
+            starts.push(range);
+        } else if line == TOOL_RULES_END {
+            ends.push(range);
+        }
+    }
+    match (starts.as_slice(), ends.as_slice()) {
+        ([], []) => ToolRulesMarks::None,
+        ([start], [end]) if start.start < end.start => {
+            // A byte-order mark before the START line stays the file's own.
+            let from = start.start + text[start.clone()].len()
+                - text[start.clone()].trim_start_matches('\u{feff}').len();
+            ToolRulesMarks::One(from..end.end)
+        }
+        ([_], [_]) => ToolRulesMarks::Broken("end_marker_before_start"),
+        ([_], []) => ToolRulesMarks::Broken("start_marker_without_end"),
+        ([], [_]) => ToolRulesMarks::Broken("end_marker_without_start"),
+        _ => ToolRulesMarks::Broken("more_than_one_part"),
+    }
+}
+
+/// Whether `text` holds exactly one part of Wenlan's.
+pub fn holds_tool_rules_block(text: &str) -> bool {
+    matches!(tool_rules_marks(text), ToolRulesMarks::One(_))
+}
+
+/// The line ending most lines of `text` have; `\n` when it has none.
+fn dominant_line_ending(text: &str) -> &'static str {
+    let crlf = text.matches("\r\n").count();
+    let lf = text.matches('\n').count() - crlf;
+    if crlf > lf {
+        "\r\n"
+    } else {
+        "\n"
+    }
+}
+
+fn strip_line_ending(text: &str) -> Option<&str> {
+    text.strip_suffix("\r\n")
+        .or_else(|| text.strip_suffix('\n'))
+}
+
+fn skip_line_ending(text: &str) -> Option<&str> {
+    text.strip_prefix("\r\n")
+        .or_else(|| text.strip_prefix('\n'))
+}
+
+/// `text` with Wenlan's block replaced by `block`, appended when it has none,
+/// or taken out when `block` is `None`. Every byte outside Wenlan's part
+/// stays as it is: the file's own line endings (the block takes the ones
+/// most of the file has), its last line with or without an ending, and a
+/// byte-order mark. Taking the part out also takes out the blank line and
+/// line ending that adding it put in.
+///
+/// `Err` names why the file must be left exactly as it is: its markers are
+/// not one START followed by one END, each alone on a line outside fenced
+/// code, or a change would not leave it that way.
+pub fn upsert_tool_rules_block(text: &str, block: Option<&str>) -> Result<String, &'static str> {
+    let marks = tool_rules_marks(text);
+    let outside = match &marks {
+        ToolRulesMarks::One(range) => format!("{}{}", &text[..range.start], &text[range.end..]),
+        _ => text.to_string(),
+    };
+    let ending = if outside.contains('\n') {
+        dominant_line_ending(&outside)
+    } else {
+        dominant_line_ending(text)
+    };
+    let block = block.map(|block| block.replace('\n', ending));
+    let updated = match (marks, &block) {
+        (ToolRulesMarks::Broken(reason), _) => return Err(reason),
+        (ToolRulesMarks::One(range), Some(block)) => {
+            format!("{}{block}{}", &text[..range.start], &text[range.end..])
+        }
+        (ToolRulesMarks::One(range), None) => {
+            let (mut before, after) = (&text[..range.start], &text[range.end..]);
+            let after = match skip_line_ending(after) {
+                // The block ended the file: the blank line before it goes too.
+                None if after.is_empty() => {
+                    for _ in 0..2 {
+                        before = strip_line_ending(before).unwrap_or(before);
+                    }
+                    after
+                }
+                // The block was the last line: the blank line before it goes.
+                Some("") => {
+                    let blank = strip_line_ending(before).and_then(strip_line_ending);
+                    if blank.is_some() {
+                        before = strip_line_ending(before).unwrap_or(before);
+                        ""
+                    } else if before.trim_start_matches('\u{feff}').is_empty() {
+                        ""
+                    } else {
+                        after
+                    }
+                }
+                // Text follows: one blank line between the two is enough.
+                Some(rest) => {
+                    let blank_before = before.trim_start_matches('\u{feff}').is_empty()
+                        || strip_line_ending(before)
+                            .is_some_and(|b| strip_line_ending(b).is_some());
+                    match skip_line_ending(rest) {
+                        Some(closer) if blank_before => closer,
+                        _ => rest,
+                    }
+                }
+                None => after,
+            };
+            format!("{before}{after}")
+        }
+        (ToolRulesMarks::None, Some(block)) => {
+            let body = text.trim_start_matches('\u{feff}');
+            if body.is_empty() {
+                format!("{text}{block}{ending}")
+            } else if strip_line_ending(text).is_some() {
+                format!("{text}{ending}{block}{ending}")
+            } else {
+                format!("{text}{ending}{ending}{block}")
             }
         }
-        (None, Some(block)) if text.trim().is_empty() => format!("{block}\n"),
-        (None, Some(block)) => format!("{}\n\n{block}\n", text.trim_end()),
-        (None, None) => text.to_string(),
+        (ToolRulesMarks::None, None) => return Ok(text.to_string()),
+    };
+    // What comes out must read back the same way, or the next pass would
+    // add a second part or cut the person's text.
+    let reads_back = match (tool_rules_marks(&updated), &block) {
+        (ToolRulesMarks::One(range), Some(block)) => &updated[range] == block.as_str(),
+        (ToolRulesMarks::None, None) => true,
+        _ => false,
+    };
+    if reads_back {
+        Ok(updated)
+    } else {
+        Err("part_would_not_read_back")
     }
 }
 
@@ -613,7 +1097,11 @@ fn rules_file_item(line: &SkillLine) -> String {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ");
-    format!("- {text} (from \"{title}\")\n")
+    if line.hand_written {
+        format!("- {text} (written by you in \"{title}\")\n")
+    } else {
+        format!("- {text} (from \"{title}\")\n")
+    }
 }
 
 fn rules_appendix(heading: &str, lines: &[&SkillLine]) -> String {

@@ -240,6 +240,7 @@ pub async fn global_routes_enforce_scope_contracts() {
             "/api/skills/spaces/suggestions",
         ),
         ("/api/skills/suggestions", "/api/skills/suggestions"),
+        ("/api/skills/delivery", "/api/skills/delivery"),
     ];
     let mut executed = Vec::new();
 

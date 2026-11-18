@@ -158,6 +158,8 @@ pub async fn handle_accept_sentence_proposal(
     body: Option<Json<SentenceDecisionRequest>>,
 ) -> Result<Json<SentenceAcceptResponse>, ServerError> {
     require_person(&headers)?;
+    // On a rules page the accepted sentence changes what counts as a rule.
+    let _rules = crate::skill_grow::RulesPageWrite::begin(&state, Some(&id)).await;
     let (db, page_root) = {
         let s = state.read().await;
         (

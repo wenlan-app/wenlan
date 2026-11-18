@@ -1766,10 +1766,12 @@ pub fn spawn_scheduler(
             // origin_version frontmatter trails the DB (daemon wrote
             // last). Runs every poll so freshness ≈ POLL_INTERVAL.
             let knowledge_path = runtime_config.knowledge_path_or_default();
+            let mut pages_edited = false;
             match wenlan_core::sources::page_watcher::sync_filesystem_edits(&db, &knowledge_path)
                 .await
             {
                 Ok(stats) if stats.applied > 0 => {
+                    pages_edited = true;
                     tracing::info!(
                         "[scheduler] page-watcher applied {} fs_edit(s)",
                         stats.applied
@@ -1778,6 +1780,15 @@ pub fn spawn_scheduler(
                 Ok(_) => {}
                 Err(e) => tracing::warn!("[scheduler] page-watcher error: {e}"),
             }
+            // A rule the person wrote in a file counts at once (UX-SKILL-10):
+            // no model, so this runs on every pass. It writes only when a
+            // file was edited or a rules page joined, left or moved.
+            crate::skill_grow::sync_rules_files_after_file_changes(
+                &db,
+                &knowledge_path,
+                pages_edited,
+            )
+            .await;
             if crate::lifecycle::shutdown_requested(&shutdown) {
                 break;
             }

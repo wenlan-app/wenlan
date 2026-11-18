@@ -61,6 +61,7 @@ pub(super) const ROUTES: &[SensitiveReadRoute] = &[
     row!(Get,"/api/snapshots","snapshot_list",NoSelector,UnauthenticatedLocal,Global,NoGate,NotApplicable,GlobalRead),
     row!(Get,"/api/palace/layout","palace_layout",NoSelector,UnauthenticatedLocal,Global,NoGate,NotApplicable,GlobalRead),
     row!(Get,"/api/skills/rules","space_working_rules",QueryThenHeader,UnauthenticatedLocal,MemorySpace,NoGate,Rejected,Forbidden),
+    row!(Get,"/api/skills/delivery","rules_delivery",NoSelector,UnauthenticatedLocal,Global,NoGate,NotApplicable,GlobalRead),
     row!(Get,"/api/skills/spaces/suggestions","space_rule_suggestions",NoSelector,UnauthenticatedLocal,Global,NoGate,NotApplicable,GlobalRead),
     row!(Get,"/api/skills/suggestions","skill_suggestions",NoSelector,UnauthenticatedLocal,Global,NoGate,NotApplicable,GlobalRead),
     row!(Post,"/api/skills/suggestions/{id}/apply","skill_suggestion_apply",NoSelector,UnauthenticatedLocal,Global,NoGate,NotApplicable,GlobalRead),

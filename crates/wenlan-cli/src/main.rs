@@ -247,34 +247,42 @@ enum Commands {
 
 /// Help groups for `wenlan --help`, in display order. Only names live here;
 /// each description stays on its `Commands` doc comment. Hidden subcommands
-/// (`sweep`, `agents`) are deliberately absent.
+/// (`sweep`, `agents`) are deliberately absent. The first `FIRST_PAGE_GROUPS`
+/// groups are the short help; `wenlan help all` writes out every group.
 const HELP_GROUPS: &[(&str, &[&str])] = &[
-    (
-        "Daily",
-        &[
-            "brief", "capture", "recall", "rules", "pages", "memories", "sources", "follow",
-            "unfollow", "follows",
-        ],
-    ),
-    (
-        "Setup",
-        &[
-            "setup", "init", "open", "connect", "status", "doctor", "start", "stop", "restart",
-        ],
-    ),
+    ("Start", &["setup", "init", "open", "status"]),
+    ("Daily", &["capture", "recall", "brief", "rules", "pages"]),
     ("Team", &["team"]),
     (
-        ADVANCED_GROUP,
+        "Running",
+        &["connect", "doctor", "start", "stop", "restart"],
+    ),
+    (
+        "More",
         &[
-            "spaces", "repo", "curate", "lint", "models", "keys", "steep", "outbox", "export",
-            "entities", "tool",
+            "memories", "sources", "follow", "unfollow", "follows", "spaces", "repo", "curate",
+            "lint", "models", "keys", "steep", "outbox", "export", "entities", "tool",
         ],
     ),
 ];
 
-/// The last help group: commands most people never need. `wenlan --help` names
-/// them on one line; `wenlan help all` lists them like the rest.
-const ADVANCED_GROUP: &str = "Advanced";
+/// How many of `HELP_GROUPS` the short `wenlan --help` shows.
+const FIRST_PAGE_GROUPS: usize = 3;
+
+/// One short line per command on the short help, so the first page reads at a
+/// glance. `wenlan help all` and `wenlan <command> --help` keep the full text.
+const FIRST_PAGE_LINES: &[(&str, &str)] = &[
+    ("setup", "Set Wenlan up (once per computer)"),
+    ("init", "Set this repository up (once per repo)"),
+    ("open", "Open Wenlan in the browser"),
+    ("status", "Is Wenlan running, and which Space is this"),
+    ("capture", "Save something"),
+    ("recall", "Find memories and pages"),
+    ("brief", "Read the Space Brief"),
+    ("rules", "Read the working rules"),
+    ("pages", "List, read or write pages"),
+    ("team", "Start, invite, or join a team"),
+];
 
 /// Build a clap help template that lists the subcommands by `HELP_GROUPS`
 /// instead of one flat `Commands:` block. Every line keeps clap's two-space
@@ -289,7 +297,12 @@ fn grouped_help_template(cmd: &clap::Command, all: bool) -> String {
             )
         })
         .collect();
-    let width = HELP_GROUPS
+    let groups = if all {
+        HELP_GROUPS
+    } else {
+        &HELP_GROUPS[..FIRST_PAGE_GROUPS]
+    };
+    let width = groups
         .iter()
         .flat_map(|(_, names)| names.iter())
         .map(|name| name.len())
@@ -297,32 +310,36 @@ fn grouped_help_template(cmd: &clap::Command, all: bool) -> String {
         .unwrap_or(0);
     let mut template =
         String::from("{before-help}{about-with-newline}\n{usage-heading} {usage}\n\n");
-    for (heading, names) in HELP_GROUPS {
-        if *heading == ADVANCED_GROUP && !all {
-            // Not indented: tools that read the first word of indented
-            // lines as a command must not see this one.
-            template.push_str(&format!(
-                "More commands: wenlan help all ({})\n\n",
-                names.join(", ")
-            ));
-            continue;
-        }
+    for (heading, names) in groups {
         template.push_str(heading);
         template.push_str(":\n");
         for name in names.iter() {
-            let about = abouts.get(name).map(String::as_str).unwrap_or("");
+            let short = FIRST_PAGE_LINES
+                .iter()
+                .find(|(command, _)| command == name)
+                .map(|(_, line)| *line);
+            let about = match short {
+                Some(line) if !all => line,
+                _ => abouts.get(name).map(String::as_str).unwrap_or(""),
+            };
             template.push_str(&format!("  {name:<width$}  {about}\n"));
         }
         template.push('\n');
     }
-    template.push_str("Options:\n{options}{after-help}");
+    if all {
+        template.push_str("Options:\n{options}{after-help}");
+    } else {
+        // Not indented: tools that read the first word of indented lines as a
+        // command must not see this one.
+        template.push_str("Everything else: wenlan help all\n{after-help}");
+    }
     template
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<ExitCode> {
     let cmd = Cli::command();
-    // `wenlan help all`: the same help with the Advanced group written out.
+    // `wenlan help all`: every group, full descriptions and the options.
     let wants_all = std::env::args()
         .skip(1)
         .eq(["help", "all"].map(String::from));

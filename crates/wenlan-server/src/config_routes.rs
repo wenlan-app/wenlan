@@ -186,9 +186,15 @@ pub async fn handle_update_config(
     }
     if rules_setting_touched {
         // Off removes the rules files Wenlan wrote; on writes them again.
-        let db = state.read().await.db.clone();
+        let (db, page_root) = {
+            let s = state.read().await;
+            (
+                s.db.clone(),
+                s.lint_config.page_root().map(std::path::Path::to_path_buf),
+            )
+        };
         if let Some(db) = db {
-            crate::skill_grow::sync_rules_files_quietly(&db).await;
+            crate::skill_grow::sync_rules_files_quietly(&db, page_root.as_deref()).await;
         }
     }
     Ok(Json(config_to_response(&cfg)))
