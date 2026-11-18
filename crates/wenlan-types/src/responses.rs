@@ -1575,6 +1575,41 @@ pub struct PageChangelogEntry {
     pub restored_from: Option<i64>,
 }
 
+impl PageChangelogEntry {
+    /// Every reader of a page's stored changelog parses it here, so one old
+    /// entry never takes the whole history down. The nightly "How I work"
+    /// write once stored `{"timestamp","edited_by","summary"}` with no
+    /// `version` or `at`: `timestamp` stands in for `at` and `summary` for
+    /// `delta_summary`. An entry that names no version is left out, since
+    /// which version it describes cannot be known from the entry alone.
+    /// Only a changelog that is not a JSON array at all is an error.
+    pub fn parse_changelog(raw: &str) -> Result<Vec<Self>, serde_json::Error> {
+        let raw = raw.trim();
+        if raw.is_empty() {
+            return Ok(Vec::new());
+        }
+        let values: Vec<serde_json::Value> = serde_json::from_str(raw)?;
+        Ok(values
+            .into_iter()
+            .filter_map(|mut value| {
+                if let Some(entry) = value.as_object_mut() {
+                    if !entry.contains_key("at") {
+                        if let Some(at) = entry.get("timestamp").cloned() {
+                            entry.insert("at".into(), at);
+                        }
+                    }
+                    if !entry.contains_key("delta_summary") {
+                        if let Some(summary) = entry.get("summary").cloned() {
+                            entry.insert("delta_summary".into(), summary);
+                        }
+                    }
+                }
+                serde_json::from_value(value).ok()
+            })
+            .collect())
+    }
+}
+
 /// Response envelope for `/api/pages/{id}/revisions`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ListPageRevisionsResponse {
@@ -2652,6 +2687,44 @@ mod tests {
             (new.char_delta, new.sources_added, new.sources_removed),
             (Some(-4), Some(1), Some(0))
         );
+    }
+
+    /// UX-HIST-1: a changelog holding the old nightly "How I work" entry
+    /// (`timestamp`, `summary`, no `version` or `at`) still parses; the
+    /// entries around it are kept whole.
+    #[test]
+    fn ux_hist_1_a_legacy_nightly_rules_entry_does_not_break_the_changelog() {
+        let raw = r#"[
+            {"version":2,"at":10,"edited_by":"agent_refresh","delta_summary":"accepted"},
+            {"timestamp":20,"edited_by":"agent_refresh","summary":"Wenlan maintained approved working rules"},
+            {"version":3,"timestamp":30,"edited_by":"agent_refresh","summary":"kept"},
+            {"version":4,"at":40,"edited_by":"manual_edit"}
+        ]"#;
+        let entries = PageChangelogEntry::parse_changelog(raw).unwrap();
+        let shape: Vec<_> = entries
+            .iter()
+            .map(|e| {
+                (
+                    e.version,
+                    e.at,
+                    e.edited_by.as_str(),
+                    e.delta_summary.as_deref(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            shape,
+            [
+                (2, 10, "agent_refresh", Some("accepted")),
+                (3, 30, "agent_refresh", Some("kept")),
+                (4, 40, "manual_edit", None),
+            ]
+        );
+        assert!(PageChangelogEntry::parse_changelog("").unwrap().is_empty());
+        assert!(PageChangelogEntry::parse_changelog("[]")
+            .unwrap()
+            .is_empty());
+        assert!(PageChangelogEntry::parse_changelog("{not json").is_err());
     }
 }
 

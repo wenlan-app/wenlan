@@ -3272,7 +3272,7 @@ pub async fn handle_get_page_revisions(
     .is_empty();
     let mut entries: Vec<wenlan_types::responses::PageChangelogEntry> = if full {
         let changelog_str = db.get_page_changelog_scoped(&id, &scope).await?;
-        serde_json::from_str(&changelog_str)
+        wenlan_types::responses::PageChangelogEntry::parse_changelog(&changelog_str)
             .map_err(|e| ServerError::Internal(format!("parse changelog: {e}")))?
     } else {
         Vec::new()

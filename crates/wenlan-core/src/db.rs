@@ -62203,8 +62203,7 @@ impl MemoryDB {
     /// The AI tool the page's changelog names for `version`, if any.
     async fn changelog_agent_at(&self, page_id: &str, version: i64) -> Option<String> {
         let json = self.get_page_changelog(page_id).await.ok()?;
-        let entries: Vec<wenlan_types::responses::PageChangelogEntry> =
-            serde_json::from_str(&json).ok()?;
+        let entries = wenlan_types::responses::PageChangelogEntry::parse_changelog(&json).ok()?;
         entries
             .into_iter()
             .rev()
@@ -64835,6 +64834,9 @@ pub(crate) fn compute_memory_delta_summary(
     Some(result)
 }
 
+/// How many entries a page's changelog keeps (see [`append_changelog_entry`]).
+pub const PAGE_CHANGELOG_CAP: usize = 20;
+
 /// Append a changelog entry to a JSON array string, trimming oldest non-protected
 /// entries to stay within `cap`.
 ///
@@ -64845,7 +64847,7 @@ pub(crate) fn compute_memory_delta_summary(
 ///
 /// Invalid or empty `existing_json` is treated as an empty array (defensive
 /// default, not an error).
-pub(crate) fn append_changelog_entry(
+pub fn append_changelog_entry(
     existing_json: &str,
     entry: serde_json::Value,
     cap: usize,

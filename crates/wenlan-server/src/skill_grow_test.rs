@@ -5690,3 +5690,161 @@ async fn ux_skill_14_the_saved_rules_pages_are_told_by_id_not_by_title() {
         .saved_rules_page_ids
         .is_empty());
 }
+
+async fn page_revisions(
+    scratch: &Scratch,
+    page_id: &str,
+) -> wenlan_types::responses::ListPageRevisionsResponse {
+    crate::page_routes::handle_get_page_revisions(
+        axum::extract::State(scratch.shared.clone()),
+        crate::space_header::SpaceHeader(None),
+        crate::truth_guard::TruthView::automatic(),
+        AxumPath(page_id.to_string()),
+        Query(std::collections::HashMap::new()),
+    )
+    .await
+    .unwrap()
+    .0
+}
+
+/// UX-HIST-1: the nightly "How I work" write is listed in the page's history
+/// with the version it made and when, and the history still reads.
+#[tokio::test]
+async fn ux_hist_1_the_nightly_rules_write_is_in_the_page_history() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(true).await;
+    let research = scratch
+        .db
+        .create_space("Research", None, false)
+        .await
+        .unwrap();
+    create_person_page(
+        &scratch.db,
+        &scratch.pages,
+        "Research",
+        "Working agreements",
+        SOURCE_QUOTE,
+    )
+    .await;
+    let model = GrowModel::new();
+    assert_eq!(refresh(&scratch, &model).await.suggestions, 1);
+    let rules_page_id = handle_accept_space_rules(
+        axum::extract::State(scratch.shared.clone()),
+        person_headers(),
+        AxumPath(research.id.clone()),
+        Query(SpaceAnswerScope::default()),
+    )
+    .await
+    .unwrap()
+    .0
+    .rules_page_id
+    .unwrap();
+    let before = scratch.db.get_page(&rules_page_id).await.unwrap().unwrap();
+
+    let mut rules_state = scratch
+        .db
+        .space_rules_state(&research.id)
+        .await
+        .unwrap()
+        .unwrap();
+    let existing_line = rules_state.lines[0].clone();
+    let mut additional = existing_line.clone();
+    additional.id = "nightly-addition".into();
+    additional.text = "Use isolated test data before writing pages.".into();
+    let started = chrono::Utc::now().timestamp();
+    assert!(write_maintained_rules_page(
+        &scratch.db,
+        Some(&scratch.pages),
+        &mut rules_state,
+        &[existing_line, additional],
+    )
+    .await
+    .unwrap());
+    let after = scratch.db.get_page(&rules_page_id).await.unwrap().unwrap();
+    assert_eq!(after.version, before.version + 1);
+
+    let revisions = page_revisions(&scratch, &rules_page_id).await;
+    assert_eq!(revisions.current_version, after.version);
+    let nightly = revisions
+        .entries
+        .iter()
+        .find(|entry| entry.version == after.version)
+        .unwrap_or_else(|| panic!("no entry for v{}: {:?}", after.version, revisions.entries));
+    assert_eq!(nightly.edited_by, "agent_refresh");
+    assert!(nightly.at >= started, "{nightly:?}");
+    assert_eq!(
+        nightly.delta_summary.as_deref(),
+        Some("Wenlan maintained approved working rules")
+    );
+    assert!(
+        revisions
+            .history
+            .iter()
+            .any(|item| item.version == Some(after.version)),
+        "{:?}",
+        revisions.history
+    );
+}
+
+/// UX-HIST-1: a "How I work" page that already holds the old nightly entry
+/// (`timestamp`, `summary`, no `version`) still serves its history; the
+/// entries that name their version are all listed.
+#[tokio::test]
+async fn ux_hist_1_a_rules_page_with_the_old_nightly_entry_still_serves_its_history() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(true).await;
+    scratch
+        .db
+        .create_space("Research", None, false)
+        .await
+        .unwrap();
+    let page_id = create_person_page(
+        &scratch.db,
+        &scratch.pages,
+        "Research",
+        "How I work — Research",
+        "- Keep the first rule.",
+    )
+    .await;
+    let page = scratch.db.get_page(&page_id).await.unwrap().unwrap();
+    let legacy = serde_json::json!([
+        {"timestamp": 1_700_000_000i64, "edited_by": "agent_refresh",
+         "summary": "Wenlan maintained approved working rules"},
+        {"version": page.version + 1, "at": 1_700_000_100i64, "edited_by": "agent_refresh",
+         "delta_summary": "later write"},
+    ])
+    .to_string();
+    assert!(scratch
+        .db
+        .try_update_page_content_with_changelog_at_version_and_basis(
+            &page_id,
+            "- Keep the first rule.\n- And a second.",
+            &[],
+            "agent_refresh",
+            &legacy,
+            None,
+            page.version,
+            None,
+            &wenlan_core::db::BasisWrite::default(),
+        )
+        .await
+        .unwrap()
+        .is_some());
+
+    let revisions = page_revisions(&scratch, &page_id).await;
+    let listed: Vec<_> = revisions
+        .entries
+        .iter()
+        .map(|entry| (entry.version, entry.at, entry.delta_summary.as_deref()))
+        .collect();
+    assert_eq!(
+        listed,
+        [(page.version + 1, 1_700_000_100, Some("later write"))]
+    );
+}

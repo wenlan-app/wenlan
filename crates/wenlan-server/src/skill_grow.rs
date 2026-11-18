@@ -397,18 +397,25 @@ async fn eligible_lines(
     Ok(out)
 }
 
-fn append_changelog(page: &wenlan_types::Page, at: i64, summary: &str) -> String {
-    let mut entries: Vec<serde_json::Value> = page
-        .changelog
-        .as_deref()
-        .and_then(|raw| serde_json::from_str(raw).ok())
-        .unwrap_or_default();
-    entries.push(serde_json::json!({
-        "timestamp": at,
+/// The changelog after the nightly rules write, in the shape every reader
+/// parses (`PageChangelogEntry`): the version this write produces, when, who,
+/// and what, under the usual cap.
+fn append_changelog(
+    page: &wenlan_types::Page,
+    at: i64,
+    summary: &str,
+) -> Result<String, ServerError> {
+    let entry = serde_json::json!({
+        "version": page.version + 1,
+        "at": at,
         "edited_by": "agent_refresh",
-        "summary": summary,
-    }));
-    serde_json::to_string(&entries).unwrap_or_else(|_| "[]".into())
+        "delta_summary": summary,
+    });
+    Ok(wenlan_core::db::append_changelog_entry(
+        page.changelog.as_deref().unwrap_or("[]"),
+        entry,
+        wenlan_core::db::PAGE_CHANGELOG_CAP,
+    )?)
 }
 
 async fn write_maintained_rules_page(
@@ -466,6 +473,7 @@ async fn write_maintained_rules_page(
         ));
     }
     let now = chrono::Utc::now().timestamp();
+    let changelog = append_changelog(&page, now, "Wenlan maintained approved working rules")?;
     let prior_undo = state.undo.take();
     let preserve_prior = prior_undo.as_ref().is_some_and(|undo| {
         chrono::Local
@@ -499,7 +507,7 @@ async fn write_maintained_rules_page(
             &reconciled.body,
             &[],
             "agent_refresh",
-            &append_changelog(&page, now, "Wenlan maintained approved working rules"),
+            &changelog,
             None,
             page.version,
             None,
