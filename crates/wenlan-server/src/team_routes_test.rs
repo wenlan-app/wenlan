@@ -900,7 +900,11 @@ async fn a_member_learns_only_the_names_of_people_in_their_spaces() {
         );
     }
     let text = String::from_utf8(body).unwrap();
-    for secret in [&f.writer.1, &f.outsider.1, &f.writer.0.key_sha256] {
+    for secret in [
+        &f.writer.1,
+        &f.outsider.1,
+        f.writer.0.key_sha256.as_ref().unwrap(),
+    ] {
         assert!(!text.contains(secret.as_str()));
     }
     assert!(!text.contains("Cy") && !text.contains("Other") && !text.contains("join"));
@@ -916,4 +920,144 @@ async fn a_member_learns_only_the_names_of_people_in_their_spaces() {
     .await;
     let me: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(me["people"], serde_json::json!([]));
+}
+
+// ===== Tool keys and the route table =====
+
+#[test]
+fn the_route_table_gives_a_tool_key_only_mcp() {
+    use team::CredentialKind::{LegacyKey, ToolKey};
+    for path in ["/mcp", "/mcp/Design", "/mcp/Design/x"] {
+        assert!(credential_may_reach(ToolKey, path), "{path}");
+        assert!(credential_may_reach(LegacyKey, path), "{path}");
+    }
+    for path in [
+        "/team/v1/me",
+        "/team/v1/admin",
+        "/team/v1/admin/members/x/compromised",
+        "/team/v1/app/anything",
+        "/team/v1/spaces/design/files",
+        "/mcpx",
+        "/",
+    ] {
+        assert!(!credential_may_reach(ToolKey, path), "{path}");
+        assert!(credential_may_reach(LegacyKey, path), "{path}");
+    }
+}
+
+#[tokio::test]
+async fn a_tool_key_is_refused_on_every_route_but_mcp() {
+    let f = fixture();
+    let (_, tool) = team::issue_tool_key(&f.state.team_path, &f.writer.0.id, "Cursor").unwrap();
+    let page = "p1";
+    let name = format!("{}.md", "a".repeat(64));
+    let put = format!("/team/v1/spaces/design/versions/{page}/{name}");
+    let routes: Vec<(Method, String)> = vec![
+        (Method::GET, "/team/v1/me".into()),
+        (Method::POST, "/team/v1/me".into()),
+        (Method::GET, "/team/v1/admin".into()),
+        (Method::PUT, "/team/v1/admin".into()),
+        (Method::POST, "/team/v1/admin/members".into()),
+        (Method::POST, "/team/v1/admin/spaces".into()),
+        (Method::DELETE, "/team/v1/admin/members/x".into()),
+        (Method::POST, "/team/v1/admin/members/x/key".into()),
+        (Method::POST, "/team/v1/admin/members/x/compromised".into()),
+        (Method::GET, "/team/v1/spaces/Design/files".into()),
+        (
+            Method::GET,
+            "/team/v1/spaces/Design/file?path=space.json".into(),
+        ),
+        (Method::PUT, put),
+        (Method::GET, "/team/v1/app/api/pages".into()),
+        (Method::POST, "/team/v1/app/api/pages".into()),
+        (Method::GET, "/team/v1/account/keys".into()),
+        (Method::GET, "/nothing-here".into()),
+    ];
+    for (method, uri) in routes {
+        let (status, _) = call(&f.state, method.clone(), &uri, Some(&tool), b"x".to_vec()).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{method} {uri}");
+    }
+    // The same key passes the table on /mcp (whatever the MCP service then
+    // answers, it is not the table's 401 or 403).
+    for uri in ["/mcp", "/mcp/Design"] {
+        let (status, _) = call(&f.state, Method::GET, uri, Some(&tool), vec![]).await;
+        assert_ne!(status, StatusCode::FORBIDDEN, "{uri}");
+        assert_ne!(status, StatusCode::UNAUTHORIZED, "{uri}");
+    }
+    // The member's legacy key still reaches what it did.
+    let (status, _) = call(
+        &f.state,
+        Method::GET,
+        "/team/v1/me",
+        Some(&f.writer.1),
+        vec![],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    // A revoked or unknown tool key is 401 everywhere.
+    let (id, revoked) = team::issue_tool_key(&f.state.team_path, &f.writer.0.id, "Old").unwrap();
+    team::revoke_tool_key(&f.state.team_path, &f.writer.0.id, &id).unwrap();
+    for uri in ["/mcp", "/team/v1/me"] {
+        let (status, _) = call(&f.state, Method::GET, uri, Some(&revoked), vec![]).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{uri}");
+    }
+}
+
+#[tokio::test]
+async fn an_owner_tool_key_does_not_open_the_management_calls() {
+    let f = fixture();
+    let (owner, _) = team::owner_key(&f.state.team_path, "Owner").unwrap();
+    let (_, tool) = team::issue_tool_key(&f.state.team_path, &owner.id, "Cursor").unwrap();
+    let uri = format!("/team/v1/admin/members/{}/compromised", f.writer.0.id);
+    let (status, _) = call(&f.state, Method::POST, &uri, Some(&tool), vec![]).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    // Nothing happened to Amy.
+    assert!(team::authenticate(&f.state.team_path, &f.writer.1)
+        .unwrap()
+        .is_some());
+}
+
+#[tokio::test]
+async fn the_owner_resets_a_compromised_account() {
+    let f = fixture();
+    let (_, tool) = team::issue_tool_key(&f.state.team_path, &f.writer.0.id, "Cursor").unwrap();
+    let uri = format!("/team/v1/admin/members/{}/compromised", f.writer.0.id);
+
+    // Not for a member, or without a key.
+    let (status, _) = call(&f.state, Method::POST, &uri, Some(&f.reader.1), vec![]).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _) = call(&f.state, Method::POST, &uri, None, vec![]).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    let (_, owner_key) = team::owner_key(&f.state.team_path, "Owner").unwrap();
+    let (status, _) = call(&f.state, Method::GET, &uri, Some(&owner_key), vec![]).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = call(
+        &f.state,
+        Method::POST,
+        "/team/v1/admin/members/nobody/compromised",
+        Some(&owner_key),
+        vec![],
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    let (status, body) = call(&f.state, Method::POST, &uri, Some(&owner_key), vec![]).await;
+    assert_eq!(status, StatusCode::OK);
+    let answer: wenlan_types::team::TeamMemberKey = serde_json::from_slice(&body).unwrap();
+    assert_eq!(answer.member.id, f.writer.0.id);
+    assert!(wenlan_types::team::is_team_key(&answer.key));
+    for dead in [&f.writer.1, &tool] {
+        let (status, _) = call(&f.state, Method::GET, "/mcp", Some(dead), vec![]).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+    let (status, _) = call(
+        &f.state,
+        Method::GET,
+        "/team/v1/me",
+        Some(&answer.key),
+        vec![],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
 }

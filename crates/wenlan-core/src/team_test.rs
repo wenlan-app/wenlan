@@ -314,3 +314,207 @@ fn key_hashes_match_only_when_identical() {
     assert!(!same_hash(&hash, &hash[..hash.len() - 1]));
     assert!(!same_hash(&hash, ""));
 }
+
+// ===== Format 2: tool keys, identities, invites =====
+
+fn bak(path: &Path) -> PathBuf {
+    path.with_file_name(V1_BACKUP_FILE)
+}
+
+fn raw(path: &Path) -> serde_json::Value {
+    serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
+}
+
+#[test]
+fn a_format_1_file_is_read_and_rewritten_unchanged() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(TEAM_FILE);
+    let (amy, _) = add_member(&path, "Amy", &[access("Design", TeamAccess::Write)]).unwrap();
+    // Writes that need nothing new keep format 1 and make no backup.
+    new_member_key(&path, &amy.id).unwrap();
+    rename_team(&path, "Team").unwrap();
+    assert!(!bak(&path).exists());
+    let before = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(raw(&path)["format"], 1);
+    for field in ["identities", "keys", "invite"] {
+        assert!(!before.contains(field), "{field}");
+    }
+    // Read and write back through the types: byte-identical.
+    let file = read_team(&path).unwrap();
+    assert_eq!(file.format, FORMAT);
+    assert_eq!(serde_json::to_string_pretty(&file).unwrap(), before);
+    // A hand-written format 1 file (as today's code wrote it) reads too.
+    let old = r#"{"format":1,"id":"t","members":[{"id":"a","name":"Amy","key_sha256":"00","spaces":{},"added_at":"2026-01-01T00:00:00Z"}]}"#;
+    std::fs::write(&path, old).unwrap();
+    let file = read_team(&path).unwrap();
+    assert_eq!(file.members[0].key_sha256.as_deref(), Some("00"));
+    assert_eq!(serde_json::to_string(&file).unwrap(), old);
+}
+
+#[test]
+fn the_first_tool_key_makes_format_2_and_keeps_a_format_1_backup_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(TEAM_FILE);
+    let (amy, _) = add_member(&path, "Amy", &[]).unwrap();
+    let v1 = std::fs::read(&path).unwrap();
+    assert_eq!(raw(&path)["format"], 1);
+
+    let (id, key) = issue_tool_key(&path, &amy.id, "Cursor").unwrap();
+    assert!(wenlan_types::team::is_team_key(&key));
+    assert!(key.starts_with("wlt_") && key.len() == 68);
+    assert_eq!(raw(&path)["format"], 2);
+    assert_eq!(std::fs::read(bak(&path)).unwrap(), v1);
+    // Only the hash is kept.
+    assert!(!std::fs::read_to_string(&path).unwrap().contains(&key));
+
+    // A later write never replaces the backup.
+    issue_tool_key(&path, &amy.id, "Claude").unwrap();
+    revoke_tool_key(&path, &amy.id, &id).unwrap();
+    assert_eq!(std::fs::read(bak(&path)).unwrap(), v1);
+    // This code reads format 2.
+    assert_eq!(read_team(&path).unwrap().format, FORMAT_V2);
+}
+
+#[test]
+fn an_existing_backup_is_not_overwritten() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(TEAM_FILE);
+    let (amy, _) = add_member(&path, "Amy", &[]).unwrap();
+    std::fs::write(bak(&path), "earlier").unwrap();
+    issue_tool_key(&path, &amy.id, "Cursor").unwrap();
+    assert_eq!(std::fs::read_to_string(bak(&path)).unwrap(), "earlier");
+}
+
+#[test]
+fn a_member_without_a_legacy_key_makes_format_2_and_today_s_reader_refuses_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(TEAM_FILE);
+    let (amy, _) = add_member(&path, "Amy", &[]).unwrap();
+    change_team(&path, |file| {
+        file.members[0].key_sha256 = None;
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(raw(&path)["format"], 2);
+    assert!(bak(&path).exists());
+    let file = read_team(&path).unwrap();
+    assert_eq!(file.members[0].id, amy.id);
+    assert!(file.members[0].key_sha256.is_none());
+
+    // Today's code reads a member as a struct with a required `key_sha256`
+    // string, and reads the whole file before looking at the version. One
+    // keyless member therefore makes the whole list unreadable to it, which
+    // is why the format moves to 2 and the old file is kept.
+    #[derive(serde::Deserialize)]
+    #[allow(dead_code)]
+    struct V1Member {
+        id: String,
+        key_sha256: String,
+    }
+    #[derive(serde::Deserialize)]
+    #[allow(dead_code)]
+    struct V1File {
+        format: u32,
+        members: Vec<V1Member>,
+    }
+    let error = serde_json::from_slice::<V1File>(&std::fs::read(&path).unwrap())
+        .err()
+        .expect("a format 1 reader cannot parse a keyless member")
+        .to_string();
+    assert!(error.contains("missing field `key_sha256`"), "{error}");
+    // The backup is still readable by it.
+    assert!(serde_json::from_slice::<V1File>(&std::fs::read(bak(&path)).unwrap()).is_ok());
+}
+
+#[test]
+fn a_newer_format_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(TEAM_FILE);
+    std::fs::write(&path, r#"{"format":3,"members":[]}"#).unwrap();
+    assert!(read_team(&path).is_err());
+}
+
+#[test]
+fn a_tool_key_authenticates_until_revoked_or_the_member_is_removed() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(TEAM_FILE);
+    let (amy, legacy) = add_member(&path, "Amy", &[access("Design", TeamAccess::Write)]).unwrap();
+    let (bo, _) = add_member(&path, "Bo", &[]).unwrap();
+    let (id, key) = issue_tool_key(&path, &amy.id, "Cursor").unwrap();
+    let (id2, key2) = issue_tool_key(&path, &bo.id, "Cursor").unwrap();
+
+    let found = authenticate(&path, &key).unwrap().unwrap();
+    assert_eq!(found.member.id, amy.id);
+    assert_eq!(found.credential, Credential::ToolKey { id: id.clone() });
+    assert_eq!(found.access("Design"), Some(TeamAccess::Write));
+    let by_legacy = authenticate(&path, &legacy).unwrap().unwrap();
+    assert_eq!(by_legacy.credential, Credential::LegacyKey);
+
+    revoke_tool_key(&path, &amy.id, &id).unwrap();
+    assert!(authenticate(&path, &key).unwrap().is_none());
+    assert!(authenticate(&path, &legacy).unwrap().is_some());
+    assert!(revoke_tool_key(&path, &amy.id, "nope").is_err());
+    // Another member's key id is not theirs to revoke.
+    assert!(revoke_tool_key(&path, &amy.id, &id2).is_err());
+
+    assert!(authenticate(&path, &key2).unwrap().is_some());
+    remove_member(&path, &bo.id).unwrap();
+    assert!(authenticate(&path, &key2).unwrap().is_none());
+    assert!(issue_tool_key(&path, &bo.id, "Late").is_err());
+}
+
+#[test]
+fn reset_compromised_kills_every_credential_and_keeps_the_member() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(TEAM_FILE);
+    let (amy, old) = add_member(&path, "Amy", &[access("Design", TeamAccess::Write)]).unwrap();
+    let (_, tool1) = issue_tool_key(&path, &amy.id, "One").unwrap();
+    let (_, tool2) = issue_tool_key(&path, &amy.id, "Two").unwrap();
+    change_team(&path, |file| {
+        let member = &mut file.members[0];
+        member.identities.push(Identity {
+            issuer: "https://accounts.google.com".into(),
+            subject: "123".into(),
+            email: Some("a@example.com".into()),
+            linked_at: now(),
+        });
+        member.invite = Some(Invite {
+            token_sha256: "ab".repeat(32),
+            email: None,
+            expires_at: now(),
+        });
+        Ok(())
+    })
+    .unwrap();
+
+    let (member, fresh) = reset_compromised(&path, &amy.id).unwrap();
+    assert_eq!(member.id, amy.id);
+    assert!(wenlan_types::team::is_team_key(&fresh));
+    for dead in [&old, &tool1, &tool2] {
+        assert!(authenticate(&path, dead).unwrap().is_none());
+    }
+    let found = authenticate(&path, &fresh).unwrap().unwrap();
+    assert_eq!(found.member.id, amy.id);
+    assert_eq!(found.credential, Credential::LegacyKey);
+    assert_eq!(found.access("Design"), Some(TeamAccess::Write));
+    let listed = read_team(&path).unwrap();
+    let stored = &listed.members[0];
+    assert!(stored.identities.is_empty() && stored.invite.is_none());
+    assert!(stored.keys.iter().all(|key| key.revoked_at.is_some()));
+    assert!(reset_compromised(&path, "missing").is_err());
+}
+
+#[test]
+fn reset_compromised_works_on_the_owner() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(TEAM_FILE);
+    let (owner, old) = owner_key(&path, "Owner").unwrap();
+    let (_, tool) = issue_tool_key(&path, &owner.id, "Cursor").unwrap();
+    let (again, fresh) = reset_compromised(&path, &owner.id).unwrap();
+    assert_eq!(again.id, owner.id);
+    assert_eq!(again.role, TeamRole::Owner);
+    assert!(authenticate(&path, &old).unwrap().is_none());
+    assert!(authenticate(&path, &tool).unwrap().is_none());
+    let found = authenticate(&path, &fresh).unwrap().unwrap();
+    assert_eq!(found.role, TeamRole::Owner);
+}
