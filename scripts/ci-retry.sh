@@ -24,6 +24,26 @@ elif command -v gtimeout >/dev/null 2>&1; then
   bounded=(gtimeout --kill-after=30 "$limit")
 fi
 
+# `timeout` stops the command it started, but an `apt-get` that command ran
+# through sudo (Playwright's --with-deps) is outside its reach and keeps going.
+# The next attempt then fails at once on the dpkg lock, so one slow mirror
+# used to spend every attempt. Before a retry, wait (bounded by the same
+# limit) for any apt-get or dpkg still running to finish. Without pgrep there
+# is nothing to measure, and the retry goes ahead as before.
+wait_for_leftover_apt() {
+  command -v pgrep >/dev/null 2>&1 || return 0
+  [[ -d /var/lib/dpkg ]] || return 0
+  local waited=0
+  while pgrep -x apt-get >/dev/null 2>&1 || pgrep -x dpkg >/dev/null 2>&1; do
+    if [[ $waited -ge $limit ]]; then
+      echo "::warning title=Setup retried::apt-get or dpkg still running after ${limit}s" >&2
+      return 0
+    fi
+    sleep 5
+    waited=$((waited + 5))
+  done
+}
+
 status=1
 for ((attempt = 1; attempt <= attempts; attempt++)); do
   ${bounded[@]+"${bounded[@]}"} "$@"
@@ -34,6 +54,7 @@ for ((attempt = 1; attempt <= attempts; attempt++)); do
   echo "::warning title=Setup retried::attempt $attempt/$attempts of '$*' exited $status" >&2
   if [[ $attempt -lt $attempts ]]; then
     sleep $((attempt * 10))
+    wait_for_leftover_apt
   fi
 done
 exit "$status"
