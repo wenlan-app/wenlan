@@ -67,14 +67,14 @@ describe("Space how-I-work ask", () => {
     const { onOpenPage } = renderAsk();
     expect(await screen.findByRole("heading", { name: /Let AI tools follow how you work/ })).toBeInTheDocument();
     expect(screen.getByText(line.text)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Working style" }));
+    fireEvent.click(screen.getByRole("button", { name: "from “Working style”" }));
     expect(onOpenPage).toHaveBeenCalledExactlyOnceWith("page-source");
   });
 
   it("UX-SKILL-1 always names the source in the ask, never an edit mark", async () => {
     api.list.mockResolvedValue([{ space_id: space.id, space_name: space.name, lines: [{ ...line, person_edited: true }] }]);
     renderAsk();
-    expect(await screen.findByRole("button", { name: "Working style" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "from “Working style”" })).toBeInTheDocument();
     expect(screen.queryByText("You changed this")).not.toBeInTheDocument();
   });
 

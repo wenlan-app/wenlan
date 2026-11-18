@@ -414,39 +414,33 @@
 .notes-page-shared { color: var(--mem-text-tertiary); display: inline-flex; flex: none; margin-left: auto; padding-left: 6px; }
 .notes-page-shared-icon { height: 13px; width: 13px; }
 
-/* One left column: with labels, the Wiki closes the destinations and every
-   page follows it here, instead of a second column beside the sidebar. */
-.notes-rail-nav:has(> .notes-wiki-section) { flex: 1 1 auto; min-height: 0; }
-.notes-wiki-section {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  width: 100%;
-  min-height: 0;
-  margin-top: 6px;
+/* The left side is one fixed list: the destinations, then the pages the
+   person pinned, then the ones opened lately. Nothing nests or folds
+   (UX-FIND-4), so the list scrolls as a whole when the window is short. */
+.notes-rail-nav--labels { overflow-y: auto; }
+.notes-primary-count {
+  flex: none;
+  margin-left: auto;
+  padding-left: 8px;
+  color: var(--mem-text-tertiary);
+  font: 400 13px var(--mem-font-body);
+  font-variant-numeric: tabular-nums;
 }
-.memory-shell .notes-rail-nav .notes-wiki-section .wiki-sidebar-directory.wiki-workspace-directory {
-  flex: 1 1 auto;
-  width: 100%;
+.notes-rail-heading {
   margin: 0;
-  padding: 0;
-  border: 0;
+  padding: 4px 12px;
+  color: var(--mem-text-tertiary);
+  font: 400 12px/1.4 var(--mem-font-body);
+  white-space: nowrap;
 }
-.notes-wiki-section .wiki-workspace-mode-row {
-  min-height: 0;
-  gap: 0;
-  padding: 0;
-}
-.notes-wiki-section .notes-wiki-heading { flex: 1 1 auto; min-width: 0; }
-.notes-wiki-section .wiki-workspace-back { flex: 0 0 auto; min-height: 28px; padding: 0 6px; color: var(--mem-text-tertiary); font-size: 12px; font-weight: 400; }
-.notes-wiki-section .wiki-workspace-new-folder { flex-basis: 28px; width: 28px; height: 28px; color: var(--mem-text-tertiary); }
-.notes-wiki-section .wiki-sidebar-directory > .notes-list-panel { padding-inline: 4px 0; margin-top: 2px; }
-/* One icon column: top-level pages line up with top-level folders,
-   whose caret sits in the gutter to the left of the icon. */
-.notes-wiki-section .notes-inventory-root-pages > li > .notes-inventory-page { padding-left: calc(9px + 18px); }
+.notes-pinned-pages .notes-primary-link,
+.notes-recent-pages .notes-primary-link { min-height: 34px; flex-basis: 34px; }
+.notes-recent-pages { display: flex; flex: 0 0 auto; flex-direction: column; width: 100%; margin-top: 14px; }
+.notes-recent-page { justify-content: space-between; }
+.notes-recent-page-kind { flex: none; color: var(--mem-text-tertiary); font-size: 12px; white-space: nowrap; }
 
-/* Pages the person pinned sit under the destinations with a gap and no
-   heading (UX-FIND-6). */
+/* Pages the person pinned sit under the destinations, under their own
+   small heading (UX-FIND-6). */
 .notes-pinned-pages { display: flex; flex: 0 0 auto; flex-direction: column; width: 100%; margin-top: 14px; }
 .notes-rail-nav--icons .notes-pinned-pages { align-items: center; }
 .notes-pinned-page { position: relative; display: flex; width: 100%; }

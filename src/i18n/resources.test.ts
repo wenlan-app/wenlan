@@ -216,17 +216,21 @@ describe("translation resources", () => {
     ]).toEqual(["Reset test data", "重置测试数据", "重設測試資料"]);
   });
 
-  it("presents the Pages route as Library in every locale", () => {
+  it("presents the Pages route as Docs in every locale", () => {
     expect([
       resources.en.translation.sidebar.pages,
       resources["zh-Hans"].translation.sidebar.pages,
       resources["zh-Hant"].translation.sidebar.pages,
-    ]).toEqual(["Library", "文件", "檔案"]);
+    ]).toEqual(["Docs", "文档", "文件"]);
     expect([
       resources.en.translation.pages.overview.title,
       resources["zh-Hans"].translation.pages.overview.title,
       resources["zh-Hant"].translation.pages.overview.title,
-    ]).toEqual(["Library", "文件", "檔案"]);
+    ]).toEqual(["Docs", "文档", "文件"]);
+    // Skills and Rules are its two fixed siblings on the left side.
+    expect(supportedAppLocales.map((locale) => [resources[locale].translation.sidebar.skills, resources[locale].translation.sidebar.rules])).toEqual([
+      ["Skills", "Rules"], ["技能", "规则"], ["技能", "規則"],
+    ]);
   });
 
   it("lists pages only in the Wiki: no Kind filter, column, or type labels", () => {

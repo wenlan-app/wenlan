@@ -12,6 +12,7 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import {
   listMemoriesRich,
+  getSpaceFolders,
   listSpaces,
   listThings,
   openSearchResult as openSearchResultTarget,
@@ -42,7 +43,6 @@ import { ExampleWikiBanner, useExampleWikiSwitch } from "../onboarding/ExampleWi
 import { exampleWikiActive, useExampleWikiActive } from "../../lib/exampleWiki/mode";
 import { showExampleWikiReadOnly } from "../../lib/exampleWiki/invoke";
 import { setStartIntent } from "../onboarding/startIntent";
-import { readRememberedDirectoryHidden, rememberDirectoryHidden } from "../../lib/wikiLayoutMemory";
 import AtlasView from "./AtlasView";
 import { SearchResults, matchesAllWords, matchingThings } from "./SearchResults";
 import { ARCHIVED_PAGES_QUERY_KEY, EXPLICIT_BROWSE_QUERY_POLICY, isKnowledgePage, listAllArchivedPagesExplicitBrowse } from "./pages/listAllPages";
@@ -61,11 +61,14 @@ import { ThingDetail } from "./things/ThingDetail";
 import { SpacesOverview } from "./spaces";
 import { ScopeProvider, useScopeState } from "./team/scope";
 import { ScopeSwitcher } from "./team/ScopeSwitcher";
-import { PagesOverview, WikiStart } from "./pages/PagesOverview";
+import { PagesOverview } from "./pages/PagesOverview";
+import { SectionListPage } from "./pages/SectionListPage";
+import { pageSection, spaceLayout, type PageSection } from "./pages/pageSections";
+import { SPACE_FOLDERS_QUERY_KEY } from "./pages/SpaceFoldersPrompt";
+import { listAllActivePages } from "./pages/listAllPages";
 import { openPageMapOnVisit } from "./page/usePageInspectorSession";
 import { WikiWorkspace } from "./pages/WikiWorkspace";
 import { WIKI_DIRECTORY_ID, WikiDirectory, type WikiInventoryMode } from "./pages/WikiDirectory";
-import { Stack } from "@phosphor-icons/react";
 import { useLibraryInventory } from "./pages/useLibraryInventory";
 import { SecondaryNoteGroup, type SecondaryNoteGroupHandle } from "./pages/SecondaryNoteGroup";
 import { NoteTabs } from "./pages/NoteTabs";
@@ -86,7 +89,7 @@ import { searchResultTarget } from "../../lib/searchResultTarget";
 import { forgetRecentPage, readRecentPageHistory, recordRecentPageVisit } from "../../lib/recentPages";
 import { deleteRecentSpace, readRecentSpaceHistory, recordRecentSpaceVisit, renameRecentSpace } from "../../lib/recentSpaces";
 import { createSpaceDetailCopy, createSpacesOverviewLabels } from "./navigation/copy";
-import { activeNavigationForView, type View } from "./navigation/viewState";
+import { activeNavigationForView, navigationForSection, type View } from "./navigation/viewState";
 import { ReviewEnvironmentBadge } from "./navigation/ReviewEnvironmentBadge";
 import QuickCaptureScrim from "./QuickCaptureScrim";
 import { useResponsiveSidebar } from "./navigation/useResponsiveSidebar";
@@ -109,7 +112,7 @@ import { WorkspacePaneHostContext, WorkspaceDocumentToolsHostContext, SharedWiki
 import { ReferenceNavigationProvider } from "./links/ReferenceNavigationContext";
 import "./navigation/navigation-shell.css";
 import "./assets/collectionToolbar.css";
-import { inventoryFolderPath } from "./pages/pageInventory";
+import { folderScope, inventoryFolderPath, pageFolderPath } from "./pages/pageInventory";
 import { FindSkillsView } from "./skills/FindSkillsView";
 import { isWebBuild } from "../../web/runtime";
 import { useTeamAccess } from "../../web/teamAccess";
@@ -150,7 +153,8 @@ function scrollDestinationKey(view: View): string {
 // always a new intent; persisted drafts retain their session through history.
 function sameDestination(current: View, next: View): boolean {
   if (current.kind === "pages" && next.kind === "pages") {
-    return (current.inventoryScope ?? "all") === (next.inventoryScope ?? "all");
+    return (current.section ?? "docs") === (next.section ?? "docs")
+      && (current.inventoryScope ?? "all") === (next.inventoryScope ?? "all");
   }
   if (current.kind !== next.kind) return false;
   switch (current.kind) {
@@ -322,7 +326,6 @@ export default function Main({
   const [wikiDirectoryCloseRequest, setWikiDirectoryCloseRequest] = useState(0);
   // The one Wiki directory renders into the left sidebar, or into the Wiki
   // workspace's own column when the sidebar has no room for it.
-  const [sidebarWikiHost, setSidebarWikiHost] = useState<HTMLDivElement | null>(null);
   const [workspaceDirectoryHost, setWorkspaceDirectoryHost] = useState<HTMLDivElement | null>(null);
   const updateNoteTabs = (next: NoteTab[]) => { noteTabsRef.current = next; setNoteTabs(next); };
   const findPrimaryNoteTab = (next: NoteView) => noteTabsRef.current.find(tab =>
@@ -415,8 +418,6 @@ export default function Main({
     updateHistory(viewHistoryRef.current, []);
     showView(next);
   };
-  const lastNoteViewRef = useRef<View | null>(null);
-  if (view.kind === "page" || view.kind === "page-draft") lastNoteViewRef.current = view;
   const pageSelectionsRef = useRef(new Map<string, MarkdownEditorSelection>());
   const readingPositions = noteReadingPositionsFor(pageSelectionsRef.current);
   const [readyEditorView, setReadyEditorView] = useState<View | null>(null);
@@ -499,7 +500,6 @@ export default function Main({
       if (identity.publishedPage) {
         const next: View = { kind: "page", pageId: identity.publishedPage.id, inventoryScope: source.inventoryScope, projectionIssue: identity.projectionIssue };
         updateNoteTabs(promoteNoteTab(noteTabsRef.current, source, next).map(tab => matchesNote(tab, next) ? { ...tab, title: identity.publishedPage!.title } : tab));
-        lastNoteViewRef.current = next;
         showView(next, false);
       }
     }
@@ -559,8 +559,6 @@ export default function Main({
             }
           }
           // The intermediate setView may be batched away by navigation.
-          // Remember the saved identity before leaving so Notes reopens it.
-          lastNoteViewRef.current = sourceView;
           if (sourceView.kind === "page") showView(sourceView, false);
           pending?.action(sourceView);
         } else pending?.refuse();
@@ -798,10 +796,7 @@ export default function Main({
       updateNoteTabs(remaining);
       if (active) {
         const next = remaining[Math.min(index, remaining.length - 1)]?.view ?? { kind: "home" } as View;
-        lastNoteViewRef.current = isNoteView(next) ? next : null;
         showView(next);
-      } else if (lastNoteViewRef.current && isNoteView(lastNoteViewRef.current) && matchesNote(tab, lastNoteViewRef.current)) {
-        lastNoteViewRef.current = remaining[remaining.length - 1]?.view ?? null;
       }
     };
     if (active) afterNavigationGuards(close);
@@ -842,10 +837,8 @@ export default function Main({
         updateNoteTabs(remaining);
         const retained = (entry: View) => !isNoteView(entry) || !matchesNote(current, entry);
         updateHistory(viewHistoryRef.current.filter(retained), viewForwardRef.current.filter(retained));
-        if (lastNoteViewRef.current && isNoteView(lastNoteViewRef.current) && matchesNote(current, lastNoteViewRef.current)) lastNoteViewRef.current = null;
         if (active) {
           const next = remaining[Math.min(index, remaining.length - 1)]?.view ?? { kind: "home" } as View;
-          lastNoteViewRef.current = isNoteView(next) ? next : null;
           showView(next);
         }
         return true;
@@ -887,7 +880,7 @@ export default function Main({
     onCreate={exampleWiki || (teamAccess.member && teamAccess.writable.length === 0) ? undefined : () => navigateTo({
       kind: "page-draft",
       space: null,
-      folderPath: wikiInventoryMode === "folders" ? wikiCreationFolderPath ?? undefined : undefined,
+      folderPath: wikiInventoryMode === "folders" ? creationFolderPath ?? undefined : undefined,
       inventoryScope: wikiInventoryMode === "folders" && (view.kind === "pages" || view.kind === "page" || view.kind === "page-draft")
         ? view.inventoryScope : undefined,
     })} />;
@@ -910,13 +903,8 @@ export default function Main({
     navigateHome();
     if (responsiveSidebar.presentation === "overlay") responsiveSidebar.close();
   };
-  const navigateNotes = () => {
-    if (activeNavigationForView(view) !== "pages" && lastNoteViewRef.current) {
-      navigateTo(lastNoteViewRef.current);
-    } else {
-      navigatePages();
-    }
-  };
+  // A section's row always opens that section's list (UX-FIND-4).
+  const navigateSection = (section: PageSection) => navigateTo(section === "docs" ? { kind: "pages" } : { kind: "pages", section });
 
   const externalDetailExit = view.kind === "memory" && !!initialMemoryId
     && !!onBackFromDetail && viewHistory.length === 0;
@@ -1013,7 +1001,7 @@ export default function Main({
   const displayedSearchQuery = pendingDraftSearchQuery ?? query;
   // Memories are the AI's notes, not what was said: search shows the
   // conversation's own words instead (UX-FIND-1), and source passages with them.
-  const { empty: libraryEmpty, pages: pagesOnSide } = useLibraryInventory();
+  const { pages: pagesOnSide } = useLibraryInventory();
   // Search follows the side shown. A team's side finds only the team's
   // pages: conversations, sources, topics and things are the person's own.
   const split = scope.teams.length > 0;
@@ -1084,7 +1072,19 @@ export default function Main({
     }
     setSidebarPreferences((current) => ({ ...current, visible: !current.visible }));
   };
-  const activeNavigation = activeNavigationForView(view);
+  // The pages the left side already counts tell which section an open page
+  // lights, and which folder a new page beside it lands in.
+  const { data: shellPages } = useQuery({ queryKey: ["pages", "inventory", "passive", "active"], queryFn: listAllActivePages, staleTime: 30_000 });
+  const openPage = view.kind === "page" ? shellPages?.find((page) => page.id === view.pageId) : undefined;
+  // Only a page whose folders carry a section's name needs the daemon's
+  // setting, to tell a Space's own folder from one the person named.
+  const { data: spaceFoldersOn } = useQuery({ queryKey: SPACE_FOLDERS_QUERY_KEY, queryFn: () => getSpaceFolders(), enabled: !!openPage && pageSection(openPage) !== "docs", retry: false, staleTime: Infinity });
+  const shellLayout = useMemo(() => spaceLayout(shellPages ?? [], spaceFoldersOn === true, scope.teamSpaces), [shellPages, spaceFoldersOn, scope.teamSpaces]);
+  const activeNavigation = openPage ? navigationForSection(pageSection(openPage, shellLayout)) : activeNavigationForView(view);
+  const creationFolderPath = view.kind === "pages"
+    ? wikiCreationFolderPath
+    : openPage ? pageFolderPath(openPage) || null
+      : view.kind === "page-draft" ? view.folderPath ?? null : null;
   const wikiInventoryScope = view.kind === "pages" || view.kind === "page" || view.kind === "page-draft"
     ? view.inventoryScope ?? "all"
     : "all";
@@ -1122,14 +1122,11 @@ export default function Main({
       ? "zero"
       : effectiveSidebar.mode;
   const headerSidebarBackdropClass = `is-sidebar-backdrop-${sidebarLayout}`;
-  // With labels, the sidebar is the one navigation column and holds every page.
-  const directoryInSidebar = sidebarLayout === "labels" && view.kind !== "settings";
+  // The left side never lists pages: a section opens its list in the main
+  // area (UX-FIND-4), so no directory sits in the sidebar or beside it.
   const spacesOverviewLabels = createSpacesOverviewLabels(t);
   const spaceDetailCopy = createSpaceDetailCopy(t);
   const { data: spaces } = useQuery({ queryKey: ["spaces"], queryFn: listSpaces });
-  // The directory has nothing to say to a brand-new library, and it reads as a
-  // second sidebar next to the open getting-started checklist, so both give the
-  // Wiki a single column; see WikiWorkspace `directoryHidden`.
   const gettingStarted = useGettingStartedState();
   const exampleWikiSwitch = useExampleWikiSwitch();
   // Opening or leaving the example changes which wiki every read answers
@@ -1152,7 +1149,6 @@ export default function Main({
       updateNoteTabs([]);
       primaryDraftIdentityByTab.current.clear();
       updateHistory([], []);
-      lastNoteViewRef.current = null;
       pageSelectionsRef.current.clear();
       readingPositions.clear();
       setOwnershipNotice(null);
@@ -1170,17 +1166,6 @@ export default function Main({
       settled();
     }, settled, true);
   };
-  const liveDirectoryHidden = libraryEmpty
-    || (gettingStarted.visible && !gettingStarted.dismissed);
-  // Until both reads answer (they wait on the daemon at launch), keep the
-  // layout of last time so the Wiki does not collapse under the user.
-  const layoutKnown = gettingStarted.loaded || libraryEmpty;
-  const [rememberedDirectoryHidden] = useState(readRememberedDirectoryHidden);
-  const directoryHidden = layoutKnown ? liveDirectoryHidden : rememberedDirectoryHidden;
-  useEffect(() => {
-    if (layoutKnown) rememberDirectoryHidden(liveDirectoryHidden);
-  }, [layoutKnown, liveDirectoryHidden]);
-
   useEffect(() => {
     if (!mobileSearchOpen) return;
     const pages = readRecentPageHistory().entries.map((entry) => ({
@@ -1213,7 +1198,6 @@ export default function Main({
     const isPage = (candidate: View) => candidate.kind === "page" && candidate.pageId === pageId;
     updateNoteTabs(noteTabsRef.current.filter(tab => !isPage(tab.view)));
     updateHistory(viewHistoryRef.current.filter(candidate => !isPage(candidate)), viewForwardRef.current.filter(candidate => !isPage(candidate)));
-    if (lastNoteViewRef.current && isPage(lastNoteViewRef.current)) lastNoteViewRef.current = null;
     pageSelectionsRef.current.delete(pageId);
     secondaryGroupRef.current?.removePage(pageId);
     if (isPage(viewRef.current)) {
@@ -1263,11 +1247,9 @@ export default function Main({
       updateNoteTabs(noteTabsRef.current.filter(tab => !goneTabs.some(gone => gone.key === tab.key)));
     }
     updateHistory(viewHistoryRef.current.filter(entry => !isGone(entry)), viewForwardRef.current.filter(entry => !isGone(entry)));
-    if (lastNoteViewRef.current && isGone(lastNoteViewRef.current)) lastNoteViewRef.current = null;
     if (!wasOnScreen) return;
     const remaining = noteTabsRef.current;
     const next: View = remaining[Math.min(Math.max(firstIndex, 0), remaining.length - 1)]?.view ?? { kind: "home" };
-    lastNoteViewRef.current = isNoteView(next) ? next : null;
     showView(next);
   };
   const handleDraftTitleChange = useCallback((title: string) => {
@@ -1492,36 +1474,16 @@ export default function Main({
           </div>
   );
 
-  // The Wiki as the last section of the sidebar: its heading is the Wiki
-  // destination, and every page follows it in the same column.
-  const wikiDirectoryTarget = directoryInSidebar
-    ? sidebarWikiHost
-    : isWikiWorkspaceView ? workspaceDirectoryHost : null;
-  const wikiHeading = directoryInSidebar ? (
-    <button
-      type="button"
-      className="notes-primary-link notes-wiki-heading"
-      aria-label={t("sidebar.pages")}
-      aria-current={activeNavigation === "pages" ? "page" : undefined}
-      data-active={view.kind === "pages" ? "true" : undefined}
-      onClick={navigateNotes}
-    >
-      <span aria-hidden="true" className="notes-navigation-glyph">
-        <Stack aria-hidden="true" data-navigation-icon="wiki-stack" focusable="false" size={16} style={{ color: "currentColor" }} weight="regular" />
-      </span>
-      <span>{t("sidebar.pages")}</span>
-    </button>
-  ) : undefined;
+  // Archived pages are a short detour beside the reading column, opened
+  // from Home; nothing else lists pages outside the main area.
+  const wikiDirectoryTarget = isWikiWorkspaceView && wikiInventoryMode === "archived" ? workspaceDirectoryHost : null;
   const wikiDirectory = (
     <WikiDirectory
-      key={`${exampleWiki ? "example" : "own"}-${directoryInSidebar ? "sidebar" : "workspace"}`}
+      key={exampleWiki ? "example" : "own"}
       id={WIKI_DIRECTORY_ID}
-      placement={directoryInSidebar ? "sidebar" : "workspace"}
-      heading={wikiHeading}
       inventoryMode={wikiInventoryMode}
       onInventoryModeChange={setWikiInventoryMode}
       inventoryScope={wikiInventoryScope}
-      onCreationFolderPathChange={setWikiCreationFolderPath}
       currentPageId={view.kind === "page" ? view.pageId : view.kind === "page-draft" ? view.draftId ?? null : null}
       currentFolderPath={view.kind === "page-draft" ? view.folderPath : undefined}
       browsing={view.kind === "pages" || view.kind === "home"}
@@ -1529,7 +1491,6 @@ export default function Main({
       onFilterChange={setPageInventoryFilter}
       onBrowse={(scope) => navigateTo({ kind: "pages", inventoryScope: scope })}
       onCreatePage={(folderPath) => navigateTo({ kind: "page-draft", space: null, folderPath, inventoryScope: retainWikiScope ? view.inventoryScope : undefined })}
-      onFindSkills={() => navigateTo({ kind: "skills" })}
       onOpenDraft={openWikiDraft}
       onOpenPage={openWikiPage}
       onDeletePage={handleDirectoryNoteDeleted}
@@ -1650,7 +1611,9 @@ export default function Main({
             activityCurrent={view.kind === "activity"}
             onConnectTool={() => navigateTo({ kind: "connect-agent" })}
             onNavigateHome={navigateHome}
-            onNavigatePages={navigateNotes}
+            onNavigatePages={() => navigateSection("docs")}
+            onNavigateSkills={() => navigateSection("skills")}
+            onNavigateRules={() => navigateSection("rules")}
             onOpenPinnedPage={teamSide ? undefined : (pageId) => navigateTo({ kind: "page", pageId })}
             activePageId={view.kind === "page" ? view.pageId : null}
             // The graph and topics read the whole library, so a team's side
@@ -1673,7 +1636,6 @@ export default function Main({
             onRequestClose={responsiveSidebar.close}
             open={sidebarOpen}
             presentation={responsiveSidebar.presentation}
-            onWikiSectionHost={directoryInSidebar ? setSidebarWikiHost : undefined}
           />
         )}
 
@@ -1718,7 +1680,7 @@ export default function Main({
             <WikiWorkspace key={exampleWiki ? "example" : "own"}
               // Home holds what is in motion; the directory of every page
               // belongs to the Wiki.
-              directoryHidden={view.kind === "home" || directoryHidden}
+              directoryHidden
               tabs={noteTabStrip} onGroupFocus={focusPrimaryGroup} onGlobalToolsHost={setGroupToolsHost}
               onSharedReadingHost={setSharedReadingHost} onSharedToolsHost={setSharedToolsHost}
               secondaryOpen={secondaryOpen} onSecondaryHost={setSecondaryHost}
@@ -1726,11 +1688,9 @@ export default function Main({
               directoryOpenRequest={wikiDirectoryOpenRequest}
               directoryCloseRequest={wikiDirectoryCloseRequest}
               externalDirectory
-              directoryInSidebar={directoryInSidebar}
               onDirectoryHost={setWorkspaceDirectoryHost}
               onInventoryModeChange={setWikiInventoryMode}
               inventoryScope={wikiInventoryScope}
-              onCreationFolderPathChange={setWikiCreationFolderPath}
               browsing
               filter={pageInventoryFilter}
               onFilterChange={setPageInventoryFilter}
@@ -1742,7 +1702,20 @@ export default function Main({
               onArchiveOpenPage={archiveOpenPage}
               onRestorePage={handlePageRestored}
             >
-              {view.kind === "pages" ? <WikiStart /> : <PagesOverview
+              {view.kind === "pages" ? <SectionListPage
+                key={`${view.section ?? "docs"}:${view.inventoryScope ?? "all"}`}
+                section={view.section ?? "docs"}
+                folderPath={inventoryFolderPath(view.inventoryScope ?? "all")}
+                onBrowseFolder={(path) => navigateTo(path === null ? { kind: "pages" } : { kind: "pages", inventoryScope: folderScope(path) })}
+                onCreatePage={(folderPath) => navigateTo({ kind: "page-draft", space: null, folderPath, inventoryScope: view.inventoryScope })}
+                onOpenDraft={openWikiDraft}
+                onOpenPage={openWikiPage}
+                onOpenPageId={(pageId) => navigateTo({ kind: "page", pageId })}
+                onDeletePage={handleDirectoryNoteDeleted}
+                onArchiveOpenPage={archiveOpenPage}
+                onFindSkills={() => navigateTo({ kind: "skills" })}
+                onCreationFolderPathChange={setWikiCreationFolderPath}
+              /> : <PagesOverview
                 onBrowseArchived={() => {
                   // A browse mode for now only: the app never reopens in it.
                   setWikiInventoryMode("archived");
@@ -1852,11 +1825,10 @@ export default function Main({
               directoryOpenRequest={wikiDirectoryOpenRequest}
               directoryCloseRequest={wikiDirectoryCloseRequest}
               externalDirectory
-              directoryInSidebar={directoryInSidebar}
               onDirectoryHost={setWorkspaceDirectoryHost}
               onInventoryModeChange={setWikiInventoryMode}
               inventoryScope={wikiInventoryScope}
-              onCreationFolderPathChange={setWikiCreationFolderPath}
+              directoryHidden
               currentPageId={view.draftId ?? null}
               currentFolderPath={view.folderPath}
               filter={pageInventoryFilter}
@@ -1910,11 +1882,10 @@ export default function Main({
               directoryOpenRequest={wikiDirectoryOpenRequest}
               directoryCloseRequest={wikiDirectoryCloseRequest}
               externalDirectory
-              directoryInSidebar={directoryInSidebar}
               onDirectoryHost={setWorkspaceDirectoryHost}
               onInventoryModeChange={setWikiInventoryMode}
               inventoryScope={wikiInventoryScope}
-              onCreationFolderPathChange={setWikiCreationFolderPath}
+              directoryHidden
               currentPageId={view.pageId}
               filter={pageInventoryFilter}
               onFilterChange={setPageInventoryFilter}

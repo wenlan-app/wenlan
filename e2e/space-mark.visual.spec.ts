@@ -63,7 +63,7 @@ test("renders the Planet Space mark across light, dark, mobile, focus, and physi
   await page.setViewportSize({ width: 1280, height: 900 });
   await installTauriMock(page, { locale: "en", localStorage: { "wenlan-spaces-view-mode": "rows" }, rawActions: [] });
   await page.goto("/");
-  await openPrimaryDestination(page, "Library");
+  await openPrimaryDestination(page, "Docs");
   await settle(page);
 
   const screenshots: string[] = [];
@@ -111,7 +111,7 @@ test("renders the Planet Space mark across light, dark, mobile, focus, and physi
 
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
-  await openPrimaryDestination(page, "Library");
+  await openPrimaryDestination(page, "Docs");
   const darkDefault = await markState(spacesButton(page).locator(markSelector));
   expect(darkDefault).toMatchObject({
     color: "rgb(201, 200, 209)",
@@ -126,13 +126,12 @@ test("renders the Planet Space mark across light, dark, mobile, focus, and physi
 
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
   const navigation = page.getByRole("navigation", { name: "Primary navigation" });
-  // The Wiki heads its page tree at the end of the list (UX-FIND-4), so Tab
-  // walks Home, Spaces, Graph.
+  // The rows never reorder (UX-FIND-4), so Tab walks Home, Spaces, Docs.
   await navigation.getByRole("button", { name: "Home", exact: true }).focus();
   await page.keyboard.press("Tab");
   await expect(spacesButton(page)).toBeFocused();
   await page.keyboard.press("Tab");
-  await expect(navigation.getByRole("button", { name: "Graph", exact: true })).toBeFocused();
+  await expect(navigation.getByRole("button", { name: "Docs", exact: true })).toBeFocused();
   await page.keyboard.press("Shift+Tab");
   await expect(spacesButton(page)).toBeFocused();
   await expect(spacesButton(page)).toHaveAttribute("aria-current", "page");

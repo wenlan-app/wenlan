@@ -2,15 +2,15 @@
 import { expect, test, type Page } from "@playwright/test";
 import { openPrimaryDestination } from "./helpers/primaryNavigation";
 import { collectBrowserErrors } from "./tauriMock";
-import { openWikiNote } from "./helpers/wikiWorkspace";
+import { findWikiNote, openWikiNote } from "./helpers/wikiWorkspace";
 import type { Page as KnowledgePage } from "../src/lib/tauri";
 
 async function openWiki(page: Page): Promise<void> {
   await page
     .getByRole("navigation", { name: "Primary navigation" })
-    .getByRole("button", { name: "Library", exact: true })
+    .getByRole("button", { name: "Docs", exact: true })
     .click();
-  await expect(page.getByRole("heading", { level: 1, name: "Open a page" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Docs", exact: true })).toBeVisible();
 }
 
 async function openFixtureArchitecture(page: Page): Promise<void> {
@@ -82,8 +82,8 @@ test("keeps every enabled primary destination inside the Review command contract
 
   const navigation = page.getByRole("navigation", { name: "Primary navigation" });
 
-  await navigation.getByRole("button", { name: "Library", exact: true }).click();
-  await expect(page.getByRole("heading", { level: 1, name: "Open a page" })).toBeVisible();
+  await navigation.getByRole("button", { name: "Docs", exact: true }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Docs", exact: true })).toBeVisible();
 
   await navigation.getByRole("button", { name: "Spaces", exact: true }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Spaces" })).toBeVisible();
@@ -97,9 +97,9 @@ test("keeps every enabled primary destination inside the Review command contract
   // Sources is no longer a primary destination: its list opens from Settings,
   // which is outside this Review command contract. source-library.spec covers it.
 
-  await openPrimaryDestination(page, "Library");
-  await expect(page.getByRole("heading", { level: 1, name: "Open a page", exact: true })).toBeVisible();
-  await expect(navigation.getByRole("button", { name: "Library", exact: true })).toHaveAttribute("aria-current", "page");
+  await openPrimaryDestination(page, "Docs");
+  await expect(page.getByRole("heading", { level: 1, name: "Docs", exact: true })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "Docs", exact: true })).toHaveAttribute("aria-current", "page");
   await expect(navigation.locator('[aria-current="page"]')).toHaveCount(1);
 
   await page.waitForTimeout(250);
@@ -147,10 +147,8 @@ test("proves Review identity and exercises Wiki Page mutations", async ({ page }
   await page.getByRole("button", { name: "Page actions" }).click();
   await page.getByRole("menuitem", { name: "Delete page" }).click();
   await page.getByRole("alertdialog").getByRole("button", { name: "Delete page", exact: true }).click();
-  await expect(page.getByRole("heading", { level: 1, name: "Open a page" })).toBeVisible();
-  await expect(
-    page.locator(".wiki-workspace-directory").getByText("Fixture architecture", { exact: true }),
-  ).toHaveCount(0);
+  await expect(page.getByRole("heading", { level: 1, name: "Docs", exact: true })).toBeVisible();
+  expect(await findWikiNote(page, "Fixture architecture")).toBeNull();
   expect(await storedReviewPage(page, "page-architecture")).toBeNull();
 
   expect(await rejectedCommands(page)).toEqual([]);

@@ -52,10 +52,10 @@ async function assertRedesignedSurface(page: Page, name: string): Promise<boolea
   expect(overflow.main).toBeLessThanOrEqual(1);
   if (wikiLibrary) {
     const reading=page.locator(".wiki-workspace-reading");
-    await expect(reading.getByRole("heading", { level: 1, name: "Open a page", exact: true })).toBeVisible();
+    await expect(reading.getByRole("heading", { level: 1, name: "Docs", exact: true })).toBeVisible();
     await expect(reading.locator(".asset-card, .wiki-table, .wiki-folder-lenses")).toHaveCount(0);
-    // The Wiki lists pages only in its directory, never as a second list.
-    await expect(reading.getByText("Fixture architecture", { exact: true })).toHaveCount(0);
+    // Docs lists its pages once, in the main area, never as a second list.
+    await expect(reading.locator(".section-list")).toHaveCount(1);
     await expect(reading.getByTestId("wiki-new-pages")).toHaveCount(0);
     const control=page.locator(".note-tab-create");
     await expect(control).toBeVisible();
@@ -63,7 +63,7 @@ async function assertRedesignedSurface(page: Page, name: string): Promise<boolea
     expect(box.left).toBeGreaterThanOrEqual(0);expect(box.right).toBeLessThanOrEqual(viewport.width+1);
     expect(box.height).toBeGreaterThanOrEqual(32);expect(box.width).toBeGreaterThanOrEqual(32);
     const contrast=await renderedContrast(page,[
-      {selector:".wiki-overview h1",label:"Workspace title",foregroundProperty:"color",minimum:4.5},
+      {selector:".section-list h1",label:"Workspace title",foregroundProperty:"color",minimum:4.5},
       {selector:".note-tab-create",label:"New page icon",foregroundProperty:"color",minimum:4.5},
     ]);
     for(const result of contrast)expect(result.ratio,result.label).toBeGreaterThanOrEqual(result.minimum);
@@ -232,8 +232,8 @@ async function openSpaces(page: Page): Promise<void> {
 
 async function openWiki(page: Page): Promise<void> {
   await openSidebar(page);
-  await page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Library", exact: true }).click();
-  await expect(page.getByRole("heading", { level: 1, name: "Open a page" })).toBeVisible();
+  await page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Docs", exact: true }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Docs", exact: true })).toBeVisible();
 }
 
 async function captureFourSurfaces(page: Page, label: string): Promise<void> {

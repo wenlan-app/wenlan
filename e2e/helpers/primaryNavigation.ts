@@ -43,7 +43,7 @@ export async function openMemoryFromPage(
   page: Page,
   pageTitle: string,
   memoryTitle: string | RegExp,
-  labels: { readonly wiki: string; readonly more?: string; readonly info: string } = { wiki: "Library", info: "Info" },
+  labels: { readonly wiki: string; readonly more?: string; readonly info: string } = { wiki: "Docs", info: "Info" },
 ) {
   await openPrimaryDestination(page, labels.wiki, labels.more);
   await openWikiNote(page, pageTitle);

@@ -35,6 +35,8 @@ function renderSidebar(extraProps: Partial<ComponentProps<typeof Sidebar>> = {})
         onEntityClick={() => {}}
         onNavigateGraph={() => {}}
         onNavigatePages={() => {}}
+        onNavigateSkills={() => {}}
+        onNavigateRules={() => {}}
         onNavigateSpaces={() => {}}
         {...extraProps}
       />
@@ -66,7 +68,7 @@ describe("Sidebar workspace", () => {
     expect(aside).toHaveStyle({ width: "var(--workspace-sidebar-width, 240px)" });
     expect(container.querySelector(".notes-icon-rail")).toBeInTheDocument();
     expect(container.querySelector(".notes-workspace-panel")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Library" })).toBeInTheDocument();
+    for (const name of ["Docs", "Skills", "Rules"]) expect(screen.getByRole("button", { name })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Spaces" })).toBeInTheDocument();
     // Every destination is on the left; memories and sources have no page.
     expect(screen.getByRole("button", { name: "Graph" })).toBeInTheDocument();
@@ -85,13 +87,13 @@ describe("Sidebar workspace", () => {
     expect(aside).toHaveStyle({ width: "64px" });
     expect(aside).not.toHaveAttribute("aria-hidden", "true");
     expect(screen.queryByRole("region", { name: "Notes" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Library" }));
+    await user.click(screen.getByRole("button", { name: "Docs" }));
     expect(onNavigatePages).toHaveBeenCalledTimes(1);
   });
 
   it("UX-FIND-4: puts Graph on the left, with no More, Topics, Memories or Sources", () => {
     renderSidebar({ onNavigateEntities: vi.fn() });
-    for (const name of ["Library", "Spaces", "Graph"]) expect(screen.getByRole("button", { name })).toBeInTheDocument();
+    for (const name of ["Spaces", "Docs", "Skills", "Rules", "Graph"]) expect(screen.getByRole("button", { name })).toBeInTheDocument();
     for (const name of ["More", "Topics", "Memories", "Sources", "Home"]) expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
   });
 
@@ -134,7 +136,7 @@ describe("Sidebar workspace", () => {
 
   it("keeps the closed narrow drawer out of the accessibility tree", () => {
     renderSidebar({ hidden: true, open: false, presentation: "overlay" });
-    expect(screen.queryByRole("button", { name: "Library" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Docs" })).not.toBeInTheDocument();
   });
 
   it("removes hidden desktop navigation from the focusable accessibility surface", () => {
@@ -142,7 +144,7 @@ describe("Sidebar workspace", () => {
     const aside = container.querySelector(".notes-workspace-sidebar");
     expect(aside).toHaveAttribute("aria-hidden", "true");
     expect(aside).toHaveAttribute("inert");
-    expect(screen.queryByRole("button", { name: "Library" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Docs" })).not.toBeInTheDocument();
   });
 
   it("keeps account controls in the bottom utilities", async () => {

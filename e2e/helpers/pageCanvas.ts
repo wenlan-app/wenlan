@@ -8,7 +8,7 @@ export async function openCanvas(page: Page): Promise<void> {
   await page.goto("/");
   await page
     .getByRole("navigation", { name: "Primary navigation" })
-    .getByRole("button", { name: "Library", exact: true })
+    .getByRole("button", { name: "Docs", exact: true })
     .click();
   await openWikiNote(page, "Fixture architecture");
   await expect(page.getByRole("textbox", { name: "Page editor", exact: true })).toBeVisible();

@@ -413,25 +413,40 @@ and wait for evidence that people need them.
   原文：點出處只顯示那一句和用在哪，文瀾裡不顯示整段對話。「C 啊，不过能看到前后一点点的话会更好，然后也能展开看全部」（2026-10-31 16:54）「一般这种对话怎么渲染会更适合一些？就像现在这样在左边，还是说要左右左右这样子的？」（2026-11-02 16:03）「2. 同意」（2026-11-02 16:47）
 - **UX-FIND-3** `shipped` There is "open in the original AI tool".
   原文：有「在原本的 AI 工具打開」。
-- **UX-FIND-4** `shipped` The left side shows Search, Home, Library, Spaces and the
-  graph, with no More menu: there are few enough to show them all. Topics have
-  no entry of their own, since few open them: a topic opens from a page, the
-  graph or search, and the list of every topic from the graph's top corner.
-  It is one column: with labels, the Library comes last and every page and folder
-  follows it in the same column, on every screen, never as a second column
-  beside it. Only when the left side shrinks to icons do the pages sit beside
-  the Library. The pages show only as folders: no menu to pick another list (recent
-  pages are on Home), and archived pages stay out of the tree, as in Obsidian;
-  search finds them, and an archived page opens read only with Restore.
-  One New button heads the tree and offers a new page or a new folder.
+- **UX-FIND-4** `shipped` The left side always shows the same seven rows in
+  the same order: Search, Home, Spaces, Docs (文件), Skills (技能), Rules (規則)
+  and the graph, with no More menu. The order never changes, nothing is nested
+  under a row, and nothing on the left side folds or unfolds. Docs, Skills and
+  Rules each show how many pages they hold; a section with none keeps its row.
+  Clicking one opens its list in the main area. For Docs that is folders as
+  cards with their page counts, then the pages in no folder with when each
+  last changed, and one New button for a new page or a new folder; a folder
+  opens the same list for that folder. Skills and Rules list their pages. An
+  empty section's list says so in a few words. A person's own folders live
+  under Docs. Nothing moves on disk: Rules is the pages in a folder named
+  Rules (規則, 规则) and the "How I work" pages, Skills is the pages in a folder
+  named Skills (技能), and Docs is every other page. A Space's own folder is
+  never read as one of these, so a Space called Rules or Skills keeps its
+  pages under Docs, and every page is listed in the one section that counts
+  it. New under Rules or Skills puts the page in that section's folder
+  outside every Space's folder, making it if needed; when that cannot be
+  done it says so and makes no page elsewhere. A page picked from a list
+  opens in the group of pages that has focus. Below the rows come the
+  pinned pages (UX-FIND-6) and then Recent (最近): the last four pages opened
+  on this computer, from all three sections, each marked with its section.
+  With the left side shrunk to icons the same rows stay and Recent is left
+  out. There is no Library (檔案) or Wiki layer and no page tree, on the left
+  or beside it. Recent pages are also on Home. Archived pages stay out of the
+  lists, as in Obsidian; search finds them, and an archived page opens read
+  only with Restore. Topics have no entry of their own, since few open them:
+  a topic opens from a page, the graph or search, and the list of every topic
+  from the graph's top corner.
   Activity stays at the bottom. There is no Memories page and no
   Sources page: a source is what a sentence cites, so a source shows which
   pages cite it, and the list of added files and links opens from Settings.
   When a source can't be reached (moved, or its drive unplugged), Activity says
   so in its own place at the bottom left, not on Home, and opens that source.
-  The place that holds every page is called Library (檔案, 文件), not Wiki: it
-  also holds skills and more, and reads like folders.
-  原文：「以及要把左邊的導覽，只留下重要的，剩下的可以不用特別的 tab」（2026-11-01 22:20）「我确定是、不会特别需要有一个记忆的页面」（2026-11-01 23:35）「活动还是要在的……它就在左下角」（2026-11-01 23:46）「那你说你有什么情况下会特别需要到一个来源的页面，导览页面里面去管理那些东西？感觉机会并不是很大。」（2026-11-02 16:02）「1. 同意」（2026-11-02 16:47）選擇卡「左下角「活动」」（2026-11-02 18:11）「因為現在選項沒有很多，全放出來也還好」（2026-11-02 19:38）「我们会有左边的 navigation pane，然后我们还有这个 wiki 再靠右边一个，所以相当于我们会有两个 navigation，这个到底要怎么解决啊？」（2026-11-09 17:46）「同意」（2026-11-09 17:52，一欄方案）「好」（2026-11-09 17:58，草圖）「三種呈現類型有下拉選單過於複雜？」（2026-11-09 19:09）「2 或著 OB 放在哪」（2026-11-09 19:14，已歸檔不放左欄、靠搜尋找）「新建合成一個按鈕？」（2026-11-09 19:36）「主題在想怎麼收起來，沒人會點開那」（2026-11-09 19:37）選擇卡「拿掉，列表放进图谱」（2026-11-09 19:38）「我想要讓 Wiki 不再是那名字，而是改叫更加兼容的 Library? 因為裡面會放更多 skills 等等的東西，更像是資料夾？」（2026-11-15 12:44）「太學術？我以為有比較自然的叫法」（2026-11-15 12:47，否決書庫／資料庫）「那先這樣吧」（2026-11-15 12:50，Library／檔案／文件）
+  原文：「以及要把左邊的導覽，只留下重要的，剩下的可以不用特別的 tab」（2026-11-01 22:20）「我确定是、不会特别需要有一个记忆的页面」（2026-11-01 23:35）「活动还是要在的……它就在左下角」（2026-11-01 23:46）「那你说你有什么情况下会特别需要到一个来源的页面，导览页面里面去管理那些东西？感觉机会并不是很大。」（2026-11-02 16:02）「1. 同意」（2026-11-02 16:47）選擇卡「左下角「活动」」（2026-11-02 18:11）「因為現在選項沒有很多，全放出來也還好」（2026-11-02 19:38）「我们会有左边的 navigation pane，然后我们还有这个 wiki 再靠右边一个，所以相当于我们会有两个 navigation，这个到底要怎么解决啊？」（2026-11-09 17:46）「同意」（2026-11-09 17:52，一欄方案）「好」（2026-11-09 17:58，草圖）「三種呈現類型有下拉選單過於複雜？」（2026-11-09 19:09）「2 或著 OB 放在哪」（2026-11-09 19:14，已歸檔不放左欄、靠搜尋找）「新建合成一個按鈕？」（2026-11-09 19:36）「主題在想怎麼收起來，沒人會點開那」（2026-11-09 19:37）選擇卡「拿掉，列表放进图谱」（2026-11-09 19:38）「我想要讓 Wiki 不再是那名字，而是改叫更加兼容的 Library? 因為裡面會放更多 skills 等等的東西，更像是資料夾？」（2026-11-15 12:44）「太學術？我以為有比較自然的叫法」（2026-11-15 12:47，否決書庫／資料庫）「那先這樣吧」（2026-11-15 12:50，Library／檔案／文件；2026-11-16 起由下一條決定取代）決定 1、2：「Docs, Skills, Rules are built-in fixed sidebar sections.」「The Library (檔案) layer is removed. Sidebar first level, in this order: Home, Spaces, Docs, Skills, Rules, Graph」「A person's own folders live under Docs.」Qi-Xuan 各以輸入「A」回答（2026-11-16 22:28Z–22:30Z，Graph 移到最下；記錄於 `/mnt/project-files/readme-2026-11/cover-v3/2026-11-16-app-changes-from-cover.md`）；草圖 C「固定側欄：上半七項不動，下面是釘選和最近」獲選（2026-11-17，草圖 `Fixed.dc.html`：「左側上半永遠是同樣七項，下面是你釘選的頁面和最近開過的幾頁。」）
 - **UX-FIND-5** `shipped` When an AI tool's lookup finds pages, the pages
   they link to come along in the same answer, at most two, each as its title
   and first paragraph, so no AI tool has to think of following the links
@@ -440,16 +455,18 @@ and wait for evidence that people need them.
   needs it.
   原文：「自己 get page links 區別在哪」「可以做些量測，能確認方向對就行」（2026-11-09 03:48）「以上三點都同意」「為什麼不現在做？」（2026-11-09 03:55）
 - **UX-FIND-6** `shipped` Any page of your own can be pinned to the left
-  side from its More menu, or by right-clicking it in the Library's list
+  side from its More menu, or by right-clicking it in a section's list
   ("Pin", 釘選, 固定). Pinned
-  pages sit under the graph and above the Library, with a gap and no heading,
-  and open in one click; with the left side shrunk to icons each shows its
+  pages sit under the graph and above Recent, under a small "Pinned" (釘選,
+  固定) heading, and open in one click; with the left side shrunk to icons
+  each shows its
   first letter. Hovering one shows a small x to unpin it, the page's menu
   unpins it too, and dragging changes the order. Unpinning never touches the
-  page. With nothing pinned the left side is exactly as UX-FIND-4 describes.
+  page. With nothing pinned there is no Pinned heading and the left side is
+  exactly as UX-FIND-4 describes.
   Pins stay on this computer, like a page's look (UX-LOOK-6). A team's side
   and the example show none.
-  原文：「甚至在想導覽頁也能讓他們自由產生」「現在說的客製化還延伸到新的導覽，比如說要搞 skills hub or agents 等等 自由發揮」（2026-11-15 08:24–08:27）「可以」「是指 `我的` 用詞不好」（2026-11-15 13:20，草圖）「不放也行」（2026-11-15 13:21，那一段不放標題）「釘選左側改成丁選。大家也可以右鍵在左側邊欄的頁面丁選」（2026-11-15 13:53）
+  原文：「甚至在想導覽頁也能讓他們自由產生」「現在說的客製化還延伸到新的導覽，比如說要搞 skills hub or agents 等等 自由發揮」（2026-11-15 08:24–08:27）「可以」「是指 `我的` 用詞不好」（2026-11-15 13:20，草圖）「不放也行」（2026-11-15 13:21，那一段不放標題）「釘選左側改成丁選。大家也可以右鍵在左側邊欄的頁面丁選」（2026-11-15 13:53）草圖 C 獲選（2026-11-17，`Fixed.dc.html`：釘選有「釘選」小標題，下面接「最近」；取代「那一段不放標題」，右鍵改在各區的列表頁）
 
 ## What AI tools made (HTML, images)
 
@@ -677,6 +694,31 @@ and wait for evidence that people need them.
   used in every Space. The setting and a No do not silence them;
   `#not-for-ai-tools` on the page does.
   原文：決定 4：「A rule the person writes themselves counts at once. AI tools get it and `wenlan rules` prints it, with no model needed. Rules the AI derives from pages still need the person's accept.」Qi-Xuan 以輸入「A」回答此題（2026-11-16 22:30Z；題目與決定記錄於 `/mnt/project-files/readme-2026-11/cover-v3/2026-11-16-app-changes-from-cover.md`，決定 4）。
+- **UX-SKILL-11** `shipped` A rules page shows two things. Under each rule,
+  where it came from: a link "from" the page it was taken from, or "written
+  by you" for a rule the person wrote themselves (UX-SKILL-10). Who wrote a
+  rule is the daemon's answer, from the page's history, never a guess from
+  the page's text: a line reads "written by you" only when the daemon lists
+  it as the person's own, from this page, in the same words, and a line it
+  does not list that way names no author. A page kept in a Rules folder
+  shows the same, in a short list above its text. Looking at rules in the
+  app is the person reading, never recorded as an AI tool reading them. At
+  the top, which connected AI tools the rules are used in, from what Wenlan
+  can say tool by tool (UX-SKILL-8). Only rules used in every Space are
+  written into the tools' files, so only a page that gives such a rule says
+  more than "connected": "connected, rules delivered" where Wenlan's part is
+  in the tool's own file, only "connected" for a tool that gets the rules
+  when it asks Wenlan, and a short plain line when the rules were not
+  delivered (not yet, too long for the tool, or a file Wenlan cannot
+  change). A page whose rules are for its own Space only, a stopped page and
+  a `#not-for-ai-tools` page say "connected" for every connected tool. A
+  tool that is not connected is not listed. It says connected and delivered
+  only, never that the AI follows the rules, and shows no file path. Rules
+  the AI drew from pages that nobody answered yet stay in a box of their
+  own with Accept and No, one box for each Space that has any, on the Rules
+  list and on a rules page of that Space; they do not count until accepted
+  (UX-SKILL-1).
+  原文：決定 3：「A rules page shows two things. Under each rule, the page it came from. At the top of the page, which AI tools the rules are used in. Wording limit: say the tool is connected and the rules were delivered; never say the AI always follows them.」Qi-Xuan 以輸入「A」回答此題（2026-11-16 22:28Z–22:30Z；記錄於 `/mnt/project-files/readme-2026-11/cover-v3/2026-11-16-app-changes-from-cover.md`，決定 3）；草圖 `Main.dc.html` 右側規則頁（「用在 … 已連接，規則已送達」「來自〈…〉」「你寫的」「AI 從你的頁面整理出一條，還沒算數」「接受／不要」）。
 
 ## From the terminal
 
