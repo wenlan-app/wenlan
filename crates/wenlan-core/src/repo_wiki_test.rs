@@ -1615,6 +1615,18 @@ fn publish_target_names_the_repository_and_its_owner() {
     };
     assert!(!signed_in("lucian").owned());
     assert!(signed_in("Pallets").owned());
+    assert!(
+        !signed_in("lucian").ours(),
+        "a project only cloned is not ours"
+    );
+    assert!(signed_in("Pallets").ours());
+    // A teammate's account may push to the organization's repository.
+    let teammate = PublishTarget {
+        can_push: true,
+        ..signed_in("lucian")
+    };
+    assert!(!teammate.owned());
+    assert!(teammate.ours());
 }
 
 #[test]

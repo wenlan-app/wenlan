@@ -60,7 +60,8 @@ pub enum WikiCommand {
         #[arg(long, requires = "daily")]
         on_github: bool,
         /// The repository pull requests go to (`owner/name` on GitHub, else
-        /// the remote URL). Needed when it is not yours.
+        /// the remote URL). Needed when it is not yours and GitHub does not let
+        /// you push to it.
         #[arg(long, value_name = "OWNER/NAME")]
         confirm_repo: Option<String>,
         /// Publish from this computer although another Wenlan (a teammate's,
@@ -297,7 +298,7 @@ fn check_target(target: &PublishTarget, confirm: Option<&str>) -> Result<()> {
             "--confirm-repo names {confirm}, but pull requests would go to {name}; nothing was bound"
         );
     }
-    if target.owned() {
+    if target.ours() {
         return Ok(());
     }
     let whose = match (target.owner(), target.signed_in_as.as_deref()) {
@@ -463,6 +464,7 @@ mod tests {
             remote_url: slug.map(|slug| format!("https://github.com/{slug}.git")),
             slug: slug.map(str::to_owned),
             signed_in_as: login.map(str::to_owned),
+            can_push: false,
         }
     }
 
@@ -485,6 +487,15 @@ mod tests {
     }
 
     #[test]
+    fn binding_your_teams_repo_just_works() {
+        let team = PublishTarget {
+            can_push: true,
+            ..target(Some("acme/api"), Some("lucian"))
+        };
+        check_target(&team, None).unwrap();
+    }
+
+    #[test]
     fn binding_your_own_repo_or_one_without_origin_just_works() {
         check_target(&target(Some("Lucian/site"), Some("lucian")), None).unwrap();
         check_target(&target(None, None), None).unwrap();
@@ -496,6 +507,7 @@ mod tests {
             remote_url: Some("git@gitlab.com:lucian/site.git".into()),
             slug: None,
             signed_in_as: None,
+            can_push: false,
         };
         assert!(check_target(&elsewhere, None).is_err());
         check_target(&elsewhere, Some("git@gitlab.com:lucian/site.git")).unwrap();

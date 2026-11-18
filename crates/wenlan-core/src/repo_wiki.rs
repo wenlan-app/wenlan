@@ -1148,6 +1148,9 @@ pub struct PublishTarget {
     pub slug: Option<String>,
     /// The GitHub account the GitHub CLI is signed in to, when known.
     pub signed_in_as: Option<String>,
+    /// Whether GitHub says that account may push to the repository: a
+    /// teammate in the organization that owns it, or a collaborator.
+    pub can_push: bool,
 }
 
 impl PublishTarget {
@@ -1168,6 +1171,13 @@ impl PublishTarget {
             (self.owner(), self.signed_in_as.as_deref()),
             (Some(owner), Some(login)) if owner.eq_ignore_ascii_case(login)
         )
+    }
+
+    /// Whether pull requests may open here without the user naming the
+    /// repository: it is theirs, or GitHub lets them push to it (a team's
+    /// repository). Someone else's project they only cloned still needs naming.
+    pub fn ours(&self) -> bool {
+        self.owned() || self.can_push
     }
 
     /// Whether `confirm` names this target.
@@ -1206,10 +1216,21 @@ pub fn publish_target(repo: &Path, gh: Option<&Path>) -> PublishTarget {
         }
         _ => None,
     };
+    let can_push = match (&slug, &signed_in_as, gh) {
+        (Some(slug), Some(_), Some(gh)) => {
+            let mut command = Command::new(gh);
+            command
+                .args(["api", &format!("repos/{slug}"), "--jq", ".permissions.push"])
+                .stdin(std::process::Stdio::null());
+            run(command, "gh api repos").is_ok_and(|push| push == "true")
+        }
+        _ => false,
+    };
     PublishTarget {
         remote_url,
         slug,
         signed_in_as,
+        can_push,
     }
 }
 
