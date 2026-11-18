@@ -689,7 +689,7 @@ and wait for evidence that people need them.
   in the first week, in named groups. Everything else is under
   `wenlan help all`. A command that leaves the short help, or gets a new name,
   keeps working under its old name.
-  原文：「精簡這些，總感覺亂亂的」（2026-11-15 21:06Z）；選擇卡「四項都做」（2026-11-16 07:07Z）；選擇卡「wenlan repo」（2026-11-16 08:15Z）。
+  原文：「精簡這些，總感覺亂亂的」（2026-11-15 21:06Z）；選擇卡「四項都做」（2026-11-16 07:07Z）；選擇卡「wenlan repo」（2026-11-16 08:15Z）；第一頁只留 Start、Daily、Team 三組的草稿回「可」（2026-11-18 00:58Z）。
 - **UX-CLI-3** `shipped` Turning Wenlan on and off uses plain words:
   `wenlan start`, `wenlan stop`, `wenlan restart`.
   原文：「background 要改名？感覺像是 restart 就挺直觀的。」（2026-11-15 21:35Z）；「要的，以及你其他建議也同意。」（2026-11-15 21:36Z）。

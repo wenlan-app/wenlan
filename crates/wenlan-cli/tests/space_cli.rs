@@ -53,8 +53,17 @@ fn global_space_and_all_spaces_conflict() {
 
 #[test]
 fn global_agent_and_space_options_are_visible() {
+    // The short `--help` lists commands only; the options are on `help all`
+    // and on every command's own `--help`.
     cli()
-        .arg("--help")
+        .args(["help", "all"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("--agent-name"))
+        .stdout(predicates::str::contains("--all-spaces"))
+        .stdout(predicates::str::contains("--space"));
+    cli()
+        .args(["recall", "--help"])
         .assert()
         .success()
         .stdout(predicates::str::contains("--agent-name"))
