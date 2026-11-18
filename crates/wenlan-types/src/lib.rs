@@ -121,9 +121,10 @@ pub use sessions::{
     SessionReadEntry, SessionReadKind, SessionRef, UpsertSessionRequest, SESSION_HEADER,
 };
 pub use skills::{
-    SkillBorrowRecord, SkillLine, SkillLineKind, SkillReportKind, SkillReportRequest,
-    SkillSuggestion, SkillSuggestionActionResponse, SkillsRefreshResponse,
-    SpaceRulesActionResponse, SpaceRulesResponse, SpaceRulesSuggestion,
+    RulesDeliveryMethod, RulesDeliveryResponse, RulesDeliveryState, SkillBorrowRecord, SkillLine,
+    SkillLineKind, SkillReportKind, SkillReportRequest, SkillSuggestion,
+    SkillSuggestionActionResponse, SkillsRefreshResponse, SpaceRulesActionResponse,
+    SpaceRulesResponse, SpaceRulesSuggestion, ToolRulesDelivery,
 };
 pub use sources::{MemoryType, RawDocument, SourceType, StabilityTier, SyncStatus};
 pub use space_context::{WriteOutcome, WriteSpaceSource, WriteSpaceTarget};

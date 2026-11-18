@@ -185,7 +185,11 @@ impl Scratch {
         SkillDirs {
             home: Some(self.home.clone()),
             config: Some(self.config.clone()),
+            codex_home: None,
+            copilot_home: None,
+            xdg_config_home: None,
             tool_files: true,
+            tool_files_record: Some(self.data.join("tool-rules-files.json")),
         }
     }
 }
@@ -500,11 +504,13 @@ async fn suggests_then_person_accepts_and_reads_one_space_scoped_rules_page() {
         )
         .await
         .unwrap();
-    assert!(read_rules_for_space(&scratch.db, &research)
-        .await
-        .unwrap()
-        .lines
-        .is_empty());
+    assert!(
+        read_rules_for_space(&scratch.db, &OwnRulePages::default(), &research)
+            .await
+            .unwrap()
+            .lines
+            .is_empty()
+    );
     let source = scratch.db.get_page(&source_page_id).await.unwrap().unwrap();
     scratch
         .db
@@ -527,11 +533,13 @@ async fn suggests_then_person_accepts_and_reads_one_space_scoped_rules_page() {
         )
         .await
         .unwrap();
-    assert!(read_rules_for_space(&scratch.db, &research)
-        .await
-        .unwrap()
-        .lines
-        .is_empty());
+    assert!(
+        read_rules_for_space(&scratch.db, &OwnRulePages::default(), &research)
+            .await
+            .unwrap()
+            .lines
+            .is_empty()
+    );
     let rules_page = scratch.db.get_page(&rules_page_id).await.unwrap().unwrap();
     scratch
         .db
@@ -763,6 +771,7 @@ async fn existing_skill_suggestions_are_person_only_positional_and_undo_conflict
         source_quote: "Use the merge queue because required checks run there.".into(),
         person_edited: false,
         general: false,
+        hand_written: false,
     };
     let rules_body = skill_grow::reconcile_rules_page(
         &space.name,
@@ -1341,7 +1350,7 @@ async fn ux_skill_6_approved_rules_are_written_as_layered_files_and_follow_the_s
         Ok(())
     })
     .unwrap();
-    sync_rules_files_quietly(&scratch.db).await;
+    sync_rules_files_quietly(&scratch.db, Some(&scratch.pages)).await;
     assert!(!general_file.exists() && !project_file.exists());
     assert_eq!(std::fs::read_to_string(&own).unwrap(), "my own notes\n");
 
@@ -1352,7 +1361,7 @@ async fn ux_skill_6_approved_rules_are_written_as_layered_files_and_follow_the_s
         Ok(())
     })
     .unwrap();
-    sync_rules_files_quietly(&scratch.db).await;
+    sync_rules_files_quietly(&scratch.db, Some(&scratch.pages)).await;
     assert_eq!(std::fs::read_to_string(&general_file).unwrap(), "# mine\n");
     assert!(project_file.exists());
 }
@@ -1410,7 +1419,7 @@ async fn ux_skill_8_general_rules_are_kept_in_each_connected_tools_own_file() {
         "# Mine\n\nUse pnpm.\n",
         "a run on scratch data never writes the person's tool files by itself"
     );
-    sync_rules_files_in(&scratch.db, &scratch.skill_dirs()).await;
+    sync_rules_files_in(&scratch.db, Some(&scratch.pages), &scratch.skill_dirs()).await;
 
     let codex = std::fs::read_to_string(&codex_file).unwrap();
     assert!(codex.starts_with("# Mine\n\nUse pnpm.\n\n<!-- WENLAN:RULES:START -->"));
@@ -1428,7 +1437,7 @@ async fn ux_skill_8_general_rules_are_kept_in_each_connected_tools_own_file() {
         .update_agent("claude-code", None, None, Some(false), None, None)
         .await
         .unwrap();
-    sync_rules_files_in(&scratch.db, &scratch.skill_dirs()).await;
+    sync_rules_files_in(&scratch.db, Some(&scratch.pages), &scratch.skill_dirs()).await;
     assert!(!claude_file.exists());
     assert!(std::fs::read_to_string(&codex_file)
         .unwrap()
@@ -1443,7 +1452,7 @@ async fn ux_skill_8_general_rules_are_kept_in_each_connected_tools_own_file() {
     };
     // Off takes Wenlan's part out and leaves the person's text as it was.
     set(false);
-    sync_rules_files_in(&scratch.db, &scratch.skill_dirs()).await;
+    sync_rules_files_in(&scratch.db, Some(&scratch.pages), &scratch.skill_dirs()).await;
     assert_eq!(
         std::fs::read_to_string(&codex_file).unwrap(),
         "# Mine\n\nUse pnpm.\n"
@@ -1453,7 +1462,7 @@ async fn ux_skill_8_general_rules_are_kept_in_each_connected_tools_own_file() {
     // A file that already brings in a written one gets no second copy.
     std::fs::write(&claude_file, "@~/.codex/AGENTS.md\n").unwrap();
     set(true);
-    sync_rules_files_in(&scratch.db, &scratch.skill_dirs()).await;
+    sync_rules_files_in(&scratch.db, Some(&scratch.pages), &scratch.skill_dirs()).await;
     assert!(std::fs::read_to_string(&codex_file)
         .unwrap()
         .contains(GENERAL_QUOTE));
@@ -1544,6 +1553,2035 @@ async fn ux_skill_9_a_teammates_page_never_gives_this_person_a_general_rule() {
     scratch.db.set_space_rules_state(&state).await.unwrap();
     assert!(!read(Some("Habits")).await.lines[0].general);
     assert!(read(None).await.lines.is_empty());
+}
+
+/// A page the person writes in the app, in `folder` of the pages folder,
+/// published as `by` (`"publish"` is the person here).
+async fn write_page_in_folder(
+    scratch: &Scratch,
+    number: u32,
+    space: Option<&str>,
+    folder: &str,
+    title: &str,
+    content: &str,
+    by: &str,
+) -> String {
+    let id = format!("page_00000000-0000-4000-8000-{number:012x}");
+    std::fs::create_dir_all(scratch.pages.join(folder)).unwrap();
+    let draft = scratch
+        .db
+        .create_page_draft_with_id_in_registered_space_and_folder(
+            &id, title, content, space, folder,
+        )
+        .await
+        .unwrap();
+    let wenlan_core::pages::PageDraftPublishOutcome::Published(page) = scratch
+        .db
+        .publish_page_draft_by(&id, draft.version, by)
+        .await
+        .unwrap()
+    else {
+        panic!("publish")
+    };
+    wenlan_core::export::knowledge::KnowledgeProjectionWrite::new(
+        scratch.pages.clone(),
+        &scratch.db,
+    )
+    .write_page_gated(&scratch.db, &page)
+    .await
+    .unwrap();
+    id
+}
+
+async fn person_saves(scratch: &Scratch, id: &str, content: &str) {
+    let page = scratch.db.get_page(id).await.unwrap().unwrap();
+    let saved = wenlan_core::post_write::update_page_preserving_sources(
+        &scratch.db,
+        id,
+        UpdatePageRequest {
+            content: content.into(),
+            source_memory_ids: Vec::new(),
+            expected_version: Some(page.version),
+            caller_id: None,
+            operation_id: None,
+        },
+        "manual_edit",
+        Some(&scratch.pages),
+    )
+    .await
+    .unwrap();
+    assert!(saved.wrote);
+}
+
+async fn read_rules_as_codex(scratch: &Scratch, space: Option<&str>) -> SpaceRulesResponse {
+    let mut headers = HeaderMap::new();
+    headers.insert("x-agent-name", HeaderValue::from_static("codex"));
+    handle_read_rules(
+        axum::extract::State(scratch.shared.clone()),
+        headers,
+        Query(RulesQuery {
+            space: space.map(str::to_string),
+        }),
+    )
+    .await
+    .unwrap()
+    .0
+}
+
+fn texts(response: &SpaceRulesResponse) -> Vec<&str> {
+    response
+        .lines
+        .iter()
+        .map(|line| line.text.as_str())
+        .collect()
+}
+
+#[tokio::test]
+async fn ux_skill_10_hand_written_rules_reach_tools_with_no_model_and_no_yes() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(true).await;
+    let project = scratch
+        .db
+        .create_space("Project", None, false)
+        .await
+        .unwrap();
+    scratch.db.register_trusted_agent("codex").await.unwrap();
+    let codex_file = scratch.home.join(".codex/AGENTS.md");
+    std::fs::create_dir_all(codex_file.parent().unwrap()).unwrap();
+
+    let git = write_page_in_folder(
+        &scratch,
+        1,
+        Some("Project"),
+        "Rules",
+        "Git",
+        "How we use git.\n\n- Use the merge queue\n- [pitfall] Force-pushing main loses work\n",
+        "publish",
+    )
+    .await;
+    // A rules page in no Space, in a folder named in another language.
+    write_page_in_folder(
+        &scratch,
+        2,
+        None,
+        "筆記/規則",
+        "習慣",
+        "- 回答用白話\n",
+        "publish",
+    )
+    .await;
+    // The same words outside a Rules folder are an ordinary page.
+    write_page_in_folder(
+        &scratch,
+        3,
+        Some("Project"),
+        "Notes",
+        "Ideas",
+        "- Rewrite everything in one go\n",
+        "publish",
+    )
+    .await;
+
+    // "Update now" with no model answers OK and asks no model.
+    let report = refresh_without_model(&scratch.shared, scratch.skill_dirs())
+        .await
+        .unwrap();
+    assert_eq!(report.model_calls, 0);
+    assert!(
+        scratch
+            .db
+            .space_rules_state(&project.id)
+            .await
+            .unwrap()
+            .is_none(),
+        "nothing was suggested or accepted"
+    );
+
+    let in_project = read_rules_as_codex(&scratch, Some("Project")).await;
+    assert_eq!(
+        texts(&in_project),
+        vec![
+            "Use the merge queue",
+            "Force-pushing main loses work",
+            "回答用白話"
+        ]
+    );
+    assert!(in_project.lines.iter().all(|line| line.hand_written));
+    assert_eq!(in_project.lines[0].source_page_title, "Git");
+    assert_eq!(in_project.lines[0].source_page_id, git);
+    assert!(!in_project.lines[0].general && in_project.lines[2].general);
+    assert_eq!(
+        in_project.lines[1].kind,
+        wenlan_types::SkillLineKind::Pitfall
+    );
+    assert_eq!(
+        texts(&read_rules_as_codex(&scratch, None).await),
+        vec!["回答用白話"],
+        "a rules page in no Space is used everywhere; a Space's own stays there"
+    );
+
+    let project_dir = scratch.data.join("spaces").join("Project");
+    let own = std::fs::read_to_string(project_dir.join("AGENTS.md")).unwrap();
+    assert!(own.contains("- Use the merge queue (written by you in \"Git\")"));
+    assert!(!own.contains("Rewrite everything"));
+    assert!(std::fs::read_to_string(project_dir.join("pitfalls.md"))
+        .unwrap()
+        .contains("Force-pushing main loses work"));
+    let general = std::fs::read_to_string(scratch.data.join("AGENTS.md")).unwrap();
+    assert!(general.contains("- 回答用白話 (written by you in \"習慣\")"));
+    assert!(std::fs::read_to_string(&codex_file)
+        .unwrap()
+        .contains("- 回答用白話\n"));
+    assert_eq!(
+        project_rules(&scratch.db, Some(&scratch.pages), "Project").await,
+        vec!["Use the merge queue".to_string()],
+        "the repository copy gets the Space's own rules"
+    );
+
+    // A changed line follows the page at the next write, and the route's
+    // own trigger does it without being asked.
+    let guard = RulesPageWrite::begin(&scratch.shared, Some(&git)).await;
+    person_saves(&scratch, &git, "- Rebase before you merge\n").await;
+    drop(guard);
+    let mut own = String::new();
+    for _ in 0..100 {
+        own = std::fs::read_to_string(project_dir.join("AGENTS.md")).unwrap_or_default();
+        if own.contains("Rebase before you merge") {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(own.contains("- Rebase before you merge (written by you in \"Git\")"));
+    assert!(!own.contains("Use the merge queue"));
+    assert!(!project_dir.join("pitfalls.md").exists());
+
+    // The page's own mark is the one way to keep it from AI tools.
+    person_saves(
+        &scratch,
+        &git,
+        "#not-for-ai-tools\n\n- Rebase before you merge\n",
+    )
+    .await;
+    sync_rules_files_in(&scratch.db, Some(&scratch.pages), &scratch.skill_dirs()).await;
+    assert!(!project_dir.join("AGENTS.md").exists());
+    assert_eq!(
+        texts(&read_rules_as_codex(&scratch, Some("Project")).await),
+        vec!["回答用白話"]
+    );
+}
+
+#[tokio::test]
+async fn ux_skill_10_a_file_the_person_puts_in_a_rules_folder_counts_at_the_next_pass() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    // The setting off does not silence what the person wrote themselves.
+    let scratch = Scratch::new(false).await;
+    std::fs::create_dir_all(scratch.pages.join("rules")).unwrap();
+    std::fs::write(
+        scratch.pages.join("rules/testing.md"),
+        "# Testing\n\n- Run the smallest test first\n",
+    )
+    .unwrap();
+    // A note becomes a page once the editor has stopped saving it.
+    std::fs::File::options()
+        .write(true)
+        .open(scratch.pages.join("rules/testing.md"))
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(60))
+        .unwrap();
+    let stats =
+        wenlan_core::sources::page_watcher::sync_filesystem_edits(&scratch.db, &scratch.pages)
+            .await
+            .unwrap();
+    assert_eq!(stats.adopted, 1, "{stats:?}");
+    sync_rules_files_after_file_changes(&scratch.db, &scratch.pages, false).await;
+
+    assert_eq!(
+        texts(&read_rules_as_codex(&scratch, None).await),
+        vec!["Run the smallest test first"]
+    );
+    assert!(std::fs::read_to_string(scratch.data.join("AGENTS.md"))
+        .unwrap()
+        .contains("- Run the smallest test first (written by you in \"testing\")"));
+}
+
+#[tokio::test]
+async fn ux_skill_10_a_page_an_ai_wrote_still_needs_the_yes() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(true).await;
+    let project = scratch
+        .db
+        .create_space("Project", None, false)
+        .await
+        .unwrap();
+    // The person started the page; an AI tool then rewrote it.
+    let ai_page = write_page_in_folder(
+        &scratch,
+        1,
+        Some("Project"),
+        "Rules",
+        "Checks",
+        "- Placeholder to fill in\n",
+        "publish",
+    )
+    .await;
+    scratch
+        .db
+        .update_page_content(
+            &ai_page,
+            &format!("- {SOURCE_QUOTE}\n"),
+            &[],
+            "agent_refresh",
+        )
+        .await
+        .unwrap();
+    write_page_in_folder(
+        &scratch,
+        2,
+        Some("Project"),
+        "Rules",
+        "Git",
+        "- Use the merge queue\n",
+        "publish",
+    )
+    .await;
+
+    sync_rules_files_in(&scratch.db, Some(&scratch.pages), &scratch.skill_dirs()).await;
+    assert_eq!(
+        texts(&read_rules_as_codex(&scratch, Some("Project")).await),
+        vec!["Use the merge queue"],
+        "the AI tool's page gives no rule by itself"
+    );
+
+    let model = GrowModel::new();
+    assert_eq!(refresh(&scratch, &model).await.suggestions, 1);
+    let prompts = model.prompts.lock().unwrap().join("\n");
+    assert!(prompts.contains(SOURCE_QUOTE));
+    assert!(
+        !prompts.contains("Use the merge queue"),
+        "the person's own rules are not sent to the model to be suggested back"
+    );
+    assert_eq!(
+        texts(&read_rules_as_codex(&scratch, Some("Project")).await),
+        vec!["Use the merge queue"],
+        "a suggestion is not a rule until the person says yes"
+    );
+    let accepted = handle_accept_space_rules(
+        axum::extract::State(scratch.shared.clone()),
+        person_headers(),
+        AxumPath(project.id.clone()),
+        Query(SpaceAnswerScope::default()),
+    )
+    .await
+    .unwrap()
+    .0;
+    let after = read_rules_as_codex(&scratch, Some("Project")).await;
+    assert_eq!(texts(&after), vec!["Use the merge queue", RULE_TEXT]);
+    assert!(after.lines[0].hand_written && !after.lines[1].hand_written);
+
+    // An AI tool then rewrites the person's own page: their bullet still
+    // counts, the tool's does not.
+    let git = "page_00000000-0000-4000-8000-000000000002";
+    scratch
+        .db
+        .update_page_content(
+            git,
+            "- Use the merge queue\n- Deploy on Fridays\n",
+            &[],
+            "agent_refresh",
+        )
+        .await
+        .unwrap();
+    let mixed = read_rules_as_codex(&scratch, Some("Project")).await;
+    assert!(texts(&mixed).contains(&"Use the merge queue"));
+    assert!(!texts(&mixed).contains(&"Deploy on Fridays"));
+
+    // On the "How I work" page, a bullet an AI tool adds is not a rule; one
+    // the person adds is, also after the person saved over the AI's bullet.
+    let rules_page = accepted.rules_page_id.unwrap();
+    let body = scratch
+        .db
+        .get_page(&rules_page)
+        .await
+        .unwrap()
+        .unwrap()
+        .content;
+    scratch
+        .db
+        .update_page_content(
+            &rules_page,
+            &format!("{body}\n- Skip review when in a hurry\n"),
+            &[],
+            "agent_refresh",
+        )
+        .await
+        .unwrap();
+    let with_ai = read_rules_as_codex(&scratch, Some("Project")).await;
+    assert!(!texts(&with_ai).contains(&"Skip review when in a hurry"));
+    person_saves(
+        &scratch,
+        &rules_page,
+        &format!("{body}\n- Skip review when in a hurry\n- Ask before deleting data\n"),
+    )
+    .await;
+    let with_mine = read_rules_as_codex(&scratch, Some("Project")).await;
+    assert!(texts(&with_mine).contains(&"Ask before deleting data"));
+    assert!(!texts(&with_mine).contains(&"Skip review when in a hurry"));
+    assert!(texts(&with_mine).contains(&RULE_TEXT));
+}
+
+#[tokio::test]
+async fn ux_skill_9_a_teammates_hand_written_page_gives_no_rule_here() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(true).await;
+    scratch.db.create_space("Team", None, false).await.unwrap();
+    // A teammate wrote the whole page.
+    write_page_in_folder(
+        &scratch,
+        1,
+        Some("Team"),
+        "Rules",
+        "Theirs",
+        "- Always squash commits\n",
+        "shared_person:member-b",
+    )
+    .await;
+    // This person wrote the page; a teammate edited it afterwards.
+    let mixed = write_page_in_folder(
+        &scratch,
+        2,
+        Some("Team"),
+        "Rules",
+        "Ours",
+        "- Use the merge queue\n",
+        "publish",
+    )
+    .await;
+    scratch
+        .db
+        .update_page_content(
+            &mixed,
+            "- Use the merge queue\n- Never work on Fridays\n",
+            &[],
+            "shared_person:member-b",
+        )
+        .await
+        .unwrap();
+
+    sync_rules_files_in(&scratch.db, Some(&scratch.pages), &scratch.skill_dirs()).await;
+    assert_eq!(
+        texts(&read_rules_as_codex(&scratch, Some("Team")).await),
+        vec!["Use the merge queue"],
+        "only the bullet this person wrote; nothing a teammate wrote"
+    );
+    assert!(read_rules_as_codex(&scratch, None).await.lines.is_empty());
+    assert!(!scratch.data.join("AGENTS.md").exists());
+    let own = std::fs::read_to_string(scratch.data.join("spaces/Team/AGENTS.md")).unwrap();
+    assert!(!own.contains("squash") && !own.contains("Fridays"));
+}
+
+#[tokio::test]
+async fn ux_skill_1_a_no_still_delivers_hand_written_rules() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(true).await;
+    let project = scratch
+        .db
+        .create_space("Project", None, false)
+        .await
+        .unwrap();
+    create_person_page(
+        &scratch.db,
+        &scratch.pages,
+        "Project",
+        "Checks",
+        SOURCE_QUOTE,
+    )
+    .await;
+    write_page_in_folder(
+        &scratch,
+        1,
+        Some("Project"),
+        "Rules",
+        "Git",
+        "- Use the merge queue\n",
+        "publish",
+    )
+    .await;
+    let model = GrowModel::new();
+    assert_eq!(refresh(&scratch, &model).await.suggestions, 1);
+
+    let _ = handle_decline_space_rules(
+        axum::extract::State(scratch.shared.clone()),
+        person_headers(),
+        AxumPath(project.id.clone()),
+        Query(SpaceAnswerScope::default()),
+    )
+    .await
+    .unwrap();
+    assert!(!wenlan_core::config::load_config().skills_from_library);
+
+    sync_rules_files_in(&scratch.db, Some(&scratch.pages), &scratch.skill_dirs()).await;
+    assert_eq!(
+        texts(&read_rules_as_codex(&scratch, Some("Project")).await),
+        vec!["Use the merge queue"],
+        "the no is about what Wenlan derives, not what the person wrote"
+    );
+    let own = std::fs::read_to_string(scratch.data.join("spaces/Project/AGENTS.md")).unwrap();
+    assert!(own.contains("- Use the merge queue (written by you in \"Git\")"));
+    assert!(!own.contains(RULE_TEXT));
+}
+
+#[tokio::test]
+async fn ux_skill_10_ai_text_the_person_accepted_as_one_sentence_is_not_hand_written() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(true).await;
+    scratch
+        .db
+        .create_space("Project", None, false)
+        .await
+        .unwrap();
+    let id = write_page_in_folder(
+        &scratch,
+        1,
+        Some("Project"),
+        "Rules",
+        "Git",
+        "- Use the merge queue\n- Ask before deleting data\n",
+        "publish",
+    )
+    .await;
+    // An AI tool adds a line, then proposes a new wording for it.
+    scratch
+        .db
+        .update_page_content(
+            &id,
+            "- Use the merge queue\n- Ask before deleting data\n- A tool wrote this line\n",
+            &[],
+            "agent_refresh",
+        )
+        .await
+        .unwrap();
+    let page = scratch.db.get_page(&id).await.unwrap().unwrap();
+    let first = wenlan_core::authorship::sentence_units(&page.content)
+        .into_iter()
+        .find(|unit| page.content[unit.start..unit.end].contains("A tool wrote"))
+        .unwrap()
+        .hash;
+    let proposal = wenlan_core::sentences::propose_sentence(
+        &scratch.db,
+        &id,
+        &wenlan_types::authorship::SentenceProposeRequest {
+            sentence_hash: first,
+            text: "- Push straight to main".into(),
+            why: None,
+            reason: None,
+            expected_version: Some(page.version),
+        },
+        "claude-code",
+    )
+    .await
+    .unwrap();
+    wenlan_core::sentences::accept_sentence_proposal(
+        &scratch.db,
+        &id,
+        &proposal.id,
+        None,
+        Some(&scratch.pages),
+    )
+    .await
+    .unwrap();
+    let page = scratch.db.get_page(&id).await.unwrap().unwrap();
+    assert!(
+        page.content.contains("Push straight to main"),
+        "{}",
+        page.content
+    );
+    assert_eq!(
+        texts(&read_rules_as_codex(&scratch, Some("Project")).await),
+        vec!["Use the merge queue", "Ask before deleting data"],
+        "the accepted sentence was an AI tool's; the person's own bullets stay"
+    );
+}
+
+#[tokio::test]
+async fn ux_skill_10_a_note_put_in_a_spaces_folder_gives_rules_for_that_space_only() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(true).await;
+    for name in ["Work", "Home"] {
+        scratch.db.create_space(name, None, false).await.unwrap();
+    }
+    scratch.db.register_trusted_agent("codex").await.unwrap();
+    let codex_file = scratch.home.join(".codex/AGENTS.md");
+    std::fs::create_dir_all(codex_file.parent().unwrap()).unwrap();
+    wenlan_core::space_folders::turn_on(&scratch.pages).unwrap();
+    // The Space's folder as the person spelled it on disk.
+    for (file, body) in [
+        ("work/Rules/standup.md", "- Stand-up is at ten\n"),
+        ("Rules/everywhere.md", "- Answer in plain words\n"),
+    ] {
+        let path = scratch.pages.join(file);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, body).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(60))
+            .unwrap();
+    }
+    let stats =
+        wenlan_core::sources::page_watcher::sync_filesystem_edits(&scratch.db, &scratch.pages)
+            .await
+            .unwrap();
+    assert_eq!(stats.adopted, 2, "{stats:?}");
+    sync_rules_files_in(&scratch.db, Some(&scratch.pages), &scratch.skill_dirs()).await;
+
+    assert_eq!(
+        texts(&read_rules_as_codex(&scratch, Some("Work")).await),
+        vec!["Stand-up is at ten", "Answer in plain words"]
+    );
+    assert_eq!(
+        texts(&read_rules_as_codex(&scratch, Some("Home")).await),
+        vec!["Answer in plain words"],
+        "a note in Work's folder is Work's, though the note itself names no Space"
+    );
+    assert_eq!(
+        texts(&read_rules_as_codex(&scratch, None).await),
+        vec!["Answer in plain words"]
+    );
+    let codex = std::fs::read_to_string(&codex_file).unwrap();
+    assert!(codex.contains("Answer in plain words") && !codex.contains("Stand-up"));
+    assert!(
+        std::fs::read_to_string(scratch.data.join("spaces/Work/AGENTS.md"))
+            .unwrap()
+            .contains("Stand-up is at ten")
+    );
+}
+
+#[tokio::test]
+async fn ux_skill_10_many_saves_in_a_row_do_not_queue_a_sync_each() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(true).await;
+    write_page_in_folder(&scratch, 1, None, "Rules", "Mine", "- First\n", "publish").await;
+    let general = scratch.data.join("AGENTS.md");
+    let library = Arc::as_ptr(&scratch.db) as usize;
+    let running = move || with_background_syncs(|syncs| syncs.contains_key(&library));
+    let runs = move || {
+        BACKGROUND_SYNC_RUNS
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|runs| runs.get(&library).copied())
+            .unwrap_or(0)
+    };
+    {
+        // While one sync is held up, twenty more saves ask for one each.
+        let held = SKILLS_MUTATION_LOCK.lock().await;
+        for _ in 0..20 {
+            request_rules_sync(scratch.db.clone(), Some(scratch.pages.clone()));
+            tokio::task::yield_now().await;
+        }
+        assert!(running());
+        drop(held);
+    }
+    for _ in 0..400 {
+        if !running() && general.exists() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    assert!(!running(), "the background sync never finished");
+    let runs = runs();
+    assert!((1..=2).contains(&runs), "{runs} syncs for twenty requests");
+    assert!(std::fs::read_to_string(&general)
+        .unwrap()
+        .contains("- First"));
+}
+
+#[tokio::test]
+async fn ux_skill_10_a_space_named_rules_does_not_silence_the_persons_rules_folder() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(true).await;
+    wenlan_core::space_folders::turn_on(&scratch.pages).unwrap();
+    write_page_in_folder(
+        &scratch,
+        1,
+        None,
+        "Rules",
+        "How we work",
+        "- Answer in plain words\n",
+        "publish",
+    )
+    .await;
+    sync_rules_files_in(&scratch.db, Some(&scratch.pages), &scratch.skill_dirs()).await;
+    let general = scratch.data.join("AGENTS.md");
+    assert!(std::fs::read_to_string(&general)
+        .unwrap()
+        .contains("Answer in plain words"));
+
+    // A Space that happens to be named like the folder, in another case.
+    scratch.db.create_space("rules", None, false).await.unwrap();
+    sync_rules_files_in(&scratch.db, Some(&scratch.pages), &scratch.skill_dirs()).await;
+    assert_eq!(
+        texts(&read_rules_as_codex(&scratch, None).await),
+        vec!["Answer in plain words"],
+        "the page is in no Space: its rules still hold everywhere"
+    );
+    assert!(std::fs::read_to_string(&general)
+        .unwrap()
+        .contains("Answer in plain words"));
+
+    // A page that is in that Space sits in the Space's own folder, which is
+    // not a rules folder; one in a Rules folder inside it is.
+    write_page_in_folder(
+        &scratch,
+        2,
+        Some("rules"),
+        "Rules",
+        "Plain",
+        "- Not a rule\n",
+        "publish",
+    )
+    .await;
+    write_page_in_folder(
+        &scratch,
+        3,
+        Some("rules"),
+        "Rules/Rules",
+        "Inner",
+        "- A rule of this Space\n",
+        "publish",
+    )
+    .await;
+    assert_eq!(
+        texts(&read_rules_as_codex(&scratch, Some("rules")).await),
+        vec!["A rule of this Space", "Answer in plain words"]
+    );
+}
+
+// ── UX-SKILL-8: the rules in more tools' own files ─────────────────────
+
+const OWN_RULE: &str = "Answer in plain words";
+const PART_START: &str = "<!-- WENLAN:RULES:START -->";
+
+/// A scratch library whose person wrote one rule for every Space, with
+/// `tools` connected. No tool folder exists yet.
+async fn scratch_with_own_rule(tools: &[&str]) -> (Scratch, String) {
+    let scratch = Scratch::new(true).await;
+    let page = write_page_in_folder(
+        &scratch,
+        1,
+        None,
+        "Rules",
+        "Habits",
+        &format!("- {OWN_RULE}\n"),
+        "publish",
+    )
+    .await;
+    for tool in tools {
+        scratch.db.register_trusted_agent(tool).await.unwrap();
+    }
+    (scratch, page)
+}
+
+async fn sync_tools(scratch: &Scratch) {
+    sync_rules_files_in(&scratch.db, Some(&scratch.pages), &scratch.skill_dirs()).await;
+}
+
+async fn turn_off(scratch: &Scratch, tool: &str) {
+    scratch
+        .db
+        .update_agent(tool, None, None, Some(false), None, None)
+        .await
+        .unwrap();
+}
+
+/// The file with its folder made, as an installed tool would have it.
+fn tool_folder_for(file: &Path) -> &Path {
+    let folder = file.parent().unwrap();
+    std::fs::create_dir_all(folder).unwrap();
+    folder
+}
+
+fn read(file: &Path) -> String {
+    std::fs::read_to_string(file).unwrap()
+}
+
+async fn delivery_in(scratch: &Scratch, dirs: &SkillDirs) -> Vec<ToolRulesDelivery> {
+    rules_delivery(&scratch.db, Some(&scratch.pages), dirs)
+        .await
+        .unwrap()
+        .tools
+}
+
+async fn delivery(scratch: &Scratch) -> Vec<ToolRulesDelivery> {
+    delivery_in(scratch, &scratch.skill_dirs()).await
+}
+
+fn row<'a>(tools: &'a [ToolRulesDelivery], id: &str) -> &'a ToolRulesDelivery {
+    tools
+        .iter()
+        .find(|tool| tool.id == id)
+        .unwrap_or_else(|| panic!("no delivery row for {id}"))
+}
+
+fn state_of(tools: &[ToolRulesDelivery], id: &str) -> RulesDeliveryState {
+    row(tools, id).state
+}
+
+/// Where Zed's file is on the platform the test runs on.
+fn zed_file(scratch: &Scratch) -> PathBuf {
+    if cfg!(windows) {
+        scratch.config.join("Zed").join("AGENTS.md")
+    } else {
+        scratch.home.join(".config/zed/AGENTS.md")
+    }
+}
+
+#[tokio::test]
+async fn ux_skill_8_gemini_and_antigravity_share_one_file_and_one_part() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let (scratch, page) = scratch_with_own_rule(&["gemini-cli", "antigravity"]).await;
+    let file = scratch.home.join(".gemini/GEMINI.md");
+    tool_folder_for(&file);
+    std::fs::write(&file, "# Mine\n\nUse pnpm.\n").unwrap();
+
+    sync_tools(&scratch).await;
+    let text = read(&file);
+    assert!(text.starts_with("# Mine\n\nUse pnpm.\n\n<!-- WENLAN:RULES:START -->"));
+    assert!(text.contains(&format!("- {OWN_RULE}\n")));
+    assert_eq!(text.matches(PART_START).count(), 1, "one part for both");
+    let tools = delivery(&scratch).await;
+    for tool in ["gemini-cli", "antigravity"] {
+        let row = row(&tools, tool);
+        assert_eq!(row.state, RulesDeliveryState::Delivered, "{tool}");
+        assert_eq!(row.path.as_deref(), Some(file.to_string_lossy().as_ref()));
+    }
+
+    // One of the two turned off: the other still reads the file.
+    turn_off(&scratch, "gemini-cli").await;
+    sync_tools(&scratch).await;
+    assert_eq!(read(&file), text);
+    let tools = delivery(&scratch).await;
+    assert_eq!(
+        state_of(&tools, "gemini-cli"),
+        RulesDeliveryState::NotConnected
+    );
+    assert_eq!(
+        state_of(&tools, "antigravity"),
+        RulesDeliveryState::Delivered
+    );
+
+    // The rule deleted from the page: the part goes, the person's text stays.
+    person_saves(&scratch, &page, "Nothing here now.\n").await;
+    sync_tools(&scratch).await;
+    assert_eq!(read(&file), "# Mine\n\nUse pnpm.\n");
+    assert_eq!(
+        state_of(&delivery(&scratch).await, "antigravity"),
+        RulesDeliveryState::NoRules
+    );
+
+    // Back again, then both turned off: the part goes again.
+    person_saves(&scratch, &page, &format!("- {OWN_RULE}\n")).await;
+    sync_tools(&scratch).await;
+    assert_eq!(read(&file), text);
+    turn_off(&scratch, "antigravity").await;
+    sync_tools(&scratch).await;
+    assert_eq!(read(&file), "# Mine\n\nUse pnpm.\n");
+}
+
+#[tokio::test]
+async fn ux_skill_8_codex_and_copilot_files_follow_their_home_override() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    // Only VS Code is connected: it reads Copilot's file.
+    let (scratch, _) = scratch_with_own_rule(&["codex", "vscode"]).await;
+    let codex_home = scratch.home.join("elsewhere/codex");
+    let copilot_home = scratch.home.join("elsewhere/copilot");
+    let default_codex = scratch.home.join(".codex/AGENTS.md");
+    let default_copilot = scratch.home.join(".copilot/copilot-instructions.md");
+    for folder in [&codex_home, &copilot_home] {
+        std::fs::create_dir_all(folder).unwrap();
+    }
+    tool_folder_for(&default_codex);
+    tool_folder_for(&default_copilot);
+    let dirs = SkillDirs {
+        codex_home: Some(codex_home.clone()),
+        copilot_home: Some(copilot_home.clone()),
+        ..scratch.skill_dirs()
+    };
+
+    sync_rules_files_in(&scratch.db, Some(&scratch.pages), &dirs).await;
+    assert!(read(&codex_home.join("AGENTS.md")).contains(OWN_RULE));
+    assert!(read(&copilot_home.join("copilot-instructions.md")).contains(OWN_RULE));
+    assert!(
+        !default_codex.exists() && !default_copilot.exists(),
+        "the default folders are not where these tools look now"
+    );
+    let tools = delivery_in(&scratch, &dirs).await;
+    assert_eq!(state_of(&tools, "codex"), RulesDeliveryState::Delivered);
+    assert_eq!(state_of(&tools, "vscode"), RulesDeliveryState::Delivered);
+    assert_eq!(
+        state_of(&tools, "copilot-cli"),
+        RulesDeliveryState::NotConnected
+    );
+
+    // With no override the default folders are used.
+    sync_tools(&scratch).await;
+    assert!(read(&default_codex).contains(OWN_RULE));
+    assert!(read(&default_copilot).contains(OWN_RULE));
+}
+
+#[tokio::test]
+async fn ux_skill_8_windsurf_gets_no_part_when_the_file_would_pass_its_limit() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let (scratch, _) = scratch_with_own_rule(&["windsurf"]).await;
+    let file = scratch
+        .home
+        .join(".codeium/windsurf/memories/global_rules.md");
+    // Windsurf is installed; it has not made its memories folder yet.
+    std::fs::create_dir_all(scratch.home.join(".codeium/windsurf")).unwrap();
+
+    sync_tools(&scratch).await;
+    let part_only = read(&file);
+    assert!(part_only.starts_with(PART_START) && part_only.contains(OWN_RULE));
+    let part = part_only.trim_end().chars().count();
+
+    // The person's text and Wenlan's part come to exactly 6,000 characters
+    // (two line ends sit between them, one after): still written.
+    let fits = "字".repeat(6_000 - part - 3);
+    std::fs::write(&file, format!("{fits}\n")).unwrap();
+    sync_tools(&scratch).await;
+    let text = read(&file);
+    assert_eq!(text.chars().count(), 6_000);
+    assert!(text.contains(OWN_RULE));
+    assert_eq!(
+        state_of(&delivery(&scratch).await, "windsurf"),
+        RulesDeliveryState::Delivered
+    );
+
+    // One character more of the person's: the part is taken out and their
+    // text is left as it is.
+    let over = format!("{fits}字\n");
+    std::fs::write(&file, format!("{over}\n{}", &part_only)).unwrap();
+    sync_tools(&scratch).await;
+    assert_eq!(read(&file), over);
+    let tools = delivery(&scratch).await;
+    assert_eq!(state_of(&tools, "windsurf"), RulesDeliveryState::OverLimit);
+    assert_eq!(row(&tools, "windsurf").delivered_at, None);
+    sync_tools(&scratch).await;
+    assert_eq!(read(&file), over, "and it stays out");
+}
+
+#[tokio::test]
+async fn ux_skill_8_opencode_with_no_file_of_its_own_is_covered_by_claudes() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let (scratch, _) = scratch_with_own_rule(&["opencode", "claude-code"]).await;
+    let opencode = scratch.home.join(".config/opencode/AGENTS.md");
+    let claude = scratch.home.join(".claude/CLAUDE.md");
+    tool_folder_for(&opencode);
+    tool_folder_for(&claude);
+
+    sync_tools(&scratch).await;
+    assert!(read(&claude).contains(OWN_RULE));
+    assert!(
+        !opencode.exists(),
+        "a new AGENTS.md would hide the person's CLAUDE.md from OpenCode"
+    );
+    let tools = delivery(&scratch).await;
+    assert_eq!(
+        state_of(&tools, "opencode"),
+        RulesDeliveryState::CoveredByAnotherFile
+    );
+    assert_eq!(row(&tools, "opencode").method, RulesDeliveryMethod::File);
+
+    // Claude Code turned off: nothing covers OpenCode and still no file is
+    // made for it; it has the rules only by asking.
+    turn_off(&scratch, "claude-code").await;
+    sync_tools(&scratch).await;
+    assert!(!claude.exists() && !opencode.exists());
+    let tools = delivery(&scratch).await;
+    let row = row(&tools, "opencode");
+    assert_eq!(row.state, RulesDeliveryState::OnRequest);
+    assert_eq!(row.method, RulesDeliveryMethod::Mcp);
+    assert_eq!(row.path, None);
+
+    // Once the person has their own AGENTS.md there, it gets the part.
+    std::fs::write(&opencode, "# Mine\n").unwrap();
+    sync_tools(&scratch).await;
+    let text = read(&opencode);
+    assert!(text.starts_with("# Mine\n\n<!-- WENLAN:RULES:START -->") && text.contains(OWN_RULE));
+    assert_eq!(
+        state_of(&delivery(&scratch).await, "opencode"),
+        RulesDeliveryState::Delivered
+    );
+    turn_off(&scratch, "opencode").await;
+    sync_tools(&scratch).await;
+    assert_eq!(read(&opencode), "# Mine\n");
+}
+
+#[tokio::test]
+async fn ux_skill_8_kiro_gets_a_file_of_wenlans_own_and_the_persons_files_are_left() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let (scratch, page) = scratch_with_own_rule(&["kiro"]).await;
+    let steering = scratch.home.join(".kiro/steering");
+    let file = steering.join("wenlan-rules.md");
+    let mine = steering.join("product.md");
+
+    sync_tools(&scratch).await;
+    assert!(!scratch.home.join(".kiro").exists(), "no Kiro, no folder");
+
+    // Kiro is installed and the person has a steering file of their own.
+    tool_folder_for(&mine);
+    std::fs::write(&mine, "# Product\n").unwrap();
+    sync_tools(&scratch).await;
+    let text = read(&file);
+    assert!(
+        text.starts_with(&format!(
+            "---\ninclusion: always\n---\n{}\n",
+            skill_grow::RULES_FILE_MARK
+        )),
+        "Kiro needs the front matter first; Wenlan's mark is right after it"
+    );
+    assert!(text.ends_with(&format!("- {OWN_RULE}\n")));
+    assert!(!text.contains(PART_START), "the whole file is Wenlan's");
+    assert_eq!(read(&mine), "# Product\n");
+    let tools = delivery(&scratch).await;
+    assert_eq!(state_of(&tools, "kiro"), RulesDeliveryState::Delivered);
+    assert!(row(&tools, "kiro").delivered_at.is_some());
+
+    // A second pass rewrites nothing.
+    let written = std::fs::metadata(&file).unwrap().modified().unwrap();
+    sync_tools(&scratch).await;
+    assert_eq!(
+        std::fs::metadata(&file).unwrap().modified().unwrap(),
+        written
+    );
+
+    // The rule changed on the page: Wenlan finds its file by the mark and
+    // rewrites it.
+    person_saves(&scratch, &page, "- Show the plan first\n").await;
+    sync_tools(&scratch).await;
+    assert!(read(&file).contains("- Show the plan first\n") && !read(&file).contains(OWN_RULE));
+
+    // Turned off: Wenlan's file goes; the folder and the person's file stay.
+    turn_off(&scratch, "kiro").await;
+    sync_tools(&scratch).await;
+    assert!(!file.exists());
+    assert_eq!(read(&mine), "# Product\n");
+
+    // A file of that name the person wrote is never changed or removed.
+    scratch
+        .db
+        .update_agent("kiro", None, None, Some(true), None, None)
+        .await
+        .unwrap();
+    let own = "---\ninclusion: manual\n---\n# My own notes\n";
+    std::fs::write(&file, own).unwrap();
+    sync_tools(&scratch).await;
+    assert_eq!(read(&file), own);
+    let tools = delivery(&scratch).await;
+    assert_eq!(state_of(&tools, "kiro"), RulesDeliveryState::Blocked);
+    assert_eq!(
+        row(&tools, "kiro").blocked_reason.as_deref(),
+        Some("not_wenlans_file")
+    );
+    turn_off(&scratch, "kiro").await;
+    sync_tools(&scratch).await;
+    assert_eq!(read(&file), own);
+}
+
+#[tokio::test]
+async fn ux_skill_8_zed_gets_the_part_in_its_settings_folder() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let (scratch, _) = scratch_with_own_rule(&["zed"]).await;
+    let file = zed_file(&scratch);
+    tool_folder_for(&file);
+    std::fs::write(&file, "# Mine\n").unwrap();
+
+    sync_tools(&scratch).await;
+    let text = read(&file);
+    assert!(text.starts_with("# Mine\n\n<!-- WENLAN:RULES:START -->") && text.contains(OWN_RULE));
+    let tools = delivery(&scratch).await;
+    assert_eq!(state_of(&tools, "zed"), RulesDeliveryState::Delivered);
+    assert_eq!(
+        row(&tools, "zed").path.as_deref(),
+        Some(file.to_string_lossy().as_ref())
+    );
+
+    turn_off(&scratch, "zed").await;
+    sync_tools(&scratch).await;
+    assert_eq!(read(&file), "# Mine\n");
+}
+
+/// On Windows Zed keeps its settings under `%APPDATA%\Zed`, not `~/.config/zed`.
+#[cfg(windows)]
+#[tokio::test]
+async fn ux_skill_8_zed_on_windows_is_under_the_app_data_folder() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let (scratch, _) = scratch_with_own_rule(&["zed"]).await;
+    let unix_spelling = scratch.home.join(".config").join("zed").join("AGENTS.md");
+    let windows_file = scratch.config.join("Zed").join("AGENTS.md");
+    tool_folder_for(&unix_spelling);
+    tool_folder_for(&windows_file);
+
+    sync_tools(&scratch).await;
+    assert!(read(&windows_file).contains(OWN_RULE));
+    assert!(!unix_spelling.exists());
+}
+
+/// Off Windows the platform's config folder is not where Zed looks.
+#[cfg(not(windows))]
+#[tokio::test]
+async fn ux_skill_8_zed_off_windows_is_under_the_home_config_folder() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let (scratch, _) = scratch_with_own_rule(&["zed"]).await;
+    let home_file = scratch.home.join(".config/zed/AGENTS.md");
+    let config_file = scratch.config.join("Zed/AGENTS.md");
+    tool_folder_for(&home_file);
+    tool_folder_for(&config_file);
+
+    sync_tools(&scratch).await;
+    assert!(read(&home_file).contains(OWN_RULE));
+    assert!(!config_file.exists());
+}
+
+#[tokio::test]
+async fn ux_skill_8_no_tool_folder_is_made_and_a_tool_not_connected_gets_nothing() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let all = wenlan_core::skill_locations::GLOBAL_RULES_TOOLS;
+    let (scratch, _) = scratch_with_own_rule(&all).await;
+    let entries = |folder: &Path| {
+        let mut names: Vec<_> = std::fs::read_dir(folder)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        names.sort();
+        names
+    };
+    let (home_before, config_before) = (entries(&scratch.home), entries(&scratch.config));
+
+    // Every tool connected, none installed: nothing appears.
+    sync_tools(&scratch).await;
+    assert_eq!(entries(&scratch.home), home_before);
+    assert_eq!(entries(&scratch.config), config_before);
+    let tools = delivery(&scratch).await;
+    for tool in all {
+        assert_eq!(
+            state_of(&tools, tool),
+            RulesDeliveryState::FolderMissing,
+            "{tool}"
+        );
+    }
+
+    // Every tool installed, none connected: no file is made in any folder.
+    let files: Vec<PathBuf> = [
+        ".codex/AGENTS.md",
+        ".claude/CLAUDE.md",
+        ".gemini/GEMINI.md",
+        ".copilot/copilot-instructions.md",
+        ".codeium/windsurf/memories/global_rules.md",
+        ".config/opencode/AGENTS.md",
+        ".kiro/steering/wenlan-rules.md",
+    ]
+    .iter()
+    .map(|file| scratch.home.join(file))
+    .chain([zed_file(&scratch)])
+    .collect();
+    for file in &files {
+        tool_folder_for(file);
+    }
+    for tool in all {
+        turn_off(&scratch, tool).await;
+    }
+    sync_tools(&scratch).await;
+    for file in &files {
+        assert!(!file.exists(), "{}", file.display());
+    }
+    let tools = delivery(&scratch).await;
+    for tool in all {
+        let row = row(&tools, tool);
+        assert_eq!(row.state, RulesDeliveryState::NotConnected, "{tool}");
+        assert!(!row.connected);
+    }
+}
+
+#[tokio::test]
+async fn ux_skill_8_only_a_tool_whose_file_has_imports_is_covered_by_an_at_line() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let (scratch, _) = scratch_with_own_rule(&["codex", "copilot-cli", "gemini-cli"]).await;
+    let codex = scratch.home.join(".codex/AGENTS.md");
+    let copilot = scratch.home.join(".copilot/copilot-instructions.md");
+    let gemini = scratch.home.join(".gemini/GEMINI.md");
+    for file in [&codex, &copilot, &gemini] {
+        tool_folder_for(file);
+    }
+    // The same line in both: Gemini CLI reads it as an import, Copilot as text.
+    let at_line = "@~/.codex/AGENTS.md\n";
+    std::fs::write(&copilot, at_line).unwrap();
+    std::fs::write(&gemini, at_line).unwrap();
+
+    sync_tools(&scratch).await;
+    assert!(read(&codex).contains(OWN_RULE));
+    assert_eq!(read(&gemini), at_line, "brought in already: no second copy");
+    let copilot_text = read(&copilot);
+    assert!(
+        copilot_text.starts_with(at_line) && copilot_text.contains(OWN_RULE),
+        "Copilot's file has no imports, so it needs its own part"
+    );
+    let tools = delivery(&scratch).await;
+    assert_eq!(
+        state_of(&tools, "gemini-cli"),
+        RulesDeliveryState::CoveredByAnotherFile
+    );
+    assert_eq!(
+        state_of(&tools, "copilot-cli"),
+        RulesDeliveryState::Delivered
+    );
+}
+
+#[tokio::test]
+async fn ux_skill_8_a_linked_file_is_written_where_it_points_and_only_once() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let (scratch, _) = scratch_with_own_rule(&["codex", "zed"]).await;
+    let codex = scratch.home.join(".codex/AGENTS.md");
+    let zed = zed_file(&scratch);
+    tool_folder_for(&codex);
+    tool_folder_for(&zed);
+    std::fs::write(&codex, "# Mine\n").unwrap();
+    // The person keeps one file and links the other tool's name to it.
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&codex, &zed).unwrap();
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_file(&codex, &zed).unwrap();
+
+    sync_tools(&scratch).await;
+    let text = read(&codex);
+    assert_eq!(text.matches(PART_START).count(), 1);
+    assert!(text.starts_with("# Mine\n") && text.contains(OWN_RULE));
+    assert!(is_symlink(&zed), "the link is still a link");
+    let tools = delivery(&scratch).await;
+    assert_eq!(state_of(&tools, "codex"), RulesDeliveryState::Delivered);
+    assert_eq!(state_of(&tools, "zed"), RulesDeliveryState::Delivered);
+
+    // One of the two turned off: the file both names reach keeps its part.
+    turn_off(&scratch, "codex").await;
+    sync_tools(&scratch).await;
+    assert_eq!(read(&codex), text);
+    turn_off(&scratch, "zed").await;
+    sync_tools(&scratch).await;
+    assert_eq!(read(&codex), "# Mine\n");
+    assert!(is_symlink(&zed));
+}
+
+#[tokio::test]
+async fn ux_skill_8_delivery_reports_each_tool_from_the_files_as_they_are() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let (scratch, page) = scratch_with_own_rule(&["codex", "cursor", "claude-code"]).await;
+    turn_off(&scratch, "claude-code").await;
+    let codex = scratch.home.join(".codex/AGENTS.md");
+    tool_folder_for(&codex);
+    tool_folder_for(&scratch.home.join(".claude/CLAUDE.md"));
+
+    // Asking writes nothing: before the sync the file is behind.
+    let tools = delivery(&scratch).await;
+    assert!(!codex.exists());
+    assert_eq!(state_of(&tools, "codex"), RulesDeliveryState::OutOfDate);
+    assert_eq!(row(&tools, "codex").delivered_at, None);
+
+    sync_tools(&scratch).await;
+    let tools = delivery(&scratch).await;
+    let ids: Vec<&str> = tools.iter().map(|tool| tool.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        [
+            "codex",
+            "copilot-cli",
+            "vscode",
+            "windsurf",
+            "zed",
+            "kiro",
+            "claude-code",
+            "gemini-cli",
+            "antigravity",
+            "opencode",
+            "cursor"
+        ],
+        "every tool with a file, then the connected tools without one"
+    );
+    let delivered = row(&tools, "codex");
+    assert_eq!(delivered.display_name, "ChatGPT / Codex");
+    assert!(delivered.connected);
+    assert_eq!(delivered.method, RulesDeliveryMethod::File);
+    assert_eq!(
+        delivered.path.as_deref(),
+        Some(codex.to_string_lossy().as_ref())
+    );
+    assert_eq!(delivered.state, RulesDeliveryState::Delivered);
+    assert_eq!(delivered.rule_count, 1);
+    assert!(delivered.delivered_at.is_some() && delivered.blocked_reason.is_none());
+    assert_eq!(
+        serde_json::to_value(delivered).unwrap(),
+        serde_json::json!({
+            "id": "codex",
+            "display_name": "ChatGPT / Codex",
+            "connected": true,
+            "method": "file",
+            "path": codex.to_string_lossy(),
+            "state": "delivered",
+            "delivered_at": delivered.delivered_at,
+            "rule_count": 1,
+        })
+    );
+
+    // A tool with no file Wenlan can write is reached through MCP only.
+    let cursor = row(&tools, "cursor");
+    assert_eq!(cursor.display_name, "Cursor");
+    assert_eq!(cursor.method, RulesDeliveryMethod::Mcp);
+    assert_eq!(cursor.state, RulesDeliveryState::OnRequest);
+    assert_eq!((cursor.path.as_deref(), cursor.delivered_at), (None, None));
+    assert_eq!(
+        serde_json::to_value(cursor).unwrap()["state"],
+        serde_json::json!("on_request")
+    );
+    let claude = row(&tools, "claude-code");
+    assert_eq!(claude.state, RulesDeliveryState::NotConnected);
+    assert!(!claude.connected);
+    assert_eq!(
+        serde_json::to_value(RulesDeliveryState::CoveredByAnotherFile).unwrap(),
+        serde_json::json!("covered_by_another_file")
+    );
+
+    // The person changed their own text: still what Wenlan would write.
+    std::fs::write(&codex, format!("# Mine\n\n{}", read(&codex))).unwrap();
+    assert_eq!(
+        state_of(&delivery(&scratch).await, "codex"),
+        RulesDeliveryState::Delivered
+    );
+    // A line of Wenlan's part changed by hand: behind until the next sync.
+    std::fs::write(&codex, read(&codex).replace(OWN_RULE, "Answer at length")).unwrap();
+    assert_eq!(
+        state_of(&delivery(&scratch).await, "codex"),
+        RulesDeliveryState::OutOfDate
+    );
+    sync_tools(&scratch).await;
+    assert_eq!(
+        state_of(&delivery(&scratch).await, "codex"),
+        RulesDeliveryState::Delivered
+    );
+
+    // A run on other data never writes the tools' files and says so. The
+    // route itself is such a run under test.
+    let isolated = SkillDirs {
+        tool_files: false,
+        ..scratch.skill_dirs()
+    };
+    let tools = delivery_in(&scratch, &isolated).await;
+    assert_eq!(state_of(&tools, "codex"), RulesDeliveryState::IsolatedRun);
+    assert_eq!(state_of(&tools, "cursor"), RulesDeliveryState::OnRequest);
+    let served = handle_rules_delivery(axum::extract::State(scratch.shared.clone()))
+        .await
+        .unwrap()
+        .0;
+    assert_eq!(
+        state_of(&served.tools, "codex"),
+        RulesDeliveryState::IsolatedRun
+    );
+    assert!(read(&codex).contains(OWN_RULE), "reading changed nothing");
+
+    // No rule left for every Space: nothing to write, and why.
+    person_saves(&scratch, &page, "Nothing here now.\n").await;
+    let tools = delivery(&scratch).await;
+    assert_eq!(state_of(&tools, "codex"), RulesDeliveryState::NoRules);
+    assert_eq!(state_of(&tools, "cursor"), RulesDeliveryState::NoRules);
+    assert_eq!(row(&tools, "codex").rule_count, 0);
+    wenlan_core::config::update_config(|cfg| {
+        cfg.skills_from_library = false;
+        Ok(())
+    })
+    .unwrap();
+    let tools = delivery(&scratch).await;
+    assert_eq!(state_of(&tools, "codex"), RulesDeliveryState::SettingOff);
+    assert_eq!(
+        state_of(&tools, "claude-code"),
+        RulesDeliveryState::NotConnected
+    );
+}
+
+// ── UX-SKILL-8: a file Wenlan cannot safely change is left alone ───────
+
+const PART_END: &str = "<!-- WENLAN:RULES:END -->";
+
+/// Codex connected and installed, with `text` as the person's own file.
+async fn scratch_with_codex_file(text: &[u8]) -> (Scratch, PathBuf) {
+    let (scratch, _) = scratch_with_own_rule(&["codex"]).await;
+    let codex = scratch.home.join(".codex/AGENTS.md");
+    tool_folder_for(&codex);
+    std::fs::write(&codex, text).unwrap();
+    (scratch, codex)
+}
+
+fn blocked_reason(tools: &[ToolRulesDelivery], id: &str) -> Option<String> {
+    let row = row(tools, id);
+    assert_eq!(
+        row.state,
+        RulesDeliveryState::Blocked,
+        "{id} is not blocked"
+    );
+    assert_eq!(row.delivered_at, None);
+    row.blocked_reason.clone()
+}
+
+/// The file stays byte for byte the same over two syncs with the tool
+/// connected and one with it turned off, and is shown as blocked for `reason`.
+async fn assert_left_alone(scratch: &Scratch, file: &Path, reason: &str) {
+    let before = std::fs::read(file).unwrap();
+    for _ in 0..2 {
+        sync_tools(scratch).await;
+        assert_eq!(std::fs::read(file).unwrap(), before);
+    }
+    assert_eq!(
+        blocked_reason(&delivery(scratch).await, "codex").as_deref(),
+        Some(reason)
+    );
+    turn_off(scratch, "codex").await;
+    sync_tools(scratch).await;
+    assert_eq!(std::fs::read(file).unwrap(), before);
+}
+
+#[tokio::test]
+async fn ux_skill_8_a_start_marker_with_no_end_leaves_the_notes_below_it_alone() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let mine = format!("# Mine\n\n{PART_START}\nmy own notes below\n\n## More of mine\n- keep\n");
+    let (scratch, codex) = scratch_with_codex_file(mine.as_bytes()).await;
+    assert_left_alone(&scratch, &codex, "start_marker_without_end").await;
+    assert_eq!(
+        read(&codex).matches(PART_START).count(),
+        1,
+        "no second part"
+    );
+}
+
+#[tokio::test]
+async fn ux_skill_8_an_end_marker_alone_or_two_parts_block_the_file() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let orphan_end = format!("# Mine\n{PART_END}\nmy notes\n");
+    let (scratch, codex) = scratch_with_codex_file(orphan_end.as_bytes()).await;
+    assert_left_alone(&scratch, &codex, "end_marker_without_start").await;
+
+    let pair = format!("{PART_START}\n- an old line\n{PART_END}\n");
+    let two = format!("# Mine\n\n{pair}\nbetween, mine\n\n{pair}");
+    let (scratch, codex) = scratch_with_codex_file(two.as_bytes()).await;
+    assert_left_alone(&scratch, &codex, "more_than_one_part").await;
+
+    let backwards = format!("{PART_END}\nmine\n{PART_START}\n");
+    let (scratch, codex) = scratch_with_codex_file(backwards.as_bytes()).await;
+    assert_left_alone(&scratch, &codex, "end_marker_before_start").await;
+}
+
+#[tokio::test]
+async fn ux_skill_8_a_marker_quoted_in_a_sentence_or_a_code_fence_stays_the_persons_text() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let mine = format!(
+        "# Notes on Wenlan\n\nIts part starts at `{PART_START}` and ends at {PART_END} here.\n\n\
+         ```md\n{PART_START}\nmy example, not Wenlan's\n{PART_END}\n```\n\nAfter the example.\n"
+    );
+    let (scratch, codex) = scratch_with_codex_file(mine.as_bytes()).await;
+
+    sync_tools(&scratch).await;
+    let with = read(&codex);
+    assert!(
+        with.starts_with(&mine),
+        "every byte of the person's is kept"
+    );
+    assert!(with[mine.len()..].contains(OWN_RULE));
+    assert!(with.contains("my example, not Wenlan's"));
+    assert_eq!(
+        state_of(&delivery(&scratch).await, "codex"),
+        RulesDeliveryState::Delivered
+    );
+    sync_tools(&scratch).await;
+    assert_eq!(read(&codex), with, "a second pass adds nothing");
+
+    turn_off(&scratch, "codex").await;
+    sync_tools(&scratch).await;
+    assert_eq!(read(&codex), mine);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn ux_skill_8_a_link_to_nothing_is_blocked_and_stays_a_link() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let (scratch, _) = scratch_with_own_rule(&["codex", "windsurf"]).await;
+    let codex = scratch.home.join(".codex/AGENTS.md");
+    tool_folder_for(&codex);
+    let nowhere = scratch.home.join("dotfiles/AGENTS.md");
+    std::os::unix::fs::symlink(&nowhere, &codex).unwrap();
+    // A folder on the way that leads nowhere is no place to make a file.
+    let memories = scratch.home.join(".codeium/windsurf/memories");
+    tool_folder_for(&memories);
+    std::os::unix::fs::symlink(scratch.home.join("gone"), &memories).unwrap();
+
+    for _ in 0..2 {
+        sync_tools(&scratch).await;
+        assert!(is_symlink(&codex), "the link is still a link");
+        assert_eq!(std::fs::read_link(&codex).unwrap(), nowhere);
+        assert!(!nowhere.exists() && !scratch.home.join("dotfiles").exists());
+        assert!(is_symlink(&memories) && !scratch.home.join("gone").exists());
+    }
+    let tools = delivery(&scratch).await;
+    assert_eq!(
+        blocked_reason(&tools, "codex").as_deref(),
+        Some("broken_link")
+    );
+    assert_eq!(
+        blocked_reason(&tools, "windsurf").as_deref(),
+        Some("folder_not_usable")
+    );
+    turn_off(&scratch, "codex").await;
+    sync_tools(&scratch).await;
+    assert!(is_symlink(&codex));
+}
+
+#[tokio::test]
+async fn ux_skill_8_a_read_only_file_is_left_alone() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let (scratch, codex) = scratch_with_codex_file(b"# Mine\n").await;
+    let set_read_only = |on: bool| {
+        let mut permissions = std::fs::metadata(&codex).unwrap().permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        permissions.set_readonly(on);
+        std::fs::set_permissions(&codex, permissions).unwrap();
+    };
+    set_read_only(true);
+    let before = std::fs::metadata(&codex).unwrap().permissions();
+
+    for _ in 0..2 {
+        sync_tools(&scratch).await;
+        assert_eq!(read(&codex), "# Mine\n");
+        assert_eq!(std::fs::metadata(&codex).unwrap().permissions(), before);
+    }
+    assert_eq!(
+        blocked_reason(&delivery(&scratch).await, "codex").as_deref(),
+        Some("read_only")
+    );
+    let folder = codex.parent().unwrap();
+    assert_eq!(
+        std::fs::read_dir(folder).unwrap().count(),
+        1,
+        "nothing was left beside it"
+    );
+
+    // Writable again: the next pass writes, and taking the part out of a
+    // file made read-only meanwhile is blocked too.
+    set_read_only(false);
+    sync_tools(&scratch).await;
+    let with = read(&codex);
+    assert!(with.contains(OWN_RULE));
+    set_read_only(true);
+    turn_off(&scratch, "codex").await;
+    sync_tools(&scratch).await;
+    assert_eq!(read(&codex), with);
+    set_read_only(false);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn ux_skill_8_a_rewritten_file_keeps_its_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let (scratch, codex) = scratch_with_codex_file(b"# Mine, private\n").await;
+    let mode = |file: &Path| std::fs::metadata(file).unwrap().permissions().mode() & 0o7777;
+    std::fs::set_permissions(&codex, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+    sync_tools(&scratch).await;
+    assert!(read(&codex).contains(OWN_RULE));
+    assert_eq!(mode(&codex), 0o600);
+    turn_off(&scratch, "codex").await;
+    sync_tools(&scratch).await;
+    assert_eq!(read(&codex), "# Mine, private\n");
+    assert_eq!(mode(&codex), 0o600);
+}
+
+#[tokio::test]
+async fn ux_skill_8_a_crlf_file_keeps_its_line_endings_and_every_byte_outside_the_part() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let mine = "# Mine\r\n\r\nUse pnpm.  \r\n\ttabbed\r\n";
+    let (scratch, codex) = scratch_with_codex_file(mine.as_bytes()).await;
+
+    sync_tools(&scratch).await;
+    let with = read(&codex);
+    assert!(with.starts_with(mine));
+    assert!(with.contains(&format!("- {OWN_RULE}\r\n")));
+    assert!(
+        !with.replace("\r\n", "").contains('\n'),
+        "Wenlan's part takes the file's line endings"
+    );
+
+    // The person writes after the part; a new rule changes only the part.
+    let after = "\r\nAfter, mine.\r\none bare\nline";
+    std::fs::write(&codex, format!("{with}{after}")).unwrap();
+    let tail_from = |text: &str| text[text.find(PART_END).unwrap()..].to_string();
+    sync_tools(&scratch).await;
+    let again = read(&codex);
+    assert_eq!(again, format!("{with}{after}"), "already in line");
+    assert_eq!(tail_from(&again), format!("{PART_END}\r\n{after}"));
+
+    turn_off(&scratch, "codex").await;
+    sync_tools(&scratch).await;
+    let left = read(&codex);
+    assert!(left.starts_with(mine) && left.ends_with("After, mine.\r\none bare\nline"));
+    assert!(!left.contains(PART_START));
+}
+
+#[tokio::test]
+async fn ux_skill_8_a_last_line_without_an_ending_and_a_byte_order_mark_are_kept() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    for mine in [
+        "# Mine\n\nlast line",
+        "\u{feff}# Mine\n",
+        "\u{feff}",
+        "",
+        "  \n",
+    ] {
+        let (scratch, codex) = scratch_with_codex_file(mine.as_bytes()).await;
+        sync_tools(&scratch).await;
+        let with = read(&codex);
+        assert!(
+            with.starts_with(mine) && with.contains(OWN_RULE),
+            "{mine:?}"
+        );
+        assert_eq!(
+            with.ends_with('\n'),
+            mine.is_empty() || mine == "\u{feff}" || mine.ends_with('\n'),
+            "{mine:?}: no line ending added to the person's last line"
+        );
+        assert_eq!(
+            state_of(&delivery(&scratch).await, "codex"),
+            RulesDeliveryState::Delivered
+        );
+        turn_off(&scratch, "codex").await;
+        sync_tools(&scratch).await;
+        // The file was the person's before Wenlan wrote: it stays, even
+        // with nothing in it.
+        assert_eq!(std::fs::read(&codex).unwrap(), mine.as_bytes(), "{mine:?}");
+    }
+}
+
+#[tokio::test]
+async fn ux_skill_8_only_a_file_wenlan_made_goes_when_its_part_is_all_it_holds() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let (scratch, _) = scratch_with_own_rule(&["codex", "windsurf", "kiro"]).await;
+    let codex = scratch.home.join(".codex/AGENTS.md");
+    let windsurf = scratch
+        .home
+        .join(".codeium/windsurf/memories/global_rules.md");
+    let kiro = scratch.home.join(".kiro/steering/wenlan-rules.md");
+    tool_folder_for(&codex);
+    std::fs::create_dir_all(scratch.home.join(".codeium/windsurf")).unwrap();
+    std::fs::create_dir_all(scratch.home.join(".kiro")).unwrap();
+
+    // Wenlan makes all three files, and two of the folders.
+    sync_tools(&scratch).await;
+    assert!(read(&codex).starts_with(PART_START));
+    assert!(read(&windsurf).starts_with(PART_START) && kiro.exists());
+    // The person puts a file of their own beside Windsurf's.
+    std::fs::write(windsurf.with_file_name("mine.md"), "mine\n").unwrap();
+
+    for tool in ["codex", "windsurf", "kiro"] {
+        turn_off(&scratch, tool).await;
+    }
+    sync_tools(&scratch).await;
+    assert!(!codex.exists() && codex.parent().unwrap().is_dir());
+    assert!(!windsurf.exists());
+    assert!(
+        windsurf.parent().unwrap().is_dir(),
+        "a folder with the person's file in it stays"
+    );
+    assert!(!kiro.exists());
+    assert!(
+        !kiro.parent().unwrap().exists() && scratch.home.join(".kiro").is_dir(),
+        "the empty folder Wenlan made goes; the tool's own stays"
+    );
+
+    // Without Wenlan's record nobody knows who made the file: it stays.
+    for tool in ["codex", "kiro"] {
+        scratch
+            .db
+            .update_agent(tool, None, None, Some(true), None, None)
+            .await
+            .unwrap();
+    }
+    sync_tools(&scratch).await;
+    assert!(read(&codex).starts_with(PART_START) && kiro.exists());
+    std::fs::remove_file(scratch.data.join("tool-rules-files.json")).unwrap();
+    turn_off(&scratch, "codex").await;
+    turn_off(&scratch, "kiro").await;
+    sync_tools(&scratch).await;
+    assert_eq!(read(&codex), "", "left empty, not removed");
+    assert!(!kiro.exists(), "a file that is all Wenlan's own still goes");
+    assert!(kiro.parent().unwrap().is_dir(), "its folder stays");
+}
+
+#[tokio::test]
+async fn ux_skill_8_an_import_line_shown_in_fenced_code_brings_nothing_in() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let (scratch, _) = scratch_with_own_rule(&["codex", "claude-code"]).await;
+    let codex = scratch.home.join(".codex/AGENTS.md");
+    let claude = scratch.home.join(".claude/CLAUDE.md");
+    tool_folder_for(&codex);
+    tool_folder_for(&claude);
+    let mine = "How to share a file:\n\n```\n@~/.codex/AGENTS.md\n```\n";
+    std::fs::write(&claude, mine).unwrap();
+
+    sync_tools(&scratch).await;
+    let text = read(&claude);
+    assert!(text.starts_with(mine) && text.contains(OWN_RULE));
+    let tools = delivery(&scratch).await;
+    assert_eq!(
+        state_of(&tools, "claude-code"),
+        RulesDeliveryState::Delivered
+    );
+
+    // The same line outside the fence does bring the file in.
+    std::fs::write(&claude, format!("{text}\n@~/.codex/AGENTS.md\n")).unwrap();
+    sync_tools(&scratch).await;
+    assert!(!read(&claude).contains(PART_START));
+    assert_eq!(
+        state_of(&delivery(&scratch).await, "claude-code"),
+        RulesDeliveryState::CoveredByAnotherFile
+    );
+}
+
+#[tokio::test]
+async fn ux_skill_8_a_file_changed_since_it_was_planned_is_left_for_the_next_pass() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let (scratch, codex) = scratch_with_codex_file(b"# Mine\n").await;
+    let dirs = scratch.skill_dirs();
+    let (general, _) = rules_by_layer(&scratch.db, Some(&scratch.pages))
+        .await
+        .unwrap();
+    let connected = connected_rules_tools(&scratch.db).await.unwrap();
+
+    // The person saves between the plan and the write.
+    let plans = plan_tool_rules(&dirs, &connected, &general);
+    std::fs::write(&codex, "# Mine\n\nA line saved just now.\n").unwrap();
+    apply_tool_rules(&dirs, plans);
+    assert_eq!(read(&codex), "# Mine\n\nA line saved just now.\n");
+    assert_eq!(
+        std::fs::read_dir(codex.parent().unwrap()).unwrap().count(),
+        1
+    );
+    assert_eq!(
+        state_of(&delivery(&scratch).await, "codex"),
+        RulesDeliveryState::OutOfDate
+    );
+
+    // The same for a file that appeared where none was, and one that went.
+    std::fs::remove_file(&codex).unwrap();
+    let plans = plan_tool_rules(&dirs, &connected, &general);
+    std::fs::write(&codex, "Just made.\n").unwrap();
+    apply_tool_rules(&dirs, plans);
+    assert_eq!(read(&codex), "Just made.\n");
+
+    // The next pass plans from what the file holds now.
+    sync_tools(&scratch).await;
+    let text = read(&codex);
+    assert!(text.starts_with("Just made.\n") && text.contains(OWN_RULE));
+
+    // Taking the part out is held back the same way.
+    turn_off(&scratch, "codex").await;
+    let plans = plan_tool_rules(&dirs, &HashSet::new(), &general);
+    let edited = format!("{text}\nAdded while Wenlan planned.\n");
+    std::fs::write(&codex, &edited).unwrap();
+    apply_tool_rules(&dirs, plans);
+    assert_eq!(read(&codex), edited);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn ux_skill_8_a_file_two_tools_share_takes_the_smallest_limit_of_the_two() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let (scratch, _) = scratch_with_own_rule(&["codex", "windsurf"]).await;
+    let codex = scratch.home.join(".codex/AGENTS.md");
+    let windsurf = scratch
+        .home
+        .join(".codeium/windsurf/memories/global_rules.md");
+    tool_folder_for(&codex);
+    tool_folder_for(&windsurf);
+    // Codex has no limit of its own; Windsurf reads 6,000 characters.
+    let mine = format!("{}\n", "字".repeat(5_990));
+    std::fs::write(&codex, &mine).unwrap();
+    std::os::unix::fs::symlink(&codex, &windsurf).unwrap();
+
+    sync_tools(&scratch).await;
+    assert_eq!(read(&codex), mine, "Windsurf could not read all of it");
+    let tools = delivery(&scratch).await;
+    assert_eq!(state_of(&tools, "codex"), RulesDeliveryState::OverLimit);
+    assert_eq!(state_of(&tools, "windsurf"), RulesDeliveryState::OverLimit);
+
+    // Only Codex reads it now: no limit holds.
+    turn_off(&scratch, "windsurf").await;
+    sync_tools(&scratch).await;
+    assert!(read(&codex).starts_with(&mine) && read(&codex).contains(OWN_RULE));
+    assert_eq!(
+        state_of(&delivery(&scratch).await, "codex"),
+        RulesDeliveryState::Delivered
+    );
+    assert!(is_symlink(&windsurf));
+}
+
+#[tokio::test]
+async fn ux_skill_8_delivery_says_blocked_covered_and_when_only_as_they_are() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let (scratch, _) =
+        scratch_with_own_rule(&["codex", "claude-code", "kiro", "zed", "opencode"]).await;
+    let codex = scratch.home.join(".codex/AGENTS.md");
+    let claude = scratch.home.join(".claude/CLAUDE.md");
+    let kiro = scratch.home.join(".kiro/steering/wenlan-rules.md");
+    let zed = zed_file(&scratch);
+    for file in [&codex, &claude, &kiro, &zed] {
+        tool_folder_for(file);
+    }
+    std::fs::create_dir_all(scratch.home.join(".config/opencode")).unwrap();
+    std::fs::write(&claude, "@~/.codex/AGENTS.md\n").unwrap();
+    // A file of the person's own where Wenlan's would go, and one that is
+    // not text.
+    std::fs::write(&kiro, "# My own steering notes\n").unwrap();
+    std::fs::write(&zed, [0xff, 0xfe, 0x00, 0x41]).unwrap();
+
+    // Before any sync nothing holds the rules, so nothing covers anything.
+    let tools = delivery(&scratch).await;
+    assert_eq!(state_of(&tools, "codex"), RulesDeliveryState::OutOfDate);
+    assert_eq!(
+        state_of(&tools, "claude-code"),
+        RulesDeliveryState::OutOfDate
+    );
+    assert_eq!(
+        blocked_reason(&tools, "kiro").as_deref(),
+        Some("not_wenlans_file")
+    );
+    assert_eq!(blocked_reason(&tools, "zed").as_deref(), Some("not_text"));
+    assert_eq!(
+        serde_json::to_value(row(&tools, "kiro")).unwrap()["state"],
+        serde_json::json!("blocked")
+    );
+    assert_eq!(
+        serde_json::to_value(row(&tools, "kiro")).unwrap()["blocked_reason"],
+        serde_json::json!("not_wenlans_file")
+    );
+
+    sync_tools(&scratch).await;
+    assert_eq!(read(&kiro), "# My own steering notes\n");
+    assert_eq!(std::fs::read(&zed).unwrap(), [0xff, 0xfe, 0x00, 0x41]);
+    let tools = delivery(&scratch).await;
+    assert_eq!(state_of(&tools, "codex"), RulesDeliveryState::Delivered);
+    assert_eq!(
+        state_of(&tools, "claude-code"),
+        RulesDeliveryState::CoveredByAnotherFile
+    );
+    // OpenCode falls back to Claude's file, which holds no part of its own.
+    assert_eq!(state_of(&tools, "opencode"), RulesDeliveryState::OnRequest);
+    assert_eq!(blocked_reason(&tools, "zed").as_deref(), Some("not_text"));
+
+    // The covering file lost its part by hand: no longer covered.
+    let with = read(&codex);
+    std::fs::write(&codex, "").unwrap();
+    let tools = delivery(&scratch).await;
+    assert_eq!(
+        state_of(&tools, "claude-code"),
+        RulesDeliveryState::OutOfDate
+    );
+    std::fs::write(&codex, &with).unwrap();
+
+    // The time is the one Wenlan noted when it wrote, not the file's own.
+    let noted = row(&delivery(&scratch).await, "codex")
+        .delivered_at
+        .unwrap();
+    let long_ago = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
+    std::fs::File::options()
+        .write(true)
+        .open(&codex)
+        .unwrap()
+        .set_modified(long_ago)
+        .unwrap();
+    assert_eq!(
+        row(&delivery(&scratch).await, "codex").delivered_at,
+        Some(noted)
+    );
+    assert!((chrono::Utc::now().timestamp() - noted).abs() < 600);
+    // No record: delivered, and no time is made up.
+    std::fs::remove_file(scratch.data.join("tool-rules-files.json")).unwrap();
+    let tools = delivery(&scratch).await;
+    assert_eq!(state_of(&tools, "codex"), RulesDeliveryState::Delivered);
+    assert_eq!(row(&tools, "codex").delivered_at, None);
+}
+
+#[tokio::test]
+async fn ux_skill_8_opencode_and_zed_follow_the_xdg_config_folder_and_never_from_an_isolated_run() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let (scratch, _) = scratch_with_own_rule(&["zed", "opencode"]).await;
+    let xdg = scratch.home.join("xdg");
+    let dirs = SkillDirs {
+        xdg_config_home: Some(xdg.clone()),
+        ..scratch.skill_dirs()
+    };
+    let opencode = xdg.join("opencode/AGENTS.md");
+    tool_folder_for(&opencode);
+    std::fs::write(&opencode, "# Mine\n").unwrap();
+    // Zed follows the variable on Linux only.
+    let zed = if cfg!(any(windows, target_os = "macos")) {
+        zed_file(&scratch)
+    } else {
+        xdg.join("zed/AGENTS.md")
+    };
+    tool_folder_for(&zed);
+    // The default places exist too and must not be the ones written.
+    let default_opencode = scratch.home.join(".config/opencode/AGENTS.md");
+    tool_folder_for(&default_opencode);
+    std::fs::write(&default_opencode, "# Old place\n").unwrap();
+
+    sync_rules_files_in(&scratch.db, Some(&scratch.pages), &dirs).await;
+    assert!(read(&opencode).contains(OWN_RULE) && read(&zed).contains(OWN_RULE));
+    assert_eq!(read(&default_opencode), "# Old place\n");
+    let tools = delivery_in(&scratch, &dirs).await;
+    assert_eq!(
+        row(&tools, "opencode").path.as_deref(),
+        Some(opencode.to_string_lossy().as_ref())
+    );
+    assert_eq!(state_of(&tools, "opencode"), RulesDeliveryState::Delivered);
+
+    // A run on other data takes none of the overrides and writes no tool
+    // file of the person's.
+    let dev = scratch.data.join("dev-state");
+    let _env = EnvGuard::set(&[
+        ("WENLAN_DEV_STATE_DIR", &dev),
+        ("XDG_CONFIG_HOME", &xdg),
+        ("CODEX_HOME", &xdg),
+        ("COPILOT_HOME", &xdg),
+    ]);
+    let isolated = SkillDirs::system();
+    assert!(isolated.home.as_deref().unwrap().starts_with(&dev));
+    assert_eq!(
+        (
+            isolated.xdg_config_home,
+            isolated.codex_home,
+            isolated.copilot_home
+        ),
+        (None, None, None)
+    );
+    assert!(isolated
+        .tool_files_record
+        .as_deref()
+        .unwrap()
+        .starts_with(&dev));
+    drop(_env);
+    // This test run is itself on other data: the real folders are named but
+    // never read or written.
+    assert!(!SkillDirs::system().tool_files);
 }
 
 /// Answers with whichever of the two follower rules the pages hold.

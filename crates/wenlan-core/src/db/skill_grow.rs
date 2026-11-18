@@ -233,6 +233,31 @@ impl MemoryDB {
             .await
     }
 
+    /// The versions of a page that an accepted sentence proposal made. Such a
+    /// version is recorded as the person's edit, but its new text was an AI
+    /// tool's (`sentence_history`, `sentence.accept`).
+    pub async fn sentence_accept_versions(&self, page_id: &str) -> Result<Vec<i64>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT DISTINCT version FROM sentence_history \
+                 WHERE op = 'sentence.accept' AND target_type = 'page' AND target_id = ?1 \
+                   AND version IS NOT NULL",
+                libsql::params![page_id],
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("sentence_accept_versions: {e}")))?;
+        let mut out = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("sentence_accept_versions row: {e}")))?
+        {
+            out.push(row.get::<i64>(0).unwrap_or_default());
+        }
+        Ok(out)
+    }
+
     pub async fn record_skill_rules_read(
         &self,
         tool: &str,

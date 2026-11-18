@@ -1546,7 +1546,7 @@ async fn team_admin(
     Extension(member): Extension<Member>,
     req: Request,
 ) -> Response {
-    if member.role != TeamRole::Owner {
+    if !crate::team_policy::allowed(&member, crate::team_policy::Action::Manage, None, false) {
         return (StatusCode::FORBIDDEN, "only the team's owner").into_response();
     }
     let method = req.method().clone();
@@ -1643,7 +1643,9 @@ fn space_folder(
     member: &Member,
     space: &str,
 ) -> Result<(PathBuf, TeamAccess), Response> {
-    let Some(access) = member.access(space) else {
+    // The rules' answer for the Space as if hosted: a Space that is not
+    // theirs is refused before saying whether this server hosts it.
+    let Some(access) = crate::team_policy::access(member, space, true) else {
         return Err((StatusCode::FORBIDDEN, "not a Space of this member").into_response());
     };
     match team::hosted_folder(&state.settings_path, space) {
@@ -1774,7 +1776,7 @@ async fn team_mcp(
         .spaces
         .into_iter()
         .map(|entry| entry.space)
-        .filter(|space| member.access(space).is_some())
+        .filter(|space| crate::team_policy::access(&member, space, true).is_some())
         .collect();
     match spaces.len() {
         1 => {

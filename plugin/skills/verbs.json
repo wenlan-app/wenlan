@@ -8,7 +8,7 @@
   {"verb": "/wenlan setup", "skill": "setup", "menu": false, "line": "set up or repair Wenlan (installs the local runtime)"},
   {"verb": "/wenlan lint", "args": "[deep|repair] [scope]", "skill": "lint", "menu": false, "line": "diagnose, or resolve all findings safely"},
   {"verb": "/wenlan steep", "args": "[request] [space:<name>]", "skill": "steep", "menu": false, "line": "prepare new material, update pages, or arrange existing knowledge around your goal"},
-  {"verb": "/wenlan wiki", "args": "[space:<name>]", "skill": "wiki", "menu": false, "line": "read this repository and write a wiki about it, sized to the repository, each page tied to the code lines it relies on"},
+  {"verb": "/wenlan docs", "args": "[space:<name>]", "skill": "wiki", "menu": false, "line": "read this repository and write docs about it, sized to the repository, each page tied to the code lines it relies on (earlier `/wenlan wiki`)"},
   {"verb": "/wenlan pages", "args": "[q]", "skill": "pages", "menu": false, "line": "browse and open distilled pages"},
   {"verb": "/wenlan curate", "args": "<surface>", "skill": "curate", "menu": false, "line": "deep audit of captures, revisions or refinements"},
   {"verb": "/wenlan forget", "args": "<id>", "skill": "forget", "menu": false, "line": "delete one memory by ID, after confirmation"},

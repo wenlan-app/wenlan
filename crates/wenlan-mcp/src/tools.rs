@@ -5312,6 +5312,8 @@ impl WenlanMcpServer {
                 "Themes can only be changed from the computer running Wenlan.".to_string(),
             )]));
         }
+        // The refusal is the tool's answer, as in the other tools here.
+        #[allow(clippy::result_large_err)]
         let need_id = |id: &Option<String>| -> Result<String, CallToolResult> {
             id.clone().filter(|id| !id.is_empty()).ok_or_else(|| {
                 CallToolResult::error(vec![ContentBlock::text(

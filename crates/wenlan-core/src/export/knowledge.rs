@@ -1176,6 +1176,17 @@ impl KnowledgeWriter {
             .collect()
     }
 
+    /// Every page id with the file `state.json` records for it, and whether
+    /// the page began as a note the person put in the folder themselves (an
+    /// adopted file). Read only; an unreadable state gives an empty map.
+    pub fn page_files_with_person_notes(&self) -> HashMap<String, (String, bool)> {
+        self.load_state()
+            .pages
+            .into_iter()
+            .map(|(id, state)| (id, (state.file, state.person_frontmatter.is_some())))
+            .collect()
+    }
+
     /// `state.json`'s SHA-256 of the bytes last written for each page, where
     /// it records one. A file whose bytes differ was edited outside Wenlan.
     pub fn page_file_digests(&self) -> HashMap<String, String> {

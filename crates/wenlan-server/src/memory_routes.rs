@@ -1925,6 +1925,8 @@ pub async fn handle_accept_revision(
         )
         .await?
     };
+    // The accepted text may be on a rules page (UX-SKILL-10).
+    crate::skill_grow::rules_may_have_changed(&state).await;
     Ok(Json(result))
 }
 

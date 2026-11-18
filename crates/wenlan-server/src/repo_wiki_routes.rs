@@ -787,7 +787,7 @@ pub(crate) async fn publish_space(
         failed,
     } = taken;
     let now = chrono::Utc::now().timestamp();
-    let rules = crate::skill_grow::project_rules(db, space).await;
+    let rules = crate::skill_grow::project_rules(db, page_root, space).await;
     let space = space.to_owned();
     let result = blocking(move || {
         let Gathered {
