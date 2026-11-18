@@ -2,11 +2,11 @@
 //! Human-facing setup/status commands for the Wenlan runtime.
 
 use clap::{Subcommand, ValueEnum};
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use wenlan_core::{config, on_device_models};
 
-use crate::client::origin_host_from_env;
+use crate::client::{origin_host_from_env, WenlanClient};
 
 #[path = "secret_input.rs"]
 mod secret_input;
@@ -17,6 +17,10 @@ pub struct SetupArgs {
     pub model: Option<String>,
     pub anthropic_api_key_env: Option<String>,
     pub yes: bool,
+    /// Write the settings and stop: no AI tool is connected, nothing is asked.
+    pub config_only: bool,
+    /// Skip the settings and do only what follows them (see [`finish`]).
+    pub finish: bool,
 }
 
 #[derive(Subcommand)]
@@ -132,7 +136,10 @@ impl RerankerModeArg {
     }
 }
 
-pub async fn run_setup(args: SetupArgs) -> anyhow::Result<()> {
+pub async fn run_setup(client: &WenlanClient, args: SetupArgs) -> anyhow::Result<()> {
+    if args.finish {
+        return finish(client).await;
+    }
     if let Some(note) = super::home_bin::refresh_for_setup() {
         println!("{note}");
     }
@@ -141,31 +148,97 @@ pub async fn run_setup(args: SetupArgs) -> anyhow::Result<()> {
         println!("Wenlan is set up for local memory.");
         println!("Storage, search, recall, and MCP memory work without a local model or API key.");
         println!("Steep (background upkeep) is off.");
-        print_browser_address();
-        return Ok(());
-    }
-
-    if let Some(model_id) = args.model {
+    } else if let Some(model_id) = args.model {
         install_model(&model_id, args.yes).await?;
         mark_setup_completed()?;
         print_enrichment_opt_in("on-device");
-        print_browser_address();
-        return Ok(());
-    }
-
-    if let Some(env_name) = args.anthropic_api_key_env {
+    } else if let Some(env_name) = args.anthropic_api_key_env {
         let key = std::env::var(&env_name)
             .map_err(|_| anyhow::anyhow!("environment variable {} is not set", env_name))?;
         set_anthropic_key(key).await?;
         mark_setup_completed()?;
         print_enrichment_opt_in("Anthropic");
-        print_browser_address();
-        return Ok(());
+    } else {
+        interactive_setup().await?;
+    }
+    print_browser_address();
+    if !args.config_only {
+        finish(client).await?;
+    }
+    Ok(())
+}
+
+/// What follows the settings, so that one `wenlan setup` leaves nothing to do
+/// by hand but restarting the AI tools: connect every AI tool found on this
+/// computer, offer to bring one folder in, and say what to try. The installer
+/// (`npx wenlan setup`) runs this as its own step, after Wenlan has started,
+/// because bringing a folder in needs it running.
+async fn finish(client: &WenlanClient) -> anyhow::Result<()> {
+    println!();
+    let tools = super::init::connect_tools(client, super::init::Connect::All).await?;
+    tools.print();
+    if tools.new > 0 {
+        println!("Restart them to pick Wenlan up. `wenlan connect --help` lists more tools.");
     }
 
-    interactive_setup().await?;
-    print_browser_address();
+    let running = client.health().await.is_ok();
+    let asked = running && std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
+    if asked {
+        if let Some(folder) = ask_folder()? {
+            let added = super::ingest::run(
+                client,
+                crate::output::ResolvedFormat::Table,
+                false,
+                folder,
+                super::ingest::SourceKind::Directory,
+            )
+            .await;
+            if let Err(error) = added {
+                eprintln!("wenlan: the folder was not brought in: {error:#}");
+            }
+        }
+    } else {
+        println!("`wenlan sources add <folder>` brings a folder of notes or docs in.");
+    }
+
+    if let Some(tool) = tools.first_label() {
+        println!(
+            "Try it: open a new session in {tool} and say \"remember this in Wenlan: …\", \
+             or ask \"what does Wenlan know about …?\""
+        );
+    }
+    let in_repository = std::env::current_dir()
+        .is_ok_and(|cwd| wenlan_core::repo_wiki::repository_top_level(&cwd).is_ok());
+    if in_repository {
+        println!("This folder is a git repository. `wenlan init` gives it its own Space.");
+    }
     Ok(())
+}
+
+/// One question, answered with a path or with Enter to skip.
+fn ask_folder() -> anyhow::Result<Option<std::path::PathBuf>> {
+    print!("Bring a folder of notes or docs in? Type its path, or press Enter to skip: ");
+    io::stdout().flush()?;
+    let mut answer = String::new();
+    io::stdin().read_line(&mut answer)?;
+    Ok(folder_answer(&answer, dirs::home_dir().as_deref()))
+}
+
+/// The folder a typed answer names: nothing for an empty line, `~` read as the
+/// home folder, and quotes a drag-and-drop adds taken off.
+fn folder_answer(answer: &str, home: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
+    let typed = answer.trim().trim_matches(|c| c == '"' || c == '\'');
+    if typed.is_empty() {
+        return None;
+    }
+    let rest = typed
+        .strip_prefix("~/")
+        .or_else(|| typed.strip_prefix("~\\"));
+    Some(match (typed, rest, home) {
+        ("~", _, Some(home)) => home.to_path_buf(),
+        (_, Some(rest), Some(home)) => home.join(rest),
+        _ => std::path::PathBuf::from(typed),
+    })
 }
 
 fn print_browser_address() {
@@ -802,6 +875,39 @@ pub async fn print_steep_summary() {
         Err(err) => format!("status unavailable ({err})"),
     };
     println!("Steep: {summary}");
+    print_following_pages().await;
+}
+
+/// `Following pages: 2 waiting to catch up` when pages that follow another
+/// page have not caught up with its change yet. Silent when there are none,
+/// or when the daemon cannot say.
+async fn print_following_pages() {
+    let Ok(groups) = get_json("/api/pages/basis-pending").await else {
+        return;
+    };
+    let mut waiting: Vec<&str> = groups
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|group| group["state"].as_str() == Some("pending"))
+        .flat_map(|group| group["citers"].as_array().into_iter().flatten())
+        .filter_map(|citer| citer["page_id"].as_str())
+        .collect();
+    waiting.sort_unstable();
+    waiting.dedup();
+    if let Some(line) = following_line(waiting.len()) {
+        println!("{line}");
+    }
+}
+
+fn following_line(waiting: usize) -> Option<String> {
+    match waiting {
+        0 => None,
+        1 => Some("Following pages: 1 waiting to catch up; the next steep updates it".into()),
+        n => Some(format!(
+            "Following pages: {n} waiting to catch up; the next steep updates them"
+        )),
+    }
 }
 
 fn print_job_route(label: &str, route: &serde_json::Value) {
@@ -1147,6 +1253,30 @@ fn prompt_secret(prompt: &str) -> anyhow::Result<String> {
 }
 
 #[cfg(test)]
+mod finish_tests {
+    use super::folder_answer;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn enter_skips_the_folder_and_a_typed_path_names_it() {
+        let home = Some(Path::new("/home/me"));
+        assert_eq!(folder_answer("\n", home), None);
+        assert_eq!(folder_answer("   \n", home), None);
+        assert_eq!(folder_answer("notes\n", home), Some(PathBuf::from("notes")));
+        assert_eq!(folder_answer("~\n", home), Some(PathBuf::from("/home/me")));
+        assert_eq!(
+            folder_answer("~/Documents/notes\n", home),
+            Some(PathBuf::from("/home/me/Documents/notes"))
+        );
+        // A path dragged into the terminal arrives in quotes.
+        assert_eq!(
+            folder_answer("'/Users/me/My Notes'\n", home),
+            Some(PathBuf::from("/Users/me/My Notes"))
+        );
+    }
+}
+
+#[cfg(test)]
 mod doctor_tests {
     use super::{
         last_daemon_error, last_daemon_error_since, scratch_data_root_warning, strip_ansi,
@@ -1288,5 +1418,17 @@ mod doctor_tests {
                 "TMPDIR={tmpdir:?}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod following_tests {
+    use super::following_line;
+
+    #[test]
+    fn the_line_shows_only_when_a_page_waits() {
+        assert_eq!(following_line(0), None);
+        assert!(following_line(1).unwrap().contains("1 waiting"));
+        assert!(following_line(3).unwrap().contains("3 waiting"));
     }
 }

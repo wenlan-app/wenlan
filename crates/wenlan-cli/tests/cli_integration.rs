@@ -728,15 +728,18 @@ fn top_level_help() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "a studio for everything you think, learn, and build with AI",
+            "docs, skills and rules your AI tools keep current and work from",
         ))
+        .stdout(predicate::str::contains("\nStart:\n"))
         .stdout(predicate::str::contains("\nDaily:\n"))
-        .stdout(predicate::str::contains("\nSetup:\n"))
         .stdout(predicate::str::contains("\nTeam:\n"))
         .stdout(predicate::str::contains(
-            "\nMore commands: wenlan help all (",
+            "\nEverything else: wenlan help all\n",
         ))
-        .stdout(predicate::str::contains("\n  start "))
+        .stdout(predicate::str::contains("\n  setup "))
+        .stdout(predicate::str::contains("\n  init "))
+        .stdout(predicate::str::contains("\n  start ").not())
+        .stdout(predicate::str::contains("\nOptions:").not())
         .stdout(predicate::str::contains("\n  steep ").not())
         .stdout(predicate::str::contains("\n  search ").not())
         .stdout(predicate::str::contains("\n  sweep ").not())
@@ -1032,6 +1035,127 @@ fn connect_native_clients_add_named_entry_then_retire_legacy_origin() {
             .replace("\r\n", "\n");
         assert_eq!(actual, expected_log.as_str());
     }
+}
+
+/// A fake AI tool whose `mcp add` says the entry is already there, as
+/// `claude mcp add` does the second time.
+#[cfg(unix)]
+fn write_fake_command_that_already_has_it(fake_bin: &Path, name: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    let path = fake_bin.join(name);
+    fs::write(
+        &path,
+        "#!/bin/sh\nif [ \"$2\" = add ]; then echo 'MCP server wenlan already exists in user config' >&2; exit 1; fi\nexit 0\n",
+    )
+    .expect("write fake command");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).expect("chmod fake command");
+}
+
+#[cfg(unix)]
+#[test]
+fn connecting_a_tool_that_already_has_wenlan_is_not_an_error() {
+    let runtime = IsolatedRuntime::new();
+    write_fake_command_that_already_has_it(runtime.fake_bin.path(), "claude");
+
+    cli_with_isolated_runtime(&runtime)
+        .args(["connect", "claude-code"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Wenlan MCP already configured for claude-code.",
+        ));
+}
+
+/// PATH with only the fake tools, so a developer's real `claude` or `codex`
+/// is never found, plus the folders the shell scripts themselves need.
+#[cfg(unix)]
+fn only_fake_tools_on_path(runtime: &IsolatedRuntime) -> std::ffi::OsString {
+    std::env::join_paths([
+        runtime.fake_bin.path(),
+        Path::new("/usr/bin"),
+        Path::new("/bin"),
+    ])
+    .expect("join PATH entries")
+}
+
+#[cfg(unix)]
+#[test]
+fn ux_cli_6_setup_connects_every_ai_tool_it_finds_and_says_what_to_try() {
+    let runtime = IsolatedRuntime::new();
+    write_fake_command(runtime.fake_bin.path(), "claude");
+    write_fake_command(runtime.fake_bin.path(), "codex");
+    let log = runtime.root.path().join("setup.log");
+    let outside = tempfile::tempdir().expect("a folder outside any repository");
+
+    cli_with_isolated_runtime(&runtime)
+        .env("PATH", only_fake_tools_on_path(&runtime))
+        .env("WENLAN_TEST_CLI_LOG", &log)
+        .current_dir(outside.path())
+        .args(["setup", "--basic"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Connected AI tools: Claude Code, Codex.",
+        ))
+        .stdout(predicate::str::contains("Restart them to pick Wenlan up."))
+        // Nobody to ask and Wenlan not running: the folder is named, not asked.
+        .stdout(predicate::str::contains(
+            "`wenlan sources add <folder>` brings a folder of notes or docs in.",
+        ))
+        .stdout(predicate::str::contains(
+            "Try it: open a new session in Claude Code",
+        ))
+        .stdout(predicate::str::contains("wenlan init").not());
+
+    let calls = fs::read_to_string(log).expect("fake tool log");
+    assert!(
+        calls.contains("claude\tmcp\tadd\t-s\tuser\twenlan"),
+        "{calls}"
+    );
+    assert!(calls.contains("codex\tmcp\tadd\twenlan"), "{calls}");
+}
+
+#[cfg(unix)]
+#[test]
+fn ux_cli_6_setup_leaves_a_tool_that_has_the_wenlan_plugin_alone() {
+    let runtime = IsolatedRuntime::new();
+    write_fake_command(runtime.fake_bin.path(), "claude");
+    let log = runtime.root.path().join("setup.log");
+    let settings = runtime.home.path().join(".claude/settings.json");
+    fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    fs::write(&settings, r#"{"enabledPlugins":{"wenlan@7xuanlu":true}}"#).unwrap();
+
+    cli_with_isolated_runtime(&runtime)
+        .env("PATH", only_fake_tools_on_path(&runtime))
+        .env("WENLAN_TEST_CLI_LOG", &log)
+        .args(["setup", "--basic"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Connected AI tools: Claude Code."))
+        .stdout(predicate::str::contains("Restart them").not());
+
+    assert!(
+        !log.exists(),
+        "the plugin's tool was connected a second time"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn setup_config_only_connects_nothing() {
+    let runtime = IsolatedRuntime::new();
+    write_fake_command(runtime.fake_bin.path(), "claude");
+    let log = runtime.root.path().join("setup.log");
+
+    cli_with_isolated_runtime(&runtime)
+        .env("PATH", only_fake_tools_on_path(&runtime))
+        .env("WENLAN_TEST_CLI_LOG", &log)
+        .args(["setup", "--basic", "--config-only"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Connected AI tools").not());
+
+    assert!(!log.exists(), "config-only ran an AI tool");
 }
 
 #[test]
@@ -1854,7 +1978,7 @@ fn setup_background_status_roundtrip_isolated() {
     let runtime = IsolatedRuntime::new();
 
     cli_with_isolated_runtime(&runtime)
-        .args(["setup", "--basic"])
+        .args(["setup", "--basic", "--config-only"])
         .assert()
         .success()
         .stdout(predicate::str::contains(

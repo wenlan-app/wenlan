@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! `wenlan wiki` — put a Space's code pages into its git repository.
+//! `wenlan repo` (earlier `wenlan wiki`) — put a Space's code pages into its git repository.
 //!
 //! `bind` ties the Space to the repository the command runs in (or
 //! `--repo`), `publish` writes the pages into the repository's wiki folder on
@@ -11,8 +11,8 @@ use clap::{Subcommand, ValueEnum};
 use std::path::{Path, PathBuf};
 use wenlan_core::repo_wiki::{self, PublishTarget};
 use wenlan_types::repo_wiki::{
-    BindRepoWikiRequest, RepoWikiAgent, RepoWikiBinding, RepoWikiDaily, RepoWikiPublishResult,
-    RepoWikiPublishStatus, RepoWikiRunner,
+    BindRepoWikiRequest, RepoDocsRequest, RepoWikiAgent, RepoWikiBinding, RepoWikiDaily,
+    RepoWikiPublishResult, RepoWikiPublishStatus, RepoWikiRunner,
 };
 
 use crate::client::WenlanClient;
@@ -63,6 +63,11 @@ pub enum WikiCommand {
         /// the remote URL). Needed when it is not yours.
         #[arg(long, value_name = "OWNER/NAME")]
         confirm_repo: Option<String>,
+        /// Publish from this computer although another Wenlan (a teammate's,
+        /// or another computer of yours) keeps this repository's pages and
+        /// rules. The next publish replaces theirs.
+        #[arg(long)]
+        take_over: bool,
     },
     /// Write the Space's code pages into the repository and open or update
     /// the pull request.
@@ -71,6 +76,25 @@ pub enum WikiCommand {
     Status,
     /// Stop putting this Space's pages into its repository.
     Unbind,
+    /// Make docs of the bound repository follow a page of the Space: when
+    /// the page changes, the AI tool suggests fixes to them for the wiki
+    /// pull request. `wenlan follow README.md <page>` is the short way.
+    #[command(hide = true)]
+    Follow {
+        /// The page the docs follow (its id).
+        #[arg(long)]
+        page: String,
+        /// Docs relative to the repository root, such as README.md.
+        #[arg(required = true)]
+        files: Vec<String>,
+    },
+    /// Stop the docs following a page.
+    #[command(hide = true)]
+    Unfollow {
+        /// The page the docs follow (its id).
+        #[arg(long)]
+        page: String,
+    },
     /// Check the wiki folder of this checkout against the code: fix line
     /// numbers that moved and have an AI tool rewrite pages whose code
     /// changed. Works without Wenlan running; the GitHub Actions workflow
@@ -95,10 +119,34 @@ pub async fn run(
     space: Option<&str>,
     command: WikiCommand,
 ) -> Result<()> {
-    let Some(space) = space else {
-        bail!(
-            "no Space for this folder; run it inside a repository matched to a Space, or pass --space"
-        );
+    // `publish` in a repository that is not set up cannot do its work: a
+    // person is asked once whether to set it up now (see `set_up_to_publish`).
+    let set_up;
+    let space = match (space, &command) {
+        (Some(space), WikiCommand::Publish)
+            if client.repo_wiki_binding(space).await?.is_none() =>
+        {
+            match super::init::set_up_to_publish(client, format, quiet).await? {
+                Some(space) => {
+                    set_up = space;
+                    set_up.as_str()
+                }
+                None => return Ok(()),
+            }
+        }
+        (Some(space), _) => space,
+        (None, WikiCommand::Publish) => {
+            match super::init::set_up_to_publish(client, format, quiet).await? {
+                Some(space) => {
+                    set_up = space;
+                    set_up.as_str()
+                }
+                None => return Ok(()),
+            }
+        }
+        (None, _) => bail!(
+            "no Space for this folder yet. Inside a git repository, `wenlan init` sets one up; or pass --space"
+        ),
     };
     match command {
         WikiCommand::Bind {
@@ -108,6 +156,7 @@ pub async fn run(
             agent,
             on_github,
             confirm_repo,
+            take_over,
         } => {
             let repo = match repo {
                 Some(repo) => repo,
@@ -128,6 +177,7 @@ pub async fn run(
                         repo_root: repo.to_string_lossy().into_owned(),
                         folder,
                         daily,
+                        take_over,
                     },
                 )
                 .await?;
@@ -150,7 +200,7 @@ pub async fn run(
                     match format {
                         ResolvedFormat::Json => print_json(&serde_json::Value::Null)?,
                         ResolvedFormat::Table => println!(
-                            "Space '{space}' is not bound to a repository. `wenlan wiki bind` ties it to this one."
+                            "Space '{space}' is not bound to a repository. `wenlan repo bind` ties it to this one."
                         ),
                     }
                 }
@@ -159,6 +209,49 @@ pub async fn run(
         },
         WikiCommand::Refresh(_) | WikiCommand::Workflow(_) => {
             unreachable!("offline wiki commands run before the daemon is reached")
+        }
+        WikiCommand::Follow { page, files } => {
+            let reply = client
+                .repo_wiki_docs(
+                    space,
+                    &RepoDocsRequest::Follow {
+                        page_id: page,
+                        files,
+                    },
+                )
+                .await?;
+            if !quiet {
+                match format {
+                    ResolvedFormat::Json => print_json(&reply)?,
+                    ResolvedFormat::Table => {
+                        if let Some(follow) = &reply.follow {
+                            println!(
+                                "{} now follow page {}.",
+                                follow.files.join(", "),
+                                follow.page_id
+                            );
+                        }
+                    }
+                }
+            }
+            Ok(())
+        }
+        WikiCommand::Unfollow { page } => {
+            let reply = client
+                .repo_wiki_docs(
+                    space,
+                    &RepoDocsRequest::Unfollow {
+                        page_id: page.clone(),
+                    },
+                )
+                .await?;
+            if !quiet {
+                match format {
+                    ResolvedFormat::Json => print_json(&reply)?,
+                    ResolvedFormat::Table => println!("No docs follow page {page} any more."),
+                }
+            }
+            Ok(())
         }
         WikiCommand::Unbind => {
             let removed = client.unbind_repo_wiki(space).await?;
@@ -284,13 +377,24 @@ fn print_binding(format: ResolvedFormat, quiet: bool, binding: &RepoWikiBinding)
         ),
         _ => println!("  daily: off"),
     }
+    for follow in &binding.follows {
+        println!(
+            "  follows page {}: {}{}",
+            follow.page_id,
+            follow.files.join(", "),
+            match follow.followed_version {
+                Some(version) => format!(" (up to version {version})"),
+                None => " (not run yet)".to_owned(),
+            }
+        );
+    }
     if let Some(last) = &binding.last_publish {
         println!("  last publish: {}", describe_publish(last));
     }
     Ok(())
 }
 
-fn describe_publish(result: &RepoWikiPublishResult) -> String {
+pub(crate) fn describe_publish(result: &RepoWikiPublishResult) -> String {
     let mut left_out = if result.left_out > 0 {
         format!(
             "; {} page(s) that rest on personal notes stay out",
@@ -308,6 +412,19 @@ fn describe_publish(result: &RepoWikiPublishResult) -> String {
     match result.status {
         RepoWikiPublishStatus::NothingToPublish => {
             format!("no page of this Space rests on this repository's code yet{left_out}")
+        }
+        // No pages went: the pull request carries the project rules for
+        // `AGENTS.md`, fixes to the repository's own docs, or both.
+        RepoWikiPublishStatus::PrOpened | RepoWikiPublishStatus::PrUpdated if result.pages == 0 => {
+            format!(
+                "no pages; pull request {} with the project rules or doc fixes: {}{left_out}",
+                if result.status == RepoWikiPublishStatus::PrOpened {
+                    "opened"
+                } else {
+                    "updated"
+                },
+                result.pr_url.as_deref().unwrap_or("(no link)")
+            )
         }
         RepoWikiPublishStatus::NoChanges => {
             format!("{} page(s), already up to date{left_out}", result.pages)
@@ -397,6 +514,8 @@ mod tests {
             doc_fixes: Vec::new(),
             doc_check: None,
             kept_edits: Vec::new(),
+            follows: Vec::new(),
+            take_over: false,
         };
         let now = target(Some("pallets/itsdangerous"), None);
         let ssh = binding(Some("git@github.com:pallets/itsdangerous.git"));

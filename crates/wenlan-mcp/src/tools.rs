@@ -38,7 +38,8 @@ where
 }
 
 /// Return the effective space for a tool call: strict process pin, then an
-/// explicit non-empty tool argument, then the overridable process fallback.
+/// explicit non-empty tool argument, then the overridable process fallback,
+/// then the Space the server's working folder points at.
 pub fn effective_space(inbound: &Option<String>) -> Option<String> {
     if let Some(locked) = crate::lock_state::locked_space() {
         if let Some(passed) = inbound.as_ref() {
@@ -59,7 +60,7 @@ pub fn effective_space(inbound: &Option<String>) -> Option<String> {
     {
         Some(explicit)
     } else {
-        crate::lock_state::default_space()
+        crate::lock_state::default_space().or_else(crate::lock_state::folder_space)
     }
 }
 
@@ -507,6 +508,8 @@ pub struct WenlanMcpServer {
     /// This connection's own strict Space pin (a team server's member
     /// connection), applied around every call (`lock_state::with_session_pin`).
     space_pin: Option<String>,
+    /// Stdio only: keeps the working folder's Space current before each call.
+    folder_space: Option<std::sync::Arc<crate::folder_space::FolderSpaceWatch>>,
 }
 
 // ===== Parameter Structs =====
@@ -1369,6 +1372,25 @@ pub enum DocFixAction {
     Suggest,
     /// Say how many docs were read against the code.
     Checked,
+    /// List the pages docs follow, with their files and followed versions.
+    Follows,
+    /// Make docs follow a page of the Space.
+    Follow,
+    /// Stop docs following a page.
+    Unfollow,
+    /// Say the docs that follow a page were brought up to a version of it.
+    Followed,
+}
+
+/// The line of a followed page a doc fix rests on.
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
+pub struct DocFixPageParam {
+    #[schemars(description = "The followed page's id.")]
+    pub page_id: String,
+    #[schemars(description = "The page.version you read it at with read_page.")]
+    pub version: i64,
+    #[schemars(description = "The page's line the fix rests on, copied exactly.")]
+    pub quote: String,
 }
 
 /// Code lines a doc fix rests on.
@@ -1382,7 +1404,7 @@ pub struct DocFixCodeParam {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct DocFixParams {
-    #[schemars(description = "suggest | checked.")]
+    #[schemars(description = "suggest | checked | follows | follow | unfollow | followed.")]
     pub action: DocFixAction,
     #[schemars(description = "suggest: the doc, relative to the repository root.")]
     #[serde(default)]
@@ -1405,9 +1427,25 @@ pub struct DocFixParams {
     )]
     #[serde(default)]
     pub code: Option<Vec<DocFixCodeParam>>,
+    #[schemars(
+        description = "suggest, for a doc that follows a page, instead of code: {page_id, version, quote}."
+    )]
+    #[serde(default)]
+    pub page: Option<DocFixPageParam>,
     #[schemars(description = "checked: how many docs you read.")]
     #[serde(default)]
     pub docs: Option<u32>,
+    #[schemars(description = "follow, unfollow, followed: the page's id.")]
+    #[serde(default)]
+    pub page_id: Option<String>,
+    #[schemars(
+        description = "follow: the docs that follow the page, relative to the repository root."
+    )]
+    #[serde(default)]
+    pub files: Option<Vec<String>>,
+    #[schemars(description = "followed: the page.version the docs were brought up to.")]
+    #[serde(default)]
+    pub version: Option<i64>,
     #[schemars(description = "The Space connected to the repository.")]
     #[serde(default)]
     pub space: Option<String>,
@@ -3529,7 +3567,9 @@ impl WenlanMcpServer {
 
         let output = match response.state {
             wenlan_types::BriefReadState::SpaceNotResolved => {
-                "Space not resolved. Pass `space` or configure a default Space.".to_string()
+                // A new install has no Space yet: say that nothing is wrong
+                // and what makes one, so the tool does not report a failure.
+                "No Brief to show: this folder has no Space yet. Nothing is wrong. The user can run `wenlan init` inside their repository to make one, or pass `space` to read another Space's Brief.".to_string()
             }
             wenlan_types::BriefReadState::BriefNotCreated => {
                 let mut output = format!(
@@ -5058,7 +5098,24 @@ impl WenlanMcpServer {
                 "doc_fix {field} is required for this action; nothing was recorded."
             ))]))
         };
+        if params.action == DocFixAction::Follows {
+            let path = format!("/api/spaces/{}/wiki/repo", url_encode_simple(&space));
+            return match self
+                .client
+                .get::<Option<wenlan_types::repo_wiki::RepoWikiBinding>>(&path)
+                .await
+            {
+                Ok(binding) => {
+                    let follows = binding.map(|binding| binding.follows).unwrap_or_default();
+                    Ok(CallToolResult::structured(serde_json::json!({
+                        "follows": follows,
+                    })))
+                }
+                Err(error) => Ok(tool_error(error, "doc_fix")),
+            };
+        }
         let request = match params.action {
+            DocFixAction::Follows => unreachable!("answered above"),
             DocFixAction::Suggest => {
                 let (Some(path), Some(old_text), Some(new_text), Some(reason)) =
                     (params.path, params.old_text, params.new_text, params.reason)
@@ -5080,6 +5137,13 @@ impl WenlanMcpServer {
                             line_end: code.line_end,
                         })
                         .collect(),
+                    page: params
+                        .page
+                        .map(|page| wenlan_types::repo_wiki::RepoDocPageLine {
+                            page_id: page.page_id,
+                            version: page.version,
+                            quote: page.quote,
+                        }),
                 }
             }
             DocFixAction::Checked => {
@@ -5087,6 +5151,24 @@ impl WenlanMcpServer {
                     return missing("docs");
                 };
                 wenlan_types::repo_wiki::RepoDocsRequest::Checked { docs }
+            }
+            DocFixAction::Follow => {
+                let (Some(page_id), Some(files)) = (params.page_id, params.files) else {
+                    return missing("page_id and files");
+                };
+                wenlan_types::repo_wiki::RepoDocsRequest::Follow { page_id, files }
+            }
+            DocFixAction::Unfollow => {
+                let Some(page_id) = params.page_id else {
+                    return missing("page_id");
+                };
+                wenlan_types::repo_wiki::RepoDocsRequest::Unfollow { page_id }
+            }
+            DocFixAction::Followed => {
+                let (Some(page_id), Some(version)) = (params.page_id, params.version) else {
+                    return missing("page_id and version");
+                };
+                wenlan_types::repo_wiki::RepoDocsRequest::Followed { page_id, version }
             }
         };
         let path = format!("/api/spaces/{}/wiki/docs", url_encode_simple(&space));
@@ -5101,7 +5183,7 @@ impl WenlanMcpServer {
                 })?,
             )),
             Err(WenlanError::Api {
-                status: 400 | 404 | 409,
+                status: 400 | 404 | 409 | 422,
                 reason: Some(reason),
             }) => Ok(CallToolResult::error(vec![ContentBlock::text(format!(
                 "doc_fix refused, nothing recorded: {reason}"
@@ -5230,6 +5312,8 @@ impl WenlanMcpServer {
                 "Themes can only be changed from the computer running Wenlan.".to_string(),
             )]));
         }
+        // The refusal is the tool's answer, as in the other tools here.
+        #[allow(clippy::result_large_err)]
         let need_id = |id: &Option<String>| -> Result<String, CallToolResult> {
             id.clone().filter(|id| !id.is_empty()).ok_or_else(|| {
                 CallToolResult::error(vec![ContentBlock::text(
@@ -5967,7 +6051,7 @@ impl WenlanMcpServer {
     ) -> Result<CallToolResult, McpError> {
         let Some(space) = effective_space(&params.space) else {
             return Ok(CallToolResult::error(vec![ContentBlock::text(
-                "Space not resolved. Pass `space` or configure a default Space.".to_string(),
+                "Nothing was saved: this folder has no Space yet. Pass `space`, or have the user run `wenlan init` inside their repository to make one.".to_string(),
             )]));
         };
         if params.summary.is_none() && params.mutations.is_empty() {
@@ -6477,7 +6561,17 @@ impl WenlanMcpServer {
             )),
             user_id,
             space_pin: None,
+            folder_space: None,
         }
+    }
+
+    /// Let the folder this server was started in pick the Space when the
+    /// caller names none, as the terminal does. For the local stdio server.
+    pub fn with_folder_space(mut self, hint: wenlan_types::folder_space::FolderSpaceHint) -> Self {
+        self.folder_space = Some(std::sync::Arc::new(
+            crate::folder_space::FolderSpaceWatch::new(hint),
+        ));
+        self
     }
 
     /// Set the tool exposure profile without changing the existing constructor
@@ -6935,7 +7029,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "For a Space connected to a repository: fix a sentence in the repository's own docs (README, docs/, AGENTS.md, CLAUDE.md, SKILL.md) that the code contradicts. `suggest` (path, old_text found once, new_text, reason, code): goes into the wiki pull request for review. `checked` (docs): how many docs you read. Not for wiki pages. Local stdio only.",
+        description = "For a Space connected to a repository: fix a sentence in the repository's own docs (README, docs/, AGENTS.md, CLAUDE.md, SKILL.md) that the code contradicts, or that a page the doc follows now says otherwise. `suggest` (path, old_text found once, new_text, reason, and code or page {page_id, version, quote}): goes into the wiki pull request for review. `checked` (docs): how many docs you read. `follow` (page_id, files) / `unfollow` (page_id): only when the user asks which docs follow a page. `follows`: the pages docs follow, with files and followed_version. `followed` (page_id, version): the docs were brought up to that version. Not for wiki pages. Local stdio only.",
         annotations(
             title = "Doc fix",
             read_only_hint = false,
@@ -7696,6 +7790,9 @@ impl ServerHandler for WenlanMcpServer {
         }
         if let Some(refusal) = self.local_only_refusal(request.name.as_ref()) {
             return Ok(refusal);
+        }
+        if let Some(folder_space) = &self.folder_space {
+            folder_space.refresh(&self.client).await;
         }
         let tcc = ToolCallContext::new(self, request, context);
         crate::lock_state::with_session_pin(self.space_pin.clone(), self.tool_router.call(tcc))

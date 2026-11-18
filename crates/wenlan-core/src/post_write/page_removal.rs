@@ -18,6 +18,10 @@ use wenlan_types::responses::PageRemovalErrorCode;
 pub enum PageRemover<'a> {
     /// The person, with their own gesture in the app.
     Person,
+    /// A team member in person, forwarded by the team gate and pinned to the
+    /// Space it checked; named by their history actor. Archives as the
+    /// person does, and may never delete for good.
+    Member(&'a str),
     /// Anything else, named by its agent name (`unknown` when it sent none).
     Ai(&'a str),
 }
@@ -27,6 +31,7 @@ impl PageRemover<'_> {
     pub fn audit_name(&self) -> &str {
         match self {
             Self::Person => "person",
+            Self::Member(member) => member,
             Self::Ai(agent) => agent,
         }
     }
@@ -141,7 +146,7 @@ pub async fn archive_page_as(
         return Ok(None);
     }
     let expected_version = match remover {
-        PageRemover::Person => None,
+        PageRemover::Person | PageRemover::Member(_) => None,
         PageRemover::Ai(_) => {
             if page_holds_persons_work(db, &page).await? {
                 log::warn!(

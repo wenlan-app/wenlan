@@ -78,12 +78,38 @@ async fn stand_in(log: Log, req: Request) -> Response {
                 {"id": "b9", "space": "Beta", "title": "Beta secret"},
             ],
         }),
+        ("GET", "/api/memory/graph") => json!({
+            "entities": [{"id": "e1", "name": "Beta secret"}],
+            "relations": [], "memories": [], "memory_links": [],
+            "pages": [
+                {"id": "a1", "title": "Alpha one", "space": "Alpha", "storage_path": "/srv/a1.md", "entity_id": "e1"},
+                {"id": "a2", "title": "Alpha two", "space": "Alpha", "entity_id": null},
+                {"id": "b1", "title": "Beta secret", "space": "Beta", "entity_id": "e1"},
+            ],
+            "page_links": [
+                {"from": {"kind": "page", "id": "a1"}, "to": {"kind": "page", "id": "a2"}},
+                {"from": {"kind": "page", "id": "a1"}, "to": {"kind": "page", "id": "b1", "title": "Beta secret"}},
+                {"from": {"kind": "page", "id": "a2"}, "to": {"kind": "entity", "id": "e1"}},
+            ],
+        }),
+        ("GET", "/api/knowledge/folders") => {
+            let space = pinned.clone().unwrap_or_default();
+            json!({"folders": [
+                {"path": space, "parent_path": "", "name": space},
+                {"path": format!("{space}/Q3"), "parent_path": space, "name": "Q3"},
+                // A folder of another Space, as a daemon bug could return.
+                {"path": "Beta/Beta secret", "parent_path": "Beta", "name": "Beta secret"},
+            ], "truncated": false})
+        }
         ("GET", "/api/pages/recent") => json!([
             {"id": format!("r-{}", pinned.clone().unwrap_or_default()), "timestamp_ms": 5},
         ]),
         ("GET", "/api/pages/recent-changes") => json!([
             {"page_id": format!("c-{}", pinned.clone().unwrap_or_default()), "changed_at_ms": 5},
         ]),
+        // A route that answers for some other page than the one named, as a
+        // list route under `/api/pages/` would.
+        ("GET", "/api/pages/alias") => json!({"page": {"id": "a2", "space": "Alpha"}}),
         ("GET", _) if path.starts_with("/api/pages/") && path.matches('/').count() == 3 => {
             let id = path.trim_start_matches("/api/pages/");
             match space_of(id) {
@@ -131,7 +157,7 @@ async fn fixture() -> Fixture {
     });
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
-    tokio::spawn(async move { axum::serve(listener, daemon).await });
+    tokio::spawn(async move { axum::serve(listener, daemon.into_make_service()).await });
 
     let dir = tempfile::tempdir().unwrap();
     let team_path = dir.path().join(team::TEAM_FILE);
@@ -336,6 +362,24 @@ async fn a_member_reaches_only_their_own_spaces() {
             None,
             ok,
             &["Beta"],
+        ),
+        case(
+            "recent changes of one own Space",
+            AlphaWriter,
+            "GET",
+            "/api/pages/recent-changes?space=Alpha",
+            None,
+            ok,
+            &["Alpha"],
+        ),
+        case(
+            "recent changes of another Space",
+            AlphaWriter,
+            "GET",
+            "/api/pages/recent-changes?space=Beta",
+            None,
+            not_found,
+            &[],
         ),
         // By body field.
         case(
@@ -638,6 +682,241 @@ async fn a_member_reaches_only_their_own_spaces() {
             ok,
             &["Alpha"],
         ),
+        // Archive, restore, basis, graph (team web controls).
+        case(
+            "archive own page",
+            AlphaWriter,
+            "POST",
+            "/api/pages/a1/archive",
+            None,
+            ok,
+            &["Alpha"],
+        ),
+        case(
+            "archive another Space's page by id",
+            AlphaWriter,
+            "POST",
+            "/api/pages/b1/archive",
+            None,
+            not_found,
+            &[],
+        ),
+        case(
+            "archive own page: a query Space is dropped, the page's own is pinned",
+            AlphaWriter,
+            "POST",
+            "/api/pages/a1/archive?space=Beta",
+            None,
+            ok,
+            &["Alpha"],
+        ),
+        case(
+            "archive own page naming another Space in the body",
+            AlphaWriter,
+            "POST",
+            "/api/pages/a1/archive",
+            Some(json!({"space": "Beta"})),
+            not_found,
+            &[],
+        ),
+        case(
+            "archive as a reader",
+            AlphaReader,
+            "POST",
+            "/api/pages/a1/archive",
+            None,
+            forbidden,
+            &[],
+        ),
+        case(
+            "restore own page",
+            AlphaWriter,
+            "POST",
+            "/api/pages/a1/restore",
+            None,
+            ok,
+            &["Alpha"],
+        ),
+        case(
+            "restore another Space's page by id",
+            AlphaWriter,
+            "POST",
+            "/api/pages/b1/restore",
+            None,
+            not_found,
+            &[],
+        ),
+        case(
+            "restore own page: a query Space is dropped, the page's own is pinned",
+            AlphaWriter,
+            "POST",
+            "/api/pages/a1/restore?domain=Beta",
+            None,
+            ok,
+            &["Alpha"],
+        ),
+        case(
+            "restore own page naming another Space in the body",
+            AlphaWriter,
+            "POST",
+            "/api/pages/a1/restore",
+            Some(json!({"domain": "Beta"})),
+            not_found,
+            &[],
+        ),
+        case(
+            "restore as a reader",
+            AlphaReader,
+            "POST",
+            "/api/pages/a1/restore",
+            None,
+            forbidden,
+            &[],
+        ),
+        case(
+            "restore a page that is not there",
+            AlphaWriter,
+            "POST",
+            "/api/pages/zz/restore",
+            None,
+            not_found,
+            &[],
+        ),
+        case(
+            "delete for good stays the owner's",
+            AlphaWriter,
+            "DELETE",
+            "/api/pages/a1?permanent=true",
+            None,
+            not_found,
+            &[],
+        ),
+        case(
+            "add a basis in the same Space",
+            AlphaWriter,
+            "PUT",
+            "/api/pages/a1/basis/a2",
+            Some(json!({"version": 1})),
+            ok,
+            &["Alpha"],
+        ),
+        case(
+            "remove a basis in the same Space",
+            AlphaWriter,
+            "DELETE",
+            "/api/pages/a1/basis/a2",
+            None,
+            ok,
+            &["Alpha"],
+        ),
+        case(
+            "add a basis from another Space",
+            AlphaWriter,
+            "PUT",
+            "/api/pages/a1/basis/b1",
+            Some(json!({"version": 1})),
+            not_found,
+            &[],
+        ),
+        case(
+            "remove a basis from another Space",
+            AlphaWriter,
+            "DELETE",
+            "/api/pages/a1/basis/b1",
+            None,
+            not_found,
+            &[],
+        ),
+        case(
+            "add a basis to another Space's page",
+            AlphaWriter,
+            "PUT",
+            "/api/pages/b1/basis/a1",
+            Some(json!({"version": 1})),
+            not_found,
+            &[],
+        ),
+        case(
+            "add a basis that is not there",
+            AlphaWriter,
+            "PUT",
+            "/api/pages/a1/basis/zz",
+            Some(json!({"version": 1})),
+            not_found,
+            &[],
+        ),
+        case(
+            "add a basis whose id answers for another page",
+            AlphaWriter,
+            "PUT",
+            "/api/pages/a1/basis/alias",
+            Some(json!({"version": 1})),
+            not_found,
+            &[],
+        ),
+        case(
+            "add a basis naming another Space in the body",
+            AlphaWriter,
+            "PUT",
+            "/api/pages/a1/basis/a2",
+            Some(json!({"version": 1, "space": "Beta"})),
+            not_found,
+            &[],
+        ),
+        case(
+            "add a basis: a query Space is dropped, the page's own is pinned",
+            AlphaWriter,
+            "PUT",
+            "/api/pages/a1/basis/a2?space=Beta",
+            Some(json!({"version": 1})),
+            ok,
+            &["Alpha"],
+        ),
+        case(
+            "add a basis as a reader",
+            AlphaReader,
+            "PUT",
+            "/api/pages/a1/basis/a2",
+            Some(json!({"version": 1})),
+            not_found,
+            &[],
+        ),
+        case(
+            "remove a basis as a reader",
+            AlphaReader,
+            "DELETE",
+            "/api/pages/a1/basis/a2",
+            None,
+            not_found,
+            &[],
+        ),
+        case(
+            "the graph of a reader's Spaces",
+            AlphaReader,
+            "GET",
+            "/api/memory/graph",
+            None,
+            ok,
+            &["Alpha"],
+        ),
+        case(
+            "the graph: a query Space is dropped, only the member's are read",
+            AlphaWriter,
+            "GET",
+            "/api/memory/graph?space=Beta",
+            None,
+            ok,
+            &["Alpha"],
+        ),
+        case(
+            "lock has no row",
+            AlphaWriter,
+            "POST",
+            "/api/pages/a1/lock",
+            Some(json!({"locked": true})),
+            not_found,
+            &[],
+        ),
         // By path: not in the table, or not plain.
         case(
             "a call with no row",
@@ -663,6 +942,77 @@ async fn a_member_reaches_only_their_own_spaces() {
             "DELETE",
             "/api/pages/a1",
             None,
+            not_found,
+            &[],
+        ),
+        // Folders: a writer makes and moves inside their Space; a reader
+        // only sees them; a page of another Space is not there.
+        case(
+            "folder list",
+            AlphaReader,
+            "GET",
+            "/api/knowledge/folders",
+            None,
+            ok,
+            &["Alpha"],
+        ),
+        case(
+            "folder create by a writer",
+            AlphaWriter,
+            "POST",
+            "/api/knowledge/folders",
+            Some(json!({"space": "Alpha", "parent_path": "Alpha", "name": "Q3"})),
+            ok,
+            &["Alpha"],
+        ),
+        case(
+            "folder create by a reader",
+            AlphaReader,
+            "POST",
+            "/api/knowledge/folders",
+            Some(json!({"space": "Alpha", "parent_path": "Alpha", "name": "Q3"})),
+            forbidden,
+            &[],
+        ),
+        case(
+            "folder create in another Space",
+            AlphaWriter,
+            "POST",
+            "/api/knowledge/folders",
+            Some(json!({"space": "Beta", "parent_path": "Beta", "name": "Q3"})),
+            not_found,
+            &[],
+        ),
+        case(
+            "page move by a writer",
+            AlphaWriter,
+            "POST",
+            "/api/pages/a1/move",
+            Some(
+                json!({"expected_storage_path": "Alpha/a1.md", "folder_path": "Alpha/Q3", "operation_id": "op-1"}),
+            ),
+            ok,
+            &["Alpha"],
+        ),
+        case(
+            "page move by a reader",
+            AlphaReader,
+            "POST",
+            "/api/pages/a1/move",
+            Some(
+                json!({"expected_storage_path": "Alpha/a1.md", "folder_path": "Alpha/Q3", "operation_id": "op-1"}),
+            ),
+            forbidden,
+            &[],
+        ),
+        case(
+            "page move of another Space's page",
+            AlphaWriter,
+            "POST",
+            "/api/pages/b1/move",
+            Some(
+                json!({"expected_storage_path": "Beta/b1.md", "folder_path": "Beta", "operation_id": "op-1"}),
+            ),
             not_found,
             &[],
         ),
@@ -706,6 +1056,106 @@ async fn a_member_reaches_only_their_own_spaces() {
             assert!(!text.contains(private), "{}: {private} in {text}", case.why);
         }
     }
+}
+
+/// A member's folders come from each of their Spaces, each Space a top
+/// folder, and nothing of a Space they were not given.
+#[tokio::test]
+async fn a_members_folders_are_their_spaces_folders_only() {
+    let f = fixture().await;
+    let (status, answer) = call(
+        &f.state,
+        "GET",
+        &format!("{PREFIX}/api/knowledge/folders"),
+        &f.alpha_writer.1,
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let paths: Vec<&str> = answer["folders"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|folder| folder["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(paths, ["Alpha", "Alpha/Q3"]);
+    assert!(!answer.to_string().contains("Beta"), "{answer}");
+}
+
+/// The graph keeps the member's pages and only the links between them: no
+/// page, title, entity or link end of another Space reaches the browser.
+#[tokio::test]
+async fn the_graph_shows_only_the_members_pages_and_their_links() {
+    let f = fixture().await;
+    let (status, answer) = call(
+        &f.state,
+        "GET",
+        &format!("{PREFIX}/api/memory/graph"),
+        &f.alpha_writer.1,
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let ids: Vec<&str> = answer["pages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|page| page["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["a1", "a2"]);
+    assert_eq!(
+        answer["page_links"],
+        json!([{"from": {"kind": "page", "id": "a1"}, "to": {"kind": "page", "id": "a2"}}])
+    );
+    for key in ["entities", "relations", "memories", "memory_links"] {
+        assert_eq!(answer[key], json!([]), "{key}");
+    }
+    // No entity id: two pages sharing a subject is not told.
+    for page in answer["pages"].as_array().unwrap() {
+        assert_eq!(page["entity_id"], Value::Null, "{page}");
+    }
+    let text = answer.to_string();
+    assert!(
+        !text.contains("b1") && !text.contains("Beta") && !text.contains("/srv/"),
+        "{text}"
+    );
+    assert_eq!(
+        f.seen()
+            .iter()
+            .map(|seen| seen.space().unwrap_or(""))
+            .collect::<Vec<_>>(),
+        ["Alpha"]
+    );
+}
+
+/// The browser's copy of the table (`src/web/team.ts` `GATE_ROWS`) names
+/// exactly these rows, so a control is never offered for a call the gate
+/// refuses, nor hidden for one it allows.
+#[test]
+fn the_browser_mirror_names_exactly_the_rows() {
+    const TEAM_TS: &str = include_str!("../../../src/web/team.ts");
+    let start = TEAM_TS
+        .find("const GATE_ROWS")
+        .expect("GATE_ROWS in team.ts");
+    let end = start + TEAM_TS[start..].find("];").unwrap();
+    let mut mirror: Vec<(String, String)> = TEAM_TS[start..end]
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.trim().trim_start_matches('[').split('"');
+            let method = parts.nth(1)?.to_string();
+            let path = parts.nth(1)?.to_string();
+            Some((method, path))
+        })
+        .collect();
+    let mut rows: Vec<(String, String)> = CALLS
+        .iter()
+        .map(|call| (call.method.to_string(), call.path.to_string()))
+        .collect();
+    mirror.sort();
+    rows.sort();
+    assert_eq!(mirror, rows);
 }
 
 /// A member's entry for a Space the server does not host for the team
@@ -877,7 +1327,7 @@ async fn every_daemon_route_without_a_row_is_not_found() {
                         .path
                         .split('/')
                         .zip(path.split('/'))
-                        .all(|(a, b)| a == b || (a == "{id}" && b.starts_with('{')))
+                        .all(|(a, b)| a == b || (a.starts_with('{') && b.starts_with('{')))
             });
         if in_table {
             allowed += 1;
@@ -1164,4 +1614,247 @@ async fn every_bound_daemon_route_without_a_row_is_not_found() {
     }
     assert_eq!(allowed, CALLS.len(), "every row is a bound daemon route");
     assert!(checked > 300, "the daemon's routes were read ({checked})");
+}
+
+/// A folder answer keeps the folder's `path` (already the member's) and
+/// still loses every other private key.
+#[test]
+fn a_folder_answer_keeps_only_the_folder_path() {
+    let mut list = json!({"folders": [
+        {"path": "Alpha/Q3", "parent_path": "Alpha", "name": "Q3", "absolute_path": "/srv/pages/a/Q3"},
+    ], "knowledge_path": "/srv/pages", "truncated": false});
+    strip_private_keeping_folder_paths(&mut list);
+    assert_eq!(
+        list,
+        json!({"folders": [{"path": "Alpha/Q3", "parent_path": "Alpha", "name": "Q3"}], "truncated": false})
+    );
+    let mut made = json!({"path": "Alpha/Q3", "nested": {"path": "/srv/pages/a/Q3"}});
+    strip_private_keeping_folder_paths(&mut made);
+    assert_eq!(made, json!({"path": "Alpha/Q3", "nested": {}}));
+}
+
+/// End to end: the real gate in front of a real daemon with real files. A
+/// writer sees their Space as a top folder, makes a folder in it and moves
+/// a page there by the paths they see; no server path reaches them, and
+/// another member's folder appears for them too (folders are the Space's).
+#[tokio::test]
+async fn a_member_uses_folders_through_the_gate_and_a_real_daemon() {
+    const SPACE: &str = "產品:A";
+    const FOLDER: &str = "產品-A";
+    let dir = tempfile::tempdir().unwrap();
+    let db = Arc::new(
+        wenlan_core::db::MemoryDB::new(dir.path(), Arc::new(wenlan_core::events::NoopEmitter))
+            .await
+            .unwrap(),
+    );
+    db.create_space(SPACE, None, false).await.unwrap();
+    db.create_space("Private", None, false).await.unwrap();
+    let root = dir.path().join("pages");
+    std::fs::create_dir_all(root.join(FOLDER)).unwrap();
+    std::fs::create_dir_all(root.join("Private").join("Secret plans")).unwrap();
+    wenlan_core::space_folders::turn_on(&root).unwrap();
+    let id = "page_00000000-0000-4000-8000-00000000e2e1";
+    let draft = db
+        .create_page_draft_with_id_in_registered_space_and_folder(
+            id,
+            "路線",
+            "Body",
+            Some(SPACE),
+            FOLDER,
+        )
+        .await
+        .unwrap();
+    let wenlan_core::pages::PageDraftPublishOutcome::Published(page) =
+        db.publish_page_draft(id, draft.version).await.unwrap()
+    else {
+        panic!("publish")
+    };
+    let absolute = wenlan_core::export::knowledge::KnowledgeProjectionWrite::new(root.clone(), &db)
+        .write_page_gated(&db, &page)
+        .await
+        .unwrap()
+        .unwrap();
+    let file = std::path::Path::new(&absolute)
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+
+    let daemon_state = Arc::new(tokio::sync::RwLock::new(crate::state::ServerState {
+        db: Some(db.clone()),
+        lint_config: crate::state::LintServerConfig::new(vec![], Some(root.clone())),
+        ..Default::default()
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let daemon = crate::router::build_router(daemon_state);
+    tokio::spawn(async move { axum::serve(listener, daemon.into_make_service()).await });
+
+    let team_dir = dir.path().join("team");
+    std::fs::create_dir_all(&team_dir).unwrap();
+    let team_path = team_dir.join(team::TEAM_FILE);
+    let settings_path = team_dir.join(shared_space::SETTINGS_FILE);
+    let folder = team_dir.join("team-spaces").join("a");
+    let scope = Scope::Space(SPACE.into());
+    shared_space::ensure_space_file(
+        &folder,
+        &scope,
+        SPACE,
+        &SpaceMember {
+            id: "server".into(),
+            name: "Server".into(),
+        },
+    )
+    .unwrap();
+    shared_space::join_at(&settings_path, &scope, &folder, "Server").unwrap();
+    shared_space::update_share(&settings_path, &scope, |share| share.hosted = true).unwrap();
+    let grant = |access| {
+        vec![TeamSpaceAccess {
+            space: SPACE.into(),
+            access,
+            id: None,
+        }]
+    };
+    let (_, writer) = team::add_member(&team_path, "王小明", &grant(TeamAccess::Write)).unwrap();
+    let (_, reader) = team::add_member(&team_path, "Bo", &grant(TeamAccess::Read)).unwrap();
+    team::set_url(&team_path, Some("https://team.example.com/")).unwrap();
+    let state = TeamState {
+        team_path,
+        settings_path,
+        daemon_url: format!("http://127.0.0.1:{port}"),
+        mcp: Arc::default(),
+    };
+    let folders = |answer: &Value| -> Vec<String> {
+        answer["folders"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| f["path"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let no_server_path = |answer: &Value| {
+        let text = answer.to_string();
+        assert!(!text.contains(FOLDER), "{text}");
+        assert!(!text.contains("Private"), "{text}");
+        assert!(!text.contains(&dir.path().display().to_string()), "{text}");
+    };
+
+    let (status, answer) = call(
+        &state,
+        "GET",
+        &format!("{PREFIX}/api/knowledge/folders"),
+        &reader,
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(folders(&answer), [SPACE]);
+    no_server_path(&answer);
+
+    let (status, answer) = call(
+        &state,
+        "POST",
+        &format!("{PREFIX}/api/knowledge/folders"),
+        &reader,
+        Some(json!({"space": SPACE, "parent_path": SPACE, "name": "Q3"})),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{answer}");
+
+    let (status, answer) = call(
+        &state,
+        "POST",
+        &format!("{PREFIX}/api/knowledge/folders"),
+        &writer,
+        Some(json!({"space": SPACE, "parent_path": SPACE, "name": "Q3"})),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(answer["path"], format!("{SPACE}/Q3"));
+    no_server_path(&answer);
+    assert!(root.join(FOLDER).join("Q3").is_dir());
+
+    // The reader sees the folder the writer made.
+    let (_, answer) = call(
+        &state,
+        "GET",
+        &format!("{PREFIX}/api/knowledge/folders"),
+        &reader,
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(folders(&answer), [SPACE.to_string(), format!("{SPACE}/Q3")]);
+
+    // The page list gives the member the page's place as they see it.
+    let (status, answer) = call(
+        &state,
+        "GET",
+        &format!("{PREFIX}/api/pages?space={}", urlencoding(SPACE)),
+        &writer,
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(answer["pages"][0]["space_path"], format!("{SPACE}/{file}"));
+    assert!(answer["pages"][0].get("storage_path").is_none());
+    no_server_path(&answer);
+
+    let (status, answer) = call(
+        &state,
+        "POST",
+        &format!("{PREFIX}/api/pages/{id}/move"),
+        &writer,
+        Some(json!({
+            "expected_storage_path": format!("{SPACE}/{file}"),
+            "folder_path": format!("{SPACE}/Q3"),
+            "operation_id": "00000000-0000-4000-8000-00000000e2e2",
+        })),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(answer["space_path"], format!("{SPACE}/Q3/{file}"));
+    no_server_path(&answer);
+    assert!(root.join(FOLDER).join("Q3").join(&file).is_file());
+
+    // A target outside the Space is refused and nothing moves.
+    let (status, _) = call(
+        &state,
+        "POST",
+        &format!("{PREFIX}/api/pages/{id}/move"),
+        &writer,
+        Some(json!({
+            "expected_storage_path": format!("{SPACE}/Q3/{file}"),
+            "folder_path": "Private/Secret plans",
+            "operation_id": "00000000-0000-4000-8000-00000000e2e3",
+        })),
+        &[],
+    )
+    .await;
+    assert!(status.is_client_error(), "{status}");
+    assert!(root.join(FOLDER).join("Q3").join(&file).is_file());
+    assert_eq!(
+        std::fs::read_dir(root.join("Private").join("Secret plans"))
+            .unwrap()
+            .count(),
+        0
+    );
+}
+
+fn urlencoding(text: &str) -> String {
+    text.bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect()
 }

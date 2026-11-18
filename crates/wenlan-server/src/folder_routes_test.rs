@@ -162,6 +162,7 @@ async fn scoped_folder_listing_returns_only_authorized_live_ancestors() {
     let Json(response) = handle_list_knowledge_folders(
         State(state.clone()),
         SpaceHeader(Some("work".into())),
+        crate::team_actor::TeamActor(None),
         TruthView::automatic(),
         Query(Default::default()),
     )
@@ -179,6 +180,7 @@ async fn scoped_folder_listing_returns_only_authorized_live_ancestors() {
     let Json(global) = handle_list_knowledge_folders(
         State(state.clone()),
         SpaceHeader(None),
+        crate::team_actor::TeamActor(None),
         TruthView::automatic(),
         Query(Default::default()),
     )
@@ -189,6 +191,7 @@ async fn scoped_folder_listing_returns_only_authorized_live_ancestors() {
     assert!(handle_create_knowledge_folder(
         State(state.clone()),
         SpaceHeader(Some("work".into())),
+        crate::team_actor::TeamActor(None),
         Json(wenlan_types::requests::CreateKnowledgeFolderRequest {
             parent_path: "".into(),
             name: "Forbidden".into()
@@ -199,6 +202,7 @@ async fn scoped_folder_listing_returns_only_authorized_live_ancestors() {
     let Json(created) = handle_create_knowledge_folder(
         State(state),
         SpaceHeader(None),
+        crate::team_actor::TeamActor(None),
         Json(wenlan_types::requests::CreateKnowledgeFolderRequest {
             parent_path: "Visible".into(),
             name: "New".into(),
@@ -282,6 +286,7 @@ async fn scoped_folder_listing_uses_authoritative_page_fields_for_live_files() {
     let Json(response) = handle_list_knowledge_folders(
         State(state),
         SpaceHeader(Some("work".into())),
+        crate::team_actor::TeamActor(None),
         TruthView::automatic(),
         Query(Default::default()),
     )

@@ -232,10 +232,12 @@ pub async fn handle_get_page(
     let edit_root = page_root
         .clone()
         .unwrap_or_else(|| wenlan_core::config::load_config().knowledge_path_or_default());
-    if let Err(error) =
-        wenlan_core::sources::page_watcher::sync_page_file_if_changed(&db, &edit_root, &id).await
+    match wenlan_core::sources::page_watcher::sync_page_file_if_changed(&db, &edit_root, &id).await
     {
-        tracing::debug!("[pages] reading back {id} from its file failed: {error}");
+        // An edit just taken in from the file may be a rule the person wrote.
+        Ok(true) => drop(crate::skill_grow::RulesPageWrite::begin(&state, Some(&id)).await),
+        Ok(false) => {}
+        Err(error) => tracing::debug!("[pages] reading back {id} from its file failed: {error}"),
     }
     let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
     // Q1 browse surface: a shadow id resolves 200 here, so read the unfenced
@@ -518,6 +520,7 @@ pub async fn handle_set_page_review_required(
     Path(id): Path<String>,
     Json(req): Json<wenlan_types::requests::SetPageReviewRequiredRequest>,
 ) -> Result<Json<wenlan_types::responses::PageReviewRequiredResponse>, ServerError> {
+    let _rules = crate::skill_grow::RulesPageWrite::begin(&state, Some(&id)).await;
     let db = {
         let s = state.read().await;
         s.db.clone().ok_or(ServerError::DbNotInitialized)?
@@ -555,12 +558,17 @@ static PAGE_LIFECYCLE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(()
 /// An AI tool (any request that is not the person's, see
 /// `memory_routes::caller_is_person`) may not archive a page holding the
 /// person's work (UX-WHO-2). Every archive is recorded in `agent_activity`.
+///
+/// A team member the team gate forwards archives in person, recorded as
+/// that member, and only a page filed in the Space the gate checked.
 pub async fn handle_archive_page(
     State(state): State<Arc<RwLock<ServerState>>>,
     headers: HeaderMap,
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
+    crate::team_actor::TeamActor(member): crate::team_actor::TeamActor,
     Path(id): Path<String>,
 ) -> Result<Json<PageRemovalResponse>, ServerError> {
+    let _rules = crate::skill_grow::RulesPageWrite::begin(&state, Some(&id)).await;
     let (db, page_root) = {
         let s = state.read().await;
         (
@@ -569,17 +577,44 @@ pub async fn handle_archive_page(
         )
     };
     let agent = extract_agent_name(&headers, None);
-    let remover = page_remover(&headers, &agent);
+    let (remover, actor) = match &member {
+        Some(member) => {
+            member_page_in_pinned_space(&db, &id, header_space.as_deref()).await?;
+            (None, member.edited_by())
+        }
+        None => {
+            let remover = page_remover(&headers, &agent);
+            let actor = remover_actor(&remover);
+            (Some(remover), actor)
+        }
+    };
+    // A member's archive is recorded under their name in the activity log
+    // as well as in the page's history.
+    let remover = remover.unwrap_or(wenlan_core::post_write::PageRemover::Member(&actor));
     let session = crate::session_routes::extract_session_ref(&headers);
     archive_page_for(
         &db,
         page_root,
         &id,
         remover,
+        &actor,
         header_space.as_deref(),
         session.as_ref(),
     )
     .await
+}
+
+/// Who an archive or restore is recorded as (`page_history.actor`).
+fn remover_actor(remover: &wenlan_core::post_write::PageRemover<'_>) -> String {
+    match remover {
+        wenlan_core::post_write::PageRemover::Person => {
+            wenlan_core::db::page_history_actor::PERSON_ACTOR.to_string()
+        }
+        wenlan_core::post_write::PageRemover::Member(actor) => (*actor).to_string(),
+        wenlan_core::post_write::PageRemover::Ai(agent) => {
+            wenlan_core::db::page_history_actor::ai_actor(agent)
+        }
+    }
 }
 
 /// Who asks to archive or delete a page: the person only when the request
@@ -616,6 +651,7 @@ async fn archive_page_for(
     page_root: Option<std::path::PathBuf>,
     id: &str,
     remover: wenlan_core::post_write::PageRemover<'_>,
+    actor: &str,
     header_space: Option<&str>,
     session: Option<&wenlan_types::SessionRef>,
 ) -> Result<Json<PageRemovalResponse>, ServerError> {
@@ -628,6 +664,13 @@ async fn archive_page_for(
     let archived_version = wenlan_core::post_write::archive_page_as(db, id, remover, &scope)
         .await
         .map_err(|error| page_removal_error(error, id))?;
+    // Who archived it, on that version's history row. Best effort: the
+    // archive already happened, and a missing name is shown as none.
+    if let Some(version) = archived_version {
+        if let Err(error) = db.stamp_page_history_actor(id, version, actor).await {
+            tracing::warn!("[page] archived {id} but could not record who: {error}");
+        }
+    }
     // The archive's history row names the session that asked for it, as a
     // create or refresh does: that one version, so no other row written in
     // the same second is stamped. Best effort: the archive already happened.
@@ -695,11 +738,14 @@ async fn archive_page_for(
 /// ([`wenlan_types::responses::RestorePageErrorCode`]).
 pub async fn handle_restore_page(
     State(state): State<Arc<RwLock<ServerState>>>,
+    headers: HeaderMap,
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
+    crate::team_actor::TeamActor(member): crate::team_actor::TeamActor,
     view: crate::truth_guard::TruthView,
     Path(id): Path<String>,
     Json(req): Json<wenlan_types::requests::RestorePageRequest>,
 ) -> Result<Json<wenlan_types::responses::RestorePageResponse>, ServerError> {
+    let _rules = crate::skill_grow::RulesPageWrite::begin(&state, Some(&id)).await;
     let (db, page_root) = {
         let state = state.read().await;
         (
@@ -709,6 +755,18 @@ pub async fn handle_restore_page(
                 .page_root()
                 .map(std::path::Path::to_path_buf),
         )
+    };
+    // A team member restores only a page filed in the Space the gate checked,
+    // and is recorded as that member.
+    let actor = match &member {
+        Some(member) => {
+            member_page_in_pinned_space(&db, &id, header_space.as_deref()).await?;
+            member.edited_by()
+        }
+        None => {
+            let agent = extract_agent_name(&headers, None);
+            remover_actor(&page_remover(&headers, &agent))
+        }
     };
     // Held through the projection below; see `PAGE_LIFECYCLE`.
     let _lifecycle = PAGE_LIFECYCLE.lock().await;
@@ -735,6 +793,17 @@ pub async fn handle_restore_page(
     )
     .await
     .map_err(restore_error)?;
+    // A replay of a restore that already landed writes nothing and answers
+    // the version it was asked at; naming anyone then would put a name on
+    // an earlier row.
+    if response.version != req.expected_version {
+        if let Err(error) = db
+            .stamp_page_history_actor(&id, response.version, &actor)
+            .await
+        {
+            tracing::warn!("[page] restored {id} but could not record who: {error}");
+        }
+    }
     if let Some(root) = page_root {
         // Use the current durable row rather than request/saved editor text.
         let projection = wenlan_core::export::knowledge::KnowledgeProjectionWrite::new(root, &db);
@@ -803,6 +872,7 @@ pub async fn handle_set_page_space(
     Path(id): Path<String>,
     Json(req): Json<wenlan_types::requests::SetPageSpaceRequest>,
 ) -> Result<Json<wenlan_types::responses::SetPageSpaceResponse>, ServerError> {
+    let _rules = crate::skill_grow::RulesPageWrite::begin(&state, Some(&id)).await;
     let (db, page_root) = {
         let state = state.read().await;
         (
@@ -913,6 +983,7 @@ pub async fn handle_delete_page(
     Path(id): Path<String>,
     axum::extract::Query(query): axum::extract::Query<DeletePageQuery>,
 ) -> Result<Json<PageRemovalResponse>, ServerError> {
+    let _rules = crate::skill_grow::RulesPageWrite::begin(&state, Some(&id)).await;
     let (db, page_root) = {
         let s = state.read().await;
         (
@@ -930,11 +1001,13 @@ pub async fn handle_delete_page(
     let remover = page_remover(&headers, &agent);
     if !query.permanent {
         let session = crate::session_routes::extract_session_ref(&headers);
+        let actor = remover_actor(&remover);
         return archive_page_for(
             &db,
             page_root,
             &id,
             remover,
+            &actor,
             header_space.as_deref(),
             session.as_ref(),
         )
@@ -1041,6 +1114,7 @@ pub async fn handle_create_page(
         &req.source_memory_ids,
         page_min_cluster_size,
     ) == "distilled";
+    let mut rules = crate::skill_grow::RulesPageWrite::begin(&state, None).await;
     let mut slow = crate::slow_save::SlowSaveLog::start("saving a page");
     let result = handle_create_page_inner(
         State(state),
@@ -1050,6 +1124,9 @@ pub async fn handle_create_page(
     )
     .await;
     slow.finish(&result);
+    if let Ok(Json(response)) = &result {
+        rules.page(&response.id);
+    }
     if is_distilled {
         match &result {
             Ok(Json(response)) if response.write_outcome == Some(WriteOutcome::Created) => {
@@ -1410,10 +1487,12 @@ async fn draft_response(
 pub async fn handle_move_page(
     State(state): State<SharedState>,
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
+    crate::team_actor::TeamActor(actor): crate::team_actor::TeamActor,
     view: crate::truth_guard::TruthView,
     Path(id): Path<String>,
-    Json(req): Json<MovePageRequest>,
+    Json(mut req): Json<MovePageRequest>,
 ) -> Result<Json<MovePageResponse>, ServerError> {
+    let _rules = crate::skill_grow::RulesPageWrite::begin(&state, Some(&id)).await;
     let (db, root) = {
         let s = state.read().await;
         (
@@ -1429,6 +1508,24 @@ pub async fn handle_move_page(
         .ok_or_else(|| ServerError::NotFound("page not found".into()))?;
     let root = root
         .ok_or_else(|| ServerError::ValidationError("Wiki projection is not configured".into()))?;
+    // A team member names paths as they see them, inside their Space's own
+    // folder only.
+    let member_view = match actor {
+        Some(_) => Some(
+            crate::member_folders::view(&db, &root, true, header_space.as_deref())
+                .await
+                .ok_or_else(|| {
+                    ServerError::ValidationError(
+                        "Folders need each Space kept in a folder of its own".into(),
+                    )
+                })?,
+        ),
+        None => None,
+    };
+    if let Some(member_view) = &member_view {
+        req.expected_storage_path = member_view.file_path(&req.expected_storage_path)?;
+        req.folder_path = member_view.folder_path(&req.folder_path)?;
+    }
     let projection_write = db.begin_page_projection_write();
     let storage_path = tokio::task::spawn_blocking(move || {
         // The blocking mutation may outlive cancellation of the request future.
@@ -1443,6 +1540,14 @@ pub async fn handle_move_page(
     })
     .await
     .map_err(|e| ServerError::Internal(e.to_string()))??;
+    // The answer keeps the server path; for a member the gate takes it out
+    // and `member_folders::add_space_paths` puts the path they see beside it.
+    if member_view
+        .as_ref()
+        .is_some_and(|member_view| member_view.shown(&storage_path).is_none())
+    {
+        return Err(ServerError::Internal("page moved outside the Space".into()));
+    }
     Ok(Json(MovePageResponse { storage_path }))
 }
 
@@ -1564,6 +1669,7 @@ pub async fn handle_publish_page_draft(
     Path(id): Path<String>,
     Json(req): Json<PageDraftVersionRequest>,
 ) -> Result<Json<PageDraftResponse>, ServerError> {
+    let _rules = crate::skill_grow::RulesPageWrite::begin(&state, Some(&id)).await;
     let (db, page_root) = {
         let s = state.read().await;
         (
@@ -1926,6 +2032,7 @@ pub async fn handle_rename_page(
     Path(id): Path<String>,
     Json(req): Json<wenlan_types::requests::RenamePageRequest>,
 ) -> Result<Json<wenlan_types::responses::RenamePageResponse>, ServerError> {
+    let _rules = crate::skill_grow::RulesPageWrite::begin(&state, Some(&id)).await;
     let (db, page_root) = {
         let state = state.read().await;
         (
@@ -2119,6 +2226,7 @@ pub async fn handle_update_page(
     Path(id): Path<String>,
     Json(wire): Json<wenlan_types::requests::ManualPageEditRequest>,
 ) -> Result<Json<wenlan_types::responses::ManualPageWriteResponse>, ServerError> {
+    let _rules = crate::skill_grow::RulesPageWrite::begin(&state, Some(&id)).await;
     let wenlan_types::requests::ManualPageEditRequest {
         edit: req,
         minor,
@@ -2290,6 +2398,7 @@ pub async fn handle_refresh_page(
     headers: HeaderMap,
     Json(req): Json<wenlan_types::requests::RefreshPageRequest>,
 ) -> Result<Json<wenlan_types::responses::PageWriteResponse>, ServerError> {
+    let _rules = crate::skill_grow::RulesPageWrite::begin(&state, Some(&id)).await;
     let telemetry = { state.read().await.telemetry.clone() };
     // The agent named on a staged revision card. Only the header counts: an
     // unattributed write leaves the card unattributed.
@@ -2883,6 +2992,7 @@ pub async fn handle_restore_page_version(
     headers: HeaderMap,
     Json(req): Json<wenlan_types::requests::RestorePageVersionRequest>,
 ) -> Result<Json<wenlan_types::responses::RestorePageVersionResponse>, ServerError> {
+    let _rules = crate::skill_grow::RulesPageWrite::begin(&state, Some(&id)).await;
     use wenlan_types::responses::RestorePageVersionErrorCode as Code;
     let proposer = headers
         .get("x-agent-name")
@@ -4778,6 +4888,9 @@ mod entity_page_guard_tests;
 #[path = "page_routes/real_folder_page_routes_test.rs"]
 mod real_folder_page_route_tests;
 
+#[cfg(test)]
+#[path = "page_routes/team_member_archive_test.rs"]
+mod team_member_archive_tests;
 #[cfg(test)]
 #[path = "page_routes/team_member_edit_test.rs"]
 mod team_member_edit_tests;

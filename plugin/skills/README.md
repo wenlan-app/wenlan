@@ -26,7 +26,7 @@ Skills must write `${CLAUDE_PLUGIN_ROOT}` with braces and no `:-` default: Claud
 | `/wenlan setup` | set up or repair Wenlan (installs the local runtime) |
 | `/wenlan lint [deep\|repair] [scope]` | diagnose, or resolve all findings safely |
 | `/wenlan steep [request] [space:<name>]` | prepare new material, update pages, or arrange existing knowledge around your goal |
-| `/wenlan wiki [space:<name>]` | read this repository and write a wiki about it, sized to the repository, each page tied to the code lines it relies on |
+| `/wenlan docs [space:<name>]` | read this repository and write docs about it, sized to the repository, each page tied to the code lines it relies on (earlier `/wenlan wiki`) |
 | `/wenlan pages [q]` | browse and open distilled pages |
 | `/wenlan curate <surface>` | deep audit of captures, revisions or refinements |
 | `/wenlan forget <id>` | delete one memory by ID, after confirmation |
@@ -48,6 +48,11 @@ ordered chain below. Higher layers override lower ones:
 | 4 | `~/.wenlan/spaces.toml` cwd-prefix mapping (longest prefix wins; ties go to first-defined) | see `plugin/examples/spaces.toml` |
 | 5 | registered cwd git-repo basename | `~/Repos/wenlan/...` → `wenlan`, only if that Space exists |
 | 6 | none | omit client context; daemon Default decides new writes |
+
+The terminal (`wenlan`) and the local MCP server (`wenlan-mcp` over stdio)
+walk the same chain from the folder they were started in, so an AI tool
+connected without this plugin lands in the same Space. `wenlan init`, run
+inside a repository, makes the Space layer 5 looks for.
 
 To pin a session to a specific bucket regardless of cwd, set
 `WENLAN_SPACE` before invoking Claude Code. To pin by working directory

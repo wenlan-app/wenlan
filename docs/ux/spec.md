@@ -562,7 +562,9 @@ and wait for evidence that people need them.
   for candidates; the ask leaves every Space's page at once. Cleared, the
   answer is for this Space only and other Spaces still ask. One Settings switch
   changes the answer later. Suggested edits to the person's own skills are still
-  asked one by one.
+  asked one by one. The ask, a No and the switch are about what Wenlan takes
+  from pages; a rule the person wrote themselves needs none of them
+  (UX-SKILL-10).
   原文：「可以」（2026-11-15 17:33Z，回覆[草圖](https://claude.ai/artifact/EqEaFuewDn2qBRyBrG7eHn)與「put the first ask at the top of the Space page, asked only once?」）；「而且儘量不用一直問用戶，或著第一次問，後面就不問了」（2026-11-15 20:21Z）；「第一次在空間那的改動，要有選項以後都自動，勾掉就是不要」（2026-11-15 21:24Z）。
 - **UX-SKILL-2** `shipped` The accepted "How I work" page is an ordinary
   Wenlan page with Update now, Undo last night and Stop. It shows its grounded
@@ -595,8 +597,9 @@ and wait for evidence that people need them.
   main file plus appendix files it names for when the work needs them. Every
   line names the page it comes from. The files say what the AI tools would be
   told right then, so Stop, the setting turned off, a deleted line and Undo
-  take them away the same way. Wenlan never changes or removes a file there
-  that it did not write.
+  take them away the same way; with the setting off, the rules the person
+  wrote themselves stay (UX-SKILL-10). Wenlan never changes or removes a file
+  there that it did not write.
   原文：「現在只想要把這層整合好再 .wenlan」（2026-11-15 22:20Z）；「AGENTS 檔案可以分層 不論是個人還是空間/專案/repo」（2026-11-15 22:39Z）。
 - **UX-SKILL-7** `shipped` For a Space connected to a repository, the wiki
   pull request also puts that Space's own rules (rules only, not decisions or
@@ -608,15 +611,46 @@ and wait for evidence that people need them.
   原文：「空間如果是 repo，那就直接對應上了」（2026-11-15 22:26Z）；「原本說就會寫 wiki folders 這點也要看要不要一起修改？」（2026-11-15 22:51Z）。
 - **UX-SKILL-8** `shipped` The rules used in every Space (rules only, not
   decisions or pitfalls) are also kept in
-  each connected AI tool's own always-read file (Claude Code's `CLAUDE.md`,
-  Codex's `AGENTS.md`), in one part marked as Wenlan's. Wenlan changes only
-  that part and never the person's own text around it. Only the installed
-  app does this: a test or trial run on other data never writes these files. The person is not asked
-  again: the one answer of UX-SKILL-1 covers it. When the lines change the
-  part follows; with the setting off, the tool disconnected, or no such lines
-  left, the part is taken out. A file that another one already brings in gets
-  no second copy.
-  原文：「為啥要外掛？直接把我們的規則同步過去工具，工具就會讀啊？」（2026-11-15 23:28Z）。
+  each connected AI tool's own always-read file, in one part marked as
+  Wenlan's: Claude Code's `CLAUDE.md`, Codex's `AGENTS.md`, the `GEMINI.md`
+  Gemini CLI and Antigravity both read, the `copilot-instructions.md` Copilot
+  CLI and Copilot in VS Code both read, Windsurf's `global_rules.md`,
+  OpenCode's and Zed's `AGENTS.md`. Kiro reads every file of a folder, so
+  there the rules are a file of Wenlan's own, `wenlan-rules.md`, and no file
+  of the person's is touched. Wenlan changes only
+  its part and never the person's own text around it: the file keeps its
+  line endings, its last line as it was, and its permissions. Wenlan's part
+  is what sits between its two marker lines, one start then one end, each
+  alone on a line and not inside a code example. A file Wenlan cannot safely
+  change is left exactly as it is and shown as blocked, with the reason: a
+  marker without its pair or more than one pair, a link that leads nowhere,
+  a file that is read-only, not text or unreadable, or a file of the
+  person's own where Wenlan's would go. A file the person saved while Wenlan
+  was working is left for the next pass. Wenlan never makes a
+  tool's folder: a tool that is not on the computer gets nothing. Only the
+  installed app does this: a test or trial run on other data never writes these files. The person is not asked
+  again: the one answer of UX-SKILL-1 covers it, and a rule the person wrote
+  themselves for every Space (UX-SKILL-10) needs no answer. When the lines
+  change the part follows; with the tool disconnected or no such lines left,
+  the part is taken out, and with the setting off only the rules the person
+  wrote themselves stay in it. A file is removed only when Wenlan made it
+  and nothing but Wenlan's part is in it; a file the person had first stays,
+  even empty. A file two tools share, or two names that
+  reach one file, gets one part, kept while either tool is connected, under
+  the smallest limit any connected tool reading it has. A file
+  that another one already brings in gets no second copy; only Claude Code's
+  and Gemini's files can bring one in, and a line shown inside a code example
+  brings nothing in. When OpenCode has no `AGENTS.md` of
+  its own Wenlan makes none, because OpenCode then reads Claude Code's file,
+  and the part there covers it. When the person's text and the part together
+  would pass the 6,000 characters Windsurf reads, the part is left out. Every
+  other tool (Cursor, Claude Desktop, ChatGPT and the rest) has no such file
+  Wenlan can write and gets the rules only when it asks Wenlan. Wenlan can
+  say, tool by tool, which of these holds and when Wenlan last wrote its
+  part (from Wenlan's own note, not the file's date); a tool is shown as
+  covered by another file only while that file holds the part. It
+  says what is in the file, not that the AI followed it.
+  原文：「為啥要外掛？直接把我們的規則同步過去工具，工具就會讀啊？」（2026-11-15 23:28Z）；「要有信心，馬上就要做了」（2026-11-17 05:01Z）。
 - **UX-SKILL-9** `shipped` In a Space shared with teammates, each person's
   "How I work" page stays on their own computer and is not sent to the
   others. A page a teammate wrote can still give that Space a rule, but never
@@ -624,6 +658,74 @@ and wait for evidence that people need them.
   person's own AI tools' files. Rules for the whole team go through the
   repo's `AGENTS.md` in a PR (UX-SKILL-7).
   原文：「我們這改動包含團隊了嗎？」「可以下個 PR 繼續開搞」（2026-11-15 23:30Z）。
+- **UX-SKILL-10** `shipped` A rule the person writes themselves counts at
+  once, with no model and no accept. On a page in a folder named Rules (規則,
+  规则; any depth, any app language), each top-level bullet the person wrote is
+  a rule, or a decision or pitfall when it starts with `[decision]` or
+  `[pitfall]`. It is decided bullet by bullet: a bullet counts when the person
+  wrote it. A bullet an AI tool or a teammate wrote, and AI text the person
+  only accepted, do not count this way and still go through the ask
+  (UX-SKILL-1, UX-SKILL-9); when an AI tool later changes other lines of the
+  page, the person's own bullets still count. A plain bullet the person adds
+  to a "How I work" page counts the same way, and the nightly update keeps it
+  on the page. `wenlan rules` prints these rules as "written by you" with the
+  page; a Space's own are listed before the lines Wenlan took from its pages.
+  The files of UX-SKILL-6 and UX-SKILL-8 follow when the page is saved; the
+  repository's `AGENTS.md` (UX-SKILL-7) gets them at the next wiki pull
+  request. A page in a Space, or in a Space's folder, gives rules for that
+  Space only; a page in no Space and outside every Space's folder gives rules
+  used in every Space. The setting and a No do not silence them;
+  `#not-for-ai-tools` on the page does.
+  原文：決定 4：「A rule the person writes themselves counts at once. AI tools get it and `wenlan rules` prints it, with no model needed. Rules the AI derives from pages still need the person's accept.」Qi-Xuan 以輸入「A」回答此題（2026-11-16 22:30Z；題目與決定記錄於 `/mnt/project-files/readme-2026-11/cover-v3/2026-11-16-app-changes-from-cover.md`，決定 4）。
+
+## From the terminal
+
+- **UX-CLI-1** `shipped` Same things, two doors. Whatever an AI tool can do in
+  Wenlan, a person can do from the terminal under the matching name
+  (`write_page` is `wenlan pages write`), and `wenlan tool call` reaches any
+  tool by its own name. The terminal adds only installing, setting up and team.
+  原文：「建議指令要完整，然後明確跟 MCP 的分工，有時候我還是會不太清楚區別」（2026-11-15 21:03Z）；「要的，以及你其他建議也同意。」（2026-11-15 21:36Z）。
+- **UX-CLI-2** `shipped` `wenlan --help` fits one screen: what a person needs
+  in the first week, in named groups. Everything else is under
+  `wenlan help all`. A command that leaves the short help, or gets a new name,
+  keeps working under its old name.
+  原文：「精簡這些，總感覺亂亂的」（2026-11-15 21:06Z）；選擇卡「四項都做」（2026-11-16 07:07Z）；選擇卡「wenlan repo」（2026-11-16 08:15Z）；第一頁只留 Start、Daily、Team 三組的草稿回「可」（2026-11-18 00:58Z）。
+- **UX-CLI-3** `shipped` Turning Wenlan on and off uses plain words:
+  `wenlan start`, `wenlan stop`, `wenlan restart`.
+  原文：「background 要改名？感覺像是 restart 就挺直觀的。」（2026-11-15 21:35Z）；「要的，以及你其他建議也同意。」（2026-11-15 21:36Z）。
+- **UX-CLI-4** `shipped` When something fails, the terminal says what happened
+  in plain words and names the next command to run. A refusal shows Wenlan's
+  own sentence, not a status code or an address.
+  原文：「要讓體驗簡潔易懂」（2026-11-16 08:23Z）。
+- **UX-CLI-5** `shipped` The repository is the Space. Inside a git
+  repository, `wenlan init` sets it up in one step: it makes a Space named
+  after the repository, ties the two, and connects the AI tools on this
+  computer. From then on the terminal and every AI tool started in that
+  folder use that Space without being told, and `wenlan status` shows which
+  Space the folder uses. `wenlan spaces` and `wenlan repo` keep working and
+  sit under `wenlan help all`. When it first ties a repository, `wenlan init`
+  asks once whether to open a pull request every day, and Enter means yes;
+  with nobody to ask, the daily run stays off and the command that turns it
+  on is named. It never ties a repository that is not yours without a yes.
+  原文：「跟空間啥的一起思考呢？」（2026-11-16 08:15Z）；「對 還有意思是指 讓他們進到 repo 後就可以下指令不用 wenlan repo 動作」（2026-11-16 08:30Z）；「那這樣 wenlan space 還有存在必要？」「還是說要怎麼整合整併」（2026-11-16 08:33Z）；「繼續推進」（2026-11-16 08:35Z）；「感覺可以」（2026-11-16，答「讓 init 多問一句『要不要每天自動開 PR』，預設是要」）。
+- **UX-CLI-6** `shipped` One command sets Wenlan up. `wenlan setup` (and
+  `npx wenlan setup`) writes the settings, connects every AI tool it finds on
+  this computer without asking, asks once whether to bring a folder in (Enter
+  skips), and says what to try; the one thing left by hand is restarting the
+  AI tools. A tool that already has Wenlan, through its plugin or an earlier
+  run, is left as it is. It works the same outside a repository; inside one
+  it names `wenlan init` and ties nothing. `--config-only` connects nothing
+  and asks nothing.
+  原文：「裝完的流程，是要那些需要人手動做，哪些是自動設好，要絲滑的體驗 dx ux」（2026-11-17 06:11Z）；「要的，另外想問如果不在 repo 內的情況，不知是否已考慮過」（2026-11-17 06:24Z）。
+- **UX-CLI-7** `shipped` In a repository Wenlan does not know, the terminal
+  asks only when the command cannot do its work without setup:
+  `wenlan repo publish` asks a person once "Set it up now?" and, on a yes,
+  sets the repository up and goes on. A command that works anyway (`recall`,
+  `capture`, `rules`, …) says one line about `wenlan init` the first time in
+  that repository and never again. An AI tool or a script is never asked and
+  is not shown the line; a command that cannot go on fails and names
+  `wenlan init`.
+  原文：「怎樣更好的 DX UX」（2026-11-17 05:28Z）；「沒問題，那繼續」（2026-11-17 06:45Z）。
 
 ## Adding to Wenlan
 

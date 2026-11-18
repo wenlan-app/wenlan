@@ -93,7 +93,7 @@ import "./page/pageDocumentTools.css";
 import KnowledgeContext from "./context/KnowledgeContext";
 import { pageReviewNotice, type PageReviewNotice } from "./page/pageReviewNotice";
 import { RailPanelTitle } from "./MemoryDetailPrimitives";
-import { PageLockSwitch } from "./page/PageLockSwitch";
+import { PageLockedNotice, PageLockSwitch } from "./page/PageLockSwitch";
 import { AiUpdateLine } from "./page/AiUpdateLine";
 import { ThisSentence } from "./page/ThisSentence";
 import { processCitations, stripCitationLinks } from "../../lib/pageCitations";
@@ -132,6 +132,7 @@ import { linkCompletionText, pageTitleKey, trimLikeDaemon } from "./editor/pageT
 import { loadAllLinkCandidates, linkNotesFor } from "./page/linkCandidates";
 import { leadingMarkdownH1, leadingMarkdownH1MatchesTitle, withoutLeadingTitleH1 } from "./editor/pageEditorPresentation";
 import { MovePageDialog } from "./pages/MovePageDialog";
+import { useKnowledgeFolders } from "./pages/useKnowledgeFolders";
 import { PageProjectionNotice } from "./pages/PageProjectionNotice";
 import { finishRenameLinks } from "./pages/renameLinksNotice";
 import { applyTextEdits, renameRewriteExplaining } from "./pages/renameLinkRewrite";
@@ -355,6 +356,9 @@ export default function PageDetail({
   const [wikiLinkPreview, setWikiLinkPreview] = useState<ReferencePreviewRequest | null>(null);
   const wikiLinkPreviewLeaveTimerRef = useRef<number | null>(null);
   const [moveOpen, setMoveOpen] = useState(false);
+  // A member has folders only while the owner keeps each Space in a folder
+  // of its own; then the list holds each of their Spaces as a top folder.
+  const memberFolders = useKnowledgeFolders({ enabled: teamAccess.member });
   const [editing, setEditing] = useState(false);
   const [restoreOpen, setRestoreOpen] = useState(false);
   useEffect(() => setRestoreOpen(false), [pageId]);
@@ -2440,7 +2444,9 @@ export default function PageDetail({
   // An entity's own page cannot rely on, or be, a note.
   // A team member's server keeps no basis marks, so the Pages section and its
   // Add a page link stay with the owner.
-  const basisEditable = page.creation_kind !== "entity" && !teamAccess.member;
+  // A member who can write the page's Space marks what it relies on there;
+  // the gate keeps both pages in that one Space.
+  const basisEditable = page.creation_kind !== "entity" && (!teamAccess.member || teamAccess.canEdit(page.space));
 
   // A page someone wrote reads as written: its own Markdown (tables, a
   // `## Sources` heading of its own, a first H1 that is not the title), with
@@ -2778,7 +2784,10 @@ export default function PageDetail({
   // The example wiki is for looking at: nothing in it can be moved, renamed or deleted.
   // Page actions sit in the top bar beside the page sidebar toggle, as Obsidian's
   // view header does; the title row keeps only the title.
-  const actionsMenu = exampleWiki || teamAccess.member ? null : (
+  // A team member who can write the page's Space gets one item, Archive page;
+  // moving, sharing, looks and deleting for good stay the owner's.
+  const memberMayArchive = teamAccess.member && teamAccess.canEdit(page.space) && canArchivePage(page);
+  const actionsMenu = exampleWiki || (teamAccess.member && !memberMayArchive) ? null : (
       <div className="page-detail-actions-anchor" ref={actionMenuRef}>
                 <button
                   ref={actionMenuTriggerRef}
@@ -2831,6 +2840,12 @@ export default function PageDetail({
                     role="menu"
                     tabIndex={-1}
                   >
+                    {/* A member who can edit the page's Space moves it between
+                        that Space's folders; the dialog offers no others. */}
+                    {teamAccess.member && teamAccess.canEdit(page.space) && (memberFolders.data?.folders ?? []).some(folder => folder.path === page.space) && (
+                    <button type="button" role="menuitem" disabled={storedActionPending || page.status !== "active" || !inventoryPageFilename(page) || editDirty || saveState.phase !== "idle" || editorStatus?.compositionActive} onClick={() => { closeActionMenu(); setMoveOpen(true); }}>{t("pages.folders.move")}</button>
+                    )}
+                    {!teamAccess.member && <>
                     <button type="button" role="menuitem" disabled={storedActionPending || page.status !== "active" || !inventoryPageFilename(page) || editDirty || saveState.phase !== "idle" || editorStatus?.compositionActive} onClick={() => { closeActionMenu(); setMoveOpen(true); }}>{t("pages.folders.move")}</button>
                     {!web && <button type="button" role="menuitem" disabled={storedActionBlocked || editDirty || saveState.phase !== "idle"} onClick={() => { closeActionMenu(); setPageExportOpen(true); }}>{t("pageExport.menuAction")}</button>}
                     {page.status === "active" && !exampleWiki && !teamScope.team ? (
@@ -2851,6 +2866,7 @@ export default function PageDetail({
                         {t(spaceOfPageShare || ownPageShare ? "sharing.menuMembers" : "sharing.menuShare")}
                       </button>
                     ) : null}
+                    </>}
                     {canArchivePage(page) && (
                       <button
                         className="page-detail-mobile-menu-item"
@@ -2862,7 +2878,7 @@ export default function PageDetail({
                         {t("pageDetail.archivePage")}
                       </button>
                     )}
-                    <button
+                    {!teamAccess.member && <button
                       className="page-detail-menu-danger"
                       disabled={
                         storedActionBlocked || renaming || renameMutation.isPending || deleteMutation.isPending || archiveMutation.isPending
@@ -2872,7 +2888,7 @@ export default function PageDetail({
                       type="button"
                     >
                       {t("pageDetail.deletePage")}
-                    </button>
+                    </button>}
                   </div>
                 ) : null}
               </div>
@@ -2927,7 +2943,7 @@ export default function PageDetail({
       <DetailReadingFrame className="page-detail-document">
         {page.status === "archived" && <div className="wiki-archive-notice" role="status">
           <p>{t("pages.archive.readOnly")}</p>
-          {!exampleWiki && <button type="button" onClick={() => setRestoreOpen(true)}>{t("pages.archive.restore")}</button>}
+          {!exampleWiki && (!teamAccess.member || teamAccess.canEdit(page.space)) && <button type="button" onClick={() => setRestoreOpen(true)}>{t("pages.archive.restore")}</button>}
         </div>}
         {/* A design draws the page's title itself (UX-LOOK-1); the app's own
             title stays for screen readers, so the design starts where it would. */}
@@ -3644,8 +3660,9 @@ export default function PageDetail({
           </div>
           {/* The daemon refuses to lock an entity shadow page. The switch is
               the page's review lock (UX-WHO-2). */}
-          {/* The lock and the knowledge graph are the owner's: the team server
-              keeps neither, so a member sees neither. */}
+          {/* The lock is the owner's: a member sees that the page is locked,
+              with no switch. */}
+          {page.creation_kind !== "entity" && teamAccess.member && page.review_required === true && <PageLockedNotice />}
           {page.creation_kind !== "entity" && !teamAccess.member && <PageLockSwitch
             locked={page.review_required === true}
             pending={reviewLockPending}
@@ -3656,12 +3673,12 @@ export default function PageDetail({
             }}
           />}
           <div className="note-info-sections">
-            {!teamAccess.member && <KnowledgeContext standaloneGraph diagramOnly key={pageId} kind="page" id={pageId} title={page.title}
+            <KnowledgeContext standaloneGraph diagramOnly key={pageId} kind="page" id={pageId} title={page.title}
               onOpenGraph={onOpenGraph ? () => onOpenGraph(pageId) : undefined}
               onNavigateMemory={(id) => { setInfoOpen(false); onMemoryClick(id); }}
               onNavigatePage={onPageClick}
               onNavigateEntity={onEntityClick ? (id) => { setInfoOpen(false); onEntityClick(id); } : undefined}
-            />}
+            />
             {hasRail && (
               <div className="flex flex-col gap-4">
                 {pageEntities.length > 0 && (
@@ -3713,11 +3730,11 @@ export default function PageDetail({
               onMarkBasis={basisEditable ? markBasis : undefined}
               onUnmarkBasis={basisEditable ? unmarkBasis : undefined}
               codeBasis={codeBasisRefs}
-              onUnmarkCodeBasis={unmarkCodeBasis}
+              onUnmarkCodeBasis={teamAccess.member ? undefined : unmarkCodeBasis}
               shares={shares.data}
               openVersion={openLostVersion}
               onOpenedVersion={clearOpenLostVersion}
-              sourcesAction={page.status === "active" && canUpdateFromSources ? <button
+              sourcesAction={page.status === "active" && canUpdateFromSources && !teamAccess.member ? <button
                 className="note-info-sources-action"
                 disabled={storedActionBlocked || redistillMutation.isPending}
                 aria-busy={redistillMutation.isPending}

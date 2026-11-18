@@ -70,7 +70,10 @@ claim hooks are active without checking the current worktree.
   real pages folder.
 - Request defaults: `WENLAN_AGENT_NAME` supplies the CLI identity when no explicit
   agent name is given; `WENLAN_DEFAULT_SPACE` is an overridable CLI/MCP fallback, while
-  the strict `WENLAN_SPACE` lock wins over both explicit and default values.
+  the strict `WENLAN_SPACE` lock wins over both explicit and default values. With none
+  of them, the CLI and the stdio MCP server use the Space their working folder points
+  at (`wenlan_types::folder_space`); a test that must not pick one runs outside a
+  repository whose folder name is a registered Space.
 - Daemon recovery: on a connect failure to a loopback host the CLI starts the registered
   background service once and re-polls health before failing. `WENLAN_NO_AUTOSTART=1`
   turns that off — every test harness and CI job must set it so a run can never start the

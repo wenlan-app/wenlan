@@ -10,6 +10,7 @@ use crate::chat_import::types::{
 };
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::{Cursor, Read};
 
@@ -34,7 +35,10 @@ impl ChatExportParser for ClaudeParser {
 
     fn can_parse(&self, archive: &mut zip::ZipArchive<Cursor<&[u8]>>) -> bool {
         let names: Vec<String> = (0..archive.len())
-            .filter_map(|i| archive.by_index(i).ok().map(|f| f.name().to_string()))
+            .filter_map(|i| {
+                let entry = archive.by_index(i).ok()?;
+                entry.name().ok().map(Cow::into_owned)
+            })
             .collect();
         names.iter().any(|n| n == "users.json") && names.iter().any(|n| n == "conversations.json")
     }

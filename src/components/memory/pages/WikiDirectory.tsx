@@ -251,8 +251,9 @@ function NewMenu({ exampleWiki, canCreateFolder, onNewPage, onNewFolder, onFindS
               <span>{t("pages.overview.newPage")}</span>
             </button>
           )}
-          {/* Folders live on the owner's computer; the team server makes none. */}
-          {!teamAccess.member && (
+          {/* A member gets New folder only where they can make one: the
+              owner keeps each Space in a folder and they can edit one. */}
+          {(!teamAccess.member || canCreateFolder) && (
             <button type="button" role="menuitem" aria-disabled={folderDisabled} onClick={() => { if (folderDisabled) return; close(true); onNewFolder(); }}>
               <FolderPlus aria-hidden="true" size={16} />
               <span>{t("pages.folders.newFolder")}</span>

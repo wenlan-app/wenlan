@@ -40,7 +40,7 @@ pub struct ConnectArgs {
     pub all_tools: bool,
 }
 
-#[derive(Clone, Copy, Debug, ValueEnum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 #[value(rename_all = "kebab-case")]
 pub enum McpClient {
     /// Claude Code without the Wenlan plugin.
@@ -58,22 +58,24 @@ pub enum McpClient {
     Vscode,
 }
 
+/// Returns whether the tool's settings changed: `false` when its own command
+/// said Wenlan is already there, or on a dry run.
 pub async fn run_connect(
     client: &crate::client::WenlanClient,
     args: ConnectArgs,
     quiet: bool,
-) -> Result<()> {
+) -> Result<bool> {
     let agent = agent_name_for_client(args.client);
     let dry_run = args.dry_run;
     let note = tool_list_note(args.client, args.all_tools);
-    add(args, quiet)?;
+    let added = add(args, quiet)?;
     if !quiet {
         println!("{note}");
     }
     if !dry_run {
         register_connected_tool(client, agent).await;
     }
-    Ok(())
+    Ok(added)
 }
 
 /// Tell a running daemon the user connected this tool, as connecting it from
@@ -101,7 +103,7 @@ fn agent_name_for_client(client: McpClient) -> &'static str {
     }
 }
 
-fn add(args: ConnectArgs, quiet: bool) -> Result<()> {
+fn add(args: ConnectArgs, quiet: bool) -> Result<bool> {
     let server = with_tool_list(
         with_agent_name(server_command(), agent_name_for_client(args.client)),
         args.all_tools,
@@ -141,7 +143,8 @@ fn add(args: ConnectArgs, quiet: bool) -> Result<()> {
             &server,
             args.dry_run,
             quiet,
-        ),
+        )
+        .map(|()| !args.dry_run),
         McpClient::ClaudeDesktop => add_json_config(
             "claude-desktop",
             claude_desktop_config_file()?,
@@ -149,13 +152,15 @@ fn add(args: ConnectArgs, quiet: bool) -> Result<()> {
             &server,
             args.dry_run,
             quiet,
-        ),
+        )
+        .map(|()| !args.dry_run),
         McpClient::Vscode => {
             let path = std::env::current_dir()
                 .context("determine current directory")?
                 .join(".vscode")
                 .join("mcp.json");
             add_json_config("vscode", path, "servers", &server, args.dry_run, quiet)
+                .map(|()| !args.dry_run)
         }
     }
 }
@@ -177,7 +182,7 @@ fn add_native(
     dry_run: bool,
     quiet: bool,
     note: Option<&str>,
-) -> Result<()> {
+) -> Result<bool> {
     if dry_run {
         println!("Would run:");
         println!("  {} {}", binary, add_args.join(" "));
@@ -190,21 +195,25 @@ fn add_native(
             println!();
             println!("{note}");
         }
-        return Ok(());
+        return Ok(false);
     }
 
     // Add first: the legacy entry is only retired once its replacement is in
     // place, so a failed add never leaves the client with neither.
-    run_external(binary, &add_args)?;
+    let added = run_external(binary, &add_args)?;
     retire_legacy_native(binary, &legacy_remove);
 
     if !quiet {
-        println!("Configured Wenlan MCP for {client}.");
+        if added {
+            println!("Configured Wenlan MCP for {client}.");
+        } else {
+            println!("Wenlan MCP already configured for {client}.");
+        }
         if let Some(note) = note {
             println!("{note}");
         }
     }
-    Ok(())
+    Ok(added)
 }
 
 /// Best effort, and silent: an absent legacy entry is the common case and the
@@ -221,27 +230,44 @@ fn retire_legacy_native(binary: &str, args: &[String]) {
         .output();
 }
 
-fn run_external(binary: &str, args: &[String]) -> Result<()> {
+/// Run the tool's own "add an MCP server" command. Its output is held back
+/// and shown only when it fails. `Ok(false)` means the tool said the entry is
+/// already there (`claude mcp add` exits 1 with "already exists"), which is
+/// what running `wenlan connect` or `wenlan setup` a second time meets.
+fn run_external(binary: &str, args: &[String]) -> Result<bool> {
     // Resolve via PATHEXT so .cmd / .bat shims on Windows match. CreateProcess
     // only auto-appends `.exe`, which would miss a fake `claude.cmd` in tests
     // and also any real Windows shell-script wrappers the user installed.
     let resolved = which::which(binary)
         .with_context(|| format!("could not find `{binary}`. Is it installed and on PATH?"))?;
-    let status = Command::new(&resolved)
+    let output = Command::new(&resolved)
         .args(args)
-        .status()
+        .stdin(std::process::Stdio::null())
+        .output()
         .with_context(|| format!("could not run `{binary}`. Is it installed and on PATH?"))?;
-
-    if !status.success() {
-        bail!(
-            "`{} {}` failed with status {}",
-            binary,
-            args.join(" "),
-            status
-        );
+    if output.status.success() {
+        return Ok(true);
     }
+    let said = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    if says_already_there(&said) {
+        return Ok(false);
+    }
+    bail!(
+        "`{} {}` failed with status {}: {}",
+        binary,
+        args.join(" "),
+        output.status,
+        said.trim()
+    );
+}
 
-    Ok(())
+/// Whether a tool's refusal to add an MCP server means "it is already there".
+fn says_already_there(said: &str) -> bool {
+    said.to_ascii_lowercase().contains("already exists")
 }
 
 fn add_json_config(

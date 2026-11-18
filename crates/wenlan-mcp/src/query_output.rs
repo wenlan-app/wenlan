@@ -324,6 +324,9 @@ pub struct QuerySpaceRuleLine {
     pub source_revision: i64,
     pub source_revision_at: i64,
     pub source_quote: String,
+    /// `written_by_you`: the person wrote this rule themselves on that page.
+    /// `from_page`: Wenlan took it from that page and the person accepted it.
+    pub source: String,
 }
 
 pub fn project_space_rules(response: &SpaceRulesResponse) -> QuerySpaceRulesOutput {
@@ -343,6 +346,12 @@ pub fn project_space_rules(response: &SpaceRulesResponse) -> QuerySpaceRulesOutp
                 source_revision: line.source_revision,
                 source_revision_at: line.source_revision_at,
                 source_quote: line.source_quote.clone(),
+                source: if line.hand_written {
+                    "written_by_you"
+                } else {
+                    "from_page"
+                }
+                .to_string(),
             })
             .collect(),
     }
@@ -370,6 +379,7 @@ mod space_rules_tests {
                 source_quote: "Keep the source quote".into(),
                 person_edited: false,
                 general: false,
+                hand_written: false,
             }],
         };
 
@@ -378,6 +388,34 @@ mod space_rules_tests {
         assert_eq!(projected.lines[0].source_page_title, "Working agreements");
         assert_eq!(projected.lines[0].source_revision, 7);
         assert_eq!(projected.lines[0].source_quote, "Keep the source quote");
+        assert_eq!(projected.lines[0].source, "from_page");
         assert!(output_schema("read_space_rules").is_some());
+    }
+
+    #[test]
+    fn ux_skill_10_a_rule_the_person_wrote_is_marked_written_by_you() {
+        // Typed from the daemon's wire form, as the tool receives it.
+        let response: SpaceRulesResponse = serde_json::from_value(serde_json::json!({
+            "space_id": "space-1",
+            "space_name": "Research",
+            "rules_page_id": null,
+            "lines": [{
+                "id": "rule-1",
+                "kind": "rule",
+                "text": "Use the merge queue.",
+                "source_page_id": "page-1",
+                "source_page_title": "Git",
+                "source_revision": 3,
+                "source_revision_at": 1_700_000_000,
+                "source_quote": "Use the merge queue.",
+                "person_edited": true,
+                "hand_written": true
+            }]
+        }))
+        .unwrap();
+        assert_eq!(response.lines[0].kind, SkillLineKind::Rule);
+        let projected = project_space_rules(&response);
+        assert_eq!(projected.lines[0].source, "written_by_you");
+        assert_eq!(projected.lines[0].source_page_title, "Git");
     }
 }

@@ -178,6 +178,6 @@ features = [
 ]
 
 [target.'cfg(target_os = "windows")'.dependencies.zip]
-version = "4"
+version = "9"
 optional = true
 default-features = false

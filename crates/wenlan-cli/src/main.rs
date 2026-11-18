@@ -14,7 +14,7 @@ use wenlan_types::lint::LintProfile;
 #[command(
     name = "wenlan",
     version,
-    about = "Wenlan: a studio for everything you think, learn, and build with AI. Capture, recall, and hand off across sessions."
+    about = "Wenlan: docs, skills and rules your AI tools keep current and work from. Capture, recall, and hand off across sessions."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -48,11 +48,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Check whether Wenlan is running.
+    /// Check whether Wenlan is running, and which Space this folder uses.
     Status,
     /// Open Wenlan's personal browser UI.
     Open,
-    /// Guided setup: get Wenlan running, optionally with a local model or an Anthropic key.
+    /// Set Wenlan up and connect the AI tools on this computer; optionally a local model or an Anthropic key.
     Setup {
         /// Set up without a model or API key.
         #[arg(long)]
@@ -66,7 +66,15 @@ enum Commands {
         /// Skip confirmation prompts where possible.
         #[arg(short = 'y', long)]
         yes: bool,
+        /// Write the settings only: connect no AI tool and ask nothing.
+        #[arg(long)]
+        config_only: bool,
+        /// Only what follows the settings; the installer runs it once Wenlan has started.
+        #[arg(long, hide = true, conflicts_with_all = ["basic", "model", "anthropic_api_key_env", "config_only"])]
+        finish: bool,
     },
+    /// Set this repository up: a Space named after it, tied to it, and your AI tools connected.
+    Init,
     /// Start Wenlan now and keep it running in the background after login.
     Start,
     /// Stop Wenlan. It stays off until `wenlan start`.
@@ -214,10 +222,18 @@ enum Commands {
         command: commands::export::ExportCommand,
     },
     /// Put this Space's code pages into its git repository as a pull request.
+    /// `wenlan wiki` is the earlier name and still works.
+    #[command(name = "repo", alias = "wiki")]
     Wiki {
         #[command(subcommand)]
         command: commands::wiki::WikiCommand,
     },
+    /// Make a page or a repo file follow a page, so it keeps up when that page changes.
+    Follow(commands::follow::FollowArgs),
+    /// Stop a page or a repo file following a page.
+    Unfollow(commands::follow::UnfollowArgs),
+    /// Show what follows which page, and what is waiting to catch up.
+    Follows(commands::follow::FollowsArgs),
     /// Call any Wenlan tool an AI tool can call, by the same name (list, show, call).
     Tool {
         #[command(subcommand)]
@@ -231,33 +247,42 @@ enum Commands {
 
 /// Help groups for `wenlan --help`, in display order. Only names live here;
 /// each description stays on its `Commands` doc comment. Hidden subcommands
-/// (`sweep`, `agents`) are deliberately absent.
+/// (`sweep`, `agents`) are deliberately absent. The first `FIRST_PAGE_GROUPS`
+/// groups are the short help; `wenlan help all` writes out every group.
 const HELP_GROUPS: &[(&str, &[&str])] = &[
+    ("Start", &["setup", "init", "open", "status"]),
+    ("Daily", &["capture", "recall", "brief", "rules", "pages"]),
+    ("Team", &["team"]),
     (
-        "Daily",
-        &[
-            "brief", "capture", "recall", "rules", "pages", "memories", "sources",
-        ],
+        "Running",
+        &["connect", "doctor", "start", "stop", "restart"],
     ),
     (
-        "Setup",
+        "More",
         &[
-            "setup", "open", "connect", "status", "doctor", "start", "stop", "restart",
-        ],
-    ),
-    ("Team", &["team", "spaces"]),
-    (
-        ADVANCED_GROUP,
-        &[
-            "curate", "lint", "models", "keys", "steep", "wiki", "outbox", "export", "entities",
-            "tool",
+            "memories", "sources", "follow", "unfollow", "follows", "spaces", "repo", "curate",
+            "lint", "models", "keys", "steep", "outbox", "export", "entities", "tool",
         ],
     ),
 ];
 
-/// The last help group: commands most people never need. `wenlan --help` names
-/// them on one line; `wenlan help all` lists them like the rest.
-const ADVANCED_GROUP: &str = "Advanced";
+/// How many of `HELP_GROUPS` the short `wenlan --help` shows.
+const FIRST_PAGE_GROUPS: usize = 3;
+
+/// One short line per command on the short help, so the first page reads at a
+/// glance. `wenlan help all` and `wenlan <command> --help` keep the full text.
+const FIRST_PAGE_LINES: &[(&str, &str)] = &[
+    ("setup", "Set Wenlan up (once per computer)"),
+    ("init", "Set this repository up (once per repo)"),
+    ("open", "Open Wenlan in the browser"),
+    ("status", "Is Wenlan running, and which Space is this"),
+    ("capture", "Save something"),
+    ("recall", "Find memories and pages"),
+    ("brief", "Read the Space Brief"),
+    ("rules", "Read the working rules"),
+    ("pages", "List, read or write pages"),
+    ("team", "Start, invite, or join a team"),
+];
 
 /// Build a clap help template that lists the subcommands by `HELP_GROUPS`
 /// instead of one flat `Commands:` block. Every line keeps clap's two-space
@@ -272,7 +297,12 @@ fn grouped_help_template(cmd: &clap::Command, all: bool) -> String {
             )
         })
         .collect();
-    let width = HELP_GROUPS
+    let groups = if all {
+        HELP_GROUPS
+    } else {
+        &HELP_GROUPS[..FIRST_PAGE_GROUPS]
+    };
+    let width = groups
         .iter()
         .flat_map(|(_, names)| names.iter())
         .map(|name| name.len())
@@ -280,32 +310,36 @@ fn grouped_help_template(cmd: &clap::Command, all: bool) -> String {
         .unwrap_or(0);
     let mut template =
         String::from("{before-help}{about-with-newline}\n{usage-heading} {usage}\n\n");
-    for (heading, names) in HELP_GROUPS {
-        if *heading == ADVANCED_GROUP && !all {
-            // Not indented: tools that read the first word of indented
-            // lines as a command must not see this one.
-            template.push_str(&format!(
-                "More commands: wenlan help all ({})\n\n",
-                names.join(", ")
-            ));
-            continue;
-        }
+    for (heading, names) in groups {
         template.push_str(heading);
         template.push_str(":\n");
         for name in names.iter() {
-            let about = abouts.get(name).map(String::as_str).unwrap_or("");
+            let short = FIRST_PAGE_LINES
+                .iter()
+                .find(|(command, _)| command == name)
+                .map(|(_, line)| *line);
+            let about = match short {
+                Some(line) if !all => line,
+                _ => abouts.get(name).map(String::as_str).unwrap_or(""),
+            };
             template.push_str(&format!("  {name:<width$}  {about}\n"));
         }
         template.push('\n');
     }
-    template.push_str("Options:\n{options}{after-help}");
+    if all {
+        template.push_str("Options:\n{options}{after-help}");
+    } else {
+        // Not indented: tools that read the first word of indented lines as a
+        // command must not see this one.
+        template.push_str("Everything else: wenlan help all\n{after-help}");
+    }
     template
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<ExitCode> {
     let cmd = Cli::command();
-    // `wenlan help all`: the same help with the Advanced group written out.
+    // `wenlan help all`: every group, full descriptions and the options.
     let wants_all = std::env::args()
         .skip(1)
         .eq(["help", "all"].map(String::from));
@@ -349,6 +383,9 @@ async fn main() -> anyhow::Result<ExitCode> {
     let tool_backed = matches!(
         &cli.command,
         Commands::Tool { .. }
+            | Commands::Follow(_)
+            | Commands::Unfollow(_)
+            | Commands::Follows(_)
             | Commands::Pages {
                 action: Some(commands::pages::PagesAction::Tool(_)),
                 ..
@@ -377,6 +414,18 @@ async fn main() -> anyhow::Result<ExitCode> {
         let (format, quiet) = (cli.format.resolve(), cli.quiet);
         let ok = match cli.command {
             Commands::Tool { cmd } => commands::tool::run(cmd, &caller, format, quiet)?,
+            Commands::Follow(args) => {
+                commands::follow::run_follow(args, &caller, format, quiet)?;
+                true
+            }
+            Commands::Unfollow(args) => {
+                commands::follow::run_unfollow(args, &caller, format, quiet)?;
+                true
+            }
+            Commands::Follows(args) => {
+                commands::follow::run_follows(args, &caller, format, quiet)?;
+                true
+            }
             Commands::Pages {
                 action: Some(commands::pages::PagesAction::Tool(action)),
                 ..
@@ -458,13 +507,28 @@ async fn main() -> anyhow::Result<ExitCode> {
         base_client
     } else if let Some(operation) = operation {
         let context = match base_client.list_spaces().await {
-            Ok(spaces) => resolve_cli_space(
-                cli.space.clone(),
-                cli.all_spaces,
-                std::env::current_dir().ok(),
-                operation,
-                &spaces.into_iter().map(|space| space.name).collect(),
-            )?,
+            Ok(spaces) => {
+                let registered = spaces.into_iter().map(|space| space.name).collect();
+                let cwd = std::env::current_dir().ok();
+                let context = resolve_cli_space(
+                    cli.space.clone(),
+                    cli.all_spaces,
+                    cwd.clone(),
+                    operation,
+                    &registered,
+                )?;
+                // In a repository Wenlan does not know, a person is told once
+                // about `wenlan init`. `repo` commands say their own.
+                let wants_hint = context.space.is_none()
+                    && !cli.all_spaces
+                    && !cli.quiet
+                    && matches!(cli.format.resolve(), output::ResolvedFormat::Table)
+                    && !matches!(&cli.command, Commands::Wiki { .. });
+                if let (true, Some(cwd)) = (wants_hint, cwd.as_deref()) {
+                    commands::init::say_once_not_set_up(cwd, &registered);
+                }
+                context
+            }
             Err(error)
                 if matches!(&cli.command, Commands::Capture { .. })
                     && base_client.is_local()
@@ -561,15 +625,23 @@ async fn main() -> anyhow::Result<ExitCode> {
             model,
             anthropic_api_key_env,
             yes,
+            config_only,
+            finish,
         } => {
-            commands::setup::run_setup(commands::setup::SetupArgs {
-                basic,
-                model,
-                anthropic_api_key_env,
-                yes,
-            })
+            commands::setup::run_setup(
+                &client,
+                commands::setup::SetupArgs {
+                    basic,
+                    model,
+                    anthropic_api_key_env,
+                    yes,
+                    config_only,
+                    finish,
+                },
+            )
             .await?
         }
+        Commands::Init => commands::init::run(&client, format, cli.quiet).await?,
         Commands::Start => {
             commands::service::run_background(commands::service::BackgroundCommand::On).await?
         }
@@ -578,7 +650,10 @@ async fn main() -> anyhow::Result<ExitCode> {
         }
         Commands::Background { command } => commands::service::run_background(command).await?,
         Commands::Restart => commands::service::restart().await?,
-        Commands::Tool { .. } => {
+        Commands::Tool { .. }
+        | Commands::Follow(_)
+        | Commands::Unfollow(_)
+        | Commands::Follows(_) => {
             unreachable!("tool commands return before a daemon client is made")
         }
         Commands::Doctor { repair } => commands::setup::run_doctor(repair).await?,
@@ -603,7 +678,9 @@ async fn main() -> anyhow::Result<ExitCode> {
         Commands::Models { command } => commands::setup::run_model(command).await?,
         Commands::Keys { command } => commands::setup::run_key(command).await?,
         Commands::Steep { command } => commands::setup::run_enrichment(command).await?,
-        Commands::Connect(args) => commands::mcp::run_connect(&client, args, cli.quiet).await?,
+        Commands::Connect(args) => {
+            commands::mcp::run_connect(&client, args, cli.quiet).await?;
+        }
         Commands::Recall { query, limit } => {
             commands::recall::run(&client, format, cli.quiet, query, limit).await?
         }
@@ -743,6 +820,33 @@ mod catalog_tests {
             visible,
             "HELP_GROUPS in main.rs drifted from the visible clap subcommands"
         );
+    }
+
+    /// UX-CLI-3: turning Wenlan on and off uses the plain words, each one
+    /// listed in the short help, and the earlier `background on|off` still
+    /// parses.
+    #[test]
+    fn ux_cli_3_start_stop_and_restart_are_plain_top_level_words() {
+        use super::Commands;
+        use clap::Parser;
+
+        let start = Cli::try_parse_from(["wenlan", "start"]).expect("start");
+        assert!(matches!(start.command, Commands::Start));
+        let stop = Cli::try_parse_from(["wenlan", "stop"]).expect("stop");
+        assert!(matches!(stop.command, Commands::Stop));
+        let restart = Cli::try_parse_from(["wenlan", "restart"]).expect("restart");
+        assert!(matches!(restart.command, Commands::Restart));
+
+        let listed: BTreeSet<&str> = super::HELP_GROUPS
+            .iter()
+            .flat_map(|(_, names)| names.iter().copied())
+            .collect();
+        for word in ["start", "stop", "restart"] {
+            assert!(listed.contains(word), "{word} left the short help");
+        }
+
+        Cli::try_parse_from(["wenlan", "background", "on"]).expect("background on");
+        Cli::try_parse_from(["wenlan", "background", "off"]).expect("background off");
     }
 
     /// `wenlan pages lock|unlock <id>` parse as the review-lock actions, and

@@ -43,6 +43,10 @@ pub(crate) enum SpaceFrom {
     Body,
     /// The page (or draft) named in the path, its Space looked up here.
     Page,
+    /// The two pages named in the path, both looked up here: the call goes
+    /// on only when both are in the same Space. Any other pair answers as
+    /// a missing page, so it says nothing about the second page.
+    PagePair,
     /// Each of the member's Spaces in turn; a client filter is not read.
     MemberSpaces,
 }
@@ -63,13 +67,18 @@ pub(crate) enum Strip {
     Health,
     /// The Space list: only the member's Spaces stay, and no private keys.
     MemberSpaces,
+    /// Folders as the member sees them: the daemon answers a member's
+    /// folder call with paths under their Space's name, never the
+    /// server's, so a folder's `path` stays; every other private key goes.
+    MemberFolders,
 }
 
 /// One call a member's browser may make.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Call {
     pub method: &'static str,
-    /// The daemon path, `{id}` for one plain segment.
+    /// The daemon path, a `{…}` segment for one plain segment (the page id
+    /// first, then a second page's).
     pub path: &'static str,
     pub space: SpaceFrom,
     pub need: Need,
@@ -90,6 +99,12 @@ pub(crate) enum Rows {
     Pages,
     /// A bare list, newest first by `field`.
     Newest(&'static str),
+    /// The knowledge graph: its pages and the links between them, put
+    /// together across Spaces. Nothing else of the graph is sent on.
+    Graph,
+    /// `{ "folders": [...] }`, each folder's path starting with its Space's
+    /// name (as a member sees folders), put together across Spaces.
+    Folders,
 }
 
 /// The calls. Owner-only calls (config, team admin, shared folders,
@@ -135,7 +150,9 @@ pub(crate) const CALLS: &[Call] = &[
     Call {
         method: "GET",
         path: "/api/pages/recent-changes",
-        space: SpaceFrom::MemberSpaces,
+        // One Space's changes when the page asks for one (a Space's page,
+        // and each Space on the home page, labels them with it).
+        space: SpaceFrom::QueryOrMember,
         need: Need::Read,
         strip: Strip::Private,
         query: &["limit"],
@@ -179,6 +196,17 @@ pub(crate) const CALLS: &[Call] = &[
         query: &[],
         rows: Rows::One,
     },
+    // The graph beside a page: pages and their links, of the member's
+    // Spaces only.
+    Call {
+        method: "GET",
+        path: "/api/memory/graph",
+        space: SpaceFrom::MemberSpaces,
+        need: Need::Read,
+        strip: Strip::Private,
+        query: &[],
+        rows: Rows::Graph,
+    },
     // Editing a page by hand.
     Call {
         method: "POST",
@@ -217,6 +245,75 @@ pub(crate) const CALLS: &[Call] = &[
         query: &[],
         rows: Rows::One,
     },
+    // Archiving a page and putting it back. Deleting for good has no row.
+    Call {
+        method: "POST",
+        path: "/api/pages/{id}/archive",
+        space: SpaceFrom::Page,
+        need: Need::Write,
+        strip: Strip::Private,
+        query: &[],
+        rows: Rows::One,
+    },
+    Call {
+        method: "POST",
+        path: "/api/pages/{id}/restore",
+        space: SpaceFrom::Page,
+        need: Need::Write,
+        strip: Strip::Private,
+        query: &[],
+        rows: Rows::One,
+    },
+    // A page another relies on, in the same Space: added and removed.
+    Call {
+        method: "PUT",
+        path: "/api/pages/{id}/basis/{basis_id}",
+        space: SpaceFrom::PagePair,
+        need: Need::Write,
+        strip: Strip::Private,
+        query: &[],
+        rows: Rows::One,
+    },
+    Call {
+        method: "DELETE",
+        path: "/api/pages/{id}/basis/{basis_id}",
+        space: SpaceFrom::PagePair,
+        need: Need::Write,
+        strip: Strip::Private,
+        query: &[],
+        rows: Rows::One,
+    },
+    // Folders, while the owner keeps each Space in a folder of its own: a
+    // member sees each of their Spaces as a top folder (paths as they see
+    // them, never the server's), makes folders inside a Space they can
+    // edit, and moves its pages between them.
+    Call {
+        method: "GET",
+        path: "/api/knowledge/folders",
+        space: SpaceFrom::MemberSpaces,
+        need: Need::Read,
+        strip: Strip::MemberFolders,
+        query: &[],
+        rows: Rows::Folders,
+    },
+    Call {
+        method: "POST",
+        path: "/api/knowledge/folders",
+        space: SpaceFrom::Body,
+        need: Need::Write,
+        strip: Strip::MemberFolders,
+        query: &[],
+        rows: Rows::One,
+    },
+    Call {
+        method: "POST",
+        path: "/api/pages/{id}/move",
+        space: SpaceFrom::Page,
+        need: Need::Write,
+        strip: Strip::Private,
+        query: &[],
+        rows: Rows::One,
+    },
 ];
 
 /// Keys taken out of every answer, wherever they are: where things are on
@@ -238,9 +335,9 @@ const PRIVATE_KEYS: &[&str] = &[
     "repo_root",
 ];
 
-/// The row of `method` and `path` (a daemon path), with the page id it
-/// names. Only plain segments match.
-pub(crate) fn find(method: &str, path: &str) -> Option<(&'static Call, Option<String>)> {
+/// The row of `method` and `path` (a daemon path), with the page ids it
+/// names, in order. Only plain segments match.
+pub(crate) fn find(method: &str, path: &str) -> Option<(&'static Call, Vec<String>)> {
     let plain = path
         .bytes()
         .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'_' | b'-'));
@@ -256,21 +353,21 @@ pub(crate) fn find(method: &str, path: &str) -> Option<(&'static Call, Option<St
         if pattern.len() != given.len() {
             return None;
         }
-        let mut id = None;
+        let mut ids = Vec::new();
         for (want, got) in pattern.iter().zip(&given) {
-            if *want == "{id}" {
+            if want.starts_with('{') {
                 if got.is_empty() {
                     return None;
                 }
-                id = Some((*got).to_string());
+                ids.push((*got).to_string());
             } else if want != got {
                 return None;
             }
         }
-        if id.is_some() && names_another_route(&given) {
+        if !ids.is_empty() && names_another_route(&given) {
             return None;
         }
-        Some((call, id))
+        Some((call, ids))
     })
 }
 
@@ -297,7 +394,7 @@ fn names_another_route(given: &[&str]) -> bool {
                         .path
                         .split('/')
                         .zip(&route)
-                        .all(|(a, b)| a == *b || (a == "{id}" && b.starts_with('{')))
+                        .all(|(a, b)| a == *b || (a.starts_with('{') && b.starts_with('{')))
             })
     })
 }
@@ -322,17 +419,22 @@ async fn member_spaces(
         // Only Spaces this server hosts for the team: a member's entry for
         // a name that is not hosted (not hosted yet, or no longer) must not
         // open a Space of the same name that is the owner's own.
+        // The access in each is the rules' answer (`team_policy`).
         Ok(Ok(hosted)) => Ok(member
             .me(&hosted)
             .spaces
             .into_iter()
-            .filter(|space| hosted.iter().any(|(name, _)| *name == space.space))
-            .map(|space| (space.space, space.access))
+            .filter_map(|space| {
+                let is_hosted = hosted.iter().any(|(name, _)| *name == space.space);
+                crate::team_policy::access(member, &space.space, is_hosted)
+                    .map(|access| (space.space, access))
+            })
             .collect()),
         _ => Err(StatusCode::SERVICE_UNAVAILABLE.into_response()),
     }
 }
 
+/// Whether the access the rules gave a Space covers `need`.
 fn allows(access: TeamAccess, need: Need) -> bool {
     need == Need::Read || access == TeamAccess::Write
 }
@@ -449,6 +551,11 @@ async fn page_space(
         return Ok(None);
     }
     let read: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+    // Only the page asked for counts: a reserved segment (`recent`, ...)
+    // reaches a list route whose answer names no single page.
+    if read.pointer("/page/id").and_then(Value::as_str) != Some(id) {
+        return Ok(None);
+    }
     let space = read
         .pointer("/page/space")
         .or_else(|| read.pointer("/page/domain"))
@@ -466,6 +573,31 @@ pub(crate) fn strip_private(value: &mut Value) {
         }
         Value::Array(list) => list.iter_mut().for_each(strip_private),
         _ => {}
+    }
+}
+
+/// [`strip_private`], keeping the `path` of the folder an answer names
+/// (`{"path": …}`) and of each folder in a list (`{"folders": [{"path": …}]}`).
+fn strip_private_keeping_folder_paths(value: &mut Value) {
+    fn take_path(value: &mut Value) -> Option<Value> {
+        value.as_object_mut()?.remove("path")
+    }
+    fn put_path(value: &mut Value, path: Option<Value>) {
+        if let (Some(map), Some(Value::String(path))) = (value.as_object_mut(), path) {
+            map.insert("path".into(), Value::String(path));
+        }
+    }
+    let own = take_path(value);
+    let listed: Vec<Option<Value>> = match value.get_mut("folders") {
+        Some(Value::Array(folders)) => folders.iter_mut().map(take_path).collect(),
+        _ => Vec::new(),
+    };
+    strip_private(value);
+    put_path(value, own);
+    if let Some(Value::Array(folders)) = value.get_mut("folders") {
+        for (folder, path) in folders.iter_mut().zip(listed) {
+            put_path(folder, path);
+        }
     }
 }
 
@@ -514,7 +646,7 @@ pub(super) async fn handle(
         .strip_prefix(PREFIX)
         .unwrap_or("")
         .to_string();
-    let Some((call, id)) = find(&method, &path) else {
+    let Some((call, ids)) = find(&method, &path) else {
         return not_found();
     };
     let given = query_pairs(req.uri().query());
@@ -607,13 +739,29 @@ pub(super) async fn handle(
                 }
             }
         }
-        SpaceFrom::Page => {
-            let id = id.as_deref().unwrap_or_default();
+        SpaceFrom::Page | SpaceFrom::PagePair => {
+            let id = ids.first().map(String::as_str).unwrap_or_default();
             let space = match page_space(&state, &member, id).await {
                 Ok(Some(space)) => space,
                 Ok(None) => return not_found(),
                 Err(response) => return response,
             };
+            if call.space == SpaceFrom::PagePair {
+                // The first page must be the member's before the second is
+                // looked up at all; then both must share its Space.
+                if checked(&spaces, &space, call.need).is_err() {
+                    return not_found();
+                }
+                let other = match ids.get(1) {
+                    Some(other) => page_space(&state, &member, other).await,
+                    None => Ok(None),
+                };
+                match other {
+                    Ok(Some(other)) if other == space => {}
+                    Ok(_) => return not_found(),
+                    Err(response) => return response,
+                }
+            }
             if let Some(map) = object.as_ref() {
                 match named_space(map.get("space"), map.get("domain")) {
                     Ok(None) => {}
@@ -651,7 +799,7 @@ pub(super) async fn handle(
                 map.remove("domain");
                 // A draft's save names its Space (the daemon checks it is
                 // the draft's); other page calls carry none.
-                if call.space != SpaceFrom::Page
+                if !matches!(call.space, SpaceFrom::Page | SpaceFrom::PagePair)
                     || map.contains_key("space")
                     || call.path == "/api/pages/drafts/{id}"
                 {
@@ -697,10 +845,58 @@ pub(super) async fn handle(
         }
         None => merge(call, &query, window, answers),
     };
+    // Every folder starts with its Space's name: folders of a Space not the
+    // member's go.
+    if call.rows == Rows::Folders {
+        if let Some(Value::Array(folders)) = value.get_mut("folders") {
+            folders.retain(|row| {
+                row.get("path")
+                    .and_then(Value::as_str)
+                    .and_then(|path| path.split('/').next())
+                    .is_some_and(|space| spaces.contains_key(space))
+            });
+        }
+    }
     // Every page row names its Space: rows of a Space not the member's go.
     if call.rows == Rows::Pages {
         if let Some(Value::Array(pages)) = value.get_mut("pages") {
             pages.retain(|row| row_space(row).is_some_and(|space| spaces.contains_key(space)));
+        }
+    }
+    // Pages of the member's Spaces only, and links only between those pages:
+    // a link to anything else would name a page, entity or memory they may
+    // not see.
+    if call.rows == Rows::Graph {
+        if let Some(Value::Array(pages)) = value.get_mut("pages") {
+            pages.retain(|row| row_space(row).is_some_and(|space| spaces.contains_key(space)));
+            // An entity id would tell two pages share a subject, possibly
+            // one from a Space the member cannot read.
+            for page in pages.iter_mut() {
+                if let Some(row) = page.as_object_mut() {
+                    if row.contains_key("entity_id") {
+                        row.insert("entity_id".into(), Value::Null);
+                    }
+                }
+            }
+        }
+        let kept: std::collections::HashSet<String> = value
+            .get("pages")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|page| page.get("id").and_then(Value::as_str).map(str::to_string))
+            .collect();
+        let kept_page = |end: Option<&Value>| {
+            end.is_some_and(|end| {
+                end.get("kind").and_then(Value::as_str) == Some("page")
+                    && end
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .is_some_and(|id| kept.contains(id))
+            })
+        };
+        if let Some(Value::Array(links)) = value.get_mut("page_links") {
+            links.retain(|link| kept_page(link.get("from")) && kept_page(link.get("to")));
         }
     }
     match call.strip {
@@ -722,6 +918,7 @@ pub(super) async fn handle(
             strip_private(&mut value);
         }
         Strip::Private => strip_private(&mut value),
+        Strip::MemberFolders => strip_private_keeping_folder_paths(&mut value),
     }
     json(StatusCode::OK, &value)
 }
@@ -775,6 +972,48 @@ fn merge(
             }
             first["pages"] = Value::Array(pages);
             first
+        }
+        Rows::Folders => {
+            let mut folders = Vec::new();
+            for mut answer in answers {
+                if let Some(Value::Array(list)) = answer.get_mut("folders").map(Value::take) {
+                    folders.extend(list);
+                }
+            }
+            serde_json::json!({ "folders": folders, "truncated": false })
+        }
+        Rows::Graph => {
+            let mut pages: Vec<Value> = Vec::new();
+            let mut links: Vec<Value> = Vec::new();
+            for mut answer in answers {
+                if let Some(Value::Array(list)) = answer.get_mut("pages").map(Value::take) {
+                    for page in list {
+                        let id = page.get("id").and_then(Value::as_str);
+                        if id.is_some()
+                            && !pages
+                                .iter()
+                                .any(|have| have.get("id").and_then(Value::as_str) == id)
+                        {
+                            pages.push(page);
+                        }
+                    }
+                }
+                if let Some(Value::Array(list)) = answer.get_mut("page_links").map(Value::take) {
+                    for link in list {
+                        if !links.contains(&link) {
+                            links.push(link);
+                        }
+                    }
+                }
+            }
+            serde_json::json!({
+                "entities": [],
+                "relations": [],
+                "memories": [],
+                "memory_links": [],
+                "pages": pages,
+                "page_links": links,
+            })
         }
         Rows::Newest(field) => {
             let mut rows: Vec<Value> = answers

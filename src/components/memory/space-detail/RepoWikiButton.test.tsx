@@ -83,7 +83,7 @@ describe("RepoWikiButton", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Connect GitHub" }));
     expect(screen.getByLabelText("Repository folder on this computer")).toHaveValue(ROOT);
     expect(screen.getByText("Found github.com/7xuanlu/wenlan-site")).toBeInTheDocument();
-    expect(screen.getByLabelText("Pages go in")).toHaveValue("wiki");
+    expect(screen.getByLabelText("Pages go in")).toHaveValue("wenlan");
     fireEvent.click(screen.getByRole("button", { name: "Update every day" }));
     expect(screen.getByText(/Claude Code updates the pages in the background/)).toBeInTheDocument();
     expect(bindRepoWiki).not.toHaveBeenCalled();
@@ -92,7 +92,7 @@ describe("RepoWikiButton", () => {
     fireEvent.click(screen.getByRole("button", { name: "Connect and open PR" }));
 
     await waitFor(() => expect(publishRepoWiki).toHaveBeenCalledWith("site"));
-    expect(bindRepoWiki).toHaveBeenCalledWith("site", ROOT, "wiki", { enabled: false, hour: 9, agent: "claude", runs_on: "computer" });
+    expect(bindRepoWiki).toHaveBeenCalledWith("site", ROOT, "wenlan", { enabled: false, hour: 9, agent: "claude", runs_on: "computer" });
     expect(await screen.findByRole("button", { name: "GitHub repository settings" })).toHaveTextContent("PR #261");
     expect(screen.getByText(/new PR with 12 pages/)).toBeInTheDocument();
   });

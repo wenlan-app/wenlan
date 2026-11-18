@@ -28,8 +28,8 @@ pub use self::page_create::resolve_page_creation_kind;
 pub(crate) use self::page_dispatch::update_page_growth_at_versions;
 pub use self::page_dispatch::{
     create_page, create_page_with_floor, create_page_with_tuning, page_write,
-    page_write_with_citation_snapshot, steep_update_page, update_page,
-    update_page_at_source_revision, update_page_preserving_sources, PageWrite,
+    page_write_with_citation_snapshot, steep_update_page, steep_update_page_with_bases,
+    update_page, update_page_at_source_revision, update_page_preserving_sources, PageWrite,
 };
 pub(crate) use self::page_link_rename::LINK_RENAME_WRITER;
 pub use self::page_removal::{

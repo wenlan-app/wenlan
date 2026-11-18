@@ -1,7 +1,7 @@
 {
   "name": "wenlan-app",
   "private": true,
-  "version": "0.22.0",
+  "version": "0.22.1",
   "type": "module",
   "license": "AGPL-3.0-only",
   "packageManager": "pnpm@10.28.2",
@@ -97,15 +97,15 @@
     "@types/react-dom": "^19.0.0",
     "@types/semver": "7.7.1",
     "@vitejs/plugin-react": "^4.0.0",
-    "@vitest/coverage-v8": "^4.1.11",
+    "@vitest/coverage-v8": "^4.1.12",
     "jsdom": "^28.1.0",
     "react-grab": "^0.1.48",
     "react-scan": "^0.5.7",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.7.0",
-    "vite": "^6.0.0",
+    "vite": "^6.4.4",
     "vite-plugin-static-copy": "^4.1.1",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.12"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
@@ -115,11 +115,14 @@
     "overrides": {
       "brace-expansion@>=4.0.0 <5.0.12": "^5.0.12",
       "browserslist@<4.28.7": "^4.28.7",
-      "fast-uri@>=3.0.0 <3.1.7": "^3.1.7",
+      "fast-uri@>=3.0.0 <3.1.9": "^3.1.9",
       "katex@>=0.11.0 <0.18.2": "^0.18.2",
+      "minimatch@>=10.0.0 <11.0.1": "^11.0.1",
       "nanoid@<3.3.18": "^3.3.18",
       "postcss@<=8.5.22": "^8.5.23",
-      "undici@>=7.0.0 <7.29.1": "^7.29.1"
+      "source-map-js@>=1.0.0 <1.2.2": "^1.2.2",
+      "undici@>=7.0.0 <7.30.1": "^7.30.1",
+      "zod@>=4.0.0 <4.6.6": "^4.6.6"
     }
   },
   "repository": {

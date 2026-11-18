@@ -171,6 +171,43 @@ pub async fn handle_steep_claim(
     if !visible.contains(&req.page_id) {
         return Err(ServerError::NotFound("page not found".into()));
     }
+    // The claim hands out the pages the note relies on in full too: a note
+    // relying on a page the caller may not read stays with the person.
+    let basis_ids: Vec<String> = db
+        .list_page_basis(&req.page_id)
+        .await?
+        .into_iter()
+        .filter(|basis| {
+            basis.state == wenlan_core::db::BASIS_STATE_OK
+                || basis.state == wenlan_core::db::BASIS_STATE_PENDING
+        })
+        .map(|basis| basis.basis_page_id)
+        .collect();
+    if !basis_ids.is_empty() {
+        let readable = visible_ids(&db, &view.grant, &scope, &basis_ids).await?;
+        if basis_ids.iter().any(|id| !readable.contains(id)) {
+            let page = db
+                .get_page(&req.page_id)
+                .await?
+                .ok_or_else(|| ServerError::NotFound("page not found".into()))?;
+            return Ok(Json(SteepClaimResponse {
+                page_id: page.id,
+                title: page.title,
+                plan: wenlan_types::steep::STEEP_PLAN_NEEDS_YOU.to_string(),
+                token: None,
+                held_until: None,
+                version: page.version,
+                stale_reason: page.stale_reason.unwrap_or_default(),
+                current_content: page.content,
+                sources: Vec::new(),
+                code: Vec::new(),
+                judge_instructions: None,
+                code_checks: Vec::new(),
+                bases: Vec::new(),
+                note: "This page relies on a page you cannot read, so its owner updates it.".into(),
+            }));
+        }
+    }
     let claim = wenlan_core::steep::claim(&db, &req.page_id, &scope, judge_instructions.as_deref())
         .await
         .map_err(steep_error)?;
@@ -187,6 +224,7 @@ pub async fn handle_steep_claim(
         code: claim.code,
         judge_instructions: claim.judge_instructions,
         code_checks: claim.code_checks,
+        bases: claim.bases,
         note: claim.note,
     }))
 }

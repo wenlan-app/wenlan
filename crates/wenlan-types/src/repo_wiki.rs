@@ -8,8 +8,13 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Folder inside the repository the wiki is written to when none is named.
-pub const DEFAULT_REPO_WIKI_FOLDER: &str = "wiki";
+/// Folder inside the repository the pages are written to when none is named.
+/// Named after the tool, so a teammate can tell who writes it.
+pub const DEFAULT_REPO_WIKI_FOLDER: &str = "wenlan";
+
+/// The default folder before it was named after the tool. A repository that
+/// already holds pages there keeps it.
+pub const EARLIER_REPO_WIKI_FOLDER: &str = "wiki";
 
 /// Branch the wiki pull request is offered from. One branch per repository:
 /// while its pull request is open, every publish updates that pull request.
@@ -192,6 +197,41 @@ pub struct RepoWikiBinding {
     /// wrote them, by path and digest, so each is reported once.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub kept_edits: Vec<String>,
+    /// Pages of this Space the repository's docs follow: when such a page
+    /// changes, its AI tool suggests fixes to those docs.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub follows: Vec<RepoDocFollow>,
+    /// Set by `wenlan repo bind --take-over`: the next publish may replace
+    /// what another Wenlan keeps in this repository. Cleared once it has.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub take_over: bool,
+}
+
+/// Docs of the repository that follow one page of the Space: when the page
+/// changes, sentences of these docs that no longer say what it says get a
+/// fix for the wiki pull request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoDocFollow {
+    pub page_id: String,
+    /// Files relative to the repository root, `/` separated.
+    pub files: Vec<String>,
+    /// The page's version an AI tool last brought the files up to; `None`
+    /// until the first run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub followed_version: Option<i64>,
+    /// Unix seconds.
+    pub added_at: i64,
+}
+
+/// The line of a followed page a doc fix rests on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RepoDocPageLine {
+    pub page_id: String,
+    /// The page's version the line was read from.
+    pub version: i64,
+    /// Text copied exactly from that version of the page.
+    pub quote: String,
 }
 
 /// Where a doc fix stands.
@@ -226,10 +266,13 @@ pub struct RepoDocFix {
     /// Text in the file now; occurs there exactly once.
     pub old_text: String,
     pub new_text: String,
-    /// One sentence on what the code says instead.
+    /// One sentence on what the code (or the followed page) says instead.
     pub reason: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub code: Vec<RepoDocCode>,
+    /// The followed page's line the fix rests on, for a fix from a page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page: Option<RepoDocPageLine>,
     pub state: RepoDocFixState,
     /// Unix seconds.
     pub found_at: i64,
@@ -255,12 +298,22 @@ pub enum RepoDocsRequest {
         reason: String,
         #[serde(default)]
         code: Vec<RepoDocCode>,
+        /// For a fix from a followed page instead of the code.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        page: Option<RepoDocPageLine>,
     },
     /// The user declines a fix; it leaves the pull request on the next
     /// publish and is not suggested again.
     Dismiss { id: String },
     /// An AI tool finished reading `docs` docs against the code.
     Checked { docs: u32 },
+    /// Make `files` follow the page `page_id` of the Space (replaces the
+    /// files of an existing follow; its followed version is kept).
+    Follow { page_id: String, files: Vec<String> },
+    /// The files stop following the page.
+    Unfollow { page_id: String },
+    /// An AI tool brought the files up to `version` of the page.
+    Followed { page_id: String, version: i64 },
 }
 
 /// Reply of `POST /api/spaces/{space}/wiki/docs`.
@@ -271,6 +324,9 @@ pub struct RepoDocsReply {
     pub fix: Option<RepoDocFix>,
     /// Fixes waiting for or in the pull request.
     pub open: usize,
+    /// The follow made, changed or brought up to date.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub follow: Option<RepoDocFollow>,
 }
 
 /// Body of `PUT /api/spaces/{space}/wiki/repo`.
@@ -284,6 +340,10 @@ pub struct BindRepoWikiRequest {
     /// Leave the daily setting as it is when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub daily: Option<RepoWikiDaily>,
+    /// Publish from this Wenlan although another one keeps this repository's
+    /// pages and rules: the next publish replaces theirs.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub take_over: bool,
 }
 
 /// A repository the pages of a Space could go into.

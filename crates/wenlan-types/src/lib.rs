@@ -18,6 +18,7 @@ pub mod communities;
 pub mod conversations;
 pub mod entities;
 pub mod events;
+pub mod folder_space;
 pub mod import;
 pub mod lint;
 pub mod memory;
@@ -120,15 +121,16 @@ pub use sessions::{
     SessionReadEntry, SessionReadKind, SessionRef, UpsertSessionRequest, SESSION_HEADER,
 };
 pub use skills::{
-    SkillBorrowRecord, SkillLine, SkillLineKind, SkillReportKind, SkillReportRequest,
-    SkillSuggestion, SkillSuggestionActionResponse, SkillsRefreshResponse,
-    SpaceRulesActionResponse, SpaceRulesResponse, SpaceRulesSuggestion,
+    RulesDeliveryMethod, RulesDeliveryResponse, RulesDeliveryState, SkillBorrowRecord, SkillLine,
+    SkillLineKind, SkillReportKind, SkillReportRequest, SkillSuggestion,
+    SkillSuggestionActionResponse, SkillsRefreshResponse, SpaceRulesActionResponse,
+    SpaceRulesResponse, SpaceRulesSuggestion, ToolRulesDelivery,
 };
 pub use sources::{MemoryType, RawDocument, SourceType, StabilityTier, SyncStatus};
 pub use space_context::{WriteOutcome, WriteSpaceSource, WriteSpaceTarget};
 pub use steep::{
-    SteepClaimRequest, SteepClaimResponse, SteepCommitRequest, SteepCommitResponse, SteepSource,
-    SteepWorkItem, SteepWorklistResponse,
+    SteepBasis, SteepClaimRequest, SteepClaimResponse, SteepCommitRequest, SteepCommitResponse,
+    SteepSource, SteepWorkItem, SteepWorklistResponse,
 };
 pub use steep_new::{
     steep_short_id, SteepExistingPage, SteepNewClaimRequest, SteepNewClaimResponse,

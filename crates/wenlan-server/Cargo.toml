@@ -38,6 +38,8 @@ uuid = { workspace = true }
 clap = { version = "4", features = ["derive"] }
 futures = { workspace = true }
 sysinfo = { workspace = true }
+# Team permission rules (`team_policy`): who may read, edit or manage.
+cedar-policy = "4.15"
 fs2 = { workspace = true }
 sha2 = "0.10"
 file-rotate = "0.8"

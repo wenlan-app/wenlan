@@ -53,6 +53,15 @@ describe("team-member mode", () => {
     // A literal segment is never read as a page id.
     expect(teamCallAllowed("GET", "/api/pages/orphan-links")).toBe(false);
     expect(teamCallAllowed("DELETE", "/api/pages/page_1")).toBe(false);
+    expect(teamCallAllowed("GET", "/api/memory/graph")).toBe(true);
+    expect(teamCallAllowed("POST", "/api/pages/page_1/archive")).toBe(true);
+    expect(teamCallAllowed("POST", "/api/pages/page_1/restore")).toBe(true);
+    expect(teamCallAllowed("PUT", "/api/pages/page_1/basis/page_2")).toBe(true);
+    expect(teamCallAllowed("DELETE", "/api/pages/page_1/basis/page_2")).toBe(true);
+    expect(teamCallAllowed("DELETE", "/api/pages/page_1/basis/")).toBe(false);
+    // Deleting a page for good, and locking it, stay the owner's.
+    expect(teamCallAllowed("DELETE", "/api/pages/page_1?permanent=true")).toBe(false);
+    expect(teamCallAllowed("POST", "/api/pages/page_1/lock")).toBe(false);
     expect(teamCallAllowed("GET", "/api/config")).toBe(false);
     expect(teamCallAllowed("GET", "/api/memories")).toBe(false);
     expect(teamCallAllowed("GET", "/api/pages/../config")).toBe(false);
@@ -74,6 +83,18 @@ describe("team-member mode", () => {
     );
   });
 
+  it("asks for one Space's recent changes in the query, never a header", async () => {
+    at("/app");
+    window.localStorage.setItem(TEAM_KEY_STORAGE, "key-123");
+    const fetch = vi.fn(async () => new Response("[]"));
+    vi.stubGlobal("fetch", fetch);
+    await liveInvoke("list_recent_changes", { limit: 5, space: "產品" });
+    expect(fetch).toHaveBeenCalledWith(
+      `/team/v1/app/api/pages/recent-changes?limit=5&space=${encodeURIComponent("產品")}`,
+      expect.objectContaining({ headers: { Authorization: "Bearer key-123" } }),
+    );
+  });
+
   it("answers calls with no gate row without a request or a warning", async () => {
     at("/app");
     window.localStorage.setItem(TEAM_KEY_STORAGE, "key-123");
@@ -85,7 +106,6 @@ describe("team-member mode", () => {
     await expect(liveInvoke("search_conversations", { query: "x" })).resolves.toEqual([]);
     await expect(liveInvoke("list_shares")).resolves.toEqual([]);
     await expect(liveInvoke("get_page_links", { pageId: "page_x" })).resolves.toEqual({ outbound: [], inbound: [] });
-    await expect(liveInvoke("get_knowledge_graph_cmd")).resolves.toEqual({ entities: [], relations: [], memories: [], memory_links: [], pages: [], page_links: [] });
     expect(fetch).not.toHaveBeenCalled();
     expect(warn).not.toHaveBeenCalled();
   });

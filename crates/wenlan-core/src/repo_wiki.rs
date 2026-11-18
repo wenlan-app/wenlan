@@ -21,9 +21,10 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use wenlan_types::repo_wiki::{
-    RepoDocCheck, RepoDocCode, RepoDocFix, RepoDocFixState, RepoWikiAgent, RepoWikiBinding,
-    RepoWikiCandidate, RepoWikiDaily, RepoWikiPublishResult, RepoWikiPublishStatus, RepoWikiRunner,
-    DEFAULT_REPO_WIKI_FOLDER, REPO_WIKI_BRANCH,
+    RepoDocCheck, RepoDocCode, RepoDocFix, RepoDocFixState, RepoDocFollow, RepoDocPageLine,
+    RepoWikiAgent, RepoWikiBinding, RepoWikiCandidate, RepoWikiDaily, RepoWikiPublishResult,
+    RepoWikiPublishStatus, RepoWikiRunner, DEFAULT_REPO_WIKI_FOLDER, EARLIER_REPO_WIKI_FOLDER,
+    REPO_WIKI_BRANCH,
 };
 use wenlan_types::CodeBasisLocator;
 
@@ -40,6 +41,12 @@ const BUNDLE_MARKER: &str = ".wenlan-okf-export.json";
 const BUNDLE_ARCHIVE: &str = ".wenlan-archive";
 /// Most fixes waiting for or in the pull request at once.
 const MAX_OPEN_DOC_FIXES: usize = 50;
+/// Most docs one page can lead.
+const MAX_FOLLOW_FILES: usize = 20;
+/// Most pages the docs of one Space can follow.
+const MAX_FOLLOWS: usize = 20;
+/// Longest quote of a followed page a fix may rest on.
+const MAX_PAGE_QUOTE: usize = 500;
 
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 struct Store {
@@ -50,6 +57,110 @@ struct Store {
 /// Where the bindings are kept.
 pub fn store_path() -> PathBuf {
     crate::config::data_root().join(STORE_FILE)
+}
+
+/// File beside the store holding this Wenlan's publisher id.
+const PUBLISHER_FILE: &str = "repo-wiki-publisher";
+/// Line inside Wenlan's block in `AGENTS.md` naming the Wenlan that keeps it.
+const PUBLISHER_MARK: &str = "<!-- wenlan-publisher: ";
+/// Trailer of the wiki commit naming the Wenlan that made it.
+const PUBLISHER_TRAILER: &str = "Wenlan-Publisher: ";
+
+/// This Wenlan's publisher id: a random id made once and kept beside the
+/// store at `store`. A repository's pages and rules are kept by one Wenlan;
+/// the id is how another one tells they are not its own.
+pub fn publisher_id_at(store: &Path) -> Result<String, WenlanError> {
+    let file = store.with_file_name(PUBLISHER_FILE);
+    if let Ok(id) = std::fs::read_to_string(&file) {
+        let id = id.trim();
+        if !id.is_empty() {
+            return Ok(id.to_owned());
+        }
+    }
+    if let Some(parent) = file.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let id = uuid::Uuid::new_v4().simple().to_string();
+    std::fs::write(&file, &id)?;
+    Ok(id)
+}
+
+/// The publisher named in Wenlan's block of an `AGENTS.md`, if it names one.
+pub fn block_publisher(agents_md: &str) -> Option<String> {
+    let start = agents_md.find(AGENTS_START)?;
+    let end = agents_md[start..].find(AGENTS_END)? + start;
+    let block = &agents_md[start..end];
+    let from = block.find(PUBLISHER_MARK)? + PUBLISHER_MARK.len();
+    let id = block[from..].split("-->").next()?.trim();
+    (!id.is_empty()).then(|| id.to_owned())
+}
+
+/// Whose pages and rules a text of `AGENTS.md` shows, seen from `ours`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Keeper {
+    /// No Wenlan block.
+    Nobody,
+    Ours,
+    /// A block written before publishers were named.
+    Unnamed,
+    Another,
+}
+
+fn keeper(agents_md: Option<&str>, ours: &str) -> Keeper {
+    match agents_md {
+        Some(text) if text.contains(AGENTS_START) => match block_publisher(text) {
+            Some(id) if id == ours => Keeper::Ours,
+            Some(_) => Keeper::Another,
+            None => Keeper::Unnamed,
+        },
+        _ => Keeper::Nobody,
+    }
+}
+
+/// What a second Wenlan is told when the repository is another one's.
+fn kept_by_another(folder: &str) -> WenlanError {
+    WenlanError::Conflict(format!(
+        "this repository's pages and rules are already kept by another Wenlan (a teammate's, \
+         or another computer of yours), and publishing from here would replace theirs. Nothing \
+         was sent. Read them in the repository: `AGENTS.md`, and `{folder}/` when it is there. \
+         To publish from this computer instead, run `wenlan repo bind --take-over`"
+    ))
+}
+
+/// Whether the working copy at `top` shows that another Wenlan keeps this
+/// repository: its `AGENTS.md` block names a publisher that is not `ours`.
+/// Reads the files on disk, no network.
+pub fn working_copy_kept_by_another(top: &Path, ours: &str) -> bool {
+    let text = std::fs::read_to_string(top.join("AGENTS.md")).ok();
+    // A block from before publishers were named counts too: this is asked
+    // before a first bind, so it cannot be this Wenlan's own.
+    matches!(
+        keeper(text.as_deref(), ours),
+        Keeper::Another | Keeper::Unnamed
+    )
+}
+
+/// The error for binding a repository another Wenlan keeps (see
+/// [`working_copy_kept_by_another`]).
+pub fn kept_by_another_error(folder: &str) -> WenlanError {
+    kept_by_another(folder)
+}
+
+/// Set or clear the "next publish may take the repository over" mark.
+pub fn set_take_over_at(
+    path: &Path,
+    space: &str,
+    take_over: bool,
+) -> Result<Option<RepoWikiBinding>, WenlanError> {
+    let mut out = None;
+    update_store_at(path, |bindings| {
+        if let Some(binding) = bindings.iter_mut().find(|binding| binding.space == space) {
+            binding.take_over = take_over;
+            out = Some(binding.clone());
+        }
+        Ok(())
+    })?;
+    Ok(out)
 }
 
 /// Where publishes check out the repository, one folder per Space.
@@ -184,6 +295,23 @@ pub fn origin_url(repo: &Path) -> Option<String> {
         .filter(|url| !url.is_empty())
 }
 
+/// The folder to use in the repository at `top` when none is named:
+/// [`DEFAULT_REPO_WIKI_FOLDER`], unless the repository has no pages there yet
+/// and still holds the ones an earlier publish wrote under
+/// [`EARLIER_REPO_WIKI_FOLDER`].
+pub fn default_folder(top: &Path) -> &'static str {
+    let published = |folder: &str| {
+        top.join(folder)
+            .join(crate::repo_wiki_ci::CODE_FILE)
+            .is_file()
+    };
+    if !published(DEFAULT_REPO_WIKI_FOLDER) && published(EARLIER_REPO_WIKI_FOLDER) {
+        EARLIER_REPO_WIKI_FOLDER
+    } else {
+        DEFAULT_REPO_WIKI_FOLDER
+    }
+}
+
 /// Bind `space` to the repository holding `repo_path` in the store at `path`,
 /// or update its folder and daily setting. `daily: None` keeps the current
 /// daily setting.
@@ -214,7 +342,7 @@ pub fn bind_at(
             Some(folder) => normalize_folder(folder)?,
             None => existing
                 .map(|index| bindings[index].folder.clone())
-                .unwrap_or_else(|| DEFAULT_REPO_WIKI_FOLDER.to_owned()),
+                .unwrap_or_else(|| default_folder(&top).to_owned()),
         };
         let binding = match existing {
             Some(index) => {
@@ -225,6 +353,7 @@ pub fn bind_at(
                     current.doc_fixes.clear();
                     current.doc_check = None;
                     current.kept_edits.clear();
+                    current.follows.clear();
                 }
                 current.repo_root = repo_root.clone();
                 current.folder = folder;
@@ -246,6 +375,8 @@ pub fn bind_at(
                     doc_fixes: Vec::new(),
                     doc_check: None,
                     kept_edits: Vec::new(),
+                    follows: Vec::new(),
+                    take_over: false,
                 };
                 bindings.push(binding.clone());
                 binding
@@ -273,6 +404,14 @@ pub fn record_publish_at(
     update_store_at(path, |bindings| {
         if let Some(binding) = bindings.iter_mut().find(|binding| binding.space == space) {
             binding.last_publish = Some(published.result.clone());
+            if matches!(
+                published.result.status,
+                RepoWikiPublishStatus::Pushed
+                    | RepoWikiPublishStatus::PrOpened
+                    | RepoWikiPublishStatus::PrUpdated
+            ) {
+                binding.take_over = false;
+            }
             if let Some(kept) = &published.kept_edits {
                 binding.kept_edits = kept.clone();
             }
@@ -362,6 +501,9 @@ pub struct DocFixRequest {
     pub new_text: String,
     pub reason: String,
     pub code: Vec<RepoDocCode>,
+    /// For a fix from a followed page. The caller has checked that the quote
+    /// is in that version of the page and that the version is current.
+    pub page: Option<RepoDocPageLine>,
 }
 
 /// Record a fix to one of the repository's docs for the next publish of
@@ -401,10 +543,44 @@ pub fn suggest_doc_fix_at(
         ));
     }
     if reason.is_empty() || reason.chars().count() > 500 {
-        return Err(WenlanError::Validation(
-            "reason must say in one sentence what the code says instead".into(),
-        ));
+        return Err(WenlanError::Validation(if request.page.is_some() {
+            "reason must say in one sentence what the followed page says now".into()
+        } else {
+            "reason must say in one sentence what the code says instead".into()
+        }));
     }
+    let page = match request.page {
+        Some(page) => {
+            if !request.code.is_empty() {
+                return Err(WenlanError::Validation(
+                    "a fix rests on the code or on a followed page, not both".into(),
+                ));
+            }
+            let quote = page.quote.trim();
+            if quote.is_empty() || quote.chars().count() > MAX_PAGE_QUOTE {
+                return Err(WenlanError::Validation(format!(
+                    "page.quote must be the page's line the fix rests on, at most \
+                     {MAX_PAGE_QUOTE} characters"
+                )));
+            }
+            let follows_file = binding
+                .follows
+                .iter()
+                .any(|follow| follow.page_id == page.page_id && follow.files.contains(&path));
+            if !follows_file {
+                return Err(WenlanError::Validation(format!(
+                    "{path} does not follow page {}; only the files a page leads take fixes \
+                     from it",
+                    page.page_id
+                )));
+            }
+            Some(RepoDocPageLine {
+                quote: quote.to_owned(),
+                ..page
+            })
+        }
+        None => None,
+    };
     if request.code.len() > 20 {
         return Err(WenlanError::Validation(
             "at most 20 code entries per fix".into(),
@@ -469,6 +645,7 @@ pub fn suggest_doc_fix_at(
             new_text: new_text.clone(),
             reason: reason.clone(),
             code: code.clone(),
+            page: page.clone(),
             state: RepoDocFixState::Pending,
             found_at: now,
         };
@@ -523,6 +700,131 @@ pub fn record_doc_check_at(
         binding.doc_check = Some(RepoDocCheck { at: now, docs });
         Ok(open_fixes(binding))
     })
+}
+
+/// Make `files` of the repository follow the page `page_id` of `space`.
+/// Each must be one of the repository's docs (see [`is_repo_doc`]) and exist
+/// in the working copy. Following a page again replaces its files and keeps
+/// the version they last followed.
+pub fn follow_page_at(
+    store: &Path,
+    space: &str,
+    page_id: &str,
+    files: Vec<String>,
+    now: i64,
+) -> Result<RepoDocFollow, WenlanError> {
+    let binding = binding_at(store, space)?.ok_or_else(|| {
+        WenlanError::NotFound(format!(
+            "Space {space:?} is not connected to a repository; connect it first"
+        ))
+    })?;
+    let page_id = page_id.trim();
+    if page_id.is_empty() {
+        return Err(WenlanError::Validation("page_id is required".into()));
+    }
+    if files.is_empty() || files.len() > MAX_FOLLOW_FILES {
+        return Err(WenlanError::Validation(format!(
+            "name 1 to {MAX_FOLLOW_FILES} docs to follow the page"
+        )));
+    }
+    let mut normalized: Vec<String> = Vec::with_capacity(files.len());
+    for file in files {
+        let path = normalize_repo_path(&file)?;
+        if !is_repo_doc(&path, &binding.folder) {
+            return Err(WenlanError::Validation(format!(
+                "{path} is not one of the repository's docs: a page can lead Markdown files \
+                 outside `{}/`, not a changelog",
+                binding.folder
+            )));
+        }
+        if !Path::new(&binding.repo_root).join(&path).is_file() {
+            return Err(WenlanError::Validation(format!(
+                "{path} is not in {}",
+                binding.repo_root
+            )));
+        }
+        if !normalized.contains(&path) {
+            normalized.push(path);
+        }
+    }
+    update_store_at(store, |bindings| {
+        let binding = bindings
+            .iter_mut()
+            .find(|binding| binding.space == space)
+            .ok_or_else(|| WenlanError::NotFound(format!("Space {space:?} is not connected")))?;
+        if let Some(existing) = binding
+            .follows
+            .iter_mut()
+            .find(|follow| follow.page_id == page_id)
+        {
+            existing.files = normalized.clone();
+            return Ok(existing.clone());
+        }
+        if binding.follows.len() >= MAX_FOLLOWS {
+            return Err(WenlanError::Conflict(format!(
+                "the docs already follow {MAX_FOLLOWS} pages; stop following one first"
+            )));
+        }
+        let follow = RepoDocFollow {
+            page_id: page_id.to_owned(),
+            files: normalized.clone(),
+            followed_version: None,
+            added_at: now,
+        };
+        binding.follows.push(follow.clone());
+        Ok(follow)
+    })
+}
+
+/// The docs stop following `page_id`. Fixes already found from it stay.
+/// True when they followed it.
+pub fn unfollow_page_at(store: &Path, space: &str, page_id: &str) -> Result<bool, WenlanError> {
+    update_store_at(store, |bindings| {
+        let binding = bindings
+            .iter_mut()
+            .find(|binding| binding.space == space)
+            .ok_or_else(|| WenlanError::NotFound(format!("Space {space:?} is not connected")))?;
+        let before = binding.follows.len();
+        binding.follows.retain(|follow| follow.page_id != page_id);
+        Ok(binding.follows.len() != before)
+    })
+}
+
+/// An AI tool brought the docs that follow `page_id` up to `version` of it.
+/// The caller has checked that `version` is the page's current one.
+pub fn mark_followed_at(
+    store: &Path,
+    space: &str,
+    page_id: &str,
+    version: i64,
+) -> Result<RepoDocFollow, WenlanError> {
+    update_store_at(store, |bindings| {
+        let binding = bindings
+            .iter_mut()
+            .find(|binding| binding.space == space)
+            .ok_or_else(|| WenlanError::NotFound(format!("Space {space:?} is not connected")))?;
+        let follow = binding
+            .follows
+            .iter_mut()
+            .find(|follow| follow.page_id == page_id)
+            .ok_or_else(|| {
+                WenlanError::NotFound(format!("no docs follow page {page_id} in {space:?}"))
+            })?;
+        follow.followed_version = Some(version);
+        Ok(follow.clone())
+    })
+}
+
+/// Whether `quote` is on the page: the same text once surrounding white
+/// space is set aside on each line, so a quote copied from a Markdown line
+/// without its indent or list marker spacing still counts.
+pub fn page_has_quote(page_text: &str, quote: &str) -> bool {
+    let quote = quote.trim();
+    !quote.is_empty() && (page_text.contains(quote) || squeeze(page_text).contains(&squeeze(quote)))
+}
+
+fn squeeze(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// After a publish: fixes it put in the pull request are `in_pr`, fixes whose
@@ -670,16 +972,23 @@ pub(crate) fn code_footer<'a>(
 /// How many of the Space's rules ride in the always-read block.
 pub const AGENTS_BLOCK_MAX_RULES: usize = 30;
 
-/// The text between [`AGENTS_START`] and [`AGENTS_END`]: where the wiki is,
-/// then the Space's own project rules, one per line, without their source
-/// pages (the repository may be public; the page titles are the person's).
-fn agents_block(folder: &str, rules: &[String]) -> String {
-    let mut block = format!(
-        "{AGENTS_START}\n## Wiki\n\nThis repository has a wiki written by Wenlan in `{folder}/`. Start at \
-         `{folder}/index.md`. Each page ends with the code lines it relies on. Read the page \
-         for an unfamiliar part before changing it, and check the cited lines: when a page \
-         and the code disagree, the code wins.\n"
-    );
+/// The text between [`AGENTS_START`] and [`AGENTS_END`]: where the wiki is
+/// (when the repository holds one, in `folder`), then the Space's own project
+/// rules, one per line, without their source pages (the repository may be
+/// public; the page titles are the person's).
+fn agents_block(folder: Option<&str>, rules: &[String], publisher: Option<&str>) -> String {
+    let mut block = format!("{AGENTS_START}\n");
+    if let Some(publisher) = publisher {
+        block.push_str(&format!("{PUBLISHER_MARK}{publisher} -->\n"));
+    }
+    if let Some(folder) = folder {
+        block.push_str(&format!(
+            "## Wiki\n\nThis repository has a wiki written by Wenlan in `{folder}/`. Start at \
+             `{folder}/index.md`. Each page ends with the code lines it relies on. Read the page \
+             for an unfamiliar part before changing it, and check the cited lines: when a page \
+             and the code disagree, the code wins.\n"
+        ));
+    }
     let rules = rules
         .iter()
         .map(|rule| rule.split_whitespace().collect::<Vec<_>>().join(" "))
@@ -687,7 +996,10 @@ fn agents_block(folder: &str, rules: &[String]) -> String {
         .take(AGENTS_BLOCK_MAX_RULES)
         .collect::<Vec<_>>();
     if !rules.is_empty() {
-        block.push_str("\n## Rules for this project\n\n");
+        if folder.is_some() {
+            block.push('\n');
+        }
+        block.push_str("## Rules for this project\n\n");
         for rule in rules {
             block.push_str(&format!("- {rule}\n"));
         }
@@ -704,7 +1016,16 @@ pub fn upsert_agents_block(text: &str, folder: &str) -> String {
 
 /// [`upsert_agents_block`], with the Space's project rules inside the block.
 pub fn upsert_agents_block_with_rules(text: &str, folder: &str, rules: &[String]) -> String {
-    let block = agents_block(folder, rules);
+    upsert_block(text, &agents_block(Some(folder), rules, None))
+}
+
+/// Wenlan's block with the project rules alone, for a repository that holds
+/// no wiki folder: nothing in it points at one.
+pub fn upsert_agents_rules_block(text: &str, rules: &[String]) -> String {
+    upsert_block(text, &agents_block(None, rules, None))
+}
+
+fn upsert_block(text: &str, block: &str) -> String {
     if let (Some(start), Some(end)) = (text.find(AGENTS_START), text.find(AGENTS_END)) {
         if start < end {
             let end = end + AGENTS_END.len();
@@ -718,26 +1039,24 @@ pub fn upsert_agents_block_with_rules(text: &str, folder: &str, rules: &[String]
 }
 
 /// Keep Wenlan's block in `AGENTS.md` (created when missing) and in an
-/// existing `CLAUDE.md` that does not already import `AGENTS.md`.
+/// existing `CLAUDE.md` that does not already import `AGENTS.md`. `folder`
+/// is the wiki folder when the repository holds one; without it the block
+/// carries the rules alone.
 fn maintain_agent_files(
     worktree: &Path,
-    folder: &str,
+    folder: Option<&str>,
     rules: &[String],
+    publisher: &str,
 ) -> Result<Vec<&'static str>, WenlanError> {
+    let block = agents_block(folder, rules, Some(publisher));
     let mut touched = vec!["AGENTS.md"];
     let agents = worktree.join("AGENTS.md");
     let current = std::fs::read_to_string(&agents).unwrap_or_default();
-    std::fs::write(
-        &agents,
-        upsert_agents_block_with_rules(&current, folder, rules),
-    )?;
+    std::fs::write(&agents, upsert_block(&current, &block))?;
     let claude = worktree.join("CLAUDE.md");
     if let Ok(current) = std::fs::read_to_string(&claude) {
         if !current.contains("@AGENTS.md") {
-            std::fs::write(
-                &claude,
-                upsert_agents_block_with_rules(&current, folder, rules),
-            )?;
+            std::fs::write(&claude, upsert_block(&current, &block))?;
             touched.push("CLAUDE.md");
         }
     }
@@ -918,7 +1237,7 @@ fn bound_origin(binding: &RepoWikiBinding) -> Result<String, WenlanError> {
         if !same_remote(bound, &remote) {
             return Err(WenlanError::Validation(format!(
                 "the repository's `origin` changed since it was bound (was {bound}, now \
-                 {remote}); nothing was pushed. Run `wenlan wiki bind` again to publish there"
+                 {remote}); nothing was pushed. Run `wenlan repo bind` again to publish there"
             )));
         }
     }
@@ -953,6 +1272,9 @@ pub struct PublishInput<'a> {
     /// Never the general ones: those are the person's habits, not the
     /// repository's.
     pub rules: Vec<String>,
+    /// This Wenlan's publisher id ([`publisher_id_at`]). A repository another
+    /// publisher keeps is left alone unless the binding says to take it over.
+    pub publisher: String,
     /// Folder for this Space's worktree (under [`worktrees_root`]).
     pub worktree: PathBuf,
     /// `gh` to open the pull request with; `None` pushes the branch only.
@@ -1263,6 +1585,47 @@ fn written_by_export(path: &str, folder: &str) -> bool {
 /// Files people changed in their own commits on the wiki branch (not in
 /// Wenlan's, and not in ones merged in from elsewhere) that the default
 /// branch has not changed since the wiki branch started from it.
+/// The publisher named by the newest Wenlan commit that `branch` holds and
+/// the default branch does not: who keeps the open pull request.
+/// A merged pull request usually deletes its branch on the remote, and a plain
+/// fetch keeps our record of it. That stale record would be read as an open
+/// pull request and would make the next push fail, so drop it — this one
+/// branch only, never the person's other remote branches.
+fn forget_deleted_wiki_branch(repo: &Path) {
+    let mut command = git(repo);
+    command.args([
+        "ls-remote",
+        "--heads",
+        "origin",
+        &format!("refs/heads/{REPO_WIKI_BRANCH}"),
+    ]);
+    let Ok(out) = run(command, "git ls-remote") else {
+        return;
+    };
+    if out.trim().is_empty() {
+        let mut command = git(repo);
+        command.args([
+            "update-ref",
+            "-d",
+            &format!("refs/remotes/origin/{REPO_WIKI_BRANCH}"),
+        ]);
+        let _ = run(command, "git update-ref");
+    }
+}
+
+fn branch_publisher(repo: &Path, base_tree: &str, branch: &str) -> Option<String> {
+    let mut command = git(repo);
+    command.args(["log", "--format=%B%x00", &format!("{base_tree}..{branch}")]);
+    let log = run(command, "git log").ok()?;
+    log.split('\0').find_map(|message| {
+        message
+            .lines()
+            .find_map(|line| line.strip_prefix(PUBLISHER_TRAILER))
+            .map(|id| id.trim().to_owned())
+            .filter(|id| !id.is_empty())
+    })
+}
+
 fn files_changed_by_others(repo: &Path, base_tree: &str, branch: &str, fork: &str) -> Vec<String> {
     let mut command = git(repo);
     command.args([
@@ -1317,6 +1680,7 @@ pub fn prepare(binding: &RepoWikiBinding, worktree: &Path) -> Result<Prepared, W
     let mut command = git(&repo);
     command.args(["fetch", "--quiet", "origin"]);
     run(command, "git fetch origin")?;
+    forget_deleted_wiki_branch(&repo);
     let base = remote_default_branch(&repo);
     prepare_worktree(&repo, worktree, &base)?;
 
@@ -1376,6 +1740,11 @@ fn plural(n: usize) -> &'static str {
     }
 }
 
+/// A quote on one line, for the pull request body.
+fn one_line_quote(quote: &str) -> String {
+    squeeze(quote).replace('"', "'")
+}
+
 struct PrBody<'a> {
     binding: &'a RepoWikiBinding,
     pages: usize,
@@ -1388,6 +1757,21 @@ struct PrBody<'a> {
     /// `owner/name` on GitHub, for links to the code.
     slug: Option<&'a str>,
     base: &'a str,
+}
+
+#[cfg(test)]
+fn pr_body_for_test(binding: &RepoWikiBinding, fixes: Vec<&RepoDocFix>) -> String {
+    pr_body(PrBody {
+        binding,
+        pages: 0,
+        left_out: 0,
+        waiting: 0,
+        kept: 0,
+        rules: 0,
+        fixes,
+        slug: None,
+        base: "main",
+    })
 }
 
 fn pr_body(body: PrBody<'_>) -> String {
@@ -1416,21 +1800,37 @@ fn pr_body(body: PrBody<'_>) -> String {
     }
     if rules > 0 {
         out.push_str(&format!(
-            "\n\n`AGENTS.md` also carries {rules} project rule{} from the person's own pages \
+            "{}`AGENTS.md` {} {rules} project rule{} from the person's own pages \
              in that Space, under \"Rules for this project\". Read them before merging: \
              they come from notes, not from the code.",
+            if pages > 0 { "\n\n" } else { " " },
+            if pages > 0 { "also carries" } else { "carries" },
             plural(rules)
         ));
     }
     if !fixes.is_empty() {
         out.push_str(&format!(
-            "\n\n{} sentence{} in the repository's docs no longer match{} the code:\n",
+            "\n\n{} sentence{} in the repository's docs no longer match{} {}:\n",
             fixes.len(),
             plural(fixes.len()),
-            if fixes.len() == 1 { "es" } else { "" }
+            if fixes.len() == 1 { "es" } else { "" },
+            match (
+                fixes.iter().any(|fix| fix.page.is_none()),
+                fixes.iter().any(|fix| fix.page.is_some()),
+            ) {
+                (true, true) => "the code or the page the doc follows",
+                (false, true) => "the page the doc follows",
+                _ => "the code",
+            }
         ));
         for fix in fixes {
             out.push_str(&format!("\n- `{}`: {}", fix.path, fix.reason));
+            if let Some(page) = &fix.page {
+                out.push_str(&format!(
+                    " (the page it follows says: \"{}\")",
+                    one_line_quote(&page.quote)
+                ));
+            }
             let links: Vec<String> = fix
                 .code
                 .iter()
@@ -1630,7 +2030,7 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
         .doc_fixes
         .iter()
         .any(|fix| fix.state != RepoDocFixState::Dismissed);
-    if input.pages.is_empty() && !open_fix {
+    if input.pages.is_empty() && !open_fix && input.rules.is_empty() {
         return Ok(nothing(result(
             RepoWikiPublishStatus::NothingToPublish,
             0,
@@ -1648,6 +2048,40 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
     };
     let base = prepared.base.clone();
     let base_tree = format!("origin/{base}");
+
+    // One Wenlan keeps a repository's pages and rules. Another one's are on
+    // the default branch (merged) or on the open wiki branch: either way a
+    // publish from here would replace them, so it stops unless told to take
+    // the repository over. A block from before publishers were named counts
+    // as ours only when this Wenlan has published here before.
+    if !binding.take_over {
+        let published_before = binding.last_publish.is_some();
+        let branch = format!("origin/{REPO_WIKI_BRANCH}");
+        let on_base = keeper(
+            tree_file(&repo, &base_tree, "AGENTS.md").as_deref(),
+            &input.publisher,
+        );
+        let on_branch = if tree_exists(&repo, &branch) {
+            match branch_publisher(&repo, &base_tree, &branch) {
+                Some(id) if id == input.publisher => Keeper::Ours,
+                Some(_) => Keeper::Another,
+                None => keeper(
+                    tree_file(&repo, &branch, "AGENTS.md").as_deref(),
+                    &input.publisher,
+                ),
+            }
+        } else {
+            Keeper::Nobody
+        };
+        let foreign = |keeper| match keeper {
+            Keeper::Another => true,
+            Keeper::Unnamed => !published_before,
+            Keeper::Ours | Keeper::Nobody => false,
+        };
+        if foreign(on_base) || foreign(on_branch) {
+            return Err(kept_by_another(&folder));
+        }
+    }
 
     // A page's lines were read from the working copy; the pull request is
     // built on the remote's default branch. Each code basis is looked up there
@@ -1704,7 +2138,7 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
         }
     }
     waiting.set(held);
-    if ready.is_empty() && !open_fix {
+    if ready.is_empty() && !open_fix && input.rules.is_empty() {
         return Ok(nothing(result(
             RepoWikiPublishStatus::NothingToPublish,
             0,
@@ -1819,8 +2253,25 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
     for path in &prepared.carried {
         restore(&input.worktree, &branch_tree, path)?;
     }
+    // The rules go into `AGENTS.md` with or without pages. The block points
+    // at the wiki folder only when the repository holds one: written now, or
+    // merged earlier and still on the default branch.
+    let holds_wiki = export
+        || input
+            .worktree
+            .join(&folder)
+            .join(crate::repo_wiki_ci::CODE_FILE)
+            .is_file();
+    let writes_block = export || !input.rules.is_empty();
+    if writes_block {
+        maintain_agent_files(
+            &input.worktree,
+            holds_wiki.then_some(folder.as_str()),
+            &input.rules,
+            &input.publisher,
+        )?;
+    }
     if export {
-        maintain_agent_files(&input.worktree, &folder, &input.rules)?;
         maintain_gitattributes(&input.worktree, &folder)?;
     }
     crate::repo_wiki_github::maintain_workflow(
@@ -1859,7 +2310,14 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
     // The commit stays on a detached HEAD: no local branch is added to the
     // user's repository, only the remote branch the push below names.
     let mut command = git(&input.worktree);
-    command.args(["commit", "--quiet", "-m", COMMIT_SUBJECT]);
+    command.args([
+        "commit",
+        "--quiet",
+        "-m",
+        COMMIT_SUBJECT,
+        "-m",
+        &format!("{PUBLISHER_TRAILER}{}", input.publisher),
+    ]);
     run(command, "git commit")?;
     // The branch is rebuilt on the latest default branch every time. The
     // lease refuses to overwrite commits someone else pushed to it since the
@@ -1909,7 +2367,7 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
         left_out: input.left_out,
         waiting: waiting.get(),
         kept: kept.get(),
-        rules: if export {
+        rules: if writes_block {
             input.rules.len().min(AGENTS_BLOCK_MAX_RULES)
         } else {
             0

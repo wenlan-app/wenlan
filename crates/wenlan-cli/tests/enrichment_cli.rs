@@ -416,7 +416,7 @@ fn basic_setup_explicitly_disables_previously_enabled_background_work() {
     .expect("seed opted-in config");
     cli("http://127.0.0.1:9")
         .env("WENLAN_DATA_DIR", data.path())
-        .args(["setup", "--basic"])
+        .args(["setup", "--basic", "--config-only"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Steep (background upkeep) is off"));

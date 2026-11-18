@@ -759,3 +759,37 @@ test('relative redirects succeed, loops and insecure redirects fail', async () =
     await assert.rejects(request('https://fixture/insecure', {}, options), /HTTPS/);
   });
 });
+
+describe("setup steps", () => {
+  const { setupSteps, START_FOR_THIS_SESSION } = require("./run.js");
+
+  test("settings first, then start, then the finish step that needs Wenlan running", () => {
+    assert.deepEqual(setupSteps([], true), [
+      ["setup", "--basic", "--config-only"],
+      ["background", "on"],
+      ["status", "--format", "table"],
+      ["setup", "--finish"],
+    ]);
+  });
+
+  test("a system that cannot keep Wenlan running starts it for this session", () => {
+    assert.equal(setupSteps([], false)[1], START_FOR_THIS_SESSION);
+  });
+
+  test("the person's own setup choice is kept", () => {
+    assert.deepEqual(setupSteps(["--model", "qwen3.5-4b"], true)[0], [
+      "setup",
+      "--model",
+      "qwen3.5-4b",
+      "--config-only",
+    ]);
+  });
+
+  test("asking for the settings only connects nothing afterwards", () => {
+    assert.deepEqual(setupSteps(["--basic", "--config-only"], true), [
+      ["setup", "--basic", "--config-only"],
+      ["background", "on"],
+      ["status", "--format", "table"],
+    ]);
+  });
+});

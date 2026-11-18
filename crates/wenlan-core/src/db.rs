@@ -68,6 +68,7 @@ pub mod originals;
 mod page_basis;
 mod page_drafts;
 pub mod page_export;
+pub mod page_history_actor;
 pub mod page_looks;
 pub mod page_map;
 pub mod page_map_independent;
@@ -1629,7 +1630,7 @@ pub const EMBEDDING_DIM: usize = 768;
 /// `entities` table, skip every `version < N` branch, and quietly operate
 /// against a schema it cannot see. Refusing to open is recoverable; writing is
 /// not.
-pub const SCHEMA_VERSION: u32 = 164;
+pub const SCHEMA_VERSION: u32 = 165;
 
 /// The text a `source = 'memory'` row is embedded from: `[space] ` when the
 /// row has a space, its retrieval cue on its own line when it has one, then
@@ -11173,6 +11174,15 @@ impl MemoryDB {
             }
             if version < 164 {
                 self.migrate_164_page_looks(version).await?;
+            }
+
+            // Migration 165: who archived or restored a page. See
+            // db/page_history_actor.rs.
+            if ceiling < 165 {
+                return Ok(());
+            }
+            if version < 165 {
+                self.migrate_165_page_history_actor(version).await?;
             }
         }
 
@@ -52770,6 +52780,9 @@ impl MemoryDB {
     /// - `Revised` — `version > 1`, OR `version == 1` with `created_at !=
     ///   last_modified` (edited without a version bump).
     ///
+    /// - `Archived` — the page is archived now; `Restored` — its current
+    ///   version is a restore. Both name who did it when that was recorded.
+    ///
     /// `Merged` is currently never emitted: the `pages` schema has no
     /// merge-tracking column (e.g. `merged_into` / `superseded_by`). The
     /// `PageChangeKind::Merged` variant remains defined in `wenlan-types`
@@ -52781,9 +52794,9 @@ impl MemoryDB {
         let conn = self.conn.lock().await;
         let mut rows = conn
             .query(
-                "SELECT id, title, version, created_at, last_modified
+                "SELECT id, title, version, created_at, last_modified, status
                  FROM pages
-                 WHERE status = 'active'
+                 WHERE status IN ('active', 'archived')
                  ORDER BY last_modified DESC LIMIT ?1",
                 libsql::params![limit],
             )
@@ -52803,7 +52816,9 @@ impl MemoryDB {
             let created_at: String = row.get(3).unwrap_or_default();
             let last_modified: String = row.get(4).unwrap_or_default();
 
-            let change_kind = if version > 1 {
+            let change_kind = if row.get::<String>(5).unwrap_or_default() == "archived" {
+                wenlan_types::PageChangeKind::Archived
+            } else if version > 1 {
                 wenlan_types::PageChangeKind::Revised
             } else if created_at == last_modified {
                 wenlan_types::PageChangeKind::Created
@@ -52842,6 +52857,20 @@ impl MemoryDB {
         versions: &[i64],
     ) {
         for (change, &version) in changes.iter_mut().zip(versions) {
+            // An archive or a restore names who did it, when recorded; an
+            // older one names no one rather than a guess.
+            if let Some((marker, actor)) = self.page_lifecycle_at(&change.page_id, version).await {
+                change.change_kind = if marker == "archive" {
+                    wenlan_types::PageChangeKind::Archived
+                } else {
+                    wenlan_types::PageChangeKind::Restored
+                };
+                change.edited_by = actor;
+                continue;
+            }
+            if change.change_kind == wenlan_types::PageChangeKind::Archived {
+                continue;
+            }
             let Ok(Some(current)) = self.get_page_history_at(&change.page_id, version).await else {
                 continue;
             };

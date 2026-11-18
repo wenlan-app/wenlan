@@ -6,6 +6,7 @@ import { daemonMeetsFloor } from "../lib/daemonVersion";
 import type { RenamePageResponse, RestorePageResponse } from "../lib/tauri";
 import { archiveFixturePage, restoreFixturePage } from "../../e2e/tauriMock/pageRestore";
 import { isWebBuild } from "./runtime";
+import { MEMBER_THEME_COMMANDS } from "./memberThemes";
 import { isTeamMemberMode, readTeamKey, teamCallAllowed, TeamCallUnavailable, TEAM_GATE_PREFIX } from "./team";
 
 declare const __WENLAN_SOURCE_PREVIEW__: boolean;
@@ -67,7 +68,25 @@ async function http(
       text,
     );
   }
-  return text ? JSON.parse(text) : null;
+  const parsed = text ? JSON.parse(text) : null;
+  return team ? withSpacePaths(parsed) : parsed;
+}
+
+/**
+ * A member never gets a path on the server: the gate drops `storage_path`
+ * and the daemon adds `space_path`, the file as the member sees it (each
+ * Space a top folder). Put it where the file tree reads a page's place.
+ */
+function withSpacePaths(value: any): any {
+  if (Array.isArray(value)) return value.map(withSpacePaths);
+  if (!value || typeof value !== "object") return value;
+  const out: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (key === "space_path") continue;
+    out[key] = withSpacePaths(item);
+  }
+  if ("space_path" in value) out.storage_path = value.space_path ?? null;
+  return out;
 }
 const get = (p: string, headers?: Record<string, string>) => http("GET", p, undefined, headers);
 const post = (p: string, b: unknown = {}, headers?: Record<string, string>) => http("POST", p, b, headers);
@@ -440,6 +459,22 @@ function searchPagesVia(a: any, headers?: Record<string, string>): Promise<unkno
   ).then((r) => r.pages ?? r);
 }
 
+/**
+ * The page object of a `GET /api/pages/{id}` answer, with the lists that
+ * ride beside it (the pages and code it relies on, selection impacts)
+ * folded in, as the desktop app's `page_from_wire` does. A field the page
+ * already carries wins.
+ */
+export function pageFromWire(wire: any): unknown {
+  const page = wire?.page;
+  if (!page || typeof page !== "object") return null;
+  const folded: Record<string, unknown> = { ...page };
+  for (const key of ["selection_impacts", "basis", "code_basis"]) {
+    if (wire[key] != null && folded[key] === undefined) folded[key] = wire[key];
+  }
+  return folded;
+}
+
 async function getPageVia(a: any, headers?: Record<string, string>): Promise<unknown> {
   const id = String(a.id);
   const previewPage = PREVIEW_AUTHORED_PAGES.get(id);
@@ -447,7 +482,7 @@ async function getPageVia(a: any, headers?: Record<string, string>): Promise<unk
   if (PREVIEW_DELETED_PAGE_IDS.has(id)) return null;
   try {
     const wire = await get(`/api/pages/${enc(a.id)}`, headers);
-    return wire?.page ?? null;
+    return pageFromWire(wire);
   } catch (e) {
     if (e instanceof HttpError && e.status === 404) return null;
     throw e;
@@ -576,6 +611,9 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
     post("/api/knowledge/folders", {
       parent_path: a.parentPath,
       name: a.name,
+      // A member's folders start with their Space's name; the gate checks
+      // they may edit that Space.
+      ...(isTeamMemberMode() ? { space: String(a.parentPath ?? "").split("/")[0] } : undefined),
     }),
   // --- pages (mirrors search.rs exactly) ---
   get_page: (a) => getPageVia(a),
@@ -884,9 +922,11 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
     get(`/api/pages/recent${qs({ limit: a?.limit, since_ms: a?.sinceMs })}`).then(
       (r) => r.pages ?? r,
     ),
+  // A member's browser names the Space in the query: the gate drops the
+  // header, and a header cannot carry a Space named in Chinese.
   list_recent_changes: (a) =>
     get(
-      `/api/pages/recent-changes${qs({ limit: a?.limit })}`,
+      `/api/pages/recent-changes${qs({ limit: a?.limit, space: isTeamMemberMode() ? a?.space : undefined })}`,
       a?.space ? { "x-wenlan-space": a.space } : undefined,
     ).then((r) => r.changes ?? r),
   get_page_sources: (a) => get(`/api/pages/${enc(a.pageId)}/sources`).then((r) => r?.sources ?? r),
@@ -1872,14 +1912,10 @@ function unsupportedWebCommand(command: string): Error {
  * instead of a "could not load" message for a part a member does not have.
  */
 const TEAM_LOCAL_ANSWERS: Record<string, () => unknown> = {
-  knowledge_folders_list: () => ({ folders: [], truncated: false }),
   list_shares: () => [],
   // A page's links can name pages in Spaces the member cannot open, so the
   // gate has no row for them; the page shows none instead of an error.
   get_page_links: () => ({ outbound: [], inbound: [] }),
-  // The knowledge graph holds the owner's whole library, so a member gets an
-  // empty one and the page panel says it has no connections to show.
-  get_knowledge_graph_cmd: () => ({ entities: [], relations: [], memories: [], memory_links: [], pages: [], page_links: [] }),
   // Search finds pages only: memories, topics and conversations are the owner's.
   search: () => [],
   search_entities_cmd: () => [],
@@ -1888,6 +1924,8 @@ const TEAM_LOCAL_ANSWERS: Record<string, () => unknown> = {
 
 export async function liveInvoke(cmd: string, args?: Args): Promise<unknown> {
   if (isTeamMemberMode() && cmd in TEAM_LOCAL_ANSWERS) return TEAM_LOCAL_ANSWERS[cmd]();
+  // A member's custom themes live in this browser only; no server call.
+  if (isTeamMemberMode() && cmd in MEMBER_THEME_COMMANDS) return MEMBER_THEME_COMMANDS[cmd](args ?? {});
   if (isWebBuild() && (NATIVE_ONLY_COMMANDS.has(cmd) || PREVIEW_ONLY_HANDLERS.has(cmd) || cmd in DEFAULTS)) {
     throw unsupportedWebCommand(cmd);
   }

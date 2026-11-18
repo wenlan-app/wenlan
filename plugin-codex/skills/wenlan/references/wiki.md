@@ -1,6 +1,11 @@
-# $wenlan wiki
+# $wenlan docs
 
-Read this repository and keep a wiki about it in its Space. How many pages it
+`$wenlan wiki` is the earlier name of this command and means the same. The
+steps below still say "wiki" for the set of pages, and the `wenlan wiki ...`
+terminal commands they run are the spelling every installed Wenlan
+understands (newer ones also answer to `wenlan repo ...`).
+
+Read this repository and write docs about it in its Space. How many pages it
 has depends on the repository: a small tool may need five, a large monorepo
 twenty or more. The overview page lists them all.
 Each key sentence is tied to the code lines it was read from (a code basis), so
@@ -16,7 +21,7 @@ The skill accepts one optional inline token of the form `space:<name>`. The
 bundled resolver strips it and prints the resolved Space line itself:
 
 ```bash
-raw_args="<the full argument string passed to $wenlan wiki>"
+raw_args="<the full argument string passed to $wenlan docs>"
 # The resolver ships inside the installed plugin; the relative path only
 # exists in a wenlan checkout.
 resolver="$(find "$HOME/.codex/plugins/cache" -path '*/wenlan/*/bin/resolve-space.sh' 2>/dev/null | head -1)"
@@ -30,7 +35,7 @@ commands), take the Space from the `space:<name>` token instead.
 
 If the `git rev-parse` fails, say this folder is not a git repository and stop.
 If `space` is empty, say this folder is not matched to a Space and that
-`$wenlan wiki space:<name>` names one, then stop. Do not ask a question.
+`$wenlan docs space:<name>` names one, then stop. Do not ask a question.
 
 ## 2. Plan the pages
 
@@ -213,7 +218,7 @@ read: read it again and redo the edit once.
 
 One line per planned page with its title: written, left as is, waiting for
 steep, re-pointed, or staged for review. When pages are left over for the next
-run, say how many and that `$wenlan wiki` again writes them. Then one line on
+run, say how many and that `$wenlan docs` again writes them. Then one line on
 what happens later: `/brief` names how many pages rely on code that changed,
 and `$wenlan steep` brings them up to date. When step 7 ran, one more line:
 how many docs were read and how many fixes go into the pull request, each as
@@ -229,7 +234,7 @@ is connected. Otherwise run the `wiki status` command of step 8 first; when it
 prints `null`, or the command is missing, skip this step.
 
 1. List the docs with `git ls-files '*.md' '*.mdx'`. Leave out the wiki folder
-   (`folder` in the status, `wiki` by default), any changelog and anything
+   (`folder` in the status, `wenlan` by default), any changelog and anything
    under `node_modules`. Read at most 30 per run, in this order: `README.md`,
    `AGENTS.md`, `CLAUDE.md`, then files under `docs/`, then `SKILL.md` files,
    then the rest.
@@ -254,6 +259,53 @@ prints `null`, or the command is missing, skip this step.
 6. Finish with `doc_fix` `action: "checked"`, `space` and `docs` set to how
    many docs you read, even when you found nothing to fix.
 
+## 7b. Docs that follow a page
+
+A page of the Space can lead some of the repository's docs: the README in
+every language, for example, follows the page that says what the project is.
+When that page changes, those docs get fixes so they say what it says now.
+This uses the same binding as step 7; skip it when step 7 was skipped.
+
+**Setting it up, only when the user asks** ("make the README follow this
+page", "讓 README 跟著這頁"): find the page with `list_pages` (exact title)
+and the docs with `git ls-files`, then call `doc_fix` with
+`action: "follow"`, `space`, `page_id` and `files` (every language of the
+doc, relative to the repository root). Say which files now follow which page.
+`action: "unfollow"` with `page_id` undoes it. Never set up a follow on your
+own.
+
+**Each run:** call `doc_fix` with `action: "follows"` and `space`. Each
+entry names a page, its `files`, and `followed_version`, the page version the
+docs were last brought up to (absent the first time). No entries: skip this
+step. For each follow:
+
+1. `read_page` the page. When its `version` equals `followed_version`, it has
+   not changed: go to the next follow.
+2. Read each file in `files`. Look for sentences that say something the page
+   now says differently: what the project is, who it is for, what it does and
+   does not do, names, numbers, and claims. A sentence the page does not
+   speak to is not wrong; leave it.
+3. For each such sentence call `doc_fix` with `action: "suggest"`, `space`,
+   `path`, `old_text` copied exactly from the file (it must occur there once),
+   `new_text` that says what the page says in that file's language, tone and
+   formatting, `reason` (one sentence: what the page says now) and `page`:
+   `{"page_id": ..., "version": <the version you read>, "quote": <the page's
+   line it rests on, copied exactly>}`. Pass no `code`. Write each language as
+   a native writer would, not word for word from English.
+4. Never copy anything else from the page into a file: the pull request is
+   often public, and the page may hold private notes. Only the quote you name
+   and your new sentence go in. Leave out a fix whose only support is a line
+   that looks private (a person's name, money, health, a customer).
+5. At most 10 fixes per page per run. A refusal saying the user declined it:
+   leave that sentence alone. "is at version": read the page again and start
+   this follow over, once.
+6. When you have gone through every file, call `doc_fix` with
+   `action: "followed"`, `space`, `page_id` and the `version` you read, even
+   when nothing needed a fix. Do not call it when you stopped part way.
+
+Add one line to the report per follow: the page, how many fixes, and to
+which files.
+
 ## 8. Put the wiki in the repository
 
 Wenlan can write the pages that rest on this repository's code into a folder of
@@ -271,7 +323,7 @@ W="$(command -v wenlan || echo "$HOME/.wenlan/bin/wenlan")"
   a link to open the pull request by hand).
 - It prints `null`: find where a pull request would go with
   `git -C "$repo_root" remote get-url origin` (on GitHub, the `owner/name` in
-  it). Ask once whether to put the pages in this repository's `wiki/` folder
+  it). Ask once whether to put the pages in this repository's `wenlan/` folder
   and open a pull request there, naming that repository in the question.
   Offer two answers, with No first and as the default: "No, keep the pages in
   Wenlan only" and "Yes, open a pull request on <owner/name>". Only a clear

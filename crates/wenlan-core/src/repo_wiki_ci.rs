@@ -159,7 +159,7 @@ pub fn read_manifest(wiki_dir: &Path) -> Result<CodeManifest, WenlanError> {
     let text = std::fs::read_to_string(&path).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
             WenlanError::Validation(format!(
-                "{} is missing; publish the wiki from Wenlan once (`wenlan wiki publish`) \
+                "{} is missing; publish the wiki from Wenlan once (`wenlan repo publish`) \
                  and merge the pull request first",
                 path.display()
             ))
@@ -737,7 +737,7 @@ pub fn workflow(
          {env}\
          \x20         GH_TOKEN: ${{{{ github.token }}}}\n\
          \x20         WENLAN_NO_AUTOSTART: \"1\"\n\
-         \x20       run: wenlan wiki refresh --folder {folder} --agent {agent_arg} --pull-request\n",
+         \x20       run: wenlan repo refresh --folder {folder} --agent {agent_arg} --pull-request\n",
         agent_arg = agent.slug(),
     )
 }

@@ -1901,6 +1901,8 @@ export interface RepoDocFix {
   new_text: string;
   reason: string;
   code?: RepoDocCode[];
+  /** For a fix from a page the doc follows: the page's line it rests on. */
+  page?: { page_id: string; version: number; quote: string } | null;
   state: RepoDocFixState;
   /** Unix seconds. */
   found_at: number;
@@ -2250,7 +2252,7 @@ export interface PageChangelogEntry {
   restored_from?: number | null;
 }
 
-export type PageHistoryKind = "person_edit" | "ai_edit" | "source_update";
+export type PageHistoryKind = "person_edit" | "ai_edit" | "source_update" | "archived" | "restored";
 
 /** The page a `source_update` history item is about. */
 export interface PageHistorySource {
@@ -4491,7 +4493,7 @@ export interface RetrievalEvent {
   memory_snippets: string[];
 }
 
-export type PageChangeKind = "created" | "revised" | "merged";
+export type PageChangeKind = "created" | "revised" | "merged" | "archived" | "restored";
 
 /** @deprecated Use {@link PageChangeKind} instead. */
 export type ConceptChangeKind = PageChangeKind;

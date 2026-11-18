@@ -71,6 +71,8 @@ const CHANGE_GLYPH: Record<PageChangeKind, string> = {
   revised: "✎",
   merged: "⇄",
   created: "+",
+  archived: "⌫",
+  restored: "↺",
 };
 
 const CHANGE_TONE: Record<PageChangeKind, { color: string; background: string }> = {
@@ -86,6 +88,14 @@ const CHANGE_TONE: Record<PageChangeKind, { color: string; background: string }>
     color: "var(--mem-accent-sage)",
     background: "color-mix(in srgb, var(--mem-accent-sage) 15%, transparent)",
   },
+  archived: {
+    color: "var(--mem-text-secondary)",
+    background: "color-mix(in srgb, var(--mem-text-secondary) 12%, transparent)",
+  },
+  restored: {
+    color: "var(--mem-accent-sage)",
+    background: "color-mix(in srgb, var(--mem-accent-sage) 15%, transparent)",
+  },
 };
 
 function changeLabel(t: TFunction, kind: PageChangeKind): string {
@@ -93,6 +103,8 @@ function changeLabel(t: TFunction, kind: PageChangeKind): string {
     revised: "review.changeRevised",
     merged: "review.changeMerged",
     created: "review.changeCreated",
+    archived: "review.changeArchived",
+    restored: "review.changeRestored",
   } as const;
   return t(keys[kind]);
 }

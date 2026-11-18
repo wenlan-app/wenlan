@@ -51,10 +51,18 @@ const GATE_ROWS: ReadonlyArray<readonly [string, string]> = [
   ["GET", "/api/pages/{id}"],
   ["GET", "/api/pages/{id}/revisions"],
   ["GET", "/api/pages/{id}/sources"],
+  ["GET", "/api/memory/graph"],
   ["POST", "/api/memory/{id}/update-page"],
   ["POST", "/api/pages/drafts"],
   ["PUT", "/api/pages/drafts/{id}"],
   ["POST", "/api/pages/drafts/{id}/publish"],
+  ["POST", "/api/pages/{id}/archive"],
+  ["POST", "/api/pages/{id}/restore"],
+  ["PUT", "/api/pages/{id}/basis/{basis_id}"],
+  ["DELETE", "/api/pages/{id}/basis/{basis_id}"],
+  ["GET", "/api/knowledge/folders"],
+  ["POST", "/api/knowledge/folders"],
+  ["POST", "/api/pages/{id}/move"],
 ];
 
 /** Daemon paths the gate routes elsewhere, never as a page id. */
@@ -73,7 +81,7 @@ export function teamCallAllowed(method: string, path: string): boolean {
     if (want.length !== given.length) return false;
     return want.every((segment, index) => {
       const got = given[index];
-      if (segment !== "{id}") return segment === got;
+      if (!segment.startsWith("{")) return segment === got;
       if (!got) return false;
       return !(want[index - 1] === "pages" && index === 3 && RESERVED_PAGE_SEGMENTS.has(got));
     });

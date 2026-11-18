@@ -455,8 +455,8 @@ impl MemoryDB {
         }
         let (scope_sql, scope_value) = page_scope_clause(scope, "c.workspace", 2);
         let sql = format!(
-            "SELECT c.id, c.title, c.version, c.created_at, c.last_modified \
-             FROM pages c WHERE c.status = 'active'{scope_sql} \
+            "SELECT c.id, c.title, c.version, c.created_at, c.last_modified, c.status \
+             FROM pages c WHERE c.status IN ('active', 'archived'){scope_sql} \
              ORDER BY c.last_modified DESC LIMIT ?1"
         );
         let mut params = vec![libsql::Value::Integer(limit)];
@@ -477,7 +477,9 @@ impl MemoryDB {
             let version = row.get::<i64>(2).unwrap_or(1);
             let created_at = row.get::<String>(3).unwrap_or_default();
             let last_modified = row.get::<String>(4).unwrap_or_default();
-            let change_kind = if version > 1 || created_at != last_modified {
+            let change_kind = if row.get::<String>(5).unwrap_or_default() == "archived" {
+                wenlan_types::PageChangeKind::Archived
+            } else if version > 1 || created_at != last_modified {
                 wenlan_types::PageChangeKind::Revised
             } else {
                 wenlan_types::PageChangeKind::Created

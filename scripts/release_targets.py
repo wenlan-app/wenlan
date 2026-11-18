@@ -121,8 +121,29 @@ def release_matrix(*, exclude_targets: Iterable[str] = ()) -> dict:
     }
 
 
-def release_preflight_matrix(*, event_name: str, ref: str, head_ref: str) -> dict:
+def release_preflight_matrix(
+    *, event_name: str, ref: str, head_ref: str, macos_allowed: bool = True
+) -> dict:
     """Return the event-scoped preflight matrix without weakening release proof."""
+
+    matrix = _event_preflight_matrix(event_name=event_name, ref=ref, head_ref=head_ref)
+    if macos_allowed:
+        return matrix
+    # A merge queue entry whose changes cannot affect macOS (frontend only,
+    # see scripts/ci_native_lane.py darwin-preflight) skips the darwin leg.
+    # Main push does not run darwin, so a ci.yml edit keeps it here; the
+    # release-please PR re-proves every target before a release. Never empty:
+    # the Linux targets always remain.
+    if event_name != "merge_group":
+        raise TargetError("only a merge queue entry may drop the darwin preflight")
+    return {
+        "include": [
+            entry for entry in matrix["include"] if entry["target"] != "aarch64-apple-darwin"
+        ]
+    }
+
+
+def _event_preflight_matrix(*, event_name: str, ref: str, head_ref: str) -> dict:
 
     if event_name == "pull_request":
         if head_ref.startswith("release-please--branches--"):
@@ -195,6 +216,7 @@ def _main(argv: list[str]) -> int:
     preflight_parser.add_argument("--event-name", required=True)
     preflight_parser.add_argument("--ref", required=True)
     preflight_parser.add_argument("--head-ref", default="")
+    preflight_parser.add_argument("--macos-allowed", choices=["true", "false"], default="true")
     preflight_parser.add_argument("--github-output")
     preflight_parser.add_argument("--output-name", default="release-preflight-targets")
 
@@ -224,6 +246,10 @@ def _main(argv: list[str]) -> int:
             event_name=arguments.event_name,
             ref=arguments.ref,
             head_ref=arguments.head_ref,
+            macos_allowed=(
+                arguments.macos_allowed == "true"
+                or arguments.event_name != "merge_group"
+            ),
         )
     else:
         matrix = release_matrix(exclude_targets=arguments.exclude_target)

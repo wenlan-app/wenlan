@@ -129,6 +129,12 @@ pub fn build_router_with_shutdown(state: SharedState, shutdown: ShutdownHandle) 
             },
             truth_guard::guard,
         ))
+        // A team member's call (forwarded by the team gate) gets the path
+        // each page has as the member sees it; nothing else is touched.
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::member_folders::add_space_paths,
+        ))
         .layer(cors)
         // Outermost: reject cross-origin browser traffic before CORS/handlers.
         .layer(axum::middleware::from_fn(security::guard_local_only))

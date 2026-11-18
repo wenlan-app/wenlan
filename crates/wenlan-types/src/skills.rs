@@ -41,6 +41,10 @@ pub struct SkillLine {
     /// line still lives on, and is checked against, its own Space's page.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub general: bool,
+    /// The person wrote this line themselves on a page of their own. It
+    /// counts at once, with no model and no accept.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hand_written: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -119,4 +123,79 @@ pub struct SpaceRulesActionResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rules_page_id: Option<String>,
     pub undo_available: bool,
+}
+
+/// How the rules used in every Space reach one AI tool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RulesDeliveryMethod {
+    /// Wenlan keeps them in a file the tool reads in every conversation.
+    File,
+    /// The tool gets them only when it asks Wenlan through MCP.
+    Mcp,
+}
+
+/// Where one AI tool stands, worked out when asked from the file as it is.
+/// It says what Wenlan wrote, never whether the AI follows it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RulesDeliveryState {
+    /// The file holds exactly what Wenlan would write now.
+    Delivered,
+    /// Another file the tool reads holds them on disk right now: one the
+    /// tool's file brings in, or the file the tool falls back to.
+    CoveredByAnotherFile,
+    /// The tool's own folder is not on this computer; nothing was written.
+    FolderMissing,
+    /// The person's text plus Wenlan's part is more than the tool reads.
+    OverLimit,
+    /// The setting is off and the person wrote no rule for every Space.
+    SettingOff,
+    /// A dev, test or demo run on other data never writes the tools' files.
+    IsolatedRun,
+    /// The tool is not connected, or was turned off.
+    NotConnected,
+    /// There is no rule used in every Space to write.
+    NoRules,
+    /// The file does not hold what Wenlan would write now and the next sync
+    /// has not run yet.
+    OutOfDate,
+    /// Wenlan cannot safely change the file and leaves it exactly as it is;
+    /// `blocked_reason` says why.
+    Blocked,
+    /// No file is written for this tool; it gets the rules when it asks.
+    OnRequest,
+}
+
+/// One AI tool's row of `GET /api/skills/delivery`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolRulesDelivery {
+    pub id: String,
+    pub display_name: String,
+    /// Connected and not turned off.
+    pub connected: bool,
+    pub method: RulesDeliveryMethod,
+    /// The tool's always-read file, when the method is `file`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    pub state: RulesDeliveryState,
+    /// Why the file is left alone, as a short machine word, only when
+    /// `blocked`: `start_marker_without_end`, `end_marker_without_start`,
+    /// `end_marker_before_start`, `more_than_one_part`,
+    /// `part_would_not_read_back`, `broken_link`, `folder_not_usable`,
+    /// `not_a_file`, `not_text`, `not_readable`, `read_only`,
+    /// `not_wenlans_file`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocked_reason: Option<String>,
+    /// When Wenlan last wrote its part (Unix seconds), from Wenlan's own
+    /// record, only when `delivered`. Left out when Wenlan has no record.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivered_at: Option<i64>,
+    /// How many rules used in every Space Wenlan writes into a tool's file.
+    pub rule_count: usize,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RulesDeliveryResponse {
+    pub tools: Vec<ToolRulesDelivery>,
 }

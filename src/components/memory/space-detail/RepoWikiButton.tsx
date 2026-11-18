@@ -280,7 +280,7 @@ function ConnectPanel({
   const folderId = useId();
   const pagesId = useId();
   const [repoRoot, setRepoRoot] = useState(candidates[0]?.repo_root ?? "");
-  const [folder, setFolder] = useState("wiki");
+  const [folder, setFolder] = useState("wenlan");
   const [daily, setDaily] = useState<RepoWikiDaily>(DEFAULT_DAILY);
   const found = githubRepo(
     candidates.find((candidate) => candidate.repo_root === repoRoot.trim())?.remote_url,

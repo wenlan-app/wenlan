@@ -500,6 +500,7 @@ mod tests {
 pub async fn handle_list_knowledge_folders(
     axum::extract::State(state): axum::extract::State<SharedState>,
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
+    crate::team_actor::TeamActor(actor): crate::team_actor::TeamActor,
     view: crate::truth_guard::TruthView,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<wenlan_types::responses::KnowledgeFoldersResponse>, ServerError> {
@@ -511,6 +512,53 @@ pub async fn handle_list_knowledge_folders(
             s.lint_config.page_root().map(std::path::Path::to_path_buf),
         )
     };
+    // A team member: their Space's folders as they see them, empty ones
+    // too (a folder a member made is the whole Space's); none while the
+    // owner does not keep each Space in a folder of its own.
+    if actor.is_some() {
+        let member_view = match root.as_deref() {
+            Some(root) => {
+                crate::member_folders::view(&db, root, true, header_space.as_deref()).await
+            }
+            None => None,
+        };
+        let (Some(member_view), Some(root)) = (member_view, root) else {
+            return Ok(Json(KnowledgeFoldersResponse {
+                folders: vec![],
+                truncated: false,
+            }));
+        };
+        let all = tokio::task::spawn_blocking(move || {
+            wenlan_core::export::knowledge::list_knowledge_folders(&root)
+        })
+        .await
+        .map_err(|e| ServerError::Internal(e.to_string()))??;
+        let mut folders = vec![KnowledgeFolderEntry {
+            path: member_view.space.clone(),
+            parent_path: String::new(),
+            name: member_view.space.clone(),
+        }];
+        for folder in all {
+            let Some(path) = member_view.shown(&folder.path) else {
+                continue;
+            };
+            if path == member_view.space {
+                continue;
+            }
+            let parent_path = member_view
+                .shown(&folder.parent_path)
+                .unwrap_or_else(|| member_view.space.clone());
+            folders.push(KnowledgeFolderEntry {
+                path,
+                parent_path,
+                name: folder.name,
+            });
+        }
+        return Ok(Json(KnowledgeFoldersResponse {
+            folders,
+            truncated: false,
+        }));
+    }
     let scope = crate::read_scope::effective_read_scope(
         &db,
         params.get("space").map(String::as_str),
@@ -577,6 +625,7 @@ pub async fn handle_list_knowledge_folders(
 pub async fn handle_create_knowledge_folder(
     axum::extract::State(state): axum::extract::State<SharedState>,
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
+    crate::team_actor::TeamActor(actor): crate::team_actor::TeamActor,
     Json(req): Json<wenlan_types::requests::CreateKnowledgeFolderRequest>,
 ) -> Result<Json<wenlan_types::responses::CreateKnowledgeFolderResponse>, ServerError> {
     let (db, root) = {
@@ -586,6 +635,34 @@ pub async fn handle_create_knowledge_folder(
             s.lint_config.page_root().map(std::path::Path::to_path_buf),
         )
     };
+    // A team member makes a folder inside their Space's own folder only:
+    // it belongs to that Space, so everyone in it sees it.
+    if actor.is_some() {
+        let root = root.ok_or_else(|| {
+            ServerError::ValidationError("Wiki projection is not configured".into())
+        })?;
+        let member_view = crate::member_folders::view(&db, &root, true, header_space.as_deref())
+            .await
+            .ok_or_else(|| {
+                ServerError::ValidationError(
+                    "Folders need each Space kept in a folder of its own".into(),
+                )
+            })?;
+        let parent = member_view.folder_path(&req.parent_path)?;
+        let projection_write = db.begin_page_projection_write();
+        let path = tokio::task::spawn_blocking(move || {
+            let _projection_write = projection_write;
+            wenlan_core::export::knowledge::create_knowledge_folder(&root, &parent, &req.name)
+        })
+        .await
+        .map_err(|e| ServerError::Internal(e.to_string()))??;
+        let path = member_view
+            .shown(&path)
+            .ok_or_else(|| ServerError::Internal("folder made outside the Space".into()))?;
+        return Ok(Json(
+            wenlan_types::responses::CreateKnowledgeFolderResponse { path },
+        ));
+    }
     let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
     if scope != wenlan_core::read_scope::ReadScope::Global {
         return Err(ServerError::ValidationError(
