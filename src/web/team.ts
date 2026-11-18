@@ -60,6 +60,9 @@ const GATE_ROWS: ReadonlyArray<readonly [string, string]> = [
   ["POST", "/api/pages/{id}/restore"],
   ["PUT", "/api/pages/{id}/basis/{basis_id}"],
   ["DELETE", "/api/pages/{id}/basis/{basis_id}"],
+  ["GET", "/api/knowledge/folders"],
+  ["POST", "/api/knowledge/folders"],
+  ["POST", "/api/pages/{id}/move"],
 ];
 
 /** Daemon paths the gate routes elsewhere, never as a page id. */

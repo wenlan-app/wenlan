@@ -83,6 +83,18 @@ describe("team-member mode", () => {
     );
   });
 
+  it("asks for one Space's recent changes in the query, never a header", async () => {
+    at("/app");
+    window.localStorage.setItem(TEAM_KEY_STORAGE, "key-123");
+    const fetch = vi.fn(async () => new Response("[]"));
+    vi.stubGlobal("fetch", fetch);
+    await liveInvoke("list_recent_changes", { limit: 5, space: "產品" });
+    expect(fetch).toHaveBeenCalledWith(
+      `/team/v1/app/api/pages/recent-changes?limit=5&space=${encodeURIComponent("產品")}`,
+      expect.objectContaining({ headers: { Authorization: "Bearer key-123" } }),
+    );
+  });
+
   it("answers calls with no gate row without a request or a warning", async () => {
     at("/app");
     window.localStorage.setItem(TEAM_KEY_STORAGE, "key-123");

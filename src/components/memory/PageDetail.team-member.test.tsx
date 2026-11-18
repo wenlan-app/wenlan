@@ -9,6 +9,7 @@ import { TeamAccessProvider, teamAccessFor, type TeamAccess } from "../../web/te
 
 const tauriMocks = vi.hoisted(() => ({
   getPage: vi.fn(),
+  knowledgeFoldersList: vi.fn(),
   getPageSources: vi.fn(),
   listRegisteredSources: vi.fn(),
   getPageLinks: vi.fn(),
@@ -92,6 +93,7 @@ describe("PageDetail info panel for a team member", () => {
     tauriMocks.listOrphanLinks.mockResolvedValue({ min_count: 2, orphan_labels: [] });
     tauriMocks.getPageRevisions.mockResolvedValue(HISTORY);
     tauriMocks.listPages.mockResolvedValue([]);
+    tauriMocks.knowledgeFoldersList.mockResolvedValue({ folders: [], truncated: false });
     tauriMocks.getDaemonVersion.mockResolvedValue("0.14.1");
     tauriMocks.getSystemInfo.mockResolvedValue({ os: "macos" });
     tauriMocks.daemonMeetsFloor.mockReturnValue(true);
@@ -174,11 +176,26 @@ describe("PageDetail info panel for a team member", () => {
 
   const actions = () => screen.queryByRole("button", { name: i18n.t("pageDetail.actions") });
 
-  it("a writer's page menu holds only Archive page", async () => {
+  it("a writer's page menu holds only Archive page while their Space has no folders", async () => {
     const { user } = renderPage(member("write"));
+    await waitFor(() => expect(tauriMocks.knowledgeFoldersList).toHaveBeenCalled());
     await user.click(await screen.findByRole("button", { name: i18n.t("pageDetail.actions") }));
     const items = (await screen.findAllByRole("menuitem")).map((item) => item.textContent);
     expect(items).toEqual([i18n.t("pageDetail.archivePage")]);
+  });
+
+  it("a writer may move a page once their Space has folders", async () => {
+    tauriMocks.knowledgeFoldersList.mockResolvedValue({
+      folders: [{ path: "Field Notes", parent_path: "", name: "Field Notes" }],
+      truncated: false,
+    });
+    const { user } = renderPage(member("write"));
+    await waitFor(() => expect(tauriMocks.knowledgeFoldersList).toHaveBeenCalled());
+    await user.click(await screen.findByRole("button", { name: i18n.t("pageDetail.actions") }));
+    await waitFor(async () => {
+      const items = (await screen.findAllByRole("menuitem")).map((item) => item.textContent);
+      expect(items).toEqual([i18n.t("pages.folders.move"), i18n.t("pageDetail.archivePage")]);
+    });
   });
 
   for (const access of ["read", "write"] as const) {

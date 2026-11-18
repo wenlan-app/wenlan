@@ -3290,6 +3290,11 @@ jobs:
       # web bundle on Linux so a src/web break cannot wait for main.
       - name: Web bundle builds
         run: pnpm build:web
+      # A timed-out install attempt can leave its apt-get running (a slow
+      # Ubuntu mirror) and holding the dpkg lock; apt then waits for it
+      # instead of failing the next attempt at once.
+      - name: Let apt wait for a held lock
+        run: echo 'DPkg::Lock::Timeout "300";' | sudo tee /etc/apt/apt.conf.d/99wenlan-lock-timeout
       - name: Install Playwright Chromium
         run: bash scripts/ci-retry.sh 3 300 pnpm exec playwright install --with-deps chromium
       - name: Review e2e
@@ -3325,6 +3330,11 @@ jobs:
         run: pnpm install
       # --with-deps adds the system libraries and fonts (CJK included) that a
       # bare Ubuntu image lacks.
+      # A timed-out install attempt can leave its apt-get running (a slow
+      # Ubuntu mirror) and holding the dpkg lock; apt then waits for it
+      # instead of failing the next attempt at once.
+      - name: Let apt wait for a held lock
+        run: echo 'DPkg::Lock::Timeout "300";' | sudo tee /etc/apt/apt.conf.d/99wenlan-lock-timeout
       - name: Install Playwright Chromium
         run: bash scripts/ci-retry.sh 3 300 pnpm exec playwright install --with-deps chromium
       - name: Frontend e2e

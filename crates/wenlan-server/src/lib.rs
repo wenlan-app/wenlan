@@ -33,6 +33,7 @@ pub mod knowledge_routes;
 pub mod lifecycle;
 pub mod lint_routes;
 pub mod maintenance_coordinator;
+mod member_folders;
 pub mod memory_detail_routes;
 pub mod memory_revision_routes;
 pub mod memory_routes;
