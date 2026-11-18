@@ -1435,8 +1435,8 @@ async fn require_member(State(state): State<TeamState>, mut req: Request, next: 
         .to_string();
     let path = state.team_path.clone();
     let member = tokio::task::spawn_blocking(move || team::authenticate(&path, &key)).await;
-    let member = match member {
-        Ok(Ok(Some(member))) => member,
+    let (member, credential) = match member {
+        Ok(Ok(Some(found))) => (found.member, found.credential),
         Ok(Ok(None)) => return (StatusCode::UNAUTHORIZED, "member key required").into_response(),
         Ok(Err(error)) => {
             tracing::warn!("[team] member list cannot be read: {error}");
@@ -1444,6 +1444,9 @@ async fn require_member(State(state): State<TeamState>, mut req: Request, next: 
         }
         Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
     };
+    if !credential_may_reach(credential.kind(), req.uri().path()) {
+        return (StatusCode::FORBIDDEN, "this key does not open that").into_response();
+    }
     if let Some(origin) = req
         .headers()
         .get(header::ORIGIN)
@@ -1467,7 +1470,46 @@ async fn require_member(State(state): State<TeamState>, mut req: Request, next: 
         }
     }
     req.extensions_mut().insert(member);
+    req.extensions_mut().insert(credential);
     next.run(req).await
+}
+
+/// The kinds of path the team listener serves behind a credential.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RouteClass {
+    /// `/mcp` and `/mcp/<space>`: AI tools.
+    Mcp,
+    /// Everything else: sync, `/team/v1/me`, the app gate, owner admin.
+    Other,
+}
+
+fn route_class(path: &str) -> RouteClass {
+    if path == "/mcp" || path.starts_with("/mcp/") {
+        RouteClass::Mcp
+    } else {
+        RouteClass::Other
+    }
+}
+
+/// The one table of which credential reaches which kind of path, checked in
+/// [`require_member`] before any handler. Not Cedar's job: Cedar only says
+/// which Spaces a member may read or write. A later credential kind adds a
+/// column here. Columns: legacy key, tool key.
+const ROUTE_TABLE: &[(RouteClass, [bool; 2])] = &[
+    (RouteClass::Mcp, [true, true]),
+    (RouteClass::Other, [true, false]),
+];
+
+fn credential_may_reach(kind: team::CredentialKind, path: &str) -> bool {
+    let column = match kind {
+        team::CredentialKind::LegacyKey => 0,
+        team::CredentialKind::ToolKey => 1,
+    };
+    let class = route_class(path);
+    ROUTE_TABLE
+        .iter()
+        .find(|(row, _)| *row == class)
+        .is_some_and(|(_, allowed)| allowed[column])
 }
 
 /// This server's own web origin (`https://team.example.com`), from the
@@ -1566,6 +1608,12 @@ async fn team_admin(
     let plain = rest
         .bytes()
         .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'_' | b'-'));
+    // Handled here, not passed on: the team's own file is this server's.
+    if plain && method.as_str() == "POST" {
+        if let ["", "members", id, "compromised"] = rest.split('/').collect::<Vec<_>>().as_slice() {
+            return reset_compromised(&state, id).await;
+        }
+    }
     let allowed = plain
         && matches!(
             (
@@ -1633,6 +1681,36 @@ async fn team_admin(
                 .into_response()
         }
         Err(_) => (StatusCode::BAD_GATEWAY, "the team server did not answer").into_response(),
+    }
+}
+
+/// `POST /team/v1/admin/members/{id}/compromised`: the member's account was
+/// stolen. Every tool key and linked account goes, and a new key is made
+/// the way a new key is for a lost one; the answer carries it this once.
+async fn reset_compromised(state: &TeamState, id: &str) -> Response {
+    let path = state.team_path.clone();
+    let id = id.to_string();
+    let url = match tokio::task::spawn_blocking({
+        let path = path.clone();
+        move || team::read_team(&path).map(|file| file.url)
+    })
+    .await
+    {
+        Ok(Ok(url)) => env_value(TEAM_URL_ENV).or(url),
+        _ => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    };
+    match tokio::task::spawn_blocking(move || team::reset_compromised(&path, &id)).await {
+        Ok(Ok((member, key))) => match member_key(member, key, url.as_deref()) {
+            Ok(answer) => Json(answer).into_response(),
+            Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        },
+        Ok(Err(wenlan_core::error::WenlanError::NotFound(what))) => {
+            (StatusCode::NOT_FOUND, what).into_response()
+        }
+        Ok(Err(wenlan_core::error::WenlanError::Validation(what))) => {
+            (StatusCode::BAD_REQUEST, what).into_response()
+        }
+        _ => StatusCode::SERVICE_UNAVAILABLE.into_response(),
     }
 }
 

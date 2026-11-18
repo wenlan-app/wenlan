@@ -18,7 +18,10 @@ fn member(
     Member {
         id: "m-1".into(),
         name: "Amy".into(),
-        key_sha256: String::new(),
+        key_sha256: Some(String::new()),
+        identities: Vec::new(),
+        keys: Vec::new(),
+        invite: None,
         spaces: map(own),
         added_at: "2026-11-17T00:00:00Z".into(),
         removed_at: removed.then(|| "2026-11-17T01:00:00Z".into()),

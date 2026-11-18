@@ -53,6 +53,7 @@ libsql = { workspace = true }
 libsql-ffi = { workspace = true }
 sha2 = { workspace = true }
 subtle = { workspace = true }
+getrandom = "0.3"
 sha1 = { workspace = true }
 hmac = { workspace = true }
 hex = { workspace = true }
