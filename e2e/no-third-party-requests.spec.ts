@@ -38,11 +38,11 @@ test("loads the whole app without a single request leaving the origin", async ({
   // A couple of surfaces beyond the first paint, so a lazily loaded chunk or an
   // image that only one view asks for is covered too.
   const sidebar = page.getByRole("navigation", { name: "Primary navigation" });
-  for (const destination of ["Library", "Spaces"]) {
+  for (const destination of ["Docs", "Spaces"]) {
     await sidebar.getByRole("button", { name: destination, exact: true }).click();
-    if (destination === "Library") {
+    if (destination === "Docs") {
       await expect(page.locator(".wiki-workspace")).toBeVisible();
-      await expect(page.getByRole("heading", { level: 1, name: "Open a page", exact: true })).toBeVisible();
+      await expect(page.getByRole("heading", { level: 1, name: "Docs", exact: true })).toBeVisible();
     } else {
       await expect(page.getByRole("heading", { level: 1, name: destination, exact: true })).toBeVisible();
     }

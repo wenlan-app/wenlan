@@ -590,6 +590,7 @@ pub async fn steep_update_page_with_bases(
         &BasisWrite {
             actor: agent.unwrap_or("unknown").to_string(),
             space_guard,
+            follows: !marks.is_empty(),
             marks,
             ..BasisWrite::default()
         },

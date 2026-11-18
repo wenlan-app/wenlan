@@ -3,7 +3,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { installTauriMock } from './tauriMock';
 import { createSpacesNavigationFixture } from './fixtures/spacesNavigation';
 import { createReviewDecisionFixture } from './fixtures/reviewDecisions';
-import { showWikiFolders } from './helpers/wikiWorkspace';
+import { openWikiNote } from './helpers/wikiWorkspace';
 import { openPrimaryDestination, openSourceLibrary } from './helpers/primaryNavigation';
 
 const body = '# Three references\n\nRead [城市散步](#concept:linked-page), [討論記憶](#memory:linked-memory), and the imported source [1].\n';
@@ -31,11 +31,8 @@ async function openReferences(page: Page, withAuthorship = false) {
     });
   }
   await page.goto('/');
-  await openPrimaryDestination(page, 'Library');
-  const directory = await showWikiFolders(page);
-  const panel = directory.locator('.notes-list-panel');
-  await panel.getByRole('button', { name: 'Work', exact: true }).click();
-  await panel.getByRole('button', { name: 'Open Three references', exact: true }).click();
+  await openPrimaryDestination(page, 'Docs');
+  await openWikiNote(page, 'Three references');
   const editor = page.getByRole('textbox', { name: 'Page editor', exact: true });
   await expect(editor).toBeEditable();
   await page.mouse.move(1, 1);

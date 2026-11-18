@@ -12,10 +12,13 @@ test('Info is selected from the page toolbar without a nested inspector tab bar'
 });
 test('expanded inspector and its page-specific state restore after another Wiki page',async({page},info)=>{
  const {errors,control}=await boot(page);const infoTool=page.getByRole('button',{name:'Info',exact:true});const mapTool=page.getByRole('button',{name:'Mind map',exact:true});
+ // Both pages are open as tabs: the expanded workspace belongs to the open pages, and a list page in between closes it.
+ await openWikiNote(page,'Why fixtures stay deterministic');const tab=(name:string)=>page.getByRole('tab',{name,exact:true});
+ await tab('Fixture architecture').click();await expect(tab('Fixture architecture')).toHaveAttribute('aria-selected','true');
  await mapTool.click();await expect(page.locator('.page-canvas-surface')).toBeVisible();await page.getByRole('button',{name:'Expand workspace',exact:true}).click();
  const pane=page.locator('.page-info-drawer-expanded-workspace');await expect(pane).toBeVisible();await infoTool.click();await expect(pane).toBeVisible();await expect(page.locator('.page-detail-document')).toBeHidden();await expect(page.getByRole('group',{name:'Connections',exact:true})).toBeVisible();
- await openWikiNote(page,'Why fixtures stay deterministic');await expect(page.getByRole('button',{name:'Info',exact:true})).toHaveAttribute('aria-expanded','false');await expect(pane).toHaveCount(0);
- await openWikiNote(page,'Fixture architecture');await expect(infoTool).toHaveAttribute('aria-pressed','true');await expect(pane).toBeVisible();
+ await tab('Why fixtures stay deterministic').click();await expect(page.getByRole('button',{name:'Info',exact:true})).toHaveAttribute('aria-expanded','false');await expect(pane).toHaveCount(0);
+ await tab('Fixture architecture').click();await expect(infoTool).toHaveAttribute('aria-pressed','true');await expect(pane).toBeVisible();
  await mapTool.click();await expect(page.getByRole('region',{name:'Canvas for Fixture architecture',exact:true})).toBeVisible();await page.screenshot({path:info.outputPath('restored-map.png')});
  await page.getByRole('button',{name:'Return to sidebar',exact:true}).click();await expect(pane).toHaveCount(0);await expect(page.locator('.page-info-drawer-group-overlay-panel')).toBeVisible();await expect(page.locator('.page-detail-document')).toBeVisible();
  expect(control.calls().filter(c=>/^(update_page|create_page_map_node|patch_page_map_node|delete_page_map_node)$/.test(c.command))).toHaveLength(0);expect(errors.pageErrors).toEqual([]);

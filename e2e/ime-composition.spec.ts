@@ -16,7 +16,7 @@ test("a draft title mid-composition keeps Escape and autosave for the committed 
   const runtime = await installTauriMock(page, { locale: "en", rawActions: [] });
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto("/");
-  await openPrimaryDestination(page, "Library");
+  await openPrimaryDestination(page, "Docs");
   await page.locator(".note-tab-create").click();
 
   const title = page.getByRole("textbox", { name: "Title", exact: true });

@@ -1,0 +1,141 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+
+/* The list page of a section (Docs, Skills, Rules). No divider lines: space
+   and a tinted card carry the grouping. */
+.section-list {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  width: 100%;
+  max-width: 1130px;
+  margin: 0 auto;
+  padding: 64px clamp(20px, 8vw, 96px) 72px;
+  box-sizing: border-box;
+  color: var(--mem-text);
+  font: 14px/1.5 var(--mem-font-body);
+}
+
+.section-list-back {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 4px;
+  margin: -32px 0 -8px -6px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: var(--mem-r-5);
+  background: transparent;
+  color: var(--mem-text-tertiary);
+  font: 13px/1.4 var(--mem-font-body);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.section-list-back:hover { background: var(--mem-hover); color: var(--mem-text); }
+
+.section-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+}
+.section-list-header h1 {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font: 600 32px/1.2 var(--mem-font-heading);
+  letter-spacing: -0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.section-list-new { position: relative; flex: none; }
+.section-list-new-button {
+  min-height: 36px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: var(--mem-r-6);
+  background: var(--mem-accent-indigo);
+  color: var(--mem-text-on-accent);
+  font: 500 14px var(--mem-font-body);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.section-list-new-button:hover { background: var(--mem-accent-indigo-hover); }
+.section-list-new-button:disabled { opacity: 0.6; cursor: default; }
+.section-list-new-button:focus-visible,
+.section-list-back:focus-visible,
+.section-list-folder:focus-visible,
+.section-list-page:focus-visible { outline: 2px solid var(--mem-accent-page); outline-offset: 2px; }
+.section-list-new-menu { position: absolute; top: calc(100% + 6px); right: 0; z-index: 20; min-width: 168px; }
+
+.section-list-label {
+  margin: 12px 0 0;
+  color: var(--mem-text-secondary);
+  font: 500 13px/1.4 var(--mem-font-body);
+}
+
+.section-list-folders {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.section-list-folder {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  padding: 16px 18px;
+  border: 0;
+  border-radius: var(--mem-r-10);
+  background: var(--mem-hover);
+  color: var(--mem-text);
+  font: 14px/1.4 var(--mem-font-body);
+  text-align: left;
+  cursor: pointer;
+}
+.section-list-folder:hover { background: var(--mem-hover-strong); }
+.section-list-folder-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.section-list-folder-count { flex: none; color: var(--mem-text-secondary); font-variant-numeric: tabular-nums; }
+
+.section-list-pages {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 -10px;
+  padding: 0;
+  list-style: none;
+}
+.section-list-page {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: var(--mem-r-6);
+  background: transparent;
+  color: var(--mem-text);
+  text-align: left;
+  cursor: pointer;
+}
+.section-list-page:hover { background: var(--mem-hover); }
+.section-list-page-title { min-width: 0; overflow: hidden; font: 16px/1.5 var(--mem-font-body); text-overflow: ellipsis; white-space: nowrap; }
+.section-list-page-time { flex: none; color: var(--mem-text-secondary); font: 14px/1.5 var(--mem-font-body); white-space: nowrap; }
+
+.section-list-state { margin: 0; color: var(--mem-text-secondary); }
+.section-list-state button { margin-top: 8px; padding: 0; border: 0; background: transparent; color: var(--mem-link); font: inherit; cursor: pointer; }
+.section-list-folder-form { max-width: 360px; }
+
+@media (max-width: 720px) {
+  .section-list { padding-top: 32px; }
+  .section-list-folders { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .section-list-back { margin-top: -12px; }
+}

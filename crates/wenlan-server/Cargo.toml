@@ -42,6 +42,8 @@ sysinfo = { workspace = true }
 cedar-policy = "4.15"
 fs2 = { workspace = true }
 sha2 = "0.10"
+hex = { workspace = true }
+getrandom = "0.3"
 file-rotate = "0.8"
 tracing-throttle = "0.4"
 dom_query = "=0.27.0"

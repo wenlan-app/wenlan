@@ -1606,6 +1606,7 @@ carrying the authority of agreement.
 | `core/post_write/page_revision.rs::accept_page_revision_card_with_edit` | `pub(super)` | no | no | — | `core/db.rs::get_page` |
 | `core/post_write/page_revision.rs::resolve_page_revision_card` | `pub(super)` | no | no | — | `core/db.rs::get_page` |
 | `core/post_write/page_update.rs::project_latest_page` | `private` | no | no | — | `core/db.rs::get_page` |
+| `core/post_write/page_update.rs::stage_page_revision_card_inner` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/post_write/page_update.rs::update_page_db_impl` | `private` | no | no | — | `core/db.rs::get_page`, `core/db/page_basis.rs::prepare_staged_basis_marks` |
 | `core/refinery/mod.rs::enqueue_changed_pages` | `pub(crate)` | no | no | — | `core/db.rs::list_pages` |
 | `core/refinery/mod.rs::maybe_refresh_overview_page` | `private` | no | no | — | `core/synthesis/overview.rs::refresh_overview_page` |
@@ -1821,6 +1822,9 @@ carrying the authority of agreement.
 | `core/post_write/page_revision.rs::accept_pending_revision_edited_with_knowledge_path` | `pub` | no | **yes** | `server/memory_routes.rs::handle_accept_revision` | `core/post_write/page_revision.rs::accept_page_revision_card_with_edit`, `core/post_write/page_revision.rs::resolve_page_revision_card` |
 | `core/post_write/page_revision.rs::accept_pending_revision_with_knowledge_path` | `pub` | no | **yes** | `server/memory_routes.rs::handle_accept_revision` | `core/post_write/page_revision.rs::resolve_page_revision_card` |
 | `core/post_write/page_revision.rs::dismiss_pending_revision` | `pub` | yes | no | — | `core/post_write/page_revision.rs::resolve_page_revision_card` |
+| `core/post_write/page_update.rs::stage_basis_preview_card` | `pub(crate)` | no | no | — | `core/post_write/page_update.rs::stage_page_revision_card_inner` |
+| `core/post_write/page_update.rs::stage_page_revision_card_at_fence` | `pub(crate)` | no | no | — | `core/post_write/page_update.rs::stage_page_revision_card_inner` |
+| `core/post_write/page_update.rs::stage_page_revision_card_with_citations` | `pub` | no | **yes** | `server/page_routes.rs::handle_refresh_page_inner` | `core/post_write/page_update.rs::stage_page_revision_card_inner` |
 | `core/post_write/page_update.rs::update_page_impl` | `pub(super)` | no | no | — | `core/post_write/page_update.rs::project_latest_page`, `core/post_write/page_update.rs::update_page_db_impl` |
 | `core/reconcile.rs::write_revision` | `pub` | no | no | — | `core/ingest.rs::run_canonical_enrichment` |
 | `core/refinery/mod.rs::run_periodic_steep_with_api` | `pub` | no | **yes** | `server/routes.rs::handle_steep` | `core/refinery/mod.rs::run_periodic_steep_with_api_scope` |

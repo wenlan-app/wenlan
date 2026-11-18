@@ -23,6 +23,13 @@ describe("activeNavigationForView", () => {
     expect(activeNavigationForView({ kind: "distill-review" })).toBe("pages");
     expect(activeNavigationForView({ kind: "space", spaceId: "space-1", spaceName: "Launch" })).toBe("spaces");
   });
+  it("lights each section's own row on its list page, and Skills on Find skills", () => {
+    expect(activeNavigationForView({ kind: "pages", section: "docs" })).toBe("pages");
+    expect(activeNavigationForView({ kind: "pages", inventoryScope: "folder:Work" })).toBe("pages");
+    expect(activeNavigationForView({ kind: "pages", section: "skills" })).toBe("skills");
+    expect(activeNavigationForView({ kind: "pages", section: "rules" })).toBe("rules");
+    expect(activeNavigationForView({ kind: "skills" })).toBe("skills");
+  });
   it("lights the graph on the topic list, which opens from it", () => {
     expect(activeNavigationForView({ kind: "entities" })).toBe("graph");
     expect(activeNavigationForView({ kind: "entity", entityId: "entity-1" })).toBe("entities");

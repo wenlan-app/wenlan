@@ -86,6 +86,7 @@ pub mod team_actor;
 mod team_firewall;
 mod team_policy;
 pub mod team_routes;
+mod team_session;
 pub mod telemetry;
 pub mod telemetry_routes;
 pub mod theme_routes;

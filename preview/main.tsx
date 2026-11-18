@@ -163,6 +163,14 @@ function Harness() {
   if (params.get("mode") === "home") return <Main initialView={{ kind: "home" }} />;
   if (params.get("mode") === "spaces") return <Main initialView={{kind:"space",spaceId:null,spaceName:params.get("space") ?? "Wenlan"}} />;
   if (params.get("mode") === "sources") return <Main initialView={{ kind: "sources" }} />;
+  // `?mode=sections&section=docs|skills|rules[&folder=Work][&page=<id>][&demo=empty]`:
+  // the fixed left side with a section's list page, or one of its pages.
+  if (params.get("mode") === "sections") {
+    const pageId = params.get("page");
+    const section = param("section", ["docs", "skills", "rules"] as const, "docs");
+    const folder = params.get("folder");
+    return <Main initialView={pageId ? { kind: "page", pageId } : { kind: "pages", section, ...(folder ? { inventoryScope: `folder:${folder}` as const } : {}) }} />;
+  }
   if (params.get("mode") === "folders") return <Main initialView={{kind:"pages",inventoryScope:params.has("folder") ? `folder:${params.get("folder") ?? ""}` : "all"}} />;
   return (
     <div style={{ minHeight: "100vh", background: "var(--mem-bg)" }}>

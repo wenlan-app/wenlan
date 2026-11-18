@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { expect, test, type Page as BrowserPage } from "@playwright/test";
 import { createSpacesNavigationFixture } from "./fixtures/spacesNavigation";
-import { openWikiNote } from "./helpers/wikiWorkspace";
+import { openWikiNote, sectionList } from "./helpers/wikiWorkspace";
 import { collectBrowserErrors, installTauriMock } from "./tauriMock";
 
 const evidenceDirectory = process.env.WENLAN_UI_EVIDENCE_DIR || "/tmp/wenlan-wiki-ui-evidence";
@@ -45,8 +45,8 @@ async function openWiki(page: BrowserPage, locale: "en" | "zh-Hant", theme: "dar
     await page.getByTitle(locale === "zh-Hant" ? "顯示側邊欄" : "Show sidebar").click();
   }
   const primaryNavigation = page.getByRole("navigation", { name: locale === "zh-Hant" ? "主要導覽" : "Primary navigation" });
-  await primaryNavigation.getByRole("button", { name: locale === "zh-Hant" ? "檔案" : "Library", exact: true }).click();
-  await expect(page.getByRole("heading", { level: 1, name: locale === "zh-Hant" ? "開啟筆記" : "Open a page" })).toBeVisible();
+  await primaryNavigation.getByRole("button", { name: locale === "zh-Hant" ? "文件" : "Docs", exact: true }).click();
+  await expect(page.getByRole("heading", { level: 1, name: locale === "zh-Hant" ? "文件" : "Docs", exact: true })).toBeVisible();
   if ((page.viewportSize()?.width ?? 0) < 900) await page.waitForTimeout(250);
   return browserErrors;
 }
@@ -54,15 +54,16 @@ async function openWiki(page: BrowserPage, locale: "en" | "zh-Hant", theme: "dar
 
 for(const locale of ["en","zh-Hant"] as const)for(const theme of ["light","dark"] as const)for(const width of [1280,375])test(`Wiki reading workspace ${locale} ${theme} ${width}`,async({page},info)=>{
  await page.setViewportSize({width,height:900});const errors=await openWiki(page,locale,theme,"cards");
- const right=page.locator(".wiki-workspace-reading"),tree=page.locator(".wiki-workspace-directory");
+ const right=page.locator(".wiki-workspace-reading"),tree=sectionList(page,"docs");
  await expect(right.locator(".wiki-table, .asset-card, .wiki-folder-lenses")).toHaveCount(0);
  await expect(page.locator(".note-tab-create")).toBeVisible();
- if(!(await tree.isVisible()))await page.locator(".wiki-workspace-folders-toggle").click();
+ await expect(tree).toBeVisible();
  await expect(tree.getByRole("combobox")).toHaveCount(0);
  await tree.getByRole("button",{name:"Research",exact:true}).click();
  await expect(tree.getByTitle("Memory provenance",{exact:true})).toBeVisible();
  await expect(tree.getByTitle("Local-first architecture",{exact:true})).toHaveCount(0);
- await expect(right).not.toContainText("Memory provenance");
+ // The list is the one place the page is named: nothing beside it repeats it.
+ await expect(page.getByText("Memory provenance",{exact:true})).toHaveCount(1);
  await tree.getByRole("button",{name:"Pages",exact:true}).click();
  await expect(tree.getByTitle("Local-first architecture",{exact:true})).toBeVisible();
  await expect(tree.getByTitle("Nash Su",{exact:true})).toHaveCount(0);

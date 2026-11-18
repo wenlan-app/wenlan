@@ -3583,3 +3583,238 @@ async fn ux_skill_8_opencode_and_zed_follow_the_xdg_config_folder_and_never_from
     // never read or written.
     assert!(!SkillDirs::system().tool_files);
 }
+
+#[tokio::test]
+async fn ux_skill_11_the_person_reading_their_rules_in_the_app_is_not_recorded_as_a_tool_read() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(true).await;
+    let project = scratch
+        .db
+        .create_space("Project", None, false)
+        .await
+        .unwrap();
+    scratch.db.register_trusted_agent("codex").await.unwrap();
+    let git = write_page_in_folder(
+        &scratch,
+        1,
+        Some("Project"),
+        "Rules",
+        "Git",
+        "- Use the merge queue\n",
+        "publish",
+    )
+    .await;
+
+    // The app asks as the person, with and without a Space: it gets the same
+    // lines a tool gets, each saying whose hand wrote it and on which page.
+    for space in [Some("Project"), None] {
+        let shown = handle_read_rules(
+            axum::extract::State(scratch.shared.clone()),
+            person_headers(),
+            Query(RulesQuery {
+                space: space.map(str::to_string),
+            }),
+        )
+        .await
+        .unwrap()
+        .0;
+        if space.is_some() {
+            assert_eq!(texts(&shown), vec!["Use the merge queue"]);
+            assert!(shown.lines[0].hand_written);
+            assert_eq!(shown.lines[0].source_page_id, git);
+        }
+    }
+    assert!(
+        scratch
+            .db
+            .skill_borrow_records(&project.id, 0, i64::MAX)
+            .await
+            .unwrap()
+            .is_empty(),
+        "the person's own look is not a tool reading the rules"
+    );
+
+    // A tool's read of the same lines is recorded.
+    read_rules_as_codex(&scratch, Some("Project")).await;
+    assert_eq!(
+        scratch
+            .db
+            .skill_borrow_records(&project.id, 0, i64::MAX)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+/// Answers with whichever of the two follower rules the pages hold.
+struct FollowModel;
+
+const FOLLOW_RULE_V1: &str = "Always describe Wenlan as a memory system in public copy.";
+const FOLLOW_RULE_V2: &str =
+    "Always describe Wenlan as the living playbook for every AI tool in public copy.";
+
+#[async_trait]
+impl LlmProvider for FollowModel {
+    async fn generate(&self, request: LlmRequest) -> Result<String, LlmError> {
+        let prompt = request.user_prompt;
+        match request.label.as_deref() {
+            Some("skills_from_library") => {
+                let quote = [FOLLOW_RULE_V2, FOLLOW_RULE_V1]
+                    .into_iter()
+                    .find(|quote| prompt.contains(quote));
+                Ok(match quote {
+                    Some(quote) => format!(
+                        r#"{{"lines":[{{"kind":"rule","text":{quote:?},"page":"P0","quote":{quote:?}}}]}}"#
+                    ),
+                    None => r#"{"lines":[]}"#.into(),
+                })
+            }
+            Some("skills_conflict_check") => Ok(r#"{"suggestions":[]}"#.into()),
+            _ => Err(LlmError::NotAvailable),
+        }
+    }
+
+    fn is_available(&self) -> bool {
+        true
+    }
+
+    fn name(&self) -> &str {
+        "skill-follow-test"
+    }
+
+    fn backend(&self) -> LlmBackend {
+        LlmBackend::Api
+    }
+}
+
+/// Source follow C2: a page follows another page, the AI tool brings it in
+/// line through steep, and the next night pass rewrites the rule taken from it.
+#[tokio::test]
+async fn a_rule_from_a_following_page_changes_the_night_after_that_page_catches_up() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(true).await;
+    let team = scratch.db.create_space("Team", None, false).await.unwrap();
+    scratch
+        .db
+        .create_space("Source", None, false)
+        .await
+        .unwrap();
+    let lead = create_person_page(
+        &scratch.db,
+        &scratch.pages,
+        "Source",
+        "Positioning",
+        "Wenlan is a memory system.",
+    )
+    .await;
+    let follower = create_person_page(
+        &scratch.db,
+        &scratch.pages,
+        "Team",
+        "How we describe Wenlan",
+        FOLLOW_RULE_V1,
+    )
+    .await;
+    let lead_version = scratch.db.get_page(&lead).await.unwrap().unwrap().version;
+    scratch
+        .db
+        .mark_page_basis(&follower, &lead, lead_version, "human")
+        .await
+        .unwrap();
+
+    let model = FollowModel;
+    let first = refresh(&scratch, &model).await;
+    assert_eq!(first.suggestions, 1, "{first:?}");
+    let _accepted = handle_accept_space_rules(
+        axum::extract::State(scratch.shared.clone()),
+        person_headers(),
+        AxumPath(team.id.clone()),
+        Query(SpaceAnswerScope::default()),
+    )
+    .await
+    .unwrap();
+    let read = |scratch: &Scratch| {
+        let shared = scratch.shared.clone();
+        async move {
+            handle_read_rules(
+                axum::extract::State(shared),
+                HeaderMap::new(),
+                Query(RulesQuery {
+                    space: Some("Team".into()),
+                }),
+            )
+            .await
+            .unwrap()
+            .0
+        }
+    };
+    let before = read(&scratch).await;
+    assert_eq!(before.lines.len(), 1);
+    assert_eq!(before.lines[0].source_quote, FOLLOW_RULE_V1);
+
+    // The page it follows changes; nothing about the rule changes yet.
+    scratch
+        .db
+        .update_page_content(
+            &lead,
+            "Wenlan is the living playbook for every AI tool.",
+            &[],
+            "manual_edit",
+        )
+        .await
+        .unwrap();
+    let unchanged = read(&scratch).await;
+    assert_eq!(unchanged.lines[0].source_quote, FOLLOW_RULE_V1);
+
+    // The AI tool brings the following page in line through steep.
+    let claim = wenlan_core::steep::claim(
+        &scratch.db,
+        &follower,
+        &wenlan_core::read_scope::ReadScope::Global,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        claim.stale_reason,
+        wenlan_types::steep::STEEP_REASON_BASIS_CHANGED
+    );
+    let done = wenlan_core::steep::commit(
+        &scratch.db,
+        claim.token.as_deref().unwrap(),
+        wenlan_types::steep::STEEP_ACTION_REWRITE,
+        Some(FOLLOW_RULE_V2),
+        &[],
+        Some(&scratch.pages),
+        Some("claude-code"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(done.outcome, "written");
+
+    // The next night pass sees the new version and rewrites the rule.
+    let report = refresh(&scratch, &model).await;
+    assert!(report.spaces_updated >= 1, "{report:?}");
+    let after = read(&scratch).await;
+    assert_eq!(after.lines.len(), 1, "{:?}", after.lines);
+    assert_eq!(after.lines[0].source_quote, FOLLOW_RULE_V2);
+    assert_eq!(after.lines[0].source_page_title, "How we describe Wenlan");
+    let rules_page = scratch
+        .db
+        .space_rules_state(&team.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .rules_page_id
+        .unwrap();
+    let page = scratch.db.get_page(&rules_page).await.unwrap().unwrap();
+    assert!(page.content.contains(FOLLOW_RULE_V2), "{}", page.content);
+    assert!(!page.content.contains(FOLLOW_RULE_V1), "{}", page.content);
+}

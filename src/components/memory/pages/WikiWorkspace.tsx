@@ -35,8 +35,6 @@ export interface WikiWorkspaceProps {
   /** The shell renders the directory (see Main): into this workspace's slot
    *  while it is a column here, or into the left sidebar. */
   readonly externalDirectory?: boolean;
-  /** The directory sits in the left sidebar, so this workspace has no column for it. */
-  readonly directoryInSidebar?: boolean;
   readonly onDirectoryHost?: (host: HTMLDivElement | null) => void;
   /** Increment to close the narrow directory drawer after a navigation. */
   readonly directoryCloseRequest?: number;
@@ -86,7 +84,6 @@ export function WikiWorkspace({
   onRestorePage,
   directoryOpenRequest = 0,
   externalDirectory = false,
-  directoryInSidebar = false,
   onDirectoryHost,
   directoryCloseRequest = 0,
 }: WikiWorkspaceProps) {
@@ -139,7 +136,7 @@ export function WikiWorkspace({
   useReportWorkspaceDemand("list", WIKI_LIST_DOCKED_WIDTH);
   const closeDrawer = useCallback(() => setFolderOpen(false), []);
   const openDrawer = useCallback(() => setFolderOpen(true), []);
-  const hidden = directoryInSidebar || (directoryHidden && inventoryMode !== "archived");
+  const hidden = directoryHidden && inventoryMode !== "archived";
 
   return (
     <div className="wiki-workspace" data-directory-hidden={hidden ? "true" : undefined}>

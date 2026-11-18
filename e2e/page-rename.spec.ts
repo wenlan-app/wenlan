@@ -100,7 +100,7 @@ test("renames an active page while preserving its identity and body after revisi
   expect(controller.calls().some((call) => call.command === "rename_page")).toBe(true);
 
   await page.getByRole("button", { name: "Back" }).click();
-  await expect(page.getByRole("heading", { level: 1, name: "Open a page" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Docs", exact: true })).toBeVisible();
   await openWikiNote(page, "Renamed architecture");
   await expect(page.getByRole("heading", { level: 1, name: "Renamed architecture" })).toBeVisible();
   const revisited = await page.evaluate(async () =>

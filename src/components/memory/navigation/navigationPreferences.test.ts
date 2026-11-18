@@ -29,7 +29,7 @@ describe("navigation preferences", () => {
 
   it("shows every destination once, in order, and drops Memories and Sources", () => {
     localStorage.setItem(NAVIGATION_PREFERENCE_KEY, JSON.stringify({ version: 2, visible: ["home", "graph", "home", "memories", "sources"] }));
-    expect(readNavigationPreferences()).toEqual(["home", "pages", "spaces", "graph"]);
+    expect(readNavigationPreferences()).toEqual(["home", "spaces", "pages", "skills", "rules", "graph"]);
     expect(sanitizeVisibleNavigation(["home", "pages", "home"])).toEqual(REQUIRED_NAVIGATION_DESTINATIONS);
   });
 
@@ -48,11 +48,11 @@ describe("navigation preferences", () => {
     localStorage.setItem(NAVIGATION_PREFERENCE_KEY, JSON.stringify({ version: 2, visible: ["home", "unknown", "spaces", "home", "pages", "graph"] }));
     expect(readNavigationPreferences()).toEqual(NAVIGATION_DESTINATION_ORDER);
     // A saved Topics pin is dropped: topics open from the graph now.
-    expect(sanitizeVisibleNavigation(["entities", "graph", "graph", null])).toEqual(["home", "pages", "spaces", "graph"]);
+    expect(sanitizeVisibleNavigation(["entities", "graph", "graph", null])).toEqual(["home", "spaces", "pages", "skills", "rules", "graph"]);
     writeNavigationPreferences(["entities", "graph", "graph", "pages"]);
     expect(JSON.parse(localStorage.getItem(NAVIGATION_PREFERENCE_KEY)!)).toEqual({
       version: 2,
-      visible: ["home", "pages", "spaces", "graph"],
+      visible: ["home", "spaces", "pages", "skills", "rules", "graph"],
       sidebar: DEFAULT_SIDEBAR_PREFERENCES,
     });
   });

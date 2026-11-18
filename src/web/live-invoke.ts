@@ -1385,6 +1385,8 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
     requireSourcePreview();
     return http("POST", `/api/skills/suggestions/${enc(String(a.suggestionId))}/undo`, undefined, AS_PERSON);
   },
+  get_rules_delivery: () => get("/api/skills/delivery", AS_PERSON),
+  get_space_rules: (a) => get(`/api/skills/rules${qs({ space: a.space })}`, AS_PERSON),
   list_skill_borrow_records: (a) =>
     get(`/api/skills/record${qs({ space: a.space })}`),
   create_space: (a) => { requireSourcePreview(); return post("/api/spaces", { name: a.name, description: a.description }); },

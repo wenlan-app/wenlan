@@ -457,13 +457,14 @@ pub async fn run(client: &WenlanClient, format: ResolvedFormat, quiet: bool) -> 
 }
 
 /// Whether pull requests may go to `target`: always when the repository has
-/// no remote or is the user's own; otherwise only when they say yes here.
+/// no remote, is the user's own, or GitHub lets them push to it (their team's);
+/// otherwise only when they say yes here.
 /// The same line `wenlan repo bind` draws with `--confirm-repo`.
 fn agreed(target: &PublishTarget, interactive: bool) -> Result<bool> {
     let Some(name) = target.name() else {
         return Ok(true);
     };
-    if target.owned() {
+    if target.ours() {
         return Ok(true);
     }
     if !interactive {
@@ -727,8 +728,19 @@ mod tests {
             remote_url: None,
             slug: None,
             signed_in_as: None,
+            can_push: false,
         };
         assert!(agreed(&no_remote, false).unwrap());
+        let team = PublishTarget {
+            remote_url: Some("https://github.com/acme/api.git".to_owned()),
+            slug: Some("acme/api".to_owned()),
+            signed_in_as: Some("me".to_owned()),
+            can_push: true,
+        };
+        assert!(
+            agreed(&team, false).unwrap(),
+            "a team's repository is not asked about"
+        );
     }
 
     #[test]
@@ -737,11 +749,13 @@ mod tests {
             remote_url: Some("https://github.com/me/acme-api.git".to_owned()),
             slug: Some("me/acme-api".to_owned()),
             signed_in_as: Some("me".to_owned()),
+            can_push: false,
         };
         let no_remote = PublishTarget {
             remote_url: None,
             slug: None,
             signed_in_as: None,
+            can_push: false,
         };
         let claude = Some(RepoWikiAgent::Claude);
         // No terminal.

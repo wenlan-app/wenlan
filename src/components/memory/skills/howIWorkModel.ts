@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { TFunction } from "i18next";
-import type { Page, SkillLine, SkillLineKind } from "../../../lib/tauri";
+import type { Page, SkillLine, SkillLineKind, SpaceRulesResponse } from "../../../lib/tauri";
 
 export const NOT_FOR_AI_TOOLS_MARKER = "<!-- wenlan:not-for-ai-tools -->";
 export const HOW_I_WORK_QUERY_KEYS = {
@@ -8,6 +8,9 @@ export const HOW_I_WORK_QUERY_KEYS = {
   spaceSuggestions: ["space-rules-suggestions"] as const,
   skillSuggestions: ["skill-suggestions"] as const,
   records: (space: string) => ["skill-borrow-records", space] as const,
+  /** The rules the daemon lists for a Space (or for every Space, with ""),
+   *  asked again whenever the page in view changes. */
+  rules: (space: string, pageId: string, version: number) => ["space-rules", space, pageId, version] as const,
 };
 
 const RULE_MARKER = "<!-- wenlan-rule:";
@@ -23,28 +26,109 @@ function parseQuotedText(raw: string): string {
   }
 }
 
-/** Read the page projection without exposing its revision bindings in the UI. */
-export function parseHowIWorkLines(content: string): SkillLine[] {
+const MANAGED_LINE = /^- \[(rule|decision|pitfall)\] (.*?) — Source: (.*) \(([^()]*)\) r(-?\d+) at (-?\d+) — Quote: (.+) <!-- wenlan-rule:([^>]+) -->$/u;
+const BULLET = /^( {0,3})[-*+] +(.*)$/u;
+const TAGGED = /^\[(rule|decision|pitfall)\]\s*/iu;
+
+/** Read the page projection without exposing its revision bindings in the UI.
+ *  A managed line names the page it came from. A plain top-level bullet is
+ *  read as the daemon reads it (`skill_grow::person_rule_lines`): outside
+ *  code blocks, not a to-do box, a rule unless it opens with `[decision]` or
+ *  `[pitfall]`. Who wrote a bullet is not in the page text: only the daemon
+ *  knows, from the page's history, so a bullet carries no author here until
+ *  `withDaemonAuthors` adds the daemon's answer. */
+export function parseHowIWorkLines(content: string, page?: Pick<Page, "id" | "title">): SkillLine[] {
   const lines: SkillLine[] = [];
+  const seen = new Set<string>();
+  let fence: string | null = null;
+  let listIndent: number | null = null;
   for (const raw of content.split(/\r?\n/u)) {
-    if (!raw.includes(RULE_MARKER)) continue;
-    const match = /^- \[(rule|decision|pitfall)\] (.*?) — Source: (.*) \(([^()]*)\) r(-?\d+) at (-?\d+) — Quote: (.+) <!-- wenlan-rule:([^>]+) -->$/u.exec(raw);
-    if (!match) continue;
-    const [, kind, text, sourceTitle, sourcePageId, sourceRevision, sourceRevisionAt, quoted, id] = match;
-    const sourceQuote = parseQuotedText(quoted);
+    const trimmed = raw.trimStart();
+    const opens = ["```", "~~~"].find((mark) => trimmed.startsWith(mark));
+    if (opens) { fence = fence === null ? opens : fence === opens ? null : fence; continue; }
+    if (fence !== null) continue;
+    if (raw.includes(RULE_MARKER)) {
+      const match = MANAGED_LINE.exec(raw);
+      if (!match) continue;
+      const [, kind, text, sourceTitle, sourcePageId, sourceRevision, sourceRevisionAt, quoted, id] = match;
+      const sourceQuote = parseQuotedText(quoted);
+      lines.push({
+        id,
+        kind: kind as SkillLineKind,
+        text,
+        source_page_id: sourcePageId,
+        source_page_title: sourceTitle,
+        source_revision: Number(sourceRevision),
+        source_revision_at: Number(sourceRevisionAt),
+        source_quote: sourceQuote,
+        person_edited: text !== sourceQuote,
+      });
+      continue;
+    }
+    if (trimmed.startsWith("#")) { listIndent = null; continue; }
+    const bullet = BULLET.exec(raw);
+    if (!bullet) continue;
+    const indent = bullet[1].length;
+    if (listIndent !== null && indent >= listIndent + 2) continue;
+    listIndent = indent;
+    const item = bullet[2].trim();
+    if (/^\[[ xX]\]/u.test(item)) continue;
+    const tag = TAGGED.exec(item);
+    const kind = (tag?.[1].toLowerCase() ?? "rule") as SkillLineKind;
+    const text = (tag ? item.slice(tag[0].length) : item).split(/\s+/u).filter(Boolean).join(" ");
+    const key = text.toLowerCase();
+    if (!text || seen.has(key)) continue;
+    seen.add(key);
     lines.push({
-      id,
-      kind: kind as SkillLineKind,
+      id: `own:${lines.length}:${key}`,
+      kind,
       text,
-      source_page_id: sourcePageId,
-      source_page_title: sourceTitle,
-      source_revision: Number(sourceRevision),
-      source_revision_at: Number(sourceRevisionAt),
-      source_quote: sourceQuote,
-      person_edited: text !== sourceQuote,
+      source_page_id: page?.id ?? "",
+      source_page_title: page?.title ?? "",
+      source_revision: 0,
+      source_revision_at: 0,
+      source_quote: text,
     });
   }
   return lines;
+}
+
+/** One rule's words, compared as the daemon compares them. */
+export function ruleTextKey(text: string): string {
+  return text.split(/\s+/u).filter(Boolean).join(" ").toLowerCase();
+}
+
+/** The daemon's lines that came from `pageId` itself. */
+export function rulesFromPage(rules: SpaceRulesResponse | undefined, pageId: string): SkillLine[] {
+  return (rules?.lines ?? []).filter((line) => line.source_page_id === pageId);
+}
+
+/** Marks a plain bullet as written by the person only where the daemon says
+ *  so: a line it returned as hand-written, from this page, with the same
+ *  words. Every other bullet keeps no author. */
+export function withDaemonAuthors(lines: readonly SkillLine[], rules: SpaceRulesResponse | undefined, pageId: string): SkillLine[] {
+  const own = new Map(rulesFromPage(rules, pageId).filter((line) => line.hand_written).map((line) => [ruleTextKey(line.text), line] as const));
+  const all = new Map((rules?.lines ?? []).map((line) => [line.id, line] as const));
+  return lines.map((line) => {
+    if (!line.id.startsWith("own:")) return all.get(line.id)?.general ? { ...line, general: true } : line;
+    const told = own.get(ruleTextKey(line.text));
+    return told ? { ...line, hand_written: true, person_edited: true, general: told.general } : line;
+  });
+}
+
+/** Whether `page` gives any rule that is used in every Space: those are the
+ *  only rules Wenlan writes into the AI tools' files. `everySpace` says the
+ *  daemon was asked with no Space, where every line it lists is one. */
+export function pageGivesGeneralRules(
+  rules: SpaceRulesResponse | undefined,
+  page: Pick<Page, "id">,
+  pageLines: readonly SkillLine[],
+  everySpace: boolean,
+): boolean {
+  if (!rules) return false;
+  const onPage = new Set(pageLines.map((line) => line.id));
+  return rules.lines.some((line) => (everySpace || line.general === true)
+    && (line.source_page_id === page.id || (rules.rules_page_id === page.id && onPage.has(line.id))));
 }
 
 export function isHowIWorkPage(page: Pick<Page, "content" | "title">): boolean {

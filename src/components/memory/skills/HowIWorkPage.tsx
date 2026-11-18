@@ -19,14 +19,17 @@ import {
   type SkillSuggestion,
 } from "../../../lib/tauri";
 import { HowIWorkLines } from "./HowIWorkLines";
+import { RulesToolsHeader, usePageRules } from "./RulesToolsHeader";
 import {
   HOW_I_WORK_QUERY_KEYS,
   howIWorkSpaceName,
+  pageGivesGeneralRules,
   parseHowIWorkLines,
   replaceHowIWorkLine,
   rulesPageStopped,
   setRulesPageStopped,
   visibleSourceTitle,
+  withDaemonAuthors,
 } from "./howIWorkModel";
 import "./howIWork.css";
 
@@ -45,8 +48,12 @@ export function HowIWorkPage({ page, onOpenPage }: Props) {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
   const spaceName = howIWorkSpaceName(page);
-  const lines = useMemo(() => parseHowIWorkLines(page.content), [page.content]);
+  // Who wrote a bullet, and which rules are used in every Space, are the
+  // daemon's answers; the page text only says which lines there are.
+  const rules = usePageRules(page, spaceName || null);
+  const lines = useMemo(() => withDaemonAuthors(parseHowIWorkLines(page.content, page), rules, page.id), [page, rules]);
   const stopped = rulesPageStopped(page.content);
+  const delivers = !stopped && pageGivesGeneralRules(rules, page, lines, !spaceName);
   const [writeBusy, setWriteBusy] = useState(false);
   const [writeError, setWriteError] = useState(false);
   const [suggestionStates, setSuggestionStates] = useState<Record<string, SuggestionState>>({});
@@ -153,6 +160,7 @@ export function HowIWorkPage({ page, onOpenPage }: Props) {
 
   return (
     <section className="how-i-work-page" data-testid="how-i-work-page">
+      <RulesToolsHeader delivers={delivers} />
       {enabled.data === true ? (
         <div className="how-i-work-page-actions" aria-label={t("howIWork.page.actionsLabel")}>
           <button className="how-i-work-quiet-action" disabled={actionBusy} onClick={() => refresh.mutate()} type="button">
@@ -192,7 +200,7 @@ export function HowIWorkPage({ page, onOpenPage }: Props) {
         </section>
       ) : null}
 
-      <HowIWorkLines lines={lines} onOpenPage={onOpenPage} onEditLine={editLine} />
+      <HowIWorkLines lines={lines} onOpenPage={onOpenPage} onEditLine={editLine} ownPageId={page.id} />
       <p className="how-i-work-stop-note">{t(stopped ? "howIWork.page.stoppedNote" : "howIWork.page.stopNote")}</p>
 
       {matchingSuggestions.length > 0 ? (

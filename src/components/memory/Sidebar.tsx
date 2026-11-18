@@ -3,7 +3,9 @@ import { forwardRef, useEffect, useRef } from "react";
 import { GearSix, SidebarSimple, SignOut } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 import IdentityCard from "./IdentityCard";
-import { PrimaryNavigation } from "./navigation/PrimaryNavigation";
+import { PrimaryNavigation, SIDEBAR_RECENT_LISTED } from "./navigation/PrimaryNavigation";
+import { sectionCounts, useRecentSectionPages, useSectionPages } from "./pages/useSectionPages";
+import { howIWorkPageTitle } from "./skills/howIWorkModel";
 import { ReviewEnvironmentBadge } from "./navigation/ReviewEnvironmentBadge";
 import { SearchEntry } from "./SearchEntry";
 import ActivityStatus from "./activity/ActivityStatus";
@@ -31,6 +33,8 @@ interface SidebarProps {
   readonly onConnectTool?: () => void;
   readonly onNavigateHome?: () => void;
   readonly onNavigatePages?: () => void;
+  readonly onNavigateSkills?: () => void;
+  readonly onNavigateRules?: () => void;
   readonly onNavigateSettings?: () => void;
   readonly onNavigateSpaces?: (create: boolean) => void;
   /** The Private / team switch, above everything; only for someone on a team. */
@@ -42,9 +46,7 @@ interface SidebarProps {
   readonly onRequestClose?: () => void;
   readonly open?: boolean;
   readonly presentation?: "desktop" | "overlay";
-  /** Where the shell renders the Wiki and its pages, below the destinations. */
-  readonly onWikiSectionHost?: (host: HTMLDivElement | null) => void;
-  /** Opens a page pinned to the left side; without it no pinned page shows. */
+  /** Opens a pinned or recently opened page; without it neither list shows. */
   readonly onOpenPinnedPage?: (pageId: string) => void;
   readonly activePageId?: string | null;
 }
@@ -81,6 +83,8 @@ export default function Sidebar({
   onConnectTool,
   onNavigateHome,
   onNavigatePages,
+  onNavigateSkills,
+  onNavigateRules,
   onNavigateSettings,
   onNavigateSpaces = () => {},
   switcher,
@@ -91,7 +95,6 @@ export default function Sidebar({
   onRequestClose,
   open = !hidden,
   presentation = "desktop",
-  onWikiSectionHost,
   onOpenPinnedPage,
   activePageId = null,
 }: SidebarProps) {
@@ -99,6 +102,9 @@ export default function Sidebar({
   const teamMember = isTeamMemberMode();
   const { t } = useTranslation();
   const pinnedPages = usePinnedPages();
+  const sections = useSectionPages();
+  const recentPages = useRecentSectionPages(sections.pages, SIDEBAR_RECENT_LISTED, sections.sectionOf)
+    .map((recent) => ({ ...recent, title: howIWorkPageTitle(recent.page, t) }));
   const asideRef = useRef<HTMLElement>(null);
   const overlay = presentation === "overlay";
   const compact = !overlay && mode === "icons";
@@ -178,10 +184,16 @@ export default function Sidebar({
               home: t("sidebar.home"),
               navigation: t("sidebar.navigation"),
               pages: t("sidebar.pages"),
+              skills: t("sidebar.skills"),
+              rules: t("sidebar.rules"),
               spaces: t("sidebar.spaces"),
               pinned: t("sidebar.pinnedPages"),
+              recent: t("sidebar.recentPages"),
+              counted: (label, count) => t("sidebar.sectionCount", { label, count }),
               unpin: (title) => t("sidebar.unpinNamed", { title }),
             }}
+            counts={sectionCounts(sections)}
+            recentPages={recentPages}
             pinnedPages={pinnedPages}
             activePinnedPageId={activePageId}
             onOpenPinnedPage={closeAfterNavigation(onOpenPinnedPage, closeOverlay)}
@@ -191,8 +203,9 @@ export default function Sidebar({
             onNavigateGraph={teamMember ? undefined : closeAfterNavigation(onNavigateGraph, closeOverlay)}
             onNavigateHome={closeAfterNavigation(onNavigateHome, closeOverlay)}
             onNavigatePages={closeAfterNavigation(onNavigatePages, closeOverlay)}
+            onNavigateSkills={closeAfterNavigation(onNavigateSkills, closeOverlay)}
+            onNavigateRules={closeAfterNavigation(onNavigateRules, closeOverlay)}
             onNavigateSpaces={closeAfterNavigation(onNavigateSpaces, closeOverlay)}
-            onWikiSectionHost={overlay ? undefined : onWikiSectionHost}
           />
         </div>
         <div className={`notes-rail-utilities${compact ? " notes-rail-utilities--icons" : ""}`}>
