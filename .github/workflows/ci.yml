@@ -580,6 +580,8 @@ jobs:
               # reparse point), and the tests build real symlinks on each side.
               - 'crates/wenlan-server/src/skill_grow.rs'
               - 'crates/wenlan-server/src/skill_grow_test.rs'
+              # The sign-in config file warns when others can read it (`cfg(unix)`).
+              - 'crates/wenlan-server/src/team_auth.rs'
               # The OKF overlap refusal is proved against a symlinked spelling
               # too, and that case is `cfg(unix)`, so the file carries a
               # platform route and must schedule both sides of the gate.
@@ -634,6 +636,8 @@ jobs:
               # No-follow skill reads and symlink tests have a Windows branch.
               - 'crates/wenlan-server/src/skill_grow.rs'
               - 'crates/wenlan-server/src/skill_grow_test.rs'
+              # The sign-in config file warns when others can read it (`cfg(unix)`).
+              - 'crates/wenlan-server/src/team_auth.rs'
               # The team's Windows Firewall probe runs PowerShell only on Windows.
               - 'crates/wenlan-server/src/team_firewall.rs'
               - 'crates/wenlan-server/tests/graceful_shutdown.rs'
