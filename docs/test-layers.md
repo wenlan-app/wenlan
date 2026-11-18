@@ -63,43 +63,40 @@ owns that suite` and stops at Clippy. Narrow plans still run their own lib and
 integration tests locally, which is where the fast local signal is worth paying
 for.
 
-**macOS runs in the merge queue, not on PR pushes.** Hosted macOS allows five
-jobs at once, and in the week of 2026-11-02 PR pushes used 159 of 263 macOS
-runner-hours while the merge queue re-ran the same work. Ordinary PR runs now
-skip every macOS job (`detect-changes.outputs.macos-allowed == 'false'`): the
-macOS nextest archive and slices, the macOS `test`, `platform-compile` and
-`native-platform-contracts` legs, `app-check`, and the darwin release preflight.
-The merge-queue run keeps all of them, and its `conclusion` still requires each
-selected one before a PR lands. Release-please and manual runs keep macOS on the
-PR. A macOS-only failure therefore first shows up in the queue.
+**macOS never blocks a merge.** Hosted macOS allows five jobs at once and its
+arm64 pool is often short: a queued macOS job that no runner picks up within 15
+minutes is cancelled ("not acquired by Runner"), and the merge queue drops the
+entry. On 2026-11-16 five queue entries in three hours were dropped this way and
+on 2026-11-18 one PR was dropped three times; none was a macOS test failure. So
+ordinary PR runs and merge-queue runs skip every macOS job
+(`detect-changes.outputs.macos-allowed == 'false'`): the macOS nextest archive
+and slices, the macOS `test`, `platform-compile` and `native-platform-contracts`
+legs, `app-check`, and the darwin release preflight.
 
-**Native lanes run in the queue only when native code changed.** On 2026-11-16
-five queue entries in three hours were kicked because their macOS jobs waited
-15 to 62 minutes for one of the five runners; none was a macOS test failure.
-In a merge-queue run, `scripts/ci_native_lane.py` reads the files that woke any
-macOS or Windows filter:
+The main push after merge runs every macOS job, including the darwin release
+preflight when release packaging changed. A macOS-only break therefore shows up
+red on main, not before merge, and must be fixed forward before the next
+release. The Release PR (release-please) and manual runs keep every native lane,
+so a release never ships without a macOS pass. For a change aimed at macOS
+(the app, the updater, packaging, `target_os = "macos"` code), run the workflow
+by hand on the branch before queueing.
 
-- **macOS** (`macos-allowed`) runs only for macOS-specific changes: `app/`, the
-  vendored updater, packaging and release scripts (`*macos*`,
-  `build-release-binaries*`, `release_targets*`, sidecar staging, `install.sh`,
-  `release.yml`), native C/ObjC sources, `build.rs`, `rust-toolchain.toml`, and
-  Rust files containing `target_os = "macos"` or `target_vendor = "apple"`.
-  Shared Rust (including `cfg(unix)` code) and dependency bumps are proved on
-  Linux and Windows before merge and on macOS by the main push after merge.
-- **Windows** (`windows-allowed`) runs unless every such file is React frontend
-  (`src/`, `e2e/`, `preview/`, `review/`, `public/`, root Vite/TS configs) or
-  `.github/workflows/ci.yml` alone. `tooling/` stays native: its Vite configs
-  decide where the Tauri and Review bundles land. The PR run already exercised
-  Windows on the same diff.
-- **Darwin release preflight** follows the Windows rule plus any ci.yml edit,
-  because the main push never runs it (`darwin-preflight`).
+**Windows runs in the queue only when native code changed.** In a merge-queue
+run, `scripts/ci_native_lane.py` reads the files that woke any macOS or Windows
+filter. Windows (`windows-allowed`) runs unless every such file is React
+frontend (`src/`, `e2e/`, `preview/`, `review/`, `public/`, root Vite/TS
+configs) or `.github/workflows/ci.yml` alone. `tooling/` stays native: its Vite
+configs decide where the Tauri and Review bundles land. The PR run already
+exercised Windows on the same diff.
+
+**Runner shortages re-run themselves.** `ci-runner-retry.yml` watches finished
+CI runs. When every failed job is one GitHub never gave a runner (no steps, a
+"was not acquired by Runner" annotation), it re-runs the failed jobs of a PR or
+main run, or puts a dropped merge-queue entry back in the queue, at most twice.
+A real test failure is never retried.
 
 Skipped lanes are expected skipped by `conclusion`. `app-frontend` also runs
-`pnpm build:web`, the bundle the daemon embeds. The main push after merge runs
-every native job as the backstop, so a macOS-only break in shared code now
-shows up red on main rather than in the queue, and must be fixed forward before
-the next release. For a ci.yml change to a macOS job block, run the workflow by
-hand on the branch before queueing.
+`pnpm build:web`, the bundle the daemon embeds.
 
 The Linux desktop bundle (`linux-app-bundle.yml`, about 90 minutes) follows the
 same rule on PRs: it runs for the app, updater, dependency graph, build scripts
