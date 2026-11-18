@@ -1418,10 +1418,12 @@ jobs:
 // Compatibility pair grounded in ort commit 2de34065983a5c034f5afcc072b23b99479f465b:
 // ort-sys/build/download/dist.txt pins the Windows x64 CPU build to ms@1.23.2,
 // and ort-sys/src/version.rs exposes ORT_API_VERSION = 23.
+// The archive is Microsoft's NuGet package Microsoft.ML.OnnxRuntime 1.23.2
+// (the GitHub release zip began returning 404 on 2026-11-18).
 const ORT_CRATE_VERSION: &str = "2.0.0-rc.11";
 const WINDOWS_ORT_VERSION: &str = "1.23.2";
 const WINDOWS_ORT_ZIP_SHA256: &str =
-    "0b38df9af21834e41e73d602d90db5cb06dbd1ca618948b8f1d66d607ac9f3cd";
+    "25fe172f7fcdf34f2b5b02c8b997f6b88abc282956849d4af4335af23d0c4e4a";
 
 fn dependency_features<'a>(
     manifest: &'a toml::Value,
