@@ -21,6 +21,7 @@ const api = vi.hoisted(() => ({
   rules: vi.fn(),
   spaceFolders: vi.fn(),
   removeSaved: vi.fn(),
+  revisions: vi.fn(),
 }));
 
 vi.mock("../../../lib/tauri", () => ({
@@ -39,6 +40,7 @@ vi.mock("../../../lib/tauri", () => ({
   getSpaceRules: api.rules,
   getSpaceFolders: api.spaceFolders,
   removeSavedRule: api.removeSaved,
+  getPageRevisions: api.revisions,
   SAVED_FROM_TERMINAL: "terminal",
 }));
 
@@ -127,13 +129,23 @@ describe("How-I-work page", () => {
     api.askSuggestions.mockResolvedValue([]);
     api.rules.mockResolvedValue(told([]));
     api.spaceFolders.mockReset().mockResolvedValue(false);
+    api.revisions.mockReset().mockResolvedValue({ page_id: page.id, current_version: 3, user_edited: false, entries: [] });
   });
 
-  it("UX-SKILL-2 shows actions, real borrowing labels and person-edited lines without internal ids", async () => {
+  /** Opens the "…" menu and returns its items by name. */
+  const openMenu = async () => {
+    fireEvent.click(await screen.findByRole("button", { name: "How I work actions" }));
+    return screen.getByRole("menu", { name: "How I work actions" });
+  };
+
+  it("UX-SKILL-2 shows actions behind the … menu, real borrowing labels and person-edited lines without internal ids", async () => {
     const { onOpenPage } = renderPage();
-    expect(await screen.findByRole("button", { name: "Update now" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Undo last night" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
+    const menu = await openMenu();
+    expect(within(menu).getByRole("menuitem", { name: "Update now" })).toBeInTheDocument();
+    expect(within(menu).getByRole("menuitem", { name: "Undo last night" })).toBeInTheDocument();
+    expect(within(menu).getByRole("menuitem", { name: /^Stop/ })).toBeInTheDocument();
+    // No row of buttons is left in the page body.
+    expect(screen.queryByRole("button", { name: "Update now" })).not.toBeInTheDocument();
     const borrowed = await screen.findByRole("heading", { name: "AI tools borrowed this week" });
     const borrowedSection = borrowed.closest("section")!;
     expect(within(borrowedSection).getByText(/Reported by the AI tool/)).toBeInTheDocument();
@@ -192,9 +204,14 @@ describe("How-I-work page", () => {
     tool("kiro", "Kiro", { state: "folder_missing" }),
     tool("zed", "Zed", { connected: false, state: "not_connected" }),
   ];
-  const headerRows = async () => {
+  /** Each chip in the tools row: its name, its dot, and the state its card says. */
+  const headerChips = async () => {
     const header = await screen.findByRole("region", { name: "AI tools these rules are used in" });
-    return { header, rows: () => [...header.querySelectorAll(".rules-tools-row")].map((row) => row.textContent) };
+    const chips = () => [...header.querySelectorAll<HTMLButtonElement>(".rules-tools-chip")].map((chip) => {
+      const card = document.getElementById(chip.getAttribute("aria-describedby") ?? "")!;
+      return [chip.querySelector(".rules-tools-name")!.textContent, chip.querySelector(".rules-tools-dot")!.getAttribute("data-dot"), card.querySelector(".rules-tools-card-state")!.textContent];
+    });
+    return { header, chips };
   };
 
   it("UX-SKILL-11, UX-SKILL-8: heads a page that gives a rule used in every Space with the connected AI tools, saying only connected and delivered", async () => {
@@ -203,15 +220,21 @@ describe("How-I-work page", () => {
     // Wenlan writes into the tools' files.
     api.rules.mockResolvedValue(told([daemonLine("rule-1", "Discuss the approach before writing code", { source_page_id: "page-source-1", general: true })]));
     renderPage();
-    const { header, rows } = await headerRows();
-    await waitFor(() => expect(rows()).toEqual([
-      "Used inClaude CodeOpenCodeconnected, rules delivered",
-      "Used inCursorOddconnected",
-      "Used inCodexconnected, not delivered yet",
-      "Used inWindsurfconnected, too long to deliver",
-      "Used inGemini CLIconnected, file can’t be changed",
-      "Used inKiroconnected, not delivered",
+    const { header, chips } = await headerChips();
+    // One row: delivered tools first, then connected only, then the ones
+    // whose rules were not delivered, with an amber dot.
+    await waitFor(() => expect(chips()).toEqual([
+      ["Claude Code", "delivered", "connected, rules delivered"],
+      ["OpenCode", "delivered", "connected, rules delivered"],
+      ["Cursor", "connected", "connected"],
+      ["Odd", "connected", "connected"],
+      ["Codex", "problem", "connected, not delivered yet"],
+      ["Windsurf", "problem", "connected, too long to deliver"],
+      ["Gemini CLI", "problem", "connected, file can’t be changed"],
+      ["Kiro", "problem", "connected, not delivered"],
     ]));
+    expect(header.querySelectorAll(".rules-tools-row")).toHaveLength(1);
+    expect(header.querySelector(".rules-tools-row")).toHaveTextContent(/^Used in/);
     // A tool that is not connected is not listed, and nothing claims the AI
     // follows or obeys the rules; no path or machine word shows.
     expect(header).not.toHaveTextContent("Zed");
@@ -220,7 +243,7 @@ describe("How-I-work page", () => {
 
   it("UX-SKILL-11, UX-SKILL-8: says only connected on a page whose rules are for its own Space, stopped, or not listed by the daemon", async () => {
     api.delivery.mockResolvedValue(everyState);
-    const onlyConnected = ["Used inClaude CodeOpenCodeCursorOddWindsurfGemini CLICodexKiroconnected"];
+    const onlyConnected = ["Claude Code", "OpenCode", "Cursor", "Odd", "Windsurf", "Gemini CLI", "Codex", "Kiro"].map((name) => [name, "connected", "connected"]);
     // Rules for this Space only: none of them is in any tool's file.
     api.rules.mockResolvedValue(told([
       daemonLine("rule-1", "Discuss the approach before writing code", { source_page_id: "page-source-1" }),
@@ -228,15 +251,15 @@ describe("How-I-work page", () => {
       daemonLine("far-1", "Write in plain words", { source_page_id: "far-page", general: true }),
     ]));
     const first = renderPage();
-    expect((await headerRows()).rows()).toEqual(onlyConnected);
+    expect((await headerChips()).chips()).toEqual(onlyConnected);
     await waitFor(() => expect(api.rules).toHaveBeenCalled());
-    expect((await headerRows()).rows()).toEqual(onlyConnected);
+    expect((await headerChips()).chips()).toEqual(onlyConnected);
     first.unmount();
     // A stopped page gives nothing, whatever the daemon lists.
     api.rules.mockResolvedValue(told([daemonLine("rule-1", "Discuss the approach before writing code", { source_page_id: "page-source-1", general: true })]));
     renderPage({ ...page, version: 4, content: content.replace("\n\n", "\n\n<!-- wenlan:not-for-ai-tools -->\n\n") });
     await waitFor(() => expect(api.rules).toHaveBeenCalledTimes(2));
-    expect((await headerRows()).rows()).toEqual(onlyConnected);
+    expect((await headerChips()).chips()).toEqual(onlyConnected);
     expect(document.body).not.toHaveTextContent("delivered");
   });
 
@@ -249,13 +272,141 @@ describe("How-I-work page", () => {
   it("UX-SKILL-2 shows no borrowing section when the record is empty and Stop only adds the opt-out marker", async () => {
     api.records.mockResolvedValue([]);
     renderPage();
-    await screen.findByRole("button", { name: "Stop" });
+    const menu = await openMenu();
     expect(screen.queryByRole("heading", { name: "AI tools borrowed this week" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    fireEvent.click(within(menu).getByRole("menuitem", { name: /^Stop/ }));
     await waitFor(() => expect(api.updatePage).toHaveBeenCalled());
     const request = api.updatePage.mock.calls[0][0];
     expect(request.content).toContain("<!-- wenlan:not-for-ai-tools -->");
     expect(request.content).toContain("<!-- wenlan-rule:rule-1 -->");
+  });
+
+  it("UX-SKILL-11: each tool chip shows its logo or a short badge, and keyboard focus opens a card with its state, rule count and delivered time", async () => {
+    api.delivery.mockResolvedValue([
+      tool("claude-code", "Claude Code", { delivered_at: now - 7200, rule_count: 3 }),
+      tool("windsurf", "Windsurf", { state: "over_limit" }),
+      // Two tools Wenlan has no logo for, whose first letters would read the same.
+      tool("vscode", "Mira", { method: "mcp", state: "on_request" }),
+      tool("continue", "Muse", { method: "mcp", state: "on_request" }),
+    ]);
+    api.rules.mockResolvedValue(told([daemonLine("rule-1", "Discuss the approach before writing code", { source_page_id: "page-source-1", general: true })]));
+    renderPage();
+    const claude = await screen.findByRole("button", { name: "Claude Code" });
+    expect(claude.querySelector("svg[data-logo='claude-code']")).not.toBeNull();
+    const badges = [...document.querySelectorAll(".rules-tools-chip .rules-tools-badge")].map((badge) => badge.textContent);
+    expect(badges).toEqual(["M", "Mu"]);
+    // The card is closed until the chip is hovered or focused, and is the chip's description.
+    const card = document.getElementById(claude.getAttribute("aria-describedby")!)!;
+    expect(card).toHaveAttribute("role", "tooltip");
+    expect(card).not.toBeVisible();
+    fireEvent.focus(claude);
+    expect(card).toBeVisible();
+    expect(card).toHaveTextContent("Claude Codeconnected, rules delivered3 rules delivered · 2h ago");
+    fireEvent.keyDown(claude, { key: "Escape" });
+    expect(card).not.toBeVisible();
+    fireEvent.blur(claude);
+    const windsurf = screen.getByRole("button", { name: "Windsurf" });
+    fireEvent.mouseEnter(windsurf.parentElement!);
+    const windsurfCard = screen.getByRole("tooltip");
+    expect(windsurfCard).toHaveTextContent(/^Windsurfconnected, too long to deliver$/);
+    expect(windsurfCard.querySelector(".rules-tools-dot")).toHaveAttribute("data-dot", "problem");
+    fireEvent.mouseLeave(windsurf.parentElement!);
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    expect(document.querySelector(".rules-tools")!.textContent).not.toMatch(/follow|obey/i);
+  });
+
+  it("UX-SKILL-2: under the title, says You edited, how many source pages the AI updated it from, and when, from the page's history", async () => {
+    api.revisions.mockResolvedValue({ page_id: page.id, current_version: 3, user_edited: true, entries: [
+      { version: 1, at: now - 86400 * 3, edited_by: "agent_create" },
+      { version: 2, at: now - 7200, edited_by: "agent_refresh" },
+      { version: 3, at: now - 60, edited_by: "user" },
+    ] });
+    renderPage({ ...page, user_edited: true });
+    const status = await screen.findByTestId("how-i-work-status");
+    // Two managed lines, from two different pages; the time is the AI's
+    // last rules write, not the person's later edit.
+    await waitFor(() => expect(status).toHaveTextContent("You edited·AI updated it from 2 sources·2h ago"));
+    expect(status.querySelector("[data-part='when']")).toHaveAttribute("data-from", "history");
+  });
+
+  it("UX-SKILL-2: the status line shows only what is true, falls back to the page's modified time, and is gone when nothing is", async () => {
+    api.revisions.mockRejectedValue(new Error("older daemon"));
+    const oneSource = content.replace("(page-source-2)", "(page-source-1)");
+    const first = renderPage({ ...page, content: oneSource });
+    const status = await screen.findByTestId("how-i-work-status");
+    await waitFor(() => expect(status.querySelector("[data-part='when']")).toHaveAttribute("data-from", "modified"));
+    expect(status).toHaveTextContent(/^AI updated it from 1 source·/);
+    expect(status).not.toHaveTextContent("You edited");
+    first.unmount();
+    // Only the person's own bullets, never edited by them: no line at all.
+    renderPage({ ...page, version: 9, content: "# How I work — Wenlan\n\nThese are this Space's approved working rules.\n\n- Keep commits small\n" });
+    await screen.findByText("Keep commits small");
+    expect(screen.queryByTestId("how-i-work-status")).not.toBeInTheDocument();
+  });
+
+  it("UX-SKILL-2: the status line in Traditional Chinese", async () => {
+    await i18n.changeLanguage("zh-Hant");
+    try {
+      renderPage({ ...page, human_edited_at: now - 30 });
+      const status = await screen.findByTestId("how-i-work-status");
+      await waitFor(() => expect(status).toHaveTextContent(/^你改過·AI 依 2 個來源更新·/));
+    } finally {
+      await i18n.changeLanguage("en");
+    }
+  });
+
+  it("UX-SKILL-2: the … menu greys out Undo last night while no Space can be undone, shows the Stop sentence under Stop, and works from the keyboard", async () => {
+    api.getSpace.mockResolvedValue(null);
+    renderPage();
+    const trigger = await screen.findByRole("button", { name: "How I work actions" });
+    expect(trigger).toHaveAttribute("aria-haspopup", "menu");
+    fireEvent.click(trigger);
+    const menu = screen.getByRole("menu");
+    expect(within(menu).getByRole("menuitem", { name: "Undo last night" })).toBeDisabled();
+    const stop = within(menu).getByRole("menuitem", { name: /^Stop/ });
+    expect(stop).toHaveTextContent("StopStop means AI tools can’t read this page right away. The page stays here, and you can start it again later.");
+    // The sentence is in the menu only, not in the page body.
+    expect(document.querySelectorAll(".how-i-work-stop-note")).toHaveLength(0);
+    expect(within(menu).getByRole("menuitem", { name: "Update now" })).toHaveFocus();
+    fireEvent.keyDown(menu, { key: "ArrowDown" });
+    expect(stop).toHaveFocus();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Update now" }));
+    await waitFor(() => expect(api.refresh).toHaveBeenCalledTimes(1));
+  });
+
+  it("UX-SKILL-2: Undo last night in the menu undoes the Space's night, and a failed action still says so", async () => {
+    api.undoNight.mockRejectedValueOnce(new Error("nothing to undo"));
+    renderPage();
+    const menu = await openMenu();
+    await waitFor(() => expect(within(menu).getByRole("menuitem", { name: "Undo last night" })).toBeEnabled());
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Undo last night" }));
+    await waitFor(() => expect(api.undoNight).toHaveBeenCalledWith(space.id));
+    expect(await screen.findByRole("alert")).toHaveTextContent("That change didn’t finish. Nothing else was changed.");
+  });
+
+  it("UX-SKILL-2: a stopped page offers Start in the menu, with the stopped sentence under it", async () => {
+    renderPage({ ...page, content: content.replace("\n\n", "\n\n<!-- wenlan:not-for-ai-tools -->\n\n") });
+    const menu = await openMenu();
+    const start = within(menu).getByRole("menuitem", { name: /^Start/ });
+    expect(start).toHaveTextContent("AI tools can’t read this page. The page is still here; press Start when you want to use it again.");
+    fireEvent.click(start);
+    await waitFor(() => expect(api.updatePage).toHaveBeenCalled());
+    expect(api.updatePage.mock.calls[0][0].content).not.toContain("<!-- wenlan:not-for-ai-tools -->");
+  });
+
+  it("UX-SKILL-11: a rule carries no tag; only a decision or a pitfall says what it is", async () => {
+    renderPage({ ...page, content: `${content}- [pitfall] Staging hangs when the VPN is off\n` });
+    const rule = (await screen.findByText("Discuss the approach before writing code")).closest("li")!;
+    expect(rule.querySelector(".how-i-work-chip")).toBeNull();
+    expect(rule).not.toHaveTextContent(/^Rule/);
+    const decision = screen.getByText("Put completed work into the merge queue").closest("li")!;
+    expect(decision.querySelector(".how-i-work-chip")).toHaveTextContent("Decision");
+    const pitfall = screen.getByText("Staging hangs when the VPN is off").closest("li")!;
+    expect(pitfall.querySelector(".how-i-work-chip")).toHaveTextContent("Pitfall");
   });
 
   it("UX-SKILL-3 keeps an own-skill conflict suggestion-only, then offers Undo after Apply", async () => {
@@ -301,12 +452,14 @@ describe("a page kept in a Rules folder", () => {
     await waitFor(() => expect(api.rules).toHaveBeenCalledWith(null));
     const list = await screen.findByRole("region", { name: "Rules on this page" });
     const rows = [...list.querySelectorAll("li")].map((row) => row.textContent);
-    expect(rows).toEqual(["RuleUse the merge queuewritten by you·Used in every Space"]);
+    expect(rows).toEqual(["Use the merge queuewritten by you·Used in every Space"]);
     // "Squash before merging" is on the page, but the daemon does not list it
     // as a rule the person wrote: it is not shown as one.
     expect(list).not.toHaveTextContent("Squash before merging");
     const header = screen.getByRole("region", { name: "AI tools these rules are used in" });
-    await waitFor(() => expect(header).toHaveTextContent("Used inClaude Codeconnected, rules delivered"));
+    await waitFor(() => expect(header.querySelector(".rules-tools-row")).toHaveTextContent(/^Used inClaude Code/));
+    expect(header.querySelector(".rules-tools-dot")).toHaveAttribute("data-dot", "delivered");
+    expect(screen.getByRole("tooltip", { hidden: true })).toHaveTextContent("connected, rules delivered");
     expect(header.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
@@ -316,7 +469,8 @@ describe("a page kept in a Rules folder", () => {
     await waitFor(() => expect(api.rules).toHaveBeenCalledWith("Wenlan"));
     expect(await screen.findByText("written by you")).toBeInTheDocument();
     const header = screen.getByRole("region", { name: "AI tools these rules are used in" });
-    expect(header).toHaveTextContent("Used inClaude Codeconnected");
+    expect(header.querySelector(".rules-tools-dot")).toHaveAttribute("data-dot", "connected");
+    expect(screen.getByRole("tooltip", { hidden: true })).toHaveTextContent(/^Claude Codeconnected$/);
     expect(header).not.toHaveTextContent("delivered");
   });
 
@@ -340,9 +494,9 @@ describe("a page kept in a Rules folder", () => {
       const list = await screen.findByRole("region", { name: "Rules on this page" });
       const rows = [...list.querySelectorAll("li")].map((row) => row.textContent);
       expect(rows).toEqual([
-        "RuleRelease on Tuesdayssaved from Codex·Used in every SpaceRemove",
-        "RuleAnswer in plain wordssaved from the terminal·Used in every SpaceRemove",
-        "RuleKeep pull requests smallwritten by you·Used in every Space",
+        "Release on Tuesdayssaved from Codex·Used in every SpaceRemove",
+        "Answer in plain wordssaved from the terminal·Used in every SpaceRemove",
+        "Keep pull requests smallwritten by you·Used in every Space",
       ]);
       expect(within(list).getAllByRole("button", { name: /^Remove “/ })).toHaveLength(2);
       // The page is in no Rules folder: the daemon's list alone puts it under Rules.

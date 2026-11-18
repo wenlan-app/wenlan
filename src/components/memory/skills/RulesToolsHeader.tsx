@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import {
@@ -19,7 +19,9 @@ import { SPACE_FOLDERS_QUERY_KEY } from "../pages/SpaceFoldersPrompt";
 import { useScope } from "../team/scope";
 import { HowIWorkLines } from "./HowIWorkLines";
 import { useExampleWikiActive } from "../../../lib/exampleWiki/mode";
-import { HOW_I_WORK_QUERY_KEYS, pageGivesGeneralRules, rulesFromPage, savedRuleAlreadyRemoved, savedRuleRemoveFailure } from "./howIWorkModel";
+import { HOW_I_WORK_QUERY_KEYS, pageGivesGeneralRules, rulesFromPage, savedRuleAlreadyRemoved, savedRuleRemoveFailure, toolBadges } from "./howIWorkModel";
+import { TOOL_LOGOS } from "./toolLogos";
+import { formatTimeAgo } from "../../../lib/dateFormat";
 import { useSavedRulesPageIds } from "./useSavedRulesPages";
 import { SpaceRulesAsk } from "./SpaceRulesAsk";
 import "./howIWork.css";
@@ -68,12 +70,70 @@ export function usePageRules(page: Pick<Page, "id" | "version">, spaceName: stri
   return rules.data;
 }
 
+/** The dot a tool's chip carries: filled when Wenlan delivered the rules,
+ *  hollow when the tool is only connected, amber when they were not
+ *  delivered (not yet, too long, a file Wenlan cannot change). */
+export type ToolDot = "delivered" | "connected" | "problem";
+export function toolDot(standing: ToolStanding): ToolDot {
+  return standing === "delivered" || standing === "connected" ? standing : "problem";
+}
+
+function ToolMark({ id, badge }: { readonly id: string; readonly badge: string }) {
+  const logo = TOOL_LOGOS[id];
+  if (!logo) return <span className="rules-tools-badge" aria-hidden="true">{badge}</span>;
+  return (
+    <svg className="rules-tools-logo" aria-hidden="true" focusable="false" viewBox={logo.viewBox} fill="currentColor" data-logo={id}>
+      {logo.paths.map((path, index) => <path key={index} d={path.d} fillRule={path.evenOdd ? "evenodd" : undefined} clipRule={path.evenOdd ? "evenodd" : undefined} />)}
+    </svg>
+  );
+}
+
+type ShownTool = { readonly tool: ToolRulesDelivery; readonly standing: ToolStanding; readonly badge: string };
+
+/** One tool: its logo (or a short badge), its name and a dot. Hover or
+ *  keyboard focus opens a small card with the tool's name, what Wenlan can
+ *  say about it, and, once delivered, how many rules and when. */
+function ToolChip({ shown }: { readonly shown: ShownTool }) {
+  const { t, i18n } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const cardId = useId();
+  const { tool, standing, badge } = shown;
+  const dot = toolDot(standing);
+  const locale = i18n.resolvedLanguage ?? i18n.language;
+  const delivered = standing === "delivered";
+  const when = delivered && tool.delivered_at ? (locale.startsWith("en") ? formatTimeAgo(tool.delivered_at) : formatTimeAgo(tool.delivered_at, locale)) : null;
+  const count = delivered && tool.rule_count > 0 ? t("howIWork.tools.rulesDelivered", { count: tool.rule_count }) : null;
+  const detail = [count, when].filter(Boolean).join(" · ");
+  return (
+    <span className="rules-tools-item" data-standing={standing} onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
+      <button
+        type="button"
+        className="rules-tools-chip"
+        aria-describedby={cardId}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        onClick={() => setOpen((value) => !value)}
+        onKeyDown={(event) => { if (event.key === "Escape" && open) { event.stopPropagation(); setOpen(false); } }}
+      >
+        <ToolMark id={tool.id} badge={badge} />
+        <span className="rules-tools-name">{tool.display_name}</span>
+        <span className="rules-tools-dot" data-dot={dot} aria-hidden="true" />
+      </button>
+      <span className="rules-tools-card mem-popover-surface" id={cardId} role="tooltip" hidden={!open}>
+        <span className="rules-tools-card-head"><ToolMark id={tool.id} badge={badge} />{tool.display_name}</span>
+        <span className="rules-tools-card-state" data-dot={dot}><span className="rules-tools-dot" data-dot={dot} aria-hidden="true" /><span className="rules-tools-card-state-text">{t(`howIWork.tools.${standing}`)}</span></span>
+        {detail ? <span className="rules-tools-card-detail">{detail}</span> : null}
+      </span>
+    </span>
+  );
+}
+
 /** Heads a rules page: which connected AI tools the rules are used in, and
- *  whether Wenlan delivered them. Only rules used in every Space are written
- *  into the tools' files, so `delivers` says whether this page gives any;
- *  without one, each connected tool reads "connected" and nothing more.
- *  Nothing shows until the daemon answers; an older daemon that cannot
- *  answer shows nothing. */
+ *  whether Wenlan delivered them, in one row of small chips. Only rules used
+ *  in every Space are written into the tools' files, so `delivers` says
+ *  whether this page gives any; without one, each connected tool reads
+ *  "connected" and nothing more. Nothing shows until the daemon answers; an
+ *  older daemon that cannot answer shows nothing. */
 export function RulesToolsHeader({ delivers }: { readonly delivers: boolean }) {
   const { t } = useTranslation();
   const exampleWiki = useExampleWikiActive();
@@ -85,20 +145,29 @@ export function RulesToolsHeader({ delivers }: { readonly delivers: boolean }) {
     retry: false,
   });
   if (!delivery.isSuccess) return null;
-  const groups = STANDING_ORDER
-    .map((standing) => ({ standing, tools: delivery.data.filter((tool) => { const own = toolStanding(tool); return (own !== null && !delivers ? "connected" : own) === standing; }) }))
-    .filter((group) => group.tools.length > 0);
+  const listed = delivery.data
+    .map((tool) => {
+      const own = toolStanding(tool);
+      return { tool, standing: own !== null && !delivers ? "connected" as const : own };
+    })
+    .filter((item): item is { tool: ToolRulesDelivery; standing: ToolStanding } => item.standing !== null)
+    .sort((a, b) => STANDING_ORDER.indexOf(a.standing) - STANDING_ORDER.indexOf(b.standing));
+  // Only a tool with no logo shows a badge, so only those must differ.
+  const unmarked = listed.filter((item) => !TOOL_LOGOS[item.tool.id]);
+  const badges = new Map(toolBadges(unmarked.map((item) => item.tool.display_name)).map((badge, index) => [unmarked[index].tool.id, badge] as const));
+  const shown: ShownTool[] = listed.map((item) => ({ ...item, badge: badges.get(item.tool.id) ?? "" }));
   return (
     <section className="rules-tools" aria-label={t("howIWork.tools.label")} data-testid="rules-tools">
-      {groups.length === 0 ? (
+      {shown.length === 0 ? (
         <p className="rules-tools-row">{t("howIWork.tools.none")}</p>
-      ) : groups.map((group, index) => (
-        <p className="rules-tools-row" data-standing={group.standing} key={group.standing}>
-          <span className="rules-tools-lead" aria-hidden={index > 0 ? "true" : undefined} data-quiet={index > 0 ? "true" : undefined}>{t("howIWork.tools.usedIn")}</span>
-          {group.tools.map((tool) => <span className="rules-tools-chip" key={tool.id}>{tool.display_name}</span>)}
-          <span className="rules-tools-standing">{t(`howIWork.tools.${group.standing}`)}</span>
-        </p>
-      ))}
+      ) : (
+        <div className="rules-tools-row">
+          <span className="rules-tools-lead">{t("howIWork.tools.usedIn")}</span>
+          <ul className="rules-tools-list">
+            {shown.map((item) => <li key={item.tool.id}><ToolChip shown={item} /></li>)}
+          </ul>
+        </div>
+      )}
     </section>
   );
 }

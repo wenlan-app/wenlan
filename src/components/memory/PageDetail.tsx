@@ -391,6 +391,7 @@ export default function PageDetail({
   const canvasWorkspaceRestoreRef = useRef<{ pageId: string; element: HTMLElement; scrollTop: number } | null>(null);
   const inspectorId = useId();
   const documentToolsHost = useContext(WorkspaceDocumentToolsHostContext);
+  const [howIWorkActionsHost, setHowIWorkActionsHost] = useState<HTMLElement | null>(null);
   const noteGroup = useContext(WorkspaceNoteGroupContext);
   // A heading or item clicked on the mind map shows where it is in the page.
   const showPageLine = useCallback(({ text, heading }: { text: string; heading: string | null }) => {
@@ -3021,6 +3022,8 @@ export default function PageDetail({
                 ) : visiblePageTitle}
               </h1>
             )}
+            {/* A "How I work" page puts its "…" menu at the end of the title row. */}
+            {howIWorkPage && !renaming && <span className="how-i-work-title-actions" ref={setHowIWorkActionsHost} />}
             {documentTools}
           </div>
         )}
@@ -3205,7 +3208,7 @@ export default function PageDetail({
           <RulesFolderPageHead page={page} onOpenPage={(id) => onPageClick?.(id)} />
         )}
         {howIWorkPage ? (
-          <HowIWorkPage page={page} onOpenPage={(id) => onPageClick?.(id)} />
+          <HowIWorkPage page={page} onOpenPage={(id) => onPageClick?.(id)} titleActionsHost={!pageLook.shown && !hideOuterTitleWhileEditing && !renaming ? howIWorkActionsHost : undefined} />
         ) : editing ? (
           editGate.kind === "checking" ? (
             <div role="status" className="page-editor-notice">

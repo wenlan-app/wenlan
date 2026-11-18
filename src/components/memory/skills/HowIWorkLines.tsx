@@ -60,8 +60,10 @@ export function HowIWorkLines({ lines, onOpenPage, onEditLine, showEdited = true
         const fromThisPage = !line.hand_written && ownPageId !== undefined && line.source_page_id === ownPageId;
         return (
           <li className="how-i-work-line" data-kind={line.kind} key={line.id}>
-            <span className="how-i-work-chip">{t(`howIWork.kind.${line.kind}`)}</span>
             <div className="how-i-work-line-copy">
+              <div className="how-i-work-line-main">
+              {/* A rule needs no tag: only a decision or a pitfall says what it is. */}
+              {line.kind === "rule" ? null : <span className="how-i-work-chip">{t(`howIWork.kind.${line.kind}`)}</span>}
               {editing === line.id ? (
                 <input
                   autoFocus
@@ -91,6 +93,7 @@ export function HowIWorkLines({ lines, onOpenPage, onEditLine, showEdited = true
               ) : (
                 <p className="how-i-work-line-text">{line.text}</p>
               )}
+              </div>
               {savedFrom === null && fromThisPage && !line.general ? null : (
                 <p className="how-i-work-line-source">
                   {/* Where the line came from: the tool it was saved from, a

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import "./OverflowMenu.css";
 
 export interface OverflowMenuItem {
@@ -7,6 +7,8 @@ export interface OverflowMenuItem {
   label: string;
   /** A quieter second line under the label. */
   hint?: string;
+  /** A small icon before the label. */
+  icon?: ReactNode;
   disabled?: boolean;
   onSelect: () => void;
 }
@@ -98,6 +100,7 @@ export function OverflowMenu({ label, items, disabled = false, className }: Over
         type="button"
         role="menuitem"
         className="overflow-menu__item"
+        data-icon={item.icon ? "true" : undefined}
         disabled={item.disabled}
         onClick={(event) => {
           event.stopPropagation();
@@ -107,6 +110,7 @@ export function OverflowMenu({ label, items, disabled = false, className }: Over
           item.onSelect();
         }}
       >
+        {item.icon && <span className="overflow-menu__icon" aria-hidden="true">{item.icon}</span>}
         <span>{item.label}</span>
         {item.hint && <span className="overflow-menu__hint">{item.hint}</span>}
       </button>)}

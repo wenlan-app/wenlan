@@ -592,7 +592,14 @@ and wait for evidence that people need them.
   (UX-SKILL-10).
   原文：「可以」（2026-11-15 17:33Z，回覆[草圖](https://claude.ai/artifact/EqEaFuewDn2qBRyBrG7eHn)與「put the first ask at the top of the Space page, asked only once?」）；「而且儘量不用一直問用戶，或著第一次問，後面就不問了」（2026-11-15 20:21Z）；「第一次在空間那的改動，要有選項以後都自動，勾掉就是不要」（2026-11-15 21:24Z）。
 - **UX-SKILL-2** `shipped` The accepted "How I work" page is an ordinary
-  Wenlan page with Update now, Undo last night and Stop. It shows its grounded
+  Wenlan page with Update now, Undo last night and Stop. They sit in a "…"
+  menu at the right end of the title row, with Stop's explanation under
+  Stop; the page body has no row of buttons. The page is titled "How I
+  work", with no Space after it, wherever it is listed. Under the title one
+  quiet line says only what is true: "You edited", "AI updated it from N
+  sources" (N the distinct pages its maintained lines come from) and when
+  Wenlan last wrote its rules; with none of these the line is absent. Owner's
+  2026-11-18 approval of sketch rules-page-v2 (選擇卡「照草圖做」). It shows its grounded
   lines without internal ids or paths; a person's edited line says "You changed
   this". Above them, real examples from this week say whether an AI tool
   reported changing its approach or Wenlan recorded the read, with no counts.
@@ -728,7 +735,13 @@ and wait for evidence that people need them.
   in the tool's own file, only "connected" for a tool that gets the rules
   when it asks Wenlan, and a short plain line when the rules were not
   delivered (not yet, too long for the tool, or a file Wenlan cannot
-  change). A page whose rules are for its own Space only, a stopped page and
+  change). Following the owner's 2026-11-18 approval of sketch
+  rules-page-v2, this is one row, "Used in" and a small chip per tool with
+  its logo (or a short badge when Wenlan has none) and a dot: filled for
+  delivered, hollow for connected only, amber when not delivered; hovering
+  or focusing a chip shows that sentence, and once delivered how many rules
+  and when. A rule carries no tag; only a decision or a pitfall says what it
+  is. A page whose rules are for its own Space only, a stopped page and
   a `#not-for-ai-tools` page say "connected" for every connected tool. A
   tool that is not connected is not listed. It says connected and delivered
   only, never that the AI follows the rules, and shows no file path. Rules

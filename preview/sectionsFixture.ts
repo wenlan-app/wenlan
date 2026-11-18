@@ -13,7 +13,7 @@ type Copy = {
   readonly docs: readonly [string, string, string];
   readonly skillPages: readonly string[];
   readonly handRules: { readonly title: string; readonly heading: string; readonly lines: readonly string[] };
-  readonly managed: readonly { readonly text: string; readonly source: string; readonly sourceId: string }[];
+  readonly managed: readonly { readonly text: string; readonly source: string; readonly sourceId: string; readonly kind?: "pitfall" }[];
   readonly ownLine: string;
   /** Rules the person asked to be saved: from an AI tool, from the terminal. */
   readonly saved: readonly { readonly text: string; readonly from: string; readonly by: NonNullable<SkillLine["saved_by"]>; readonly asked: string }[];
@@ -33,6 +33,7 @@ const COPY: Record<"en" | "zh", Copy> = {
     managed: [
       { text: "Run the release checklist before tagging a version.", source: "Release checklist", sourceId: "sec-doc-1" },
       { text: "Never quote a price that is not on the pricing page.", source: "Pricing and plans", sourceId: "sec-doc-0" },
+      { text: "Staging deploys hang with no error when the VPN is off.", source: "Onboarding guide", sourceId: "sec-doc-2", kind: "pitfall" },
     ],
     ownLine: "Ask before changing the plan; when stuck, give options.",
     saved: [
@@ -55,6 +56,7 @@ const COPY: Record<"en" | "zh", Copy> = {
     managed: [
       { text: "打版本標籤前，先跑完發版檢查清單。", source: "發版檢查清單", sourceId: "sec-doc-1" },
       { text: "不報價格頁上沒有的價格。", source: "價格與方案", sourceId: "sec-doc-0" },
+      { text: "VPN 沒開時，staging 部署會卡住，也不報錯。", source: "新人上手指南", sourceId: "sec-doc-2", kind: "pitfall" },
     ],
     ownLine: "改計畫前先問；卡住時，給選項。",
     saved: [
@@ -95,10 +97,10 @@ export function sectionsLibrary(lang: string | null): { pages: Page[]; folders: 
     `# ${copy.handRules.title}\n\n## ${copy.handRules.heading}\n\n${copy.handRules.lines.map((line) => `- ${line}`).join("\n")}\n`,
   ));
   const managed = copy.managed.map((line, index) =>
-    `- [rule] ${line.text} — Source: ${line.source} (${line.sourceId}) r3 at 1794211200 — Quote: ${JSON.stringify(line.text)} <!-- wenlan-rule:sec-rule-${index} -->`);
+    `- [${line.kind ?? "rule"}] ${line.text} — Source: ${line.source} (${line.sourceId}) r3 at 1794211200 — Quote: ${JSON.stringify(line.text)} <!-- wenlan-rule:sec-rule-${index} -->`);
   pages.push({
     ...page("sec-rule-how", "How I work — Wenlan", "How I work — Wenlan.md", 1, "", "Wenlan"),
-    content: `# How I work — Wenlan\n\nThese are this Space's approved working rules.\n\n${managed[0]}\n- ${copy.ownLine}\n${managed[1]}\n`,
+    content: `# How I work — Wenlan\n\nThese are this Space's approved working rules.\n\n${managed.join("\n")}\n- ${copy.ownLine}\n`,
   });
   // The page the daemon keeps saved rules on: an ordinary page in no Rules
   // folder. The daemon's rules answer names it by id (`get_space_rules`).
@@ -194,7 +196,7 @@ export function sectionsInvoke(cmd: string, args: Record<string, unknown> | unde
         rules_page_id: "sec-rule-how",
         saved_rules_page_ids: [SAVED_PAGE_ID],
         lines: [
-          ...copy.managed.map((item, index) => line(`sec-rule-${index}`, item.text, item.sourceId, item.source, { general: index === 0 })),
+          ...copy.managed.map((item, index) => line(`sec-rule-${index}`, item.text, item.sourceId, item.source, { general: index === 0, kind: item.kind ?? "rule" })),
           line("sec-own-0", copy.ownLine, "sec-rule-how", "How I work — Wenlan", { hand_written: true }),
           ...own,
         ],
@@ -211,6 +213,15 @@ export function sectionsInvoke(cmd: string, args: Record<string, unknown> | unde
       return { status: "removed", id, page_id: SAVED_PAGE_ID, page_title: "Rules I saved", message: "" };
     }
     case "get_page_revisions": {
+      if (args?.pageId === "sec-rule-how") {
+        // The nightly update wrote the rules two hours ago; the person edited the page since.
+        const now = Math.floor(Date.now() / 1000);
+        return { page_id: "sec-rule-how", current_version: 3, user_edited: true, stale_reason: null, entries: [
+          { version: 1, at: now - 3 * 86_400, edited_by: "agent_create", agent: "wenlan-skills" },
+          { version: 2, at: now - 7_200, edited_by: "agent_refresh" },
+          { version: 3, at: now - 1_200, edited_by: "manual_edit" },
+        ] };
+      }
       if (args?.pageId !== SAVED_PAGE_ID) return undefined;
       const copy = COPY[params.get("lang")?.startsWith("zh") ? "zh" : "en"];
       return { page_id: SAVED_PAGE_ID, current_version: 7, user_edited: true, stale_reason: null, entries: savedHistory(copy) };

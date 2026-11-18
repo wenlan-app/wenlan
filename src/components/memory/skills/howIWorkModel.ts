@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { TFunction } from "i18next";
-import { SAVED_FROM_TERMINAL, type Page, type SkillLine, type SkillLineKind, type SpaceRulesResponse } from "../../../lib/tauri";
+import { SAVED_FROM_TERMINAL, type Page, type PageChangelogEntry, type SkillLine, type SkillLineKind, type SpaceRulesResponse } from "../../../lib/tauri";
 
 export const NOT_FOR_AI_TOOLS_MARKER = "<!-- wenlan:not-for-ai-tools -->";
 export const HOW_I_WORK_QUERY_KEYS = {
@@ -196,12 +196,50 @@ export function howIWorkSpaceName(page: Pick<Page, "content" | "space" | "title"
   return heading || "";
 }
 
+/** The name a "How I work" page is shown under: the same for every Space,
+ *  wherever it is shown (the page, its tab, Recent, the Rules list). Its
+ *  Space is not part of it (owner's 2026-11-18 approval of sketch
+ *  rules-page-v2). */
 export function howIWorkPageTitle(
   page: Pick<Page, "content" | "space" | "title">,
   t: TFunction,
 ): string {
   if (!isHowIWorkPage(page)) return page.title;
-  return t("howIWork.page.title", { space: howIWorkSpaceName(page) });
+  return t("howIWork.page.title");
+}
+
+/** How many distinct pages the lines Wenlan maintains on a "How I work" page
+ *  come from. A bullet the page itself holds (`own:`) is not one of them. */
+export function maintainedSourceCount(lines: readonly SkillLine[]): number {
+  return new Set(lines.filter((line) => !line.id.startsWith("own:") && line.source_page_id).map((line) => line.source_page_id)).size;
+}
+
+/** When Wenlan last wrote the rules into the page, from the page's history:
+ *  the latest `agent_refresh` version, unix seconds. Null when the history
+ *  holds none. */
+export function lastRulesWrite(entries: readonly Pick<PageChangelogEntry, "at" | "edited_by">[]): number | null {
+  const times = entries.filter((entry) => entry.edited_by === "agent_refresh").map((entry) => entry.at);
+  return times.length > 0 ? Math.max(...times) : null;
+}
+
+/** A short badge for each tool name, for a tool that has no logo: the first
+ *  letter of each word (two at most), or the first letter alone for one
+ *  word; when two would read the same, the first word's first two letters,
+ *  then a number. No two tools in `names` get the same badge. */
+export function toolBadges(names: readonly string[]): string[] {
+  const taken = new Set<string>();
+  return names.map((name) => {
+    const words = name.split(/[\s/._-]+/u).filter(Boolean);
+    const first = [...(words[0] ?? "?")];
+    const candidates = [
+      words.length > 1 ? words.slice(0, 2).map((word) => [...word][0].toUpperCase()).join("") : first[0].toUpperCase(),
+      first[0].toUpperCase() + (first[1] ?? "").toLowerCase(),
+    ];
+    let badge = candidates.find((candidate) => !taken.has(candidate));
+    for (let n = 2; badge === undefined; n += 1) if (!taken.has(`${candidates[0]}${n}`)) badge = `${candidates[0]}${n}`;
+    taken.add(badge);
+    return badge;
+  });
 }
 
 export function visibleSourceTitle(title: string, t: TFunction): string {
