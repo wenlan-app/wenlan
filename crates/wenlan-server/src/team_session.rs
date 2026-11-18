@@ -18,9 +18,9 @@
 //!
 //! The store holds a `std::sync::Mutex`, never held across an `.await`.
 //!
-//! Nothing signs anyone in yet, so `create` and the caps are used only by
-//! tests until the sign-in routes of a later change.
-#![allow(dead_code)]
+//! A session also remembers when its member last signed in again at the
+//! identity provider ([`Session::reauthed`]); [`SessionStore::fresh`] is
+//! what a route that issues a long-lived credential asks first.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -41,6 +41,9 @@ pub(crate) const ABSOLUTE: Duration = Duration::from_secs(90 * 24 * 60 * 60);
 pub(crate) const PER_MEMBER_CAP: usize = 50;
 /// Live sessions in all.
 pub(crate) const TOTAL_CAP: usize = 10_000;
+/// How long after signing in again at the provider a session may still
+/// make a long-lived credential. A stolen cookie can use no more than this.
+pub(crate) const REAUTH_WINDOW: Duration = Duration::from_secs(5 * 60);
 
 type Hash = [u8; 32];
 
@@ -48,6 +51,9 @@ struct Session {
     member_id: String,
     created: Instant,
     last_used: Instant,
+    /// When the member last proved themselves at the provider with an
+    /// account already linked to them; `None` for a session made without.
+    reauthed: Option<Instant>,
 }
 
 impl Session {
@@ -89,8 +95,19 @@ impl SessionStore {
     }
 
     /// Makes a session for `member_id` and returns its token (64 hex
-    /// characters), which is not kept.
+    /// characters), which is not kept. It starts without a fresh sign-in.
+    #[cfg(test)]
     pub(crate) fn create(&self, member_id: &str) -> Result<String, getrandom::Error> {
+        self.create_with(member_id, false)
+    }
+
+    /// As [`SessionStore::create`], for a member who has just signed in at
+    /// the provider: the session counts as freshly signed in.
+    pub(crate) fn create_fresh(&self, member_id: &str) -> Result<String, getrandom::Error> {
+        self.create_with(member_id, true)
+    }
+
+    fn create_with(&self, member_id: &str, fresh: bool) -> Result<String, getrandom::Error> {
         let mut bytes = [0u8; 32];
         getrandom::fill(&mut bytes)?;
         let token = hex::encode(bytes);
@@ -105,6 +122,7 @@ impl SessionStore {
                 member_id: member_id.to_string(),
                 created: now,
                 last_used: now,
+                reauthed: fresh.then_some(now),
             },
         );
         Ok(token)
@@ -126,6 +144,21 @@ impl SessionStore {
         }
         session.last_used = now;
         Some(session.member_id.clone())
+    }
+
+    /// Whether this token's live session signed in at the provider within
+    /// `window`. Asking does not count as use.
+    pub(crate) fn fresh(&self, token: &str, window: Duration) -> bool {
+        if token.len() != 64 || !token.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return false;
+        }
+        let now = (self.clock)();
+        self.sessions().get(&hash(token)).is_some_and(|session| {
+            session.live(now)
+                && session
+                    .reauthed
+                    .is_some_and(|at| now.saturating_duration_since(at) < window)
+        })
     }
 
     /// Ends this token's session.
@@ -185,11 +218,17 @@ pub(crate) fn clear_cookie() -> String {
 /// there is none, or when the cookie appears twice (which one a browser
 /// meant is then unknown).
 pub(crate) fn cookie_token(headers: &HeaderMap) -> Option<String> {
+    cookie_value(headers, COOKIE_NAME)
+}
+
+/// The value of the cookie `name`: `None` when the request has none, or
+/// has it twice.
+pub(crate) fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
     let mut found = None;
     for value in headers.get_all(header::COOKIE) {
         for pair in value.to_str().ok()?.split(';') {
-            if let Some((name, token)) = pair.split_once('=') {
-                if name.trim() == COOKIE_NAME {
+            if let Some((n, token)) = pair.split_once('=') {
+                if n.trim() == name {
                     if found.is_some() {
                         return None;
                     }

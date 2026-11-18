@@ -533,3 +533,63 @@ fn member_by_id_sees_a_removed_member_as_removed() {
         CredentialKind::BrowserSession
     );
 }
+
+fn identity(issuer: &str, subject: &str, email: &str) -> Identity {
+    Identity {
+        issuer: issuer.into(),
+        subject: subject.into(),
+        email: Some(email.into()),
+        linked_at: String::new(),
+    }
+}
+
+#[test]
+fn an_identity_finds_its_active_member_by_issuer_and_subject_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(TEAM_FILE);
+    let (amy, _) = add_member(&path, "Amy", &[]).unwrap();
+    let (bo, _) = add_member(&path, "Bo", &[]).unwrap();
+    let linked = link_identity(&path, &amy.id, identity("https://i", "s1", "amy@x.org")).unwrap();
+    assert_eq!(linked.identities.len(), 1);
+    assert!(!linked.identities[0].linked_at.is_empty());
+    let found = member_by_identity(&path, "https://i", "s1")
+        .unwrap()
+        .unwrap();
+    assert_eq!(found.id, amy.id);
+    // The same email under another subject, or the subject under another
+    // issuer, is nobody.
+    assert!(member_by_identity(&path, "https://i", "s2")
+        .unwrap()
+        .is_none());
+    assert!(member_by_identity(&path, "https://other", "s1")
+        .unwrap()
+        .is_none());
+    // A second member cannot take the same account.
+    let err = link_identity(&path, &bo.id, identity("https://i", "s1", "amy@x.org")).unwrap_err();
+    assert!(matches!(err, WenlanError::Conflict(_)), "{err}");
+    assert!(member_by_id(&path, &bo.id)
+        .unwrap()
+        .unwrap()
+        .identities
+        .is_empty());
+    // Linking it again to its own member keeps one entry.
+    let again = link_identity(&path, &amy.id, identity("https://i", "s1", "new@x.org")).unwrap();
+    assert_eq!(again.identities.len(), 1);
+    assert_eq!(again.identities[0].email.as_deref(), Some("new@x.org"));
+    // A removed member is not found, and no longer holds the account.
+    remove_member(&path, &amy.id).unwrap();
+    assert!(member_by_identity(&path, "https://i", "s1")
+        .unwrap()
+        .is_none());
+    link_identity(&path, &bo.id, identity("https://i", "s1", "amy@x.org")).unwrap();
+    assert_eq!(
+        member_by_identity(&path, "https://i", "s1")
+            .unwrap()
+            .unwrap()
+            .id,
+        bo.id
+    );
+    // An empty subject is refused; a removed member cannot be linked.
+    assert!(link_identity(&path, &bo.id, identity("https://i", " ", "e")).is_err());
+    assert!(link_identity(&path, &amy.id, identity("https://i", "s9", "e")).is_err());
+}

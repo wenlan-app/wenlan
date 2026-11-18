@@ -75,3 +75,26 @@ be read after restart. After such an error, keep the process disabled (or set th
 emergency-off environment flag), resolve the filesystem failure, retry revocation,
 and verify the persisted state before restarting. Never describe an errored revoke
 as a successfully persisted opt-out.
+
+## Team sign-in (`team_auth.rs`)
+
+Web sign-in on the team listener, with an OpenID Connect provider (Google
+today). It is on only when the team's address (`WENLAN_TEAM_URL`, else the
+address saved in `team.json`) is `https://` and a provider is configured;
+otherwise every `/auth/start`, `/auth/callback`, `/auth/link` and
+`/auth/reauth` route answers 404 and one line says why at start.
+
+| Setting | Meaning |
+|---|---|
+| `WENLAN_TEAM_GOOGLE_CLIENT_ID` | The Google OAuth client id. Beats `team-auth.json`. |
+| `WENLAN_TEAM_GOOGLE_CLIENT_SECRET` | The client secret. Never logged. Beats `team-auth.json`. |
+| `team-auth.json` | In the data root next to `team.json`, mode 0600 on Unix: `{"google": {"client_id": "...", "client_secret": "..."}}`. An `https://` `issuer` may be added for another OIDC issuer. |
+
+Register `<WENLAN_TEAM_URL>/auth/callback/google` as the redirect URL; Google
+accepts a domain name, not an IP address. Login transactions and browser
+sessions live in memory, so a restart signs everyone out. Requests to the
+`/auth` routes are limited per direct peer IP (a token bucket, burst 30, one
+request per two seconds after): behind a reverse proxy all clients share the
+proxy's bucket, and there is no trusted-proxy list yet. Re-signing-in
+("reauth") needs the provider to return `auth_time`; a provider that never
+does cannot complete it.
