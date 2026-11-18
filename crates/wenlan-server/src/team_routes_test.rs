@@ -60,6 +60,7 @@ fn fixture() -> Fixture {
             settings_path,
             daemon_url: "http://127.0.0.1:9".into(),
             mcp: Arc::default(),
+            sessions: Arc::default(),
         },
         _dir: dir,
         folder,
@@ -925,6 +926,29 @@ async fn a_member_learns_only_the_names_of_people_in_their_spaces() {
 // ===== Tool keys and the route table =====
 
 #[test]
+fn the_route_table_gives_a_browser_session_the_web_only() {
+    use team::CredentialKind::{BrowserSession, LegacyKey, ToolKey};
+    for path in ["/team/v1/me", "/team/v1/app/api/pages", "/auth/logout"] {
+        assert!(credential_may_reach(BrowserSession, path), "{path}");
+    }
+    for path in [
+        "/mcp",
+        "/mcp/Design",
+        "/team/v1/admin",
+        "/team/v1/admin/members/x/compromised",
+        "/team/v1/spaces/design/files",
+        "/team/v1/spaces/design/versions/p/n",
+        "/team/v1/account/keys",
+        "/team/v1/mex",
+        "/",
+    ] {
+        assert!(!credential_may_reach(BrowserSession, path), "{path}");
+    }
+    assert!(!credential_may_reach(LegacyKey, "/auth/logout"));
+    assert!(!credential_may_reach(ToolKey, "/auth/logout"));
+}
+
+#[test]
 fn the_route_table_gives_a_tool_key_only_mcp() {
     use team::CredentialKind::{LegacyKey, ToolKey};
     for path in ["/mcp", "/mcp/Design", "/mcp/Design/x"] {
@@ -1060,4 +1084,392 @@ async fn the_owner_resets_a_compromised_account() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
+}
+
+// ===== Browser sessions =====
+
+const ORIGIN: &str = "https://team.example.com";
+const DAY: u64 = 24 * 60 * 60;
+
+/// A fixture whose session clock the test moves, and whose own address is
+/// [`ORIGIN`].
+fn session_fixture() -> (Fixture, Arc<std::sync::atomic::AtomicU64>) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    let mut f = fixture();
+    team::set_url(&f.state.team_path, Some(ORIGIN)).unwrap();
+    let base = std::time::Instant::now();
+    let offset = Arc::new(AtomicU64::new(0));
+    let seen = offset.clone();
+    f.state.sessions = Arc::new(crate::team_session::SessionStore::with_clock(Arc::new(
+        move || base + std::time::Duration::from_secs(seen.load(Ordering::SeqCst)),
+    )));
+    (f, offset)
+}
+
+async fn browser(
+    state: &TeamState,
+    method: Method,
+    uri: &str,
+    cookie: Option<&str>,
+    origin: Option<&str>,
+    bearer: Option<&str>,
+) -> Response {
+    let mut req = Request::builder().method(method).uri(uri);
+    if let Some(token) = cookie {
+        req = req.header(header::COOKIE, format!("__Host-wenlan-session={token}"));
+    }
+    if let Some(origin) = origin {
+        req = req.header(header::ORIGIN, origin);
+    }
+    if let Some(key) = bearer {
+        req = req.header(header::AUTHORIZATION, format!("Bearer {key}"));
+    }
+    team_router(state.clone())
+        .oneshot(req.body(Body::empty()).unwrap())
+        .await
+        .unwrap()
+}
+
+fn no_store(response: &Response) -> bool {
+    response
+        .headers()
+        .get(header::CACHE_CONTROL)
+        .is_some_and(|v| v == "no-store")
+}
+
+#[tokio::test]
+async fn a_session_cookie_reaches_me_and_the_app_gate_and_nothing_else() {
+    let (f, _) = session_fixture();
+    let token = f.state.sessions.create(&f.writer.0.id).unwrap();
+    let get = |uri: &'static str| browser(&f.state, Method::GET, uri, Some(&token), None, None);
+
+    let me = get("/team/v1/me").await;
+    assert_eq!(me.status(), StatusCode::OK);
+    assert!(no_store(&me));
+    let bytes = to_bytes(me.into_body(), 1 << 20).await.unwrap();
+    assert!(String::from_utf8_lossy(&bytes).contains(&f.writer.0.id));
+
+    let gate = get("/team/v1/app/api/pages").await;
+    assert_ne!(gate.status(), StatusCode::UNAUTHORIZED);
+    assert_ne!(gate.status(), StatusCode::FORBIDDEN);
+    assert!(no_store(&gate));
+    // A write on the gate from the server's own page passes the table too.
+    let post = browser(
+        &f.state,
+        Method::POST,
+        "/team/v1/app/api/pages",
+        Some(&token),
+        Some(ORIGIN),
+        None,
+    )
+    .await;
+    assert_ne!(post.status(), StatusCode::UNAUTHORIZED);
+    assert_ne!(post.status(), StatusCode::FORBIDDEN);
+
+    let page = "p1";
+    let name = format!("{}.md", "a".repeat(64));
+    let put = format!("/team/v1/spaces/design/versions/{page}/{name}");
+    for (method, uri) in [
+        (Method::GET, "/mcp".to_string()),
+        (Method::POST, "/mcp/Design".to_string()),
+        (Method::GET, "/team/v1/spaces/Design/files".to_string()),
+        (
+            Method::GET,
+            "/team/v1/spaces/Design/file?path=x".to_string(),
+        ),
+        (Method::PUT, put),
+        (Method::GET, "/team/v1/admin".to_string()),
+        (Method::POST, "/team/v1/admin/members".to_string()),
+        (
+            Method::POST,
+            "/team/v1/admin/members/x/compromised".to_string(),
+        ),
+        (Method::GET, "/team/v1/account/keys".to_string()),
+    ] {
+        let response = browser(
+            &f.state,
+            method.clone(),
+            &uri,
+            Some(&token),
+            Some(ORIGIN),
+            None,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{method} {uri}");
+        assert!(no_store(&response), "{method} {uri}");
+    }
+    // An owner's cookie does not open the owner's calls either, yet.
+    let (owner, _) = team::owner_key(&f.state.team_path, "Owner").unwrap();
+    let owner_token = f.state.sessions.create(&owner.id).unwrap();
+    let response = browser(
+        &f.state,
+        Method::GET,
+        "/team/v1/admin",
+        Some(&owner_token),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn a_wrong_bearer_is_refused_even_with_a_good_cookie() {
+    let (f, _) = session_fixture();
+    let token = f.state.sessions.create(&f.writer.0.id).unwrap();
+    let wrong = format!("wlt_{}", "0".repeat(64));
+    for bearer in [wrong.as_str(), "", "garbage"] {
+        let response = browser(
+            &f.state,
+            Method::GET,
+            "/team/v1/me",
+            Some(&token),
+            None,
+            Some(bearer),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{bearer:?}");
+    }
+    // A good key with the cookie is the key's request, as before.
+    let response = browser(
+        &f.state,
+        Method::GET,
+        "/mcp",
+        Some(&token),
+        None,
+        Some(&f.writer.1),
+    )
+    .await;
+    assert_ne!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_ne!(response.status(), StatusCode::FORBIDDEN);
+    assert!(!no_store(&response) || response.status() != StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_cookie_change_needs_this_servers_exact_origin() {
+    let (f, _) = session_fixture();
+    let token = f.state.sessions.create(&f.writer.0.id).unwrap();
+    let uri = "/team/v1/app/api/pages";
+    for origin in [
+        None,
+        Some("null"),
+        Some("http://team.example.com"),
+        Some("https://team.example.com:8443"),
+        Some("https://team.example.com."),
+        Some("https://evil.example"),
+        Some("https://team.example.com/"),
+    ] {
+        let response = browser(&f.state, Method::POST, uri, Some(&token), origin, None).await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{origin:?}");
+    }
+    // No Host-based fallback: a page at the very Host it called still fails.
+    let response = team_router(f.state.clone())
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri(uri)
+                .header(header::COOKIE, format!("__Host-wenlan-session={token}"))
+                .header(header::HOST, "other.example")
+                .header(header::ORIGIN, "https://other.example")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let response = browser(
+        &f.state,
+        Method::POST,
+        uri,
+        Some(&token),
+        Some(ORIGIN),
+        None,
+    )
+    .await;
+    assert_ne!(response.status(), StatusCode::FORBIDDEN);
+    // A read needs no Origin, but one that is present must be the server's.
+    let response = browser(
+        &f.state,
+        Method::GET,
+        "/team/v1/me",
+        Some(&token),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let response = browser(
+        &f.state,
+        Method::GET,
+        "/team/v1/me",
+        Some(&token),
+        Some("https://evil.example"),
+        None,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    // Without a configured address no change passes.
+    team::set_url(&f.state.team_path, None).unwrap();
+    let response = browser(
+        &f.state,
+        Method::POST,
+        uri,
+        Some(&token),
+        Some(ORIGIN),
+        None,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn a_bearer_request_keeps_the_origin_rules_it_had() {
+    let (f, _) = session_fixture();
+    // The same-Host fallback still serves the app gate for a key.
+    let response = team_router(f.state.clone())
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/team/v1/app/api/pages")
+                .header(header::AUTHORIZATION, format!("Bearer {}", f.writer.1))
+                .header(header::HOST, "other.example")
+                .header(header::ORIGIN, "https://other.example")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_ne!(response.status(), StatusCode::FORBIDDEN);
+    assert!(!no_store(&response) || response.status() != StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_removed_members_cookie_is_refused_and_forgotten() {
+    let (f, _) = session_fixture();
+    let token = f.state.sessions.create(&f.writer.0.id).unwrap();
+    let uri = "/team/v1/me";
+    let ok = browser(&f.state, Method::GET, uri, Some(&token), None, None).await;
+    assert_eq!(ok.status(), StatusCode::OK);
+    team::remove_member(&f.state.team_path, &f.writer.0.id).unwrap();
+    let response = browser(&f.state, Method::GET, uri, Some(&token), None, None).await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert!(no_store(&response));
+    assert!(f.state.sessions.lookup(&token).is_none());
+}
+
+#[tokio::test]
+async fn idle_and_absolute_expiry_refuse_and_remove_the_session() {
+    use std::sync::atomic::Ordering;
+    let (f, clock) = session_fixture();
+    let uri = "/team/v1/me";
+    let idle = f.state.sessions.create(&f.writer.0.id).unwrap();
+    clock.fetch_add(30 * DAY, Ordering::SeqCst);
+    let response = browser(&f.state, Method::GET, uri, Some(&idle), None, None).await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(f.state.sessions.len(), 0);
+
+    let long = f.state.sessions.create(&f.writer.0.id).unwrap();
+    for _ in 0..3 {
+        clock.fetch_add(29 * DAY, Ordering::SeqCst);
+        let response = browser(&f.state, Method::GET, uri, Some(&long), None, None).await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+    clock.fetch_add(3 * DAY, Ordering::SeqCst);
+    let response = browser(&f.state, Method::GET, uri, Some(&long), None, None).await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(f.state.sessions.len(), 0);
+}
+
+#[tokio::test]
+async fn logout_ends_the_session_and_clears_the_cookie() {
+    let (f, _) = session_fixture();
+    let token = f.state.sessions.create(&f.writer.0.id).unwrap();
+    let other = f.state.sessions.create(&f.writer.0.id).unwrap();
+    let uri = "/auth/logout";
+    // Without the server's Origin it does nothing.
+    let response = browser(&f.state, Method::POST, uri, Some(&token), None, None).await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert!(f.state.sessions.lookup(&token).is_some());
+    // A key has no session to end.
+    let response = browser(&f.state, Method::POST, uri, None, None, Some(&f.writer.1)).await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+    let response = browser(
+        &f.state,
+        Method::POST,
+        uri,
+        Some(&token),
+        Some(ORIGIN),
+        None,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let headers = response.headers();
+    assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+    assert_eq!(headers[header::REFERRER_POLICY], "no-referrer");
+    assert_eq!(
+        headers[header::SET_COOKIE],
+        "__Host-wenlan-session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0"
+    );
+    let response = browser(
+        &f.state,
+        Method::GET,
+        "/team/v1/me",
+        Some(&token),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    // Only that browser's session ended.
+    let response = browser(
+        &f.state,
+        Method::GET,
+        "/team/v1/me",
+        Some(&other),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn compromise_reset_and_removal_through_the_owner_end_the_sessions() {
+    let (f, _) = session_fixture();
+    let (_, owner_key) = team::owner_key(&f.state.team_path, "Owner").unwrap();
+    let token = f.state.sessions.create(&f.writer.0.id).unwrap();
+    let uri = format!("/team/v1/admin/members/{}/compromised", f.writer.0.id);
+    let (status, _) = call(&f.state, Method::POST, &uri, Some(&owner_key), vec![]).await;
+    assert_eq!(status, StatusCode::OK);
+    let response = browser(
+        &f.state,
+        Method::GET,
+        "/team/v1/me",
+        Some(&token),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(f.state.sessions.len(), 0);
+}
+
+#[tokio::test]
+async fn an_unknown_or_malformed_cookie_is_401() {
+    let (f, _) = session_fixture();
+    for token in ["x", &"0".repeat(64), ""] {
+        let response = browser(
+            &f.state,
+            Method::GET,
+            "/team/v1/me",
+            Some(token),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{token:?}");
+    }
+    let response = browser(&f.state, Method::GET, "/team/v1/me", None, None, None).await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }

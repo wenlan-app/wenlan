@@ -518,3 +518,18 @@ fn reset_compromised_works_on_the_owner() {
     let found = authenticate(&path, &fresh).unwrap().unwrap();
     assert_eq!(found.role, TeamRole::Owner);
 }
+
+#[test]
+fn member_by_id_sees_a_removed_member_as_removed() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(TEAM_FILE);
+    let (amy, _) = add_member(&path, "Amy", &[]).unwrap();
+    assert!(member_by_id(&path, &amy.id).unwrap().unwrap().is_active());
+    assert!(member_by_id(&path, "nobody").unwrap().is_none());
+    remove_member(&path, &amy.id).unwrap();
+    assert!(!member_by_id(&path, &amy.id).unwrap().unwrap().is_active());
+    assert_eq!(
+        Credential::BrowserSession.kind(),
+        CredentialKind::BrowserSession
+    );
+}

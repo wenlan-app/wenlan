@@ -23,7 +23,7 @@ use std::sync::{Arc, LazyLock};
 
 use axum::body::Body;
 use axum::extract::{DefaultBodyLimit, Path, Query, Request, State};
-use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
+use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
@@ -745,6 +745,8 @@ struct TeamState {
     /// One MCP service per member, Space and access, so a connection's
     /// session stays with the service that made it.
     mcp: McpCache,
+    /// Browser sessions, in memory only.
+    sessions: Arc<crate::team_session::SessionStore>,
 }
 
 /// MCP services by (member, Space, access).
@@ -762,6 +764,7 @@ pub async fn serve_team_listener(shared: SharedState, shutdown: ShutdownHandle) 
         settings_path: shared_space::settings_path(),
         daemon_url: format!("http://127.0.0.1:{port}"),
         mcp: Arc::default(),
+        sessions: Arc::default(),
     };
     let kept = {
         let path = state.team_path.clone();
@@ -895,7 +898,7 @@ async fn owner_link_for_headless_server(state: &TeamState) {
 }
 
 fn team_router(state: TeamState) -> axum::Router {
-    use axum::routing::{any, get, put};
+    use axum::routing::{any, get, post, put};
     let checked = axum::Router::new()
         .route("/team/v1/me", get(team_me))
         .route("/team/v1/admin", any(team_admin))
@@ -909,6 +912,7 @@ fn team_router(state: TeamState) -> axum::Router {
         .route("/mcp", any(team_mcp))
         .route("/mcp/{*space}", any(team_mcp_in))
         .route("/team/v1/app/{*call}", any(app_gate::handle))
+        .route("/auth/logout", post(auth_logout))
         .layer(middleware::from_fn(wenlan_mcp::serve::guard_initialization))
         .layer(middleware::from_fn(capped_body))
         .layer(middleware::from_fn_with_state(
@@ -1422,9 +1426,18 @@ mod app_gate;
 /// Origins of web AI apps whose connectors may call `/mcp` from a browser.
 const ALLOWED_ORIGINS: &[&str] = &["https://claude.ai", "https://chatgpt.com"];
 
-/// Every request but `/health`: the member key first (401), then a browser
+/// Every request but `/health`: the credential first (401), then a browser
 /// origin (403). The member is handed to the handler.
+///
+/// With an `Authorization` header the request is a key's, and a bad key is
+/// 401 whatever cookie comes with it. Only without one is the session
+/// cookie read.
 async fn require_member(State(state): State<TeamState>, mut req: Request, next: Next) -> Response {
+    if !req.headers().contains_key(header::AUTHORIZATION)
+        && crate::team_session::has_cookie(req.headers())
+    {
+        return require_session(state, req, next).await;
+    }
     let key = req
         .headers()
         .get(header::AUTHORIZATION)
@@ -1474,18 +1487,116 @@ async fn require_member(State(state): State<TeamState>, mut req: Request, next: 
     next.run(req).await
 }
 
+/// A browser's request, by its session cookie. Every answer, refusals
+/// included, is `Cache-Control: no-store`.
+async fn require_session(state: TeamState, mut req: Request, next: Next) -> Response {
+    let no_store = |mut response: Response| {
+        response
+            .headers_mut()
+            .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+        response
+    };
+    let Some(token) = crate::team_session::cookie_token(req.headers()) else {
+        return no_store((StatusCode::UNAUTHORIZED, "sign in again").into_response());
+    };
+    let Some(member_id) = state.sessions.lookup(&token) else {
+        return no_store((StatusCode::UNAUTHORIZED, "sign in again").into_response());
+    };
+    // Every request rereads the team's file, so a removed member's session
+    // stops at once even where nothing told this process.
+    let path = state.team_path.clone();
+    let lookup = {
+        let id = member_id.clone();
+        tokio::task::spawn_blocking(move || team::member_by_id(&path, &id)).await
+    };
+    let member = match lookup {
+        Ok(Ok(Some(member))) if member.is_active() => member,
+        Ok(Ok(_)) => {
+            state.sessions.delete_member(&member_id);
+            return no_store((StatusCode::UNAUTHORIZED, "sign in again").into_response());
+        }
+        Ok(Err(error)) => {
+            tracing::warn!("[team] member list cannot be read: {error}");
+            return no_store(StatusCode::SERVICE_UNAVAILABLE.into_response());
+        }
+        Err(_) => return no_store(StatusCode::SERVICE_UNAVAILABLE.into_response()),
+    };
+    let credential = team::Credential::BrowserSession;
+    if !credential_may_reach(credential.kind(), req.uri().path()) {
+        return no_store(
+            (StatusCode::FORBIDDEN, "this sign-in does not open that").into_response(),
+        );
+    }
+    // A cookie goes with whatever page asks, so a change must come from
+    // this server's own page: its exact origin, never a Host-based guess.
+    let safe_method = matches!(*req.method(), Method::GET | Method::HEAD);
+    let origin = req
+        .headers()
+        .get(header::ORIGIN)
+        .map(|value| value.to_str().ok());
+    let own = if origin.is_some() || !safe_method {
+        own_origin(&state).await
+    } else {
+        None
+    };
+    let origin_ok = match origin {
+        None => safe_method,
+        Some(Some(origin)) => own.as_deref() == Some(origin),
+        Some(None) => false,
+    };
+    if !origin_ok {
+        return no_store((StatusCode::FORBIDDEN, "origin not allowed").into_response());
+    }
+    req.extensions_mut().insert(member);
+    req.extensions_mut().insert(credential);
+    no_store(next.run(req).await)
+}
+
+/// `POST /auth/logout`: ends this browser's session and clears its cookie.
+async fn auth_logout(State(state): State<TeamState>, req: Request) -> Response {
+    if let Some(token) = crate::team_session::cookie_token(req.headers()) {
+        state.sessions.delete(&token);
+    }
+    let mut response = StatusCode::NO_CONTENT.into_response();
+    let headers = response.headers_mut();
+    headers.insert(
+        header::SET_COOKIE,
+        HeaderValue::from_str(&crate::team_session::clear_cookie())
+            .expect("the cookie attributes are a valid header"),
+    );
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    headers.insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("no-referrer"),
+    );
+    response
+}
+
 /// The kinds of path the team listener serves behind a credential.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RouteClass {
     /// `/mcp` and `/mcp/<space>`: AI tools.
     Mcp,
-    /// Everything else: sync, `/team/v1/me`, the app gate, owner admin.
+    /// `/team/v1/me`.
+    Me,
+    /// `/team/v1/app/*`: the web app's gate.
+    App,
+    /// `/auth/logout`: ends a browser session, so only a browser has one.
+    Logout,
+    /// Everything else: sync, owner admin.
     Other,
 }
 
 fn route_class(path: &str) -> RouteClass {
-    if path == "/mcp" || path.starts_with("/mcp/") {
+    let under = |prefix: &str| path == prefix || path.starts_with(&format!("{prefix}/"));
+    if under("/mcp") {
         RouteClass::Mcp
+    } else if path == "/team/v1/me" {
+        RouteClass::Me
+    } else if under(app_gate::PREFIX) {
+        RouteClass::App
+    } else if path == "/auth/logout" {
+        RouteClass::Logout
     } else {
         RouteClass::Other
     }
@@ -1494,16 +1605,21 @@ fn route_class(path: &str) -> RouteClass {
 /// The one table of which credential reaches which kind of path, checked in
 /// [`require_member`] before any handler. Not Cedar's job: Cedar only says
 /// which Spaces a member may read or write. A later credential kind adds a
-/// column here. Columns: legacy key, tool key.
-const ROUTE_TABLE: &[(RouteClass, [bool; 2])] = &[
-    (RouteClass::Mcp, [true, true]),
-    (RouteClass::Other, [true, false]),
+/// column here. Columns: legacy key, tool key, browser session. (Owner
+/// admin by browser session is a later change.)
+const ROUTE_TABLE: &[(RouteClass, [bool; 3])] = &[
+    (RouteClass::Mcp, [true, true, false]),
+    (RouteClass::Me, [true, false, true]),
+    (RouteClass::App, [true, false, true]),
+    (RouteClass::Logout, [false, false, true]),
+    (RouteClass::Other, [true, false, false]),
 ];
 
 fn credential_may_reach(kind: team::CredentialKind, path: &str) -> bool {
     let column = match kind {
         team::CredentialKind::LegacyKey => 0,
         team::CredentialKind::ToolKey => 1,
+        team::CredentialKind::BrowserSession => 2,
     };
     let class = route_class(path);
     ROUTE_TABLE
@@ -1614,6 +1730,10 @@ async fn team_admin(
             return reset_compromised(&state, id).await;
         }
     }
+    let removed_member = match rest.split('/').collect::<Vec<_>>().as_slice() {
+        ["", "members", id] if plain && method.as_str() == "DELETE" => Some((*id).to_string()),
+        _ => None,
+    };
     let allowed = plain
         && matches!(
             (
@@ -1672,6 +1792,14 @@ async fn team_admin(
         Ok(answer) => {
             let status = StatusCode::from_u16(answer.status().as_u16())
                 .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+            // A removed member's browsers sign out here too; the daemon's
+            // own removal call cannot reach this process's sessions, and
+            // `require_session` rejects them on the next request anyway.
+            if status.is_success() {
+                if let Some(id) = &removed_member {
+                    state.sessions.delete_member(id);
+                }
+            }
             let bytes = answer.bytes().await.unwrap_or_default();
             (
                 status,
@@ -1700,10 +1828,13 @@ async fn reset_compromised(state: &TeamState, id: &str) -> Response {
         _ => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
     };
     match tokio::task::spawn_blocking(move || team::reset_compromised(&path, &id)).await {
-        Ok(Ok((member, key))) => match member_key(member, key, url.as_deref()) {
-            Ok(answer) => Json(answer).into_response(),
-            Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-        },
+        Ok(Ok((member, key))) => {
+            state.sessions.delete_member(&member.id);
+            match member_key(member, key, url.as_deref()) {
+                Ok(answer) => Json(answer).into_response(),
+                Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            }
+        }
         Ok(Err(wenlan_core::error::WenlanError::NotFound(what))) => {
             (StatusCode::NOT_FOUND, what).into_response()
         }
