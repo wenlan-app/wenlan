@@ -157,7 +157,11 @@ export function NoteReviewNotice({ page, onReview, onShowSources, disabled = fal
       : page.stale_reason === "source_updated" && !pageRevisionPending
         ? "sourceUpdated"
         : null;
-  const basisLines = basis ? basisNeedingAttention(page.basis) : [];
+  // A page revision card waiting for review already brings in what changed in
+  // the pages this one follows: one decision, not a second "confirm" beside it.
+  const basisLines = basis
+    ? basisNeedingAttention(page.basis).filter((entry) => !(pageRevisionPending && entry.state === "pending"))
+    : [];
   const codeLines = codeBasis ? codeBasisNeedingAttention(page.code_basis, modelAvailable) : [];
   // Basis lines alone leave the review row empty; drawing it anyway adds a blank row and a gap above them.
   const hasTopRow = pendingItems.length > 0 || staleMessage !== null || queryFailed || capped;

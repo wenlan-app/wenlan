@@ -571,8 +571,19 @@ async fn stage_page_revision_card_inner(
     // review every change. A pipeline write
     // an AI tool made on demand (steep) names that tool, so it is not called
     // background.
+    // A locked note brought in line with a page it follows says which page
+    // changed, rather than only that the note is locked.
+    let follows_title = match basis_marks.iter().find(|mark| mark.follows) {
+        Some(mark) if page.review_required => db
+            .get_page(&mark.basis_page_id)
+            .await?
+            .map(|basis| basis.title),
+        _ => None,
+    };
     let review_reason = if selection_review_pending(page) {
         "source_selection_changed"
+    } else if follows_title.is_some() {
+        "follows"
     } else if page.review_required && page.user_edited {
         "authored"
     } else if page.review_required {
@@ -609,6 +620,9 @@ async fn stage_page_revision_card_inner(
     // Only an update-from-sources card carries the notes it was written from.
     if let Some(snapshot) = basis_snapshot {
         structured["basis_snapshot"] = serde_json::to_value(snapshot)?;
+    }
+    if let Some(title) = &follows_title {
+        structured["follows_title"] = serde_json::json!(title);
     }
     // The notes an agent's gated write relied on, recorded when it is accepted.
     if !basis_marks.is_empty() {
@@ -1500,7 +1514,10 @@ async fn update_page_db_impl(
                 // The marks this write carried ride the card and land when it
                 // is accepted. They are checked now, so a refused mark refuses
                 // the write here exactly as it would a direct one.
-                let staged_marks = db.prepare_staged_basis_marks(page_id, &basis.marks).await?;
+                let mut staged_marks = db.prepare_staged_basis_marks(page_id, &basis.marks).await?;
+                for mark in &mut staged_marks {
+                    mark.follows = basis.follows;
+                }
                 // A rewrite from sources (steep, on demand or automatic)
                 // cannot know what the person wrote that no source says, so
                 // the card keeps those lines: accepting it must not delete
@@ -1666,8 +1683,13 @@ async fn update_page_db_impl(
             // asked for in the conversation, carrying their words. It lands
             // as sent, and the sentences it changed or added are the
             // person's (see `authorship::VersionAuthor::PersonAsked`).
+            // The other is a note the person set to follow other pages, when
+            // it is not locked: bringing it in line with them is what they
+            // asked for (`BasisWrite::follows`).
+            let follows_unlocked = basis.follows && !current.review_required;
             let (gate, keeps_person_text) = if writer.is_machine()
                 && !person_asked_write
+                && !follows_unlocked
                 && !matches!(writer, Writer::Pipeline(PipelineStage::LinkRename))
             {
                 crate::sentences::sentence_gate(db, &current, &req.content).await?

@@ -2196,6 +2196,10 @@ pub struct PendingRevisionItem {
     /// memory-target revisions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub review_reason: Option<String>,
+    /// With `review_reason` `follows`: the title of the page this locked
+    /// page follows, whose change the card brings in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub follows_title: Option<String>,
     /// The member of a shared Space whose change this card is
     /// (`shared_ai:<member>` or `shared_person:<member>`), so the card can
     /// name them. None for every card made on this computer.
@@ -2565,6 +2569,7 @@ mod tests {
             target_kind: RevisionTargetKind::Memory,
             grounded_in: None,
             review_reason: None,
+            follows_title: None,
             edited_by: None,
         };
         let json = serde_json::to_value(&item).unwrap();
@@ -2590,6 +2595,7 @@ mod tests {
             target_kind: RevisionTargetKind::Page,
             grounded_in: None,
             review_reason: None,
+            follows_title: None,
             edited_by: None,
         };
         let json = serde_json::to_value(&page_item).unwrap();
