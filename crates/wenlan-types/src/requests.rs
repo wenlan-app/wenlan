@@ -10,13 +10,18 @@ use std::collections::HashMap;
 
 /// Header the desktop app sends on a request the person made with their own
 /// gesture (delete a page, forget a memory). The daemon treats a request as
-/// the person's only when it carries this header with [`PERSON_CALLER_VALUE`]
-/// and no `x-agent-name`; a request without it is treated as an AI tool's,
-/// named or not. Like `x-agent-name`, it is a cooperative label from a local
-/// client, not proof: the remote relay does not forward it.
+/// the person's only when it carries this header with [`PERSON_CALLER_VALUE`],
+/// the person key in [`PERSON_KEY_HEADER`], and no `x-agent-name`; a request
+/// without both is treated as an AI tool's, named or not. The marker alone is
+/// a label any local program can write; the key is what the daemon believes
+/// (see [`crate::person_key`]). The remote relay forwards neither.
 pub const CALLER_HEADER: &str = "x-wenlan-caller";
 /// The value of [`CALLER_HEADER`] that marks the person, in the app.
 pub const PERSON_CALLER_VALUE: &str = "person";
+/// Header that carries the person key next to [`CALLER_HEADER`]. Only the
+/// Wenlan app, the `wenlan` command and the page the daemon serves send it;
+/// `wenlan-mcp` never does.
+pub const PERSON_KEY_HEADER: &str = "x-wenlan-person-key";
 
 // ===== Memory CRUD =====
 

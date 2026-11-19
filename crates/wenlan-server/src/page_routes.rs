@@ -2300,6 +2300,7 @@ pub async fn handle_update_page(
                 space_guard: member_space_guard(actor.is_some(), header_space.as_deref()),
                 person_asked: None,
                 restored_from: None,
+                follows: false,
             },
         },
     )
@@ -2833,6 +2834,7 @@ async fn handle_refresh_page_inner(
                 space_guard: space_guard.clone(),
                 person_asked: person_asked.clone(),
                 restored_from,
+                follows: false,
             },
             page_id: &id,
             req: wenlan_types::requests::UpdatePageRequest {
@@ -3270,7 +3272,7 @@ pub async fn handle_get_page_revisions(
     .is_empty();
     let mut entries: Vec<wenlan_types::responses::PageChangelogEntry> = if full {
         let changelog_str = db.get_page_changelog_scoped(&id, &scope).await?;
-        serde_json::from_str(&changelog_str)
+        wenlan_types::responses::PageChangelogEntry::parse_changelog(&changelog_str)
             .map_err(|e| ServerError::Internal(format!("parse changelog: {e}")))?
     } else {
         Vec::new()

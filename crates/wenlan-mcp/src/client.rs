@@ -653,6 +653,7 @@ fn parse_api_error_reason(bytes: &[u8]) -> Option<String> {
             | "page_space_unknown"
             | "page_space_needs_global_scope"
             | "look_refused"
+            | "rule_save_refused"
     );
     if !safe {
         return None;
@@ -685,6 +686,9 @@ fn parse_api_error_reason(bytes: &[u8]) -> Option<String> {
         || code == "note_change_needs_proposal"
         || code == "doc_fix_refused"
         || code == "look_refused"
+        // Saving or removing a rule: a fixed sentence from the daemon that
+        // holds no page text, and tells the agent what to ask the person.
+        || code == "rule_save_refused"
     {
         if let Some((_, detail)) = reason.split_once(':') {
             let detail: String = detail

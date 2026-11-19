@@ -7,7 +7,7 @@ import { getPageRevisions, type PageHistoryItem, type SharedStatus } from "../..
 import { diffWords } from "../../../lib/wordDiff";
 import { DiffText } from "../ReviewDialog";
 import { Button } from "../settings/primitives";
-import { historyItemLabel } from "./historyItems";
+import { historyItemLabel, historyItemQuote } from "./historyItems";
 import "./BasisDiffDialog.css";
 
 interface HistoryChangeDialogProps {
@@ -129,8 +129,8 @@ export function HistoryChangeDialog({ pageId, item, onClose, shares, action }: H
       >
         <h2 id={titleId} className="basis-diff__title">{historyItemLabel(t, item, shares)}</h2>
         <p className="basis-diff__versions">{when}</p>
-        {item.person_asked && (
-          <p className="basis-diff__versions">{t("pageHistory.yourWords", { quote: item.person_asked })}</p>
+        {historyItemQuote(item) && (
+          <p className="basis-diff__versions">{t("pageHistory.yourWords", { quote: historyItemQuote(item) })}</p>
         )}
         {body}
         <div className="basis-diff__actions">

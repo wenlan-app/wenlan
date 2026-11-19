@@ -51,7 +51,7 @@ describe("BasisUpdatesSection in the review panel", () => {
     renderWith(<BasisUpdatesSection entries={[entry()]} onPageClick={vi.fn()} />);
 
     const group = screen.getByRole("region", { name: "Source updates" });
-    expect(within(group).getByText("“Pricing” changed. 2 pages to confirm")).toBeInTheDocument();
+    expect(within(group).getByText("“Pricing” changed. 2 pages follow it")).toBeInTheDocument();
     expect(within(group).queryByText("Launch plan")).toBeNull();
 
     fireEvent.click(within(group).getByRole("button", { name: "Show the pages" }));

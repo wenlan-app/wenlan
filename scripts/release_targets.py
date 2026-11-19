@@ -129,11 +129,9 @@ def release_preflight_matrix(
     matrix = _event_preflight_matrix(event_name=event_name, ref=ref, head_ref=head_ref)
     if macos_allowed:
         return matrix
-    # A merge queue entry whose changes cannot affect macOS (frontend only,
-    # see scripts/ci_native_lane.py darwin-preflight) skips the darwin leg.
-    # Main push does not run darwin, so a ci.yml edit keeps it here; the
-    # release-please PR re-proves every target before a release. Never empty:
-    # the Linux targets always remain.
+    # The merge queue never waits for a macOS runner (scripts/ci_native_lane.py
+    # darwin-preflight); the main push and the release-please PR run darwin.
+    # Never empty: the Linux targets always remain.
     if event_name != "merge_group":
         raise TargetError("only a merge queue entry may drop the darwin preflight")
     return {
@@ -157,20 +155,25 @@ def _event_preflight_matrix(*, event_name: str, ref: str, head_ref: str) -> dict
     if event_name == "push":
         if ref != "refs/heads/main":
             raise TargetError(f"release preflight does not accept push ref {ref!r}")
+        # Linux was proved in the queue. Windows warms its cache here, and
+        # darwin runs here because the queue never waits for a macOS runner:
+        # a darwin packaging break is fixed forward before the release.
         return release_matrix(
             exclude_targets=[
-                "aarch64-apple-darwin",
                 "aarch64-unknown-linux-gnu",
                 "x86_64-unknown-linux-gnu",
             ]
         )
     if event_name == "merge_group":
-        # A queue entry re-proves the PR's targets on the commit main will
+        # A queue entry re-proves the Linux targets on the commit main will
         # become. The Windows cache warmer stays on the main push, the only
-        # event allowed to save that cache.
+        # event allowed to save that cache; darwin runs there too, so no
+        # queue entry waits for a macOS runner.
         if not ref.startswith(MERGE_QUEUE_REF_PREFIX):
             raise TargetError(f"release preflight does not accept merge queue ref {ref!r}")
-        return release_matrix(exclude_targets=["x86_64-pc-windows-msvc"])
+        return release_matrix(
+            exclude_targets=["x86_64-pc-windows-msvc", "aarch64-apple-darwin"]
+        )
     if event_name == "workflow_dispatch":
         return release_matrix()
     raise TargetError(f"release preflight does not accept event {event_name!r}")

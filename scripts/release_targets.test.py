@@ -79,24 +79,24 @@ class ReleaseTargetTests(unittest.TestCase):
             {"include": EXPECTED[1:-1]},
         )
 
-    def test_release_sensitive_main_preflight_only_warms_windows(self) -> None:
+    def test_release_sensitive_main_preflight_runs_darwin_and_warms_windows(self) -> None:
         self.assertEqual(
             release_preflight_matrix(
                 event_name="push",
                 ref="refs/heads/main",
                 head_ref="",
             ),
-            {"include": EXPECTED[-1:]},
+            {"include": [EXPECTED[0], EXPECTED[-1]]},
         )
 
-    def test_merge_queue_preflight_matches_an_ordinary_pr(self) -> None:
+    def test_merge_queue_preflight_never_waits_for_macos(self) -> None:
         self.assertEqual(
             release_preflight_matrix(
                 event_name="merge_group",
                 ref="refs/heads/gh-readonly-queue/main/pr-847-a8108f257f70016a74ede72a829bb6e9dcc5035f",
                 head_ref="",
             ),
-            {"include": EXPECTED[:-1]},
+            {"include": EXPECTED[1:-1]},
         )
 
     def test_merge_queue_without_macos_changes_leaves_darwin_to_main(self) -> None:

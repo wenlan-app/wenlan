@@ -8,6 +8,9 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { isAbsolute, join, resolve } from "node:path";
 
 const mock = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 const stubs = mock("../src/web/tauri-stubs.ts");
@@ -24,6 +27,43 @@ if (sourcePreview) {
   const target = new URL(daemonTarget);
   if (target.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(target.hostname) || !target.port || target.port === "7878") {
     throw new Error("Source preview writes require an isolated loopback daemon port");
+  }
+}
+
+// The isolated daemon believes the person marker only next to its person
+// key. With `WENLAN_PREVIEW_DATA_DIR` set to that daemon's data root, the
+// proxy adds the key to the preview's person gestures, as the app does, but
+// only for a scratch daemon: an isolated loopback port (not 7878) and a data
+// root that is not the installed app's. Otherwise this proxy would hand any
+// local program the real person's key.
+const PRODUCTION_DATA_ROOTS = (() => {
+  const home = homedir();
+  const bases = [
+    join(home, ".local", "share"),
+    join(home, "Library", "Application Support"),
+    process.env.LOCALAPPDATA ?? "",
+    process.env.XDG_DATA_HOME ?? "",
+  ].filter(Boolean);
+  return bases.flatMap((base) => [join(base, "wenlan"), join(base, "origin")]).map((p) => resolve(p));
+})();
+
+export function isScratchPreview(target: string, dataRoot: string | undefined): dataRoot is string {
+  if (!dataRoot || !isAbsolute(dataRoot)) return false;
+  const url = new URL(target);
+  const loopback = ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname);
+  if (url.protocol !== "http:" || !loopback || !url.port || url.port === "7878") return false;
+  const root = resolve(dataRoot);
+  return !PRODUCTION_DATA_ROOTS.includes(root) && !root.startsWith(join(homedir(), ".wenlan"));
+}
+
+function previewPersonKey(): string | null {
+  const root = process.env.WENLAN_PREVIEW_DATA_DIR;
+  if (!isScratchPreview(daemonTarget, root)) return null;
+  try {
+    const key = readFileSync(join(root, "person.key"), "utf8").trim();
+    return /^[0-9a-f]{64}$/.test(key) ? key : null;
+  } catch {
+    return null;
   }
 }
 
@@ -62,6 +102,12 @@ export default defineConfig({
         target: daemonTarget,
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/daemon/, ""),
+        configure: (proxy) => {
+          proxy.on("proxyReq", (outgoing, incoming) => {
+            const key = incoming.headers["x-wenlan-caller"] === "person" ? previewPersonKey() : null;
+            if (key) outgoing.setHeader("x-wenlan-person-key", key);
+          });
+        },
       },
     },
     // Polling: edits from the sandboxed agent don't emit fsevents.

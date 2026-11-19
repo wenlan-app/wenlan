@@ -391,6 +391,15 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     // Skill refresh and person decisions return counts or receipts only. The
     // rules and suggestion readers stay in the read catalog.
     "/api/skills/refresh", "/api/skills/spaces/{id}/accept", "/api/skills/spaces/{id}/decline", "/api/skills/spaces/{id}/undo",
+    // Other people's skills: skills.sh results, and SKILL.md folders in
+    // Wenlan's own folder and the AI tools' folders. Never library text.
+    "/api/skills/registry/search", "/api/skills/registry/preview", "/api/skills/registry/installed", "/api/skills/registry/local",
+    "/api/skills/registry/import", "/api/skills/registry/install", "/api/skills/registry/remove",
+    // Taking off a rule the person asked to be saved: a receipt with the
+    // rule's id and its page's title, never its text.
+    "/api/skills/rules/{id}/remove",
+    // A one-time browser pass for `wenlan open`: no user data, never the key.
+    "/api/person/browser-pass",
     "/api/steep", "/api/distill", "/api/distill/{page_id}",
     "/api/ingest/text", "/api/ingest/webpage", "/api/ingest/webpage/create", "/api/ingest/memory", "/api/documents/{source}/{source_id}",
     // Fetches external public text, never reads the user's source store.
@@ -558,6 +567,9 @@ const NON_SENSITIVE_MIXED_ROUTES: &[(RegisteredMethod, &str)] = &[
     // GET returns the page-title borrowing record; POST only acknowledges an
     // AI self-report and returns no library text.
     (RegisteredMethod::Post, "/api/skills/record"),
+    // GET returns the rules; POST saves one rule the caller sends and
+    // answers with a receipt for it, not with library text.
+    (RegisteredMethod::Post, "/api/skills/rules"),
     (RegisteredMethod::Put, "/api/sources/{id}/ai-changes"),
     (RegisteredMethod::Post, "/api/notes/proposals"),
     (RegisteredMethod::Delete, "/api/notes/proposals/{id}"),

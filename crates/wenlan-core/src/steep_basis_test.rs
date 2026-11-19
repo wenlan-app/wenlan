@@ -183,6 +183,16 @@ async fn a_locked_note_gets_a_revision_card_and_the_page_waits() {
     .await
     .unwrap();
     assert_eq!(done.outcome, "review_card");
+    // The card says which page changed, not only that the note is locked.
+    let card = db
+        .list_pending_revisions(10)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|card| card.target_source_id == "intro")
+        .expect("the card is listed");
+    assert_eq!(card.review_reason.as_deref(), Some("follows"));
+    assert_eq!(card.follows_title.as_deref(), Some("Positioning"));
     let after = db.get_page("intro").await.unwrap().unwrap();
     assert_eq!(
         after.content, CITER_V1,
@@ -194,4 +204,60 @@ async fn a_locked_note_gets_a_revision_card_and_the_page_waits() {
         .await
         .unwrap();
     assert!(list.items.iter().all(|item| item.page_id != "intro"));
+}
+
+#[tokio::test]
+async fn sentences_the_person_wrote_follow_the_page_too() {
+    // A note the person wrote themselves: every sentence is theirs, which the
+    // sentence gate otherwise keeps from any AI rewrite. Following a page is
+    // the person's own ask, so the rewrite lands.
+    let (db, dir) = test_db().await;
+    let pages = dir.path().join("pages");
+    std::fs::create_dir_all(&pages).unwrap();
+    note(&db, "lead", "Positioning", LEAD_V1, "authored").await;
+    let intro = crate::post_write::create_page(
+        &db,
+        wenlan_types::requests::CreateConceptRequest {
+            title: "Introduction".into(),
+            content: CITER_V1.into(),
+            summary: None,
+            entity_id: None,
+            space: wenlan_types::WriteSpaceTarget::Named("sp".into()),
+            source_memory_ids: Vec::new(),
+            creation_kind: Some("authored".into()),
+            workspace: Some("sp".into()),
+        },
+        "unknown",
+        Some(&pages),
+    )
+    .await
+    .unwrap()
+    .id;
+    db.mark_page_basis(&intro, "lead", 1, "human")
+        .await
+        .unwrap();
+    db.update_page_content("lead", LEAD_V2, &[], "manual_edit")
+        .await
+        .unwrap();
+
+    let claim = claim(&db, &intro, &ReadScope::Global, None).await.unwrap();
+    assert_eq!(claim.plan, STEEP_PLAN_REWRITE);
+    let done = commit(
+        &db,
+        claim.token.as_deref().unwrap(),
+        STEEP_ACTION_REWRITE,
+        Some(CITER_V2),
+        &[],
+        Some(&pages),
+        Some("claude-code"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(done.outcome, "written");
+    let after = db.get_page(&intro).await.unwrap().unwrap();
+    assert_eq!(after.content, CITER_V2);
+    assert_eq!(
+        db.list_page_basis(&intro).await.unwrap()[0].state,
+        BASIS_STATE_OK
+    );
 }

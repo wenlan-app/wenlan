@@ -1260,6 +1260,7 @@ fn sample_pending_revision_item(target: &str, rev: &str) -> PendingRevisionItem 
         target_kind: wenlan_types::responses::RevisionTargetKind::Memory,
         grounded_in: None,
         review_reason: None,
+        follows_title: None,
         edited_by: None,
     }
 }

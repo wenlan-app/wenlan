@@ -63,6 +63,10 @@ impl<'a> Writer<'a> {
             // read-only body, the lock); only the sentence gate lets it change
             // the person's sentences, because the person authorized it.
             PERSON_ASKED => Writer::Agent(edited_by),
+            // A rule the person asked to be saved or removed (UX-SKILL-14).
+            // An agent write for every guard, like the one above; it may add
+            // or remove exactly one rule and nothing else.
+            crate::skill_grow::RULE_SAVE => Writer::Agent(edited_by),
             "distill" => Writer::Pipeline(PipelineStage::Distill),
             "re_distill" => Writer::Pipeline(PipelineStage::ReDistill),
             "page_growth" => Writer::Pipeline(PipelineStage::PageGrowth),
@@ -571,8 +575,19 @@ async fn stage_page_revision_card_inner(
     // review every change. A pipeline write
     // an AI tool made on demand (steep) names that tool, so it is not called
     // background.
+    // A locked note brought in line with a page it follows says which page
+    // changed, rather than only that the note is locked.
+    let follows_title = match basis_marks.iter().find(|mark| mark.follows) {
+        Some(mark) if page.review_required => db
+            .get_page(&mark.basis_page_id)
+            .await?
+            .map(|basis| basis.title),
+        _ => None,
+    };
     let review_reason = if selection_review_pending(page) {
         "source_selection_changed"
+    } else if follows_title.is_some() {
+        "follows"
     } else if page.review_required && page.user_edited {
         "authored"
     } else if page.review_required {
@@ -609,6 +624,9 @@ async fn stage_page_revision_card_inner(
     // Only an update-from-sources card carries the notes it was written from.
     if let Some(snapshot) = basis_snapshot {
         structured["basis_snapshot"] = serde_json::to_value(snapshot)?;
+    }
+    if let Some(title) = &follows_title {
+        structured["follows_title"] = serde_json::json!(title);
     }
     // The notes an agent's gated write relied on, recorded when it is accepted.
     if !basis_marks.is_empty() {
@@ -737,7 +755,9 @@ async fn stage_page_revision_card_inner(
             )
             .await
         {
-            Ok(true) => {}
+            Ok(true) => {
+                super::page_revision::saved_rule_card_gone(db, old_card_id).await;
+            }
             Ok(false) => log::info!(
                 "[page_revision_card] open card {old_card_id} of page {} changed before it \
                  could be replaced; left it open beside {revision_card_id}",
@@ -1173,16 +1193,19 @@ async fn update_page_db_impl(
     // UX-WHO-2: a person-asked write is an agent's version-checked write
     // carrying the person's words, and only that write carries them.
     let person_asked_write = edited_by == PERSON_ASKED;
+    // UX-SKILL-14: saving or removing a rule the person asked for carries
+    // their words the same way, and does nothing but that one change.
+    let rule_save_write = edited_by == crate::skill_grow::RULE_SAVE;
     match basis.person_asked.as_deref() {
         Some(quote) => {
-            if !person_asked_write {
+            if !person_asked_write && !rule_save_write {
                 return Err(WenlanError::Validation(format!(
                     "person_asked rides only a write recorded as {PERSON_ASKED}"
                 )));
             }
             validate_person_asked(quote, req.expected_version).map_err(WenlanError::Validation)?;
         }
-        None if person_asked_write => {
+        None if person_asked_write || rule_save_write => {
             return Err(WenlanError::Validation(
                 "a person_asked write must quote the person's words".into(),
             ));
@@ -1423,6 +1446,18 @@ async fn update_page_db_impl(
                 }
             }
 
+            // A rule save is the one change it says it is, checked against
+            // the very row this write lands on.
+            if rule_save_write
+                && !crate::skill_grow::is_one_rule_change(&current.content, &req.content)
+            {
+                return Err(WenlanError::Validation(
+                    "a rule save adds or removes exactly one rule and leaves every other line \
+                     of the page as it is"
+                        .into(),
+                ));
+            }
+
             // Ownership gate, re-evaluated on every attempt. Inside the CAS loop
             // it is no longer advisory: whatever it decided is what the write
             // guards on. A user-forced rebuild of a page the person edited or
@@ -1442,6 +1477,7 @@ async fn update_page_db_impl(
             let lock_proposes = basis.citation_snapshots.is_empty()
                 && basis.marks.is_empty()
                 && !person_asked_write
+                && !rule_save_write
                 && basis.research_write.is_none()
                 && writer.is_machine()
                 && current.review_required
@@ -1500,7 +1536,10 @@ async fn update_page_db_impl(
                 // The marks this write carried ride the card and land when it
                 // is accepted. They are checked now, so a refused mark refuses
                 // the write here exactly as it would a direct one.
-                let staged_marks = db.prepare_staged_basis_marks(page_id, &basis.marks).await?;
+                let mut staged_marks = db.prepare_staged_basis_marks(page_id, &basis.marks).await?;
+                for mark in &mut staged_marks {
+                    mark.follows = basis.follows;
+                }
                 // A rewrite from sources (steep, on demand or automatic)
                 // cannot know what the person wrote that no source says, so
                 // the card keeps those lines: accepting it must not delete
@@ -1575,7 +1614,7 @@ async fn update_page_db_impl(
                 // A card is the person's to accept, so a person-asked write
                 // that waits as one is staged as the agent's ordinary write:
                 // accepting it is the person's own decision.
-                let card_edited_by = if person_asked_write {
+                let card_edited_by = if person_asked_write || rule_save_write {
                     "agent_refresh"
                 } else {
                     edited_by
@@ -1666,8 +1705,14 @@ async fn update_page_db_impl(
             // asked for in the conversation, carrying their words. It lands
             // as sent, and the sentences it changed or added are the
             // person's (see `authorship::VersionAuthor::PersonAsked`).
+            // The other is a note the person set to follow other pages, when
+            // it is not locked: bringing it in line with them is what they
+            // asked for (`BasisWrite::follows`).
+            let follows_unlocked = basis.follows && !current.review_required;
             let (gate, keeps_person_text) = if writer.is_machine()
                 && !person_asked_write
+                && !follows_unlocked
+                && !rule_save_write
                 && !matches!(writer, Writer::Pipeline(PipelineStage::LinkRename))
             {
                 crate::sentences::sentence_gate(db, &current, &req.content).await?

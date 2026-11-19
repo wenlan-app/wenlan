@@ -21,6 +21,9 @@
 //! A session also remembers when its member last signed in again at the
 //! identity provider ([`Session::reauthed`]); [`SessionStore::fresh`] is
 //! what a route that issues a long-lived credential asks first.
+//!
+//! The local listener's browser sessions (`person_key`, made from a
+//! `wenlan open` pass) are kept in a store of their own.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -96,7 +99,6 @@ impl SessionStore {
 
     /// Makes a session for `member_id` and returns its token (64 hex
     /// characters), which is not kept. It starts without a fresh sign-in.
-    #[cfg(test)]
     pub(crate) fn create(&self, member_id: &str) -> Result<String, getrandom::Error> {
         self.create_with(member_id, false)
     }

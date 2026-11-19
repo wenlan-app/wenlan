@@ -29,6 +29,7 @@ import {
   type SkillSearchRow,
 } from "../../../lib/tauri";
 import { confirmAction } from "../../../lib/confirmAction";
+import { isWebBuild } from "../../../web/runtime";
 import "./findSkills.css";
 
 export const INSTALLED_SKILLS_KEY = ["installed-skills"] as const;
@@ -36,6 +37,50 @@ export const LOCAL_SKILLS_KEY = ["local-skills"] as const;
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** Why a skill could not be installed, taken in or removed, in the person's
+ *  words. The two refusals Wenlan gives by rule (UX-SKILL-13) are said in
+ *  the app's language; any other reason is the one that came back. */
+export function refusalText(error: unknown, t: TFunction): string {
+  const text = message(error);
+  if (text.includes("skills_need_the_person")) return t("findSkills.refusedNotPerson");
+  if (text.includes("skills_need_this_computer")) return t("findSkills.refusedBeyondComputer");
+  return text;
+}
+
+/** Why Wenlan will not install the skill a preview shows, or null: it holds
+ *  text that cannot be shown to the person as it is. The daemon and the
+ *  desktop app both say so in `cannotInstall` and refuse the install
+ *  themselves; an answer without the field (a daemon older than the rule)
+ *  blocks nothing here. */
+export function cannotInstallReason(preview: Pick<SkillPreview, "files" | "cannotInstall">, t: TFunction): string | null {
+  const reason = preview.cannotInstall?.trim();
+  if (!reason) return null;
+  const cut = preview.files.find((file) => file.cut === true);
+  if (cut) return t("findSkills.cannotInstallCut", { file: cut.path });
+  const unreadable = /^(.+) is not readable text/u.exec(reason)?.[1];
+  if (unreadable) return t("findSkills.cannotInstallUnreadable", { file: unreadable });
+  const hidden = /^(.+) holds characters that do not show/u.exec(reason)?.[1];
+  if (hidden) return t("findSkills.cannotInstallHidden", { file: hidden });
+  return reason;
+}
+
+/** One `<U+XXXX>` in a file's text, as the daemon writes out a character
+ *  that would not show. */
+const WRITTEN_OUT = /(<U\+[0-9A-F]{4,6}>)/u;
+
+/** A file's text with each written-out character set apart, so it reads as
+ *  a mark and not as part of the author's words. */
+function FileText({ text, marked }: { readonly text: string; readonly marked: boolean }) {
+  if (!marked) return <pre>{text}</pre>;
+  return (
+    <pre>
+      {text.split(WRITTEN_OUT).map((part, index) => index % 2 === 1
+        ? <mark className="find-skills-mark" key={index}>{part}</mark>
+        : part)}
+    </pre>
+  );
 }
 
 function openLink(url: string) {
@@ -140,7 +185,14 @@ function DetailPane({ row, onBack }: { readonly row: SkillSearchRow; readonly on
   });
   const data = preview.data;
   const warn = data?.safety.verdict === "warn";
-  const canInstall = !!data && !install.isPending && (where === "all" || spaceName !== "") && (!warn || warnOk);
+  const blocked = data ? cannotInstallReason(data, t) : null;
+  // A refusal shown under the button means pressing it again would only be
+  // refused again, so the button is off while that block is on the screen.
+  // Changing where the skill goes, or the warning tick, takes the block away.
+  const refused = install.isError;
+  const resetInstall = install.reset;
+  const clearRefusal = () => { if (refused) resetInstall(); };
+  const canInstall = !!data && blocked === null && !refused && !install.isPending && (where === "all" || spaceName !== "") && (!warn || warnOk);
   return (
     <div className="find-skills-detail">
       <div className="find-skills-detail-main">
@@ -158,6 +210,7 @@ function DetailPane({ row, onBack }: { readonly row: SkillSearchRow; readonly on
               {data.runnable.length === 0 && <span className="find-skills-badge">{t("findSkills.noScripts")}</span>}
             </div>
             {data.runnable.length > 0 && <p className="find-skills-note">{t("findSkills.scripts", { files: data.runnable.join(", ") })}</p>}
+            {blocked && <p className="find-skills-note" id="find-skills-blocked" role="note">{blocked}</p>}
             {warn && data.safety.audits.length > 0 && (
               <ul className="find-skills-audits">
                 {data.safety.audits.filter((audit) => audit.status !== "pass").map((audit) => (
@@ -170,9 +223,11 @@ function DetailPane({ row, onBack }: { readonly row: SkillSearchRow; readonly on
               {data.files.map((file) => (
                 <div key={file.path} className="find-skills-file">
                   <div className="find-skills-file-path">{file.path}</div>
+                  {(file.marked ?? 0) > 0 && <p className="find-skills-note find-skills-marked">{t("findSkills.marked", { count: file.marked ?? 0 })}</p>}
                   {file.text === null
                     ? <p className="find-skills-muted">{t("findSkills.binary")}</p>
-                    : <pre>{file.text}</pre>}
+                    : <FileText text={file.text} marked={(file.marked ?? 0) > 0} />}
+                  {file.cut === true && <p className="find-skills-note find-skills-cut">{t("findSkills.cut")}</p>}
                 </div>
               ))}
             </section>
@@ -184,15 +239,15 @@ function DetailPane({ row, onBack }: { readonly row: SkillSearchRow; readonly on
         <fieldset className="find-skills-where">
           <legend className="sr-only">{t("findSkills.installWhere")}</legend>
           <label className="find-skills-choice" data-selected={where === "all" ? "true" : undefined}>
-            <input type="radio" name="skill-where" checked={where === "all"} onChange={() => setWhere("all")} />
+            <input type="radio" name="skill-where" checked={where === "all"} onChange={() => { clearRefusal(); setWhere("all"); }} />
             <span><span>{t("findSkills.allSpaces")}</span><span className="find-skills-muted">{t("findSkills.allSpacesHint")}</span></span>
           </label>
           <label className="find-skills-choice" data-selected={where === "space" ? "true" : undefined}>
-            <input type="radio" name="skill-where" checked={where === "space"} onChange={() => setWhere("space")} />
+            <input type="radio" name="skill-where" checked={where === "space"} onChange={() => { clearRefusal(); setWhere("space"); }} />
             <span><span>{t("findSkills.oneSpace")}</span><span className="find-skills-muted">{t("findSkills.oneSpaceHint")}</span></span>
           </label>
           {where === "space" && (
-            <select aria-label={t("findSkills.pickSpace")} value={spaceName} onChange={(event) => setSpaceName(event.target.value)}>
+            <select aria-label={t("findSkills.pickSpace")} value={spaceName} onChange={(event) => { clearRefusal(); setSpaceName(event.target.value); }}>
               <option value="">{t("findSkills.pickSpace")}</option>
               {(spaces.data ?? []).map((space) => <option key={space.id} value={space.name}>{space.name}</option>)}
             </select>
@@ -200,15 +255,21 @@ function DetailPane({ row, onBack }: { readonly row: SkillSearchRow; readonly on
         </fieldset>
         {warn && (
           <label className="find-skills-toggle">
-            <input type="checkbox" checked={warnOk} onChange={(event) => setWarnOk(event.target.checked)} />
+            <input type="checkbox" checked={warnOk} onChange={(event) => { clearRefusal(); setWarnOk(event.target.checked); }} />
             {t("findSkills.warnConfirm")}
           </label>
         )}
-        <button type="button" className="find-skills-install" disabled={!canInstall} onClick={() => data && install.mutate(data)}>
+        <button type="button" className="find-skills-install" disabled={!canInstall} aria-describedby={blocked ? "find-skills-blocked" : refused ? "find-skills-refused" : undefined} onClick={() => data && install.mutate(data)}>
           {install.isPending ? t("findSkills.installing") : data?.installedAs ? t("findSkills.reinstall") : t("findSkills.install")}
         </button>
+        {blocked && <p className="find-skills-note">{t("findSkills.cannotInstall")}</p>}
         {done && <p role="status">{done}</p>}
-        {install.isError && <p role="alert">{t("findSkills.installFailed", { message: message(install.error) })}</p>}
+        {install.isError && (
+          <div className="find-skills-refusal" id="find-skills-refused" role="alert">
+            <p className="find-skills-refusal-lead">{t("findSkills.installFailedLead")}</p>
+            <p>{refusalText(install.error, t)}</p>
+          </div>
+        )}
         <p className="find-skills-muted">{t("findSkills.pinned")}</p>
         {data && (
           <p className="find-skills-muted">
@@ -250,17 +311,30 @@ function InstalledRow({ skill }: { readonly skill: InstalledSkill }) {
         <span className="find-skills-row-name">{skill.name}</span>
         <span className="find-skills-muted">{skill.scope.kind === "space" ? t("findSkills.forSpace", { space: skill.scope.name }) : t("findSkills.forAll")}</span>
         <span className="find-skills-muted">{local ? t("findSkills.fromComputer") : skill.source}</span>
-        <button type="button" className="find-skills-link-button" onClick={() => void askRemove()}>{t("findSkills.remove")}</button>
+        <button type="button" className="find-skills-link-button" disabled={remove.isPending} onClick={() => void askRemove()}>{t("findSkills.remove")}</button>
       </div>
-      <label className="find-skills-additions">
-        <span>{t("findSkills.additions")}</span>
-        <span className="find-skills-muted">{t("findSkills.additionsHint")}</span>
-        <textarea value={text} rows={3} onChange={(event) => { setText(event.target.value); setSaved(false); }} />
-      </label>
-      <div className="find-skills-installed-actions">
-        <button type="button" disabled={save.isPending || text === skill.additions} onClick={() => save.mutate()}>{t("findSkills.save")}</button>
-        {saved && <span role="status" className="find-skills-muted">{t("findSkills.saved")}</span>}
-      </div>
+      {remove.isError && <p role="alert" className="find-skills-note">{t("findSkills.removeFailed", { message: refusalText(remove.error, t) })}</p>}
+      {/* The person's additions are changed in the desktop app only: the
+          browser has nowhere to save them, so it shows them and offers no box. */}
+      {isWebBuild() && skill.additions.trim() !== "" && (
+        <div className="find-skills-additions">
+          <span>{t("findSkills.additions")}</span>
+          <p className="find-skills-muted find-skills-additions-text">{skill.additions}</p>
+        </div>
+      )}
+      {!isWebBuild() && (
+        <>
+          <label className="find-skills-additions">
+            <span>{t("findSkills.additions")}</span>
+            <span className="find-skills-muted">{t("findSkills.additionsHint")}</span>
+            <textarea value={text} rows={3} onChange={(event) => { setText(event.target.value); setSaved(false); }} />
+          </label>
+          <div className="find-skills-installed-actions">
+            <button type="button" disabled={save.isPending || text === skill.additions} onClick={() => save.mutate()}>{t("findSkills.save")}</button>
+            {saved && <span role="status" className="find-skills-muted">{t("findSkills.saved")}</span>}
+          </div>
+        </>
+      )}
     </li>
   );
 }
@@ -296,7 +370,7 @@ function LocalPane() {
       )}
       {result && result.imported > 0 && <p role="status" className="find-skills-muted">{t("findSkills.localImported", { count: result.imported })}</p>}
       {result?.failed.map((name) => <p key={name} className="find-skills-note">{t("findSkills.localFailed", { name })}</p>)}
-      {take.isError && <p role="alert">{message(take.error)}</p>}
+      {take.isError && <p role="alert">{t("findSkills.localImportFailed", { message: refusalText(take.error, t) })}</p>}
     </section>
   );
 }

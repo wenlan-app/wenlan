@@ -258,6 +258,17 @@ describe("ReviewDialog page-target revision card", () => {
     expect(within(dialog).getByTestId("review-reason")).toHaveTextContent(text);
   });
 
+  it.each([
+    ["en", "Positioning", "Reason: \u201cPositioning\u201d changed, and this page follows it"],
+    ["zh-Hant", "Positioning", "原因：『Positioning』改了，這篇跟著它"],
+    ["en", null, "Reason: a page this one follows changed"],
+  ])("names the page a locked page follows (%s, %s)", async (language, followsTitle, text) => {
+    await i18n.changeLanguage(language);
+    const dialog = await openDialog({ ...pageItem, reviewReason: "follows", followsTitle });
+    await within(dialog).findByRole("heading", { name: PAGE_TITLE });
+    expect(within(dialog).getByTestId("review-reason")).toHaveTextContent(text);
+  });
+
   it.each([undefined, null, "something_new"])(
     "shows no reason line for reviewReason %s",
     async (reviewReason) => {

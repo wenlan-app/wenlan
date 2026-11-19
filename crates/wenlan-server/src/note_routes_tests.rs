@@ -75,10 +75,15 @@ async fn send(
     let mut request = Request::builder().method(method).uri(uri);
     match agent {
         Some(PERSON) => {
-            request = request.header(
-                wenlan_types::requests::CALLER_HEADER,
-                wenlan_types::requests::PERSON_CALLER_VALUE,
-            );
+            request = request
+                .header(
+                    wenlan_types::requests::CALLER_HEADER,
+                    wenlan_types::requests::PERSON_CALLER_VALUE,
+                )
+                .header(
+                    wenlan_types::requests::PERSON_KEY_HEADER,
+                    crate::person_key::test_key(),
+                );
         }
         Some(agent) => request = request.header("x-agent-name", agent),
         None => {}
@@ -495,6 +500,10 @@ async fn a_memory_delete_with_no_caller_name_is_refused_for_a_note_like_an_ai_on
             wenlan_types::requests::CALLER_HEADER,
             wenlan_types::requests::PERSON_CALLER_VALUE,
         )
+        .header(
+            wenlan_types::requests::PERSON_KEY_HEADER,
+            crate::person_key::test_key(),
+        )
         .body(Body::empty())
         .unwrap();
     let response = tower::ServiceExt::oneshot(&mut app, request).await.unwrap();
@@ -534,6 +543,10 @@ async fn a_memory_edit_with_no_caller_name_is_refused_for_a_note_like_an_ai_one(
         .header(
             wenlan_types::requests::CALLER_HEADER,
             wenlan_types::requests::PERSON_CALLER_VALUE,
+        )
+        .header(
+            wenlan_types::requests::PERSON_KEY_HEADER,
+            crate::person_key::test_key(),
         )
         .header("content-type", "application/json")
         .body(Body::from(json!({"content": "x"}).to_string()))

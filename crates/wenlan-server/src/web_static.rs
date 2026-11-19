@@ -36,15 +36,58 @@ pub(crate) async fn handle(request: Request) -> Response {
     {
         return plain(StatusCode::NOT_FOUND, "not found");
     }
-    response_for(
+    let loopback = matches!(
+        crate::security::bind_scope_from_env(),
+        crate::security::BindScope::Unset | crate::security::BindScope::Loopback
+    );
+    if let Some(page) = page_with_person_key(
         request.method(),
-        request.uri().path(),
-        matches!(
-            crate::security::bind_scope_from_env(),
-            crate::security::BindScope::Unset | crate::security::BindScope::Loopback
-        ),
+        request.uri(),
+        loopback,
+        crate::person_key::installed(),
         WEB_ASSETS,
-    )
+    ) {
+        return page;
+    }
+    response_for(request.method(), request.uri().path(), loopback, WEB_ASSETS)
+}
+
+/// The meta tag that hands a browser session token (never the person key)
+/// to the page `wenlan open` opened.
+pub(crate) const PERSON_SESSION_META: &str = "wenlan-person-session";
+
+/// `GET /?pass=…` with a browser pass this daemon handed out (`wenlan open`):
+/// the page, carrying a new browser session token once in a meta tag the
+/// page reads and removes. The token is believed like the person key until
+/// the daemon stops; the key itself never leaves the daemon this way. The pass is used up by this one answer; a pass that is unknown,
+/// used or late gets the ordinary page. Never beyond this computer.
+fn page_with_person_key(
+    method: &Method,
+    uri: &axum::http::Uri,
+    loopback: bool,
+    key: Option<&crate::person_key::PersonKey>,
+    assets: &'static [EmbeddedAsset],
+) -> Option<Response> {
+    if !loopback || *method != Method::GET || uri.path() != "/" {
+        return None;
+    }
+    let pass = uri
+        .query()?
+        .split('&')
+        .find_map(|pair| pair.strip_prefix("pass="))
+        .filter(|pass| wenlan_types::person_key::well_formed(pass))?;
+    // Only a page that can be served uses up the pass.
+    let index = assets.iter().find(|asset| asset.path == "index.html")?;
+    let token = key?.redeem_browser_pass(pass)?;
+    let page = String::from_utf8_lossy(index.bytes);
+    let meta = format!(r#"<meta name="{PERSON_SESSION_META}" content="{token}">"#);
+    let page = match page.find("</head>") {
+        Some(at) => format!("{}{meta}{}", &page[..at], &page[at..]),
+        None => format!("{page}{meta}"),
+    };
+    let mut answer = response(StatusCode::OK, index.content_type, b"", "no-store");
+    *answer.body_mut() = Body::from(page);
+    Some(answer)
 }
 
 /// The team listener's `/app` and `/app/...`: the same embedded bundle, for
@@ -325,6 +368,100 @@ mod tests {
                 .unwrap(),
             &b"console.log('test bundle')"[..]
         );
+    }
+
+    /// UX-SKILL-13, the page path: only the page `wenlan open` opened with a
+    /// fresh pass carries a session token, once, never the key, and never
+    /// beyond this computer; the token dies with the daemon.
+    #[tokio::test]
+    async fn ux_skill_13_web_page_gets_a_session_token_once_never_the_key() {
+        let key = crate::person_key::PersonKey::new("cd".repeat(32));
+        let pass = key.new_browser_pass().unwrap();
+        let uri = |query: &str| format!("/?{query}").parse::<axum::http::Uri>().unwrap();
+        let body = |answer: Response| async move {
+            String::from_utf8(
+                axum::body::to_bytes(answer.into_body(), usize::MAX)
+                    .await
+                    .unwrap()
+                    .to_vec(),
+            )
+            .unwrap()
+        };
+
+        // Beyond this computer, by another method or at another path: nothing.
+        let pass_query = format!("pass={pass}");
+        assert!(page_with_person_key(
+            &Method::GET,
+            &uri(&pass_query),
+            false,
+            Some(&key),
+            TEST_ASSETS
+        )
+        .is_none());
+        assert!(page_with_person_key(
+            &Method::POST,
+            &uri(&pass_query),
+            true,
+            Some(&key),
+            TEST_ASSETS
+        )
+        .is_none());
+        let elsewhere = format!("/settings?{pass_query}").parse().unwrap();
+        assert!(
+            page_with_person_key(&Method::GET, &elsewhere, true, Some(&key), TEST_ASSETS).is_none()
+        );
+        // A made-up pass, or no key set: nothing.
+        let guess = format!("pass={}", "ef".repeat(32));
+        assert!(
+            page_with_person_key(&Method::GET, &uri(&guess), true, Some(&key), TEST_ASSETS)
+                .is_none()
+        );
+        assert!(
+            page_with_person_key(&Method::GET, &uri(&pass_query), true, None, TEST_ASSETS)
+                .is_none()
+        );
+
+        let page = page_with_person_key(
+            &Method::GET,
+            &uri(&pass_query),
+            true,
+            Some(&key),
+            TEST_ASSETS,
+        )
+        .expect("the pass opens the page with a session token");
+        assert_eq!(page.headers()[header::CACHE_CONTROL], "no-store");
+        assert_eq!(page.headers()["referrer-policy"], "no-referrer");
+        assert!(page.headers()[header::CONTENT_SECURITY_POLICY]
+            .to_str()
+            .unwrap()
+            .contains("frame-ancestors 'none'"));
+        let html = body(page).await;
+        assert!(!html.contains(&"cd".repeat(32)), "never the key: {html}");
+        let token = html
+            .split(r#"<meta name="wenlan-person-session" content=""#)
+            .nth(1)
+            .and_then(|rest| rest.split('"').next())
+            .expect("a session token in the page");
+        assert!(wenlan_types::person_key::well_formed(token));
+        // The gate believes the token like the key; a restarted daemon (a
+        // new key holder for the same key) does not.
+        assert!(key.believes(token.as_bytes()));
+        let restarted = crate::person_key::PersonKey::new("cd".repeat(32));
+        assert!(!restarted.believes(token.as_bytes()));
+        assert!(restarted.believes("cd".repeat(32).as_bytes()));
+
+        // The pass works once.
+        assert!(page_with_person_key(
+            &Method::GET,
+            &uri(&pass_query),
+            true,
+            Some(&key),
+            TEST_ASSETS
+        )
+        .is_none());
+        // The ordinary page never carries a token.
+        let plain = body(response_for(&Method::GET, "/", true, TEST_ASSETS)).await;
+        assert!(!plain.contains("wenlan-person-session"));
     }
 
     #[tokio::test]

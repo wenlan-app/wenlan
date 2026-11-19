@@ -202,8 +202,15 @@ export function truncateReviewText(value: string, max: number): string {
 }
 
 /** Why a page revision card needs review; nothing for a reason we do not know. */
-function revisionReasonText(t: TFunction, reason: string | null | undefined): string | null {
+function revisionReasonText(
+  t: TFunction,
+  reason: string | null | undefined,
+  followsTitle?: string | null,
+): string | null {
   switch (reason) {
+    case "follows": return followsTitle
+      ? t("review.reasonFollows", { title: followsTitle })
+      : t("review.reasonFollowsUntitled");
     case "authored": return t("review.reasonAuthored");
     case "locked": return t("review.reasonLocked");
     case "background": return t("review.reasonBackground");
@@ -1313,9 +1320,9 @@ export default function ReviewDialog({
                 {item.kind === "revision"
                   ? <>
                       {summary.reason}
-                      {revisionReasonText(t, item.reviewReason) && (
+                      {revisionReasonText(t, item.reviewReason, item.followsTitle) && (
                         <span data-testid="review-reason" style={{ display: "block" }}>
-                          {revisionReasonText(t, item.reviewReason)}
+                          {revisionReasonText(t, item.reviewReason, item.followsTitle)}
                         </span>
                       )}
                     </>

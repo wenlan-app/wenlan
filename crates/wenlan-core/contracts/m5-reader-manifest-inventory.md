@@ -754,6 +754,16 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/skills/suggestions/{id}/undo` | main | yes | automatic | `none` | `handle_undo_suggestion` | SkillSuggestionActionResponse returns the library-derived suggestion and source Page title |
 | `GET` | `/api/skills/record` | main | yes | automatic | `none` | `handle_record` | Space-filtered SkillBorrowRecord carries source page titles and rule ids |
 | `POST` | `/api/skills/record` | main | no | not_applicable | `none` | — | self-report receipt contains a boolean and rule id only |
+| `POST` | `/api/skills/rules` | main | no | not_applicable | `none` | — | SaveRuleResponse: a receipt for the rule the caller just sent (status, rule id, the saved-rules page's id and title, where it was saved from); no other page text |
+| `POST` | `/api/skills/rules/{id}/remove` | main | no | not_applicable | `none` | — | RemoveRuleResponse: status, the rule id the caller sent and the saved-rules page's id and title; never the rule's text |
+| `GET` | `/api/skills/registry/search` | main | no | not_applicable | `none` | — | SkillSearchResponse: skills.sh results and their safety verdicts; no library text |
+| `GET` | `/api/skills/registry/preview` | main | no | not_applicable | `none` | — | SkillPreview: another author's skill files fetched from GitHub; no library text |
+| `GET` | `/api/skills/registry/installed` | main | no | not_applicable | `none` | — | InstalledSkillsResponse: SKILL.md folders Wenlan holds and the person's own additions; no Page prose |
+| `GET` | `/api/skills/registry/local` | main | no | not_applicable | `none` | — | LocalSkillsResponse: names, folders and descriptions of skills in AI tool folders; no Page prose |
+| `POST` | `/api/skills/registry/import` | main | no | not_applicable | `none` | — | SkillImportResult: skill names and refusal reasons only |
+| `POST` | `/api/skills/registry/install` | main | no | not_applicable | `none` | — | SkillInstallResult: the installed skill's record and the folders it was copied to |
+| `POST` | `/api/skills/registry/remove` | main | no | not_applicable | `none` | — | SkillRemoveResponse: the removed skill's name only |
+| `POST` | `/api/person/browser-pass` | main | no | not_applicable | `none` | — | BrowserPassResponse: a one-time pass for wenlan open; never the person key, no page text |
 | `GET` | `/api/memories/{source_id}/said` | main | no | not_applicable | `none` | — | MemorySaidResponse: the transcript lines one memory came from with its conversation and thing titles, no page prose |
 | `POST` | `/api/things/{id}/map/ops` | main | no | not_applicable | `none` | — | ThingMapOpsResponse: point labels written for the map and conversation ids, no page prose |
 | `PATCH` | `/api/things/{id}` | main | no | not_applicable | `none` | — | ThingSummary: thing title, Brief status line and Space names, no page prose |
@@ -920,7 +930,7 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/research/disputes/{id}/decision` | main | no | not_applicable | `none` | — | Dispute contains original Source quotes and human decisions, no Page prose |
 | `POST` | `/api/research/source-lifecycle` | main | no | not_applicable | `none` | — | explicit retained-source status change and affected identities; no page prose |
 
-## MCP — all 59 `#[tool(` declarations
+## MCP — all 63 `#[tool(` declarations
 
 From `crates/wenlan-mcp/src/tools.rs` **in this tree**. An earlier draft listed
 `search_pages`, `get_page`, `get_page_links`, `list_pages_recent`, and
@@ -994,6 +1004,10 @@ must be demoted individually with a recorded reason. **Every MCP tool is
 | `read_source` | no | not_applicable | `none` | exact file or webpage text; rejects page sources |
 | `read_space_rules` | yes | automatic | `none` | tool handler |
 | `report_space_rule_use` | no | not_applicable | `none` | structured rule id and fixed changed_plan outcome only; no Page prose |
+| `list_skills` | no | not_applicable | `none` | held SKILL.md folders: names, scope, source and safety verdict; no Page prose |
+| `search_skills` | no | not_applicable | `none` | skills.sh results and safety verdicts; no library text |
+| `add_rule` | no | not_applicable | `none` | receipt for the rule the tool just sent: status, rule id, the saved-rules page's title and where it was saved from; no other page text |
+| `remove_rule` | no | not_applicable | `none` | receipt: status, the rule id sent and the saved-rules page's title; never the rule's text |
 
 ## CLI — all 27 `Commands` variants
 
@@ -1024,6 +1038,7 @@ the projection-directory reader.
 | `wenlan recall` | yes | automatic | `none` | subcommand renderer |
 | `wenlan brief` | yes | automatic | `none` | subcommand renderer |
 | `wenlan rules` | yes | automatic | `none` | subcommand renderer |
+| `wenlan skills` | yes | automatic | `none` | subcommand renderer |
 | `wenlan pages` | yes | automatic | **`collection` + `named_page`** | enforce_projection_directory_invariant |
 | `wenlan sources` | yes | automatic | `none` | subcommand renderer |
 | `wenlan capture` | yes | automatic | `none` | subcommand renderer |
@@ -1317,7 +1332,7 @@ carrying the authority of agreement.
 | `core/db.rs::find_matching_page_scoped` | `pub` | no | no | — | `core/db.rs::find_matching_page_with_policy` |
 | `core/db.rs::find_page_to_grow_scoped` | `pub(crate)` | no | no | — | `core/db.rs::find_matching_page_with_policy` |
 | `core/db.rs::folded_title_owners_by_scope` | `pub(crate)` | no | no | — | `core/db.rs::folded_title_owners_by_scope_on_conn` |
-| `core/db.rs::get_page` | `pub` | no | **yes** | `server/knowledge_routes.rs::handle_resolve_embed`, `server/original_routes.rs::handle_keep_original`, `server/page_map_routes.rs::ensure_page_is_active`, `server/page_map_routes.rs::visible_page`, `server/page_routes.rs::archive_page_for`, `server/page_routes.rs::handle_create_page_inner`, `server/page_routes.rs::handle_delete_page`, `server/page_routes.rs::handle_get_page_sources`, `server/page_routes.rs::handle_refresh_page`, `server/page_routes.rs::handle_refresh_page_inner`, `server/page_routes.rs::handle_restore_page_version`, `server/page_routes.rs::handle_update_page`, `server/page_routes.rs::member_page_in_pinned_space`, `server/page_routes.rs::space_locked_write_error`, `server/sentence_routes.rs::require_visible_page`, `server/skill_grow.rs::handle_undo_space_rules`, `server/skill_grow.rs::load`, `server/skill_grow.rs::readable_rules_page`, `server/skill_grow.rs::source_line_is_eligible`, `server/skill_grow.rs::write_maintained_rules_page`, `server/steep_new_routes.rs::handle_steep_new_commit_inner`, `server/steep_routes.rs::handle_steep_claim`, `server/steep_routes.rs::handle_steep_commit` | `core/db.rs::get_page_inner` |
+| `core/db.rs::get_page` | `pub` | no | **yes** | `server/knowledge_routes.rs::handle_resolve_embed`, `server/original_routes.rs::handle_keep_original`, `server/page_map_routes.rs::ensure_page_is_active`, `server/page_map_routes.rs::visible_page`, `server/page_routes.rs::archive_page_for`, `server/page_routes.rs::handle_create_page_inner`, `server/page_routes.rs::handle_delete_page`, `server/page_routes.rs::handle_get_page_sources`, `server/page_routes.rs::handle_refresh_page`, `server/page_routes.rs::handle_refresh_page_inner`, `server/page_routes.rs::handle_restore_page_version`, `server/page_routes.rs::handle_update_page`, `server/page_routes.rs::member_page_in_pinned_space`, `server/page_routes.rs::space_locked_write_error`, `server/sentence_routes.rs::require_visible_page`, `server/skill_grow.rs::handle_undo_space_rules`, `server/skill_grow.rs::load_rules_folders`, `server/skill_grow.rs::readable_rules_page`, `server/skill_grow.rs::source_line_is_eligible`, `server/skill_grow.rs::write_maintained_rules_page`, `server/skill_grow/saved_rules.rs::make_page`, `server/skill_grow/saved_rules.rs::page_of`, `server/skill_grow/saved_rules.rs::save_rule_in`, `server/skill_grow/saved_rules.rs::write_rule_change`, `server/steep_new_routes.rs::handle_steep_new_commit_inner`, `server/steep_routes.rs::handle_steep_claim`, `server/steep_routes.rs::handle_steep_commit` | `core/db.rs::get_page_inner` |
 | `core/db.rs::get_page_browse` | `pub` | no | no | — | `core/db.rs::get_page_inner` |
 | `core/db.rs::insert_document_source_page_at_hash` | `pub(crate)` | no | no | — | `core/db.rs::insert_page_with_kind_inner` |
 | `core/db.rs::insert_page_with_basis` | `pub(crate)` | no | no | — | `core/db.rs::insert_page_with_kind_inner` |
@@ -1606,6 +1621,7 @@ carrying the authority of agreement.
 | `core/post_write/page_revision.rs::accept_page_revision_card_with_edit` | `pub(super)` | no | no | — | `core/db.rs::get_page` |
 | `core/post_write/page_revision.rs::resolve_page_revision_card` | `pub(super)` | no | no | — | `core/db.rs::get_page` |
 | `core/post_write/page_update.rs::project_latest_page` | `private` | no | no | — | `core/db.rs::get_page` |
+| `core/post_write/page_update.rs::stage_page_revision_card_inner` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/post_write/page_update.rs::update_page_db_impl` | `private` | no | no | — | `core/db.rs::get_page`, `core/db/page_basis.rs::prepare_staged_basis_marks` |
 | `core/refinery/mod.rs::enqueue_changed_pages` | `pub(crate)` | no | no | — | `core/db.rs::list_pages` |
 | `core/refinery/mod.rs::maybe_refresh_overview_page` | `private` | no | no | — | `core/synthesis/overview.rs::refresh_overview_page` |
@@ -1708,12 +1724,16 @@ carrying the authority of agreement.
 | `server/sentence_routes.rs::require_visible_page` | `private` | no | no | `server/sentence_routes.rs::handle_accept_sentence_proposal`, `server/sentence_routes.rs::handle_flag_sentence`, `server/sentence_routes.rs::handle_get_page_sentences`, `server/sentence_routes.rs::handle_propose_sentence`, `server/sentence_routes.rs::handle_recheck_sentence`, `server/sentence_routes.rs::handle_reject_sentence_proposal`, `server/sentence_routes.rs::handle_revert_sentences` | `core/db.rs::get_page` |
 | `server/skill_grow.rs::handle_accept_space_rules` | `pub` | no | no | — | `server/skill_grow.rs::accept_space` |
 | `server/skill_grow.rs::handle_undo_space_rules` | `pub` | no | no | — | `core/db.rs::get_page` |
-| `server/skill_grow.rs::load` | `private` | yes | no | — | `core/db.rs::get_page` |
+| `server/skill_grow.rs::load_rules_folders` | `private` | no | no | `server/skill_grow.rs::load` | `core/db.rs::get_page` |
 | `server/skill_grow.rs::process_space` | `private` | no | no | `server/skill_grow.rs::refresh_unlocked` | `server/skill_grow.rs::accept_space` |
 | `server/skill_grow.rs::readable_rules_page` | `private` | no | no | `server/skill_grow.rs::read_rules_for_space` | `core/db.rs::get_page` |
 | `server/skill_grow.rs::refresh_unlocked` | `private` | no | no | `server/skill_grow.rs::refresh_with` | `server/skill_grow.rs::pages_for_space` |
 | `server/skill_grow.rs::source_line_is_eligible` | `private` | no | no | `server/skill_grow.rs::eligible_lines` | `core/db.rs::get_page` |
 | `server/skill_grow.rs::write_maintained_rules_page` | `private` | no | no | `server/skill_grow.rs::process_space` | `core/db.rs::get_page` |
+| `server/skill_grow/saved_rules.rs::make_page` | `private` | no | no | `server/skill_grow/saved_rules.rs::save_rule_in` | `core/db.rs::get_page` |
+| `server/skill_grow/saved_rules.rs::page_of` | `pub(super)` | no | no | `server/skill_grow.rs::load_saved`, `server/skill_grow/saved_rules.rs::page_ids`, `server/skill_grow/saved_rules.rs::remove_rule_in`, `server/skill_grow/saved_rules.rs::save_rule_in` | `core/db.rs::get_page` |
+| `server/skill_grow/saved_rules.rs::save_rule_in` | `pub(super)` | no | no | `server/skill_grow/saved_rules.rs::handle_save_rule` | `core/db.rs::get_page` |
+| `server/skill_grow/saved_rules.rs::write_rule_change` | `private` | no | no | `server/skill_grow/saved_rules.rs::remove_rule_in`, `server/skill_grow/saved_rules.rs::save_rule_in` | `core/db.rs::get_page` |
 | `server/source_lifecycle_routes.rs::read` | `private` | yes | no | — | `core/db/citation_provenance.rs::source_lifecycle` |
 | `server/steep_new_routes.rs::handle_steep_new_commit_inner` | `private` | no | no | `server/steep_new_routes.rs::handle_steep_new_commit` | `core/db.rs::get_page`, `core/onboarding.rs::check_first_page`, `core/steep_new.rs::commit_new` |
 | `server/steep_new_routes.rs::handle_steep_new_list` | `pub` | no | no | — | `core/steep_new.rs::list_new` |
@@ -1821,6 +1841,9 @@ carrying the authority of agreement.
 | `core/post_write/page_revision.rs::accept_pending_revision_edited_with_knowledge_path` | `pub` | no | **yes** | `server/memory_routes.rs::handle_accept_revision` | `core/post_write/page_revision.rs::accept_page_revision_card_with_edit`, `core/post_write/page_revision.rs::resolve_page_revision_card` |
 | `core/post_write/page_revision.rs::accept_pending_revision_with_knowledge_path` | `pub` | no | **yes** | `server/memory_routes.rs::handle_accept_revision` | `core/post_write/page_revision.rs::resolve_page_revision_card` |
 | `core/post_write/page_revision.rs::dismiss_pending_revision` | `pub` | yes | no | — | `core/post_write/page_revision.rs::resolve_page_revision_card` |
+| `core/post_write/page_update.rs::stage_basis_preview_card` | `pub(crate)` | no | no | — | `core/post_write/page_update.rs::stage_page_revision_card_inner` |
+| `core/post_write/page_update.rs::stage_page_revision_card_at_fence` | `pub(crate)` | no | no | — | `core/post_write/page_update.rs::stage_page_revision_card_inner` |
+| `core/post_write/page_update.rs::stage_page_revision_card_with_citations` | `pub` | no | **yes** | `server/page_routes.rs::handle_refresh_page_inner` | `core/post_write/page_update.rs::stage_page_revision_card_inner` |
 | `core/post_write/page_update.rs::update_page_impl` | `pub(super)` | no | no | — | `core/post_write/page_update.rs::project_latest_page`, `core/post_write/page_update.rs::update_page_db_impl` |
 | `core/reconcile.rs::write_revision` | `pub` | no | no | — | `core/ingest.rs::run_canonical_enrichment` |
 | `core/refinery/mod.rs::run_periodic_steep_with_api` | `pub` | no | **yes** | `server/routes.rs::handle_steep` | `core/refinery/mod.rs::run_periodic_steep_with_api_scope` |
@@ -1898,8 +1921,13 @@ carrying the authority of agreement.
 | `server/sentence_routes.rs::handle_reject_sentence_proposal` | `pub` | no | no | — | `server/sentence_routes.rs::require_visible_page` |
 | `server/sentence_routes.rs::handle_revert_sentences` | `pub` | no | no | — | `server/sentence_routes.rs::require_visible_page` |
 | `server/skill_grow.rs::eligible_lines` | `private` | no | no | `server/skill_grow.rs::accept_space`, `server/skill_grow.rs::handle_space_suggestions`, `server/skill_grow.rs::process_space`, `server/skill_grow.rs::read_rules_for_space` | `server/skill_grow.rs::source_line_is_eligible` |
+| `server/skill_grow.rs::load` | `private` | yes | no | — | `server/skill_grow.rs::load_rules_folders` |
+| `server/skill_grow.rs::load_saved` | `private` | no | no | `server/skill_grow.rs::load` | `server/skill_grow/saved_rules.rs::page_of` |
 | `server/skill_grow.rs::read_rules_for_space` | `private` | no | no | `server/skill_grow.rs::approved_rule_ids`, `server/skill_grow.rs::general_lines`, `server/skill_grow.rs::handle_read_rules`, `server/skill_grow.rs::handle_self_report`, `server/skill_grow.rs::project_rules`, `server/skill_grow.rs::rules_by_layer` | `server/skill_grow.rs::readable_rules_page` |
 | `server/skill_grow.rs::refresh_with` | `private` | no | no | `server/skill_grow.rs::handle_refresh`, `server/skill_grow.rs::run_nightly_if_due` | `server/skill_grow.rs::refresh_unlocked` |
+| `server/skill_grow/saved_rules.rs::handle_save_rule` | `pub` | no | no | — | `server/skill_grow/saved_rules.rs::save_rule_in` |
+| `server/skill_grow/saved_rules.rs::page_ids` | `pub(super)` | yes | no | — | `server/skill_grow/saved_rules.rs::page_of` |
+| `server/skill_grow/saved_rules.rs::remove_rule_in` | `pub(super)` | no | no | `server/skill_grow/saved_rules.rs::handle_remove_rule` | `server/skill_grow/saved_rules.rs::page_of`, `server/skill_grow/saved_rules.rs::write_rule_change` |
 | `server/source_lifecycle_routes.rs::write` | `private` | yes | no | — | `core/db/citation_provenance.rs::set_source_lifecycle` |
 | `server/source_routes.rs::sync_directory_source` | `pub(crate)` | no | no | `server/scheduler.rs::sync_directory_sources_in_scope`, `server/source_routes.rs::handle_sync_source` | `core/db.rs::rebind_source_id_with_source_page` |
 | `server/source_routes/okf_sync.rs::sync_okf_source_in_batches` | `pub(super)` | no | no | `server/source_routes/okf_sync.rs::sync_okf_source` | `core/db.rs::rebind_source_id_with_source_page`, `core/db/okf_concepts.rs::refresh_okf_concept_linkers` |

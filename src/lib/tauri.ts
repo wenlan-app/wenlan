@@ -1045,6 +1045,33 @@ export interface SkillLine {
   general?: boolean;
   /** The person wrote this line themselves; it counts at once (UX-SKILL-10). */
   hand_written?: boolean;
+  /** The person asked for this rule to be saved (UX-SKILL-14): the name of
+   *  the AI tool it was saved from, or `SAVED_FROM_TERMINAL`. Never shown as
+   *  written by the person. */
+  saved_from?: string | null;
+  /** `saved_from` as its parts, so it can be said in the app's language:
+   *  the terminal, an AI tool by name, an AI tool whose own name reads as
+   *  the terminal, the person or Wenlan (shown in quotes), or an AI tool
+   *  with no usable name. Absent from an older daemon. */
+  saved_by?: { kind: SavedByKind; name?: string | null } | null;
+}
+
+export type SavedByKind = "terminal" | "tool" | "self_named" | "unnamed";
+
+/** `SkillLine.saved_from` for a rule saved with the `wenlan` command. */
+export const SAVED_FROM_TERMINAL = "terminal";
+/** The writer a page's history names when the person pressed Remove on a
+ *  saved rule in the app (`wenlan_types::RULE_REMOVED_IN_APP`). */
+export const RULE_REMOVED_IN_APP = "wenlan-app";
+
+/** `waiting`: the page is locked, so the removal waits as a card. */
+export interface RemoveSavedRuleResponse {
+  status: "saved" | "removed" | "waiting";
+  id: string;
+  page_id: string;
+  page_title: string;
+  revision_card_id?: string | null;
+  message: string;
 }
 
 /** `file`: Wenlan keeps the rules in a file the tool always reads. `mcp`:
@@ -1156,12 +1183,23 @@ export interface SpaceRulesResponse {
   space_name: string;
   rules_page_id?: string | null;
   lines: SkillLine[];
+  /** The pages that keep the rules the person asked to be saved, by id,
+   *  whatever they are titled now (UX-SKILL-14). The daemon's ledger says
+   *  which they are; a page's title never does. */
+  saved_rules_page_ids?: string[];
 }
 
 /** Read as the person: the daemon records only an AI tool's read. */
 export async function getSpaceRules(space: string | null): Promise<SpaceRulesResponse> {
   const response = await invoke<Partial<SpaceRulesResponse> | null>("get_space_rules", { space: space?.trim() || null });
-  return { space_id: response?.space_id ?? "", space_name: response?.space_name ?? "", rules_page_id: response?.rules_page_id ?? null, lines: response?.lines ?? [] };
+  return { space_id: response?.space_id ?? "", space_name: response?.space_name ?? "", rules_page_id: response?.rules_page_id ?? null, lines: response?.lines ?? [], saved_rules_page_ids: response?.saved_rules_page_ids ?? [] };
+}
+
+/** The person presses Remove on a rule they had asked to be saved
+ *  (UX-SKILL-14). Sent as the person, with no quoted words: the press is
+ *  the ask. AI tools are no longer told the rule; the page's history keeps it. */
+export async function removeSavedRule(id: string): Promise<RemoveSavedRuleResponse> {
+  return invoke("remove_saved_rule", { id });
 }
 
 export async function getRulesDelivery(): Promise<ToolRulesDelivery[]> {
@@ -2227,6 +2265,8 @@ export interface PendingRevisionItem {
   /** Why a page revision card needs review: "authored", "locked",
    * "background" or "owned". Absent when the daemon cannot say (memory revisions, old cards). */
   review_reason?: string | null;
+  /** With review_reason "follows": the title of the page this locked page follows. */
+  follows_title?: string | null;
   /** The shared Space member whose change this card is ("shared_ai:<id>" or
    * "shared_person:<id>"). Absent for cards made on this computer. */
   edited_by?: string | null;
@@ -2296,6 +2336,8 @@ export interface PageChangelogEntry {
   person_asked?: string | null;
   /** The earlier version this one put back. */
   restored_from?: number | null;
+  /** The whole page text at this version, with `includeText` (UX-HIST-2). */
+  text?: string | null;
 }
 
 export type PageHistoryKind = "person_edit" | "ai_edit" | "source_update" | "archived" | "restored";
@@ -6198,12 +6240,19 @@ export interface SkillPreview {
   repoPath: string;
   name: string | null;
   description: string | null;
-  files: { path: string; text: string | null }[];
+  /** `cut`: the file is longer than `text`, so not all of it is shown.
+   *  `marked`: how many characters of the file would not show on a screen;
+   *  each is written out in `text` as `<U+XXXX>`. */
+  files: { path: string; text: string | null; cut?: boolean; marked?: number }[];
   runnable: string[];
   safety: { verdict: SkillVerdict; audits: SkillAuditLine[] };
   sourceUrl: string;
   skillsShUrl: string;
   installedAs: string | null;
+  /** Why Wenlan will refuse to install this skill: it holds text that
+   *  cannot be shown as it is. Absent only from an older daemon's answer;
+   *  the daemon and the desktop app both refuse such an install themselves. */
+  cannotInstall?: string | null;
 }
 
 export interface InstalledSkill {

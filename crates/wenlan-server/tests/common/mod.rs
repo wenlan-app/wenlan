@@ -192,3 +192,19 @@ pub async fn insert_memory(
     };
     db.upsert_documents(vec![doc]).await.unwrap();
 }
+
+/// The person key every test in this process believes, set on first use.
+/// A request that stands in for the app's person gesture sends it next to
+/// the person marker (`wenlan_server::person_key`).
+#[allow(dead_code)]
+pub fn person_key() -> &'static str {
+    test_person_key()
+}
+
+/// The same, for test files that do not use this module.
+#[allow(dead_code)]
+pub fn test_person_key() -> &'static str {
+    const KEY: &str = "7e577e577e577e577e577e577e577e577e577e577e577e577e577e577e577e57";
+    wenlan_server::person_key::install(wenlan_server::person_key::PersonKey::new(KEY.into()));
+    KEY
+}

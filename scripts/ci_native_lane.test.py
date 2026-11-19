@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from ci_native_lane import LaneError, lane_allowed, macos_specific, native_relevant  # noqa: E402
+from ci_native_lane import LaneError, lane_allowed, native_relevant  # noqa: E402
 
 SCRIPT = ROOT / "scripts" / "ci_native_lane.py"
 
@@ -46,124 +46,45 @@ class NativeLaneTests(unittest.TestCase):
         ]:
             self.assertTrue(native_relevant(path), path)
 
-    def test_macos_specific_paths(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / "crates/c/src").mkdir(parents=True)
-            (root / "crates/c/src/mac.rs").write_text('#[cfg(target_os = "macos")]\nfn f() {}\n')
-            (root / "crates/c/src/apple.rs").write_text('#[cfg(target_vendor="apple")]\nfn f() {}\n')
-            (root / "crates/c/src/shared.rs").write_text('#[cfg(unix)]\nfn f() {}\n')
-            for path in [
-                "app/src/lib.rs",
-                "vendor/tauri-plugin-updater/src/lib.rs",
-                "scripts/setup-macos-openssl.sh",
-                "scripts/first-run/macos-app.sh",
-                "scripts/build-release-binaries.sh",
-                "scripts/release_targets.py",
-                ".github/workflows/release.yml",
-                "install.sh",
-                "rust-toolchain.toml",
-                "crates/wenlan-core/build.rs",
-                "crates/wenlan-core/src/native/shim.m",
-                "crates/c/src/mac.rs",
-                "crates/c/src/apple.rs",
-                "crates/c/src/deleted.rs",
-            ]:
-                self.assertTrue(macos_specific(path, root), path)
-            for path in [
-                "crates/c/src/shared.rs",
-                "Cargo.lock",
-                "Cargo.toml",
-                "crates/wenlan-core/Cargo.toml",
-                "scripts/ci_test_plan.py",
-                ".github/workflows/ci.yml",
-                "src/App.tsx",
-                "package.json",
-            ]:
-                self.assertFalse(macos_specific(path, root), path)
+    def test_merge_queue_never_runs_macos(self):
+        # 2026-11-18: queue entries were dropped three times in one day because
+        # no hosted macOS arm64 runner picked up their jobs within 15 minutes.
+        # macOS now runs on the main push after merge and on the Release PR.
+        for files in (
+            [],
+            ["app/src/lib.rs"],
+            ["vendor/tauri-plugin-updater/src/lib.rs", "Cargo.lock"],
+            ["crates/wenlan-core/build.rs", "rust-toolchain.toml"],
+            [".github/workflows/release.yml", ".github/workflows/ci.yml"],
+        ):
+            for platform in ("macos", "darwin-preflight"):
+                self.assertFalse(
+                    lane_allowed(
+                        platform=platform, event_name="merge_group", head_ref="", files=files
+                    ),
+                    (platform, files),
+                )
 
-    def test_merge_queue_macos_lane_needs_macos_specific_files(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / "crates/c/src").mkdir(parents=True)
-            (root / "crates/c/src/shared.rs").write_text("fn f() {}\n")
-            self.assertFalse(
-                lane_allowed(
-                    platform="macos",
-                    event_name="merge_group",
-                    head_ref="",
-                    files=["Cargo.lock", "crates/c/src/shared.rs"],
-                    root=root,
-                )
-            )
-            self.assertTrue(
-                lane_allowed(
-                    platform="windows",
-                    event_name="merge_group",
-                    head_ref="",
-                    files=["Cargo.lock", "crates/c/src/shared.rs"],
-                    root=root,
-                )
-            )
-            self.assertTrue(
-                lane_allowed(
-                    platform="macos",
-                    event_name="merge_group",
-                    head_ref="",
-                    files=["Cargo.lock", "app/src/lib.rs"],
-                    root=root,
-                )
-            )
-
-    def test_merge_queue_runs_lane_only_for_native_relevant_files(self):
-        for platform in ("macos", "windows"):
-            self.assertFalse(
-                lane_allowed(
-                    platform=platform,
-                    event_name="merge_group",
-                    head_ref="",
-                    files=[".github/workflows/ci.yml", "src/App.tsx"],
-                )
-            )
-            self.assertFalse(
-                lane_allowed(platform=platform, event_name="merge_group", head_ref="", files=[])
-            )
-            self.assertTrue(
-                lane_allowed(
-                    platform=platform,
-                    event_name="merge_group",
-                    head_ref="",
-                    files=[".github/workflows/ci.yml", "app/src/lib.rs"],
-                )
-            )
-
-    def test_darwin_preflight_keeps_workflow_edits_in_the_queue(self):
-        # Main push never runs the darwin release preflight, so a ci.yml edit
-        # has no later pre-release run of that leg.
-        self.assertTrue(
+    def test_merge_queue_runs_windows_only_for_native_relevant_files(self):
+        self.assertFalse(
             lane_allowed(
-                platform="darwin-preflight",
+                platform="windows",
                 event_name="merge_group",
                 head_ref="",
-                files=[".github/workflows/ci.yml"],
+                files=[".github/workflows/ci.yml", "src/App.tsx"],
             )
         )
         self.assertFalse(
-            lane_allowed(
-                platform="darwin-preflight",
-                event_name="merge_group",
-                head_ref="",
-                files=["src/App.tsx"],
-            )
+            lane_allowed(platform="windows", event_name="merge_group", head_ref="", files=[])
         )
-        self.assertFalse(
-            lane_allowed(
-                platform="darwin-preflight",
-                event_name="pull_request",
-                head_ref="x",
-                files=[".github/workflows/ci.yml"],
+        for files in (
+            [".github/workflows/ci.yml", "app/src/lib.rs"],
+            ["Cargo.lock", "crates/c/src/shared.rs"],
+        ):
+            self.assertTrue(
+                lane_allowed(platform="windows", event_name="merge_group", head_ref="", files=files),
+                files,
             )
-        )
 
     def test_pull_request_keeps_windows_and_defers_macos(self):
         self.assertFalse(
@@ -203,7 +124,7 @@ class NativeLaneTests(unittest.TestCase):
                     sys.executable,
                     str(SCRIPT),
                     "--platform",
-                    "macos",
+                    "windows",
                     "--event-name",
                     "merge_group",
                     "--files-json",

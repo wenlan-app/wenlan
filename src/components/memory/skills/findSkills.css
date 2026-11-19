@@ -42,7 +42,9 @@
 .find-skills-choice > span { display: flex; flex-direction: column; gap: 2px; }
 .find-skills-where select { height: var(--mem-control-height); border-radius: var(--mem-control-radius); border: 1px solid var(--mem-control-border); background: var(--mem-bg); color: var(--mem-text); font: inherit; padding: 0 8px; }
 .find-skills-install { height: 44px; border: 0; border-radius: var(--mem-control-radius); background: var(--mem-accent-indigo); color: var(--mem-text-on-accent); font: inherit; font-weight: 600; font-size: 15px; cursor: pointer; }
-.find-skills-install:disabled { opacity: 0.5; cursor: default; }
+/* Off: the plain control colours, so it does not read as the page's one
+   action beside a reason it cannot be pressed. */
+.find-skills-install:disabled { border: 1px solid var(--mem-control-border); background: transparent; color: var(--mem-text-secondary); opacity: 0.7; cursor: not-allowed; }
 .find-skills-installed { display: flex; flex-direction: column; gap: 12px; }
 .find-skills-installed-row { display: flex; flex-direction: column; gap: 10px; padding: 14px 18px; border-radius: var(--mem-r-10); background: var(--mem-card-surface); }
 .find-skills-installed-head { display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; }
@@ -57,3 +59,12 @@
 .find-skills-local-names { list-style: none; margin: 0; padding: 0; display: flex; gap: 8px; flex-wrap: wrap; }
 .find-skills-local-button { align-self: flex-start; padding: 0 20px; }
 @media (max-width: 640px) { .find-skills { padding: 20px 16px 48px; } }
+.find-skills-additions-text { margin: 0; white-space: pre-wrap; }
+.find-skills-cut { margin-top: 6px; }
+/* A refusal is a block of its own under the button, so a long sentence
+   wraps inside the narrow install column instead of trailing a label. */
+.find-skills-refusal { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border-radius: var(--mem-control-radius); background: var(--mem-bg); color: var(--mem-accent-warm-text); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.find-skills-refusal-lead { font-weight: 600; }
+/* A character that would not show, written out by Wenlan. */
+.find-skills-mark { padding: 0 3px; border-radius: var(--mem-r-4); background: var(--mem-hover-strong); color: var(--mem-accent-warm-text); font-size: 12px; }
+.find-skills-marked { margin-bottom: 6px; }

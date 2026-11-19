@@ -1839,6 +1839,12 @@ async fn pass(
                 left_out.insert(id);
             }
         }
+        // So is a "Rules I saved" page: what this person asked their own AI
+        // tools to keep (UX-SKILL-14).
+        for saved in db.saved_rules_pages().await? {
+            local.remove(&saved.page_id);
+            left_out.insert(saved.page_id);
+        }
     }
     let name = match scope {
         Scope::Space(space) => space.clone(),

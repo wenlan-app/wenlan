@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { Page } from "../../lib/tauri";
+import { useTranslation } from "react-i18next";
 import { highlightTerms } from "../../lib/highlight";
+import { howIWorkPageTitle } from "./skills/howIWorkModel";
 
 function previewText(markdown: string): string {
   // Code is literal text: Markdown/citation cleanup must not erase array indices,
@@ -76,12 +78,13 @@ export default function PageSearchResult({ page, query, onClick }: {
   query: string;
   onClick: () => void;
 }) {
+  const { t } = useTranslation();
   const snippet = pageSearchSnippet(page, query);
   return (
     <button type="button" className="search-result-button" onClick={onClick}>
       <span className="search-result-line">
         <span className="search-result-dot" />
-        <span className="search-result-title">{highlightTerms(page.title, query, "search-result-match")}</span>
+        <span className="search-result-title">{highlightTerms(howIWorkPageTitle(page, t), query, "search-result-match")}</span>
         {page.domain && <span className="search-result-domain">{page.domain}</span>}
       </span>
       {snippet && <span className="search-result-summary">{highlightTerms(snippet, query, "search-result-match")}</span>}

@@ -69,6 +69,21 @@ pub enum PageWrite<'a> {
         /// citations, as for every write that carries none.
         citations: Option<(String, String)>,
     },
+    /// UX-SKILL-14: save or remove one rule the person explicitly asked for,
+    /// on a "Rules I saved" page. Recorded as `skill_grow::RULE_SAVE`, the
+    /// literal no other write can carry, with the tool and the person's
+    /// words in the history entry. The write is refused unless `content` is
+    /// the page at `expected_version` with exactly one rule added or taken
+    /// out. A locked page takes a card instead.
+    RuleSave {
+        page_id: &'a str,
+        content: String,
+        source_memory_ids: Vec<String>,
+        expected_version: i64,
+        agent: &'a str,
+        person_asked: String,
+        knowledge_path: Option<&'a Path>,
+    },
     /// Explicit user-forced rebuild of a Page body (Re-distill). Like `Update`
     /// under a source-revision fence with no stale requirement, except a
     /// `user_edited` Page is rewritten rather than staged, and that flag and
@@ -236,6 +251,44 @@ pub async fn page_write_with_citation_snapshot(
                 false,
                 None,
                 agent,
+                &basis,
+            )
+            .await
+        }
+        PageWrite::RuleSave {
+            page_id,
+            content,
+            source_memory_ids,
+            expected_version,
+            agent,
+            person_asked,
+            knowledge_path,
+        } => {
+            let basis = BasisWrite {
+                actor: agent.to_string(),
+                person_asked: Some(person_asked),
+                ..BasisWrite::default()
+            };
+            update_page_impl(
+                db,
+                page_id,
+                UpdatePageRequest {
+                    content,
+                    source_memory_ids,
+                    expected_version: Some(expected_version),
+                    caller_id: None,
+                    operation_id: None,
+                },
+                crate::skill_grow::RULE_SAVE,
+                false,
+                None,
+                knowledge_path,
+                None,
+                None,
+                false,
+                false,
+                None,
+                Some(agent),
                 &basis,
             )
             .await
@@ -590,6 +643,7 @@ pub async fn steep_update_page_with_bases(
         &BasisWrite {
             actor: agent.unwrap_or("unknown").to_string(),
             space_guard,
+            follows: !marks.is_empty(),
             marks,
             ..BasisWrite::default()
         },
