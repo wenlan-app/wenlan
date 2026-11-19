@@ -3183,7 +3183,7 @@ fn ci_routing_contract_violations(
         "else",
         r#"include="""#,
         "fi",
-        // Ordinary PRs leave macOS to the merge queue (`macos-allowed`).
+        // PR pushes and the merge queue leave macOS to the main push (`macos-allowed`).
         r#"if [ "${{ steps.macos-lane.outputs.allowed }}" != "true" ]; then"#,
         r#"include="${include//${macos},/}""#,
         r#"include="${include//${macos}/}""#,
@@ -4348,7 +4348,7 @@ fn archive_server_binary_path_violations(
 fn macos_archive_contract_violations(ci_workflow: &str, planner: &str) -> Vec<String> {
     let ci: serde_yaml::Value = serde_yaml::from_str(ci_workflow).expect("parse ci.yml");
     let mut violations = Vec::new();
-    // Ordinary PRs leave macOS to the merge queue (`macos-allowed`).
+    // PR pushes and the merge queue leave macOS to the main push (`macos-allowed`).
     let condition = "needs.detect-changes.outputs.macos-allowed == 'true' && needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && (needs.detect-changes.outputs.workspace-platform == 'true' || needs.detect-changes.outputs.macos-archive-contract == 'true' || (needs.detect-changes.outputs.macos == 'true' && (needs.detect-changes.outputs.platform-workspace-lib-required == 'true' || needs.detect-changes.outputs.platform-cli-server-integration-required == 'true' || needs.detect-changes.outputs.macos-m4 == 'true')) || github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'release-please--branches--'))";
     let archive_plan = "${{ (needs.detect-changes.outputs.workspace-platform == 'true' || needs.detect-changes.outputs.macos-archive-contract == 'true') && needs.detect-changes.outputs.test-plan || needs.detect-changes.outputs.platform-test-plan }}";
     let m4_required = "${{ github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'release-please--branches--') || needs.detect-changes.outputs.macos-m4 == 'true' }}";

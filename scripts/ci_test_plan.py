@@ -79,6 +79,10 @@ DETECT_CONTRACT_INPUTS = {
     ".githooks/pre-commit",
     ".githooks/pre-push",
     "scripts/git-hooks.test.sh",
+    # Out-of-band runner-shortage retry; its tests run in detect-changes.
+    ".github/workflows/ci-runner-retry.yml",
+    "scripts/ci_runner_retry.py",
+    "scripts/ci_runner_retry.test.py",
 }
 
 # Repository contracts are executable Rust tests, but they do not exercise
