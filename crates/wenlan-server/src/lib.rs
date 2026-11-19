@@ -48,6 +48,7 @@ pub mod page_look_routes;
 pub mod page_map_routes;
 pub mod page_routes;
 pub mod palace_routes;
+pub mod person_key;
 pub mod pinned_memory_routes;
 pub mod profile_agents_routes;
 pub mod profile_narrative_routes;

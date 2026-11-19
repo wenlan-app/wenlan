@@ -226,6 +226,10 @@ async fn a_deleted_pages_former_id_carries_no_sentinel_anywhere() {
                 wenlan_types::requests::CALLER_HEADER,
                 wenlan_types::requests::PERSON_CALLER_VALUE,
             )
+            .header(
+                wenlan_types::requests::PERSON_KEY_HEADER,
+                crate::person_key::test_key(),
+            )
             .body(Body::empty())
             .unwrap(),
     )

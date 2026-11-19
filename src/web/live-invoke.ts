@@ -38,6 +38,46 @@ class HttpError extends Error {
   }
 }
 
+// The person key (`wenlan_types::person_key`). The daemon believes the
+// person marker below only next to it, or next to a browser session token it
+// handed out. The page `wenlan open` opened carries such a token once in a
+// meta tag, never the key itself; it is kept for this tab only, taken out of
+// the page and the address, and ends when Wenlan stops. A page opened any
+// other way has none, and the person's own actions are refused there with
+// the daemon's plain sentence.
+export const PERSON_SESSION_META = "wenlan-person-session";
+export const PERSON_KEY_HEADER = "x-wenlan-person-key";
+const PERSON_KEY_STORE = "wenlan-person-key";
+
+export function takePersonKeyFromPage(): void {
+  if (typeof document === "undefined") return;
+  const meta = document.querySelector<HTMLMetaElement>(`meta[name="${PERSON_SESSION_META}"]`);
+  const key = meta?.content ?? "";
+  meta?.remove();
+  if (/^[0-9a-f]{64}$/.test(key)) {
+    try {
+      sessionStorage.setItem(PERSON_KEY_STORE, key);
+    } catch {
+      // No storage: this page simply cannot act as the person.
+    }
+  }
+  const url = new URL(window.location.href);
+  if (url.searchParams.has("pass")) {
+    url.searchParams.delete("pass");
+    window.history.replaceState(window.history.state, "", url.toString());
+  }
+}
+
+export function readPersonKey(): string | null {
+  try {
+    return sessionStorage.getItem(PERSON_KEY_STORE);
+  } catch {
+    return null;
+  }
+}
+
+if (isWebBuild()) takePersonKeyFromPage();
+
 async function http(
   method: string,
   path: string,
@@ -45,6 +85,7 @@ async function http(
   extraHeaders?: Record<string, string>,
 ): Promise<any> {
   const team = isTeamMemberMode();
+  const personKey = !team && extraHeaders?.["x-wenlan-caller"] === "person" ? readPersonKey() : null;
   if (team && !teamCallAllowed(method, path)) throw new TeamCallUnavailable(`${method} ${path.split("?")[0]}`);
   const key = team ? readTeamKey() : null;
   if (team && !key) throw new TeamCallUnavailable(`${method} ${path.split("?")[0]}`);
@@ -56,6 +97,7 @@ async function http(
       // The gate builds a new call from the member its key names; headers
       // meant for the local daemon would only be dropped there.
       ...(team ? { Authorization: `Bearer ${key}` } : extraHeaders),
+      ...(personKey ? { [PERSON_KEY_HEADER]: personKey } : undefined),
     },
     ...(team ? { credentials: "omit" as const, cache: "no-store" as const } : undefined),
     body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -96,7 +138,8 @@ const del = (p: string) => http("DELETE", p);
 // archiving, accepting a revision card, answering a sentence or map proposal,
 // and correcting a thing (`wenlan_types::requests::CALLER_HEADER`). Without it
 // the daemon treats the caller as an AI tool: it archives instead of deleting,
-// refuses to remove a page the person wrote, and refuses those answers.
+// refuses to remove a page the person wrote, and refuses those answers. It
+// counts only with the person key, which `http` adds when this page has it.
 const AS_PERSON = { "x-wenlan-caller": "person" };
 const patch = (p: string, b: unknown = {}, headers?: Record<string, string>) =>
   http("PATCH", p, b, headers);

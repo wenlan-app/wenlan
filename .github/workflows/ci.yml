@@ -235,7 +235,11 @@ jobs:
               - 'crates/wenlan-cli/src/commands/service_binding.rs'
               - 'crates/wenlan-core/src/config.rs'
               - 'crates/wenlan-core/src/home_bin.rs'
+              # The person key file is `0600` on Unix (`cfg(unix)`).
+              - 'crates/wenlan-core/src/person_key.rs'
               - 'crates/wenlan-cli/src/commands/pages.rs'
+              # `wenlan open` hands the browser pass over in a 0600 launcher file on Unix (`cfg(unix)`).
+              - 'crates/wenlan-cli/src/commands/web.rs'
               - 'crates/wenlan-cli/src/commands/setup.rs'
               - 'crates/wenlan-cli/src/commands/secret_input.rs'
               - 'crates/wenlan-cli/src/commands/open_document.rs'
@@ -481,6 +485,8 @@ jobs:
               - 'scripts/first-run/macos-app.sh'
               - 'crates/wenlan-cli/src/commands/mcp.rs'
               - 'crates/wenlan-cli/src/commands/pages.rs'
+              # `wenlan open` hands the browser pass over in a 0600 launcher file on Unix (`cfg(unix)`).
+              - 'crates/wenlan-cli/src/commands/web.rs'
               - 'crates/wenlan-cli/src/commands/service.rs'
               - 'crates/wenlan-cli/src/commands/service_binding.rs'
               - 'crates/wenlan-cli/src/commands/setup.rs'
@@ -491,6 +497,8 @@ jobs:
               - 'crates/wenlan-cli/tests/tool_cli.rs'
               - 'crates/wenlan-core/src/config.rs'
               - 'crates/wenlan-core/src/home_bin.rs'
+              # The person key file is `0600` on Unix (`cfg(unix)`).
+              - 'crates/wenlan-core/src/person_key.rs'
               - 'crates/wenlan-core/src/community_grouping.rs'
               - 'crates/wenlan-core/src/community_partition.rs'
               - 'crates/wenlan-core/src/edge_grounding.rs'
@@ -611,6 +619,8 @@ jobs:
               - 'crates/wenlan-cli/src/commands/mcp.rs'
               - 'crates/wenlan-cli/src/commands/mod.rs'
               - 'crates/wenlan-cli/src/commands/pages.rs'
+              # `wenlan open` hands the browser pass over in a 0600 launcher file on Unix (`cfg(unix)`).
+              - 'crates/wenlan-cli/src/commands/web.rs'
               - 'crates/wenlan-cli/src/commands/windows_task.rs'
               - 'scripts/resolve-backend-dir.test.ps1'
               - 'crates/wenlan-cli/src/commands/service.rs'
@@ -640,6 +650,8 @@ jobs:
               - 'crates/wenlan-mcp/npm/install.js'
               - 'crates/wenlan-core/src/config.rs'
               - 'crates/wenlan-core/src/home_bin.rs'
+              # The person key file is `0600` on Unix (`cfg(unix)`).
+              - 'crates/wenlan-core/src/person_key.rs'
               - 'crates/wenlan-core/src/db/m5_page_size_snapshot.rs'
               # A code basis may not follow a symlink out of its repository;
               # that case is proved against a real symlink, which is `cfg(unix)`.

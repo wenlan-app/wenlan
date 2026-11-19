@@ -786,8 +786,26 @@ and wait for evidence that people need them.
   removes, and Wenlan refuses such a request that does not come from the
   person, or any such request while it listens beyond this computer. A trial
   run on other data never reads or writes the person's real AI tool folders.
+  Following the owner's OK (2026-11-18): Wenlan tells the person apart with a
+  key it makes on its first start and keeps in a file only this computer's
+  account that runs Wenlan can read (on Windows, the user's own profile
+  folder). The Wenlan app and the `wenlan` command read it and send it with
+  the person's own actions; the page `wenlan open` opens is let in once, and a
+  page opened another way, an AI tool's connection and a teammate's call never
+  have it. A request that says it is the person without the key is treated as
+  any unnamed caller, so it cannot remove a saved rule in one press, install,
+  take in or remove a skill, or accept a card, and history never says "you"
+  for it. There is no sign-in and nothing for the person to do or see. The
+  browser page never holds the key itself, only a token that ends when
+  Wenlan stops, and the `wenlan` command sends the key only to the Wenlan on
+  this computer. The key cannot stop a program that runs under the same
+  account and reads the key file on purpose, nor a program that takes
+  Wenlan's address while Wenlan is not running and receives the key from the
+  app or the terminal. A data folder set outside the user's own profile on
+  Windows, or on a drive that keeps no Unix permissions, may let other
+  accounts read the key; Wenlan says so in its log.
   Pending owner confirmation (2026-11-17): Wenlan also refuses to install or take in a skill with a text file that holds tag characters (U+E0000 to U+E007F) or direction override or isolate controls (U+202A to U+202E, U+2066 to U+2069); the app's preview writes out every other character that would not show as the same visible mark the terminal prints and says how many there are, a byte-order mark at the very start of a file is not shown, in the app or in the terminal, and does not keep the skill's name and description from being read, and the installed file is always the author's own, that mark included.
-  原文：待 Qi-Xuan 確認。交辦內容（2026-11-17）：AI 工具不能把檔案放進每個工具的資料夾，也不能替人點頭（UX-WHO-2）；終端機裡要由人明確確認，不能有 `--yes`。看不見字元的補充（2026-11-17 交辦，實測發現 6b）：標籤字元和改變文字方向的控制字元直接拒絕，其他看不見的字元在 app 預覽裡標出來；英文字句待 Qi-Xuan 確認。
+  原文：待 Qi-Xuan 確認。交辦內容（2026-11-17）：AI 工具不能把檔案放進每個工具的資料夾，也不能替人點頭（UX-WHO-2）；終端機裡要由人明確確認，不能有 `--yes`。本機金鑰的補充（2026-11-18）：說明「現在任何本機程式只要帶上 `x-wenlan-caller: person` 就被當成你」並提議由 Wenlan 第一次啟動時產生只有你的帳號讀得到的金鑰、app 和 `wenlan` 自動帶上、沒帶對的不算你之後，Qi-Xuan 回「要」，再回「那可以」；英文字句待 Qi-Xuan 確認。看不見字元的補充（2026-11-17 交辦，實測發現 6b）：標籤字元和改變文字方向的控制字元直接拒絕，其他看不見的字元在 app 預覽裡標出來；英文字句待 Qi-Xuan 確認。
 - **UX-SKILL-14** `shipped` When the person explicitly asks for a rule to be
   saved, it counts at once, with no model and no accept. They ask in an AI
   tool on this computer ("save this as a rule: ...", which the tool does with

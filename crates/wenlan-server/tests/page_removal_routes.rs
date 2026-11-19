@@ -79,11 +79,20 @@ async fn send(
     match caller {
         Caller::Agent(name) => request = request.header("x-agent-name", name),
         Caller::Unnamed => {}
-        Caller::Person => request = request.header(CALLER_HEADER, PERSON_CALLER_VALUE),
+        Caller::Person => {
+            request = request.header(CALLER_HEADER, PERSON_CALLER_VALUE).header(
+                wenlan_types::requests::PERSON_KEY_HEADER,
+                common::person_key(),
+            )
+        }
         Caller::AgentWithPersonMarker(name) => {
             request = request
                 .header("x-agent-name", name)
                 .header(CALLER_HEADER, PERSON_CALLER_VALUE)
+                .header(
+                    wenlan_types::requests::PERSON_KEY_HEADER,
+                    common::person_key(),
+                )
         }
     }
     if body.is_some() {

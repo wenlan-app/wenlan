@@ -65,6 +65,10 @@ async fn request_bytes(
                     wenlan_types::requests::CALLER_HEADER,
                     wenlan_types::requests::PERSON_CALLER_VALUE,
                 )
+                .header(
+                    wenlan_types::requests::PERSON_KEY_HEADER,
+                    common::person_key(),
+                )
                 .body(body)
                 .unwrap(),
         )

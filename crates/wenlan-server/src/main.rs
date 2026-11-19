@@ -854,6 +854,9 @@ async fn run_daemon(startup_repair_claim: Option<StartupRepairClaim>) -> anyhow:
     // The file name mirrors `MemoryDB` in wenlan-core (`db.rs`).
     tracing::info!("{}", data_root_log_line(&wenlan_root, &data_dir));
     let _data_root_lock = DaemonDataLock::acquire(&wenlan_root, startup_repair_claimed)?;
+    // Who counts as the person: the key the app and the `wenlan` command
+    // read from this data root. Made on the first start; never logged.
+    wenlan_server::person_key::install_from(&wenlan_root);
 
     let startup::PreparedStartupState {
         mut server_state,

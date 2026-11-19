@@ -398,3 +398,4 @@ main|get|/api/skills/registry/local|wenlan_server::skill_registry_routes::handle
 main|post|/api/skills/registry/import|wenlan_server::skill_registry_routes::handle_registry_import_local
 main|post|/api/skills/registry/install|wenlan_server::skill_registry_routes::handle_registry_install
 main|post|/api/skills/registry/remove|wenlan_server::skill_registry_routes::handle_registry_remove
+main|post|/api/person/browser-pass|wenlan_server::person_key::handle_browser_pass

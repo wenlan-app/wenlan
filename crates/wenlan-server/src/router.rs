@@ -114,6 +114,7 @@ pub fn build_router_with_shutdown(state: SharedState, shutdown: ShutdownHandle) 
     let router = crate::theme_routes::register(router);
     let router = crate::trust_scan_routes::register(router);
     let router = crate::team_routes::register(router);
+    let router = crate::person_key::register(router);
 
     router
         .finish()
@@ -136,6 +137,9 @@ pub fn build_router_with_shutdown(state: SharedState, shutdown: ShutdownHandle) 
             state.clone(),
             crate::member_folders::add_space_paths,
         ))
+        // The person marker counts only next to the person key; the key
+        // itself never reaches a handler.
+        .layer(axum::middleware::from_fn(crate::person_key::gate))
         .layer(cors)
         // Outermost: reject cross-origin browser traffic before CORS/handlers.
         .layer(axum::middleware::from_fn(security::guard_local_only))
@@ -177,6 +181,7 @@ pub fn build_repair_router(state: SharedState) -> AppRouter {
         },
         truth_guard::guard,
     ))
+    .layer(axum::middleware::from_fn(crate::person_key::gate))
     .layer(cors)
     .layer(axum::middleware::from_fn(security::guard_local_only))
     .with_state(state)

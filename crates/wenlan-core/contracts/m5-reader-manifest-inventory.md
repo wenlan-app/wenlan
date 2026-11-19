@@ -763,6 +763,7 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/skills/registry/import` | main | no | not_applicable | `none` | — | SkillImportResult: skill names and refusal reasons only |
 | `POST` | `/api/skills/registry/install` | main | no | not_applicable | `none` | — | SkillInstallResult: the installed skill's record and the folders it was copied to |
 | `POST` | `/api/skills/registry/remove` | main | no | not_applicable | `none` | — | SkillRemoveResponse: the removed skill's name only |
+| `POST` | `/api/person/browser-pass` | main | no | not_applicable | `none` | — | BrowserPassResponse: a one-time pass for wenlan open; never the person key, no page text |
 | `GET` | `/api/memories/{source_id}/said` | main | no | not_applicable | `none` | — | MemorySaidResponse: the transcript lines one memory came from with its conversation and thing titles, no page prose |
 | `POST` | `/api/things/{id}/map/ops` | main | no | not_applicable | `none` | — | ThingMapOpsResponse: point labels written for the map and conversation ids, no page prose |
 | `PATCH` | `/api/things/{id}` | main | no | not_applicable | `none` | — | ThingSummary: thing title, Brief status line and Space names, no page prose |

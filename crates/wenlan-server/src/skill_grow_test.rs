@@ -5438,7 +5438,11 @@ async fn ux_skill_14_the_router_takes_the_persons_press_and_refuses_a_team_membe
             .method("POST")
             .uri(format!("/api/skills/rules/{rule}/remove"))
             .header("content-type", "application/json")
-            .header(CALLER_HEADER, PERSON_CALLER_VALUE);
+            .header(CALLER_HEADER, PERSON_CALLER_VALUE)
+            .header(
+                wenlan_types::requests::PERSON_KEY_HEADER,
+                crate::person_key::test_key(),
+            );
         if member {
             request = request
                 .header(

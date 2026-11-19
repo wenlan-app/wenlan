@@ -407,6 +407,10 @@ mod maintenance_tests {
                         wenlan_types::requests::CALLER_HEADER,
                         wenlan_types::requests::PERSON_CALLER_VALUE,
                     )
+                    .header(
+                        wenlan_types::requests::PERSON_KEY_HEADER,
+                        crate::person_key::test_key(),
+                    )
                     .body(Body::from(serde_json::to_vec(&body).unwrap()))
                     .unwrap(),
             )
