@@ -111,6 +111,7 @@ fn the_total_cap_evicts_the_least_recently_used_and_expired_ones_free_room() {
                     member_id: format!("m{i}"),
                     created: now,
                     last_used: now + Duration::from_secs(i as u64),
+                    reauthed: None,
                 },
             );
         }
@@ -156,4 +157,26 @@ fn the_cookie_token_is_read_from_the_cookie_header() {
     let mut other = HeaderMap::new();
     other.append(header::COOKIE, "wenlan-session=abc".parse().unwrap());
     assert!(!has_cookie(&other));
+}
+
+#[test]
+fn a_session_is_fresh_for_the_window_after_a_sign_in_and_never_without_one() {
+    let (store, clock) = store();
+    let plain = store.create("m1").unwrap();
+    let signed_in = store.create_fresh("m1").unwrap();
+    assert!(!store.fresh(&plain, REAUTH_WINDOW));
+    assert!(store.fresh(&signed_in, REAUTH_WINDOW));
+    clock.fetch_add(4 * 60, Ordering::SeqCst);
+    assert!(store.fresh(&signed_in, REAUTH_WINDOW));
+    clock.fetch_add(60, Ordering::SeqCst);
+    assert!(
+        !store.fresh(&signed_in, REAUTH_WINDOW),
+        "five minutes is over"
+    );
+    // Using the session does not make it fresh again.
+    assert!(store.lookup(&signed_in).is_some());
+    assert!(!store.fresh(&signed_in, REAUTH_WINDOW));
+    assert!(!store.fresh("nope", REAUTH_WINDOW));
+    store.delete(&plain);
+    assert!(!store.fresh(&plain, REAUTH_WINDOW));
 }

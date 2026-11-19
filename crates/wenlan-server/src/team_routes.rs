@@ -747,6 +747,8 @@ struct TeamState {
     mcp: McpCache,
     /// Browser sessions, in memory only.
     sessions: Arc<crate::team_session::SessionStore>,
+    /// Sign-in with an identity provider.
+    auth: Arc<auth::AuthState>,
 }
 
 /// MCP services by (member, Space, access).
@@ -765,6 +767,7 @@ pub async fn serve_team_listener(shared: SharedState, shutdown: ShutdownHandle) 
         daemon_url: format!("http://127.0.0.1:{port}"),
         mcp: Arc::default(),
         sessions: Arc::default(),
+        auth: Arc::new(auth::AuthState::from_config(&team::team_path())),
     };
     let kept = {
         let path = state.team_path.clone();
@@ -778,6 +781,7 @@ pub async fn serve_team_listener(shared: SharedState, shutdown: ShutdownHandle) 
     if env_value(TEAM_ADDR_ENV).is_some() {
         owner_link_for_headless_server(&state).await;
     }
+    auth::announce(&state).await;
     let mut changes = LISTEN.subscribe();
     let stop = shutdown.subscribe();
     loop {
@@ -809,14 +813,17 @@ pub async fn serve_team_listener(shared: SharedState, shutdown: ShutdownHandle) 
         let app = team_router(state.clone());
         let mut until = changes.clone();
         let stop_for = stop.clone();
-        let ended = axum::serve(listener, app.into_make_service())
-            .with_graceful_shutdown(async move {
-                tokio::select! {
-                    _ = crate::lifecycle::wait_for_shutdown(stop_for) => {}
-                    _ = until.changed() => {}
-                }
-            })
-            .await;
+        let ended = axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .with_graceful_shutdown(async move {
+            tokio::select! {
+                _ = crate::lifecycle::wait_for_shutdown(stop_for) => {}
+                _ = until.changed() => {}
+            }
+        })
+        .await;
         if let Err(error) = ended {
             tracing::error!("[team] team listener stopped: {error}");
             return;
@@ -919,8 +926,24 @@ fn team_router(state: TeamState) -> axum::Router {
             state.clone(),
             require_member,
         ));
+    // Sign-in: rate limit, then "is it on", behind headers that every
+    // answer carries. Only link and reauth need a member.
+    let auth_checked = axum::Router::new()
+        .route("/auth/link/{provider}", post(auth::link))
+        .route("/auth/reauth/{provider}", post(auth::reauth))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            require_member,
+        ));
+    let sign_in = axum::Router::new()
+        .route("/auth/start/{provider}", get(auth::start))
+        .route("/auth/callback/{provider}", get(auth::callback))
+        .merge(auth_checked)
+        .layer(middleware::from_fn_with_state(state.clone(), auth::guard))
+        .layer(middleware::from_fn(auth::headers));
     axum::Router::new()
         .route("/health", get(team_health))
+        .merge(sign_in)
         .route(wenlan_types::team::JOIN_PATH, get(team_join_page))
         .route("/app", get(crate::web_static::team_app))
         .route("/app/", get(crate::web_static::team_app))
@@ -1423,6 +1446,9 @@ async fn team_join_page(State(state): State<TeamState>, headers: HeaderMap) -> R
 #[path = "team_app_gate.rs"]
 mod app_gate;
 
+#[path = "team_auth.rs"]
+mod auth;
+
 /// Origins of web AI apps whose connectors may call `/mcp` from a browser.
 const ALLOWED_ORIGINS: &[&str] = &["https://claude.ai", "https://chatgpt.com"];
 
@@ -1471,7 +1497,11 @@ async fn require_member(State(state): State<TeamState>, mut req: Request, next: 
             || req
                 .uri()
                 .path()
-                .starts_with(&format!("{}/", app_gate::PREFIX));
+                .starts_with(&format!("{}/", app_gate::PREFIX))
+            || matches!(
+                route_class(req.uri().path()),
+                RouteClass::AuthLink | RouteClass::AuthReauth
+            );
         let allowed = if on_gate {
             own_origin(&state).await.as_deref() == Some(origin)
                 || same_site_as_host(origin, req.headers())
@@ -1573,7 +1603,7 @@ async fn auth_logout(State(state): State<TeamState>, req: Request) -> Response {
 }
 
 /// The kinds of path the team listener serves behind a credential.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RouteClass {
     /// `/mcp` and `/mcp/<space>`: AI tools.
     Mcp,
@@ -1583,6 +1613,14 @@ enum RouteClass {
     App,
     /// `/auth/logout`: ends a browser session, so only a browser has one.
     Logout,
+    /// `/auth/start/*` and `/auth/callback/*`: sign-in, before anyone has a
+    /// credential. They are not behind [`require_member`]; the row is here
+    /// so every `/auth` path is in this table.
+    AuthPublic,
+    /// `/auth/link/*`: start linking a provider account to the caller.
+    AuthLink,
+    /// `/auth/reauth/*`: a browser session signs in again.
+    AuthReauth,
     /// Everything else: sync, owner admin.
     Other,
 }
@@ -1597,6 +1635,12 @@ fn route_class(path: &str) -> RouteClass {
         RouteClass::App
     } else if path == "/auth/logout" {
         RouteClass::Logout
+    } else if under("/auth/start") || under("/auth/callback") {
+        RouteClass::AuthPublic
+    } else if under("/auth/link") {
+        RouteClass::AuthLink
+    } else if under("/auth/reauth") {
+        RouteClass::AuthReauth
     } else {
         RouteClass::Other
     }
@@ -1612,6 +1656,9 @@ const ROUTE_TABLE: &[(RouteClass, [bool; 3])] = &[
     (RouteClass::Me, [true, false, true]),
     (RouteClass::App, [true, false, true]),
     (RouteClass::Logout, [false, false, true]),
+    (RouteClass::AuthPublic, [true, true, true]),
+    (RouteClass::AuthLink, [true, false, true]),
+    (RouteClass::AuthReauth, [false, false, true]),
     (RouteClass::Other, [true, false, false]),
 ];
 

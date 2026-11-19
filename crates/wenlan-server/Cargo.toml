@@ -48,6 +48,8 @@ file-rotate = "0.8"
 tracing-throttle = "0.4"
 dom_query = "=0.27.0"
 url = "2.5"
+# Sign-in with an OpenID Connect provider (`team_auth`).
+openidconnect = { version = "4.1", default-features = false, features = ["reqwest", "rustls-tls"] }
 # Pulls openssl-sys with the vendored feature (declared at workspace level).
 # wenlan-server doesn't call openssl_sys directly, but the dep needs to land
 # in at least one workspace-member's tree for cargo feature unification to
@@ -66,6 +68,9 @@ cc = "1"
 wenlan-core = { workspace = true, features = ["scratch-config"] }
 async-trait = { workspace = true }
 hex = { workspace = true }
+# Signs the fake identity provider's id tokens in the sign-in tests.
+ring = "0.17"
+base64 = "0.22"
 hmac = { workspace = true }
 libsql = { workspace = true }
 sha2 = { workspace = true }
