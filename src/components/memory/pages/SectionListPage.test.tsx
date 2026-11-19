@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { i18n } from "../../../i18n";
@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { getSpaceFolders, knowledgeFolderCreate, knowledgeFoldersList, listSpaceRulesSuggestions, skillsFromLibraryEnabled, type Page } from "../../../lib/tauri";
 import { readPinnedPages } from "../navigation/pinnedPages";
 import { SectionListPage, type SectionListPageProps } from "./SectionListPage";
+import { TeamAccessProvider, teamAccessFor } from "../../../web/teamAccess";
 
 const { active, drafts } = vi.hoisted(() => ({ active: vi.fn(), drafts: vi.fn() }));
 vi.mock("./listAllPages", () => ({ EXPLICIT_BROWSE_QUERY_POLICY: {}, listAllActivePages: active, listAllDraftPages: drafts, listAllActivePagesExplicitBrowse: active, listAllDraftPagesExplicitBrowse: drafts }));
@@ -135,6 +136,29 @@ describe("section list page", () => {
     await user.click(screen.getByRole("button", { name: "New" }));
     await waitFor(() => expect(knowledgeFolderCreate).toHaveBeenCalledWith("", "Skills"));
     await waitFor(() => expect(handlers.onCreatePage).toHaveBeenCalledWith("Skills"));
+  });
+
+  it("UX-SKILL-12: the Skills list offers Find skills to the person, and not to a team member who is given the same way in", async () => {
+    const user = userEvent.setup();
+    const handlers = setup({ section: "skills" });
+    await screen.findByRole("button", { name: "Open Release notes" });
+    await user.click(screen.getByRole("button", { name: "New" }));
+    await user.click(within(screen.getByRole("menu", { name: "New" })).getByRole("menuitem", { name: "Find skills" }));
+    expect(handlers.onFindSkills).toHaveBeenCalledTimes(1);
+    cleanup();
+
+    // A team member who may write: New makes a page, and no menu offers skills.
+    const member = teamAccessFor({ member_id: "m", name: "Amy", spaces: [{ space: "Field Notes", access: "write" }] });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const asMember = { onBrowseFolder: vi.fn(), onCreatePage: vi.fn(), onOpenDraft: vi.fn(), onOpenPage: vi.fn(), onOpenPageId: vi.fn(), onFindSkills: vi.fn() };
+    render(<QueryClientProvider client={client}><TeamAccessProvider value={member}><SectionListPage section="skills" {...asMember} /></TeamAccessProvider></QueryClientProvider>);
+    await screen.findByRole("button", { name: "Open Release notes" });
+    const create = screen.getByRole("button", { name: "New" });
+    expect(create).not.toHaveAttribute("aria-haspopup");
+    await user.click(create);
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Find skills" })).not.toBeInTheDocument();
+    expect(asMember.onFindSkills).not.toHaveBeenCalled();
   });
 
   it("a new rules page never lands in a Space's own Rules folder: the top one is made instead", async () => {

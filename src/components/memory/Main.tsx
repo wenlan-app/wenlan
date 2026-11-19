@@ -114,6 +114,7 @@ import "./navigation/navigation-shell.css";
 import "./assets/collectionToolbar.css";
 import { folderScope, inventoryFolderPath, pageFolderPath } from "./pages/pageInventory";
 import { FindSkillsView } from "./skills/FindSkillsView";
+import { useSavedRulesPageIds } from "./skills/useSavedRulesPages";
 import { isWebBuild } from "../../web/runtime";
 import { useTeamAccess } from "../../web/teamAccess";
 
@@ -1076,11 +1077,12 @@ export default function Main({
   // lights, and which folder a new page beside it lands in.
   const { data: shellPages } = useQuery({ queryKey: ["pages", "inventory", "passive", "active"], queryFn: listAllActivePages, staleTime: 30_000 });
   const openPage = view.kind === "page" ? shellPages?.find((page) => page.id === view.pageId) : undefined;
+  const savedRulesPages = useSavedRulesPageIds();
   // Only a page whose folders carry a section's name needs the daemon's
   // setting, to tell a Space's own folder from one the person named.
-  const { data: spaceFoldersOn } = useQuery({ queryKey: SPACE_FOLDERS_QUERY_KEY, queryFn: () => getSpaceFolders(), enabled: !!openPage && pageSection(openPage) !== "docs", retry: false, staleTime: Infinity });
+  const { data: spaceFoldersOn } = useQuery({ queryKey: SPACE_FOLDERS_QUERY_KEY, queryFn: () => getSpaceFolders(), enabled: !!openPage && pageSection(openPage, undefined, savedRulesPages) !== "docs", retry: false, staleTime: Infinity });
   const shellLayout = useMemo(() => spaceLayout(shellPages ?? [], spaceFoldersOn === true, scope.teamSpaces), [shellPages, spaceFoldersOn, scope.teamSpaces]);
-  const activeNavigation = openPage ? navigationForSection(pageSection(openPage, shellLayout)) : activeNavigationForView(view);
+  const activeNavigation = openPage ? navigationForSection(pageSection(openPage, shellLayout, savedRulesPages)) : activeNavigationForView(view);
   const creationFolderPath = view.kind === "pages"
     ? wikiCreationFolderPath
     : openPage ? pageFolderPath(openPage) || null

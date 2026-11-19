@@ -4341,6 +4341,36 @@ pub async fn get_space_rules(
     client.get_json_as_person(&path).await
 }
 
+/// The person pressed Remove on a rule they had asked to be saved
+/// (UX-SKILL-14). Sent as the person with no quoted words: the press is the
+/// ask, and the daemon records it as made in the app. The daemon refuses a
+/// team member and any caller while it listens beyond this computer.
+#[tauri::command]
+pub async fn remove_saved_rule(
+    state: tauri::State<'_, State>,
+    id: String,
+) -> Result<wenlan_types::RemoveRuleResponse, String> {
+    let client = daemon_client(&state).await;
+    remove_saved_rule_response(&client, &id).await
+}
+
+/// The press as it goes to the daemon: the person marker, no tool name and
+/// no quoted words.
+async fn remove_saved_rule_response(
+    client: &crate::api::WenlanClient,
+    id: &str,
+) -> Result<wenlan_types::RemoveRuleResponse, String> {
+    client
+        .post_json_as_person(
+            &format!(
+                "/api/skills/rules/{}/remove",
+                crate::api::percent_encode_path_segment(id)
+            ),
+            &wenlan_types::RemoveRuleRequest::default(),
+        )
+        .await
+}
+
 #[tauri::command]
 pub async fn refresh_skills(
     state: tauri::State<'_, State>,
@@ -6159,6 +6189,29 @@ mod page_status_command_type_tests {
                 .contains("x-wenlan-caller: person\r\n"),
             "{request}"
         );
+    }
+
+    /// UX-SKILL-14: Remove pressed in the app goes out as the person's own
+    /// press, with the person marker and no tool name.
+    #[tokio::test]
+    async fn ux_skill_14_remove_saved_rule_carries_the_person_marker_and_no_tool_name() {
+        let (client, request) = serve_status_once(
+            "200 OK",
+            r#"{"status":"removed","id":"rule-1","page_id":"page-1","page_title":"Rules I saved","message":"Removed."}"#,
+        )
+        .await;
+
+        let response = remove_saved_rule_response(&client, "rule 1").await.unwrap();
+        let request = request.await.unwrap();
+
+        assert_eq!(response.status, wenlan_types::SavedRuleStatus::Removed);
+        assert!(
+            request.starts_with("POST /api/skills/rules/rule%201/remove HTTP/1.1\r\n"),
+            "{request}"
+        );
+        let lower = request.to_ascii_lowercase();
+        assert!(lower.contains("x-wenlan-caller: person\r\n"), "{request}");
+        assert!(!lower.contains("x-agent-name"), "{request}");
     }
 
     #[tokio::test]

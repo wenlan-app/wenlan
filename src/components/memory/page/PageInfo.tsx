@@ -21,7 +21,7 @@ import PageInfoNotes from "./PageInfoNotes";
 import { HistoryChangeDialog } from "./HistoryChangeDialog";
 import { PutBackButton } from "./PutBackButton";
 import { useTeamAccess } from "../../../web/teamAccess";
-import { entryForItem, historyItemLabel, historyRows } from "./historyItems";
+import { entryForItem, historyItemLabel, historyItemQuote, historyRows } from "./historyItems";
 import "./NoteInfo.css";
 
 interface PageInfoProps {
@@ -322,7 +322,8 @@ export default function PageInfo({
                   const entry = entryForItem(item, entryByVersion);
                   const incomingCount = entry?.incoming_source_ids?.length ?? 0;
                   const summary = entry ? revisionSummary(t, entry, i18n.language) : null;
-                  const label = historyItemLabel(t, item, shares);
+                  const label = historyItemLabel(t, item, shares, entry);
+                  const quote = historyItemQuote(item);
                   return (
                     <li
                       key={`${item.kind}-${item.version ?? ""}-${item.source?.page_id ?? ""}-${item.source?.version ?? ""}-${item.at}`}
@@ -351,9 +352,9 @@ export default function PageInfo({
                         {item.kind === "source_update" && item.source?.pending && (
                           <span className="note-revision-summary">{t("pageHistory.notChecked")}</span>
                         )}
-                        {item.person_asked && (
+                        {quote && (
                           <span className="note-revision-summary">
-                            {t("pageHistory.yourWords", { quote: item.person_asked })}
+                            {t("pageHistory.yourWords", { quote })}
                           </span>
                         )}
                         {summary && <span className="note-revision-summary">{summary}</span>}

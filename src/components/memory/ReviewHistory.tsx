@@ -354,7 +354,7 @@ function PageRevisionRow({ entry }: { entry: PageChangelogEntry }) {
             color: "var(--mem-text-secondary)",
           }}
         >
-          {revisionWriterLabel(t, entry.edited_by, entry.agent)}
+          {revisionWriterLabel(t, entry.edited_by, entry.agent, entry.char_delta)}
         </span>
         <span
           style={{

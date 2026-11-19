@@ -54,7 +54,14 @@ impl Drop for NightlyRunningGuard {
 pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<SharedState> {
     router
         .route("/api/skills/refresh", post(handle_refresh))
-        .route("/api/skills/rules", get(handle_read_rules))
+        .route(
+            "/api/skills/rules",
+            get(handle_read_rules).post(saved_rules::handle_save_rule),
+        )
+        .route(
+            "/api/skills/rules/{id}/remove",
+            post(saved_rules::handle_remove_rule),
+        )
         .route("/api/skills/delivery", get(handle_rules_delivery))
         .route(
             "/api/skills/spaces/suggestions",
@@ -390,18 +397,25 @@ async fn eligible_lines(
     Ok(out)
 }
 
-fn append_changelog(page: &wenlan_types::Page, at: i64, summary: &str) -> String {
-    let mut entries: Vec<serde_json::Value> = page
-        .changelog
-        .as_deref()
-        .and_then(|raw| serde_json::from_str(raw).ok())
-        .unwrap_or_default();
-    entries.push(serde_json::json!({
-        "timestamp": at,
+/// The changelog after the nightly rules write, in the shape every reader
+/// parses (`PageChangelogEntry`): the version this write produces, when, who,
+/// and what, under the usual cap.
+fn append_changelog(
+    page: &wenlan_types::Page,
+    at: i64,
+    summary: &str,
+) -> Result<String, ServerError> {
+    let entry = serde_json::json!({
+        "version": page.version + 1,
+        "at": at,
         "edited_by": "agent_refresh",
-        "summary": summary,
-    }));
-    serde_json::to_string(&entries).unwrap_or_else(|_| "[]".into())
+        "delta_summary": summary,
+    });
+    Ok(wenlan_core::db::append_changelog_entry(
+        page.changelog.as_deref().unwrap_or("[]"),
+        entry,
+        wenlan_core::db::PAGE_CHANGELOG_CAP,
+    )?)
 }
 
 async fn write_maintained_rules_page(
@@ -459,6 +473,7 @@ async fn write_maintained_rules_page(
         ));
     }
     let now = chrono::Utc::now().timestamp();
+    let changelog = append_changelog(&page, now, "Wenlan maintained approved working rules")?;
     let prior_undo = state.undo.take();
     let preserve_prior = prior_undo.as_ref().is_some_and(|undo| {
         chrono::Local
@@ -492,7 +507,7 @@ async fn write_maintained_rules_page(
             &reconciled.body,
             &[],
             "agent_refresh",
-            &append_changelog(&page, now, "Wenlan maintained approved working rules"),
+            &changelog,
             None,
             page.version,
             None,
@@ -596,6 +611,8 @@ struct TracedPage {
     version: i64,
     title: String,
     person_note: bool,
+    /// The saves the ledger held for the page that had brought a rule in.
+    saves: Vec<(String, i64, String)>,
     lines: Vec<SkillLine>,
 }
 
@@ -615,12 +632,33 @@ const RULES_PAGE_HISTORY_DEPTH: i64 = 2_000;
 /// person wrote before or after. `person_note` says the page began as a note
 /// the person put in the folder, whose first version is recorded as a
 /// tool's. A page with no plain bullet costs no history read.
+///
+/// `saved` is the ledger's record when the page is a "Rules I saved" page
+/// (UX-SKILL-14). A bullet then also counts, as a saved rule naming where it
+/// was saved from, when the version that brought it in was a save the
+/// ledger recorded for that very text: a `rule_save` version, or the accept
+/// of the card a save on a locked page waited as. An AI tool's ordinary
+/// write to that page still gives no rule.
 async fn person_lines_of(
     db: &MemoryDB,
     root: Option<&Path>,
     page: &wenlan_types::Page,
     person_note: bool,
+    saved: Option<&wenlan_core::db::skill_grow::SavedRulesPage>,
 ) -> Result<Vec<SkillLine>, ServerError> {
+    // A waiting save (no version yet) gives no rule: only the accept of its
+    // own card gives it the version that brings its rule in.
+    let saves: Vec<(String, i64, String)> = saved
+        .iter()
+        .flat_map(|saved| saved.saves.iter())
+        .filter_map(|save| {
+            Some((
+                skill_grow::rule_text_key(&save.text),
+                save.version?,
+                save.tool.clone(),
+            ))
+        })
+        .collect();
     let mut input = SkillPageInput {
         id: page.id.clone(),
         title: page.title.clone(),
@@ -637,7 +675,10 @@ async fn person_lines_of(
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         if let Some(found) = cache.as_ref().and_then(|cache| cache.get(key)).filter(|t| {
-            t.version == page.version && t.title == page.title && t.person_note == person_note
+            t.version == page.version
+                && t.title == page.title
+                && t.person_note == person_note
+                && t.saves == saves
         }) {
             return Ok(found.lines.clone());
         }
@@ -651,17 +692,42 @@ async fn person_lines_of(
         .await?
         .into_iter()
         .collect();
-    let versions: Vec<(bool, &str)> = history
+    // What each save may bring in: the rule's text, and where it came from.
+    let nothing: HashMap<String, String> = HashMap::new();
+    let mut by_version: HashMap<i64, HashMap<String, String>> = HashMap::new();
+    for (key, version, tool) in &saves {
+        by_version
+            .entry(*version)
+            .or_default()
+            .insert(key.clone(), tool.clone());
+    }
+    let versions: Vec<skill_grow::RuleVersion<'_>> = history
         .iter()
         .map(|version| {
-            let own = !accepted.contains(&version.version)
-                && (skill_grow::version_is_the_persons_own(&version.edited_by)
-                    || (person_note && version.edited_by == "agent_create"));
-            (own, version.content.as_str())
+            let hand = if accepted.contains(&version.version) {
+                skill_grow::VersionHand::Other
+            } else if person_note && version.edited_by == "agent_create" {
+                skill_grow::VersionHand::Person
+            } else {
+                skill_grow::version_hand(&version.edited_by)
+            };
+            // A save's own version, or the accept of the very card a save
+            // on a locked page waited as: the ledger names the version.
+            let saved = match version.edited_by.as_str() {
+                skill_grow::RULE_SAVE | "revision_accept" => {
+                    by_version.get(&version.version).unwrap_or(&nothing)
+                }
+                _ => &nothing,
+            };
+            skill_grow::RuleVersion {
+                content: version.content.as_str(),
+                hand,
+                saved,
+            }
         })
         .collect();
     input.revision_at = history.last().map_or(0, |version| version.created_at);
-    let lines = skill_grow::person_rule_lines_through_history(&input, &versions);
+    let lines = skill_grow::rule_lines_through_versions(&input, &versions);
     if let Some(key) = key {
         TRACED
             .lock()
@@ -673,6 +739,7 @@ async fn person_lines_of(
                     version: page.version,
                     title: page.title.clone(),
                     person_note,
+                    saves,
                     lines: lines.clone(),
                 },
             );
@@ -693,21 +760,77 @@ impl OwnRulePages {
     /// holds its file, and only a page outside every Space's folder holds
     /// for every Space. No pages folder, no such pages.
     async fn load(db: &MemoryDB, page_root: Option<&Path>) -> Result<Self, ServerError> {
+        let ledger = db.saved_rules_pages().await?;
+        let mut pages = Self::load_rules_folders(db, page_root, &ledger).await?;
+        pages.extend(Self::load_saved(db, page_root, &ledger).await?);
+        Ok(Self {
+            root: page_root.map(Path::to_path_buf),
+            pages,
+        })
+    }
+
+    /// The "Rules I saved" pages (UX-SKILL-14), one per Space and one for
+    /// every Space, with the rules that count on each. A page under review,
+    /// one marked not for AI tools, and one that left its Space give none.
+    async fn load_saved(
+        db: &MemoryDB,
+        page_root: Option<&Path>,
+        ledger: &[wenlan_core::db::skill_grow::SavedRulesPage],
+    ) -> Result<Vec<OwnRulePage>, ServerError> {
+        let mut pages = Vec::new();
+        for entry in ledger {
+            let Some(page) = saved_rules::page_of(db, entry).await? else {
+                continue;
+            };
+            if page.review_required || skill_grow::page_is_not_for_ai_tools(&page.content) {
+                continue;
+            }
+            let Some(page) = wenlan_core::truth_adapter::filter_page(
+                db,
+                &wenlan_core::truth_contract::TruthGrant::Automatic,
+                Some(page),
+            )
+            .await?
+            else {
+                continue;
+            };
+            let lines = saved_rules::lines_of(db, page_root, &page, entry).await?;
+            let space = match entry.space_id.as_str() {
+                "" => None,
+                _ => page.space.clone(),
+            };
+            pages.push(OwnRulePage {
+                // Nothing on this page is offered back as a suggestion.
+                all_own: true,
+                id: page.id,
+                space,
+                version: page.version,
+                file: String::new(),
+                lines,
+            });
+        }
+        Ok(pages)
+    }
+
+    async fn load_rules_folders(
+        db: &MemoryDB,
+        page_root: Option<&Path>,
+        ledger: &[wenlan_core::db::skill_grow::SavedRulesPage],
+    ) -> Result<Vec<OwnRulePage>, ServerError> {
+        let mut pages = Vec::new();
         let Some(root) = page_root else {
-            return Ok(Self::default());
+            return Ok(pages);
         };
         let mut files: Vec<(String, (String, bool))> = page_files(db, root)
             .await
             .into_iter()
             .filter(|(_, (file, _))| skill_grow::may_be_in_rules_folder(file))
+            // A "Rules I saved" page is read by `load_saved`, wherever it is.
+            .filter(|(id, _)| !ledger.iter().any(|entry| entry.page_id == *id))
             .collect();
         files.sort();
-        let mut pages = Vec::new();
         if files.is_empty() {
-            return Ok(Self {
-                root: Some(root.to_path_buf()),
-                pages,
-            });
+            return Ok(pages);
         }
         let layout = wenlan_core::space_folders::current_layout(db, root).await?;
         for (id, (file, person_note)) in files {
@@ -759,7 +882,7 @@ impl OwnRulePages {
             else {
                 continue;
             };
-            let mut lines = person_lines_of(db, Some(root), &page, person_note).await?;
+            let mut lines = person_lines_of(db, Some(root), &page, person_note, None).await?;
             for line in &mut lines {
                 line.general = space.is_none();
             }
@@ -782,10 +905,7 @@ impl OwnRulePages {
                 lines,
             });
         }
-        Ok(Self {
-            root: Some(root.to_path_buf()),
-            pages,
-        })
+        Ok(pages)
     }
 
     /// A page whose every bullet is the person's own already counts, so the
@@ -872,7 +992,7 @@ async fn read_rules_for_space(
     let mut lines = own.lines_in(Some(&space.name));
     let mut rules_page_id = None;
     if let Some((state, page)) = readable_rules_page(db, space).await? {
-        lines.extend(person_lines_of(db, own.root.as_deref(), &page, false).await?);
+        lines.extend(person_lines_of(db, own.root.as_deref(), &page, false, None).await?);
         if feature_enabled() {
             let reconciled = skill_grow::reconcile_rules_page(
                 &space.name,
@@ -897,6 +1017,7 @@ async fn read_rules_for_space(
         space_id: space.id.clone(),
         space_name: space.name.clone(),
         rules_page_id,
+        saved_rules_page_ids: Vec::new(),
         lines,
     })
 }
@@ -924,6 +1045,13 @@ pub async fn handle_read_rules(
     // The person looking at their own rules in the app is not an AI tool
     // reading them: only a tool's read is recorded.
     let by_tool = !crate::memory_routes::caller_is_person(&headers);
+    // The app lists the saved-rules pages under Rules by their ids, so a
+    // renamed one stays there and a page that only has the title does not.
+    let saved_pages = if by_tool {
+        Vec::new()
+    } else {
+        saved_rules::page_ids(&db).await?
+    };
     if no_space_named(&headers, query.space.as_deref()) {
         // No Space: only the general lines, read from every accepted Space.
         let general = general_lines(&db, &own, None).await?;
@@ -934,6 +1062,7 @@ pub async fn handle_read_rules(
             space_id: String::new(),
             space_name: String::new(),
             rules_page_id: None,
+            saved_rules_page_ids: saved_pages,
             lines: general.into_iter().map(|(_, line)| line).collect(),
         }));
     }
@@ -960,6 +1089,7 @@ pub async fn handle_read_rules(
     response
         .lines
         .extend(general.into_iter().map(|(_, line)| line));
+    response.saved_rules_page_ids = saved_pages;
     Ok(Json(response))
 }
 
@@ -1984,6 +2114,13 @@ async fn may_hold_own_rules(db: &MemoryDB, page_root: Option<&Path>, id: &str) -
         if file.is_some_and(|file| skill_grow::may_be_in_rules_folder(&file)) {
             return true;
         }
+    }
+    if db
+        .saved_rules_pages()
+        .await
+        .is_ok_and(|pages| pages.iter().any(|page| page.page_id == id))
+    {
+        return true;
     }
     db.space_rules_states().await.is_ok_and(|states| {
         states
@@ -3564,6 +3701,8 @@ pub async fn handle_self_report(
         "rule_id": request.rule_id,
     })))
 }
+
+mod saved_rules;
 
 #[cfg(test)]
 #[path = "skill_grow_test.rs"]

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import "./OverflowMenu.css";
 
 export interface OverflowMenuItem {
@@ -7,6 +7,8 @@ export interface OverflowMenuItem {
   label: string;
   /** A quieter second line under the label. */
   hint?: string;
+  /** A small icon before the label. */
+  icon?: ReactNode;
   disabled?: boolean;
   onSelect: () => void;
 }
@@ -25,6 +27,7 @@ interface OverflowMenuProps {
  */
 export function OverflowMenu({ label, items, disabled = false, className }: OverflowMenuProps) {
   const [open, setOpen] = useState(false);
+  const hintId = useId();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -98,6 +101,10 @@ export function OverflowMenu({ label, items, disabled = false, className }: Over
         type="button"
         role="menuitem"
         className="overflow-menu__item"
+        data-icon={item.icon ? "true" : undefined}
+        // The hint describes the item; its name stays the label alone.
+        aria-label={item.hint ? item.label : undefined}
+        aria-describedby={item.hint ? `${hintId}-${item.key}` : undefined}
         disabled={item.disabled}
         onClick={(event) => {
           event.stopPropagation();
@@ -107,8 +114,9 @@ export function OverflowMenu({ label, items, disabled = false, className }: Over
           item.onSelect();
         }}
       >
+        {item.icon && <span className="overflow-menu__icon" aria-hidden="true">{item.icon}</span>}
         <span>{item.label}</span>
-        {item.hint && <span className="overflow-menu__hint">{item.hint}</span>}
+        {item.hint && <span className="overflow-menu__hint" id={`${hintId}-${item.key}`}>{item.hint}</span>}
       </button>)}
     </div>}
   </span>;

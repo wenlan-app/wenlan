@@ -10,6 +10,51 @@ const SPACE_PREFIX: &str = "space:";
 const SUGGESTION_PREFIX: &str = "suggestion:";
 const FILE_PREFIX: &str = "file:";
 const NIGHT_BUDGET_KEY: &str = "night_budget";
+const SAVED_RULES_PREFIX: &str = "saved-rules:";
+
+/// One rule the person asked to be saved (UX-SKILL-14). Kept after the rule
+/// is removed: it is the record of a save, and the day's count reads it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SavedRule {
+    /// This record's own id.
+    #[serde(default)]
+    pub id: String,
+    /// The rule as saved, without its `[decision]` or `[pitfall]` tag.
+    pub text: String,
+    /// The tool the save came from, or `terminal`: what rules lists show.
+    pub tool: String,
+    /// The name the caller reported, which the day's count and the right to
+    /// remove are kept by (compared without case or padding).
+    #[serde(default)]
+    pub tool_id: String,
+    pub person_asked: String,
+    pub at: i64,
+    /// The page version that brought the rule in: the save's own, or the
+    /// one that accepted its card. `None` while the save waits as a card on
+    /// a locked page; a waiting save gives no rule.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<i64>,
+    /// The revision card a save on a locked page waits as. Only accepting
+    /// this very card gives the save its `version`; when the card is
+    /// dismissed, replaced or discarded the record is dropped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub card: Option<String>,
+}
+
+/// One writer of the saved-rules rows at a time: a save, a removal and the
+/// accept or dismissal of a waiting save's card each read a row, change it
+/// and write it back.
+static SAVED_RULES_EDIT: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// The "Rules I saved" page of one scope: a Space, or every Space.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SavedRulesPage {
+    /// The Space's id; empty for the rules used in every Space.
+    pub space_id: String,
+    pub page_id: String,
+    #[serde(default)]
+    pub saves: Vec<SavedRule>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -169,6 +214,92 @@ impl MemoryDB {
     pub async fn set_space_rules_state(&self, state: &SpaceRulesState) -> Result<(), WenlanError> {
         self.set_skill_ledger(&format!("{SPACE_PREFIX}{}", state.space_id), state)
             .await
+    }
+
+    /// Every "Rules I saved" page the ledger knows, one per scope.
+    pub async fn saved_rules_pages(&self) -> Result<Vec<SavedRulesPage>, WenlanError> {
+        Ok(self
+            .skill_ledger_rows::<SavedRulesPage>(SAVED_RULES_PREFIX)
+            .await?
+            .into_iter()
+            .map(|(_, page)| page)
+            .collect())
+    }
+
+    /// Read the saved-rules row of one scope (`space_id`, empty for every
+    /// Space), change it and write it back, with no other change to these
+    /// rows in between. A scope with no row yet starts empty. Returns what
+    /// `change` returns, and the row as written.
+    pub async fn edit_saved_rules_page<T>(
+        &self,
+        space_id: &str,
+        change: impl FnOnce(&mut SavedRulesPage) -> T,
+    ) -> Result<(T, SavedRulesPage), WenlanError> {
+        let _one_writer = SAVED_RULES_EDIT.lock().await;
+        let mut page = self
+            .saved_rules_pages()
+            .await?
+            .into_iter()
+            .find(|page| page.space_id == space_id)
+            .unwrap_or_else(|| SavedRulesPage {
+                space_id: space_id.to_string(),
+                page_id: String::new(),
+                saves: Vec::new(),
+            });
+        let before = page.clone();
+        let out = change(&mut page);
+        if page != before {
+            self.set_skill_ledger(&format!("{SAVED_RULES_PREFIX}{}", page.space_id), &page)
+                .await?;
+        }
+        Ok((out, page))
+    }
+
+    /// The person accepted revision card `card_id`, which made `version` of
+    /// its page: a save that waited as that very card counts from that
+    /// version on. Any other card changes nothing here.
+    pub async fn saved_rule_card_accepted(
+        &self,
+        card_id: &str,
+        version: i64,
+    ) -> Result<(), WenlanError> {
+        self.settle_saved_rule_card(card_id, Some(version)).await
+    }
+
+    /// Revision card `card_id` is gone without being accepted (dismissed,
+    /// replaced by a newer proposal, or discarded as outdated): a save that
+    /// waited as it is dropped, so no later accept can bring its rule in.
+    pub async fn saved_rule_card_gone(&self, card_id: &str) -> Result<(), WenlanError> {
+        self.settle_saved_rule_card(card_id, None).await
+    }
+
+    async fn settle_saved_rule_card(
+        &self,
+        card_id: &str,
+        version: Option<i64>,
+    ) -> Result<(), WenlanError> {
+        let waits =
+            |save: &SavedRule| save.version.is_none() && save.card.as_deref() == Some(card_id);
+        // Nearly every card is not a saved rule's: look before taking the turn.
+        let scopes: Vec<String> = self
+            .saved_rules_pages()
+            .await?
+            .into_iter()
+            .filter(|page| page.saves.iter().any(waits))
+            .map(|page| page.space_id)
+            .collect();
+        for space_id in scopes {
+            self.edit_saved_rules_page(&space_id, |page| match version {
+                Some(version) => {
+                    for save in page.saves.iter_mut().filter(|save| waits(save)) {
+                        save.version = Some(version);
+                    }
+                }
+                None => page.saves.retain(|save| !waits(save)),
+            })
+            .await?;
+        }
+        Ok(())
     }
 
     pub async fn skill_suggestions(&self) -> Result<Vec<StoredSkillSuggestion>, WenlanError> {

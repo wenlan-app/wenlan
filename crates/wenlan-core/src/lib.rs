@@ -96,6 +96,7 @@ pub mod reranker;
 pub(crate) mod retrieval;
 pub mod router;
 pub mod said_lines;
+pub mod saved_rules;
 pub mod schema;
 pub mod sentences;
 pub mod shared_space;

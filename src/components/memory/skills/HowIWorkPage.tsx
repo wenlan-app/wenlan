@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowClockwise, ArrowCounterClockwise, Play, Stop } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 import {
   applySkillSuggestion,
   dismissSkillSuggestion,
+  getPageRevisions,
   getSpace,
   listSkillBorrowRecords,
   listSkillSuggestions,
@@ -19,13 +22,17 @@ import {
   type SkillSuggestion,
 } from "../../../lib/tauri";
 import { HowIWorkLines } from "./HowIWorkLines";
+import { OverflowMenu } from "../page/OverflowMenu";
+import { formatTimeAgo } from "../../../lib/dateFormat";
 import { RulesToolsHeader, usePageRules } from "./RulesToolsHeader";
 import {
   HOW_I_WORK_QUERY_KEYS,
   howIWorkSpaceName,
+  maintainedSourceCount,
   pageGivesGeneralRules,
   parseHowIWorkLines,
   replaceHowIWorkLine,
+  readRulesPageHistory,
   rulesPageStopped,
   setRulesPageStopped,
   visibleSourceTitle,
@@ -36,7 +43,46 @@ import "./howIWork.css";
 type Props = {
   readonly page: Page;
   readonly onOpenPage: (pageId: string) => void;
+  /** The place at the right end of the page's title row where the "…" menu
+   *  goes. Undefined: the page has no title row of its own here, and the
+   *  menu heads the page. Null: the row is not mounted yet. */
+  readonly titleActionsHost?: HTMLElement | null;
 };
+
+/** One quiet line under the title: "You edited · AI updated it from N
+ *  sources · 2h ago", each part only when it is true, and nothing at all
+ *  when none is. Who edited and when Wenlan's rules write was come only from
+ *  the page's history (`readRulesPageHistory`): while it loads, or when it
+ *  cannot be read, the line names neither, never a guess from the page's
+ *  modified time. */
+function HowIWorkStatus({ page, lines }: { readonly page: Page; readonly lines: readonly SkillLine[] }) {
+  const { t, i18n } = useTranslation();
+  const history = useQuery({
+    queryKey: ["page-revisions-text", page.id],
+    queryFn: () => getPageRevisions(page.id, true),
+    staleTime: 30_000,
+    retry: false,
+  });
+  const locale = i18n.resolvedLanguage ?? i18n.language;
+  const read = history.data ? readRulesPageHistory(history.data.entries) : null;
+  const sources = maintainedSourceCount(lines);
+  const at = sources > 0 ? read?.rulesWrittenAt ?? null : null;
+  const parts: { key: string; text: string }[] = [];
+  if (read?.youEdited) parts.push({ key: "you", text: t("howIWork.page.status.youEdited") });
+  if (sources > 0) parts.push({ key: "ai", text: t("howIWork.page.status.aiUpdated", { count: sources }) });
+  if (at !== null) parts.push({ key: "when", text: locale.startsWith("en") ? formatTimeAgo(at) : formatTimeAgo(at, locale) });
+  if (parts.length === 0) return null;
+  return (
+    <p className="how-i-work-status" data-testid="how-i-work-status">
+      {parts.map((part, index) => (
+        <span key={part.key} data-part={part.key}>
+          {index > 0 ? <span className="how-i-work-status-sep" aria-hidden="true">·</span> : null}
+          {part.key === "when" && at !== null ? <time dateTime={new Date(at * 1000).toISOString()}>{part.text}</time> : part.text}
+        </span>
+      ))}
+    </p>
+  );
+}
 
 type SuggestionState = "applied" | "hidden";
 
@@ -44,7 +90,7 @@ function recordLine(record: SkillBorrowRecord, lines: readonly SkillLine[]): Ski
   return lines.find((line) => line.id === record.rule_id);
 }
 
-export function HowIWorkPage({ page, onOpenPage }: Props) {
+export function HowIWorkPage({ page, onOpenPage, titleActionsHost }: Props) {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
   const spaceName = howIWorkSpaceName(page);
@@ -83,11 +129,18 @@ export function HowIWorkPage({ page, onOpenPage }: Props) {
     retry: false,
   });
 
+  // A write changes who edited the page and which rules write stands.
+  const readHistoryAgain = () => {
+    void queryClient.invalidateQueries({ queryKey: ["page-revisions", page.id] });
+    void queryClient.invalidateQueries({ queryKey: ["page-revisions-text", page.id] });
+  };
+
   const refresh = useMutation({
     mutationFn: refreshSkills,
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["page", page.id] });
       void queryClient.invalidateQueries({ queryKey: ["pages"] });
+      readHistoryAgain();
       void queryClient.invalidateQueries({ queryKey: HOW_I_WORK_QUERY_KEYS.skillSuggestions });
       void queryClient.invalidateQueries({ queryKey: HOW_I_WORK_QUERY_KEYS.records(spaceName) });
     },
@@ -100,6 +153,7 @@ export function HowIWorkPage({ page, onOpenPage }: Props) {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["page", page.id] });
       void queryClient.invalidateQueries({ queryKey: ["pages"] });
+      readHistoryAgain();
     },
   });
   const suggestionAction = useMutation({
@@ -131,6 +185,7 @@ export function HowIWorkPage({ page, onOpenPage }: Props) {
       if (outcome.outcome !== "saved") throw new Error(outcome.outcome);
       await queryClient.invalidateQueries({ queryKey: ["page", page.id] });
       void queryClient.invalidateQueries({ queryKey: ["pages"] });
+      readHistoryAgain();
       return true;
     } catch {
       setWriteError(true);
@@ -158,28 +213,37 @@ export function HowIWorkPage({ page, onOpenPage }: Props) {
   const actionFailed = refresh.isError || undoNight.isError || suggestionAction.isError || writeError;
   const actionBusy = refresh.isPending || undoNight.isPending || writeBusy;
 
+  // Update now, Undo last night and Stop live behind the "…" at the end of
+  // the title row; the Stop sentence sits under Stop (owner's 2026-11-18
+  // approval of sketch rules-page-v2).
+  const menu = enabled.data === true ? (
+    <OverflowMenu
+      className="how-i-work-menu"
+      label={t("howIWork.page.actionsLabel")}
+      items={[
+        { key: "refresh", label: t("howIWork.page.refresh"), icon: <ArrowClockwise size={16} />, disabled: actionBusy, onSelect: () => refresh.mutate() },
+        { key: "undo", label: t("howIWork.page.undoNight"), icon: <ArrowCounterClockwise size={16} />, disabled: actionBusy || !space.data?.id, onSelect: () => undoNight.mutate() },
+        {
+          key: "stop",
+          label: t(stopped ? "howIWork.page.start" : "howIWork.page.stop"),
+          hint: t(stopped ? "howIWork.page.stoppedNote" : "howIWork.page.stopNote"),
+          icon: stopped ? <Play size={16} /> : <Stop size={16} />,
+          disabled: actionBusy,
+          onSelect: () => { void saveContent(setRulesPageStopped(page.content, !stopped)); },
+        },
+      ]}
+    />
+  ) : null;
+
   return (
     <section className="how-i-work-page" data-testid="how-i-work-page">
-      <RulesToolsHeader delivers={delivers} />
-      {enabled.data === true ? (
-        <div className="how-i-work-page-actions" aria-label={t("howIWork.page.actionsLabel")}>
-          <button className="how-i-work-quiet-action" disabled={actionBusy} onClick={() => refresh.mutate()} type="button">
-            {t("howIWork.page.refresh")}
-          </button>
-          <button className="how-i-work-quiet-action" disabled={actionBusy || !space.data?.id} onClick={() => undoNight.mutate()} type="button">
-            {t("howIWork.page.undoNight")}
-          </button>
-          <button
-            className="how-i-work-quiet-action"
-            disabled={actionBusy}
-            onClick={() => { void saveContent(setRulesPageStopped(page.content, !stopped)); }}
-            type="button"
-          >
-            {t(stopped ? "howIWork.page.start" : "howIWork.page.stop")}
-          </button>
-        </div>
-      ) : null}
-
+      {titleActionsHost === undefined ? <div className="how-i-work-title-actions how-i-work-title-actions--inline">{menu}</div> : null}
+      {titleActionsHost ? createPortal(menu, titleActionsHost) : null}
+      <div className="how-i-work-head">
+        <HowIWorkStatus page={page} lines={lines} />
+        {stopped ? <p className="how-i-work-stopped-note" data-testid="how-i-work-stopped">{t("howIWork.page.stoppedNote")}</p> : null}
+        <RulesToolsHeader delivers={delivers} />
+      </div>
       {recentRecords.length > 0 ? (
         <section className="how-i-work-borrowed" aria-labelledby="how-i-work-borrowed-title">
           <h2 id="how-i-work-borrowed-title">{t("howIWork.page.borrowedTitle")}</h2>
@@ -201,7 +265,6 @@ export function HowIWorkPage({ page, onOpenPage }: Props) {
       ) : null}
 
       <HowIWorkLines lines={lines} onOpenPage={onOpenPage} onEditLine={editLine} ownPageId={page.id} />
-      <p className="how-i-work-stop-note">{t(stopped ? "howIWork.page.stoppedNote" : "howIWork.page.stopNote")}</p>
 
       {matchingSuggestions.length > 0 ? (
         <section className="how-i-work-suggestions" aria-label={t("howIWork.suggestion.sectionTitle")}>

@@ -47,6 +47,7 @@ pub mod responses;
 pub mod session_context;
 pub mod sessions;
 pub mod shared_space;
+pub mod skill_registry;
 pub mod skills;
 pub mod source_annotations;
 pub mod sources;
@@ -121,10 +122,14 @@ pub use sessions::{
     SessionReadEntry, SessionReadKind, SessionRef, UpsertSessionRequest, SESSION_HEADER,
 };
 pub use skills::{
-    RulesDeliveryMethod, RulesDeliveryResponse, RulesDeliveryState, SkillBorrowRecord, SkillLine,
+    saved_from_label, saved_from_self_named, RemoveRuleRequest, RemoveRuleResponse,
+    RulesDeliveryMethod, RulesDeliveryResponse, RulesDeliveryState, SaveRuleRequest,
+    SaveRuleResponse, SavedBy, SavedByKind, SavedRuleStatus, SkillBorrowRecord, SkillLine,
     SkillLineKind, SkillReportKind, SkillReportRequest, SkillSuggestion,
     SkillSuggestionActionResponse, SkillsRefreshResponse, SpaceRulesActionResponse,
-    SpaceRulesResponse, SpaceRulesSuggestion, ToolRulesDelivery,
+    SpaceRulesResponse, SpaceRulesSuggestion, ToolRulesDelivery, RULE_REMOVED_IN_APP,
+    RULE_REMOVED_IN_APP_WORDS, SAVED_FROM_TERMINAL, SAVED_FROM_UNNAMED_TOOL, SAVED_RULES_PER_DAY,
+    SAVED_RULES_PER_TOOL_PER_DAY, SAVED_RULE_MAX_CHARS,
 };
 pub use sources::{MemoryType, RawDocument, SourceType, StabilityTier, SyncStatus};
 pub use space_context::{WriteOutcome, WriteSpaceSource, WriteSpaceTarget};
