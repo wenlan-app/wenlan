@@ -61,6 +61,7 @@ fn fixture() -> Fixture {
             daemon_url: "http://127.0.0.1:9".into(),
             mcp: Arc::default(),
             sessions: Arc::default(),
+            auth: Arc::default(),
         },
         _dir: dir,
         folder,

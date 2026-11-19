@@ -132,8 +132,16 @@ enum Commands {
         #[arg(short, long, default_value_t = 10)]
         limit: usize,
     },
-    /// Read the working rules approved for a Space.
-    Rules,
+    /// Read the working rules for a Space, or save and remove one of your own (add, remove).
+    Rules {
+        #[command(subcommand)]
+        command: Option<commands::skills::RulesCmd>,
+    },
+    /// List, find and take in skills your AI tools can use (list, search, show, scan, import, install, remove).
+    Skills {
+        #[command(subcommand)]
+        command: Option<commands::skills::SkillsCmd>,
+    },
     /// Read the current Space Brief, optionally with related context.
     Brief(commands::brief::BriefArgs),
     /// List pages or open one by title; read, write, rename, move, delete or restore one (read, write, rename, delete, move, history, restore, links, lock, unlock).
@@ -260,8 +268,8 @@ const HELP_GROUPS: &[(&str, &[&str])] = &[
     (
         "More",
         &[
-            "memories", "sources", "follow", "unfollow", "follows", "spaces", "repo", "curate",
-            "lint", "models", "keys", "steep", "outbox", "export", "entities", "tool",
+            "skills", "memories", "sources", "follow", "unfollow", "follows", "spaces", "repo",
+            "curate", "lint", "models", "keys", "steep", "outbox", "export", "entities", "tool",
         ],
     ),
 ];
@@ -478,8 +486,24 @@ async fn main() -> anyhow::Result<ExitCode> {
         Commands::Brief(args) if args.is_update()
     );
     let is_outbox = matches!(&cli.command, Commands::Outbox { .. });
+    // A rule for every Space, and the removal of a rule by its id, are not
+    // for the Space this folder or the default points at: they carry a
+    // Space only when `WENLAN_SPACE` limits this terminal to one, and then
+    // the daemon holds them to it (UX-SKILL-14).
+    let is_rule_beyond_one_space = matches!(
+        &cli.command,
+        Commands::Rules {
+            command: Some(
+                commands::skills::RulesCmd::Add {
+                    every_space: true,
+                    ..
+                } | commands::skills::RulesCmd::Remove { .. }
+            ),
+        }
+    );
     let operation = match &cli.command {
-        Commands::Recall { .. } | Commands::Memories { .. } | Commands::Rules => {
+        Commands::Rules { .. } if is_rule_beyond_one_space => None,
+        Commands::Recall { .. } | Commands::Memories { .. } | Commands::Rules { .. } => {
             Some(CliSpaceOperation::Read)
         }
         Commands::Brief(args) if !args.is_update() => Some(CliSpaceOperation::Read),
@@ -505,6 +529,30 @@ async fn main() -> anyhow::Result<ExitCode> {
         }
         effective_cli_space = None;
         base_client
+    } else if is_rule_beyond_one_space {
+        let strict_space = std::env::var("WENLAN_SPACE")
+            .ok()
+            .map(|space| space.trim().to_string())
+            .filter(|space| !space.is_empty());
+        let every_space = matches!(
+            &cli.command,
+            Commands::Rules {
+                command: Some(commands::skills::RulesCmd::Add { .. })
+            }
+        );
+        commands::skills::refuse_rule_beyond_one_space(
+            every_space,
+            strict_space.as_deref(),
+            cli.space.as_deref(),
+            cli.all_spaces,
+        )?;
+        effective_cli_space = strict_space;
+        client::WenlanClient::from_env_with_context(
+            agent_name.as_deref(),
+            effective_cli_space.as_deref(),
+        )?
+        .with_session(session.clone())?
+        .with_recovery(recovery_enabled)
     } else if let Some(operation) = operation {
         let context = match base_client.list_spaces().await {
             Ok(spaces) => {
@@ -619,7 +667,7 @@ async fn main() -> anyhow::Result<ExitCode> {
     let format = cli.format.resolve();
     match cli.command {
         Commands::Status => commands::status::run(&client, format, cli.quiet).await?,
-        Commands::Open => commands::web::run(&client)?,
+        Commands::Open => commands::web::run(&client).await?,
         Commands::Setup {
             basic,
             model,
@@ -684,7 +732,12 @@ async fn main() -> anyhow::Result<ExitCode> {
         Commands::Recall { query, limit } => {
             commands::recall::run(&client, format, cli.quiet, query, limit).await?
         }
-        Commands::Rules => commands::skills::read_space_rules(&client, format, cli.quiet).await?,
+        Commands::Rules { command } => {
+            commands::skills::run_rules(&client, format, cli.quiet, command).await?
+        }
+        Commands::Skills { command } => {
+            commands::skills::run_skills(&client, format, cli.quiet, command).await?
+        }
         Commands::Brief(args) => {
             commands::brief::run(
                 &client,

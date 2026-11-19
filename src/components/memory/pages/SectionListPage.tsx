@@ -9,7 +9,6 @@ import { knowledgeFolderCreate, listSpaceRulesSuggestions, skillsFromLibraryEnab
 import { confirmAction } from "../../../lib/confirmAction";
 import { formatTimeAgo } from "../../../lib/dateFormat";
 import { exampleWikiActive, useExampleWikiActive } from "../../../lib/exampleWiki/mode";
-import { isWebBuild } from "../../../web/runtime";
 import { useTeamAccess } from "../../../web/teamAccess";
 import { pinPage, unpinPage, usePinnedPages } from "../navigation/pinnedPages";
 import { HOW_I_WORK_QUERY_KEYS, howIWorkPageTitle } from "../skills/howIWorkModel";
@@ -269,7 +268,9 @@ export function SectionListPage({
   const empty = sections.loaded && rows.length === 0 && folderCards.length === 0;
   const menuItems = !canWrite ? [] : [
     ...(section === "docs" && !member ? ["folder" as const] : []),
-    ...(section === "skills" && onFindSkills && !isWebBuild() ? ["find" as const] : []),
+    // A team member's browser has no skills of its own to hold: the entry
+    // shows wherever Wenlan is the person's own.
+    ...(section === "skills" && onFindSkills && !member ? ["find" as const] : []),
   ];
 
   return (

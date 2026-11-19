@@ -65,6 +65,22 @@ describe("page sections", () => {
     expect(pageSection(page({ status: "draft", folder_path: "規則" }))).toBe("rules");
   });
 
+  it("UX-SKILL-14: lists a page that keeps the rules the person asked to be saved under Rules by what the daemon says, never by its title", () => {
+    const told = new Set(["saved-every", "saved-wenlan"]);
+    const every = page({ id: "saved-every", title: "Rules I saved", storage_path: "Rules I saved.md" });
+    const wenlan = page({ id: "saved-wenlan", title: "Rules I saved — Wenlan", space: "Wenlan", storage_path: "Wenlan/Rules I saved — Wenlan.md" });
+    expect(pageSection(every, undefined, told)).toBe("rules");
+    expect(pageSection(wenlan, undefined, told)).toBe("rules");
+    // Renamed by the person: it still keeps the rules, so it stays under Rules.
+    expect(pageSection({ ...wenlan, title: "Work conventions", storage_path: "Wenlan/Work conventions.md" }, undefined, told)).toBe("rules");
+    // A page that only carries the title, made by anyone, is an ordinary page.
+    expect(pageSection(page({ id: "lookalike", title: "Rules I saved — anything", storage_path: "Rules I saved — anything.md" }), undefined, told)).toBe("docs");
+    expect(pageSection(page({ id: "lookalike-2", title: "Rules I saved", storage_path: "notes.md" }), undefined, told)).toBe("docs");
+    // Until the daemon answers, no page is one by its title either.
+    expect(pageSection(every)).toBe("docs");
+    expect(pageSection(wenlan)).toBe("docs");
+  });
+
   it("finds the section's folder for a new page, nearest the top first, and never one inside a Space's or a team's folder", () => {
     expect(sectionFolderPath("rules", ["Work", "Work/Rules", "規則"])).toBe("規則");
     expect(sectionFolderPath("skills", ["Work", "Rules"])).toBeNull();

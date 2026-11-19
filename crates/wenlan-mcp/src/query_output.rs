@@ -325,8 +325,13 @@ pub struct QuerySpaceRuleLine {
     pub source_revision_at: i64,
     pub source_quote: String,
     /// `written_by_you`: the person wrote this rule themselves on that page.
-    /// `from_page`: Wenlan took it from that page and the person accepted it.
+    /// `saved`: the person asked for it to be saved; `saved_from` says where
+    /// the save came from. `from_page`: Wenlan took it from that page and
+    /// the person accepted it.
     pub source: String,
+    /// For a `saved` rule: the AI tool the save came from, or `terminal`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub saved_from: Option<String>,
 }
 
 pub fn project_space_rules(response: &SpaceRulesResponse) -> QuerySpaceRulesOutput {
@@ -348,10 +353,15 @@ pub fn project_space_rules(response: &SpaceRulesResponse) -> QuerySpaceRulesOutp
                 source_quote: line.source_quote.clone(),
                 source: if line.hand_written {
                     "written_by_you"
+                } else if line.saved_from.is_some() {
+                    // Never "written by you": Wenlan knows where a save
+                    // came from, not who spoke (UX-SKILL-14).
+                    "saved"
                 } else {
                     "from_page"
                 }
                 .to_string(),
+                saved_from: line.saved_from.clone(),
             })
             .collect(),
     }
@@ -368,6 +378,7 @@ mod space_rules_tests {
             space_id: "space-1".into(),
             space_name: "Research".into(),
             rules_page_id: Some("rules-1".into()),
+            saved_rules_page_ids: Vec::new(),
             lines: vec![SkillLine {
                 id: "rule-1".into(),
                 kind: SkillLineKind::Rule,
@@ -380,6 +391,8 @@ mod space_rules_tests {
                 person_edited: false,
                 general: false,
                 hand_written: false,
+                saved_from: None,
+                saved_by: None,
             }],
         };
 

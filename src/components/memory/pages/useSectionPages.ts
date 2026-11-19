@@ -8,6 +8,7 @@ import { EXPLICIT_BROWSE_QUERY_POLICY, listAllActivePages, listAllActivePagesExp
 import { collectPageInventory } from "./pageInventory";
 import { PAGE_SECTIONS, pageSection, spaceLayout, type PageSection, type SpaceLayout } from "./pageSections";
 import { SPACE_FOLDERS_QUERY_KEY } from "./SpaceFoldersPrompt";
+import { useSavedRulesPageIds } from "../skills/useSavedRulesPages";
 
 export type SectionPages = {
   /** Every page, whichever side it is on. */
@@ -38,7 +39,9 @@ export function useSectionPages(browsing = false): SectionPages {
   // The daemon's own setting says whether Spaces keep folders of their own.
   const spaceFolders = useQuery({ queryKey: SPACE_FOLDERS_QUERY_KEY, queryFn: getSpaceFolders, retry: false, staleTime: Infinity });
   const layout = useMemo(() => spaceLayout(allPages, spaceFolders.data === true, scope.teamSpaces), [allPages, spaceFolders.data, scope.teamSpaces]);
-  const sectionOf = useCallback((page: Page) => pageSection(page, layout), [layout]);
+  // Which pages keep saved rules is the daemon's to say, by id.
+  const savedRulesPages = useSavedRulesPageIds();
+  const sectionOf = useCallback((page: Page) => pageSection(page, layout, savedRulesPages), [layout, savedRulesPages]);
   const bySection = useMemo(() => {
     const split: Record<PageSection, Page[]> = { docs: [], skills: [], rules: [] };
     for (const page of pages) split[sectionOf(page)].push(page);

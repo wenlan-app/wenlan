@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Shared display helpers for the page-detail subcomponents.
 import type { TFunction } from "i18next";
-import { agentDisplayName, type MemoryItem, type PageChangelogEntry } from "../../../lib/tauri";
+import { agentDisplayName, RULE_REMOVED_IN_APP, SAVED_FROM_TERMINAL, type MemoryItem, type PageChangelogEntry } from "../../../lib/tauri";
 import { writerAgentName } from "../sharing/teamPeople";
 
 export function prettyAgent(name: string | null | undefined): string {
   return agentDisplayName(name) ?? "unknown agent";
 }
+
+/** How the daemon opens the id of a tool whose own name reads as the
+ *  terminal, the person or Wenlan (`saved_rules::SELF_NAMED_TOOL_ID_PREFIX`). */
+const SELF_NAMED_TOOL_PREFIX = "tool:";
 
 const WRITER_LABEL_KEYS = {
   manual_edit: "revisionLabel.writer.manualEdit",
@@ -27,13 +31,42 @@ const WRITER_LABEL_KEYS = {
   create: "revisionLabel.writer.create",
 } as const;
 
+/** A rule the person asked to be saved, or to be taken out again
+ * (`edited_by` is `rule_save`, UX-SKILL-14): where the ask came from. It
+ * names the AI tool or the terminal, and "you" only for the Remove the
+ * person pressed in the app. `removed` says the change took a rule out. */
+function ruleSaveLabel(t: TFunction, agent: string | null | undefined, removed: boolean): string {
+  const from = agent?.trim() ?? "";
+  if (from === RULE_REMOVED_IN_APP) {
+    return t(removed ? "revisionLabel.writer.ruleRemovedByYou" : "revisionLabel.writer.ruleSaved");
+  }
+  if (from === SAVED_FROM_TERMINAL) {
+    return t(removed ? "revisionLabel.writer.ruleRemovedTerminal" : "revisionLabel.writer.ruleSavedTerminal");
+  }
+  // A tool that calls itself the terminal, the person or Wenlan is recorded
+  // as `tool:<name>`. It is said to be an AI tool, with the name it gave in
+  // quotes and as it gave it: never the terminal, the person or the app.
+  if (from.startsWith(SELF_NAMED_TOOL_PREFIX)) {
+    const called = from.slice(SELF_NAMED_TOOL_PREFIX.length).trim();
+    if (!called) return t(removed ? "revisionLabel.writer.ruleRemoved" : "revisionLabel.writer.ruleSaved");
+    return t(removed ? "revisionLabel.writer.ruleRemovedSelfNamed" : "revisionLabel.writer.ruleSavedSelfNamed", { name: called });
+  }
+  const name = writerAgentName(t, from);
+  if (!name) return t(removed ? "revisionLabel.writer.ruleRemoved" : "revisionLabel.writer.ruleSaved");
+  return t(removed ? "revisionLabel.writer.ruleRemovedNamed" : "revisionLabel.writer.ruleSavedNamed", { agent: name });
+}
+
 /** Who made a page revision, in words the reader can use. Never the raw
- * `edited_by` slug: an unrecognized writer reads as a plain "Updated". */
+ * `edited_by` slug: an unrecognized writer reads as a plain "Updated".
+ * `charDelta` is the change's size where it is known; it tells a saved rule
+ * from a removed one. */
 export function revisionWriterLabel(
   t: TFunction,
   editedBy: string,
   agent?: string | null,
+  charDelta?: number | null,
 ): string {
+  if (editedBy === "rule_save") return ruleSaveLabel(t, agent, (charDelta ?? 0) < 0);
   if (editedBy === "agent_refresh") {
     const name = writerAgentName(t, agent);
     return name

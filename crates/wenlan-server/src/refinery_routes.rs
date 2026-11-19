@@ -617,6 +617,10 @@ mod research_scope_tests {
                             wenlan_types::requests::CALLER_HEADER,
                             wenlan_types::requests::PERSON_CALLER_VALUE,
                         )
+                        .header(
+                            wenlan_types::requests::PERSON_KEY_HEADER,
+                            crate::person_key::test_key(),
+                        )
                         .header("x-wenlan-space", "B")
                         .header("content-type", "application/json")
                         .body(Body::from(body))

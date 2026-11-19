@@ -834,6 +834,68 @@ pub fn member_by_id(path: &Path, id: &str) -> Result<Option<Member>, WenlanError
     Ok(read_team(path)?.members.into_iter().find(|m| m.id == id))
 }
 
+/// The active member with this provider account linked, if any. Who the
+/// account is is `(issuer, subject)`; an email never finds a member. A
+/// removed member is never found.
+pub fn member_by_identity(
+    path: &Path,
+    issuer: &str,
+    subject: &str,
+) -> Result<Option<Member>, WenlanError> {
+    Ok(read_team(path)?
+        .members
+        .into_iter()
+        .find(|m| m.is_active() && has_identity(m, issuer, subject)))
+}
+
+fn has_identity(member: &Member, issuer: &str, subject: &str) -> bool {
+    member
+        .identities
+        .iter()
+        .any(|i| i.issuer == issuer && i.subject == subject)
+}
+
+/// Links a provider account to an active member, in one change under the
+/// file's lock: refused with [`WenlanError::Conflict`] when another active
+/// member already has the same `(issuer, subject)` (a removed member's
+/// links no longer count: they cannot sign in, and the person may be
+/// invited again as a new member). Linking what the member already has
+/// changes only the email shown. `identity.linked_at` is set here.
+pub fn link_identity(
+    path: &Path,
+    member_id: &str,
+    mut identity: Identity,
+) -> Result<Member, WenlanError> {
+    if identity.issuer.trim().is_empty() || identity.subject.trim().is_empty() {
+        return Err(WenlanError::Validation(
+            "an identity needs an issuer and a subject".into(),
+        ));
+    }
+    identity.linked_at = now();
+    change_team(path, |file| {
+        let taken = file.members.iter().any(|other| {
+            other.id != member_id
+                && other.is_active()
+                && has_identity(other, &identity.issuer, &identity.subject)
+        });
+        if taken {
+            return Err(WenlanError::Conflict(
+                "that account is linked to another member".into(),
+            ));
+        }
+        let member = find_active(file, member_id)?;
+        match member
+            .identities
+            .iter_mut()
+            .find(|i| i.issuer == identity.issuer && i.subject == identity.subject)
+        {
+            Some(known) => known.email = identity.email.clone(),
+            None => member.identities.push(identity.clone()),
+        }
+        Ok(member.clone())
+    })
+}
+
 /// The active member whose legacy key or non-revoked tool key this is, and
 /// which of the two it was.
 pub fn authenticate(path: &Path, key: &str) -> Result<Option<Authenticated>, WenlanError> {

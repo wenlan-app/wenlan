@@ -60,19 +60,28 @@
 }
 
 .how-i-work-line {
-  display: grid;
-  grid-template-columns: 78px minmax(0, 1fr);
-  align-items: start;
-  gap: 13px;
   min-width: 0;
+}
+
+/* A decision or pitfall carries its tag before the text; a rule carries none. */
+.how-i-work-line-main {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  min-width: 0;
+}
+
+.how-i-work-line-main > :not(.how-i-work-chip) {
+  flex: 0 1 auto;
 }
 
 .how-i-work-chip {
   display: inline-flex;
+  flex: none;
   align-items: center;
   justify-content: center;
-  min-height: 24px;
-  padding: 3px 9px;
+  min-height: 21px;
+  padding: 2px 8px;
   border-radius: var(--mem-radius-full);
   background: var(--mem-indigo-bg);
   color: var(--mem-accent-indigo);
@@ -107,6 +116,7 @@
 .how-i-work-line-edit {
   width: max-content;
   max-width: 100%;
+  margin-inline-start: -3px;
   padding: 1px 3px;
   border: 0;
   border-radius: var(--mem-r-4);
@@ -153,7 +163,6 @@
 }
 
 .how-i-work-actions,
-.how-i-work-page-actions,
 .how-i-work-suggestion-actions {
   display: flex;
   flex-wrap: wrap;
@@ -166,8 +175,7 @@
 }
 
 .how-i-work-primary,
-.how-i-work-secondary,
-.how-i-work-quiet-action {
+.how-i-work-secondary {
   min-height: 34px;
   padding: 0 14px;
   border: 0;
@@ -186,28 +194,24 @@
   background: var(--mem-accent-indigo-hover);
 }
 
-.how-i-work-secondary,
-.how-i-work-quiet-action {
+.how-i-work-secondary {
   background: var(--mem-detail-surface-raised);
   color: var(--mem-text-secondary);
 }
 
-.how-i-work-secondary:hover,
-.how-i-work-quiet-action:hover {
+.how-i-work-secondary:hover {
   color: var(--mem-text);
   background: var(--mem-hover-strong);
 }
 
 .how-i-work-primary:disabled,
-.how-i-work-secondary:disabled,
-.how-i-work-quiet-action:disabled {
+.how-i-work-secondary:disabled {
   cursor: default;
   opacity: 0.45;
 }
 
 .how-i-work-primary:focus-visible,
 .how-i-work-secondary:focus-visible,
-.how-i-work-quiet-action:focus-visible,
 .how-i-work-line-source button:focus-visible,
 .how-i-work-suggestion-source button:focus-visible,
 .how-i-work-line-edit:focus-visible,
@@ -231,14 +235,76 @@
   font-family: var(--mem-font-body);
 }
 
-.how-i-work-page-actions {
-  margin-top: -4px;
+/* The status line sits right under the title, the tools row under it. */
+.how-i-work-head {
+  display: grid;
+  gap: 22px;
+  margin-top: -8px;
 }
 
-.how-i-work-page-actions .how-i-work-quiet-action {
-  min-height: 31px;
-  padding-inline: 11px;
-  font-size: 12.5px;
+.how-i-work-head > .rules-tools {
+  margin: 0;
+}
+
+.how-i-work-status {
+  margin: 0;
+  color: var(--mem-text-tertiary);
+  font: 13px/1.5 var(--mem-font-body);
+}
+
+.how-i-work-status > span {
+  white-space: nowrap;
+}
+
+.how-i-work-status-sep {
+  margin: 0 7px;
+}
+
+/* A stopped page says so on the page, not only in the menu. */
+.how-i-work-stopped-note {
+  margin: 0;
+  color: var(--mem-status-warning-text);
+  font: 13px/1.5 var(--mem-font-body);
+}
+
+/* The "…" at the right end of the title row. */
+.how-i-work-title-actions {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  align-self: center;
+}
+
+.how-i-work-title-actions:empty {
+  display: none;
+}
+
+.how-i-work-title-actions--inline {
+  justify-self: end;
+}
+
+.how-i-work-menu .overflow-menu__trigger {
+  --mem-icon-action-size: 32px;
+}
+
+.how-i-work-menu .overflow-menu__list {
+  width: max-content;
+  min-width: 220px;
+  max-width: min(360px, calc(100vw - 32px));
+  padding: 6px;
+}
+
+.how-i-work-menu .overflow-menu__item {
+  font-size: 14px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.how-i-work-menu .overflow-menu__hint {
+  max-width: 300px;
+  margin-top: 3px;
+  line-height: 1.5;
+  white-space: normal;
 }
 
 .how-i-work-borrowed {
@@ -276,12 +342,6 @@
 
 .how-i-work-page > .how-i-work-lines .how-i-work-line-text {
   font-size: 15px;
-}
-
-.how-i-work-stop-note {
-  margin: -12px 0 0 91px;
-  color: var(--mem-text-tertiary);
-  font: 12px/1.55 var(--mem-font-body);
 }
 
 .how-i-work-suggestions {
@@ -388,52 +448,162 @@
     font-size: 18px;
   }
 
-  .how-i-work-line {
-    grid-template-columns: 68px minmax(0, 1fr);
-    gap: 10px;
-  }
-
-  .how-i-work-stop-note {
-    margin-left: 78px;
-  }
 }
 
 .how-i-work-line-general > span {
   margin: 0 6px;
 }
 
-/* Which AI tools the rules are used in. Plain rows, no dividers. */
+/* Which AI tools the rules are used in: one row of small chips, each with
+   the tool's logo (or a short badge) and a dot. No dividers. */
 .rules-tools {
-  display: grid;
-  gap: 8px;
   margin: 0 0 22px;
 }
 
 .rules-tools-row {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 8px 10px;
+  gap: 8px;
   margin: 0;
   color: var(--mem-text-secondary);
   font: 13px/1.5 var(--mem-font-body);
 }
 
-.rules-tools-lead { white-space: nowrap; }
-.rules-tools-lead[data-quiet="true"] { visibility: hidden; }
+.rules-tools-lead { flex: none; margin-right: 2px; white-space: nowrap; }
 
-.rules-tools-chip {
-  padding: 3px 10px;
-  border: 1px solid var(--mem-border);
-  border-radius: var(--mem-radius-full);
-  color: var(--mem-text);
-  white-space: nowrap;
+.rules-tools-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
-/* One line always; in a very narrow window it is cut short, never spilled. */
-.rules-tools-standing { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rules-tools-row[data-standing="overLimit"] .rules-tools-standing,
-.rules-tools-row[data-standing="blocked"] .rules-tools-standing { color: var(--mem-status-warning-text); }
+.rules-tools-item {
+  position: relative;
+  display: inline-flex;
+}
+
+.rules-tools-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 28px;
+  padding: 0 11px 0 8px;
+  border: 1px solid var(--mem-border);
+  border-radius: var(--mem-radius-full);
+  background: var(--mem-surface);
+  color: var(--mem-text);
+  font: 13px/1 var(--mem-font-body);
+  white-space: nowrap;
+  cursor: default;
+}
+
+.rules-tools-chip:hover,
+.rules-tools-chip:focus-visible,
+.rules-tools-chip[data-pinned="true"] {
+  background: var(--mem-detail-surface-raised);
+}
+
+.rules-tools-chip:focus-visible {
+  outline: 2px solid var(--mem-accent-page);
+  outline-offset: 2px;
+}
+
+/* Brand colour where it reads on the chip in this theme, else the theme's
+   own text colour (toolLogos.ts says which). */
+.rules-tools-logo {
+  display: block;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--logo-dark, var(--mem-text));
+}
+
+:root[data-theme="light"] .rules-tools-logo {
+  color: var(--logo-light, var(--mem-text));
+}
+
+.rules-tools-badge {
+  display: grid;
+  flex: none;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 3px;
+  border-radius: var(--mem-radius-full);
+  background: var(--mem-hover-strong);
+  color: var(--mem-text-secondary);
+  font: 600 9px/1 var(--mem-font-body);
+  letter-spacing: -0.02em;
+}
+
+/* Each state has its own mark, not only its own colour. */
+.rules-tools-dot {
+  display: block;
+  flex: none;
+  width: 11px;
+  height: 11px;
+}
+
+.rules-tools-dot[data-dot="delivered"] { color: var(--mem-accent-sage); }
+.rules-tools-dot[data-dot="connected"] { color: var(--mem-text-tertiary); }
+.rules-tools-dot[data-dot="problem"] { color: var(--mem-accent-amber); }
+.rules-tools-dot-glyph { stroke: var(--mem-surface); }
+
+/* The small card a chip opens on hover, focus or a click. Its top padding
+   is see-through and part of the card, so the pointer can move from the
+   chip into the card without leaving it. */
+.rules-tools-card {
+  position: absolute;
+  z-index: 30;
+  top: 100%;
+  left: 0;
+  display: block;
+  padding-top: 8px;
+}
+
+.rules-tools-card[hidden] { display: none; }
+
+.rules-tools-card-surface {
+  display: grid;
+  gap: 6px;
+  width: max-content;
+  min-width: 220px;
+  max-width: min(330px, calc(100vw - 16px));
+  padding: 12px 14px 13px;
+  color: var(--mem-text);
+  font: 13px/1.5 var(--mem-font-body);
+  white-space: normal;
+}
+
+.rules-tools-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.rules-tools-card-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--mem-text-secondary);
+}
+
+.rules-tools-card-state-text { display: inline-block; }
+.rules-tools-card-state-text::first-letter { text-transform: uppercase; }
+.rules-tools-card-state[data-dot="problem"] { color: var(--mem-status-warning-text); }
+
+.rules-tools-card-detail {
+  margin-left: 19px;
+  color: var(--mem-text-tertiary);
+  font-size: 12.5px;
+}
 
 .how-i-work-line-source .how-i-work-line-note::before { content: "·"; margin: 0 6px; }
 
@@ -455,3 +625,15 @@
 .rules-page-lines { margin: 0 0 22px; }
 .rules-page-lines-title { margin: 0 0 8px; color: var(--mem-text-tertiary); font: 12px/1.5 var(--mem-font-body); }
 .rules-pending .space-rules-ask-all { margin: 0; }
+
+/* Remove on a rule the person asked to be saved: a quiet word at the end of
+   its line, never a second row. */
+/* The source line wraps between its parts, never inside one: a long "saved
+   from" stays whole and Remove drops to the next line with it. */
+.how-i-work-line-source { overflow-wrap: anywhere; }
+.how-i-work-line-source .how-i-work-line-general { white-space: nowrap; }
+.how-i-work-line-source .how-i-work-line-remove { margin-left: 12px; color: var(--mem-text-secondary); white-space: nowrap; }
+.rules-page-removed-note { margin: 0 0 14px; }
+.how-i-work-line-source .how-i-work-line-remove:hover { color: var(--mem-text); }
+.how-i-work-line-source .how-i-work-line-remove:disabled { opacity: 0.5; cursor: default; text-decoration: none; }
+.how-i-work-line-remove-note { margin: 0; color: var(--mem-status-warning-text); font: 12px/1.45 var(--mem-font-body); }

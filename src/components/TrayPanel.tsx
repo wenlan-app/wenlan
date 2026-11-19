@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { howIWorkPageTitle } from "./memory/skills/howIWorkModel";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -239,11 +240,11 @@ export default function TrayPanel() {
                     key={page.id}
                     type="button"
                     className="tray-panel-row"
-                    aria-label={t("trayPanel.openPage", { title: page.title })}
+                    aria-label={t("trayPanel.openPage", { title: howIWorkPageTitle(page, t) })}
                     onClick={() => void openMain({ kind: "page", pageId: page.id })}
                   >
                     <PageIcon />
-                    <span className="tray-panel-row-title">{page.title}</span>
+                    <span className="tray-panel-row-title">{howIWorkPageTitle(page, t)}</span>
                     <span className="tray-panel-row-meta">
                       {whenLabel(page.last_modified, now, i18n.language, t("trayPanel.yesterday"))}
                     </span>

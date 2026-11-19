@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { TFunction } from "i18next";
 import { i18n } from "../../../i18n";
 import type { SharedStatus } from "../../../lib/tauri";
-import { historyItemLabel, historyRows } from "./historyItems";
+import { historyItemLabel, historyItemQuote, historyRows } from "./historyItems";
 
 const tFor = (lng: "en" | "zh-Hans" | "zh-Hant") => i18n.getFixedT(lng) as unknown as TFunction;
 
@@ -70,5 +70,28 @@ describe("an archive or a restore says who did it, or reads whole without a name
     expect(historyItemLabel(tFor("zh-Hant"), row("archived", null))).toBe("這篇筆記已封存");
     expect(historyItemLabel(tFor("zh-Hant"), row("restored", null))).toBe("這篇筆記已還原");
     expect(historyItemLabel(tFor("zh-Hans"), row("archived", null))).toBe("这篇笔记已归档");
+  });
+});
+
+describe("UX-SKILL-14 a saved rule's history says where the ask came from", () => {
+  const saved = { kind: "ai_edit" as const, at: 1_700_000_000, version: 2, edited_by: "rule_save", agent: "cursor", delta_summary: "+27 chars", person_asked: "save this as a rule: release on Tuesdays" };
+
+  it("labels a save and a removal by the tool or the terminal, from the entry or the daemon's summary", () => {
+    expect(historyItemLabel(tFor("en"), saved)).toBe("Rule saved from Cursor");
+    expect(historyItemLabel(tFor("en"), { ...saved, delta_summary: "-27 chars" })).toBe("Rule removed in Cursor");
+    // The changelog entry's number wins over the summary's text.
+    expect(historyItemLabel(tFor("en"), { ...saved, delta_summary: null }, undefined, { char_delta: -27 })).toBe("Rule removed in Cursor");
+    expect(historyItemLabel(tFor("zh-Hant"), { ...saved, agent: "terminal" })).toBe("從終端機存的規則");
+    expect(historyItemQuote(saved)).toBe("save this as a rule: release on Tuesdays");
+  });
+
+  it("shows the Remove pressed in the app as the person's, with no quote: they said nothing", () => {
+    const pressed = { ...saved, agent: "wenlan-app", delta_summary: "-27 chars", person_asked: "Remove, pressed in the Wenlan app" };
+    expect(historyItemLabel(tFor("en"), pressed)).toBe("You removed a rule");
+    expect(historyItemLabel(tFor("zh-Hans"), pressed)).toBe("你移除了一条规则");
+    expect(historyItemQuote(pressed)).toBeNull();
+    // Any other change keeps its quote.
+    expect(historyItemQuote({ edited_by: "person_asked", agent: "wenlan-app", person_asked: "Remove it." })).toBe("Remove it.");
+    expect(historyItemQuote({ edited_by: "manual_edit", agent: null, person_asked: " " })).toBeNull();
   });
 });

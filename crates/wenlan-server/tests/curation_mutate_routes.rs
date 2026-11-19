@@ -70,6 +70,10 @@ async fn accept_revision_succeeds_and_returns_typed_response() {
                 .method("POST")
                 .uri("/api/memory/revision/mem_ar1_target/accept")
                 .header(CALLER_HEADER, PERSON_CALLER_VALUE)
+                .header(
+                    wenlan_types::requests::PERSON_KEY_HEADER,
+                    common::person_key(),
+                )
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -94,6 +98,10 @@ async fn accept_revision_accepts_revision_source_id() {
                 .method("POST")
                 .uri("/api/memory/revision/mem_ar_rev_id_rev/accept")
                 .header(CALLER_HEADER, PERSON_CALLER_VALUE)
+                .header(
+                    wenlan_types::requests::PERSON_KEY_HEADER,
+                    common::person_key(),
+                )
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -116,6 +124,10 @@ async fn accept_revision_returns_404_on_missing_target() {
                 .method("POST")
                 .uri("/api/memory/revision/mem_missing/accept")
                 .header(CALLER_HEADER, PERSON_CALLER_VALUE)
+                .header(
+                    wenlan_types::requests::PERSON_KEY_HEADER,
+                    common::person_key(),
+                )
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -136,6 +148,10 @@ async fn accept_revision_returns_404_on_re_call() {
                 .method("POST")
                 .uri("/api/memory/revision/mem_ar2_target/accept")
                 .header(CALLER_HEADER, PERSON_CALLER_VALUE)
+                .header(
+                    wenlan_types::requests::PERSON_KEY_HEADER,
+                    common::person_key(),
+                )
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -149,6 +165,10 @@ async fn accept_revision_returns_404_on_re_call() {
                 .method("POST")
                 .uri("/api/memory/revision/mem_ar2_target/accept")
                 .header(CALLER_HEADER, PERSON_CALLER_VALUE)
+                .header(
+                    wenlan_types::requests::PERSON_KEY_HEADER,
+                    common::person_key(),
+                )
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -179,9 +199,22 @@ async fn ux_who_2_an_ai_caller_cannot_accept_a_revision_the_app_can() {
         vec![],
         vec![
             (CALLER_HEADER, PERSON_CALLER_VALUE),
+            (
+                wenlan_types::requests::PERSON_KEY_HEADER,
+                common::person_key(),
+            ),
             ("x-agent-name", "openai-test"),
         ],
         vec![(CALLER_HEADER, "agent")],
+        // The marker without the person key, or with a wrong one, is not the app.
+        vec![(CALLER_HEADER, PERSON_CALLER_VALUE)],
+        vec![
+            (CALLER_HEADER, PERSON_CALLER_VALUE),
+            (
+                wenlan_types::requests::PERSON_KEY_HEADER,
+                "0000000000000000000000000000000000000000000000000000000000000000",
+            ),
+        ],
     ] {
         let response = router.clone().oneshot(accept(&headers)).await.unwrap();
         assert_eq!(
@@ -209,7 +242,13 @@ async fn ux_who_2_an_ai_caller_cannot_accept_a_revision_the_app_can() {
     );
 
     let response = router
-        .oneshot(accept(&[(CALLER_HEADER, PERSON_CALLER_VALUE)]))
+        .oneshot(accept(&[
+            (CALLER_HEADER, PERSON_CALLER_VALUE),
+            (
+                wenlan_types::requests::PERSON_KEY_HEADER,
+                common::person_key(),
+            ),
+        ]))
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);

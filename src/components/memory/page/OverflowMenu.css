@@ -53,3 +53,19 @@
   font-size: 12px;
   font-weight: 400;
 }
+
+.overflow-menu__item[data-icon="true"] {
+  grid-template-columns: 16px minmax(0, 1fr);
+  column-gap: 10px;
+}
+
+.overflow-menu__icon {
+  display: grid;
+  place-items: center;
+  height: 18px;
+  color: var(--mem-text-secondary);
+}
+
+.overflow-menu__item[data-icon="true"] .overflow-menu__hint {
+  grid-column: 2;
+}

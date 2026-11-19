@@ -421,6 +421,8 @@ pub fn version_author(edited_by: &str, creation_kind: &str) -> VersionAuthor {
         "distill" | "re_distill" | "agent_refresh" | "page_growth" | "refinery_merge"
         | "citation_backfill" | "page_merge" => VersionAuthor::Ai,
         crate::post_write::PERSON_ASKED => VersionAuthor::PersonAsked,
+        // A rule the person asked to be saved: their sentence, by their say.
+        crate::skill_grow::RULE_SAVE => VersionAuthor::PersonAsked,
         "link_rename" | "title_rename" | "space_move" | "archive" => VersionAuthor::System,
         // `migration_87` (the seed of every page that predates history),
         // `migration_84`, and any writer this code does not know.

@@ -1,0 +1,44 @@
+name: CI Runner Retry
+
+# A hosted runner pool (macOS arm64 most often) can be short: a job no runner
+# picks up is cancelled after about 15 minutes ("not acquired by Runner") and
+# the run fails although no code ran. When that is the ONLY reason a CI run
+# failed, re-run its failed jobs (PR and main runs) or put the PR back in the
+# merge queue (queue runs), at most twice. A real failure is never retried.
+# Rules and evidence: scripts/ci_runner_retry.py, docs/test-layers.md.
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: ci-runner-retry-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+  cancel-in-progress: false
+
+jobs:
+  retry:
+    name: retry runner-starved CI
+    if: >-
+      github.event.workflow_run.conclusion == 'failure' ||
+      (github.event.workflow_run.conclusion == 'cancelled' && github.event.workflow_run.event == 'merge_group')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      # For workflow_run, github.sha is the trusted default-branch commit. The
+      # observed run's code is never checked out; only its metadata is read.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Re-run or re-queue when no runner was the only failure
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: python3 scripts/ci_runner_retry.py --repo "$GITHUB_REPOSITORY" --run-id "$RUN_ID"

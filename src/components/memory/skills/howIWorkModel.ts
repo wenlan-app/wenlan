@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { TFunction } from "i18next";
-import type { Page, SkillLine, SkillLineKind, SpaceRulesResponse } from "../../../lib/tauri";
+import { SAVED_FROM_TERMINAL, type Page, type PageChangelogEntry, type SkillLine, type SkillLineKind, type SpaceRulesResponse } from "../../../lib/tauri";
 
 export const NOT_FOR_AI_TOOLS_MARKER = "<!-- wenlan:not-for-ai-tools -->";
 export const HOW_I_WORK_QUERY_KEYS = {
@@ -139,6 +139,55 @@ export function isHowIWorkPage(page: Pick<Page, "content" | "title">): boolean {
     || (page.title ?? "").startsWith(GENERATED_TITLE_PREFIX);
 }
 
+/** The daemon's answer that carries which pages keep saved rules. Its key
+ *  opens like every rules query, so whatever refreshes the rules refreshes
+ *  it too. */
+export const SAVED_RULES_PAGES_QUERY_KEY = ["space-rules", "saved-pages"] as const;
+export const NO_SAVED_RULES_PAGES: ReadonlySet<string> = new Set<string>();
+
+/** Whether `page` keeps the rules the person asked to be saved. Only the
+ *  daemon knows: its ledger holds each such page's id, and `savedPages` is
+ *  that answer. The title says nothing, so a renamed page still is one and
+ *  a page somebody titled "Rules I saved" is an ordinary page (UX-SKILL-14). */
+export function isSavedRulesPage(page: Pick<Page, "id">, savedPages: ReadonlySet<string>): boolean {
+  return savedPages.has(page.id);
+}
+
+/** "saved from <tool>" for a rule the person asked to be saved, else null,
+ *  in the app's language. The daemon says which kind of place it was saved
+ *  from and the tool's name; a tool that calls itself the terminal, the
+ *  person or Wenlan is said to be an AI tool, with its name in quotes. It
+ *  is never the person (UX-SKILL-14). An older daemon sends only its
+ *  English label, shown as it is. */
+export function savedFromLabel(line: Pick<SkillLine, "saved_from" | "saved_by">, t: TFunction): string | null {
+  const from = line.saved_from?.trim();
+  if (!from) return null;
+  const name = line.saved_by?.name?.trim() ?? "";
+  switch (line.saved_by?.kind) {
+    case "terminal": return t("howIWork.saved.fromTerminal");
+    case "unnamed": return t("howIWork.saved.fromUnnamed");
+    case "self_named": return name ? t("howIWork.saved.fromSelfNamed", { name }) : t("howIWork.saved.fromUnnamed");
+    case "tool": return name ? t("howIWork.saved.from", { tool: name }) : t("howIWork.saved.fromUnnamed");
+    default: return from === SAVED_FROM_TERMINAL ? t("howIWork.saved.fromTerminal") : t("howIWork.saved.from", { tool: from });
+  }
+}
+
+/** The daemon's answer to a Remove for a rule that is no longer there: it
+ *  was already removed somewhere else (the terminal, another window). */
+export function savedRuleAlreadyRemoved(error: unknown): boolean {
+  const text = error instanceof Error ? error.message : String(error);
+  return text.includes("no saved rule has that id");
+}
+
+/** Why a Remove did not go through, in the person's words. The daemon's own
+ *  sentence carries a route or an id, so it is never shown as it is. */
+export function savedRuleRemoveFailure(error: unknown, t: TFunction): string {
+  const text = error instanceof Error ? error.message : String(error);
+  if (text.includes("team member")) return t("howIWork.saved.refusedTeam");
+  if (text.includes("listens on this computer alone")) return t("howIWork.saved.refusedBeyond");
+  return t("howIWork.saved.failed");
+}
+
 export function howIWorkSpaceName(page: Pick<Page, "content" | "space" | "title">): string {
   const explicit = page.space?.trim();
   if (explicit) return explicit;
@@ -147,12 +196,93 @@ export function howIWorkSpaceName(page: Pick<Page, "content" | "space" | "title"
   return heading || "";
 }
 
+/** The name a "How I work" page is listed under: in tabs, Recent, Pinned,
+ *  the Rules list, search and every other list, with its Space, so two
+ *  Spaces' pages are never confused ("How I work · Wenlan"). The page's own
+ *  heading drops the Space (`howIWorkHeading`). A pinned row carries only the
+ *  stored title, which still names the Space, so it reads the same. */
 export function howIWorkPageTitle(
-  page: Pick<Page, "content" | "space" | "title">,
+  page: Pick<Page, "title"> & Partial<Pick<Page, "content" | "space">>,
   t: TFunction,
 ): string {
-  if (!isHowIWorkPage(page)) return page.title;
-  return t("howIWork.page.title", { space: howIWorkSpaceName(page) });
+  const full = { title: page.title ?? "", content: page.content ?? "", space: page.space ?? null };
+  if (!isHowIWorkPage(full)) return page.title;
+  const space = howIWorkSpaceName(full);
+  return space ? t("howIWork.page.title", { space }) : t("howIWork.page.heading");
+}
+
+/** The heading on a "How I work" page itself: "How I work", with no Space
+ *  (owner's 2026-11-18 approval of sketch rules-page-v2). Any other page
+ *  keeps its own title. */
+export function howIWorkHeading(page: Pick<Page, "content" | "space" | "title">, t: TFunction): string {
+  return isHowIWorkPage(page) ? t("howIWork.page.heading") : page.title;
+}
+
+/** How many distinct pages the lines Wenlan maintains on a "How I work" page
+ *  come from. A bullet the page itself holds (`own:`) is not one of them. */
+export function maintainedSourceCount(lines: readonly SkillLine[]): number {
+  return new Set(lines.filter((line) => !line.id.startsWith("own:") && line.source_page_id).map((line) => line.source_page_id)).size;
+}
+
+/** Writers that are the person at this computer (or another computer of
+ *  theirs). A teammate in a shared Space (`shared_person:<member>`) is not. */
+const OWN_EDITS = new Set(["manual_edit", "fs_edit", "own_device", "restore"]);
+
+/** What the page's history says for the status line: whether the person
+ *  edited the page themselves, and when Wenlan's still-standing rules write
+ *  was. Read oldest first, with each version's text:
+ *  - an `agent_refresh` version is a rules write;
+ *  - a version whose text differs from the one before only by the
+ *    not-for-AI-tools marker is Stop or Start, not an edit;
+ *  - the person's version right after a rules write that puts back the text
+ *    from before it is "Undo last night": that write no longer stands;
+ *  - any other version by the person is their edit.
+ *  Without texts, Stop, Start and Undo cannot be told from an edit. */
+export function readRulesPageHistory(
+  entries: readonly Pick<PageChangelogEntry, "at" | "edited_by" | "version" | "text">[],
+): { readonly youEdited: boolean; readonly rulesWrittenAt: number | null } {
+  const sorted = [...entries].sort((a, b) => a.version - b.version);
+  const strip = (text: string | null | undefined) => text == null ? null : text.split(/\r?\n/u).filter((line) => line.trim() !== NOT_FOR_AI_TOOLS_MARKER && line.trim() !== "").join("\n");
+  const standing: { at: number; before: string | null }[] = [];
+  let youEdited = false;
+  sorted.forEach((entry, index) => {
+    const previous = sorted[index - 1];
+    const text = strip(entry.text);
+    const before = strip(previous?.text);
+    if (entry.edited_by === "agent_refresh") {
+      standing.push({ at: entry.at, before });
+      return;
+    }
+    if (!OWN_EDITS.has(entry.edited_by)) return;
+    if (text !== null && before !== null && text === before) return;
+    const last = standing[standing.length - 1];
+    if (last && previous?.edited_by === "agent_refresh" && text !== null && text === last.before) {
+      standing.pop();
+      return;
+    }
+    youEdited = true;
+  });
+  return { youEdited, rulesWrittenAt: standing.length > 0 ? standing[standing.length - 1].at : null };
+}
+
+/** A short badge for each tool name, for a tool that has no logo: the first
+ *  letter of each word (two at most), or the first letter alone for one
+ *  word; when two would read the same, the first word's first two letters,
+ *  then a number. No two tools in `names` get the same badge. */
+export function toolBadges(names: readonly string[]): string[] {
+  const taken = new Set<string>();
+  return names.map((name) => {
+    const words = name.split(/[\s/._-]+/u).filter(Boolean);
+    const first = [...(words[0] ?? "?")];
+    const candidates = [
+      words.length > 1 ? words.slice(0, 2).map((word) => [...word][0].toUpperCase()).join("") : first[0].toUpperCase(),
+      first[0].toUpperCase() + (first[1] ?? "").toLowerCase(),
+    ];
+    let badge = candidates.find((candidate) => !taken.has(candidate));
+    for (let n = 2; badge === undefined; n += 1) if (!taken.has(`${candidates[0]}${n}`)) badge = `${candidates[0]}${n}`;
+    taken.add(badge);
+    return badge;
+  });
 }
 
 export function visibleSourceTitle(title: string, t: TFunction): string {

@@ -292,7 +292,7 @@ wenlan connect cursor --dry-run
 wenlan connect cursor --all-tools
 ```
 
-The client is given the 19 everyday tools: reading and searching, the approved working rules, saving, writing and reshaping pages, and writing pages on demand. A client loads every listed tool into each conversation, and the full list of 59 is more than twice the size. `--all-tools` lists them all (health checks and repairs, review queues, entities, folders, version history); without it they are still one `wenlan tool call <name>` away in a terminal.
+The client is given the 23 everyday tools: reading and searching, the approved working rules and saving one the person asks for, the skills Wenlan holds and the search for more, saving, writing and reshaping pages, and writing pages on demand. A client loads every listed tool into each conversation, and the full list of 63 is more than twice the size. `--all-tools` lists them all (health checks and repairs, review queues, entities, folders, version history); without it they are still one `wenlan tool call <name>` away in a terminal.
 
 Supported clients: `claude-code`, `codex`, `gemini`, `cursor`, `claude-desktop`, `vscode`.
 
@@ -465,11 +465,40 @@ wenlan brief show [OPTIONS] --version <VERSION>
 
 ### `wenlan rules`
 
-Read the working rules approved for a Space.
+Read the working rules for a Space, or save and remove one of your own (add, remove).
 
 ```text
-wenlan rules [OPTIONS]
+wenlan rules [OPTIONS] [COMMAND]
 ```
+
+#### `wenlan rules add`
+
+Save a rule your AI tools follow from now on (what an AI tool does with add_rule).
+
+```text
+wenlan rules add [OPTIONS] <TEXT>
+```
+
+Arguments:
+
+- `<TEXT>`: The rule, as one sentence.
+
+Options:
+
+- `--every-space`: Save it for every Space instead of this one. Not with --space.
+- `--kind <KIND>`: Save it as a decision or a pitfall instead of a rule. Possible values: `rule`, `decision`, `pitfall`.
+
+#### `wenlan rules remove`
+
+Remove a rule saved this way, by the id `wenlan rules` prints (remove_rule).
+
+```text
+wenlan rules remove [OPTIONS] <ID>
+```
+
+Arguments:
+
+- `<ID>`: The rule's id, as `wenlan rules` prints it.
 
 ### `wenlan pages`
 
@@ -843,6 +872,98 @@ wenlan restart [OPTIONS]
 ```
 
 **More**
+
+### `wenlan skills`
+
+List, find and take in skills your AI tools can use (list, search, show, scan, import, install, remove).
+
+```text
+wenlan skills [OPTIONS] [COMMAND]
+```
+
+#### `wenlan skills list`
+
+List the skills Wenlan holds (what an AI tool gets from list_skills).
+
+```text
+wenlan skills list [OPTIONS]
+```
+
+#### `wenlan skills search`
+
+Search skills.sh (what an AI tool gets from search_skills).
+
+```text
+wenlan skills search [OPTIONS] <QUERY>...
+```
+
+Arguments:
+
+- `<QUERY>...`: What your AI tools should be able to do.
+
+Options:
+
+- `--warnings`: Also show skills whose safety checks warned or have not run.
+
+#### `wenlan skills show`
+
+Show everything in one skill and its safety checks, before installing.
+
+```text
+wenlan skills show [OPTIONS] <SKILL>
+```
+
+Arguments:
+
+- `<SKILL>`: The skill as search prints it: owner/repo/skill.
+
+#### `wenlan skills scan`
+
+List skills already in your AI tools' folders that Wenlan does not hold.
+
+```text
+wenlan skills scan [OPTIONS]
+```
+
+#### `wenlan skills import`
+
+Take skills from your AI tools' folders into Wenlan. Asks you first.
+
+```text
+wenlan skills import [OPTIONS] [NAMES]...
+```
+
+Arguments:
+
+- `[NAMES]...`: Names from `wenlan skills scan`. Omit to take all of them.
+
+#### `wenlan skills install`
+
+Install a skill from skills.sh. Shows it and asks you first.
+
+```text
+wenlan skills install [OPTIONS] <SKILL>
+```
+
+Arguments:
+
+- `<SKILL>`: The skill as search prints it: owner/repo/skill.
+
+Options:
+
+- `--only-in <SPACE>`: Use it only while working in this Space instead of everywhere.
+
+#### `wenlan skills remove`
+
+Remove a skill from Wenlan and from the AI tools it was copied to. Asks you first.
+
+```text
+wenlan skills remove [OPTIONS] <NAME>
+```
+
+Arguments:
+
+- `<NAME>`: The skill's name as `wenlan skills list` prints it.
 
 ### `wenlan memories`
 

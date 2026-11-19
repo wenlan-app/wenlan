@@ -150,7 +150,7 @@ import { ConcurrentEditLine, markConcurrentEditSeen, unseenConcurrentEdit } from
 import { pageShare, sharedWriter, spaceShare, useShares } from "./sharing/sharing";
 import { HowIWorkPage } from "./skills/HowIWorkPage";
 import { RulesFolderPageHead } from "./skills/RulesToolsHeader";
-import { howIWorkPageTitle, isHowIWorkPage } from "./skills/howIWorkModel";
+import { howIWorkHeading, howIWorkPageTitle, isHowIWorkPage } from "./skills/howIWorkModel";
 
 interface PageDetailProps {
   pageId: string;
@@ -391,6 +391,7 @@ export default function PageDetail({
   const canvasWorkspaceRestoreRef = useRef<{ pageId: string; element: HTMLElement; scrollTop: number } | null>(null);
   const inspectorId = useId();
   const documentToolsHost = useContext(WorkspaceDocumentToolsHostContext);
+  const [howIWorkActionsHost, setHowIWorkActionsHost] = useState<HTMLElement | null>(null);
   const noteGroup = useContext(WorkspaceNoteGroupContext);
   // A heading or item clicked on the mind map shows where it is in the page.
   const showPageLine = useCallback(({ text, heading }: { text: string; heading: string | null }) => {
@@ -2314,7 +2315,8 @@ export default function PageDetail({
   }
 
   const howIWorkPage = isHowIWorkPage(page);
-  const visiblePageTitle = howIWorkPageTitle(page, t);
+  // A "How I work" page is headed plainly; its tab and lists name its Space.
+  const visiblePageTitle = howIWorkHeading(page, t);
   const sourceCount = pageSources?.length ?? page.source_memory_ids.length;
   const basisRefs = page.basis ?? [];
   // A note that relies on other notes is not rebuilt by itself: the daemon says
@@ -3021,6 +3023,8 @@ export default function PageDetail({
                 ) : visiblePageTitle}
               </h1>
             )}
+            {/* A "How I work" page puts its "…" menu at the end of the title row. */}
+            {howIWorkPage && !renaming && <span className="how-i-work-title-actions" ref={setHowIWorkActionsHost} />}
             {documentTools}
           </div>
         )}
@@ -3205,7 +3209,7 @@ export default function PageDetail({
           <RulesFolderPageHead page={page} onOpenPage={(id) => onPageClick?.(id)} />
         )}
         {howIWorkPage ? (
-          <HowIWorkPage page={page} onOpenPage={(id) => onPageClick?.(id)} />
+          <HowIWorkPage page={page} onOpenPage={(id) => onPageClick?.(id)} titleActionsHost={!pageLook.shown && !hideOuterTitleWhileEditing && !renaming ? howIWorkActionsHost : undefined} />
         ) : editing ? (
           editGate.kind === "checking" ? (
             <div role="status" className="page-editor-notice">

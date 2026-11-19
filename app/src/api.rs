@@ -63,6 +63,53 @@ pub(crate) enum RepairRuntimeRequestError {
     Http { status: u16, body: String },
 }
 
+/// The headers of a request the person made with their own gesture: the
+/// person marker, and the person key the daemon wrote to the data root this
+/// app gives it (`wenlan_types::person_key`). The daemon believes the marker
+/// only next to the key; when the key cannot be read the request goes out
+/// with the marker alone, and the daemon answers the person-only ones with
+/// its plain refusal. Read on each gesture, so a key made after the app
+/// started is used at once. Never logged.
+pub(crate) fn person_headers() -> reqwest::header::HeaderMap {
+    match person_key_root() {
+        Some(root) => person_headers_from(&root),
+        // No data root: the marker alone, never a key file read from the
+        // working folder.
+        None => marker_only(),
+    }
+}
+
+#[cfg(not(test))]
+fn person_key_root() -> Option<std::path::PathBuf> {
+    Some(crate::identity_paths::app_data_dir())
+}
+
+/// A unit test never resolves the developer's real profile: it reads a key
+/// only from a data root it set itself.
+#[cfg(test)]
+fn person_key_root() -> Option<std::path::PathBuf> {
+    std::env::var_os("WENLAN_DATA_DIR").map(std::path::PathBuf::from)
+}
+
+fn marker_only() -> reqwest::header::HeaderMap {
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        wenlan_types::requests::CALLER_HEADER,
+        reqwest::header::HeaderValue::from_static(wenlan_types::requests::PERSON_CALLER_VALUE),
+    );
+    headers
+}
+
+pub(crate) fn person_headers_from(data_root: &std::path::Path) -> reqwest::header::HeaderMap {
+    let mut headers = marker_only();
+    if let Some(key) = wenlan_types::person_key::read(data_root)
+        .and_then(|key| reqwest::header::HeaderValue::from_str(&key).ok())
+    {
+        headers.insert(wenlan_types::requests::PERSON_KEY_HEADER, key);
+    }
+    headers
+}
+
 impl RepairRuntimeRequestError {
     pub(crate) fn definitive_refusal(&self, earlier_uncertain: bool) -> bool {
         let Self::Http { status, body } = self else {
@@ -569,10 +616,7 @@ impl WenlanClient {
         let resp = self
             .client
             .get(self.url(path))
-            .header(
-                wenlan_types::requests::CALLER_HEADER,
-                wenlan_types::requests::PERSON_CALLER_VALUE,
-            )
+            .headers(person_headers())
             .send()
             .await
             .map_err(|e| format!("HTTP GET {}: {}", path, e))?;
@@ -822,10 +866,7 @@ impl WenlanClient {
         let resp = self
             .client
             .put(self.url(path))
-            .header(
-                wenlan_types::requests::CALLER_HEADER,
-                wenlan_types::requests::PERSON_CALLER_VALUE,
-            )
+            .headers(person_headers())
             .json(body)
             .send()
             .await
@@ -872,10 +913,7 @@ impl WenlanClient {
         let resp = self
             .client
             .patch(self.url(path))
-            .header(
-                wenlan_types::requests::CALLER_HEADER,
-                wenlan_types::requests::PERSON_CALLER_VALUE,
-            )
+            .headers(person_headers())
             .json(body)
             .send()
             .await
@@ -917,10 +955,7 @@ impl WenlanClient {
         let resp = self
             .client
             .delete(self.url(path))
-            .header(
-                wenlan_types::requests::CALLER_HEADER,
-                wenlan_types::requests::PERSON_CALLER_VALUE,
-            )
+            .headers(person_headers())
             .send()
             .await
             .map_err(|e| format!("HTTP DELETE {}: {}", path, e))?;
@@ -946,10 +981,7 @@ impl WenlanClient {
         let resp = self
             .client
             .post(self.url(path))
-            .header(
-                wenlan_types::requests::CALLER_HEADER,
-                wenlan_types::requests::PERSON_CALLER_VALUE,
-            )
+            .headers(person_headers())
             .send()
             .await
             .map_err(|e| format!("HTTP POST {}: {}", path, e))?;
@@ -1038,10 +1070,7 @@ impl WenlanClient {
         let resp = self
             .client
             .post(self.url(path))
-            .header(
-                wenlan_types::requests::CALLER_HEADER,
-                wenlan_types::requests::PERSON_CALLER_VALUE,
-            )
+            .headers(person_headers())
             .json(body)
             .send()
             .await
@@ -3168,6 +3197,23 @@ mod tests {
     use super::*;
     use std::sync::{Mutex, OnceLock};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// UX-SKILL-13: the app's gestures carry the person key from the data
+    /// root it gives the daemon; without a readable key, the marker alone.
+    #[test]
+    fn ux_skill_13_app_gesture_carries_the_person_key() {
+        let root = tempfile::tempdir().unwrap();
+        let alone = person_headers_from(root.path());
+        assert_eq!(alone[wenlan_types::requests::CALLER_HEADER], "person");
+        assert!(!alone.contains_key(wenlan_types::requests::PERSON_KEY_HEADER));
+        let key = "9a".repeat(32);
+        std::fs::write(wenlan_types::person_key::path_in(root.path()), &key).unwrap();
+        let both = person_headers_from(root.path());
+        assert_eq!(
+            both[wenlan_types::requests::PERSON_KEY_HEADER],
+            key.as_str()
+        );
+    }
 
     fn env_lock() -> std::sync::MutexGuard<'static, ()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();

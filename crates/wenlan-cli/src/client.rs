@@ -87,6 +87,9 @@ pub struct WenlanClient {
     session: Option<SessionRef>,
     /// Set once the daemon has been told where the session ran.
     session_announced: tokio::sync::OnceCell<()>,
+    /// Where the person key is read; `None` is the data root this command
+    /// uses (`wenlan_core::config::data_root`).
+    person_key_root: Option<std::path::PathBuf>,
 }
 
 impl WenlanClient {
@@ -123,6 +126,7 @@ impl WenlanClient {
             recovery_enabled: true,
             session: None,
             session_announced: tokio::sync::OnceCell::new(),
+            person_key_root: None,
         })
     }
 
@@ -137,7 +141,15 @@ impl WenlanClient {
             recovery_enabled: false,
             session: None,
             session_announced: tokio::sync::OnceCell::new(),
+            person_key_root: None,
         }
+    }
+
+    /// Read the person key from `root` instead of the data root, for tests.
+    #[cfg(test)]
+    pub(crate) fn with_person_key_root(mut self, root: &std::path::Path) -> Self {
+        self.person_key_root = Some(root.to_path_buf());
+        self
     }
 
     /// Attribute this client's writes to an AI session by sending
@@ -740,6 +752,220 @@ impl WenlanClient {
         self.get_json("/api/skills/rules", true).await
     }
 
+    /// POST /api/skills/rules — save one rule the person asked for. Sent as
+    /// this process is: under a tool's name it is that tool's save, with
+    /// none it is the terminal's.
+    pub async fn save_rule(
+        &self,
+        request: &wenlan_types::SaveRuleRequest,
+    ) -> Result<wenlan_types::SaveRuleResponse> {
+        self.post_json("/api/skills/rules", request).await
+    }
+
+    /// POST /api/skills/rules/{id}/remove — take a saved rule out.
+    pub async fn remove_rule(
+        &self,
+        id: &str,
+        request: &wenlan_types::RemoveRuleRequest,
+    ) -> Result<wenlan_types::RemoveRuleResponse> {
+        anyhow::ensure!(
+            !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric()),
+            "that is not a rule id; `wenlan rules` prints each saved rule's id"
+        );
+        self.post_json(&format!("/api/skills/rules/{id}/remove"), request)
+            .await
+    }
+
+    /// GET /api/skills/registry/installed — the skills Wenlan holds.
+    pub async fn list_skills(
+        &self,
+    ) -> Result<wenlan_types::skill_registry::InstalledSkillsResponse> {
+        self.get_json("/api/skills/registry/installed", true).await
+    }
+
+    /// GET /api/skills/registry/search — skills.sh results with their checks.
+    pub async fn search_skills(
+        &self,
+        query: &str,
+    ) -> Result<wenlan_types::skill_registry::SkillSearchResponse> {
+        self.get_json_with_query("/api/skills/registry/search", &[("q", query)])
+            .await
+    }
+
+    /// GET /api/skills/registry/preview — every file of one skill and its
+    /// safety checks, before anything is kept.
+    pub async fn preview_skill(
+        &self,
+        source: &str,
+        skill_id: &str,
+    ) -> Result<wenlan_types::skill_registry::SkillPreview> {
+        self.get_json_with_query(
+            "/api/skills/registry/preview",
+            &[("source", source), ("skillId", skill_id)],
+        )
+        .await
+    }
+
+    /// GET /api/skills/registry/local — skills in the AI tools' own folders
+    /// that Wenlan does not hold yet.
+    pub async fn scan_local_skills(
+        &self,
+    ) -> Result<wenlan_types::skill_registry::LocalSkillsResponse> {
+        self.get_json("/api/skills/registry/local", true).await
+    }
+
+    /// POST /api/skills/registry/import, as the person.
+    pub async fn import_local_skills_as_person(
+        &self,
+        names: Vec<String>,
+    ) -> Result<wenlan_types::skill_registry::SkillImportResult> {
+        let request = wenlan_types::skill_registry::SkillImportRequest { names };
+        self.post_json_as_person("/api/skills/registry/import", &request, None)
+            .await
+    }
+
+    /// POST /api/skills/registry/install, as the person.
+    pub async fn install_skill_as_person(
+        &self,
+        request: &wenlan_types::skill_registry::SkillInstallRequest,
+    ) -> Result<wenlan_types::skill_registry::SkillInstallResult> {
+        self.post_json_as_person("/api/skills/registry/install", request, None)
+            .await
+    }
+
+    /// POST /api/skills/registry/remove, as the person.
+    pub async fn remove_skill_as_person(
+        &self,
+        name: &str,
+    ) -> Result<wenlan_types::skill_registry::SkillRemoveResponse> {
+        self.post_json_as_person(
+            "/api/skills/registry/remove",
+            &wenlan_types::skill_registry::SkillRemoveRequest {
+                name: name.to_string(),
+            },
+            None,
+        )
+        .await
+    }
+
+    /// POST /api/person/browser-pass, as the person: a one-time pass that
+    /// opens Wenlan in the browser with the person key (`wenlan open`).
+    pub async fn browser_pass_as_person(
+        &self,
+    ) -> Result<wenlan_types::person_key::BrowserPassResponse> {
+        // Short: a daemon still starting must not hold up opening the page.
+        self.post_json_as_person(
+            "/api/person/browser-pass",
+            &serde_json::json!({}),
+            Some(std::time::Duration::from_secs(3)),
+        )
+        .await
+    }
+
+    /// Whether this process told the daemon it is an AI tool.
+    pub fn names_an_agent(&self) -> bool {
+        self.headers.contains_key("x-agent-name")
+    }
+
+    /// GET `path` with query parameters, each value encoded.
+    async fn get_json_with_query<R: DeserializeOwned>(
+        &self,
+        path: &str,
+        query: &[(&str, &str)],
+    ) -> Result<R> {
+        let url = format!("{}{}", self.base_url, path);
+        let what = format!("GET {url} failed (is the daemon running?)");
+        let resp = self.send(self.http.get(&url).query(query), &what).await?;
+        let resp = ensure_ok(resp, &url).await?;
+        resp.json()
+            .await
+            .with_context(|| format!("parsing {path} response"))
+    }
+
+    /// POST `path` marked as the person's own request. The mark is only
+    /// honest from a terminal the person is typing in, so callers ask them
+    /// first; a process that named an AI tool cannot send it at all. The
+    /// daemon believes the mark only next to the person key
+    /// ([`Self::person_key`]); without one the request goes out with the
+    /// mark alone, so an older daemon that knows no key still answers, and a
+    /// refusal says plainly why.
+    async fn post_json_as_person<B: Serialize, R: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &B,
+        timeout: Option<std::time::Duration>,
+    ) -> Result<R> {
+        anyhow::ensure!(
+            !self.names_an_agent(),
+            "this is the person's to do, and this command is running as an AI tool"
+        );
+        let key = self.person_key().await;
+        let url = format!("{}{}", self.base_url, path);
+        // A client of its own: no default header may ride along, and the
+        // key never goes through a proxy.
+        let mut http = reqwest::Client::builder();
+        if key.is_some() {
+            http = http.no_proxy();
+        }
+        let http = http.build().context("building Wenlan HTTP client")?;
+        let mut request = http
+            .post(&url)
+            .header(
+                wenlan_types::requests::CALLER_HEADER,
+                wenlan_types::requests::PERSON_CALLER_VALUE,
+            )
+            .json(body);
+        if let Some(key) = &key {
+            request = request.header(wenlan_types::requests::PERSON_KEY_HEADER, key);
+        }
+        if let Some(timeout) = timeout {
+            request = request.timeout(timeout);
+        }
+        let resp = self.send(request, &format!("POST {url} failed")).await?;
+        let refused_without_key = key.is_none() && resp.status().is_client_error();
+        let resp = match ensure_ok(resp, &url).await {
+            Ok(resp) => resp,
+            Err(_) if refused_without_key => anyhow::bail!(NO_PERSON_KEY),
+            Err(error) => return Err(error),
+        };
+        resp.json()
+            .await
+            .with_context(|| format!("parsing {path} response"))
+    }
+
+    /// The person key, when this command may send it: only to a daemon on
+    /// this computer (`WENLAN_HOST` on loopback), never to another host. It
+    /// is read from the data root the daemon itself reports, so the command
+    /// and the app find the same key on an older `origin` data root too, and
+    /// otherwise from the data root this command uses. Never printed.
+    pub(crate) async fn person_key(&self) -> Option<String> {
+        if !recovery::is_local_daemon_url(&self.base_url) {
+            return None;
+        }
+        if let Some(root) = &self.person_key_root {
+            return wenlan_types::person_key::read(root);
+        }
+        let reported = self
+            .http
+            .get(format!("{}/api/health", self.base_url))
+            .timeout(std::time::Duration::from_secs(3))
+            .send()
+            .await
+            .ok()
+            .filter(|answer| answer.status().is_success());
+        if let Some(answer) = reported {
+            if let Ok(health) = answer.json::<HealthResponse>().await {
+                if let Some(key) = health
+                    .data_root
+                    .and_then(|root| wenlan_types::person_key::read(std::path::Path::new(&root)))
+                {
+                    return Some(key);
+                }
+            }
+        }
+        wenlan_types::person_key::read(&wenlan_core::config::data_root())
+    }
+
     /// GET /api/pages/{id}/sources — the memories a page was written from.
     pub async fn get_page_sources(&self, id: &str) -> Result<Vec<PageSourceWithMemory>> {
         self.get_json(&format!("/api/pages/{}/sources", id), true)
@@ -1099,6 +1325,13 @@ impl WenlanClient {
 
 /// A response the daemon answered with a non-success status.
 ///
+/// The sentence a person-only command shows when Wenlan refused it and this
+/// account could not read the person key, so Wenlan cannot tell the command
+/// is the person's.
+pub(crate) const NO_PERSON_KEY: &str = "Wenlan cannot tell this is you: this command could not \
+     read Wenlan's key on this computer. Run it from your own account against the Wenlan on this \
+     computer (start it once with `wenlan start`), or do it in the Wenlan app.";
+
 /// A 4xx is the daemon telling the person what to change ("too short to
 /// save", "page not found"), so when it carries a message that message is
 /// the whole error: the status line and the daemon's own address say
@@ -1534,6 +1767,7 @@ mod tests {
             recovery_enabled: true,
             session: None,
             session_announced: tokio::sync::OnceCell::new(),
+            person_key_root: None,
         }
     }
 

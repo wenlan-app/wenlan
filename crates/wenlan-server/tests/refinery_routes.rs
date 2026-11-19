@@ -19,6 +19,13 @@ use wenlan_server::router::{build_router, AppRouter};
 use wenlan_server::state::ServerState;
 use wenlan_types::requests::{CALLER_HEADER, PERSON_CALLER_VALUE};
 
+/// The person key this test process believes (`wenlan_server::person_key`).
+fn person_key() -> &'static str {
+    const KEY: &str = "7e577e577e577e577e577e577e577e577e577e577e577e577e577e577e577e57";
+    wenlan_server::person_key::install(wenlan_server::person_key::PersonKey::new(KEY.into()));
+    KEY
+}
+
 fn owner_binding_digest(digest: &str, source_ids: &[String]) -> String {
     Sha256::digest(
         serde_json::to_vec(&serde_json::json!({
@@ -533,6 +540,7 @@ async fn accept_entity_merge_flow() {
         .method(Method::POST)
         .uri("/api/refinery/queue/ref_accept_em/accept")
         .header(CALLER_HEADER, PERSON_CALLER_VALUE)
+        .header(wenlan_types::requests::PERSON_KEY_HEADER, person_key())
         .body(Body::empty())
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
@@ -573,6 +581,7 @@ async fn accept_stale_empty_json_body_applies_default_accept() {
         .method(Method::POST)
         .uri("/api/refinery/queue/ref_accept_empty_json/accept")
         .header(CALLER_HEADER, PERSON_CALLER_VALUE)
+        .header(wenlan_types::requests::PERSON_KEY_HEADER, person_key())
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from("{}"))
         .unwrap();
@@ -604,6 +613,7 @@ async fn accept_tagged_accept_body_applies_default_accept() {
         .method(Method::POST)
         .uri("/api/refinery/queue/ref_accept_tagged/accept")
         .header(CALLER_HEADER, PERSON_CALLER_VALUE)
+        .header(wenlan_types::requests::PERSON_KEY_HEADER, person_key())
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(r#"{"action":"accept"}"#))
         .unwrap();
@@ -655,6 +665,7 @@ async fn accept_pick_space_body_applies_cross_space_discovery() {
         .method(Method::POST)
         .uri("/api/refinery/queue/ref_accept_pick_space/accept")
         .header(CALLER_HEADER, PERSON_CALLER_VALUE)
+        .header(wenlan_types::requests::PERSON_KEY_HEADER, person_key())
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(r#"{"action":"pick_space","space":"work"}"#))
         .unwrap();
@@ -677,6 +688,7 @@ async fn accept_garbage_body_returns_400() {
         .method(Method::POST)
         .uri("/api/refinery/queue/ref_parse_first/accept")
         .header(CALLER_HEADER, PERSON_CALLER_VALUE)
+        .header(wenlan_types::requests::PERSON_KEY_HEADER, person_key())
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from("not json"))
         .unwrap();
@@ -691,6 +703,7 @@ async fn accept_returns_404_for_unknown_id() {
         .method(Method::POST)
         .uri("/api/refinery/queue/ref_nonexistent/accept")
         .header(CALLER_HEADER, PERSON_CALLER_VALUE)
+        .header(wenlan_types::requests::PERSON_KEY_HEADER, person_key())
         .body(Body::empty())
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
@@ -717,6 +730,7 @@ async fn accept_returns_422_for_suggest_entity() {
         .method(Method::POST)
         .uri("/api/refinery/queue/ref_se_route/accept")
         .header(CALLER_HEADER, PERSON_CALLER_VALUE)
+        .header(wenlan_types::requests::PERSON_KEY_HEADER, person_key())
         .body(Body::empty())
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
@@ -747,6 +761,7 @@ async fn accept_lint_repair_review_returns_choice_specific_422() {
         .method(Method::POST)
         .uri(format!("/api/refinery/queue/{id}/accept"))
         .header(CALLER_HEADER, PERSON_CALLER_VALUE)
+        .header(wenlan_types::requests::PERSON_KEY_HEADER, person_key())
         .body(Body::empty())
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
@@ -787,6 +802,7 @@ async fn accept_returns_422_for_already_resolved() {
         .method(Method::POST)
         .uri("/api/refinery/queue/ref_done_accept/accept")
         .header(CALLER_HEADER, PERSON_CALLER_VALUE)
+        .header(wenlan_types::requests::PERSON_KEY_HEADER, person_key())
         .body(Body::empty())
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
@@ -835,8 +851,11 @@ async fn ux_who_2_an_ai_caller_cannot_accept_a_refinement_the_app_can() {
         vec![],
         vec![
             (CALLER_HEADER, PERSON_CALLER_VALUE),
+            (wenlan_types::requests::PERSON_KEY_HEADER, person_key()),
             ("x-agent-name", "claude-code"),
         ],
+        // The marker without the person key is not the app.
+        vec![(CALLER_HEADER, PERSON_CALLER_VALUE)],
     ] {
         let resp = app.clone().oneshot(accept(&headers)).await.unwrap();
         assert_eq!(
@@ -866,7 +885,10 @@ async fn ux_who_2_an_ai_caller_cannot_accept_a_refinement_the_app_can() {
         .is_empty());
 
     let resp = app
-        .oneshot(accept(&[(CALLER_HEADER, PERSON_CALLER_VALUE)]))
+        .oneshot(accept(&[
+            (CALLER_HEADER, PERSON_CALLER_VALUE),
+            (wenlan_types::requests::PERSON_KEY_HEADER, person_key()),
+        ]))
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { TFunction } from "i18next";
-import type { PageChangelogEntry, PageHistoryItem, SharedStatus } from "../../../lib/tauri";
+import { RULE_REMOVED_IN_APP, type PageChangelogEntry, type PageHistoryItem, type SharedStatus } from "../../../lib/tauri";
 import { sharedWriter } from "../sharing/sharing";
 import { teamAiWriter, writerAgentName } from "../sharing/teamPeople";
 import { revisionWriterLabel } from "./format";
@@ -27,12 +27,22 @@ export function lifecycleActorName(
   return t("team.changes.you");
 }
 
+/** The person's own words kept with a change, to show under it. A Remove
+ * the person pressed in the app carries none: the daemon keeps a fixed
+ * note there, which is not something they said. */
+export function historyItemQuote(item: Pick<PageHistoryItem, "person_asked" | "agent" | "edited_by">): string | null {
+  if (item.edited_by === "rule_save" && item.agent === RULE_REMOVED_IN_APP) return null;
+  return item.person_asked?.trim() ? item.person_asked : null;
+}
+
 /** Who or what made one change, in the person's words. A change taken
- * from a shared folder names the member who made it. */
+ * from a shared folder names the member who made it. `entry` is the
+ * changelog entry the row summarizes, where the caller has it. */
 export function historyItemLabel(
   t: TFunction,
   item: PageHistoryItem,
   shares?: readonly SharedStatus[],
+  entry?: Pick<PageChangelogEntry, "char_delta"> | null,
 ): string {
   if (item.kind === "source_update") {
     return t("pageHistory.sourceUpdate", { title: item.source?.title || t("pageHistory.untitledSource") });
@@ -48,7 +58,15 @@ export function historyItemLabel(
   }
   return sharedWriter(item.edited_by, shares, t)
     ?? teamAiWriter(t, item.edited_by, item.agent)
-    ?? revisionWriterLabel(t, item.edited_by ?? "", item.agent);
+    ?? revisionWriterLabel(t, item.edited_by ?? "", item.agent, entry?.char_delta ?? ruleDelta(item));
+}
+
+/** Whether a rule change added or took out text, from the daemon's own
+ * summary (`+24 chars`) when no changelog entry is at hand. */
+function ruleDelta(item: Pick<PageHistoryItem, "edited_by" | "delta_summary">): number | null {
+  if (item.edited_by !== "rule_save") return null;
+  const sign = /([+-])\d+ chars/u.exec(item.delta_summary ?? "")?.[1];
+  return sign === undefined ? null : sign === "+" ? 1 : -1;
 }
 
 /**

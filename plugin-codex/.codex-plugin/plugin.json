@@ -1,6 +1,6 @@
 {
   "name": "wenlan",
-  "version": "0.22.2+codex",
+  "version": "0.22.3+codex",
   "description": "Docs, skills and rules your AI tools keep current and work from. Each doc links to its sources. Open source, and works with your existing Obsidian vault.",
   "author": {
     "name": "Qi-Xuan Lu",

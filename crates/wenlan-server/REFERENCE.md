@@ -39,6 +39,7 @@ These flags control ignored, target-Mac profiling tests; they are not daemon run
 |---|---|
 | `WENLAN_TELEMETRY_DISABLED` | Set to `1` to make product telemetry unavailable: the daemon reports telemetry as unavailable and does not record or send operation counters, even when persisted consent is enabled. When unset, telemetry remains available only in non-debug builds with an initialized HTTP client. |
 | `WENLAN_DEV_STATE_DIR` | When set (non-empty), `skill_grow.rs` reads the person's existing AI-tool skill folders from `$WENLAN_DEV_STATE_DIR/ai-tools/home` and `.../ai-tools/config` instead of the real home and config folders, mirroring the app's isolated dev roots, so a dev or scratch daemon never reads real skill files. Unset in normal use. |
+| `WENLAN_DEV_SKILLS_ENDPOINTS` | Only read when `WENLAN_DATA_DIR` names a root other than the installed app's own (a test or trial daemon). When set (non-empty) to a base URL, `skill_registry_routes.rs` fetches skills from `<base>/skills-sh`, `<base>/wenlan-site`, `<base>/github-api` and `<base>/github-raw` instead of skills.sh, wenlan.app and GitHub, so a trial daemon can be driven against a local stand-in. The installed app's own run ignores it. Unset in normal use. |
 
 ## Files mirror flag (storage migration step 3)
 
@@ -75,3 +76,26 @@ be read after restart. After such an error, keep the process disabled (or set th
 emergency-off environment flag), resolve the filesystem failure, retry revocation,
 and verify the persisted state before restarting. Never describe an errored revoke
 as a successfully persisted opt-out.
+
+## Team sign-in (`team_auth.rs`)
+
+Web sign-in on the team listener, with an OpenID Connect provider (Google
+today). It is on only when the team's address (`WENLAN_TEAM_URL`, else the
+address saved in `team.json`) is `https://` and a provider is configured;
+otherwise every `/auth/start`, `/auth/callback`, `/auth/link` and
+`/auth/reauth` route answers 404 and one line says why at start.
+
+| Setting | Meaning |
+|---|---|
+| `WENLAN_TEAM_GOOGLE_CLIENT_ID` | The Google OAuth client id. Beats `team-auth.json`. |
+| `WENLAN_TEAM_GOOGLE_CLIENT_SECRET` | The client secret. Never logged. Beats `team-auth.json`. |
+| `team-auth.json` | In the data root next to `team.json`, mode 0600 on Unix: `{"google": {"client_id": "...", "client_secret": "..."}}`. An `https://` `issuer` may be added for another OIDC issuer. |
+
+Register `<WENLAN_TEAM_URL>/auth/callback/google` as the redirect URL; Google
+accepts a domain name, not an IP address. Login transactions and browser
+sessions live in memory, so a restart signs everyone out. Requests to the
+`/auth` routes are limited per direct peer IP (a token bucket, burst 30, one
+request per two seconds after): behind a reverse proxy all clients share the
+proxy's bucket, and there is no trusted-proxy list yet. Re-signing-in
+("reauth") needs the provider to return `auth_time`; a provider that never
+does cannot complete it.

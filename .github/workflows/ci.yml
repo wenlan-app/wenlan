@@ -89,13 +89,13 @@ jobs:
       # Linux runs from one compile-once archive below. This dynamic matrix is
       # only for platform-owned macOS and Windows behavior.
       test-matrix: ${{ steps.matrix.outputs.json }}
-      # Hosted macOS runs at most five jobs at once. Ordinary PR pushes skip
-      # macOS work. The merge queue runs macOS only for macOS-specific changes
-      # (app, updater, packaging, native sources, target_os = "macos" code)
-      # and Windows only when a file that woke its filters can change native
-      # behavior; everything else is proved natively by the main push after
-      # merge (scripts/ci_native_lane.py). `conclusion` requires every lane
-      # that is allowed. Release-please, main push and manual runs keep both.
+      # Hosted macOS runs at most five jobs at once and its arm64 pool is
+      # often short. Ordinary PR pushes and the merge queue never run macOS:
+      # the main push after merge runs every macOS job, and a break found
+      # there is fixed forward before the release. The queue runs Windows only
+      # when a file that woke its filters can change native behavior
+      # (scripts/ci_native_lane.py). `conclusion` requires every lane that is
+      # allowed. Release-please, main push and manual runs keep both.
       macos-allowed: ${{ steps.macos-lane.outputs.allowed }}
       windows-allowed: ${{ steps.windows-lane.outputs.allowed }}
       mcp-platform-os: ${{ steps.native-os.outputs.mcp-platform-os }}
@@ -235,7 +235,11 @@ jobs:
               - 'crates/wenlan-cli/src/commands/service_binding.rs'
               - 'crates/wenlan-core/src/config.rs'
               - 'crates/wenlan-core/src/home_bin.rs'
+              # The person key file is `0600` on Unix (`cfg(unix)`).
+              - 'crates/wenlan-core/src/person_key.rs'
               - 'crates/wenlan-cli/src/commands/pages.rs'
+              # `wenlan open` hands the browser pass over in a 0600 launcher file on Unix (`cfg(unix)`).
+              - 'crates/wenlan-cli/src/commands/web.rs'
               - 'crates/wenlan-cli/src/commands/setup.rs'
               - 'crates/wenlan-cli/src/commands/secret_input.rs'
               - 'crates/wenlan-cli/src/commands/open_document.rs'
@@ -481,6 +485,8 @@ jobs:
               - 'scripts/first-run/macos-app.sh'
               - 'crates/wenlan-cli/src/commands/mcp.rs'
               - 'crates/wenlan-cli/src/commands/pages.rs'
+              # `wenlan open` hands the browser pass over in a 0600 launcher file on Unix (`cfg(unix)`).
+              - 'crates/wenlan-cli/src/commands/web.rs'
               - 'crates/wenlan-cli/src/commands/service.rs'
               - 'crates/wenlan-cli/src/commands/service_binding.rs'
               - 'crates/wenlan-cli/src/commands/setup.rs'
@@ -491,6 +497,8 @@ jobs:
               - 'crates/wenlan-cli/tests/tool_cli.rs'
               - 'crates/wenlan-core/src/config.rs'
               - 'crates/wenlan-core/src/home_bin.rs'
+              # The person key file is `0600` on Unix (`cfg(unix)`).
+              - 'crates/wenlan-core/src/person_key.rs'
               - 'crates/wenlan-core/src/community_grouping.rs'
               - 'crates/wenlan-core/src/community_partition.rs'
               - 'crates/wenlan-core/src/edge_grounding.rs'
@@ -580,6 +588,8 @@ jobs:
               # reparse point), and the tests build real symlinks on each side.
               - 'crates/wenlan-server/src/skill_grow.rs'
               - 'crates/wenlan-server/src/skill_grow_test.rs'
+              # The sign-in config file warns when others can read it (`cfg(unix)`).
+              - 'crates/wenlan-server/src/team_auth.rs'
               # The OKF overlap refusal is proved against a symlinked spelling
               # too, and that case is `cfg(unix)`, so the file carries a
               # platform route and must schedule both sides of the gate.
@@ -611,6 +621,8 @@ jobs:
               - 'crates/wenlan-cli/src/commands/mcp.rs'
               - 'crates/wenlan-cli/src/commands/mod.rs'
               - 'crates/wenlan-cli/src/commands/pages.rs'
+              # `wenlan open` hands the browser pass over in a 0600 launcher file on Unix (`cfg(unix)`).
+              - 'crates/wenlan-cli/src/commands/web.rs'
               - 'crates/wenlan-cli/src/commands/windows_task.rs'
               - 'scripts/resolve-backend-dir.test.ps1'
               - 'crates/wenlan-cli/src/commands/service.rs'
@@ -634,12 +646,16 @@ jobs:
               # No-follow skill reads and symlink tests have a Windows branch.
               - 'crates/wenlan-server/src/skill_grow.rs'
               - 'crates/wenlan-server/src/skill_grow_test.rs'
+              # The sign-in config file warns when others can read it (`cfg(unix)`).
+              - 'crates/wenlan-server/src/team_auth.rs'
               # The team's Windows Firewall probe runs PowerShell only on Windows.
               - 'crates/wenlan-server/src/team_firewall.rs'
               - 'crates/wenlan-server/tests/graceful_shutdown.rs'
               - 'crates/wenlan-mcp/npm/install.js'
               - 'crates/wenlan-core/src/config.rs'
               - 'crates/wenlan-core/src/home_bin.rs'
+              # The person key file is `0600` on Unix (`cfg(unix)`).
+              - 'crates/wenlan-core/src/person_key.rs'
               - 'crates/wenlan-core/src/db/m5_page_size_snapshot.rs'
               # A code basis may not follow a symlink out of its repository;
               # that case is proved against a real symlink, which is `cfg(unix)`.
@@ -946,7 +962,9 @@ jobs:
           if-no-files-found: error
           overwrite: false
       - name: Test native lane routing
-        run: python3 scripts/ci_native_lane.test.py
+        run: |
+          python3 scripts/ci_native_lane.test.py
+          python3 scripts/ci_runner_retry.test.py
       # Each lane reads the union of every filter that can wake a macOS or
       # Windows job. A lane is a necessary condition only; each job still
       # requires its own filter.
@@ -969,7 +987,6 @@ jobs:
         run: |
           python3 scripts/ci_native_lane.py --platform macos \
             --event-name "$EVENT_NAME" --head-ref "$HEAD_REF" \
-            --repo-root "$GITHUB_WORKSPACE" \
             --files-json "$FILES_MACOS" --files-json "$FILES_WINDOWS" --files-json "$FILES_APP" --files-json "$FILES_NATIVE_CONTRACTS" --files-json "$FILES_MACOS_M4" --files-json "$FILES_M5_PLATFORM" --files-json "$FILES_NEXTEST_CONFIG" --files-json "$FILES_RELEASE_PREFLIGHT" --files-json "$FILES_RELEASE_CONTRACT" --files-json "$FILES_MCP_PLATFORM" --files-json "$FILES_WORKSPACE_PLATFORM" --files-json "$FILES_MACOS_ARCHIVE_CONTRACT" \
             --github-output "$GITHUB_OUTPUT"
       - id: windows-lane
@@ -1065,7 +1082,7 @@ jobs:
             include=""
           fi
           if [ "${{ steps.macos-lane.outputs.allowed }}" != "true" ]; then
-            # Ordinary PRs: the merge queue owns macOS (see macos-allowed).
+            # PR pushes and the merge queue: the main push owns macOS (see macos-allowed).
             include="${include//${macos},/}"
             include="${include//${macos}/}"
           fi
