@@ -1,15 +1,15 @@
-<!-- README_SYNC: source=README.md sha256=bf55db53db55222f4caa3e3f886c5301c570fb53ae498c065ff57849680640f4 -->
+<!-- README_SYNC: source=README.md sha256=68541013432cdb2f734f25767882905f29693ff410202bdb10dbd4cd5d60f2dd -->
 
 <p align="center">
   <picture>
     <source media="(max-width: 600px)" srcset="./docs/assets/readme-banner-zh-Hans-mobile.png">
-    <img src="./docs/assets/readme-banner-zh-Hans.png" alt="文澜：不用你维护的知识库。免费、开源、本地优先。" width="100%">
+    <img src="./docs/assets/readme-banner-zh-Hans.png" alt="文澜：会自己更新的做事手册，每个 AI 工具都用。" width="100%">
   </picture>
 </p>
 
 <p align="center">
-  <strong>开源的 Obsidian 替代品，也能直接接上你现有的仓库。</strong><br>
-  你的 AI 工具帮你整理、更新，不用 API key、不用插件。个人和团队都能用。
+  <strong>文档、技能和规则，你和 AI 工具都照着做，而且会保持最新。</strong><br>
+  笔记和知识都能放进来，每份文档都附出处。免费、开源，个人和团队都能用。
 </p>
 
 <p align="center">
@@ -40,31 +40,28 @@
 
 ## 为什么用文澜
 
-我做文澜，是因为笔记、文档和 AI 对话散落各处，要让笔记系统不荒废得不停维护。后来我们也不断听到有人说 Obsidian 太麻烦：要找插件、装插件，还要一直更新设置。文澜是给每天用 AI 工具、又不想维护笔记系统的人。
+每个 AI 工具各记各的、规则各一份。有了文澜，你定下的事，每个工具、代理和队友都拿得到。
 
-**个人版**：下载桌面 App，自己就能用。
+给每天用好几个 AI 工具的人，和小团队，全是工程师或混着其他角色都行。
 
-**团队版（下一版推出）**：团队自己架一台文澜服务器，大家都连上去，每个人可以设成只能看或可以改。
-
-- **自己保持最新。** AI 工具会把你在对话里的决定存成记忆，再整理进笔记；来源变了，用到它的笔记也会跟着更新。
-- **不用插件，不用设置。** 在设置里点“全部连接”，一键连好你的 AI 工具。不用找插件、更新插件，也不用 API key。
-- **带进现有资料。** Obsidian 仓库、笔记、文档和 AI 对话都能带进来。[完整清单](#what-can-i-bring-in)。
-- **AI 能改什么由你决定。** 改了什么都看得到、能还原，也能指定哪些笔记要先问你。
-- **笔记都附出处。** 点引用就回到原文；引用大多对不上的笔记不会保存。
-- **页面可以是文字，也可以是 HTML。** 请 AI 帮任何一页做 HTML 视图，或把它做好的 HTML 直接存成一个 HTML 页面。HTML 视图显示的是这页当下的文字，改字不用重做。
-- **共用一个 Space。** 通过 Google Drive 或 iCloud 云盘的文件夹，跟同事共用，或在自己的几台电脑间同步。
+- **有出处的文档。** 保存前，文澜会确认每个引用的来源支持那一句。
+- **技能和规则只有一份。** 同一份，在你连上的每个 AI 工具和平台上都能用。
+- **整理过的记忆。** 你定下的事会整理进文档、技能和规则，所以它们一直是新的。
+- **你说了算。** 改了什么都看得到、能还原；锁定的页面，AI 会先问你。
+- **文件优先，可以自己架，带得走。** 都是纯 Markdown 文件，数据库只是索引。
+- **人也好读。** 一页可以是文字，也可以请 AI 画成网页。
 
 <a id="how-it-compares"></a>
 
-### 跟其他做法比
+### 文澜，还是每个工具各放一份规则文件？
 
-| | Obsidian 加插件 | Notion | LLM wiki 应用 | 文澜 |
-|---|---|---|---|---|
-| 谁来整理 | 你自己加插件 | 你自己，或 Notion 的 Agent | 你另外设置的 AI | 你的 AI 工具；来源变了会更新 |
-| 设置 | 找插件、更新插件 | 完整 AI 要 Business 方案 | 填模型 key 或排程 | 一键连接，不用 API key |
-| 检查 AI 写的东西 | 看插件 | 附出处，不检查合不合 | 链接到来源 | 引用对不上的笔记不会保存 |
-| AI 能改什么 | 看插件 | 你开放给 Agent 的页面 | 它的 wiki 文件夹 | 每篇由你决定，随时可还原 |
-| 笔记存在哪 | 你的电脑 | Notion 云端 | 你的电脑 | 你的电脑；能接现有仓库 |
+只用一个工具、一个仓库时，一份规则文件（AGENTS.md、CLAUDE.md、.cursor/rules）就够了。再多的话：
+
+- **一份，每个工具都用。** 不用每个工具各复制一份、再手动对齐。
+- **旧规则不会一直留着。** 来源变了，你的 AI 工具会更新那一页。
+- **不只规则。** 文档、技能和记忆就放在旁边。
+
+跟 Obsidian、Notion AI 和各种记忆工具的比较：[wenlan.app/learn](https://wenlan.app/learn)。
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
@@ -80,27 +77,40 @@
 
 ## 开始使用
 
-### 1. 下载并打开 Wenlan
+**自己用。** 从你的 AI 工具开始，不用装 App。
 
-[下载桌面版](https://github.com/wenlan-app/wenlan/releases/latest)，支持 macOS 11 以上的 Apple Silicon、Windows x64 和 Linux x64（AppImage 或 .deb，v0.22 起）。App 界面有英文、简体中文和繁體中文。
+1. 运行一行命令（需要 Node.js）。它会装好、启动文澜，并连上它找到的 AI 工具。
 
-更喜欢终端？在 Mac 上运行 `npx -y wenlan setup`，或运行 `brew install 7xuanlu/tap/wenlan` 再运行 `wenlan setup`。Linux 和 Windows 请看 [CLI 安装说明](docs/setup-and-data.zh-Hans.md#installation)。
+   ```sh
+   npx -y wenlan setup
+   ```
 
-### 2. 带入你的资料
+   它会问一次要不要带入一个放笔记或文档的文件夹，按 Enter 跳过。[其他安装方式](docs/setup-and-data.zh-Hans.md#installation)。
 
-新建一篇笔记，或带入 Obsidian 仓库、Logseq 图谱、文件夹或之前的 AI 对话。[导入指南](docs/import-guide.md)。
+   之后：`wenlan connect cursor` 再连一个工具，`wenlan sources add ~/notes` 再加一个文件夹。[更多](docs/import-guide.md)。
 
-### 3. 连接你的 AI 工具
+2. 在一个 AI 工具里说你定下的事，再换另一个工具问，马上问得到。
 
-在 App 的设置里，“添加工具”会找出你电脑上的 AI 工具，点“全部连接”一次设好，不用另外装东西或更新。接着开一个新的 AI 会话，问它：
+   > 存到文澜：我们每周二发版，测试过了才发。
 
-> /wenlan 我之前对这件事怎么决定的？再帮我：……
+   > 问文澜：我们什么时候发版？
 
-只要记得 `/wenlan`（Codex 里是 `$wenlan`），后面直接说你要做什么。
+   装了[插件](docs/setup-with-ai.md)，这两句就是 `/capture` 和 `/recall`。[全部指令](plugin/skills/README.md)。
 
-支持 Claude Code、Claude Desktop、Codex、Cursor、GitHub Copilot、VS Code、Gemini CLI、Windsurf、Grok Bot 和其他 MCP 工具。[手动设置](docs/setup-with-ai.md)。
+3. 过一晚，文澜把你定下的事整理成文档和规则，每条都附出处。
 
-导入完成后，App 会提供“用（你的 AI 工具）写页面”，把资料写成第一批带引用的笔记，不用输入指令。
+   第一次会问你一次。你说好之后，规则就写进各个 AI 工具自己的规则文件。
+
+4. 在浏览器里看和改你的页面：`wenlan open`。
+
+想要的话再装：[桌面 App](https://github.com/wenlan-app/wenlan/releases/latest)（macOS、Windows、Linux）多了导入和一键连接 AI 工具。
+
+**团队用。** 架一台文澜服务器。[团队服务器说明](docs/team-server.md)。
+
+- 每个人用自己的密钥连上，每个 Space 可以设成只能看或可以改。
+- 成员打开邀请链接，用自己的 AI 工具加入。桌面 App 会自己同步。
+
+支持 Claude Code、Codex、Cursor、GitHub Copilot、Gemini CLI 和其他 MCP 工具：[设置说明](docs/setup-with-ai.md)。
 
 <a id="what-can-i-bring-in"></a>
 <a id="sources-and-imports"></a>
@@ -109,14 +119,14 @@
 
 ## 能带进什么
 
-- **文件和文件夹：** Markdown、文本文件、文本型 PDF、DOCX。可以只导入一次，也可以让文件夹持续同步。
+- **文件和文件夹：** Markdown、文本文件、文本型 PDF、DOCX。导入一次，或持续同步。
 - **Obsidian 仓库和 Logseq 图谱：** 持续同步或只导入一次。你自己写的笔记默认是“先问我”。
-- **网页链接：** 在笔记里粘贴链接就会保存为来源。YouTube、X、Threads、Instagram 和小红书会显示成卡片或视频。
-- **Gmail、Notion、Google Drive、Slack、GitHub：** 你的 AI 工具用自己的连接器读取，把重要的内容存进来，附上原文链接。
-- **AI 对话：** 决定和发现会存成记忆，不存完整对话记录。ChatGPT 和 Claude 导出的 ZIP 也能带进来。
-- **代码仓库：** `/wenlan wiki` 写出对应到代码的笔记。[代码 wiki](#code-repository-wiki)。
+- **网页链接：** 在页面里粘贴链接，就会保存为来源。
+- **Gmail、Notion、Google Drive、Slack、GitHub：** 你的 AI 工具读取后存下重点，附上原文链接。
+- **AI 对话：** 决定和发现会存成记忆。ChatGPT 和 Claude 导出的 ZIP 也能带进来。
+- **代码仓库：** AI 工具读代码，写出对应到代码的文档。[代码文档](#code-repository-wiki)。
 
-也可以把 Open Knowledge Format（OKF）文件夹连接为来源。扫描版 PDF 需要先提取文字；对话附件不会导入。[导入指南](docs/import-guide.md)。
+OKF 文件夹也可以。扫描版 PDF 需要先提取文字。[导入指南](docs/import-guide.md)。
 
 <a id="what-makes-wenlan-distinct"></a>
 <a id="why-is-wenlan-different"></a>
@@ -163,34 +173,44 @@
 
 ## 它怎么帮你整理
 
-你的 AI 工具会读你带进来的资料，写成 Markdown 笔记：把相关的笔记连起来，标出每句话的出处，来源变了就跟着更新。任何一篇笔记你都可以打开自己写。
+你的 AI 工具把你带进来的资料写成 Markdown 页面，连起相关的页面、标出每句的出处，并保持最新。
 
 <p align="center">
   <img src="./docs/assets/wenlan-updates-history-zh-Hans.animated.svg" alt="示意流程：AI 对话、文件与文件夹（含 Obsidian）、代码和网页内容进入沉淀。它把几条记忆写成新页、合并重复的页，并更新旧页，引用会对照来源核查；设成“先问我”的页会等你点头。它也会找出新关联，处理矛盾时改用较新的说法，旧的留在记录可还原。下次再问，AI 工具会引用更新后的页面。" width="100%">
 </p>
 <p>示意图依据当前的更新行为绘制；并非 App 截图。</p>
 
-- **每篇笔记都有出处：** 每个引用都能点回原文。笔记用 `[n]` 引用来源时，文澜会拿每个引用的句子对照它的来源；引用大多对不上时，不会保存该笔记。通过检查不代表内容一定正确。
-- **跟着来源更新：** 来源、记忆或引用的代码变了，依据它们的笔记会被标出来等待更新。不需要任何模型，文澜也会建议合并近似重复的笔记，并列出还没有对应笔记的 `[[链接]]`。
-- **AI 能改什么由你决定：** 你写的笔记默认是“先问我”，AI 的修改会先等你点头。每篇笔记都可以设成“直接改”或“先问我”，看得到改了什么，也能还原到之前的版本。
-- **两种方式：** “随叫”是默认，由你的 AI 工具在工作时顺手写，不用另外设置 API key。“自动”则由文澜用你选的模型在后台处理，模型可以在你的电脑上，也可以在云端。[沉淀指南](docs/steep.md)。
-- **在你的 AI 工具里：** 打 `/wenlan`，后面说你要做什么：找回之前的决定、存下一个心得，或接着上次做到的地方。快捷方式：`/recall`、`/capture`、`/handoff`、`/brief`。[插件指令](plugin/skills/README.md)。
-- **在 App 里：** 不连 AI 也能加资料、写笔记、改笔记、查回引用、审核修改建议。笔记可以包含 Mermaid 图表，由 App 画出来。
+- **有出处的文档：** 引用大多对不上来源的页面，文澜不会保存。通过检查不代表内容一定正确。
+- **跟着来源更新：** 来源、记忆或引用的代码变了，依据它们的页面会被标出来等更新。
+- **AI 能改什么由你决定：** 每一页可以设成“直接改”或“先问我”，也能还原到之前的版本。
+- **两种方式：** 你的 AI 工具边工作边写（默认），或由你选的模型在后台处理。[沉淀指南](docs/steep.md)。
+- **技能：** 把你已有的技能收进来，或找新的来装。文澜会建议怎么改，你点了才改。
+- **在你的 AI 工具里：** 用平常的话说，提到文澜就行。装了插件还有 `/wenlan` 快捷指令。[全部指令](plugin/skills/README.md)。
+- **在 App 里：** 不连 AI 也能加资料、改页面、查回引用、审核修改建议。
 
-已经用 Claude Code 或 Codex 管一个笔记文件夹？继续用就好。文澜接上同一个工具，补上文件夹自己做不到的事：检查引用、来源变了会标记，而且每篇笔记 AI 能不能改由你决定。
+已经用 Claude Code 或 Codex 管一个笔记文件夹？继续用就好。文澜补上引用检查和每一页的修改控制。
 
 <a id="code-repository-wiki"></a>
 <a id="a-wiki-for-your-code-repository"></a>
 
 <br>
 
-## 为代码仓库建 wiki
+## 帮代码仓库写文档
 
-在代码仓库中运行 `/wenlan wiki`（Codex 中为 `$wenlan wiki`）。你的 AI 工具会写一篇总览，再为新人需要了解的每个部分或流程各写一篇。再次运行时只补写缺少的笔记。
+在仓库里，AI 工具读代码，写一篇总览，每个部分再各写一份文档。
 
-- **与代码绑定：** 每篇笔记都会记录它依据的代码行；代码变了，笔记会显示改了什么。
-- **以 pull request 放进仓库：** Space 上的 GitHub 按钮会把笔记以 pull request 放进仓库的 `wiki/` 文件夹，可以点按钮运行，也可以每天自动跑。每日更新可以在你的电脑上用你自己的 AI 工具跑，或在 GitHub Actions 上跑（AI 工具的密钥存为仓库 secret）。同一个 pull request 还会修正仓库文档中与代码不再相符的句子。
-- **保留你的修改：** 有人在仓库中修改过的 wiki 笔记会保留那次修改。引用你的记忆或对话的笔记不会放进仓库。
+```sh
+cd your-repo
+wenlan init
+```
+
+它会连上找到的 AI 工具，并问一次要不要每天开 pull request。装了插件，打 `/wenlan docs` 马上写出文档。
+
+- **对得回代码：** 每句重点都标出它依据的代码行；代码变了，你看得到。
+- **以 pull request 放进仓库：** 点一下按钮，或每天自动跑一次。
+- **现有文档也一起修：** 同一个 pull request 会修正仓库文档中与代码不再相符的句子。
+- **项目规则也一起送：** 项目规则会写进 `AGENTS.md`，队友的 AI 工具都读得到。
+- **保留你的修改：** 在仓库里改过的页面会保留。引用你的记忆或对话的页面不会放进去。
 
 <a id="what-wenlan-is-not"></a>
 <a id="retrieval"></a>
@@ -201,7 +221,7 @@
 
 ## 给技术读者
 
-**共用本地知识库。** App、CLI 与连上的 AI 工具通过文澜的本地服务读写。笔记以 Markdown 文件保存；记忆、关系与搜索索引存在本地 libSQL。本地服务、CLI 和 MCP server 用 Rust 写成；桌面 app 用 Tauri，界面是 React 和 TypeScript。
+**共用本地知识库。** App、CLI 与连上的 AI 工具通过文澜的本地服务读写。页面以 Markdown 文件保存；记忆、关系与搜索索引存在本地 libSQL。本地服务、CLI 和 MCP server 用 Rust 写成；桌面 app 用 Tauri，界面是 React 和 TypeScript。团队服务器是在一台共用机器上跑同一个服务，每位成员的文澜和它同步共用的页面。
 
 <p align="center">
   <img src="./docs/assets/wenlan-architecture-zh-Hans.png" alt="架构示意：App 与 AI 工具共用本地知识库，后台整理模型为可选项。" width="100%">
@@ -239,8 +259,9 @@
 
 ## 数据与隐私
 
-- 笔记是你电脑上的 Markdown 文件，只会去你让它去的地方。
-- 符合条件的笔记可以导出为 Open Knowledge Format（OKF）知识库。
+- 页面是你电脑上的 Markdown 文件，只会去你让它去的地方。
+- 用团队服务器时，只有共用 Space 里的页面会送过去。记忆、来源和其他 Space 都留在你的电脑。
+- 符合条件的页面可以导出为 Open Knowledge Format（OKF）文件夹。
 - 云端 AI 工具可能会把找回的内容传给它的服务商，云端模型也会收到它处理的内容，所以本地存储不代表这些交互都留在本机。
 - 使用统计默认关闭。
 
@@ -262,6 +283,7 @@
 - [本地文件、备份与离线使用](docs/setup-and-data.zh-Hans.md)
 - [隐私](docs/PRIVACY.md)
 - [Doctor 与问题反馈](https://wenlan.app/docs/diagnostics-and-issue-reports)
+- [团队服务器](docs/team-server.md)
 - [每次发布的更新记录](CHANGELOG.md)
 - [完整文档索引](docs/README.md)
 
@@ -295,4 +317,4 @@
 
 ## 源流与同类项目
 
-Wenlan 名称来自文澜阁，产品方向承接 LLM-wiki 与 agent-memory 脉络：[Karpathy 的 LLM-wiki note](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)、[Rohitg00 的提案](https://gist.github.com/rohitg00/2067ab416f7bbe447c1977edaaa681e2)和 [nashsu/llm_wiki](https://github.com/nashsu/llm_wiki)。
+Wenlan 名称来自文澜阁，产品方向承接 LLM-wiki 与 agent-memory 脉络：[Karpathy 的 LLM-wiki note](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)、[Rohitg00 的提案](https://gist.github.com/rohitg00/2067ab416f7bbe447c1977edaaa681e2)和 [nashsu/llm_wiki](https://github.com/nashsu/llm_wiki)。代码文档方面，最接近的同类项目是 [OpenWiki](https://github.com/langchain-ai/openwiki)；文澜每天开 pull request 的做法参考了它。
