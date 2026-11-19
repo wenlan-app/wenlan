@@ -1739,7 +1739,7 @@ async fn ux_skill_10_hand_written_rules_reach_tools_with_no_model_and_no_yes() {
         .contains("- 回答用白話\n"));
     assert_eq!(
         project_rules(&scratch.db, Some(&scratch.pages), "Project").await,
-        vec!["Use the merge queue".to_string()],
+        Some(vec!["Use the merge queue".to_string()]),
         "the repository copy gets the Space's own rules"
     );
 
@@ -3658,6 +3658,29 @@ fn refusal_text(error: ServerError) -> String {
 /// save counts at once: no model, no accept, and the Settings switch off.
 /// Every list says where it was saved from and never "written by you".
 #[tokio::test]
+async fn ux_skill_7_a_space_not_found_is_not_a_space_without_rules() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(false).await;
+    scratch
+        .db
+        .create_space("Project", None, false)
+        .await
+        .unwrap();
+    // No rules read is not "no rules": the repository keeps what it has.
+    assert_eq!(
+        project_rules(&scratch.db, Some(&scratch.pages), "Gone").await,
+        None
+    );
+    assert_eq!(
+        project_rules(&scratch.db, Some(&scratch.pages), "Project").await,
+        Some(Vec::new())
+    );
+}
+
+#[tokio::test]
 async fn ux_skill_14_a_saved_rule_counts_at_once_and_names_its_tool() {
     let _lock = crate::TEST_DATA_DIR_LOCK
         .get_or_init(|| tokio::sync::Mutex::new(()))
@@ -3757,7 +3780,7 @@ async fn ux_skill_14_a_saved_rule_counts_at_once_and_names_its_tool() {
     assert!(!codex.contains("Tuesdays"), "a Space's rule stays out");
     assert_eq!(
         project_rules(&scratch.db, Some(&scratch.pages), "Project").await,
-        vec!["We release on Tuesdays.".to_string()]
+        Some(vec!["We release on Tuesdays.".to_string()])
     );
 
     // The same sentence is not saved twice.

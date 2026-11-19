@@ -2051,12 +2051,14 @@ async fn sync_rules_files(
 }
 
 /// The Space's own approved rules as plain sentences, for the repository
-/// copy. General lines are the person's habits and stay out.
+/// copy. General lines are the person's habits and stay out. `None` when
+/// they could not be read or the Space is not found, so the repository keeps
+/// the rules it has.
 pub(crate) async fn project_rules(
     db: &MemoryDB,
     page_root: Option<&Path>,
     space: &str,
-) -> Vec<String> {
+) -> Option<Vec<String>> {
     let lines = match db.get_space(space).await {
         Ok(Some(space)) => match OwnRulePages::load(db, page_root).await {
             Ok(own) => read_rules_for_space(db, &own, &space)
@@ -2064,19 +2066,20 @@ pub(crate) async fn project_rules(
                 .map(|rules| rules.lines),
             Err(error) => Err(error),
         },
-        Ok(None) => return Vec::new(),
+        // A Space that is not found is no proof its rules are gone.
+        Ok(None) => return None,
         Err(error) => Err(error.into()),
     };
     let mut lines = match lines {
         Ok(lines) => lines,
         Err(error) => {
             tracing::warn!(%error, "[skills] project rules not read for the repository");
-            return Vec::new();
+            return None;
         }
     };
     // Only rules: a decision or a pitfall read as a bare order misleads.
     lines.retain(|line| !line.general && line.kind == wenlan_types::SkillLineKind::Rule);
-    lines.into_iter().map(|line| line.text).collect()
+    Some(lines.into_iter().map(|line| line.text).collect())
 }
 
 /// Same, for callers that must not fail because a file could not be written.

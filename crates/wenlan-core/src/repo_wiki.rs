@@ -277,6 +277,57 @@ pub(crate) fn run(mut command: Command, what: &str) -> Result<String, WenlanErro
     }
 }
 
+/// How long a git command that reaches the remote may take.
+const NETWORK_LIMIT: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// [`run`], stopping the command when it takes longer than `limit`: a stalled
+/// remote must not hold the daily run. For commands with little output.
+fn run_within(
+    mut command: Command,
+    what: &str,
+    limit: std::time::Duration,
+) -> Result<String, WenlanError> {
+    use std::process::Stdio;
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| WenlanError::Generic(format!("{what}: could not run: {error}")))?;
+    let started = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if started.elapsed() >= limit => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(WenlanError::Generic(format!(
+                    "{what} was stopped after {} seconds",
+                    limit.as_secs()
+                )));
+            }
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(50)),
+            Err(error) => {
+                return Err(WenlanError::Generic(format!("{what}: {error}")));
+            }
+        }
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|error| WenlanError::Generic(format!("{what}: {error}")))?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let detail = stderr.trim();
+        Err(WenlanError::Generic(if detail.is_empty() {
+            format!("{what} failed ({})", output.status)
+        } else {
+            format!("{what} failed: {detail}")
+        }))
+    }
+}
+
 /// The top level of the git working copy holding `path`, canonicalized.
 pub fn repository_top_level(path: &Path) -> Result<PathBuf, WenlanError> {
     let mut command = git(path);
@@ -989,23 +1040,91 @@ fn agents_block(folder: Option<&str>, rules: &[String], publisher: Option<&str>)
              and the code disagree, the code wins.\n"
         ));
     }
-    let rules = rules
-        .iter()
-        .map(|rule| rule.split_whitespace().collect::<Vec<_>>().join(" "))
-        .filter(|rule| !rule.is_empty() && !rule.contains(AGENTS_END))
-        .take(AGENTS_BLOCK_MAX_RULES)
-        .collect::<Vec<_>>();
+    let rules = block_rules(rules);
     if !rules.is_empty() {
         if folder.is_some() {
             block.push('\n');
         }
-        block.push_str("## Rules for this project\n\n");
+        block.push_str(&format!("{RULES_HEADING}\n\n"));
         for rule in rules {
             block.push_str(&format!("- {rule}\n"));
         }
     }
     block.push_str(AGENTS_END);
     block
+}
+
+/// The rules as they go into the block: one line each, at most
+/// [`AGENTS_BLOCK_MAX_RULES`].
+fn block_rules(rules: &[String]) -> Vec<String> {
+    rules
+        .iter()
+        .map(|rule| rule.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|rule| !rule.is_empty() && !rule.contains(AGENTS_END))
+        .take(AGENTS_BLOCK_MAX_RULES)
+        .collect()
+}
+
+const RULES_HEADING: &str = "## Rules for this project";
+
+/// The line ending a file uses: CRLF when it has any, LF otherwise.
+fn line_ending(text: &str) -> &'static str {
+    if text.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    }
+}
+
+/// The lines of Wenlan's block in `text`, without their line endings.
+fn block_lines(text: &str) -> Option<Vec<&str>> {
+    let (start, end) = (text.find(AGENTS_START)?, text.find(AGENTS_END)?);
+    (start < end).then(|| text[start..end].lines().map(str::trim_end).collect())
+}
+
+/// Whether Wenlan's block in `text` carries project rules.
+fn block_holds_rules(text: &str) -> bool {
+    block_lines(text).is_some_and(|lines| lines.contains(&RULES_HEADING))
+}
+
+/// The rules Wenlan's block in `text` carries: the bullet lines under its
+/// rules heading, as written there.
+fn block_rule_lines(text: &str) -> Vec<String> {
+    let Some(lines) = block_lines(text) else {
+        return Vec::new();
+    };
+    lines
+        .iter()
+        .skip_while(|line| **line != RULES_HEADING)
+        .skip(1)
+        .take_while(|line| !line.starts_with("## "))
+        .filter_map(|line| line.strip_prefix("- "))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// `text` without Wenlan's block, the person's text around it kept with its
+/// own line endings.
+fn remove_block(text: &str) -> String {
+    let (Some(start), Some(end)) = (text.find(AGENTS_START), text.find(AGENTS_END)) else {
+        return text.to_owned();
+    };
+    if start > end {
+        return text.to_owned();
+    }
+    let eol = line_ending(text);
+    let mut out = text[..start].trim_end().to_owned();
+    let rest = text[end + AGENTS_END.len()..].trim_start_matches(['\r', '\n']);
+    if !rest.is_empty() {
+        if !out.is_empty() {
+            out.push_str(eol);
+            out.push_str(eol);
+        }
+        out.push_str(rest);
+    } else if !out.is_empty() {
+        out.push_str(eol);
+    }
+    out
 }
 
 /// `text` with Wenlan's block replaced, or appended when it has none. Text
@@ -1026,6 +1145,9 @@ pub fn upsert_agents_rules_block(text: &str, rules: &[String]) -> String {
 }
 
 fn upsert_block(text: &str, block: &str) -> String {
+    // The block takes the file's own line endings.
+    let eol = line_ending(text);
+    let block = block.replace('\n', eol);
     if let (Some(start), Some(end)) = (text.find(AGENTS_START), text.find(AGENTS_END)) {
         if start < end {
             let end = end + AGENTS_END.len();
@@ -1033,21 +1155,42 @@ fn upsert_block(text: &str, block: &str) -> String {
         }
     }
     if text.trim().is_empty() {
-        return format!("{block}\n");
+        return format!("{block}{eol}");
     }
-    format!("{}\n\n{block}\n", text.trim_end())
+    format!("{}{eol}{eol}{block}{eol}", text.trim_end())
 }
 
 /// Keep Wenlan's block in `AGENTS.md` (created when missing) and in an
 /// existing `CLAUDE.md` that does not already import `AGENTS.md`. `folder`
 /// is the wiki folder when the repository holds one; without it the block
-/// carries the rules alone.
+/// carries the rules alone. With no folder and no rules left, the block is
+/// taken out, and an `AGENTS.md` that held nothing else goes with it.
 fn maintain_agent_files(
     worktree: &Path,
     folder: Option<&str>,
     rules: &[String],
     publisher: &str,
 ) -> Result<Vec<&'static str>, WenlanError> {
+    if folder.is_none() && block_rules(rules).is_empty() {
+        let mut touched = Vec::new();
+        for name in ["AGENTS.md", "CLAUDE.md"] {
+            let path = worktree.join(name);
+            let Ok(current) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            if !current.contains(AGENTS_START) {
+                continue;
+            }
+            let left = remove_block(&current);
+            if left.trim().is_empty() && name == "AGENTS.md" {
+                std::fs::remove_file(&path)?;
+            } else {
+                std::fs::write(&path, left)?;
+            }
+            touched.push(name);
+        }
+        return Ok(touched);
+    }
     let block = agents_block(folder, rules, Some(publisher));
     let mut touched = vec!["AGENTS.md"];
     let agents = worktree.join("AGENTS.md");
@@ -1292,7 +1435,9 @@ pub struct PublishInput<'a> {
     /// The Space's own approved project rules, for the block in `AGENTS.md`.
     /// Never the general ones: those are the person's habits, not the
     /// repository's.
-    pub rules: Vec<String>,
+    /// `None` when they could not be read: the rules already in the
+    /// repository's block stay as they are, never taken for "no rules".
+    pub rules: Option<Vec<String>>,
     /// This Wenlan's publisher id ([`publisher_id_at`]). A repository another
     /// publisher keeps is left alone unless the binding says to take it over.
     pub publisher: String,
@@ -1349,6 +1494,9 @@ pub struct Prepared {
     /// Other files people changed on the wiki branch after Wenlan's last
     /// commit there; the next commit keeps them as they are.
     carried: Vec<String>,
+    /// The commit the remote wiki branch was at when this was prepared, or
+    /// `None` when it was not there: the push replaces only that.
+    branch_at: Option<String>,
 }
 
 /// A publish's result, and what became of the doc fixes.
@@ -1376,7 +1524,7 @@ pub(crate) fn remote_default_branch(repo: &Path) -> String {
     }
     let mut command = git(repo);
     command.args(["ls-remote", "--symref", "origin", "HEAD"]);
-    if let Ok(out) = run(command, "git ls-remote") {
+    if let Ok(out) = run_within(command, "git ls-remote", NETWORK_LIMIT) {
         for line in out.lines() {
             if let Some(rest) = line.strip_prefix("ref: refs/heads/") {
                 if let Some(branch) = rest.split_whitespace().next() {
@@ -1485,6 +1633,13 @@ fn tree_file(repo: &Path, tree: &str, path: &str) -> Option<String> {
         return None;
     }
     String::from_utf8(output.stdout).ok()
+}
+
+/// Whether `commit` is already in `tree`'s history.
+fn is_ancestor(repo: &Path, commit: &str, tree: &str) -> bool {
+    let mut command = git(repo);
+    command.args(["merge-base", "--is-ancestor", commit, tree]);
+    command.status().is_ok_and(|status| status.success())
 }
 
 /// The object id of `path` in `tree`, or `None` when it is not there.
@@ -1700,7 +1855,7 @@ pub fn prepare(binding: &RepoWikiBinding, worktree: &Path) -> Result<Prepared, W
     bound_origin(binding)?;
     let mut command = git(&repo);
     command.args(["fetch", "--quiet", "origin"]);
-    run(command, "git fetch origin")?;
+    run_within(command, "git fetch origin", NETWORK_LIMIT)?;
     forget_deleted_wiki_branch(&repo);
     let base = remote_default_branch(&repo);
     prepare_worktree(&repo, worktree, &base)?;
@@ -1729,10 +1884,21 @@ pub fn prepare(binding: &RepoWikiBinding, worktree: &Path) -> Result<Prepared, W
                 .collect();
         }
     }
+    let mut command = git(&repo);
+    command.args([
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        &format!("{branch}^{{commit}}"),
+    ]);
+    let branch_at = run(command, "git rev-parse")
+        .ok()
+        .filter(|sha| !sha.is_empty());
     Ok(Prepared {
         base,
         edits,
         carried,
+        branch_at,
     })
 }
 
@@ -1774,6 +1940,8 @@ struct PrBody<'a> {
     kept: usize,
     /// Project rules written into the block in `AGENTS.md`.
     rules: usize,
+    /// Every project rule was removed in Wenlan, and this takes them out.
+    rules_removed: bool,
     fixes: Vec<&'a RepoDocFix>,
     /// `owner/name` on GitHub, for links to the code.
     slug: Option<&'a str>,
@@ -1789,6 +1957,7 @@ fn pr_body_for_test(binding: &RepoWikiBinding, fixes: Vec<&RepoDocFix>) -> Strin
         waiting: 0,
         kept: 0,
         rules: 0,
+        rules_removed: false,
         fixes,
         slug: None,
         base: "main",
@@ -1803,6 +1972,7 @@ fn pr_body(body: PrBody<'_>) -> String {
         waiting,
         kept,
         rules,
+        rules_removed,
         fixes,
         slug,
         base,
@@ -1828,6 +1998,12 @@ fn pr_body(body: PrBody<'_>) -> String {
             if pages > 0 { "also carries" } else { "carries" },
             plural(rules)
         ));
+    }
+    if rules_removed {
+        out.push_str(
+            " Every project rule was removed in Wenlan, so this takes them out of Wenlan's part \
+             of `AGENTS.md`; the rest of the file is unchanged.",
+        );
     }
     if !fixes.is_empty() {
         out.push_str(&format!(
@@ -2051,7 +2227,22 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
         .doc_fixes
         .iter()
         .any(|fix| fix.state != RepoDocFixState::Dismissed);
-    if input.pages.is_empty() && !open_fix && input.rules.is_empty() {
+    // Nothing new to put in. Only a repository this Wenlan published to can
+    // still hold rules it put there that are now taken away.
+    let rules_known = input.rules.is_some();
+    let rules_given = input.rules.as_ref().is_some_and(|rules| !rules.is_empty());
+    let nothing_new = input.pages.is_empty() && !open_fix && !rules_given;
+    // Pushed before: a recorded "nothing to publish" put nothing there.
+    let pushed_before = binding.last_publish.as_ref().is_some_and(|last| {
+        last.branch.is_some()
+            || matches!(
+                last.status,
+                RepoWikiPublishStatus::Pushed
+                    | RepoWikiPublishStatus::PrOpened
+                    | RepoWikiPublishStatus::PrUpdated
+            )
+    });
+    if nothing_new && !pushed_before && !binding.take_over {
         return Ok(nothing(result(
             RepoWikiPublishStatus::NothingToPublish,
             0,
@@ -2062,13 +2253,106 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
     }
     let repo = PathBuf::from(&binding.repo_root);
     let folder = normalize_folder(&binding.folder)?;
-    let remote = bound_origin(binding)?;
-    let prepared = match input.prepared {
-        Some(prepared) => prepared,
-        None => prepare(binding, &input.worktree)?,
+    let remote = bound_origin(binding);
+    let prepared = match (remote.is_ok(), input.prepared) {
+        (true, Some(prepared)) => Ok(prepared),
+        (true, None) => prepare(binding, &input.worktree),
+        (false, _) => Err(WenlanError::Generic(String::new())),
     };
+    // With nothing new, a repository that cannot be looked at now stays as
+    // it was, as before: there is nothing to tell the person.
+    if nothing_new && prepared.is_err() {
+        if let (Some(rules), Err(error)) = (input.rules.as_ref(), prepared.as_ref()) {
+            if rules.is_empty() && remote.is_ok() {
+                log::warn!(
+                    "[repo_wiki] every rule of {:?} was removed, but the repository could not \
+                     be looked at ({error}); its AGENTS.md keeps the old rules until a later \
+                     publish",
+                    binding.space
+                );
+            }
+        }
+        return Ok(nothing(result(
+            RepoWikiPublishStatus::NothingToPublish,
+            0,
+            None,
+            None,
+            None,
+        )));
+    }
+    let remote = remote?;
+    let prepared = prepared?;
     let base = prepared.base.clone();
     let base_tree = format!("origin/{base}");
+
+    // Rules this Wenlan put into the default branch, or into the open wiki
+    // pull request, that are all taken away now: the pull request takes them
+    // out again (UX-SKILL-7). Rules that could not be read are not "none".
+    // Everything is read from the repository's copy, not the checkout, so
+    // line endings the checkout converted do not hide the block.
+    let published_before = binding.last_publish.is_some();
+    let branch_tree = format!("origin/{REPO_WIKI_BRANCH}");
+    let ours = |text: &str| {
+        binding.take_over
+            || match keeper(Some(text), &input.publisher) {
+                Keeper::Ours => true,
+                Keeper::Unnamed => pushed_before,
+                Keeper::Another | Keeper::Nobody => false,
+            }
+    };
+    let holds_our_rules = |tree: &str| {
+        ["AGENTS.md", "CLAUDE.md"].iter().any(|name| {
+            tree_file(&repo, tree, name).is_some_and(|text| block_holds_rules(&text) && ours(&text))
+        })
+    };
+    let all_rules_removed = rules_known && !rules_given;
+    let slug = github_slug(&remote);
+    // The open wiki pull request, asked only when its rules matter. With
+    // `gh` it is the open pull request GitHub names; without it, a wiki
+    // branch the default branch has not taken in yet.
+    let mut open_pr: Option<String> = None;
+    let branch_open = (all_rules_removed || !rules_known)
+        && tree_exists(&repo, &branch_tree)
+        && match (input.gh.as_ref(), slug.as_ref()) {
+            (Some(gh), Some(slug)) => match open_pull_request(gh, &input.worktree, slug) {
+                Ok(url) if !url.is_empty() => {
+                    open_pr = Some(url);
+                    true
+                }
+                Ok(_) => false,
+                Err(error) => {
+                    log::warn!("[repo_wiki] {error}");
+                    false
+                }
+            },
+            _ => !is_ancestor(&repo, &branch_tree, &base_tree),
+        };
+    let rules_on_branch = all_rules_removed && branch_open && holds_our_rules(&branch_tree);
+    let rules_to_take_out = all_rules_removed && (holds_our_rules(&base_tree) || rules_on_branch);
+    // Rules unread: the block keeps the ones it holds now, in the open pull
+    // request when that is ours, else on the default branch.
+    let rules = match input.rules {
+        Some(rules) => rules,
+        None => {
+            let on_branch = branch_open
+                .then(|| tree_file(&repo, &branch_tree, "AGENTS.md"))
+                .flatten()
+                .filter(|text| text.contains(AGENTS_START) && ours(text));
+            on_branch
+                .or_else(|| tree_file(&repo, &base_tree, "AGENTS.md"))
+                .map(|text| block_rule_lines(&text))
+                .unwrap_or_default()
+        }
+    };
+    if nothing_new && !rules_to_take_out {
+        return Ok(nothing(result(
+            RepoWikiPublishStatus::NothingToPublish,
+            0,
+            None,
+            None,
+            None,
+        )));
+    }
 
     // One Wenlan keeps a repository's pages and rules. Another one's are on
     // the default branch (merged) or on the open wiki branch: either way a
@@ -2076,7 +2360,6 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
     // the repository over. A block from before publishers were named counts
     // as ours only when this Wenlan has published here before.
     if !binding.take_over {
-        let published_before = binding.last_publish.is_some();
         let branch = format!("origin/{REPO_WIKI_BRANCH}");
         let on_base = keeper(
             tree_file(&repo, &base_tree, "AGENTS.md").as_deref(),
@@ -2159,7 +2442,7 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
         }
     }
     waiting.set(held);
-    if ready.is_empty() && !open_fix && input.rules.is_empty() {
+    if ready.is_empty() && !open_fix && !rules_given && !rules_to_take_out {
         return Ok(nothing(result(
             RepoWikiPublishStatus::NothingToPublish,
             0,
@@ -2270,7 +2553,6 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
         applied.push(fix.id.clone());
     }
     fix_count.set(applied.len());
-    let branch_tree = format!("origin/{REPO_WIKI_BRANCH}");
     for path in &prepared.carried {
         restore(&input.worktree, &branch_tree, path)?;
     }
@@ -2283,12 +2565,12 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
             .join(&folder)
             .join(crate::repo_wiki_ci::CODE_FILE)
             .is_file();
-    let writes_block = export || !input.rules.is_empty();
+    let writes_block = export || rules_given || rules_to_take_out;
     if writes_block {
         maintain_agent_files(
             &input.worktree,
             holds_wiki.then_some(folder.as_str()),
-            &input.rules,
+            &rules,
             &input.publisher,
         )?;
     }
@@ -2314,12 +2596,12 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
     };
     let mut command = git(&input.worktree);
     command.args(["diff", "--cached", "--quiet"]);
-    if command
+    let unchanged = command
         .status()
         .map_err(|error| WenlanError::Generic(format!("git diff: {error}")))?
         .success()
-        || only_bookkeeping_changed(&input.worktree, &folder)
-    {
+        || only_bookkeeping_changed(&input.worktree, &folder);
+    if unchanged && !rules_on_branch {
         return Ok(settled(result(
             RepoWikiPublishStatus::NoChanges,
             page_count,
@@ -2328,12 +2610,43 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
             None,
         )));
     }
+    // The open pull request still carries rules that are all taken away, and
+    // nothing else is left to change: it is closed, never left empty.
+    if unchanged {
+        if let (Some(gh), Some(slug), Some(url)) = (input.gh.as_ref(), slug.as_ref(), &open_pr) {
+            let mut command = Command::new(gh);
+            command.current_dir(&input.worktree).args([
+                "pr",
+                "close",
+                url,
+                "--repo",
+                slug,
+                "--comment",
+                "Wenlan: every rule was removed, nothing left to change.",
+                "--delete-branch",
+            ]);
+            match run(command, "gh pr close") {
+                Ok(_) => {
+                    return Ok(settled(result(
+                        RepoWikiPublishStatus::NoChanges,
+                        page_count,
+                        None,
+                        None,
+                        None,
+                    )))
+                }
+                // Not closed: the branch is still brought back below.
+                Err(error) => log::warn!("[repo_wiki] {error}"),
+            }
+        }
+    }
     // The commit stays on a detached HEAD: no local branch is added to the
     // user's repository, only the remote branch the push below names.
     let mut command = git(&input.worktree);
     command.args([
         "commit",
         "--quiet",
+        "--allow-empty",
         "-m",
         COMMIT_SUBJECT,
         "-m",
@@ -2368,18 +2681,25 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
             None,
         )));
     }
+    // Only the branch as it was when this was prepared is replaced: a
+    // commit someone pushed since, even one a later fetch brought in, stops
+    // the push.
     let mut command = git(&input.worktree);
     command.args([
         "push",
         "--quiet",
-        &format!("--force-with-lease=refs/heads/{REPO_WIKI_BRANCH}"),
+        &format!(
+            "--force-with-lease=refs/heads/{REPO_WIKI_BRANCH}:{}",
+            prepared.branch_at.as_deref().unwrap_or_default()
+        ),
         "origin",
         &format!("HEAD:refs/heads/{REPO_WIKI_BRANCH}"),
     ]);
     run(command, "git push")?;
 
-    let slug = github_slug(&remote);
-    let compare_url = slug.as_ref().map(|slug| {
+    // A branch with nothing in it but the default branch: no pull request
+    // is offered for it.
+    let compare_url = slug.as_ref().filter(|_| !unchanged).map(|slug| {
         format!("https://github.com/{slug}/compare/{base}...{REPO_WIKI_BRANCH}?expand=1")
     });
     let body = pr_body(PrBody {
@@ -2389,10 +2709,11 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
         waiting: waiting.get(),
         kept: kept.get(),
         rules: if writes_block {
-            input.rules.len().min(AGENTS_BLOCK_MAX_RULES)
+            rules.len().min(AGENTS_BLOCK_MAX_RULES)
         } else {
             0
         },
+        rules_removed: rules_to_take_out && !unchanged,
         fixes: binding
             .doc_fixes
             .iter()
@@ -2420,6 +2741,9 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
             return pushed(compare_url);
         }
     };
+    if open.is_empty() && unchanged {
+        return pushed(None);
+    }
     if !open.is_empty() {
         // The description says what is in the pull request now.
         let mut command = Command::new(gh);
