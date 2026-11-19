@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.22.3](https://github.com/wenlan-app/wenlan/compare/v0.22.2...v0.22.3) (2026-11-19)
+
+
+### Features
+
+* **security:** a local person key so only the app and wenlan CLI count as you ([#1331](https://github.com/wenlan-app/wenlan/issues/1331)) ([3808a9e](https://github.com/wenlan-app/wenlan/commit/3808a9ec6ff29c761ce79871638d5193bf20e9db))
+* **skills:** skills from every door, rules the person asks to save count at once, and the rules page redesign ([#1327](https://github.com/wenlan-app/wenlan/issues/1327)) ([9922516](https://github.com/wenlan-app/wenlan/commit/992251601a80239d8c327a928a1232288c39ba96))
+* **team:** Google sign-in for the team server ([#1328](https://github.com/wenlan-app/wenlan/issues/1328)) ([810d88e](https://github.com/wenlan-app/wenlan/commit/810d88e63030476f1b00f1d97f4c639c2264e288))
+
 ## [0.22.2](https://github.com/wenlan-app/wenlan/compare/v0.22.1...v0.22.2) (2026-11-18)
 
 
