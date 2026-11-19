@@ -24,8 +24,11 @@ vi.mock("../../../lib/tauri", async (original) => ({
 }));
 
 const DAY = 86_400_000;
+// One time for every page, so pages that change "at the same moment" sort by
+// title and never by which millisecond the fixture happened to be built in.
+const AT = new Date(Date.now() - DAY - 60_000).toISOString();
 const page = (id: string, overrides: Partial<Page> = {}): Page => {
-  const at = new Date(Date.now() - DAY - 60_000).toISOString();
+  const at = AT;
   return { id, title: id, summary: null, content: "", entity_id: null, domain: null, source_memory_ids: [], version: 1, status: "active", created_at: at, last_modified: at, last_compiled: at, ...overrides };
 };
 
