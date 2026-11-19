@@ -18,8 +18,10 @@
 //!
 //! The store holds a `std::sync::Mutex`, never held across an `.await`.
 //!
-//! Nothing signs anyone in yet, so `create` and the caps are used only by
-//! tests until the sign-in routes of a later change.
+//! Nothing signs a team member in yet, so on the team listener `create` and
+//! the caps are used only by tests until the sign-in routes of a later
+//! change. The local listener's browser sessions (`person_key`, made from a
+//! `wenlan open` pass) are kept in a store of their own.
 #![allow(dead_code)]
 
 use std::collections::HashMap;

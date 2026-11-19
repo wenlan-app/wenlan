@@ -77,10 +77,15 @@ async fn call(
         request = request.header("content-type", "application/json");
     }
     request = match caller {
-        Caller::Person => request.header(
-            wenlan_types::requests::CALLER_HEADER,
-            wenlan_types::requests::PERSON_CALLER_VALUE,
-        ),
+        Caller::Person => request
+            .header(
+                wenlan_types::requests::CALLER_HEADER,
+                wenlan_types::requests::PERSON_CALLER_VALUE,
+            )
+            .header(
+                wenlan_types::requests::PERSON_KEY_HEADER,
+                common::person_key(),
+            ),
         Caller::Agent => request.header("x-agent-name", "claude-code"),
         Caller::AgentInSpace(space) => request
             .header("x-agent-name", "claude-code")

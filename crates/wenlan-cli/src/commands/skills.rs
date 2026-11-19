@@ -1236,11 +1236,74 @@ mod tests {
         assert!(!whole.contains("will not install"));
     }
 
+    /// A data root holding a person key, and the key.
+    fn person_key_root() -> (tempfile::TempDir, String) {
+        let root = tempfile::tempdir().unwrap();
+        let key = "5e".repeat(32);
+        std::fs::write(
+            wenlan_types::person_key::path_in(root.path()),
+            format!("{key}\n"),
+        )
+        .unwrap();
+        (root, key)
+    }
+
+    /// UX-SKILL-13: without a readable person key the terminal sends the
+    /// mark alone (an older Wenlan still answers it); when Wenlan refuses,
+    /// it says so in a plain sentence, with no path.
+    #[tokio::test]
+    async fn ux_skill_13_missing_key_file_says_so_in_a_plain_sentence() {
+        let empty = tempfile::tempdir().unwrap();
+        let (base, served) = one_request_answering(
+            "422 Unprocessable Entity",
+            r#"{"error":"skills_need_the_person: only the person can install, take in or remove a skill."}"#,
+        );
+        let client = WenlanClient::for_test(&base).with_person_key_root(empty.path());
+        let refusal = client
+            .remove_skill_as_person("meeting-notes")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert_eq!(refusal, crate::client::NO_PERSON_KEY);
+        assert!(!refusal.contains(&empty.path().display().to_string()));
+        let sent = served.join().unwrap();
+        assert!(sent.contains("x-wenlan-caller: person\r\n"), "{sent}");
+        assert!(!sent.contains("x-wenlan-person-key"), "{sent}");
+    }
+
+    /// UX-SKILL-13: the key goes only to a Wenlan on this computer, never
+    /// to a `WENLAN_HOST` elsewhere.
+    #[tokio::test]
+    async fn ux_skill_13_key_is_never_sent_beyond_this_computer() {
+        let (keys, key) = person_key_root();
+        for local in [
+            "http://127.0.0.1:7878",
+            "http://localhost:7878",
+            "http://[::1]:7878",
+        ] {
+            let client = WenlanClient::for_test(local).with_person_key_root(keys.path());
+            assert_eq!(
+                client.person_key().await.as_deref(),
+                Some(key.as_str()),
+                "{local}"
+            );
+        }
+        for remote in [
+            "http://192.0.2.7:7878",
+            "https://wenlan.example.com",
+            "http://10.0.0.2:7878",
+        ] {
+            let client = WenlanClient::for_test(remote).with_person_key_root(keys.path());
+            assert_eq!(client.person_key().await, None, "{remote}");
+        }
+    }
+
     /// UX-SKILL-13: removing is asked as the person too, and by name only.
     #[tokio::test]
     async fn ux_skill_13_a_remove_is_sent_as_the_person() {
         let (base, served) = one_request(r#"{"removed":"meeting-notes"}"#);
-        let client = WenlanClient::for_test(&base);
+        let (_keys, key) = person_key_root();
+        let client = WenlanClient::for_test(&base).with_person_key_root(_keys.path());
         let removed = client
             .remove_skill_as_person("meeting-notes")
             .await
@@ -1255,6 +1318,10 @@ mod tests {
             "{sent}"
         );
         assert!(sent.contains("x-wenlan-caller: person\r\n"), "{sent}");
+        assert!(
+            sent.contains(&format!("x-wenlan-person-key: {key}\r\n")),
+            "{sent}"
+        );
         assert!(sent.ends_with(r#"{"name":"meeting-notes"}"#), "{sent}");
 
         let as_tool = WenlanClient::from_env_with_context(Some("claude-code"), None).unwrap();
@@ -1391,6 +1458,13 @@ mod tests {
 
     /// What one request to a stand-in daemon carried.
     fn one_request(answer: &'static str) -> (String, std::thread::JoinHandle<String>) {
+        one_request_answering("200 OK", answer)
+    }
+
+    fn one_request_answering(
+        status: &'static str,
+        answer: &'static str,
+    ) -> (String, std::thread::JoinHandle<String>) {
         use std::io::{BufRead, BufReader, Read, Write};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
@@ -1413,7 +1487,7 @@ mod tests {
             let mut body = vec![0u8; length];
             reader.read_exact(&mut body).unwrap();
             let response = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{answer}",
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{answer}",
                 answer.len()
             );
             reader.get_mut().write_all(response.as_bytes()).unwrap();
@@ -1428,7 +1502,8 @@ mod tests {
     #[tokio::test]
     async fn ux_skill_13_the_persons_yes_is_sent_as_the_person() {
         let (base, served) = one_request(r#"{"imported":["my-review"],"failed":[]}"#);
-        let client = WenlanClient::for_test(&base);
+        let (_keys, key) = person_key_root();
+        let client = WenlanClient::for_test(&base).with_person_key_root(_keys.path());
         let result = client
             .import_local_skills_as_person(vec!["my-review".into()])
             .await
@@ -1440,6 +1515,10 @@ mod tests {
             "{sent}"
         );
         assert!(sent.contains("x-wenlan-caller: person\r\n"), "{sent}");
+        assert!(
+            sent.contains(&format!("x-wenlan-person-key: {key}\r\n")),
+            "{sent}"
+        );
         assert!(!sent.contains("x-agent-name"), "{sent}");
         assert!(sent.ends_with(r#"{"names":["my-review"]}"#), "{sent}");
 

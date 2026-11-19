@@ -22,10 +22,17 @@ async fn send(
 ) -> (StatusCode, Value) {
     // Every page here is a draft the person published, and only the person
     // may archive one of those: these requests model the app.
-    let mut request = Request::builder().method(method).uri(path).header(
-        wenlan_types::requests::CALLER_HEADER,
-        wenlan_types::requests::PERSON_CALLER_VALUE,
-    );
+    let mut request = Request::builder()
+        .method(method)
+        .uri(path)
+        .header(
+            wenlan_types::requests::CALLER_HEADER,
+            wenlan_types::requests::PERSON_CALLER_VALUE,
+        )
+        .header(
+            wenlan_types::requests::PERSON_KEY_HEADER,
+            common::person_key(),
+        );
     if body.is_some() {
         request = request.header("content-type", "application/json");
     }

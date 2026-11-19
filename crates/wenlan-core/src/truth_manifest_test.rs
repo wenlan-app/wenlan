@@ -349,9 +349,11 @@ fn manifest_counts_match_the_spec() {
     // person-only changes: other people's SKILL.md folders, no page text).
     // Then 387 after saving and removing a rule the person asked for
     // (UX-SKILL-14): two receipts, with no page text.
+    // Then 388 after POST `/api/person/browser-pass` (a one-time pass for
+    // `wenlan open`; never the person key, no page text).
     assert_eq!(
         HTTP_READERS.len(),
-        387,
+        388,
         "registered (method, path, handler) triples"
     );
     // 61 tools with the read-only `list_skills` and `search_skills`; 63
@@ -364,7 +366,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        399,
+        400,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -372,7 +374,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        382,
+        383,
         "main builder entries"
     );
     assert_eq!(
@@ -579,7 +581,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::None)
             .count(),
-        377 // Existing 273 plus 22 research workflow routes, 7 custom-theme routes, a memory's conversation lines, the nights undo, the memory restore, the two trust scan routes, keeping a session original, the 12 sharing routes, one tidy's undo, the three old-pass routes and the four linked-vault routes, the two set-aside routes, the plain Brief lines, the seven team routes and naming the team, the three AI-memory routes, the four team start/stop/membership routes, the six page look routes and the team firewall status and a source's unreadable files, twelve skill routes, how the rules reach each AI tool, the seven skill registry routes, and saving and removing a rule, all with no page markers.
+        378 // Existing 273 plus 22 research workflow routes, 7 custom-theme routes, a memory's conversation lines, the nights undo, the memory restore, the two trust scan routes, keeping a session original, the 12 sharing routes, one tidy's undo, the three old-pass routes and the four linked-vault routes, the two set-aside routes, the plain Brief lines, the seven team routes and naming the team, the three AI-memory routes, the four team start/stop/membership routes, the six page look routes and the team firewall status and a source's unreadable files, twelve skill routes, how the rules reach each AI tool, the seven skill registry routes, and saving and removing a rule, and the browser pass for `wenlan open`, all with no page markers.
     );
 }
 

@@ -20,6 +20,58 @@ describe("production browser adapter", () => {
   });
 });
 
+describe("person key (UX-SKILL-13)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    sessionStorage.clear();
+    document.head.innerHTML = "";
+    window.history.replaceState(null, "", "/");
+  });
+  const KEY = "ab".repeat(32);
+
+  it("ux_skill_13 web page path: takes the session token from the page once and drops the pass", async () => {
+    const { takePersonKeyFromPage, readPersonKey, PERSON_SESSION_META } = await import("./live-invoke");
+    window.history.replaceState(null, "", "/?pass=" + "cd".repeat(32) + "&x=1");
+    const meta = document.createElement("meta");
+    meta.name = PERSON_SESSION_META;
+    meta.content = KEY;
+    document.head.appendChild(meta);
+    takePersonKeyFromPage();
+    expect(readPersonKey()).toBe(KEY);
+    expect(document.querySelector(`meta[name="${PERSON_SESSION_META}"]`)).toBeNull();
+    expect(window.location.search).toBe("?x=1");
+  });
+
+  it("ux_skill_13 a page with no key keeps none", async () => {
+    const { takePersonKeyFromPage, readPersonKey } = await import("./live-invoke");
+    takePersonKeyFromPage();
+    expect(readPersonKey()).toBeNull();
+  });
+
+  it("ux_skill_13 sends the key only on the person's own gestures", async () => {
+    const { liveInvoke, PERSON_KEY_HEADER } = await import("./live-invoke");
+    vi.stubGlobal("__WENLAN_WEB__", true);
+    const fetch = vi.fn(async () => new Response("{}"));
+    vi.stubGlobal("fetch", fetch);
+    sessionStorage.setItem("wenlan-person-key", KEY);
+    await liveInvoke("accept_note_proposal", { id: "n1" });
+    await liveInvoke("get_note_proposal", { id: "n1" });
+    const [gesture, read] = fetch.mock.calls as unknown as [string, RequestInit][];
+    expect(gesture[1].headers).toMatchObject({ "x-wenlan-caller": "person", [PERSON_KEY_HEADER]: KEY });
+    expect(read[1].headers ?? {}).not.toHaveProperty(PERSON_KEY_HEADER);
+  });
+
+  it("ux_skill_13 without a key the gesture goes out with the marker only", async () => {
+    const { liveInvoke, PERSON_KEY_HEADER } = await import("./live-invoke");
+    vi.stubGlobal("__WENLAN_WEB__", true);
+    const fetch = vi.fn(async () => new Response("{}"));
+    vi.stubGlobal("fetch", fetch);
+    await liveInvoke("accept_note_proposal", { id: "n1" });
+    const [gesture] = fetch.mock.calls as unknown as [string, RequestInit][];
+    expect(gesture[1].headers ?? {}).not.toHaveProperty(PERSON_KEY_HEADER);
+  });
+});
+
 describe("pageFromWire", () => {
   it("folds the pages a page relies on into it, as the desktop app does", async () => {
     const { pageFromWire } = await import("./live-invoke");

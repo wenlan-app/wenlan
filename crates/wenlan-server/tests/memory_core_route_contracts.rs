@@ -153,10 +153,15 @@ async fn request_bytes(
     }
     if case.uri.ends_with("/accept") {
         // Only the person accepts a card: these probes come from the app.
-        request = request.header(
-            wenlan_types::requests::CALLER_HEADER,
-            wenlan_types::requests::PERSON_CALLER_VALUE,
-        );
+        request = request
+            .header(
+                wenlan_types::requests::CALLER_HEADER,
+                wenlan_types::requests::PERSON_CALLER_VALUE,
+            )
+            .header(
+                wenlan_types::requests::PERSON_KEY_HEADER,
+                common::person_key(),
+            );
     }
     if marked {
         request = request

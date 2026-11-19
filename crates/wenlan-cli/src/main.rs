@@ -667,7 +667,7 @@ async fn main() -> anyhow::Result<ExitCode> {
     let format = cli.format.resolve();
     match cli.command {
         Commands::Status => commands::status::run(&client, format, cli.quiet).await?,
-        Commands::Open => commands::web::run(&client)?,
+        Commands::Open => commands::web::run(&client).await?,
         Commands::Setup {
             basic,
             model,

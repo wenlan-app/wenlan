@@ -122,7 +122,9 @@ path. Remote HTTP clients can list it, but `accept_refinement` and
 (a refinement proposal or a pending revision) is the person's decision in the
 Wenlan app: `accept_refinement` and `accept_revision` refuse on every
 transport, and the daemon refuses an accept that names an agent or lacks the
-app's `x-wenlan-caller: person` marker.
+app's `x-wenlan-caller: person` marker together with the person key
+(`x-wenlan-person-key`, read from `person.key` in Wenlan's data root). This
+server never sends either.
 
 `capture`, `write_page`, and `update_brief` accept an optional `session`
 (`<tool>:<session id>`, for example `claude-code:<id>`). Wenlan records it so a

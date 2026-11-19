@@ -2005,6 +2005,11 @@ fn truncate_for_title(content: &str) -> String {
 /// other request, named or not, is treated as an AI tool's: most unnamed
 /// requests come from tools that did not say who they are, not from the
 /// person.
+///
+/// The marker reaches a handler only next to the right person key:
+/// `crate::person_key::gate` takes it off every other request before
+/// routing, so a request that writes the marker without the key is read
+/// here as unnamed.
 pub(crate) fn caller_is_person(headers: &HeaderMap) -> bool {
     let marked = headers
         .get(wenlan_types::requests::CALLER_HEADER)
@@ -4213,6 +4218,10 @@ mod gated_store_tests {
                         wenlan_types::requests::CALLER_HEADER,
                         wenlan_types::requests::PERSON_CALLER_VALUE,
                     )
+                    .header(
+                        wenlan_types::requests::PERSON_KEY_HEADER,
+                        crate::person_key::test_key(),
+                    )
                     .header("content-type", "application/json")
                     .body(Body::from("{}"))
                     .unwrap(),
@@ -5265,6 +5274,10 @@ mod dismiss_revision_tests {
                                 wenlan_types::requests::CALLER_HEADER,
                                 wenlan_types::requests::PERSON_CALLER_VALUE,
                             )
+                            .header(
+                                wenlan_types::requests::PERSON_KEY_HEADER,
+                                crate::person_key::test_key(),
+                            )
                             .header("content-type", "application/json")
                             .body(Body::from(invalid))
                             .unwrap(),
@@ -5290,6 +5303,10 @@ mod dismiss_revision_tests {
                         .header(
                             wenlan_types::requests::CALLER_HEADER,
                             wenlan_types::requests::PERSON_CALLER_VALUE,
+                        )
+                        .header(
+                            wenlan_types::requests::PERSON_KEY_HEADER,
+                            crate::person_key::test_key(),
                         )
                         .header("content-type", "application/json")
                         .body(Body::from(body))

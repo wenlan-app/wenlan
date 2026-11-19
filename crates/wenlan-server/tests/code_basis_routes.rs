@@ -83,10 +83,15 @@ async fn call(
     }
     match caller {
         Caller::Person => {
-            request = request.header(
-                wenlan_types::requests::CALLER_HEADER,
-                wenlan_types::requests::PERSON_CALLER_VALUE,
-            )
+            request = request
+                .header(
+                    wenlan_types::requests::CALLER_HEADER,
+                    wenlan_types::requests::PERSON_CALLER_VALUE,
+                )
+                .header(
+                    wenlan_types::requests::PERSON_KEY_HEADER,
+                    common::person_key(),
+                )
         }
         Caller::Reader => {
             request = request

@@ -398,6 +398,8 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     // Taking off a rule the person asked to be saved: a receipt with the
     // rule's id and its page's title, never its text.
     "/api/skills/rules/{id}/remove",
+    // A one-time browser pass for `wenlan open`: no user data, never the key.
+    "/api/person/browser-pass",
     "/api/steep", "/api/distill", "/api/distill/{page_id}",
     "/api/ingest/text", "/api/ingest/webpage", "/api/ingest/webpage/create", "/api/ingest/memory", "/api/documents/{source}/{source_id}",
     // Fetches external public text, never reads the user's source store.
