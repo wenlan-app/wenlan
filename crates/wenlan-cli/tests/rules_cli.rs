@@ -82,6 +82,7 @@ fn personal_rules_setup_requires_interactive_confirmation() {
     for args in [
         &["rules", "adopt"][..],
         &["rules", "restore"],
+        &["rules", "settings", "local-settings"],
         &[
             "rules",
             "review",
@@ -104,6 +105,18 @@ fn personal_rules_setup_requires_interactive_confirmation() {
             .failure()
             .stderr(predicate::str::contains("unexpected argument '--yes'"));
     }
+}
+
+#[test]
+fn personal_rules_settings_preview_refuses_non_local_daemon() {
+    let state = tempfile::tempdir().unwrap();
+    personal_rules_cli(state.path())
+        .env("WENLAN_HOST", "http://192.0.2.1:17917")
+        .args(["rules", "settings", "local-settings", "--dry-run"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("daemon on this computer"));
+    assert!(!state.path().join("unused-data-root").exists());
 }
 
 fn saved() -> String {
