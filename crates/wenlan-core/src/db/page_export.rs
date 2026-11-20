@@ -17,7 +17,13 @@ fn identity(page: &State) -> String {
     hash(&format!("{}\0{}", page.page.id, page.incarnation))
 }
 fn prefix(page: &State) -> String {
-    format!("export_v1:bundle:{}:", identity(page))
+    bundle_prefix(&page.page.id, &page.incarnation)
+}
+pub(super) fn bundle_prefix(page_id: &str, incarnation: &str) -> String {
+    format!(
+        "export_v1:bundle:{}:",
+        hash(&format!("{page_id}\0{incarnation}"))
+    )
 }
 fn head_key(page: &State) -> String {
     format!("export_v1:head:{}", identity(page))

@@ -11,6 +11,7 @@
 
 use crate::db::{MemoryDB, PageHistoryEntry};
 use crate::error::WenlanError;
+use crate::read_scope::ReadScope;
 use std::collections::{HashMap, HashSet};
 use wenlan_types::responses::{
     PageChangelogEntry, PageHistoryItem, PageHistoryKind, PageHistorySource,
@@ -143,20 +144,6 @@ fn texts_by_version(rows: &[PageHistoryEntry]) -> HashMap<i64, &str> {
         .collect()
 }
 
-/// Puts each version's text on its changelog entry.
-pub async fn attach_texts(
-    db: &MemoryDB,
-    page_id: &str,
-    entries: &mut [PageChangelogEntry],
-) -> Result<(), WenlanError> {
-    let rows = db.list_page_history(page_id, HISTORY_SCAN).await?;
-    let texts = texts_by_version(&rows);
-    for entry in entries {
-        entry.text = texts.get(&entry.version).map(|t| (*t).to_string());
-    }
-    Ok(())
-}
-
 /// The ids of the pages `page_id` relies on.
 pub async fn basis_page_ids(db: &MemoryDB, page_id: &str) -> Result<Vec<String>, WenlanError> {
     Ok(db
@@ -167,17 +154,29 @@ pub async fn basis_page_ids(db: &MemoryDB, page_id: &str) -> Result<Vec<String>,
         .collect())
 }
 
-/// The merged history, newest first. `entries` is the page's changelog (with
-/// texts already attached when `include_text`); `visible_bases` are the
-/// relied-on pages this caller may see; updates of any other are left out.
+/// The merged history, newest first, with requested texts attached to the
+/// changelog too. Hosted revisions use only saved bodies from the given Space.
 pub async fn build_page_history(
     db: &MemoryDB,
     page_id: &str,
-    entries: &[PageChangelogEntry],
+    entries: &mut [PageChangelogEntry],
     visible_bases: &HashSet<String>,
     include_text: bool,
+    shared_scope: Option<&ReadScope>,
 ) -> Result<Vec<PageHistoryItem>, WenlanError> {
-    let own = db.list_page_history(page_id, HISTORY_SCAN).await?;
+    let own = match shared_scope {
+        Some(scope) => {
+            db.list_shared_page_history(page_id, scope, HISTORY_SCAN)
+                .await?
+        }
+        None => db.list_page_history(page_id, HISTORY_SCAN).await?,
+    };
+    if include_text {
+        let texts = texts_by_version(&own);
+        for entry in entries.iter_mut() {
+            entry.text = texts.get(&entry.version).map(|text| (*text).to_string());
+        }
+    }
     let mut items: Vec<PageHistoryItem> = entries
         .iter()
         .map(|entry| PageHistoryItem {
@@ -201,39 +200,48 @@ pub async fn build_page_history(
     // be compared with. Who made it decides the kind: the person, or else
     // the AI (an older `create` row whose maker is not known is the AI's
     // kind too; its `edited_by` stays `create`).
-    if !entries.iter().any(|entry| entry.version == 1) {
-        if let Some(birth) = own.iter().find(|row| row.version == 1) {
-            let person = match db.get_page(page_id).await? {
+    let birth = match shared_scope {
+        Some(_) => own.last(),
+        None => own.iter().find(|row| row.version == 1),
+    };
+    if let Some(birth) =
+        birth.filter(|birth| !entries.iter().any(|entry| entry.version == birth.version))
+    {
+        let person = if birth.version == 1 {
+            match db.get_page(page_id).await? {
                 Some(page) => {
                     crate::sentences::first_version_author(&page, &own)
                         == Some(crate::authorship::VersionAuthor::Person)
                 }
                 None => false,
-            };
-            let agent = if birth.edited_by == "agent_create" {
-                db.page_birth_agent(page_id).await?
+            }
+        } else {
+            crate::authorship::version_author(&birth.edited_by, "")
+                == crate::authorship::VersionAuthor::Person
+        };
+        let agent = if birth.edited_by == "agent_create" {
+            db.page_birth_agent(page_id).await?
+        } else {
+            None
+        };
+        items.push(PageHistoryItem {
+            kind: if person {
+                PageHistoryKind::PersonEdit
             } else {
-                None
-            };
-            items.push(PageHistoryItem {
-                kind: if person {
-                    PageHistoryKind::PersonEdit
-                } else {
-                    PageHistoryKind::AiEdit
-                },
-                at: birth.created_at,
-                version: Some(1),
-                edited_by: Some(birth.edited_by.clone()),
-                agent,
-                delta_summary: None,
-                text: include_text.then(|| birth.content.clone()),
-                source: None,
-                changed_sentences: changed_sentences_at(&own, 1),
-                person_asked: None,
-                restored_from: None,
-                first_version: None,
-            });
-        }
+                PageHistoryKind::AiEdit
+            },
+            at: birth.created_at,
+            version: Some(birth.version),
+            edited_by: Some(birth.edited_by.clone()),
+            agent,
+            delta_summary: None,
+            text: include_text.then(|| birth.content.clone()),
+            source: None,
+            changed_sentences: changed_sentences_at(&own, birth.version),
+            person_asked: None,
+            restored_from: None,
+            first_version: None,
+        });
     }
 
     // This page's version at a moment: the newest edit at or before it.
@@ -297,9 +305,16 @@ pub async fn build_page_history(
         if !visible_bases.contains(&basis.basis_page_id) {
             continue;
         }
-        let rows = db
-            .list_page_history(&basis.basis_page_id, HISTORY_SCAN)
-            .await?;
+        let rows = match shared_scope {
+            Some(scope) => {
+                db.list_shared_page_history(&basis.basis_page_id, scope, HISTORY_SCAN)
+                    .await?
+            }
+            None => {
+                db.list_page_history(&basis.basis_page_id, HISTORY_SCAN)
+                    .await?
+            }
+        };
         // A version this page has not been checked against yet is always an
         // update; an older one counts when it was written after this page
         // started relying on the source.

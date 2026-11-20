@@ -582,7 +582,43 @@ async fn hosted_search_omits_documents_prepared_from_private_chunks() {
 }
 
 #[tokio::test]
-async fn hosted_revision_history_omits_host_prompts_and_previous_bodies() {
+async fn hosted_readers_omit_legacy_imports_with_ordinary_ids() {
+    const BODY: &str = "The fictional private import label is tourmaline.";
+    let (app, db, _scratch) = fixture().await;
+    let page = wenlan_core::post_write::create_page_with_floor(
+        &db,
+        wenlan_types::requests::CreateConceptRequest {
+            title: "Legacy import fixture".into(),
+            content: BODY.into(),
+            summary: None,
+            entity_id: None,
+            space: Some(SPACE.to_string()).into(),
+            source_memory_ids: Vec::new(),
+            creation_kind: Some("imported".into()),
+            workspace: Some(SPACE.into()),
+        },
+        AGENT,
+        None,
+        1,
+    )
+    .await
+    .unwrap();
+    assert!(page.id.starts_with("page_"));
+    let path = format!("/api/pages/{}", page.id);
+    let (status, local) = request(&app, Method::GET, &path, Value::Null, false).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(local["page"]["content"], BODY);
+    let (status, detail) = request(&app, Method::GET, &path, Value::Null, true).await;
+    let search = post_as_member(&app, "/api/pages/search", json!({"query": "tourmaline"})).await;
+    assert_eq!(
+        (status, search.to_string().contains(&page.id)),
+        (StatusCode::NOT_FOUND, false),
+        "a legacy imported page appeared in a hosted read: {detail}"
+    );
+}
+
+#[tokio::test]
+async fn hosted_revision_history_keeps_published_bodies_and_omits_host_prompts() {
     const HOST_PROMPT: &str = "fixture historical request";
     const OLD_BODY: &str = "fixture historical prose";
     let (app, db, _scratch) = fixture().await;
@@ -610,16 +646,68 @@ async fn hosted_revision_history_omits_host_prompts_and_previous_bodies() {
     assert_eq!(status, StatusCode::OK);
     let local = local.to_string();
     assert!(local.contains(HOST_PROMPT) && local.contains(OLD_BODY));
-    for path in [format!("/api/pages/{id}/revisions"), path] {
+    for include_text in [false, true] {
+        let path = if include_text {
+            path.clone()
+        } else {
+            format!("/api/pages/{id}/revisions")
+        };
         let (status, hosted) = request(&app, Method::GET, &path, Value::Null, true).await;
         assert_eq!(status, StatusCode::OK);
         let wire = hosted.to_string();
         assert!(wire.contains("person_asked"));
         assert!(
-            !wire.contains(HOST_PROMPT) && !wire.contains(OLD_BODY),
-            "hosted history must omit verbatim host input and previous bodies"
+            !wire.contains(HOST_PROMPT),
+            "hosted history must omit verbatim host input"
+        );
+        assert_eq!(
+            wire.contains(OLD_BODY),
+            include_text,
+            "the first published version must be available for a diff"
+        );
+        assert_eq!(
+            wire.contains("Published replacement prose."),
+            include_text,
+            "the latest published version must be available for a diff"
         );
     }
+}
+
+#[tokio::test]
+async fn hosted_revision_history_excludes_versions_before_a_move_into_the_space() {
+    const UNPUBLISHED: &str = "Private wording before the Space move.";
+    const PUBLISHED: &str = "First body shared with the team.";
+    let (app, db, _scratch) = fixture().await;
+    db.create_space("Personal", None, false).await.unwrap();
+    let draft = db
+        .create_page_draft("Moving note", UNPUBLISHED, Some("Personal"), None)
+        .await
+        .unwrap();
+    let _ = db
+        .publish_page_draft(&draft.id, draft.version)
+        .await
+        .unwrap();
+    db.update_page_content(&draft.id, PUBLISHED, &[], "manual_edit")
+        .await
+        .unwrap();
+    let page = db.get_page(&draft.id).await.unwrap().unwrap();
+    db.set_page_space(
+        &draft.id,
+        Some(SPACE),
+        page.version,
+        &wenlan_core::read_scope::ReadScope::Global,
+    )
+    .await
+    .unwrap();
+    let path = format!("/api/pages/{}/revisions?include=text", draft.id);
+    let (status, hosted) = request(&app, Method::GET, &path, Value::Null, true).await;
+    assert_eq!(status, StatusCode::OK);
+    let wire = hosted.to_string();
+    assert!(!wire.contains(UNPUBLISHED));
+    assert!(
+        wire.contains(PUBLISHED),
+        "the version at the move was published"
+    );
 }
 
 #[tokio::test]

@@ -3408,13 +3408,11 @@ pub async fn handle_get_page_revisions(
     Path(id): Path<String>,
     axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
 ) -> Result<Json<wenlan_types::responses::ListPageRevisionsResponse>, ServerError> {
-    // `?include=text` (comma list) puts each version's whole text on its
-    // entry for the host, so every change can be opened (UX-HIST-2).
+    // `?include=text` (comma list) includes the bodies this reader can see.
     let private = crate::team_actor::can_read_private_memories(&headers);
-    let include_text = private
-        && params
-            .get("include")
-            .is_some_and(|include| include.split(',').any(|part| part.trim() == "text"));
+    let include_text = params
+        .get("include")
+        .is_some_and(|include| include.split(',').any(|part| part.trim() == "text"));
     let db = {
         let s = state.read().await;
         s.db.clone().ok_or(ServerError::DbNotInitialized)?
@@ -3459,6 +3457,7 @@ pub async fn handle_get_page_revisions(
             entry.citations_summary = None;
             entry.sources_added = None;
             entry.sources_removed = None;
+            entry.char_delta = None;
             entry.delta_summary = None;
             entry.person_asked = None;
             entry.text = None;
@@ -3468,15 +3467,19 @@ pub async fn handle_get_page_revisions(
     // new versions of the pages this one relies on. A relied-on page this
     // caller may not read in full, or outside its Space, is left out.
     let history = if full {
-        if include_text {
-            wenlan_core::page_history::attach_texts(&db, &id, &mut entries).await?;
-        }
         let bases = wenlan_core::page_history::basis_page_ids(&db, &id).await?;
         let visible =
             crate::page_basis_routes::visible_ids_for(&db, &view.grant, &scope, &bases, private)
                 .await?;
-        wenlan_core::page_history::build_page_history(&db, &id, &entries, &visible, include_text)
-            .await?
+        wenlan_core::page_history::build_page_history(
+            &db,
+            &id,
+            &mut entries,
+            &visible,
+            include_text,
+            (!private).then_some(&scope),
+        )
+        .await?
     } else {
         Vec::new()
     };

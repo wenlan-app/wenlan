@@ -955,6 +955,74 @@ impl MemoryDB {
             .await
     }
 
+    /// History text the Space could read. A saved export records the stable Space
+    /// and page incarnation at the time that version was active or archived.
+    /// A current page also proves its own body. Older snapshots without either
+    /// witness may date from a draft or another Space.
+    pub(crate) async fn list_shared_page_history(
+        &self,
+        id: &str,
+        scope: &ReadScope,
+        limit: i64,
+    ) -> Result<Vec<super::PageHistoryEntry>, WenlanError> {
+        let ReadScope::Space(space) = scope else {
+            return Ok(Vec::new());
+        };
+        let conn = self.conn.lock().await;
+        let shared = shared_page_predicate("p.");
+        let error = |e| WenlanError::VectorDb(format!("shared page history: {e}"));
+        let mut page = conn
+            .query(
+                &format!(
+                    "SELECT p.incarnation, s.id, p.version, p.content
+                       FROM pages p JOIN spaces s ON s.name=p.workspace
+                      WHERE p.id=?1 AND p.workspace=?2 AND {shared}"
+                ),
+                libsql::params![id, space.as_str()],
+            )
+            .await
+            .map_err(error)?;
+        let Some(row) = page.next().await.map_err(error)? else {
+            return Ok(Vec::new());
+        };
+        let incarnation = row.get::<String>(0).map_err(error)?;
+        let space_id = row.get::<String>(1).map_err(error)?;
+        let version = row.get::<i64>(2).map_err(error)?;
+        let content = row.get::<String>(3).map_err(error)?;
+        drop(page);
+        let prefix = super::page_export::bundle_prefix(id, &incarnation);
+        let mut rows = conn
+            .query(
+                "WITH saved AS (
+                SELECT DISTINCT json_extract(value, '$.version') AS version,
+                                json_extract(value, '$.content') AS content
+                FROM app_metadata WHERE key GLOB ?2 AND json_valid(value)
+                  AND json_extract(value, '$.kind') = 'saved'
+                  AND json_extract(value, '$.space_id') = ?3
+             )
+             SELECT h.version, h.title, h.content, h.edited_by, h.created_at
+               FROM page_history h LEFT JOIN saved
+                 ON saved.version = h.version AND saved.content = h.content
+              WHERE h.page_id=?1 AND (saved.version IS NOT NULL OR (h.version=?4 AND h.content=?5))
+              ORDER BY h.version DESC LIMIT ?6",
+                libsql::params![id, format!("{prefix}*"), space_id, version, content, limit],
+            )
+            .await
+            .map_err(error)?;
+        let mut history = Vec::new();
+        while let Some(row) = rows.next().await.map_err(error)? {
+            history.push(super::PageHistoryEntry {
+                version: row.get(0).map_err(error)?,
+                title: row.get(1).map_err(error)?,
+                content: row.get(2).map_err(error)?,
+                source_memory_ids: Vec::new(),
+                edited_by: row.get(3).map_err(error)?,
+                created_at: row.get(4).map_err(error)?,
+            });
+        }
+        Ok(history)
+    }
+
     async fn get_page_scoped_inner(
         &self,
         id: &str,
