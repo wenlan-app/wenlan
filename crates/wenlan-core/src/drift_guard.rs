@@ -9705,33 +9705,41 @@ fn doc_path_references_resolve() {
 /// Infra/transport/path flags exempt from the documentation requirement.
 /// Extend deliberately, each with a one-line reason.
 const FLAG_ALLOWLIST: &[&str] = &[
-    "WENLAN_PORT",                        // transport
-    "WENLAN_HOST",                        // transport
-    "WENLAN_BIND_ADDR",                   // transport
-    "WENLAN_DATA_DIR",                    // path
-    "WENLAN_PORT_FILE",                   // path
-    "WENLAN_LISTENING_ON",                // runtime status
-    "WENLAN_GIT_SHA",                     // build stamp
-    "WENLAN_MCP_CACHE_DIR",               // path
-    "WENLAN_MIGRATIONS_HASH",             // build stamp
-    "WENLAN_TEST_LINT_EPOCH",             // process-only lint test clock
-    "WENLAN_DATA_LOCK_CHILD_ROOT",        // test-only child-process lock root
-    "WENLAN_DATA_LOCK_CHILD_READY",       // test-only child-process ready signal
-    "WENLAN_DATA_LOCK_CHILD_RELEASE",     // test-only child-process release signal
-    "WENLAN_TEST_STARTUP_SIGNAL_BARRIER", // test-only startup signal synchronization
-    "WENLAN_TEST_NO_COMPUTER_NAME",       // test-only: pretend the computer has no account name
-    "WENLAN_TEST_COMPUTER_NAME",          // test-only: the computer name a library test uses
-    "WENLAN_RB01_PROFILE",                // test-only target-Mac profiler opt-in
-    "WENLAN_RB01_LANE",                   // test-only target-Mac profiler lane
-    "WENLAN_UPDATE_CLI_REFERENCE",        // test-only CLI README regeneration opt-in
-    "WENLAN_BATCH_LOG",                   // debug logging
-    "WENLAN_CHATGPT_ZIP",                 // import path
-    "WENLAN_CHAT_TURNS_DB_DIR",           // test-only ignored scratch-copy check
-    "WENLAN_TIDY_DRY_DIR",                // test-only night-tidy dry run on a store copy
-    "WENLAN_TIDY_DRY_REPORT",             // test-only night-tidy dry run report path
-    "WENLAN_TIDY_DRY_DAYS",               // test-only night-tidy dry run look-back
-    "WENLAN_BACKLOG_DRY_DIR",             // test-only old-memory report on a store copy
-    "WENLAN_BACKLOG_DRY_REPORT",          // test-only old-memory report path
+    "WENLAN_PORT",                          // transport
+    "WENLAN_HOST",                          // transport
+    "WENLAN_BIND_ADDR",                     // transport
+    "WENLAN_DATA_DIR",                      // path
+    "WENLAN_PORT_FILE",                     // path
+    "WENLAN_LISTENING_ON",                  // runtime status
+    "WENLAN_GIT_SHA",                       // build stamp
+    "WENLAN_MCP_CACHE_DIR",                 // path
+    "WENLAN_MIGRATIONS_HASH",               // build stamp
+    "WENLAN_TEST_LINT_EPOCH",               // process-only lint test clock
+    "WENLAN_DATA_LOCK_CHILD_ROOT",          // test-only child-process lock root
+    "WENLAN_DATA_LOCK_CHILD_READY",         // test-only child-process ready signal
+    "WENLAN_DATA_LOCK_CHILD_RELEASE",       // test-only child-process release signal
+    "WENLAN_TEST_STARTUP_SIGNAL_BARRIER",   // test-only startup signal synchronization
+    "WENLAN_TEST_NO_COMPUTER_NAME",         // test-only: pretend the computer has no account name
+    "WENLAN_TEST_COMPUTER_NAME",            // test-only: the computer name a library test uses
+    "WENLAN_RB01_PROFILE",                  // test-only target-Mac profiler opt-in
+    "WENLAN_RB01_LANE",                     // test-only target-Mac profiler lane
+    "WENLAN_UPDATE_CLI_REFERENCE",          // test-only CLI README regeneration opt-in
+    "WENLAN_BATCH_LOG",                     // debug logging
+    "WENLAN_CHATGPT_ZIP",                   // import path
+    "WENLAN_CHAT_TURNS_DB_DIR",             // test-only ignored scratch-copy check
+    "WENLAN_TIDY_DRY_DIR",                  // test-only night-tidy dry run on a store copy
+    "WENLAN_TIDY_DRY_REPORT",               // test-only night-tidy dry run report path
+    "WENLAN_TIDY_DRY_DAYS",                 // test-only night-tidy dry run look-back
+    "WENLAN_BACKLOG_DRY_DIR",               // test-only old-memory report on a store copy
+    "WENLAN_BACKLOG_DRY_REPORT",            // test-only old-memory report path
+    "WENLAN_ADOPTION_TEST_ROOT",            // test-only adoption subprocess fixture root
+    "WENLAN_ADOPTION_TEST_TOKEN",           // test-only adoption subprocess approval token
+    "WENLAN_TEST_CHECKOUT_WITHDRAWAL_DATA", // test-only interrupted rule withdrawal child
+    "WENLAN_TEST_FILE_APPLY_CRASH",         // test-only crash point in the rulesync applier
+    "WENLAN_TEST_FILE_APPLY_ROOT",          // test-only crash-during-apply child root
+    "WENLAN_TEST_PARENT_NET_NS",            // test-only renderer network-namespace probe
+    "WENLAN_TEST_RULESYNC_BINARY",          // test-only pinned renderer binary for opt-in tests
+    "WENLAN_TEST_SETTINGS_ROOT",            // test-only crash-during-settings child root
 ];
 
 /// BASELINE: behavioral flags undocumented when this contract was introduced

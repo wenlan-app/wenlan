@@ -41,6 +41,13 @@ These flags control ignored, target-Mac profiling tests; they are not daemon run
 | `WENLAN_DEV_STATE_DIR` | When set (non-empty), `skill_grow.rs` reads the person's existing AI-tool skill folders from `$WENLAN_DEV_STATE_DIR/ai-tools/home` and `.../ai-tools/config` instead of the real home and config folders, mirroring the app's isolated dev roots, so a dev or scratch daemon never reads real skill files. Unset in normal use. |
 | `WENLAN_DEV_SKILLS_ENDPOINTS` | Only read when `WENLAN_DATA_DIR` names a root other than the installed app's own (a test or trial daemon). When set (non-empty) to a base URL, `skill_registry_routes.rs` fetches skills from `<base>/skills-sh`, `<base>/wenlan-site`, `<base>/github-api` and `<base>/github-raw` instead of skills.sh, wenlan.app and GitHub, so a trial daemon can be driven against a local stand-in. The installed app's own run ignores it. Unset in normal use. |
 
+## Rulesync writer flags (UX-SKILL-15..17)
+
+| Flag | Contract |
+|---|---|
+| `WENLAN_RULESYNC` | Set to `1` to switch every writer to the person's AI-tool folders to the one rulesync writer (`wenlan_core::rulesync_personal::enabled`): rules and skills render through the pinned rulesync into private staging and `rulesync_apply.rs` places them with compare-and-swap, pull-back and journaled restore. Unset (the default while the owner accepts the feature), the older per-tool writer in `skill_grow.rs` stays in charge and `wenlan rules adopt/sync/restore` refuse. |
+| `WENLAN_RULESYNC_BINARY` | Path of a local rulesync binary to use instead of `<data root>/rulesync/<pinned name>` (`rulesync_routes.rs`, `wenlan_core::repo_wiki_project_rules`). The file is copied to a private snapshot and must match the pinned version's SHA-256 before it runs (`rulesync_renderer.rs`), so it only chooses where the pinned binary is read from. Unset in normal use. |
+
 ## Files mirror flag (storage migration step 3)
 
 | Flag | Contract |

@@ -1060,7 +1060,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rulesync_settings_merges_servers_and_only_previews_staged_additions() {
+    fn ux_skill_17_rulesync_settings_merges_servers_and_only_previews_staged_additions() {
         let path = Path::new(".claude.json");
         let existing = br#"{
           "oauthAccount": {"unknownCredential": "fixture-live-value"},

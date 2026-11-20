@@ -4241,7 +4241,7 @@ mod tests {
     }
 
     #[test]
-    fn rulesync_adopt_and_restore_exact_bytes_and_links() {
+    fn ux_skill_15_rulesync_adopt_and_restore_exact_bytes_and_links() {
         let f = Fixture::new();
         #[cfg(unix)]
         {

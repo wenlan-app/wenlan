@@ -896,7 +896,7 @@ and wait for evidence that people need them.
   Wenlan refuses a save or a removal while it listens beyond this computer.
   原文：選擇卡（2026-11-17 08:29Z）：人在 AI 工具或用 `wenlan` 明確說「存成規則」時立即算數；規則清單顯示是從哪個工具存的；一步就能移除；AI 自己整理出來的規則仍要人點頭。App 裡的補充（2026-11-17 交辦）：「a rule saved through an AI tool or the terminal to show where it was saved from and be removable in one click」；這段補充的英文字句待 Qi-Xuan 確認。細節待 Qi-Xuan 確認：每次一條、最多 300 字、純文字句子；每個工具每天十條、全部合計三十條；沒有 Space 也沒說每個 Space 就拒絕；鎖定在一個 Space 的連線只能存在那個 Space；工具名稱是工具自己報的，「終端機」只代表指令沒帶工具名稱；AI 工具只能用 `remove_rule` 移除自己存的；鎖定頁面上的卡片被拒絕就不算；團隊成員暫不開放。
 
-- **UX-SKILL-15** `pending` `wenlan rules adopt --dry-run` reads the
+- **UX-SKILL-15** `shipped` `wenlan rules adopt --dry-run` reads the
   existing files and links and prints a per-file diff and line counts. It
   can run with no daemon and creates no files. Interactive adoption shows
   the daemon's read-only preview and asks the person to type `yes` at
@@ -921,9 +921,9 @@ and wait for evidence that people need them.
   restore the original bytes and link targets. It keeps any destination
   that has changed since delivery available for review.
   原文：「我希望能把現有電腦上的一套改成用 wenlan 這套，目標就是減少摩擦和增加開發體驗，包含技能等等這些」（2026-11-20 08:11Z）。英譯待 Qi-Xuan 確認："I want to switch the setup on my current computer to Wenlan's system to reduce friction and improve the development experience, including skills."
-  Tests `rulesync_adopt_and_restore_exact_bytes_and_links`, `codex_delivery_reports_its_link_and_managed_state`, `personal_rules_dry_run_labels_skill_sources`, `adopted_skill_updates_share_the_registry_check_without_applying`, `personal_rules_dry_run_announces_retired_codex_script`, `adoption_replaces_the_codex_header_and_restore_keeps_the_script`, `personal_rules_dry_run_leaves_an_oversized_skill_unmanaged`, `personal_rules_dry_run_names_git_destinations_and_plans_codex_link_replacement` and `rulesync_personal_lifecycle_keeps_the_harness_read_only`.
+  Tests `ux_skill_15_rulesync_adopt_and_restore_exact_bytes_and_links`, `codex_delivery_reports_its_link_and_managed_state`, `personal_rules_dry_run_labels_skill_sources`, `adopted_skill_updates_share_the_registry_check_without_applying`, `personal_rules_dry_run_announces_retired_codex_script`, `adoption_replaces_the_codex_header_and_restore_keeps_the_script`, `personal_rules_dry_run_leaves_an_oversized_skill_unmanaged`, `personal_rules_dry_run_names_git_destinations_and_plans_codex_link_replacement` and `rulesync_personal_lifecycle_keeps_the_harness_read_only`.
 
-- **UX-SKILL-16** `pending` `save_skill` in a local AI tool proposes the
+- **UX-SKILL-16** `shipped` `save_skill` in a local AI tool proposes the
   skill's text and files. `wenlan skills save` saves an approved local skill
   directly when the person runs it. Wenlan also detects a new or edited skill
   in a tool's folder. It offers that content for the current tool or all
@@ -933,13 +933,13 @@ and wait for evidence that people need them.
   in new skill text are refused.
   Tests `rulesync_skill_agent_proposal_survives_reopen_and_requires_review` and `ux_skill_16_review_needs_one_scope_and_has_no_confirmation_flag`.
 
-- **UX-SKILL-17** `pending` `wenlan rules settings` asks the person to
+- **UX-SKILL-17** `shipped` `wenlan rules settings` asks the person to
   preview a local rulesync settings source and type `yes` before applying it.
   The preview shows the additions to MCP servers, hooks and permissions.
   Existing entries are kept. Conflicting entries, credentials in the source,
   symlinks and changed destinations stop the apply. Settings stay on this
   computer and are applied only through this command.
-  Tests in `rulesync_settings` and `rulesync_settings_routes`.
+  Tests `ux_skill_17_rulesync_settings_merges_servers_and_only_previews_staged_additions` and the rest of `rulesync_settings` and `rulesync_settings_routes`.
 
 ## From the terminal
 
