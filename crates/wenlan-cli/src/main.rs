@@ -512,14 +512,13 @@ async fn main() -> anyhow::Result<ExitCode> {
     };
     let is_lint = matches!(&cli.command, Commands::Lint { .. });
     let is_export = matches!(&cli.command, Commands::Export { .. });
-    // An OKF import and `sources save` each write into one Space.
-    let is_okf_import = matches!(
+    // `sources add` (a folder, a file or an OKF bundle) and `sources save`
+    // each write into one Space.
+    let writes_one_space = matches!(
         &cli.command,
         Commands::Sources {
-            command: commands::ingest::SourcesCommand::Add {
-                source_type: commands::ingest::SourceKind::Okf,
-                ..
-            } | commands::ingest::SourcesCommand::Save { .. }
+            command: commands::ingest::SourcesCommand::Add { .. }
+                | commands::ingest::SourcesCommand::Save { .. }
         }
     );
     let mut effective_cli_space = cli.space.clone();
@@ -633,10 +632,11 @@ async fn main() -> anyhow::Result<ExitCode> {
         )?
         .with_session(session.clone())?
         .with_recovery(recovery_enabled)
-    } else if is_okf_import {
-        // An OKF import or a saved source writes into one Space: `--space X`
-        // or a strict `WENLAN_SPACE` pin picks it, otherwise the daemon's
-        // default Space.
+    } else if writes_one_space {
+        // An added or saved source writes into one Space: `--space X` or a
+        // strict `WENLAN_SPACE` pin picks it. Otherwise an OKF bundle or a
+        // saved document goes to the daemon's default Space and a folder's
+        // pages stay unfiled.
         if cli.all_spaces {
             anyhow::bail!("--all-spaces is valid only for read commands");
         }
@@ -764,7 +764,14 @@ async fn main() -> anyhow::Result<ExitCode> {
                 .await?
         }
         Commands::Sources { command } => {
-            commands::ingest::run_sources(&client, format, cli.quiet, command).await?
+            commands::ingest::run_sources(
+                &client,
+                format,
+                cli.quiet,
+                command,
+                effective_cli_space.as_deref(),
+            )
+            .await?
         }
         Commands::Capture {
             text,

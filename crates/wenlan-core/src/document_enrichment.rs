@@ -138,6 +138,16 @@ pub fn okf_source_profile(sources: &[Source], source_id: &str) -> Option<OkfSour
         })
 }
 
+/// The Space a folder source (`wenlan sources add <path> --space X`) puts
+/// its new pages in, if it names one. OKF sources carry theirs in
+/// [`OkfSourceProfile`] instead.
+pub fn folder_source_space(sources: &[Source], source_id: &str) -> Option<String> {
+    sources
+        .iter()
+        .find(|source| source.id == source_id && source.source_type == SourceType::Directory)
+        .and_then(|source| source.space.clone())
+}
+
 /// Enrich a single queued document end-to-end. See the module docs for the full
 /// contract. Never propagates an error: every failure mode maps to a returned
 /// [`DocumentEnrichmentOutcome`] plus a queue transition
@@ -171,6 +181,7 @@ pub async fn run_document_enrichment_with_profile(
         prompts,
         None,
         profile,
+        None,
     )
     .await
 }
@@ -190,7 +201,9 @@ pub async fn run_document_enrichment_slice(
     llm: Option<&Arc<dyn LlmProvider>>,
     prompts: &PromptRegistry,
 ) -> DocumentEnrichmentOutcome {
-    let profile = okf_source_profile(&crate::config::load_config().sources, &entry.source_id);
+    let sources = crate::config::load_config().sources;
+    let profile = okf_source_profile(&sources, &entry.source_id);
+    let folder_space = folder_source_space(&sources, &entry.source_id);
     run_document_enrichment_with_request_budget(
         db,
         entry,
@@ -199,10 +212,12 @@ pub async fn run_document_enrichment_slice(
         prompts,
         Some(1),
         profile.as_ref(),
+        folder_space.as_deref(),
     )
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_document_enrichment_with_request_budget(
     db: &MemoryDB,
     entry: &DocEnrichmentQueueEntry,
@@ -211,6 +226,7 @@ async fn run_document_enrichment_with_request_budget(
     prompts: &PromptRegistry,
     mut requests_remaining: Option<usize>,
     profile: Option<&OkfSourceProfile>,
+    folder_space: Option<&str>,
 ) -> DocumentEnrichmentOutcome {
     let source_id = entry.source_id.clone();
     let file_path = entry.file_path.clone();
@@ -335,6 +351,21 @@ async fn run_document_enrichment_with_request_budget(
             document_space = match db.get_page(&page_id).await {
                 Ok(Some(page)) => Some(page.space.unwrap_or_else(|| UNFILED_SPACE_ID.to_string())),
                 Ok(None) => profile.space.clone(),
+                Err(error) => {
+                    log::warn!(
+                        "[doc-enrich] {file_path}: page Space read failed: {error}; pausing"
+                    );
+                    pause(db, entry, "page Space read failed").await;
+                    return DocumentEnrichmentOutcome::paused_no_page(doc_source_id);
+                }
+            };
+        } else if let Some(space) = folder_space {
+            // A folder added to a Space: the same rule, the page's Space when
+            // it exists (a user's move sticks), else the folder's.
+            let page_id = source_page_id(&source_id, &file_path);
+            document_space = match db.get_page(&page_id).await {
+                Ok(Some(page)) => Some(page.space.unwrap_or_else(|| UNFILED_SPACE_ID.to_string())),
+                Ok(None) => Some(space.to_string()),
                 Err(error) => {
                     log::warn!(
                         "[doc-enrich] {file_path}: page Space read failed: {error}; pausing"
@@ -555,7 +586,9 @@ async fn run_document_enrichment_with_request_budget(
     }
 
     // ── (4) outputs: exactly one SOURCE page (always), summary + entities ──
-    let page_space = profile.and_then(|profile| profile.space.as_deref());
+    let page_space = profile
+        .and_then(|profile| profile.space.as_deref())
+        .or(folder_space);
     if llm_failed || llm.is_none() {
         // Deterministic stub SOURCE page so the document is ALWAYS represented.
         // An OKF concept's own description stands in for the missing summary.
@@ -3155,6 +3188,90 @@ mod tests {
 
     /// Enrich one uniquely-named Markdown file through the real folder route
     /// and return the outcome (document id, SOURCE page id, chunk ids).
+    #[tokio::test]
+    async fn a_folder_added_to_a_space_puts_its_page_there_until_the_person_moves_it() {
+        let (db, dir) = test_db().await;
+        db.create_space("work", None, false).await.unwrap();
+        db.create_space("home", None, false).await.unwrap();
+        let path = dir.path().join("deploy.md");
+        let prompts = PromptRegistry::default();
+        let mut page_id = String::new();
+        for (version, expected) in [("one", "work"), ("two", "home")] {
+            std::fs::write(
+                &path,
+                format!(
+                    "# Deploy notes\n\nVersion {version}: we deploy after the checklist passes.\n"
+                ),
+            )
+            .unwrap();
+            let file_path = path.to_string_lossy().to_string();
+            db.enqueue_document("folder-notes", &file_path, Some(&file_hash(&path)))
+                .await
+                .unwrap();
+            let entry = db
+                .claim_fresh_document("folder-notes", &file_path)
+                .await
+                .unwrap()
+                .expect("claim the named document");
+            let outcome = run_document_enrichment_with_request_budget(
+                &db,
+                &entry,
+                None,
+                None,
+                &prompts,
+                Some(1),
+                None,
+                Some("work"),
+            )
+            .await;
+            let page = db.get_page(&outcome.page_id).await.unwrap().expect("page");
+            assert_eq!(page.space.as_deref(), Some(expected), "version {version}");
+            assert!(chunk_spaces(&db, &outcome.doc_source_id)
+                .await
+                .iter()
+                .all(|space| space.as_deref() == Some(expected)));
+            assert!(page.content.contains(&format!("Version {version}")));
+            page_id = outcome.page_id.clone();
+            // The person moves the page after the first import; the folder's
+            // Space must not pull it back.
+            db.update_memory_space(&outcome.doc_source_id, "home")
+                .await
+                .unwrap();
+        }
+        assert!(!page_id.is_empty());
+    }
+
+    #[test]
+    fn only_a_folder_source_names_a_folder_space() {
+        let source = |id: &str, source_type: SourceType, space: Option<&str>| Source {
+            display_name: None,
+            id: id.to_string(),
+            source_type,
+            path: PathBuf::from("/tmp/x"),
+            status: crate::sources::SyncStatus::Active,
+            last_sync: None,
+            file_count: 0,
+            memory_count: 0,
+            last_sync_errors: 0,
+            last_sync_error_detail: None,
+            space: space.map(str::to_string),
+            queued_files: 0,
+            waiting_files: 0,
+        };
+        let sources = [
+            source("directory-a", SourceType::Directory, Some("work")),
+            source("directory-b", SourceType::Directory, None),
+            source("okf-c", SourceType::Okf, Some("Research")),
+        ];
+        assert_eq!(
+            folder_source_space(&sources, "directory-a").as_deref(),
+            Some("work")
+        );
+        assert_eq!(folder_source_space(&sources, "directory-b"), None);
+        assert_eq!(folder_source_space(&sources, "okf-c"), None);
+        assert_eq!(folder_source_space(&sources, "missing"), None);
+    }
+
     async fn enrich_named_doc(db: &MemoryDB, dir: &Path, name: &str) -> DocumentEnrichmentOutcome {
         let path = dir.join(name);
         let mut body = String::new();

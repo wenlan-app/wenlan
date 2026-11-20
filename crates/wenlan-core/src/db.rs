@@ -63185,6 +63185,37 @@ impl MemoryDB {
         Ok(count.max(0) as u64)
     }
 
+    /// Claim one named document that is waiting for its first preparation
+    /// (`pending`, nothing analyzed yet), so a sync the person asked for can
+    /// prepare it in the request instead of waiting for the background lane.
+    /// `None` when the row is missing, already claimed, or past that step.
+    pub async fn claim_fresh_document(
+        &self,
+        source_id: &str,
+        file_path: &str,
+    ) -> Result<Option<DocEnrichmentQueueEntry>, WenlanError> {
+        let claimed = {
+            let conn = self.conn.lock().await;
+            conn.execute(
+                "UPDATE document_enrichment_queue
+                 SET status = 'in_progress', updated_at = ?3
+                 WHERE source_id = ?1 AND file_path = ?2
+                   AND status = 'pending' AND last_completed_chunk = -1",
+                libsql::params![
+                    source_id.to_string(),
+                    file_path.to_string(),
+                    chrono::Utc::now().timestamp()
+                ],
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("claim_fresh_document: {e}")))?
+        };
+        if claimed == 0 {
+            return Ok(None);
+        }
+        self.get_queue_entry(source_id, file_path).await
+    }
+
     /// Fetch the current queue entry for a document, if present.
     pub async fn get_queue_entry(
         &self,
