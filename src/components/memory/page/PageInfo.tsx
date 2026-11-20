@@ -201,8 +201,12 @@ export default function PageInfo({
     if (!key) return sourceKindLabels.memory;
     return KNOWN_SOURCE_KINDS.has(key) ? sourceKindLabels[key] : mem.memory_type!;
   };
-  const agentLabel = (name: string | null | undefined): string =>
-    name ? prettyAgent(name) : t("pageInfo.unknownAgent");
+  // A source no AI tool brought in (a file, an import) names no tool,
+  // rather than an "unknown agent".
+  const agentLabel = (name: string | null | undefined): string | null => {
+    const trimmed = name?.trim();
+    return trimmed && trimmed.toLowerCase() !== "unknown" ? prettyAgent(trimmed) : null;
+  };
   const diagnosability =
     citationState === "cited"
       ? t("pageInfo.citationsLine", {
@@ -451,7 +455,7 @@ export default function PageInfo({
                           {relativeMs(mem.last_modified * 1000, relativeLocale)}
                         </span>
                       )}
-                      <span
+                      {agentLabel(mem.source_agent) && <span
                         style={{
                           fontFamily: "var(--mem-font-body)",
                           fontSize: "11px",
@@ -459,7 +463,7 @@ export default function PageInfo({
                         }}
                       >
                         {agentLabel(mem.source_agent)}
-                      </span>
+                      </span>}
                       <span
                         style={{
                           fontFamily: "var(--mem-font-mono)",

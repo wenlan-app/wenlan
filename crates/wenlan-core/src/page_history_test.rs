@@ -201,6 +201,8 @@ async fn the_first_version_is_listed_as_the_pages_birth_with_its_text() {
     let birth = &history[1];
     assert_eq!(birth.kind, PageHistoryKind::AiEdit);
     assert_eq!(birth.edited_by.as_deref(), Some("agent_create"));
+    // The tool's own name is kept, so the app says which tool made it.
+    assert_eq!(birth.agent.as_deref(), Some("claude-code"));
     assert_eq!(birth.text.as_deref(), Some("Day one is Belém."));
     assert_eq!(birth.changed_sentences, Some(1));
     assert_eq!(history[0].kind, PageHistoryKind::PersonEdit);
@@ -221,6 +223,10 @@ async fn the_first_version_is_listed_as_the_pages_birth_with_its_text() {
     assert_eq!(history.len(), 1);
     assert_eq!(history[0].kind, PageHistoryKind::PersonEdit);
     assert_eq!(history[0].edited_by.as_deref(), Some("person_create"));
+    assert_eq!(
+        history[0].agent, None,
+        "the person is never named as a tool"
+    );
     assert_eq!(history[0].text, None, "no text without asking");
 }
 

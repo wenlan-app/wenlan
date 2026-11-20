@@ -210,6 +210,11 @@ pub async fn build_page_history(
                 }
                 None => false,
             };
+            let agent = if birth.edited_by == "agent_create" {
+                db.page_birth_agent(page_id).await?
+            } else {
+                None
+            };
             items.push(PageHistoryItem {
                 kind: if person {
                     PageHistoryKind::PersonEdit
@@ -219,7 +224,7 @@ pub async fn build_page_history(
                 at: birth.created_at,
                 version: Some(1),
                 edited_by: Some(birth.edited_by.clone()),
-                agent: None,
+                agent,
                 delta_summary: None,
                 text: include_text.then(|| birth.content.clone()),
                 source: None,

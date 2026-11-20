@@ -46,6 +46,16 @@ describe("revisionWriterLabel", () => {
     expect(revisionWriterLabel(tFor("zh-Hans"), "agent_refresh", null)).toBe("Agent 更新");
   });
 
+  it("names the AI tool that created a page, and falls back when it is unknown", () => {
+    expect(revisionWriterLabel(tFor("en"), "agent_create", "claude-code")).toBe("Created by Claude Code");
+    expect(revisionWriterLabel(tFor("zh-Hant"), "agent_create", "codex")).toBe("ChatGPT / Codex 建立");
+    expect(revisionWriterLabel(tFor("zh-Hans"), "agent_create", "claude-code")).toBe("Claude Code 创建");
+    expect(revisionWriterLabel(tFor("en"), "agent_create", null)).toBe("Created by an agent");
+    expect(revisionWriterLabel(tFor("en"), "agent_create", "  ")).toBe("Created by an agent");
+    expect(revisionWriterLabel(tFor("en"), "agent_create", "terminal")).toBe("Created by an agent");
+    expect(revisionWriterLabel(tFor("en"), "agent_create", "tool:Wenlan")).toBe("Created by an agent");
+  });
+
   it("UX-SKILL-14: a saved rule says where it was saved from, and a removed one where it was removed, never written by you", () => {
     const en = tFor("en");
     expect(revisionWriterLabel(en, "rule_save", "cursor", 24)).toBe("Rule saved from Cursor");

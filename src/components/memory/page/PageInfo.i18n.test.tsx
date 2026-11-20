@@ -101,7 +101,7 @@ describe("PageInfo i18n", () => {
     expect(screen.getByText("Title mem-a")).toBeInTheDocument();
   });
 
-  it("keeps the English unknown-agent fallback and unknown source kinds", async () => {
+  it("names no tool for a source no AI tool brought in, and keeps unknown source kinds", async () => {
     await i18n.changeLanguage("en");
     const { user } = renderInfo({
       sourceCount: 2,
@@ -112,7 +112,8 @@ describe("PageInfo i18n", () => {
     });
     await user.click(screen.getByText("Page info"));
     const rows = screen.getAllByTestId("page-info-source-row");
-    expect(within(rows[0]).getByText("unknown agent")).toBeInTheDocument();
+    expect(within(rows[0]).queryByText("unknown agent")).toBeNull();
+    expect(within(rows[0]).queryByText(/agent/i)).toBeNull();
     // Arbitrary data values are never translated.
     expect(within(rows[1]).getByText("pdfx")).toBeInTheDocument();
   });
@@ -133,7 +134,7 @@ describe("PageInfo i18n", () => {
     expect(headings.map((h) => h.textContent)).toEqual(["来源"]);
     const row = screen.getByTestId("page-info-source-row");
     expect(within(row).getByText("未验证")).toBeInTheDocument();
-    expect(within(row).getByText("未知代理")).toBeInTheDocument();
+    expect(within(row).queryByText("未知代理")).toBeNull();
     expect(within(row).getByText("记忆")).toBeInTheDocument();
     // Source titles stay in their original language.
     expect(within(row).getByText("Title mem-a")).toBeInTheDocument();
@@ -185,7 +186,7 @@ describe("PageInfo i18n", () => {
     expect(headings.map((h) => h.textContent)).toEqual(["來源"]);
     const row = screen.getByTestId("page-info-source-row");
     expect(within(row).getByText("未驗證")).toBeInTheDocument();
-    expect(within(row).getByText("未知代理")).toBeInTheDocument();
+    expect(within(row).queryByText("未知代理")).toBeNull();
     expect(within(row).getByText("記憶")).toBeInTheDocument();
     expect(screen.getByText("引用：2（1 條未通過核對，0 條尚未核對）")).toBeInTheDocument();
   });
