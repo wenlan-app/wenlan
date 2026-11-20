@@ -173,7 +173,8 @@ Space
 | AI（MCP） | `brief`（讀）、`handoff`（寫） | `update_brief` 從預設清單拿掉（HTTP 保留） |
 | 技能 | 不需要專門技能：人說「交接一下」「上次做到哪」，AI 直接叫上面兩個工具 | `/handoff`、`/brief` 兩個技能與 Codex `$wenlan handoff/brief` 子指令（舊名保留為隱藏別名一段時間） |
 | 終端機 | `wenlan brief`、`wenlan handoff`（含 `--file`），與 MCP 同名（兩個門同一件事） | `wenlan brief update`（併入 `handoff`） |
-| 掛勾 | 開場帶出、壓縮後交接、結束記號 | — |
+| 掛勾 | 開場帶出（現在到哪 + 這個 Space 的規則）、壓縮後交接、結束記號 | — |
+| `/how-i-work` 技能 | — | 拿掉（Qi-Xuan 22:47Z「去掉 how I work...這簡直是混進來的」）。它原本讓 AI 開工時讀這個 Space 的規則（`read_space_rules`）。拿掉後，只屬於某個 Space、沒寫進工具規則檔的規則，改由開場掛勾一起帶出；MCP `read_space_rules` 保留。Claude Code、Codex、其他工具三份與 `plugin-contract.json`、`agent_skills_bundle.rs` 一併處理；規則傳遞歸側欄那條線，動工前跟它對齊 |
 
 ## 7. 自動交接（v3 改寫：Qi-Xuan 20:43Z「我以為體驗是會自動交接？」）
 
