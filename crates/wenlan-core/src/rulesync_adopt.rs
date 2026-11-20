@@ -25,8 +25,9 @@ const CODEX_MANAGED_HEADER: &str =
     "<!-- Managed by Wenlan. Use wenlan rules sync to collect local edits. -->";
 const MAX_RULE_BYTES: u64 = 1024 * 1024;
 const MAX_CLAUDE_IMPORTS: usize = 256;
-const MAX_SKILL_BYTES: u64 = 32 * 1024 * 1024;
-const MAX_SKILL_ENTRIES: usize = 2048;
+pub const MAX_ADOPTED_SKILL_BYTES: u64 = 32 * 1024 * 1024;
+pub const MAX_ADOPTED_SKILL_ENTRIES: usize = 2048;
+pub const MAX_ADOPTED_SKILL_DEPTH: usize = 16;
 
 /// A skill bundle excludes local tool state, version control, and caches.
 /// Its portable assets, including `agents/openai.yaml`, are still included.
@@ -56,7 +57,7 @@ pub struct Adoption {
     pub sources: BTreeSet<PathBuf>,
     pub files: BTreeMap<PathBuf, AdoptionFile>,
     pub skill_locations: BTreeMap<PathBuf, Option<SkillUpstream>>,
-    /// Existing skill locations that could not be imported and will stay in place.
+    /// Existing skill locations that will stay in place outside delivery.
     pub skipped: BTreeMap<PathBuf, String>,
 }
 
@@ -823,31 +824,41 @@ impl<'a> SkillDiscovery<'a> {
                 entry.insert(SkillTree::read(self.home, &node, name)?)
             }
         };
-        match tool {
-            Some(tool) => {
-                tree.skill.targets.insert(tool.to_owned());
-                tree.skill
-                    .locations
-                    .entry(tool.to_owned())
-                    .or_default()
-                    .insert(path.to_owned());
-            }
-            None => tree.skill.shared = true,
-        }
         self.sources.insert(path.to_owned());
         self.sources.extend(tree.sources.iter().cloned());
-        if let Some(target) = node.link {
-            record_file(
-                self.files,
+        let Some(tool) = tool else {
+            tree.skill.shared = true;
+            self.skipped.insert(
                 path.to_owned(),
-                AdoptionFile {
-                    before: AdoptionEntry::Symlink {
+                "Wenlan reads this shared source for the personal master and manages tool copies separately".into(),
+            );
+            return Ok(());
+        };
+        let copying_link = node.link.is_some();
+        ensure!(
+            copying_link || !tree.nested_link,
+            "the skill folder contains linked assets; replace those links with regular files before adopting it"
+        );
+        tree.skill.targets.insert(tool.to_owned());
+        tree.skill
+            .locations
+            .entry(tool.to_owned())
+            .or_default()
+            .insert(path.to_owned());
+        record_file(
+            self.files,
+            path.to_owned(),
+            AdoptionFile {
+                before: node.link.map_or(AdoptionEntry::Directory, |target| {
+                    AdoptionEntry::Symlink {
                         target,
                         bytes: None,
-                    },
-                    after: AdoptionEntry::Directory,
-                },
-            )?;
+                    }
+                }),
+                after: AdoptionEntry::Directory,
+            },
+        )?;
+        if copying_link {
             for dir in &tree.dirs {
                 record_file(
                     self.files,
@@ -858,16 +869,20 @@ impl<'a> SkillDiscovery<'a> {
                     },
                 )?;
             }
-            for (relative, bytes) in &tree.skill.files {
-                record_file(
-                    self.files,
-                    path.join(relative),
-                    AdoptionFile {
-                        before: AdoptionEntry::Missing,
-                        after: AdoptionEntry::File(bytes.clone()),
+        }
+        for (relative, bytes) in &tree.skill.files {
+            record_file(
+                self.files,
+                path.join(relative),
+                AdoptionFile {
+                    before: if copying_link {
+                        AdoptionEntry::Missing
+                    } else {
+                        AdoptionEntry::File(bytes.clone())
                     },
-                )?;
-            }
+                    after: AdoptionEntry::File(bytes.clone()),
+                },
+            )?;
         }
         self.locations
             .insert(path.to_owned(), tree.skill.upstream.clone());
@@ -895,6 +910,7 @@ struct SkillTree {
     dirs: BTreeSet<PathBuf>,
     sources: BTreeSet<PathBuf>,
     remaining_bytes: u64,
+    nested_link: bool,
 }
 
 impl SkillTree {
@@ -910,7 +926,8 @@ impl SkillTree {
             },
             dirs: BTreeSet::new(),
             sources: BTreeSet::new(),
-            remaining_bytes: MAX_SKILL_BYTES,
+            remaining_bytes: MAX_ADOPTED_SKILL_BYTES,
+            nested_link: false,
         };
         tree.visit(home, &node.path, node, Path::new(""), &mut BTreeSet::new())?;
         let entry = tree
@@ -931,6 +948,10 @@ impl SkillTree {
         parents: &mut BTreeSet<PathBuf>,
     ) -> Result<()> {
         ensure!(
+            within.components().count() <= MAX_ADOPTED_SKILL_DEPTH,
+            "skill assets are too deeply nested (limit {MAX_ADOPTED_SKILL_DEPTH})"
+        );
+        ensure!(
             parents.insert(node.path.clone()),
             "skill symlink cycle at {}",
             node.path.display()
@@ -943,13 +964,14 @@ impl SkillTree {
                 continue;
             }
             ensure!(
-                self.skill.files.len() + self.dirs.len() < MAX_SKILL_ENTRIES,
-                "skill exceeds the {MAX_SKILL_ENTRIES} files and directories allowed for import"
+                self.skill.files.len() + self.dirs.len() < MAX_ADOPTED_SKILL_ENTRIES,
+                "skill exceeds the {MAX_ADOPTED_SKILL_ENTRIES} files and directories allowed for import"
             );
             let source = node.path.join(name);
             let entry = home.resolve(&source)?.with_context(|| {
                 format!("{} disappeared during skill discovery", source.display())
             })?;
+            self.nested_link |= entry.through_link;
             ensure!(
                 entry.path.starts_with(root),
                 "{} points outside its skill folder",
@@ -966,7 +988,7 @@ impl SkillTree {
                     self.remaining_bytes,
                     &format!(
                         "the {} MiB total import limit for a skill",
-                        MAX_SKILL_BYTES / (1024 * 1024)
+                        MAX_ADOPTED_SKILL_BYTES / (1024 * 1024)
                     ),
                 )?;
                 self.remaining_bytes -= bytes.len() as u64;
@@ -1386,11 +1408,17 @@ mod tests {
                 after: AdoptionEntry::File(b"shared content\n".to_vec()),
             }
         );
-        assert!(!adoption
-            .files
-            .keys()
-            .any(|path| path.starts_with(".claude/skills/private")
-                || path.starts_with(".codex/skills/private")));
+        for (path, text) in [
+            (".claude/skills/private/SKILL.md", "Claude copy\n"),
+            (".codex/skills/private/SKILL.md", "Codex copy\n"),
+        ] {
+            let change = &adoption.files[Path::new(path)];
+            assert_eq!(change.before, AdoptionEntry::File(text.as_bytes().to_vec()));
+            assert_eq!(change.before, change.after);
+        }
+        assert!(adoption
+            .skipped
+            .contains_key(Path::new(".agents/skills/common")));
         assert_eq!(
             fs::read_link(home.join(".claude/skills/common")).unwrap(),
             Path::new(raw_link)

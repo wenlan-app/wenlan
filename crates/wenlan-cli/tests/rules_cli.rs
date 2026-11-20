@@ -81,7 +81,7 @@ fn personal_rules_dry_run_labels_skill_sources() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            ".agents/skills/locked — tracked upstream from GitHub owner/project (library/locked)",
+            ".agents/skills/locked — stays where it is, not managed",
         ))
         .stdout(predicate::str::contains(
             ".codex/skills/handmade — plain copy in the personal master",

@@ -235,6 +235,7 @@ fn map_contents<From, To>(
             .collect::<Result<_>>()?,
         adopted: manifest.adopted,
         registry_skipped: manifest.registry_skipped.clone(),
+        unmanaged_skills: manifest.unmanaged_skills.clone(),
         scope_reviews: manifest.scope_reviews.clone(),
         delivery_issues: manifest.delivery_issues.clone(),
     })

@@ -427,6 +427,8 @@ struct Manifest<Content = Vec<u8>> {
     #[serde(default)]
     registry_skipped: BTreeMap<String, BTreeSet<PathBuf>>,
     #[serde(default)]
+    unmanaged_skills: BTreeSet<PathBuf>,
+    #[serde(default)]
     scope_reviews: BTreeMap<String, ScopeReview>,
     #[serde(default)]
     delivery_issues: BTreeMap<PathBuf, RuleDeliveryIssue>,
@@ -441,6 +443,7 @@ impl Manifest {
             pending: Vec::new(),
             adopted: false,
             registry_skipped: BTreeMap::new(),
+            unmanaged_skills: BTreeSet::new(),
             scope_reviews: BTreeMap::new(),
             delivery_issues: BTreeMap::new(),
         }
@@ -655,6 +658,7 @@ impl Setup {
             });
         }
         let mut manifest = Manifest::new(master, backup);
+        manifest.unmanaged_skills = adoption.skipped.into_keys().collect();
         let mut result = report("Adopted the local tool setup");
         for (path, status) in self.apply_batch(root, &mut manifest, operations, BatchMode::Adopt)? {
             if status != ApplyOutcome::Applied {
@@ -665,12 +669,11 @@ impl Setup {
             }
             result.written.push(path.display().to_string());
         }
-        result.blocked.extend(
-            adoption
-                .skipped
-                .into_iter()
-                .map(|(path, reason)| format!("{}: {reason}", path.display())),
-        );
+        if !manifest.unmanaged_skills.is_empty() {
+            result
+                .message
+                .push_str(". Skill paths marked unmanaged in the plan stayed in place.");
+        }
         Ok(result)
     }
 
@@ -1079,8 +1082,12 @@ impl Setup {
         result: &mut RulesSyncReport,
     ) -> Result<BTreeSet<PathBuf>> {
         let skills = self.managed_skills(manifest);
-        let pending_skills =
-            rulesync_registry::collect_tool_proposals(&self.home, &self.data, &skills)?;
+        let pending_skills = rulesync_registry::collect_tool_proposals(
+            &self.home,
+            &self.data,
+            &skills,
+            &manifest.unmanaged_skills,
+        )?;
         let Pullback {
             drafts,
             cards,
@@ -1217,7 +1224,8 @@ impl Setup {
                         .or(adopted_folder)
                         .map_or(emitted, |(path, _)| path.as_path())
                 };
-                if path_blocked(blocked, folder) {
+                if path_blocked(blocked, folder) || path_blocked(&manifest.unmanaged_skills, folder)
+                {
                     continue;
                 }
                 let owned = manifest.delivered.get(folder).is_some_and(|record| {
@@ -2147,6 +2155,75 @@ mod tests {
                 ".codex/AGENTS.md: Rule changes need your approval. Use `wenlan rules review` with the proposal below."
             ])
         );
+    }
+
+    #[test]
+    fn rulesync_adopted_regular_and_large_skills_are_quiet_on_first_sync() {
+        let f = Fixture::new();
+        for path in [
+            ".claude/skills/large/SKILL.md",
+            ".codex/skills/local/SKILL.md",
+            ".agents/skills/shared/SKILL.md",
+            ".codex/skills/too-large/SKILL.md",
+        ] {
+            fs::create_dir_all(f.setup.home.join(path).parent().unwrap()).unwrap();
+            let name = Path::new(path)
+                .parent()
+                .unwrap()
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap();
+            f.write(
+                path,
+                &format!("---\nname: {name}\ndescription: Test skill\n---\nBody.\n"),
+            );
+        }
+        for i in 0..101 {
+            f.write(&format!(".claude/skills/large/asset-{i}"), "Asset\n");
+        }
+        let oversized = f.setup.home.join(".codex/skills/too-large/asset");
+        fs::File::create(oversized)
+            .unwrap()
+            .set_len(33 * 1024 * 1024)
+            .unwrap();
+        f.adopt_from_plan();
+
+        let root = FileRoot::open(&f.setup.home).unwrap();
+        let mut manifest = f.setup.load().unwrap().unwrap();
+        let report = f
+            .setup
+            .sync_locked(
+                &root,
+                &mut manifest,
+                &[],
+                |target, text| {
+                    let path = if target == "codexcli" { CODEX } else { CLAUDE };
+                    Ok(BTreeMap::from([(path.into(), text.as_bytes().to_vec())]))
+                },
+                |_target, skills| {
+                    Ok(skills
+                        .iter()
+                        .flat_map(|skill| {
+                            skill.files.iter().map(|(path, bytes)| {
+                                (
+                                    Path::new("skills").join(&skill.name).join(path),
+                                    bytes.clone(),
+                                )
+                            })
+                        })
+                        .collect())
+                },
+            )
+            .unwrap();
+        assert!(report.blocked.is_empty(), "{report:?}");
+        assert!(report.written.is_empty(), "{report:?}");
+        assert!(manifest
+            .delivered
+            .contains_key(Path::new(".codex/skills/local/SKILL.md")));
+        assert!(rulesync_registry::approved_local_folders(&f.setup.data)
+            .unwrap()
+            .is_empty());
     }
 
     #[cfg(unix)]

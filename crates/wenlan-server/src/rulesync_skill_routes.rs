@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Save and review authored skill bundles before the personal applier delivers them.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
 
@@ -10,7 +10,9 @@ use axum::{http::HeaderMap, Json};
 use cap_fs_ext::DirExt as _;
 use cap_std::fs::Dir;
 use serde::{Deserialize, Serialize};
-use wenlan_core::rulesync_adopt::skip_skill_asset;
+use wenlan_core::rulesync_adopt::{
+    skip_skill_asset, MAX_ADOPTED_SKILL_BYTES, MAX_ADOPTED_SKILL_DEPTH, MAX_ADOPTED_SKILL_ENTRIES,
+};
 use wenlan_core::rulesync_personal::{self, fingerprint};
 use wenlan_core::rulesync_skill::{self as skills, SkillFiles};
 use wenlan_core::skill_registry;
@@ -18,7 +20,6 @@ use wenlan_types::rulesync::RulesSyncReport;
 use wenlan_types::rulesync_skill::{
     SaveSkillRequest, SaveSkillResult, SavedSkillScope, SavedSkillTool, SkillProposal,
     SkillProposalOrigin, SkillProposalsResponse, SkillReviewAction, SkillReviewRequest,
-    MAX_SAVED_SKILL_BYTES, MAX_SAVED_SKILL_FILES, MAX_SAVED_SKILL_FILE_BYTES,
 };
 use wenlan_types::skill_registry::{InstalledSkill, InstalledSkillRow, Scope, Verdict};
 
@@ -651,7 +652,7 @@ impl SkillHome {
         result: &mut PackageRead,
     ) -> Result<()> {
         ensure!(
-            prefix.components().count() <= 16,
+            prefix.components().count() <= MAX_ADOPTED_SKILL_DEPTH,
             "skill assets are too deeply nested"
         );
         for entry in dir.entries()? {
@@ -663,8 +664,8 @@ impl SkillHome {
             }
             result.entries += 1;
             ensure!(
-                result.entries <= MAX_SAVED_SKILL_FILES * 16,
-                "skill package has too many entries"
+                result.entries <= MAX_ADOPTED_SKILL_ENTRIES,
+                "skill package exceeds the {MAX_ADOPTED_SKILL_ENTRIES} files and directories allowed for import"
             );
             let path = prefix.join(name);
             let kind = entry.file_type()?;
@@ -674,18 +675,19 @@ impl SkillHome {
             }
             ensure!(kind.is_file(), "skill package has an unsafe asset type");
             ensure!(
-                result.files.len() < MAX_SAVED_SKILL_FILES
-                    && entry.metadata()?.len() <= MAX_SAVED_SKILL_FILE_BYTES as u64,
-                "skill package exceeds its file limits"
+                result.bytes + entry.metadata()?.len() <= MAX_ADOPTED_SKILL_BYTES,
+                "skill package exceeds the {} MiB import limit",
+                MAX_ADOPTED_SKILL_BYTES / (1024 * 1024)
             );
             let snapshot = self.root.read(&folder.join(&path), false)?;
             let Snapshot::File { bytes, .. } = &snapshot else {
                 bail!("a skill asset changed during discovery");
             };
-            result.bytes += bytes.len();
+            result.bytes += bytes.len() as u64;
             ensure!(
-                bytes.len() <= MAX_SAVED_SKILL_FILE_BYTES && result.bytes <= MAX_SAVED_SKILL_BYTES,
-                "skill package exceeds its size limit"
+                result.bytes <= MAX_ADOPTED_SKILL_BYTES,
+                "skill package exceeds the {} MiB import limit",
+                MAX_ADOPTED_SKILL_BYTES / (1024 * 1024)
             );
             result.files.insert(path, snapshot);
         }
@@ -695,7 +697,7 @@ impl SkillHome {
 
 struct PackageRead {
     files: BTreeMap<PathBuf, Snapshot>,
-    bytes: usize,
+    bytes: u64,
     entries: usize,
 }
 
@@ -706,6 +708,7 @@ pub(crate) fn collect_tool_proposals(
     home: &Path,
     data: &Path,
     managed: &BTreeMap<PathBuf, ManagedSkill>,
+    unmanaged: &BTreeSet<PathBuf>,
 ) -> Result<BTreeMap<PathBuf, String>> {
     let home = SkillHome::open(home)?;
     let mut candidates = home.candidates();
@@ -723,6 +726,9 @@ pub(crate) fn collect_tool_proposals(
         .retain(|_, draft| matches!(draft.source, Candidate::Agent { .. }));
     let mut blocked = BTreeMap::new();
     for (folder, tool) in candidates {
+        if folder.ancestors().any(|path| unmanaged.contains(path)) {
+            continue;
+        }
         let baseline = managed.get(&folder);
         let current = match home.package(&folder, tool) {
             Ok(Some(snapshot)) => snapshot,
@@ -868,7 +874,7 @@ mod tests {
         let file = write(&home, ".claude/skills/own/SKILL.md", "Original body.\n");
         let folder = PathBuf::from(".claude/skills/own");
         assert_eq!(
-            collect_tool_proposals(&home, &data, &BTreeMap::new())
+            collect_tool_proposals(&home, &data, &BTreeMap::new(), &BTreeSet::new())
                 .unwrap()
                 .into_keys()
                 .collect::<Vec<_>>(),
@@ -892,7 +898,7 @@ mod tests {
                 ()
             ))
             .is_err());
-        collect_tool_proposals(&home, &data, &BTreeMap::new()).unwrap();
+        collect_tool_proposals(&home, &data, &BTreeMap::new(), &BTreeSet::new()).unwrap();
         let mut store = SkillStore::open(&data).unwrap();
         let id = store.state.proposals.first_key_value().unwrap().0.clone();
         store
@@ -908,9 +914,11 @@ mod tests {
             approved_skill_sources(&data, "claudecode").unwrap()["own"][Path::new("SKILL.md")],
             b"Changed during review.\n"
         );
-        assert!(collect_tool_proposals(&home, &data, &BTreeMap::new())
-            .unwrap()
-            .is_empty());
+        assert!(
+            collect_tool_proposals(&home, &data, &BTreeMap::new(), &BTreeSet::new())
+                .unwrap()
+                .is_empty()
+        );
 
         let mut store = SkillStore::open(&data).unwrap();
         assert_eq!(store.state.rows().unwrap()[0].skill.name, "own");
@@ -922,7 +930,7 @@ mod tests {
             .is_empty());
         assert!(approved_local_folders(&data).unwrap().is_empty());
         assert_eq!(fs::read(&file).unwrap(), b"Changed during review.\n");
-        collect_tool_proposals(&home, &data, &BTreeMap::new()).unwrap();
+        collect_tool_proposals(&home, &data, &BTreeMap::new(), &BTreeSet::new()).unwrap();
         assert!(SkillStore::open(&data).unwrap().state.proposals.is_empty());
     }
 
@@ -948,12 +956,14 @@ mod tests {
             ".agents/skills/own/scripts/.claude/.cc-writes/log",
             "Local tool state.\n",
         );
-        assert!(collect_tool_proposals(&home, &data, &managed)
-            .unwrap()
-            .is_empty());
+        assert!(
+            collect_tool_proposals(&home, &data, &managed, &BTreeSet::new())
+                .unwrap()
+                .is_empty()
+        );
 
         fs::write(&asset, "First edit.\n").unwrap();
-        let pending = collect_tool_proposals(&home, &data, &managed).unwrap();
+        let pending = collect_tool_proposals(&home, &data, &managed, &BTreeSet::new()).unwrap();
         assert!(pending.contains_key(&folder));
         let mut store = SkillStore::open(&data).unwrap();
         let id = store.state.proposals.first_key_value().unwrap().0.clone();
@@ -962,13 +972,15 @@ mod tests {
             .review(&home, id, SkillReviewAction::Dismiss, None, |_| Ok(()))
             .unwrap();
         store.save().unwrap();
-        assert!(collect_tool_proposals(&home, &data, &managed)
-            .unwrap()
-            .contains_key(&folder));
+        assert!(
+            collect_tool_proposals(&home, &data, &managed, &BTreeSet::new())
+                .unwrap()
+                .contains_key(&folder)
+        );
         assert!(SkillStore::open(&data).unwrap().state.proposals.is_empty());
 
         fs::write(&asset, "Second edit.\n").unwrap();
-        collect_tool_proposals(&home, &data, &managed).unwrap();
+        collect_tool_proposals(&home, &data, &managed, &BTreeSet::new()).unwrap();
         let mut store = SkillStore::open(&data).unwrap();
         let id = store.state.proposals.first_key_value().unwrap().0.clone();
         store
