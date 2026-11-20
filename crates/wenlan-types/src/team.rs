@@ -189,6 +189,29 @@ pub struct TeamMemberKey {
     pub join_code: Option<String>,
 }
 
+/// Body of `POST /team/v1/admin/invites`: a person to invite, who signs in
+/// with their own account instead of being handed a key. With an `email`
+/// only that address may use the invite; without one, whoever holds the
+/// link can.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamInviteRequest {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    #[serde(default)]
+    pub spaces: Vec<TeamSpaceAccess>,
+}
+
+/// The answer to an invite, or to a new one for the same member: the
+/// member and the link to give them, shown this once (the server keeps only
+/// the token's hash).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamInviteLink {
+    pub member: TeamMember,
+    /// `<url>/join#inv_<token>`.
+    pub link: String,
+}
+
 /// Body of `PUT /api/team`: the team's name, which every member sees.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TeamRenameRequest {
@@ -340,9 +363,24 @@ pub fn is_team_key(key: &str) -> bool {
         .is_some_and(|rest| rest.len() == 64 && rest.bytes().all(|b| b.is_ascii_hexdigit()))
 }
 
+/// The shape of a sign-in invite token: `inv_` and 64 hex digits.
+pub fn is_invite_token(token: &str) -> bool {
+    token
+        .strip_prefix("inv_")
+        .is_some_and(|rest| rest.len() == 64 && rest.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_invite_token_has_its_own_shape() {
+        assert!(is_invite_token(&format!("inv_{}", "a".repeat(64))));
+        assert!(!is_invite_token(&format!("wlt_{}", "a".repeat(64))));
+        assert!(!is_invite_token("inv_short"));
+        assert!(!is_invite_token(&format!("inv_{}g", "a".repeat(63))));
+    }
 
     #[test]
     fn team_agent_names_round_trip() {

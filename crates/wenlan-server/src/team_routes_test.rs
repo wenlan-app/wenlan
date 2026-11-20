@@ -262,6 +262,35 @@ async fn team_join_page_accept_keeps_the_checked_key_and_opens_app() {
 }
 
 #[tokio::test]
+async fn team_join_page_takes_an_invite_out_of_the_address_before_sending_it_in_a_body() {
+    let f = fixture();
+    let page = response_text(join_page_response(&f.state, None).await).await;
+    let read = page.find("startsWith('inv_')").unwrap();
+    let clear = page.find("window.history.replaceState(null, ''").unwrap();
+    let send = page.find("fetch('/auth/invite/google'").unwrap();
+    assert!(read < clear && clear < send, "cleared right after reading");
+    let sent = &page[send..];
+    let sent = &sent[..sent.find("window.location.assign(started.url)").unwrap()];
+    assert!(
+        sent.contains("method: 'POST'") && sent.contains("body: JSON.stringify({ token: invite })")
+    );
+    assert!(!sent.contains("localStorage"));
+    for (language, label) in [
+        ("en", "Sign in with Google"),
+        ("zh-CN", "用 Google 登录"),
+        ("zh-TW", "用 Google 登入"),
+    ] {
+        let page = response_text(join_page_response(&f.state, Some(language)).await).await;
+        assert!(
+            page.contains(&format!("\"sign_in_google\":\"{label}\"")),
+            "{language}"
+        );
+    }
+    // The key flow is still there, untouched.
+    assert!(page.contains("localStorage.setItem('wenlan.team.key', key)"));
+}
+
+#[tokio::test]
 async fn team_join_page_has_private_security_headers_and_no_member_key() {
     let f = fixture();
     let response = join_page_response(&f.state, None).await;
@@ -1085,6 +1114,184 @@ async fn the_owner_resets_a_compromised_account() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
+}
+
+// ===== Sign-in invites: owner admin =====
+
+fn with_url(f: &Fixture) {
+    team::set_url(&f.state.team_path, Some("https://team.example.com")).unwrap();
+}
+
+#[tokio::test]
+async fn the_owner_makes_an_invite_with_a_link_and_nobody_else_can() {
+    let f = fixture();
+    with_url(&f);
+    let (owner, owner_key) = team::owner_key(&f.state.team_path, "Owner").unwrap();
+    let (_, tool) = team::issue_tool_key(&f.state.team_path, &owner.id, "Cursor").unwrap();
+    let request = serde_json::json!({
+        "name": "Dee", "email": "dee@example.com",
+        "spaces": [{"space": "Design", "access": "write"}]
+    })
+    .to_string()
+    .into_bytes();
+    let uri = "/team/v1/admin/invites";
+    // A member, a tool key (the owner's too), and no key: refused.
+    for key in [Some(f.writer.1.as_str()), Some(tool.as_str()), None] {
+        let (status, _) = call(&f.state, Method::POST, uri, key, request.clone()).await;
+        assert!(
+            matches!(status, StatusCode::FORBIDDEN | StatusCode::UNAUTHORIZED),
+            "{status}"
+        );
+    }
+    assert_eq!(
+        team::read_team(&f.state.team_path)
+            .unwrap()
+            .members
+            .iter()
+            .filter(|m| m.name == "Dee")
+            .count(),
+        0
+    );
+
+    let (status, body) = call(
+        &f.state,
+        Method::POST,
+        uri,
+        Some(&owner_key),
+        request.clone(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let answer: wenlan_types::team::TeamInviteLink = serde_json::from_slice(&body).unwrap();
+    assert_eq!(answer.member.name, "Dee");
+    let token = answer
+        .link
+        .strip_prefix("https://team.example.com/join#")
+        .unwrap();
+    assert!(wenlan_types::team::is_invite_token(token));
+    let dee = team::read_team(&f.state.team_path)
+        .unwrap()
+        .members
+        .into_iter()
+        .find(|m| m.id == answer.member.id)
+        .unwrap();
+    assert!(dee.key_sha256.is_none());
+    assert_eq!(
+        dee.invite.as_ref().unwrap().email.as_deref(),
+        Some("dee@example.com")
+    );
+    assert_eq!(dee.access("Design"), Some(TeamAccess::Write));
+    // The link is not a key: it opens nothing.
+    let (status, _) = call(&f.state, Method::GET, "/team/v1/me", Some(token), vec![]).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    // A bad email or name is a 400 and makes nobody.
+    let bad = serde_json::json!({"name": "Eve", "email": "nope", "spaces": []})
+        .to_string()
+        .into_bytes();
+    let (status, _) = call(&f.state, Method::POST, uri, Some(&owner_key), bad).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    // Reissue replaces the token; approve with nobody waiting is a 400.
+    let reissue = format!("/team/v1/admin/members/{}/invite", dee.id);
+    let (status, body) = call(&f.state, Method::POST, &reissue, Some(&owner_key), vec![]).await;
+    assert_eq!(status, StatusCode::OK);
+    let again: wenlan_types::team::TeamInviteLink = serde_json::from_slice(&body).unwrap();
+    assert_ne!(again.link, answer.link);
+    let approve = format!("/team/v1/admin/members/{}/approve", dee.id);
+    let (status, _) = call(&f.state, Method::POST, &approve, Some(&owner_key), vec![]).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = call(
+        &f.state,
+        Method::POST,
+        "/team/v1/admin/members/nobody/approve",
+        Some(&owner_key),
+        vec![],
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn an_invite_needs_the_teams_address_for_its_link() {
+    let f = fixture();
+    let (_, owner_key) = team::owner_key(&f.state.team_path, "Owner").unwrap();
+    let body = serde_json::json!({"name": "Dee", "spaces": []})
+        .to_string()
+        .into_bytes();
+    let (status, _) = call(
+        &f.state,
+        Method::POST,
+        "/team/v1/admin/invites",
+        Some(&owner_key),
+        body,
+    )
+    .await;
+    // (The test process may set WENLAN_TEAM_URL; without it this is a 409.)
+    if env_value(TEAM_URL_ENV).is_none() {
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert!(team::read_team(&f.state.team_path)
+            .unwrap()
+            .members
+            .iter()
+            .all(|m| m.name != "Dee"));
+    }
+}
+
+#[tokio::test]
+async fn a_browser_session_cannot_reach_the_invite_admin_calls() {
+    let f = fixture();
+    with_url(&f);
+    let (owner, _) = team::owner_key(&f.state.team_path, "Owner").unwrap();
+    let token = f.state.sessions.create_fresh(&owner.id).unwrap();
+    for (method, uri) in [
+        (Method::POST, "/team/v1/admin/invites".to_string()),
+        (
+            Method::POST,
+            format!("/team/v1/admin/members/{}/invite", f.writer.0.id),
+        ),
+        (
+            Method::POST,
+            format!("/team/v1/admin/members/{}/approve", f.writer.0.id),
+        ),
+    ] {
+        let req = Request::builder()
+            .method(method.clone())
+            .uri(&uri)
+            .header(header::ORIGIN, "https://team.example.com")
+            .header(
+                header::COOKIE,
+                format!("{}={token}", crate::team_session::COOKIE_NAME),
+            )
+            .body(Body::from("{}"))
+            .unwrap();
+        let response = team_router(f.state.clone()).oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{method} {uri}");
+    }
+    assert!(!credential_may_reach(
+        team::CredentialKind::BrowserSession,
+        "/team/v1/admin/invites"
+    ));
+    // The sign-in start is public, like the other /auth entry points.
+    assert!(credential_may_reach(
+        team::CredentialKind::BrowserSession,
+        "/auth/invite/google"
+    ));
+}
+
+#[tokio::test]
+async fn a_tool_key_is_refused_on_the_invite_admin_calls() {
+    let f = fixture();
+    with_url(&f);
+    let (owner, _) = team::owner_key(&f.state.team_path, "Owner").unwrap();
+    let (_, tool) = team::issue_tool_key(&f.state.team_path, &owner.id, "Cursor").unwrap();
+    for uri in [
+        "/team/v1/admin/invites".to_string(),
+        format!("/team/v1/admin/members/{}/invite", f.writer.0.id),
+        format!("/team/v1/admin/members/{}/approve", f.writer.0.id),
+    ] {
+        let (status, _) = call(&f.state, Method::POST, &uri, Some(&tool), b"{}".to_vec()).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{uri}");
+    }
 }
 
 // ===== Browser sessions =====

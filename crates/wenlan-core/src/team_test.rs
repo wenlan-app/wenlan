@@ -482,6 +482,7 @@ fn reset_compromised_kills_every_credential_and_keeps_the_member() {
             token_sha256: "ab".repeat(32),
             email: None,
             expires_at: now(),
+            pending: None,
         });
         Ok(())
     })
@@ -592,4 +593,354 @@ fn an_identity_finds_its_active_member_by_issuer_and_subject_only() {
     // An empty subject is refused; a removed member cannot be linked.
     assert!(link_identity(&path, &bo.id, identity("https://i", " ", "e")).is_err());
     assert!(link_identity(&path, &amy.id, identity("https://i", "s9", "e")).is_err());
+}
+
+// ===== Sign-in invites =====
+
+fn invited(path: &Path, email: Option<&str>) -> (Member, String) {
+    create_invited_member(path, "Dee", email, &[access("Design", TeamAccess::Write)]).unwrap()
+}
+
+fn redeem(path: &Path, token: &str, sub: &str, email: &str, trust: EmailTrust) -> InviteOutcome {
+    redeem_invite(
+        path,
+        token,
+        identity("https://accounts.google.com", sub, email),
+        &[email.to_string()],
+        trust,
+    )
+    .unwrap()
+}
+
+/// Moves an invite's expiry, as time passing would.
+fn set_expiry(path: &Path, member_id: &str, at: chrono::DateTime<chrono::Utc>) {
+    change_team(path, |file| {
+        let member = find_mut(file, member_id)?;
+        member.invite.as_mut().unwrap().expires_at =
+            at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn an_invited_member_has_no_key_and_only_the_tokens_hash_is_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(TEAM_FILE);
+    let (dee, token) = invited(&path, Some("dee@example.com"));
+    assert!(wenlan_types::team::is_invite_token(&token));
+    assert!(dee.key_sha256.is_none());
+    let invite = dee.invite.clone().unwrap();
+    assert_eq!(invite.token_sha256, invite_token_sha256(&token));
+    assert_eq!(invite.email.as_deref(), Some("dee@example.com"));
+    let expires = chrono::DateTime::parse_from_rfc3339(&invite.expires_at).unwrap();
+    let left = expires.signed_duration_since(chrono::Utc::now());
+    assert!(left > chrono::Duration::days(6) && left <= chrono::Duration::days(7));
+    assert!(!std::fs::read_to_string(&path).unwrap().contains(&token));
+    assert_eq!(read_team(&path).unwrap().format, FORMAT_V2);
+    // Without a key nothing authenticates, and the token is not a key.
+    assert!(authenticate(&path, &token).unwrap().is_none());
+    assert!(create_invited_member(&path, "X", Some("not an email"), &[]).is_err());
+}
+
+#[test]
+fn an_invite_is_used_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(TEAM_FILE);
+    let (dee, token) = invited(&path, Some("dee@example.com"));
+    let first = redeem(&path, &token, "s1", "dee@example.com", EmailTrust::Trusted);
+    let InviteOutcome::Linked(linked) = first else {
+        panic!("expected Linked, got {first:?}");
+    };
+    assert_eq!(linked.id, dee.id);
+    assert!(linked.invite.is_none());
+    assert_eq!(linked.identities.len(), 1);
+    assert_eq!(
+        member_by_identity(&path, "https://accounts.google.com", "s1")
+            .unwrap()
+            .unwrap()
+            .id,
+        dee.id
+    );
+    // The same token, even from the same account, is gone.
+    for sub in ["s1", "s2"] {
+        assert_eq!(
+            redeem(&path, &token, sub, "dee@example.com", EmailTrust::Trusted),
+            InviteOutcome::Refused(InviteRefusal::Unknown)
+        );
+    }
+    assert_eq!(read_team(&path).unwrap().members[0].identities.len(), 1);
+}
+
+#[test]
+fn an_expired_invite_is_refused_and_nothing_changes() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(TEAM_FILE);
+    let (dee, token) = invited(&path, None);
+    set_expiry(
+        &path,
+        &dee.id,
+        chrono::Utc::now() - chrono::Duration::seconds(5),
+    );
+    assert!(!invite_usable(&path, &invite_token_sha256(&token)).unwrap());
+    assert_eq!(
+        redeem(&path, &token, "s1", "dee@example.com", EmailTrust::Trusted),
+        InviteOutcome::Refused(InviteRefusal::Expired)
+    );
+    let after = member_by_id(&path, &dee.id).unwrap().unwrap();
+    assert!(after.identities.is_empty() && after.invite.is_some());
+    // A new invite makes it work again, and the member stays the same.
+    let (again, fresh) = reissue_invite(&path, &dee.id).unwrap();
+    assert_eq!(again.id, dee.id);
+    assert!(matches!(
+        redeem(&path, &fresh, "s1", "dee@example.com", EmailTrust::Trusted),
+        InviteOutcome::Linked(_)
+    ));
+}
+
+#[test]
+fn another_email_is_refused_with_a_masked_address_and_the_invite_survives() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(TEAM_FILE);
+    let (_, token) = invited(&path, Some("Dee@Example.com"));
+    assert_eq!(mask_email("Dee@Example.com"), "D***@Example.com");
+    let refused = redeem(&path, &token, "s9", "eve@example.com", EmailTrust::Trusted);
+    assert_eq!(
+        refused,
+        InviteOutcome::Refused(InviteRefusal::EmailMismatch {
+            invited: "D***@Example.com".into()
+        })
+    );
+    assert!(read_team(&path).unwrap().members[0].identities.is_empty());
+    // The invited address, in any case, still works.
+    assert!(matches!(
+        redeem(&path, &token, "s1", "dee@example.COM", EmailTrust::Trusted),
+        InviteOutcome::Linked(_)
+    ));
+}
+
+#[test]
+fn an_invite_without_an_email_works_for_whoever_holds_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(TEAM_FILE);
+    let (_, token) = invited(&path, None);
+    // Even an untrusted email: no email was promised, so nothing to approve.
+    assert!(matches!(
+        redeem(
+            &path,
+            &token,
+            "s1",
+            "anyone@corp.example",
+            EmailTrust::Untrusted
+        ),
+        InviteOutcome::Linked(_)
+    ));
+}
+
+#[test]
+fn an_untrusted_matching_email_waits_for_the_owner() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(TEAM_FILE);
+    let (dee, token) = invited(&path, Some("dee@corp.example"));
+    let outcome = redeem(
+        &path,
+        &token,
+        "s1",
+        "dee@corp.example",
+        EmailTrust::Untrusted,
+    );
+    let InviteOutcome::PendingApproval(waiting) = outcome else {
+        panic!("expected PendingApproval, got {outcome:?}");
+    };
+    assert!(waiting.identities.is_empty());
+    assert!(
+        member_by_identity(&path, "https://accounts.google.com", "s1")
+            .unwrap()
+            .is_none()
+    );
+    // Spent: neither the same account nor another can use the token now.
+    for sub in ["s1", "s2"] {
+        assert_eq!(
+            redeem(&path, &token, sub, "dee@corp.example", EmailTrust::Trusted),
+            InviteOutcome::Refused(InviteRefusal::Used)
+        );
+    }
+    assert!(!invite_usable(&path, &invite_token_sha256(&token)).unwrap());
+    // The owner approves: now the account signs in.
+    let approved = approve_pending(&path, &dee.id).unwrap();
+    assert_eq!(approved.identities.len(), 1);
+    assert!(approved.invite.is_none());
+    assert_eq!(
+        member_by_identity(&path, "https://accounts.google.com", "s1")
+            .unwrap()
+            .unwrap()
+            .id,
+        dee.id
+    );
+    // Nothing is left to approve.
+    assert!(approve_pending(&path, &dee.id).is_err());
+}
+
+#[test]
+fn a_new_invite_drops_an_account_waiting_for_approval() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(TEAM_FILE);
+    let (dee, token) = invited(&path, Some("dee@corp.example"));
+    redeem(
+        &path,
+        &token,
+        "eve",
+        "dee@corp.example",
+        EmailTrust::Untrusted,
+    );
+    let (_, fresh) = reissue_invite(&path, &dee.id).unwrap();
+    assert!(approve_pending(&path, &dee.id).is_err());
+    assert!(matches!(
+        redeem(
+            &path,
+            &fresh,
+            "dee",
+            "dee@corp.example",
+            EmailTrust::Trusted
+        ),
+        InviteOutcome::Linked(_)
+    ));
+}
+
+#[test]
+fn an_account_held_by_another_active_member_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(TEAM_FILE);
+    let (amy, _) = add_member(&path, "Amy", &[]).unwrap();
+    link_identity(
+        &path,
+        &amy.id,
+        identity("https://accounts.google.com", "s1", "amy@example.com"),
+    )
+    .unwrap();
+    let (_, token) = invited(&path, None);
+    assert_eq!(
+        redeem(&path, &token, "s1", "amy@example.com", EmailTrust::Trusted),
+        InviteOutcome::Refused(InviteRefusal::IdentityTaken)
+    );
+    // Once Amy is removed the account is free, and the invite was not spent.
+    remove_member(&path, &amy.id).unwrap();
+    assert!(matches!(
+        redeem(&path, &token, "s1", "amy@example.com", EmailTrust::Trusted),
+        InviteOutcome::Linked(_)
+    ));
+}
+
+#[test]
+fn approval_is_refused_when_the_account_went_to_another_member_meanwhile() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(TEAM_FILE);
+    let (dee, token) = invited(&path, Some("dee@corp.example"));
+    redeem(
+        &path,
+        &token,
+        "s1",
+        "dee@corp.example",
+        EmailTrust::Untrusted,
+    );
+    let (amy, _) = add_member(&path, "Amy", &[]).unwrap();
+    link_identity(
+        &path,
+        &amy.id,
+        identity("https://accounts.google.com", "s1", "amy@example.com"),
+    )
+    .unwrap();
+    assert!(matches!(
+        approve_pending(&path, &dee.id),
+        Err(WenlanError::Conflict(_))
+    ));
+}
+
+#[test]
+fn a_removed_member_or_an_unknown_token_gets_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(TEAM_FILE);
+    let (dee, token) = invited(&path, None);
+    assert_eq!(
+        redeem(
+            &path,
+            &format!("inv_{}", "0".repeat(64)),
+            "s1",
+            "a@b.co",
+            EmailTrust::Trusted
+        ),
+        InviteOutcome::Refused(InviteRefusal::Unknown)
+    );
+    // A member key is not an invite.
+    let (_, key) = add_member(&path, "Amy", &[]).unwrap();
+    assert_eq!(
+        redeem(&path, &key, "s1", "a@b.co", EmailTrust::Trusted),
+        InviteOutcome::Refused(InviteRefusal::Unknown)
+    );
+    remove_member(&path, &dee.id).unwrap();
+    assert_eq!(
+        redeem(&path, &token, "s1", "a@b.co", EmailTrust::Trusted),
+        InviteOutcome::Refused(InviteRefusal::Unknown)
+    );
+    assert!(reissue_invite(&path, &dee.id).is_err());
+}
+
+#[test]
+fn a_new_invite_stops_the_old_token() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(TEAM_FILE);
+    let (dee, old) = invited(&path, Some("dee@example.com"));
+    let (same, fresh) = reissue_invite(&path, &dee.id).unwrap();
+    assert_ne!(old, fresh);
+    assert_eq!(
+        same.invite.unwrap().email.as_deref(),
+        Some("dee@example.com")
+    );
+    assert_eq!(
+        redeem(&path, &old, "s1", "dee@example.com", EmailTrust::Trusted),
+        InviteOutcome::Refused(InviteRefusal::Unknown)
+    );
+    assert!(matches!(
+        redeem(&path, &fresh, "s1", "dee@example.com", EmailTrust::Trusted),
+        InviteOutcome::Linked(_)
+    ));
+    // The owner is not invited.
+    let (owner, _) = owner_key(&path, "Owner").unwrap();
+    assert!(reissue_invite(&path, &owner.id).is_err());
+}
+
+#[test]
+fn two_people_using_one_invite_at_once_only_one_wins() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(TEAM_FILE);
+    for round in 0..5 {
+        let (dee, token) = invited(&path, None);
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let handles: Vec<_> = ["a", "b"]
+            .into_iter()
+            .map(|who| {
+                let (path, token, barrier) = (path.clone(), token.clone(), barrier.clone());
+                let sub = format!("{who}{round}");
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    redeem(&path, &token, &sub, "x@example.com", EmailTrust::Trusted)
+                })
+            })
+            .collect();
+        let outcomes: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        let linked = outcomes
+            .iter()
+            .filter(|o| matches!(o, InviteOutcome::Linked(_)))
+            .count();
+        assert_eq!(linked, 1, "{outcomes:?}");
+        assert!(outcomes.contains(&InviteOutcome::Refused(InviteRefusal::Unknown)));
+        assert_eq!(
+            member_by_id(&path, &dee.id)
+                .unwrap()
+                .unwrap()
+                .identities
+                .len(),
+            1
+        );
+    }
 }

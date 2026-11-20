@@ -1063,3 +1063,310 @@ fn provider_settings_come_from_the_environment_or_the_file_and_the_environment_w
     let shown = format!("{:?}", found[0]);
     assert!(!shown.contains("file-secret"), "{shown}");
 }
+
+// ===== Invites =====
+
+fn invite_request(token: &str, headers: Vec<(&str, String)>) -> Request<Body> {
+    let mut req = Request::builder()
+        .method(Method::POST)
+        .uri("/auth/invite/google")
+        .header("content-type", "application/json");
+    for (name, value) in headers {
+        req = req.header(name, value);
+    }
+    let mut req = req
+        .body(Body::from(json!({ "token": token }).to_string()))
+        .unwrap();
+    req.extensions_mut().insert(ConnectInfo::<SocketAddr>(
+        "203.0.113.7:4000".parse().unwrap(),
+    ));
+    req
+}
+
+/// Starts signing in with an invite token; the answer is the response.
+async fn post_invite(env: &Env, token: &str) -> Response {
+    send(env, invite_request(token, vec![origin_header()])).await
+}
+
+async fn start_invite(env: &Env, token: &str) -> Started {
+    let response = post_invite(env, token).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let id = login_cookie_of(&response);
+    let answer: Value = serde_json::from_str(&body(response).await).unwrap();
+    let url = answer["url"].as_str().unwrap().to_string();
+    assert!(!url.contains("inv_"), "the token must not leave in a URL");
+    parse_started(&url, id)
+}
+
+fn invite_member(env: &Env, email: Option<&str>) -> (Member, String) {
+    team::create_invited_member(&env.state.team_path, "Dee", email, &[]).unwrap()
+}
+
+/// Claims for an invite sign-in, with the account's `hd` when given.
+fn invite_claims(env: &Env, started: &Started, sub: &str, email: &str, hd: Option<&str>) -> Value {
+    let mut claims = env.claims(started, sub, email);
+    if let Some(hd) = hd {
+        claims["hd"] = json!(hd);
+    }
+    claims
+}
+
+/// Makes an invite's expiry the past, as the file would say after a week.
+fn expire(env: &Env, member: &Member) {
+    let path = &env.state.team_path;
+    let mut file: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    for m in file["members"].as_array_mut().unwrap() {
+        if m["id"] == json!(member.id) {
+            m["invite"]["expires_at"] = json!("2020-01-01T00:00:00Z");
+        }
+    }
+    std::fs::write(path, serde_json::to_vec(&file).unwrap()).unwrap();
+}
+
+async fn admin_post(env: &Env, owner_key: &str, uri: &str) -> Response {
+    send(
+        env,
+        request(
+            Method::POST,
+            uri,
+            &[("authorization", format!("Bearer {owner_key}"))],
+        ),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn an_invited_gmail_account_is_linked_and_signed_in() {
+    let env = env().await;
+    let (dee, token) = invite_member(&env, Some("Dee@gmail.com"));
+    let started = start_invite(&env, &token).await;
+    env.fake
+        .set(invite_claims(&env, &started, "g1", "dee@gmail.com", None));
+    let response = callback(&env, &started).await;
+    assert_eq!(response.status(), StatusCode::FOUND);
+    assert_eq!(response.headers()[header::LOCATION], "/app");
+    assert!(hardened(&response));
+    let session = session_of(&response);
+    assert_eq!(
+        env.state.sessions.lookup(&session).as_deref(),
+        Some(dee.id.as_str())
+    );
+    let now = env.member(&dee);
+    assert!(now.invite.is_none());
+    assert_eq!(now.identities.len(), 1);
+    assert_eq!(now.identities[0].subject, "g1");
+    // The token is spent: the page is told so before Google is bothered.
+    assert_eq!(post_invite(&env, &token).await.status(), StatusCode::GONE);
+    // Signing in again is by the account.
+    let again = start_sign_in(&env).await;
+    env.fake.set(env.claims(&again, "g1", "dee@gmail.com"));
+    assert_eq!(callback(&env, &again).await.status(), StatusCode::FOUND);
+}
+
+#[tokio::test]
+async fn an_invited_company_account_with_a_hosted_domain_is_linked() {
+    let env = env().await;
+    let (dee, token) = invite_member(&env, Some("dee@corp.example"));
+    let started = start_invite(&env, &token).await;
+    env.fake.set(invite_claims(
+        &env,
+        &started,
+        "c1",
+        "dee@corp.example",
+        Some("corp.example"),
+    ));
+    let response = callback(&env, &started).await;
+    assert_eq!(response.status(), StatusCode::FOUND);
+    assert_eq!(env.member(&dee).identities.len(), 1);
+}
+
+#[tokio::test]
+async fn an_untrusted_matching_email_waits_until_the_owner_approves() {
+    let env = env().await;
+    let (dee, token) = invite_member(&env, Some("dee@corp.example"));
+    let started = start_invite(&env, &token).await;
+    env.fake.set(invite_claims(
+        &env,
+        &started,
+        "c1",
+        "dee@corp.example",
+        None,
+    ));
+    let response = callback(&env, &started).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(set_cookie_value(&response, team_session::COOKIE_NAME).is_none());
+    assert_eq!(env.state.sessions.len(), 0);
+    assert!(body(response).await.contains("approve"));
+    assert!(env.member(&dee).identities.is_empty());
+
+    // Not yet: the account is not in the team.
+    let attempt = start_sign_in(&env).await;
+    env.fake.set(env.claims(&attempt, "c1", "dee@corp.example"));
+    assert_eq!(
+        callback(&env, &attempt).await.status(),
+        StatusCode::FORBIDDEN
+    );
+    // The token cannot be used again to take the place.
+    assert_eq!(post_invite(&env, &token).await.status(), StatusCode::GONE);
+
+    let (_, owner_key) = team::owner_key(&env.state.team_path, "Owner").unwrap();
+    let uri = format!("/team/v1/admin/members/{}/approve", dee.id);
+    let approved = admin_post(&env, &owner_key, &uri).await;
+    assert_eq!(approved.status(), StatusCode::OK);
+
+    let attempt = start_sign_in(&env).await;
+    env.fake.set(env.claims(&attempt, "c1", "dee@corp.example"));
+    let response = callback(&env, &attempt).await;
+    assert_eq!(response.status(), StatusCode::FOUND);
+    assert_eq!(
+        env.state.sessions.lookup(&session_of(&response)).as_deref(),
+        Some(dee.id.as_str())
+    );
+}
+
+#[tokio::test]
+async fn the_wrong_email_is_refused_with_a_masked_address_and_the_invite_still_works() {
+    let env = env().await;
+    let (dee, token) = invite_member(&env, Some("amy.dee@example.com"));
+    let started = start_invite(&env, &token).await;
+    env.fake
+        .set(invite_claims(&env, &started, "e1", "eve@gmail.com", None));
+    let response = callback(&env, &started).await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert!(set_cookie_value(&response, team_session::COOKIE_NAME).is_none());
+    let message = body(response).await;
+    assert!(message.contains("a***@example.com"), "{message}");
+    assert!(!message.contains("amy.dee"), "{message}");
+    assert_eq!(env.state.sessions.len(), 0);
+    let now = env.member(&dee);
+    assert!(now.identities.is_empty() && now.invite.is_some());
+    // The right person can still use it.
+    let started = start_invite(&env, &token).await;
+    env.fake.set(invite_claims(
+        &env,
+        &started,
+        "d1",
+        "amy.dee@example.com",
+        Some("example.com"),
+    ));
+    assert_eq!(callback(&env, &started).await.status(), StatusCode::FOUND);
+}
+
+#[tokio::test]
+async fn an_account_of_another_active_member_is_refused() {
+    let env = env().await;
+    env.link_directly(&env.amy.0, "g1", "amy@gmail.com");
+    let (dee, token) = invite_member(&env, None);
+    let started = start_invite(&env, &token).await;
+    env.fake
+        .set(invite_claims(&env, &started, "g1", "amy@gmail.com", None));
+    let response = callback(&env, &started).await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(env.state.sessions.len(), 0);
+    assert!(env.member(&dee).identities.is_empty());
+    assert_eq!(env.member(&env.amy.0).identities.len(), 1);
+}
+
+#[tokio::test]
+async fn an_invite_that_expired_is_gone_at_the_start_and_at_the_end() {
+    let env = env().await;
+    let (dee, token) = invite_member(&env, None);
+    let started = start_invite(&env, &token).await;
+    env.fake
+        .set(invite_claims(&env, &started, "g1", "dee@gmail.com", None));
+    expire(&env, &dee);
+    let response = callback(&env, &started).await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert!(body(response).await.contains("expired"));
+    assert!(env.member(&dee).identities.is_empty());
+    assert_eq!(post_invite(&env, &token).await.status(), StatusCode::GONE);
+}
+
+#[tokio::test]
+async fn a_new_invite_stops_the_old_one_at_every_step() {
+    let env = env().await;
+    let (dee, old) = invite_member(&env, None);
+    let started = start_invite(&env, &old).await;
+    env.fake
+        .set(invite_claims(&env, &started, "g1", "dee@gmail.com", None));
+    let (_, owner_key) = team::owner_key(&env.state.team_path, "Owner").unwrap();
+    let uri = format!("/team/v1/admin/members/{}/invite", dee.id);
+    let response = admin_post(&env, &owner_key, &uri).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let answer: wenlan_types::team::TeamInviteLink =
+        serde_json::from_str(&body(response).await).unwrap();
+    let fresh = answer.link.split('#').nth(1).unwrap().to_string();
+    // A sign-in begun with the old token ends in a refusal; a new start too.
+    assert_eq!(
+        callback(&env, &started).await.status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(post_invite(&env, &old).await.status(), StatusCode::GONE);
+    let started = start_invite(&env, &fresh).await;
+    env.fake
+        .set(invite_claims(&env, &started, "g1", "dee@gmail.com", None));
+    assert_eq!(callback(&env, &started).await.status(), StatusCode::FOUND);
+}
+
+#[tokio::test]
+async fn starting_an_invite_needs_the_exact_origin_and_a_real_token() {
+    let env = env().await;
+    let (_, token) = invite_member(&env, None);
+    // No Origin, another Origin, and the same host over http: all 403.
+    for headers in [
+        vec![],
+        vec![("origin", "https://evil.example".to_string())],
+        vec![("origin", "http://team.example.com".to_string())],
+    ] {
+        let response = send(&env, invite_request(&token, headers)).await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert!(set_cookie_value(&response, LOGIN_COOKIE).is_none());
+    }
+    assert_eq!(env.state.auth.transactions_len(), 0);
+    // Not an invite token: a member key, junk, a made-up invite.
+    for bad in [
+        env.amy.1.clone(),
+        "junk".to_string(),
+        format!("inv_{}", "0".repeat(64)),
+    ] {
+        let response = post_invite(&env, &bad).await;
+        assert!(
+            matches!(
+                response.status(),
+                StatusCode::BAD_REQUEST | StatusCode::GONE
+            ),
+            "{bad}"
+        );
+    }
+    assert_eq!(env.state.auth.transactions_len(), 0);
+    // The token in a query string is not read.
+    let mut req = request(
+        Method::POST,
+        &format!("/auth/invite/google?token={token}"),
+        &[origin_header()],
+    );
+    *req.body_mut() = Body::from("{}");
+    assert_eq!(send(&env, req).await.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn invite_sign_in_is_off_when_sign_in_is_off() {
+    let env = env_with(TRANSACTION_TTL, BURST, REFILL_PER_SEC, None).await;
+    let (_, token) = invite_member(&env, None);
+    let response = send(&env, invite_request(&token, vec![origin_header()])).await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[test]
+fn only_gmail_and_hosted_domains_are_trusted_to_own_their_email() {
+    use team::EmailTrust::{Trusted, Untrusted};
+    assert_eq!(google_email_trust("a@gmail.com", false), Trusted);
+    assert_eq!(google_email_trust("a@GoogleMail.com", false), Trusted);
+    assert_eq!(google_email_trust("a@corp.example", true), Trusted);
+    assert_eq!(google_email_trust("a@corp.example", false), Untrusted);
+    assert_eq!(google_email_trust("a@notgmail.com", false), Untrusted);
+    assert_eq!(
+        google_email_trust("a@gmail.com.evil.example", false),
+        Untrusted
+    );
+}
