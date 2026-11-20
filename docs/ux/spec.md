@@ -946,8 +946,9 @@ and wait for evidence that people need them.
   directly when the person runs it. Wenlan also detects a new or edited skill
   in a tool's folder. It offers that content for the current tool or all
   supported tools. The person's terminal shows the complete proposal and
-  asks for typed `yes` before accepting it. Only accepted source files are
-  eligible for delivery. Invisible characters and bidirectional controls
+  asks for typed `yes` before accepting it. The review for an edited skill
+  shows the changed files and lists the removed files. Only accepted source
+  files are eligible for delivery. Invisible characters and bidirectional controls
   in new skill text are refused.
   Tests `rulesync_skill_agent_proposal_survives_reopen_and_requires_review` and `ux_skill_16_review_needs_one_scope_and_has_no_confirmation_flag`.
 

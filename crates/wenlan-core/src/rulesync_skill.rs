@@ -102,9 +102,56 @@ pub fn uploaded_files(request: &SaveSkillRequest) -> Result<SkillFiles> {
 }
 
 pub fn preview(name: &str, files: &SkillFiles) -> Result<Vec<SkillPreviewFile>> {
+    preview_files(name, files, true)
+}
+
+/// Preview just the changed files in a managed skill. The full snapshot stays
+/// available to acceptance, but unchanged assets are not shown to reviewers.
+pub fn preview_changes(
+    name: &str,
+    files: &SkillFiles,
+    changed_paths: &BTreeSet<PathBuf>,
+    removed_paths: &BTreeSet<PathBuf>,
+) -> Result<Vec<SkillPreviewFile>> {
+    ensure!(
+        changed_paths.len() + removed_paths.len() <= MAX_SAVED_SKILL_FILES,
+        "the skill has too many changed files"
+    );
+    for path in removed_paths {
+        portable_path(path)?;
+        ensure!(
+            !files.contains_key(path),
+            "a removed skill asset is still present"
+        );
+    }
+    ensure!(
+        changed_paths.iter().all(|path| files.contains_key(path)),
+        "a changed skill asset is missing"
+    );
+    // Compare names across the package so a changed path cannot collide with
+    // an unchanged asset on case-insensitive file systems. Adopted packages
+    // may already include dotfiles that the save API does not accept.
+    check_path_collisions(files.keys().map(|path| {
+        path.iter()
+            .map(|part| part.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/")
+    }))?;
+    let changed: SkillFiles = changed_paths
+        .iter()
+        .filter_map(|path| files.get(path).map(|bytes| (path.clone(), bytes.clone())))
+        .collect();
+    preview_files(name, &changed, false)
+}
+
+fn preview_files(
+    name: &str,
+    files: &SkillFiles,
+    require_skill_md: bool,
+) -> Result<Vec<SkillPreviewFile>> {
     ensure!(skill_name(name), "the skill folder name is not portable");
     ensure!(
-        files.contains_key(Path::new("SKILL.md")),
+        !require_skill_md || files.contains_key(Path::new("SKILL.md")),
         "the skill needs a regular SKILL.md"
     );
     ensure!(
@@ -118,27 +165,14 @@ pub fn preview(name: &str, files: &SkillFiles) -> Result<Vec<SkillPreviewFile>> 
             && files.values().map(Vec::len).sum::<usize>() <= MAX_SAVED_SKILL_BYTES,
         "the skill exceeds the size limit"
     );
-    let mut paths = BTreeSet::new();
     let mut content = Vec::with_capacity(files.len());
     for (path, bytes) in files {
-        let path = portable_path(path)?;
-        let collision: String = path.nfkc().flat_map(char::to_lowercase).collect();
-        ensure!(
-            paths.insert(collision),
-            "skill asset paths collide on another file system"
-        );
         content.push(SkillFile {
-            path,
+            path: portable_path(path)?,
             bytes: bytes.clone(),
         });
     }
-    for path in &paths {
-        ensure!(
-            path.match_indices('/')
-                .all(|(index, _)| !paths.contains(&path[..index])),
-            "a skill asset path is also used as a directory"
-        );
-    }
+    check_path_collisions(content.iter().map(|file| &file.path))?;
     if let Some(reason) = skill_registry::hidden_from_the_person(&content) {
         anyhow::bail!("{reason}");
     }
@@ -162,6 +196,25 @@ pub fn preview(name: &str, files: &SkillFiles) -> Result<Vec<SkillPreviewFile>> 
         (left.path != "SKILL.md", &left.path).cmp(&(right.path != "SKILL.md", &right.path))
     });
     Ok(files)
+}
+
+fn check_path_collisions(paths: impl IntoIterator<Item = impl AsRef<str>>) -> Result<()> {
+    let mut normalized = BTreeSet::new();
+    for path in paths {
+        let key: String = path.as_ref().nfkc().flat_map(char::to_lowercase).collect();
+        ensure!(
+            normalized.insert(key),
+            "skill asset paths collide on another file system"
+        );
+    }
+    for path in &normalized {
+        ensure!(
+            path.match_indices('/')
+                .all(|(index, _)| !normalized.contains(&path[..index])),
+            "a skill asset path is also used as a directory"
+        );
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -226,5 +279,33 @@ mod tests {
             request.files[0].path = path.into();
             assert!(uploaded_files(&request).is_err(), "accepted {path}");
         }
+    }
+
+    #[test]
+    fn rulesync_skill_delta_preview_allows_asset_only_changes_and_deletions() {
+        let mut files = BTreeMap::from([
+            (
+                PathBuf::from("SKILL.md"),
+                b"Stable instructions.\n".to_vec(),
+            ),
+            (
+                PathBuf::from("assets/new.md"),
+                b"New reviewed asset.\n".to_vec(),
+            ),
+            (PathBuf::from(".gitignore"), b"scratch/\n".to_vec()),
+        ]);
+        let changed = BTreeSet::from([PathBuf::from("assets/new.md")]);
+        let removed = BTreeSet::from([PathBuf::from("assets/old.md")]);
+        let preview = preview_changes("review-notes", &files, &changed, &removed).unwrap();
+        assert_eq!(preview.len(), 1);
+        assert_eq!(preview[0].path, "assets/new.md");
+        assert_eq!(preview[0].text.as_deref(), Some("New reviewed asset.\n"));
+
+        let no_changed_files = BTreeSet::new();
+        let preview = preview_changes("review-notes", &files, &no_changed_files, &removed).unwrap();
+        assert!(preview.is_empty());
+
+        files.insert(PathBuf::from("assets/NEW.md"), Vec::new());
+        assert!(preview_changes("review-notes", &files, &changed, &removed).is_err());
     }
 }

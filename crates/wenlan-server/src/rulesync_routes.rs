@@ -3670,6 +3670,73 @@ mod tests {
     }
 
     #[test]
+    fn rulesync_large_adopted_skill_proposes_only_the_changed_file() {
+        let f = Fixture::new();
+        fs::remove_dir_all(f.setup.home.join(".claude")).unwrap();
+        fs::remove_dir_all(f.setup.home.join(".codex")).unwrap();
+        let folder = f.setup.home.join(".cursor/skills/large-skill");
+        fs::create_dir_all(&folder).unwrap();
+        let original =
+            "---\nname: large-skill\ndescription: Fixture\nversion: 1\n---\n\nOriginal body.\n";
+        let edited = original.replace("Original body.", "A reviewed change.");
+        fs::write(folder.join("SKILL.md"), original).unwrap();
+        for index in 0..502 {
+            fs::write(
+                folder.join(format!("asset-{index:03}.txt")),
+                format!("Asset {index}\n"),
+            )
+            .unwrap();
+        }
+        let plan = f
+            .setup
+            .preview_adoption_using(fixture_skill_renderer)
+            .unwrap();
+        assert!(plan.skills[0].byte_copy_reason.is_some(), "{plan:?}");
+        f.setup
+            .adopt_using(&plan.token, fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+
+        fs::write(folder.join("SKILL.md"), &edited).unwrap();
+        let pending = f.sync_with("");
+        assert!(
+            pending
+                .blocked
+                .iter()
+                .any(|path| path.contains("need your approval")),
+            "{pending:?}"
+        );
+        {
+            let _lock = f.setup.lock().unwrap();
+            let proposal =
+                rulesync_registry::accept_only_tool_proposal(&f.setup.home, &f.setup.data).unwrap();
+            let [file] = proposal.files.as_slice() else {
+                panic!("expected only SKILL.md in the proposal");
+            };
+            assert_eq!(file.path, "SKILL.md");
+            assert!(file.text.as_deref().unwrap().contains("A reviewed change."));
+        }
+        let delivered = f.sync_with("");
+        assert!(delivered.blocked.is_empty(), "{delivered:?}");
+        let unchanged = f.sync_with("");
+        assert!(
+            unchanged.blocked.is_empty() && unchanged.written.is_empty(),
+            "{unchanged:?}"
+        );
+        assert_eq!(fs::read_to_string(folder.join("SKILL.md")).unwrap(), edited);
+        assert_eq!(
+            fs::read_to_string(folder.join("asset-499.txt")).unwrap(),
+            "Asset 499\n"
+        );
+        assert_eq!(fs::read_dir(&folder).unwrap().count(), 503);
+        let restored = f.setup.restore().unwrap();
+        assert!(restored.blocked.is_empty(), "{restored:?}");
+        assert_eq!(
+            fs::read_to_string(folder.join("SKILL.md")).unwrap(),
+            original
+        );
+    }
+
+    #[test]
     fn rulesync_shares_the_edited_occurrence_of_a_repeated_rule() {
         let f = Fixture::new();
         let cursor = ".cursor/AGENTS.md";

@@ -10,8 +10,9 @@ use anyhow::{bail, ensure, Context, Result};
 use clap::{Args, Subcommand, ValueEnum};
 use wenlan_types::rulesync_skill::{
     SaveSkillRequest, SaveSkillResult, SavedSkillFile, SavedSkillScope, SavedSkillTool,
-    SkillProposal, SkillProposalOrigin, SkillProposalsResponse, SkillReviewAction,
-    SkillReviewRequest, MAX_SAVED_SKILL_BYTES, MAX_SAVED_SKILL_FILES, MAX_SAVED_SKILL_FILE_BYTES,
+    SkillProposal, SkillProposalChanges, SkillProposalOrigin, SkillProposalsResponse,
+    SkillReviewAction, SkillReviewRequest, MAX_SAVED_SKILL_BYTES, MAX_SAVED_SKILL_FILES,
+    MAX_SAVED_SKILL_FILE_BYTES,
 };
 use wenlan_types::skill_registry::{
     InstalledSkillsResponse, LocalSkillsResponse, Scope, SkillImportResult, SkillInstallRequest,
@@ -347,10 +348,13 @@ async fn review_saved_skill(
         .context("This skill proposal is no longer waiting for review.")?;
     let mut preview = skill_proposal_summary(&proposal);
     push_skill_preview_files(&mut preview, &proposal.files);
+    if let Some(changes) = &proposal.changes {
+        push_skill_removed_files(&mut preview, changes);
+    }
     println!("{preview}");
     let question = if accept {
         ensure!(
-            complete_skill_preview(&proposal.files),
+            complete_skill_proposal(&proposal),
             "Wenlan needs a complete preview to accept this skill."
         );
         format!(
@@ -398,6 +402,24 @@ fn complete_skill_preview(files: &[SkillPreviewFile]) -> bool {
             .any(|file| file.path == "SKILL.md" && file.text.is_some())
 }
 
+fn complete_skill_proposal(proposal: &SkillProposal) -> bool {
+    if proposal.changes.is_some() {
+        proposal.files.iter().all(|file| !file.cut)
+    } else {
+        complete_skill_preview(&proposal.files)
+    }
+}
+
+fn push_skill_removed_files(out: &mut String, changes: &SkillProposalChanges) {
+    if changes.removed.is_empty() {
+        return;
+    }
+    out.push_str("Removed files\n");
+    for path in &changes.removed {
+        out.push_str(&format!("- {}\n", one_line(path)));
+    }
+}
+
 fn saved_skill_scope_words(scope: SavedSkillScope) -> String {
     match scope {
         SavedSkillScope::Shared => "shared".into(),
@@ -411,10 +433,15 @@ fn skill_proposal_summary(proposal: &SkillProposal) -> String {
         SkillProposalOrigin::Tool { tool } => format!("the {} skills folder", tool.display_name()),
     };
     format!(
-        "{}  {} ({})\nFrom {origin}\n",
+        "{}  {} ({})\nFrom {origin}\n{}",
         one_line(&proposal.id),
         one_line(&proposal.name),
-        saved_skill_scope_words(proposal.scope)
+        saved_skill_scope_words(proposal.scope),
+        if proposal.changes.is_some() {
+            "Changes since the last managed copy.\n"
+        } else {
+            ""
+        }
     )
 }
 
@@ -1275,6 +1302,29 @@ mod tests {
         files[0].cut = false;
         files[0].text = None;
         assert!(!complete_skill_preview(&files));
+    }
+
+    #[test]
+    fn ux_skill_16_managed_delta_review_shows_deletions_without_skill_md() {
+        let proposal = SkillProposal {
+            id: "delta".into(),
+            name: "meeting-notes".into(),
+            origin: SkillProposalOrigin::Tool {
+                tool: SavedSkillTool::Cursor,
+            },
+            scope: SavedSkillScope::Tool {
+                tool: SavedSkillTool::Cursor,
+            },
+            files: Vec::new(),
+            changes: Some(SkillProposalChanges {
+                removed: vec!["examples/old.md".into()],
+            }),
+        };
+        assert!(complete_skill_proposal(&proposal));
+        let mut preview = skill_proposal_summary(&proposal);
+        push_skill_removed_files(&mut preview, proposal.changes.as_ref().unwrap());
+        assert!(preview.contains("Changes since the last managed copy."));
+        assert!(preview.contains("Removed files\n- examples/old.md\n"));
     }
 
     fn line(text: &str, title: &str, general: bool) -> SkillLine {

@@ -75,6 +75,15 @@ pub struct SkillProposal {
     pub origin: SkillProposalOrigin,
     pub scope: SavedSkillScope,
     pub files: Vec<SkillPreviewFile>,
+    /// Present when `files` contains only changed paths from a managed skill.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changes: Option<SkillProposalChanges>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SkillProposalChanges {
+    /// Paths removed from the managed skill; added and changed paths are in `files`.
+    pub removed: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

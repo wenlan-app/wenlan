@@ -10,6 +10,7 @@ use axum::{http::HeaderMap, Json};
 use cap_fs_ext::DirExt as _;
 use cap_std::fs::Dir;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use wenlan_core::rulesync_adopt::{
     skip_skill_asset, MAX_ADOPTED_SKILL_BYTES, MAX_ADOPTED_SKILL_DEPTH, MAX_ADOPTED_SKILL_ENTRIES,
 };
@@ -19,7 +20,8 @@ use wenlan_core::skill_registry;
 use wenlan_types::rulesync::RulesSyncReport;
 use wenlan_types::rulesync_skill::{
     SaveSkillRequest, SaveSkillResult, SavedSkillScope, SavedSkillTool, SkillProposal,
-    SkillProposalOrigin, SkillProposalsResponse, SkillReviewAction, SkillReviewRequest,
+    SkillProposalChanges, SkillProposalOrigin, SkillProposalsResponse, SkillReviewAction,
+    SkillReviewRequest,
 };
 use wenlan_types::skill_registry::{InstalledSkill, InstalledSkillRow, Scope, Verdict};
 
@@ -30,6 +32,8 @@ use crate::rulesync_routes::{require_local_person, Setup};
 use crate::state::SharedState;
 
 const SKILL_STATE: &str = "skills.json";
+const SKILL_BLOBS: &str = "skills-blobs";
+const SKILL_STATE_FORMAT: u32 = 1;
 const MAX_AGENT_PROPOSALS: usize = 40;
 
 pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<SharedState> {
@@ -236,13 +240,13 @@ fn failed_store(error: anyhow::Error) -> ServerError {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct ManagedSkill {
+pub(crate) struct ManagedSkill<Content = Vec<u8>> {
     pub tool: SavedSkillTool,
     /// Package-relative leaf snapshots, including each file's mode.
-    pub files: BTreeMap<PathBuf, Snapshot>,
+    pub files: BTreeMap<PathBuf, Snapshot<Content>>,
 }
 
-impl ManagedSkill {
+impl ManagedSkill<Vec<u8>> {
     fn files(&self) -> SkillFiles {
         self.files
             .iter()
@@ -255,40 +259,96 @@ impl ManagedSkill {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-enum Candidate {
+enum Candidate<Content = Vec<u8>> {
     Agent {
         agent: String,
-        files: SkillFiles,
+        files: BTreeMap<PathBuf, Content>,
     },
     Tool {
         folder: PathBuf,
-        snapshot: ManagedSkill,
+        snapshot: ManagedSkill<Content>,
+        #[serde(default)]
+        changes: Option<ToolSkillChanges>,
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct ToolSkillChanges {
+    changed_paths: BTreeSet<PathBuf>,
+    removed_paths: BTreeSet<PathBuf>,
+}
+
+impl ToolSkillChanges {
+    fn between(before: &SkillFiles, after: &SkillFiles) -> Option<Self> {
+        let changed_paths: BTreeSet<_> = after
+            .iter()
+            .filter(|(path, bytes)| before.get(*path) != Some(*bytes))
+            .map(|(path, _)| path.clone())
+            .collect();
+        let removed_paths: BTreeSet<_> = before
+            .keys()
+            .filter(|path| !after.contains_key(*path))
+            .cloned()
+            .collect();
+        (!changed_paths.is_empty() || !removed_paths.is_empty()).then_some(Self {
+            changed_paths,
+            removed_paths,
+        })
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
-struct Draft {
+struct Draft<Content = Vec<u8>> {
     name: String,
     scope: SavedSkillScope,
     base: String,
-    source: Candidate,
+    source: Candidate<Content>,
 }
 
 impl Draft {
     fn preview(&self, id: String) -> Result<SkillProposal> {
-        let (origin, files) = match &self.source {
+        let (origin, files, changes) = match &self.source {
             Candidate::Agent { agent, files } => (
                 SkillProposalOrigin::Agent {
                     agent: agent.clone(),
                 },
                 skills::preview(&self.name, files)?,
+                None,
             ),
-            Candidate::Tool { snapshot, .. } => (
-                SkillProposalOrigin::Tool {
-                    tool: snapshot.tool,
-                },
-                skills::preview(&self.name, &snapshot.files())?,
-            ),
+            Candidate::Tool {
+                snapshot, changes, ..
+            } => {
+                let full_files = snapshot.files();
+                let (files, changes) = match changes {
+                    Some(changes) => (
+                        skills::preview_changes(
+                            &self.name,
+                            &full_files,
+                            &changes.changed_paths,
+                            &changes.removed_paths,
+                        )?,
+                        Some(SkillProposalChanges {
+                            removed: changes
+                                .removed_paths
+                                .iter()
+                                .map(|path| {
+                                    path.to_str()
+                                        .context("a removed skill path is not UTF-8")
+                                        .map(str::to_owned)
+                                })
+                                .collect::<Result<_>>()?,
+                        }),
+                    ),
+                    None => (skills::preview(&self.name, &full_files)?, None),
+                };
+                (
+                    SkillProposalOrigin::Tool {
+                        tool: snapshot.tool,
+                    },
+                    files,
+                    changes,
+                )
+            }
         };
         Ok(SkillProposal {
             id,
@@ -296,29 +356,52 @@ impl Draft {
             scope: self.scope,
             origin,
             files,
+            changes,
         })
     }
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(default)]
-struct Variants {
-    shared: Option<SkillFiles>,
-    tools: BTreeMap<SavedSkillTool, SkillFiles>,
+struct Variants<Content = Vec<u8>> {
+    shared: Option<BTreeMap<PathBuf, Content>>,
+    tools: BTreeMap<SavedSkillTool, BTreeMap<PathBuf, Content>>,
     installed_at: i64,
     updated_at: i64,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
-#[serde(default)]
-struct SkillState {
-    proposals: BTreeMap<String, Draft>,
-    kept: BTreeMap<String, Variants>,
-    ignored: BTreeMap<PathBuf, String>,
-    approved_local: BTreeMap<PathBuf, ManagedSkill>,
+impl<Content> Default for Variants<Content> {
+    fn default() -> Self {
+        Self {
+            shared: None,
+            tools: BTreeMap::new(),
+            installed_at: 0,
+            updated_at: 0,
+        }
+    }
 }
 
-impl SkillState {
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(default)]
+struct SkillState<Content = Vec<u8>> {
+    proposals: BTreeMap<String, Draft<Content>>,
+    kept: BTreeMap<String, Variants<Content>>,
+    ignored: BTreeMap<PathBuf, String>,
+    approved_local: BTreeMap<PathBuf, ManagedSkill<Content>>,
+}
+
+impl<Content> Default for SkillState<Content> {
+    fn default() -> Self {
+        Self {
+            proposals: BTreeMap::new(),
+            kept: BTreeMap::new(),
+            ignored: BTreeMap::new(),
+            approved_local: BTreeMap::new(),
+        }
+    }
+}
+
+impl SkillState<Vec<u8>> {
     fn revision(&self, name: &str) -> Result<String> {
         fingerprint(
             &self
@@ -381,7 +464,10 @@ impl SkillState {
             .context("this skill proposal is no longer current")?;
         let name = draft.name.clone();
         if action == SkillReviewAction::Dismiss {
-            if let Candidate::Tool { folder, snapshot } = &draft.source {
+            if let Candidate::Tool {
+                folder, snapshot, ..
+            } = &draft.source
+            {
                 self.ignored.insert(folder.clone(), fingerprint(snapshot)?);
             }
             self.proposals.remove(&id);
@@ -395,22 +481,42 @@ impl SkillState {
         let files = match &draft.source {
             Candidate::Agent { files, .. } => {
                 check_name(&name)?;
+                skills::preview(&name, files)?;
                 files.clone()
             }
-            Candidate::Tool { folder, snapshot } => {
+            Candidate::Tool {
+                folder,
+                snapshot,
+                changes,
+            } => {
                 ensure!(
                     matches!(scope, SavedSkillScope::Shared) || scope == draft.scope,
                     "accept for the tool that changed the skill or share across tools"
                 );
                 let scanning_root = SkillHome::open(home)?;
-                ensure!(scanning_root.package(folder, snapshot.tool)?.as_ref() == Some(snapshot),
-                    "the tool edited this skill again. Run `wenlan rules sync` to review the current files");
+                ensure!(
+                    scanning_root.package(folder, snapshot.tool)?.as_ref() == Some(snapshot),
+                    "the tool edited this skill again. Run `wenlan rules sync` to review the current files"
+                );
                 self.approved_local.insert(folder.clone(), snapshot.clone());
                 self.ignored.remove(folder);
-                snapshot.files()
+                let files = snapshot.files();
+                match changes {
+                    Some(changes) => {
+                        skills::preview_changes(
+                            &name,
+                            &files,
+                            &changes.changed_paths,
+                            &changes.removed_paths,
+                        )?;
+                    }
+                    None => {
+                        skills::preview(&name, &files)?;
+                    }
+                }
+                files
             }
         };
-        skills::preview(&name, &files)?;
         self.keep(&name, scope, files);
         self.proposals.remove(&id);
         Ok(name)
@@ -480,6 +586,138 @@ impl SkillState {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(transparent)]
+struct SkillBlobHash(String);
+
+impl SkillBlobHash {
+    fn of(bytes: &[u8]) -> Self {
+        Self(hex::encode(Sha256::digest(bytes)))
+    }
+
+    fn path(&self) -> Result<PathBuf> {
+        ensure!(
+            self.0.len() == 64
+                && self
+                    .0
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f')),
+            "invalid skill blob hash"
+        );
+        Ok(Path::new(SKILL_BLOBS).join(&self.0))
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct StoredSkillState<Content> {
+    format: u32,
+    state: SkillState<Content>,
+}
+
+fn map_skill_state<From, To>(
+    state: SkillState<From>,
+    map: &mut impl FnMut(From) -> Result<To>,
+) -> Result<SkillState<To>> {
+    let proposals = state
+        .proposals
+        .into_iter()
+        .map(|(id, draft)| {
+            let source = match draft.source {
+                Candidate::Agent { agent, files } => Candidate::Agent {
+                    agent,
+                    files: map_skill_files(files, map)?,
+                },
+                Candidate::Tool {
+                    folder,
+                    snapshot,
+                    changes,
+                } => Candidate::Tool {
+                    folder,
+                    snapshot: map_managed_skill(snapshot, map)?,
+                    changes,
+                },
+            };
+            Ok((
+                id,
+                Draft {
+                    name: draft.name,
+                    scope: draft.scope,
+                    base: draft.base,
+                    source,
+                },
+            ))
+        })
+        .collect::<Result<_>>()?;
+    let kept = state
+        .kept
+        .into_iter()
+        .map(|(name, variants)| {
+            Ok((
+                name,
+                Variants {
+                    shared: variants
+                        .shared
+                        .map(|files| map_skill_files(files, map))
+                        .transpose()?,
+                    tools: variants
+                        .tools
+                        .into_iter()
+                        .map(|(tool, files)| Ok((tool, map_skill_files(files, map)?)))
+                        .collect::<Result<_>>()?,
+                    installed_at: variants.installed_at,
+                    updated_at: variants.updated_at,
+                },
+            ))
+        })
+        .collect::<Result<_>>()?;
+    let approved_local = state
+        .approved_local
+        .into_iter()
+        .map(|(path, skill)| Ok((path, map_managed_skill(skill, map)?)))
+        .collect::<Result<_>>()?;
+    Ok(SkillState {
+        proposals,
+        kept,
+        ignored: state.ignored,
+        approved_local,
+    })
+}
+
+fn map_skill_files<From, To>(
+    files: BTreeMap<PathBuf, From>,
+    map: &mut impl FnMut(From) -> Result<To>,
+) -> Result<BTreeMap<PathBuf, To>> {
+    files
+        .into_iter()
+        .map(|(path, content)| Ok((path, map(content)?)))
+        .collect()
+}
+
+fn map_managed_skill<From, To>(
+    skill: ManagedSkill<From>,
+    map: &mut impl FnMut(From) -> Result<To>,
+) -> Result<ManagedSkill<To>> {
+    Ok(ManagedSkill {
+        tool: skill.tool,
+        files: skill
+            .files
+            .into_iter()
+            .map(|(path, snapshot)| {
+                let Snapshot::File { bytes, mode } = snapshot else {
+                    bail!("a managed skill asset is not a regular file");
+                };
+                Ok((
+                    path,
+                    Snapshot::File {
+                        bytes: map(bytes)?,
+                        mode,
+                    },
+                ))
+            })
+            .collect::<Result<_>>()?,
+    })
+}
+
 struct SkillStore {
     root: FileRoot,
     seen: Snapshot,
@@ -488,10 +726,38 @@ struct SkillStore {
 
 impl SkillStore {
     fn open(data: &Path) -> Result<Self> {
-        let root = FileRoot::open(data)?;
+        let root = FileRoot::open(data)?.with_private_directories();
         let seen = root.read(Path::new(SKILL_STATE), false)?;
         let state = match &seen {
-            Snapshot::File { bytes, .. } => serde_json::from_slice(bytes)?,
+            Snapshot::File { bytes, .. } => {
+                let value: serde_json::Value = serde_json::from_slice(bytes)?;
+                if value.get("format").is_some() {
+                    let stored: StoredSkillState<SkillBlobHash> = serde_json::from_value(value)?;
+                    ensure!(
+                        stored.format == SKILL_STATE_FORMAT,
+                        "unsupported personal skill state format {}",
+                        stored.format
+                    );
+                    let mut cache = BTreeMap::<String, Vec<u8>>::new();
+                    map_skill_state(stored.state, &mut |hash| {
+                        if let Some(bytes) = cache.get(&hash.0) {
+                            return Ok(bytes.clone());
+                        }
+                        let blob = hash.path()?;
+                        let Snapshot::File { bytes, .. } = root.read_private(&blob, None)? else {
+                            bail!("missing personal skill blob");
+                        };
+                        ensure!(
+                            SkillBlobHash::of(&bytes).0 == hash.0,
+                            "damaged personal skill blob"
+                        );
+                        cache.insert(hash.0.clone(), bytes.clone());
+                        Ok(bytes)
+                    })?
+                } else {
+                    serde_json::from_value(value)?
+                }
+            }
             Snapshot::Absent => SkillState::default(),
             _ => bail!("unexpected personal skill store file type"),
         };
@@ -499,7 +765,36 @@ impl SkillStore {
     }
 
     fn save(self) -> Result<()> {
-        let next = Snapshot::file(serde_json::to_vec(&self.state)?);
+        let mut saved = BTreeSet::new();
+        let mut added_blob = false;
+        let state = StoredSkillState {
+            format: SKILL_STATE_FORMAT,
+            state: map_skill_state(self.state, &mut |bytes| {
+                let hash = SkillBlobHash::of(&bytes);
+                if saved.insert(hash.0.clone()) {
+                    let path = hash.path()?;
+                    match self.root.read_private(&path, Some(&bytes))? {
+                        Snapshot::Absent => {
+                            let desired = Snapshot::file(bytes.clone());
+                            ensure!(
+                                self.root.apply(&path, &Snapshot::Absent, &desired, false)?
+                                    == ApplyOutcome::Applied,
+                                "personal skill blob changed while saving"
+                            );
+                            added_blob = true;
+                        }
+                        Snapshot::File { bytes: current, .. } if current == bytes => (),
+                        _ => bail!("damaged personal skill blob"),
+                    }
+                }
+                Ok(hash)
+            })?,
+        };
+        if added_blob {
+            self.root.sync_directory(Path::new(SKILL_BLOBS))?;
+            self.root.sync_directory(Path::new(""))?;
+        }
+        let next = Snapshot::file(serde_json::to_vec(&state)?);
         if self.seen == next {
             return Ok(());
         }
@@ -509,6 +804,7 @@ impl SkillStore {
                 == ApplyOutcome::Applied,
             "personal skill state changed during the operation"
         );
+        self.root.sync_directory(Path::new(""))?;
         Ok(())
     }
 }
@@ -787,7 +1083,18 @@ pub(crate) fn collect_tool_proposals(
             blocked.insert(folder, "Rename the skill folder to use lowercase letters, digits, and hyphens, then run `wenlan rules sync`.".into());
             continue;
         };
-        if let Err(error) = skills::preview(name, &files) {
+        let changes =
+            baseline.and_then(|baseline| ToolSkillChanges::between(&baseline.files(), &files));
+        let preview = match &changes {
+            Some(changes) => skills::preview_changes(
+                name,
+                &files,
+                &changes.changed_paths,
+                &changes.removed_paths,
+            ),
+            None => skills::preview(name, &files),
+        };
+        if let Err(error) = preview {
             blocked.insert(folder, format!("Cannot propose this skill ({error:#}). Fix the files and run `wenlan rules sync`."));
             continue;
         }
@@ -807,6 +1114,7 @@ pub(crate) fn collect_tool_proposals(
             source: Candidate::Tool {
                 folder,
                 snapshot: current,
+                changes,
             },
         };
         store.state.proposals.insert(fingerprint(&draft)?, draft);
@@ -830,9 +1138,19 @@ mod tests {
     fn make_test_dirs(dir: &tempfile::TempDir) -> (PathBuf, PathBuf) {
         let data = dir.path().join("data");
         let home = dir.path().join("home");
-        fs::create_dir(&data).unwrap();
+        create_test_data_directory(&data);
         fs::create_dir(&home).unwrap();
         (data, home)
+    }
+
+    fn create_test_data_directory(path: &Path) {
+        let mut builder = fs::DirBuilder::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt as _;
+            builder.mode(0o700);
+        }
+        builder.recursive(false).create(path).unwrap();
     }
 
     #[test]
@@ -1061,5 +1379,78 @@ mod tests {
         );
         assert_eq!(approved_skill_sources(&data, "codexcli").unwrap(), shared);
         assert_eq!(fs::read(&asset).unwrap(), b"Second edit.\n");
+    }
+
+    #[test]
+    fn skill_store_blobs_keep_large_packages_and_read_legacy_state() {
+        let scratch = tempfile::tempdir().unwrap();
+        let data = scratch.path().join("data");
+        create_test_data_directory(&data);
+        let payload = vec![u8::MAX; 8 * 1024 * 1024];
+        let path = PathBuf::from("SKILL.md");
+        let mut state = SkillState::default();
+        state.keep(
+            "large-skill",
+            SavedSkillScope::Shared,
+            BTreeMap::from([(path.clone(), payload.clone())]),
+        );
+        state.approved_local.insert(
+            PathBuf::from(".cursor/skills/large-skill"),
+            ManagedSkill {
+                tool: SavedSkillTool::Cursor,
+                files: BTreeMap::from([(path, Snapshot::file(payload.clone()))]),
+            },
+        );
+        assert!(serde_json::to_vec(&state).unwrap().len() > 32 * 1024 * 1024);
+
+        SkillStore {
+            root: FileRoot::open(&data).unwrap().with_private_directories(),
+            seen: Snapshot::Absent,
+            state,
+        }
+        .save()
+        .unwrap();
+        assert!(fs::metadata(data.join(SKILL_STATE)).unwrap().len() < 32 * 1024 * 1024);
+        assert_eq!(fs::read_dir(data.join(SKILL_BLOBS)).unwrap().count(), 1);
+        let reopened = SkillStore::open(&data).unwrap();
+        assert_eq!(
+            reopened.state.kept["large-skill"].shared.as_ref().unwrap()[Path::new("SKILL.md")],
+            payload
+        );
+        assert_eq!(
+            reopened.state.approved_local[Path::new(".cursor/skills/large-skill")].files
+                [Path::new("SKILL.md")],
+            Snapshot::file(vec![u8::MAX; 8 * 1024 * 1024])
+        );
+
+        let legacy_data = scratch.path().join("legacy");
+        create_test_data_directory(&legacy_data);
+        let legacy_state = SkillState {
+            kept: BTreeMap::from([(
+                "legacy-skill".into(),
+                Variants {
+                    shared: Some(BTreeMap::from([(
+                        PathBuf::from("SKILL.md"),
+                        b"Legacy skill body.\n".to_vec(),
+                    )])),
+                    ..Variants::default()
+                },
+            )]),
+            ..SkillState::default()
+        };
+        fs::write(
+            legacy_data.join(SKILL_STATE),
+            serde_json::to_vec(&legacy_state).unwrap(),
+        )
+        .unwrap();
+        let legacy = SkillStore::open(&legacy_data).unwrap();
+        assert_eq!(
+            legacy.state.kept["legacy-skill"].shared,
+            legacy_state.kept["legacy-skill"].shared
+        );
+        legacy.save().unwrap();
+        let migrated: serde_json::Value =
+            serde_json::from_slice(&fs::read(legacy_data.join(SKILL_STATE)).unwrap()).unwrap();
+        assert_eq!(migrated["format"], SKILL_STATE_FORMAT);
     }
 }
