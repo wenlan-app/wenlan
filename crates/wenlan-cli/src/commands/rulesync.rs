@@ -248,7 +248,10 @@ fn plan_for_a_person(plan: &AdoptionPlan) -> String {
                 }
                 AdoptionSkillOutcome::PlainCopy => "plain copy in the personal master".into(),
                 AdoptionSkillOutcome::Skipped { reason } => {
-                    format!("skipped ({})", one_line(reason))
+                    format!(
+                        "skipped ({}) — stays where it is, not managed",
+                        one_line(reason)
+                    )
                 }
             };
             writeln!(&mut out, "  {} — {status}", file_label(&skill.path)).unwrap();

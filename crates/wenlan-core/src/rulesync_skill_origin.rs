@@ -21,7 +21,12 @@ fn read_metadata(home: &Home, path: &Path) -> Option<Value> {
     if node.through_link {
         return None;
     }
-    serde_json::from_slice(&home.bytes(&node, 2 * 1024 * 1024).ok()?).ok()
+    serde_json::from_slice(
+        &home
+            .bytes(&node, 2 * 1024 * 1024, "the installer metadata size limit")
+            .ok()?,
+    )
+    .ok()
 }
 
 fn slash_path(path: &Path) -> Option<String> {

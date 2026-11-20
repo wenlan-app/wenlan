@@ -101,7 +101,7 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
             path: path.to_string_lossy().into_owned(),
             added: 0,
             removed: 0,
-            diff: format!("Skipped ({reason})\n"),
+            diff: format!("Skipped ({reason}). Stays where it is, not managed.\n"),
         });
     }
     let mut skills = adoption

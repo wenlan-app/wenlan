@@ -8,7 +8,7 @@ use common::spawn_stub;
 use predicates::prelude::*;
 use serde_json::json;
 use std::{fs, path::Path};
-use wenlan_types::rulesync::AdoptionPlan;
+use wenlan_types::rulesync::{AdoptionPlan, AdoptionSkillOutcome};
 
 fn cli(base: &str) -> Command {
     let mut cmd = Command::cargo_bin("wenlan").unwrap();
@@ -128,6 +128,51 @@ fn personal_rules_dry_run_announces_retired_codex_script() {
         ));
     assert_eq!(fs::read_to_string(codex).unwrap(), original);
     assert_eq!(fs::read_to_string(script).unwrap(), "#!/bin/sh\n");
+}
+
+#[test]
+fn personal_rules_dry_run_leaves_an_oversized_skill_unmanaged() {
+    let state = tempfile::tempdir().unwrap();
+    let relative = ".codex/skills/video-shotcraft";
+    let skill = state.path().join("ai-tools/home").join(relative);
+    fs::create_dir_all(&skill).unwrap();
+    fs::write(skill.join("SKILL.md"), "An existing skill\n").unwrap();
+    let audio = skill.join("audio.mp3");
+    let size = 32 * 1024 * 1024;
+    // The audio file is within the limit by itself. The whole skill exceeds it.
+    fs::File::create(&audio).unwrap().set_len(size).unwrap();
+
+    let output = personal_rules_cli(state.path())
+        .args(["rules", "adopt", "--dry-run", "--format", "json"])
+        .assert()
+        .success();
+    let plan: AdoptionPlan = serde_json::from_slice(&output.get_output().stdout).unwrap();
+    let item = plan
+        .skills
+        .iter()
+        .find(|item| item.path == relative)
+        .unwrap();
+    let AdoptionSkillOutcome::Skipped { reason } = &item.outcome else {
+        panic!("expected an unmanaged skip, got {:?}", item.outcome);
+    };
+    assert!(reason.contains("32 MiB total import limit"));
+    assert!(reason.contains("audio.mp3"));
+    assert_eq!(plan.files.len(), 1);
+    assert_eq!((plan.files[0].added, plan.files[0].removed), (0, 0));
+    assert!(plan.files[0]
+        .diff
+        .contains("Stays where it is, not managed."));
+    personal_rules_cli(state.path())
+        .args(["rules", "adopt", "--dry-run", "--format", "table"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("stays where it is, not managed"));
+    assert_eq!(fs::metadata(&audio).unwrap().len(), size);
+    assert_eq!(
+        fs::read_to_string(skill.join("SKILL.md")).unwrap(),
+        "An existing skill\n"
+    );
+    assert!(!state.path().join("unused-data-root").exists());
 }
 
 #[test]

@@ -260,7 +260,7 @@ impl Home {
         Ok(names)
     }
 
-    fn bytes(&self, node: &Node, limit: u64) -> Result<Vec<u8>> {
+    fn bytes(&self, node: &Node, limit: u64, limit_label: &str) -> Result<Vec<u8>> {
         ensure!(
             node.metadata.is_file(),
             "{} is not a regular file",
@@ -268,7 +268,7 @@ impl Home {
         );
         ensure!(
             node.metadata.len() <= limit,
-            "{} exceeds the import size limit",
+            "{} exceeds {limit_label}",
             node.path.display()
         );
         let mut options = OpenOptions::new();
@@ -291,7 +291,7 @@ impl Home {
         file.take(limit + 1).read_to_end(&mut bytes)?;
         ensure!(
             bytes.len() as u64 <= limit,
-            "{} exceeds the import size limit",
+            "{} exceeds {limit_label}",
             node.path.display()
         );
         Ok(bytes)
@@ -335,8 +335,9 @@ fn load_text(
         return Ok(None);
     };
     ensure_rule_source(&node.path)?;
-    let text = String::from_utf8(home.bytes(&node, MAX_RULE_BYTES)?)
-        .with_context(|| format!("{} is not readable UTF-8", path.display()))?;
+    let text =
+        String::from_utf8(home.bytes(&node, MAX_RULE_BYTES, "the rule file import size limit")?)
+            .with_context(|| format!("{} is not readable UTF-8", path.display()))?;
     sources.extend([relative.to_path_buf(), node.path.clone()]);
     Ok(Some(LoadedText { node, text }))
 }
@@ -936,7 +937,7 @@ impl SkillTree {
             }
             ensure!(
                 self.skill.files.len() + self.dirs.len() < MAX_SKILL_ENTRIES,
-                "skill exceeds the import entry limit"
+                "skill exceeds the {MAX_SKILL_ENTRIES} files and directories allowed for import"
             );
             let source = node.path.join(name);
             let entry = home.resolve(&source)?.with_context(|| {
@@ -953,7 +954,14 @@ impl SkillTree {
                 self.dirs.insert(relative.clone());
                 self.visit(home, root, &entry, &relative, parents)?;
             } else {
-                let bytes = home.bytes(&entry, self.remaining_bytes)?;
+                let bytes = home.bytes(
+                    &entry,
+                    self.remaining_bytes,
+                    &format!(
+                        "the {} MiB total import limit for a skill",
+                        MAX_SKILL_BYTES / (1024 * 1024)
+                    ),
+                )?;
                 self.remaining_bytes -= bytes.len() as u64;
                 self.skill.files.insert(relative, bytes);
             }
