@@ -269,6 +269,24 @@ async fn ux_skill_16_save_skill_only_proposes() {
 }
 
 #[tokio::test]
+async fn ux_skill_16_save_skill_checks_its_transport_before_http() {
+    let uri = "http://127.0.0.1:17917".to_owned();
+    let remote = server(uri.clone(), TransportMode::Http);
+    let refused = remote.save_skill_impl(skill_to_save()).await.unwrap();
+    assert_eq!(refused.is_error, Some(true));
+
+    let local = server(uri, TransportMode::Stdio);
+    let pinned = crate::lock_state::with_session_pin(
+        Some("Clinic".into()),
+        local.save_skill_impl(skill_to_save()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(pinned.is_error, Some(true));
+    assert!(text_of(&pinned).contains("limited to one Space"));
+}
+
+#[tokio::test]
 async fn save_skill_refuses_a_pinned_space_and_unexpected_save_receipt() {
     let mock = MockServer::start().await;
     let local = server(mock.uri(), TransportMode::Stdio);

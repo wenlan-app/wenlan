@@ -278,8 +278,8 @@ fn canonical_matrix_freezes_exact_global_and_scoped_keys() {
         .map(|row| (row.method, row.path))
         .collect::<BTreeSet<_>>();
 
-    assert_eq!(rows.len(), 148);
-    assert_eq!(keys.len(), 148, "duplicate sensitive route key");
+    assert_eq!(rows.len(), 165);
+    assert_eq!(keys.len(), rows.len(), "duplicate sensitive route key");
     assert_eq!(global, GLOBAL.iter().copied().collect());
     assert_eq!(scoped, SCOPED.iter().copied().collect());
     assert_eq!(

@@ -213,7 +213,15 @@ impl Setup {
             let Kind::Rule { target, .. } = &delivery.kind else {
                 continue;
             };
-            let (at, blocked) = recorded_delivery(&home, path, delivery);
+            let (mut at, mut blocked) = recorded_delivery(&home, path, delivery);
+            if let Some(issue) = manifest
+                .delivery_issues
+                .get(path)
+                .filter(|_| blocked.is_none())
+            {
+                at = None;
+                blocked = Some(issue.label());
+            }
             tools.insert(
                 agent_for_target(target).into(),
                 DeliveryStatus {
@@ -357,6 +365,27 @@ struct Manifest {
     registry_skipped: BTreeMap<String, BTreeSet<PathBuf>>,
     #[serde(default)]
     scope_reviews: BTreeMap<String, ScopeReview>,
+    #[serde(default)]
+    delivery_issues: BTreeMap<PathBuf, RuleDeliveryIssue>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+enum RuleDeliveryIssue {
+    MasterConflict,
+    RendererUnavailable,
+    MissingOutput,
+    ConcurrentEdit,
+}
+
+impl RuleDeliveryIssue {
+    fn label(&self) -> &'static str {
+        match self {
+            Self::MasterConflict => "master_conflict",
+            Self::RendererUnavailable => "renderer_unavailable",
+            Self::MissingOutput => "missing_renderer_output",
+            Self::ConcurrentEdit => "changed_during_sync",
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -567,6 +596,7 @@ impl Setup {
             adopted: false,
             registry_skipped: BTreeMap::new(),
             scope_reviews: BTreeMap::new(),
+            delivery_issues: BTreeMap::new(),
         };
         self.save(&manifest)?;
         let mut result = report("Adopted the local tool setup");
@@ -806,6 +836,7 @@ impl Setup {
         );
         let mut result = report("Checked the local tool setup");
         let blocked = self.pull_back(root, manifest, &mut result)?;
+        manifest.delivery_issues.clear();
         let paths: Vec<_> = manifest.delivered.keys().cloned().collect();
         for path in paths {
             if blocked.contains(&path) {
@@ -823,6 +854,9 @@ impl Setup {
             let source = match manifest.master.rule_text(target, generated) {
                 Ok(text) => text,
                 Err(error) => {
+                    manifest
+                        .delivery_issues
+                        .insert(path.clone(), RuleDeliveryIssue::MasterConflict);
                     result.blocked.push(format!("{}: {error}", path.display()));
                     continue;
                 }
@@ -830,6 +864,9 @@ impl Setup {
             let output = match render(target, &source) {
                 Ok(output) => output,
                 Err(error) => {
+                    manifest
+                        .delivery_issues
+                        .insert(path.clone(), RuleDeliveryIssue::RendererUnavailable);
                     result
                         .blocked
                         .push(format!("{}: {error:#}", path.display()));
@@ -837,6 +874,9 @@ impl Setup {
                 }
             };
             let Some(bytes) = output.get(&path) else {
+                manifest
+                    .delivery_issues
+                    .insert(path.clone(), RuleDeliveryIssue::MissingOutput);
                 result.blocked.push(format!(
                     "{}: rulesync did not render this file",
                     path.display()
@@ -861,11 +901,15 @@ impl Setup {
             if self.apply(root, manifest, operation)? {
                 result.written.push(path.display().to_string());
             } else {
+                manifest
+                    .delivery_issues
+                    .insert(path.clone(), RuleDeliveryIssue::ConcurrentEdit);
                 result
                     .blocked
                     .push(format!("{} changed during sync", path.display()));
             }
         }
+        self.save(manifest)?;
         self.sync_skills(root, manifest, &blocked, &mut result)?;
         self.sync_registry(root, manifest, &blocked, &mut result)?;
         Ok(result)
@@ -1919,6 +1963,34 @@ mod tests {
             f.setup.delivery_status()["codex"].blocked,
             Some("local_edit_pending")
         );
+    }
+
+    #[test]
+    fn rulesync_reports_codex_blocked_until_a_render_succeeds() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        {
+            let root = FileRoot::open(&f.setup.home).unwrap();
+            let _lock = f.setup.lock().unwrap();
+            let mut manifest = f.setup.load().unwrap().unwrap();
+            f.setup
+                .sync_locked(&root, &mut manifest, &[], |target, text| {
+                    if target == "codexcli" {
+                        bail!("failed to render Codex");
+                    }
+                    Ok(BTreeMap::from([(
+                        PathBuf::from(CLAUDE),
+                        text.as_bytes().to_vec(),
+                    )]))
+                })
+                .unwrap();
+        }
+        let status = f.setup.delivery_status();
+        assert_eq!(status["codex"].blocked, Some("renderer_unavailable"));
+        assert!(status["codex"].at.is_none());
+        assert!(status["claude-code"].at.is_some());
+        assert!(f.sync_with("").blocked.is_empty());
+        assert!(f.setup.delivery_status()["codex"].at.is_some());
     }
 
     #[test]
