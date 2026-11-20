@@ -96,7 +96,7 @@ pub enum WikiCommand {
         #[arg(value_enum)]
         action: ProjectRulesAction,
     },
-    /// Render this checkout's readable project, team, and personal rules here.
+    /// Prepare readable rules and project skills for this checkout in Wenlan's data directory.
     RulesCheckout {
         /// A directory inside the checkout. Defaults to the current directory.
         #[arg(long)]
@@ -104,7 +104,7 @@ pub enum WikiCommand {
     },
     /// Include one team Rules layer in future wiki pull requests, or turn it off.
     RulesTeam {
-        /// The team Rules layer's ID, or `off`.
+        /// The team's name or ID, or `off`.
         team: String,
     },
     /// Propose the next Rules page for a Space hosted on this computer.
@@ -201,7 +201,7 @@ pub async fn run(
                 ResolvedFormat::Json => print_json(&receipt)?,
                 ResolvedFormat::Table => {
                     println!(
-                        "Checkout rules in {}",
+                        "Checkout files in {}",
                         file_label(&receipt.directory.display().to_string())
                     );
                     for blocked in receipt.report.blocked {

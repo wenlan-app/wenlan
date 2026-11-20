@@ -465,7 +465,7 @@ wenlan brief show [OPTIONS] --version <VERSION>
 
 ### `wenlan rules`
 
-Read the working rules for a Space, or save and remove one of your own (add, remove).
+Read and save working rules for a Space, or manage your personal AI-tool setup.
 
 ```text
 wenlan rules [OPTIONS] [COMMAND]
@@ -499,6 +499,67 @@ wenlan rules remove [OPTIONS] <ID>
 Arguments:
 
 - `<ID>`: The rule's id, as `wenlan rules` prints it.
+
+#### `wenlan rules adopt`
+
+Bring your existing personal rules and skills under Wenlan management.
+
+```text
+wenlan rules adopt [OPTIONS]
+```
+
+Options:
+
+- `--dry-run`: Show the files and changes without contacting Wenlan or writing to disk.
+
+#### `wenlan rules restore`
+
+Restore the original files and links from the adoption backup.
+
+```text
+wenlan rules restore [OPTIONS]
+```
+
+#### `wenlan rules sync`
+
+Collect tool edits for review and deliver current personal rules and skills.
+
+```text
+wenlan rules sync [OPTIONS]
+```
+
+#### `wenlan rules settings`
+
+Preview local MCP servers, hooks and permissions and confirm before applying.
+
+```text
+wenlan rules settings [OPTIONS] <SOURCE>
+```
+
+Arguments:
+
+- `<SOURCE>`: A local rulesync source folder.
+
+Options:
+
+- `--dry-run`: Show only the proposed settings changes.
+
+#### `wenlan rules review`
+
+Answer a proposal shown by `wenlan rules sync`.
+
+```text
+wenlan rules review [OPTIONS] <ID> <ACTION>
+```
+
+Arguments:
+
+- `<ID>`: The proposal ID shown by `wenlan rules sync`.
+- `<ACTION>` Possible values: `tool-only` (Keep the change for the tool that made it), `all-tools` (Use the change in all tools), `dismiss` (Discard the proposal).
+
+Options:
+
+- `--file <PATH>`: Choose which file's change to keep when several tools changed the same line.
 
 ### `wenlan pages`
 
@@ -875,7 +936,7 @@ wenlan restart [OPTIONS]
 
 ### `wenlan skills`
 
-List, find and take in skills your AI tools can use (list, search, show, scan, import, install, remove).
+Find, save, review and install skills your AI tools can use.
 
 ```text
 wenlan skills [OPTIONS] [COMMAND]
@@ -964,6 +1025,51 @@ wenlan skills remove [OPTIONS] <NAME>
 Arguments:
 
 - `<NAME>`: The skill's name as `wenlan skills list` prints it.
+
+#### `wenlan skills save`
+
+Save your own skill from a Markdown body and optional text files.
+
+```text
+wenlan skills save [OPTIONS] --description <DESCRIPTION> --body <FILE> <NAME>
+```
+
+Arguments:
+
+- `<NAME>`: Folder name for the skill.
+
+Options:
+
+- `--description <DESCRIPTION>`: When an AI tool should use the skill.
+- `--body <FILE>`: Markdown file containing the SKILL.md body without YAML front matter.
+- `--extra <PATH>`: A UTF-8 file relative to the body file's folder. Repeat for each extra file.
+- `--tool <TOOL>`: Use the skill for one tool. Omit to share across tools. Possible values: `claude-code`, `codex`.
+
+#### `wenlan skills pending`
+
+List personal skill proposals waiting for your review.
+
+```text
+wenlan skills pending [OPTIONS]
+```
+
+#### `wenlan skills review`
+
+Show a skill proposal and ask whether to accept or dismiss it.
+
+```text
+wenlan skills review [OPTIONS] <ID> <ACTION>
+```
+
+Arguments:
+
+- `<ID>`: A proposal ID printed by `wenlan skills pending`.
+- `<ACTION>` Possible values: `accept`, `dismiss`.
+
+Options:
+
+- `--tool <TOOL>`: Keep an accepted skill for one tool. Possible values: `claude-code`, `codex`.
+- `--shared`: Share an accepted skill across tools.
 
 ### `wenlan memories`
 
@@ -1237,6 +1343,84 @@ Stop putting this Space's pages into its repository.
 ```text
 wenlan repo unbind [OPTIONS]
 ```
+
+#### `wenlan repo rules-proposals`
+
+Show repository rule changes waiting for review in this Space.
+
+```text
+wenlan repo rules-proposals [OPTIONS]
+```
+
+#### `wenlan repo rules-review`
+
+Review a repository rule change and decide whether to keep it in this Space.
+
+```text
+wenlan repo rules-review [OPTIONS] <ID> <ACTION>
+```
+
+Arguments:
+
+- `<ID>`: The proposal ID from `wenlan wiki rules-proposals`.
+- `<ACTION>` Possible values: `accept`, `dismiss`.
+
+#### `wenlan repo rules-checkout`
+
+Prepare readable rules and project skills for this checkout in Wenlan's data directory.
+
+```text
+wenlan repo rules-checkout [OPTIONS]
+```
+
+Options:
+
+- `--repo <REPO>`: A directory inside the checkout. Defaults to the current directory.
+
+#### `wenlan repo rules-team`
+
+Include one team Rules layer in future wiki pull requests, or turn it off.
+
+```text
+wenlan repo rules-team [OPTIONS] <TEAM>
+```
+
+Arguments:
+
+- `<TEAM>`: The team's name or ID, or `off`.
+
+#### `wenlan repo shared-rules-propose`
+
+Propose the next Rules page for a Space hosted on this computer.
+
+```text
+wenlan repo shared-rules-propose [OPTIONS] <FILE>
+```
+
+Arguments:
+
+- `<FILE>`
+
+#### `wenlan repo shared-rules-proposals`
+
+List Rules proposals for a Space hosted on this computer.
+
+```text
+wenlan repo shared-rules-proposals [OPTIONS]
+```
+
+#### `wenlan repo shared-rules-review`
+
+Review a Rules proposal in a Space hosted on this computer.
+
+```text
+wenlan repo shared-rules-review [OPTIONS] <ID> <ACTION>
+```
+
+Arguments:
+
+- `<ID>`
+- `<ACTION>` Possible values: `accept`, `dismiss`.
 
 #### `wenlan repo refresh`
 

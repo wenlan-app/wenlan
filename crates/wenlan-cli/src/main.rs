@@ -137,7 +137,7 @@ enum Commands {
         #[command(subcommand)]
         command: Option<commands::skills::RulesCmd>,
     },
-    /// List, find and take in skills your AI tools can use (list, search, show, scan, import, install, remove).
+    /// Find, save, review and install skills your AI tools can use.
     Skills {
         #[command(subcommand)]
         command: Option<commands::skills::SkillsCmd>,

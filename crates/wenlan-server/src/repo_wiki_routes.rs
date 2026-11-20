@@ -126,8 +126,7 @@ async fn handle_project_team_rules(
     let db = db_of(&state).await?;
     let space = project_rule_space(&db, &registered_space(&db, &name).await?).await?;
     let name = space.name.clone();
-    let team = request.team.clone();
-    blocking(move || {
+    let team = blocking(move || {
         if repo_wiki::binding_at(&repo_wiki::store_path(), &name)?.is_none() {
             return Err(wenlan_core::WenlanError::NotFound(
                 "bind this Space to a repository first".into(),
@@ -141,25 +140,28 @@ async fn handle_project_team_rules(
                 "change the team rules opt-in on the project host".into(),
             ));
         }
-        if let Some(team) = team {
-            if !rulesync_team::load_layers(&settings)?
-                .iter()
-                .any(|layer| layer.id == team)
-            {
-                return Err(wenlan_core::WenlanError::NotFound(
-                    "no readable team Rules layer with that ID".into(),
-                ));
-            }
+        let Some(team) = request.team else {
+            return Ok(None);
+        };
+        let layers = rulesync_team::load_layers(&settings)?;
+        if layers.iter().any(|layer| layer.id == team) {
+            return Ok(Some(team));
         }
-        Ok(())
+        let mut matches = layers.into_iter().filter(|layer| layer.name == team);
+        let found = matches.next().ok_or_else(|| {
+            wenlan_core::WenlanError::NotFound("no readable Rules layer for that team".into())
+        })?;
+        if matches.next().is_some() {
+            return Err(wenlan_core::WenlanError::Conflict(
+                "several teams use that name; give the team ID".into(),
+            ));
+        }
+        Ok(Some(found.id))
     })
     .await?;
-    db.set_app_metadata(
-        &team_rules_key(&space),
-        request.team.as_deref().unwrap_or(""),
-    )
-    .await?;
-    Ok(Json(request))
+    db.set_app_metadata(&team_rules_key(&space), team.as_deref().unwrap_or(""))
+        .await?;
+    Ok(Json(ProjectTeamRulesRequest { team }))
 }
 
 async fn handle_shared_rule_proposals(
