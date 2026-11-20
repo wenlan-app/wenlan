@@ -151,7 +151,8 @@ impl MemoryDB {
     /// Pages made before the name was kept answer `None`; no name is guessed.
     pub async fn page_birth_agent(&self, page_id: &str) -> Result<Option<String>, WenlanError> {
         let conn = self.conn.lock().await;
-        let mut rows = conn
+        // Before migration 165 there is no `actor` column: no name, no error.
+        let Ok(mut rows) = conn
             .query(
                 "SELECT actor FROM page_history
                   WHERE page_id = ?1 AND version = 1 AND edited_by = 'agent_create'
@@ -159,7 +160,9 @@ impl MemoryDB {
                 libsql::params![page_id],
             )
             .await
-            .map_err(db_err("page birth agent"))?;
+        else {
+            return Ok(None);
+        };
         let Some(row) = rows.next().await.map_err(db_err("page birth agent row"))? else {
             return Ok(None);
         };

@@ -54483,15 +54483,30 @@ impl MemoryDB {
         if let Err(e) = conn
             .execute(
                 "INSERT OR IGNORE INTO page_history \
-                   (page_id, version, title, content, source_memory_ids, edited_by, created_at, actor) \
-                 SELECT id, version, title, content, source_memory_ids, ?3, ?2, ?4 \
+                   (page_id, version, title, content, source_memory_ids, edited_by, created_at) \
+                 SELECT id, version, title, content, source_memory_ids, ?3, ?2 \
                  FROM pages WHERE id = ?1",
-                libsql::params![id, linked_at, birth_label, birth_actor],
+                libsql::params![id, linked_at, birth_label],
             )
             .await
         {
             let _ = conn.execute("ROLLBACK", ()).await;
             return Err(WenlanError::VectorDb(format!("insert_page history: {e}")));
+        }
+        // The name is a label only: a database still before migration 165
+        // has no `actor` column, and the page is made without it.
+        if let Some(actor) = birth_actor {
+            if let Err(e) = conn
+                .execute(
+                    "UPDATE page_history SET actor = ?3 \
+                      WHERE page_id = ?1 AND version = 1 AND edited_by = 'agent_create' \
+                        AND actor IS NULL AND created_at = ?2",
+                    libsql::params![id, linked_at, actor],
+                )
+                .await
+            {
+                log::debug!("[insert_page] creator name not kept for {id}: {e}");
+            }
         }
 
         if let Err(error) = page_export::capture_on(&conn, id).await {
