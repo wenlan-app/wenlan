@@ -14,8 +14,8 @@ mod saved_skills;
 #[cfg(test)]
 pub(crate) use saved_skills::accept_only_tool_proposal;
 pub(crate) use saved_skills::{
-    approved_local_folders, approved_skill_sources, authored_rows, collect_tool_proposals,
-    register, remove_saved_source, ManagedSkill,
+    approved_local_folders, approved_skill_sources, approved_skills, authored_rows,
+    collect_tool_proposals, register, remove_saved_source, ManagedSkill,
 };
 
 // The registry swaps source directories in place. A snapshot taken during

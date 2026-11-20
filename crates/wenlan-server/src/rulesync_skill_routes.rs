@@ -27,7 +27,7 @@ use wenlan_types::skill_registry::{InstalledSkill, InstalledSkillRow, Scope, Ver
 
 use crate::error::ServerError;
 use crate::route_registry::{get, post, TrackedRouter};
-use crate::rulesync_apply::{ApplyOutcome, FileRoot, Snapshot};
+use crate::rulesync_apply::{ApplyOutcome, FileMode, FileRoot, Snapshot};
 use crate::rulesync_routes::{require_local_person, Setup};
 use crate::state::SharedState;
 
@@ -109,7 +109,9 @@ async fn save_skill(
         let result = match caller {
             Submitter::Person => {
                 refuse_installed_name(&request.name).map_err(conflict)?;
-                store.state.keep(&request.name, request.scope, files);
+                store
+                    .state
+                    .keep(&request.name, request.scope, files, SkillModes::default());
                 store.save().map_err(failed_store)?;
                 drop(lock);
                 saved(request.name)
@@ -244,6 +246,8 @@ pub(crate) struct ManagedSkill<Content = Vec<u8>> {
     pub tool: SavedSkillTool,
     /// Package-relative leaf snapshots, including each file's mode.
     pub files: BTreeMap<PathBuf, Snapshot<Content>>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub directories: BTreeMap<PathBuf, FileMode>,
 }
 
 impl ManagedSkill<Vec<u8>> {
@@ -255,6 +259,26 @@ impl ManagedSkill<Vec<u8>> {
                 _ => None,
             })
             .collect()
+    }
+
+    fn modes(&self) -> SkillModes {
+        SkillModes {
+            files: self
+                .files
+                .iter()
+                .filter_map(|(path, snapshot)| match snapshot {
+                    Snapshot::File { mode, .. } => Some((path.clone(), *mode)),
+                    _ => None,
+                })
+                .collect(),
+            directories: self.directories.clone(),
+        }
+    }
+
+    fn matches(&self, current: &Self) -> bool {
+        self.tool == current.tool
+            && self.files == current.files
+            && (self.directories.is_empty() || self.directories == current.directories)
     }
 }
 
@@ -361,11 +385,33 @@ impl Draft {
     }
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub(crate) struct SkillModes {
+    pub files: BTreeMap<PathBuf, FileMode>,
+    pub directories: BTreeMap<PathBuf, FileMode>,
+}
+
+impl SkillModes {
+    fn is_empty(&self) -> bool {
+        self.files.is_empty() && self.directories.is_empty()
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct ApprovedSkills {
+    pub files: BTreeMap<String, SkillFiles>,
+    pub modes: BTreeMap<String, SkillModes>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(default)]
 struct Variants<Content = Vec<u8>> {
     shared: Option<BTreeMap<PathBuf, Content>>,
     tools: BTreeMap<SavedSkillTool, BTreeMap<PathBuf, Content>>,
+    #[serde(skip_serializing_if = "SkillModes::is_empty")]
+    shared_modes: SkillModes,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    tool_modes: BTreeMap<SavedSkillTool, SkillModes>,
     installed_at: i64,
     updated_at: i64,
 }
@@ -375,6 +421,8 @@ impl<Content> Default for Variants<Content> {
         Self {
             shared: None,
             tools: BTreeMap::new(),
+            shared_modes: SkillModes::default(),
+            tool_modes: BTreeMap::new(),
             installed_at: 0,
             updated_at: 0,
         }
@@ -403,15 +451,22 @@ impl<Content> Default for SkillState<Content> {
 
 impl SkillState<Vec<u8>> {
     fn revision(&self, name: &str) -> Result<String> {
-        fingerprint(
-            &self
-                .kept
-                .get(name)
-                .map(|skill| (&skill.shared, &skill.tools)),
-        )
+        let skill = self.kept.get(name);
+        if let Some(skill) =
+            skill.filter(|skill| !skill.shared_modes.is_empty() || !skill.tool_modes.is_empty())
+        {
+            fingerprint(&(
+                &skill.shared,
+                &skill.tools,
+                &skill.shared_modes,
+                &skill.tool_modes,
+            ))
+        } else {
+            fingerprint(&skill.map(|skill| (&skill.shared, &skill.tools)))
+        }
     }
 
-    fn keep(&mut self, name: &str, scope: SavedSkillScope, files: SkillFiles) {
+    fn keep(&mut self, name: &str, scope: SavedSkillScope, files: SkillFiles, modes: SkillModes) {
         let now = chrono::Utc::now().timestamp();
         let variants = self
             .kept
@@ -424,10 +479,17 @@ impl SkillState<Vec<u8>> {
         match scope {
             SavedSkillScope::Shared => {
                 variants.shared = Some(files);
+                variants.shared_modes = modes;
                 variants.tools.clear();
+                variants.tool_modes.clear();
             }
             SavedSkillScope::Tool { tool } => {
                 variants.tools.insert(tool, files);
+                if modes.is_empty() {
+                    variants.tool_modes.remove(&tool);
+                } else {
+                    variants.tool_modes.insert(tool, modes);
+                }
             }
         }
     }
@@ -478,11 +540,11 @@ impl SkillState<Vec<u8>> {
             "the saved skill changed after this proposal. Review a current proposal"
         );
         let scope = scope.unwrap_or(draft.scope);
-        let files = match &draft.source {
+        let (files, modes) = match &draft.source {
             Candidate::Agent { files, .. } => {
                 check_name(&name)?;
                 skills::preview(&name, files)?;
-                files.clone()
+                (files.clone(), SkillModes::default())
             }
             Candidate::Tool {
                 folder,
@@ -494,8 +556,9 @@ impl SkillState<Vec<u8>> {
                     "accept for the tool that changed the skill or share across tools"
                 );
                 let scanning_root = SkillHome::open(home)?;
+                let current = scanning_root.package(folder, snapshot.tool)?;
                 ensure!(
-                    scanning_root.package(folder, snapshot.tool)?.as_ref() == Some(snapshot),
+                    current.as_ref().is_some_and(|current| snapshot.matches(current)),
                     "the tool edited this skill again. Run `wenlan rules sync` to review the current files"
                 );
                 self.approved_local.insert(folder.clone(), snapshot.clone());
@@ -514,25 +577,28 @@ impl SkillState<Vec<u8>> {
                         skills::preview(&name, &files)?;
                     }
                 }
-                files
+                (files, snapshot.modes())
             }
         };
-        self.keep(&name, scope, files);
+        self.keep(&name, scope, files, modes);
         self.proposals.remove(&id);
         Ok(name)
     }
 
-    fn sources(&self, tool: SavedSkillTool) -> BTreeMap<String, SkillFiles> {
-        self.kept
-            .iter()
-            .filter_map(|(name, skill)| {
-                skill
-                    .tools
-                    .get(&tool)
-                    .or(skill.shared.as_ref())
-                    .map(|files| (name.clone(), files.clone()))
-            })
-            .collect()
+    fn sources(&self, tool: SavedSkillTool) -> ApprovedSkills {
+        let mut sources = ApprovedSkills::default();
+        for (name, skill) in &self.kept {
+            let (files, modes) = match (skill.tools.get(&tool), &skill.shared) {
+                (Some(files), _) => (files, skill.tool_modes.get(&tool)),
+                (None, Some(files)) => (files, Some(&skill.shared_modes)),
+                (None, None) => continue,
+            };
+            sources.files.insert(name.clone(), files.clone());
+            if let Some(modes) = modes.filter(|modes| !modes.is_empty()) {
+                sources.modes.insert(name.clone(), modes.clone());
+            }
+        }
+        sources
     }
 
     fn rows(&self) -> Result<Vec<InstalledSkillRow>> {
@@ -664,6 +730,8 @@ fn map_skill_state<From, To>(
                         .into_iter()
                         .map(|(tool, files)| Ok((tool, map_skill_files(files, map)?)))
                         .collect::<Result<_>>()?,
+                    shared_modes: variants.shared_modes,
+                    tool_modes: variants.tool_modes,
                     installed_at: variants.installed_at,
                     updated_at: variants.updated_at,
                 },
@@ -699,6 +767,7 @@ fn map_managed_skill<From, To>(
 ) -> Result<ManagedSkill<To>> {
     Ok(ManagedSkill {
         tool: skill.tool,
+        directories: skill.directories,
         files: skill
             .files
             .into_iter()
@@ -814,8 +883,12 @@ pub(crate) fn approved_skill_sources(
     data: &Path,
     target: &str,
 ) -> Result<BTreeMap<String, SkillFiles>> {
+    Ok(approved_skills(data, target)?.files)
+}
+
+pub(crate) fn approved_skills(data: &Path, target: &str) -> Result<ApprovedSkills> {
     let Some(target) = rulesync_personal::personal_target(target) else {
-        return Ok(BTreeMap::new());
+        return Ok(ApprovedSkills::default());
     };
     Ok(SkillStore::open(data)?.state.sources(target.tool))
 }
@@ -945,6 +1018,7 @@ impl SkillHome {
         }
         let mut package = PackageRead {
             files: BTreeMap::new(),
+            directories: BTreeMap::from([(PathBuf::new(), FileMode::of(&dir.dir_metadata()?))]),
             bytes: 0,
             entries: 0,
         };
@@ -956,6 +1030,7 @@ impl SkillHome {
         Ok(Some(ManagedSkill {
             tool,
             files: package.files,
+            directories: package.directories,
         }))
     }
 
@@ -985,7 +1060,11 @@ impl SkillHome {
             let path = prefix.join(name);
             let kind = entry.file_type()?;
             if kind.is_dir() {
-                self.read_files(&dir.open_dir_nofollow(name)?, folder, &path, result)?;
+                let child = dir.open_dir_nofollow(name)?;
+                result
+                    .directories
+                    .insert(path.clone(), FileMode::of(&child.dir_metadata()?));
+                self.read_files(&child, folder, &path, result)?;
                 continue;
             }
             ensure!(kind.is_file(), "skill package has an unsafe asset type");
@@ -1012,6 +1091,7 @@ impl SkillHome {
 
 struct PackageRead {
     files: BTreeMap<PathBuf, Snapshot>,
+    directories: BTreeMap<PathBuf, FileMode>,
     bytes: u64,
     entries: usize,
 }
@@ -1062,7 +1142,11 @@ pub(crate) fn collect_tool_proposals(
         };
         let files = current.files();
         if baseline.is_some_and(|skill| skill.files() == files)
-            || store.state.approved_local.get(&folder) == Some(&current)
+            || store
+                .state
+                .approved_local
+                .get(&folder)
+                .is_some_and(|approved| approved.matches(&current))
             || (baseline.is_none() && files.contains_key(Path::new(skill_registry::MANAGED_MARKER)))
         {
             continue;
@@ -1393,12 +1477,14 @@ mod tests {
             "large-skill",
             SavedSkillScope::Shared,
             BTreeMap::from([(path.clone(), payload.clone())]),
+            SkillModes::default(),
         );
         state.approved_local.insert(
             PathBuf::from(".cursor/skills/large-skill"),
             ManagedSkill {
                 tool: SavedSkillTool::Cursor,
                 files: BTreeMap::from([(path, Snapshot::file(payload.clone()))]),
+                directories: BTreeMap::new(),
             },
         );
         assert!(serde_json::to_vec(&state).unwrap().len() > 32 * 1024 * 1024);

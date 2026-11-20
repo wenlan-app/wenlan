@@ -184,7 +184,7 @@ fn map_contents<From, To>(
     let mut map_snapshot = |snapshot: &Snapshot<From>| {
         Ok::<_, anyhow::Error>(match snapshot {
             Snapshot::Absent => Snapshot::Absent,
-            Snapshot::Directory => Snapshot::Directory,
+            Snapshot::Directory { mode } => Snapshot::Directory { mode: *mode },
             Snapshot::File { bytes, mode } => Snapshot::File {
                 bytes: map(bytes)?,
                 mode: *mode,

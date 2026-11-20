@@ -207,7 +207,7 @@ fn recorded_delivery(
     match home.read(path, true) {
         Ok(actual) if actual == delivery.delivered => (Some(delivery.at), None),
         Ok(Snapshot::Symlink { .. }) => (None, Some("symlink_requires_adoption")),
-        Ok(Snapshot::Directory) => (None, Some("not_a_file")),
+        Ok(Snapshot::Directory { .. }) => (None, Some("not_a_file")),
         Ok(Snapshot::Absent) => (None, Some("managed_file_missing")),
         Ok(Snapshot::File { .. }) => (None, Some("local_edit_pending")),
         Err(error) if error.kind() == std::io::ErrorKind::FileTooLarge => {
@@ -448,7 +448,7 @@ impl BatchDirectories {
         if operation.seen != operation.desired {
             self.parents
                 .extend(operation.path.ancestors().skip(1).map(Path::to_owned));
-            if operation.seen == Snapshot::Directory && operation.desired != Snapshot::Directory {
+            if operation.seen.is_directory() && !operation.desired.is_directory() {
                 self.replaced.insert(operation.path.clone());
             }
         }
@@ -779,7 +779,16 @@ impl Setup {
                     }
                     None => with_bytes(&seen, bytes),
                 },
-                AdoptionEntry::Directory => Snapshot::Directory,
+                AdoptionEntry::Directory => {
+                    if let Some((ancestor, link)) = linked {
+                        let mode = link
+                            .directory_mode(path.strip_prefix(ancestor)?)
+                            .context("missing resolved directory mode in the adoption plan")?;
+                        Snapshot::directory_with_mode(mode)
+                    } else {
+                        seen.clone()
+                    }
+                }
                 _ => bail!("unexpected adoption output at {}", path.display()),
             };
             let kind = match rules.get(path.as_path()) {
@@ -788,7 +797,7 @@ impl Setup {
                     source: master.rule_text(tool, &[])?,
                     base: master.base_rule_text(tool, &[]),
                 },
-                None if desired == Snapshot::Directory => Kind::Directory,
+                None if desired.is_directory() => Kind::Directory,
                 None => Kind::Skill,
             };
             backup.insert(path.clone(), seen.clone());
@@ -921,8 +930,8 @@ impl Setup {
         let mut linked = BTreeMap::new();
         for op in &pending {
             let phase = match (&op.seen, &op.desired) {
-                (Snapshot::Symlink { .. }, Snapshot::Directory) => Some((false, &op.seen)),
-                (Snapshot::Directory, Snapshot::Symlink { .. }) => Some((true, &op.desired)),
+                (Snapshot::Symlink { .. }, Snapshot::Directory { .. }) => Some((false, &op.seen)),
+                (Snapshot::Directory { .. }, Snapshot::Symlink { .. }) => Some((true, &op.desired)),
                 _ => None,
             };
             if let Some((restored, expected)) = phase {
@@ -990,10 +999,10 @@ impl Setup {
             )?;
         }
         ensure!(
-            actual == op.desired || actual == op.seen,
+            op.desired.matches(&actual) || op.seen.matches(&actual),
             "changed during an interrupted write. Save your edit and compare it with the retained backup before retrying"
         );
-        Ok(actual == op.desired)
+        Ok(op.desired.matches(&actual))
     }
 
     fn apply_batch(
@@ -1188,11 +1197,11 @@ impl Setup {
                 .clone();
             let delivered = &manifest.delivered[&path];
             let seen = match root.read(&path, true) {
-                Ok(current) if extension_only && current == original => {
+                Ok(current) if extension_only && original.matches(&current) => {
                     manifest.delivered.remove(&path);
                     continue;
                 }
-                Ok(current) if current == delivered.delivered => current,
+                Ok(current) if delivered.delivered.matches(&current) => current,
                 _ => {
                     result
                         .blocked
@@ -1615,12 +1624,15 @@ impl Setup {
         let mut operations = Vec::new();
         for id in targets {
             let target = personal_target(&id).context("unknown personal skill target")?;
-            if !matches!(root.read(target.folder(), false), Ok(Snapshot::Directory)) {
+            if !matches!(
+                root.read(target.folder(), false),
+                Ok(Snapshot::Directory { .. })
+            ) {
                 continue;
             }
-            let local = rulesync_registry::approved_skill_sources(&self.data, target.id)?;
+            let local = rulesync_registry::approved_skills(&self.data, target.id)?;
             let mut sources = installed.clone();
-            sources.extend(local.clone());
+            sources.extend(local.files.clone());
             active.extend(sources.keys().cloned());
             if sources.is_empty() {
                 continue;
@@ -1647,6 +1659,7 @@ impl Setup {
                     path.file_name() == emitted.file_name() && skill.tool == target.tool
                 });
                 let adopted_folder = local
+                    .files
                     .contains_key(name)
                     .then(|| {
                         adopted.iter().find(|(path, skill)| {
@@ -1703,7 +1716,7 @@ impl Setup {
                             .is_ok_and(|current| current == *expected)
                     })
                 });
-                let adopted_owned = local.contains_key(name)
+                let adopted_owned = local.files.contains_key(name)
                     && adopted.contains_key(folder)
                     && manifest.delivered.contains_key(folder);
                 if !owned
@@ -1718,8 +1731,38 @@ impl Setup {
                         .insert(folder.to_owned());
                     continue;
                 }
+                let modes = local.modes.get(name);
+                let mut directories = BTreeMap::new();
+                let mut directory_conflict = false;
+                for (relative, mode) in modes.into_iter().flat_map(|modes| &modes.directories) {
+                    let path = folder.join(relative);
+                    match root.read(&path, false) {
+                        Ok(Snapshot::Directory { .. }) => {}
+                        Ok(Snapshot::Absent) if mode.permits_child_writes() => {
+                            directories.insert(path, Snapshot::directory_with_permissions(*mode));
+                        }
+                        _ => {
+                            result.blocked.push(format!(
+                                "{}: The destination is unsafe or the source permissions would prevent managing its copied files.",
+                                path.display()
+                            ));
+                            directory_conflict = true;
+                            break;
+                        }
+                    }
+                }
+                if directory_conflict {
+                    continue;
+                }
                 if !owned {
                     let seen = seen?;
+                    let desired = directories.remove(folder).unwrap_or_else(|| {
+                        if seen == Snapshot::Absent {
+                            Snapshot::directory()
+                        } else {
+                            seen.clone()
+                        }
+                    });
                     manifest
                         .backup
                         .entry(folder.to_owned())
@@ -1727,12 +1770,33 @@ impl Setup {
                     operations.push(Pending {
                         path: folder.to_owned(),
                         seen,
-                        desired: Snapshot::Directory,
+                        desired,
                         kind: Some(Kind::RegistryDirectory { name: name.clone() }),
                         allow_link: false,
                     });
                 }
                 let mut wanted = BTreeSet::from([folder.to_owned()]);
+                if let Some(modes) = modes {
+                    wanted.extend(
+                        modes
+                            .directories
+                            .keys()
+                            .map(|relative| folder.join(relative)),
+                    );
+                }
+                for (path, desired) in directories {
+                    manifest
+                        .backup
+                        .entry(path.clone())
+                        .or_insert(Snapshot::Absent);
+                    operations.push(Pending {
+                        path,
+                        seen: Snapshot::Absent,
+                        desired,
+                        kind: Some(Kind::RegistryAssetDirectory { name: name.clone() }),
+                        allow_link: false,
+                    });
+                }
                 let mut complete = true;
                 for (relative, bytes) in &delivery.files {
                     let path = folder.join(relative);
@@ -1758,7 +1822,7 @@ impl Setup {
                             operations.push(Pending {
                                 path: parent.to_owned(),
                                 seen: Snapshot::Absent,
-                                desired: Snapshot::Directory,
+                                desired: Snapshot::directory(),
                                 kind: Some(Kind::RegistryAssetDirectory { name: name.clone() }),
                                 allow_link: false,
                             });
@@ -1777,7 +1841,10 @@ impl Setup {
                     } else {
                         Snapshot::Absent
                     };
-                    let desired = with_bytes(&seen, bytes.clone());
+                    let desired = match modes.and_then(|modes| modes.files.get(relative)) {
+                        Some(mode) => Snapshot::file_with_permissions(bytes.clone(), *mode),
+                        None => with_bytes(&seen, bytes.clone()),
+                    };
                     if seen == desired
                         && manifest.delivered.get(&path).is_some_and(|record| {
                             matches!(record.kind, Kind::RegistrySkill { .. })
@@ -1974,6 +2041,7 @@ impl Setup {
                                 ManagedSkill {
                                     tool: spec.tool,
                                     files: BTreeMap::new(),
+                                    directories: BTreeMap::new(),
                                 },
                             )
                         },
@@ -1990,6 +2058,7 @@ impl Setup {
                     packages.entry(path.clone()).or_insert(ManagedSkill {
                         tool: target.tool,
                         files: BTreeMap::new(),
+                        directories: BTreeMap::new(),
                     });
                 }
             }
@@ -2562,7 +2631,7 @@ pub(crate) fn read_stage(
 fn adoption_entry_matches(entry: &AdoptionEntry, snapshot: &Snapshot) -> bool {
     match (entry, snapshot) {
         (AdoptionEntry::Missing, Snapshot::Absent)
-        | (AdoptionEntry::Directory, Snapshot::Directory) => true,
+        | (AdoptionEntry::Directory, Snapshot::Directory { .. }) => true,
         (AdoptionEntry::File(seen), Snapshot::File { bytes, .. }) => seen == bytes,
         (AdoptionEntry::Symlink { .. }, Snapshot::Symlink { .. }) => true,
         _ => false,
@@ -2608,14 +2677,12 @@ fn journal_missing_parents(
 ) -> Result<Vec<Pending>> {
     let explicit: BTreeSet<_> = operations
         .iter()
-        .filter(|op| op.desired == Snapshot::Directory)
+        .filter(|op| op.desired.is_directory())
         .map(|op| op.path.clone())
         .collect();
     let replacing_links: BTreeSet<_> = operations
         .iter()
-        .filter(|op| {
-            op.desired == Snapshot::Directory && matches!(op.seen, Snapshot::Symlink { .. })
-        })
+        .filter(|op| op.desired.is_directory() && matches!(op.seen, Snapshot::Symlink { .. }))
         .map(|op| op.path.clone())
         .collect();
     let mut checked = BTreeSet::new();
@@ -2647,7 +2714,7 @@ fn journal_missing_parents(
                     batch.push(Pending {
                         path: path.to_owned(),
                         seen: Snapshot::Absent,
-                        desired: Snapshot::Directory,
+                        desired: Snapshot::directory(),
                         kind: Some(Kind::Directory),
                         allow_link: false,
                     });
@@ -3593,6 +3660,52 @@ mod tests {
         assert_eq!(f.text(skill), original_skill);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn rulesync_sharing_a_byte_copy_keeps_a_new_executable_asset() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let f = Fixture::new();
+        let folder = f.setup.home.join(".claude/skills/example");
+        let codex = f.setup.home.join(".codex/skills/example");
+        for skill in [&folder, &codex] {
+            fs::create_dir_all(skill).unwrap();
+            fs::write(
+                skill.join("SKILL.md"),
+                "---\nname: example\ndescription: Fixture\nversion: 1\n---\n\nBody.\n",
+            )
+            .unwrap();
+        }
+        f.adopt_from_plan();
+        let scripts = folder.join("scripts");
+        fs::create_dir(&scripts).unwrap();
+        fs::set_permissions(&scripts, fs::Permissions::from_mode(0o750)).unwrap();
+        let script = scripts.join("run.sh");
+        fs::write(&script, "#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o751)).unwrap();
+        f.sync_with("");
+        {
+            let _lock = f.setup.lock().unwrap();
+            rulesync_registry::accept_only_tool_proposal(&f.setup.home, &f.setup.data).unwrap();
+        }
+        let delivered = f.sync_with("");
+        assert!(delivered.blocked.is_empty(), "{delivered:?}");
+        let copied = codex.join("scripts/run.sh");
+        assert_eq!(fs::read(&copied).unwrap(), fs::read(&script).unwrap());
+        assert_eq!(
+            fs::metadata(&copied).unwrap().permissions().mode() & 0o7777,
+            0o751
+        );
+        assert_eq!(
+            fs::metadata(copied.parent().unwrap())
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o7777,
+            0o750
+        );
+    }
+
     #[test]
     #[ignore = "requires the local pinned rulesync binary and an isolated test home"]
     fn rulesync_preview_byte_copies_a_package_rejected_by_the_pin() {
@@ -3632,6 +3745,90 @@ mod tests {
             .unwrap();
         assert_eq!(f.text(".cursor/skills/rejected/SKILL.md"), rejected);
         assert_ne!(f.text(".cursor/skills/valid/SKILL.md"), valid);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rulesync_byte_copy_keeps_linked_skill_directory_and_file_modes() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+
+        let f = Fixture::new();
+        let source = f.setup.home.join(".agents/skills/example");
+        let skills = f.setup.home.join(".cursor/skills");
+        fs::create_dir_all(source.join("scripts")).unwrap();
+        fs::create_dir_all(&skills).unwrap();
+        fs::write(
+            source.join("SKILL.md"),
+            "---\nname: example\ndescription: Fixture\nversion: 1\n---\n\nBody.\n",
+        )
+        .unwrap();
+        fs::write(source.join("scripts/run.sh"), "#!/bin/sh\nexit 0\n").unwrap();
+        for (path, mode) in [("", 0o755), ("scripts", 0o750), ("scripts/run.sh", 0o751)] {
+            fs::set_permissions(source.join(path), fs::Permissions::from_mode(mode)).unwrap();
+        }
+        let destination = skills.join("example");
+        symlink("../../.agents/skills/example", &destination).unwrap();
+        let plan = f
+            .setup
+            .preview_adoption_using(fixture_skill_renderer)
+            .unwrap();
+        assert!(plan.skills.iter().any(
+            |skill| skill.path == ".cursor/skills/example" && skill.byte_copy_reason.is_some()
+        ));
+        f.setup
+            .adopt_using(&plan.token, fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o7777;
+        for path in ["", "scripts", "scripts/run.sh"] {
+            assert_eq!(
+                mode(&destination.join(path)),
+                mode(&source.join(path)),
+                "{path}"
+            );
+        }
+        let restored = f.setup.restore().unwrap();
+        assert!(restored.blocked.is_empty(), "{restored:?}");
+        assert_eq!(
+            fs::read_link(destination).unwrap(),
+            Path::new("../../.agents/skills/example")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rulesync_linked_skill_with_internal_symlink_stays_unmanaged() {
+        use std::os::unix::fs::symlink;
+
+        let f = Fixture::new();
+        let source = f.setup.home.join(".agents/skills/example");
+        let skills = f.setup.home.join(".cursor/skills");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&skills).unwrap();
+        fs::write(
+            source.join("SKILL.md"),
+            "---\nname: example\ndescription: Fixture\nversion: 1\n---\n\nBody.\n",
+        )
+        .unwrap();
+        fs::write(source.join("guide.txt"), "Original guide.\n").unwrap();
+        symlink("guide.txt", source.join("alias.txt")).unwrap();
+        let destination = skills.join("example");
+        symlink("../../.agents/skills/example", &destination).unwrap();
+
+        let plan = f
+            .setup
+            .preview_adoption_using(fixture_skill_renderer)
+            .unwrap();
+        assert!(plan.skills.iter().any(|skill| {
+            skill.path == ".cursor/skills/example"
+                && matches!(&skill.outcome, wenlan_types::rulesync::AdoptionSkillOutcome::Skipped { reason } if reason.contains("linked assets"))
+        }), "{plan:?}");
+        f.setup
+            .adopt_using(&plan.token, fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        assert_eq!(
+            fs::read_link(destination.join("alias.txt")).unwrap(),
+            Path::new("guide.txt")
+        );
     }
 
     #[test]
@@ -4130,8 +4327,6 @@ mod tests {
         let asset = skill_source.join("nested/asset.txt");
         fs::write(&asset, b"an asset").unwrap();
         fs::set_permissions(&asset, fs::Permissions::from_mode(0o750)).unwrap();
-        let alias = skill_source.join("alias.txt");
-        symlink("nested/asset.txt", &alias).unwrap();
         symlink("../../.agents/skills/example", &skill).unwrap();
 
         let adoption = discover_adoption(home).unwrap();
@@ -4140,12 +4335,7 @@ mod tests {
 
         let rule_target = "../.agents/./codex.md";
         let skill_target = "../../.agents/skills/./example";
-        let alias_target = "./nested/./asset.txt";
-        for (path, target) in [
-            (&rule, rule_target),
-            (&skill, skill_target),
-            (&alias, alias_target),
-        ] {
+        for (path, target) in [(&rule, rule_target), (&skill, skill_target)] {
             fs::remove_file(path).unwrap();
             symlink(target, path).unwrap();
         }
@@ -4158,8 +4348,11 @@ mod tests {
             // The last discovery before applying may have seen older spellings.
             f.setup.apply_adoption(&root, adoption, master).unwrap();
         }
-        assert_eq!(fs::read(skill.join("alias.txt")).unwrap(), b"an asset");
-        for (path, mode) in [(&rule, 0o640), (&skill.join("alias.txt"), 0o750)] {
+        assert_eq!(
+            fs::read(skill.join("nested/asset.txt")).unwrap(),
+            b"an asset"
+        );
+        for (path, mode) in [(&rule, 0o640), (&skill.join("nested/asset.txt"), 0o750)] {
             let metadata = fs::symlink_metadata(path).unwrap();
             assert!(metadata.is_file());
             assert_eq!(metadata.permissions().mode() & 0o7777, mode);
@@ -4167,11 +4360,7 @@ mod tests {
 
         let restored = f.setup.restore().unwrap();
         assert!(restored.blocked.is_empty(), "{restored:?}");
-        for (path, target) in [
-            (&rule, rule_target),
-            (&skill, skill_target),
-            (&alias, alias_target),
-        ] {
+        for (path, target) in [(&rule, rule_target), (&skill, skill_target)] {
             assert_eq!(fs::read_link(path).unwrap().as_os_str(), target);
         }
     }
@@ -4376,7 +4565,7 @@ mod tests {
         ) {
             let absolute = home.join(path);
             let state = root.read(path, true).unwrap();
-            if state == Snapshot::Directory {
+            if state.is_directory() {
                 for entry in fs::read_dir(&absolute).unwrap() {
                     snapshot(home, root, &path.join(entry.unwrap().file_name()), entries);
                 }
@@ -5215,7 +5404,7 @@ mod tests {
             operations.push(Pending {
                 path: folder.clone(),
                 seen: root.read(&folder, true).unwrap(),
-                desired: Snapshot::Directory,
+                desired: Snapshot::directory(),
                 kind: Some(Kind::Directory),
                 allow_link: true,
             });

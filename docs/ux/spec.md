@@ -908,9 +908,10 @@ and wait for evidence that people need them.
   and replaces the adopted links with managed files or folders.
   The skill diff uses pinned rulesync's staged output for each tool.
   If rulesync rejects a skill's frontmatter, or drops or changes a field,
-  Wenlan delivers that skill folder byte-for-byte and says why. Unsafe paths and links
-  stay in place with a reason in the plan. Adoption stages the files again
-  and checks their bytes against the approved plan before writing.
+  Wenlan delivers that skill folder byte-for-byte, keeps the copied file and
+  directory modes, and says why. Skills with internal symlinks stay unmanaged.
+  Unsafe paths and links stay in place with a reason in the plan. Adoption
+  stages the files again and checks their bytes against the approved plan before writing.
   On Windows, the plan lists linked rule files and skill folders as unmanaged.
   The preview names any Git worktree that contains a delivery destination.
   The preview says `~/.agents` is left untouched. Wenlan reads its shared

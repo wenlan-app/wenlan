@@ -157,6 +157,21 @@ impl AdoptionLink {
         }
     }
 
+    pub fn directory_mode(&self, relative: &Path) -> Option<u32> {
+        match &self.resolved {
+            ResolvedLink::Skill {
+                mode, directories, ..
+            } => {
+                if relative.as_os_str().is_empty() {
+                    Some(*mode)
+                } else {
+                    directories.get(relative).copied()
+                }
+            }
+            ResolvedLink::Rule(_) => None,
+        }
+    }
+
     pub fn matches(&self, home: &Path, path: &Path) -> Result<bool> {
         let home = Home::open(home)?;
         let current = match &self.resolved {
@@ -1116,9 +1131,18 @@ impl<'a> SkillDiscovery<'a> {
         };
         let copying_link = node.link.is_some();
         ensure!(
-            copying_link || !tree.nested_link,
+            !tree.nested_link,
             "the skill folder contains linked assets; replace those links with regular files before adopting it"
         );
+        #[cfg(unix)]
+        if copying_link {
+            ensure!(
+                std::iter::once(permission_mode(&node.metadata))
+                    .chain(tree.dirs.values().copied())
+                    .all(|mode| mode & 0o700 == 0o700),
+                "a directory's permissions would prevent managing its copied skill files"
+            );
+        }
         tree.skill.targets.insert(tool.to_owned());
         tree.skill
             .locations
