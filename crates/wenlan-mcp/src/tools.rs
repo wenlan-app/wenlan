@@ -8279,7 +8279,7 @@ impl WenlanMcpServer {
                 let description = match tool.name.as_ref() {
                     "recall" => "Search this shared Space for relevant pages. Matching pages are returned in supplemental_pages with their page IDs, titles, and text.",
                     "get_page_sources" => "Read the available source list for a shared page. An empty list means there are no published sources in this Space.",
-                    "write_page" => "Create a page in this shared Space or refresh a page created without sources. Read the page first and pass its current version as expected_version. Use shared pages as bases.",
+                    "write_page" => "Create or refresh a page in this shared Space. Before refreshing, read the page and pass its current version as expected_version. A refresh keeps existing source links and follows the page's review settings. Use shared pages as bases.",
                     _ => continue,
                 };
                 tool.description = Some(description.into());
@@ -10226,6 +10226,28 @@ mod tests {
         assert_eq!(result.is_error, Some(true));
         assert_eq!(text_of(&result), TEAM_REFRESH_NEEDS_VERSION);
         assert!(received(&mock).await.is_empty());
+    }
+
+    #[test]
+    fn hosted_write_page_help_describes_refresh_with_existing_sources() {
+        let server = WenlanMcpServer::new_with_identity(
+            WenlanClient::new("http://127.0.0.1:19999".into()),
+            TransportMode::Http,
+            AgentIdentity::new("remote-mcp".into(), false).for_team_member("member".into()),
+            None,
+        )
+        .with_tool_profile(ToolProfile::WebWrite);
+        let tool = server
+            .visible_tools()
+            .into_iter()
+            .find(|tool| tool.name == "write_page")
+            .unwrap();
+        let description = tool.description.unwrap();
+        assert!(
+            description.contains("keeps existing source links")
+                && description.contains("expected_version"),
+            "hosted write_page help does not describe supported refreshes: {description}"
+        );
     }
 
     #[tokio::test]
