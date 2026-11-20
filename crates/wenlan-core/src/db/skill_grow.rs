@@ -12,6 +12,18 @@ const FILE_PREFIX: &str = "file:";
 const NIGHT_BUDGET_KEY: &str = "night_budget";
 const SAVED_RULES_PREFIX: &str = "saved-rules:";
 
+/// The rule pages the person keeps for their own tools. Null/malformed rows
+/// yield NULL, so callers select or test only concrete ids.
+pub(super) fn personal_rule_pages_sql() -> String {
+    format!(
+        "SELECT CASE WHEN json_valid(content_hash) THEN
+            CASE WHEN file_path LIKE '{SPACE_PREFIX}%' THEN json_extract(content_hash, '$.rules_page_id')
+                 ELSE json_extract(content_hash, '$.page_id') END END AS page_id
+         FROM source_sync_state WHERE source_id = '{LEDGER}'
+            AND (file_path LIKE '{SPACE_PREFIX}%' OR file_path LIKE '{SAVED_RULES_PREFIX}%')"
+    )
+}
+
 /// One rule the person asked to be saved (UX-SKILL-14). Kept after the rule
 /// is removed: it is the record of a save, and the day's count reads it.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -156,6 +168,25 @@ fn db_err(context: &str) -> impl Fn(libsql::Error) -> WenlanError + '_ {
 }
 
 impl MemoryDB {
+    pub(crate) async fn personal_rule_page_ids(&self) -> Result<Vec<String>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(&personal_rule_pages_sql(), ())
+            .await
+            .map_err(db_err("personal rule pages"))?;
+        let mut ids = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(db_err("personal rule page row"))?
+        {
+            if let Some(id) = row.get::<Option<String>>(0).ok().flatten() {
+                ids.push(id);
+            }
+        }
+        Ok(ids)
+    }
+
     async fn skill_ledger_rows<T: serde::de::DeserializeOwned>(
         &self,
         prefix: &str,

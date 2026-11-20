@@ -91,6 +91,22 @@ fn page_link_label_key(label: &str) -> String {
     label.to_lowercase()
 }
 
+/// The page set a Space shares, applied before filtering, ranking or paging.
+pub(super) fn shared_page_predicate(alias: &str) -> String {
+    let personal_rules = super::skill_grow::personal_rule_pages_sql();
+    format!(
+        "{alias}status IN ('active', 'archived') AND COALESCE({alias}kind, 'concept') != 'entity'
+           AND {alias}id NOT IN (SELECT page_id FROM ({personal_rules}) WHERE page_id IS NOT NULL)"
+    )
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PageReader {
+    Browse,
+    Internal,
+    Shared,
+}
+
 /// One unresolved wikilink, still attached to the page whose body it came from.
 ///
 /// This is the row `list_orphan_link_labels_scoped` throws away:
@@ -122,7 +138,7 @@ impl MemoryDB {
         page_type: Option<&str>,
         scope: &ReadScope,
     ) -> Result<Vec<Page>, WenlanError> {
-        self.search_pages_scoped_inner(query, limit, page_type, scope, true)
+        self.search_pages_scoped_inner(query, limit, page_type, scope, PageReader::Internal)
             .await
     }
 
@@ -138,7 +154,18 @@ impl MemoryDB {
         page_type: Option<&str>,
         scope: &ReadScope,
     ) -> Result<Vec<Page>, WenlanError> {
-        self.search_pages_scoped_inner(query, limit, page_type, scope, false)
+        self.search_pages_scoped_inner(query, limit, page_type, scope, PageReader::Browse)
+            .await
+    }
+
+    pub async fn search_shared_pages_scoped(
+        &self,
+        query: &str,
+        limit: usize,
+        page_type: Option<&str>,
+        scope: &ReadScope,
+    ) -> Result<Vec<Page>, WenlanError> {
+        self.search_pages_scoped_inner(query, limit, page_type, scope, PageReader::Shared)
             .await
     }
 
@@ -148,10 +175,10 @@ impl MemoryDB {
         limit: usize,
         page_type: Option<&str>,
         scope: &ReadScope,
-        fence_entity: bool,
+        reader: PageReader,
     ) -> Result<Vec<Page>, WenlanError> {
-        if matches!(scope, ReadScope::Global) {
-            return if fence_entity {
+        if matches!(scope, ReadScope::Global) && reader != PageReader::Shared {
+            return if reader == PageReader::Internal {
                 self.search_pages(query, limit, page_type).await
             } else {
                 self.search_pages_browse(query, limit, page_type).await
@@ -187,10 +214,10 @@ impl MemoryDB {
         // rows and drops detected and archived ones, matching the Wiki list.
         // In SQL rather than a post-fusion Rust filter so the fence lands
         // before `LIMIT`.
-        conditions.push(if fence_entity {
-            "COALESCE(c.kind, 'concept') != 'entity'".to_string()
-        } else {
-            super::entity_row_browse_predicate("c.")
+        conditions.push(match reader {
+            PageReader::Internal => "COALESCE(c.kind, 'concept') != 'entity'".to_string(),
+            PageReader::Browse => super::entity_row_browse_predicate("c."),
+            PageReader::Shared => shared_page_predicate("c."),
         });
         let mut values = Vec::new();
         super::push_read_scope_filter_folded(scope, "c.workspace", &mut conditions, &mut values);
@@ -374,7 +401,8 @@ impl MemoryDB {
             self.list_pages_scoped_browse("active", limit, 0, scope)
                 .await?
         } else {
-            self.list_pages_scoped("active", limit, 0, scope).await?
+            self.list_shared_pages_scoped("active", limit, 0, scope)
+                .await?
         };
         let (visible_source_ids, flagged) = if private {
             let all_source_ids = pages
@@ -500,14 +528,14 @@ impl MemoryDB {
             return self.list_recent_changes(limit).await;
         }
         let (scope_sql, scope_value) = page_scope_clause(scope, "c.workspace", 2);
-        let entity_fence = if include_entities {
-            ""
+        let shared_fence = if include_entities {
+            String::new()
         } else {
-            "AND COALESCE(c.kind, 'concept') != 'entity'"
+            format!("AND {}", shared_page_predicate("c."))
         };
         let sql = format!(
             "SELECT c.id, c.title, c.version, c.created_at, c.last_modified, c.status \
-             FROM pages c WHERE c.status IN ('active', 'archived'){scope_sql} {entity_fence} \
+             FROM pages c WHERE c.status IN ('active', 'archived'){scope_sql} {shared_fence} \
              ORDER BY c.last_modified DESC LIMIT ?1"
         );
         let mut params = vec![libsql::Value::Integer(limit)];
@@ -567,7 +595,7 @@ impl MemoryDB {
         offset: i64,
         scope: &ReadScope,
     ) -> Result<Vec<Page>, WenlanError> {
-        self.list_pages_scoped_inner(status, limit, offset, scope, true)
+        self.list_pages_scoped_inner(status, limit, offset, scope, PageReader::Internal)
             .await
     }
 
@@ -583,7 +611,18 @@ impl MemoryDB {
         offset: i64,
         scope: &ReadScope,
     ) -> Result<Vec<Page>, WenlanError> {
-        self.list_pages_scoped_inner(status, limit, offset, scope, false)
+        self.list_pages_scoped_inner(status, limit, offset, scope, PageReader::Browse)
+            .await
+    }
+
+    pub async fn list_shared_pages_scoped(
+        &self,
+        status: &str,
+        limit: i64,
+        offset: i64,
+        scope: &ReadScope,
+    ) -> Result<Vec<Page>, WenlanError> {
+        self.list_pages_scoped_inner(status, limit, offset, scope, PageReader::Shared)
             .await
     }
 
@@ -593,10 +632,10 @@ impl MemoryDB {
         limit: i64,
         offset: i64,
         scope: &ReadScope,
-        fence_entity: bool,
+        reader: PageReader,
     ) -> Result<Vec<Page>, WenlanError> {
-        if matches!(scope, ReadScope::Global) {
-            return if fence_entity {
+        if matches!(scope, ReadScope::Global) && reader != PageReader::Shared {
+            return if reader == PageReader::Internal {
                 self.list_pages(status, limit, offset).await
             } else {
                 self.list_pages_browse(status, limit, offset).await
@@ -623,10 +662,10 @@ impl MemoryDB {
         // entity row as before. Both land in SQL before `LIMIT`, so a burst
         // of fresh detected entities can never crowd real pages out of a
         // bounded window.
-        let fence_sql = if fence_entity {
-            " AND COALESCE(c.kind, 'concept') != 'entity'".to_string()
-        } else {
-            super::entity_row_browse_fence("c.")
+        let fence_sql = match reader {
+            PageReader::Internal => " AND COALESCE(c.kind, 'concept') != 'entity'".to_string(),
+            PageReader::Browse => super::entity_row_browse_fence("c."),
+            PageReader::Shared => format!(" AND {}", shared_page_predicate("c.")),
         };
         let (sql, params) = match scope {
             ReadScope::Space(workspace) => (
@@ -654,7 +693,17 @@ impl MemoryDB {
                     libsql::Value::Integer(offset),
                 ],
             ),
-            ReadScope::Global => unreachable!(),
+            ReadScope::Global => (
+                format!(
+                    "SELECT {select} FROM pages c WHERE c.status = ?1{fence_sql}
+                     ORDER BY c.last_modified DESC LIMIT ?2 OFFSET ?3"
+                ),
+                vec![
+                    libsql::Value::Text(status.to_string()),
+                    libsql::Value::Integer(limit),
+                    libsql::Value::Integer(offset),
+                ],
+            ),
         };
         let conn = self.conn.lock().await;
         let mut rows = conn
@@ -813,7 +862,8 @@ impl MemoryDB {
         id: &str,
         scope: &ReadScope,
     ) -> Result<Option<Page>, WenlanError> {
-        self.get_page_scoped_inner(id, scope, true).await
+        self.get_page_scoped_inner(id, scope, PageReader::Internal)
+            .await
     }
 
     /// Browse-facing twin of `get_page_scoped`: backs `GET /api/pages/{id}` and
@@ -825,17 +875,27 @@ impl MemoryDB {
         id: &str,
         scope: &ReadScope,
     ) -> Result<Option<Page>, WenlanError> {
-        self.get_page_scoped_inner(id, scope, false).await
+        self.get_page_scoped_inner(id, scope, PageReader::Browse)
+            .await
+    }
+
+    pub async fn get_shared_page_scoped(
+        &self,
+        id: &str,
+        scope: &ReadScope,
+    ) -> Result<Option<Page>, WenlanError> {
+        self.get_page_scoped_inner(id, scope, PageReader::Shared)
+            .await
     }
 
     async fn get_page_scoped_inner(
         &self,
         id: &str,
         scope: &ReadScope,
-        fence_entity: bool,
+        reader: PageReader,
     ) -> Result<Option<Page>, WenlanError> {
-        if matches!(scope, ReadScope::Global) {
-            return if fence_entity {
+        if matches!(scope, ReadScope::Global) && reader != PageReader::Shared {
+            return if reader == PageReader::Internal {
                 self.get_page(id).await
             } else {
                 self.get_page_browse(id).await
@@ -860,10 +920,10 @@ impl MemoryDB {
         // twins as before; column 22 carries the review lock so list_pages and
         // read_page can report it.
         let (scope_sql, scope_value) = page_scope_clause(scope, "c.workspace", 2);
-        let fence_sql = if fence_entity {
-            " AND COALESCE(c.kind, 'concept') != 'entity'"
-        } else {
-            ""
+        let fence_sql = match reader {
+            PageReader::Internal => " AND COALESCE(c.kind, 'concept') != 'entity'".to_string(),
+            PageReader::Browse => String::new(),
+            PageReader::Shared => format!(" AND {}", shared_page_predicate("c.")),
         };
         let sql = format!("SELECT {select} FROM pages c WHERE c.id = ?1{fence_sql}{scope_sql}");
         let mut params = vec![libsql::Value::Text(id.to_string())];
@@ -1213,7 +1273,7 @@ impl MemoryDB {
         let entity_fence = if include_entities {
             super::entity_row_browse_predicate("c.")
         } else {
-            "COALESCE(c.kind, 'concept') != 'entity'".to_string()
+            shared_page_predicate("c.")
         };
         let mut conditions = vec!["c.status = 'active'".to_string(), entity_fence];
         let mut values = Vec::new();

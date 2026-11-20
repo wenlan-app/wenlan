@@ -25,6 +25,9 @@ pub(crate) const MEMBER_HEADER: &str = "x-wenlan-team-member";
 pub(crate) const MEMBER_NAME_HEADER: &str = "x-wenlan-team-member-name";
 /// What is acting: only `person` is accepted.
 pub(crate) const KIND_HEADER: &str = "x-wenlan-team-member-kind";
+/// Internal Space lookup for a draft mutation. The browser gate constructs
+/// this header itself and forwards no caller-supplied headers.
+pub(crate) const DRAFT_SPACE_LOOKUP_HEADER: &str = "x-wenlan-draft-space-lookup";
 
 static SECRET: LazyLock<String> = LazyLock::new(|| {
     format!(

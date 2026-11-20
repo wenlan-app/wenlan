@@ -1639,6 +1639,80 @@ fn texts(response: &SpaceRulesResponse) -> Vec<&str> {
 }
 
 #[tokio::test]
+async fn hosted_rules_exclude_personal_rules_pages() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(true).await;
+    let project = scratch
+        .db
+        .create_space("Project", None, false)
+        .await
+        .unwrap();
+    scratch.db.register_trusted_agent("codex").await.unwrap();
+    for (n, title, rule) in [
+        (1, "Team conventions", "Check the shared agenda"),
+        (2, "How I work", "Private working preference"),
+    ] {
+        let id = write_page_in_folder(
+            &scratch,
+            n,
+            Some("Project"),
+            "Rules",
+            title,
+            &format!("- {rule}\n"),
+            "publish",
+        )
+        .await;
+        if n == 2 {
+            let state = serde_json::from_value(serde_json::json!({
+                "space_id": project.id,
+                "space_name": "Project",
+                "status": "accepted",
+                "rules_page_id": id,
+            }))
+            .unwrap();
+            scratch.db.set_space_rules_state(&state).await.unwrap();
+        }
+    }
+    save_rule(
+        &scratch,
+        &caller(Some("codex"), Some("Project")),
+        save_request("Private saved rule", false),
+    )
+    .await
+    .unwrap();
+    let local = read_rules_as_codex(&scratch, Some("Project")).await;
+    assert!(texts(&local).contains(&"Private working preference"));
+    assert!(texts(&local).contains(&"Private saved rule"));
+    let mut headers = caller(Some("codex@team.reader"), Some("Project"));
+    headers.insert(
+        crate::team_actor::SECRET_HEADER,
+        HeaderValue::from_static(crate::team_actor::secret()),
+    );
+    let hosted = handle_read_rules(
+        axum::extract::State(scratch.shared.clone()),
+        headers,
+        Query(RulesQuery { space: None }),
+    )
+    .await
+    .unwrap()
+    .0;
+    let lines = texts(&hosted);
+    assert_eq!(
+        (
+            lines.len(),
+            hosted.rules_page_id.is_none(),
+            hosted.saved_rules_page_ids.is_empty()
+        ),
+        (1, true, true),
+        "hosted rules must only include rules from published pages"
+    );
+    assert!(lines.contains(&"Check the shared agenda"));
+}
+
+#[tokio::test]
 async fn ux_skill_10_hand_written_rules_reach_tools_with_no_model_and_no_yes() {
     let _lock = crate::TEST_DATA_DIR_LOCK
         .get_or_init(|| tokio::sync::Mutex::new(()))

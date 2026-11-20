@@ -768,7 +768,7 @@ impl OwnRulePages {
     /// for every Space. No pages folder, no such pages.
     async fn load(db: &MemoryDB, page_root: Option<&Path>) -> Result<Self, ServerError> {
         let ledger = db.saved_rules_pages().await?;
-        let mut pages = Self::load_rules_folders(db, page_root, &ledger).await?;
+        let mut pages = Self::load_rules_folders(db, page_root, &ledger, None).await?;
         pages.extend(Self::load_saved(db, page_root, &ledger).await?);
         Ok(Self {
             root: page_root.map(Path::to_path_buf),
@@ -823,6 +823,7 @@ impl OwnRulePages {
         db: &MemoryDB,
         page_root: Option<&Path>,
         ledger: &[wenlan_core::db::skill_grow::SavedRulesPage],
+        shared_scope: Option<&wenlan_core::read_scope::ReadScope>,
     ) -> Result<Vec<OwnRulePage>, ServerError> {
         let mut pages = Vec::new();
         let Some(root) = page_root else {
@@ -841,7 +842,11 @@ impl OwnRulePages {
         }
         let layout = wenlan_core::space_folders::current_layout(db, root).await?;
         for (id, (file, person_note)) in files {
-            let Some(page) = db.get_page(&id).await? else {
+            let page = match shared_scope {
+                Some(scope) => db.get_shared_page_scoped(&id, scope).await?,
+                None => db.get_page(&id).await?,
+            };
+            let Some(page) = page else {
                 continue;
             };
             if page.status != "active"
@@ -1102,11 +1107,35 @@ pub async fn handle_read_rules(
 ) -> Result<Json<SpaceRulesResponse>, ServerError> {
     let private = crate::team_actor::can_read_private_memories(&headers);
     let (db, page_root) = db_and_page_root(&state).await?;
-    let own = OwnRulePages::load(&db, page_root.as_deref()).await?;
     let tool = crate::memory_routes::extract_agent_name(&headers, None);
     // The person looking at their own rules in the app is not an AI tool
     // reading them: only a tool's read is recorded.
     let by_tool = !crate::memory_routes::caller_is_person(&headers);
+    if !private {
+        let space = resolved_space(&db, &headers, query.space.as_deref()).await?;
+        let scope = wenlan_core::read_scope::ReadScope::Space(space.name.clone());
+        // A shared Rules folder can supply rules from its published pages.
+        // "How I work" and "Rules I saved" are excluded by the shared page reader.
+        let pages =
+            OwnRulePages::load_rules_folders(&db, page_root.as_deref(), &[], Some(&scope)).await?;
+        let mut seen = HashSet::new();
+        let lines: Vec<_> = pages
+            .into_iter()
+            .flat_map(|page| page.lines)
+            .filter(|line| seen.insert(line.text.trim().to_lowercase()))
+            .collect();
+        if by_tool && feature_enabled() && !lines.is_empty() {
+            db.record_skill_rules_read(&tool, &space.id, &lines).await?;
+        }
+        return Ok(Json(SpaceRulesResponse {
+            space_id: space.id,
+            space_name: space.name,
+            rules_page_id: None,
+            saved_rules_page_ids: Vec::new(),
+            lines,
+        }));
+    }
+    let own = OwnRulePages::load(&db, page_root.as_deref()).await?;
     // The app lists the saved-rules pages under Rules by their ids, so a
     // renamed one stays there and a page that only has the title does not.
     let saved_pages = if by_tool {
@@ -1114,7 +1143,7 @@ pub async fn handle_read_rules(
     } else {
         saved_rules::page_ids(&db).await?
     };
-    if private && no_space_named(&headers, query.space.as_deref()) {
+    if no_space_named(&headers, query.space.as_deref()) {
         // No Space: only the general lines, read from every accepted Space.
         let general = general_lines(&db, &own, None).await?;
         if by_tool {
@@ -1133,9 +1162,6 @@ pub async fn handle_read_rules(
     if by_tool && feature_enabled() && !response.lines.is_empty() {
         db.record_skill_rules_read(&tool, &space.id, &response.lines)
             .await?;
-    }
-    if !private {
-        return Ok(Json(response));
     }
     // General lines from other Spaces apply here too (UX-SKILL-5).
     let general = general_lines(&db, &own, Some(&space.id)).await?;

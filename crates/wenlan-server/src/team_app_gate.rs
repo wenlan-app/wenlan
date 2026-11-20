@@ -496,6 +496,7 @@ async fn forward(
     path_and_query: &str,
     space: Option<&str>,
     body: Option<&[u8]>,
+    draft_lookup: bool,
 ) -> Result<(StatusCode, Vec<u8>), Response> {
     let client = client().ok_or_else(|| StatusCode::INTERNAL_SERVER_ERROR.into_response())?;
     let method = reqwest::Method::from_bytes(method.as_bytes())
@@ -508,6 +509,9 @@ async fn forward(
         )
         .header(crate::team_actor::KIND_HEADER, "person")
         .header(crate::team_actor::MEMBER_HEADER, member.id.as_str());
+    if draft_lookup {
+        call = call.header(crate::team_actor::DRAFT_SPACE_LOOKUP_HEADER, "1");
+    }
     if let Ok(name) = reqwest::header::HeaderValue::from_str(member.name.trim()) {
         call = call.header(crate::team_actor::MEMBER_NAME_HEADER, name);
     }
@@ -539,6 +543,7 @@ async fn page_space(
     state: &TeamState,
     member: &Member,
     id: &str,
+    draft_lookup: bool,
 ) -> Result<Option<String>, Response> {
     let (status, bytes) = forward(
         state,
@@ -547,6 +552,7 @@ async fn page_space(
         &format!("/api/pages/{id}"),
         None,
         None,
+        draft_lookup,
     )
     .await?;
     if !status.is_success() {
@@ -743,7 +749,8 @@ pub(super) async fn handle(
         }
         SpaceFrom::Page | SpaceFrom::PagePair => {
             let id = ids.first().map(String::as_str).unwrap_or_default();
-            let space = match page_space(&state, &member, id).await {
+            let draft_lookup = call.path.starts_with("/api/pages/drafts/");
+            let space = match page_space(&state, &member, id, draft_lookup).await {
                 Ok(Some(space)) => space,
                 Ok(None) => return not_found(),
                 Err(response) => return response,
@@ -755,7 +762,7 @@ pub(super) async fn handle(
                     return not_found();
                 }
                 let other = match ids.get(1) {
-                    Some(other) => page_space(&state, &member, other).await,
+                    Some(other) => page_space(&state, &member, other, false).await,
                     None => Ok(None),
                 };
                 match other {
@@ -826,6 +833,7 @@ pub(super) async fn handle(
             &format!("{path}{}", encode(&pairs)),
             space.as_deref(),
             bytes.as_deref(),
+            false,
         )
         .await
         {

@@ -318,6 +318,83 @@ async fn hosted_draft_publish_replay_omits_private_provenance() {
 }
 
 #[tokio::test]
+async fn hosted_readers_hide_unpublished_drafts() {
+    let (app, db, _scratch) = fixture().await;
+    let draft = db
+        .create_page_draft("Team draft", "Work in progress.", Some(SPACE), None)
+        .await
+        .unwrap();
+    let path = format!("/api/pages/{}", draft.id);
+    let (host_status, host) = request(&app, Method::GET, &path, Value::Null, false).await;
+    assert_eq!(host_status, StatusCode::OK);
+    assert_eq!(host["page"]["status"], "draft");
+    let (list_status, list) = request(
+        &app,
+        Method::GET,
+        "/api/pages?status=draft",
+        Value::Null,
+        true,
+    )
+    .await;
+    let (read_status, _) = request(&app, Method::GET, &path, Value::Null, true).await;
+    assert_eq!(list_status, StatusCode::OK);
+    assert_eq!(
+        (list["pages"].as_array().unwrap().is_empty(), read_status),
+        (true, StatusCode::NOT_FOUND),
+        "drafts must be absent from hosted listing and by-id reads"
+    );
+}
+
+#[tokio::test]
+async fn hosted_basis_responses_drop_targets_outside_the_grant() {
+    use wenlan_core::read_scope::ReadScope;
+    let (app, db, _scratch) = fixture().await;
+    let mut pages = Vec::new();
+    for title in ["Citing note", "Shared basis", "Basis moved out"] {
+        let page = post_as_member(
+            &app,
+            "/api/pages",
+            json!({"title": title, "content": format!("{title}.")}),
+        )
+        .await;
+        pages.push(
+            db.get_page(page["id"].as_str().unwrap())
+                .await
+                .unwrap()
+                .unwrap(),
+        );
+    }
+    let [citer, shared, moved] = pages.as_slice() else {
+        unreachable!()
+    };
+    for basis in [shared, moved] {
+        db.mark_page_basis(&citer.id, &basis.id, basis.version, AGENT)
+            .await
+            .unwrap();
+    }
+    db.create_space("Private", None, false).await.unwrap();
+    db.set_page_space(
+        &moved.id,
+        Some("Private"),
+        moved.version,
+        &ReadScope::Global,
+    )
+    .await
+    .unwrap();
+    let path = format!("/api/pages/{}", citer.id);
+    let (status, local) = request(&app, Method::GET, &path, Value::Null, false).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(local["basis"].to_string().contains(&moved.id));
+    let (status, hosted) = request(&app, Method::GET, &path, Value::Null, true).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        !hosted.to_string().contains(&moved.id),
+        "a hosted basis reference disclosed an out-of-grant page"
+    );
+    assert!(hosted["basis"].to_string().contains(&shared.id));
+}
+
+#[tokio::test]
 async fn hosted_forwarding_does_not_admit_private_readers() {
     let (app, _, _scratch) = fixture().await;
     for (method, path) in [

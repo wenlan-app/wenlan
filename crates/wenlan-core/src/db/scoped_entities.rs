@@ -1023,7 +1023,7 @@ impl MemoryDB {
         }
         drop(memory_rows);
 
-        let (pages, mut page_links) = page_graph_rows(&conn, scope, &entity_ids).await?;
+        let (pages, mut page_links) = page_graph_rows(&conn, scope, &entity_ids, true).await?;
         let page_ids: HashSet<&str> = pages.iter().map(|page| page.id.as_str()).collect();
 
         // ---- page -> memory citations ----------------------------------
@@ -1102,7 +1102,7 @@ impl MemoryDB {
         scope: &ReadScope,
     ) -> Result<wenlan_types::KnowledgeGraphResponse, WenlanError> {
         let conn = self.conn.lock().await;
-        let (mut pages, page_links) = page_graph_rows(&conn, scope, &HashSet::new()).await?;
+        let (mut pages, page_links) = page_graph_rows(&conn, scope, &HashSet::new(), false).await?;
         for page in &mut pages {
             page.entity_id = None;
         }
@@ -1121,6 +1121,7 @@ async fn page_graph_rows(
     conn: &libsql::Connection,
     scope: &ReadScope,
     entity_ids: &HashSet<&str>,
+    private: bool,
 ) -> Result<
     (
         Vec<wenlan_types::GraphPageNode>,
@@ -1138,6 +1139,11 @@ async fn page_graph_rows(
     let mut page_links: Vec<wenlan_types::GraphPageLink> = Vec::new();
     let (page_scope_sql, page_scope_value) =
         super::scoped_pages::page_scope_clause(scope, "p.workspace", 1);
+    let shared_fence = if private {
+        String::new()
+    } else {
+        format!("AND {}", super::scoped_pages::shared_page_predicate("p."))
+    };
     let page_sql = format!(
         "SELECT p.id, p.title, p.space, COALESCE(p.creation_kind, 'distilled'), \
                     p.entity_id, p.last_modified \
@@ -1145,7 +1151,7 @@ async fn page_graph_rows(
              WHERE p.status = 'active' \
                AND COALESCE(p.kind, 'concept') != 'entity' \
                AND COALESCE(p.creation_kind, 'distilled') != 'entity'\
-               {page_scope_sql} \
+               {page_scope_sql} {shared_fence} \
              ORDER BY p.id ASC"
     );
     let mut page_rows = conn

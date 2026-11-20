@@ -111,7 +111,7 @@ async fn list_visible_browse_pages(
             db.list_pages_scoped_browse(status, batch as i64, row_offset as i64, scope)
                 .await?
         } else {
-            db.list_pages_scoped(status, batch as i64, row_offset as i64, scope)
+            db.list_shared_pages_scoped(status, batch as i64, row_offset as i64, scope)
                 .await?
         };
         let read = rows.len();
@@ -175,9 +175,14 @@ pub async fn handle_list_pages(
         .collect();
     // A note whose basis needs a look carries those rows; the quiet majority
     // carry none, so the list stays small.
-    let mut basis_by_page =
-        crate::page_basis_routes::non_ok_basis_by_citer(&db, &view.grant, &scope, &page_ids)
-            .await?;
+    let mut basis_by_page = crate::page_basis_routes::non_ok_basis_by_citer(
+        &db,
+        &view.grant,
+        &scope,
+        &page_ids,
+        private,
+    )
+    .await?;
     // The states shown are checked against the files as they read now, so a
     // list read without a Brief first does not call a changed note current.
     if !page_ids.is_empty() {
@@ -264,9 +269,28 @@ pub async fn handle_get_page(
     let page = if private {
         db.get_page_scoped_browse(&id, &scope).await
     } else {
-        db.get_page_scoped(&id, &scope).await
+        db.get_shared_page_scoped(&id, &scope).await
     }
     .map_err(|e| ServerError::SearchFailed(e.to_string()))?;
+    let page = if page.is_none()
+        && header_space.is_none()
+        && headers.contains_key(crate::team_actor::DRAFT_SPACE_LOOKUP_HEADER)
+        && crate::team_actor::from_headers(&headers).is_some()
+    {
+        // The gate probes the Space before forwarding a draft mutation. Only
+        // that internal probe can see an unpublished draft's routing data.
+        db.get_page_scoped(&id, &scope)
+            .await?
+            .filter(|page| page.status == "draft")
+            .map(|mut page| {
+                page.title.clear();
+                page.content.clear();
+                page.summary = None;
+                page
+            })
+    } else {
+        page
+    };
     match wenlan_core::truth_adapter::filter_page(&db, &view.grant, page)
         .await
         .map_err(|e| ServerError::SearchFailed(e.to_string()))?
@@ -327,10 +351,11 @@ pub async fn handle_get_page(
                 &view.grant,
                 &scope,
                 db.list_page_basis(&id).await?,
+                private,
             )
             .await?;
             let linked_ids: Vec<(String, String, i64)> = db.linked_changed(&id).await?;
-            let linked_visible = crate::page_basis_routes::visible_ids(
+            let linked_visible = crate::page_basis_routes::visible_ids_for(
                 &db,
                 &view.grant,
                 &scope,
@@ -338,6 +363,7 @@ pub async fn handle_get_page(
                     .iter()
                     .map(|(page_id, _, _)| page_id.clone())
                     .collect::<Vec<_>>(),
+                private,
             )
             .await?;
             let linked_changed = linked_ids
@@ -464,7 +490,7 @@ pub async fn handle_get_page_sources(
 
     let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
     if !crate::team_actor::can_read_private_memories(&headers) {
-        let page = db.get_page_scoped(&id, &scope).await?;
+        let page = db.get_shared_page_scoped(&id, &scope).await?;
         return match wenlan_core::truth_adapter::filter_page(&db, &view.grant, page).await? {
             Some(_) => Ok(Json(Vec::new())),
             None => Err(ServerError::NotFound("page not found".into())),
@@ -1147,7 +1173,7 @@ async fn hosted_page_candidates(
         }
     }
     Ok(db
-        .search_pages_scoped(query, limit, page_type, scope)
+        .search_shared_pages_scoped(query, limit, page_type, scope)
         .await?)
 }
 
@@ -1254,6 +1280,7 @@ async fn handle_create_page_inner(
         organize_run_id,
     } = wire;
     let agent = extract_agent_name(&headers, None);
+    let private = crate::team_actor::can_read_private_memories(&headers);
     let (db, page_root, page_min_cluster_size, page_match_threshold) = {
         let s = state.read().await;
         (
@@ -1297,7 +1324,7 @@ async fn handle_create_page_inner(
         .iter()
         .map(|b| (b.page_id.clone(), b.version))
         .collect();
-    crate::page_basis_routes::require_basis_visible(&db, &scope, &marks).await?;
+    crate::page_basis_routes::require_basis_visible(&db, &scope, &marks, private).await?;
     db.check_basis_candidates(&marks)
         .await
         .map_err(crate::page_basis_routes::basis_error)?;
@@ -1399,7 +1426,8 @@ async fn handle_create_page_inner(
     let mut warnings = result.warnings;
     if !reused_existing {
         warnings.extend(wenlan_core::diagrams::diagram_warnings(&diagram_content));
-        written_basis = crate::page_basis_routes::written_basis(&db, &scope, &result.id).await?;
+        written_basis =
+            crate::page_basis_routes::written_basis(&db, &scope, &result.id, private).await?;
         if !prepared_code_basis.is_empty() {
             if let Err(error) = db
                 .upsert_page_code_basis(&result.id, &prepared_code_basis, &agent)
@@ -1420,7 +1448,7 @@ async fn handle_create_page_inner(
                 .to_string(),
         );
     }
-    let link_targets = if crate::team_actor::can_read_private_memories(&headers) {
+    let link_targets = if private {
         link_targets_from_sources(&db, &scope, &persisted_page).await?
     } else {
         Vec::new()
@@ -2747,7 +2775,7 @@ async fn handle_refresh_page_inner(
         .iter()
         .map(|b| (b.page_id.clone(), b.version))
         .collect();
-    crate::page_basis_routes::require_basis_visible(&db, &scope, &basis_marks).await?;
+    crate::page_basis_routes::require_basis_visible(&db, &scope, &basis_marks, private).await?;
     // Read the staleness fence before the fields it protects (same
     // fence-first discipline as the refresh/growth path): a source attached
     // between this read and the page read below is then either fully
@@ -2921,7 +2949,7 @@ async fn handle_refresh_page_inner(
             wenlan_types::responses::PageWriteResponse {
                 write_outcome: Some(page_refresh_outcome(result.outcome)),
                 code_basis: db.list_page_code_basis(&id).await?,
-                basis: crate::page_basis_routes::written_basis(&db, &scope, &id).await?,
+                basis: crate::page_basis_routes::written_basis(&db, &scope, &id, private).await?,
                 ok: true,
                 revision_card_id: result.revision_card_id,
                 gated: true,
@@ -3071,7 +3099,7 @@ async fn handle_refresh_page_inner(
         wenlan_types::responses::PageWriteResponse {
             write_outcome: Some(page_refresh_outcome(result.outcome)),
             code_basis: db.list_page_code_basis(&id).await?,
-            basis: crate::page_basis_routes::written_basis(&db, &scope, &id).await?,
+            basis: crate::page_basis_routes::written_basis(&db, &scope, &id, private).await?,
             ok: true,
             revision_card_id: result.revision_card_id,
             gated: result.gated,
@@ -3375,7 +3403,7 @@ pub async fn handle_get_page_revisions(
     let page = if private {
         db.get_page_scoped_browse(&id, &scope).await?
     } else {
-        db.get_page_scoped(&id, &scope).await?
+        db.get_shared_page_scoped(&id, &scope).await?
     };
     // A hidden page 404s here for the same reason it does at `GET /api/pages/
     // {id}`: for this caller it is not there. An `EntryOnly` verdict arrives

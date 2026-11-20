@@ -1507,9 +1507,14 @@ async fn handle_search_memory_inner(
             // A hit on a note whose basis needs a look says so, in the same
             // shape `read_page` uses. Quiet notes carry nothing.
             let ids: Vec<String> = kept.iter().map(|row| row.source_id.clone()).collect();
-            let mut basis_by_page =
-                crate::page_basis_routes::non_ok_basis_by_citer(&db, &view.grant, &scope, &ids)
-                    .await?;
+            let mut basis_by_page = crate::page_basis_routes::non_ok_basis_by_citer(
+                &db,
+                &view.grant,
+                &scope,
+                &ids,
+                true,
+            )
+            .await?;
             let mut code_basis_by_page =
                 crate::code_basis_routes::non_ok_code_basis_by_page(&db, &ids).await?;
             let kept: Vec<_> = kept
