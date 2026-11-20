@@ -354,7 +354,7 @@ fn manifest_counts_match_the_spec() {
     // Personal adoption, settings, checkout and skill routes, and project review/opt-in.
     assert_eq!(
         HTTP_READERS.len(),
-        406,
+        407,
         "registered (method, path, handler) triples"
     );
     // 61 tools with the read-only `list_skills` and `search_skills`; 63
@@ -367,7 +367,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        418,
+        419,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -375,7 +375,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        401,
+        402,
         "main builder entries"
     );
     assert_eq!(
@@ -582,7 +582,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::None)
             .count(),
-        396 // 18 personal setup, checkout and skill routes plus the existing 378.
+        397 // 19 personal setup, checkout, skill and rule-proposal routes plus the existing 378.
     );
 }
 
