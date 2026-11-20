@@ -316,23 +316,12 @@ fn discover_targets(
         .iter()
         .map(|target| target.adoption_input())
         .collect();
-    let mut adoption = rulesync_adopt::discover(home, &targets)?;
-    if let Some(master) = master {
-        // The harness still identifies imported lines and shared skill links.
-        // An already adopted setup uses the current master for delivered rules.
-        adoption.shared.clone_from(&master.shared);
-        for target in installed {
-            let path = Path::new(target.rules.destination);
-            if let Some(file) = adoption.files.get_mut(path) {
-                let after = rulesync_adopt::personal_rule_body(
-                    &adoption.shared,
-                    &adoption.overlays[target.id],
-                    target.id,
-                    adoption.codex_sync_replaced,
-                );
-                file.after = AdoptionEntry::File(after.into_bytes());
-            }
-        }
+    let mut adoption = if let Some(master) = master {
+        rulesync_adopt::discover_with_shared(home, &targets, &master.shared)?
+    } else {
+        rulesync_adopt::discover(home, &targets)?
+    };
+    if master.is_some() {
         adoption.skills.retain(|skill| !skill.locations.is_empty());
         adoption.skipped.retain(|path, _| !is_harness_path(path));
     }
@@ -1055,20 +1044,11 @@ mod tests {
             ("y\nx\n".into(), String::new())
         );
         assert_eq!(
-            promote_changes("cursor", false, "x\ny\n", "", "x\ny\n", "z\ny\n")
-                .unwrap(),
+            promote_changes("cursor", false, "x\ny\n", "", "x\ny\n", "z\ny\n").unwrap(),
             ("z\ny\n".into(), String::new())
         );
         assert_eq!(
-            promote_changes(
-                "cursor",
-                false,
-                "x\n",
-                "y\ny\n",
-                "x\ny\ny\n",
-                "x\nz\ny\n"
-            )
-            .unwrap(),
+            promote_changes("cursor", false, "x\n", "y\ny\n", "x\ny\ny\n", "x\nz\ny\n").unwrap(),
             ("x\nz\n".into(), "y\n".into())
         );
     }
@@ -1084,11 +1064,9 @@ mod tests {
         };
         let before = master.base_rule_text("cursor", &[]);
 
-        assert!(
-            master
-                .promote_tool_edit("cursor", &before, "Repeated rule.\nEdited tool rule.\n")
-                .unwrap()
-        );
+        assert!(master
+            .promote_tool_edit("cursor", &before, "Repeated rule.\nEdited tool rule.\n")
+            .unwrap());
         assert_eq!(master.shared, "Repeated rule.\nEdited tool rule.\n");
         assert_eq!(master.overlays.get("cursor").unwrap(), "");
     }
@@ -1153,7 +1131,8 @@ mod tests {
             overrides: BTreeMap::new(),
         };
         let before = master.base_rule_text("cursor", &[]);
-        let edited = before.replace("First rule.", "Edited first rule.")
+        let edited = before
+            .replace("First rule.", "Edited first rule.")
             .replace("Last rule.", "Edited last rule.");
 
         assert!(master

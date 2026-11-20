@@ -186,12 +186,21 @@ impl AdoptionLink {
 /// Discover rules, source references, and current skill subsets without writing
 /// to the home, data root, or a renderer's staging folder.
 pub fn discover(home: &Path, targets: &[AdoptionTarget]) -> Result<Adoption> {
-    discover_with_platform(home, targets, cfg!(windows))
+    discover_with_platform(home, targets, None, cfg!(windows))
+}
+
+pub(super) fn discover_with_shared(
+    home: &Path,
+    targets: &[AdoptionTarget],
+    shared: &str,
+) -> Result<Adoption> {
+    discover_with_platform(home, targets, Some(shared), cfg!(windows))
 }
 
 fn discover_with_platform(
     home: &Path,
     targets: &[AdoptionTarget],
+    saved_shared: Option<&str>,
     is_windows: bool,
 ) -> Result<Adoption> {
     for target in targets {
@@ -209,7 +218,8 @@ fn discover_with_platform(
     let home = Home::open(home)?;
     let mut sources = BTreeSet::new();
     let shared_file = load_text(&home, Path::new(SHARED_RULES), &mut sources)?;
-    let shared = shared_file.as_ref().map_or("", |file| file.text.as_str());
+    let shared =
+        saved_shared.unwrap_or_else(|| shared_file.as_ref().map_or("", |file| file.text.as_str()));
     let shared_path = shared_file.as_ref().map(|file| file.node.path.as_path());
     let (overlays, mut files, mut links, codex_sync_replaced, skipped_rules) = discover_rules(
         &home,
@@ -746,6 +756,7 @@ fn rule_overlay(
     }
     let mut imports = Imports {
         home,
+        shared,
         shared_path,
         sources,
         stack: BTreeSet::new(),
@@ -762,6 +773,7 @@ fn rule_overlay(
 
 struct Imports<'a> {
     home: &'a Home,
+    shared: &'a str,
     shared_path: Option<&'a Path>,
     sources: &'a mut BTreeSet<PathBuf>,
     stack: BTreeSet<PathBuf>,
@@ -840,6 +852,11 @@ impl Imports<'_> {
             };
             if self.shared_path == Some(&imported.node.path) {
                 self.included_shared = true;
+                let extra = without_shared(self.shared, &imported.text);
+                body.push_str(&extra);
+                if !extra.is_empty() && !extra.ends_with('\n') {
+                    body.push_str(ending);
+                }
             } else {
                 let expanded = self.expand(&imported_path, &imported, depth + 1)?;
                 body.push_str(&expanded);
@@ -1327,6 +1344,7 @@ mod tests {
                 Some(".claude/AGENTS.md"),
                 Some(".claude/skills"),
             )],
+            None,
             true,
         )
         .unwrap();
@@ -1602,6 +1620,34 @@ mod tests {
             actual
         );
         assert!(!home.join(".rulesync").exists());
+    }
+
+    #[test]
+    fn later_claude_import_keeps_rules_outside_the_saved_master() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path();
+        let shared = "Originally adopted.\n";
+        put(
+            home,
+            ".agents/AGENTS.md",
+            format!("{shared}After adoption.\n"),
+        );
+        put(
+            home,
+            ".claude/CLAUDE.md",
+            "@~/.agents/AGENTS.md\nClaude overlay.\n",
+        );
+        let adoption = discover_with_shared(
+            home,
+            &[target("claudecode", Some(".claude/CLAUDE.md"), None)],
+            shared,
+        )
+        .unwrap();
+        assert_eq!(adoption.shared, shared);
+        assert_eq!(
+            adoption.overlays["claudecode"],
+            "After adoption.\nClaude overlay.\n"
+        );
     }
 
     #[test]

@@ -3635,6 +3635,41 @@ mod tests {
     }
 
     #[test]
+    fn rulesync_added_tool_keeps_rules_written_since_adoption() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let cursor = ".cursor/AGENTS.md";
+        let later_rule = "Read the rollout checklist before shipping.\n";
+        let harness = format!("{SHARED}{later_rule}");
+        f.write(".agents/AGENTS.md", &harness);
+        fs::create_dir(f.setup.home.join(".cursor")).unwrap();
+        f.write(cursor, &format!("{harness}Cursor only.\n"));
+
+        let plan = f
+            .setup
+            .preview_adoption_using(fixture_skill_renderer)
+            .unwrap();
+        f.setup
+            .adopt_using(&plan.token, fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        assert_eq!(
+            f.text(cursor).matches(later_rule).count(),
+            1,
+            "{}",
+            f.text(cursor)
+        );
+        let report = f.sync_with("");
+        assert!(
+            report.written.is_empty() && report.blocked.is_empty(),
+            "{report:?}"
+        );
+        assert_eq!(f.text(cursor).matches(later_rule).count(), 1);
+        assert!(!f.text(CLAUDE).contains(later_rule));
+        assert!(!f.text(CODEX).contains(later_rule));
+        assert_eq!(f.text(".agents/AGENTS.md"), harness);
+    }
+
+    #[test]
     fn rulesync_shares_the_edited_occurrence_of_a_repeated_rule() {
         let f = Fixture::new();
         let cursor = ".cursor/AGENTS.md";
