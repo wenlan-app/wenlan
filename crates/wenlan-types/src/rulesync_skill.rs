@@ -116,6 +116,8 @@ pub struct SkillDeliveryPreview {
     pub token: String,
     pub files: Vec<SkillDeliveryChange>,
     pub blocked: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cleared_overrides: Vec<SavedSkillTool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -130,6 +132,13 @@ pub struct SkillDeliveryChange {
 pub struct SkillDeliveryFile {
     pub digest: SkillFileDigest,
     pub permissions: String,
+    /// Directory entries also appear in the existing destination list.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub directory: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -137,6 +146,7 @@ pub struct SkillDeliveryFile {
 pub enum SkillProposalOrigin {
     Agent { agent: String },
     Tool { tool: SavedSkillTool },
+    Delivery { tool: SavedSkillTool },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -954,10 +954,12 @@ and wait for evidence that people need them.
   as code points in the preview. Newly introduced invisible characters
   and bidirectional controls are refused. Only accepted source files
   are eligible for delivery.
-  Before approval, the review lists each tool file the chosen scope will
-  create, overwrite or remove, including files from a tool's existing variant.
-  If the delivery plan changes before confirmation, Wenlan asks for a fresh
-  review.
+  Before approval, the review lists each file or directory the chosen scope
+  will create, change, or remove. It also names any saved tool versions the
+  shared version will replace. If a destination is blocked or the delivery
+  plan changes before confirmation, Wenlan asks for a fresh review. A tool
+  enrolled later gets its own delivery proposal for a previously reviewed
+  shared skill.
   Tests `rulesync_skill_agent_proposal_survives_reopen_and_requires_review` and `ux_skill_16_review_needs_one_scope_and_has_no_confirmation_flag`.
 
 - **UX-SKILL-17** `shipped` `wenlan rules settings` asks the person to

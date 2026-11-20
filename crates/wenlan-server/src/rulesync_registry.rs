@@ -16,8 +16,9 @@ pub(crate) use saved_skills::{
     accept_only_tool_proposal, accept_only_tool_proposal_with_scope, review_only_tool_proposal,
 };
 pub(crate) use saved_skills::{
-    approved_local_folders, approved_skill_sources, approved_skills, authored_rows,
+    approved_local_folders, approved_skills, authored_rows, clear_review_holds,
     collect_tool_proposals, register, remove_saved_source, ApprovedSkills, ManagedSkill, SkillHome,
+    SkillModes,
 };
 
 // The registry swaps source directories in place. A snapshot taken during

@@ -372,6 +372,12 @@ async fn review_saved_skill(
             complete_skill_proposal(&proposal),
             "Wenlan needs a complete preview to accept this skill."
         );
+        ensure!(
+            delivery
+                .as_ref()
+                .is_none_or(|delivery| delivery.blocked.is_empty()),
+            "Resolve the blocked paths and review this skill again."
+        );
         format!(
             "Accept {} as a {} skill?",
             one_line(&proposal.name),
@@ -419,7 +425,8 @@ fn complete_skill_preview(files: &[SkillPreviewFile]) -> bool {
 }
 
 fn complete_skill_proposal(proposal: &SkillProposal) -> bool {
-    if proposal.changes.is_some() {
+    if matches!(proposal.origin, SkillProposalOrigin::Delivery { .. }) || proposal.changes.is_some()
+    {
         proposal.files.iter().all(|file| !file.cut)
     } else {
         complete_skill_preview(&proposal.files)
@@ -437,9 +444,17 @@ fn skill_review_for_a_person(
     }
     if let Some(delivery) = delivery {
         if !delivery.files.is_empty() {
-            out.push_str("\nTool files affected\n");
+            out.push_str("\nTool paths affected\n");
             for file in &delivery.files {
-                let path = file_label(&file.path);
+                let mut path = file_label(&file.path);
+                if file
+                    .before
+                    .iter()
+                    .chain(&file.after)
+                    .any(|entry| entry.directory)
+                {
+                    path.push_str(" (directory)");
+                }
                 let change = match (&file.before, &file.after) {
                     (None, Some(_)) => format!("Create {path}"),
                     (Some(_), None) => format!("Remove {path}"),
@@ -455,6 +470,12 @@ fn skill_review_for_a_person(
                 };
                 out.push_str(&format!("- {change}\n"));
             }
+        }
+        for tool in &delivery.cleared_overrides {
+            out.push_str(&format!(
+                "\nReplace the saved {} version with the shared version.\n",
+                tool.display_name()
+            ));
         }
         if !delivery.blocked.is_empty() {
             out.push_str("\nDelivery blocked\n");
@@ -513,6 +534,7 @@ fn skill_proposal_summary(proposal: &SkillProposal) -> String {
     let origin = match &proposal.origin {
         SkillProposalOrigin::Agent { agent } => one_line(agent),
         SkillProposalOrigin::Tool { tool } => format!("the {} skills folder", tool.display_name()),
+        SkillProposalOrigin::Delivery { tool } => format!("Wenlan for {}", tool.display_name()),
     };
     format!(
         "{}  {} ({})\nFrom {origin}\n{}",
@@ -1432,6 +1454,7 @@ mod tests {
                 sha256: contents.into(),
             },
             permissions: "0644".into(),
+            directory: false,
         };
         let delivery = SkillDeliveryPreview {
             token: "token".into(),
@@ -1446,12 +1469,24 @@ mod tests {
                     before: Some(file("Old asset")),
                     after: None,
                 },
+                SkillDeliveryChange {
+                    path: ".codex/skills/meeting-notes/examples".into(),
+                    before: Some(SkillDeliveryFile {
+                        directory: true,
+                        permissions: "0755".into(),
+                        ..file("directory")
+                    }),
+                    after: None,
+                },
             ],
             blocked: Vec::new(),
+            cleared_overrides: vec![SavedSkillTool::ClaudeCode],
         };
         let rendered = skill_review_for_a_person(&proposal, Some(&delivery));
         assert!(rendered.contains("- Overwrite .claude/skills/meeting-notes/helper.py\n"));
         assert!(rendered.contains("- Remove .codex/skills/meeting-notes/examples/old.md\n"));
+        assert!(rendered.contains("- Remove .codex/skills/meeting-notes/examples (directory)\n"));
+        assert!(rendered.contains("Replace the saved Claude Code version with the shared version."));
     }
 
     fn line(text: &str, title: &str, general: bool) -> SkillLine {

@@ -208,6 +208,7 @@ fn map_contents<From, To>(
             .iter()
             .map(|(path, snap)| Ok((path.clone(), map_snapshot(snap)?)))
             .collect::<Result<_>>()?,
+        exact_skill_backups: manifest.exact_skill_backups.clone(),
         delivered: manifest
             .delivered
             .iter()

@@ -110,6 +110,11 @@ async fn save_skill(
         let result = match caller {
             Submitter::Person => {
                 refuse_installed_name(&request.name).map_err(conflict)?;
+                if store.state.review_holds.contains_key(&request.name) {
+                    return Err(conflict(anyhow::anyhow!(
+                        "Finish the interrupted skill review listed by `{PENDING_SKILLS_COMMAND}` before saving this skill."
+                    )));
+                }
                 store
                     .state
                     .keep(&request.name, request.scope, files, SkillModes::default());
@@ -209,6 +214,7 @@ async fn review_skill(
 
 struct PreparedSkillReview {
     proposal: SkillProposal,
+    scope: SavedSkillScope,
     preview: SkillDeliveryPreview,
     delivery: SkillReviewDelivery,
 }
@@ -221,13 +227,33 @@ fn prepare_skill_review(
     check_name: impl FnOnce(&str) -> Result<()>,
     render: impl Fn(&str, &SkillPackages) -> Result<SkillFiles>,
 ) -> Result<PreparedSkillReview> {
-    let proposal = store
+    let mut proposal = store
         .state
         .proposals
         .get(id)
         .context("this skill proposal is no longer current")?
         .preview(id.to_owned())?;
-    let scope = scope.unwrap_or(proposal.scope);
+    let scope = scope
+        .or_else(|| {
+            store
+                .state
+                .review_holds
+                .get(&proposal.name)
+                .filter(|hold| hold.proposal == id)
+                .map(|hold| hold.scope)
+        })
+        .unwrap_or(proposal.scope);
+    proposal.scope = scope;
+    let cleared_overrides = if scope == SavedSkillScope::Shared {
+        store
+            .state
+            .kept
+            .get(&proposal.name)
+            .map(|variants| variants.tools.keys().copied().collect())
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
     let name = store.state.review(
         &setup.home,
         id.to_owned(),
@@ -249,15 +275,27 @@ fn prepare_skill_review(
         })
         .collect();
     let delivery = setup.plan_skill_review(&sources, &store.state.approved_local, render)?;
+    store
+        .state
+        .mark_reviewed(&name, scope, &proposal.origin, delivery.tools.clone());
     let files = delivery.changes();
     let blocked = delivery.report.blocked.clone();
     let preview = SkillDeliveryPreview {
-        token: fingerprint(&(id, scope, &files, &blocked))?,
+        token: fingerprint(&(
+            id,
+            scope,
+            &delivery.tools,
+            &cleared_overrides,
+            delivery.digest()?,
+            &blocked,
+        ))?,
         files,
         blocked,
+        cleared_overrides,
     };
     Ok(PreparedSkillReview {
         proposal,
+        scope,
         preview,
         delivery,
     })
@@ -265,7 +303,7 @@ fn prepare_skill_review(
 
 fn accept_skill_review(
     setup: &Setup,
-    store: SkillStore,
+    mut store: SkillStore,
     approved: PreparedSkillReview,
     token: Option<&str>,
 ) -> Result<SaveSkillResult, ServerError> {
@@ -274,11 +312,39 @@ fn accept_skill_review(
             "The skill delivery changed or hasn't been previewed. Review it again before accepting."
         )));
     }
+    if !approved.preview.blocked.is_empty() {
+        return Err(conflict(anyhow::anyhow!(
+            "Resolve the blocked paths and review this skill again."
+        )));
+    }
+    let name = approved.proposal.name;
+    // Freeze the previous source across a partial apply, process exit, or
+    // skill store save error. Keep the original draft for a fresh review.
+    let mut checkpoint = SkillStore::open(&setup.data).map_err(failed_store)?;
+    if checkpoint.seen != store.seen {
+        return Err(conflict(anyhow::anyhow!(
+            "The saved skill state changed. Review this proposal again."
+        )));
+    }
+    checkpoint.state.review_holds.insert(
+        name.clone(),
+        ReviewHold {
+            proposal: approved.proposal.id,
+            scope: approved.scope,
+        },
+    );
+    store.seen = checkpoint.save().map_err(failed_store)?;
+    // Publish the chosen source and remove its overrides only after the
+    // complete reviewed batch succeeds.
+    let delivery = setup
+        .apply_skill_review(approved.delivery)
+        .map_err(conflict)?;
+    store.state.review_holds.remove(&name);
     store.save().map_err(failed_store)?;
-    Ok(saved_with_delivery(
-        approved.proposal.name,
-        setup.apply_skill_review(approved.delivery),
-    ))
+    Ok(SaveSkillResult::Saved {
+        name,
+        delivery: Some(delivery),
+    })
 }
 
 async fn work_on_disk<T: Send + 'static>(
@@ -369,7 +435,7 @@ impl ManagedSkill<Vec<u8>> {
         }
     }
 
-    fn matches(&self, current: &Self) -> bool {
+    pub(crate) fn matches(&self, current: &Self) -> bool {
         self.tool == current.tool
             && self.files == current.files
             && (self.directories.is_empty() || self.directories == current.directories)
@@ -389,6 +455,7 @@ enum Candidate<Content = Vec<u8>> {
         #[serde(default)]
         changes: Option<ToolSkillChanges<Content>>,
     },
+    Delivery,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -462,6 +529,12 @@ struct Draft<Content = Vec<u8>> {
 impl Draft {
     fn preview(&self, id: String) -> Result<SkillProposal> {
         let (origin, files, changes) = match &self.source {
+            Candidate::Delivery => {
+                let SavedSkillScope::Tool { tool } = self.scope else {
+                    bail!("a saved skill delivery needs a tool");
+                };
+                (SkillProposalOrigin::Delivery { tool }, Vec::new(), None)
+            }
             Candidate::Agent { agent, files } => (
                 SkillProposalOrigin::Agent {
                     agent: agent.clone(),
@@ -537,6 +610,7 @@ impl SkillModes {
 pub(crate) struct ApprovedSkills {
     pub files: BTreeMap<String, SkillFiles>,
     pub modes: BTreeMap<String, SkillModes>,
+    pub reviewed: BTreeSet<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -548,6 +622,12 @@ struct Variants<Content = Vec<u8>> {
     shared_modes: SkillModes,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     tool_modes: BTreeMap<SavedSkillTool, SkillModes>,
+    // A reviewed version has already been delivered by its exact plan.
+    // Normal sync must not render and deliver it again.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    shared_reviewed: Option<BTreeSet<SavedSkillTool>>,
+    #[serde(skip_serializing_if = "BTreeSet::is_empty")]
+    reviewed_tools: BTreeSet<SavedSkillTool>,
     installed_at: i64,
     updated_at: i64,
 }
@@ -559,10 +639,18 @@ impl<Content> Default for Variants<Content> {
             tools: BTreeMap::new(),
             shared_modes: SkillModes::default(),
             tool_modes: BTreeMap::new(),
+            shared_reviewed: None,
+            reviewed_tools: BTreeSet::new(),
             installed_at: 0,
             updated_at: 0,
         }
     }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ReviewHold {
+    proposal: String,
+    scope: SavedSkillScope,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -572,6 +660,8 @@ struct SkillState<Content = Vec<u8>> {
     kept: BTreeMap<String, Variants<Content>>,
     ignored: BTreeMap<PathBuf, String>,
     approved_local: BTreeMap<PathBuf, ManagedSkill<Content>>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    review_holds: BTreeMap<String, ReviewHold>,
 }
 
 impl<Content> Default for SkillState<Content> {
@@ -581,6 +671,7 @@ impl<Content> Default for SkillState<Content> {
             kept: BTreeMap::new(),
             ignored: BTreeMap::new(),
             approved_local: BTreeMap::new(),
+            review_holds: BTreeMap::new(),
         }
     }
 }
@@ -618,9 +709,12 @@ impl SkillState<Vec<u8>> {
                 variants.shared_modes = modes;
                 variants.tools.clear();
                 variants.tool_modes.clear();
+                variants.shared_reviewed = None;
+                variants.reviewed_tools.clear();
             }
             SavedSkillScope::Tool { tool } => {
                 variants.tools.insert(tool, files);
+                variants.reviewed_tools.remove(&tool);
                 if modes.is_empty() {
                     variants.tool_modes.remove(&tool);
                 } else {
@@ -628,6 +722,68 @@ impl SkillState<Vec<u8>> {
                 }
             }
         }
+    }
+
+    fn mark_reviewed(
+        &mut self,
+        name: &str,
+        scope: SavedSkillScope,
+        origin: &SkillProposalOrigin,
+        tools: BTreeSet<SavedSkillTool>,
+    ) {
+        let variants = self.kept.get_mut(name).expect("review kept the skill");
+        match scope {
+            SavedSkillScope::Shared => variants.shared_reviewed = Some(tools),
+            SavedSkillScope::Tool { tool }
+                if matches!(origin, SkillProposalOrigin::Delivery { .. }) =>
+            {
+                variants
+                    .shared_reviewed
+                    .get_or_insert_with(BTreeSet::new)
+                    .insert(tool);
+            }
+            SavedSkillScope::Tool { tool } => {
+                variants.reviewed_tools.insert(tool);
+            }
+        }
+    }
+
+    fn queue_new_tool_deliveries(
+        &mut self,
+        enrolled: &BTreeSet<SavedSkillTool>,
+        blocked: &mut BTreeMap<PathBuf, String>,
+    ) -> Result<()> {
+        for (name, variants) in &self.kept {
+            let Some(reviewed) = &variants.shared_reviewed else {
+                continue;
+            };
+            if self.review_holds.contains_key(name) {
+                continue;
+            }
+            for &tool in enrolled.difference(reviewed) {
+                if variants.tools.contains_key(&tool) {
+                    continue;
+                }
+                if self.proposals.len() >= MAX_AGENT_PROPOSALS * 2 {
+                    return Ok(());
+                }
+                let draft = Draft {
+                    name: name.clone(),
+                    scope: SavedSkillScope::Tool { tool },
+                    base: self.revision(name)?,
+                    source: Candidate::Delivery,
+                };
+                self.proposals.entry(fingerprint(&draft)?).or_insert(draft);
+                let target = rulesync_personal::PERSONAL_TARGETS
+                    .iter()
+                    .find(|target| target.tool == tool)
+                    .context("unknown personal skill tool")?;
+                blocked.entry(Path::new(target.skills.destination).join(name)).or_insert_with(|| {
+                    format!("A shared skill is ready to review for this tool. Run `{PENDING_SKILLS_COMMAND}`.")
+                });
+            }
+        }
+        Ok(())
     }
 
     fn propose_agent(&mut self, draft: Draft) -> Result<SkillProposal> {
@@ -661,12 +817,32 @@ impl SkillState<Vec<u8>> {
             .get(&id)
             .context("this skill proposal is no longer current")?;
         let name = draft.name.clone();
+        let interrupted = self.review_holds.get(&name);
+        if let Some(hold) = interrupted {
+            ensure!(
+                hold.proposal == id && action == SkillReviewAction::Accept,
+                "Finish the interrupted skill review first, or run `wenlan rules restore` to undo the setup."
+            );
+        }
         if action == SkillReviewAction::Dismiss {
             if let Candidate::Tool {
                 folder, snapshot, ..
             } = &draft.source
             {
                 self.ignored.insert(folder.clone(), fingerprint(snapshot)?);
+            }
+            if let (Candidate::Delivery, SavedSkillScope::Tool { tool }) =
+                (&draft.source, draft.scope)
+            {
+                if draft.base == self.revision(&name)? {
+                    if let Some(reviewed) = self
+                        .kept
+                        .get_mut(&name)
+                        .and_then(|skill| skill.shared_reviewed.as_mut())
+                    {
+                        reviewed.insert(tool);
+                    }
+                }
             }
             self.proposals.remove(&id);
             return Ok(name);
@@ -676,7 +852,21 @@ impl SkillState<Vec<u8>> {
             "the saved skill changed after this proposal. Review a current proposal"
         );
         let scope = scope.unwrap_or(draft.scope);
+        if let Some(hold) = interrupted {
+            ensure!(
+                scope == hold.scope,
+                "Review the interrupted delivery with its original scope"
+            );
+        }
         let (files, modes) = match &draft.source {
+            Candidate::Delivery => {
+                ensure!(
+                    scope == draft.scope,
+                    "Review this delivery for its named tool"
+                );
+                self.proposals.remove(&id);
+                return Ok(name);
+            }
             Candidate::Agent { files, .. } => {
                 check_name(&name)?;
                 skills::preview(&name, files)?;
@@ -691,12 +881,14 @@ impl SkillState<Vec<u8>> {
                     matches!(scope, SavedSkillScope::Shared) || scope == draft.scope,
                     "accept for the tool that changed the skill or share across tools"
                 );
-                let scanning_root = SkillHome::open(home)?;
-                let current = scanning_root.package(folder, snapshot.tool)?;
-                ensure!(
-                    current.as_ref().is_some_and(|current| snapshot.matches(current)),
-                    "the tool edited this skill again. Run `wenlan rules sync` to review the current files"
-                );
+                if interrupted.is_none() {
+                    let scanning_root = SkillHome::open(home)?;
+                    let current = scanning_root.package(folder, snapshot.tool)?;
+                    ensure!(
+                        current.as_ref().is_some_and(|current| snapshot.matches(current)),
+                        "the tool edited this skill again. Run `wenlan rules sync` to review the current files"
+                    );
+                }
                 self.approved_local.insert(folder.clone(), snapshot.clone());
                 self.ignored.remove(folder);
                 let files = snapshot.files();
@@ -733,16 +925,28 @@ impl SkillState<Vec<u8>> {
             .iter()
             .filter(|(name, _)| only.is_none_or(|only| *name == only))
         {
-            let (files, modes) = match (skill.tools.get(&tool), &skill.shared) {
-                (Some(files), _) => (files, skill.tool_modes.get(&tool)),
-                (None, Some(files)) => (files, Some(&skill.shared_modes)),
+            let (files, modes, reviewed) = match (skill.tools.get(&tool), &skill.shared) {
+                (Some(files), _) => (
+                    files,
+                    skill.tool_modes.get(&tool),
+                    skill.reviewed_tools.contains(&tool),
+                ),
+                (None, Some(files)) => (
+                    files,
+                    Some(&skill.shared_modes),
+                    skill.shared_reviewed.is_some(),
+                ),
                 (None, None) => continue,
             };
             sources.files.insert(name.clone(), files.clone());
             if let Some(modes) = modes.filter(|modes| !modes.is_empty()) {
                 sources.modes.insert(name.clone(), modes.clone());
             }
+            if reviewed {
+                sources.reviewed.insert(name.clone());
+            }
         }
+        sources.reviewed.extend(self.review_holds.keys().cloned());
         sources
     }
 
@@ -778,6 +982,10 @@ impl SkillState<Vec<u8>> {
     }
 
     fn remove_kept(&mut self, name: &str) -> Result<bool> {
+        ensure!(
+            !self.review_holds.contains_key(name),
+            "Finish the interrupted skill review before removing this skill."
+        );
         if self.kept.remove(name).is_none() {
             return Ok(false);
         }
@@ -834,6 +1042,7 @@ fn map_skill_state<From, To>(
         .into_iter()
         .map(|(id, draft)| {
             let source = match draft.source {
+                Candidate::Delivery => Candidate::Delivery,
                 Candidate::Agent { agent, files } => Candidate::Agent {
                     agent,
                     files: map_skill_files(files, map)?,
@@ -886,6 +1095,8 @@ fn map_skill_state<From, To>(
                         .collect::<Result<_>>()?,
                     shared_modes: variants.shared_modes,
                     tool_modes: variants.tool_modes,
+                    shared_reviewed: variants.shared_reviewed,
+                    reviewed_tools: variants.reviewed_tools,
                     installed_at: variants.installed_at,
                     updated_at: variants.updated_at,
                 },
@@ -902,6 +1113,7 @@ fn map_skill_state<From, To>(
         kept,
         ignored: state.ignored,
         approved_local,
+        review_holds: state.review_holds,
     })
 }
 
@@ -987,7 +1199,7 @@ impl SkillStore {
         Ok(Self { root, seen, state })
     }
 
-    fn save(self) -> Result<()> {
+    fn save(self) -> Result<Snapshot> {
         let mut saved = BTreeSet::new();
         let mut added_blob = false;
         let state = StoredSkillState {
@@ -1019,7 +1231,7 @@ impl SkillStore {
         }
         let next = Snapshot::file(serde_json::to_vec(&state)?);
         if self.seen == next {
-            return Ok(());
+            return Ok(next);
         }
         ensure!(
             self.root
@@ -1028,15 +1240,13 @@ impl SkillStore {
             "personal skill state changed during the operation"
         );
         self.root.sync_directory(Path::new(""))?;
-        Ok(())
+        Ok(next)
     }
 }
 
 /// Read under the same setup lock as the renderer and proposal operations.
-pub(crate) fn approved_skill_sources(
-    data: &Path,
-    target: &str,
-) -> Result<BTreeMap<String, SkillFiles>> {
+#[cfg(test)]
+fn approved_skill_sources(data: &Path, target: &str) -> Result<BTreeMap<String, SkillFiles>> {
     Ok(approved_skills(data, target)?.files)
 }
 
@@ -1098,22 +1308,16 @@ pub(crate) fn review_only_tool_proposal(
 ) -> Result<SaveSkillResult, ServerError> {
     let _lock = setup.lock().map_err(failed_store)?;
     let mut store = SkillStore::open(&setup.data).map_err(failed_store)?;
-    let (id, _) = store
+    let (id, draft) = store
         .state
         .proposals
         .first_key_value()
         .context("missing tool skill proposal")
         .map_err(conflict)?;
     let id = id.clone();
-    let prepared = prepare_skill_review(
-        setup,
-        &mut store,
-        &id,
-        Some(SavedSkillScope::Shared),
-        |_| Ok(()),
-        render,
-    )
-    .map_err(conflict)?;
+    let scope = (!matches!(draft.source, Candidate::Delivery)).then_some(SavedSkillScope::Shared);
+    let prepared = prepare_skill_review(setup, &mut store, &id, scope, |_| Ok(()), render)
+        .map_err(conflict)?;
     if token.is_some() {
         accept_skill_review(setup, store, prepared, token)
     } else {
@@ -1146,6 +1350,16 @@ pub(crate) fn remove_saved_source(name: &str) -> Result<bool> {
     }
     store.save()?;
     Ok(true)
+}
+
+/// Called under the setup lock after restoration undoes all managed writes.
+pub(crate) fn clear_review_holds(data: &Path) -> Result<()> {
+    let mut store = SkillStore::open(data)?;
+    if !store.state.review_holds.is_empty() {
+        store.state.review_holds.clear();
+        store.save()?;
+    }
+    Ok(())
 }
 
 pub(crate) struct SkillHome {
@@ -1231,17 +1445,26 @@ impl SkillHome {
         }))
     }
 
-    pub(crate) fn has_unapproved_edit(
+    pub(crate) fn checked_package(
         &self,
         folder: &Path,
         tool: SavedSkillTool,
         baseline: Option<&ManagedSkill>,
         approved: Option<&ManagedSkill>,
-    ) -> Result<bool> {
-        Ok(match self.package(folder, tool)? {
-            Some(current) => !unchanged_tool_skill(&current, baseline, approved),
-            None => baseline.is_some_and(|skill| skill.files.contains_key(Path::new("SKILL.md"))),
-        })
+    ) -> Result<Option<ManagedSkill>> {
+        let current = self.package(folder, tool)?;
+        let unchanged = match &current {
+            Some(current) => {
+                baseline.is_none() && approved.is_none()
+                    || unchanged_tool_skill(current, baseline, approved)
+            }
+            None => !baseline.is_some_and(|skill| skill.files.contains_key(Path::new("SKILL.md"))),
+        };
+        ensure!(
+            unchanged,
+            "This skill has local edits. Run `wenlan rules sync` to review them."
+        );
+        Ok(current)
     }
 
     fn read_files(
@@ -1311,7 +1534,12 @@ fn unchanged_tool_skill(
     baseline: Option<&ManagedSkill>,
     approved: Option<&ManagedSkill>,
 ) -> bool {
-    baseline.is_some_and(|skill| skill.files == current.files)
+    baseline.is_some_and(|skill| {
+        skill.files == current.files
+            // Tools may create previously unseen parents for ignored local
+            // state. An approved directory's own mode and existence matter.
+            && skill.directories.iter().all(|(path, mode)| current.directories.get(path) == Some(mode))
+    })
         || approved.is_some_and(|approved| approved.matches(current))
         || (baseline.is_none()
             && current
@@ -1327,6 +1555,7 @@ pub(crate) fn collect_tool_proposals(
     data: &Path,
     managed: &BTreeMap<PathBuf, ManagedSkill>,
     unmanaged: &BTreeSet<PathBuf>,
+    enrolled: &BTreeSet<SavedSkillTool>,
 ) -> Result<BTreeMap<PathBuf, String>> {
     let home = SkillHome::open(home)?;
     let mut candidates = home.candidates();
@@ -1336,12 +1565,15 @@ pub(crate) fn collect_tool_proposals(
             .map(|(folder, skill)| (folder.clone(), skill.tool)),
     );
     let mut store = SkillStore::open(data)?;
-    // Replace the tool drafts with the currently observed versions. Agent
-    // drafts have their own immutable payload and stay until disposition.
-    store
-        .state
-        .proposals
-        .retain(|_, draft| matches!(draft.source, Candidate::Agent { .. }));
+    // Keep immutable agent drafts and interrupted reviews. Refresh other
+    // tool drafts from disk and saved-skill deliveries from enrollment.
+    let holds = &store.state.review_holds;
+    store.state.proposals.retain(|id, draft| {
+        matches!(draft.source, Candidate::Agent { .. })
+            || holds
+                .get(&draft.name)
+                .is_some_and(|hold| hold.proposal == *id)
+    });
     let mut blocked = BTreeMap::new();
     for (folder, tool) in candidates {
         if folder.ancestors().any(|path| unmanaged.contains(path)) {
@@ -1383,6 +1615,12 @@ pub(crate) fn collect_tool_proposals(
             blocked.insert(folder, "Rename the skill folder to use lowercase letters, digits, and hyphens, then run `wenlan rules sync`.".into());
             continue;
         };
+        if holds.contains_key(name) {
+            blocked.insert(folder, format!(
+                "This skill has an interrupted review. Run `{PENDING_SKILLS_COMMAND}` to review it again."
+            ));
+            continue;
+        }
         let changes = baseline.and_then(|baseline| ToolSkillChanges::between(baseline, &current));
         let validation = match &changes {
             Some(changes) => skills::preview_changes(
@@ -1405,7 +1643,9 @@ pub(crate) fn collect_tool_proposals(
         }
         blocked.insert(
             folder.clone(),
-            format!("Skill changes need your approval. Run `{PENDING_SKILLS_COMMAND}` to review them."),
+            format!(
+                "Skill changes need your approval. Run `{PENDING_SKILLS_COMMAND}` to review them."
+            ),
         );
         let draft = Draft {
             name: name.into(),
@@ -1419,6 +1659,9 @@ pub(crate) fn collect_tool_proposals(
         };
         store.state.proposals.insert(fingerprint(&draft)?, draft);
     }
+    store
+        .state
+        .queue_new_tool_deliveries(enrolled, &mut blocked)?;
     store.save()?;
     Ok(blocked)
 }
@@ -1505,13 +1748,134 @@ mod tests {
     }
 
     #[test]
+    fn rulesync_step1e_keeps_a_skill_proposal_pending_until_a_tool_is_adopted() {
+        let scratch = tempfile::tempdir().unwrap();
+        let (data, home) = make_test_dirs(&scratch);
+        let setup = Setup {
+            home,
+            data,
+            binary: "unused".into(),
+        };
+        let _lock = setup.lock().unwrap();
+        let mut store = SkillStore::open(&setup.data).unwrap();
+        let proposal = store
+            .state
+            .propose_agent(Draft {
+                name: "before-adoption".into(),
+                scope: SavedSkillScope::Shared,
+                base: store.state.revision("before-adoption").unwrap(),
+                source: Candidate::Agent {
+                    agent: "Codex".into(),
+                    files: BTreeMap::from([("SKILL.md".into(), b"Skill instructions.\n".to_vec())]),
+                },
+            })
+            .unwrap();
+        store.save().unwrap();
+
+        let mut store = SkillStore::open(&setup.data).unwrap();
+        let preview = prepare_skill_review(
+            &setup,
+            &mut store,
+            &proposal.id,
+            None,
+            |_| Ok(()),
+            |_, _| panic!("there are no adopted tool paths"),
+        )
+        .unwrap();
+        assert!(preview.preview.files.is_empty());
+        assert!(preview.preview.blocked[0].contains("wenlan rules adopt"));
+        let token = preview.preview.token.clone();
+        assert!(accept_skill_review(&setup, store, preview, Some(&token)).is_err());
+        let store = SkillStore::open(&setup.data).unwrap();
+        assert!(store.state.proposals.contains_key(&proposal.id));
+        assert!(store.state.kept.is_empty() && store.state.review_holds.is_empty());
+    }
+
+    #[test]
+    fn rulesync_step1e_guard_keeps_an_interrupted_review_pending() {
+        let scratch = tempfile::tempdir().unwrap();
+        let (data, home) = make_test_dirs(&scratch);
+        let mut store = SkillStore::open(&data).unwrap();
+        let name = "resume-review";
+        let scope = SavedSkillScope::Shared;
+        let files = |body: &str| BTreeMap::from([("SKILL.md".into(), body.as_bytes().to_vec())]);
+        store.state.keep(
+            name,
+            scope,
+            files("Current skill.\n"),
+            SkillModes::default(),
+        );
+        let base = store.state.revision(name).unwrap();
+        let mut propose = |body| {
+            store
+                .state
+                .propose_agent(Draft {
+                    name: name.into(),
+                    scope,
+                    base: base.clone(),
+                    source: Candidate::Agent {
+                        agent: "Codex".into(),
+                        files: files(body),
+                    },
+                })
+                .unwrap()
+                .id
+        };
+        let pending = propose("Pending review.\n");
+        let other = propose("Another review.\n");
+        store.state.review_holds.insert(
+            name.into(),
+            ReviewHold {
+                proposal: pending.clone(),
+                scope,
+            },
+        );
+        store.save().unwrap();
+
+        let mut store = SkillStore::open(&data).unwrap();
+        assert!(store
+            .state
+            .review(
+                &home,
+                pending.clone(),
+                SkillReviewAction::Dismiss,
+                None,
+                |_| Ok(())
+            )
+            .is_err());
+        assert!(store
+            .state
+            .review(&home, other, SkillReviewAction::Accept, None, |_| Ok(()))
+            .is_err());
+        assert!(store.state.remove_kept(name).is_err());
+        assert!(store
+            .state
+            .sources(SavedSkillTool::Codex)
+            .reviewed
+            .contains(name));
+
+        clear_review_holds(&data).unwrap();
+        let mut store = SkillStore::open(&data).unwrap();
+        assert!(store
+            .state
+            .review(&home, pending, SkillReviewAction::Dismiss, None, |_| Ok(()))
+            .is_ok());
+    }
+
+    #[test]
     fn rulesync_skill_hand_added_folder_is_a_tool_only_proposal_until_accepted() {
         let scratch = tempfile::tempdir().unwrap();
         let (data, home) = make_test_dirs(&scratch);
         let file = write(&home, ".claude/skills/own/SKILL.md", "Original body.\n");
         let folder = PathBuf::from(".claude/skills/own");
-        let pending =
-            collect_tool_proposals(&home, &data, &BTreeMap::new(), &BTreeSet::new()).unwrap();
+        let pending = collect_tool_proposals(
+            &home,
+            &data,
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+        )
+        .unwrap();
         assert_eq!(pending.len(), 1);
         assert!(pending.contains_key(&folder));
         let mut store = SkillStore::open(&data).unwrap();
@@ -1532,7 +1896,14 @@ mod tests {
                 ()
             ))
             .is_err());
-        collect_tool_proposals(&home, &data, &BTreeMap::new(), &BTreeSet::new()).unwrap();
+        collect_tool_proposals(
+            &home,
+            &data,
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+        )
+        .unwrap();
         let mut store = SkillStore::open(&data).unwrap();
         let id = store.state.proposals.first_key_value().unwrap().0.clone();
         store
@@ -1548,11 +1919,15 @@ mod tests {
             approved_skill_sources(&data, "claudecode").unwrap()["own"][Path::new("SKILL.md")],
             b"Changed during review.\n"
         );
-        assert!(
-            collect_tool_proposals(&home, &data, &BTreeMap::new(), &BTreeSet::new())
-                .unwrap()
-                .is_empty()
-        );
+        assert!(collect_tool_proposals(
+            &home,
+            &data,
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+            &BTreeSet::new()
+        )
+        .unwrap()
+        .is_empty());
 
         let mut store = SkillStore::open(&data).unwrap();
         assert_eq!(store.state.rows().unwrap()[0].skill.name, "own");
@@ -1564,7 +1939,14 @@ mod tests {
             .is_empty());
         assert!(approved_local_folders(&data).unwrap().is_empty());
         assert_eq!(fs::read(&file).unwrap(), b"Changed during review.\n");
-        collect_tool_proposals(&home, &data, &BTreeMap::new(), &BTreeSet::new()).unwrap();
+        collect_tool_proposals(
+            &home,
+            &data,
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+        )
+        .unwrap();
         assert!(SkillStore::open(&data).unwrap().state.proposals.is_empty());
     }
 
@@ -1581,8 +1963,14 @@ mod tests {
             (SavedSkillScope::Shared, "Shared skill.\n"),
         ] {
             fs::write(&file, contents).unwrap();
-            let blocked =
-                collect_tool_proposals(&home, &data, &BTreeMap::new(), &BTreeSet::new()).unwrap();
+            let blocked = collect_tool_proposals(
+                &home,
+                &data,
+                &BTreeMap::new(),
+                &BTreeSet::new(),
+                &BTreeSet::new(),
+            )
+            .unwrap();
             assert_eq!(blocked.len(), 1);
             assert!(blocked.contains_key(&folder));
             let mut store = SkillStore::open(&data).unwrap();
@@ -1635,13 +2023,15 @@ mod tests {
             "Local tool state.\n",
         );
         assert!(
-            collect_tool_proposals(&home, &data, &managed, &BTreeSet::new())
+            collect_tool_proposals(&home, &data, &managed, &BTreeSet::new(), &BTreeSet::new())
                 .unwrap()
                 .is_empty()
         );
 
         fs::write(&asset, "First edit.\n").unwrap();
-        let pending = collect_tool_proposals(&home, &data, &managed, &BTreeSet::new()).unwrap();
+        let pending =
+            collect_tool_proposals(&home, &data, &managed, &BTreeSet::new(), &BTreeSet::new())
+                .unwrap();
         assert!(pending.contains_key(&folder));
         let mut store = SkillStore::open(&data).unwrap();
         let id = store.state.proposals.first_key_value().unwrap().0.clone();
@@ -1651,14 +2041,14 @@ mod tests {
             .unwrap();
         store.save().unwrap();
         assert!(
-            collect_tool_proposals(&home, &data, &managed, &BTreeSet::new())
+            collect_tool_proposals(&home, &data, &managed, &BTreeSet::new(), &BTreeSet::new())
                 .unwrap()
                 .contains_key(&folder)
         );
         assert!(SkillStore::open(&data).unwrap().state.proposals.is_empty());
 
         fs::write(&asset, "Second edit.\n").unwrap();
-        collect_tool_proposals(&home, &data, &managed, &BTreeSet::new()).unwrap();
+        collect_tool_proposals(&home, &data, &managed, &BTreeSet::new(), &BTreeSet::new()).unwrap();
         let mut store = SkillStore::open(&data).unwrap();
         let id = store.state.proposals.first_key_value().unwrap().0.clone();
         store

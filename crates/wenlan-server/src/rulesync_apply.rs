@@ -7,6 +7,7 @@ use cap_std::fs::{Dir, DirBuilder, Metadata, OpenOptions};
 #[cfg(unix)]
 use cap_std::fs::{DirBuilderExt as _, OpenOptionsExt as _, PermissionsExt as _};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use wenlan_core::rulesync_adopt::MAX_ADOPTED_SKILL_BYTES;
@@ -39,6 +40,20 @@ impl FileMode {
 
     pub(crate) fn permits_child_writes(self) -> bool {
         !cfg!(unix) || self.0 & 0o700 == 0o700
+    }
+
+    #[cfg(unix)]
+    fn set_directory(self, dir: &Dir) -> io::Result<()> {
+        let file = dir.open(".")?;
+        self.set(&file)?;
+        file.sync_all()
+    }
+
+    #[cfg(windows)]
+    fn set_directory(self, dir: &Dir) -> io::Result<()> {
+        let mut permissions = dir.dir_metadata()?.permissions();
+        permissions.set_readonly(self.0 != 0);
+        dir.set_permissions(".", permissions)
     }
 
     #[cfg(windows)]
@@ -123,8 +138,13 @@ impl Snapshot {
         Self::File { bytes, mode }
     }
 
+    #[cfg(test)]
     pub(crate) fn directory() -> Self {
         Self::Directory { mode: None }
+    }
+
+    pub(crate) fn private_directory() -> Self {
+        Self::directory_with_mode(if cfg!(unix) { 0o700 } else { 0 })
     }
 
     pub(crate) fn directory_with_mode(mode: u32) -> Self {
@@ -311,6 +331,17 @@ impl FileRoot {
         }
     }
 
+    pub(crate) fn children(&self, path: &Path) -> io::Result<BTreeSet<PathBuf>> {
+        entry_path(path)?;
+        match self.open_parent(path, false)? {
+            Some(directory) => directory
+                .entries()?
+                .map(|entry| Ok(path.join(entry?.file_name())))
+                .collect(),
+            None => Ok(BTreeSet::new()),
+        }
+    }
+
     pub(crate) fn sync_directory(&self, path: &Path) -> io::Result<()> {
         #[cfg(unix)]
         if let Some(directory) = self.open_parent(path, false)? {
@@ -399,6 +430,25 @@ impl FileRoot {
             return Ok(ApplyOutcome::ChangedSincePlan);
         }
         if desired.matches(seen) {
+            return Ok(ApplyOutcome::Applied);
+        }
+        if let (Snapshot::Directory { .. }, Snapshot::Directory { mode: Some(mode) }) =
+            (seen, desired)
+        {
+            // Change metadata on the open directory without replacing its subtree.
+            let directory = parent.open_dir_nofollow(name)?;
+            let Some(current_parent) = self.open_parent(relative_parent, false)? else {
+                return Ok(ApplyOutcome::ChangedSincePlan);
+            };
+            if !same_directory(&parent, &current_parent)?
+                || !same_directory(&directory, &current_parent.open_dir_nofollow(name)?)?
+                || !seen.matches(&Snapshot::directory_with_permissions(FileMode::of(
+                    &directory.dir_metadata()?,
+                )))
+            {
+                return Ok(ApplyOutcome::ChangedSincePlan);
+            }
+            mode.set_directory(&directory)?;
             return Ok(ApplyOutcome::Applied);
         }
         let displaced = recovery_location(&parent, options.displaced)?;
@@ -606,19 +656,7 @@ fn create_directory(parent: &Dir, name: &Path) -> io::Result<()> {
 fn create_planned_directory(parent: &Dir, name: &Path, mode: Option<FileMode>) -> io::Result<()> {
     create_directory(parent, name)?;
     if let Some(mode) = mode {
-        let dir = parent.open_dir_nofollow(name)?;
-        #[cfg(unix)]
-        {
-            let file = dir.open(".")?;
-            mode.set(&file)?;
-            file.sync_all()?;
-        }
-        #[cfg(windows)]
-        {
-            let mut permissions = dir.dir_metadata()?.permissions();
-            permissions.set_readonly(mode.0 != 0);
-            dir.set_permissions(".", permissions)?;
-        }
+        mode.set_directory(&parent.open_dir_nofollow(name)?)?;
     }
     Ok(())
 }

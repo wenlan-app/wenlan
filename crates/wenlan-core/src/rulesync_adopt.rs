@@ -1170,17 +1170,19 @@ impl<'a> SkillDiscovery<'a> {
                 after: AdoptionEntry::Directory,
             },
         )?;
-        if copying_link {
-            for dir in tree.dirs.keys() {
-                record_file(
-                    self.files,
-                    path.join(dir),
-                    AdoptionFile {
-                        before: AdoptionEntry::Missing,
-                        after: AdoptionEntry::Directory,
+        for dir in tree.dirs.keys() {
+            record_file(
+                self.files,
+                path.join(dir),
+                AdoptionFile {
+                    before: if copying_link {
+                        AdoptionEntry::Missing
+                    } else {
+                        AdoptionEntry::Directory
                     },
-                )?;
-            }
+                    after: AdoptionEntry::Directory,
+                },
+            )?;
         }
         for (relative, bytes) in &tree.skill.files {
             record_file(
