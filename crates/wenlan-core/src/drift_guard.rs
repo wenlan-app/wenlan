@@ -2846,6 +2846,18 @@ fn ci_routing_contract_violations(
             ));
         }
     }
+    for (filter, paths) in [("macos", &macos_paths), ("windows", &windows_paths)] {
+        for path in [
+            "crates/wenlan-core/src/rulesync_settings/**",
+            "crates/wenlan-server/src/rulesync_routes/personal_settings.rs",
+        ] {
+            if !paths.contains(path) {
+                violations.push(format!(
+                    "{filter} routing omits personal settings path {path}"
+                ));
+            }
+        }
+    }
     for extension in ["c", "cc", "cpp", "cxx", "h", "hh", "hpp", "hxx"] {
         let path = format!("crates/**/*.{extension}");
         for (filter, paths) in [
