@@ -709,8 +709,10 @@ and wait for evidence that people need them.
   included, makes a tool load another file or hides text from the person.
   With the opt-in writer (UX-SKILL-6), Wenlan owns the whole file after
   per-file adoption (UX-SKILL-15). Pinned rulesync renders into private
-  staging with networking disabled. Wenlan records the delivered bytes and
-  checks each destination against the plan before applying an atomic write.
+  staging with only the environment it needs. Networking is disabled on macOS
+  and on Linux where the daemon can create a network namespace. Wenlan records
+  the delivered bytes and checks each destination against the plan before an
+  atomic write.
   A symlink needs explicit adoption. The opt-in writer places rules and skills
   by default.
   原文：「為啥要外掛？直接把我們的規則同步過去工具，工具就會讀啊？」（2026-11-15 23:28Z）；「要有信心，馬上就要做了」（2026-11-17 05:01Z）。寫入工具檔案的補充（2026-11-17，審查發現）：規則只當文字寫入，`@` 與 HTML 註解改寫、看不見的字元拿掉；英文字句待 Qi-Xuan 確認。

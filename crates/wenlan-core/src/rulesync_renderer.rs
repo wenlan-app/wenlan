@@ -84,7 +84,6 @@ pub fn render(
             global,
             targets,
             features,
-            show_diagnostics: true,
         },
     )
 }
@@ -114,7 +113,6 @@ pub(crate) fn render_settings(
             global: true,
             targets: &["claudecode".into(), "codexcli".into()],
             features,
-            show_diagnostics: false,
         },
     )
 }
@@ -123,7 +121,6 @@ struct Selection<'a> {
     global: bool,
     targets: &'a [String],
     features: &'a [&'a str],
-    show_diagnostics: bool,
 }
 
 fn render_staged(
@@ -136,15 +133,15 @@ fn render_staged(
     let (stage, input_roots, output) = validate_roots(stage, input_roots, output)?;
     let runtime = tempfile::Builder::new()
         .prefix("rulesync-runtime-")
-        .tempdir_in(stage)
+        .tempdir_in(&stage)
         .context("create private rulesync runtime directory")?;
     let pin = pin_for(std::env::consts::OS, std::env::consts::ARCH)?;
     let verified = runtime.path().join(pin.name);
     let work = runtime.path().join("work");
-    let mut command = offline_command(&verified, &output, &work)?;
     fs::create_dir(&work).context("create rulesync scratch directory")?;
     copy_verified_binary(binary, &verified, &pin)?;
 
+    let mut command = renderer_command(&verified, &stage, &output, &work)?;
     configure_generate(
         &mut command,
         &input_roots,
@@ -154,29 +151,19 @@ fn render_staged(
         selection.targets,
         selection.features,
     );
-    let result = command
-        .output()
-        .context("launch rulesync with the offline sandbox")?;
-    if !result.status.success() {
-        if !selection.show_diagnostics {
-            bail!(
-                "sandboxed rulesync settings generation failed ({})",
-                result.status
-            );
-        }
-        let diagnostic = if result.stderr.is_empty() {
-            &result.stdout
-        } else {
-            &result.stderr
-        };
-        let diagnostic = String::from_utf8_lossy(&diagnostic[..diagnostic.len().min(4096)]);
-        bail!(
-            "sandboxed rulesync generate failed ({}): {}",
-            result.status,
-            diagnostic.trim()
-        );
-    }
+    run_generate(&mut command)?;
     validate_tree(&output)?;
+    Ok(())
+}
+
+fn run_generate(command: &mut Command) -> Result<()> {
+    // Either stream can contain source text, including on successful runs.
+    let status = command
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .context("launch the staged rulesync renderer")?;
+    ensure!(status.success(), "rulesync generation failed ({status})");
     Ok(())
 }
 
@@ -250,11 +237,25 @@ fn require_directory(path: &Path) -> Result<fs::Metadata> {
     let metadata = fs::symlink_metadata(path)
         .with_context(|| format!("inspect rulesync staging directory {}", path.display()))?;
     ensure!(
-        metadata.is_dir(),
+        metadata.is_dir() && !is_windows_reparse_point(&metadata),
         "expected a regular staging directory: {}",
         path.display()
     );
     Ok(metadata)
+}
+
+fn is_windows_reparse_point(metadata: &fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = metadata;
+        false
+    }
 }
 
 fn staged_directory(stage: &Path, canonical_stage: &Path, path: &Path) -> Result<PathBuf> {
@@ -308,6 +309,11 @@ fn validate_tree(directory: &Path) -> Result<()> {
             path.display()
         );
         let metadata = fs::symlink_metadata(&path)?;
+        ensure!(
+            !is_windows_reparse_point(&metadata),
+            "reparse point in rulesync stage: {}",
+            path.display()
+        );
         if metadata.is_dir() {
             validate_tree(&path)?;
         } else {
@@ -377,13 +383,25 @@ fn copy_verified_binary(source: &Path, destination: &Path, pin: &Pin) -> Result<
 }
 
 #[cfg(target_os = "macos")]
-fn offline_command(binary: &Path, output: &Path, runtime: &Path) -> Result<Command> {
+fn renderer_command(binary: &Path, stage: &Path, output: &Path, runtime: &Path) -> Result<Command> {
     use std::ffi::OsString;
 
     const SANDBOX_EXEC: &str = "/usr/bin/sandbox-exec";
     const PROFILE: &str = "(version 1)
         (allow default)
         (deny network*)
+        (deny process-exec (require-not (literal (param \"RENDERER\"))))
+        (deny file-read* (require-all
+            (require-not (subpath (param \"STAGE_ROOT\")))
+            (require-not (subpath \"/usr/lib\"))
+            (require-not (subpath \"/System/Library/dyld\"))
+            (require-not (subpath \"/private/var/db/dyld\"))
+            (require-not (subpath \"/System/Cryptexes/OS/System/Library/dyld\"))
+            (require-not (subpath \"/System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld\"))
+            (require-not (literal \"/System/Library/CoreServices/SystemVersion.plist\"))
+            (require-not (literal \"/dev/null\"))
+            (require-not (literal \"/dev/random\"))
+            (require-not (literal \"/dev/urandom\"))))
         (deny file-write* (require-all
             (require-not (subpath (param \"OUTPUT_ROOT\")))
             (require-not (subpath (param \"RUNTIME_ROOT\")))
@@ -392,24 +410,80 @@ fn offline_command(binary: &Path, output: &Path, runtime: &Path) -> Result<Comma
         Path::new(SANDBOX_EXEC).is_file(),
         "macOS rulesync offline sandbox is unavailable"
     );
-    let mut output_param = OsString::from("OUTPUT_ROOT=");
-    output_param.push(output);
-    let mut runtime_param = OsString::from("RUNTIME_ROOT=");
-    runtime_param.push(runtime);
     let mut command = Command::new(SANDBOX_EXEC);
     command.args(["-p", PROFILE]);
-    command.arg("-D").arg(output_param);
-    command.arg("-D").arg(runtime_param);
+    for (name, path) in [
+        ("STAGE_ROOT=", stage),
+        ("OUTPUT_ROOT=", output),
+        ("RUNTIME_ROOT=", runtime),
+        ("RENDERER=", binary),
+    ] {
+        let mut param = OsString::from(name);
+        param.push(path);
+        command.arg("-D").arg(param);
+    }
     command.arg(binary);
     Ok(command)
 }
 
-#[cfg(not(target_os = "macos"))]
-fn offline_command(_binary: &Path, _output: &Path, _runtime: &Path) -> Result<Command> {
-    bail!(
-        "no supported offline rulesync sandbox on {}",
-        std::env::consts::OS
-    )
+#[cfg(target_os = "linux")]
+fn renderer_command(
+    binary: &Path,
+    _stage: &Path,
+    output: &Path,
+    _runtime: &Path,
+) -> Result<Command> {
+    use std::sync::OnceLock;
+
+    static NETWORK_NAMESPACE: OnceLock<Option<(&str, &str)>> = OnceLock::new();
+    let namespace = NETWORK_NAMESPACE.get_or_init(|| {
+        let unshare = ["/usr/bin/unshare", "/bin/unshare"]
+            .into_iter()
+            .find(|path| Path::new(path).is_file())?;
+        let probe = ["/usr/bin/true", "/bin/true"]
+            .into_iter()
+            .find(|path| Path::new(path).is_file())?;
+        ["-n", "-Urn"]
+            .into_iter()
+            .find(|flag| {
+                Command::new(unshare)
+                    .args([flag, "--", probe])
+                    .current_dir(output)
+                    .env_clear()
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status()
+                    .is_ok_and(|status| status.success())
+            })
+            .map(|flag| (unshare, flag))
+    });
+    if let Some((unshare, flag)) = namespace {
+        let mut command = Command::new(unshare);
+        command.args([*flag, "--"]).arg(binary);
+        return Ok(command);
+    }
+    Ok(Command::new(binary))
+}
+
+#[cfg(target_os = "windows")]
+fn renderer_command(
+    binary: &Path,
+    _stage: &Path,
+    _output: &Path,
+    _runtime: &Path,
+) -> Result<Command> {
+    Ok(Command::new(binary))
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+fn renderer_command(
+    _binary: &Path,
+    _stage: &Path,
+    _output: &Path,
+    _runtime: &Path,
+) -> Result<Command> {
+    bail!("no supported rulesync renderer on {}", std::env::consts::OS)
 }
 
 fn configure_generate(
@@ -422,15 +496,8 @@ fn configure_generate(
     features: &[&str],
 ) {
     let home = if global { output } else { runtime };
-    command
-        .current_dir(output)
-        .env_clear()
-        .env("HOME", home)
-        .env("HOME_DIR", home)
-        .env("TMPDIR", runtime)
-        .env("DO_NOT_TRACK", "1")
-        .stdin(Stdio::null())
-        .arg("generate");
+    configure_environment(command, home, output, runtime);
+    command.arg("generate");
     if global {
         command.arg("--global");
     }
@@ -446,10 +513,184 @@ fn configure_generate(
         .args(input_roots);
 }
 
+fn configure_environment(command: &mut Command, home: &Path, output: &Path, runtime: &Path) {
+    command
+        .current_dir(output)
+        .env_clear()
+        .env("HOME", home)
+        .env("HOME_DIR", home)
+        .env("USERPROFILE", home)
+        .env("TMPDIR", runtime)
+        .env("DO_NOT_TRACK", "1")
+        .stdin(Stdio::null());
+    #[cfg(windows)]
+    {
+        command
+            .env("APPDATA", home)
+            .env("LOCALAPPDATA", home)
+            .env("TEMP", runtime)
+            .env("TMP", runtime);
+        if let Some(system_root) = std::env::var_os("SystemRoot") {
+            command.env("SystemRoot", system_root);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::ffi::OsStr;
+
+    const RENDERER_CHILD_MODE: &str = "WENLAN_TEST_RENDERER_CHILD_MODE";
+
+    #[cfg(unix)]
+    #[test]
+    fn generate_failure_keeps_child_diagnostics_private() {
+        let root = tempfile::tempdir().unwrap();
+        let input = root.path().join("rule.md");
+        let source = "private rule fixture for renderer diagnostics";
+        fs::write(&input, source).unwrap();
+        let mut command = Command::new("/bin/sh");
+        command
+            .current_dir(root.path())
+            .env_clear()
+            .args(["-c", "/bin/cat \"$1\"; /bin/cat \"$1\" >&2; exit 7", "sh"])
+            .arg(input);
+        let error = run_generate(&mut command).unwrap_err().to_string();
+        assert!(error.contains('7'), "{error}");
+        assert!(!error.contains(source), "{error}");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "requires a native macOS session allowed to apply a Seatbelt profile"]
+    fn macos_sandbox_allows_staged_reads_and_denies_unrelated_reads() {
+        let parent = tempfile::tempdir().unwrap();
+        let temp = new_stage(parent.path()).unwrap();
+        let stage = temp.path().canonicalize().unwrap();
+        let input = stage.join("input");
+        let output = stage.join("output");
+        let work = stage.join("work");
+        for dir in [&input, &output, &work] {
+            fs::create_dir(dir).unwrap();
+        }
+        let inside = input.join("rule.md");
+        let outside = parent.path().join("unrelated-home-rule.md");
+        fs::write(&inside, "staged rule fixture\n").unwrap();
+        fs::write(&outside, "unrelated rule fixture\n").unwrap();
+        let binary = stage.join("probe");
+        fs::copy("/bin/cat", &binary).unwrap();
+        let result = renderer_command(&binary, &stage, &output, &work)
+            .unwrap()
+            .env_clear()
+            .current_dir(&output)
+            .args([&inside, &outside])
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&result.stdout),
+            "staged rule fixture\n",
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(!result.status.success());
+    }
+
+    #[test]
+    fn renderer_child_fixture() {
+        let Some(home) = std::env::var_os(RENDERER_CHILD_MODE).map(PathBuf::from) else {
+            return;
+        };
+        for name in ["HOME", "HOME_DIR", "USERPROFILE"] {
+            assert_eq!(std::env::var_os(name).as_deref(), Some(home.as_os_str()));
+        }
+        assert_eq!(std::env::var("DO_NOT_TRACK").as_deref(), Ok("1"));
+        for name in ["OPENAI_API_KEY", "GITHUB_TOKEN", "SSH_AUTH_SOCK", "PATH"] {
+            assert!(std::env::var_os(name).is_none(), "inherited {name}");
+        }
+        assert_eq!(
+            std::env::current_dir().unwrap().canonicalize().unwrap(),
+            home
+        );
+        #[cfg(windows)]
+        for name in ["APPDATA", "LOCALAPPDATA"] {
+            assert_eq!(std::env::var_os(name).as_deref(), Some(home.as_os_str()));
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(parent_namespace) = std::env::var_os("WENLAN_TEST_PARENT_NET_NS") {
+            let child_namespace = fs::read_link("/proc/self/ns/net").unwrap();
+            assert_ne!(child_namespace.as_os_str(), parent_namespace);
+        }
+        println!("verified renderer child environment");
+    }
+
+    #[test]
+    fn renderer_child_uses_only_allowlisted_environment() {
+        let temp = new_stage(&std::env::temp_dir()).unwrap();
+        let stage = temp.path().canonicalize().unwrap();
+        let output = stage.join("output with spaces 測試");
+        let work = stage.join("work");
+        fs::create_dir(&output).unwrap();
+        fs::create_dir(&work).unwrap();
+        let binary = std::env::current_exe().unwrap();
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        let mut command = renderer_command(&binary, &stage, &output, &work).unwrap();
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        let mut command = Command::new(&binary);
+        command
+            .env("OPENAI_API_KEY", "fixture-key")
+            .env("GITHUB_TOKEN", "fixture-token")
+            .env("SSH_AUTH_SOCK", "fixture-socket");
+        configure_environment(&mut command, &output, &output, &work);
+        command.env(RENDERER_CHILD_MODE, &output).args([
+            "--exact",
+            "rulesync_renderer::tests::renderer_child_fixture",
+            "--nocapture",
+        ]);
+        #[cfg(target_os = "linux")]
+        if command.get_program() != binary.as_os_str() {
+            let parent_namespace = fs::read_link("/proc/self/ns/net").unwrap();
+            command.env("WENLAN_TEST_PARENT_NET_NS", parent_namespace);
+        }
+        let result = command.output().unwrap();
+        let stdout = String::from_utf8_lossy(&result.stdout);
+        assert!(
+            result.status.success() && stdout.contains("verified renderer child environment"),
+            "{stdout}{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
+
+    #[test]
+    #[ignore = "requires a local verified rulesync release binary and a supported native launcher"]
+    fn renders_rules_with_local_pinned_binary() {
+        let binary = PathBuf::from(std::env::var_os("WENLAN_TEST_RULESYNC_BINARY").unwrap());
+        let temp = new_stage(&std::env::temp_dir()).unwrap();
+        let input = temp.path().join("input with spaces 測試");
+        crate::rulesync_personal::write_root_rule(&input, "A staged rendering fixture.").unwrap();
+        for global in [false, true] {
+            let output = temp.path().join(format!("output,{global}"));
+            fs::create_dir(&output).unwrap();
+            render(
+                &binary,
+                temp.path(),
+                std::slice::from_ref(&input),
+                &output,
+                global,
+                &["codexcli".into()],
+                &["rules"],
+            )
+            .unwrap();
+            let relative = if global {
+                ".codex/AGENTS.md"
+            } else {
+                "AGENTS.md"
+            };
+            assert!(fs::read_to_string(output.join(relative))
+                .unwrap()
+                .contains("A staged rendering fixture."));
+        }
+    }
 
     #[test]
     fn generate_only_uses_staging_paths_and_environment() {
@@ -470,14 +711,34 @@ mod tests {
             );
             let home = if global { &output } else { &runtime };
             assert_eq!(command.get_current_dir(), Some(output.as_path()));
+            let mut expected_env = std::collections::BTreeMap::from([
+                (OsStr::new("DO_NOT_TRACK"), Some(OsStr::new("1"))),
+                (OsStr::new("HOME"), Some(home.as_os_str())),
+                (OsStr::new("HOME_DIR"), Some(home.as_os_str())),
+                (OsStr::new("USERPROFILE"), Some(home.as_os_str())),
+                (OsStr::new("TMPDIR"), Some(runtime.as_os_str())),
+            ]);
+            #[cfg(windows)]
+            let system_root = std::env::var_os("SystemRoot");
+            #[cfg(windows)]
+            {
+                expected_env.extend([
+                    (OsStr::new("APPDATA"), Some(home.as_os_str())),
+                    (OsStr::new("LOCALAPPDATA"), Some(home.as_os_str())),
+                    (OsStr::new("TEMP"), Some(runtime.as_os_str())),
+                    (OsStr::new("TMP"), Some(runtime.as_os_str())),
+                ]);
+                if let Some(root) = system_root.as_deref() {
+                    expected_env.insert(OsStr::new("SystemRoot"), Some(root));
+                }
+            }
+            #[cfg(not(windows))]
+            let _ = &mut expected_env;
             assert_eq!(
-                command.get_envs().collect::<Vec<_>>(),
-                vec![
-                    (OsStr::new("DO_NOT_TRACK"), Some(OsStr::new("1"))),
-                    (OsStr::new("HOME"), Some(home.as_os_str())),
-                    (OsStr::new("HOME_DIR"), Some(home.as_os_str())),
-                    (OsStr::new("TMPDIR"), Some(runtime.as_os_str())),
-                ]
+                command
+                    .get_envs()
+                    .collect::<std::collections::BTreeMap<_, _>>(),
+                expected_env
             );
             let mut expected = vec![OsStr::new("generate")];
             if global {
