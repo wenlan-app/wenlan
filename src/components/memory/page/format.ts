@@ -73,6 +73,18 @@ export function revisionWriterLabel(
       ? t("revisionLabel.writer.agentRefreshNamed", { agent: name })
       : t("revisionLabel.writer.agentRefresh");
   }
+  if (editedBy === "agent_create") {
+    // The AI tool that made the page, by its own name where it was kept.
+    // A tool that calls itself the terminal, the person or Wenlan is not
+    // named as itself.
+    const from = agent?.trim() ?? "";
+    const selfNamed = from === SAVED_FROM_TERMINAL || from === RULE_REMOVED_IN_APP
+      || from.startsWith(SELF_NAMED_TOOL_PREFIX);
+    const name = selfNamed ? null : writerAgentName(t, from);
+    return name
+      ? t("revisionLabel.writer.agentCreateNamed", { agent: name })
+      : t("revisionLabel.writer.agentCreate");
+  }
   if (editedBy === "person_asked") {
     const name = writerAgentName(t, agent);
     return name

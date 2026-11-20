@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Who archived or restored a page (migration 165).
+//! Who archived or restored a page (migration 165), and which AI tool made
+//! it.
 //!
 //! `page_history.edited_by` keeps its `archive` / `restore` marker; the new,
 //! nullable `actor` column says who asked, in the writer vocabulary the
 //! history already speaks: `manual_edit` for the person at this computer,
 //! `shared_person:<member>` for a team member in person, `ai:<agent>` for an
 //! AI tool. Rows written before it stay `NULL` and are shown without a name;
-//! no name is ever guessed for them.
+//! no name is ever guessed for them. A page's `agent_create` first row keeps
+//! the AI tool's own name (`claude-code`) there.
 
 use std::collections::HashMap;
 
@@ -142,6 +144,30 @@ impl MemoryDB {
             .into_iter()
             .map(|(version, _, _, actor)| (version, actor))
             .collect())
+    }
+
+    /// The AI tool that made `page_id`, as it named itself (`claude-code`),
+    /// when its first version is an `agent_create` row that recorded one.
+    /// Pages made before the name was kept answer `None`; no name is guessed.
+    pub async fn page_birth_agent(&self, page_id: &str) -> Result<Option<String>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT actor FROM page_history
+                  WHERE page_id = ?1 AND version = 1 AND edited_by = 'agent_create'
+                  ORDER BY rowid ASC LIMIT 1",
+                libsql::params![page_id],
+            )
+            .await
+            .map_err(db_err("page birth agent"))?;
+        let Some(row) = rows.next().await.map_err(db_err("page birth agent row"))? else {
+            return Ok(None);
+        };
+        Ok(row
+            .get::<Option<String>>(0)
+            .unwrap_or(None)
+            .map(|agent| agent.trim().to_string())
+            .filter(|agent| !agent.is_empty()))
     }
 }
 

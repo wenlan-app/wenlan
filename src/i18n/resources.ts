@@ -1102,7 +1102,6 @@ const en = {
     citationsStrippedEmpty: "Citations cleared by edit. Rebuild to restore",
     citationsStrippedMismatch: "Citation data mismatched. Rebuild to repair",
     unresolvedLink: "Not organized yet",
-    unknownAgent: "unknown agent",
     sourceKind: {
       memory: "memory",
       chat: "chat",
@@ -1140,6 +1139,7 @@ const en = {
       other: "Updated",
       personCreate: "You created this page",
       agentCreate: "Created by an agent",
+      agentCreateNamed: "Created by {{agent}}",
       create: "Created",
     },
     summary: {
@@ -4606,7 +4606,6 @@ const zhHans = {
     citationsStrippedEmpty: "编辑已清除引用。重新整理即可恢复",
     citationsStrippedMismatch: "引用数据不匹配。重新整理即可修复",
     unresolvedLink: "尚未整理成笔记",
-    unknownAgent: "未知代理",
     sourceKind: {
       memory: "记忆",
       chat: "对话",
@@ -4644,6 +4643,7 @@ const zhHans = {
       other: "已更新",
       personCreate: "你创建了这篇",
       agentCreate: "Agent 创建",
+      agentCreateNamed: "{{agent}} 创建",
       create: "创建",
     },
     summary: {
@@ -8065,7 +8065,6 @@ const zhHant = {
     citationsStrippedEmpty: "編輯已清除引用。重新整理即可恢復",
     citationsStrippedMismatch: "引用資料不相符。重新整理即可修復",
     unresolvedLink: "尚未整理成筆記",
-    unknownAgent: "未知代理",
     sourceKind: {
       memory: "記憶",
       chat: "對話",
@@ -8103,6 +8102,7 @@ const zhHant = {
       other: "已更新",
       personCreate: "你建立了這篇",
       agentCreate: "Agent 建立",
+      agentCreateNamed: "{{agent}} 建立",
       create: "建立",
     },
     summary: {
