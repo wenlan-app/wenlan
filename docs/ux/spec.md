@@ -903,11 +903,14 @@ and wait for evidence that people need them.
   The preview shows which skills track a verified upstream and which
   become plain copies. `wenlan rules skill-updates` offers available
   upstream versions for review without changing the master or tool files.
+  Codex adoption replaces the legacy harness-generated header with a
+  Wenlan-managed header. The preview says the old sync script becomes
+  unused for this file and stays in place.
   `wenlan rules restore` asks the person again and uses that backup to
   restore the original bytes and link targets. It keeps any destination
   that has changed since delivery available for review.
   原文：「我希望能把現有電腦上的一套改成用 wenlan 這套，目標就是減少摩擦和增加開發體驗，包含技能等等這些」（2026-11-20 08:11Z）。英譯待 Qi-Xuan 確認："I want to switch the setup on my current computer to Wenlan's system to reduce friction and improve the development experience, including skills."
-  Tests `rulesync_adopt_and_restore_exact_bytes_and_links`, `codex_delivery_reports_its_link_and_managed_state`, `personal_rules_dry_run_labels_skill_sources` and `adopted_skill_updates_share_the_registry_check_without_applying`.
+  Tests `rulesync_adopt_and_restore_exact_bytes_and_links`, `codex_delivery_reports_its_link_and_managed_state`, `personal_rules_dry_run_labels_skill_sources`, `adopted_skill_updates_share_the_registry_check_without_applying`, `personal_rules_dry_run_announces_retired_codex_script` and `adoption_replaces_the_codex_header_and_restore_keeps_the_script`.
 
 - **UX-SKILL-16** `pending` `save_skill` in a local AI tool proposes the
   skill's text and files. `wenlan skills save` saves an approved local skill

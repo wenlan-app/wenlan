@@ -127,6 +127,11 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
         token: fingerprint(adoption)?,
         files,
         skills,
+        notes: if adoption.codex_sync_replaced {
+            vec!["~/.agents/scripts/sync-codex-agents.sh becomes unused for Codex AGENTS.md after adoption. The script stays in place for you to keep or remove.".into()]
+        } else {
+            Vec::new()
+        },
     })
 }
 
@@ -136,6 +141,8 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
 pub struct PersonalMaster {
     pub shared: String,
     pub overlays: BTreeMap<String, String>,
+    #[serde(default)]
+    pub codex_sync_replaced: bool,
     pub skills: Vec<AdoptedSkill>,
     #[serde(default)]
     pub overrides: BTreeMap<String, LocalText>,
@@ -152,6 +159,7 @@ impl PersonalMaster {
         Self {
             shared: adoption.shared.clone(),
             overlays: adoption.overlays.clone(),
+            codex_sync_replaced: adoption.codex_sync_replaced,
             skills: adoption.skills.clone(),
             overrides: BTreeMap::new(),
         }
@@ -159,7 +167,12 @@ impl PersonalMaster {
 
     pub fn base_rule_text(&self, target: &str, generated: &[String]) -> String {
         let overlay = self.overlays.get(target).map(String::as_str).unwrap_or("");
-        let mut base = join_text(&self.shared, overlay);
+        let mut base = rulesync_adopt::personal_rule_body(
+            &self.shared,
+            overlay,
+            target,
+            self.codex_sync_replaced,
+        );
         if !generated.is_empty() {
             let mut addition = String::from("\n## How I work\n\n");
             for line in generated {

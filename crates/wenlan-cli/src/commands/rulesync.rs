@@ -236,6 +236,9 @@ pub(super) fn terminal_json(value: &impl Serialize) -> Result<String> {
 
 fn plan_for_a_person(plan: &AdoptionPlan) -> String {
     let mut out = String::from("Personal rules and skills adoption plan\n");
+    for note in &plan.notes {
+        writeln!(&mut out, "\n{}", one_line(note)).unwrap();
+    }
     if !plan.skills.is_empty() {
         out.push_str("\nSkill folders\n");
         for skill in &plan.skills {
@@ -395,6 +398,7 @@ mod tests {
                 diff: "-old\n+\u{1b}[2J\n+🐈\u{202e}\u{7f}".into(),
             }],
             skills: Vec::new(),
+            notes: Vec::new(),
         };
         let text = plan_for_a_person(&plan);
         assert!(text.contains("tool<U+000A>settings.md (+2 / -1)"));

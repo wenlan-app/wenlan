@@ -10,6 +10,8 @@ pub struct AdoptionPlan {
     pub files: Vec<AdoptionChange>,
     #[serde(default)]
     pub skills: Vec<AdoptionSkill>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
