@@ -118,10 +118,18 @@ the command still fails if the shutdown response names a different PID. New Linu
 
 macOS updates require the previous job to be unloaded, even after its daemon has
 exited. The CLI writes the confirmed plist and uses `bootstrap` without implicit
-unload/remove behavior; starting a verified inactive loaded job uses `kickstart`
-without `-k`. If an update reports that the old job is still loaded, inspect and
-boot out that confirmed job using the steps below, then retry. Other root's loaded
+unload/remove behavior, and it checks for a loaded job before it asks any daemon
+to shut down, so a refused update leaves the running service as it was. Starting
+a verified inactive loaded job uses `kickstart` without `-k`; launchd gets up to
+five seconds to report a gracefully stopped job as exited. The job parser counts
+the nested ` => {` values of a signed job's `LWCR` block, so a notarized install
+is measured like any other. If an update reports that the old job is still
+loaded, inspect and boot out that confirmed job using the steps below, then retry. Other root's loaded
 configuration cannot be replaced merely by editing the plist on disk.
+
+The desktop app never hands the registration to itself when the registered
+daemon lives in another `Wenlan.app` bundle with a newer release (an old copy
+left in `~/Applications`, say), and it never restarts a daemon newer than itself.
 
 For a one-time upgrade, first inspect the existing service and confirm its
 executable, arguments, and data directory against the store you intend to upgrade:

@@ -207,6 +207,20 @@ fn loaded_launchd_job() -> Result<Option<String>> {
     Err(OwnershipRefusal("loaded launchd job could not be measured".into()).into())
 }
 
+/// launchd reports a job as running for a moment after its process answered
+/// a graceful shutdown. Give the supervisor that moment before treating the
+/// registration as still active; the last refusal stands after the deadline.
+async fn wait_for_registered_stopped() -> Result<()> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        match verify_registered_stopped() {
+            Ok(()) => return Ok(()),
+            Err(error) if std::time::Instant::now() >= deadline => return Err(error),
+            Err(_) => tokio::time::sleep(std::time::Duration::from_millis(200)).await,
+        }
+    }
+}
+
 #[cfg(target_os = "macos")]
 fn require_unloaded_launchd_job() -> Result<()> {
     if loaded_launchd_job()?.is_some() {
@@ -673,6 +687,12 @@ pub async fn install() -> Result<()> {
     #[cfg(not(target_os = "macos"))]
     let m = manager()?;
 
+    // A loaded macOS job blocks the replacement below, and the CLI never
+    // unloads one itself. Refuse before the shutdown, not after it: refusing
+    // later would leave the daemon this command stopped down for good.
+    #[cfg(target_os = "macos")]
+    require_unloaded_launchd_job()?;
+
     // Gracefully stop any daemon that is currently answering, and wait for it
     // to fully exit, before reinstalling. Swapping the binary under a live
     // process would otherwise leave the OLD daemon running until something
@@ -690,7 +710,7 @@ pub async fn install() -> Result<()> {
     }
 
     if is_installed() {
-        verify_registered_stopped()?;
+        wait_for_registered_stopped().await?;
     }
     #[cfg(target_os = "macos")]
     require_unloaded_launchd_job()?;
@@ -1002,6 +1022,9 @@ fn print_service_diagnostics() {
 
 // Supervisors start proven inactive registrations; they never force-stop.
 async fn start_after_graceful_stop() -> Result<()> {
+    if is_installed() {
+        wait_for_registered_stopped().await?;
+    }
     start_registered(false)
 }
 
