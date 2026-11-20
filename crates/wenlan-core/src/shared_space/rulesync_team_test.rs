@@ -2,7 +2,7 @@
 
 use super::*;
 use std::{fs, sync::Arc};
-use wenlan_types::team::{TeamAccess, TeamFileList, TeamSpaceAccess};
+use wenlan_types::team::{TeamAccess, TeamSpaceAccess};
 
 use crate::rulesync_team::{self, ReviewError};
 use crate::skill_registry::{project_sync::store_test_skill, Scope as SkillScope, SkillFile};
@@ -93,11 +93,15 @@ impl Fixture {
         let grant = me.spaces.iter().find(|entry| entry.space == space).unwrap();
         let server = team::hosted_folder(&self.settings, space).unwrap().unwrap();
         let pages = self.db.shared_folder_pages(space).await.unwrap();
-        let list = TeamFileList {
-            access: grant.access,
-            files: team::list_folder_files(&server, &pages),
-            rules: rulesync_team::hosted_manifest(&self.team, &self.settings, space).unwrap(),
-        };
+        let list = rulesync_team::hosted_file_list(
+            &self.team,
+            &self.settings,
+            space,
+            &server,
+            grant.access,
+            &pages,
+        )
+        .unwrap();
         let settings = self.root.path().join(name).join(SETTINGS_FILE);
         let folder = remote::mirror_folder(&settings, URL, space);
         let host = HostLink {
@@ -509,9 +513,17 @@ async fn rulesync_team_shares_only_approved_safe_skills_from_the_exact_project()
     let folder = team::hosted_folder(&fixture.settings, PROJECT)
         .unwrap()
         .unwrap();
-    let manifest = rulesync_team::hosted_manifest(&fixture.team, &fixture.settings, PROJECT)
-        .unwrap()
-        .unwrap();
+    let pages = fixture.db.shared_folder_pages(PROJECT).await.unwrap();
+    let list = rulesync_team::hosted_file_list(
+        &fixture.team,
+        &fixture.settings,
+        PROJECT,
+        &folder,
+        TeamAccess::Read,
+        &pages,
+    )
+    .unwrap();
+    let manifest = list.rules.as_ref().unwrap();
     let approved = rulesync_team::read_hosted_rule_file(
         &fixture.team,
         &fixture.settings,
@@ -520,15 +532,9 @@ async fn rulesync_team_shares_only_approved_safe_skills_from_the_exact_project()
     )
     .unwrap()
     .unwrap();
-    let pages = fixture.db.shared_folder_pages(PROJECT).await.unwrap();
     let invalid_bundle = |skills| {
-        let mut manifest = manifest.clone();
-        manifest.skills = skills;
-        let list = TeamFileList {
-            access: TeamAccess::Read,
-            files: team::list_folder_files(&folder, &pages),
-            rules: Some(manifest),
-        };
+        let mut list = list.clone();
+        list.rules.as_mut().unwrap().skills = skills;
         assert!(rulesync_team::pulled_layer(&host, &list, &approved).is_err());
     };
     let mut unsafe_path = manifest.skills.clone();

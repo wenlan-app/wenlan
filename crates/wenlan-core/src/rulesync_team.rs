@@ -467,6 +467,28 @@ pub fn hosted_manifest(
     }))
 }
 
+/// Lists the shared page versions and the approved Rules version for a Space pull.
+pub fn hosted_file_list(
+    team_path: &Path,
+    settings_path: &Path,
+    space: &str,
+    folder: &Path,
+    access: TeamAccess,
+    pages: &team::SharedFolderPages,
+) -> Result<TeamFileList, WenlanError> {
+    let rules = hosted_manifest(team_path, settings_path, space)?;
+    let mut files = team::list_folder_files(folder, pages);
+    // Space pulls require the manifest's approved path in the file list.
+    if let Some(rules) = rules.as_ref().filter(|rules| !files.contains(&rules.file)) {
+        files.push(rules.file.clone());
+    }
+    Ok(TeamFileList {
+        access,
+        files,
+        rules,
+    })
+}
+
 /// Reads the Space's approved Rules version named by its file manifest.
 pub fn read_hosted_rule_file(
     team_path: &Path,

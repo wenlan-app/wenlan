@@ -33,9 +33,9 @@ use wenlan_core::rulesync_team::{self, ReviewError};
 use wenlan_core::shared_space::{self, remote, Scope};
 use wenlan_core::team::{self, Member};
 use wenlan_types::team::{
-    TeamAccess, TeamAddMemberRequest, TeamFileList, TeamHostSpaceRequest, TeamJoinRequest,
-    TeamJoinResponse, TeamMember, TeamMemberKey, TeamMembershipRequest, TeamRenameRequest,
-    TeamRole, TeamRulesDecisionRequest, TeamStartRequest, TeamStatus, TeamUpdateMemberRequest,
+    TeamAccess, TeamAddMemberRequest, TeamHostSpaceRequest, TeamJoinRequest, TeamJoinResponse,
+    TeamMember, TeamMemberKey, TeamMembershipRequest, TeamRenameRequest, TeamRole,
+    TeamRulesDecisionRequest, TeamStartRequest, TeamStatus, TeamUpdateMemberRequest,
     DEFAULT_TEAM_PORT,
 };
 
@@ -2342,13 +2342,14 @@ async fn team_files(
         }
     };
     let listed = tokio::task::spawn_blocking(move || {
-        let rules = rulesync_team::hosted_manifest(&state.team_path, &state.settings_path, &space)?;
-        let files = team::list_folder_files(&folder, &shared_pages);
-        Ok::<_, wenlan_core::error::WenlanError>(TeamFileList {
+        rulesync_team::hosted_file_list(
+            &state.team_path,
+            &state.settings_path,
+            &space,
+            &folder,
             access,
-            files,
-            rules,
-        })
+            &shared_pages,
+        )
     })
     .await;
     match listed {

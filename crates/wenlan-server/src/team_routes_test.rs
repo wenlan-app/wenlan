@@ -6,7 +6,7 @@ use super::*;
 use axum::body::to_bytes;
 use axum::http::Method;
 use wenlan_core::shared_space::{version, SpaceMember};
-use wenlan_types::team::TeamSpaceAccess;
+use wenlan_types::team::{TeamFileList, TeamSpaceAccess};
 
 struct Fixture {
     _dir: tempfile::TempDir,
@@ -2052,7 +2052,7 @@ async fn rulesync_team_project_review_requires_a_current_write_session() {
     assert!(list.files.contains(&page_file));
     let rules = list.rules.unwrap();
     assert_eq!(rules.project.as_ref().unwrap().space, "Design");
-    assert!(!list.files.contains(&rules.file));
+    assert!(list.files.contains(&rules.file));
     let (status, body) = call(
         &f.state,
         Method::GET,
