@@ -6,6 +6,8 @@ use crate::read_scope::ReadScope;
 use crate::WenlanError;
 use std::collections::{HashMap, HashSet};
 
+const SHARED_PAGE_DELETION_PREFIX: &str = "shared_space.deleted:";
+
 fn numbered_conditions(conditions: &[String], start: usize) -> String {
     let mut parameter = start;
     conditions
@@ -96,7 +98,7 @@ pub(super) fn shared_page_predicate(alias: &str) -> String {
     let personal_rules = super::skill_grow::personal_rule_pages_sql();
     format!(
         "{alias}status IN ('active', 'archived') AND COALESCE({alias}kind, 'concept') != 'entity'
-           AND COALESCE({alias}creation_kind, 'distilled') != 'source'
+           AND COALESCE({alias}creation_kind, 'distilled') NOT IN ('source', 'imported')
            AND NOT (LENGTH({alias}id) = 20 AND {alias}id GLOB 'src_*'
                     AND SUBSTR({alias}id, 5) NOT GLOB '*[^0-9a-f]*')
            AND {alias}id NOT IN (SELECT page_id FROM ({personal_rules}) WHERE page_id IS NOT NULL)"
@@ -880,6 +882,68 @@ impl MemoryDB {
     ) -> Result<Option<Page>, WenlanError> {
         self.get_page_scoped_inner(id, scope, PageReader::Browse)
             .await
+    }
+
+    /// Eligibility for the Space's shared folder, including archive delivery
+    /// for pages verified as shared when the host permanently deleted them.
+    pub async fn shared_folder_pages(
+        &self,
+        space: &str,
+    ) -> Result<crate::team::SharedFolderPages, WenlanError> {
+        let shared = shared_page_predicate("p.");
+        let id_start = SHARED_PAGE_DELETION_PREFIX.len() + 1;
+        let sql = format!(
+            "SELECT p.id, 0 FROM pages p WHERE p.workspace = ?1 AND {shared}
+             UNION ALL
+             SELECT substr(m.key, {id_start}), 1
+               FROM app_metadata m JOIN spaces s ON s.id = m.value
+              WHERE s.name = ?1 AND m.key GLOB '{SHARED_PAGE_DELETION_PREFIX}*'
+                AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.id = substr(m.key, {id_start}))"
+        );
+        let error = |e| WenlanError::VectorDb(format!("shared folder pages: {e}"));
+        let conn = self.conn.lock().await;
+        let mut rows = conn.query(&sql, [space]).await.map_err(error)?;
+        let mut pages = crate::team::SharedFolderPages::default();
+        while let Some(row) = rows.next().await.map_err(error)? {
+            let id = row.get(0).map_err(error)?;
+            if row.get::<i64>(1).map_err(error)? == 1 {
+                pages.deleted.insert(id);
+            } else {
+                pages.shared.insert(id);
+            }
+        }
+        Ok(pages)
+    }
+
+    pub(super) async fn record_shared_page_deletion_on(
+        conn: &libsql::Connection,
+        id: &str,
+    ) -> Result<(), WenlanError> {
+        let key = format!("{SHARED_PAGE_DELETION_PREFIX}{id}");
+        let error = |e| WenlanError::VectorDb(format!("shared page deletion: {e}"));
+        // The ID may have been reused. Only its current generation's eligibility
+        // can authorize an archive after the page row is gone.
+        conn.execute("DELETE FROM app_metadata WHERE key = ?1", [key.as_str()])
+            .await
+            .map_err(error)?;
+        let shared = shared_page_predicate("p.");
+        conn.execute(
+            &format!(
+                "INSERT INTO app_metadata(key, value)
+                 SELECT ?2, s.id FROM pages p
+                   JOIN spaces s ON s.name = p.workspace
+                   JOIN app_metadata h ON h.key = 'shared_space.held:' || s.name
+                  WHERE p.id = ?1 AND {shared}
+                    AND EXISTS (
+                        SELECT 1 FROM json_each(CASE WHEN json_valid(h.value) THEN h.value ELSE '{{}}' END)
+                         WHERE key = p.id
+                    )"
+            ),
+            libsql::params![id, key],
+        )
+        .await
+        .map_err(error)?;
+        Ok(())
     }
 
     pub async fn get_shared_page_scoped(

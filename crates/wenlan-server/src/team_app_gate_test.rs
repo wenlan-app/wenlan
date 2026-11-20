@@ -196,6 +196,7 @@ async fn fixture() -> Fixture {
         state: TeamState {
             team_path,
             settings_path,
+            db: None,
             daemon_url: format!("http://127.0.0.1:{port}"),
             in_process_daemon: None,
             mcp: Arc::default(),
@@ -1725,6 +1726,7 @@ async fn a_member_uses_folders_through_the_gate_and_a_real_daemon() {
     let state = TeamState {
         team_path,
         settings_path,
+        db: None,
         daemon_url: format!("http://127.0.0.1:{port}"),
         in_process_daemon: None,
         mcp: Arc::default(),

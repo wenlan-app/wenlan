@@ -612,26 +612,65 @@ async fn nothing_outside_the_shared_space_reaches_the_folder() {
             "{private:?} is in the folder:\n{all}"
         );
     }
-    // The note and its markers are shared. Its unpublished sources are not.
-    assert!(all.contains("Fish or pasta [1]. Budget agreed [2]."));
+    // The note stays readable; its unpublished source markers and metadata do not.
+    assert!(all.contains("Fish or pasta. Budget agreed."));
+    assert!(
+        !all.contains("Unavailable source") && !all.contains("shared:private-source"),
+        "a shared snapshot must not reveal the number of hidden citations:\n{all}"
+    );
+    assert!(
+        !all.contains("[1]") && !all.contains("[2]"),
+        "body markers must not reveal hidden citations either:\n{all}"
+    );
     assert!(
         !all.contains("We said fish is fine for Grandma."),
         "a shared snapshot included an unpublished memory excerpt"
     );
-    assert!(all.contains("[1]: Unavailable source · shared:private-source"));
-    assert!(all.contains("[2]: Unavailable source · shared:private-source"));
 
     // The page as B gets it keeps its words, and a later sync of A writes
     // nothing new: the rewritten version is the page's version.
     assert_eq!(a.sync(&folder).await, zero());
+    assert_eq!(
+        a.content(&menu).await,
+        "Fish or pasta [1]. Budget agreed [2].",
+        "rewriting the shared snapshot must not change the local original"
+    );
     let b = Member::new("Ana").await;
     assert_eq!(b.sync(&folder).await.applied, 1);
-    assert_eq!(
-        b.content(&menu).await,
-        "Fish or pasta [1]. Budget agreed [2]."
-    );
+    assert_eq!(b.content(&menu).await, "Fish or pasta. Budget agreed.");
     assert_eq!(b.sync(&folder).await, zero());
     assert_eq!(a.sync(&folder).await, zero());
+}
+
+#[tokio::test]
+async fn an_ordinary_id_import_is_not_exported_as_a_shared_page() {
+    let folder = tempfile::tempdir().unwrap();
+    let a = Member::new("Qi-Xuan").await;
+    let imported = crate::post_write::create_page(
+        &a.db,
+        CreateConceptRequest {
+            title: "Imported notes".into(),
+            content: "A verbatim imported paragraph.".into(),
+            summary: None,
+            entity_id: None,
+            space: Some(SPACE.into()).into(),
+            source_memory_ids: Vec::new(),
+            creation_kind: Some("imported".into()),
+            workspace: Some(SPACE.into()),
+        },
+        "fixture",
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(imported.id.starts_with("page_"));
+
+    let counts = a.sync(folder.path()).await;
+    assert_eq!(
+        counts.exported, 0,
+        "legacy import content stays local: {counts:?}"
+    );
+    assert_eq!(version_count(folder.path()), 0);
 }
 
 #[tokio::test]

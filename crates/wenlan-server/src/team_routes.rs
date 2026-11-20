@@ -883,6 +883,9 @@ static LIVE_SESSIONS: LazyLock<Arc<crate::team_session::SessionStore>> =
 struct TeamState {
     team_path: PathBuf,
     settings_path: PathBuf,
+    /// The listener needs the host's current shared-page IDs to suppress old
+    /// snapshots whose citations predate the source filter.
+    db: Option<Arc<wenlan_core::db::MemoryDB>>,
     /// The daemon's own loopback address, which MCP reaches it at.
     daemon_url: String,
     /// Dispatch the forwarded browser request without a listening socket.
@@ -906,10 +909,18 @@ type McpCache = Arc<std::sync::Mutex<HashMap<(String, String, TeamAccess), McpSe
 /// stops or starts it without a restart. A listener that cannot start is
 /// logged; the daemon goes on without it.
 pub async fn serve_team_listener(shared: SharedState, shutdown: ShutdownHandle) {
-    let port = { shared.read().await.bound_port };
+    let (port, db) = {
+        let shared = shared.read().await;
+        (shared.bound_port, shared.db.clone())
+    };
+    let Some(db) = db else {
+        tracing::warn!("[team] listener not started without the local database");
+        return;
+    };
     let state = TeamState {
         team_path: team::team_path(),
         settings_path: shared_space::settings_path(),
+        db: Some(db),
         daemon_url: format!("http://127.0.0.1:{port}"),
         #[cfg(test)]
         in_process_daemon: None,
@@ -2323,9 +2334,16 @@ async fn team_files(
         Ok(found) => found,
         Err(refused) => return refused,
     };
+    let shared_pages = match hosted_folder_pages(&state, &space).await {
+        Ok(pages) => pages,
+        Err(error) => {
+            tracing::warn!("[team] cannot verify hosted page sources: {error}");
+            return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        }
+    };
     let listed = tokio::task::spawn_blocking(move || {
         let rules = rulesync_team::hosted_manifest(&state.team_path, &state.settings_path, &space)?;
-        let files = team::list_folder_files(&folder);
+        let files = team::list_folder_files(&folder, &shared_pages);
         Ok::<_, wenlan_core::error::WenlanError>(TeamFileList {
             access,
             files,
@@ -2412,6 +2430,16 @@ fn rules_review_error(error: ReviewError) -> Response {
     (status, error.to_string()).into_response()
 }
 
+async fn hosted_folder_pages(
+    state: &TeamState,
+    space: &str,
+) -> Result<team::SharedFolderPages, ServerError> {
+    let Some(db) = &state.db else {
+        return Ok(team::SharedFolderPages::default());
+    };
+    Ok(db.shared_folder_pages(space).await?)
+}
+
 #[derive(Debug, Deserialize)]
 struct FileQuery {
     path: String,
@@ -2430,12 +2458,19 @@ async fn team_file(
     let Some(file) = team::served_path(&folder, &query.path) else {
         return (StatusCode::BAD_REQUEST, "not a file of the Space").into_response();
     };
+    let shared_pages = match hosted_folder_pages(&state, &space).await {
+        Ok(pages) => pages,
+        Err(error) => {
+            tracing::warn!("[team] cannot verify hosted page sources: {error}");
+            return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        }
+    };
     match tokio::fs::read(&file).await {
         Ok(bytes)
             if query.path == shared_space::SPACE_FILE || {
                 let mut parts = query.path.rsplit('/');
                 matches!((parts.next(), parts.next()), (Some(name), Some(page))
-                        if team::can_serve_version(page, name, &bytes))
+                    if team::can_serve_version(page, name, &bytes, &shared_pages))
             } =>
         {
             (

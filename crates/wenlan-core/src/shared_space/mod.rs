@@ -2117,7 +2117,7 @@ async fn pass(
     if matches!(scope, Scope::Space(_)) {
         // A source page can be a verbatim projection of a local import.
         local.retain(|id, page| {
-            let shared = page.creation_kind != "source"
+            let shared = !matches!(page.creation_kind.as_str(), "source" | "imported")
                 && !crate::document_enrichment::is_source_page_id(id);
             if !shared {
                 left_out.insert(id.clone());
@@ -2367,7 +2367,9 @@ impl Pass<'_> {
     fn local_state(&self, page: &Page) -> version::State {
         version::State {
             title: page.title.clone(),
-            body_digest: version::body_digest(&page.content),
+            body_digest: version::body_digest(
+                &self.shared_body(&page.content, &local_citations(page)),
+            ),
             archived: page.status == "archived",
             locked: page.review_required,
             space: if self.library {
@@ -3007,8 +3009,9 @@ impl Pass<'_> {
                 }
             }
         }
+        let current_shared_body = self.shared_body(&current.content, &local_citations(&current));
         if current.status == "active"
-            && version::body_digest(&current.content) != head.meta.body_digest
+            && version::body_digest(&current_shared_body) != head.meta.body_digest
         {
             if !apply_update(
                 self.db,
@@ -3345,7 +3348,8 @@ impl Pass<'_> {
             }
         }
 
-        let mut file = PageFile::new(&page.title, &page.content);
+        let shared_body = self.shared_body(&page.content, &citations);
+        let mut file = PageFile::new(&page.title, &shared_body);
         file.id = Some(page.id.clone());
         file.kind = PageKind::Page;
         if self.library {
@@ -3366,7 +3370,7 @@ impl Pass<'_> {
                 .map(|parent| parent.sha.clone())
                 .or(parent_sha.map(str::to_string)),
             merged,
-            body_digest: version::body_digest(&page.content),
+            body_digest: version::body_digest(&shared_body),
             author: match parent.filter(|parent| lock_only(parent, page)) {
                 // Only the lock changed: the person here did that.
                 Some(_) => Author {
@@ -3387,7 +3391,7 @@ impl Pass<'_> {
         let text = version::render(&file, &meta);
         let name = version::version_file_name(&version::sha256_hex(text.as_bytes()));
         match version::parse(&name, text.as_bytes()) {
-            Ok(read) if read.page.body == page.content && read.page.title == page.title => {}
+            Ok(read) if read.page.body == shared_body && read.page.title == page.title => {}
             _ => {
                 log::warn!(
                     "[shared_space] {} does not read back as written; not shared",
@@ -3451,6 +3455,9 @@ impl Pass<'_> {
         let Some(id) = winner.page.id.clone().filter(|id| version::is_safe_id(id)) else {
             return Ok(None);
         };
+        let mut page = winner.page.clone();
+        page.body = self.shared_body(&winner.page.body, &winner.page.citations);
+        (page.citations, page.basis) = self.shared_sources(&page.citations, &page.basis);
         let meta = VersionMeta {
             parent: Some(winner.sha.clone()),
             merged: head
@@ -3459,7 +3466,7 @@ impl Pass<'_> {
                 .filter(|leaf| leaf.sha != winner.sha)
                 .map(|leaf| leaf.sha.clone())
                 .collect(),
-            body_digest: winner.meta.body_digest.clone(),
+            body_digest: version::body_digest(&page.body),
             author: Author {
                 member: self.settings.member_id.clone(),
                 kind: AuthorKind::Person,
@@ -3472,8 +3479,6 @@ impl Pass<'_> {
             decides: None,
             device: self.own_device(),
         };
-        let mut page = winner.page.clone();
-        (page.citations, page.basis) = self.shared_sources(&page.citations, &page.basis);
         let text = version::render(&page, &meta);
         self.write(&id, text).await.map(Some)
     }
@@ -3486,6 +3491,17 @@ impl Pass<'_> {
         rewrite::rewrite_sources(
             citations,
             basis,
+            &rewrite::RewriteContext {
+                space_pages: &self.space_pages,
+                keep_all: self.library,
+            },
+        )
+    }
+
+    fn shared_body(&self, body: &str, citations: &[Citation]) -> String {
+        rewrite::rewrite_body(
+            body,
+            citations,
             &rewrite::RewriteContext {
                 space_pages: &self.space_pages,
                 keep_all: self.library,
@@ -3546,16 +3562,12 @@ fn edit_ts(last_modified: &str) -> String {
     }
 }
 
-/// The page's sources block as it is stored here, before the rewrite: one
-/// line per marker (its first occurrence) and one per live basis.
-async fn local_sources(
-    db: &MemoryDB,
-    page: &Page,
-) -> Result<(Vec<Citation>, Vec<Basis>), WenlanError> {
+/// One line per stored marker, using its first occurrence.
+fn local_citations(page: &Page) -> Vec<Citation> {
     let mut stored = page.citations.clone();
     stored.sort_by_key(|citation| citation.occurrence);
     let mut seen = HashSet::new();
-    let citations = stored
+    stored
         .iter()
         .filter(|citation| seen.insert(citation.marker))
         .map(|citation| Citation {
@@ -3563,7 +3575,14 @@ async fn local_sources(
             label: String::new(),
             locator: crate::store::export::pages::locator_of(citation),
         })
-        .collect();
+        .collect()
+}
+
+/// The stored sources block before the shared-folder rewrite.
+async fn local_sources(
+    db: &MemoryDB,
+    page: &Page,
+) -> Result<(Vec<Citation>, Vec<Basis>), WenlanError> {
     let basis = db
         .list_page_basis(&page.id)
         .await?
@@ -3577,7 +3596,7 @@ async fn local_sources(
             },
         })
         .collect();
-    Ok((citations, basis))
+    Ok((local_citations(page), basis))
 }
 
 /// Who wrote the page's current version here, for the version's author.

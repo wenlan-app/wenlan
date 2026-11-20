@@ -58488,6 +58488,7 @@ impl MemoryDB {
             )
             .await
             .map_err(|e| WenlanError::VectorDb(format!("delete_page looks: {e}")))?;
+            Self::record_shared_page_deletion_on(&conn, id).await?;
             conn.execute("DELETE FROM pages WHERE id = ?1", libsql::params![id])
                 .await
                 .map_err(|e| WenlanError::VectorDb(format!("delete_page row: {e}")))?;
