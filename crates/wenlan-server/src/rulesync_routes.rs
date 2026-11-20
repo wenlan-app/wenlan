@@ -16,7 +16,7 @@ use wenlan_core::rulesync_adopt::{AdoptedSkill, Adoption, AdoptionEntry};
 use wenlan_core::rulesync_personal::{
     adoption_inputs, describe_change, discover_adoption, fingerprint, line_changes,
     merge_rule_text, promote_changes, stage_adopted_skill, system_home, write_root_rule,
-    LineChange, LocalText, PersonalMaster,
+    DeliveryWorktrees, LineChange, LocalText, PersonalMaster,
 };
 use wenlan_core::rulesync_renderer;
 use wenlan_core::rulesync_team::{self, TeamRuleLayer};
@@ -429,6 +429,8 @@ struct Manifest<Content = Vec<u8>> {
     #[serde(default)]
     unmanaged_skills: BTreeSet<PathBuf>,
     #[serde(default)]
+    worktree_writes: BTreeMap<PathBuf, PathBuf>,
+    #[serde(default)]
     scope_reviews: BTreeMap<String, ScopeReview>,
     #[serde(default)]
     delivery_issues: BTreeMap<PathBuf, RuleDeliveryIssue>,
@@ -444,6 +446,7 @@ impl Manifest {
             adopted: false,
             registry_skipped: BTreeMap::new(),
             unmanaged_skills: BTreeSet::new(),
+            worktree_writes: BTreeMap::new(),
             scope_reviews: BTreeMap::new(),
             delivery_issues: BTreeMap::new(),
         }
@@ -689,6 +692,7 @@ impl Setup {
         }
         let mut manifest = Manifest::new(master, backup);
         manifest.unmanaged_skills = adoption.skipped.into_keys().collect();
+        manifest.worktree_writes = adoption.worktree_writes;
         let mut result = report("Adopted the local tool setup");
         for (path, status) in self.apply_batch(root, &mut manifest, operations, BatchMode::Adopt)? {
             if status != ApplyOutcome::Applied {
@@ -884,6 +888,32 @@ impl Setup {
                 "Restore is waiting for changed files. The backup is still available".into();
         }
         Ok(result)
+    }
+
+    fn sync_batch(
+        &self,
+        root: &FileRoot,
+        manifest: &mut Manifest,
+        operations: Vec<Pending>,
+        result: &mut RulesSyncReport,
+    ) -> Result<Vec<(PathBuf, ApplyOutcome)>> {
+        if operations.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut worktrees = DeliveryWorktrees::new(&self.home)?;
+        let mut approved = Vec::with_capacity(operations.len());
+        for op in operations {
+            if op.seen != op.desired {
+                if let Some(reason) = worktrees.unreviewed(&op.path, &manifest.worktree_writes)? {
+                    result
+                        .blocked
+                        .push(format!("{}: {reason}", op.path.display()));
+                    continue;
+                }
+            }
+            approved.push(op);
+        }
+        self.apply_batch(root, manifest, approved, BatchMode::Continue)
     }
 
     fn sync(&self, generated: &[String]) -> Result<RulesSyncReport> {
@@ -1085,7 +1115,7 @@ impl Setup {
                 allow_link: false,
             });
         }
-        for (path, status) in self.apply_batch(root, manifest, operations, BatchMode::Continue)? {
+        for (path, status) in self.sync_batch(root, manifest, operations, &mut result)? {
             if status == ApplyOutcome::Applied {
                 result.written.push(path.display().to_string());
             } else {
@@ -1206,6 +1236,7 @@ impl Setup {
                 .flat_map(|skill| skill.targets.iter().cloned()),
         );
         let previous_skips = std::mem::take(&mut manifest.registry_skipped);
+        let mut worktrees = DeliveryWorktrees::new(&self.home)?;
         let mut operations = Vec::new();
         for target in targets {
             let local = rulesync_registry::approved_skill_sources(&self.data, &target)?;
@@ -1235,6 +1266,7 @@ impl Setup {
                     continue;
                 };
                 let emitted = emitted.as_path();
+                let default_folder = personal_skill_destination(&target, emitted)?;
                 let selected = approved.iter().find(|(path, skill)| {
                     path.file_name() == emitted.file_name()
                         && Some(skill.tool) == renderer_skill_tool(&target)
@@ -1253,10 +1285,37 @@ impl Setup {
                 } else {
                     selected
                         .or(adopted_folder)
-                        .map_or(emitted, |(path, _)| path.as_path())
+                        .map_or(default_folder.as_path(), |(path, _)| path.as_path())
                 };
                 if path_blocked(blocked, folder) || path_blocked(&manifest.unmanaged_skills, folder)
                 {
+                    continue;
+                }
+                if let Some(reason) = worktrees.unreviewed(folder, &manifest.worktree_writes)? {
+                    result
+                        .blocked
+                        .push(format!("{}: {reason}", folder.display()));
+                    manifest
+                        .registry_skipped
+                        .entry(name.clone())
+                        .or_default()
+                        .insert(folder.to_owned());
+                    continue;
+                }
+                if folder == default_folder
+                    && folder != emitted
+                    && !manifest.delivered.contains_key(folder)
+                    && !matches!(root.read(emitted, true), Ok(Snapshot::Absent))
+                {
+                    result.blocked.push(format!(
+                        "{}: Codex can already read a skill at {}. Choose another name to avoid a duplicate.",
+                        folder.display(), emitted.display()
+                    ));
+                    manifest
+                        .registry_skipped
+                        .entry(name.clone())
+                        .or_default()
+                        .insert(folder.to_owned());
                     continue;
                 }
                 let owned = manifest.delivered.get(folder).is_some_and(|record| {
@@ -1373,7 +1432,7 @@ impl Setup {
                 }
             }
         }
-        for (path, status) in self.apply_batch(root, manifest, operations, BatchMode::Continue)? {
+        for (path, status) in self.sync_batch(root, manifest, operations, result)? {
             if status == ApplyOutcome::Applied {
                 if matches!(manifest.delivered[&path].kind, Kind::RegistrySkill { .. }) {
                     result.written.push(path.display().to_string());
@@ -1435,7 +1494,7 @@ impl Setup {
                 allow_link,
             });
         }
-        for (path, status) in self.apply_batch(root, manifest, operations, BatchMode::Continue)? {
+        for (path, status) in self.sync_batch(root, manifest, operations, result)? {
             if status != ApplyOutcome::Applied {
                 result
                     .blocked
@@ -1540,7 +1599,7 @@ impl Setup {
                 });
             }
         }
-        for (path, status) in self.apply_batch(root, manifest, operations, BatchMode::Continue)? {
+        for (path, status) in self.sync_batch(root, manifest, operations, result)? {
             if status == ApplyOutcome::Applied {
                 result.written.push(path.display().to_string());
             } else {
@@ -1767,6 +1826,20 @@ struct SkillPath {
     target: String,
     installed: PathBuf,
     relative: PathBuf,
+}
+
+fn personal_skill_destination(target: &str, emitted: &Path) -> Result<PathBuf> {
+    if target == "codexcli" {
+        // The renderer stages Codex skills under .agents/skills. Codex also
+        // reads its own directory, which keeps personal copies out of the harness.
+        let folder = adoption_inputs()
+            .into_iter()
+            .find(|input| input.tool == target)
+            .and_then(|input| input.skills_path)
+            .context("Codex skill delivery folder is missing")?;
+        return Ok(folder.join(emitted.file_name().context("rendered skill has no name")?));
+    }
+    Ok(emitted.to_owned())
 }
 
 fn skill_path(skills: &[AdoptedSkill], path: &Path) -> Option<SkillPath> {
@@ -2237,6 +2310,40 @@ mod tests {
                 ".claude/skills/new-skill: Skill changes need your approval. Run `wenlan skills proposals` to review them.",
                 ".codex/AGENTS.md: Rule changes need your approval. Use `wenlan rules review` with the proposal below."
             ])
+        );
+    }
+
+    #[test]
+    fn rulesync_holds_delivery_into_a_worktree_added_after_adoption() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let checkout = f.setup.home.join(".claude");
+        assert!(std::process::Command::new("git")
+            .arg("-C")
+            .arg(&checkout)
+            .args(["init", "--quiet"])
+            .status()
+            .unwrap()
+            .success());
+        let old = f.text(CLAUDE);
+        let sync = f.sync_with("New render\n");
+        assert_eq!(sync.written, [CODEX]);
+        assert_eq!(sync.blocked.len(), 1, "{sync:?}");
+        assert!(sync.blocked[0].contains("inside the Git worktree at ~/.claude"));
+        assert_eq!(f.text(CLAUDE), old);
+    }
+
+    #[test]
+    fn rulesync_personal_codex_delivery_uses_the_tool_owned_folder() {
+        let shared = Path::new(".agents/skills/public-skill");
+        let claude = Path::new(".claude/skills/public-skill");
+        assert_eq!(
+            personal_skill_destination("codexcli", shared).unwrap(),
+            Path::new(".codex/skills/public-skill")
+        );
+        assert_eq!(
+            personal_skill_destination("claudecode", claude).unwrap(),
+            claude
         );
     }
 

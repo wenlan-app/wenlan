@@ -902,6 +902,9 @@ and wait for evidence that people need them.
   and replaces the adopted links with managed files or folders.
   The skill diff shows the rendered `SKILL.md` the tool receives. Adoption
   verifies that preview against pinned rulesync output before applying it.
+  The preview names any Git worktree that contains a delivery destination.
+  Personal Codex copies use `~/.codex/skills`. An existing Codex link to a
+  shared skill stays in place so Codex continues to list that skill once.
   The preview shows which skills track a verified upstream and which
   become plain copies. `wenlan rules skill-updates` offers available
   upstream versions for review without changing the master or tool files.

@@ -545,3 +545,60 @@ fn ux_skill_14_plain_rules_lists_a_saved_rule_with_where_it_came_from() {
         .stdout(predicate::str::contains("written by you").not());
     assert_eq!(sent(&received)[0].0, "GET /api/skills/rules");
 }
+
+#[cfg(unix)]
+#[test]
+fn personal_rules_dry_run_names_git_destinations_and_leaves_shared_codex_aliases() {
+    let state = tempfile::tempdir().unwrap();
+    let home = state.path().join("ai-tools/home");
+    for repo in [".agents", ".claude"] {
+        let folder = home.join(repo).join("skills/sample");
+        fs::create_dir_all(&folder).unwrap();
+        fs::write(
+            folder.join("SKILL.md"),
+            "---\nname: sample\ndescription: Fixture skill\n---\n\nInstructions.\n",
+        )
+        .unwrap();
+    }
+    for (root, name) in [(".agents", "agents-harness"), (".claude", "claude-config")] {
+        let git = |args: &[&str]| {
+            let output = std::process::Command::new("git")
+                .arg("-C")
+                .arg(home.join(root))
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        git(&["init", "--quiet"]);
+        git(&[
+            "remote",
+            "add",
+            "origin",
+            &format!("https://github.com/fixture/{name}.git"),
+        ]);
+    }
+    let codex = home.join(".codex/skills");
+    fs::create_dir_all(&codex).unwrap();
+    std::os::unix::fs::symlink("../../.agents/skills/sample", codex.join("sample")).unwrap();
+    personal_rules_cli(state.path())
+        .args(["rules", "adopt", "--dry-run", "--format", "table"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "~/.agents/skills is inside the Git repository agents-harness. Wenlan reads the shared skills there and leaves that directory in place.",
+        ))
+        .stdout(predicate::str::contains(
+            "~/.claude/skills is inside the Git repository claude-config. Wenlan will manage 1 skill folder there, and its writes can appear as changes in that repository.",
+        ))
+        .stdout(predicate::str::contains(
+            ".codex/skills/sample — skipped",
+        ))
+        .stdout(predicate::str::contains("A second copy would make Codex list the skill twice"));
+    assert!(codex.join("sample").is_symlink());
+    assert!(!state.path().join("unused-data-root").exists());
+}

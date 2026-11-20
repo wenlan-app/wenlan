@@ -13,8 +13,11 @@ use wenlan_types::rulesync::{AdoptionChange, AdoptionPlan, AdoptionSkill, Adopti
 
 use crate::rulesync_adopt::{self, AdoptedSkill, Adoption, AdoptionEntry, AdoptionTarget};
 
+#[path = "rulesync_delivery_worktrees.rs"]
+mod delivery_worktrees;
 #[path = "rulesync_skill_preview.rs"]
 mod skill_preview;
+pub use delivery_worktrees::DeliveryWorktrees;
 
 pub const RULE_PRECEDENCE: &str =
     "When instructions disagree, project rules come first, followed by team rules and personal rules.";
@@ -51,7 +54,8 @@ pub fn adoption_inputs() -> [AdoptionTarget; 2] {
 }
 
 pub fn discover_adoption(home: &Path) -> Result<Adoption> {
-    let mut adoption = rulesync_adopt::discover(home, &adoption_inputs())?;
+    let targets = adoption_inputs();
+    let mut adoption = rulesync_adopt::discover(home, &targets)?;
     for skill in &mut adoption.skills {
         let entry = Path::new("SKILL.md");
         skill.locations.retain(|target, folders| {
@@ -81,6 +85,7 @@ pub fn discover_adoption(home: &Path) -> Result<Adoption> {
             .targets
             .retain(|target| skill.locations.contains_key(target));
     }
+    delivery_worktrees::review_destinations(home, &mut adoption, &targets)?;
     Ok(adoption)
 }
 
@@ -167,15 +172,16 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
         }))
         .collect::<Vec<_>>();
     skills.sort_by(|first, second| first.path.cmp(&second.path));
+    let mut notes = Vec::new();
+    if adoption.codex_sync_replaced {
+        notes.push("~/.agents/scripts/sync-codex-agents.sh becomes unused for Codex AGENTS.md after adoption. The script stays in place for you to keep or remove.".into());
+    }
+    notes.extend(adoption.worktree_notes.iter().cloned());
     Ok(AdoptionPlan {
         token: fingerprint(adoption)?,
         files,
         skills,
-        notes: if adoption.codex_sync_replaced {
-            vec!["~/.agents/scripts/sync-codex-agents.sh becomes unused for Codex AGENTS.md after adoption. The script stays in place for you to keep or remove.".into()]
-        } else {
-            Vec::new()
-        },
+        notes,
     })
 }
 

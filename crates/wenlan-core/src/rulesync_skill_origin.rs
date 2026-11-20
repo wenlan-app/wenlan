@@ -134,6 +134,23 @@ fn git(home: &Home, checkout: &Path, args: &[&str]) -> Option<String> {
     if repo.through_link || control.through_link {
         return None;
     }
+    read_only_git_at(&home.canonical.join(checkout), args)
+}
+
+const ORIGIN_URL: &[&str] = &[
+    "config",
+    "--local",
+    "--no-includes",
+    "--get",
+    "remote.origin.url",
+];
+
+pub(crate) fn git_repository_name(checkout: &Path) -> Option<String> {
+    let slug = github(&read_only_git_at(checkout, ORIGIN_URL)?)?;
+    slug.rsplit('/').next().map(str::to_owned)
+}
+
+fn read_only_git_at(checkout: &Path, args: &[&str]) -> Option<String> {
     let mut command = Command::new("git");
     for (key, _) in std::env::vars_os() {
         if key
@@ -152,7 +169,7 @@ fn git(home: &Home, checkout: &Path, args: &[&str]) -> Option<String> {
             "core.fsmonitor=false",
             "-C",
         ])
-        .arg(home.canonical.join(checkout))
+        .arg(checkout)
         .env("GIT_ALLOW_PROTOCOL", "")
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env(
@@ -173,17 +190,7 @@ fn git(home: &Home, checkout: &Path, args: &[&str]) -> Option<String> {
 }
 
 fn origin(home: &Home, checkout: &Path) -> Option<String> {
-    github(&git(
-        home,
-        checkout,
-        &[
-            "config",
-            "--local",
-            "--no-includes",
-            "--get",
-            "remote.origin.url",
-        ],
-    )?)
+    github(&git(home, checkout, ORIGIN_URL)?)
 }
 
 fn checkout_source(home: &Home, skill: &Path) -> Option<SkillUpstream> {
