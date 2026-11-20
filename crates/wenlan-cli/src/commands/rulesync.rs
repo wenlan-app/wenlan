@@ -26,7 +26,7 @@ pub enum RulesSetupCmd {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Restore the original files and links from the adoption backup.
+    /// Restore the original files and links from the local setup backup.
     Restore,
     /// Collect tool edits for review and deliver current personal rules and skills.
     Sync,
@@ -123,7 +123,7 @@ async fn run_inner(
                 .await?
         }
         RulesSetupCmd::Restore => {
-            if !confirm("Replace managed files and links with the original copies from the adoption backup?")? {
+            if !confirm("Replace managed files and links with the original copies from the local setup backup?")? {
                 return Ok(());
             }
             client.restore_rules_as_person().await?
@@ -146,7 +146,7 @@ async fn run_inner(
                 return show(format, quiet, &plan, settings_plan_for_a_person);
             }
             println!("{}", settings_plan_for_a_person(&plan));
-            if plan.files.is_empty()
+            if (plan.files.is_empty() && plan.notice.is_none())
                 || !confirm("Apply these settings to your AI tools on this computer?")?
             {
                 return Ok(());
@@ -318,11 +318,15 @@ fn updates_for_a_person(updates: &[AdoptedSkillUpdate]) -> String {
 }
 
 fn settings_plan_for_a_person(plan: &SettingsPlan) -> String {
-    render_plan(
+    let mut output = render_plan(
         "Personal settings plan",
         "No settings changes.",
         &plan.files,
-    )
+    );
+    if let Some(notice) = &plan.notice {
+        writeln!(output, "\n{}", printable(notice)).unwrap();
+    }
+    output
 }
 
 fn render_plan(

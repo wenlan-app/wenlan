@@ -23,4 +23,7 @@ pub struct SettingsPlan {
     /// Binds confirmation to the selected source and every destination snapshot.
     pub token: String,
     pub files: Vec<AdoptionChange>,
+    /// A previous apply of this source is still open.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notice: Option<String>,
 }

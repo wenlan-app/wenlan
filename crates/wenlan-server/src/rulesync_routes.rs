@@ -35,7 +35,10 @@ use crate::rulesync_registry::{self, ManagedSkill};
 use crate::state::SharedState;
 
 mod displaced;
+mod settings;
 mod storage;
+
+pub(crate) use settings::SETTINGS_RESUME_NOTICE;
 
 pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<SharedState> {
     router
@@ -374,6 +377,7 @@ enum Kind {
     },
     Skill,
     Directory,
+    Settings,
     RegistrySkill {
         name: String,
     },
@@ -412,6 +416,7 @@ struct Pending<Content = Vec<u8>> {
 enum BatchMode {
     Adopt,
     Continue,
+    Settings,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -479,6 +484,10 @@ struct Manifest<Content = Vec<u8>> {
     recovery_issues: BTreeMap<PathBuf, String>,
     adopted: bool,
     #[serde(default)]
+    settings_only: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    settings_batch: Option<settings::SettingsBatch>,
+    #[serde(default)]
     registry_skipped: BTreeMap<String, BTreeSet<PathBuf>>,
     #[serde(default)]
     unmanaged_skills: BTreeSet<PathBuf>,
@@ -500,6 +509,8 @@ impl Manifest {
             stages: BTreeMap::new(),
             recovery_issues: BTreeMap::new(),
             adopted: false,
+            settings_only: false,
+            settings_batch: None,
             registry_skipped: BTreeMap::new(),
             unmanaged_skills: BTreeSet::new(),
             worktree_writes: BTreeMap::new(),
@@ -613,12 +624,20 @@ impl Setup {
         Ok(())
     }
 
-    fn preview_adoption(&self, expected_home: &Path) -> Result<AdoptionPlan> {
-        self.check_adoption_home(expected_home)?;
+    fn unrecorded_adoption(&self) -> Result<Option<Manifest>> {
+        let manifest = self.load_if_present()?;
         ensure!(
-            self.load_if_present()?.is_none(),
+            manifest
+                .as_ref()
+                .is_none_or(|manifest| manifest.settings_only),
             "An adoption backup already exists. Run `wenlan rules restore` before adopting again."
         );
+        Ok(manifest)
+    }
+
+    fn preview_adoption(&self, expected_home: &Path) -> Result<AdoptionPlan> {
+        self.check_adoption_home(expected_home)?;
+        self.unrecorded_adoption()?;
         wenlan_core::rulesync_personal::plan_adoption(&self.home)
     }
 
@@ -648,18 +667,12 @@ impl Setup {
         token: &str,
         render: impl Fn(&str, Option<&str>, &[&AdoptedSkill]) -> Result<BTreeMap<PathBuf, Vec<u8>>>,
     ) -> Result<RulesSyncReport> {
-        ensure!(
-            self.load_if_present()?.is_none(),
-            "An adoption backup already exists. Run `wenlan rules restore` before adopting again."
-        );
+        self.unrecorded_adoption()?;
         let adoption = discover_adoption(&self.home)?;
         verify_adoption_token(&adoption, token)?;
         let root = FileRoot::open_home(&self.home)?;
         let _lock = self.lock()?;
-        ensure!(
-            self.load_if_present()?.is_none(),
-            "An adoption backup already exists. Run `wenlan rules restore` before adopting again."
-        );
+        self.unrecorded_adoption()?;
         let master = PersonalMaster::new(&adoption);
         let inputs = adoption_inputs();
         for input in &inputs {
@@ -766,7 +779,16 @@ impl Setup {
                 allow_link: true,
             });
         }
-        let mut manifest = Manifest::new(master, backup);
+        let mut manifest = match self.unrecorded_adoption()? {
+            Some(mut manifest) => {
+                self.recover(root, &mut manifest)?;
+                manifest.master = master;
+                manifest.backup.extend(backup);
+                manifest.settings_only = false;
+                manifest
+            }
+            None => Manifest::new(master, backup),
+        };
         manifest.unmanaged_skills = adoption.skipped.into_keys().collect();
         manifest.worktree_writes = adoption.worktree_writes;
         let mut result = report("Adopted the local tool setup");
@@ -1003,16 +1025,19 @@ impl Setup {
     pub(crate) fn restore(&self) -> Result<RulesSyncReport> {
         let _lock = self.lock()?;
         let root = FileRoot::open_home(&self.home)?;
-        let mut manifest = self.load()?.context("no personal adoption backup")?;
+        let mut manifest = self.load()?.context("no local setup backup")?;
         self.recover(&root, &mut manifest)?;
         manifest.adopted = false;
-        crate::rulesync_checkout::refresh(
-            self,
-            &wenlan_core::shared_space::settings_path(),
-            None,
-            &[],
-        );
-        let mut result = report("Restored the managed files from the adoption backup");
+        manifest.settings_batch = None;
+        if !manifest.settings_only {
+            crate::rulesync_checkout::refresh(
+                self,
+                &wenlan_core::shared_space::settings_path(),
+                None,
+                &[],
+            );
+        }
+        let mut result = report("Restored the managed files from the local setup backup");
         result.blocked.extend(
             manifest
                 .recovery_issues
@@ -2316,6 +2341,9 @@ fn settle(manifest: &mut Manifest, operation: Pending) -> Result<()> {
         return Ok(());
     }
     if let Some(kind) = operation.kind {
+        if matches!(kind, Kind::Settings) {
+            settings::settle(manifest, &operation.path);
+        }
         manifest.delivered.insert(
             operation.path,
             Delivery {
@@ -2605,6 +2633,42 @@ mod tests {
         fn write(&self, path: &str, text: &str) {
             fs::write(self.setup.home.join(path), text).unwrap();
         }
+    }
+
+    #[test]
+    fn run9_settings_backup_survives_later_adoption() {
+        let f = Fixture::new();
+        let config = Path::new(".claude.json");
+        let original = r#"{"sessionToken":"fixture-only"}"#;
+        f.write(config.to_str().unwrap(), original);
+        let root = FileRoot::open_home(&f.setup.home).unwrap();
+        let seen = root.read(config, false).unwrap();
+        let desired = with_bytes(
+            &seen,
+            br#"{"sessionToken":"fixture-only","mcpServers":{"new":{"command":"new"}}}"#.to_vec(),
+        );
+        {
+            let _lock = f.setup.lock().unwrap();
+            let applied = f
+                .setup
+                .apply_settings(
+                    &root,
+                    "first-source".into(),
+                    vec![(config.into(), seen, desired.clone())],
+                )
+                .unwrap();
+            assert_eq!(applied.written, [".claude.json"]);
+            assert!(applied.blocked.is_empty(), "{applied:?}");
+        }
+
+        let home = f.setup.home.canonicalize().unwrap();
+        f.setup.preview_adoption(&home).unwrap();
+        f.adopt_from_plan();
+        assert_eq!(root.read(config, false).unwrap(), desired);
+
+        let restored = f.setup.restore().unwrap();
+        assert!(restored.blocked.is_empty(), "{restored:?}");
+        assert_eq!(f.text(config.to_str().unwrap()), original);
     }
 
     #[cfg(unix)]

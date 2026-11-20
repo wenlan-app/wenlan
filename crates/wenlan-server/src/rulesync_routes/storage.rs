@@ -244,6 +244,8 @@ fn map_contents<From, To>(
         stages: manifest.stages.clone(),
         recovery_issues: manifest.recovery_issues.clone(),
         adopted: manifest.adopted,
+        settings_only: manifest.settings_only,
+        settings_batch: manifest.settings_batch.clone(),
         registry_skipped: manifest.registry_skipped.clone(),
         unmanaged_skills: manifest.unmanaged_skills.clone(),
         worktree_writes: manifest.worktree_writes.clone(),

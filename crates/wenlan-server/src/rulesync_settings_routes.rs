@@ -19,8 +19,8 @@ use wenlan_types::{
 use crate::{
     error::ServerError,
     route_registry::{post, TrackedRouter},
-    rulesync_apply::{ApplyOutcome, FileRoot, Snapshot},
-    rulesync_routes::{require_local_person, Setup},
+    rulesync_apply::{FileRoot, Snapshot},
+    rulesync_routes::{require_local_person, Setup, SETTINGS_RESUME_NOTICE},
     state::SharedState,
 };
 
@@ -34,15 +34,15 @@ async fn preview(
     headers: HeaderMap,
     Json(request): Json<SettingsPreviewRequest>,
 ) -> Result<Json<SettingsPlan>, ServerError> {
-    execute(headers, request.source, |_, plan| Ok(plan.response)).await
+    execute(headers, request.source, |_, _, plan| Ok(plan.response)).await
 }
 
 async fn apply(
     headers: HeaderMap,
     Json(request): Json<SettingsApplyRequest>,
 ) -> Result<Json<RulesSyncReport>, ServerError> {
-    execute(headers, request.source, move |root, plan| {
-        apply_plan(root, plan, &request.token)
+    execute(headers, request.source, move |setup, root, plan| {
+        apply_plan(setup, root, plan, &request.token)
     })
     .await
 }
@@ -50,7 +50,7 @@ async fn apply(
 async fn execute<T: Send + 'static>(
     headers: HeaderMap,
     source: PathBuf,
-    finish: impl FnOnce(&FileRoot, LocalPlan) -> Result<T> + Send + 'static,
+    finish: impl FnOnce(&Setup, &FileRoot, LocalPlan) -> Result<T> + Send + 'static,
 ) -> Result<Json<T>, ServerError> {
     require_local_person(&headers)?;
     if !rulesync_personal::enabled() {
@@ -64,8 +64,8 @@ async fn execute<T: Send + 'static>(
         let _lock = setup.lock()?;
         let root = FileRoot::open_home(&setup.home).context("open local AI-tool home")?;
         let rendered = rulesync_settings::render_source(&setup.binary, &setup.data, &source)?;
-        let plan = plan_rendered(&root, &setup.home, &source, rendered)?;
-        finish(&root, plan)
+        let plan = plan_rendered(&setup, &root, &source, rendered)?;
+        finish(&setup, &root, plan)
     })
     .await
     .map_err(|_| ServerError::Internal("settings task failed".into()))?;
@@ -83,15 +83,24 @@ struct PlannedWrite {
 
 struct LocalPlan {
     response: SettingsPlan,
+    source_digest: String,
     writes: Vec<PlannedWrite>,
 }
 
 fn plan_rendered(
+    setup: &Setup,
     root: &FileRoot,
-    home: &Path,
     source: &Path,
-    rendered: RenderedSettings,
+    mut rendered: RenderedSettings,
 ) -> Result<LocalPlan> {
+    let remaining = setup.settings_remaining(&rendered.source_digest)?;
+    if let Some(remaining) = &remaining {
+        ensure!(
+            remaining.iter().all(|path| rendered.files.contains_key(path)),
+            "The renderer no longer produces an unfinished settings file. Run `wenlan rules restore` to undo applied changes."
+        );
+        rendered.files.retain(|path, _| remaining.contains(path));
+    }
     let mut files = Vec::new();
     let mut writes = Vec::new();
     for (path, staged) in rendered.files {
@@ -123,18 +132,29 @@ fn plan_rendered(
     }
     let token = rulesync_settings::confirmation_token(&(
         PINNED_VERSION,
-        home,
+        &setup.home,
         source,
-        rendered.source_digest,
+        &rendered.source_digest,
+        &remaining,
         &writes,
     ))?;
     Ok(LocalPlan {
-        response: SettingsPlan { token, files },
+        response: SettingsPlan {
+            token,
+            files,
+            notice: remaining.map(|_| SETTINGS_RESUME_NOTICE.into()),
+        },
+        source_digest: rendered.source_digest,
         writes,
     })
 }
 
-fn apply_plan(root: &FileRoot, plan: LocalPlan, token: &str) -> Result<RulesSyncReport> {
+fn apply_plan(
+    setup: &Setup,
+    root: &FileRoot,
+    plan: LocalPlan,
+    token: &str,
+) -> Result<RulesSyncReport> {
     ensure!(
         plan.response.token == token,
         "settings changed since preview. Run the preview again"
@@ -148,37 +168,14 @@ fn apply_plan(root: &FileRoot, plan: LocalPlan, token: &str) -> Result<RulesSync
             write.path.display()
         );
     }
-    let mut report = RulesSyncReport {
-        written: Vec::new(),
-        blocked: Vec::new(),
-        proposals: Vec::new(),
-        message: String::new(),
-    };
-    for write in plan.writes {
-        let path = write.path.display();
-        if !report.blocked.is_empty() {
-            report.blocked.push(format!(
-                "{path}: preview again after resolving the write failure"
-            ));
-            continue;
-        }
-        match root.apply(&write.path, &write.seen, &write.desired, false) {
-            Ok(ApplyOutcome::Applied) => report.written.push(path.to_string()),
-            Ok(ApplyOutcome::ChangedSincePlan) => {
-                report.blocked.push(format!("{path}: changed during apply"))
-            }
-            Err(error) => report.blocked.push(format!("{path}: {error}")),
-        }
-    }
-    report.message = if !report.blocked.is_empty() {
-        "Some settings still need review"
-    } else if report.written.is_empty() {
-        "Settings are already up to date"
-    } else {
-        "Applied the approved local settings"
-    }
-    .into();
-    Ok(report)
+    setup.apply_settings(
+        root,
+        plan.source_digest,
+        plan.writes
+            .into_iter()
+            .map(|write| (write.path, write.seen, write.desired))
+            .collect(),
+    )
 }
 
 #[cfg(test)]
@@ -192,6 +189,16 @@ mod tests {
     use tokio::sync::RwLock;
     use tower::ServiceExt as _;
     use wenlan_types::requests::{CALLER_HEADER, PERSON_CALLER_VALUE, PERSON_KEY_HEADER};
+
+    fn test_setup(base: &Path) -> Setup {
+        let setup = Setup {
+            home: base.join("home"),
+            data: base.join("data"),
+            binary: "unused".into(),
+        };
+        fs::create_dir_all(&setup.home).unwrap();
+        setup
+    }
 
     fn rendered(source_digest: &str) -> RenderedSettings {
         RenderedSettings {
@@ -247,26 +254,28 @@ mod tests {
     #[test]
     fn rulesync_settings_rejects_changed_source_and_destinations_before_any_writes() {
         let temp = tempfile::tempdir().unwrap();
-        let root = FileRoot::open_home(temp.path()).unwrap();
-        let home = temp.path();
+        let setup = test_setup(temp.path());
+        let _lock = setup.lock().unwrap();
+        let home = &setup.home;
+        let root = FileRoot::open_home(home).unwrap();
         let source = home.join(".rulesync");
-        let first = plan_rendered(&root, home, &source, rendered("source")).unwrap();
+        let first = plan_rendered(&setup, &root, &source, rendered("source")).unwrap();
         assert_eq!(first.response.files.len(), 2);
         assert!(!home.join(".claude.json").exists());
         assert!(!home.join(".codex").exists());
 
         let token = first.response.token.clone();
-        let different = plan_rendered(&root, home, &source, rendered("changed")).unwrap();
-        assert!(apply_plan(&root, different, &token).is_err());
+        let different = plan_rendered(&setup, &root, &source, rendered("changed")).unwrap();
+        assert!(apply_plan(&setup, &root, different, &token).is_err());
         assert!(!home.join(".claude.json").exists());
 
         fs::create_dir(home.join(".codex")).unwrap();
         let concurrent = "# written while the preview was open\nmodel = 'other'\n";
         fs::write(home.join(".codex/config.toml"), concurrent).unwrap();
         // Exercise both a freshly recomputed plan and a change after planning.
-        let updated = plan_rendered(&root, home, &source, rendered("source")).unwrap();
-        assert!(apply_plan(&root, updated, &token).is_err());
-        assert!(apply_plan(&root, first, &token).is_err());
+        let updated = plan_rendered(&setup, &root, &source, rendered("source")).unwrap();
+        assert!(apply_plan(&setup, &root, updated, &token).is_err());
+        assert!(apply_plan(&setup, &root, first, &token).is_err());
         assert!(!home.join(".claude.json").exists());
         assert_eq!(
             fs::read_to_string(home.join(".codex/config.toml")).unwrap(),
@@ -277,20 +286,22 @@ mod tests {
     #[test]
     fn rulesync_settings_applies_a_fresh_redacted_plan_and_retries_as_noop() {
         let temp = tempfile::tempdir().unwrap();
-        let home = temp.path();
+        let setup = test_setup(temp.path());
+        let _lock = setup.lock().unwrap();
+        let home = &setup.home;
         let source = home.join(".rulesync");
         let existing =
             br#"{"sessionToken":"fixture-live-value","mcpServers":{"local":{"command":"local"}}}"#;
         fs::write(home.join(".claude.json"), existing).unwrap();
         let root = FileRoot::open_home(home).unwrap();
-        let plan = plan_rendered(&root, home, &source, rendered("source")).unwrap();
+        let plan = plan_rendered(&setup, &root, &source, rendered("source")).unwrap();
         let token = plan.response.token.clone();
         assert!(!serde_json::to_string(&plan.response)
             .unwrap()
             .contains("fixture-live-value"));
 
-        let same = plan_rendered(&root, home, &source, rendered("source")).unwrap();
-        let report = apply_plan(&root, same, &token).unwrap();
+        let same = plan_rendered(&setup, &root, &source, rendered("source")).unwrap();
+        let report = apply_plan(&setup, &root, same, &token).unwrap();
         assert_eq!(report.written.len(), 2);
         assert!(report.blocked.is_empty());
         let bytes = fs::read(home.join(".claude.json")).unwrap();
@@ -299,10 +310,13 @@ mod tests {
         assert_eq!(json["mcpServers"]["local"]["command"], "local");
         assert_eq!(json["mcpServers"]["new"]["command"], "new");
 
-        let retry = plan_rendered(&root, home, &source, rendered("source")).unwrap();
+        let retry = plan_rendered(&setup, &root, &source, rendered("source")).unwrap();
         assert!(retry.response.files.is_empty());
         let fresh = retry.response.token.clone();
-        assert!(apply_plan(&root, retry, &fresh).unwrap().written.is_empty());
+        assert!(apply_plan(&setup, &root, retry, &fresh)
+            .unwrap()
+            .written
+            .is_empty());
         assert_eq!(fs::read(home.join(".claude.json")).unwrap(), bytes);
     }
 
@@ -311,7 +325,9 @@ mod tests {
     fn rulesync_settings_refuse_a_physical_harness_alias() {
         use std::os::unix::fs::symlink;
         let temp = tempfile::tempdir().unwrap();
-        let home = temp.path();
+        let setup = test_setup(temp.path());
+        let _lock = setup.lock().unwrap();
+        let home = &setup.home;
         // Exercise the mixed-case lookup on case-insensitive volumes too.
         fs::create_dir(home.join(".Codex")).unwrap();
         if !home.join(".codex").exists() {
@@ -321,9 +337,9 @@ mod tests {
         fs::write(physical.join("config.toml"), b"# harness settings\n").unwrap();
         symlink(&physical, home.join(".agents")).unwrap();
         let root = FileRoot::open_home(home).unwrap();
-        let result = plan_rendered(&root, home, home, rendered("source")).and_then(|plan| {
+        let result = plan_rendered(&setup, &root, home, rendered("source")).and_then(|plan| {
             let token = plan.response.token.clone();
-            apply_plan(&root, plan, &token)
+            apply_plan(&setup, &root, plan, &token)
         });
         assert!(result.is_err() || !result.unwrap().blocked.is_empty());
         assert_eq!(
@@ -335,16 +351,106 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn run9_crash_settings_subprocess() {
+        let Some(base) = std::env::var_os("WENLAN_TEST_SETTINGS_ROOT").map(PathBuf::from) else {
+            return;
+        };
+        let setup = test_setup(&base);
+        let _lock = setup.lock().unwrap();
+        let root = FileRoot::open_home(&setup.home).unwrap();
+        let plan = plan_rendered(&setup, &root, &base, rendered("confirmed")).unwrap();
+        let token = plan.response.token.clone();
+        apply_plan(&setup, &root, plan, &token).unwrap();
+        panic!("the injected exit was not reached");
+    }
+
+    #[cfg(unix)]
+    fn crash_after_claude_write(base: &Path) {
+        let child = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg("--exact")
+            .arg("rulesync_settings_routes::tests::run9_crash_settings_subprocess")
+            .env("WENLAN_TEST_SETTINGS_ROOT", base)
+            .env("WENLAN_TEST_FILE_APPLY_CRASH", "displaced:.claude.json")
+            .output()
+            .unwrap();
+        assert_eq!(child.status.code(), Some(76), "{child:?}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run9_settings_restore_reverts_the_first_tool_after_a_half_applied_batch() {
+        let temp = tempfile::tempdir().unwrap();
+        let setup = test_setup(temp.path());
+        fs::create_dir_all(setup.home.join(".codex")).unwrap();
+        let claude = setup.home.join(".claude.json");
+        let codex = setup.home.join(".codex/config.toml");
+        let original = br#"{"sessionToken":"example-not-a-token"}"#;
+        fs::write(&claude, original).unwrap();
+        fs::write(&codex, b"# local configuration\n").unwrap();
+        crash_after_claude_write(temp.path());
+        assert_ne!(fs::read(&claude).unwrap(), original);
+        assert_eq!(fs::read(&codex).unwrap(), b"# local configuration\n");
+
+        let restored = setup.restore().unwrap();
+        assert!(restored.blocked.is_empty(), "{restored:?}");
+        assert_eq!(fs::read(&claude).unwrap(), original);
+        assert_eq!(fs::read(&codex).unwrap(), b"# local configuration\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run9_settings_reports_partial_progress_and_resumes_the_same_source() {
+        let temp = tempfile::tempdir().unwrap();
+        let setup = test_setup(temp.path());
+        let claude = setup.home.join(".claude.json");
+        let codex = setup.home.join(".codex/config.toml");
+        fs::write(&claude, br#"{"sessionToken":"example-not-a-token"}"#).unwrap();
+        crash_after_claude_write(temp.path());
+        assert!(!codex.exists());
+        let applied_claude = fs::read(&claude).unwrap();
+
+        let _lock = setup.lock().unwrap();
+        let root = FileRoot::open_home(&setup.home).unwrap();
+        let source = temp.path();
+        let different = plan_rendered(&setup, &root, source, rendered("changed"));
+        assert!(different.is_err());
+        let resume = plan_rendered(&setup, &root, source, rendered("confirmed")).unwrap();
+        assert_eq!(
+            resume.response.notice.as_deref(),
+            Some(SETTINGS_RESUME_NOTICE)
+        );
+        assert_eq!(resume.response.files.len(), 1);
+        assert_eq!(resume.response.files[0].path, ".codex/config.toml");
+        assert!(!serde_json::to_string(&resume.response)
+            .unwrap()
+            .contains("example-not-a-token"));
+        assert!(
+            !codex.exists(),
+            "preview must not complete a settings write"
+        );
+
+        let token = resume.response.token.clone();
+        let report = apply_plan(&setup, &root, resume, &token).unwrap();
+        assert_eq!(report.written, [".codex/config.toml"]);
+        assert!(report.blocked.is_empty(), "{report:?}");
+        assert!(codex.exists());
+        assert_eq!(fs::read(&claude).unwrap(), applied_claude);
+        assert!(setup.settings_remaining("confirmed").unwrap().is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn rulesync_settings_never_follows_a_destination_link() {
         use std::os::unix::fs::symlink;
         let temp = tempfile::tempdir().unwrap();
-        let home = temp.path();
+        let setup = test_setup(temp.path());
+        let home = &setup.home;
         let outside = tempfile::tempdir().unwrap();
         let target = outside.path().join("config.json");
         fs::write(&target, "{}").unwrap();
         symlink(&target, home.join(".claude.json")).unwrap();
         let root = FileRoot::open_home(home).unwrap();
-        assert!(plan_rendered(&root, home, home, rendered("source")).is_err());
+        assert!(plan_rendered(&setup, &root, home, rendered("source")).is_err());
         assert_eq!(fs::read(&target).unwrap(), b"{}");
     }
 }
