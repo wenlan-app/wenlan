@@ -334,25 +334,53 @@ async fn ux_skill_14_one_press_rule_remove_refuses_the_marker_without_the_right_
 /// with the marker and the right key, at the daemon's own door.
 #[tokio::test]
 async fn ux_skill_13_router_never_counts_a_team_forwarded_call_as_the_person() {
-    let (_, answer) = send_with(
-        "/api/memory/revision/no-such-card/accept",
-        &[
-            (CALLER_HEADER, PERSON_CALLER_VALUE),
-            (PERSON_KEY_HEADER, test_key()),
-            (
-                crate::team_actor::SECRET_HEADER,
-                crate::team_actor::secret(),
-            ),
-            (crate::team_actor::KIND_HEADER, "person"),
-            (crate::team_actor::MEMBER_HEADER, "m-amy"),
-        ],
-        "{}",
-    )
-    .await;
-    assert!(
-        refusal(&answer).starts_with("card_needs_the_person"),
-        "{answer}"
+    use wenlan_core::{db::MemoryDB, events::NoopEmitter};
+
+    const SPACE: &str = "Project";
+    let dir = tempfile::tempdir().unwrap();
+    let db = Arc::new(
+        MemoryDB::new(dir.path(), Arc::new(NoopEmitter))
+            .await
+            .unwrap(),
     );
+    db.create_space(SPACE, None, false).await.unwrap();
+    let draft = db
+        .create_page_draft("My note", "I wrote this.", Some(SPACE), None)
+        .await
+        .unwrap();
+    db.publish_page_draft(&draft.id, draft.version)
+        .await
+        .unwrap();
+    let state = state();
+    state.write().await.db = Some(db);
+    let app = crate::router::build_router(state);
+    let archive = |forwarded| {
+        // This page route admits a forwarded call and consults the person marker.
+        let mut request = HttpRequest::builder()
+            .method("DELETE")
+            .uri(format!("/api/pages/{}", draft.id))
+            .header(crate::space_header::HEADER_NAME, SPACE)
+            .header(CALLER_HEADER, PERSON_CALLER_VALUE)
+            .header(PERSON_KEY_HEADER, test_key());
+        if forwarded {
+            request = request
+                .header(
+                    crate::team_actor::SECRET_HEADER,
+                    crate::team_actor::secret(),
+                )
+                .header(crate::team_actor::KIND_HEADER, "person")
+                .header(crate::team_actor::MEMBER_HEADER, "m-amy");
+        }
+        app.clone().oneshot(request.body(Body::empty()).unwrap())
+    };
+    let member = archive(true).await.unwrap();
+    assert_eq!(member.status(), StatusCode::FORBIDDEN);
+    let bytes = axum::body::to_bytes(member.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    let answer: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(answer["code"], "page_is_the_persons", "{answer}");
+    assert_eq!(archive(false).await.unwrap().status(), StatusCode::OK);
 }
 
 /// UX-SKILL-13: the browser's session token works at the door like the
