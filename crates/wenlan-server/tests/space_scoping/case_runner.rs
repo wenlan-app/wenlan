@@ -420,19 +420,23 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
     // A source's unreadable files add one Global reader. Existing-skill
     // suggestions (list, apply, dismiss, undo) stay Global; approved Space
     // rules and their borrowing record add two Space-scoped readers. How the
-    // rules reach each AI tool adds one Global reader.
-    assert_eq!(rows.len(), 148);
+    // rules reach each AI tool adds one Global reader. The personal rules and
+    // skills setup (adopt, preview, restore, skill updates, sync, review,
+    // settings preview and apply, checkout, skill save, proposals, review)
+    // adds twelve Global routes; project and team rule proposals add seven
+    // Space-scoped routes.
+    assert_eq!(rows.len(), 167);
     assert_eq!(
         rows.iter()
             .filter(|row| row.scope_binding == ScopeBinding::Global)
             .count(),
-        34
+        46
     );
     assert_eq!(
         rows.iter()
             .filter(|row| row.scope_binding != ScopeBinding::Global)
             .count(),
-        114
+        121
     );
     assert_eq!(
         rows.iter()
