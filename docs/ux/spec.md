@@ -948,9 +948,12 @@ and wait for evidence that people need them.
   in a tool's folder. It offers that content for the current tool or all
   supported tools. The person's terminal shows the complete proposal and
   asks for typed `yes` before accepting it. The review for an edited skill
-  shows the changed files and lists the removed files. Only accepted source
-  files are eligible for delivery. Invisible characters and bidirectional controls
-  in new skill text are refused.
+  shows the changed files and lists the removed files. A changed adopted
+  file that is too large to preview shows its size and SHA-256 before and
+  after the edit. Existing invisible characters on unchanged lines appear
+  as code points in the preview. Newly introduced invisible characters
+  and bidirectional controls are refused. Only accepted source files
+  are eligible for delivery.
   Tests `rulesync_skill_agent_proposal_survives_reopen_and_requires_review` and `ux_skill_16_review_needs_one_scope_and_has_no_confirmation_flag`.
 
 - **UX-SKILL-17** `shipped` `wenlan rules settings` asks the person to

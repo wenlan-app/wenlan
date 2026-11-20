@@ -84,6 +84,21 @@ pub struct SkillProposal {
 pub struct SkillProposalChanges {
     /// Paths removed from the managed skill; added and changed paths are in `files`.
     pub removed: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub oversized: Vec<OversizedSkillFile>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OversizedSkillFile {
+    pub path: String,
+    pub before: Option<SkillFileDigest>,
+    pub after: SkillFileDigest,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SkillFileDigest {
+    pub bytes: usize,
+    pub sha256: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -283,6 +283,7 @@ impl ManagedSkill<Vec<u8>> {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(bound(deserialize = "Content: Deserialize<'de>"))]
 enum Candidate<Content = Vec<u8>> {
     Agent {
         agent: String,
@@ -292,17 +293,20 @@ enum Candidate<Content = Vec<u8>> {
         folder: PathBuf,
         snapshot: ManagedSkill<Content>,
         #[serde(default)]
-        changes: Option<ToolSkillChanges>,
+        changes: Option<ToolSkillChanges<Content>>,
     },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct ToolSkillChanges {
+#[serde(bound(deserialize = "Content: Deserialize<'de>"))]
+struct ToolSkillChanges<Content = Vec<u8>> {
     changed_paths: BTreeSet<PathBuf>,
     removed_paths: BTreeSet<PathBuf>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    previous: BTreeMap<PathBuf, Content>,
 }
 
-impl ToolSkillChanges {
+impl ToolSkillChanges<Vec<u8>> {
     fn between(before: &SkillFiles, after: &SkillFiles) -> Option<Self> {
         let changed_paths: BTreeSet<_> = after
             .iter()
@@ -314,9 +318,14 @@ impl ToolSkillChanges {
             .filter(|path| !after.contains_key(*path))
             .cloned()
             .collect();
+        let previous = changed_paths
+            .iter()
+            .filter_map(|path| before.get(path).map(|bytes| (path.clone(), bytes.clone())))
+            .collect();
         (!changed_paths.is_empty() || !removed_paths.is_empty()).then_some(Self {
             changed_paths,
             removed_paths,
+            previous,
         })
     }
 }
@@ -344,25 +353,30 @@ impl Draft {
             } => {
                 let full_files = snapshot.files();
                 let (files, changes) = match changes {
-                    Some(changes) => (
-                        skills::preview_changes(
+                    Some(changes) => {
+                        let preview = skills::preview_changes(
                             &self.name,
                             &full_files,
+                            &changes.previous,
                             &changes.changed_paths,
                             &changes.removed_paths,
-                        )?,
-                        Some(SkillProposalChanges {
-                            removed: changes
-                                .removed_paths
-                                .iter()
-                                .map(|path| {
-                                    path.to_str()
-                                        .context("a removed skill path is not UTF-8")
-                                        .map(str::to_owned)
-                                })
-                                .collect::<Result<_>>()?,
-                        }),
-                    ),
+                        )?;
+                        (
+                            preview.files,
+                            Some(SkillProposalChanges {
+                                removed: changes
+                                    .removed_paths
+                                    .iter()
+                                    .map(|path| {
+                                        path.to_str()
+                                            .context("a removed skill path is not UTF-8")
+                                            .map(str::to_owned)
+                                    })
+                                    .collect::<Result<_>>()?,
+                                oversized: preview.oversized,
+                            }),
+                        )
+                    }
                     None => (skills::preview(&self.name, &full_files)?, None),
                 };
                 (
@@ -569,6 +583,7 @@ impl SkillState<Vec<u8>> {
                         skills::preview_changes(
                             &name,
                             &files,
+                            &changes.previous,
                             &changes.changed_paths,
                             &changes.removed_paths,
                         )?;
@@ -700,7 +715,15 @@ fn map_skill_state<From, To>(
                 } => Candidate::Tool {
                     folder,
                     snapshot: map_managed_skill(snapshot, map)?,
-                    changes,
+                    changes: changes
+                        .map(|changes| {
+                            Ok::<_, anyhow::Error>(ToolSkillChanges {
+                                changed_paths: changes.changed_paths,
+                                removed_paths: changes.removed_paths,
+                                previous: map_skill_files(changes.previous, map)?,
+                            })
+                        })
+                        .transpose()?,
                 },
             };
             Ok((
@@ -1169,16 +1192,18 @@ pub(crate) fn collect_tool_proposals(
         };
         let changes =
             baseline.and_then(|baseline| ToolSkillChanges::between(&baseline.files(), &files));
-        let preview = match &changes {
+        let validation = match &changes {
             Some(changes) => skills::preview_changes(
                 name,
                 &files,
+                &changes.previous,
                 &changes.changed_paths,
                 &changes.removed_paths,
-            ),
-            None => skills::preview(name, &files),
+            )
+            .map(|_| ()),
+            None => skills::preview(name, &files).map(|_| ()),
         };
-        if let Err(error) = preview {
+        if let Err(error) = validation {
             blocked.insert(folder, format!("Cannot propose this skill ({error:#}). Fix the files and run `wenlan rules sync`."));
             continue;
         }

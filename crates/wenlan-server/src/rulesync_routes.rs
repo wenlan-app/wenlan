@@ -3933,6 +3933,122 @@ mod tests {
         );
     }
 
+    fn write_step1d_skill(f: &Fixture, tool_dir: &str, body: &str, asset: &str) -> PathBuf {
+        let folder = f.setup.home.join(tool_dir).join("skills/example");
+        fs::create_dir_all(&folder).unwrap();
+        fs::write(
+            folder.join("SKILL.md"),
+            format!("---\nname: example\ndescription: Fixture\nversion: 1\n---\n\n{body}\n"),
+        )
+        .unwrap();
+        fs::write(folder.join("helper.py"), asset).unwrap();
+        folder
+    }
+
+    #[test]
+    fn rulesync_step1d_reviews_an_edit_with_adopted_variation_selectors() {
+        let f = Fixture::new();
+        fs::remove_dir_all(f.setup.home.join(".claude")).unwrap();
+        fs::remove_dir_all(f.setup.home.join(".codex")).unwrap();
+        let body = "## ⚙\u{fe0f} Setup\nOriginal instructions.\n## ☀\u{fe0f} Daily workflow";
+        let asset = format!("# {}\n", "a".repeat(82_782));
+        let folder = write_step1d_skill(&f, ".cursor", body, &asset);
+        f.adopt_from_plan();
+
+        let entry = folder.join("SKILL.md");
+        let original = fs::read_to_string(&entry).unwrap();
+        let edited = original.replace("Original instructions.", "Edited instructions.");
+        fs::write(&entry, &edited).unwrap();
+        let pending = f.sync_with("");
+        assert!(
+            pending
+                .blocked
+                .iter()
+                .any(|line| line.contains("need your approval")),
+            "{pending:?}"
+        );
+        let proposal =
+            rulesync_registry::accept_only_tool_proposal(&f.setup.home, &f.setup.data).unwrap();
+        assert_eq!(proposal.files.len(), 1);
+        assert_eq!(proposal.files[0].path, "SKILL.md");
+        assert!(proposal.files[0]
+            .text
+            .as_deref()
+            .unwrap()
+            .contains("Edited instructions."));
+        assert!(f.sync_with("").blocked.is_empty());
+        assert_eq!(fs::read_to_string(&entry).unwrap(), edited);
+        assert_eq!(fs::read_to_string(folder.join("helper.py")).unwrap(), asset);
+
+        fs::write(
+            &entry,
+            edited.replace("Edited instructions.", "Another edit.\u{fe0f}"),
+        )
+        .unwrap();
+        let blocked = f.sync_with("");
+        assert!(
+            blocked
+                .blocked
+                .iter()
+                .any(|line| line.contains("invisible")),
+            "{blocked:?}"
+        );
+        assert!(
+            rulesync_registry::accept_only_tool_proposal(&f.setup.home, &f.setup.data).is_err()
+        );
+    }
+
+    #[test]
+    fn rulesync_step1d_shows_large_changed_assets_alongside_small_edits() {
+        let f = Fixture::new();
+        fs::remove_dir_all(f.setup.home.join(".claude")).unwrap();
+        fs::remove_dir_all(f.setup.home.join(".codex")).unwrap();
+        let asset = format!("# {}\n", "a".repeat(82_782));
+        let folder = write_step1d_skill(&f, ".cursor", "Original instructions.", &asset);
+        f.adopt_from_plan();
+
+        let entry = folder.join("SKILL.md");
+        let edited = fs::read_to_string(&entry)
+            .unwrap()
+            .replace("Original instructions.", "Edited instructions.");
+        fs::write(&entry, &edited).unwrap();
+        let edited_asset = format!("{asset}# A change to the long script\n");
+        fs::write(folder.join("helper.py"), &edited_asset).unwrap();
+        let pending = f.sync_with("");
+        assert!(
+            pending
+                .blocked
+                .iter()
+                .any(|line| line.contains("need your approval")),
+            "{pending:?}"
+        );
+        let proposal =
+            rulesync_registry::accept_only_tool_proposal(&f.setup.home, &f.setup.data).unwrap();
+        assert!(proposal
+            .files
+            .iter()
+            .any(|file| file.path == "SKILL.md" && file.text.as_deref() == Some(&edited)));
+        let changes = proposal.changes.unwrap();
+        let [large] = changes.oversized.as_slice() else {
+            panic!("expected one oversized asset: {changes:?}");
+        };
+        use sha2::{Digest, Sha256};
+        assert_eq!(large.path, "helper.py");
+        let before = large.before.as_ref().unwrap();
+        assert_eq!(before.bytes, asset.len());
+        assert_eq!(before.sha256, format!("{:x}", Sha256::digest(asset)));
+        assert_eq!(large.after.bytes, edited_asset.len());
+        assert_eq!(
+            large.after.sha256,
+            format!("{:x}", Sha256::digest(&edited_asset))
+        );
+        assert!(f.sync_with("").blocked.is_empty());
+        assert_eq!(
+            fs::read_to_string(folder.join("helper.py")).unwrap(),
+            edited_asset
+        );
+    }
+
     #[test]
     fn rulesync_shares_the_edited_occurrence_of_a_repeated_rule() {
         let f = Fixture::new();

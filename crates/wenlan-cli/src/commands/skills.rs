@@ -349,7 +349,7 @@ async fn review_saved_skill(
     let mut preview = skill_proposal_summary(&proposal);
     push_skill_preview_files(&mut preview, &proposal.files);
     if let Some(changes) = &proposal.changes {
-        push_skill_removed_files(&mut preview, changes);
+        push_skill_changes(&mut preview, changes);
     }
     println!("{preview}");
     let question = if accept {
@@ -410,7 +410,25 @@ fn complete_skill_proposal(proposal: &SkillProposal) -> bool {
     }
 }
 
-fn push_skill_removed_files(out: &mut String, changes: &SkillProposalChanges) {
+fn push_skill_changes(out: &mut String, changes: &SkillProposalChanges) {
+    for file in &changes.oversized {
+        out.push_str(&format!(
+            "\n{} is too large to preview.\n",
+            file_label(&file.path)
+        ));
+        if let Some(before) = &file.before {
+            out.push_str(&format!(
+                "  Before: {} bytes, SHA-256 {}\n",
+                before.bytes,
+                one_line(&before.sha256)
+            ));
+        }
+        out.push_str(&format!(
+            "  After: {} bytes, SHA-256 {}\n",
+            file.after.bytes,
+            one_line(&file.after.sha256)
+        ));
+    }
     if changes.removed.is_empty() {
         return;
     }
@@ -1318,13 +1336,24 @@ mod tests {
             files: Vec::new(),
             changes: Some(SkillProposalChanges {
                 removed: vec!["examples/old.md".into()],
+                oversized: vec![wenlan_types::rulesync_skill::OversizedSkillFile {
+                    path: "helper.py".into(),
+                    before: None,
+                    after: wenlan_types::rulesync_skill::SkillFileDigest {
+                        bytes: 83_000,
+                        sha256: "a".repeat(64),
+                    },
+                }],
             }),
         };
         assert!(complete_skill_proposal(&proposal));
         let mut preview = skill_proposal_summary(&proposal);
-        push_skill_removed_files(&mut preview, proposal.changes.as_ref().unwrap());
+        push_skill_changes(&mut preview, proposal.changes.as_ref().unwrap());
         assert!(preview.contains("Changes since the last managed copy."));
         assert!(preview.contains("Removed files\n- examples/old.md\n"));
+        assert!(
+            preview.contains("helper.py is too large to preview.\n  After: 83000 bytes, SHA-256 ")
+        );
     }
 
     fn line(text: &str, title: &str, general: bool) -> SkillLine {
