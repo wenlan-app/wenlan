@@ -2458,6 +2458,40 @@ async fn team_file(
     let Some(file) = team::served_path(&folder, &query.path) else {
         return (StatusCode::BAD_REQUEST, "not a file of the Space").into_response();
     };
+    let send_file = |bytes: Vec<u8>| {
+        (
+            [(header::CONTENT_TYPE, "text/markdown; charset=utf-8")],
+            Body::from(bytes),
+        )
+            .into_response()
+    };
+    // The approved manifest authorizes the Rules download. The master lives
+    // in the folder without a shared page row in the DB.
+    if query
+        .path
+        .split('/')
+        .nth(3)
+        .is_some_and(rulesync_team::is_master_page)
+    {
+        let result = tokio::task::spawn_blocking(move || {
+            rulesync_team::read_hosted_rule_file(
+                &state.team_path,
+                &state.settings_path,
+                &space,
+                &query.path,
+            )
+        })
+        .await;
+        return match result {
+            Ok(Ok(Some(bytes))) => send_file(bytes),
+            Ok(Ok(None)) => StatusCode::NOT_FOUND.into_response(),
+            Ok(Err(error)) => {
+                tracing::warn!("[team] approved Rules version cannot be read: {error}");
+                StatusCode::SERVICE_UNAVAILABLE.into_response()
+            }
+            Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+        };
+    }
     let shared_pages = match hosted_folder_pages(&state, &space).await {
         Ok(pages) => pages,
         Err(error) => {
@@ -2473,11 +2507,7 @@ async fn team_file(
                     if team::can_serve_version(page, name, &bytes, &shared_pages))
             } =>
         {
-            (
-                [(header::CONTENT_TYPE, "text/markdown; charset=utf-8")],
-                Body::from(bytes),
-            )
-                .into_response()
+            send_file(bytes)
         }
         Ok(_) => StatusCode::NOT_FOUND.into_response(),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {

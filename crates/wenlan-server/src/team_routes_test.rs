@@ -2017,7 +2017,8 @@ fn no_store(response: &Response) -> bool {
 
 #[tokio::test]
 async fn rulesync_team_project_review_requires_a_current_write_session() {
-    let (f, _) = session_fixture();
+    let (f, db) = fixture_with_daemon().await;
+    team::set_url(&f.state.team_path, Some(ORIGIN)).unwrap();
     team::owner_key(&f.state.team_path, "Team owner").unwrap();
     std::fs::write(
         f.state.settings_path.with_file_name("repo-wiki.json"),
@@ -2036,12 +2037,36 @@ async fn rulesync_team_project_review_requires_a_current_write_session() {
         .unwrap();
     rulesync_team::decide_local_space_proposal(&f.state.settings_path, "Design", &seed, true)
         .unwrap();
+    let page = create_folder_test_page(&db, "Shared project page", "authored").await;
+    let text = version_text(&page.id, "server", "Shared project page.");
+    let (sha, _) = version::write_version(&f.folder, "server", &page.id, &text).unwrap();
+    let page_file = format!(
+        "members/server/pages/{}/{}",
+        page.id,
+        version::version_file_name(&sha)
+    );
     let files = "/team/v1/spaces/Design/files";
     let (status, body) = call(&f.state, Method::GET, files, Some(&f.reader.1), vec![]).await;
     assert_eq!(status, StatusCode::OK);
     let list: TeamFileList = serde_json::from_slice(&body).unwrap();
+    assert!(list.files.contains(&page_file));
     let rules = list.rules.unwrap();
     assert_eq!(rules.project.as_ref().unwrap().space, "Design");
+    assert!(!list.files.contains(&rules.file));
+    let (status, body) = call(
+        &f.state,
+        Method::GET,
+        &format!("/team/v1/spaces/Design/file?path={}", rules.file),
+        Some(&f.reader.1),
+        vec![],
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "the advertised Rules version must download"
+    );
+    assert!(String::from_utf8(body).unwrap().contains("Initial rule"));
     let revision = rules
         .file
         .rsplit('/')
@@ -2082,6 +2107,18 @@ async fn rulesync_team_project_review_requires_a_current_write_session() {
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
+    let (status, _) = call(
+        &f.state,
+        Method::GET,
+        &format!(
+            "/team/v1/spaces/Design/file?path=members/{}/proposals/{}/{name}",
+            f.reader.0.id, rules.page_id
+        ),
+        Some(&f.reader.1),
+        vec![],
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
     let forged = version_text(&rules.page_id, &f.writer.0.id, "Unapproved team rules");
     let forged_name = version::version_file_name(&version::sha256_hex(forged.as_bytes()));
     let forged_path = format!(

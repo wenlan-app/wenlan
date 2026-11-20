@@ -316,6 +316,17 @@ impl HostedRules {
         Ok(approved_head(&self.history(), &self.page_id)?.cloned())
     }
 
+    fn file_path(&self, rules: &version::PageVersion) -> String {
+        format!(
+            "{}/{}/{}/{}/{}",
+            version::MEMBERS_DIR,
+            rules.meta.author.member,
+            version::PAGES_DIR,
+            self.page_id,
+            version::version_file_name(&rules.sha)
+        )
+    }
+
     fn skills(&self, settings_path: &Path) -> Result<Vec<TeamProjectSkill>, WenlanError> {
         let Some(project) = &self.project else {
             return Ok(Vec::new());
@@ -449,18 +460,32 @@ pub fn hosted_manifest(
     };
     Ok(Some(TeamRulesManifest {
         skills: hosted.skills(settings_path)?,
-        file: format!(
-            "{}/{}/{}/{}/{}",
-            version::MEMBERS_DIR,
-            rules.meta.author.member,
-            version::PAGES_DIR,
-            hosted.page_id,
-            version::version_file_name(&rules.sha)
-        ),
+        file: hosted.file_path(&rules),
         team: hosted.info,
         page_id: hosted.page_id,
         project: hosted.project,
     }))
+}
+
+/// Reads the Space's approved Rules version named by its file manifest.
+pub fn read_hosted_rule_file(
+    team_path: &Path,
+    settings_path: &Path,
+    space: &str,
+    path: &str,
+) -> Result<Option<Vec<u8>>, WenlanError> {
+    let Some(hosted) = hosted_rules(team_path, settings_path, space)? else {
+        return Ok(None);
+    };
+    let Some(rules) = hosted
+        .head()?
+        .filter(|rules| hosted.file_path(rules) == path)
+    else {
+        return Ok(None);
+    };
+    let bytes = fs::read(hosted.folder.join(path))?;
+    // The content must still match the version validated by `head`.
+    Ok((version::sha256_hex(&bytes) == rules.sha).then_some(bytes))
 }
 
 fn layer(
