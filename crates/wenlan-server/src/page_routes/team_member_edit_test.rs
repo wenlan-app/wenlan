@@ -184,16 +184,11 @@ async fn publish(
 async fn publishing_names_the_member_and_stays_in_the_pinned_space() {
     let (_tmp, db, state) = server().await;
     let amy = actor(team_actor::secret(), "m-amy");
-    let draft = db
-        .create_page_draft_with_id_in_registered_space_and_folder(
-            PAGE,
-            "Plan",
-            "Body",
-            Some("Beta"),
-            "",
-        )
+    let draft = create_draft(&state, Some("Beta"), amy.clone(), PAGE)
         .await
-        .unwrap();
+        .unwrap()
+        .0
+        .page;
     assert!(
         publish(&state, Some("Alpha"), amy.clone(), PAGE, draft.version)
             .await
@@ -226,6 +221,37 @@ async fn publishing_names_the_member_and_stays_in_the_pinned_space() {
     .await
     .unwrap();
     assert_eq!(last_writer(&db, other).await, "publish");
+}
+
+#[tokio::test]
+async fn a_local_draft_publish_respects_an_explicit_space() {
+    let (_tmp, db, state) = server().await;
+    let draft = db
+        .create_page_draft("Plan", "Body", Some("Beta"), None)
+        .await
+        .unwrap();
+    let refused = publish(
+        &state,
+        Some("Alpha"),
+        TeamActor::default(),
+        &draft.id,
+        draft.version,
+    )
+    .await;
+    assert!(refused.is_err(), "the registry declares a scoped route");
+    assert_eq!(
+        db.get_page(&draft.id).await.unwrap().unwrap().status,
+        "draft"
+    );
+    publish(
+        &state,
+        Some("Beta"),
+        TeamActor::default(),
+        &draft.id,
+        draft.version,
+    )
+    .await
+    .unwrap();
 }
 
 async fn create_draft(

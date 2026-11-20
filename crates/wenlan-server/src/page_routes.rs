@@ -272,16 +272,18 @@ pub async fn handle_get_page(
         db.get_shared_page_scoped(&id, &scope).await
     }
     .map_err(|e| ServerError::SearchFailed(e.to_string()))?;
-    let page = if page.is_none()
+    let routing_member = if page.is_none()
         && header_space.is_none()
         && headers.contains_key(crate::team_actor::DRAFT_SPACE_LOOKUP_HEADER)
-        && crate::team_actor::from_headers(&headers).is_some()
     {
-        // The gate probes the Space before forwarding a draft mutation. Only
-        // that internal probe can see an unpublished draft's routing data.
-        db.get_page_scoped(&id, &scope)
+        crate::team_actor::from_headers(&headers)
+    } else {
+        None
+    };
+    let page = if let Some(member) = routing_member {
+        // The gate probes the Space before forwarding a mutation of the member's own draft.
+        db.get_member_page_draft(&id, &member.id)
             .await?
-            .filter(|page| page.status == "draft")
             .map(|mut page| {
                 page.title.clear();
                 page.content.clear();
@@ -1730,12 +1732,13 @@ pub async fn handle_create_page_draft(
         header_space
     };
     let page = db
-        .create_page_draft_with_id_in_registered_space_and_folder(
+        .create_registered_page_draft(
             &req.draft_id,
             &req.title,
             &req.content,
             space.as_deref(),
             req.folder_path.as_deref().unwrap_or(""),
+            actor.as_ref().map(|member| member.id.as_str()),
         )
         .await
         .map_err(page_draft_error)?;
@@ -1764,21 +1767,17 @@ pub async fn handle_update_page_draft(
     Json(req): Json<UpdatePageDraftRequest>,
 ) -> Result<Json<PageDraftResponse>, ServerError> {
     let db = draft_db(&state).await?;
-    if actor.is_some() {
-        // A team member changes a draft only in the Space the team gate
-        // checked, and does not move it out of there.
-        member_page_in_pinned_space(&db, &id, header_space.as_deref()).await?;
-        if req.space.as_deref() != header_space.as_deref() {
-            return Err(ServerError::NotFound(format!("Page draft {id}")));
-        }
+    if actor.is_some() && (header_space.is_none() || req.space != header_space) {
+        return Err(draft_not_found());
     }
     match db
-        .update_page_draft_in_registered_space(
+        .update_registered_page_draft(
             &id,
             req.expected_version,
             &req.title,
             &req.content,
             req.space.as_deref(),
+            actor.as_ref().map(|member| member.id.as_str()),
         )
         .await
         .map_err(page_draft_error)?
@@ -1806,7 +1805,9 @@ pub async fn handle_publish_page_draft(
     Path(id): Path<String>,
     Json(req): Json<PageDraftVersionRequest>,
 ) -> Result<Json<PageDraftResponse>, ServerError> {
-    let _rules = crate::skill_grow::RulesPageWrite::begin(&state, Some(&id)).await;
+    let private = crate::team_actor::can_read_private_memories(&headers);
+    let mut rules =
+        crate::skill_grow::RulesPageWrite::begin(&state, private.then_some(id.as_str())).await;
     let (db, page_root) = {
         let s = state.read().await;
         (
@@ -1818,17 +1819,20 @@ pub async fn handle_publish_page_draft(
     // A team member publishes only in the Space the team gate checked, and
     // the page is recorded as theirs (shared as theirs, like a desktop
     // member's).
-    let private = crate::team_actor::can_read_private_memories(&headers);
-    let (edited_by, pinned_space) = if private {
+    let (edited_by, member_id) = if private {
         ("publish".to_string(), None)
     } else {
         let member = actor.as_ref().ok_or_else(draft_not_found)?;
-        let space = header_space.as_deref().ok_or_else(draft_not_found)?;
-        (member.edited_by(), Some(space))
+        header_space.as_deref().ok_or_else(draft_not_found)?;
+        (member.edited_by(), Some(member.id.as_str()))
     };
+    let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
+    if !private && !matches!(scope, wenlan_core::read_scope::ReadScope::Space(_)) {
+        return Err(draft_not_found());
+    }
     let folder_path = db.page_initial_folder_path(&id).await?;
     let page = match db
-        .publish_page_draft_in_space(&id, req.expected_version, &edited_by, pinned_space)
+        .publish_page_draft_scoped(&id, req.expected_version, &edited_by, &scope, member_id)
         .await
         .map_err(page_draft_error)?
     {
@@ -1865,6 +1869,7 @@ pub async fn handle_publish_page_draft(
         }
     };
     let page = filter_draft_echo(&db, &view, page).await?;
+    rules.page(&page.id);
     let mut response = PageDraftResponse {
         page,
         folder_path,

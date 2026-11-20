@@ -1100,6 +1100,22 @@ async fn db_and_page_root(
     ))
 }
 
+/// Hosted reads and reports use the same published Rules-folder lines.
+async fn shared_rule_lines(
+    db: &MemoryDB,
+    page_root: Option<&Path>,
+    space: &str,
+) -> Result<Vec<SkillLine>, ServerError> {
+    let scope = wenlan_core::read_scope::ReadScope::Space(space.to_string());
+    let pages = OwnRulePages::load_rules_folders(db, page_root, &[], Some(&scope)).await?;
+    let mut seen = HashSet::new();
+    Ok(pages
+        .into_iter()
+        .flat_map(|page| page.lines)
+        .filter(|line| seen.insert(line.text.trim().to_lowercase()))
+        .collect())
+}
+
 pub async fn handle_read_rules(
     State(state): State<SharedState>,
     headers: HeaderMap,
@@ -1113,17 +1129,7 @@ pub async fn handle_read_rules(
     let by_tool = !crate::memory_routes::caller_is_person(&headers);
     if !private {
         let space = resolved_space(&db, &headers, query.space.as_deref()).await?;
-        let scope = wenlan_core::read_scope::ReadScope::Space(space.name.clone());
-        // A shared Rules folder can supply rules from its published pages.
-        // "How I work" and "Rules I saved" are excluded by the shared page reader.
-        let pages =
-            OwnRulePages::load_rules_folders(&db, page_root.as_deref(), &[], Some(&scope)).await?;
-        let mut seen = HashSet::new();
-        let lines: Vec<_> = pages
-            .into_iter()
-            .flat_map(|page| page.lines)
-            .filter(|line| seen.insert(line.text.trim().to_lowercase()))
-            .collect();
+        let lines = shared_rule_lines(&db, page_root.as_deref(), &space.name).await?;
         if by_tool && feature_enabled() && !lines.is_empty() {
             db.record_skill_rules_read(&tool, &space.id, &lines).await?;
         }
@@ -3864,27 +3870,37 @@ pub async fn handle_self_report(
         return Ok(Json(serde_json::json!({ "recorded": false })));
     }
     let (db, page_root) = db_and_page_root(&state).await?;
-    let own = OwnRulePages::load(&db, page_root.as_deref()).await?;
-    // A general line is recorded under its own Space, including when it was
-    // read with no Space at all.
-    let (space_id, own_lines) = if private && no_space_named(&headers, Some(&request.space)) {
-        (None, Vec::new())
-    } else {
+    let missing = || ServerError::NotFound("approved rule not found".into());
+    let (owner, line) = if !private {
         let space = resolved_space(&db, &headers, Some(&request.space)).await?;
-        let lines = read_rules_for_space(&db, &own, &space).await?.lines;
-        (Some(space.id), lines)
-    };
-    let (owner, line) = match own_lines
-        .into_iter()
-        .find(|line| line.id == request.rule_id)
-    {
-        Some(line) => (space_id.clone().unwrap_or_default(), line),
-        None if !private => return Err(ServerError::NotFound("approved rule not found".into())),
-        None => general_lines(&db, &own, space_id.as_deref())
+        let line = shared_rule_lines(&db, page_root.as_deref(), &space.name)
             .await?
             .into_iter()
-            .find(|(_, line)| line.id == request.rule_id)
-            .ok_or_else(|| ServerError::NotFound("approved rule not found".into()))?,
+            .find(|line| line.id == request.rule_id)
+            .ok_or_else(missing)?;
+        (space.id, line)
+    } else {
+        let own = OwnRulePages::load(&db, page_root.as_deref()).await?;
+        // A general line is recorded under its own Space, including when it
+        // was read with no Space at all.
+        let (space_id, own_lines) = if no_space_named(&headers, Some(&request.space)) {
+            (None, Vec::new())
+        } else {
+            let space = resolved_space(&db, &headers, Some(&request.space)).await?;
+            let lines = read_rules_for_space(&db, &own, &space).await?.lines;
+            (Some(space.id), lines)
+        };
+        match own_lines
+            .into_iter()
+            .find(|line| line.id == request.rule_id)
+        {
+            Some(line) => (space_id.unwrap_or_default(), line),
+            None => general_lines(&db, &own, space_id.as_deref())
+                .await?
+                .into_iter()
+                .find(|(_, line)| line.id == request.rule_id)
+                .ok_or_else(missing)?,
+        }
     };
     let tool = crate::memory_routes::extract_agent_name(&headers, None);
     if tool == "unknown" {

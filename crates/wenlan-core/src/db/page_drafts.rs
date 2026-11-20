@@ -3,6 +3,7 @@
 use super::MemoryDB;
 use crate::error::WenlanError;
 use crate::pages::{Page, PageDraftDeleteOutcome, PageDraftPublishOutcome, PageDraftUpdateOutcome};
+use crate::read_scope::ReadScope;
 
 const PAGE_COLUMNS: &str = "id, title, summary, content, entity_id, space,
     source_memory_ids, version, status, created_at, last_compiled, last_modified,
@@ -117,6 +118,31 @@ impl MemoryDB {
         Ok(())
     }
 
+    /// Old drafts carry no proof of member ownership and remain local-only.
+    pub(super) async fn migrate_167_page_draft_owner(
+        &self,
+        prior_version: i64,
+    ) -> Result<(), WenlanError> {
+        self.backup_before_migration(167, prior_version).await?;
+        let has_owner = self
+            .get_table_columns("page_draft_create_requests")
+            .await?
+            .contains("owner_member_id");
+        let conn = self.conn.lock().await;
+        if !has_owner {
+            conn.execute(
+                "ALTER TABLE page_draft_create_requests ADD COLUMN owner_member_id TEXT",
+                (),
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("m167 draft owner: {e}")))?;
+        }
+        conn.execute("PRAGMA user_version = 167", ())
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("m167 bump: {e}")))?;
+        Ok(())
+    }
+
     async fn registered_page_draft_space_on_conn(
         conn: &libsql::Connection,
         requested: Option<&str>,
@@ -177,6 +203,78 @@ impl MemoryDB {
             .ok_or_else(|| WenlanError::NotFound(format!("Page draft {id}")))
     }
 
+    async fn owns_draft_on_conn(
+        conn: &libsql::Connection,
+        id: &str,
+        member_id: &str,
+    ) -> Result<bool, WenlanError> {
+        let mut rows = conn
+            .query(
+                "SELECT 1 FROM page_draft_create_requests WHERE page_id=?1 AND owner_member_id=?2",
+                libsql::params![id, member_id],
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("load Page draft owner: {e}")))?;
+        Ok(rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("read Page draft owner: {e}")))?
+            .is_some())
+    }
+
+    /// The browser gate uses an owned draft's Space to route its mutation.
+    pub async fn get_member_page_draft(
+        &self,
+        id: &str,
+        member_id: &str,
+    ) -> Result<Option<Page>, WenlanError> {
+        let conn = self.conn.lock().await;
+        if !Self::owns_draft_on_conn(&conn, id, member_id).await? {
+            return Ok(None);
+        }
+        Ok(Self::page_draft_on_conn(&conn, id)
+            .await?
+            .filter(|page| page.status == "draft"))
+    }
+
+    async fn check_publish_access_on_conn(
+        conn: &libsql::Connection,
+        page: &Page,
+        scope: &ReadScope,
+        member_id: Option<&str>,
+    ) -> Result<(), WenlanError> {
+        let not_found = || WenlanError::NotFound(format!("Page draft {}", page.id));
+        if !scope.matches(page.workspace.as_deref()) {
+            return Err(not_found());
+        }
+        if let Some(member_id) = member_id {
+            let visible = if page.status == "draft" {
+                Self::owns_draft_on_conn(conn, &page.id, member_id).await?
+            } else {
+                let predicate = super::scoped_pages::shared_page_predicate("p.");
+                let mut rows = conn
+                    .query(
+                        &format!("SELECT 1 FROM pages p WHERE p.id=?1 AND {predicate}"),
+                        [page.id.as_str()],
+                    )
+                    .await
+                    .map_err(|e| {
+                        WenlanError::VectorDb(format!("check published Page visibility: {e}"))
+                    })?;
+                rows.next()
+                    .await
+                    .map_err(|e| {
+                        WenlanError::VectorDb(format!("read published Page visibility: {e}"))
+                    })?
+                    .is_some()
+            };
+            if !visible {
+                return Err(not_found());
+            }
+        }
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     async fn page_draft_create_request_matches_on_conn(
         conn: &libsql::Connection,
@@ -186,6 +284,7 @@ impl MemoryDB {
         space: Option<&str>,
         workspace: Option<&str>,
         folder_path: &str,
+        member_id: Option<&str>,
     ) -> Result<bool, WenlanError> {
         let mut rows = conn
             .query(
@@ -197,8 +296,9 @@ impl MemoryDB {
                     AND space IS ?4
                     AND workspace IS ?5
                     AND folder_path=?6
+                    AND owner_member_id IS ?7
                   LIMIT 1",
-                libsql::params![id, title, content, space, workspace, folder_path],
+                libsql::params![id, title, content, space, workspace, folder_path, member_id],
             )
             .await
             .map_err(|error| {
@@ -261,7 +361,7 @@ impl MemoryDB {
         space: Option<&str>,
         workspace: Option<&str>,
     ) -> Result<Page, WenlanError> {
-        self.create_page_draft_with_id_impl(id, title, content, space, workspace, false, "")
+        self.create_page_draft_with_id_impl(id, title, content, space, workspace, false, "", None)
             .await
     }
 
@@ -273,7 +373,7 @@ impl MemoryDB {
         content: &str,
         space: Option<&str>,
     ) -> Result<Page, WenlanError> {
-        self.create_page_draft_with_id_impl(id, title, content, space, space, true, "")
+        self.create_page_draft_with_id_impl(id, title, content, space, space, true, "", None)
             .await
     }
 
@@ -286,8 +386,31 @@ impl MemoryDB {
         space: Option<&str>,
         folder_path: &str,
     ) -> Result<Page, WenlanError> {
-        self.create_page_draft_with_id_impl(id, title, content, space, space, true, folder_path)
+        self.create_registered_page_draft(id, title, content, space, folder_path, None)
             .await
+    }
+
+    /// When a browser member creates the draft, bind its first request to them.
+    pub async fn create_registered_page_draft(
+        &self,
+        id: &str,
+        title: &str,
+        content: &str,
+        space: Option<&str>,
+        folder_path: &str,
+        member_id: Option<&str>,
+    ) -> Result<Page, WenlanError> {
+        self.create_page_draft_with_id_impl(
+            id,
+            title,
+            content,
+            space,
+            space,
+            true,
+            folder_path,
+            member_id,
+        )
+        .await
     }
 
     /// The ledger survives publish/discard so delayed projection retries retain intent.
@@ -322,6 +445,7 @@ impl MemoryDB {
         workspace: Option<&str>,
         validate_space: bool,
         folder_path: &str,
+        member_id: Option<&str>,
     ) -> Result<Page, WenlanError> {
         let folder_path = crate::export::knowledge::validate_knowledge_folder_path(folder_path)?;
         ensure_client_page_draft_id(id)?;
@@ -355,6 +479,7 @@ impl MemoryDB {
                     requested_space.as_deref(),
                     requested_workspace.as_deref(),
                     &folder_path,
+                    member_id,
                 )
                 .await?
             {
@@ -416,15 +541,16 @@ impl MemoryDB {
         .map_err(|error| WenlanError::VectorDb(format!("create Page draft: {error}")))?;
         tx.execute(
             "INSERT INTO page_draft_create_requests (
-                page_id, title, content, space, workspace, folder_path
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                page_id, title, content, space, workspace, folder_path, owner_member_id
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             libsql::params![
                 id,
                 title,
                 content,
                 normalized_space.as_deref(),
                 normalized_workspace.as_deref(),
-                folder_path
+                folder_path,
+                member_id
             ],
         )
         .await
@@ -459,6 +585,7 @@ impl MemoryDB {
             space,
             workspace,
             false,
+            None,
         )
         .await
     }
@@ -473,8 +600,31 @@ impl MemoryDB {
         content: &str,
         space: Option<&str>,
     ) -> Result<PageDraftUpdateOutcome, WenlanError> {
-        self.update_page_draft_impl(id, expected_version, title, content, space, space, true)
+        self.update_registered_page_draft(id, expected_version, title, content, space, None)
             .await
+    }
+
+    /// A member's save must target their own draft in the granted Space.
+    pub async fn update_registered_page_draft(
+        &self,
+        id: &str,
+        expected_version: i64,
+        title: &str,
+        content: &str,
+        space: Option<&str>,
+        member_id: Option<&str>,
+    ) -> Result<PageDraftUpdateOutcome, WenlanError> {
+        self.update_page_draft_impl(
+            id,
+            expected_version,
+            title,
+            content,
+            space,
+            space,
+            true,
+            member_id,
+        )
+        .await
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -487,6 +637,7 @@ impl MemoryDB {
         space: Option<&str>,
         workspace: Option<&str>,
         validate_space: bool,
+        member_id: Option<&str>,
     ) -> Result<PageDraftUpdateOutcome, WenlanError> {
         ensure_meaningful_draft_snapshot(title, content)?;
         let requested_space = if validate_space {
@@ -515,6 +666,14 @@ impl MemoryDB {
             // update racing after publish gets the structured 404, not a 422 —
             // the editor treats "draft not found" as the terminal answer.
             return Err(WenlanError::NotFound(format!("Page draft {id}")));
+        }
+        if let Some(member_id) = member_id {
+            if requested_space.is_none()
+                || current.space != requested_space
+                || !Self::owns_draft_on_conn(&tx, id, member_id).await?
+            {
+                return Err(WenlanError::NotFound(format!("Page draft {id}")));
+            }
         }
         // M1 read-collapse: the write below mirrors ONE resolved scope onto both
         // NOT NULL columns via the Option A ladder (workspace wins, else space,
@@ -631,7 +790,8 @@ impl MemoryDB {
                 title=NULL,
                 content=NULL,
                 space=NULL,
-                workspace=NULL",
+                workspace=NULL,
+                owner_member_id=NULL",
             libsql::params![id],
         )
         .await
@@ -677,18 +837,19 @@ impl MemoryDB {
         expected_version: i64,
         edited_by: &str,
     ) -> Result<PageDraftPublishOutcome, WenlanError> {
-        self.publish_page_draft_in_space(id, expected_version, edited_by, None)
+        self.publish_page_draft_scoped(id, expected_version, edited_by, &ReadScope::Global, None)
             .await
     }
 
     /// Publish in the Space granted to a hosted writer. Scope, version, and
     /// the receipt for an exact retry are checked in the write transaction.
-    pub async fn publish_page_draft_in_space(
+    pub async fn publish_page_draft_scoped(
         &self,
         id: &str,
         expected_version: i64,
         edited_by: &str,
-        pinned_space: Option<&str>,
+        scope: &ReadScope,
+        member_id: Option<&str>,
     ) -> Result<PageDraftPublishOutcome, WenlanError> {
         // Snapshot outside the write transaction so the embedding compute
         // (slow on first call while the model loads) never holds it. Any
@@ -697,11 +858,10 @@ impl MemoryDB {
         // content are exactly what gets published.
         let snapshot = {
             let conn = self.conn.lock().await;
-            Self::required_page_draft_on_conn(&conn, id).await?
+            let page = Self::required_page_draft_on_conn(&conn, id).await?;
+            Self::check_publish_access_on_conn(&conn, &page, scope, member_id).await?;
+            page
         };
-        if pinned_space.is_some_and(|space| snapshot.space.as_deref() != Some(space)) {
-            return Err(WenlanError::NotFound(format!("Page draft {id}")));
-        }
         let embedding_sql = if snapshot.status == "draft" && snapshot.version == expected_version {
             let embed_text = crate::pages::page_embedding_text(
                 &initial_note_title(&snapshot.title, &snapshot.content),
@@ -730,9 +890,7 @@ impl MemoryDB {
             .await
             .map_err(|error| WenlanError::VectorDb(format!("publish Page draft begin: {error}")))?;
         let current = Self::required_page_draft_on_conn(&tx, id).await?;
-        if pinned_space.is_some_and(|space| current.space.as_deref() != Some(space)) {
-            return Err(WenlanError::NotFound(format!("Page draft {id}")));
-        }
+        Self::check_publish_access_on_conn(&tx, &current, scope, member_id).await?;
         if current.status == "active" && expected_version.checked_add(1) == Some(current.version) {
             // Older local publications used a dedicated history writer.
             // Older shared-person writes did not distinguish publish from edit.

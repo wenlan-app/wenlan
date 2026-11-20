@@ -21,16 +21,26 @@ async fn request(
     body: Value,
     forwarded: bool,
 ) -> (StatusCode, Value) {
+    request_as(app, method, path, body, forwarded.then_some("reader")).await
+}
+
+async fn request_as(
+    app: &AppRouter,
+    method: Method,
+    path: &str,
+    body: Value,
+    member: Option<&str>,
+) -> (StatusCode, Value) {
     let mut req = Request::builder()
         .method(method)
         .uri(path)
         .header("content-type", "application/json")
         .header("x-agent-name", AGENT)
         .header(crate::space_header::HEADER_NAME, SPACE);
-    if forwarded {
+    if let Some(member) = member {
         req = req
             .header(SECRET_HEADER, secret())
-            .header(MEMBER_HEADER, "reader")
+            .header(MEMBER_HEADER, member)
             .header(KIND_HEADER, "person");
     }
     let response = app
@@ -348,10 +358,8 @@ async fn hosted_draft_publish_conflict_only_identifies_shared_pages() {
 async fn hosted_draft_publish_replay_omits_private_provenance() {
     const FIXTURE_LOCATOR: &str = "fixture-unpublished-locator";
     let (app, db, _scratch) = fixture().await;
-    let draft = db
-        .create_page_draft("Team draft", "New text.", Some(SPACE), None)
-        .await
-        .unwrap();
+    let created = create_member_draft(&app, "Team draft", "New text.").await;
+    let draft: wenlan_core::pages::Page = serde_json::from_value(created["page"].clone()).unwrap();
     let path = format!("/api/pages/drafts/{}/publish", draft.id);
     let publish = json!({"expected_version": draft.version});
     let published = post_as_member(&app, &path, publish.clone()).await;
@@ -384,6 +392,50 @@ async fn hosted_draft_publish_replay_omits_private_provenance() {
         !replayed.to_string().contains(FIXTURE_LOCATOR),
         "publication response must omit private provenance"
     );
+}
+
+#[tokio::test]
+async fn hosted_draft_publish_requires_the_draft_owner() {
+    let (app, db, _scratch) = fixture().await;
+    let local = db
+        .create_page_draft("Local draft", "Private text.", Some(SPACE), None)
+        .await
+        .unwrap();
+    let created = create_member_draft(&app, "Member draft", "Work in progress.").await;
+    let owned_id = created["page"]["id"].as_str().unwrap();
+    let mut failures = Vec::new();
+    for id in [
+        local.id.as_str(),
+        owned_id,
+        "page_00000000-0000-4000-8000-000000000000",
+    ] {
+        let (status, body) = request_as(
+            &app,
+            Method::POST,
+            &format!("/api/pages/drafts/{id}/publish"),
+            json!({"expected_version": 1}),
+            Some("another-writer"),
+        )
+        .await;
+        if status != StatusCode::NOT_FOUND || body["code"] != "page_draft_not_found" {
+            failures.push((id, status, body["code"].clone()));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "a writer reached a draft they could not read: {failures:?}"
+    );
+    assert_eq!(
+        db.get_page(&local.id).await.unwrap().unwrap().status,
+        "draft"
+    );
+    let published = post_as_member(
+        &app,
+        &format!("/api/pages/drafts/{owned_id}/publish"),
+        json!({"expected_version": 1}),
+    )
+    .await;
+    assert_eq!(published["page"]["status"], "active");
 }
 
 #[tokio::test]

@@ -1693,7 +1693,7 @@ async fn hosted_rules_exclude_personal_rules_pages() {
     );
     let hosted = handle_read_rules(
         axum::extract::State(scratch.shared.clone()),
-        headers,
+        headers.clone(),
         Query(RulesQuery { space: None }),
     )
     .await
@@ -1710,6 +1710,51 @@ async fn hosted_rules_exclude_personal_rules_pages() {
         "hosted rules must only include rules from published pages"
     );
     assert!(lines.contains(&"Check the shared agenda"));
+
+    let report = |rule_id: String| {
+        handle_self_report(
+            axum::extract::State(scratch.shared.clone()),
+            headers.clone(),
+            Json(SkillReportRequest {
+                space: "Project".into(),
+                rule_id,
+                report: wenlan_types::SkillReportKind::ChangedPlan,
+            }),
+        )
+    };
+    let private = local
+        .lines
+        .iter()
+        .find(|line| line.text == "Private saved rule")
+        .unwrap();
+    let private_result =
+        axum::response::IntoResponse::into_response(report(private.id.clone()).await);
+    let unknown_result =
+        axum::response::IntoResponse::into_response(report("unknown-rule".into()).await);
+    let (private_parts, private_body) = private_result.into_parts();
+    let (unknown_parts, unknown_body) = unknown_result.into_parts();
+    let private_body = axum::body::to_bytes(private_body, 4096).await.unwrap();
+    let unknown_body = axum::body::to_bytes(unknown_body, 4096).await.unwrap();
+    let records = scratch
+        .db
+        .skill_borrow_records(&project.id, 0, i64::MAX)
+        .await
+        .unwrap();
+    assert_eq!(
+        (
+            private_parts.status,
+            private_body,
+            records
+                .iter()
+                .any(|record| record.rule_id == private.id && record.self_report.is_some())
+        ),
+        (unknown_parts.status, unknown_body, false),
+        "a hosted report must neither confirm nor record a private rule"
+    );
+    assert_eq!(
+        report(hosted.lines[0].id.clone()).await.unwrap().0["recorded"],
+        true
+    );
 }
 
 #[tokio::test]
