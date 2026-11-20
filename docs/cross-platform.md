@@ -179,9 +179,10 @@ its `SystemRoot` and staged profile, app-data and temp paths. Wenlan reports the
 exit status without retaining the child's output, which can contain source text.
 
 On macOS, `sandbox-exec` denies network access. The renderer can read the staging
-tree and the system runtime paths listed in its profile. Writes are limited to
-staged output, scratch and `/dev/null`. A session that cannot apply the profile
-cannot render through this path.
+tree, the system runtime paths listed in its profile (including `/usr/share/icu`),
+and the individual ancestor directories of the canonical stage path. Writes are
+limited to staged output, scratch and `/dev/null`. A session that cannot apply
+the profile cannot render through this path.
 
 On Linux x86_64 and aarch64, Wenlan checks whether the daemon can create a network
 namespace with `unshare -n` or `unshare -Urn`. If `unshare` is unavailable or the
@@ -196,6 +197,18 @@ On macOS, run `macos_sandbox_allows_staged_reads_and_denies_unrelated_reads` wit
 `renders_rules_with_local_pinned_binary` test also takes `-- --ignored` and
 requires `WENLAN_TEST_RULESYNC_BINARY` to point to the release executable for the
 test host. Run it on each supported platform to verify native launch and output.
+
+In a macOS session that permits `sandbox-exec`, run the personal rules fixture
+with the pinned rulesync executable for your architecture. The test uses the
+same renderer and staging layout as adoption and checks the generated Claude
+Code and Codex files.
+
+```bash
+WENLAN_NO_AUTOSTART=1 WENLAN_TEST_RULESYNC_BINARY=/path/to/rulesync-darwin-arm64 \
+  cargo test --locked -p wenlan-core --lib \
+  rulesync_renderer::tests::macos_sandbox_renders_personal_rules_with_pinned_binary \
+  -- --ignored --exact
+```
 
 ## Microsoft runtime on Windows
 

@@ -385,9 +385,10 @@ fn copy_verified_binary(source: &Path, destination: &Path, pin: &Pin) -> Result<
 #[cfg(target_os = "macos")]
 fn renderer_command(binary: &Path, stage: &Path, output: &Path, runtime: &Path) -> Result<Command> {
     use std::ffi::OsString;
+    use std::fmt::Write as _;
 
     const SANDBOX_EXEC: &str = "/usr/bin/sandbox-exec";
-    const PROFILE: &str = "(version 1)
+    const PROFILE_START: &str = "(version 1)
         (allow default)
         (deny network*)
         (deny process-exec (require-not (literal (param \"RENDERER\"))))
@@ -398,10 +399,13 @@ fn renderer_command(binary: &Path, stage: &Path, output: &Path, runtime: &Path) 
             (require-not (subpath \"/private/var/db/dyld\"))
             (require-not (subpath \"/System/Cryptexes/OS/System/Library/dyld\"))
             (require-not (subpath \"/System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld\"))
+            (require-not (subpath \"/usr/share/icu\"))
             (require-not (literal \"/System/Library/CoreServices/SystemVersion.plist\"))
             (require-not (literal \"/dev/null\"))
             (require-not (literal \"/dev/random\"))
-            (require-not (literal \"/dev/urandom\"))))
+            (require-not (literal \"/dev/urandom\"))
+";
+    const PROFILE_END: &str = "        ))
         (deny file-write* (require-all
             (require-not (subpath (param \"OUTPUT_ROOT\")))
             (require-not (subpath (param \"RUNTIME_ROOT\")))
@@ -411,7 +415,23 @@ fn renderer_command(binary: &Path, stage: &Path, output: &Path, runtime: &Path) 
         "macOS rulesync offline sandbox is unavailable"
     );
     let mut command = Command::new(SANDBOX_EXEC);
-    command.args(["-p", PROFILE]);
+    let mut profile = String::from(PROFILE_START);
+    // The renderer needs to read the directories along the canonical stage
+    // path. Each literal exception applies to the directory itself.
+    for (index, ancestor) in stage.ancestors().skip(1).enumerate() {
+        let name = format!("STAGE_ANCESTOR_{index}");
+        writeln!(
+            profile,
+            "            (require-not (literal (param \"{name}\")))"
+        )
+        .expect("append Seatbelt filter to profile");
+        let mut param = OsString::from(name);
+        param.push("=");
+        param.push(ancestor);
+        command.arg("-D").arg(param);
+    }
+    profile.push_str(PROFILE_END);
+    command.args(["-p", &profile]);
     for (name, path) in [
         ("STAGE_ROOT=", stage),
         ("OUTPUT_ROOT=", output),
@@ -594,6 +614,43 @@ mod tests {
             String::from_utf8_lossy(&result.stderr)
         );
         assert!(!result.status.success());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "requires the local pinned rulesync binary and a macOS session that permits sandbox-exec"]
+    fn macos_sandbox_renders_personal_rules_with_pinned_binary() {
+        let binary = PathBuf::from(
+            std::env::var_os("WENLAN_TEST_RULESYNC_BINARY")
+                .expect("set WENLAN_TEST_RULESYNC_BINARY to the local pinned release executable"),
+        );
+        let home = tempfile::tempdir().unwrap();
+        let data = home.path().join("Wenlan \"測試\"").join("rulesync");
+        fs::create_dir_all(&data).unwrap();
+        let rule = "Keep the personal rules fixture in staging.";
+        for (target, destination) in [
+            ("claudecode", ".claude/CLAUDE.md"),
+            ("codexcli", ".codex/AGENTS.md"),
+        ] {
+            let stage = new_stage(&data).unwrap();
+            let input = stage.path().join("master");
+            let output = stage.path().join("output");
+            fs::create_dir(&output).unwrap();
+            crate::rulesync_personal::write_root_rule(&input, rule).unwrap();
+            render(
+                &binary,
+                stage.path(),
+                &[input],
+                &output,
+                true,
+                &[target.into()],
+                &["rules"],
+            )
+            .unwrap_or_else(|error| panic!("{target}: {error:#}"));
+            assert!(fs::read_to_string(output.join(destination))
+                .unwrap()
+                .contains(rule));
+        }
     }
 
     #[test]
