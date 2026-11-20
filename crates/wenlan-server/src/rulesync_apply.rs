@@ -38,10 +38,10 @@ impl FileMode {
 
 #[derive(Debug, Clone, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub(crate) enum Snapshot {
+pub(crate) enum Snapshot<Content = Vec<u8>> {
     Absent,
     File {
-        bytes: Vec<u8>,
+        bytes: Content,
         mode: FileMode,
     },
     Symlink {
@@ -56,7 +56,7 @@ pub(crate) enum Snapshot {
     Directory,
 }
 
-impl PartialEq for Snapshot {
+impl<Content: PartialEq> PartialEq for Snapshot<Content> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Absent, Self::Absent) | (Self::Directory, Self::Directory) => true,
@@ -169,6 +169,25 @@ impl FileRoot {
         match self.open_parent(relative_parent, false)? {
             Some(parent) => read_leaf(&parent, name, allow_symlink),
             None => Ok(Snapshot::Absent),
+        }
+    }
+
+    pub(crate) fn sync_directory(&self, path: &Path) -> io::Result<()> {
+        #[cfg(unix)]
+        if let Some(directory) = self.open_parent(path, false)? {
+            // On Linux the capability itself can be an O_PATH descriptor.
+            directory.open(".")?.sync_all()?;
+        }
+        #[cfg(not(unix))]
+        let _ = path;
+        Ok(())
+    }
+
+    pub(crate) fn remove_private_directory(&self, path: &Path) -> io::Result<()> {
+        match self.dir.open_dir_nofollow(path) {
+            Ok(directory) => directory.remove_open_dir_all(),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
         }
     }
 
@@ -680,7 +699,7 @@ mod tests {
             link
         );
         assert_ne!(
-            Snapshot::Symlink {
+            Snapshot::<Vec<u8>>::Symlink {
                 target: PathBuf::from("parent//target"),
                 directory: false,
             },

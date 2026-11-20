@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, ensure, Context, Result};
@@ -52,7 +53,11 @@ pub fn discover_adoption(home: &Path) -> Result<Adoption> {
 
 pub fn fingerprint(value: &impl Serialize) -> Result<String> {
     let mut hash = Sha256::new();
-    serde_json::to_writer(&mut hash, value)?;
+    {
+        let mut buffered = BufWriter::new(&mut hash);
+        serde_json::to_writer(&mut buffered, value)?;
+        buffered.flush()?;
+    }
     Ok(format!("{:x}", hash.finalize()))
 }
 
@@ -138,12 +143,12 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
 /// Wenlan keeps imported text as authored. Only Wenlan-generated additions
 /// have already passed through the UX-SKILL-8 escaping in skill_grow.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PersonalMaster {
+pub struct PersonalMaster<Content = Vec<u8>> {
     pub shared: String,
     pub overlays: BTreeMap<String, String>,
     #[serde(default)]
     pub codex_sync_replaced: bool,
-    pub skills: Vec<AdoptedSkill>,
+    pub skills: Vec<AdoptedSkill<Content>>,
     #[serde(default)]
     pub overrides: BTreeMap<String, LocalText>,
 }

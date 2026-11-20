@@ -52,14 +52,14 @@ pub struct Adoption {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AdoptedSkill {
+pub struct AdoptedSkill<Content = Vec<u8>> {
     pub name: String,
     pub shared: bool,
     pub targets: BTreeSet<String>,
     /// The skill folder, relative to home, under which each tool uses this copy.
     pub locations: BTreeMap<String, BTreeSet<PathBuf>>,
     /// Paths relative to the skill folder.
-    pub files: BTreeMap<PathBuf, Vec<u8>>,
+    pub files: BTreeMap<PathBuf, Content>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub upstream: Option<SkillUpstream>,
 }
