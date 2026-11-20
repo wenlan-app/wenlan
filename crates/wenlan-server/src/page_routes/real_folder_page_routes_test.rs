@@ -106,6 +106,7 @@ async fn publish_reports_committed_page_with_pending_projection_and_retains_inte
     assert_eq!(reloaded.page.folder_path.as_deref(), Some("Missing"));
     let Json(published) = handle_publish_page_draft(
         State(state.clone()),
+        axum::http::HeaderMap::new(),
         SpaceHeader(None),
         crate::team_actor::TeamActor::default(),
         TruthView::automatic(),
@@ -127,6 +128,7 @@ async fn publish_reports_committed_page_with_pending_projection_and_retains_inte
     std::fs::create_dir(root.join("Missing")).unwrap();
     let Json(retry) = handle_publish_page_draft(
         State(state),
+        axum::http::HeaderMap::new(),
         SpaceHeader(None),
         crate::team_actor::TeamActor::default(),
         TruthView::automatic(),

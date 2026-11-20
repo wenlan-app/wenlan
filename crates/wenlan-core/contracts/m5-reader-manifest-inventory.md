@@ -1274,7 +1274,7 @@ carrying the authority of agreement.
 | `core/db/page_basis.rs::list_basis_context` | `pub` | no | no | — | — |
 | `core/db/page_basis.rs::list_basis_pending` | `pub` | no | no | — | — |
 | `core/db/page_basis.rs::load_facts` | `private` | no | no | — | — |
-| `core/db/page_drafts.rs::publish_page_draft_by` | `pub` | no | **yes** | `server/page_routes.rs::handle_publish_page_draft` | — |
+| `core/db/page_drafts.rs::publish_page_draft_in_space` | `pub` | no | **yes** | `server/page_routes.rs::handle_publish_page_draft` | — |
 | `core/db/page_export.rs::state_on` | `private` | no | no | — | — |
 | `core/db/page_map_independent.rs::migrate_134_page_map_ideas` | `pub(crate)` | no | no | — | — |
 | `core/db/page_rename.rs::commit_page_title_rename` | `pub(crate)` | no | no | — | — |
@@ -1404,7 +1404,7 @@ carrying the authority of agreement.
 | `core/db/page_basis.rs::mark_page_basis_on_conn` | `pub(super)` | no | no | — | `core/db/page_basis.rs::load_facts` |
 | `core/db/page_basis.rs::prepare_staged_basis_marks` | `pub` | no | **yes** | `server/page_routes.rs::handle_refresh_page_inner` | `core/db/page_basis.rs::load_facts` |
 | `core/db/page_basis.rs::refresh_rows` | `private` | no | no | — | `core/db/page_basis.rs::load_facts` |
-| `core/db/page_drafts.rs::publish_page_draft` | `pub` | no | no | — | `core/db/page_drafts.rs::publish_page_draft_by` |
+| `core/db/page_drafts.rs::publish_page_draft_by` | `pub` | no | no | — | `core/db/page_drafts.rs::publish_page_draft_in_space` |
 | `core/db/page_export.rs::authorize_on` | `private` | no | no | — | `core/db/truth_exposure.rs::page_truth_states_on_conn` |
 | `core/db/page_export.rs::capture_on` | `pub(super)` | yes | no | — | `core/db/page_export.rs::state_on` |
 | `core/db/page_export.rs::capture_page_export` | `pub` | no | **yes** | `server/page_export_routes.rs::capture` | `core/db/page_export.rs::state_on` |
@@ -1493,7 +1493,7 @@ carrying the authority of agreement.
 | `server/page_map_routes.rs::resolve_outline_links` | `private` | no | no | `server/page_map_routes.rs::handle_get_page_map` | `core/db/scoped_pages.rs::get_page_outbound_links_scoped` |
 | `server/page_routes.rs::handle_get_page` | `pub` | no | **yes** | `server/repair_read_routes.rs::handle_get_repair_page` | `core/db/page_basis.rs::linked_changed` |
 | `server/page_routes.rs::handle_get_page_links` | `pub` | no | no | — | `core/db/scoped_pages.rs::get_page_outbound_links_scoped` |
-| `server/page_routes.rs::handle_publish_page_draft` | `pub` | no | no | — | `core/db/page_drafts.rs::publish_page_draft_by` |
+| `server/page_routes.rs::handle_publish_page_draft` | `pub` | no | no | — | `core/db/page_drafts.rs::publish_page_draft_in_space` |
 | `server/page_routes.rs::visible_conflict_identity` | `private` | no | no | `server/page_routes.rs::handle_publish_page_draft` | `core/db/truth_exposure.rs::conflict_identity_snapshot` |
 | `server/routes.rs::handle_distill_inner` | `private` | no | no | `server/routes.rs::handle_distill` | `core/db.rs::list_stale_pages_scoped`, `core/db.rs::load_page_source_index` |
 | `server/routes.rs::handle_recent_retrievals` | `pub` | no | no | — | `core/db.rs::list_recent_retrievals_scoped` |
@@ -1570,6 +1570,7 @@ carrying the authority of agreement.
 | `core/db/page_basis.rs::mark_page_basis_in` | `pub` | no | **yes** | `server/page_basis_routes.rs::handle_mark_basis` | `core/db/page_basis.rs::mark_page_basis_on_conn` |
 | `core/db/page_basis.rs::refresh_basis_all` | `pub(super)` | no | no | — | `core/db/page_basis.rs::refresh_rows` |
 | `core/db/page_basis.rs::refresh_basis_state` | `pub(super)` | no | no | — | `core/db/page_basis.rs::refresh_rows` |
+| `core/db/page_drafts.rs::publish_page_draft` | `pub` | no | no | — | `core/db/page_drafts.rs::publish_page_draft_by` |
 | `core/db/page_export.rs::pending_on` | `private` | yes | no | — | `core/db/citation_sources.rs::guard_on` |
 | `core/db/page_restore.rs::restore_page` | `pub` | yes | no | — | `core/db/page_restore.rs::commit_page_restore` |
 | `core/db/presence_review.rs::review_page_with_presence` | `pub` | no | **yes** | `server/page_routes.rs::handle_review_page` | `core/db/presence_review.rs::review_in_txn` |
@@ -1667,7 +1668,6 @@ carrying the authority of agreement.
 | `core/sentences.rs::recheck_sentence` | `pub` | no | **yes** | `server/sentence_routes.rs::handle_recheck_sentence` | `core/db/sentence_history.rs::set_page_citations_at_page_version` |
 | `core/sentences.rs::source_states` | `private` | no | no | — | `core/db/citation_sources.rs::citation_page_source` |
 | `core/shared_space/library.rs::write_copy` | `private` | no | no | — | `core/reading_copy.rs::pages_for_copy` |
-| `core/shared_space/mod.rs::apply_create_untitled_body` | `private` | no | no | — | `core/db/page_drafts.rs::publish_page_draft` |
 | `core/shared_space/mod.rs::apply_sources` | `private` | no | no | — | `core/db.rs::set_page_citations` |
 | `core/shared_space/mod.rs::free_title` | `private` | no | no | — | `core/shared_space/mod.rs::taken_titles` |
 | `core/shared_space/mod.rs::held_space_of` | `private` | no | no | — | `core/db.rs::get_page` |
@@ -1744,7 +1744,7 @@ carrying the authority of agreement.
 | `server/page_routes.rs::handle_search_pages` | `pub` | no | no | — | `core/db/scoped_pages.rs::pages_containing_text` |
 | `server/page_routes.rs::handle_update_page` | `pub` | no | no | — | `core/db.rs::get_page` |
 | `server/page_routes.rs::hosted_page_candidates` | `private` | no | no | `server/page_routes.rs::handle_search_pages`, `server/page_routes.rs::search_hosted_page_hits` | `core/db/scoped_pages.rs::shared_pages_containing_text` |
-| `server/page_routes.rs::member_page_in_pinned_space` | `private` | no | no | `server/page_routes.rs::handle_archive_page`, `server/page_routes.rs::handle_publish_page_draft`, `server/page_routes.rs::handle_restore_page`, `server/page_routes.rs::handle_update_page_draft` | `core/db.rs::get_page` |
+| `server/page_routes.rs::member_page_in_pinned_space` | `private` | no | no | `server/page_routes.rs::handle_archive_page`, `server/page_routes.rs::handle_restore_page`, `server/page_routes.rs::handle_update_page_draft` | `core/db.rs::get_page` |
 | `server/page_routes.rs::reject_entity_page_mutation` | `private` | no | no | `server/page_routes.rs::archive_page_for`, `server/page_routes.rs::handle_delete_page`, `server/page_routes.rs::handle_set_page_review_required` | `core/db.rs::entity_shadow_page_owner` |
 | `server/page_routes.rs::space_locked_write_error` | `private` | no | no | `server/page_routes.rs::handle_refresh_page_inner` | `core/db.rs::get_page` |
 | `server/repair_read_routes.rs::handle_get_repair_page` | `pub` | no | no | — | `server/page_routes.rs::handle_get_page` |
@@ -1891,7 +1891,8 @@ carrying the authority of agreement.
 | `core/sentences.rs::revert_ai_write` | `pub` | no | **yes** | `server/sentence_routes.rs::handle_revert_sentences` | `core/sentences.rs::load_page` |
 | `core/sentences.rs::unit_citations` | `private` | no | no | — | `core/sentences.rs::source_states` |
 | `core/shared_space/library.rs::main_jobs` | `pub(super)` | no | no | — | `core/shared_space/library.rs::write_copy` |
-| `core/shared_space/mod.rs::apply_create` | `private` | no | no | — | `core/shared_space/mod.rs::apply_create_untitled_body`, `core/shared_space/mod.rs::apply_sources`, `core/shared_space/mod.rs::free_title`, `core/shared_space/mod.rs::reload` |
+| `core/shared_space/mod.rs::apply_create` | `private` | no | no | — | `core/shared_space/mod.rs::apply_sources`, `core/shared_space/mod.rs::free_title`, `core/shared_space/mod.rs::reload` |
+| `core/shared_space/mod.rs::apply_create_untitled_body` | `private` | no | no | — | `core/db/page_drafts.rs::publish_page_draft` |
 | `core/shared_space/mod.rs::apply_version` | `private` | no | no | — | `core/export/knowledge.rs::archive_page_if_still_archived`, `core/shared_space/mod.rs::apply_sources`, `core/shared_space/mod.rs::free_title`, `core/shared_space/mod.rs::reload` |
 | `core/shared_space/mod.rs::archive_here` | `private` | no | no | — | `core/export/knowledge.rs::archive_page_if_still_archived`, `core/shared_space/mod.rs::reload` |
 | `core/shared_space/mod.rs::move_to_space` | `private` | no | no | — | `core/shared_space/mod.rs::reload` |

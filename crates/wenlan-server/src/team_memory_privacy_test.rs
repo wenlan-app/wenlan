@@ -246,6 +246,78 @@ async fn hosted_readers_keep_shared_pages_without_private_memory_data() {
 }
 
 #[tokio::test]
+async fn hosted_draft_publish_requires_a_real_publication_to_replay() {
+    let (app, db, _scratch) = fixture().await;
+    let page = post_as_member(
+        &app,
+        "/api/pages",
+        json!({"title": "Team note", "content": "Initial text."}),
+    )
+    .await;
+    let id = page["id"].as_str().unwrap();
+    db.update_page_content(id, "Edited text.", &[], "manual_edit")
+        .await
+        .unwrap();
+    let version = db.get_page(id).await.unwrap().unwrap().version;
+    assert!(version > 1);
+    let (status, _) = request(
+        &app,
+        Method::POST,
+        &format!("/api/pages/drafts/{id}/publish"),
+        json!({"expected_version": version - 1}),
+        true,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::CONFLICT,
+        "ordinary edit is not a publication"
+    );
+}
+
+#[tokio::test]
+async fn hosted_draft_publish_replay_omits_private_provenance() {
+    const FIXTURE_LOCATOR: &str = "fixture-unpublished-locator";
+    let (app, db, _scratch) = fixture().await;
+    let draft = db
+        .create_page_draft("Team draft", "New text.", Some(SPACE), None)
+        .await
+        .unwrap();
+    let path = format!("/api/pages/drafts/{}/publish", draft.id);
+    let publish = json!({"expected_version": draft.version});
+    let published = post_as_member(&app, &path, publish.clone()).await;
+    assert_eq!(published["page"]["status"], "active");
+    let citations = json!([{
+        "occurrence": 1, "marker": 1, "source_kind": "memory",
+        "locator": FIXTURE_LOCATOR, "score": 1.0, "status": "verified",
+    }]);
+    let changelog = json!([{
+        "version": draft.version + 1, "at": 1, "edited_by": "agent_refresh",
+        "incoming_source_ids": [FIXTURE_LOCATOR], "sources_added": 1,
+    }]);
+    db.set_page_citations_with_changelog(
+        &draft.id,
+        Some(&citations.to_string()),
+        &changelog.to_string(),
+    )
+    .await
+    .unwrap();
+    assert!(db
+        .get_page(&draft.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .changelog
+        .is_some_and(|history| history.contains(FIXTURE_LOCATOR)));
+    let replayed = post_as_member(&app, &path, publish).await;
+    assert_eq!(replayed["page"]["version"], published["page"]["version"]);
+    assert!(
+        !replayed.to_string().contains(FIXTURE_LOCATOR),
+        "publication response must omit private provenance"
+    );
+}
+
+#[tokio::test]
 async fn hosted_forwarding_does_not_admit_private_readers() {
     let (app, _, _scratch) = fixture().await;
     for (method, path) in [

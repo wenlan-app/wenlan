@@ -1705,7 +1705,10 @@ pub async fn handle_create_page_draft(
     {
         return Err(draft_not_found());
     }
-    let page = filter_draft_echo(&db, &view, page).await?;
+    let mut page = filter_draft_echo(&db, &view, page).await?;
+    if actor.is_some() {
+        remove_private_provenance(&mut page);
+    }
     Ok(Json(draft_response(&db, page).await?))
 }
 
@@ -1739,7 +1742,10 @@ pub async fn handle_update_page_draft(
         .map_err(page_draft_error)?
     {
         wenlan_core::pages::PageDraftUpdateOutcome::Updated(page) => {
-            let page = filter_draft_echo(&db, &view, page).await?;
+            let mut page = filter_draft_echo(&db, &view, page).await?;
+            if actor.is_some() {
+                remove_private_provenance(&mut page);
+            }
             Ok(Json(draft_response(&db, page).await?))
         }
         wenlan_core::pages::PageDraftUpdateOutcome::VersionConflict { current_version } => {
@@ -1751,6 +1757,7 @@ pub async fn handle_update_page_draft(
 /// POST /api/pages/drafts/{id}/publish
 pub async fn handle_publish_page_draft(
     State(state): State<Arc<RwLock<ServerState>>>,
+    headers: HeaderMap,
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
     crate::team_actor::TeamActor(actor): crate::team_actor::TeamActor,
     view: crate::truth_guard::TruthView,
@@ -1769,16 +1776,17 @@ pub async fn handle_publish_page_draft(
     // A team member publishes only in the Space the team gate checked, and
     // the page is recorded as theirs (shared as theirs, like a desktop
     // member's).
-    let edited_by = match &actor {
-        Some(member) => {
-            member_page_in_pinned_space(&db, &id, header_space.as_deref()).await?;
-            member.edited_by()
-        }
-        None => "publish".to_string(),
+    let private = crate::team_actor::can_read_private_memories(&headers);
+    let (edited_by, pinned_space) = if private {
+        ("publish".to_string(), None)
+    } else {
+        let member = actor.as_ref().ok_or_else(draft_not_found)?;
+        let space = header_space.as_deref().ok_or_else(draft_not_found)?;
+        (member.edited_by(), Some(space))
     };
     let folder_path = db.page_initial_folder_path(&id).await?;
     let page = match db
-        .publish_page_draft_by(&id, req.expected_version, &edited_by)
+        .publish_page_draft_in_space(&id, req.expected_version, &edited_by, pinned_space)
         .await
         .map_err(page_draft_error)?
     {
@@ -1849,6 +1857,9 @@ pub async fn handle_publish_page_draft(
                 response.projection_error = Some(error.to_string());
             }
         }
+    }
+    if !private {
+        remove_private_provenance(&mut response.page);
     }
     Ok(Json(response))
 }

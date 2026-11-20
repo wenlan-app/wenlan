@@ -158,8 +158,16 @@ async fn publish(
     id: &str,
     version: i64,
 ) -> Result<(), ServerError> {
+    let mut headers = HeaderMap::new();
+    if who.0.is_some() {
+        headers.insert(
+            team_actor::SECRET_HEADER,
+            HeaderValue::from_static(team_actor::secret()),
+        );
+    }
     handle_publish_page_draft(
         State(state.clone()),
+        headers,
         SpaceHeader(space.map(str::to_string)),
         who,
         TruthView::automatic(),

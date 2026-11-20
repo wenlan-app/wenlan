@@ -92,6 +92,31 @@ fn ensure_draft(page: &Page) -> Result<(), WenlanError> {
 }
 
 impl MemoryDB {
+    /// Record which history version is the result of a draft publication.
+    pub(super) async fn migrate_166_page_draft_publication(
+        &self,
+        prior_version: i64,
+    ) -> Result<(), WenlanError> {
+        self.backup_before_migration(166, prior_version).await?;
+        let has_marker = self
+            .get_table_columns("page_history")
+            .await?
+            .contains("draft_published_by");
+        let conn = self.conn.lock().await;
+        if !has_marker {
+            conn.execute(
+                "ALTER TABLE page_history ADD COLUMN draft_published_by TEXT",
+                (),
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("m166 draft publication: {e}")))?;
+        }
+        conn.execute("PRAGMA user_version = 166", ())
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("m166 bump: {e}")))?;
+        Ok(())
+    }
+
     async fn registered_page_draft_space_on_conn(
         conn: &libsql::Connection,
         requested: Option<&str>,
@@ -622,9 +647,9 @@ impl MemoryDB {
     /// Publish a draft as an active Page if the caller still holds its version.
     ///
     /// Editor contract (mirrored by `e2e/tauriMock/runtime.ts`): an exact retry
-    /// of a publish that already landed — the row is active at
-    /// `expected_version + 1` — replays the published Page; any other version
-    /// mismatch is a `VersionConflict`; an active Page in the same scope whose
+    /// of a publish that already landed replays the published Page while its
+    /// publication version is current. Other version mismatches are a
+    /// `VersionConflict`. An active Page in the same scope whose
     /// trimmed title matches case-insensitively blocks with `TitleConflict`.
     /// Finalizing accepts a title or body. Body-first notes derive a unique name
     /// from their first line; explicit title conflicts still block. It stamps
@@ -652,6 +677,19 @@ impl MemoryDB {
         expected_version: i64,
         edited_by: &str,
     ) -> Result<PageDraftPublishOutcome, WenlanError> {
+        self.publish_page_draft_in_space(id, expected_version, edited_by, None)
+            .await
+    }
+
+    /// Publish in the Space granted to a hosted writer. Scope, version, and
+    /// the receipt for an exact retry are checked in the write transaction.
+    pub async fn publish_page_draft_in_space(
+        &self,
+        id: &str,
+        expected_version: i64,
+        edited_by: &str,
+        pinned_space: Option<&str>,
+    ) -> Result<PageDraftPublishOutcome, WenlanError> {
         // Snapshot outside the write transaction so the embedding compute
         // (slow on first call while the model loads) never holds it. Any
         // concurrent draft write bumps the version, so if the in-transaction
@@ -661,6 +699,9 @@ impl MemoryDB {
             let conn = self.conn.lock().await;
             Self::required_page_draft_on_conn(&conn, id).await?
         };
+        if pinned_space.is_some_and(|space| snapshot.space.as_deref() != Some(space)) {
+            return Err(WenlanError::NotFound(format!("Page draft {id}")));
+        }
         let embedding_sql = if snapshot.status == "draft" && snapshot.version == expected_version {
             let embed_text = crate::pages::page_embedding_text(
                 &initial_note_title(&snapshot.title, &snapshot.content),
@@ -689,8 +730,29 @@ impl MemoryDB {
             .await
             .map_err(|error| WenlanError::VectorDb(format!("publish Page draft begin: {error}")))?;
         let current = Self::required_page_draft_on_conn(&tx, id).await?;
+        if pinned_space.is_some_and(|space| current.space.as_deref() != Some(space)) {
+            return Err(WenlanError::NotFound(format!("Page draft {id}")));
+        }
         if current.status == "active" && expected_version.checked_add(1) == Some(current.version) {
-            return Ok(PageDraftPublishOutcome::Published(current));
+            // Older local publications used a dedicated history writer.
+            // Older shared-person writes did not distinguish publish from edit.
+            let mut receipts = tx
+                .query(
+                    "SELECT 1 FROM page_history WHERE page_id=?1 AND version=?2
+                       AND (draft_published_by=?3 OR
+                            (draft_published_by IS NULL AND edited_by='publish' AND ?3='publish'))",
+                    libsql::params![id, current.version, edited_by],
+                )
+                .await
+                .map_err(|e| WenlanError::VectorDb(format!("read draft publication: {e}")))?;
+            if receipts
+                .next()
+                .await
+                .map_err(|e| WenlanError::VectorDb(format!("draft publication receipt: {e}")))?
+                .is_some()
+            {
+                return Ok(PageDraftPublishOutcome::Published(current));
+            }
         }
         if current.version != expected_version {
             return Ok(PageDraftPublishOutcome::VersionConflict {
@@ -833,6 +895,12 @@ impl MemoryDB {
             .map_err(|error| {
                 WenlanError::VectorDb(format!("publish Page draft history: {error}"))
             })?;
+        tx.execute(
+            "UPDATE page_history SET draft_published_by=?3 WHERE page_id=?1 AND version=?2",
+            libsql::params![id, expected_version + 1, edited_by],
+        )
+        .await
+        .map_err(|e| WenlanError::VectorDb(format!("record draft publication: {e}")))?;
         let outcome =
             PageDraftPublishOutcome::Published(Self::required_page_draft_on_conn(&tx, id).await?);
         tx.commit().await.map_err(|error| {
