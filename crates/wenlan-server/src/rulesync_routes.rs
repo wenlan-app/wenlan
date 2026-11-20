@@ -558,6 +558,12 @@ struct ScopeReview {
     card: PullbackCard,
 }
 
+struct ExpectedRegistrySkill {
+    name: String,
+    wanted: BTreeSet<PathBuf>,
+    approved_local_matches: bool,
+}
+
 pub(crate) struct Setup {
     pub(crate) home: PathBuf,
     pub(crate) data: PathBuf,
@@ -1607,7 +1613,7 @@ impl Setup {
         let approved = rulesync_registry::approved_local_folders(&self.data)?;
         let adopted = self.managed_skills(manifest);
         let mut active = installed.keys().cloned().collect::<BTreeSet<_>>();
-        let mut expected = BTreeMap::<PathBuf, BTreeSet<PathBuf>>::new();
+        let mut expected = BTreeMap::<PathBuf, ExpectedRegistrySkill>::new();
         let mut targets: BTreeSet<_> = manifest
             .active_deliveries()
             .filter_map(|(_, delivery)| match &delivery.kind {
@@ -1878,7 +1884,14 @@ impl Setup {
                     });
                 }
                 if complete {
-                    expected.insert(folder.to_owned(), wanted);
+                    expected.insert(
+                        folder.to_owned(),
+                        ExpectedRegistrySkill {
+                            name: name.clone(),
+                            wanted,
+                            approved_local_matches: snapshot.is_some(),
+                        },
+                    );
                 }
             }
         }
@@ -1899,51 +1912,7 @@ impl Setup {
                     .push(format!("{} changed during sync", path.display()));
             }
         }
-        let mut obsolete: Vec<_> = manifest
-            .delivered
-            .iter()
-            .filter_map(|(path, delivery)| {
-                let (Kind::RegistryDirectory { name }
-                | Kind::RegistryAssetDirectory { name }
-                | Kind::RegistrySkill { name }) = &delivery.kind
-                else {
-                    return None;
-                };
-                let remove = !active.contains(name);
-                let stale = path
-                    .ancestors()
-                    .find_map(|parent| expected.get(parent))
-                    .is_some_and(|wanted| !wanted.contains(path));
-                ((remove || stale) && !path_blocked(blocked, path)).then(|| (path.clone(), remove))
-            })
-            .collect();
-        obsolete.sort_by_key(|(path, _)| std::cmp::Reverse(path.components().count()));
-        let mut operations = Vec::new();
-        for (path, remove) in obsolete {
-            let record = &manifest.delivered[&path];
-            let seen = record
-                .observed
-                .as_ref()
-                .unwrap_or(&record.delivered)
-                .clone();
-            let desired = if remove {
-                manifest
-                    .backup
-                    .get(&path)
-                    .cloned()
-                    .unwrap_or(Snapshot::Absent)
-            } else {
-                Snapshot::Absent
-            };
-            let allow_link = remove && matches!(desired, Snapshot::Symlink { .. });
-            operations.push(Pending {
-                path,
-                seen,
-                desired,
-                kind: (!remove).then(|| record.kind.clone()),
-                allow_link,
-            });
-        }
+        let operations = registry_removals(manifest, &expected, &active, &approved, blocked);
         for (path, status) in self.sync_batch(root, manifest, operations, result)? {
             if status != ApplyOutcome::Applied {
                 result
@@ -2078,15 +2047,11 @@ impl Setup {
         for (folder, skill) in &mut packages {
             for (path, record) in manifest.active_deliveries() {
                 if let Ok(relative) = path.strip_prefix(folder) {
-                    if matches!(record.kind, Kind::Skill | Kind::RegistrySkill { .. }) {
-                        skill.files.insert(
-                            relative.to_owned(),
-                            record
-                                .observed
-                                .as_ref()
-                                .unwrap_or(&record.delivered)
-                                .clone(),
-                        );
+                    let snapshot = record.observed.as_ref().unwrap_or(&record.delivered);
+                    if matches!(record.kind, Kind::Skill | Kind::RegistrySkill { .. })
+                        && matches!(snapshot, Snapshot::File { .. })
+                    {
+                        skill.files.insert(relative.to_owned(), snapshot.clone());
                     }
                 }
             }
@@ -2335,6 +2300,81 @@ struct SkillPath {
     target: String,
     installed: PathBuf,
     relative: PathBuf,
+}
+
+fn registry_removals(
+    manifest: &Manifest,
+    expected: &BTreeMap<PathBuf, ExpectedRegistrySkill>,
+    active: &BTreeSet<String>,
+    approved: &BTreeMap<PathBuf, ManagedSkill>,
+    blocked: &BTreeSet<PathBuf>,
+) -> Vec<Pending> {
+    let mut operations: Vec<_> = manifest
+        .active_deliveries()
+        .filter_map(|(path, record)| {
+            if path_blocked(blocked, path) {
+                return None;
+            }
+            let stale = path
+                .ancestors()
+                .find_map(|folder| expected.get_key_value(folder))
+                .filter(|(_, expected)| !expected.wanted.contains(path));
+            let (kind, remove) = match &record.kind {
+                Kind::RegistryDirectory { name }
+                | Kind::RegistryAssetDirectory { name }
+                | Kind::RegistrySkill { name } => (record.kind.clone(), !active.contains(name)),
+                Kind::Skill => (
+                    Kind::RegistrySkill {
+                        name: stale?.1.name.clone(),
+                    },
+                    false,
+                ),
+                _ => return None,
+            };
+            if !remove && (stale.is_none() || record.delivered == Snapshot::Absent) {
+                return None;
+            }
+            // An approved deletion in the editing tool is already absent. Keep
+            // that observation as a delivery receipt while retaining the backup.
+            let approved_absence = stale.is_some_and(|(folder, expected)| {
+                expected.approved_local_matches
+                    && path.strip_prefix(folder).ok().is_some_and(|relative| {
+                        approved.get(folder).is_some_and(|skill| {
+                            !skill.files.contains_key(relative)
+                                && !skill.directories.contains_key(relative)
+                        })
+                    })
+            });
+            let seen = if approved_absence {
+                Snapshot::Absent
+            } else {
+                record
+                    .observed
+                    .as_ref()
+                    .unwrap_or(&record.delivered)
+                    .clone()
+            };
+            let desired = if remove {
+                manifest
+                    .backup
+                    .get(path)
+                    .cloned()
+                    .unwrap_or(Snapshot::Absent)
+            } else {
+                Snapshot::Absent
+            };
+            let allow_link = remove && matches!(desired, Snapshot::Symlink { .. });
+            Some(Pending {
+                path: path.clone(),
+                seen,
+                desired,
+                kind: (!remove).then_some(kind),
+                allow_link,
+            })
+        })
+        .collect();
+    operations.sort_by_key(|op| std::cmp::Reverse(op.path.components().count()));
+    operations
 }
 
 fn extend_personal_master(master: &mut PersonalMaster, added: PersonalMaster) {
@@ -4132,6 +4172,37 @@ mod tests {
                 .mode()
                 & 0o7777,
             0o755
+        );
+    }
+
+    #[test]
+    fn rulesync_step1d_restores_an_adopted_asset_after_an_approved_deletion() {
+        let f = Fixture::new();
+        fs::remove_dir_all(f.setup.home.join(".codex")).unwrap();
+        let claude = write_step1d_skill(&f, ".claude", "Original body.", "# Claude helper\n");
+        let cursor = write_step1d_skill(&f, ".cursor", "Original body.", "# Cursor helper\n");
+        let claude_asset = claude.join("helper.py");
+        let cursor_asset = cursor.join("helper.py");
+        f.adopt_from_plan();
+        fs::remove_file(&cursor_asset).unwrap();
+        f.sync_with("");
+        let proposal =
+            rulesync_registry::accept_only_tool_proposal(&f.setup.home, &f.setup.data).unwrap();
+        assert_eq!(proposal.changes.unwrap().removed, ["helper.py"]);
+        let delivered = f.sync_with("");
+        assert!(delivered.blocked.is_empty(), "{delivered:?}");
+        let deleted_in_both_tools = !claude_asset.exists() && !cursor_asset.exists();
+
+        let restored = f.setup.restore().unwrap();
+        assert!(restored.blocked.is_empty(), "{restored:?}");
+        assert!(deleted_in_both_tools);
+        assert_eq!(
+            fs::read_to_string(claude_asset).unwrap(),
+            "# Claude helper\n"
+        );
+        assert_eq!(
+            fs::read_to_string(cursor_asset).unwrap(),
+            "# Cursor helper\n"
         );
     }
 
