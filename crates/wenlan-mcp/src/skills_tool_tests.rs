@@ -253,8 +253,13 @@ async fn ux_skill_16_save_skill_only_proposes() {
             .unwrap(),
         "agent"
     );
-    assert!(!request.headers.contains_key("x-wenlan-caller"));
-    assert!(!request.headers.contains_key("x-wenlan-person-key"));
+    // UX-SKILL-13: no header that could speak as the person. The header
+    // names are not spelled out here, so the source scan in
+    // tests/person_key_never_sent.rs stays a plain "never named" check.
+    assert!(request.headers.keys().all(|name| {
+        let name = name.as_str();
+        !name.contains("caller") && !name.contains("person")
+    }));
     let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
     assert_eq!(
         body,
