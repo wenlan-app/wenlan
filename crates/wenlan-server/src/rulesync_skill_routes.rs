@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Save and review authored skill bundles before the personal applier delivers them.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
 
@@ -706,7 +706,7 @@ pub(crate) fn collect_tool_proposals(
     home: &Path,
     data: &Path,
     managed: &BTreeMap<PathBuf, ManagedSkill>,
-) -> Result<BTreeSet<PathBuf>> {
+) -> Result<BTreeMap<PathBuf, String>> {
     let home = SkillHome::open(home)?;
     let mut candidates = home.candidates();
     candidates.extend(
@@ -721,14 +721,20 @@ pub(crate) fn collect_tool_proposals(
         .state
         .proposals
         .retain(|_, draft| matches!(draft.source, Candidate::Agent { .. }));
-    let mut blocked = BTreeSet::new();
+    let mut blocked = BTreeMap::new();
     for (folder, tool) in candidates {
         let baseline = managed.get(&folder);
         let current = match home.package(&folder, tool) {
             Ok(Some(snapshot)) => snapshot,
-            _ => {
+            problem => {
                 if baseline.is_some_and(|skill| skill.files.contains_key(Path::new("SKILL.md"))) {
-                    blocked.insert(folder);
+                    let reason = match problem {
+                        Err(error) => format!(
+                            "Cannot read this managed skill ({error:#}). Fix the folder and run `wenlan rules sync`."
+                        ),
+                        _ => "The managed SKILL.md is missing. Put it back and run `wenlan rules sync`.".into(),
+                    };
+                    blocked.insert(folder, reason);
                 }
                 continue;
             }
@@ -740,8 +746,12 @@ pub(crate) fn collect_tool_proposals(
         {
             continue;
         }
-        blocked.insert(folder.clone());
         if store.state.ignored.get(&folder) == Some(&fingerprint(&current)?) {
+            blocked.insert(
+                folder,
+                "You dismissed these skill changes. Edit the skill to propose a new version."
+                    .into(),
+            );
             continue;
         }
         let Some(name) = folder
@@ -749,13 +759,22 @@ pub(crate) fn collect_tool_proposals(
             .and_then(|name| name.to_str())
             .filter(|name| skills::skill_name(name))
         else {
+            blocked.insert(folder, "Rename the skill folder to use lowercase letters, digits, and hyphens, then run `wenlan rules sync`.".into());
             continue;
         };
-        if skills::preview(name, &files).is_err()
-            || store.state.proposals.len() >= MAX_AGENT_PROPOSALS * 2
-        {
+        if let Err(error) = skills::preview(name, &files) {
+            blocked.insert(folder, format!("Cannot propose this skill ({error:#}). Fix the files and run `wenlan rules sync`."));
             continue;
         }
+        if store.state.proposals.len() >= MAX_AGENT_PROPOSALS * 2 {
+            blocked.insert(folder, "The skill review queue is full. Review some entries with `wenlan skills proposals`, then sync again.".into());
+            continue;
+        }
+        blocked.insert(
+            folder.clone(),
+            "Skill changes need your approval. Run `wenlan skills proposals` to review them."
+                .into(),
+        );
         let draft = Draft {
             name: name.into(),
             scope: SavedSkillScope::Tool { tool },
@@ -849,8 +868,11 @@ mod tests {
         let file = write(&home, ".claude/skills/own/SKILL.md", "Original body.\n");
         let folder = PathBuf::from(".claude/skills/own");
         assert_eq!(
-            collect_tool_proposals(&home, &data, &BTreeMap::new()).unwrap(),
-            BTreeSet::from([folder.clone()])
+            collect_tool_proposals(&home, &data, &BTreeMap::new())
+                .unwrap()
+                .into_keys()
+                .collect::<Vec<_>>(),
+            [folder.clone()]
         );
         let mut store = SkillStore::open(&data).unwrap();
         let (id, draft) = store.state.proposals.first_key_value().unwrap();
@@ -932,7 +954,7 @@ mod tests {
 
         fs::write(&asset, "First edit.\n").unwrap();
         let pending = collect_tool_proposals(&home, &data, &managed).unwrap();
-        assert!(pending.contains(&folder));
+        assert!(pending.contains_key(&folder));
         let mut store = SkillStore::open(&data).unwrap();
         let id = store.state.proposals.first_key_value().unwrap().0.clone();
         store
@@ -942,7 +964,7 @@ mod tests {
         store.save().unwrap();
         assert!(collect_tool_proposals(&home, &data, &managed)
             .unwrap()
-            .contains(&folder));
+            .contains_key(&folder));
         assert!(SkillStore::open(&data).unwrap().state.proposals.is_empty());
 
         fs::write(&asset, "Second edit.\n").unwrap();

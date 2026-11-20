@@ -284,6 +284,14 @@ struct Job<'a> {
     directory: &'a Path,
 }
 
+fn report_blocks(result: &mut RulesSyncReport, blocked: BTreeMap<PathBuf, &'static str>) {
+    result.blocked.extend(
+        blocked
+            .into_iter()
+            .map(|(path, reason)| format!("{}: {reason}", path.display())),
+    );
+}
+
 impl Job<'_> {
     fn run(
         &self,
@@ -328,7 +336,7 @@ impl Job<'_> {
                 .iter()
                 .map(|name| format!("project skill {name} is approved in more than one Space")),
         );
-        let mut blocked = BTreeSet::new();
+        let mut blocked = BTreeMap::new();
         if let Some(pending) = checkout.pending.take() {
             let current = self.root.read(&self.directory.join(&pending.path), false)?;
             if fingerprint(&current)? == pending.digest {
@@ -358,15 +366,13 @@ impl Job<'_> {
                 if self.replace(path, &current, &desired)? {
                     *delivered = with_bytes(delivered, remaining.into_bytes());
                 } else {
-                    blocked.insert(path.clone());
+                    blocked.insert(path.clone(), "Changed while Wenlan was removing a layer. Sync again to finish removing it.");
                 }
             }
         }
         let mut record = self.save(state_path, &state, &checkout)?;
         let Some(master) = master else {
-            result
-                .blocked
-                .extend(blocked.iter().map(|path| path.display().to_string()));
+            report_blocks(&mut result, blocked);
             return Ok(result);
         };
         let mut observed = BTreeMap::new();
@@ -394,7 +400,7 @@ impl Job<'_> {
                         }
                     }
                     _ => {
-                        blocked.insert(path.clone());
+                        blocked.insert(path.clone(), "The checkout rules or their section markers changed. Reconcile the edits with the Rules page and sync again.");
                     }
                 }
             }
@@ -404,16 +410,14 @@ impl Job<'_> {
         let rendered = match self.render(&project, &teams, &skills, master, generated) {
             Ok(files) => files,
             Err(error) => {
-                result.blocked.push(error.to_string());
-                result
-                    .blocked
-                    .extend(blocked.iter().map(|path| path.display().to_string()));
+                result.blocked.push(format!("Checkout render: {error:#}"));
+                report_blocks(&mut result, blocked);
                 return Ok(result);
             }
         };
         for (path, bytes) in rendered.rules {
             let current = observed.get(&path).unwrap_or(&Snapshot::Absent);
-            if blocked.contains(&path) {
+            if blocked.contains_key(&path) {
                 continue;
             }
             let found = rulesync_layers::blocks(std::str::from_utf8(&bytes)?)?;
@@ -444,11 +448,14 @@ impl Job<'_> {
                     result.written.push(path.display().to_string());
                 }
             } else {
-                blocked.insert(path);
+                blocked.insert(
+                    path,
+                    "Changed during delivery. Sync again to collect the latest edits.",
+                );
             }
         }
         for (path, file) in rendered.skills {
-            if blocked.contains(&path) {
+            if blocked.contains_key(&path) {
                 continue;
             }
             let current = observed_skills.remove(&path).unwrap_or(Snapshot::Absent);
@@ -471,12 +478,13 @@ impl Job<'_> {
                     result.written.push(path.display().to_string());
                 }
             } else {
-                blocked.insert(path);
+                blocked.insert(
+                    path,
+                    "Changed during delivery. Check the skill files and sync again.",
+                );
             }
         }
-        result
-            .blocked
-            .extend(blocked.iter().map(|path| path.display().to_string()));
+        report_blocks(&mut result, blocked);
         Ok(result)
     }
 
@@ -509,7 +517,7 @@ impl Job<'_> {
         &self,
         checkout: &mut Checkout,
         allowed: &BTreeSet<&str>,
-        blocked: &mut BTreeSet<PathBuf>,
+        blocked: &mut BTreeMap<PathBuf, &'static str>,
     ) -> Result<BTreeMap<PathBuf, Snapshot>> {
         let mut retired = Vec::new();
         let mut observed = BTreeMap::new();
@@ -519,12 +527,12 @@ impl Job<'_> {
                 if self.replace(path, &current, &Snapshot::Absent)? {
                     retired.push(path.clone());
                 } else {
-                    blocked.insert(path.clone());
+                    blocked.insert(path.clone(), "Changed while Wenlan was removing a skill. Sync again to finish removing it.");
                 }
             } else if current == Snapshot::Absent || fingerprint(&current)? == delivery.digest {
                 observed.insert(path.clone(), current);
             } else {
-                blocked.insert(path.clone());
+                blocked.insert(path.clone(), "The installed skill was edited. Reconcile the change with the Space's approved skill and sync again.");
             }
         }
         for path in retired {

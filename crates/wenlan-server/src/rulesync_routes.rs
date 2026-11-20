@@ -1122,7 +1122,9 @@ impl Setup {
             self.save(manifest)?;
         }
         for card in cards {
-            blocked.extend(card.paths.iter().cloned());
+            for path in card.paths {
+                blocked.insert(path, "Rule changes need your approval. Use `wenlan rules review` with the proposal below.".into());
+            }
             result.proposals.push(card.wire);
         }
         result.proposals.extend(
@@ -1131,10 +1133,12 @@ impl Setup {
                 .values()
                 .map(|review| review.card.clone()),
         );
-        result
-            .blocked
-            .extend(blocked.iter().map(|path| path.display().to_string()));
-        Ok(blocked)
+        result.blocked.extend(
+            blocked
+                .iter()
+                .map(|(path, reason)| format!("{}: {reason}", path.display())),
+        );
+        Ok(blocked.into_keys().collect())
     }
 
     fn sync_registry(
@@ -1896,20 +1900,20 @@ struct Card {
 struct Pullback {
     drafts: Vec<Draft>,
     cards: Vec<Card>,
-    blocked: BTreeSet<PathBuf>,
+    blocked: BTreeMap<PathBuf, String>,
 }
 
 fn inspect(root: &FileRoot, manifest: &Manifest) -> Result<Pullback> {
     let mut drafts = Vec::new();
-    let mut blocked = BTreeSet::new();
+    let mut blocked = BTreeMap::new();
     for (path, delivery) in &manifest.delivered {
         if !matches!(delivery.kind, Kind::Rule { .. }) {
             continue;
         }
         let current = match root.read(path, false) {
             Ok(current) => current,
-            Err(_) => {
-                blocked.insert(path.clone());
+            Err(error) => {
+                blocked.insert(path.clone(), format!("Cannot read this rules file ({error:#}). Check that it is a readable regular file and sync again."));
                 continue;
             }
         };
@@ -1918,24 +1922,24 @@ fn inspect(root: &FileRoot, manifest: &Manifest) -> Result<Pullback> {
             continue;
         }
         let (Ok(before), Ok(after)) = (text(baseline), text(&current)) else {
-            blocked.insert(path.clone());
+            blocked.insert(path.clone(), "The rules file is missing or is not UTF-8. Restore it as a UTF-8 text file and sync again.".into());
             continue;
         };
         if !rulesync_layers::edits(before, after).is_ok_and(|edits| edits.is_empty()) {
-            blocked.insert(path.clone());
+            blocked.insert(path.clone(), "A shared section or its markers changed. Restore that section from the shared Rules page and sync again.".into());
             continue;
         }
         let before = rulesync_layers::only_personal(before)?;
         let after = rulesync_layers::only_personal(after)?;
         let changes = match line_changes(&before, &after) {
             Ok(changes) => changes,
-            Err(_) => {
-                blocked.insert(path.clone());
+            Err(error) => {
+                blocked.insert(path.clone(), format!("Cannot compare the rules edits ({error:#}). Split large changes into smaller edits and sync again."));
                 continue;
             }
         };
         if changes.is_empty() {
-            blocked.insert(path.clone());
+            blocked.insert(path.clone(), "The file metadata changed without a rules edit. Check its permissions and sync again.".into());
             continue;
         }
         let needs_review = changes.iter().any(|change| change.removed.is_empty());
@@ -2124,6 +2128,25 @@ mod tests {
         fn write(&self, path: &str, text: &str) {
             fs::write(self.setup.home.join(path), text).unwrap();
         }
+    }
+
+    #[test]
+    fn rulesync_blocked_paths_explain_how_to_review_the_change() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        f.write(CODEX, &format!("{}A new line.\n", f.text(CODEX)));
+        let skill = ".claude/skills/new-skill/SKILL.md";
+        fs::create_dir_all(f.setup.home.join(skill).parent().unwrap()).unwrap();
+        f.write(skill, "New instructions.\n");
+
+        let json = serde_json::to_value(f.sync_with("")).unwrap();
+        assert_eq!(
+            json["blocked"],
+            serde_json::json!([
+                ".claude/skills/new-skill: Skill changes need your approval. Run `wenlan skills proposals` to review them.",
+                ".codex/AGENTS.md: Rule changes need your approval. Use `wenlan rules review` with the proposal below."
+            ])
+        );
     }
 
     #[cfg(unix)]

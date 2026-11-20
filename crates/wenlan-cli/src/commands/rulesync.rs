@@ -391,6 +391,18 @@ mod tests {
     use wenlan_types::rulesync::AdoptionChange;
 
     #[test]
+    fn rules_sync_table_includes_the_block_reason() {
+        let report = RulesSyncReport {
+            written: Vec::new(),
+            blocked: vec![".codex/AGENTS.md: Review your changes before syncing.".into()],
+            proposals: Vec::new(),
+            message: "Checked the local tool setup".into(),
+        };
+        assert!(report_for_a_person(&report)
+            .contains("Blocked .codex/AGENTS.md: Review your changes before syncing.\n"));
+    }
+
+    #[test]
     fn personal_preview_neutralizes_terminal_controls() {
         let plan = AdoptionPlan {
             token: "test".into(),
