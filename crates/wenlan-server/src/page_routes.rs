@@ -96,6 +96,7 @@ async fn list_visible_browse_pages(
     limit: usize,
     offset: usize,
     scope: &wenlan_core::read_scope::ReadScope,
+    private: bool,
 ) -> Result<Vec<wenlan_core::pages::Page>, wenlan_core::WenlanError> {
     const MIN_SCAN_BATCH: usize = 100;
     let batch = limit.max(MIN_SCAN_BATCH);
@@ -106,9 +107,13 @@ async fn list_visible_browse_pages(
         // Q1 browse surface: `kind='entity'` dual-write shadow pages appear
         // here, so read the unfenced `_browse` twin (export + internal callers
         // keep the fenced `list_pages_scoped`).
-        let rows = db
-            .list_pages_scoped_browse(status, batch as i64, row_offset as i64, scope)
-            .await?;
+        let rows = if private {
+            db.list_pages_scoped_browse(status, batch as i64, row_offset as i64, scope)
+                .await?
+        } else {
+            db.list_pages_scoped(status, batch as i64, row_offset as i64, scope)
+                .await?
+        };
         let read = rows.len();
         row_offset += read;
         for page in wenlan_core::truth_adapter::filter_pages(db, grant, rows).await? {
@@ -128,6 +133,7 @@ async fn list_visible_browse_pages(
 /// GET /api/pages
 pub async fn handle_list_pages(
     State(state): State<Arc<RwLock<ServerState>>>,
+    headers: HeaderMap,
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
     view: crate::truth_guard::TruthView,
     axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
@@ -156,7 +162,8 @@ pub async fn handle_list_pages(
     let scope =
         crate::read_scope::effective_read_scope(&db, space.as_deref(), header_space.as_deref())
             .await?;
-    let pages = list_visible_browse_pages(&db, &view.grant, status, limit, offset, &scope)
+    let private = crate::team_actor::can_read_private_memories(&headers);
+    let pages = list_visible_browse_pages(&db, &view.grant, status, limit, offset, &scope, private)
         .await
         .map_err(|e| ServerError::SearchFailed(e.to_string()))?;
     // Enrich only the final scoped, truth-filtered browse result. Entity shadow
@@ -199,13 +206,18 @@ pub async fn handle_list_pages(
     Ok(Json(PageInventoryResponse {
         pages: pages
             .into_iter()
-            .map(|page| PageInventoryEntry {
-                basis: basis_by_page.remove(&page.id).unwrap_or_default(),
-                code_basis: code_basis_by_page.remove(&page.id).unwrap_or_default(),
-                storage_path: filenames.get(&page.id).cloned(),
-                folder_path: folders.get(&page.id).cloned(),
-                tags: wenlan_core::page_markdown::page_tags(&page.content),
-                page,
+            .map(|mut page| {
+                if !private {
+                    remove_private_provenance(&mut page);
+                }
+                PageInventoryEntry {
+                    basis: basis_by_page.remove(&page.id).unwrap_or_default(),
+                    code_basis: code_basis_by_page.remove(&page.id).unwrap_or_default(),
+                    storage_path: filenames.get(&page.id).cloned(),
+                    folder_path: folders.get(&page.id).cloned(),
+                    tags: wenlan_core::page_markdown::page_tags(&page.content),
+                    page,
+                }
             })
             .collect(),
     }))
@@ -219,6 +231,7 @@ pub async fn handle_get_page(
     view: crate::truth_guard::TruthView,
     Path(id): Path<String>,
 ) -> Result<Json<PageReadResponse>, ServerError> {
+    let private = crate::team_actor::can_read_private_memories(&headers);
     let (db, page_root) = {
         let s = state.read().await;
         (
@@ -229,29 +242,36 @@ pub async fn handle_get_page(
     // A page saved in Obsidian or another editor is read back first, so an
     // open page shows the edit within seconds. Best effort: the scheduler's
     // pass catches up on anything this misses.
-    let edit_root = page_root
-        .clone()
-        .unwrap_or_else(|| wenlan_core::config::load_config().knowledge_path_or_default());
-    match wenlan_core::sources::page_watcher::sync_page_file_if_changed(&db, &edit_root, &id).await
-    {
-        // An edit just taken in from the file may be a rule the person wrote.
-        Ok(true) => drop(crate::skill_grow::RulesPageWrite::begin(&state, Some(&id)).await),
-        Ok(false) => {}
-        Err(error) => tracing::debug!("[pages] reading back {id} from its file failed: {error}"),
+    if private {
+        let edit_root = page_root
+            .clone()
+            .unwrap_or_else(|| wenlan_core::config::load_config().knowledge_path_or_default());
+        match wenlan_core::sources::page_watcher::sync_page_file_if_changed(&db, &edit_root, &id)
+            .await
+        {
+            // An edit just taken in from the file may be a rule the person wrote.
+            Ok(true) => drop(crate::skill_grow::RulesPageWrite::begin(&state, Some(&id)).await),
+            Ok(false) => {}
+            Err(error) => {
+                tracing::debug!("[pages] reading back {id} from its file failed: {error}")
+            }
+        }
     }
     let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
     // Q1 browse surface: a shadow id resolves 200 here, so read the unfenced
     // `_browse` twin (mutation/export by-id reads keep fenced `get_page_scoped`).
     let impact_fence = db.try_get_page_fence(&id).await?;
-    let page = db
-        .get_page_scoped_browse(&id, &scope)
-        .await
-        .map_err(|e| ServerError::SearchFailed(e.to_string()))?;
+    let page = if private {
+        db.get_page_scoped_browse(&id, &scope).await
+    } else {
+        db.get_page_scoped(&id, &scope).await
+    }
+    .map_err(|e| ServerError::SearchFailed(e.to_string()))?;
     match wenlan_core::truth_adapter::filter_page(&db, &view.grant, page)
         .await
         .map_err(|e| ServerError::SearchFailed(e.to_string()))?
     {
-        Some(page) => {
+        Some(mut page) => {
             // A note read in full is listed on the session card when the caller
             // names its AI session. Only after scope and truth authorization,
             // so a hidden note is never recorded.
@@ -339,7 +359,7 @@ pub async fn handle_get_page(
             )
             .await?
             .is_empty();
-            if full && impact_fence.is_some() {
+            if private && full && impact_fence.is_some() {
                 if let Some(space) = page.space.as_deref() {
                     let source_scope = wenlan_core::read_scope::ReadScope::Space(space.to_owned());
                     let pending = db.pending_zotero_scope_impacts(&id, space).await?;
@@ -397,6 +417,9 @@ pub async fn handle_get_page(
                     }
                 }
             }
+            if !private {
+                remove_private_provenance(&mut page);
+            }
             let body = Some(wenlan_core::page_body::body_parts(&page.content));
             Ok(Json(PageReadResponse {
                 selection_impacts,
@@ -429,6 +452,7 @@ pub async fn handle_get_page(
 /// enriched with memory metadata for display.
 pub async fn handle_get_page_sources(
     State(state): State<Arc<RwLock<ServerState>>>,
+    headers: HeaderMap,
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
     view: crate::truth_guard::TruthView,
     Path(id): Path<String>,
@@ -439,6 +463,13 @@ pub async fn handle_get_page_sources(
     };
 
     let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
+    if !crate::team_actor::can_read_private_memories(&headers) {
+        let page = db.get_page_scoped(&id, &scope).await?;
+        return match wenlan_core::truth_adapter::filter_page(&db, &view.grant, page).await? {
+            Some(_) => Ok(Json(Vec::new())),
+            None => Err(ServerError::NotFound("page not found".into())),
+        };
+    }
     let sources = db.get_page_sources_scoped(&id, &scope).await?;
     // The provenance trail hangs off the page rather than being it, so it has
     // no entry form: `reduce_to_entry` strips `source_memory_ids` precisely
@@ -479,6 +510,20 @@ pub async fn handle_get_page_sources(
         .collect();
 
     Ok(Json(result))
+}
+
+/// Keep the published page text and page-to-page bases. The host's source
+/// IDs, citation verification, and source-driven change metadata stay local.
+fn remove_private_provenance(page: &mut wenlan_types::Page) {
+    page.source_memory_ids.clear();
+    page.citations.clear();
+    page.entity_id = None;
+    page.sources_updated_count = 0;
+    page.stale_reason = None;
+    page.pending_rebuild = None;
+    page.refresh_blocked_reason = None;
+    page.last_delta_summary = None;
+    page.changelog = None;
 }
 
 /// Refuse a page mutation that targets an entity's page, naming the entity and
@@ -1042,6 +1087,7 @@ pub async fn handle_delete_page(
 /// POST /api/pages/search
 pub async fn handle_search_pages(
     State(state): State<Arc<RwLock<ServerState>>>,
+    headers: HeaderMap,
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
     view: crate::truth_guard::TruthView,
     Json(req): Json<SearchPagesRequest>,
@@ -1058,6 +1104,14 @@ pub async fn handle_search_pages(
     // when some pages contain the words, the results are those (UX-FIND-1).
     // A search narrowed to one kind of page keeps the usual path.
     let limit = req.limit.unwrap_or(20);
+    if !crate::team_actor::can_read_private_memories(&headers) {
+        let pages =
+            hosted_page_candidates(&db, &req.query, limit, req.page_type.as_deref(), &scope)
+                .await?;
+        let mut pages = wenlan_core::truth_adapter::filter_pages(&db, &view.grant, pages).await?;
+        pages.iter_mut().for_each(remove_private_provenance);
+        return Ok(Json(serde_json::json!({ "pages": pages })));
+    }
     let literal = if req.page_type.is_none() && req.query.chars().any(is_cjk_char) {
         db.pages_containing_text(&req.query, limit, &scope)
             .await
@@ -1079,6 +1133,43 @@ pub async fn handle_search_pages(
     Ok(Json(serde_json::json!({ "pages": results })))
 }
 
+async fn hosted_page_candidates(
+    db: &wenlan_core::db::MemoryDB,
+    query: &str,
+    limit: usize,
+    page_type: Option<&str>,
+    scope: &wenlan_core::read_scope::ReadScope,
+) -> Result<Vec<wenlan_types::Page>, ServerError> {
+    if page_type.is_none() && (query.chars().any(is_cjk_char) || !db.embedder_ready()) {
+        let pages = db.shared_pages_containing_text(query, limit, scope).await?;
+        if !pages.is_empty() || !db.embedder_ready() {
+            return Ok(pages);
+        }
+    }
+    Ok(db
+        .search_pages_scoped(query, limit, page_type, scope)
+        .await?)
+}
+
+pub(crate) async fn search_hosted_page_hits(
+    db: &wenlan_core::db::MemoryDB,
+    query: &str,
+    limit: usize,
+    scope: &wenlan_core::read_scope::ReadScope,
+    grant: &wenlan_core::truth_contract::TruthGrant,
+) -> Result<Vec<wenlan_types::SearchResult>, ServerError> {
+    let pages = hosted_page_candidates(db, query, limit, None, scope).await?;
+    let pages =
+        wenlan_core::truth_adapter::filter_page_refs(db, grant, pages, |p| p.id.as_str()).await?;
+    Ok(pages
+        .into_iter()
+        .map(|mut page| {
+            remove_private_provenance(&mut page);
+            wenlan_core::db::MemoryDB::search_result_from_page(page)
+        })
+        .collect())
+}
+
 fn is_cjk_char(c: char) -> bool {
     matches!(c as u32,
         0x3040..=0x30FF | 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF | 0xAC00..=0xD7AF)
@@ -1097,6 +1188,13 @@ pub async fn handle_create_page(
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
     Json(wire): Json<wenlan_types::requests::CreatePageWithBasisRequest>,
 ) -> Result<Json<CreatePageResponse>, ServerError> {
+    if !crate::team_actor::can_read_private_memories(&headers)
+        && (!wire.create.source_memory_ids.is_empty()
+            || wire.create.entity_id.is_some()
+            || wire.organize_run_id.is_some())
+    {
+        return Err(hosted_page_source_refusal());
+    }
     let req = &wire.create;
     // An omitted creation_kind is resolved by the core writer from the
     // distinct source count against the distillation floor. Classify
@@ -1322,21 +1420,11 @@ async fn handle_create_page_inner(
                 .to_string(),
         );
     }
-    let link_sources = db
-        .get_memory_contents_by_ids(&persisted_page.source_memory_ids)
-        .await?;
-    let link_targets = wenlan_core::steep_new::unused_link_targets(
-        &db,
-        &scope,
-        persisted_page
-            .workspace
-            .as_deref()
-            .or(persisted_page.space.as_deref()),
-        &link_sources,
-        &persisted_page.id,
-        &persisted_page.content,
-    )
-    .await;
+    let link_targets = if crate::team_actor::can_read_private_memories(&headers) {
+        link_targets_from_sources(&db, &scope, &persisted_page).await?
+    } else {
+        Vec::new()
+    };
     let next_step = if reused_existing {
         format!(
             "Read page {} before deciding whether its prose needs an update.",
@@ -2399,6 +2487,10 @@ pub async fn handle_refresh_page(
     headers: HeaderMap,
     Json(req): Json<wenlan_types::requests::RefreshPageRequest>,
 ) -> Result<Json<wenlan_types::responses::PageWriteResponse>, ServerError> {
+    let private = crate::team_actor::can_read_private_memories(&headers);
+    if !private && (!req.source_memory_ids.is_empty() || req.organize_run_id.is_some()) {
+        return Err(hosted_page_source_refusal());
+    }
     let _rules = crate::skill_grow::RulesPageWrite::begin(&state, Some(&id)).await;
     let telemetry = { state.read().await.telemetry.clone() };
     // The agent named on a staged revision card. Only the header counts: an
@@ -2423,6 +2515,7 @@ pub async fn handle_refresh_page(
         proposer.as_deref(),
         Json(req),
         None,
+        private,
     )
     .await;
     if let (Some(session), Some(db), Ok((wenlan_core::post_write::WriteOutcome::Wrote, _))) =
@@ -2451,6 +2544,29 @@ pub async fn handle_refresh_page(
         Err(_) => telemetry.record(TelemetryEvent::WikiError),
     }
     result.map(|(_, response)| Json(response))
+}
+
+fn hosted_page_source_refusal() -> ServerError {
+    ServerError::ValidationError("Use shared pages as bases for team page writes.".into())
+}
+
+async fn link_targets_from_sources(
+    db: &wenlan_core::db::MemoryDB,
+    scope: &wenlan_core::read_scope::ReadScope,
+    page: &wenlan_types::Page,
+) -> Result<Vec<String>, ServerError> {
+    let sources = db
+        .get_memory_contents_by_ids(&page.source_memory_ids)
+        .await?;
+    Ok(wenlan_core::steep_new::unused_link_targets(
+        db,
+        scope,
+        page.workspace.as_deref().or(page.space.as_deref()),
+        &sources,
+        &page.id,
+        &page.content,
+    )
+    .await)
 }
 
 /// An agent write's `[n]` citations, checked against the sources it names:
@@ -2557,6 +2673,7 @@ async fn handle_refresh_page_inner(
     proposer: Option<&str>,
     Json(req): Json<wenlan_types::requests::RefreshPageRequest>,
     restored_from: Option<i64>,
+    private: bool,
 ) -> Result<
     (
         wenlan_core::post_write::WriteOutcome,
@@ -2678,11 +2795,13 @@ async fn handle_refresh_page_inner(
         return Err(page_read_required_conflict(&id, existing.version));
     }
     if req.source_memory_ids.is_empty() && !existing.source_memory_ids.is_empty() {
-        return Err(ServerError::ValidationError(
+        let message = if private {
             "source_memory_ids must not be empty for a page that has sources; \
              refresh keeps the page linked to its sources"
-                .into(),
-        ));
+        } else {
+            "Edit this page in the team app to keep its source links."
+        };
+        return Err(ServerError::ValidationError(message.into()));
     }
 
     // Ownership gate (spec §5.1/§5.2): agent refresh is a machine write. A
@@ -2909,21 +3028,10 @@ async fn handle_refresh_page_inner(
         .get_page(&id)
         .await?
         .ok_or_else(|| ServerError::Internal(format!("page {id} disappeared after refresh")))?;
-    let link_sources = db
-        .get_memory_contents_by_ids(&saved.source_memory_ids)
-        .await?;
-    let link_targets = if result.gated {
+    let link_targets = if !private || result.gated {
         Vec::new()
     } else {
-        wenlan_core::steep_new::unused_link_targets(
-            &db,
-            &scope,
-            saved.workspace.as_deref().or(saved.space.as_deref()),
-            &link_sources,
-            &saved.id,
-            &saved.content,
-        )
-        .await
+        link_targets_from_sources(&db, &scope, &saved).await?
     };
     let not_applied = edits_not_applied_warning(&result.edits_not_applied);
     let next_step = if result.gated {
@@ -3090,6 +3198,7 @@ pub async fn handle_restore_page_version(
         proposer.as_deref(),
         Json(refresh),
         Some(req.version),
+        true,
     )
     .await?;
     if let (Some(session), wenlan_core::post_write::WriteOutcome::Wrote) = (&session, outcome) {
@@ -3233,6 +3342,7 @@ fn gated_code_basis_warning(
 /// Return the changelog entries for a page, plus envelope metadata.
 pub async fn handle_get_page_revisions(
     State(state): State<Arc<RwLock<ServerState>>>,
+    headers: HeaderMap,
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
     view: crate::truth_guard::TruthView,
     Path(id): Path<String>,
@@ -3250,7 +3360,12 @@ pub async fn handle_get_page_revisions(
     let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
     // Q1 sub-resource: revisions is a read-only browse surface, so a shadow id
     // resolves 200 (empty changelog) via the unfenced `_browse` twin.
-    let page = db.get_page_scoped_browse(&id, &scope).await?;
+    let private = crate::team_actor::can_read_private_memories(&headers);
+    let page = if private {
+        db.get_page_scoped_browse(&id, &scope).await?
+    } else {
+        db.get_page_scoped(&id, &scope).await?
+    };
     // A hidden page 404s here for the same reason it does at `GET /api/pages/
     // {id}`: for this caller it is not there. An `EntryOnly` verdict arrives
     // already reduced, which is what clears the envelope's own `stale_reason`.
@@ -3277,6 +3392,15 @@ pub async fn handle_get_page_revisions(
     } else {
         Vec::new()
     };
+    if !private {
+        for entry in &mut entries {
+            entry.incoming_source_ids = None;
+            entry.citations_summary = None;
+            entry.sources_added = None;
+            entry.sources_removed = None;
+            entry.delta_summary = None;
+        }
+    }
     // UX-HIST-1: the one history merges the person's edits, AI edits and the
     // new versions of the pages this one relies on. A relied-on page this
     // caller may not read in full, or outside its Space, is left out.
@@ -3310,7 +3434,7 @@ pub async fn handle_get_page_revisions(
         page_id: id,
         current_version: page.version,
         user_edited: page.user_edited,
-        stale_reason: page.stale_reason.clone(),
+        stale_reason: if private { page.stale_reason } else { None },
         entries,
         history,
     }))

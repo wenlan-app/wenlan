@@ -268,10 +268,11 @@ pub async fn run_serve_with_profile(
 /// Space: `web-write` for a member who may write, `query-only` for one who
 /// may only read, pinned to that Space for this connection only, and writing
 /// as `<tool>@team.<member>` so the server files the edits under them. The
-/// caller checks the member's key before every request; the service itself
-/// has no authentication and must only be reached through that check.
+/// caller authenticates the member's Space grant before every request and
+/// supplies the daemon client with its internal team forwarding credential.
 pub fn team_member_service(
     origin_url: String,
+    daemon_client: reqwest::Client,
     member_id: String,
     space: String,
     tool_profile: ToolProfile,
@@ -285,7 +286,7 @@ pub fn team_member_service(
             let identity =
                 AgentIdentity::new("remote-mcp".into(), false).for_team_member(member_id.clone());
             Ok(WenlanMcpServer::new_with_identity(
-                WenlanClient::new(origin_url.clone()),
+                WenlanClient::with_http_client(origin_url.clone(), daemon_client.clone()),
                 TransportMode::Http,
                 identity,
                 None,

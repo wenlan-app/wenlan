@@ -339,7 +339,7 @@ async fn page_belongs_to_space(
         return Ok(false);
     };
     Ok(db
-        .get_space(name)
+        .get_space_without_private_counts(name)
         .await?
         .is_some_and(|space| space.id == expected_space_id))
 }
@@ -556,6 +556,10 @@ async fn resolved_space(
         })
         .transpose()?
         .filter(|value| !value.is_empty());
+    let private = crate::team_actor::can_read_private_memories(headers);
+    if !private {
+        crate::team_actor::required_space(header.as_deref())?;
+    }
     if let (Some(header), Some(query)) = (header.as_deref(), query_space) {
         if header != query {
             return Err(ServerError::BadRequest(
@@ -569,9 +573,12 @@ async fn resolved_space(
         .map(str::trim)
         .filter(|name| !name.is_empty())
         .ok_or_else(|| ServerError::BadRequest("a Space is required".into()))?;
-    db.get_space(name)
-        .await?
-        .ok_or_else(|| ServerError::NotFound(format!("Space {name:?} not found")))
+    let space = if private {
+        db.get_space(name).await?
+    } else {
+        db.get_space_without_private_counts(name).await?
+    };
+    space.ok_or_else(|| ServerError::NotFound(format!("Space {name:?} not found")))
 }
 
 /// A page in a folder named Rules, with the rules the person wrote on it
@@ -1093,6 +1100,7 @@ pub async fn handle_read_rules(
     headers: HeaderMap,
     Query(query): Query<RulesQuery>,
 ) -> Result<Json<SpaceRulesResponse>, ServerError> {
+    let private = crate::team_actor::can_read_private_memories(&headers);
     let (db, page_root) = db_and_page_root(&state).await?;
     let own = OwnRulePages::load(&db, page_root.as_deref()).await?;
     let tool = crate::memory_routes::extract_agent_name(&headers, None);
@@ -1106,7 +1114,7 @@ pub async fn handle_read_rules(
     } else {
         saved_rules::page_ids(&db).await?
     };
-    if no_space_named(&headers, query.space.as_deref()) {
+    if private && no_space_named(&headers, query.space.as_deref()) {
         // No Space: only the general lines, read from every accepted Space.
         let general = general_lines(&db, &own, None).await?;
         if by_tool {
@@ -1125,6 +1133,9 @@ pub async fn handle_read_rules(
     if by_tool && feature_enabled() && !response.lines.is_empty() {
         db.record_skill_rules_read(&tool, &space.id, &response.lines)
             .await?;
+    }
+    if !private {
+        return Ok(Json(response));
     }
     // General lines from other Spaces apply here too (UX-SKILL-5).
     let general = general_lines(&db, &own, Some(&space.id)).await?;
@@ -3822,6 +3833,7 @@ pub async fn handle_self_report(
     headers: HeaderMap,
     Json(request): Json<SkillReportRequest>,
 ) -> Result<Json<serde_json::Value>, ServerError> {
+    let private = crate::team_actor::can_read_private_memories(&headers);
     if !feature_enabled() {
         return Ok(Json(serde_json::json!({ "recorded": false })));
     }
@@ -3829,7 +3841,7 @@ pub async fn handle_self_report(
     let own = OwnRulePages::load(&db, page_root.as_deref()).await?;
     // A general line is recorded under its own Space, including when it was
     // read with no Space at all.
-    let (space_id, own_lines) = if no_space_named(&headers, Some(&request.space)) {
+    let (space_id, own_lines) = if private && no_space_named(&headers, Some(&request.space)) {
         (None, Vec::new())
     } else {
         let space = resolved_space(&db, &headers, Some(&request.space)).await?;
@@ -3841,6 +3853,7 @@ pub async fn handle_self_report(
         .find(|line| line.id == request.rule_id)
     {
         Some(line) => (space_id.clone().unwrap_or_default(), line),
+        None if !private => return Err(ServerError::NotFound("approved rule not found".into())),
         None => general_lines(&db, &own, space_id.as_deref())
             .await?
             .into_iter()

@@ -25601,17 +25601,25 @@ impl MemoryDB {
     // ===== Space CRUD Methods =====
 
     pub async fn list_spaces(&self) -> Result<Vec<Space>, WenlanError> {
+        self.list_spaces_inner(true).await
+    }
+
+    pub async fn list_spaces_without_private_counts(&self) -> Result<Vec<Space>, WenlanError> {
+        self.list_spaces_inner(false).await
+    }
+
+    async fn list_spaces_inner(&self, include_counts: bool) -> Result<Vec<Space>, WenlanError> {
         let conn = self.conn.lock().await;
         let mut rows = conn
             .query(
                 "SELECT s.id, s.name, s.description, s.suggested, s.created_at, s.updated_at,
-                        (SELECT COUNT(DISTINCT c.source_id) FROM memories c WHERE c.space = s.name AND c.source = 'memory' AND c.pending_revision = 0 AND COALESCE(c.is_recap, 0) = 0 AND c.source_id NOT IN (SELECT supersedes FROM memories WHERE supersedes IS NOT NULL AND pending_revision = 0 AND source = 'memory' GROUP BY supersedes)) as mem_count,
-                        (SELECT COUNT(*) FROM entity_page_map epm JOIN pages p ON p.id = epm.page_id WHERE p.space = s.name AND p.kind = 'entity' AND p.status = 'active') as ent_count,
+                        CASE WHEN ?2 THEN (SELECT COUNT(DISTINCT c.source_id) FROM memories c WHERE c.space = s.name AND c.source = 'memory' AND c.pending_revision = 0 AND COALESCE(c.is_recap, 0) = 0 AND c.source_id NOT IN (SELECT supersedes FROM memories WHERE supersedes IS NOT NULL AND pending_revision = 0 AND source = 'memory' GROUP BY supersedes)) ELSE 0 END as mem_count,
+                        CASE WHEN ?2 THEN (SELECT COUNT(*) FROM entity_page_map epm JOIN pages p ON p.id = epm.page_id WHERE p.space = s.name AND p.kind = 'entity' AND p.status = 'active') ELSE 0 END as ent_count,
                         s.sort_order, s.starred, s.is_default
                  FROM spaces s
                  WHERE s.id != ?1
                  ORDER BY s.starred DESC, s.sort_order, s.name",
-                libsql::params![UNFILED_SPACE_ID],
+                libsql::params![UNFILED_SPACE_ID, i64::from(include_counts)],
             )
             .await
             .map_err(|e| WenlanError::VectorDb(format!("list_spaces: {}", e)))?;
@@ -25640,15 +25648,30 @@ impl MemoryDB {
     }
 
     pub async fn get_space(&self, name: &str) -> Result<Option<Space>, WenlanError> {
+        self.get_space_inner(name, true).await
+    }
+
+    pub async fn get_space_without_private_counts(
+        &self,
+        name: &str,
+    ) -> Result<Option<Space>, WenlanError> {
+        self.get_space_inner(name, false).await
+    }
+
+    async fn get_space_inner(
+        &self,
+        name: &str,
+        include_counts: bool,
+    ) -> Result<Option<Space>, WenlanError> {
         let conn = self.conn.lock().await;
         let mut rows = conn
             .query(
                 "SELECT s.id, s.name, s.description, s.suggested, s.created_at, s.updated_at,
-                        (SELECT COUNT(DISTINCT c.source_id) FROM memories c WHERE c.space = s.name AND c.source = 'memory' AND c.pending_revision = 0 AND COALESCE(c.is_recap, 0) = 0 AND c.source_id NOT IN (SELECT supersedes FROM memories WHERE supersedes IS NOT NULL AND pending_revision = 0 AND source = 'memory' GROUP BY supersedes)) as mem_count,
-                        (SELECT COUNT(*) FROM entity_page_map epm JOIN pages p ON p.id = epm.page_id WHERE p.space = s.name AND p.kind = 'entity' AND p.status = 'active') as ent_count,
+                        CASE WHEN ?2 THEN (SELECT COUNT(DISTINCT c.source_id) FROM memories c WHERE c.space = s.name AND c.source = 'memory' AND c.pending_revision = 0 AND COALESCE(c.is_recap, 0) = 0 AND c.source_id NOT IN (SELECT supersedes FROM memories WHERE supersedes IS NOT NULL AND pending_revision = 0 AND source = 'memory' GROUP BY supersedes)) ELSE 0 END as mem_count,
+                        CASE WHEN ?2 THEN (SELECT COUNT(*) FROM entity_page_map epm JOIN pages p ON p.id = epm.page_id WHERE p.space = s.name AND p.kind = 'entity' AND p.status = 'active') ELSE 0 END as ent_count,
                         s.sort_order, s.starred, s.is_default
                  FROM spaces s WHERE s.name = ?1",
-                libsql::params![name],
+                libsql::params![name, i64::from(include_counts)],
             )
             .await
             .map_err(|e| WenlanError::VectorDb(format!("get_space: {}", e)))?;
@@ -25684,11 +25707,16 @@ impl MemoryDB {
             return Ok(None);
         };
 
-        if self.get_space(name).await?.is_some() {
-            Ok(Some(name.to_string()))
-        } else {
-            Ok(None)
-        }
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query("SELECT name FROM spaces WHERE name = ?1", [name])
+            .await
+            .map_err(|error| WenlanError::VectorDb(format!("registered Space: {error}")))?;
+        let row = rows
+            .next()
+            .await
+            .map_err(|error| WenlanError::VectorDb(format!("registered Space: {error}")))?;
+        Ok(row.map(|_| name.to_string()))
     }
 
     pub async fn create_space(

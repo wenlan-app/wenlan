@@ -126,8 +126,13 @@ impl WenlanClient {
     }
 
     pub fn new(base_url: String) -> Self {
+        Self::with_http_client(base_url, Client::new())
+    }
+
+    /// Build a client for a daemon transport configured by the caller.
+    pub fn with_http_client(base_url: String, client: Client) -> Self {
         Self {
-            client: Client::new(),
+            client,
             base_url,
             agent_identity: None,
             session: None,

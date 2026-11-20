@@ -135,6 +135,9 @@ pub fn build_router_with_shutdown(state: SharedState, shutdown: ShutdownHandle) 
             },
             truth_guard::guard,
         ))
+        .route_layer(axum::middleware::from_fn(
+            crate::team_actor::guard_private_memory,
+        ))
         // A team member's call (forwarded by the team gate) gets the path
         // each page has as the member sees it; nothing else is touched.
         .layer(axum::middleware::from_fn_with_state(

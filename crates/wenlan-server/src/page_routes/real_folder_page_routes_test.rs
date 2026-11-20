@@ -231,6 +231,7 @@ async fn move_route_changes_projection_path_and_preserves_page_identity() {
     );
     let Json(inventory) = handle_list_pages(
         State(state),
+        axum::http::HeaderMap::new(),
         SpaceHeader(None),
         TruthView::automatic(),
         axum::extract::Query(HashMap::new()),

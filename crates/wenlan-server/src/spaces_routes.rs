@@ -109,15 +109,18 @@ pub async fn handle_clear_default_space(
 
 pub async fn handle_list_spaces(
     State(state): State<Arc<RwLock<ServerState>>>,
+    headers: axum::http::HeaderMap,
 ) -> Result<Json<Vec<wenlan_core::db::Space>>, ServerError> {
     let db = {
         let s = state.read().await;
         s.db.clone().ok_or(ServerError::DbNotInitialized)?
     };
-    let spaces = db
-        .list_spaces()
-        .await
-        .map_err(|e| ServerError::Internal(e.to_string()))?;
+    let spaces = if crate::team_actor::can_read_private_memories(&headers) {
+        db.list_spaces().await
+    } else {
+        db.list_spaces_without_private_counts().await
+    }
+    .map_err(|e| ServerError::Internal(e.to_string()))?;
     Ok(Json(spaces))
 }
 

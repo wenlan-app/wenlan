@@ -39,7 +39,7 @@ pub async fn resolve_read_scope(
         return Ok(ReadScope::Global);
     };
 
-    let registered = db.get_space(name).await?;
+    let registered = db.registered_space_or_none(Some(name)).await?;
     if name == "uncategorized" {
         return if registered.is_some() {
             Err(ReadScopeResolveError::AmbiguousUncategorized)

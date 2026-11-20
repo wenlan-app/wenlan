@@ -482,6 +482,8 @@ fn every(spaces: &BTreeMap<String, TeamAccess>, need: Need) -> Vec<String> {
 fn client() -> Option<reqwest::Client> {
     reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .ok()
 }

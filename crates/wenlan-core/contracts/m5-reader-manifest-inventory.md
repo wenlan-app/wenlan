@@ -1290,14 +1290,14 @@ carrying the authority of agreement.
 | `core/db/repair_page_rename.rs::page_on_connection` | `private` | no | no | — | — |
 | `core/db/repair_page_rename.rs::rename_page_title_cas_inner` | `pub(crate)` | no | no | — | — |
 | `core/db/scoped_entities.rs::get_entity_detail_scoped` | `pub` | no | **yes** | `server/entity_graph_routes.rs::handle_create_relation_preserving`, `server/entity_graph_routes.rs::handle_get_entity_detail` | — |
-| `core/db/scoped_entities.rs::get_knowledge_graph_scoped` | `pub` | no | **yes** | `server/entity_graph_routes.rs::handle_get_knowledge_graph` | — |
 | `core/db/scoped_entities.rs::get_observations_for_entities_scoped` | `pub(super)` | no | no | — | — |
 | `core/db/scoped_entities.rs::list_entities_scoped` | `pub` | no | **yes** | `server/entity_graph_routes.rs::handle_list_entities` | — |
+| `core/db/scoped_entities.rs::page_graph_rows` | `private` | no | no | — | — |
 | `core/db/scoped_entities.rs::query_entities_scoped` | `pub` | no | **yes** | `server/entity_graph_routes.rs::handle_query_entities` | — |
 | `core/db/scoped_entities.rs::search_entities_by_vector_scoped` | `pub` | no | **yes** | `server/entity_graph_routes.rs::handle_search_entities` | — |
 | `core/db/scoped_pages.rs::get_page_outbound_links_scoped` | `pub` | no | **yes** | `server/page_look_routes.rs::handle_get_page_look_data`, `server/page_map_routes.rs::resolve_outline_links`, `server/page_routes.rs::handle_get_page_links` | — |
-| `core/db/scoped_pages.rs::list_recent_changes_scoped` | `pub` | no | **yes** | `server/routes.rs::handle_recent_page_changes` | — |
-| `core/db/scoped_pages.rs::pages_containing_text` | `pub` | no | **yes** | `server/page_routes.rs::handle_search_pages` | — |
+| `core/db/scoped_pages.rs::list_recent_page_changes` | `private` | no | no | — | — |
+| `core/db/scoped_pages.rs::pages_containing_text_inner` | `private` | no | no | — | — |
 | `core/db/sentence_history.rs::cited_source_state_on` | `pub(super)` | no | no | — | — |
 | `core/db/sentence_history.rs::stamp_page_citations` | `pub(super)` | no | no | — | — |
 | `core/db/sessions.rs::get_session_detail` | `pub` | no | **yes** | `server/session_routes.rs::handle_get_session` | — |
@@ -1416,8 +1416,14 @@ carrying the authority of agreement.
 | `core/db/page_space_move.rs::set_page_space` | `pub` | yes | no | — | `core/db/page_space_move.rs::set_page_space_in_transaction` |
 | `core/db/presence_review.rs::review_in_txn` | `private` | no | no | — | `core/db/presence_review.rs::page_binding` |
 | `core/db/repair_page_rename.rs::rename_page_projection_matches_post` | `private` | no | no | — | `core/db/repair_page_rename.rs::page_on_connection` |
-| `core/db/scoped_pages.rs::list_recent_pages_with_badges_scoped` | `pub` | no | **yes** | `server/routes.rs::handle_recent_pages` | `core/db.rs::list_recent_pages_with_badges` |
+| `core/db/scoped_entities.rs::get_knowledge_graph_scoped` | `pub` | no | **yes** | `server/entity_graph_routes.rs::handle_get_knowledge_graph` | `core/db/scoped_entities.rs::list_entities_scoped`, `core/db/scoped_entities.rs::page_graph_rows` |
+| `core/db/scoped_entities.rs::get_page_graph_scoped` | `pub` | no | **yes** | `server/entity_graph_routes.rs::handle_get_knowledge_graph` | `core/db/scoped_entities.rs::page_graph_rows` |
+| `core/db/scoped_pages.rs::list_recent_changes_scoped` | `pub` | no | **yes** | `server/routes.rs::handle_recent_page_changes` | `core/db/scoped_pages.rs::list_recent_page_changes` |
+| `core/db/scoped_pages.rs::list_recent_page_activity` | `private` | no | no | — | `core/db.rs::list_recent_pages_with_badges` |
+| `core/db/scoped_pages.rs::list_recent_shared_page_changes` | `pub` | no | **yes** | `server/routes.rs::handle_recent_page_changes` | `core/db/scoped_pages.rs::list_recent_page_changes` |
+| `core/db/scoped_pages.rs::pages_containing_text` | `pub` | no | **yes** | `server/page_routes.rs::handle_search_pages` | `core/db/scoped_pages.rs::pages_containing_text_inner` |
 | `core/db/scoped_pages.rs::search_pages_scoped_inner` | `private` | no | no | — | `core/db.rs::entity_row_browse_predicate` |
+| `core/db/scoped_pages.rs::shared_pages_containing_text` | `pub` | no | **yes** | `server/page_routes.rs::hosted_page_candidates` | `core/db/scoped_pages.rs::pages_containing_text_inner` |
 | `core/db/sentence_history.rs::cited_source_state` | `pub` | no | no | — | `core/db/sentence_history.rs::cited_source_state_on` |
 | `core/db/sentence_history.rs::set_page_citations_at_page_version` | `pub(crate)` | no | no | — | `core/db/sentence_history.rs::stamp_page_citations` |
 | `core/db/sentence_history.rs::stamp_cited_versions` | `pub(super)` | no | no | — | `core/db/sentence_history.rs::cited_source_state_on` |
@@ -1474,7 +1480,6 @@ carrying the authority of agreement.
 | `server/entity_graph_routes.rs::handle_create_entity` | `pub` | no | no | — | `core/db.rs::get_entity_detail` |
 | `server/entity_graph_routes.rs::handle_create_relation_preserving` | `pub` | no | no | — | `core/db/scoped_entities.rs::get_entity_detail_scoped` |
 | `server/entity_graph_routes.rs::handle_get_entity_detail` | `pub` | no | no | — | `core/db/scoped_entities.rs::get_entity_detail_scoped` |
-| `server/entity_graph_routes.rs::handle_get_knowledge_graph` | `pub` | no | no | — | `core/db/scoped_entities.rs::get_knowledge_graph_scoped` |
 | `server/entity_graph_routes.rs::handle_list_entities` | `pub` | no | no | — | `core/db/scoped_entities.rs::list_entities_scoped` |
 | `server/entity_graph_routes.rs::handle_merge_entity` | `pub` | no | no | — | `core/db.rs::merge_entities_in_scope` |
 | `server/entity_graph_routes.rs::handle_query_entities` | `pub` | no | no | — | `core/db/scoped_entities.rs::query_entities_scoped` |
@@ -1489,10 +1494,8 @@ carrying the authority of agreement.
 | `server/page_routes.rs::handle_get_page` | `pub` | no | **yes** | `server/repair_read_routes.rs::handle_get_repair_page` | `core/db/page_basis.rs::linked_changed` |
 | `server/page_routes.rs::handle_get_page_links` | `pub` | no | no | — | `core/db/scoped_pages.rs::get_page_outbound_links_scoped` |
 | `server/page_routes.rs::handle_publish_page_draft` | `pub` | no | no | — | `core/db/page_drafts.rs::publish_page_draft_by` |
-| `server/page_routes.rs::handle_search_pages` | `pub` | no | no | — | `core/db/scoped_pages.rs::pages_containing_text` |
 | `server/page_routes.rs::visible_conflict_identity` | `private` | no | no | `server/page_routes.rs::handle_publish_page_draft` | `core/db/truth_exposure.rs::conflict_identity_snapshot` |
 | `server/routes.rs::handle_distill_inner` | `private` | no | no | `server/routes.rs::handle_distill` | `core/db.rs::list_stale_pages_scoped`, `core/db.rs::load_page_source_index` |
-| `server/routes.rs::handle_recent_page_changes` | `pub` | no | no | — | `core/db/scoped_pages.rs::list_recent_changes_scoped` |
 | `server/routes.rs::handle_recent_retrievals` | `pub` | no | no | — | `core/db.rs::list_recent_retrievals_scoped` |
 | `server/session_routes.rs::handle_get_session` | `pub` | no | no | — | `core/db/sessions.rs::get_session_detail` |
 | `server/skill_grow.rs::accept_space` | `private` | no | no | `server/skill_grow.rs::handle_accept_space_rules`, `server/skill_grow.rs::process_space` | `core/db.rs::list_pages_by_space` |
@@ -1574,7 +1577,9 @@ carrying the authority of agreement.
 | `core/db/repair_page_rename.rs::recover_rename_page_title_apply_receipt` | `pub(crate)` | no | no | — | `core/db/repair_page_rename.rs::rename_page_projection_matches_post` |
 | `core/db/scoped_pages.rs::get_page_scoped_inner` | `private` | no | no | — | `core/db.rs::get_page`, `core/db.rs::get_page_browse` |
 | `core/db/scoped_pages.rs::list_pages_scoped_inner` | `private` | no | no | — | `core/db.rs::entity_row_browse_fence`, `core/db.rs::list_pages`, `core/db.rs::list_pages_browse` |
-| `core/db/scoped_pages.rs::search_pages_scoped` | `pub` | no | **yes** | `server/ai_memory_import.rs::candidates`, `server/memory_routes.rs::handle_search_memory_inner`, `server/routes.rs::handle_search_inner` | `core/db/scoped_pages.rs::search_pages_scoped_inner` |
+| `core/db/scoped_pages.rs::list_recent_pages_with_badges_scoped` | `pub` | no | **yes** | `server/routes.rs::handle_recent_pages` | `core/db/scoped_pages.rs::list_recent_page_activity` |
+| `core/db/scoped_pages.rs::list_recent_shared_pages` | `pub` | no | **yes** | `server/routes.rs::handle_recent_pages` | `core/db/scoped_pages.rs::list_recent_page_activity` |
+| `core/db/scoped_pages.rs::search_pages_scoped` | `pub` | no | **yes** | `server/ai_memory_import.rs::candidates`, `server/memory_routes.rs::handle_search_memory_inner`, `server/page_routes.rs::hosted_page_candidates`, `server/routes.rs::handle_search_inner` | `core/db/scoped_pages.rs::search_pages_scoped_inner` |
 | `core/db/scoped_pages.rs::search_pages_scoped_browse` | `pub` | no | **yes** | `server/page_routes.rs::handle_search_pages` | `core/db/scoped_pages.rs::search_pages_scoped_inner` |
 | `core/db/truth_exposure.rs::page_visibility` | `pub` | no | no | — | `core/db/truth_exposure.rs::page_truth_states` |
 | `core/document_enrichment.rs::run_document_enrichment_with_request_budget` | `private` | no | no | — | `core/db.rs::get_page` |
@@ -1689,7 +1694,7 @@ carrying the authority of agreement.
 | `core/steep_new.rs::claim_new_on` | `pub` | no | **yes** | `server/steep_new_routes.rs::handle_steep_new_claim` | `core/steep_new.rs::existing_page`, `core/steep_new.rs::link_targets` |
 | `core/steep_new.rs::links_new` | `pub` | no | **yes** | `server/steep_new_routes.rs::handle_steep_new_links` | `core/steep_new.rs::existing_page`, `core/steep_new.rs::link_targets` |
 | `core/steep_new.rs::organize_new` | `pub` | no | **yes** | `server/steep_new_routes.rs::handle_steep_new_organize` | `core/steep_new.rs::existing_page`, `core/steep_new.rs::link_targets` |
-| `core/steep_new.rs::unused_link_targets` | `pub` | no | **yes** | `server/page_routes.rs::handle_create_page_inner`, `server/page_routes.rs::handle_refresh_page_inner`, `server/steep_routes.rs::handle_steep_commit` | `core/steep_new.rs::link_targets`, `core/synthesis/wikilinks.rs::resolve_against_pages` |
+| `core/steep_new.rs::unused_link_targets` | `pub` | no | **yes** | `server/page_routes.rs::link_targets_from_sources`, `server/steep_routes.rs::handle_steep_commit` | `core/steep_new.rs::link_targets`, `core/synthesis/wikilinks.rs::resolve_against_pages` |
 | `core/steep_new.rs::vault_linked_notes` | `private` | no | no | — | `core/db/steep_new.rs::notes_citing_sources_with`, `core/db/steep_new.rs::notes_citing_text_with` |
 | `core/steep_new_automatic.rs::land` | `private` | yes | no | — | `core/steep_new.rs::commit_new` |
 | `core/steep_new_automatic.rs::write_one_new_page` | `pub` | no | no | — | `core/steep_new_automatic.rs::recent_titles` |
@@ -1711,6 +1716,7 @@ carrying the authority of agreement.
 | `server/ai_memory_import.rs::candidates` | `private` | yes | no | — | `core/db.rs::search_memory` |
 | `server/brief_routes.rs::handle_read_brief` | `pub` | no | **yes** | `server/routes.rs::handle_context` | `core/db.rs::search_memory` |
 | `server/entity_graph_routes.rs::handle_add_entity_alias` | `pub` | no | no | — | `core/db.rs::add_entity_alias_in_scope` |
+| `server/entity_graph_routes.rs::handle_get_knowledge_graph` | `pub` | no | no | — | `core/db/scoped_entities.rs::get_knowledge_graph_scoped`, `core/db/scoped_entities.rs::get_page_graph_scoped` |
 | `server/knowledge_routes.rs::handle_resolve_embed` | `pub` | no | no | — | `core/db.rs::get_page` |
 | `server/main.rs::run_daemon` | `private` | no | no | `server/main.rs::main` | `server/main/startup.rs::prepare_startup_state` |
 | `server/main/runtime.rs::register_optional_runtime_workers` | `pub(super)` | no | no | `server/main.rs::run_daemon` | `core/db/claim_derivation.rs::reconcile_supported_pages`, `server/main/runtime.rs::load_embedding_model_in_background` |
@@ -1735,14 +1741,16 @@ carrying the authority of agreement.
 | `server/page_routes.rs::handle_refresh_page` | `pub` | no | no | — | `core/db.rs::get_page` |
 | `server/page_routes.rs::handle_refresh_page_inner` | `private` | no | no | `server/page_routes.rs::handle_refresh_page`, `server/page_routes.rs::handle_restore_page_version` | `core/db.rs::get_page`, `core/db/page_basis.rs::prepare_staged_basis_marks` |
 | `server/page_routes.rs::handle_restore_page_version` | `pub` | no | no | — | `core/db.rs::get_page` |
+| `server/page_routes.rs::handle_search_pages` | `pub` | no | no | — | `core/db/scoped_pages.rs::pages_containing_text` |
 | `server/page_routes.rs::handle_update_page` | `pub` | no | no | — | `core/db.rs::get_page` |
+| `server/page_routes.rs::hosted_page_candidates` | `private` | no | no | `server/page_routes.rs::handle_search_pages`, `server/page_routes.rs::search_hosted_page_hits` | `core/db/scoped_pages.rs::shared_pages_containing_text` |
 | `server/page_routes.rs::member_page_in_pinned_space` | `private` | no | no | `server/page_routes.rs::handle_archive_page`, `server/page_routes.rs::handle_publish_page_draft`, `server/page_routes.rs::handle_restore_page`, `server/page_routes.rs::handle_update_page_draft` | `core/db.rs::get_page` |
 | `server/page_routes.rs::reject_entity_page_mutation` | `private` | no | no | `server/page_routes.rs::archive_page_for`, `server/page_routes.rs::handle_delete_page`, `server/page_routes.rs::handle_set_page_review_required` | `core/db.rs::entity_shadow_page_owner` |
 | `server/page_routes.rs::space_locked_write_error` | `private` | no | no | `server/page_routes.rs::handle_refresh_page_inner` | `core/db.rs::get_page` |
 | `server/repair_read_routes.rs::handle_get_repair_page` | `pub` | no | no | — | `server/page_routes.rs::handle_get_page` |
 | `server/repair_routes.rs::handle_prepare` | `private` | no | no | — | `core/repair.rs::prepare_memory_reclassification_with_pages` |
 | `server/routes.rs::handle_distill` | `pub` | no | no | — | `server/routes.rs::handle_distill_inner` |
-| `server/routes.rs::handle_recent_pages` | `pub` | no | no | — | `core/db/scoped_pages.rs::list_recent_pages_with_badges_scoped` |
+| `server/routes.rs::handle_recent_page_changes` | `pub` | no | no | — | `core/db/scoped_pages.rs::list_recent_changes_scoped`, `core/db/scoped_pages.rs::list_recent_shared_page_changes` |
 | `server/routes.rs::handle_search_inner` | `private` | no | no | `server/routes.rs::handle_search` | `core/db.rs::search_memory` |
 | `server/scheduler.rs::fire_maintenance_stage_safe` | `private` | no | no | `server/scheduler.rs::spawn_scheduler` | `core/maintenance.rs::run_maintenance_stage_slice` |
 | `server/sentence_routes.rs::require_visible_page` | `private` | no | no | `server/sentence_routes.rs::handle_accept_sentence_proposal`, `server/sentence_routes.rs::handle_flag_sentence`, `server/sentence_routes.rs::handle_get_page_sentences`, `server/sentence_routes.rs::handle_propose_sentence`, `server/sentence_routes.rs::handle_recheck_sentence`, `server/sentence_routes.rs::handle_reject_sentence_proposal`, `server/sentence_routes.rs::handle_revert_sentences` | `core/db.rs::get_page` |
@@ -1816,9 +1824,9 @@ carrying the authority of agreement.
 | `core/db/page_basis.rs::mark_page_basis` | `pub` | no | no | — | `core/db/page_basis.rs::mark_page_basis_in` |
 | `core/db/page_basis.rs::retarget_page_identity` | `pub(super)` | no | no | — | `core/db/page_basis.rs::refresh_basis_state` |
 | `core/db/repair_verification.rs::record_repair_verification_atomic` | `pub(crate)` | no | no | — | `core/repair.rs::projection_page_row_on_connection` |
-| `core/db/scoped_pages.rs::get_page_scoped` | `pub` | no | **yes** | `server/page_routes.rs::handle_export_page`, `server/page_routes.rs::handle_move_page`, `server/page_routes.rs::handle_restore_page`, `server/page_routes.rs::handle_set_page_space`, `server/repo_wiki_routes.rs::check_followed_page`, `server/source_annotation_routes.rs::handle_update_source_annotation`, `server/source_annotation_routes.rs::hydrate_pages` | `core/db/scoped_pages.rs::get_page_scoped_inner` |
+| `core/db/scoped_pages.rs::get_page_scoped` | `pub` | no | **yes** | `server/page_routes.rs::handle_export_page`, `server/page_routes.rs::handle_get_page`, `server/page_routes.rs::handle_get_page_revisions`, `server/page_routes.rs::handle_get_page_sources`, `server/page_routes.rs::handle_move_page`, `server/page_routes.rs::handle_restore_page`, `server/page_routes.rs::handle_set_page_space`, `server/repo_wiki_routes.rs::check_followed_page`, `server/source_annotation_routes.rs::handle_update_source_annotation`, `server/source_annotation_routes.rs::hydrate_pages` | `core/db/scoped_pages.rs::get_page_scoped_inner` |
 | `core/db/scoped_pages.rs::get_page_scoped_browse` | `pub` | no | **yes** | `server/page_basis_routes.rs::visible_ids`, `server/page_look_routes.rs::visible_page`, `server/page_routes.rs::handle_get_page`, `server/page_routes.rs::handle_get_page_revisions`, `server/session_routes.rs::handle_get_page_sessions` | `core/db/scoped_pages.rs::get_page_scoped_inner` |
-| `core/db/scoped_pages.rs::list_pages_scoped` | `pub` | no | **yes** | `server/knowledge_routes.rs::handle_list_knowledge_folders`, `server/page_routes.rs::handle_export_pages`, `server/repo_wiki_routes.rs::exportable_pages` | `core/db/scoped_pages.rs::list_pages_scoped_inner` |
+| `core/db/scoped_pages.rs::list_pages_scoped` | `pub` | no | **yes** | `server/knowledge_routes.rs::handle_list_knowledge_folders`, `server/page_routes.rs::handle_export_pages`, `server/page_routes.rs::list_visible_browse_pages`, `server/repo_wiki_routes.rs::exportable_pages` | `core/db/scoped_pages.rs::list_pages_scoped_inner` |
 | `core/db/scoped_pages.rs::list_pages_scoped_browse` | `pub` | no | **yes** | `server/page_routes.rs::list_visible_browse_pages` | `core/db/scoped_pages.rs::list_pages_scoped_inner` |
 | `core/document_enrichment.rs::refresh_okf_linkers` | `private` | no | no | — | `core/db/okf_concepts.rs::refresh_okf_concept_linkers` |
 | `core/document_enrichment.rs::run_document_enrichment_slice` | `pub` | no | **yes** | `server/scheduler/ambient.rs::run_document_enrichment_slice_tick`, `server/scheduler/ambient.rs::run_import_document_prep_slice`, `server/source_routes.rs::prepare_queued_documents` | `core/document_enrichment.rs::run_document_enrichment_with_request_budget` |
@@ -1900,7 +1908,7 @@ carrying the authority of agreement.
 | `core/synthesis/distill.rs::distill_pages_scoped` | `pub` | no | **yes** | `server/routes.rs::handle_distill_inner` | `core/synthesis/distill.rs::distill_pages_scoped_gated` |
 | `core/synthesis/distill.rs::refresh_page` | `pub` | no | no | — | `core/synthesis/distill.rs::refresh_page_with_prompt` |
 | `core/synthesis/refinement_queue.rs::apply_refinement` | `pub` | no | no | — | `core/synthesis/refinement_queue.rs::apply_refinement_with_decision` |
-| `core/truth_adapter.rs::filter_page_refs` | `pub` | no | **yes** | `server/brief_routes.rs::handle_read_brief`, `server/check_routes.rs::hide_unservable_pages`, `server/entity_graph_routes.rs::handle_get_knowledge_graph`, `server/memory_routes.rs::handle_search_memory_inner`, `server/page_basis_routes.rs::visible_ids`, `server/page_routes.rs::handle_get_page`, `server/page_routes.rs::handle_get_page_links`, `server/page_routes.rs::handle_get_page_revisions`, `server/page_routes.rs::handle_get_page_sources`, `server/page_routes.rs::handle_list_orphan_links`, `server/page_routes.rs::handle_restore_page`, `server/page_routes.rs::handle_restore_page_version`, `server/page_routes.rs::handle_set_page_space`, `server/routes.rs::handle_distill_inner`, `server/routes.rs::handle_recent_page_changes`, `server/routes.rs::handle_recent_pages`, `server/routes.rs::handle_recent_retrievals`, `server/routes.rs::handle_search_inner`, `server/session_routes.rs::handle_get_session`, `server/things_routes.rs::handle_get_thing` | `core/db/truth_exposure.rs::page_visibility` |
+| `core/truth_adapter.rs::filter_page_refs` | `pub` | no | **yes** | `server/brief_routes.rs::handle_read_brief`, `server/check_routes.rs::hide_unservable_pages`, `server/entity_graph_routes.rs::handle_get_knowledge_graph`, `server/memory_routes.rs::handle_search_memory_inner`, `server/page_basis_routes.rs::visible_ids`, `server/page_routes.rs::handle_get_page`, `server/page_routes.rs::handle_get_page_links`, `server/page_routes.rs::handle_get_page_revisions`, `server/page_routes.rs::handle_get_page_sources`, `server/page_routes.rs::handle_list_orphan_links`, `server/page_routes.rs::handle_restore_page`, `server/page_routes.rs::handle_restore_page_version`, `server/page_routes.rs::handle_set_page_space`, `server/page_routes.rs::search_hosted_page_hits`, `server/routes.rs::handle_distill_inner`, `server/routes.rs::handle_recent_page_changes`, `server/routes.rs::handle_recent_pages`, `server/routes.rs::handle_recent_retrievals`, `server/routes.rs::handle_search_inner`, `server/session_routes.rs::handle_get_session`, `server/things_routes.rs::handle_get_thing` | `core/db/truth_exposure.rs::page_visibility` |
 | `core/truth_adapter.rs::filter_pages` | `pub` | no | **yes** | `server/knowledge_routes.rs::handle_list_knowledge_folders`, `server/page_routes.rs::handle_search_pages`, `server/page_routes.rs::list_visible_browse_pages`, `server/routes.rs::handle_distill_inner`, `server/skill_grow.rs::pages_for_space` | `core/truth_adapter.rs::verdicts` |
 | `core/truth_adapter.rs::page_write_permit` | `pub` | no | **yes** | `server/page_routes.rs::handle_export_page`, `server/page_routes.rs::handle_export_pages`, `server/repo_wiki_routes.rs::exportable_pages` | `core/db/truth_exposure.rs::page_visibility` |
 | `server/check_routes.rs::handle_check` | `pub` | no | no | — | `core/chat_check.rs::check_against_decisions` |
@@ -1929,10 +1937,13 @@ carrying the authority of agreement.
 | `server/page_routes.rs::handle_review_page` | `pub` | no | no | — | `core/db/presence_review.rs::review_page_with_presence` |
 | `server/page_routes.rs::handle_set_page_review_required` | `pub` | no | no | — | `server/page_routes.rs::reject_entity_page_mutation` |
 | `server/page_routes.rs::handle_update_page_draft` | `pub` | no | no | — | `server/page_routes.rs::member_page_in_pinned_space` |
+| `server/page_routes.rs::link_targets_from_sources` | `private` | no | no | `server/page_routes.rs::handle_create_page_inner`, `server/page_routes.rs::handle_refresh_page_inner` | `core/steep_new.rs::unused_link_targets` |
+| `server/page_routes.rs::search_hosted_page_hits` | `pub(crate)` | no | no | `server/brief_routes.rs::handle_read_brief`, `server/memory_routes.rs::handle_search_memory` | `server/page_routes.rs::hosted_page_candidates` |
 | `server/refinery_routes.rs::handle_accept_refinement` | `pub` | no | no | — | `core/synthesis/refinement_queue.rs::apply_refinement_with_decision` |
 | `server/repair_prepare_operation_routes.rs::handle_prepare_operation` | `private` | no | no | — | `core/repair/current.rs::prepare_current_repair_with_pages` |
 | `server/repair_routes.rs::handle_apply` | `private` | no | no | — | `core/repair.rs::apply_repair_with_pages` |
 | `server/routes.rs::handle_context` | `pub` | no | no | — | `server/brief_routes.rs::handle_read_brief` |
+| `server/routes.rs::handle_recent_pages` | `pub` | no | no | — | `core/db/scoped_pages.rs::list_recent_pages_with_badges_scoped`, `core/db/scoped_pages.rs::list_recent_shared_pages` |
 | `server/routes.rs::handle_search` | `pub` | no | no | — | `server/routes.rs::handle_search_inner` |
 | `server/scheduler.rs::fire_steep_phase` | `private` | no | no | `server/scheduler.rs::fire_steep_phase_safe` | `core/refinery/mod.rs::run_periodic_steep_phase_with_api` |
 | `server/scheduler.rs::spawn_scheduler` | `pub` | no | **yes** | `server/main.rs::run_daemon` | `core/trust_scan.rs::run_and_store`, `server/scheduler.rs::fire_maintenance_stage_safe` |

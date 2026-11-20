@@ -1678,6 +1678,12 @@ async fn team_join_page(State(state): State<TeamState>, headers: HeaderMap) -> R
 #[path = "team_app_gate.rs"]
 mod app_gate;
 
+pub(crate) fn is_member_app_call(method: &Method, route: &str) -> bool {
+    app_gate::CALLS
+        .iter()
+        .any(|call| call.method == method.as_str() && call.path == route)
+}
+
 #[path = "team_auth.rs"]
 mod auth;
 
@@ -2555,20 +2561,28 @@ async fn serve_mcp(state: TeamState, member: Member, space: String, req: Request
             .mcp
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        services
-            .entry((member.id.clone(), space.clone(), access))
-            .or_insert_with(|| {
-                wenlan_mcp::serve::team_member_service(
-                    state.daemon_url.clone(),
-                    member.id.clone(),
-                    space.clone(),
-                    match access {
-                        TeamAccess::Write => wenlan_mcp::tools::ToolProfile::WebWrite,
-                        TeamAccess::Read => wenlan_mcp::tools::ToolProfile::QueryOnly,
-                    },
-                )
-            })
-            .clone()
+        let key = (member.id.clone(), space.clone(), access);
+        match services.entry(key) {
+            std::collections::hash_map::Entry::Occupied(entry) => entry.get().clone(),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                let client = match crate::team_actor::mcp_client() {
+                    Ok(client) => client,
+                    Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                };
+                entry
+                    .insert(wenlan_mcp::serve::team_member_service(
+                        state.daemon_url.clone(),
+                        client,
+                        member.id,
+                        space,
+                        match access {
+                            TeamAccess::Write => wenlan_mcp::tools::ToolProfile::WebWrite,
+                            TeamAccess::Read => wenlan_mcp::tools::ToolProfile::QueryOnly,
+                        },
+                    ))
+                    .clone()
+            }
+        }
     };
     match service.oneshot(req).await {
         Ok(response) => response.into_response(),

@@ -340,7 +340,28 @@ impl MemoryDB {
         since_ms: Option<i64>,
         scope: &ReadScope,
     ) -> Result<Vec<wenlan_types::RecentActivityItem>, WenlanError> {
-        if matches!(scope, ReadScope::Global) {
+        self.list_recent_page_activity(limit, since_ms, scope, true)
+            .await
+    }
+
+    pub async fn list_recent_shared_pages(
+        &self,
+        limit: i64,
+        since_ms: Option<i64>,
+        scope: &ReadScope,
+    ) -> Result<Vec<wenlan_types::RecentActivityItem>, WenlanError> {
+        self.list_recent_page_activity(limit, since_ms, scope, false)
+            .await
+    }
+
+    async fn list_recent_page_activity(
+        &self,
+        limit: i64,
+        since_ms: Option<i64>,
+        scope: &ReadScope,
+        private: bool,
+    ) -> Result<Vec<wenlan_types::RecentActivityItem>, WenlanError> {
+        if private && matches!(scope, ReadScope::Global) {
             return self.list_recent_pages_with_badges(limit, since_ms).await;
         }
 
@@ -349,22 +370,30 @@ impl MemoryDB {
         // Q1 (stage c): `kind='entity'` dual-write shadow pages appear in this
         // recent-activity listing -- a browse surface, so it reads the unfenced
         // `list_pages_scoped_browse` twin.
-        let pages: Vec<Page> = self
-            .list_pages_scoped_browse("active", limit, 0, scope)
-            .await?;
-        let all_source_ids = pages
-            .iter()
-            .flat_map(|page| page.source_memory_ids.iter().cloned())
-            .collect::<Vec<_>>();
-        let visible_source_ids = self
-            .get_memories_by_source_ids_scoped(&all_source_ids, scope)
-            .await?
-            .into_iter()
-            .map(|memory| memory.source_id)
-            .collect::<HashSet<_>>();
-        let flagged = self
-            .pending_review_memory_ids(&visible_source_ids.iter().cloned().collect::<Vec<String>>())
-            .await?;
+        let pages = if private {
+            self.list_pages_scoped_browse("active", limit, 0, scope)
+                .await?
+        } else {
+            self.list_pages_scoped("active", limit, 0, scope).await?
+        };
+        let (visible_source_ids, flagged) = if private {
+            let all_source_ids = pages
+                .iter()
+                .flat_map(|page| page.source_memory_ids.iter().cloned())
+                .collect::<Vec<_>>();
+            let visible = self
+                .get_memories_by_source_ids_scoped(&all_source_ids, scope)
+                .await?
+                .into_iter()
+                .map(|memory| memory.source_id)
+                .collect::<HashSet<_>>();
+            let flagged = self
+                .pending_review_memory_ids(&visible.iter().cloned().collect::<Vec<_>>())
+                .await?;
+            (visible, flagged)
+        } else {
+            (HashSet::new(), HashSet::new())
+        };
         let since_rfc = since_ms.and_then(|ms| {
             chrono::DateTime::from_timestamp(ms / 1000, 0).map(|dt| dt.to_rfc3339())
         });
@@ -450,13 +479,35 @@ impl MemoryDB {
         limit: i64,
         scope: &ReadScope,
     ) -> Result<Vec<wenlan_types::PageChange>, WenlanError> {
-        if matches!(scope, ReadScope::Global) {
+        self.list_recent_page_changes(limit, scope, true).await
+    }
+
+    pub async fn list_recent_shared_page_changes(
+        &self,
+        limit: i64,
+        scope: &ReadScope,
+    ) -> Result<Vec<wenlan_types::PageChange>, WenlanError> {
+        self.list_recent_page_changes(limit, scope, false).await
+    }
+
+    async fn list_recent_page_changes(
+        &self,
+        limit: i64,
+        scope: &ReadScope,
+        include_entities: bool,
+    ) -> Result<Vec<wenlan_types::PageChange>, WenlanError> {
+        if include_entities && matches!(scope, ReadScope::Global) {
             return self.list_recent_changes(limit).await;
         }
         let (scope_sql, scope_value) = page_scope_clause(scope, "c.workspace", 2);
+        let entity_fence = if include_entities {
+            ""
+        } else {
+            "AND COALESCE(c.kind, 'concept') != 'entity'"
+        };
         let sql = format!(
             "SELECT c.id, c.title, c.version, c.created_at, c.last_modified, c.status \
-             FROM pages c WHERE c.status IN ('active', 'archived'){scope_sql} \
+             FROM pages c WHERE c.status IN ('active', 'archived'){scope_sql} {entity_fence} \
              ORDER BY c.last_modified DESC LIMIT ?1"
         );
         let mut params = vec![libsql::Value::Integer(limit)];
@@ -1118,6 +1169,27 @@ impl MemoryDB {
         limit: usize,
         scope: &ReadScope,
     ) -> Result<Vec<Page>, WenlanError> {
+        self.pages_containing_text_inner(query, limit, scope, true)
+            .await
+    }
+
+    pub async fn shared_pages_containing_text(
+        &self,
+        query: &str,
+        limit: usize,
+        scope: &ReadScope,
+    ) -> Result<Vec<Page>, WenlanError> {
+        self.pages_containing_text_inner(query, limit, scope, false)
+            .await
+    }
+
+    async fn pages_containing_text_inner(
+        &self,
+        query: &str,
+        limit: usize,
+        scope: &ReadScope,
+        include_entities: bool,
+    ) -> Result<Vec<Page>, WenlanError> {
         let words: Vec<String> = query
             .split_whitespace()
             .map(str::to_lowercase)
@@ -1138,10 +1210,12 @@ impl MemoryDB {
              COALESCE(c.review_status, 'confirmed'), c.workspace, c.citations, COALESCE(c.kind, 'concept'), \
              NULL, COALESCE(c.review_required, 0)"
         );
-        let mut conditions = vec![
-            "c.status = 'active'".to_string(),
-            super::entity_row_browse_predicate("c."),
-        ];
+        let entity_fence = if include_entities {
+            super::entity_row_browse_predicate("c.")
+        } else {
+            "COALESCE(c.kind, 'concept') != 'entity'".to_string()
+        };
+        let mut conditions = vec!["c.status = 'active'".to_string(), entity_fence];
         let mut values = Vec::new();
         for word in &words {
             conditions.push(

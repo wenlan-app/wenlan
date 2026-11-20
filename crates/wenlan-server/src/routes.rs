@@ -1186,6 +1186,7 @@ pub async fn handle_recent_retrievals(
 /// GET /api/pages/recent-changes - Recent page created/revised events.
 pub async fn handle_recent_page_changes(
     State(state): State<Arc<RwLock<ServerState>>>,
+    headers: HeaderMap,
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
     view: crate::truth_guard::TruthView,
     axum::extract::Query(q): axum::extract::Query<RecentLimitQuery>,
@@ -1197,10 +1198,12 @@ pub async fn handle_recent_page_changes(
     };
     let db = db.ok_or(ServerError::DbNotInitialized)?;
     let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
-    let changes = db
-        .list_recent_changes_scoped(limit, &scope)
-        .await
-        .map_err(|e| ServerError::Internal(e.to_string()))?;
+    let changes = if crate::team_actor::can_read_private_memories(&headers) {
+        db.list_recent_changes_scoped(limit, &scope).await
+    } else {
+        db.list_recent_shared_page_changes(limit, &scope).await
+    }
+    .map_err(|e| ServerError::Internal(e.to_string()))?;
     // A change row hangs off a page (id + title + what happened to it) rather
     // than being one, and it carries no truth axes of its own, so there is no
     // entry form for it: `Full` or dropped.
@@ -1217,6 +1220,7 @@ pub async fn handle_recent_page_changes(
 /// `since_ms` scopes badge derivation only; the feed is always top-N by recency.
 pub async fn handle_recent_pages(
     State(state): State<Arc<RwLock<ServerState>>>,
+    headers: HeaderMap,
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
     view: crate::truth_guard::TruthView,
     axum::extract::Query(q): axum::extract::Query<crate::memory_routes::RecentActivityQuery>,
@@ -1227,10 +1231,14 @@ pub async fn handle_recent_pages(
     };
     let db = db.ok_or(ServerError::DbNotInitialized)?;
     let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
-    let mut items = db
-        .list_recent_pages_with_badges_scoped(q.limit.unwrap_or(10), q.since_ms, &scope)
-        .await
-        .map_err(|e| ServerError::Internal(e.to_string()))?;
+    let limit = q.limit.unwrap_or(10);
+    let mut items = if crate::team_actor::can_read_private_memories(&headers) {
+        db.list_recent_pages_with_badges_scoped(limit, q.since_ms, &scope)
+            .await
+    } else {
+        db.list_recent_shared_pages(limit, q.since_ms, &scope).await
+    }
+    .map_err(|e| ServerError::Internal(e.to_string()))?;
     // The feed interleaves pages and memories under one `id` field, so only the
     // page rows may be keyed on it -- a memory source_id carries no truth state
     // and would read as unsupported, dropping memories that this contract says

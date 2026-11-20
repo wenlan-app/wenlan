@@ -1724,6 +1724,31 @@ async fn ux_skill_10_hand_written_rules_reach_tools_with_no_model_and_no_yes() {
         vec!["回答用白話"],
         "a rules page in no Space is used everywhere; a Space's own stays there"
     );
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        "x-agent-name",
+        HeaderValue::from_static("codex@team.reader"),
+    );
+    headers.insert(
+        crate::space_header::HEADER_NAME,
+        HeaderValue::from_static("Project"),
+    );
+    headers.insert(
+        crate::team_actor::SECRET_HEADER,
+        HeaderValue::from_static(crate::team_actor::secret()),
+    );
+    let hosted = handle_read_rules(
+        axum::extract::State(scratch.shared.clone()),
+        headers,
+        Query(RulesQuery { space: None }),
+    )
+    .await
+    .unwrap()
+    .0;
+    assert_eq!(
+        texts(&hosted),
+        vec!["Use the merge queue", "Force-pushing main loses work"]
+    );
 
     let project_dir = scratch.data.join("spaces").join("Project");
     let own = std::fs::read_to_string(project_dir.join("AGENTS.md")).unwrap();
@@ -5749,6 +5774,7 @@ async fn page_revisions(
 ) -> wenlan_types::responses::ListPageRevisionsResponse {
     crate::page_routes::handle_get_page_revisions(
         axum::extract::State(scratch.shared.clone()),
+        axum::http::HeaderMap::new(),
         crate::space_header::SpaceHeader(None),
         crate::truth_guard::TruthView::automatic(),
         AxumPath(page_id.to_string()),

@@ -511,6 +511,90 @@ async fn bare_mcp_counts_a_space_open_to_everyone() {
 }
 
 #[tokio::test]
+async fn hosted_mcp_lists_tools_for_the_authenticated_space_grant() {
+    let f = fixture();
+    let router = team_router(f.state);
+    for (key, access) in [
+        (&f.reader.1, TeamAccess::Read),
+        (&f.writer.1, TeamAccess::Write),
+    ] {
+        let request = |body: serde_json::Value, session: Option<&str>| {
+            let mut builder = Request::post("/mcp")
+                .header(header::HOST, "team.example.com")
+                .header(header::AUTHORIZATION, format!("Bearer {key}"))
+                .header(header::ACCEPT, "application/json, text/event-stream")
+                .header(header::CONTENT_TYPE, "application/json");
+            if let Some(session) = session {
+                builder = builder
+                    .header("mcp-session-id", session)
+                    .header("mcp-protocol-version", "2025-06-18");
+            }
+            builder.body(Body::from(body.to_string())).unwrap()
+        };
+        let response = router
+            .clone()
+            .oneshot(request(
+                serde_json::json!({
+                    "jsonrpc": "2.0", "id": 1, "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2025-06-18", "capabilities": {},
+                        "clientInfo": {"name": "team-test", "version": "1"}
+                    }
+                }),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let session = response.headers()["mcp-session-id"]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let _ = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let response = router
+            .clone()
+            .oneshot(request(
+                serde_json::json!({
+                    "jsonrpc": "2.0", "method": "notifications/initialized"
+                }),
+                Some(&session),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let response = router
+            .clone()
+            .oneshot(request(
+                serde_json::json!({
+                    "jsonrpc": "2.0", "id": 2, "method": "tools/list"
+                }),
+                Some(&session),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_text(response).await;
+        let data = body
+            .lines()
+            .filter_map(|line| line.strip_prefix("data:"))
+            .find(|data| !data.trim().is_empty())
+            .unwrap_or(&body);
+        let reply: serde_json::Value = serde_json::from_str(data).unwrap();
+        let tools = reply["result"]["tools"].as_array().unwrap();
+        let names: std::collections::HashSet<_> = tools
+            .iter()
+            .filter_map(|tool| tool["name"].as_str())
+            .collect();
+        for tool in ["recall", "brief", "get_page_sources", "read_space_rules"] {
+            assert!(names.contains(tool));
+        }
+        assert!(!names.contains("capture"));
+        assert!(!names.contains("forget"));
+        assert_eq!(names.contains("write_page"), access == TeamAccess::Write);
+    }
+}
+
+#[tokio::test]
 async fn a_key_reads_only_its_members_spaces() {
     let f = fixture();
     let acme = team::rename_team(&f.state.team_path, "Acme").unwrap();

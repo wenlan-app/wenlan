@@ -1,19 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Who is acting when the team listener forwards a team member's browser
+//! Who is acting when the team listener forwards a member's browser or MCP
 //! call to this daemon over loopback.
 //!
-//! The team listener's gate (`team_app_gate`) sets these headers itself,
-//! from the member its key authenticated, on a call it builds anew, so no
-//! header the browser sent reaches this daemon. They are believed only next to this process's own secret,
-//! which never leaves the process, so no other local program and no
-//! browser can name a member. Without them every handler behaves as it
-//! always has for the person at this computer.
+//! Both transports attach the shared credential only to daemon requests
+//! they build after authenticating a Space grant. The browser gate also
+//! forwards the acting member for edits made in person. These requests
+//! carry only headers set by the forwarding code. Calls from the person
+//! at this computer have no forwarding credential.
 
 use std::sync::LazyLock;
 
-use axum::extract::FromRequestParts;
+use axum::extract::{FromRequestParts, MatchedPath, Request};
 use axum::http::request::Parts;
-use axum::http::HeaderMap;
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
+use axum::middleware::Next;
+use axum::response::{IntoResponse, Response};
 use wenlan_core::shared_space::version::{Author, AuthorKind};
 
 /// The secret the gate proves it is this process with.
@@ -36,6 +37,20 @@ static SECRET: LazyLock<String> = LazyLock::new(|| {
 /// This process's secret, for the gate's forwarded calls only.
 pub(crate) fn secret() -> &'static str {
     SECRET.as_str()
+}
+
+/// A dedicated loopback client for the hosted MCP service. Redirects and
+/// proxies must not carry the forwarding credential outside this daemon.
+pub(crate) fn mcp_client() -> reqwest::Result<reqwest::Client> {
+    let mut credential = HeaderValue::from_static(secret());
+    credential.set_sensitive(true);
+    let mut headers = HeaderMap::new();
+    headers.insert(SECRET_HEADER, credential);
+    reqwest::Client::builder()
+        .default_headers(headers)
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
 }
 
 /// A team member acting in person, through the team server.
@@ -69,10 +84,55 @@ fn same(a: &[u8], b: &[u8]) -> bool {
         == 0
 }
 
+/// A hosted Space grant covers shared material. Private memory reads belong
+/// to the local library. Explicitly published memories can get their own
+/// reader here when team memory sharing is introduced.
+pub(crate) fn can_read_private_memories(headers: &HeaderMap) -> bool {
+    !headers
+        .get(SECRET_HEADER)
+        .is_some_and(|given| same(given.as_bytes(), secret().as_bytes()))
+}
+
+pub(crate) fn required_space(pinned: Option<&str>) -> Result<&str, crate::error::ServerError> {
+    pinned.ok_or_else(|| crate::error::ServerError::NotFound("Space not found".into()))
+}
+
+/// Limit authenticated forwarding to the browser and MCP calls audited for
+/// that distinction. Match Axum's route template, never a client-supplied ID.
+pub(crate) async fn guard_private_memory(req: Request, next: Next) -> Response {
+    if !req.headers().contains_key(SECRET_HEADER) {
+        return next.run(req).await;
+    }
+    if can_read_private_memories(req.headers()) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let admitted = req.extensions().get::<MatchedPath>().is_some_and(|path| {
+        let path = path.as_str();
+        crate::team_routes::is_member_app_call(req.method(), path)
+            || matches!(
+                (req.method(), path),
+                (&Method::POST, "/api/memory/search" | "/api/brief")
+                    | (&Method::GET, "/api/skills/rules")
+                    | (
+                        &Method::POST,
+                        "/api/skills/record" | "/api/pages" | "/api/pages/{id}/rename"
+                    )
+                    | (&Method::PUT | &Method::DELETE, "/api/pages/{id}")
+            )
+    });
+    if !admitted {
+        return (
+            StatusCode::FORBIDDEN,
+            axum::Json(serde_json::json!({"error": "This route is unavailable to team members."})),
+        )
+            .into_response();
+    }
+    next.run(req).await
+}
+
 /// The member these headers name, when they carry this process's secret.
 pub(crate) fn from_headers(headers: &HeaderMap) -> Option<ActingMember> {
-    let given = headers.get(SECRET_HEADER)?;
-    if !same(given.as_bytes(), secret().as_bytes()) {
+    if can_read_private_memories(headers) {
         return None;
     }
     if headers.get(KIND_HEADER)?.to_str().ok()? != "person" {
@@ -117,6 +177,10 @@ pub(crate) fn in_pinned_space(page_space: Option<&str>, pinned: Option<&str>) ->
         _ => false,
     }
 }
+
+#[cfg(test)]
+#[path = "team_memory_privacy_test.rs"]
+mod memory_privacy_tests;
 
 #[cfg(test)]
 mod tests {

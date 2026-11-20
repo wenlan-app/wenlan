@@ -53,9 +53,9 @@ async fn resolve_space(
 
     if let Some(name) = selected {
         return db
-            .get_space(name)
+            .registered_space_or_none(Some(name))
             .await?
-            .map(|space| Some(space.name))
+            .map(Some)
             .ok_or_else(|| ServerError::ValidationError(format!("unknown Space: {name}")));
     }
 
@@ -112,17 +112,24 @@ pub async fn handle_read_brief(
         let state = state.read().await;
         state.db.clone().ok_or(ServerError::DbNotInitialized)?
     };
-    // Counts only, no page content, so every answer below carries it, the
-    // unresolved one included: a new user's folder is rarely a project.
-    let getting_started = match wenlan_core::steep_new::getting_started(&db).await {
-        Ok(getting_started) => getting_started,
-        Err(error) => {
-            tracing::warn!("[brief] getting started: {error}");
-            None
+    let private = crate::team_actor::can_read_private_memories(&headers);
+    let getting_started = if private {
+        match wenlan_core::steep_new::getting_started(&db).await {
+            Ok(getting_started) => getting_started,
+            Err(error) => {
+                tracing::warn!("[brief] getting started: {error}");
+                None
+            }
         }
+    } else {
+        None
     };
-    let Some(space) = resolve_space(&db, request.space.as_deref(), header_space.as_deref()).await?
-    else {
+    let selected = if private {
+        request.space.as_deref()
+    } else {
+        Some(crate::team_actor::required_space(header_space.as_deref())?)
+    };
+    let Some(space) = resolve_space(&db, selected, header_space.as_deref()).await? else {
         return Ok(Json(BriefReadResponse {
             state: BriefReadState::SpaceNotResolved,
             space: None,
@@ -155,6 +162,16 @@ pub async fn handle_read_brief(
     let related_context = related_context_if_requested(request.topic.as_deref(), move |query| {
         let scope = ReadScope::Space(recall_space);
         async move {
+            if !private {
+                return crate::page_routes::search_hosted_page_hits(
+                    &recall_db,
+                    &query,
+                    legacy_context_limit,
+                    &scope,
+                    &view.grant,
+                )
+                .await;
+            }
             let results = recall_db
                 .search_memory(
                     &query,

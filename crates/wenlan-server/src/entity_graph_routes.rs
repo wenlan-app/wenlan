@@ -425,6 +425,7 @@ pub async fn handle_get_entity_detail(
 /// hazard the reader manifest names in its `/api/pages/{id}/map` demotion note.
 pub async fn handle_get_knowledge_graph(
     State(state): State<Arc<RwLock<ServerState>>>,
+    headers: axum::http::HeaderMap,
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
     view: crate::truth_guard::TruthView,
 ) -> Result<Json<wenlan_types::KnowledgeGraphResponse>, ServerError> {
@@ -433,10 +434,12 @@ pub async fn handle_get_knowledge_graph(
         s.db.clone().ok_or(ServerError::DbNotInitialized)?
     };
     let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
-    let mut graph = db
-        .get_knowledge_graph_scoped(&scope)
-        .await
-        .map_err(|e| ServerError::SearchFailed(e.to_string()))?;
+    let mut graph = if crate::team_actor::can_read_private_memories(&headers) {
+        db.get_knowledge_graph_scoped(&scope).await
+    } else {
+        db.get_page_graph_scoped(&scope).await
+    }
+    .map_err(|e| ServerError::SearchFailed(e.to_string()))?;
 
     graph.pages = wenlan_core::truth_adapter::filter_page_refs(
         &db,
