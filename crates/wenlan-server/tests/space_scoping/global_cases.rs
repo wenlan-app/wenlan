@@ -314,6 +314,44 @@ pub async fn global_routes_enforce_scope_contracts() {
         assert_eq!(selected, baseline, "Global route honored Space: {uri}");
         executed.push((Method::Post, catalog_path));
     }
+    // The personal rules and skills setup routes act on this computer's AI-tool
+    // folders, never on a Space. Without the local person key they refuse
+    // before reading anything, and a Space header cannot change that answer.
+    for (method, uri) in [
+        (Method::Post, "/api/rules/setup/adopt"),
+        (Method::Post, "/api/rules/setup/adopt/preview"),
+        (Method::Post, "/api/rules/setup/restore"),
+        (Method::Post, "/api/rules/setup/skill-updates"),
+        (Method::Post, "/api/rules/setup/sync"),
+        (Method::Post, "/api/rules/setup/review"),
+        (Method::Post, "/api/rules/setup/settings/preview"),
+        (Method::Post, "/api/rules/setup/settings/apply"),
+        (Method::Post, "/api/rules/setup/checkout"),
+        (Method::Post, "/api/skills/registry/save"),
+        (Method::Get, "/api/skills/registry/proposals"),
+        (Method::Post, "/api/skills/registry/review"),
+    ] {
+        let http_method = if method == Method::Get {
+            HttpMethod::GET
+        } else {
+            HttpMethod::POST
+        };
+        let baseline =
+            response_parts(fixture.send(http_method.clone(), uri, None, None).await).await;
+        assert!(
+            baseline.0.is_client_error(),
+            "personal setup route ran without the person's key: {uri} -> {}",
+            baseline.0
+        );
+        let selected = response_parts(
+            fixture
+                .send(http_method, uri, None, Some("missing-space"))
+                .await,
+        )
+        .await;
+        assert_eq!(selected, baseline, "Global route honored Space: {uri}");
+        executed.push((method, uri));
+    }
     zotero_collections_ignore_space(&fixture).await;
     executed.push((Method::Get, "/api/zotero/collections"));
     executed.push((Method::Get, "/api/zotero/items"));

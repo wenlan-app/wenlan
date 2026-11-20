@@ -535,7 +535,7 @@ A surface that transmits anyway is a failing test on that surface. That gate is
 soft, and saying so plainly is what cooperative-tier means. It is also no longer
 load-bearing: the shape gate holds even when this one is bypassed.
 
-## HTTP — all 376 registered `(method, path, handler)` triples
+## HTTP — all 405 registered `(method, path, handler)` triples
 
 73 page-bearing, 124 not.
 
@@ -744,6 +744,7 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/skills/refresh` | main | no | not_applicable | `none` | — | SkillsRefreshResponse contains counts only |
 | `GET` | `/api/skills/rules` | main | yes | automatic | `none` | `handle_read_rules` | approved Space rule lines and source page titles; only accepted, eligible rules are returned |
 | `GET` | `/api/skills/delivery` | main | no | not_applicable | `none` | — | RulesDeliveryResponse: AI tool names, file paths, states, a time and a count; no rule or page text |
+| `GET` | `/api/skills/registry/proposals` | main | no | not_applicable | `none` | — | proposal previews of personal tool files |
 | `GET` | `/api/skills/spaces/suggestions` | main | yes | automatic | `none` | `handle_space_suggestions` | candidate rule lines and Space names awaiting person acceptance |
 | `POST` | `/api/skills/spaces/{id}/accept` | main | no | not_applicable | `none` | — | person acceptance receipt contains status and rules page id only |
 | `POST` | `/api/skills/spaces/{id}/decline` | main | no | not_applicable | `none` | — | person decline receipt contains status only |
@@ -893,6 +894,24 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/shared/folder` | main | no | not_applicable | `none` | — | status only: what a folder's space.json says it shares (a Space name or a page title and id) and member names; no page text |
 | `POST` | `/api/spaces/{name}/star` | main | yes | automatic | `none` | `handle_toggle_space_starred` | opaque response type — fail-closed |
 | `POST` | `/api/spaces/{name}/wiki/docs` | main | no | not_applicable | `none` | — | receipt only: the doc fix just recorded or declined (repository file text, not page text) and the open count |
+| `POST` | `/api/rules/setup/adopt` | main | no | not_applicable | `none` | — | local tool setup receipt with relative paths and local file diffs |
+| `POST` | `/api/rules/setup/adopt/preview` | main | no | not_applicable | `none` | — | read-only local adoption plan for the authenticated person |
+| `POST` | `/api/rules/setup/checkout` | main | no | not_applicable | `none` | — | checkout-specific rules receipt and private output path |
+| `POST` | `/api/rules/setup/restore` | main | no | not_applicable | `none` | — | local tool setup restoration receipt |
+| `POST` | `/api/rules/setup/skill-updates` | main | no | not_applicable | `none` | — | release metadata for personally adopted tools, no page text |
+| `POST` | `/api/rules/setup/review` | main | no | not_applicable | `none` | — | local tool setup review receipt with local file diffs |
+| `POST` | `/api/rules/setup/settings/apply` | main | no | not_applicable | `none` | — | local settings write receipt |
+| `POST` | `/api/rules/setup/settings/preview` | main | no | not_applicable | `none` | — | settings plan contains safe local settings additions |
+| `POST` | `/api/rules/setup/sync` | main | no | not_applicable | `none` | — | local tool setup receipt with local file diffs |
+| `POST` | `/api/skills/registry/review` | main | no | not_applicable | `none` | — | receipt for a personal skill proposal decision |
+| `POST` | `/api/skills/registry/save` | main | no | not_applicable | `none` | — | saved skill or pending proposal from uploaded tool files |
+| `POST` | `/api/spaces/{name}/wiki/rules/proposals/{id}/accept` | main | no | not_applicable | `none` | — | receipt of a reviewed repository file change |
+| `POST` | `/api/spaces/{name}/wiki/rules/proposals/{id}/dismiss` | main | no | not_applicable | `none` | — | receipt of a reviewed repository file change |
+| `POST` | `/api/spaces/{name}/wiki/rules/proposals` | main | no | not_applicable | `none` | — | proposal diffs from repository files bound to the selected Space |
+| `POST` | `/api/spaces/{name}/wiki/rules/team` | main | no | not_applicable | `none` | — | one team layer ID selected for the bound repository |
+| `POST` | `/api/spaces/{name}/wiki/shared-rules/proposals/{id}/decision` | main | no | not_applicable | `none` | — | receipt for the hosted Rules version decision |
+| `POST` | `/api/spaces/{name}/wiki/shared-rules/proposals` | main | yes | automatic | `none` | rulesync_team::local_space_proposals | pending authored versions of the shared Rules page |
+| `POST` | `/api/spaces/{name}/wiki/shared-rules/propose` | main | no | not_applicable | `none` | — | proposal identifier from authoring hosted Rules |
 | `POST` | `/api/spaces/{name}/wiki/github` | main | no | not_applicable | `none` | — | setup receipt only: which GitHub settings the repository has (booleans), the workflow state and the last run's links; a token is never returned |
 | `POST` | `/api/spaces/{name}/wiki/publish` | main | no | not_applicable | `none` | — | receipt only: status, page counts, branch and links; page files go to the bound repository, not the response |
 | `DELETE` | `/api/spaces/{name}/wiki/repo` | main | no | not_applicable | `none` | — | receipt only: removed flag, no prose |
@@ -930,7 +949,7 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/research/disputes/{id}/decision` | main | no | not_applicable | `none` | — | Dispute contains original Source quotes and human decisions, no Page prose |
 | `POST` | `/api/research/source-lifecycle` | main | no | not_applicable | `none` | — | explicit retained-source status change and affected identities; no page prose |
 
-## MCP — all 63 `#[tool(` declarations
+## MCP — all 64 `#[tool(` declarations
 
 From `crates/wenlan-mcp/src/tools.rs` **in this tree**. An earlier draft listed
 `search_pages`, `get_page`, `get_page_links`, `list_pages_recent`, and
@@ -1003,6 +1022,7 @@ must be demoted individually with a recorded reason. **Every MCP tool is
 | `write_page` | yes | automatic | `none` | tool handler |
 | `read_source` | no | not_applicable | `none` | exact file or webpage text; rejects page sources |
 | `read_space_rules` | yes | automatic | `none` | tool handler |
+| `save_skill` | no | not_applicable | `none` | proposal receipt and preview of the submitted skill files; no Page prose |
 | `report_space_rule_use` | no | not_applicable | `none` | structured rule id and fixed changed_plan outcome only; no Page prose |
 | `list_skills` | no | not_applicable | `none` | held SKILL.md folders: names, scope, source and safety verdict; no Page prose |
 | `search_skills` | no | not_applicable | `none` | skills.sh results and safety verdicts; no library text |
@@ -1650,7 +1670,7 @@ carrying the authority of agreement.
 | `core/shared_space/mod.rs::sync_space` | `pub` | no | **yes** | `server/spaces_routes.rs::host_sync`, `server/spaces_routes.rs::shared_sync`, `server/team_routes.rs::handle_host_space` | `core/db.rs::get_page` |
 | `core/shared_space/mod.rs::write_merged` | `private` | no | no | — | `core/db.rs::set_page_citations` |
 | `core/shared_space/review.rs::accepted` | `private` | no | no | — | `core/db.rs::get_page` |
-| `core/shared_space/review.rs::review` | `pub(super)` | no | no | — | `core/db.rs::get_page` |
+| `core/shared_space/review.rs::review` | `pub(super)` | yes | no | — | `core/db.rs::get_page` |
 | `core/sources/page_watcher.rs::archive_deleted_pages` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/sources/page_watcher.rs::bring_back_archived_page` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/sources/page_watcher.rs::create_adopted_page` | `private` | no | no | — | `core/db.rs::get_page` |
@@ -1726,7 +1746,7 @@ carrying the authority of agreement.
 | `server/skill_grow.rs::handle_undo_space_rules` | `pub` | no | no | — | `core/db.rs::get_page` |
 | `server/skill_grow.rs::load_rules_folders` | `private` | no | no | `server/skill_grow.rs::load` | `core/db.rs::get_page` |
 | `server/skill_grow.rs::process_space` | `private` | no | no | `server/skill_grow.rs::refresh_unlocked` | `server/skill_grow.rs::accept_space` |
-| `server/skill_grow.rs::readable_rules_page` | `private` | no | no | `server/skill_grow.rs::read_rules_for_space` | `core/db.rs::get_page` |
+| `server/skill_grow.rs::readable_rules_page` | `private` | no | no | `server/skill_grow.rs::read_personal_rules_for_space` | `core/db.rs::get_page` |
 | `server/skill_grow.rs::refresh_unlocked` | `private` | no | no | `server/skill_grow.rs::refresh_with` | `server/skill_grow.rs::pages_for_space` |
 | `server/skill_grow.rs::source_line_is_eligible` | `private` | no | no | `server/skill_grow.rs::eligible_lines` | `core/db.rs::get_page` |
 | `server/skill_grow.rs::write_maintained_rules_page` | `private` | no | no | `server/skill_grow.rs::process_space` | `core/db.rs::get_page` |
@@ -1920,10 +1940,10 @@ carrying the authority of agreement.
 | `server/sentence_routes.rs::handle_recheck_sentence` | `pub` | no | no | — | `core/sentences.rs::recheck_sentence`, `server/sentence_routes.rs::require_visible_page` |
 | `server/sentence_routes.rs::handle_reject_sentence_proposal` | `pub` | no | no | — | `server/sentence_routes.rs::require_visible_page` |
 | `server/sentence_routes.rs::handle_revert_sentences` | `pub` | no | no | — | `server/sentence_routes.rs::require_visible_page` |
-| `server/skill_grow.rs::eligible_lines` | `private` | no | no | `server/skill_grow.rs::accept_space`, `server/skill_grow.rs::handle_space_suggestions`, `server/skill_grow.rs::process_space`, `server/skill_grow.rs::read_rules_for_space` | `server/skill_grow.rs::source_line_is_eligible` |
+| `server/skill_grow.rs::eligible_lines` | `private` | no | no | `server/skill_grow.rs::accept_space`, `server/skill_grow.rs::handle_space_suggestions`, `server/skill_grow.rs::process_space`, `server/skill_grow.rs::read_personal_rules_for_space` | `server/skill_grow.rs::source_line_is_eligible` |
 | `server/skill_grow.rs::load` | `private` | yes | no | — | `server/skill_grow.rs::load_rules_folders` |
 | `server/skill_grow.rs::load_saved` | `private` | no | no | `server/skill_grow.rs::load` | `server/skill_grow/saved_rules.rs::page_of` |
-| `server/skill_grow.rs::read_rules_for_space` | `private` | no | no | `server/skill_grow.rs::approved_rule_ids`, `server/skill_grow.rs::general_lines`, `server/skill_grow.rs::handle_read_rules`, `server/skill_grow.rs::handle_self_report`, `server/skill_grow.rs::project_rules`, `server/skill_grow.rs::rules_by_layer` | `server/skill_grow.rs::readable_rules_page` |
+| `server/skill_grow.rs::read_personal_rules_for_space` | `private` | no | no | `server/skill_grow.rs::general_lines`, `server/skill_grow.rs::read_rules_for_space` | `server/skill_grow.rs::readable_rules_page` |
 | `server/skill_grow.rs::refresh_with` | `private` | no | no | `server/skill_grow.rs::handle_refresh`, `server/skill_grow.rs::run_nightly_if_due` | `server/skill_grow.rs::refresh_unlocked` |
 | `server/skill_grow/saved_rules.rs::handle_save_rule` | `pub` | no | no | — | `server/skill_grow/saved_rules.rs::save_rule_in` |
 | `server/skill_grow/saved_rules.rs::page_ids` | `pub(super)` | yes | no | — | `server/skill_grow/saved_rules.rs::page_of` |

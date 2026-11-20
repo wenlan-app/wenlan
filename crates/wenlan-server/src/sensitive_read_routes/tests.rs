@@ -105,12 +105,43 @@ fn canonical_matrix_freezes_exact_global_and_scoped_keys() {
         (Method::Get, "/api/palace/layout"),
         (Method::Get, "/api/skills/spaces/suggestions"),
         (Method::Get, "/api/skills/delivery"),
+        (Method::Post, "/api/rules/setup/adopt"),
+        (Method::Post, "/api/rules/setup/adopt/preview"),
+        (Method::Post, "/api/rules/setup/restore"),
+        (Method::Post, "/api/rules/setup/skill-updates"),
+        (Method::Post, "/api/rules/setup/sync"),
+        (Method::Post, "/api/rules/setup/review"),
+        (Method::Post, "/api/rules/setup/settings/preview"),
+        (Method::Post, "/api/rules/setup/settings/apply"),
+        (Method::Post, "/api/rules/setup/checkout"),
+        (Method::Post, "/api/skills/registry/save"),
+        (Method::Get, "/api/skills/registry/proposals"),
+        (Method::Post, "/api/skills/registry/review"),
         (Method::Get, "/api/skills/suggestions"),
         (Method::Post, "/api/skills/suggestions/{id}/apply"),
         (Method::Post, "/api/skills/suggestions/{id}/dismiss"),
         (Method::Post, "/api/skills/suggestions/{id}/undo"),
     ];
     const SCOPED: &[(Method, &str)] = &[
+        (Method::Post, "/api/spaces/{name}/wiki/rules/team"),
+        (
+            Method::Post,
+            "/api/spaces/{name}/wiki/shared-rules/proposals",
+        ),
+        (Method::Post, "/api/spaces/{name}/wiki/shared-rules/propose"),
+        (
+            Method::Post,
+            "/api/spaces/{name}/wiki/shared-rules/proposals/{id}/decision",
+        ),
+        (Method::Post, "/api/spaces/{name}/wiki/rules/proposals"),
+        (
+            Method::Post,
+            "/api/spaces/{name}/wiki/rules/proposals/{id}/accept",
+        ),
+        (
+            Method::Post,
+            "/api/spaces/{name}/wiki/rules/proposals/{id}/dismiss",
+        ),
         (Method::Get, "/api/skills/rules"),
         (Method::Get, "/api/skills/record"),
         (Method::Post, "/api/pages/{id}/export-capture"),
@@ -249,8 +280,8 @@ fn canonical_matrix_freezes_exact_global_and_scoped_keys() {
         .map(|row| (row.method, row.path))
         .collect::<BTreeSet<_>>();
 
-    assert_eq!(rows.len(), 148);
-    assert_eq!(keys.len(), 148, "duplicate sensitive route key");
+    assert_eq!(rows.len(), 167);
+    assert_eq!(keys.len(), rows.len(), "duplicate sensitive route key");
     assert_eq!(global, GLOBAL.iter().copied().collect());
     assert_eq!(scoped, SCOPED.iter().copied().collect());
     assert_eq!(

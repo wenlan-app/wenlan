@@ -13,6 +13,7 @@ use anyhow::{Context, Result};
 use reqwest::header::{HeaderMap, HeaderValue};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use wenlan_types::{
+    repo_wiki::ProjectRuleProposal,
     requests::{
         AddEntityAliasRequest, ArchiveEntitiesRequest, EntitySelection, ExportFormat,
         ExportPagesRequest, ListEntitiesRequest, ListMemoriesRequest, MergeEntityRequest,
@@ -24,6 +25,9 @@ use wenlan_types::{
         ExportStats, HealthResponse, KnowledgePathResponse, ListEntitiesResponse,
         ListMemoriesResponse, MemoryDetailResponse, MergeEntityResponse, PageReadResponse,
         PendingRevisionItem, RevisionDismissResponse, SearchMemoryResponse, StoreMemoryResponse,
+    },
+    rulesync::{
+        AdoptPreviewRequest, AdoptRequest, AdoptionPlan, PullbackDecision, RulesSyncReport,
     },
     sources::Source,
     BriefHistoryResponse, BriefReadRequest, BriefReadResponse, BriefUpdateReceipt,
@@ -102,7 +106,29 @@ impl WenlanClient {
     /// Create a client that consistently identifies the caller and supplies
     /// client-local Space context through the common request headers.
     pub fn from_env_with_context(agent_name: Option<&str>, space: Option<&str>) -> Result<Self> {
+        Self::from_env_with_options(agent_name, space, false)
+    }
+
+    /// Personal setup and project proposals require a direct connection to
+    /// the local daemon. Its key lookup must never start the daemon.
+    pub fn for_local_rules() -> Result<Self> {
+        Self::from_env_with_options(None, None, true)
+    }
+
+    fn from_env_with_options(
+        agent_name: Option<&str>,
+        space: Option<&str>,
+        local_rules: bool,
+    ) -> Result<Self> {
         let base_url = origin_host_from_env();
+        let mut http = reqwest::Client::builder();
+        if local_rules {
+            anyhow::ensure!(
+                recovery::is_local_daemon_url(&base_url),
+                "Use the Wenlan daemon on this computer for this rules command."
+            );
+            http = http.no_proxy().redirect(reqwest::redirect::Policy::none());
+        }
         let mut headers = HeaderMap::new();
         if let Some(agent_name) = agent_name {
             headers.insert(
@@ -118,12 +144,12 @@ impl WenlanClient {
         }
         Ok(Self {
             base_url,
-            http: reqwest::Client::builder()
+            http: http
                 .default_headers(headers.clone())
                 .build()
                 .context("building Wenlan HTTP client")?,
             headers,
-            recovery_enabled: true,
+            recovery_enabled: !local_rules,
             session: None,
             session_announced: tokio::sync::OnceCell::new(),
             person_key_root: None,
@@ -776,6 +802,73 @@ impl WenlanClient {
             .await
     }
 
+    pub(crate) async fn preview_adoption_as_person(
+        &self,
+        request: &AdoptPreviewRequest,
+    ) -> Result<AdoptionPlan> {
+        self.post_json_as_person("/api/rules/setup/adopt/preview", request, None, true)
+            .await
+    }
+
+    pub(crate) async fn adopt_rules_as_person(
+        &self,
+        request: &AdoptRequest,
+    ) -> Result<RulesSyncReport> {
+        self.post_json_as_person("/api/rules/setup/adopt", request, None, true)
+            .await
+    }
+
+    pub(crate) async fn restore_rules_as_person(&self) -> Result<RulesSyncReport> {
+        self.post_json_as_person(
+            "/api/rules/setup/restore",
+            &serde_json::json!({}),
+            None,
+            true,
+        )
+        .await
+    }
+
+    pub(crate) async fn sync_rules_as_person(&self) -> Result<RulesSyncReport> {
+        self.post_json_as_person("/api/rules/setup/sync", &serde_json::json!({}), None, true)
+            .await
+    }
+
+    pub(crate) async fn adopted_skill_updates_as_person(
+        &self,
+    ) -> Result<Vec<wenlan_types::rulesync::AdoptedSkillUpdate>> {
+        self.post_json_as_person(
+            "/api/rules/setup/skill-updates",
+            &serde_json::json!({}),
+            None,
+            true,
+        )
+        .await
+    }
+
+    pub(crate) async fn review_rules_as_person(
+        &self,
+        request: &PullbackDecision,
+    ) -> Result<RulesSyncReport> {
+        self.post_json_as_person("/api/rules/setup/review", request, None, true)
+            .await
+    }
+
+    pub(crate) async fn preview_settings_as_person(
+        &self,
+        request: &wenlan_types::rulesync_settings::SettingsPreviewRequest,
+    ) -> Result<wenlan_types::rulesync_settings::SettingsPlan> {
+        self.post_json_as_person("/api/rules/setup/settings/preview", request, None, true)
+            .await
+    }
+
+    pub(crate) async fn apply_settings_as_person(
+        &self,
+        request: &wenlan_types::rulesync_settings::SettingsApplyRequest,
+    ) -> Result<RulesSyncReport> {
+        self.post_json_as_person("/api/rules/setup/settings/apply", request, None, true)
+            .await
+    }
+
     /// GET /api/skills/registry/installed — the skills Wenlan holds.
     pub async fn list_skills(
         &self,
@@ -820,7 +913,7 @@ impl WenlanClient {
         names: Vec<String>,
     ) -> Result<wenlan_types::skill_registry::SkillImportResult> {
         let request = wenlan_types::skill_registry::SkillImportRequest { names };
-        self.post_json_as_person("/api/skills/registry/import", &request, None)
+        self.post_json_as_person("/api/skills/registry/import", &request, None, false)
             .await
     }
 
@@ -829,7 +922,7 @@ impl WenlanClient {
         &self,
         request: &wenlan_types::skill_registry::SkillInstallRequest,
     ) -> Result<wenlan_types::skill_registry::SkillInstallResult> {
-        self.post_json_as_person("/api/skills/registry/install", request, None)
+        self.post_json_as_person("/api/skills/registry/install", request, None, false)
             .await
     }
 
@@ -844,8 +937,56 @@ impl WenlanClient {
                 name: name.to_string(),
             },
             None,
+            false,
         )
         .await
+    }
+
+    pub(crate) async fn save_personal_skill(
+        &self,
+        request: &wenlan_types::rulesync_skill::SaveSkillRequest,
+    ) -> Result<wenlan_types::rulesync_skill::SaveSkillResult> {
+        self.post_json_as_person("/api/skills/registry/save", request, None, true)
+            .await
+    }
+
+    pub(crate) async fn pending_saved_skills(
+        &self,
+    ) -> Result<wenlan_types::rulesync_skill::SkillProposalsResponse> {
+        anyhow::ensure!(
+            self.is_local() && !self.names_an_agent() && self.session().is_none(),
+            "Only you can see saved skill proposals on this computer."
+        );
+        let key = self.person_key().await.context(
+            "Wenlan could not read the person key. Run this from your own account with the local daemon running.",
+        )?;
+        let url = format!("{}/api/skills/registry/proposals", self.base_url);
+        let http = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .context("building Wenlan HTTP client")?;
+        let request = http
+            .get(&url)
+            .header(
+                wenlan_types::requests::CALLER_HEADER,
+                wenlan_types::requests::PERSON_CALLER_VALUE,
+            )
+            .header(wenlan_types::requests::PERSON_KEY_HEADER, key);
+        let response = self.send(request, &format!("GET {url} failed")).await?;
+        ensure_ok(response, &url)
+            .await?
+            .json()
+            .await
+            .context("parsing saved skill proposals")
+    }
+
+    pub(crate) async fn review_saved_skill(
+        &self,
+        request: &wenlan_types::rulesync_skill::SkillReviewRequest,
+    ) -> Result<wenlan_types::rulesync_skill::SaveSkillResult> {
+        self.post_json_as_person("/api/skills/registry/review", request, None, true)
+            .await
     }
 
     /// POST /api/person/browser-pass, as the person: a one-time pass that
@@ -858,6 +999,7 @@ impl WenlanClient {
             "/api/person/browser-pass",
             &serde_json::json!({}),
             Some(std::time::Duration::from_secs(3)),
+            false,
         )
         .await
     }
@@ -886,30 +1028,45 @@ impl WenlanClient {
     /// honest from a terminal the person is typing in, so callers ask them
     /// first; a process that named an AI tool cannot send it at all. The
     /// daemon believes the mark only next to the person key
-    /// ([`Self::person_key`]); without one the request goes out with the
-    /// mark alone, so an older daemon that knows no key still answers, and a
-    /// refusal says plainly why.
+    /// ([`Self::person_key`]). Legacy routes can send the mark alone for an
+    /// older daemon that knows no key. Setup routes require a key.
     async fn post_json_as_person<B: Serialize, R: DeserializeOwned>(
         &self,
         path: &str,
         body: &B,
         timeout: Option<std::time::Duration>,
+        require_key: bool,
+    ) -> Result<R> {
+        let url = format!("{}{}", self.base_url, path);
+        self.post_url_as_person(&url, body, timeout, require_key)
+            .await
+    }
+
+    async fn post_url_as_person<B: Serialize, R: DeserializeOwned>(
+        &self,
+        url: &str,
+        body: &B,
+        timeout: Option<std::time::Duration>,
+        require_key: bool,
     ) -> Result<R> {
         anyhow::ensure!(
             !self.names_an_agent(),
             "this is the person's to do, and this command is running as an AI tool"
         );
         let key = self.person_key().await;
-        let url = format!("{}{}", self.base_url, path);
+        anyhow::ensure!(
+            !require_key || key.is_some(),
+            "Wenlan could not read the person key. Run this from your own account with the local daemon running."
+        );
         // A client of its own: no default header may ride along, and the
-        // key never goes through a proxy.
+        // key never goes through a proxy or a redirect.
         let mut http = reqwest::Client::builder();
         if key.is_some() {
-            http = http.no_proxy();
+            http = http.no_proxy().redirect(reqwest::redirect::Policy::none());
         }
         let http = http.build().context("building Wenlan HTTP client")?;
         let mut request = http
-            .post(&url)
+            .post(url)
             .header(
                 wenlan_types::requests::CALLER_HEADER,
                 wenlan_types::requests::PERSON_CALLER_VALUE,
@@ -923,14 +1080,14 @@ impl WenlanClient {
         }
         let resp = self.send(request, &format!("POST {url} failed")).await?;
         let refused_without_key = key.is_none() && resp.status().is_client_error();
-        let resp = match ensure_ok(resp, &url).await {
+        let resp = match ensure_ok(resp, url).await {
             Ok(resp) => resp,
             Err(_) if refused_without_key => anyhow::bail!(NO_PERSON_KEY),
             Err(error) => return Err(error),
         };
         resp.json()
             .await
-            .with_context(|| format!("parsing {path} response"))
+            .with_context(|| format!("parsing {url} response"))
     }
 
     /// The person key, when this command may send it: only to a daemon on
@@ -1011,12 +1168,13 @@ impl WenlanClient {
 
     /// `/api/spaces/{space}/wiki/{tail}`, with the Space name encoded as one
     /// path segment.
-    fn space_wiki_url(&self, space: &str, tail: &str) -> Result<String> {
+    fn space_wiki_url(&self, space: &str, tail: &[&str]) -> Result<String> {
         let mut url = reqwest::Url::parse(&self.base_url).context("parsing the daemon URL")?;
         url.path_segments_mut()
             .map_err(|_| anyhow::anyhow!("the daemon URL cannot take a path"))?
             .pop_if_empty()
-            .extend(["api", "spaces", space, "wiki", tail]);
+            .extend(["api", "spaces", space, "wiki"])
+            .extend(tail.iter().copied());
         Ok(url.into())
     }
 
@@ -1217,7 +1375,7 @@ impl WenlanClient {
         &self,
         space: &str,
     ) -> Result<Option<wenlan_types::repo_wiki::RepoWikiBinding>> {
-        let url = self.space_wiki_url(space, "repo")?;
+        let url = self.space_wiki_url(space, &["repo"])?;
         let resp = self
             .send(self.http.get(&url), &format!("GET {url} failed"))
             .await?;
@@ -1232,7 +1390,7 @@ impl WenlanClient {
         space: &str,
         req: &wenlan_types::repo_wiki::BindRepoWikiRequest,
     ) -> Result<wenlan_types::repo_wiki::RepoWikiBinding> {
-        let url = self.space_wiki_url(space, "repo")?;
+        let url = self.space_wiki_url(space, &["repo"])?;
         let resp = self
             .send(self.http.put(&url).json(req), &format!("PUT {url} failed"))
             .await?;
@@ -1242,7 +1400,7 @@ impl WenlanClient {
 
     /// `DELETE /api/spaces/{space}/wiki/repo`. True when a binding was removed.
     pub async fn unbind_repo_wiki(&self, space: &str) -> Result<bool> {
-        let url = self.space_wiki_url(space, "repo")?;
+        let url = self.space_wiki_url(space, &["repo"])?;
         let resp = self
             .send(self.http.delete(&url), &format!("DELETE {url} failed"))
             .await?;
@@ -1261,7 +1419,7 @@ impl WenlanClient {
         space: &str,
         req: &wenlan_types::repo_wiki::RepoDocsRequest,
     ) -> Result<wenlan_types::repo_wiki::RepoDocsReply> {
-        let url = self.space_wiki_url(space, "docs")?;
+        let url = self.space_wiki_url(space, &["docs"])?;
         let resp = self
             .send(
                 self.http.post(&url).json(req),
@@ -1278,12 +1436,100 @@ impl WenlanClient {
         &self,
         space: &str,
     ) -> Result<wenlan_types::repo_wiki::RepoWikiPublishResult> {
-        let url = self.space_wiki_url(space, "publish")?;
+        let url = self.space_wiki_url(space, &["publish"])?;
         let resp = self
             .send(self.http.post(&url), &format!("POST {url} failed"))
             .await?;
         let resp = ensure_daemon_success(resp, &url).await?;
         resp.json().await.context("parsing wiki publish response")
+    }
+
+    pub(crate) async fn project_rule_proposals(
+        &self,
+        space: &str,
+    ) -> Result<Vec<ProjectRuleProposal>> {
+        let url = self.space_wiki_url(space, &["rules", "proposals"])?;
+        self.post_url_as_person(&url, &serde_json::json!({}), None, true)
+            .await
+    }
+
+    pub(crate) async fn decide_project_rule_proposal(
+        &self,
+        space: &str,
+        id: &str,
+        accept: bool,
+    ) -> Result<ProjectRuleProposal> {
+        let action = if accept { "accept" } else { "dismiss" };
+        let url = self.space_wiki_url(space, &["rules", "proposals", id, action])?;
+        self.post_url_as_person(&url, &serde_json::json!({}), None, true)
+            .await
+    }
+
+    pub(crate) async fn checkout_rules(
+        &self,
+        repo: std::path::PathBuf,
+    ) -> Result<wenlan_types::rulesync::CheckoutRulesReceipt> {
+        self.post_json_as_person(
+            "/api/rules/setup/checkout",
+            &wenlan_types::rulesync::CheckoutRulesRequest { repo },
+            None,
+            true,
+        )
+        .await
+    }
+
+    pub(crate) async fn use_team_rules_in_repo(
+        &self,
+        space: &str,
+        team: Option<String>,
+    ) -> Result<wenlan_types::rulesync::ProjectTeamRulesRequest> {
+        let url = self.space_wiki_url(space, &["rules", "team"])?;
+        self.post_url_as_person(
+            &url,
+            &wenlan_types::rulesync::ProjectTeamRulesRequest { team },
+            None,
+            true,
+        )
+        .await
+    }
+
+    pub(crate) async fn shared_rule_proposals(
+        &self,
+        space: &str,
+    ) -> Result<Vec<wenlan_types::team::TeamRulesProposal>> {
+        let url = self.space_wiki_url(space, &["shared-rules", "proposals"])?;
+        self.post_url_as_person(&url, &(), None, true).await
+    }
+
+    pub(crate) async fn propose_shared_rules(
+        &self,
+        space: &str,
+        markdown: String,
+    ) -> Result<String> {
+        let url = self.space_wiki_url(space, &["shared-rules", "propose"])?;
+        self.post_url_as_person(
+            &url,
+            &wenlan_types::rulesync::SharedRulesProposalRequest { markdown },
+            None,
+            true,
+        )
+        .await
+    }
+
+    pub(crate) async fn decide_shared_rules(
+        &self,
+        space: &str,
+        id: &str,
+        accept: bool,
+    ) -> Result<()> {
+        let url = self.space_wiki_url(space, &["shared-rules", "proposals", id, "decision"])?;
+        self.post_url_as_person(
+            &url,
+            &wenlan_types::team::TeamRulesDecisionRequest { accept },
+            None,
+            true,
+        )
+        .await
     }
 
     /// POST /api/pages/export with `format: "okf"` — write a pure OKF v0.2

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Finding, looking at and holding other people's skills over HTTP, so the
-//! terminal and AI tools reach what the desktop app does. Every action is
-//! `wenlan_core::skill_registry`'s; this file picks the folders, checks who
-//! is asking and frames the answer.
+//! terminal and AI tools reach what the desktop app does. The core registry
+//! validates and stores each skill. The opt-in rulesync applier handles
+//! tool-file delivery for confirmed changes.
 //!
 //! Reading (search, preview, the list, the scan) is open to any local
 //! caller. Installing, taking in and removing put files into every AI
@@ -12,24 +12,27 @@
 //! computer, because the person header alone could then come from the
 //! network.
 
-use std::path::PathBuf;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use axum::extract::Query;
 use axum::http::HeaderMap;
 use axum::response::Json;
 use serde::Deserialize;
+use wenlan_core::rulesync_personal;
 use wenlan_core::skill_registry::{
     self as registry, actions, Endpoints, Fetch, RegistryError, ReqwestFetch,
 };
 use wenlan_types::skill_registry::{
-    InstalledSkillsResponse, LocalSkillsResponse, SkillImportRequest, SkillImportResult,
-    SkillInstallRequest, SkillInstallResult, SkillPreview, SkillRemoveRequest, SkillRemoveResponse,
-    SkillSearchResponse,
+    InstalledSkillsResponse, LocalSkill, LocalSkillsResponse, SkillImportRequest,
+    SkillImportResult, SkillInstallRequest, SkillInstallResult, SkillPreview, SkillRemoveRequest,
+    SkillRemoveResponse, SkillSearchResponse,
 };
 
 use crate::error::ServerError;
 use crate::route_registry::{get, post, TrackedRouter};
+use crate::rulesync_registry;
 use crate::state::SharedState;
 
 /// The refusal an AI tool gets when it tries to change which skills the
@@ -81,8 +84,7 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
 struct World {
     /// The Wenlan folder that holds `skills/`.
     root: PathBuf,
-    /// The skills folders of the AI tools on this computer.
-    tool_dirs: Vec<PathBuf>,
+    delivery: Delivery,
     http: Arc<dyn Fetch>,
     endpoints: Endpoints,
     /// The daemon listens only on this computer, so a caller marked as the
@@ -90,13 +92,20 @@ struct World {
     local_only: bool,
 }
 
+#[derive(Clone)]
+enum Delivery {
+    Legacy(Vec<PathBuf>),
+    /// A selected home for reading import sources. Only the personal setup
+    /// applier decides where to deliver copies.
+    Rulesync(Option<PathBuf>),
+}
+
 impl World {
     async fn system() -> Result<Self, ServerError> {
-        // Looking for the AI tools' folders reads the disk.
-        let tool_dirs = on_disk(system_tool_dirs).await?;
+        let delivery = on_disk(system_delivery).await??;
         Ok(Self {
             root: registry::default_wenlan_root(),
-            tool_dirs,
+            delivery,
             http: system_http()?,
             endpoints: system_endpoints(),
             local_only: matches!(
@@ -105,6 +114,27 @@ impl World {
             ),
         })
     }
+}
+
+fn system_delivery() -> Result<Delivery, ServerError> {
+    let dev_state = std::env::var_os("WENLAN_DEV_STATE_DIR")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from);
+    let installed_app_data = wenlan_core::config::may_write_tool_files();
+    if rulesync_personal::enabled() {
+        let home = if dev_state.is_some() || installed_app_data {
+            Some(rulesync_personal::system_home().map_err(internal)?)
+        } else {
+            None
+        };
+        return Ok(Delivery::Rulesync(home));
+    }
+    Ok(Delivery::Legacy(tool_dirs_for(
+        dev_state,
+        installed_app_data,
+        dirs::home_dir(),
+        dirs::config_dir(),
+    )))
 }
 
 /// One HTTP client for the life of the daemon.
@@ -117,22 +147,11 @@ fn system_http() -> Result<Arc<dyn Fetch>, ServerError> {
     Ok(HTTP.get_or_init(|| http).clone())
 }
 
-/// The AI tools' skills folders this daemon may read and write. A dev run
+/// The legacy tool folders this daemon may read and write. A dev run
 /// with its own state folder gets that folder's stand-in tools, as the app
 /// does. Any other run on data that is not the installed app's (a test or a
 /// trial daemon) gets none: it never reads or writes the person's real tool
 /// folders.
-fn system_tool_dirs() -> Vec<PathBuf> {
-    tool_dirs_for(
-        std::env::var_os("WENLAN_DEV_STATE_DIR")
-            .filter(|value| !value.is_empty())
-            .map(PathBuf::from),
-        wenlan_core::config::may_write_tool_files(),
-        dirs::home_dir(),
-        dirs::config_dir(),
-    )
-}
-
 fn tool_dirs_for(
     dev_state: Option<PathBuf>,
     installed_app_data: bool,
@@ -183,6 +202,17 @@ fn refusal(error: RegistryError) -> ServerError {
         | RegistryError::Ambiguous(_)
         | RegistryError::Refused(_) => ServerError::ValidationError(error.to_string()),
         RegistryError::Io { .. } => ServerError::Internal(error.to_string()),
+    }
+}
+
+fn internal(error: anyhow::Error) -> ServerError {
+    ServerError::Internal(format!("{error:#}"))
+}
+
+fn remove_error(error: RegistryError) -> ServerError {
+    match error {
+        RegistryError::NotFound => ServerError::NotFound("no skill by that name".into()),
+        other => refusal(other),
     }
 }
 
@@ -249,14 +279,37 @@ async fn preview_in(world: &World, query: &PreviewQuery) -> Result<SkillPreview,
 
 async fn installed_in(world: &World) -> Result<InstalledSkillsResponse, ServerError> {
     let root = world.root.clone();
-    let skills = on_disk(move || actions::installed_rows(&root)).await?;
+    let include_authored = matches!(&world.delivery, Delivery::Rulesync(Some(_)));
+    let skills = on_disk(move || {
+        let installed = actions::installed_rows(&root);
+        if !include_authored {
+            return Ok(installed);
+        }
+        let mut by_name: BTreeMap<_, _> = installed
+            .into_iter()
+            .map(|row| (row.skill.name.clone(), row))
+            .collect();
+        for row in rulesync_registry::authored_rows().map_err(internal)? {
+            by_name.insert(row.skill.name.clone(), row);
+        }
+        Ok::<_, ServerError>(by_name.into_values().collect())
+    })
+    .await??;
     Ok(InstalledSkillsResponse { skills })
 }
 
 async fn scan_local_in(world: &World) -> Result<LocalSkillsResponse, ServerError> {
-    let (root, tools) = (world.root.clone(), world.tool_dirs.clone());
-    let skills = on_disk(move || registry::scan_local(&root, &tools)).await?;
+    let (root, delivery) = (world.root.clone(), world.delivery.clone());
+    let skills = on_disk(move || match delivery {
+        Delivery::Legacy(tools) => registry::scan_local(&root, &tools),
+        Delivery::Rulesync(home) => scan_rulesync_sources(&root, home.as_deref()),
+    })
+    .await?;
     Ok(LocalSkillsResponse { skills })
+}
+
+fn scan_rulesync_sources(root: &Path, home: Option<&Path>) -> Vec<LocalSkill> {
+    home.map_or_else(Vec::new, |home| rulesync_registry::scan_sources(root, home))
 }
 
 async fn import_local_in(
@@ -270,10 +323,35 @@ async fn import_local_in(
             "at most {MAX_IMPORT_NAMES} skills can be taken in at once"
         )));
     }
-    let (root, tools) = (world.root.clone(), world.tool_dirs.clone());
+    let (root, delivery) = (world.root.clone(), world.delivery.clone());
     let now = chrono::Utc::now().timestamp();
     let _one_at_a_time = SKILLS_CHANGE_LOCK.lock().await;
-    on_disk(move || actions::import_named(&root, &tools, request.names, now)).await
+    on_disk(move || match delivery {
+        Delivery::Legacy(tools) => Ok(actions::import_named(&root, &tools, request.names, now)),
+        Delivery::Rulesync(home) => {
+            let result = rulesync_registry::with_sources_lock(|| {
+                let found = scan_rulesync_sources(&root, home.as_deref());
+                actions::store_local_named(&root, &found, request.names, now)
+            })
+            .map_err(internal)?;
+            if home.is_some() && !result.imported.is_empty() {
+                match rulesync_registry::invoke_delivery() {
+                    Ok(report) if !report.blocked.is_empty() => {
+                        tracing::warn!(
+                            files = report.blocked.len(),
+                            "[skills] tool delivery needs attention"
+                        );
+                    }
+                    Err(error) => {
+                        tracing::warn!(%error, "[skills] imported skills could not be delivered")
+                    }
+                    _ => {}
+                }
+            }
+            Ok(result)
+        }
+    })
+    .await?
 }
 
 async fn install_in(
@@ -286,12 +364,49 @@ async fn install_in(
         actions::fetch_for_install(world.http.as_ref(), &world.endpoints, &request)
             .await
             .map_err(refusal)?;
-    let (root, tools) = (world.root.clone(), world.tool_dirs.clone());
+    let (root, delivery) = (world.root.clone(), world.delivery.clone());
     let now = chrono::Utc::now().timestamp();
     let _one_at_a_time = SKILLS_CHANGE_LOCK.lock().await;
-    on_disk(move || actions::store_and_deliver(&root, &tools, &fetched, verdict, &request, now))
-        .await?
-        .map_err(refusal)
+    on_disk(move || match delivery {
+        Delivery::Legacy(tools) => {
+            actions::store_and_deliver(&root, &tools, &fetched, verdict, &request, now)
+                .map_err(refusal)
+        }
+        Delivery::Rulesync(home) => {
+            let skill = rulesync_registry::with_sources_lock(|| {
+                actions::store_checked(&root, &fetched, verdict, &request, now)
+            })
+            .map_err(internal)?
+            .map_err(refusal)?;
+            let mut result = SkillInstallResult {
+                skill,
+                tools: Vec::new(),
+                skipped: Vec::new(),
+            };
+            if home.is_some() {
+                rulesync_registry::invoke_delivery().map_err(kept_skill_error)?;
+                let (tools, skipped) =
+                    crate::rulesync_routes::registry_delivery_status(&result.skill.name)
+                        .map_err(kept_skill_error)?;
+                result.tools = tools
+                    .into_iter()
+                    .map(|path| path.display().to_string())
+                    .collect();
+                result.skipped = skipped
+                    .into_iter()
+                    .map(|path| path.display().to_string())
+                    .collect();
+            }
+            Ok(result)
+        }
+    })
+    .await?
+}
+
+fn kept_skill_error(error: anyhow::Error) -> ServerError {
+    ServerError::Conflict(format!(
+        "The skill is kept in Wenlan. Tool delivery needs attention. {error:#}"
+    ))
 }
 
 async fn remove_in(
@@ -300,17 +415,52 @@ async fn remove_in(
     request: SkillRemoveRequest,
 ) -> Result<SkillRemoveResponse, ServerError> {
     require_person(world, headers)?;
-    let (root, tools) = (world.root.clone(), world.tool_dirs.clone());
+    let (root, delivery) = (world.root.clone(), world.delivery.clone());
     let name = request.name;
     let _one_at_a_time = SKILLS_CHANGE_LOCK.lock().await;
     on_disk(move || {
-        registry::remove(&root, &name, &tools).map(|()| SkillRemoveResponse { removed: name })
+        match delivery {
+            Delivery::Legacy(tools) => {
+                registry::remove(&root, &name, &tools).map_err(remove_error)?
+            }
+            Delivery::Rulesync(home) => {
+                let legacy_removed = match rulesync_registry::with_sources_lock(|| {
+                    registry::remove(&root, &name, &[])
+                })
+                .map_err(internal)?
+                {
+                    Ok(()) => true,
+                    Err(RegistryError::NotFound) => false,
+                    Err(error) => return Err(remove_error(error)),
+                };
+                let authored_removed = home.is_some()
+                    && rulesync_registry::remove_saved_source(&name).map_err(internal)?;
+                if !legacy_removed && !authored_removed {
+                    return Err(remove_error(RegistryError::NotFound));
+                }
+                if home.is_some() {
+                    rulesync_registry::invoke_delivery()
+                        .map_err(|error| removed_skill_error(&name, &format!("{error:#}")))?;
+                    let remaining = crate::rulesync_routes::registry_pending_paths(&name)
+                        .map_err(|error| removed_skill_error(&name, &format!("{error:#}")))?;
+                    if !remaining.is_empty() {
+                        return Err(removed_skill_error(
+                            &name,
+                            "Run `wenlan rules sync` to review the remaining copies.",
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(SkillRemoveResponse { removed: name })
     })
     .await?
-    .map_err(|error| match error {
-        RegistryError::NotFound => ServerError::NotFound("no skill by that name".into()),
-        other => refusal(other),
-    })
+}
+
+fn removed_skill_error(name: &str, detail: &str) -> ServerError {
+    ServerError::Conflict(format!(
+        "Removed {name} from Wenlan. Tool-copy removal needs attention. {detail}"
+    ))
 }
 
 /// Search skills.sh. Results that fail a safety check are left out.

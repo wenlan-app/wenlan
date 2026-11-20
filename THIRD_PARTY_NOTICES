@@ -1,0 +1,33 @@
+rulesync v43.11.0
+https://github.com/dyoshikawa/rulesync/releases/tag/v43.11.0
+
+Wenlan's staging renderer verifies these release binaries against their pinned
+SHA-256 checksums.
+
+rulesync-darwin-arm64        174f73789629f9f70e527eaf05db96701e8094a723eace2c7b3b47b661434683
+rulesync-darwin-x64          027356378eb535541786c5c071bc622b23a4556634990cdf507d21d1e3337cec
+rulesync-linux-arm64         b8c57a76ffb82c90c5b86b615efcb2b0576aa1c109d8dcae762410128e65591b
+rulesync-linux-x64           df60ca38f6cf7786c27138a64f70fcafb000548d66de200c00b0e2ac8633b6d2
+rulesync-windows-x64.exe     5527c44d24b073b40bb4a7a8e22149588132e830371b50293fae929ed10ea361
+
+MIT License
+
+Copyright (c) 2024 dyoshikawa
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

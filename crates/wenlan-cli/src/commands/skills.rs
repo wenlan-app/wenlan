@@ -2,13 +2,21 @@
 //! Read approved Space rules from the local Wenlan library, and find, look
 //! at and take in skills (`wenlan skills`).
 
-use std::io::{BufRead, IsTerminal, Write};
+use std::fs;
+use std::io::{BufRead, IsTerminal, Read, Write};
+use std::path::{Component, Path, PathBuf};
 
-use anyhow::{bail, Result};
-use clap::Subcommand;
+use anyhow::{bail, ensure, Context, Result};
+use clap::{Args, Subcommand, ValueEnum};
+use wenlan_types::rulesync_skill::{
+    SaveSkillRequest, SaveSkillResult, SavedSkillFile, SavedSkillScope, SavedSkillTool,
+    SkillProposal, SkillProposalOrigin, SkillProposalsResponse, SkillReviewAction,
+    SkillReviewRequest, MAX_SAVED_SKILL_BYTES, MAX_SAVED_SKILL_FILES, MAX_SAVED_SKILL_FILE_BYTES,
+};
 use wenlan_types::skill_registry::{
     InstalledSkillsResponse, LocalSkillsResponse, Scope, SkillImportResult, SkillInstallRequest,
-    SkillInstallResult, SkillPreview, SkillRemoveResponse, SkillSearchResponse, Verdict,
+    SkillInstallResult, SkillPreview, SkillPreviewFile, SkillRemoveResponse, SkillSearchResponse,
+    Verdict,
 };
 use wenlan_types::{
     RemoveRuleRequest, RemoveRuleResponse, SaveRuleRequest, SaveRuleResponse, SkillLineKind,
@@ -17,6 +25,7 @@ use wenlan_types::{
 
 use wenlan_core::skill_registry::{printable, without_leading_bom};
 
+use super::rulesync::{file_label, terminal_error, terminal_json};
 use crate::client::WenlanClient;
 use crate::output::{print_json, ResolvedFormat};
 
@@ -61,6 +70,64 @@ pub enum SkillsCmd {
         /// The skill's name as `wenlan skills list` prints it.
         name: String,
     },
+    /// Save your own skill from a Markdown body and optional text files.
+    Save(SaveSkillArgs),
+    /// List personal skill proposals waiting for your review.
+    Pending,
+    /// Show a skill proposal and ask whether to accept or dismiss it.
+    Review {
+        /// A proposal ID printed by `wenlan skills pending`.
+        id: String,
+        #[arg(value_enum)]
+        action: SkillReviewChoice,
+        /// Keep an accepted skill for one tool.
+        #[arg(long, value_enum, conflicts_with = "shared")]
+        tool: Option<SavedSkillToolArg>,
+        /// Share an accepted skill across tools.
+        #[arg(long)]
+        shared: bool,
+    },
+}
+
+#[derive(Args, Debug)]
+pub struct SaveSkillArgs {
+    /// Folder name for the skill.
+    name: String,
+    /// When an AI tool should use the skill.
+    #[arg(long)]
+    description: String,
+    /// Markdown file containing the SKILL.md body without YAML front matter.
+    #[arg(long, value_name = "FILE")]
+    body: PathBuf,
+    /// A UTF-8 file relative to the body file's folder. Repeat for each extra file.
+    #[arg(long, value_name = "PATH")]
+    extra: Vec<PathBuf>,
+    /// Use the skill for one tool. Omit to share across tools.
+    #[arg(long, value_enum)]
+    tool: Option<SavedSkillToolArg>,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub enum SavedSkillToolArg {
+    ClaudeCode,
+    Codex,
+}
+
+impl From<SavedSkillToolArg> for SavedSkillScope {
+    fn from(tool: SavedSkillToolArg) -> Self {
+        Self::Tool {
+            tool: match tool {
+                SavedSkillToolArg::ClaudeCode => SavedSkillTool::ClaudeCode,
+                SavedSkillToolArg::Codex => SavedSkillTool::Codex,
+            },
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub enum SkillReviewChoice {
+    Accept,
+    Dismiss,
 }
 
 pub async fn run_skills(
@@ -95,6 +162,287 @@ pub async fn run_skills(
             install(client, format, quiet, &skill, only_in).await
         }
         SkillsCmd::Remove { name } => remove(client, format, quiet, &name).await,
+        SkillsCmd::Save(args) => {
+            let local = personal_skill_client(client)?;
+            let request = skill_save_request(args).map_err(terminal_error)?;
+            let saved = local
+                .save_personal_skill(&request)
+                .await
+                .map_err(terminal_error)?;
+            ensure!(
+                matches!(saved, SaveSkillResult::Saved { .. }),
+                "Wenlan returned a proposal instead of saving your skill."
+            );
+            show(format, quiet, &saved, saved_skill_result_for_a_person)
+        }
+        SkillsCmd::Pending => {
+            let pending = personal_skill_client(client)?
+                .pending_saved_skills()
+                .await
+                .map_err(terminal_error)?;
+            show(format, quiet, &pending, pending_skills_for_a_person)
+        }
+        SkillsCmd::Review {
+            id,
+            action,
+            tool,
+            shared,
+        } => {
+            let scope = tool
+                .map(Into::into)
+                .or(shared.then_some(SavedSkillScope::Shared));
+            review_saved_skill(
+                &personal_skill_client(client)?,
+                format,
+                quiet,
+                &id,
+                action,
+                scope,
+            )
+            .await
+        }
+    }
+}
+
+fn personal_skill_client(client: &WenlanClient) -> Result<WenlanClient> {
+    ensure!(
+        !client.names_an_agent() && client.session().is_none(),
+        "Use your own terminal to save or review personal skills. AI tools can propose them with save_skill."
+    );
+    ensure!(
+        std::env::var_os("WENLAN_SPACE")
+            .is_none_or(|space| space.to_string_lossy().trim().is_empty()),
+        "WENLAN_SPACE limits this terminal to one Space. Run personal skill commands without WENLAN_SPACE."
+    );
+    WenlanClient::for_local_rules()
+}
+
+fn skill_save_request(args: SaveSkillArgs) -> Result<SaveSkillRequest> {
+    ensure!(
+        args.extra.len() < MAX_SAVED_SKILL_FILES,
+        "A skill may contain at most {MAX_SAVED_SKILL_FILES} files including SKILL.md."
+    );
+    let body = read_skill_body_file(&args.body)?;
+    let mut files = Vec::with_capacity(args.extra.len());
+    let mut bytes = body
+        .len()
+        .saturating_add(args.description.len())
+        .saturating_add(args.name.len());
+    ensure!(
+        bytes <= MAX_SAVED_SKILL_BYTES,
+        "A skill may contain at most {MAX_SAVED_SKILL_BYTES} bytes."
+    );
+    if !args.extra.is_empty() {
+        let folder = args
+            .body
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or(Path::new("."))
+            .canonicalize()?;
+        for extra in args.extra {
+            let path = skill_relative_path(&extra)?;
+            let source = folder
+                .join(&extra)
+                .canonicalize()
+                .with_context(|| format!("finding extra file {}", extra.display()))?;
+            ensure!(
+                source.starts_with(&folder),
+                "{} must be inside the body file's folder",
+                extra.display()
+            );
+            let text = read_skill_body_file(&source)?;
+            bytes += text.len();
+            ensure!(
+                bytes <= MAX_SAVED_SKILL_BYTES,
+                "A skill may contain at most {MAX_SAVED_SKILL_BYTES} bytes."
+            );
+            files.push(SavedSkillFile { path, text });
+        }
+    }
+    Ok(SaveSkillRequest {
+        name: args.name,
+        description: args.description,
+        body,
+        files,
+        scope: args.tool.map(Into::into).unwrap_or_default(),
+    })
+}
+
+fn skill_relative_path(path: &Path) -> Result<String> {
+    let mut parts = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(value) => parts.push(
+                value
+                    .to_str()
+                    .context("An extra file path must be UTF-8.")?,
+            ),
+            Component::CurDir => {}
+            _ => bail!(
+                "Use an extra file path relative to the skill body: {}",
+                path.display()
+            ),
+        }
+    }
+    ensure!(
+        !parts.is_empty(),
+        "An extra file needs a relative file name."
+    );
+    Ok(parts.join("/"))
+}
+
+fn read_skill_body_file(path: &Path) -> Result<String> {
+    let read = || -> Result<String> {
+        ensure!(fs::metadata(path)?.is_file(), "Choose a regular file.");
+        let mut bytes = Vec::new();
+        fs::File::open(path)?
+            .take((MAX_SAVED_SKILL_FILE_BYTES + 1) as u64)
+            .read_to_end(&mut bytes)?;
+        ensure!(
+            bytes.len() <= MAX_SAVED_SKILL_FILE_BYTES,
+            "A skill file may contain at most {MAX_SAVED_SKILL_FILE_BYTES} bytes."
+        );
+        String::from_utf8(bytes).context("Skill files must be UTF-8 text.")
+    };
+    read().with_context(|| format!("reading {}", path.display()))
+}
+
+async fn review_saved_skill(
+    client: &WenlanClient,
+    format: ResolvedFormat,
+    quiet: bool,
+    id: &str,
+    action: SkillReviewChoice,
+    scope: Option<SavedSkillScope>,
+) -> Result<()> {
+    ensure!(
+        std::io::stdin().is_terminal() && std::io::stdout().is_terminal(),
+        "Run this command in your own terminal and type yes when asked."
+    );
+    let accept = matches!(action, SkillReviewChoice::Accept);
+    ensure!(
+        accept || scope.is_none(),
+        "Choose a scope only when you accept a skill."
+    );
+    let proposal = client
+        .pending_saved_skills()
+        .await
+        .map_err(terminal_error)?
+        .proposals
+        .into_iter()
+        .find(|proposal| proposal.id == id)
+        .context("This skill proposal is no longer waiting for review.")?;
+    let mut preview = skill_proposal_summary(&proposal);
+    push_skill_preview_files(&mut preview, &proposal.files);
+    println!("{preview}");
+    let question = if accept {
+        ensure!(
+            complete_skill_preview(&proposal.files),
+            "Wenlan needs a complete preview to accept this skill."
+        );
+        format!(
+            "Accept {} as a {} skill?",
+            one_line(&proposal.name),
+            saved_skill_scope_words(scope.unwrap_or(proposal.scope))
+        )
+    } else {
+        format!("Dismiss the proposal for {}?", one_line(&proposal.name))
+    };
+    if !person_says_yes(
+        &mut std::io::stdin().lock(),
+        &mut std::io::stdout(),
+        &question,
+    )? {
+        println!("Cancelled.");
+        return Ok(());
+    }
+    let result = client
+        .review_saved_skill(&SkillReviewRequest {
+            id: proposal.id,
+            action: if accept {
+                SkillReviewAction::Accept
+            } else {
+                SkillReviewAction::Dismiss
+            },
+            scope,
+        })
+        .await
+        .map_err(terminal_error)?;
+    ensure!(
+        matches!(
+            (accept, &result),
+            (true, SaveSkillResult::Saved { .. }) | (false, SaveSkillResult::Dismissed { .. })
+        ),
+        "Wenlan returned an unexpected skill review result."
+    );
+    show(format, quiet, &result, saved_skill_result_for_a_person)
+}
+
+fn complete_skill_preview(files: &[SkillPreviewFile]) -> bool {
+    files.iter().all(|file| !file.cut)
+        && files
+            .iter()
+            .any(|file| file.path == "SKILL.md" && file.text.is_some())
+}
+
+fn saved_skill_scope_words(scope: SavedSkillScope) -> &'static str {
+    match scope {
+        SavedSkillScope::Shared => "shared",
+        SavedSkillScope::Tool {
+            tool: SavedSkillTool::ClaudeCode,
+        } => "Claude Code-only",
+        SavedSkillScope::Tool {
+            tool: SavedSkillTool::Codex,
+        } => "Codex-only",
+    }
+}
+
+fn skill_proposal_summary(proposal: &SkillProposal) -> String {
+    let origin = match &proposal.origin {
+        SkillProposalOrigin::Agent { agent } => one_line(agent),
+        SkillProposalOrigin::Tool {
+            tool: SavedSkillTool::ClaudeCode,
+        } => "the Claude Code skills folder".into(),
+        SkillProposalOrigin::Tool {
+            tool: SavedSkillTool::Codex,
+        } => "the Codex skills folder".into(),
+    };
+    format!(
+        "{}  {} ({})\nFrom {origin}\n",
+        one_line(&proposal.id),
+        one_line(&proposal.name),
+        saved_skill_scope_words(proposal.scope)
+    )
+}
+
+fn pending_skills_for_a_person(pending: &SkillProposalsResponse) -> String {
+    if pending.proposals.is_empty() {
+        return "No skill proposals are waiting for review.\n".into();
+    }
+    let mut out = String::new();
+    for proposal in &pending.proposals {
+        out.push_str(&skill_proposal_summary(proposal));
+    }
+    out.push_str("\nReview with `wenlan skills review <id> <accept|dismiss>`.\n");
+    out
+}
+
+fn saved_skill_result_for_a_person(result: &SaveSkillResult) -> String {
+    match result {
+        SaveSkillResult::Saved { name, delivery } => {
+            let mut out = format!("Saved {}.\n", one_line(name));
+            if let Some(delivery) = delivery {
+                out.push_str(&format!("{}\n", printable(&delivery.message)));
+                for path in &delivery.blocked {
+                    out.push_str(&format!("Blocked {}\n", file_label(path)));
+                }
+            }
+            out
+        }
+        SaveSkillResult::Proposed { proposal } => skill_proposal_summary(proposal),
+        SaveSkillResult::Dismissed { name } => {
+            format!("Dismissed the proposal for {}.\n", one_line(name))
+        }
     }
 }
 
@@ -108,7 +456,7 @@ fn show<T: serde::Serialize>(
         return Ok(());
     }
     match format {
-        ResolvedFormat::Json => print_json(value)?,
+        ResolvedFormat::Json => println!("{}", terminal_json(value)?),
         ResolvedFormat::Table => print!("{}", for_a_person(value)),
     }
     Ok(())
@@ -129,7 +477,7 @@ fn skill_address(skill: &str) -> Result<(String, String)> {
 }
 
 /// One line of such text: line breaks become spaces too.
-fn one_line(text: &str) -> String {
+pub(super) fn one_line(text: &str) -> String {
     printable(text)
         .replace(['\n', '\t'], " ")
         .trim()
@@ -283,8 +631,19 @@ fn preview_for_a_person(preview: &SkillPreview) -> String {
         out.push_str(&format!("Already installed as {}.\n", one_line(name)));
     }
     out.push_str("\nEverything in this skill:\n");
-    for file in &preview.files {
-        out.push_str(&format!("\n----- {} -----\n", one_line(&file.path)));
+    push_skill_preview_files(&mut out, &preview.files);
+    if let Some(why) = preview.cannot_install.as_deref() {
+        out.push_str(&format!(
+            "\nWenlan will not install this skill: {}.\n",
+            one_line(why)
+        ));
+    }
+    out
+}
+
+fn push_skill_preview_files(out: &mut String, files: &[SkillPreviewFile]) {
+    for file in files {
+        out.push_str(&format!("\n----- {} -----\n", file_label(&file.path)));
         match file.text.as_deref() {
             Some(text) => {
                 // A byte-order mark at the very start is no part of what the
@@ -297,7 +656,7 @@ fn preview_for_a_person(preview: &SkillPreview) -> String {
                 if file.cut {
                     out.push_str(&format!(
                         "(CUT HERE: {} goes on past this point and the rest is not shown.)\n",
-                        one_line(&file.path)
+                        file_label(&file.path)
                     ));
                 }
             }
@@ -305,13 +664,6 @@ fn preview_for_a_person(preview: &SkillPreview) -> String {
         }
     }
     out.push_str("----- end -----\n");
-    if let Some(why) = preview.cannot_install.as_deref() {
-        out.push_str(&format!(
-            "\nWenlan will not install this skill: {}.\n",
-            one_line(why)
-        ));
-    }
-    out
 }
 
 fn local_for_a_person(found: &LocalSkillsResponse) -> String {
@@ -398,7 +750,7 @@ fn require_the_person_at_a_terminal(
 }
 
 /// Ask one question; only the exact word `yes` means yes.
-fn person_says_yes(
+pub(super) fn person_says_yes(
     input: &mut dyn BufRead,
     output: &mut dyn Write,
     question: &str,
@@ -623,6 +975,8 @@ pub enum RulesCmd {
         /// The rule's id, as `wenlan rules` prints it.
         id: String,
     },
+    #[command(flatten)]
+    Setup(super::rulesync::RulesSetupCmd),
 }
 
 #[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
@@ -734,6 +1088,7 @@ pub async fn run_rules(
                 .await?;
             show(format, quiet, &removed, removed_rule_for_a_person)
         }
+        Some(RulesCmd::Setup(_)) => unreachable!("personal setup runs before Space commands"),
     }
 }
 
@@ -827,6 +1182,97 @@ fn rules_for_a_person(response: &SpaceRulesResponse) -> String {
 mod tests {
     use super::*;
     use wenlan_types::SkillLine;
+
+    #[test]
+    fn ux_skill_16_review_needs_one_scope_and_has_no_confirmation_flag() {
+        use clap::Parser;
+
+        #[derive(Parser)]
+        struct SkillsInput {
+            #[command(subcommand)]
+            command: SkillsCmd,
+        }
+
+        let parsed =
+            SkillsInput::try_parse_from(["skills", "review", "card", "accept", "--shared"])
+                .unwrap();
+        assert!(matches!(
+            parsed.command,
+            SkillsCmd::Review { shared: true, .. }
+        ));
+        assert!(SkillsInput::try_parse_from([
+            "skills", "review", "card", "accept", "--shared", "--tool", "codex",
+        ])
+        .is_err());
+        assert!(
+            SkillsInput::try_parse_from(["skills", "review", "card", "accept", "--yes"]).is_err()
+        );
+    }
+
+    #[test]
+    fn ux_skill_16_save_reads_only_explicit_text_files() {
+        let folder = tempfile::tempdir().unwrap();
+        let body = folder.path().join("body.md");
+        fs::write(&body, "Write decisions with an owner.\n").unwrap();
+        fs::create_dir(folder.path().join("examples")).unwrap();
+        fs::write(folder.path().join("examples/notes.md"), "Template\n").unwrap();
+        fs::write(
+            folder.path().join("examples/unlisted.md"),
+            "Extra fixture\n",
+        )
+        .unwrap();
+        let request = skill_save_request(SaveSkillArgs {
+            name: "meeting-notes".into(),
+            description: "Turn transcripts into decisions.".into(),
+            body,
+            extra: vec!["./examples/notes.md".into()],
+            tool: Some(SavedSkillToolArg::ClaudeCode),
+        })
+        .unwrap();
+        assert_eq!(request.body, "Write decisions with an owner.\n");
+        assert_eq!(
+            request.files,
+            vec![SavedSkillFile {
+                path: "examples/notes.md".into(),
+                text: "Template\n".into()
+            }]
+        );
+        assert_eq!(
+            request.scope,
+            SavedSkillScope::Tool {
+                tool: SavedSkillTool::ClaudeCode
+            }
+        );
+        assert!(skill_relative_path(Path::new("../outside.md")).is_err());
+    }
+
+    #[test]
+    fn ux_skill_16_review_requires_complete_text_and_shows_asset_paths() {
+        let mut files = vec![
+            SkillPreviewFile {
+                path: "SKILL.md".into(),
+                text: Some("Show decisions.\u{1b}[2J".into()),
+                cut: false,
+                marked: 0,
+            },
+            SkillPreviewFile {
+                path: "images/example.png".into(),
+                text: None,
+                cut: false,
+                marked: 0,
+            },
+        ];
+        let mut preview = String::new();
+        push_skill_preview_files(&mut preview, &files);
+        assert!(complete_skill_preview(&files));
+        assert!(preview.contains("Show decisions.<U+001B>[2J"));
+        assert!(preview.contains("images/example.png -----\n(not a text file)"));
+        files[0].cut = true;
+        assert!(!complete_skill_preview(&files));
+        files[0].cut = false;
+        files[0].text = None;
+        assert!(!complete_skill_preview(&files));
+    }
 
     fn line(text: &str, title: &str, general: bool) -> SkillLine {
         SkillLine {

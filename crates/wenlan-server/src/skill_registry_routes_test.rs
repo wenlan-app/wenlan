@@ -108,7 +108,7 @@ impl Scratch {
         std::fs::create_dir_all(&cursor).unwrap();
         let world = World {
             root: temp.path().join("wenlan"),
-            tool_dirs: vec![claude, cursor],
+            delivery: Delivery::Legacy(vec![claude, cursor]),
             http: fake.clone(),
             endpoints: Endpoints {
                 skills_sh: "https://s".into(),
@@ -122,11 +122,18 @@ impl Scratch {
     }
 
     fn claude(&self) -> &Path {
-        &self.world.tool_dirs[0]
+        &self.legacy_tools()[0]
     }
 
     fn cursor(&self) -> &Path {
-        &self.world.tool_dirs[1]
+        &self.legacy_tools()[1]
+    }
+
+    fn legacy_tools(&self) -> &[PathBuf] {
+        match &self.world.delivery {
+            Delivery::Legacy(tools) => tools,
+            Delivery::Rulesync(_) => panic!("scratch fixture defaults to legacy paths"),
+        }
     }
 
     /// A skill the person keeps in Claude Code's folder.
@@ -157,6 +164,38 @@ impl Scratch {
         out.sort();
         out
     }
+}
+
+#[tokio::test]
+async fn rulesync_registry_keeps_checked_sources_without_the_legacy_writer() {
+    let scratch = Scratch::new();
+    let own = scratch.own_skill("meeting-notes");
+    let original = std::fs::read(own.join("SKILL.md")).unwrap();
+    let mut world = scratch.world.clone();
+    world.delivery = Delivery::Rulesync(None);
+
+    let install = install_in(&world, &person(), install_request())
+        .await
+        .unwrap();
+    assert!(install.tools.is_empty());
+    assert!(install.skipped.is_empty());
+    assert!(!scratch.cursor().join("meeting-notes").exists());
+    assert!(registry::personal_sources(&world.root)
+        .unwrap()
+        .contains_key("meeting-notes"));
+
+    let gone = remove_in(
+        &world,
+        &person(),
+        SkillRemoveRequest {
+            name: "meeting-notes".into(),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(gone.removed, "meeting-notes");
+    assert!(registry::personal_sources(&world.root).unwrap().is_empty());
+    assert_eq!(std::fs::read(own.join("SKILL.md")).unwrap(), original);
 }
 
 fn person() -> HeaderMap {

@@ -17,6 +17,7 @@ pub mod outbox;
 pub mod page_tools;
 pub mod pages;
 pub mod recall;
+pub mod rulesync;
 pub mod service;
 pub mod setup;
 pub mod skills;

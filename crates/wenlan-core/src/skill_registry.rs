@@ -16,11 +16,16 @@
 //! replaces `author/` and keeps the additions.
 
 use std::collections::BTreeMap;
+use std::io::{ErrorKind, Read};
 use std::path::{Component, Path, PathBuf};
 
+use anyhow::{bail, ensure, Context};
+use cap_fs_ext::{DirExt as _, FollowSymlinks, OpenOptionsFollowExt as _};
+use cap_std::fs::{Dir, OpenOptions};
 use futures::future::BoxFuture;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use wenlan_types::rulesync::{AdoptedSkillUpdate, SkillUpdateStatus, SkillUpstream};
 
 // The shapes every channel reads live in `wenlan-types`.
 pub use wenlan_types::skill_registry::{
@@ -45,6 +50,9 @@ const MAX_FILE_BYTES: u64 = 1024 * 1024;
 const MAX_TOTAL_BYTES: u64 = 5 * 1024 * 1024;
 const MAX_NAME_PROBES: usize = 40;
 const SEARCH_LIMIT: usize = 30;
+
+#[path = "skill_registry_project_sync.rs"]
+pub(crate) mod project_sync;
 
 /// Where the four services live. Tests point these at a fake.
 #[derive(Debug, Clone)]
@@ -150,7 +158,7 @@ fn encode(value: &str) -> String {
     out
 }
 
-fn valid_source(source: &str) -> bool {
+pub(crate) fn valid_source(source: &str) -> bool {
     let mut parts = source.split('/');
     let (Some(owner), Some(repo), None) = (parts.next(), parts.next(), parts.next()) else {
         return false;
@@ -164,6 +172,30 @@ fn valid_source(source: &str) -> bool {
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
     };
     ok(owner) && ok(repo)
+}
+
+pub(crate) fn valid_npm_name(name: &str) -> bool {
+    fn component(value: &str) -> bool {
+        !value.is_empty()
+            && !value.starts_with(['.', '_'])
+            && value.bytes().all(|byte| {
+                byte.is_ascii_lowercase()
+                    || byte.is_ascii_digit()
+                    || matches!(byte, b'-' | b'_' | b'.')
+            })
+    }
+    name.len() <= 214
+        && if let Some(scoped) = name.strip_prefix('@') {
+            scoped
+                .split_once('/')
+                .is_some_and(|(scope, name)| component(scope) && component(name))
+        } else {
+            component(name)
+        }
+}
+
+pub(crate) fn valid_npm_version(version: &str) -> bool {
+    semver::Version::parse(version).is_ok()
 }
 
 fn valid_skill_id(id: &str) -> bool {
@@ -828,13 +860,144 @@ fn ready_files(dir: &Path, record: &InstalledSkill) -> Result<Vec<SkillFile>, Re
     let mut files = Vec::new();
     read_tree(&author, &author, false, &mut files)?;
     let additions = std::fs::read_to_string(meta(dir).join(ADDITIONS_FILE)).unwrap_or_default();
-    for file in &mut files {
-        if file.path == "SKILL.md" {
-            let text = String::from_utf8_lossy(&file.bytes).to_string();
-            file.bytes = compose_skill_md(&text, &record.scope, &additions).into_bytes();
-        }
-    }
+    compose_ready_files(&mut files, &record.scope, &additions);
     Ok(files)
+}
+
+fn compose_ready_files(files: &mut [SkillFile], scope: &Scope, additions: &str) {
+    for file in files.iter_mut().filter(|file| file.path == "SKILL.md") {
+        let text = String::from_utf8_lossy(&file.bytes);
+        file.bytes = compose_skill_md(&text, scope, additions).into_bytes();
+    }
+}
+
+/// Snapshot the held skills that belong in the personal tool setup. A read
+/// error aborts the snapshot so the applier cannot mistake it for a removal.
+pub fn personal_sources(
+    root: &Path,
+) -> anyhow::Result<BTreeMap<String, BTreeMap<PathBuf, Vec<u8>>>> {
+    let Some(root) = optional_dir(Dir::open_ambient_dir(root, cap_std::ambient_authority()))?
+    else {
+        return Ok(BTreeMap::new());
+    };
+    let Some(skills) = optional_dir(root.open_dir_nofollow("skills"))? else {
+        return Ok(BTreeMap::new());
+    };
+    let mut sources = BTreeMap::new();
+    for entry in skills.entries()? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str().filter(|name| !name.starts_with('.')) else {
+            continue;
+        };
+        let kind = entry.file_type()?;
+        ensure!(!kind.is_symlink(), "the stored skill {name} is a symlink");
+        if !kind.is_dir() {
+            continue;
+        }
+        let skill = skills.open_dir_nofollow(name)?;
+        let Some(control) = optional_dir(skill.open_dir_nofollow(META_DIR))? else {
+            continue;
+        };
+        let record: InstalledSkill = serde_json::from_reader(open_regular(&control, RECORD_FILE)?)
+            .with_context(|| format!("read registry record for {name}"))?;
+        if record.scope != Scope::All {
+            continue;
+        }
+        ensure!(
+            record.name == name && local_name(Path::new(name)).as_deref() == Some(name),
+            "invalid registry name for {name}"
+        );
+        ensure!(
+            record.verdict != Verdict::Fail,
+            "{name} failed its skill checks"
+        );
+        let author = control.open_dir_nofollow(AUTHOR_DIR)?;
+        let mut files = Vec::new();
+        let mut total = 0;
+        read_personal_author(&author, "", &mut files, &mut total)
+            .with_context(|| format!("read stored author files for {name}"))?;
+        ensure!(
+            files.iter().any(|file| file.path == "SKILL.md") && hash_files(&files) == record.hash,
+            "the stored author files for {name} differ from the version Wenlan took in"
+        );
+        if let Some(reason) = hidden_from_the_person(&files) {
+            bail!("{name} contains text the preview cannot show in full. {reason}");
+        }
+        let mut additions = String::new();
+        open_regular(&control, ADDITIONS_FILE)?.read_to_string(&mut additions)?;
+        compose_ready_files(&mut files, &record.scope, &additions);
+        sources.insert(
+            record.name,
+            files
+                .into_iter()
+                .map(|file| (PathBuf::from(file.path), file.bytes))
+                .collect(),
+        );
+    }
+    Ok(sources)
+}
+
+fn optional_dir(dir: std::io::Result<Dir>) -> std::io::Result<Option<Dir>> {
+    match dir {
+        Ok(dir) => Ok(Some(dir)),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+fn open_regular(dir: &Dir, name: &str) -> anyhow::Result<cap_std::fs::File> {
+    let mut options = OpenOptions::new();
+    options.read(true).follow(FollowSymlinks::No);
+    #[cfg(unix)]
+    {
+        use cap_std::fs::OpenOptionsExt as _;
+        options.custom_flags(rustix::fs::OFlags::NONBLOCK.bits() as i32);
+    }
+    let file = dir
+        .open_with(name, &options)
+        .with_context(|| format!("open stored skill file {name}"))?;
+    ensure!(file.metadata()?.is_file(), "{name} is not a regular file");
+    Ok(file)
+}
+
+fn read_personal_author(
+    dir: &Dir,
+    prefix: &str,
+    files: &mut Vec<SkillFile>,
+    total: &mut u64,
+) -> anyhow::Result<()> {
+    for entry in dir.entries()? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name = name.to_str().context("skill file name is not UTF-8")?;
+        let path = format!("{prefix}{name}");
+        ensure!(safe_relative(&path), "invalid stored skill path {path}");
+        let kind = entry.file_type()?;
+        if kind.is_dir() {
+            read_personal_author(
+                &dir.open_dir_nofollow(name)?,
+                &format!("{path}/"),
+                files,
+                total,
+            )?;
+            continue;
+        }
+        ensure!(kind.is_file(), "{path} is not a regular file");
+        ensure!(files.len() < MAX_FILES, "stored skill has too many files");
+        let limit = MAX_FILE_BYTES.min(MAX_TOTAL_BYTES - *total);
+        let mut bytes = Vec::new();
+        open_regular(dir, name)?
+            .take(limit + 1)
+            .read_to_end(&mut bytes)?;
+        ensure!(
+            bytes.len() as u64 <= limit,
+            "stored skill exceeds its size limit"
+        );
+        *total += bytes.len() as u64;
+        files.push(SkillFile { path, bytes });
+    }
+    Ok(())
 }
 
 /// Write `dir` again from its `.wenlan/` folder: a fresh ready copy beside
@@ -1018,6 +1181,9 @@ pub fn deliver(
     tool_dirs: &[PathBuf],
 ) -> Result<(Vec<PathBuf>, Vec<PathBuf>), RegistryError> {
     let (dir, record) = find(root, name).ok_or(RegistryError::NotFound)?;
+    if crate::rulesync_personal::enabled() {
+        return Ok((Vec::new(), tool_dirs.to_vec()));
+    }
     let mut files = Vec::new();
     read_tree(&dir, &dir, true, &mut files)?;
     files.push(SkillFile {
@@ -1049,10 +1215,12 @@ pub fn deliver(
 /// Remove the tool copies Wenlan wrote and the skill from the Wenlan folder.
 pub fn remove(root: &Path, name: &str, tool_dirs: &[PathBuf]) -> Result<(), RegistryError> {
     let (dir, _) = find(root, name).ok_or(RegistryError::NotFound)?;
-    for tool in tool_dirs {
-        let target = tool.join(name);
-        if target.join(MANAGED_MARKER).is_file() {
-            std::fs::remove_dir_all(&target).map_err(io_err(&target))?;
+    if !crate::rulesync_personal::enabled() {
+        for tool in tool_dirs {
+            let target = tool.join(name);
+            if target.join(MANAGED_MARKER).is_file() {
+                std::fs::remove_dir_all(&target).map_err(io_err(&target))?;
+            }
         }
     }
     std::fs::remove_dir_all(&dir).map_err(io_err(&dir))
@@ -1076,22 +1244,21 @@ pub async fn refresh_one(
     if record.source == LOCAL_SOURCE {
         return Ok(outcome("unchanged"));
     }
-    let head = head_commit(http, endpoints, &record.source).await?;
-    if head == record.commit {
-        return Ok(outcome("unchanged"));
-    }
-    let fetched = fetch_skill(
+    let Some(fetched) = latest_github_skill(
         http,
         endpoints,
         &record.source,
         &record.skill_id,
-        &head,
-        Some(&record.repo_path),
+        &record.repo_path,
+        Some(&record.commit),
     )
-    .await?;
+    .await?
+    else {
+        return Ok(outcome("unchanged"));
+    };
     if fetched.hash == record.hash {
         let mut moved = record.clone();
-        moved.commit = head;
+        moved.commit.clone_from(&fetched.commit);
         write_record(&dir, &moved)?;
         return Ok(outcome("unchanged"));
     }
@@ -1101,6 +1268,119 @@ pub async fn refresh_one(
     }
     store_skill(root, &fetched, report.verdict, record.scope.clone(), now)?;
     Ok(outcome("updated"))
+}
+
+async fn latest_github_skill(
+    http: &dyn Fetch,
+    endpoints: &Endpoints,
+    source: &str,
+    skill_id: &str,
+    directory: &str,
+    revision: Option<&str>,
+) -> Result<Option<FetchedSkill>, RegistryError> {
+    let head = head_commit(http, endpoints, source).await?;
+    if revision == Some(head.as_str()) {
+        return Ok(None);
+    }
+    fetch_skill(http, endpoints, source, skill_id, &head, Some(directory))
+        .await
+        .map(Some)
+}
+
+/// Offer releases for adopted skills through the registry's update check.
+/// The master and its tool files keep their approved bytes until the person
+/// decides what to do with the offer.
+pub async fn adopted_updates(
+    http: &dyn Fetch,
+    endpoints: &Endpoints,
+    home: &Path,
+    skills: &[crate::rulesync_adopt::AdoptedSkill],
+) -> Vec<AdoptedSkillUpdate> {
+    let mut updates = Vec::new();
+    for skill in skills {
+        let Some(upstream) = &skill.upstream else {
+            continue;
+        };
+        let result = match upstream {
+            SkillUpstream::GitHub {
+                repository,
+                directory,
+                revision,
+                ..
+            } => {
+                match latest_github_skill(
+                    http,
+                    endpoints,
+                    repository,
+                    &skill.name,
+                    directory,
+                    revision.as_deref(),
+                )
+                .await
+                {
+                    Ok(Some(fetched)) if fetched.repo_path == *directory => {
+                        let same = fetched.files.len() == skill.files.len()
+                            && fetched.files.iter().all(|file| {
+                                skill.files.get(Path::new(&file.path)) == Some(&file.bytes)
+                            });
+                        Ok((!same).then_some(fetched.commit))
+                    }
+                    Ok(Some(_)) => Err(RegistryError::NotFound),
+                    Ok(None) => Ok(None),
+                    Err(error) => crate::rulesync_adopt::checkout_update(home, upstream)
+                        .map_or(Err(error), |head| Ok(Some(head))),
+                }
+            }
+            SkillUpstream::Npm {
+                package, version, ..
+            } => newer_npm_release(http, package, version).await,
+        };
+        let status = match result {
+            Ok(Some(revision)) => SkillUpdateStatus::Available { revision },
+            Ok(None) => SkillUpdateStatus::Current,
+            Err(error) => SkillUpdateStatus::Unavailable {
+                reason: error.to_string(),
+            },
+        };
+        updates.push(AdoptedSkillUpdate {
+            name: skill.name.clone(),
+            upstream: upstream.clone(),
+            status,
+        });
+    }
+    updates
+}
+
+async fn newer_npm_release(
+    http: &dyn Fetch,
+    package: &str,
+    installed: &str,
+) -> Result<Option<String>, RegistryError> {
+    if !valid_npm_name(package) {
+        return Err(RegistryError::Refused("invalid npm package name".into()));
+    }
+    let current = semver::Version::parse(installed)
+        .map_err(|_| RegistryError::Refused("invalid installed npm version".into()))?;
+    let url = format!("https://registry.npmjs.org/{}/latest", encode(package));
+    let response = http.get(&url).await.map_err(RegistryError::Network)?;
+    if response.status != 200 {
+        return Err(RegistryError::Network(format!(
+            "npm registry answered {}",
+            response.status
+        )));
+    }
+    let invalid = || RegistryError::Network("unreadable npm release".into());
+    let release: serde_json::Value =
+        serde_json::from_slice(&response.body).map_err(|_| invalid())?;
+    if release["name"].as_str() != Some(package) {
+        return Err(invalid());
+    }
+    let latest = semver::Version::parse(release["version"].as_str().ok_or_else(invalid)?)
+        .map_err(|_| invalid())?;
+    Ok(latest
+        .cmp_precedence(&current)
+        .is_gt()
+        .then(|| latest.to_string()))
 }
 
 // ── Skills already on this computer ─────────────────────────────────────
@@ -1121,6 +1401,37 @@ fn local_name(dir: &Path) -> Option<String> {
 /// Wenlan wrote (they carry the marker) and folders without SKILL.md are
 /// left out; a name found in two tools is listed once.
 pub fn scan_local(root: &Path, tool_dirs: &[PathBuf]) -> Vec<LocalSkill> {
+    scan_local_where(root, tool_dirs, |_| true)
+}
+
+/// The opt-in writer's scan reads only source folders under the selected
+/// AI-tool home. This also keeps a scratch scan from following links into the
+/// person's usual setup.
+pub fn scan_local_in_home(root: &Path, tool_dirs: &[PathBuf], home: &Path) -> Vec<LocalSkill> {
+    if !std::fs::symlink_metadata(home).is_ok_and(|meta| meta.is_dir()) {
+        return Vec::new();
+    }
+    let Ok(home) = std::fs::canonicalize(home) else {
+        return Vec::new();
+    };
+    let under_home =
+        |dir: &Path| std::fs::canonicalize(dir).is_ok_and(|path| path.starts_with(&home));
+    let tool_dirs: Vec<_> = tool_dirs
+        .iter()
+        .filter(|dir| under_home(dir))
+        .cloned()
+        .collect();
+    scan_local_where(root, &tool_dirs, |dir| {
+        under_home(dir)
+            && std::fs::symlink_metadata(dir.join("SKILL.md")).is_ok_and(|m| m.is_file())
+    })
+}
+
+fn scan_local_where(
+    root: &Path,
+    tool_dirs: &[PathBuf],
+    allow: impl Fn(&Path) -> bool,
+) -> Vec<LocalSkill> {
     let held: std::collections::HashSet<String> =
         all_records(root).into_iter().map(|(_, r)| r.name).collect();
     let mut out: Vec<LocalSkill> = Vec::new();
@@ -1134,10 +1445,11 @@ pub fn scan_local(root: &Path, tool_dirs: &[PathBuf]) -> Vec<LocalSkill> {
             let Some(name) = local_name(&dir) else {
                 continue;
             };
-            if !dir.is_dir()
-                || dir.join(MANAGED_MARKER).exists()
-                || held.contains(&name)
+            if held.contains(&name)
                 || out.iter().any(|s| s.name == name)
+                || !allow(&dir)
+                || !dir.is_dir()
+                || dir.join(MANAGED_MARKER).exists()
             {
                 continue;
             }

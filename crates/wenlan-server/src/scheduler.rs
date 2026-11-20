@@ -1866,6 +1866,13 @@ pub fn spawn_scheduler(
                         .map(|(_, run)| run.counts.memories_applied)
                         .sum(),
                 );
+                if wenlan_core::rulesync_personal::enabled() {
+                    crate::skill_grow::sync_rules_files_quietly(
+                        &db,
+                        Some(knowledge_path.as_path()),
+                    )
+                    .await;
+                }
             }
             if crate::lifecycle::shutdown_requested(&shutdown) {
                 break;

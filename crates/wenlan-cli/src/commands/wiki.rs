@@ -6,15 +6,19 @@
 //! the `wenlan/wiki` branch and opens or updates the pull request, `status`
 //! shows the binding and the last publish, `unbind` removes the binding.
 
-use anyhow::{bail, Result};
+use anyhow::{bail, ensure, Result};
 use clap::{Subcommand, ValueEnum};
+use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 use wenlan_core::repo_wiki::{self, PublishTarget};
+use wenlan_core::skill_registry::printable;
 use wenlan_types::repo_wiki::{
-    BindRepoWikiRequest, RepoDocsRequest, RepoWikiAgent, RepoWikiBinding, RepoWikiDaily,
-    RepoWikiPublishResult, RepoWikiPublishStatus, RepoWikiRunner,
+    BindRepoWikiRequest, ProjectRuleProposal, RepoDocsRequest, RepoWikiAgent, RepoWikiBinding,
+    RepoWikiDaily, RepoWikiPublishResult, RepoWikiPublishStatus, RepoWikiRunner,
 };
 
+use super::rulesync::{file_label, terminal_error, terminal_json};
+use super::skills::{one_line, person_says_yes};
 use crate::client::WenlanClient;
 use crate::output::{print_json, ResolvedFormat};
 
@@ -35,6 +39,12 @@ impl From<AgentArg> for RepoWikiAgent {
             AgentArg::Copilot => RepoWikiAgent::Copilot,
         }
     }
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+pub enum ProjectRulesAction {
+    Accept,
+    Dismiss,
 }
 
 #[derive(Subcommand)]
@@ -77,6 +87,36 @@ pub enum WikiCommand {
     Status,
     /// Stop putting this Space's pages into its repository.
     Unbind,
+    /// Show repository rule changes waiting for review in this Space.
+    RulesProposals,
+    /// Review a repository rule change and decide whether to keep it in this Space.
+    RulesReview {
+        /// The proposal ID from `wenlan wiki rules-proposals`.
+        id: String,
+        #[arg(value_enum)]
+        action: ProjectRulesAction,
+    },
+    /// Prepare readable rules and project skills for this checkout in Wenlan's data directory.
+    RulesCheckout {
+        /// A directory inside the checkout. Defaults to the current directory.
+        #[arg(long)]
+        repo: Option<PathBuf>,
+    },
+    /// Include one team Rules layer in future wiki pull requests, or turn it off.
+    RulesTeam {
+        /// The team's name or ID, or `off`.
+        team: String,
+    },
+    /// Propose the next Rules page for a Space hosted on this computer.
+    SharedRulesPropose { file: PathBuf },
+    /// List Rules proposals for a Space hosted on this computer.
+    SharedRulesProposals,
+    /// Review a Rules proposal in a Space hosted on this computer.
+    SharedRulesReview {
+        id: String,
+        #[arg(value_enum)]
+        action: ProjectRulesAction,
+    },
     /// Make docs of the bound repository follow a page of the Space: when
     /// the page changes, the AI tool suggests fixes to them for the wiki
     /// pull request. `wenlan follow README.md <page>` is the short way.
@@ -111,6 +151,39 @@ impl WikiCommand {
     pub fn is_offline(&self) -> bool {
         matches!(self, WikiCommand::Refresh(_) | WikiCommand::Workflow(_))
     }
+
+    pub fn is_project_rules(&self) -> bool {
+        matches!(
+            self,
+            Self::RulesProposals
+                | Self::RulesReview { .. }
+                | Self::RulesTeam { .. }
+                | Self::RulesCheckout { .. }
+                | Self::SharedRulesPropose { .. }
+                | Self::SharedRulesProposals
+                | Self::SharedRulesReview { .. }
+        )
+    }
+
+    pub fn is_rules_checkout(&self) -> bool {
+        matches!(self, Self::RulesCheckout { .. })
+    }
+
+    /// Preflight before the CLI contacts the daemon for the Space registry.
+    pub fn require_project_rules_caller(&self, is_ai_caller: bool) -> Result<()> {
+        ensure!(
+            !is_ai_caller,
+            "Only you can view and review repository rule proposals. Run this outside an AI session."
+        );
+        ensure!(
+            !matches!(
+                self,
+                Self::RulesReview { .. } | Self::SharedRulesReview { .. } | Self::RulesTeam { .. }
+            ) || (io::stdin().is_terminal() && io::stdout().is_terminal()),
+            "Run this command in your own terminal and type yes when asked."
+        );
+        Ok(())
+    }
 }
 
 pub async fn run(
@@ -120,6 +193,25 @@ pub async fn run(
     space: Option<&str>,
     command: WikiCommand,
 ) -> Result<()> {
+    if let WikiCommand::RulesCheckout { repo } = command {
+        let repo = std::path::absolute(repo.unwrap_or(std::env::current_dir()?))?;
+        let receipt = client.checkout_rules(repo).await?;
+        if !quiet {
+            match format {
+                ResolvedFormat::Json => print_json(&receipt)?,
+                ResolvedFormat::Table => {
+                    println!(
+                        "Checkout files in {}",
+                        file_label(&receipt.directory.display().to_string())
+                    );
+                    for blocked in receipt.report.blocked {
+                        eprintln!("{}", terminal_error(anyhow::anyhow!(blocked)));
+                    }
+                }
+            }
+        }
+        return Ok(());
+    }
     // `publish` in a repository that is not set up cannot do its work: a
     // person is asked once whether to set it up now (see `set_up_to_publish`).
     let set_up;
@@ -208,6 +300,87 @@ pub async fn run(
                 Ok(())
             }
         },
+        WikiCommand::RulesProposals => {
+            list_project_rule_proposals(client, format, quiet, space).await
+        }
+        WikiCommand::RulesReview { id, action } => {
+            review_project_rule_proposal(client, format, quiet, space, &id, action).await
+        }
+        WikiCommand::RulesTeam { team } => {
+            let choice = (team != "off").then_some(team);
+            if person_says_yes(
+                &mut io::stdin().lock(),
+                &mut io::stdout(),
+                "Change which team Rules are published in this repository?",
+            )? {
+                let reply = client.use_team_rules_in_repo(space, choice).await?;
+                if !quiet {
+                    match format {
+                        ResolvedFormat::Json => print_json(&reply)?,
+                        ResolvedFormat::Table => {
+                            println!("Updated this repository's team rules preference.")
+                        }
+                    }
+                }
+            }
+            Ok(())
+        }
+        WikiCommand::SharedRulesPropose { file } => {
+            let markdown = std::fs::read_to_string(file)?;
+            let id = client.propose_shared_rules(space, markdown).await?;
+            if !quiet {
+                match format {
+                    ResolvedFormat::Json => print_json(&id)?,
+                    ResolvedFormat::Table => {
+                        println!("Rules proposal {} is awaiting review.", one_line(&id))
+                    }
+                }
+            }
+            Ok(())
+        }
+        WikiCommand::SharedRulesProposals => {
+            let pending = client.shared_rule_proposals(space).await?;
+            if !quiet {
+                match format {
+                    ResolvedFormat::Json => print_json(&pending)?,
+                    ResolvedFormat::Table => {
+                        for proposal in pending {
+                            println!(
+                                "{}  {}",
+                                one_line(&proposal.id),
+                                one_line(&proposal.proposed_at)
+                            );
+                        }
+                    }
+                }
+            }
+            Ok(())
+        }
+        WikiCommand::SharedRulesReview { id, action } => {
+            let proposal = client
+                .shared_rule_proposals(space)
+                .await?
+                .into_iter()
+                .find(|proposal| proposal.id == id)
+                .ok_or_else(|| anyhow::anyhow!("No pending Rules proposal with that ID"))?;
+            println!("{}", terminal_json(&proposal.markdown)?);
+            if person_says_yes(
+                &mut io::stdin().lock(),
+                &mut io::stdout(),
+                match action {
+                    ProjectRulesAction::Accept => "Accept these shared rules?",
+                    ProjectRulesAction::Dismiss => "Dismiss these shared rules?",
+                },
+            )? {
+                client
+                    .decide_shared_rules(space, &id, matches!(action, ProjectRulesAction::Accept))
+                    .await?;
+            }
+            Ok(())
+        }
+        WikiCommand::RulesCheckout { .. } => {
+            unreachable!("checkout rules run without a Space selector")
+        }
         WikiCommand::Refresh(_) | WikiCommand::Workflow(_) => {
             unreachable!("offline wiki commands run before the daemon is reached")
         }
@@ -268,6 +441,102 @@ pub async fn run(
             Ok(())
         }
     }
+}
+
+async fn list_project_rule_proposals(
+    client: &WenlanClient,
+    format: ResolvedFormat,
+    quiet: bool,
+    space: &str,
+) -> Result<()> {
+    let proposals = client
+        .project_rule_proposals(space)
+        .await
+        .map_err(terminal_error)?;
+    if !quiet {
+        match format {
+            ResolvedFormat::Json => println!("{}", terminal_json(&proposals)?),
+            ResolvedFormat::Table if proposals.is_empty() => {
+                println!("No repository rule proposals are waiting for review.");
+            }
+            ResolvedFormat::Table => {
+                for proposal in proposals {
+                    println!("{}", project_proposal_for_a_person(&proposal));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn review_project_rule_proposal(
+    client: &WenlanClient,
+    format: ResolvedFormat,
+    quiet: bool,
+    space: &str,
+    id: &str,
+    action: ProjectRulesAction,
+) -> Result<()> {
+    let proposal = client
+        .project_rule_proposals(space)
+        .await
+        .map_err(terminal_error)?
+        .into_iter()
+        .find(|proposal| proposal.id == id)
+        .ok_or_else(|| {
+            anyhow::anyhow!("This proposal is no longer waiting for review in this Space.")
+        })?;
+    print!("{}", project_proposal_for_a_person(&proposal));
+    let accept = matches!(action, ProjectRulesAction::Accept);
+    ensure!(
+        !accept || proposal.blocked.is_none(),
+        "Use `dismiss` to close this blocked proposal."
+    );
+    let question = if accept {
+        format!(
+            "Accept this change to the rules in Space {:?}?",
+            one_line(space)
+        )
+    } else {
+        "Dismiss this proposal?".to_owned()
+    };
+    if !person_says_yes(&mut io::stdin().lock(), &mut io::stdout(), &question)? {
+        println!("Cancelled.");
+        return Ok(());
+    }
+    let result = client
+        .decide_project_rule_proposal(space, &proposal.id, accept)
+        .await
+        .map_err(terminal_error)?;
+    if !quiet {
+        match format {
+            ResolvedFormat::Json => println!("{}", terminal_json(&result)?),
+            ResolvedFormat::Table => {
+                let word = if accept { "Accepted" } else { "Dismissed" };
+                println!("{word} proposal {}.", one_line(&result.id));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn project_proposal_for_a_person(proposal: &ProjectRuleProposal) -> String {
+    let mut out = format!(
+        "Proposal {} for {}\nRepository revision {}\n",
+        one_line(&proposal.id),
+        file_label(&proposal.path),
+        one_line(&proposal.revision),
+    );
+    if let Some(reason) = &proposal.blocked {
+        out.push_str(&format!("Blocked {}\n", one_line(reason)));
+    }
+    if !proposal.diff.is_empty() {
+        out.push_str(&printable(&proposal.diff));
+        if !proposal.diff.ends_with('\n') {
+            out.push('\n');
+        }
+    }
+    out
 }
 
 /// Whether the Space is already bound to this repository with this `origin`:
@@ -458,6 +727,24 @@ pub(crate) fn describe_publish(result: &RepoWikiPublishResult) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn project_proposal_shows_escaped_path_and_diff() {
+        let proposal = ProjectRuleProposal {
+            id: "card".into(),
+            path: "folder\nAGENTS.md".into(),
+            revision: "git-revision".into(),
+            diff: "-before\n+after\u{1b}[2J".into(),
+            added_rules: vec![],
+            removed_rules: vec![],
+            blocked: None,
+        };
+        let text = project_proposal_for_a_person(&proposal);
+        assert!(text.contains("Proposal card for folder<U+000A>AGENTS.md"));
+        assert!(text.contains("Repository revision git-revision"));
+        assert!(text.contains("-before\n+after<U+001B>[2J\n"));
+        assert_eq!(printable(&text), text);
+    }
 
     fn target(slug: Option<&str>, login: Option<&str>) -> PublishTarget {
         PublishTarget {

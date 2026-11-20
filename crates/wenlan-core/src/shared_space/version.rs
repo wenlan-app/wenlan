@@ -513,11 +513,20 @@ pub(super) fn sub_dirs(dir: &Path) -> Vec<(String, PathBuf)> {
 /// Proposals and decisions that cannot be read yet are not counted: only
 /// a version not read yet holds back writing over a page.
 pub fn read_folder(folder: &Path) -> FolderRead {
+    read_folder_pages(folder, None)
+}
+
+/// The versions, proposals and decisions of a single page in the folder.
+pub(crate) fn read_page(folder: &Path, page_id: &str) -> FolderRead {
+    read_folder_pages(folder, Some(page_id))
+}
+
+fn read_folder_pages(folder: &Path, page_id: Option<&str>) -> FolderRead {
     let mut read = FolderRead::default();
     let mut seen = HashSet::new();
     for (member, member_dir) in sub_dirs(&folder.join(MEMBERS_DIR)) {
         for kind in KIND_DIRS {
-            read_kind(&mut read, &mut seen, &member, &member_dir, kind);
+            read_kind(&mut read, &mut seen, &member, &member_dir, kind, page_id);
         }
     }
     read
@@ -531,10 +540,14 @@ fn read_kind(
     member: &str,
     member_dir: &Path,
     kind: &str,
+    target: Option<&str>,
 ) {
     let counts = kind == PAGES_DIR;
     {
         for (page_id, page_dir) in sub_dirs(&member_dir.join(kind)) {
+            if target.is_some_and(|target| target != page_id) {
+                continue;
+            }
             let Ok(entries) = std::fs::read_dir(&page_dir) else {
                 read.skipped += u32::from(counts);
                 continue;

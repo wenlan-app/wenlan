@@ -14,7 +14,7 @@ wenlan connect cursor --dry-run   # preview before editing JSON config
 wenlan connect cursor --all-tools # list every tool, not only the everyday ones
 ```
 
-`wenlan connect` lists the 23 everyday tools (`--tool-profile daily`): a client loads every listed tool's definition into each conversation, and the full list of 63 is more than twice the size. The tools left out (health checks and repairs, review queues, entities, folders, version history) still answer when called by name, and `wenlan tool list` and `wenlan tool call` reach them from a terminal. `--all-tools`, the plugins, and a bare `wenlan-mcp` list everything.
+`wenlan connect` lists the 24 everyday tools (`--tool-profile daily`): a client loads every listed tool's definition into each conversation, and the full list of 64 is more than twice the size. The tools left out (health checks and repairs, review queues, entities, folders, version history) still answer when called by name, and `wenlan tool list` and `wenlan tool call` reach them from a terminal. `--all-tools`, the plugins, and a bare `wenlan-mcp` list everything.
 
 MCP-only setup with `--all-tools` gives agents the whole tool surface: capture and recall, reading and writing wiki pages, the Space-owned Brief with `update_brief` for handoff, and the internal `distill` tool for page synthesis. It does not install the Claude Code slash skills (`/wenlan`, `/brief`, `/handoff`), which wrap the tools in a guided flow; install the Wenlan plugin if you want them. Steep is that guided, on-demand knowledge-maintenance workflow. The connected AI reads its relevant Skill procedure and uses MCP; it may delegate a bounded enrichment or judgment step to a small AI helper. The daemon owns queues, claim tokens, guarded writes, and the single-writer path. Automatic Steep instead runs eligible background jobs with their configured models, not with arbitrary connected AI tools.
 
@@ -62,7 +62,7 @@ wenlan-mcp --origin-url http://127.0.0.1:7879
 
 ## Tools
 
-The local stdio surface is locked at exactly 63 tools. The table below calls
+The local stdio surface is locked at exactly 64 tools. The table below calls
 out the wiki loop, the primary memory loop, and the unique refinement-review
 queue.
 
@@ -83,6 +83,7 @@ queue.
 | `remove_rule` | Remove a rule saved that way, by the rule id `read_space_rules` gives, when the user explicitly asks, with their own words in `person_asked`. Local stdio only. |
 | `list_skills` | List the skills Wenlan holds and copies into every AI tool's skills folder, with scope, source, safety verdict and the person's additions. Read-only; local stdio only. |
 | `search_skills` | Search skills.sh for a skill that could help; failing skills are never returned, and ones with warnings only with `include_warnings`. Read-only: installing is the person's to do (`wenlan skills install`, or the Wenlan app). Local stdio only. |
+| `save_skill` | Propose a skill with a name, description, Markdown body, optional text files and scope across tools or for one tool. The person reviews the proposal with `wenlan skills pending` and `wenlan skills review`. Local stdio only. |
 | `write_page` | Create or update a wiki page; sources are optional. Pass `expected_version` from `read_page` on a refresh; a stale version is refused, and a locked page or an unversioned refresh of an edited page goes through a revision card. Pass `basis` (`{page_id, version}` per note read) when the page was written from other notes; the reply lists the page's bases. Pass `code_basis` (`{repo_root, path, line_start, line_end}`) for lines of code the page relies on; Wenlan reads the file when you write and tells you when the lines change. When the person explicitly asked for a change to their own sentences, set `person_asked` to their exact words (with `expected_version`, local stdio only): the change lands, and history lists it as asked by them. |
 | `restore_page_version` | Put an earlier version of a page back, as a new version, when the user asks. Pass the `version`, `expected_version` from `read_page`, and `person_asked` (their exact words) when it changes the person's own sentences. Local stdio only. |
 | `page_basis` | Mark, diff, confirm or remove what one page relies on another page for. `mark` and `confirm` take the basis note's `version` and are refused if it moved on. Changes are local stdio only. |

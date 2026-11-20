@@ -105,6 +105,7 @@ use crate::db::{MemoryDB, UNFILED_SPACE_ID};
 use crate::error::WenlanError;
 use crate::pages::Page;
 use crate::read_scope::ReadScope;
+use crate::rulesync_team::{self, TeamRuleLayer};
 use crate::store::format::page::{Basis, Citation, PageFile, PageKind};
 use version::{Author, AuthorKind, PageVersion, VersionMeta};
 
@@ -264,6 +265,9 @@ struct SettingsStore {
     /// is still followed, and its owner can manage it from here.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     memberships: BTreeMap<String, Membership>,
+    /// The last approved Rules version pulled for each Space on each server.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    team_rules: BTreeMap<String, BTreeMap<String, TeamRuleLayer>>,
 }
 
 /// This person on one team server ([`SettingsStore::memberships`]).
@@ -275,6 +279,10 @@ pub struct Membership {
     /// They own the team: they manage it from this computer.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub owner: bool,
+    /// Per-Space grants from the last authenticated response. A refused
+    /// grant also fences any earlier pull that hasn't completed yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rule_grants: Option<BTreeMap<String, Option<String>>>,
 }
 
 /// Keeps that this person is on the team at `url` as `me` says, with
@@ -285,13 +293,40 @@ pub fn remember_membership(
     key: &str,
     me: &wenlan_types::team::TeamMe,
 ) -> Result<(), WenlanError> {
+    let grants: BTreeMap<_, _> = me
+        .spaces
+        .iter()
+        .map(|entry| (entry.space.clone(), entry.id.clone()))
+        .collect();
     let membership = Membership {
         key: key.to_string(),
         member_id: me.member_id.clone(),
         owner: me.role == wenlan_types::team::TeamRole::Owner,
+        rule_grants: Some(grants.clone()),
     };
     change_settings(path, |store| {
         let mut changed = false;
+        if store
+            .memberships
+            .get(url)
+            .is_some_and(|before| before.member_id != membership.member_id)
+        {
+            changed |= store.team_rules.remove(url).is_some();
+        }
+        for share in store
+            .spaces
+            .values_mut()
+            .filter(|share| share.member_id == me.member_id)
+        {
+            if let Some(host) = share
+                .host
+                .as_mut()
+                .filter(|host| host.url == url && host.key != key)
+            {
+                host.key = key.to_string();
+                changed = true;
+            }
+        }
         if store.memberships.get(url) != Some(&membership) {
             store.memberships.insert(url.to_string(), membership);
             changed = true;
@@ -302,13 +337,222 @@ pub fn remember_membership(
                 changed = true;
             }
         }
+        if let Some(layers) = store.team_rules.get_mut(url) {
+            let before = layers.len();
+            layers.retain(|space, layer| {
+                grants.get(space).is_some_and(|id| {
+                    id.as_ref().is_none_or(|id| {
+                        layer
+                            .project
+                            .as_ref()
+                            .is_none_or(|project| &project.space_id == id)
+                    })
+                })
+            });
+            changed |= layers.len() != before;
+            if layers.is_empty() {
+                store.team_rules.remove(url);
+            }
+        }
         (changed, ())
     })
 }
 
 /// Forgets the team at `url` (this person left it).
 pub fn forget_membership(path: &Path, url: &str) -> Result<(), WenlanError> {
-    change_settings(path, |store| (store.memberships.remove(url).is_some(), ()))
+    change_settings(path, |store| {
+        let membership = store.memberships.remove(url).is_some();
+        let rules = store.team_rules.remove(url).is_some();
+        (membership || rules, ())
+    })
+}
+
+pub(crate) fn cached_team_rule_layers(path: &Path) -> Result<Vec<TeamRuleLayer>, WenlanError> {
+    let store = read_settings(path)?;
+    Ok(store
+        .spaces
+        .values()
+        .filter_map(|share| share.host.as_ref())
+        .filter(|host| rule_grant_matches(&store, host))
+        .filter_map(|host| store.team_rules.get(&host.url)?.get(&host.space).cloned())
+        .collect())
+}
+
+pub(crate) fn cached_project_rule_layer_for_space(
+    path: &Path,
+    local_space: &str,
+) -> Result<Option<TeamRuleLayer>, WenlanError> {
+    let store = read_settings(path)?;
+    let Some(host) = store
+        .spaces
+        .get(local_space)
+        .and_then(|share| share.host.as_ref())
+    else {
+        return Ok(None);
+    };
+    if !rule_grant_matches(&store, host) {
+        return Ok(None);
+    }
+    Ok(store
+        .team_rules
+        .get(&host.url)
+        .and_then(|layers| layers.get(&host.space))
+        .filter(|layer| layer.project.is_some())
+        .cloned())
+}
+
+fn rule_grant_matches(store: &SettingsStore, host: &HostLink) -> bool {
+    store.memberships.get(&host.url).is_none_or(|membership| {
+        membership.key == host.key
+            && membership.rule_grants.as_ref().is_none_or(|grants| {
+                grants.get(&host.space).is_some_and(|id| {
+                    id.as_ref()
+                        .is_none_or(|id| host.space_id.as_ref().is_none_or(|known| known == id))
+                })
+            })
+    })
+}
+
+pub(crate) fn team_rule_proposal_target(
+    path: &Path,
+    team_id: &str,
+    revision: &str,
+) -> Result<(HostLink, ShareSettings), WenlanError> {
+    let store = read_settings(path)?;
+    let Some((url, space)) = store.team_rules.iter().find_map(|(url, layers)| {
+        layers
+            .iter()
+            .find(|(_, layer)| layer.id == team_id && layer.revision == revision)
+            .map(|(space, _)| (url, space))
+    }) else {
+        return Err(WenlanError::Conflict(
+            "sync the approved team Rules before proposing a change".into(),
+        ));
+    };
+    store
+        .spaces
+        .values()
+        .find_map(|share| {
+            let host = share.host.as_ref()?;
+            (host.url == *url && host.space == *space && rule_grant_matches(&store, host))
+                .then(|| (host.clone(), share.clone()))
+        })
+        .ok_or_else(|| WenlanError::NotFound("the team Rules share".into()))
+}
+
+/// Keep the last successful pull through network failures. A current team
+/// credential that is explicitly refused cannot keep its renderer layer.
+fn clear_team_rule_layer(
+    path: &Path,
+    url: &str,
+    key: &str,
+    space: Option<&str>,
+) -> Result<(), WenlanError> {
+    change_settings(path, |store| {
+        let current_key = match store.memberships.get(url) {
+            Some(membership) => membership.key == key,
+            None => store.spaces.values().any(|share| {
+                share
+                    .host
+                    .as_ref()
+                    .is_some_and(|host| host.url == url && host.key == key)
+            }),
+        };
+        if !current_key {
+            return (false, ());
+        }
+        let mut changed = match space {
+            Some(space) => remove_cached_rule_scope(store, url, space),
+            None => store.team_rules.remove(url).is_some(),
+        };
+        if let Some(membership) = store.memberships.get_mut(url) {
+            changed |= membership.rule_grants.is_none();
+            let grants = membership.rule_grants.get_or_insert_with(BTreeMap::new);
+            match space {
+                Some(space) => changed |= grants.remove(space).is_some(),
+                None => {
+                    changed |= !grants.is_empty();
+                    grants.clear();
+                }
+            }
+        }
+        (changed, ())
+    })
+}
+
+/// Manual sync checks the member's grant before it requests a Space file
+/// list. Retire cached Rules even if that preflight refuses the sync.
+pub async fn team_space_grant_for_sync(
+    path: &Path,
+    url: &str,
+    key: &str,
+    space: &str,
+) -> Result<wenlan_types::team::TeamMe, WenlanError> {
+    let me = match remote::me_sync(url, key).await {
+        Ok(me) => me,
+        Err(error) => {
+            if matches!(
+                error,
+                remote::SyncError::Revoked(_) | remote::SyncError::Refused(_)
+            ) {
+                clear_team_rule_layer(path, url, key, None)?;
+            }
+            return Err(WenlanError::Validation(error.to_string()));
+        }
+    };
+    if !me.spaces.iter().any(|grant| grant.space == space) {
+        clear_team_rule_layer(path, url, key, Some(space))?;
+    }
+    Ok(me)
+}
+
+fn remove_cached_rule_scope(store: &mut SettingsStore, url: &str, space: &str) -> bool {
+    let Some(layers) = store.team_rules.get_mut(url) else {
+        return false;
+    };
+    let changed = layers.remove(space).is_some();
+    if layers.is_empty() {
+        store.team_rules.remove(url);
+    }
+    changed
+}
+
+fn remember_team_rule_pull(
+    path: &Path,
+    scope: &Scope,
+    host: &HostLink,
+    layer: Option<TeamRuleLayer>,
+) -> Result<(), WenlanError> {
+    change_settings(path, |store| {
+        // A leave or a rejoin under a new key may have won while pulling.
+        if store
+            .spaces
+            .get(&scope.key())
+            .and_then(|share| share.host.as_ref())
+            != Some(host)
+            || !rule_grant_matches(store, host)
+        {
+            return (false, ());
+        }
+        match layer {
+            Some(layer) => {
+                let layers = store.team_rules.entry(host.url.clone()).or_default();
+                if layers.get(&host.space).is_some_and(|before| {
+                    before.id == layer.id
+                        && before.name == layer.name
+                        && before.revision == layer.revision
+                        && before.project == layer.project
+                        && before.skills == layer.skills
+                        && before.synced_at.get(..10) == layer.synced_at.get(..10)
+                }) {
+                    return (false, ());
+                }
+                layers.insert(host.space.clone(), layer);
+                (true, ())
+            }
+            None => (remove_cached_rule_scope(store, &host.url, &host.space), ()),
+        }
+    })
 }
 
 /// Follows every team this Wenlan is on now, as a pass does: a Space the
@@ -535,6 +779,7 @@ pub fn leave_at(path: &Path, scope: &Scope) -> Result<bool, WenlanError> {
         let removed = store.remove(scope);
         if let Some(host) = removed.as_ref().and_then(|settings| settings.host.as_ref()) {
             store.left.insert(left_key(&host.url, &host.space));
+            remove_cached_rule_scope(store, &host.url, &host.space);
             if let Some(id) = &host.space_id {
                 store.left.insert(left_id_key(&host.url, id));
             }
@@ -1446,8 +1691,12 @@ async fn run_pass(
     let listed = match settings.host.clone() {
         None => None,
         Some(host) => match remote::pull(&host, &folder).await {
-            Err(reason) => return Ok(Err(reason)),
-            Ok(listed) => {
+            Err(reason) => {
+                clear_rule_layer_if_refused(settings_path, &host, &reason)?;
+                return Ok(Err(reason.to_string()));
+            }
+            Ok((listed, layer)) => {
+                remember_team_rule_pull(settings_path, scope, &host, layer)?;
                 let read_only = listed.access == wenlan_types::team::TeamAccess::Read;
                 if read_only != settings.read_only {
                     if let Some(now) = update_share(settings_path, scope, |settings| {
@@ -1467,6 +1716,15 @@ async fn run_pass(
     }
     if settings.hosted {
         if let Scope::Space(space) = scope {
+            if crate::rulesync_personal::enabled() {
+                let path = settings_path.to_path_buf();
+                let scope = space.clone();
+                tokio::task::spawn_blocking(move || {
+                    rulesync_team::ensure_hosted_master(&path, &scope)
+                })
+                .await
+                .map_err(|error| WenlanError::Generic(format!("team Rules task: {error}")))??;
+            }
             list_team_members(settings_path, &folder, space).await;
         }
     }
@@ -1485,10 +1743,27 @@ async fn run_pass(
     }
     if let Some((host, listed)) = listed {
         if let Err(reason) = remote::push(&host, &folder, &settings.member_id, &listed).await {
-            return Ok(Err(reason));
+            clear_rule_layer_if_refused(settings_path, &host, &reason)?;
+            return Ok(Err(reason.to_string()));
         }
     }
     Ok(Ok(counts))
+}
+
+fn clear_rule_layer_if_refused(
+    settings_path: &Path,
+    host: &HostLink,
+    reason: &remote::SyncError,
+) -> Result<(), WenlanError> {
+    match reason {
+        remote::SyncError::Revoked(_) => {
+            clear_team_rule_layer(settings_path, &host.url, &host.key, None)
+        }
+        remote::SyncError::Refused(_) => {
+            clear_team_rule_layer(settings_path, &host.url, &host.key, Some(&host.space))
+        }
+        remote::SyncError::Unavailable(_) => Ok(()),
+    }
 }
 
 /// A Space this Wenlan hosts: lists everyone who can use it in its
@@ -1722,6 +1997,7 @@ struct Pass<'a> {
     space_pages: HashMap<String, String>,
     /// Member id to name, from `space.json`.
     names: HashMap<String, String>,
+    team_owner: Option<String>,
     /// Version files in the folder this pass could not read yet.
     unread: u32,
     /// The scope is the library: the Space is part of what is compared.
@@ -1880,6 +2156,16 @@ async fn pass(
             .await
             .map_err(|error| WenlanError::Generic(format!("shared folder task: {error}")))?
     };
+    let team_host = matches!(scope, Scope::Space(_)) && settings.hosted;
+    if !team_host {
+        local.retain(|id, _| !rulesync_team::is_master_page(id));
+        read.pages
+            .retain(|id, _| !rulesync_team::is_master_page(id));
+        read.proposals
+            .retain(|id, _| !rulesync_team::is_master_page(id));
+        read.decisions
+            .retain(|id, _| !rulesync_team::is_master_page(id));
+    }
     if let Scope::Page(id) = scope {
         // A page folder holds that page only; anything else in it is not
         // taken.
@@ -1915,6 +2201,11 @@ async fn pass(
             .into_iter()
             .map(|member| (member.id, member.name))
             .collect(),
+        team_owner: if team_host {
+            rulesync_team::hosted_owner(settings_path)?
+        } else {
+            None
+        },
         unread: read.skipped,
         library: matches!(scope, Scope::Library),
         own_spaces,
@@ -2025,7 +2316,14 @@ async fn pass(
         .filter(|(_, held)| held.version.is_some())
         .map(|(id, held)| (id.clone(), held.sha.clone()))
         .collect();
-    ctx.review(&read.proposals, &read.decisions, &heads).await?;
+    let team_approvals = read
+        .pages
+        .iter()
+        .filter(|(page, _)| rulesync_team::is_master_page(page))
+        .flat_map(|(_, versions)| versions)
+        .filter_map(rulesync_team::approved_proposal);
+    ctx.review(&read.proposals, &read.decisions, &heads, team_approvals)
+        .await?;
     match failed {
         Some(error) => Err(error),
         None => Ok(counts),
@@ -2221,9 +2519,26 @@ impl Pass<'_> {
             // version taken earlier).
             return Ok(Some(at(&head.winner.sha)));
         }
+        let team_rules = rulesync_team::is_master_page(&page.id);
+        if team_rules && changed {
+            if let Some(head) = &head {
+                if head.winner.meta.body_digest != state.body_digest {
+                    let author = self.author_of(page).await?;
+                    let revision = base.map_or(head.winner.sha.as_str(), |base| base.sha.as_str());
+                    self.propose_team_rules(
+                        &page.id,
+                        &page.content,
+                        revision,
+                        author,
+                        edit_ts(&page.last_modified),
+                    )
+                    .await?;
+                }
+            }
+        }
         // A member who may only read writes no version: the team's version
         // is taken over the edit, which stays in this page's history.
-        let changed = changed && !self.settings.read_only;
+        let changed = changed && !self.settings.read_only && !team_rules;
         if changed && self.edit_settle > 0 {
             let last = self.db.list_page_history(&page.id, 1).await?;
             let base_at = base
@@ -2347,6 +2662,11 @@ impl Pass<'_> {
             return Ok(None);
         }
         let winner = head.winner;
+        let held = if rulesync_team::is_master_page(id) {
+            None
+        } else {
+            held
+        };
         // A page of a Space that has its own share here is taken through
         // that share, not the library.
         if self.leaves_to_own_share(winner) {
@@ -3561,3 +3881,7 @@ mod tests;
 #[cfg(test)]
 #[path = "sync_test.rs"]
 mod sync_tests;
+
+#[cfg(test)]
+#[path = "rulesync_team_test.rs"]
+mod rulesync_team_tests;

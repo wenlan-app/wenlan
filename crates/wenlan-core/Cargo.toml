@@ -25,7 +25,9 @@ serde = { workspace = true }
 # JSON numbers, and the default parser can be one bit off.
 serde_json = { workspace = true, features = ["float_roundtrip"] }
 serde_yaml = { workspace = true }
+semver = "1"
 toml = { workspace = true }
+toml_edit = "=0.22.27"
 chrono = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }

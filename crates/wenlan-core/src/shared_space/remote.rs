@@ -13,8 +13,9 @@
 //! ```
 //!
 //! Version files never change and are named by their sha256, so a file is
-//! fetched or sent once. The server takes only this member's own versions,
-//! and none from a member who may only read.
+//! fetched or sent once. The server takes only this member's own versions.
+//! A Read member can send a proposal to the hosted Rules master. Other
+//! uploads require a Write grant.
 //!
 //! Plain `http://` is used only for an address that does not leave a
 //! private network (this computer, a LAN, Tailscale); anything else must be
@@ -29,6 +30,7 @@ use wenlan_types::team::{TeamAccess, TeamFileList, TeamMe};
 
 use super::{version, HostLink, SPACE_FILE};
 use crate::error::WenlanError;
+use crate::rulesync_team::{self, TeamRuleLayer};
 
 /// This Wenlan's copies of team servers' folders, beside the settings file.
 pub const MIRROR_DIR: &str = "team-mirror";
@@ -153,8 +155,47 @@ fn unreachable(url: &str, error: reqwest::Error) -> String {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+pub(super) enum SyncError {
+    #[error("{0}")]
+    Revoked(String),
+    #[error("{0}")]
+    Refused(String),
+    #[error("{0}")]
+    Unavailable(String),
+}
+
+impl From<String> for SyncError {
+    fn from(reason: String) -> Self {
+        Self::Unavailable(reason)
+    }
+}
+
+impl SyncError {
+    fn priority(&self) -> u8 {
+        match self {
+            Self::Revoked(_) => 2,
+            Self::Refused(_) => 1,
+            Self::Unavailable(_) => 0,
+        }
+    }
+}
+
+fn response_error(url: &str, status: reqwest::StatusCode) -> SyncError {
+    let reason = refused(url, status);
+    match status {
+        reqwest::StatusCode::UNAUTHORIZED => SyncError::Revoked(reason),
+        reqwest::StatusCode::FORBIDDEN => SyncError::Refused(reason),
+        _ => SyncError::Unavailable(reason),
+    }
+}
+
 /// Who `key` belongs to on the server at `url`.
 pub async fn me(url: &str, key: &str) -> Result<TeamMe, String> {
+    me_sync(url, key).await.map_err(|error| error.to_string())
+}
+
+pub(super) async fn me_sync(url: &str, key: &str) -> Result<TeamMe, SyncError> {
     let url = check_url(url)?;
     let response = client()?
         .get(format!("{url}/team/v1/me"))
@@ -163,12 +204,12 @@ pub async fn me(url: &str, key: &str) -> Result<TeamMe, String> {
         .await
         .map_err(|error| unreachable(&url, error))?;
     if !response.status().is_success() {
-        return Err(refused(&url, response.status()));
+        return Err(response_error(&url, response.status()));
     }
     response
         .json::<TeamMe>()
         .await
-        .map_err(|_| format!("{url} is not a Wenlan team server"))
+        .map_err(|_| format!("{url} is not a Wenlan team server").into())
 }
 
 /// A call to the team's management routes (`/team/v1/admin…`), made for
@@ -209,9 +250,12 @@ pub async fn admin(
         .map_err(|_| format!("{url} is not a Wenlan team server"))
 }
 
-/// Copies every file of the server's folder that `folder` does not have
-/// yet, and the server's `space.json`. Returns the server's file list.
-pub async fn pull(link: &HostLink, folder: &Path) -> Result<TeamFileList, String> {
+/// Copies the ordinary Space files and reads the manifest-approved Rules
+/// version separately. Team Rules do not enter the general page mirror.
+pub(super) async fn pull(
+    link: &HostLink,
+    folder: &Path,
+) -> Result<(TeamFileList, Option<TeamRuleLayer>), SyncError> {
     let url = check_url(&link.url)?;
     let client = client()?;
     let response = client
@@ -221,57 +265,89 @@ pub async fn pull(link: &HostLink, folder: &Path) -> Result<TeamFileList, String
         .await
         .map_err(|error| unreachable(&url, error))?;
     if !response.status().is_success() {
-        return Err(refused(&url, response.status()));
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Err(SyncError::Refused(refused(&url, response.status())));
+        }
+        return Err(response_error(&url, response.status()));
     }
     let list: TeamFileList = response
         .json()
         .await
         .map_err(|_| format!("{url} is not a Wenlan team server"))?;
     if !list.files.iter().any(|path| path == SPACE_FILE) {
-        return Err("the team server has not shared this Space yet".into());
+        return Err(SyncError::Unavailable(
+            "the team server has not shared this Space yet".into(),
+        ));
     }
+    let rules = if let Some(manifest) = &list.rules {
+        let bytes = fetch_file(&client, &url, link, &manifest.file).await?;
+        rulesync_team::pulled_layer(link, &list, &bytes).map_err(|error| error.to_string())?
+    } else {
+        None
+    };
     std::fs::create_dir_all(folder).map_err(|error| error.to_string())?;
 
     let wanted: Vec<(String, PathBuf)> = list
         .files
         .iter()
+        .filter(|path| {
+            !path
+                .split('/')
+                .nth(3)
+                .is_some_and(rulesync_team::is_master_page)
+        })
         .filter_map(|path| Some((path.clone(), crate::team::served_path(folder, path)?)))
         .filter(|(path, local)| path == SPACE_FILE || !version::version_file_exists(local))
         .collect();
-    let fetched: Vec<Result<(), String>> = futures::stream::iter(wanted)
+    let fetched: Vec<Result<(), SyncError>> = futures::stream::iter(wanted)
         .map(|(path, local)| {
             let client = client.clone();
             let url = url.clone();
             async move {
-                let response = client
-                    .get(space_url(&url, &link.space, "/file"))
-                    .query(&[("path", path.as_str())])
-                    .bearer_auth(&link.key)
-                    .send()
-                    .await
-                    .map_err(|error| unreachable(&url, error))?;
-                if !response.status().is_success() {
-                    return Err(refused(&url, response.status()));
-                }
-                let bytes = response
-                    .bytes()
-                    .await
-                    .map_err(|error| unreachable(&url, error))?;
-                if bytes.len() > MAX_VERSION_BYTES {
-                    return Err(format!("{path} is too large"));
-                }
+                let bytes = fetch_file(&client, &url, link, &path).await?;
                 tokio::task::spawn_blocking(move || store(&path, &local, &bytes))
                     .await
                     .map_err(|error| error.to_string())?
+                    .map_err(Into::into)
             }
         })
         .buffer_unordered(PARALLEL)
         .collect()
         .await;
-    for result in fetched {
-        result?;
+    if let Some(error) = fetched
+        .into_iter()
+        .filter_map(Result::err)
+        .max_by_key(SyncError::priority)
+    {
+        return Err(error);
     }
-    Ok(list)
+    Ok((list, rules))
+}
+
+async fn fetch_file(
+    client: &reqwest::Client,
+    url: &str,
+    link: &HostLink,
+    path: &str,
+) -> Result<Vec<u8>, SyncError> {
+    let response = client
+        .get(space_url(url, &link.space, "/file"))
+        .query(&[("path", path)])
+        .bearer_auth(&link.key)
+        .send()
+        .await
+        .map_err(|error| unreachable(url, error))?;
+    if !response.status().is_success() {
+        return Err(response_error(url, response.status()));
+    }
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|error| unreachable(url, error))?;
+    if bytes.len() > MAX_VERSION_BYTES {
+        return Err(format!("{path} is too large").into());
+    }
+    Ok(bytes.to_vec())
 }
 
 /// Writes one fetched file into the copy. A version file whose bytes do not
@@ -314,14 +390,14 @@ fn store(path: &str, local: &Path, bytes: &[u8]) -> Result<(), String> {
 }
 
 /// Sends this member's version files the server does not list yet.
-/// Returns how many were sent. A member who may only read sends none.
-pub async fn push(
+/// Returns how many were sent. Members with Read access send Rules proposals.
+pub(super) async fn push(
     link: &HostLink,
     folder: &Path,
     member: &str,
     listed: &TeamFileList,
-) -> Result<u32, String> {
-    if listed.access == TeamAccess::Read {
+) -> Result<u32, SyncError> {
+    if listed.access == TeamAccess::Read && listed.rules.is_none() {
         return Ok(0);
     }
     let url = check_url(&link.url)?;
@@ -342,9 +418,24 @@ pub async fn push(
     let client = client()?;
     let missing: Vec<(String, String, PathBuf)> = mine
         .into_iter()
-        .filter(|(path, ..)| !have.contains(version::version_key(path)))
+        .filter(|(path, page, _)| {
+            if rulesync_team::is_master_page(page) {
+                let is_proposal = path.split('/').nth(2) == Some(version::PROPOSALS_DIR);
+                if !is_proposal
+                    || listed
+                        .rules
+                        .as_ref()
+                        .is_none_or(|rules| rules.page_id != *page)
+                {
+                    return false;
+                }
+            } else if listed.access == TeamAccess::Read {
+                return false;
+            }
+            !have.contains(version::version_key(path))
+        })
         .collect();
-    let sent: Vec<Result<(), String>> = futures::stream::iter(missing)
+    let sent: Vec<Result<(), SyncError>> = futures::stream::iter(missing)
         .map(|(path, page, local)| {
             let client = client.clone();
             let url = url.clone();
@@ -378,17 +469,20 @@ pub async fn push(
                     log::warn!("[shared_space] the team server did not take {path}");
                     Ok(())
                 } else {
-                    Err(refused(&url, response.status()))
+                    Err(response_error(&url, response.status()))
                 }
             }
         })
         .buffer_unordered(PARALLEL)
         .collect()
         .await;
-    let mut count = 0;
-    for result in sent {
-        result?;
-        count += 1;
+    let count = sent.len() as u32;
+    if let Some(error) = sent
+        .into_iter()
+        .filter_map(Result::err)
+        .max_by_key(SyncError::priority)
+    {
+        return Err(error);
     }
     Ok(count)
 }
