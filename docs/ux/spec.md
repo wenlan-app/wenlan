@@ -765,7 +765,9 @@ and wait for evidence that people need them.
   replacement of an existing line stays with that tool by default. New text
   and conflicting edits to the same line wait for the person to review them
   using `wenlan rules review`. The person can accept a change for one tool or
-  share it across tools.
+  share it across tools. Sharing an edit to a uniquely matched overlay rule
+  moves the revised lines into the shared rules and keeps the rest of that
+  overlay local.
   原文：決定 4：「A rule the person writes themselves counts at once. AI tools get it and `wenlan rules` prints it, with no model needed. Rules the AI derives from pages still need the person's accept.」Qi-Xuan 以輸入「A」回答此題（2026-11-16 22:30Z；題目與決定記錄於 `/mnt/project-files/readme-2026-11/cover-v3/2026-11-16-app-changes-from-cover.md`，決定 4）。存成規則的補充（2026-11-17）：見 UX-SKILL-14；這句補充的英文字句待 Qi-Xuan 確認。連結改名的補充（2026-11-17，審查發現）：Wenlan 自己改連結不算人寫的；英文字句待 Qi-Xuan 確認。
 - **UX-SKILL-11** `shipped` A rules page shows two things. Under each rule,
   where it came from: a link "from" the page it was taken from, or "written
@@ -920,7 +922,7 @@ and wait for evidence that people need them.
   The plan names the tools it skips because their folders are absent. Gemini
   CLI owns the delivery to the legacy Gemini rule path and Antigravity's
   own overlay goes to its config rule path. Cursor receives Markdown at
-  `~/.cursor/AGENTS.md`; its automatic loading of that file is unverified.
+  `~/.cursor/AGENTS.md`. Automatic loading by Cursor is unverified.
   A skill that exceeds 32 MiB total or 2048 files and directories stays
   where it is, unmanaged. The preview states the limit it exceeded.
   `wenlan rules restore` asks the person again and uses that backup to
