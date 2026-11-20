@@ -568,24 +568,7 @@ impl Setup {
                 Err(error) => return Err(error.into()),
             }
         }
-        let metadata = fs::symlink_metadata(&self.data)?;
-        ensure!(
-            metadata.is_dir(),
-            "rulesync data path must be a regular directory"
-        );
-        let directory =
-            cap_std::fs::Dir::open_ambient_dir(&self.data, cap_std::ambient_authority())?;
-        use cap_fs_ext::OpenOptionsFollowExt;
-        let lock = directory
-            .open_with(
-                "personal.lock",
-                cap_std::fs::OpenOptions::new()
-                    .write(true)
-                    .read(true)
-                    .create(true)
-                    .follow(cap_fs_ext::FollowSymlinks::No),
-            )?
-            .into_std();
+        let lock = self.data_files()?.open_private_lock()?;
         FileExt::lock_exclusive(&lock)?;
         Ok(lock)
     }
@@ -3433,6 +3416,11 @@ mod tests {
         let old = br#"{"master":{"shared":""},"backup":{},"delivered":{},"pending":null,"adopted":false}"#;
         let path = f.setup.data.join("personal.json");
         fs::write(&path, old).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        }
         let original = f.text(CLAUDE);
         let error = f.setup.restore().unwrap_err();
         assert!(error
@@ -3441,6 +3429,67 @@ mod tests {
         assert_eq!(fs::read(path).unwrap(), old);
         assert_eq!(f.text(CLAUDE), original);
         assert!(!f.setup.data.join("personal-blobs").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run9_backup_blobs_stay_private_when_reused_and_require_private_directories() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let lock = f.setup.lock().unwrap();
+        let manifest = f.setup.load().unwrap().unwrap();
+        let state_path = f.setup.data.join("personal.json");
+        let stored: serde_json::Value =
+            serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+        let hash = stored["state"]["backup"][CLAUDE]["bytes"].as_str().unwrap();
+        let blobs = f.setup.data.join("personal-blobs");
+        let blob = blobs.join(hash);
+
+        fs::set_permissions(&state_path, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(f.setup.load().is_err());
+        fs::set_permissions(&state_path, fs::Permissions::from_mode(0o600)).unwrap();
+
+        fs::set_permissions(&blob, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(f.setup.load().is_err());
+
+        let alias = f._temp.path().join("outside-blob");
+        fs::hard_link(&blob, &alias).unwrap();
+        let error = f.setup.save(&manifest).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("hard-linked personal rules file"));
+        assert_eq!(
+            fs::metadata(&alias).unwrap().permissions().mode() & 0o777,
+            0o644
+        );
+        fs::remove_file(alias).unwrap();
+
+        f.setup.save(&manifest).unwrap();
+        assert_eq!(
+            fs::metadata(&blob).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        for dir in [&blobs, &f.setup.data] {
+            fs::set_permissions(dir, fs::Permissions::from_mode(0o755)).unwrap();
+            assert!(
+                f.setup.load().is_err(),
+                "read a backup through exposed directory {dir:?}"
+            );
+            assert_eq!(
+                fs::metadata(dir).unwrap().permissions().mode() & 0o777,
+                0o755
+            );
+            fs::set_permissions(dir, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        drop(lock);
+        fs::set_permissions(&f.setup.data, fs::Permissions::from_mode(0o755)).unwrap();
+        let _lock = f.setup.lock().unwrap();
+        assert_eq!(
+            fs::metadata(&f.setup.data).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        assert!(f.setup.load().unwrap().is_some());
     }
 
     #[test]

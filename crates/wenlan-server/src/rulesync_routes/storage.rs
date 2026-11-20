@@ -48,9 +48,9 @@ struct StoredSetup {
 
 impl Setup {
     pub(super) fn load(&self) -> Result<Option<Manifest>> {
-        let root = self.data_files()?;
+        let root = self.data_files()?.with_private_directories();
         let path = Path::new(MANIFEST);
-        let bytes = match root.read(path, false)? {
+        let bytes = match root.read_private(path, None)? {
             Snapshot::File { bytes, .. } => bytes,
             Snapshot::Absent => return Ok(None),
             _ => bail!("unexpected personal rules master file type"),
@@ -70,13 +70,12 @@ impl Setup {
                 return Ok(bytes.clone());
             }
             let blob = hash.path()?;
-            let Snapshot::File { bytes, .. } = root.read(&blob, false)? else {
-                bail!("missing personal rules blob {}", hash.0);
+            let Snapshot::File { bytes, .. } = root.read_private(&blob, None)? else {
+                bail!("missing personal rules blob");
             };
             ensure!(
                 BlobHash::of(&bytes).0 == hash.0,
-                "damaged personal rules blob {}",
-                hash.0
+                "damaged personal rules blob"
             );
             cache.insert(hash.0.clone(), bytes.clone());
             Ok(bytes)
@@ -85,20 +84,20 @@ impl Setup {
         // removes the manifest first and then retires its blob directory.
         match loaded {
             Ok(manifest) => Ok(Some(manifest)),
-            Err(_) if root.read(path, false)? == Snapshot::Absent => Ok(None),
+            Err(_) if root.read_private(path, None)? == Snapshot::Absent => Ok(None),
             Err(error) => Err(error),
         }
     }
 
     pub(super) fn save(&self, manifest: &Manifest) -> Result<()> {
-        let root = self.data_files()?;
+        let root = self.data_files()?.with_private_directories();
         let mut saved = BTreeSet::new();
         let mut added_blob = false;
         let state = map_contents(manifest, |bytes| {
             let hash = BlobHash::of(bytes);
             if saved.insert(hash.0.clone()) {
                 let path = hash.path()?;
-                match root.read(&path, false)? {
+                match root.read_private(&path, Some(bytes))? {
                     Snapshot::Absent => {
                         let desired = Snapshot::file(bytes.clone());
                         ensure!(
@@ -109,7 +108,7 @@ impl Setup {
                         added_blob = true;
                     }
                     Snapshot::File { bytes: current, .. } if current == *bytes => (),
-                    _ => bail!("damaged personal rules blob {}", hash.0),
+                    _ => bail!("damaged personal rules blob"),
                 }
             }
             Ok(hash)
@@ -135,7 +134,7 @@ impl Setup {
     }
 
     pub(super) fn retire_backup(&self) -> Result<()> {
-        let root = self.data_files()?;
+        let root = self.data_files()?.with_private_directories();
         let path = Path::new(MANIFEST);
         let seen = root.read(path, false)?;
         ensure!(

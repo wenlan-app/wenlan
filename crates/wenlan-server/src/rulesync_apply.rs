@@ -150,6 +150,7 @@ pub(crate) struct FileRoot {
     dir: Dir,
     harness: Option<HarnessGuard>,
     tool_home: bool,
+    private_directories: bool,
 }
 
 impl FileRoot {
@@ -167,6 +168,7 @@ impl FileRoot {
             dir: ambient_parent.open_dir_nofollow(Path::new(name))?,
             harness: None,
             tool_home: false,
+            private_directories: false,
         })
     }
 
@@ -184,6 +186,67 @@ impl FileRoot {
         guard.check(&root.dir.dir_metadata()?)?;
         root.harness = Some(guard);
         Ok(root)
+    }
+
+    pub(crate) fn with_private_directories(mut self) -> Self {
+        self.private_directories = true;
+        self
+    }
+
+    pub(crate) fn open_private_lock(&self) -> io::Result<std::fs::File> {
+        #[cfg(unix)]
+        {
+            let mode = self.dir.dir_metadata()?.permissions().mode();
+            if mode & 0o077 != 0 {
+                // A capability may use O_PATH on Linux, so open the same directory
+                // on a descriptor that supports chmod and sync.
+                let directory = self.dir.open(".")?;
+                directory.set_permissions(cap_std::fs::Permissions::from_mode(mode & 0o7700))?;
+                directory.sync_all()?;
+            }
+        }
+        let mut options = OpenOptions::new();
+        options
+            .read(true)
+            .write(true)
+            .create(true)
+            .follow(FollowSymlinks::No);
+        #[cfg(unix)]
+        options.mode(0o600);
+        Ok(self.dir.open_with("personal.lock", &options)?.into_std())
+    }
+
+    /// On writes, repair a matching existing file on the descriptor used to
+    /// compare its contents. Reads always validate the descriptor before use.
+    pub(crate) fn read_private(
+        &self,
+        path: &Path,
+        repair_if_matches: Option<&[u8]>,
+    ) -> io::Result<Snapshot> {
+        let (relative_parent, name) = entry_path(path)?;
+        let Some(parent) = self.open_parent(relative_parent, false)? else {
+            return Ok(Snapshot::Absent);
+        };
+        read_leaf_with(&parent, name, false, |file, metadata| {
+            if repair_if_matches.is_none() {
+                require_private_permissions(metadata, "personal rules file")?;
+            }
+            let bytes = read_file_contents(file)?;
+            #[cfg(unix)]
+            if repair_if_matches == Some(bytes.as_slice())
+                && metadata.permissions().mode() & 0o7777 != 0o600
+            {
+                if cap_std::fs::MetadataExt::nlink(metadata) != 1 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::PermissionDenied,
+                        "cannot make a hard-linked personal rules file private",
+                    ));
+                }
+                file.set_permissions(cap_std::fs::Permissions::from_mode(0o600))?;
+                file.sync_all()?;
+            }
+            Ok(bytes)
+        })
     }
 
     pub(crate) fn read(&self, path: &Path, allow_symlink: bool) -> io::Result<Snapshot> {
@@ -296,6 +359,9 @@ impl FileRoot {
         if let Some(guard) = &self.harness {
             guard.check(&parent.dir_metadata()?)?;
         }
+        if self.private_directories {
+            require_private_permissions(&parent.dir_metadata()?, "rulesync data directory")?;
+        }
         for part in path.components() {
             let Component::Normal(part) = part else {
                 return Err(invalid_path());
@@ -316,6 +382,9 @@ impl FileRoot {
             };
             if let Some(guard) = &self.harness {
                 guard.check(&parent.dir_metadata()?)?;
+            }
+            if self.private_directories {
+                require_private_permissions(&parent.dir_metadata()?, "rulesync data directory")?;
             }
         }
         Ok(Some(parent))
@@ -381,7 +450,33 @@ fn create_directory(parent: &Dir, name: &Path) -> io::Result<()> {
     parent.create_dir_with(name, &builder)
 }
 
+fn require_private_permissions(metadata: &Metadata, description: &str) -> io::Result<()> {
+    #[cfg(unix)]
+    if metadata.permissions().mode() & 0o077 != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("{description} must have private permissions"),
+        ));
+    }
+    // On Windows, rulesync inherits the data root's ACL. The portable
+    // permissions API only exposes the read-only attribute there.
+    #[cfg(windows)]
+    let _ = (metadata, description);
+    Ok(())
+}
+
 fn read_leaf(parent: &Dir, name: &Path, allow_symlink: bool) -> io::Result<Snapshot> {
+    read_leaf_with(parent, name, allow_symlink, |file, _| {
+        read_file_contents(file)
+    })
+}
+
+fn read_leaf_with(
+    parent: &Dir,
+    name: &Path,
+    allow_symlink: bool,
+    read: impl FnOnce(&cap_std::fs::File, &Metadata) -> io::Result<Vec<u8>>,
+) -> io::Result<Snapshot> {
     let metadata = match parent.symlink_metadata(name) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Snapshot::Absent),
@@ -428,14 +523,18 @@ fn read_leaf(parent: &Dir, name: &Path, allow_symlink: bool) -> io::Result<Snaps
         ));
     }
     check_file_size(metadata.len())?;
+    Ok(Snapshot::File {
+        bytes: read(&file, &metadata)?,
+        mode: FileMode::of(&metadata),
+    })
+}
+
+fn read_file_contents(file: &cap_std::fs::File) -> io::Result<Vec<u8>> {
     let mut bytes = Vec::new();
     file.take(MAX_ADOPTED_SKILL_BYTES + 1)
         .read_to_end(&mut bytes)?;
     check_file_size(bytes.len() as u64)?;
-    Ok(Snapshot::File {
-        bytes,
-        mode: FileMode::of(&metadata),
-    })
+    Ok(bytes)
 }
 
 fn check_file_size(len: u64) -> io::Result<()> {
