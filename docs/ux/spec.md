@@ -900,6 +900,8 @@ and wait for evidence that people need them.
   and asks the person to type `yes` at their terminal. A changed plan
   needs a fresh review. Wenlan backs up every destination before writing
   and replaces the adopted links with managed files or folders.
+  The skill diff shows the rendered `SKILL.md` the tool receives. Adoption
+  verifies that preview against pinned rulesync output before applying it.
   The preview shows which skills track a verified upstream and which
   become plain copies. `wenlan rules skill-updates` offers available
   upstream versions for review without changing the master or tool files.

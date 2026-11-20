@@ -13,6 +13,9 @@ use wenlan_types::rulesync::{AdoptionChange, AdoptionPlan, AdoptionSkill, Adopti
 
 use crate::rulesync_adopt::{self, AdoptedSkill, Adoption, AdoptionEntry, AdoptionTarget};
 
+#[path = "rulesync_skill_preview.rs"]
+mod skill_preview;
+
 pub const RULE_PRECEDENCE: &str =
     "When instructions disagree, project rules come first, followed by team rules and personal rules.";
 
@@ -48,7 +51,43 @@ pub fn adoption_inputs() -> [AdoptionTarget; 2] {
 }
 
 pub fn discover_adoption(home: &Path) -> Result<Adoption> {
-    rulesync_adopt::discover(home, &adoption_inputs())
+    let mut adoption = rulesync_adopt::discover(home, &adoption_inputs())?;
+    for skill in &mut adoption.skills {
+        let entry = Path::new("SKILL.md");
+        skill.locations.retain(|target, folders| {
+            match skill_preview::preview(target, &skill.files[entry]) {
+                Ok(rendered) => {
+                    for folder in folders.iter() {
+                        if let Some(file) = adoption.files.get_mut(&folder.join(entry)) {
+                            file.after = AdoptionEntry::File(rendered.clone());
+                        }
+                    }
+                    true
+                }
+                Err(error) => {
+                    for folder in folders.iter() {
+                        adoption.files.retain(|path, _| !path.starts_with(folder));
+                        adoption.skill_locations.remove(folder);
+                        adoption.skipped.insert(
+                            folder.clone(),
+                            format!("cannot preview the delivered SKILL.md ({error:#})"),
+                        );
+                    }
+                    false
+                }
+            }
+        });
+        skill
+            .targets
+            .retain(|target| skill.locations.contains_key(target));
+    }
+    Ok(adoption)
+}
+
+/// Convert the installed metadata to rulesync's source representation when
+/// staging an adopted skill for this tool. The master retains the original.
+pub fn stage_adopted_skill(target: &str, skill_md: &[u8]) -> Result<Vec<u8>> {
+    skill_preview::stage(target, skill_md)
 }
 
 pub fn fingerprint(value: &impl Serialize) -> Result<String> {

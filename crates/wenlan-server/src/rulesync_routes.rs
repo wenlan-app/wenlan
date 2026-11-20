@@ -15,8 +15,8 @@ use serde::{Deserialize, Serialize};
 use wenlan_core::rulesync_adopt::{AdoptedSkill, Adoption, AdoptionEntry};
 use wenlan_core::rulesync_personal::{
     adoption_inputs, describe_change, discover_adoption, fingerprint, line_changes,
-    merge_rule_text, promote_changes, system_home, write_root_rule, LineChange, LocalText,
-    PersonalMaster,
+    merge_rule_text, promote_changes, stage_adopted_skill, system_home, write_root_rule,
+    LineChange, LocalText, PersonalMaster,
 };
 use wenlan_core::rulesync_renderer;
 use wenlan_core::rulesync_team::{self, TeamRuleLayer};
@@ -554,6 +554,28 @@ impl Setup {
     }
 
     fn adopt(&self, token: &str) -> Result<RulesSyncReport> {
+        self.adopt_using(token, |target, source, skills| {
+            let mut features = Vec::new();
+            if source.is_some() {
+                features.push("rules");
+            }
+            if !skills.is_empty() {
+                features.push("skills");
+            }
+            self.render_tree(target, &features, |input| {
+                if let Some(source) = source {
+                    write_root_rule(input, source)?;
+                }
+                stage_adopted_skills(input, target, skills)
+            })
+        })
+    }
+
+    fn adopt_using(
+        &self,
+        token: &str,
+        render: impl Fn(&str, Option<&str>, &[&AdoptedSkill]) -> Result<BTreeMap<PathBuf, Vec<u8>>>,
+    ) -> Result<RulesSyncReport> {
         let adoption = discover_adoption(&self.home)?;
         ensure!(
             fingerprint(&adoption)? == token,
@@ -567,28 +589,36 @@ impl Setup {
         );
         let master = PersonalMaster::new(&adoption);
         let inputs = adoption_inputs();
-        // Match the plan against the pinned renderer before putting anything
-        // in a tool folder. No configuration features are requested.
         for input in &inputs {
-            let Some(path) = input.rules_path.as_deref() else {
+            let rule = input.rules_path.as_deref().and_then(|path| {
+                let AdoptionEntry::File(wanted) = &adoption.files.get(path)?.after else {
+                    return None;
+                };
+                Some((path, wanted))
+            });
+            let skills = master
+                .skills
+                .iter()
+                .filter(|skill| skill.locations.contains_key(&input.tool))
+                .collect::<Vec<_>>();
+            if rule.is_none() && skills.is_empty() {
                 continue;
-            };
-            let Some(file) = adoption.files.get(path) else {
-                continue;
-            };
-            let AdoptionEntry::File(wanted) = &file.after else {
-                continue;
-            };
-            let source = master.rule_text(&input.tool, &[])?;
-            let output = self.render_rule(&input.tool, &source)?;
-            let actual = output
-                .get(path)
-                .context("rulesync no longer renders the planned rules file")?;
-            ensure!(
-                same_rule_lines(actual, wanted)?,
-                "rulesync changed the lines in {}; adoption needs a fresh preview",
-                path.display()
-            );
+            }
+            let source = rule
+                .map(|_| master.rule_text(&input.tool, &[]))
+                .transpose()?;
+            let mut output = render(&input.tool, source.as_deref(), &skills)?;
+            if let Some((path, wanted)) = rule {
+                let actual = output
+                    .get(path)
+                    .context("rulesync no longer renders the planned rules file")?;
+                ensure!(
+                    same_rule_lines(actual, wanted)?,
+                    "rulesync changed the lines in {}; adoption needs a fresh preview",
+                    path.display()
+                );
+            }
+            check_rendered_adoption_skills(&input.tool, &adoption, &skills, &mut output)?;
         }
         ensure!(
             fingerprint(&discover_adoption(&self.home)?)? == token,
@@ -1185,7 +1215,7 @@ impl Setup {
             if sources.is_empty() {
                 continue;
             }
-            let output = self.render_tree(&target, "skills", |input| {
+            let output = self.render_tree(&target, &["skills"], |input| {
                 for (name, files) in &sources {
                     write_skill_files(input, name, files)?;
                 }
@@ -1647,7 +1677,7 @@ impl Setup {
     }
 
     fn render_rule(&self, target: &str, source: &str) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
-        self.render_tree(target, "rules", |input| write_root_rule(input, source))
+        self.render_tree(target, &["rules"], |input| write_root_rule(input, source))
     }
 
     fn render_adopted_skills(
@@ -1655,11 +1685,8 @@ impl Setup {
         target: &str,
         skills: &[&AdoptedSkill],
     ) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
-        self.render_tree(target, "skills", |input| {
-            for skill in skills {
-                write_skill(input, skill)?;
-            }
-            Ok(())
+        self.render_tree(target, &["skills"], |input| {
+            stage_adopted_skills(input, target, skills)
         })
     }
 
@@ -1711,7 +1738,7 @@ impl Setup {
     fn render_tree(
         &self,
         target: &str,
-        feature: &str,
+        features: &[&str],
         stage_input: impl FnOnce(&Path) -> Result<()>,
     ) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
         let stage = rulesync_renderer::new_stage(&self.data)?;
@@ -1727,7 +1754,7 @@ impl Setup {
             &output,
             true,
             &[target.into()],
-            &[feature],
+            features,
         )?;
         let mut rendered = BTreeMap::new();
         read_stage(&output, &output, &mut rendered)?;
@@ -1762,8 +1789,44 @@ fn skill_path(skills: &[AdoptedSkill], path: &Path) -> Option<SkillPath> {
     None
 }
 
-fn write_skill(input: &Path, skill: &AdoptedSkill) -> Result<()> {
-    write_skill_files(input, &skill.name, &skill.files)
+fn stage_adopted_skills(input: &Path, target: &str, skills: &[&AdoptedSkill]) -> Result<()> {
+    for skill in skills {
+        let mut files = skill.files.clone();
+        let entry = files
+            .get_mut(Path::new("SKILL.md"))
+            .context("missing SKILL.md in the master")?;
+        *entry = stage_adopted_skill(target, entry)?;
+        write_skill_files(input, &skill.name, &files)?;
+    }
+    Ok(())
+}
+
+fn check_rendered_adoption_skills(
+    target: &str,
+    adoption: &Adoption,
+    skills: &[&AdoptedSkill],
+    output: &mut BTreeMap<PathBuf, Vec<u8>>,
+) -> Result<()> {
+    for skill in skills {
+        let root = rendered_skill_with_assets(output, &skill.name, &skill.files)?
+            .with_context(|| format!("rulesync did not render {} for {target}", skill.name))?;
+        for (emitted, actual) in output
+            .range(root.clone()..)
+            .take_while(|(path, _)| path.starts_with(&root))
+        {
+            let relative = emitted.strip_prefix(&root)?;
+            for folder in &skill.locations[target] {
+                let path = folder.join(relative);
+                let wanted = adoption.files.get(&path).map(|file| &file.after);
+                ensure!(
+                    matches!(wanted, Some(AdoptionEntry::File(bytes)) if bytes == actual),
+                    "rulesync rendered {} differently from the preview. No tool files were written",
+                    path.display()
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn write_skill_files(
@@ -2288,6 +2351,78 @@ mod tests {
         assert!(!f.setup.home.join(".agents/skills/social").exists());
     }
 
+    #[test]
+    fn rulesync_adopts_the_rendered_skill_without_a_first_sync_rewrite() {
+        let f = Fixture::new();
+        let file = ".codex/skills/folding/SKILL.md";
+        let staged = ".agents/skills/folding/SKILL.md";
+        fs::create_dir_all(f.setup.home.join(file).parent().unwrap()).unwrap();
+        let original = "---\nname: folding\ndescription: A long description with enough words to make the standard formatter wrap it over multiple lines while retaining every word.\n---\n\nBody.\n";
+        let rendered = b"---\nname: folding\ndescription: >-\n  A long description with enough words to make the standard formatter wrap it\n  over multiple lines while retaining every word.\n---\nBody.\n";
+        f.write(file, original);
+        let adoption = discover_adoption(&f.setup.home).unwrap();
+        assert_eq!(
+            adoption.files[Path::new(file)].after,
+            AdoptionEntry::File(rendered.to_vec())
+        );
+        let token = fingerprint(&adoption).unwrap();
+
+        let rule_path = |target: &str| if target == "codexcli" { CODEX } else { CLAUDE };
+        let error = f
+            .setup
+            .adopt_using(&token, |target, source, skills| {
+                let mut output = BTreeMap::from([(
+                    rule_path(target).into(),
+                    source.unwrap().as_bytes().to_vec(),
+                )]);
+                if !skills.is_empty() {
+                    output.insert(staged.into(), original.as_bytes().to_vec());
+                }
+                Ok(output)
+            })
+            .unwrap_err();
+        assert!(error.to_string().contains("differently from the preview"));
+        assert!(!f.setup.data.join("personal.json").exists());
+        assert_eq!(f.text(file), original);
+
+        f.setup
+            .adopt_using(&token, |target, source, skills| {
+                let mut output = BTreeMap::from([(
+                    rule_path(target).into(),
+                    source.unwrap().as_bytes().to_vec(),
+                )]);
+                if !skills.is_empty() {
+                    output.insert(staged.into(), rendered.to_vec());
+                }
+                Ok(output)
+            })
+            .unwrap();
+        assert_eq!(f.text(file).as_bytes(), rendered);
+        let root = FileRoot::open(&f.setup.home).unwrap();
+        let mut manifest = f.setup.load().unwrap().unwrap();
+        let sync = f
+            .setup
+            .sync_locked(
+                &root,
+                &mut manifest,
+                &[],
+                |target, source| {
+                    Ok(BTreeMap::from([(
+                        rule_path(target).into(),
+                        source.as_bytes().to_vec(),
+                    )]))
+                },
+                |_, _| Ok(BTreeMap::from([(staged.into(), rendered.to_vec())])),
+            )
+            .unwrap();
+        assert!(
+            sync.written.is_empty() && sync.blocked.is_empty() && sync.proposals.is_empty(),
+            "{sync:?}"
+        );
+        f.setup.restore().unwrap();
+        assert_eq!(f.text(file), original);
+    }
+
     #[cfg(unix)]
     #[test]
     fn rulesync_thousand_files_use_bounded_manifest_saves() {
@@ -2530,7 +2665,8 @@ mod tests {
         fs::create_dir_all(home.join(".agents/skills/shared")).unwrap();
         fs::create_dir_all(home.join(".claude/skills")).unwrap();
         let skill = ".agents/skills/shared/SKILL.md";
-        f.write(skill, "source\n");
+        let source = "---\nname: shared\ndescription: Fixture\n---\nsource\n";
+        f.write(skill, source);
         let folder = ".claude/skills/shared";
         std::os::unix::fs::symlink("../../.agents/skills/shared", home.join(folder)).unwrap();
         let original_rule = f.text(CLAUDE);
@@ -2565,7 +2701,7 @@ mod tests {
         let receipt = f.setup.restore().unwrap();
         assert!(receipt.blocked.is_empty(), "{receipt:?}");
         assert_eq!(f.text(CLAUDE), original_rule);
-        assert_eq!(f.text(skill), "source\n");
+        assert_eq!(f.text(skill), source);
         assert_eq!(
             fs::read_link(home.join(folder)).unwrap().as_os_str(),
             "../../.agents/skills/shared"
@@ -2812,8 +2948,9 @@ mod tests {
             fs::create_dir_all(home.join(path)).unwrap();
         }
         let original = "---\nname: shared\ndescription: fixture\n---\nMy skill.\n";
+        let handmade = "---\nname: handmade\ndescription: Handmade skill\n---\nHandmade\n";
         fs::write(home.join(".agents/skills/shared/SKILL.md"), original).unwrap();
-        fs::write(home.join(".codex/skills/handmade/SKILL.md"), "Handmade").unwrap();
+        fs::write(home.join(".codex/skills/handmade/SKILL.md"), handmade).unwrap();
         let link = "../../.agents/skills/shared";
         std::os::unix::fs::symlink(link, home.join(".claude/skills/shared")).unwrap();
         f.adopt_from_plan();
@@ -2822,7 +2959,7 @@ mod tests {
             .unwrap()
             .is_symlink());
         assert!(!home.join(".codex/skills/shared").exists());
-        assert_eq!(f.text(".codex/skills/handmade/SKILL.md"), "Handmade");
+        assert_eq!(f.text(".codex/skills/handmade/SKILL.md"), handmade);
         let restored = f.setup.restore().unwrap();
         assert!(restored.blocked.is_empty(), "{restored:?}");
         assert_eq!(
@@ -2832,7 +2969,7 @@ mod tests {
             link
         );
         assert_eq!(f.text(".agents/skills/shared/SKILL.md"), original);
-        assert_eq!(f.text(".codex/skills/handmade/SKILL.md"), "Handmade");
+        assert_eq!(f.text(".codex/skills/handmade/SKILL.md"), handmade);
     }
 
     #[test]

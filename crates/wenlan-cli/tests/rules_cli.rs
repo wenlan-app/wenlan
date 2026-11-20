@@ -70,7 +70,12 @@ fn personal_rules_dry_run_labels_skill_sources() {
     for path in [".agents/skills/locked", ".codex/skills/handmade"] {
         let skill = home.join(path);
         fs::create_dir_all(&skill).unwrap();
-        fs::write(skill.join("SKILL.md"), "Skill contents\n").unwrap();
+        let name = skill.file_name().unwrap().to_str().unwrap();
+        fs::write(
+            skill.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: Fixture skill\n---\nSkill contents\n"),
+        )
+        .unwrap();
     }
     fs::write(home.join(".agents/.skill-lock.json"), br#"{"skills":{"locked":{
         "sourceType":"github","source":"owner/project","sourceUrl":"https://github.com/owner/project.git",
@@ -81,11 +86,31 @@ fn personal_rules_dry_run_labels_skill_sources() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            ".agents/skills/locked — stays where it is, not managed",
+            ".agents/skills/locked — skipped (Wenlan reads this shared source",
         ))
         .stdout(predicate::str::contains(
             ".codex/skills/handmade — plain copy in the personal master",
         ));
+    assert!(!state.path().join("unused-data-root").exists());
+}
+
+#[test]
+fn personal_rules_dry_run_shows_the_rendered_skill() {
+    let state = tempfile::tempdir().unwrap();
+    let folder = state.path().join("ai-tools/home/.codex/skills/folding");
+    fs::create_dir_all(&folder).unwrap();
+    let initial = "---\nname: folding\ndescription: A long description with enough words to make the standard formatter wrap it over multiple lines while retaining every word.\n---\n\nBody.\n";
+    let path = folder.join("SKILL.md");
+    fs::write(&path, initial).unwrap();
+    personal_rules_cli(state.path())
+        .args(["rules", "adopt", "--dry-run", "--format", "table"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("+description: >-\n"))
+        .stdout(predicate::str::contains(
+            "+  over multiple lines while retaining every word.\n",
+        ));
+    assert_eq!(fs::read_to_string(path).unwrap(), initial);
     assert!(!state.path().join("unused-data-root").exists());
 }
 
