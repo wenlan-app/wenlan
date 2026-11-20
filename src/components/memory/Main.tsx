@@ -59,7 +59,7 @@ import SettingsSidebar from "./settings/SettingsSidebar";
 import SpaceDetail from "./SpaceDetail";
 import { ThingDetail } from "./things/ThingDetail";
 import { SpacesOverview } from "./spaces";
-import { ScopeProvider, useScopeState } from "./team/scope";
+import { ScopeProvider, useShownScope } from "./team/scope";
 import { ScopeSwitcher } from "./team/ScopeSwitcher";
 import { PagesOverview } from "./pages/PagesOverview";
 import { SectionListPage } from "./pages/SectionListPage";
@@ -726,7 +726,7 @@ export default function Main({
   // New destinations branch from the current entry only after saving succeeds.
   // Private or one team, picked at the top left; none of it shows for
   // someone on no team.
-  const scope = useScopeState();
+  const scope = useShownScope();
   const teamSide = scope.team;
   // A page started on a team's side belongs to that team: it goes in the
   // Space being looked at, else the team's first Space the person can edit.

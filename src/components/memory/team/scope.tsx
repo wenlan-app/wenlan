@@ -10,6 +10,7 @@ import { createContext, useCallback, useContext, useMemo, useState, type ReactNo
 import { useShares } from "../sharing/sharing";
 import { useTeamStatus } from "../sharing/team";
 import { spacesOfTeam, teamGroups, type TeamGroup } from "./TeamPage";
+import { isWebBuild } from "../../../web/runtime";
 
 export { spacesOfTeam };
 
@@ -83,6 +84,15 @@ const everything: ScopeState = {
   inScope: () => true,
   teamWritable: [],
 };
+
+/** The scope the window uses. In a browser there is no switch at the top
+ *  left, so it shows every Space: with the switch's default (Private) a
+ *  joined team's pages would be out of reach there, Docs would count 0 and
+ *  search would find nothing. */
+export function useShownScope(): ScopeState {
+  const sides = useScopeState();
+  return isWebBuild() ? everything : sides;
+}
 
 const ScopeContext = createContext<ScopeState>(everything);
 
