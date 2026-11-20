@@ -669,7 +669,10 @@ impl Setup {
         let mut adoption = self.discover_for_adoption(manifest.as_ref())?;
         plan_skill_deliveries(&mut adoption, &render_skills)?;
         let mut plan = adoption_plan(&adoption)?;
-        if plan.files.is_empty() && manifest.is_some_and(|manifest| manifest.adopted) {
+        if adoption.overlays.is_empty()
+            && plan.files.is_empty()
+            && manifest.is_some_and(|manifest| manifest.adopted)
+        {
             plan.notes.push("No additional tools found.".into());
         }
         Ok(plan)
@@ -699,7 +702,7 @@ impl Setup {
         let sources = adoption_token(&adoption)?;
         plan_skill_deliveries(&mut adoption, &render_skills)?;
         verify_adoption_token(&adoption, token)?;
-        if adoption.files.is_empty() {
+        if adoption.files.is_empty() && adoption.overlays.is_empty() {
             let mut result = report(if manifest.is_some_and(|manifest| manifest.adopted) {
                 "No additional tools found"
             } else {
@@ -1527,7 +1530,7 @@ impl Setup {
         unmanaged.extend(
             PERSONAL_TARGETS
                 .iter()
-                .filter(|target| !manifest.master.overlays.contains_key(target.id))
+                .filter(|target| !manifest.master.enrolls_target(target.id))
                 .map(|target| PathBuf::from(target.skills.destination)),
         );
         let pending_skills =
@@ -1612,6 +1615,7 @@ impl Setup {
                 _ => None,
             })
             .collect();
+        targets.extend(manifest.master.overlays.keys().cloned());
         targets.extend(
             manifest
                 .master

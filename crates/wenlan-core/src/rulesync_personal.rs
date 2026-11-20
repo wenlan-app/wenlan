@@ -271,7 +271,7 @@ pub fn additional_targets(
 ) -> Result<Vec<&'static PersonalTarget>> {
     let candidates = PERSONAL_TARGETS
         .iter()
-        .filter(|target| !master.overlays.contains_key(target.id));
+        .filter(|target| !master.enrolls_target(target.id));
     Ok(installed_targets(home, candidates)?.0)
 }
 
@@ -597,6 +597,14 @@ pub struct LocalText {
 }
 
 impl PersonalMaster {
+    pub fn enrolls_target(&self, target: &str) -> bool {
+        self.overlays.contains_key(target)
+            || self
+                .skills
+                .iter()
+                .any(|skill| skill.targets.contains(target))
+    }
+
     pub fn new(adoption: &Adoption) -> Self {
         Self {
             shared: adoption.shared.clone(),

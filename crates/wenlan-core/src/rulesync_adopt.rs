@@ -661,6 +661,7 @@ fn discover_rules(
                 path.clone(),
                 "Windows cannot replace a linked rule file; this rule stays in place".into(),
             );
+            overlays.entry(target.tool.clone()).or_default();
             continue;
         }
         let current = load_text(home, path, sources)?;
@@ -1411,6 +1412,47 @@ mod tests {
         fs::remove_file(home.join("source/skill/alias.txt")).unwrap();
         link(home, "source/skill/alias.txt", Path::new("guide.txt"));
         assert!(!expected.matches(home, destination).unwrap());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rulesync_step1d_windows_link_skip_still_enrolls_the_tool() {
+        use crate::rulesync_personal::{additional_targets, PersonalMaster};
+
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path();
+        put(home, "source/rules.md", "Tool rule\n");
+        link(home, ".claude/CLAUDE.md", home.join("source/rules.md"));
+        put(home, ".claude/skills/example/SKILL.md", "Skill content\n");
+        let adoption = discover_with_platform(
+            home,
+            &[target(
+                "claudecode",
+                Some(".claude/CLAUDE.md"),
+                Some(".claude/skills"),
+            )],
+            None,
+            true,
+        )
+        .unwrap();
+        assert!(adoption
+            .skipped_rules
+            .contains_key(Path::new(".claude/CLAUDE.md")));
+        assert!(adoption
+            .files
+            .contains_key(Path::new(".claude/skills/example/SKILL.md")));
+        let mut master = PersonalMaster::new(&adoption);
+        assert!(
+            master.overlays.contains_key("claudecode"),
+            "the tool must stay enrolled for pull-back"
+        );
+        assert!(additional_targets(home, &master).unwrap().is_empty());
+
+        // Older journals already tracked the adopted skills even when the
+        // linked rule left no overlay entry for this tool.
+        master.overlays.remove("claudecode");
+        assert!(master.enrolls_target("claudecode"));
+        assert!(additional_targets(home, &master).unwrap().is_empty());
     }
 
     #[test]
