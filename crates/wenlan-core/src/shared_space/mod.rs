@@ -2114,6 +2114,17 @@ async fn pass(
             left_out.insert(id);
         }
     }
+    if matches!(scope, Scope::Space(_)) {
+        // A source page can be a verbatim projection of a local import.
+        local.retain(|id, page| {
+            let shared = page.creation_kind != "source"
+                && !crate::document_enrichment::is_source_page_id(id);
+            if !shared {
+                left_out.insert(id.clone());
+            }
+            shared
+        });
+    }
     let name = match scope {
         Scope::Space(space) => space.clone(),
         Scope::Page(id) => local
@@ -2169,7 +2180,14 @@ async fn pass(
         // Library pages with their own folder keep it: another person's
         // sentences on them must not be filed under this person's id here.
         // The same holds for this person's own "How I work" pages.
-        read.pages.retain(|page, _| !left_out.contains(page));
+        let shared = |page: &String| {
+            !left_out.contains(page)
+                && (!matches!(scope, Scope::Space(_))
+                    || !crate::document_enrichment::is_source_page_id(page))
+        };
+        read.pages.retain(|page, _| shared(page));
+        read.proposals.retain(|page, _| shared(page));
+        read.decisions.retain(|page, _| shared(page));
     }
     let mut counts = SharedSyncCounts {
         skipped: read.skipped,

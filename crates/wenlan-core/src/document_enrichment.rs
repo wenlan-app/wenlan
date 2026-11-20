@@ -1088,6 +1088,16 @@ pub fn source_page_id(source_id: &str, file_path: &str) -> String {
     format!("src_{}", &hex[..16])
 }
 
+/// Recognize old shared copies that retained the id but lack the source kind.
+pub(crate) fn is_source_page_id(id: &str) -> bool {
+    id.strip_prefix("src_").is_some_and(|suffix| {
+        suffix.len() == 16
+            && suffix
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    })
+}
+
 /// Deterministic stub page body (no LLM) — the file's chunk text, capped. Used
 /// so a SOURCE page always exists even when enrichment has not run yet.
 fn stub_page_body(title: &str, chunks: &[MemoryDetail]) -> String {

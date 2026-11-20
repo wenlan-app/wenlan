@@ -395,6 +395,113 @@ async fn hosted_basis_responses_drop_targets_outside_the_grant() {
 }
 
 #[tokio::test]
+async fn hosted_search_omits_documents_prepared_from_private_chunks() {
+    use wenlan_core::document_enrichment::{
+        run_document_enrichment_with_profile, OkfSourceProfile,
+    };
+    use wenlan_core::prompts::PromptRegistry;
+    use wenlan_core::shared_space::version::sha256_hex;
+
+    const IMPORT_MARKER: &str = "fixturezirconimport";
+    let (app, db, scratch) = fixture().await;
+    let path = scratch.path().join("import.md");
+    let content = format!(
+        "---\ntype: concept\ntitle: Specimen notes\ndescription: Import fixture.\n---\n\n+         # Specimen notes\n\nThe fictional sample is labeled {IMPORT_MARKER}.\n\n{}",
+        "The sample was cataloged in the laboratory after the inspection.\n\n".repeat(40)
+    );
+    std::fs::write(&path, &content).unwrap();
+    let profile = OkfSourceProfile {
+        bundle_root: scratch.path().into(),
+        space: Some(SPACE.into()),
+    };
+    db.enqueue_document(
+        "fixture-okf",
+        path.to_str().unwrap(),
+        Some(&sha256_hex(content.as_bytes())),
+    )
+    .await
+    .unwrap();
+    let entry = db.claim_next_pending().await.unwrap().unwrap();
+    let outcome = run_document_enrichment_with_profile(
+        &db,
+        &entry,
+        None,
+        None,
+        &PromptRegistry::default(),
+        Some(&profile),
+    )
+    .await;
+    let page = db.get_page(&outcome.page_id).await.unwrap().unwrap();
+    assert_eq!(page.creation_kind, "source");
+    assert_eq!(page.space.as_deref(), Some(SPACE));
+    assert!(!outcome.chunk_ids.is_empty() && page.content.contains(IMPORT_MARKER));
+
+    let path = format!("/api/pages/{}", page.id);
+    let (status, local) = request(&app, Method::GET, &path, Value::Null, false).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(local["page"]["content"]
+        .as_str()
+        .unwrap()
+        .contains(IMPORT_MARKER));
+    let search = json!({"query": "Specimen notes"});
+    let hosted = post_as_member(&app, "/api/pages/search", search.clone()).await;
+    assert!(
+        !hosted.to_string().contains(IMPORT_MARKER),
+        "hosted page search returned text copied from private chunks"
+    );
+    let (status, _) = request(&app, Method::GET, &path, Value::Null, true).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    for (route, body) in [
+        ("/api/memory/search", search),
+        ("/api/brief", json!({"topic": "Specimen notes"})),
+    ] {
+        let hosted = post_as_member(&app, route, body).await.to_string();
+        assert!(!hosted.contains(IMPORT_MARKER) && !hosted.contains(&page.id));
+    }
+}
+
+#[tokio::test]
+async fn hosted_revision_history_omits_host_prompts_and_previous_bodies() {
+    const HOST_PROMPT: &str = "fixture historical request";
+    const OLD_BODY: &str = "fixture historical prose";
+    let (app, db, _scratch) = fixture().await;
+    let created = post_as_member(
+        &app,
+        "/api/pages",
+        json!({"title": "Published note", "content": OLD_BODY}),
+    )
+    .await;
+    let id = created["id"].as_str().unwrap();
+    db.update_page_content(id, "Published replacement prose.", &[], "manual_edit")
+        .await
+        .unwrap();
+    let version = db.get_page(id).await.unwrap().unwrap().version;
+    let history = json!([
+        {"version": version - 1, "at": 1, "edited_by": "create"},
+        {"version": version, "at": 2, "edited_by": "person_asked",
+         "person_asked": HOST_PROMPT},
+    ]);
+    db.set_page_citations_with_changelog(id, None, &history.to_string())
+        .await
+        .unwrap();
+    let path = format!("/api/pages/{id}/revisions?include=text");
+    let (status, local) = request(&app, Method::GET, &path, Value::Null, false).await;
+    assert_eq!(status, StatusCode::OK);
+    let local = local.to_string();
+    assert!(local.contains(HOST_PROMPT) && local.contains(OLD_BODY));
+    for path in [format!("/api/pages/{id}/revisions"), path] {
+        let (status, hosted) = request(&app, Method::GET, &path, Value::Null, true).await;
+        assert_eq!(status, StatusCode::OK);
+        let wire = hosted.to_string();
+        assert!(wire.contains("person_asked"));
+        assert!(
+            !wire.contains(HOST_PROMPT) && !wire.contains(OLD_BODY),
+            "hosted history must omit verbatim host input and previous bodies"
+        );
+    }
+}
+
+#[tokio::test]
 async fn hosted_forwarding_does_not_admit_private_readers() {
     let (app, _, _scratch) = fixture().await;
     for (method, path) in [

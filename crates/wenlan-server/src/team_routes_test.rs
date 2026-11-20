@@ -716,6 +716,41 @@ async fn hosted_files_withhold_old_snapshots_with_private_quotes() {
 }
 
 #[tokio::test]
+async fn hosted_files_withhold_old_snapshots_of_generated_source_pages() {
+    let f = fixture();
+    let id = wenlan_core::document_enrichment::source_page_id("fixture", "/import.md");
+    let legacy = version_text(&id, "server", "Private import fixture.");
+    let (sha, _) = version::write_version(&f.folder, "server", &id, &legacy).unwrap();
+    let path = format!(
+        "members/server/pages/{id}/{}",
+        version::version_file_name(&sha)
+    );
+    let (status, files) = call(
+        &f.state,
+        Method::GET,
+        "/team/v1/spaces/Design/files",
+        Some(&f.reader.1),
+        vec![],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let list: TeamFileList = serde_json::from_slice(&files).unwrap();
+    let (download, _) = call(
+        &f.state,
+        Method::GET,
+        &format!("/team/v1/spaces/Design/file?path={path}"),
+        Some(&f.reader.1),
+        vec![],
+    )
+    .await;
+    assert_eq!(
+        (list.files.contains(&path), download),
+        (false, StatusCode::NOT_FOUND),
+        "import snapshots must be absent from the inventory and downloads"
+    );
+}
+
+#[tokio::test]
 async fn a_writer_sends_only_their_own_whole_versions() {
     let f = fixture();
     let page = "page_plan";

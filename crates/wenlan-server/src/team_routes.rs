@@ -2427,12 +2427,11 @@ async fn team_file(
     };
     match tokio::fs::read(&file).await {
         Ok(bytes)
-            if query.path == shared_space::SPACE_FILE
-                || query
-                    .path
-                    .rsplit('/')
-                    .next()
-                    .is_some_and(|name| team::can_serve_version(name, &bytes)) =>
+            if query.path == shared_space::SPACE_FILE || {
+                let mut parts = query.path.rsplit('/');
+                matches!((parts.next(), parts.next()), (Some(name), Some(page))
+                        if team::can_serve_version(page, name, &bytes))
+            } =>
         {
             (
                 [(header::CONTENT_TYPE, "text/markdown; charset=utf-8")],

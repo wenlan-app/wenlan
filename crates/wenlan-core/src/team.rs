@@ -1403,10 +1403,17 @@ pub fn check_member_version(
     Ok(version::file_kind(&read.meta))
 }
 
-/// A hosted version is whole and contains no legacy private-source quotes.
-pub fn can_serve_version(name: &str, bytes: &[u8]) -> bool {
-    version::parse(name, bytes)
-        .is_ok_and(|read| !shared_space::rewrite::has_legacy_quotes(&read.page))
+/// Hosted versions exclude generated imports and legacy private-source quotes.
+pub fn can_serve_version(page: &str, name: &str, bytes: &[u8]) -> bool {
+    !crate::document_enrichment::is_source_page_id(page)
+        && version::parse(name, bytes).is_ok_and(|read| {
+            !read
+                .page
+                .id
+                .as_deref()
+                .is_some_and(crate::document_enrichment::is_source_page_id)
+                && !shared_space::rewrite::has_legacy_quotes(&read.page)
+        })
 }
 
 /// Paths the team listener can serve: `space.json` and published versions.
@@ -1444,7 +1451,7 @@ pub fn list_folder_files(folder: &Path) -> Vec<String> {
                     let name = entry.file_name().into_string().ok()?;
                     version::version_sha(&name)?;
                     let bytes = std::fs::read(entry.path()).ok()?;
-                    can_serve_version(&name, &bytes).then_some(name)
+                    can_serve_version(&page, &name, &bytes).then_some(name)
                 })
                 .collect();
             names.sort();

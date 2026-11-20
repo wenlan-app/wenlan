@@ -96,6 +96,9 @@ pub(super) fn shared_page_predicate(alias: &str) -> String {
     let personal_rules = super::skill_grow::personal_rule_pages_sql();
     format!(
         "{alias}status IN ('active', 'archived') AND COALESCE({alias}kind, 'concept') != 'entity'
+           AND COALESCE({alias}creation_kind, 'distilled') != 'source'
+           AND NOT (LENGTH({alias}id) = 20 AND {alias}id GLOB 'src_*'
+                    AND SUBSTR({alias}id, 5) NOT GLOB '*[^0-9a-f]*')
            AND {alias}id NOT IN (SELECT page_id FROM ({personal_rules}) WHERE page_id IS NOT NULL)"
     )
 }

@@ -1390,10 +1390,17 @@ async fn handle_create_page_inner(
     )
     .await?;
     let persisted_page_id = result.attached_to.as_deref().unwrap_or(&result.id);
-    let persisted_page = db
-        .get_page(persisted_page_id)
-        .await?
-        .ok_or_else(|| ServerError::Internal("Page disappeared after create".into()))?;
+    let persisted_page = if private {
+        db.get_page(persisted_page_id)
+            .await?
+            .ok_or_else(|| ServerError::Internal("Page disappeared after create".into()))?
+    } else {
+        db.get_shared_page_scoped(persisted_page_id, &scope)
+            .await?
+            .ok_or_else(|| {
+                ServerError::Conflict("This title is unavailable in the Space.".into())
+            })?
+    };
     let persisted_space = persisted_page.space.clone();
     // Attribution is best effort: the page is already written, so a failure
     // here is logged and never fails the write.
@@ -3388,10 +3395,12 @@ pub async fn handle_get_page_revisions(
     axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
 ) -> Result<Json<wenlan_types::responses::ListPageRevisionsResponse>, ServerError> {
     // `?include=text` (comma list) puts each version's whole text on its
-    // entry, so every change can be opened (UX-HIST-2).
-    let include_text = params
-        .get("include")
-        .is_some_and(|include| include.split(',').any(|part| part.trim() == "text"));
+    // entry for the host, so every change can be opened (UX-HIST-2).
+    let private = crate::team_actor::can_read_private_memories(&headers);
+    let include_text = private
+        && params
+            .get("include")
+            .is_some_and(|include| include.split(',').any(|part| part.trim() == "text"));
     let db = {
         let s = state.read().await;
         s.db.clone().ok_or(ServerError::DbNotInitialized)?
@@ -3399,7 +3408,6 @@ pub async fn handle_get_page_revisions(
     let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
     // Q1 sub-resource: revisions is a read-only browse surface, so a shadow id
     // resolves 200 (empty changelog) via the unfenced `_browse` twin.
-    let private = crate::team_actor::can_read_private_memories(&headers);
     let page = if private {
         db.get_page_scoped_browse(&id, &scope).await?
     } else {
@@ -3438,6 +3446,8 @@ pub async fn handle_get_page_revisions(
             entry.sources_added = None;
             entry.sources_removed = None;
             entry.delta_summary = None;
+            entry.person_asked = None;
+            entry.text = None;
         }
     }
     // UX-HIST-1: the one history merges the person's edits, AI edits and the
@@ -3447,23 +3457,10 @@ pub async fn handle_get_page_revisions(
         if include_text {
             wenlan_core::page_history::attach_texts(&db, &id, &mut entries).await?;
         }
-        let mut bases = Vec::new();
-        for basis_id in wenlan_core::page_history::basis_page_ids(&db, &id).await? {
-            if db
-                .get_page_scoped_browse(&basis_id, &scope)
-                .await?
-                .is_some()
-            {
-                bases.push(basis_id);
-            }
-        }
-        let visible: std::collections::HashSet<String> =
-            wenlan_core::truth_adapter::filter_page_refs(&db, &view.grant, bases, |page_id| {
-                page_id.as_str()
-            })
-            .await?
-            .into_iter()
-            .collect();
+        let bases = wenlan_core::page_history::basis_page_ids(&db, &id).await?;
+        let visible =
+            crate::page_basis_routes::visible_ids_for(&db, &view.grant, &scope, &bases, private)
+                .await?;
         wenlan_core::page_history::build_page_history(&db, &id, &entries, &visible, include_text)
             .await?
     } else {
