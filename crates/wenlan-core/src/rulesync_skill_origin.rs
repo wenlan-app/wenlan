@@ -163,8 +163,9 @@ fn git(home: &Home, checkout: &Path, args: &[&str]) -> Option<String> {
         .env("GIT_NO_LAZY_FETCH", "1")
         .env("GIT_TERMINAL_PROMPT", "0")
         .args(args)
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
+        // Keep the subprocess on pipes so a write-denied preview never has
+        // to open /dev/null for writing.
+        .stdin(Stdio::piped())
         .output()
         .ok()?;
     output.status.success().then_some(())?;
@@ -195,13 +196,12 @@ fn checkout_source(home: &Home, skill: &Path) -> Option<SkillUpstream> {
     let repository = origin(home, checkout)?;
     let path = skill.strip_prefix(checkout).ok()?;
     let skill_md = slash_path(&path.join("SKILL.md"))?;
-    git(
-        home,
-        checkout,
-        &["ls-files", "--error-unmatch", "--", &skill_md],
-    )?;
     let revision = git(home, checkout, &["rev-parse", "--verify", "HEAD"])?;
     if revision.len() != 40 || !revision.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    let at_revision = format!("{revision}:{skill_md}");
+    if git(home, checkout, &["cat-file", "-t", &at_revision])? != "blob" {
         return None;
     }
     Some(SkillUpstream::GitHub {

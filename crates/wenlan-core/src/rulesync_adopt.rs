@@ -1057,6 +1057,8 @@ mod tests {
         );
         let revision = git(".agents", &["rev-parse", "HEAD"]);
         git(".agents/local/handmade", &["init", "-q"]);
+        put(home, ".agents/skills/staged/SKILL.md", "A local addition\n");
+        git(".agents", &["add", "--", "skills/staged"]);
 
         put(
             home,
@@ -1120,6 +1122,7 @@ mod tests {
             })
         );
         assert_eq!(sources["plain"], None);
+        assert_eq!(sources["staged"], None);
         let outcomes = adoption_plan(&adoption)
             .unwrap()
             .skills

@@ -157,11 +157,15 @@ fn personal_rules_dry_run_leaves_an_oversized_skill_unmanaged() {
     };
     assert!(reason.contains("32 MiB total import limit"));
     assert!(reason.contains("audio.mp3"));
-    assert_eq!(plan.files.len(), 1);
-    assert_eq!((plan.files[0].added, plan.files[0].removed), (0, 0));
-    assert!(plan.files[0]
-        .diff
-        .contains("Stays where it is, not managed."));
+    let changes = plan
+        .files
+        .iter()
+        .filter(|file| Path::new(&file.path).starts_with(relative))
+        .collect::<Vec<_>>();
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].path, relative);
+    assert_eq!((changes[0].added, changes[0].removed), (0, 0));
+    assert!(changes[0].diff.contains("Stays where it is, not managed."));
     personal_rules_cli(state.path())
         .args(["rules", "adopt", "--dry-run", "--format", "table"])
         .assert()
