@@ -994,3 +994,55 @@ fn two_people_using_one_invite_at_once_only_one_wins() {
         );
     }
 }
+
+#[test]
+fn the_owners_list_says_how_each_member_signs_in_without_the_whole_email() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(TEAM_FILE);
+
+    // A key and nothing else: nothing to say.
+    let (keyed, _) = add_member(&path, "Ben", &[]).unwrap();
+    assert_eq!(keyed.to_wire().sign_in, None);
+
+    // An open invite.
+    let (invited_member, _) = invited(&path, Some("farah@studio.example"));
+    let open = invited_member.to_wire().sign_in.unwrap();
+    assert!(open.invited);
+    assert!(open.providers.is_empty() && open.waiting_email.is_none());
+
+    // An account waiting for the owner: its email is masked.
+    let (eli, token) = invited(&path, Some("eli@studio.example"));
+    let outcome = redeem(
+        &path,
+        &token,
+        "s9",
+        "eli@studio.example",
+        EmailTrust::Untrusted,
+    );
+    assert!(matches!(outcome, InviteOutcome::PendingApproval(_)));
+    let waiting = member_by_id(&path, &eli.id)
+        .unwrap()
+        .unwrap()
+        .to_wire()
+        .sign_in
+        .unwrap();
+    assert_eq!(
+        waiting.waiting_email.as_deref(),
+        Some("e***@studio.example")
+    );
+    assert!(!waiting.invited);
+    let wire = serde_json::to_string(&waiting).unwrap();
+    assert!(!wire.contains("eli@"));
+
+    // Linked: the provider, and the member's own view has the email but no
+    // subject id.
+    let approved = approve_pending(&path, &eli.id).unwrap();
+    let linked = approved.to_wire().sign_in.unwrap();
+    assert_eq!(linked.providers, vec!["google".to_string()]);
+    assert!(!linked.invited && linked.waiting_email.is_none());
+    let me = approved.me(&[]);
+    assert_eq!(me.accounts.len(), 1);
+    assert_eq!(me.accounts[0].provider, "google");
+    assert_eq!(me.accounts[0].email.as_deref(), Some("eli@studio.example"));
+    assert!(!serde_json::to_string(&me).unwrap().contains("s9"));
+}

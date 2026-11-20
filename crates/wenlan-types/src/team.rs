@@ -77,6 +77,27 @@ pub struct TeamMember {
     pub removed_at: Option<String>,
     #[serde(default, skip_serializing_if = "TeamRole::is_member")]
     pub role: TeamRole,
+    /// How they sign in, for the owner's list. Left out when all they have
+    /// is a key (and by an older server).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sign_in: Option<TeamMemberSignIn>,
+}
+
+/// How a member signs in, as the owner sees it. Never a subject id and
+/// never a whole email address.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamMemberSignIn {
+    /// Providers (`google`, `github`) with an account linked to them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub providers: Vec<String>,
+    /// An invite is open and nobody has used it yet.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub invited: bool,
+    /// An account used the invite with an email its provider does not vouch
+    /// for and waits for the owner to let it in: the email, already masked
+    /// by the server (`a***@example.com`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waiting_email: Option<String>,
 }
 
 /// `GET /api/team`: the member list and the Spaces this server hosts.
@@ -107,6 +128,11 @@ pub struct TeamStatus {
     /// from here; this computer hosts nothing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remote: Option<String>,
+    /// Whether this server signs people in with Google or GitHub (a
+    /// provider is set up and its address is `https://`). Left out by an
+    /// older server, which has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sign_in: Option<bool>,
 }
 
 /// `GET /api/team/firewall` on Windows: whether other computers can get
@@ -268,6 +294,35 @@ pub struct TeamPerson {
     pub owner: bool,
 }
 
+/// What a request to `GET /team/v1/me` was signed in with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TeamSignedInWith {
+    /// A browser's session cookie, from signing in with an account.
+    Browser,
+    /// The member's key, as an invite link hands it over.
+    Key,
+}
+
+/// A Google or GitHub account linked to a member, as they see it: the
+/// provider and the email it last showed. Never the account's id.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamLinkedAccount {
+    pub provider: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+}
+
+/// `GET /auth/providers`, asked before anyone has signed in: the providers
+/// sign-in offers (empty when it is off) and the team's name, which the
+/// invite page already shows to anyone.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamProviders {
+    pub providers: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team: Option<String>,
+}
+
 /// `GET /team/v1/me`: who a key belongs to and what they can use.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TeamMe {
@@ -279,6 +334,13 @@ pub struct TeamMe {
     pub team: Option<TeamInfo>,
     #[serde(default, skip_serializing_if = "TeamRole::is_member")]
     pub role: TeamRole,
+    /// How this request signed in. Left out by an older server.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signed_in_with: Option<TeamSignedInWith>,
+    /// Accounts linked to the member. Left out when there are none (and by
+    /// an older server).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub accounts: Vec<TeamLinkedAccount>,
 }
 
 /// `GET /team/v1/spaces/{space}/files`: every file of the Space's shared
@@ -464,5 +526,35 @@ mod tests {
         );
         assert_eq!(split_join_code("https://wenlan.example.com"), None);
         assert_eq!(split_join_code("https://x#wlt_short"), None);
+    }
+
+    #[test]
+    fn sign_in_fields_are_optional_for_older_servers_and_never_hold_an_id() {
+        // An older server's member and `me` answers have none of the new fields.
+        let member: TeamMember = serde_json::from_str(
+            r#"{"id":"m","name":"Amy","spaces":[],"added_at":"2026-11-01T00:00:00Z"}"#,
+        )
+        .unwrap();
+        assert_eq!(member.sign_in, None);
+        let me: TeamMe =
+            serde_json::from_str(r#"{"member_id":"m","name":"Amy","spaces":[]}"#).unwrap();
+        assert_eq!((me.signed_in_with, me.accounts.len()), (None, 0));
+        let status: TeamStatus = serde_json::from_str(r#"{"members":[],"spaces":[]}"#).unwrap();
+        assert_eq!(status.sign_in, None);
+        // And a member with nothing to say sends nothing new.
+        let text = serde_json::to_string(&member).unwrap();
+        assert!(!text.contains("sign_in"));
+        let waiting = TeamMemberSignIn {
+            waiting_email: Some("e***@studio.io".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            serde_json::to_string(&waiting).unwrap(),
+            r#"{"waiting_email":"e***@studio.io"}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&TeamSignedInWith::Browser).unwrap(),
+            r#""browser""#
+        );
     }
 }

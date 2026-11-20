@@ -552,6 +552,12 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     "/api/team/members/{id}/key", "/api/team/spaces", "/api/team/join",
     "/api/team/start", "/api/team/stop", "/api/team/membership",
     "/api/team/firewall",
+    // Sign-in invites and what the owner does about a member's sign-in:
+    // a link shown once, letting in an account that waits, and ending every
+    // credential of a member whose account was taken over. Names and
+    // masked emails only. No page text.
+    "/api/team/invites", "/api/team/members/{id}/invite",
+    "/api/team/members/{id}/approve", "/api/team/members/{id}/compromised",
     // Setting up a daily update on GitHub: which settings the repository
     // has, as booleans, and the last run's links. A token goes to GitHub
     // and is never returned.

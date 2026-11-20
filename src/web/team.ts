@@ -100,6 +100,13 @@ export interface TeamMeSpace {
   access: "read" | "write" | string;
 }
 
+export interface TeamLinkedAccount {
+  /** "google" or "github". */
+  provider: string;
+  /** The email the provider last showed; never an account id. */
+  email?: string | null;
+}
+
 export interface TeamMe {
   member_id: string;
   name: string;
@@ -108,28 +115,148 @@ export interface TeamMe {
   /** The people this member shares a Space with, to name who changed a
    *  page: id and name only. Left out by an older server. */
   people?: { id: string; name: string; owner?: boolean }[];
+  /** How this request signed in: a browser session or the member's key.
+   *  Left out by an older server. */
+  signed_in_with?: "browser" | "key";
+  /** Accounts linked to the member. Left out when there are none. */
+  accounts?: TeamLinkedAccount[];
 }
 
 let meCache: Promise<TeamMe | null> | null = null;
+let credential: "browser" | "key" | null = null;
 
-/** Who the stored key belongs to, and their Spaces; null for no or a dead key. */
-export function teamMe(): Promise<TeamMe | null> {
-  if (meCache) return meCache;
+async function readMe(init: RequestInit): Promise<TeamMe | null> {
+  try {
+    const response = await fetch("/team/v1/me", { ...init, cache: "no-store" });
+    return response.ok ? ((await response.json()) as TeamMe) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Takes the key out of this browser's storage, without leaving the page. */
+function dropTeamKey(): void {
+  try {
+    window.localStorage.removeItem(TEAM_KEY_STORAGE);
+  } catch {
+    // Storage blocked: nothing was kept to drop.
+  }
+}
+
+async function resolveMe(): Promise<TeamMe | null> {
+  // The browser session comes first: a 401 only means it is not signed in.
+  const byCookie = await readMe({ credentials: "same-origin" });
+  if (byCookie) {
+    credential = "browser";
+    // The old key goes only now, when the session is known to work.
+    if (readTeamKey()) dropTeamKey();
+    return { ...byCookie, signed_in_with: "browser" };
+  }
   const key = readTeamKey();
-  if (!key) return Promise.resolve(null);
-  meCache = fetch("/team/v1/me", {
-    headers: { Authorization: `Bearer ${key}` },
-    credentials: "omit",
-    cache: "no-store",
-  })
-    .then(async (response) => (response.ok ? ((await response.json()) as TeamMe) : null))
-    .catch(() => null);
+  if (!key) return null;
+  const byKey = await readMe({ headers: { Authorization: `Bearer ${key}` }, credentials: "omit" });
+  if (byKey) credential = "key";
+  return byKey ? { ...byKey, signed_in_with: "key" } : null;
+}
+
+/** Who this browser is: by its session cookie, else by the stored key. Null
+ *  when it is signed in neither way (a 401), or the key is dead. */
+export function teamMe(): Promise<TeamMe | null> {
+  if (!meCache) meCache = resolveMe();
   return meCache;
+}
+
+/** How the calls to the gate sign in, once `teamMe` knows. */
+export function teamCredential(): "browser" | "key" | null {
+  return credential;
+}
+
+/** Forgets who this browser is: after signing out, or a session that ended. */
+export function resetTeamMe(): void {
+  meCache = null;
+  credential = null;
 }
 
 /** For tests only. */
 export function resetTeamMeForTests(): void {
-  meCache = null;
+  resetTeamMe();
+  providersCache = null;
+}
+
+async function endSessions(path: string): Promise<void> {
+  try {
+    await fetch(path, { method: "POST", credentials: "same-origin", cache: "no-store" });
+  } catch {
+    // Offline: the cookie stays, and the reload below shows the truth.
+  }
+  resetTeamMe();
+  window.location.assign("/app");
+}
+
+/** Ends this browser's session, then reloads `/app`. */
+export function signOutBrowser(): Promise<void> {
+  return endSessions("/auth/logout");
+}
+
+/** Ends every browser session of this member (AI tool keys keep working),
+ *  then reloads `/app`. */
+export function signOutEverywhere(): Promise<void> {
+  return endSessions("/auth/logout-all");
+}
+
+export interface TeamProviders {
+  providers: string[];
+  team: string | null;
+}
+
+let providersCache: Promise<TeamProviders> | null = null;
+
+/** Which providers the server signs people in with, and the team's name;
+ *  none when sign-in is off or the server is older than this. */
+export function teamProviders(): Promise<TeamProviders> {
+  if (providersCache) return providersCache;
+  providersCache = (async () => {
+    try {
+      const response = await fetch("/auth/providers", { credentials: "omit", cache: "no-store" });
+      if (!response.ok) return { providers: [], team: null };
+      const body = (await response.json()) as { providers?: unknown; team?: unknown };
+      const providers = Array.isArray(body.providers)
+        ? body.providers.filter((name): name is string => name === "google" || name === "github")
+        : [];
+      return { providers, team: typeof body.team === "string" && body.team ? body.team : null };
+    } catch {
+      return { providers: [], team: null };
+    }
+  })();
+  return providersCache;
+}
+
+/**
+ * Starts adding a Google or GitHub account to a member who joined with a
+ * key. The server answers with the provider's address; the browser goes
+ * there, the provider sends it back to the server's callback, and that makes
+ * a session cookie and lands on `/app`. The next load of `/app` finds the
+ * cookie working and only then drops the key (see `resolveMe`).
+ * Resolves false when the server would not start it.
+ */
+export async function linkProvider(provider: string): Promise<boolean> {
+  const key = readTeamKey();
+  if (!key) return false;
+  try {
+    const response = await fetch(`/auth/link/${encodeURIComponent(provider)}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}` },
+      credentials: "same-origin",
+      cache: "no-store",
+    });
+    if (!response.ok) return false;
+    const answer = (await response.json()) as { url?: unknown };
+    if (typeof answer.url !== "string" || !answer.url) return false;
+    window.location.assign(answer.url);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** The member's access in each Space, by Space name. */

@@ -11,7 +11,11 @@ import {
   listPendingRevisions,
   stopSharingSpace,
   teamAddMember,
+  teamApproveMember,
   teamForgetMembership,
+  teamInvite,
+  teamMemberCompromised,
+  teamNewInviteLink,
   teamNewMemberKey,
   teamRemoveMember,
   teamRename,
@@ -24,7 +28,7 @@ import { confirmAction } from "../../../lib/confirmAction";
 import { SpaceRecentChanges } from "../space-detail/SpaceRecentChanges";
 import { SHARES_KEY, sharedWriter, teamKeyOf, teamLabel, useShares } from "../sharing/sharing";
 import { TEAM_KEY, activeMembers, prefillTeamUrl, rememberTeamUrl, sameName, useTeamStatus } from "../sharing/team";
-import { IssuedCode, MemberMenu, codeOf, errorText } from "../sharing/TeamMembers";
+import { IssuedCode, MemberMenu, codeOf, errorText, memberTag, usesSignIn } from "../sharing/TeamMembers";
 import "../sharing/sharing.css";
 import "../space-detail/space-brief.css";
 import "../space-detail/space-recent-changes.css";
@@ -130,6 +134,7 @@ export function TeamPeopleDialog({ group, inviteFirst = false, onClose }: {
       members={members}
       owner={group.owner}
       inviteFirst={inviteFirst}
+      signIn={teamStatus?.sign_in === true}
       url={group.hosted ? prefillTeamUrl(teamStatus?.listening) || teamStatus?.url || "" : teamStatus?.url ?? ""}
       run={run}
       error={error}
@@ -304,12 +309,14 @@ function initialOf(name: string): string {
 /** Above this many people the box offers a search field. */
 const SEARCH_FROM = 8;
 
-function PeopleBox({ teamName, people, members, owner, inviteFirst, url, run, error, onClose }: {
+function PeopleBox({ teamName, people, members, owner, inviteFirst, signIn, url, run, error, onClose }: {
   readonly teamName: string;
   readonly people: readonly Person[];
   readonly members: readonly TeamMember[];
   readonly owner: boolean;
   readonly inviteFirst: boolean;
+  /** The server signs people in with Google or GitHub. */
+  readonly signIn: boolean;
   readonly url: string;
   readonly run: Run;
   readonly error?: string | null;
@@ -318,7 +325,7 @@ function PeopleBox({ teamName, people, members, owner, inviteFirst, url, run, er
   const { t } = useTranslation();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [inviting, setInviting] = useState(inviteFirst);
-  const [issued, setIssued] = useState<{ name: string; code: string } | null>(null);
+  const [issued, setIssued] = useState<{ name: string; code: string; kind: "key" | "invite" } | null>(null);
   const [query, setQuery] = useState("");
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -326,15 +333,32 @@ function PeopleBox({ teamName, people, members, owner, inviteFirst, url, run, er
     return () => dialog?.close();
   }, []);
   const newLink = (member: TeamMember) => run(async () => {
+    // Someone who signs in gets a new invite; someone with only a key, a new key.
+    if (usesSignIn(member)) {
+      const invite = await teamNewInviteLink(member.id);
+      setIssued({ name: member.name, code: invite.link, kind: "invite" });
+      return;
+    }
     const key = await teamNewMemberKey(member.id, url.trim() || undefined);
-    setIssued({ name: member.name, code: codeOf(key) });
+    setIssued({ name: member.name, code: codeOf(key), kind: "key" });
   });
+  const letIn = (member: TeamMember) => run(async () => { await teamApproveMember(member.id); });
+  const compromised = async (member: TeamMember) => {
+    const ok = await confirmAction(t("team.signIn.compromisedConfirm", { name: member.name }), { confirm: t("team.signIn.compromisedButton"), cancel: t("sharing.cancel") });
+    if (!ok) return;
+    await run(async () => {
+      const key = await teamMemberCompromised(member.id, url.trim() || undefined);
+      setIssued({ name: member.name, code: codeOf(key), kind: "key" });
+    });
+  };
   const remove = async (member: TeamMember) => {
     const ok = await confirmAction(t("team.removeConfirm", { name: member.name }), { confirm: t("team.menuRemoveFromTeam"), cancel: t("sharing.cancel") });
     if (ok) await run(async () => { await teamRemoveMember(member.id); });
   };
   const needle = query.trim().toLocaleLowerCase();
   const shown = needle ? people.filter((person) => person.name.toLocaleLowerCase().includes(needle)) : people;
+  // With sign-in on, inviting is a form of its own, in place of the list.
+  const formOnly = inviting && signIn;
 
   return (
     <dialog
@@ -343,57 +367,90 @@ function PeopleBox({ teamName, people, members, owner, inviteFirst, url, run, er
       aria-labelledby="team-people-title"
       onCancel={(event) => { event.preventDefault(); onClose(); }}
     >
-      <div className="team-people-head">
-        <h2 id="team-people-title">{t("team.page.peopleTitle", { team: teamName })}</h2>
-        {owner && !inviting && <button type="button" className="share-secondary team-page-action" onClick={() => { setInviting(true); setIssued(null); }}>{t("team.page.invite")}</button>}
-      </div>
-      {inviting && (
+      {formOnly ? (
         <InviteForm
           members={members}
+          teamName={teamName}
+          signIn
           initialUrl={url}
           onCancel={() => setInviting(false)}
           onIssued={(next) => { setInviting(false); setIssued(next); }}
           run={run}
         />
+      ) : (
+        <>
+          <div className="team-people-head">
+            <h2 id="team-people-title">{t("team.page.peopleTitle", { team: teamName })}</h2>
+            {owner && !inviting && <button type="button" className="share-secondary team-page-action" onClick={() => { setInviting(true); setIssued(null); }}>{t("team.page.invite")}</button>}
+          </div>
+          {inviting && (
+            <InviteForm
+              members={members}
+              teamName={teamName}
+              signIn={false}
+              initialUrl={url}
+              onCancel={() => setInviting(false)}
+              onIssued={(next) => { setInviting(false); setIssued(next); }}
+              run={run}
+            />
+          )}
+          {issued && <IssuedCode name={issued.name} code={issued.code} kind={issued.kind} onDone={() => setIssued(null)} />}
+          {people.length > SEARCH_FROM && (
+            <input className="share-input team-people-search" type="search" aria-label={t("team.page.peopleSearch")} placeholder={t("team.page.peopleSearch")} value={query} onChange={(event) => setQuery(event.target.value)} />
+          )}
+          <ul className="team-page-rows team-people-list">
+            {shown.map((person) => (
+              <li key={person.id}>
+                <span className="team-page-face" aria-hidden="true">{initialOf(person.name)}</span>
+                <span className="team-page-name team-people-name">{person.label}</span>
+                {owner && person.member && (() => {
+                  const member = person.member;
+                  return (
+                    <>
+                      <span className="team-people-tag" data-testid="team-member-tag">{memberTag(t, member)}</span>
+                      {member.sign_in?.waiting_email && (
+                        <button type="button" className="share-primary team-people-letin" aria-label={t("team.signIn.letInName", { name: member.name })} onClick={() => void letIn(member)}>{t("team.signIn.letIn")}</button>
+                      )}
+                      <MemberMenu member={member} onNewCode={() => void newLink(member)} onCompromised={() => void compromised(member)} onRemoveFromTeam={() => void remove(member)} />
+                    </>
+                  );
+                })()}
+              </li>
+            ))}
+          </ul>
+          {needle && shown.length === 0 && <p className="team-page-quiet">{t("team.page.peopleNone")}</p>}
+          {owner && members.length === 0 && !inviting && !issued && <p className="team-page-quiet">{t("team.page.noMembers")}</p>}
+        </>
       )}
-      {issued && <IssuedCode name={issued.name} code={issued.code} onDone={() => setIssued(null)} />}
-      {people.length > SEARCH_FROM && (
-        <input className="share-input team-people-search" type="search" aria-label={t("team.page.peopleSearch")} placeholder={t("team.page.peopleSearch")} value={query} onChange={(event) => setQuery(event.target.value)} />
-      )}
-      <ul className="team-page-rows team-people-list">
-        {shown.map((person) => (
-          <li key={person.id}>
-            <span className="team-page-face" aria-hidden="true">{initialOf(person.name)}</span>
-            <span className="team-page-name team-people-name">{person.label}</span>
-            {owner && person.member && (() => {
-              const member = person.member;
-              return <MemberMenu member={member} onNewCode={() => void newLink(member)} onRemoveFromTeam={() => void remove(member)} />;
-            })()}
-          </li>
-        ))}
-      </ul>
-      {needle && shown.length === 0 && <p className="team-page-quiet">{t("team.page.peopleNone")}</p>}
-      {owner && members.length === 0 && !inviting && !issued && <p className="team-page-quiet">{t("team.page.noMembers")}</p>}
       {error && <p className="share-error" role="alert">{error}</p>}
-      <div className="team-people-foot">
-        <button type="button" className="share-primary" onClick={onClose}>{t("sharing.done")}</button>
-      </div>
+      {!formOnly && (
+        <div className="team-people-foot">
+          <button type="button" className="share-primary" onClick={onClose}>{t("sharing.done")}</button>
+        </div>
+      )}
     </dialog>
   );
 }
 
-/** Invite one person: their name, then a link to copy. They get every
- *  Space open to everyone; a Space for some people is opened to them from
- *  that Space. Someone already on the team gets a new link. */
-function InviteForm({ members, initialUrl, onCancel, onIssued, run }: {
+/** Invite one person. Where the server signs people in, they join with
+ *  their own Google or GitHub account (an invite, with an email only that
+ *  account may use) or with the link alone (a key). Where it does not, only
+ *  their name is asked and the link is their key. They get every Space open
+ *  to everyone; a Space for some people is opened to them from that Space.
+ *  Someone already on the team gets a new link. */
+function InviteForm({ members, teamName, signIn, initialUrl, onCancel, onIssued, run }: {
   readonly members: readonly TeamMember[];
+  readonly teamName: string;
+  readonly signIn: boolean;
   readonly initialUrl: string;
   readonly onCancel: () => void;
-  readonly onIssued: (issued: { name: string; code: string }) => void;
+  readonly onIssued: (issued: { name: string; code: string; kind: "key" | "invite" }) => void;
   readonly run: Run;
 }) {
   const { t } = useTranslation();
   const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [via, setVia] = useState<"account" | "link">("account");
   const [address, setAddress] = useState(initialUrl);
   const [pending, setPending] = useState(false);
 
@@ -403,30 +460,72 @@ function InviteForm({ members, initialUrl, onCancel, onIssued, run }: {
     if (!typed || pending) return;
     setPending(true);
     const url = address.trim();
+    const existing = members.find((member) => sameName(member.name, typed));
     await run(async () => {
-      const existing = members.find((member) => sameName(member.name, typed));
+      if (signIn && via === "account") {
+        const invite = existing ? await teamNewInviteLink(existing.id) : await teamInvite(typed, email.trim() || undefined);
+        onIssued({ name: invite.member.name, code: invite.link, kind: "invite" });
+        return;
+      }
       const key = existing
         ? await teamNewMemberKey(existing.id, url || undefined)
         : await teamAddMember(typed, [], url || undefined);
       if (url) rememberTeamUrl(url);
-      onIssued({ name: key.member.name, code: codeOf(key) });
+      onIssued({ name: key.member.name, code: codeOf(key), kind: "key" });
     });
     setPending(false);
   };
 
+  if (!signIn) {
+    return (
+      <form className="team-invite" onSubmit={(event) => void submit(event)}>
+        <div className="team-invite-row">
+          <input className="share-input" aria-label={t("team.name")} placeholder={t("team.namePlaceholder")} value={name} onChange={(event) => setName(event.target.value)} disabled={pending} autoFocus />
+          <button type="submit" className="share-primary" disabled={!name.trim() || pending}>{t("team.page.createLink")}</button>
+          <button type="button" className="share-link" onClick={onCancel}>{t("sharing.cancel")}</button>
+        </div>
+        {!initialUrl && (
+          <label className="share-field">
+            <span className="share-label">{t("team.urlLabel")}</span>
+            <input className="share-input" value={address} onChange={(event) => setAddress(event.target.value)} placeholder={t("team.urlPlaceholder")} spellCheck={false} />
+          </label>
+        )}
+      </form>
+    );
+  }
   return (
-    <form className="team-invite" onSubmit={(event) => void submit(event)}>
-      <div className="team-invite-row">
-        <input className="share-input" aria-label={t("team.name")} placeholder={t("team.namePlaceholder")} value={name} onChange={(event) => setName(event.target.value)} disabled={pending} autoFocus />
-        <button type="submit" className="share-primary" disabled={!name.trim() || pending}>{t("team.page.createLink")}</button>
-        <button type="button" className="share-link" onClick={onCancel}>{t("sharing.cancel")}</button>
+    <form className="team-invite team-invite-full" onSubmit={(event) => void submit(event)}>
+      <h2 id="team-people-title">{t("team.signIn.formTitle", { team: teamName })}</h2>
+      <label className="share-field">
+        <span className="share-label">{t("team.name")}</span>
+        <input className="share-input" value={name} onChange={(event) => setName(event.target.value)} disabled={pending} autoFocus />
+      </label>
+      <div className="share-field">
+        <label className="share-label" htmlFor="team-invite-email">{t("team.signIn.emailLabel")}</label>
+        <input id="team-invite-email" className="share-input" type="email" value={email} onChange={(event) => setEmail(event.target.value)} disabled={pending || via === "link"} spellCheck={false} aria-describedby="team-invite-email-help" />
+        <p id="team-invite-email-help" className="share-hint">{t("team.signIn.emailHelp")}</p>
       </div>
-      {!initialUrl && (
-        <label className="share-field">
-          <span className="share-label">{t("team.urlLabel")}</span>
-          <input className="share-input" value={address} onChange={(event) => setAddress(event.target.value)} placeholder={t("team.urlPlaceholder")} spellCheck={false} />
+      <fieldset className="team-invite-via">
+        <legend className="share-label">{t("team.signIn.joinWith")}</legend>
+        <label className="team-invite-choice">
+          <input type="radio" name="team-invite-via" checked={via === "account"} onChange={() => setVia("account")} disabled={pending} />
+          <span className="team-invite-choice-text">
+            <span>{t("team.signIn.viaAccount")}</span>
+            <span className="share-hint">{t("team.signIn.viaAccountHint")}</span>
+          </span>
         </label>
-      )}
+        <label className="team-invite-choice">
+          <input type="radio" name="team-invite-via" checked={via === "link"} onChange={() => setVia("link")} disabled={pending} />
+          <span className="team-invite-choice-text">
+            <span>{t("team.signIn.viaLink")}</span>
+            <span className="share-hint">{t("team.signIn.viaLinkHint")}</span>
+          </span>
+        </label>
+      </fieldset>
+      <div className="team-invite-actions">
+        <button type="button" className="share-secondary" onClick={onCancel}>{t("sharing.cancel")}</button>
+        <button type="submit" className="share-primary" disabled={!name.trim() || pending}>{t("team.page.createLink")}</button>
+      </div>
     </form>
   );
 }

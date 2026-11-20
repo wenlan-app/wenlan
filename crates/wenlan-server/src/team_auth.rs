@@ -824,6 +824,48 @@ pub(super) async fn offered(state: &TeamState) -> Vec<String> {
         .collect()
 }
 
+/// Whether sign-in is set up for a team whose address is `url`: a provider
+/// is configured and the address is `https://`. What `/api/team` tells the
+/// owner's app, so its invite form offers the choice only when it works.
+pub(super) fn configured(team_path: &Path, url: Option<&str>) -> bool {
+    configured_with(team_path, url, super::env_value)
+}
+
+fn configured_with(
+    team_path: &Path,
+    url: Option<&str>,
+    env: impl Fn(&str) -> Option<String>,
+) -> bool {
+    let file = team_path.with_file_name(AUTH_FILE);
+    !load_providers(&file, env).is_empty()
+        && url.is_some_and(|url| url.trim().to_ascii_lowercase().starts_with("https://"))
+}
+
+/// `GET /auth/providers`: `{"providers":["google","github"],"team":"Acme"}`;
+/// no providers when sign-in is off (not a 404, so a page can tell "off"
+/// from "gone"). It is rate limited like the rest of sign-in, and says
+/// nothing the invite page does not already show anyone.
+pub(super) async fn providers(State(state): State<TeamState>, req: Request) -> Response {
+    let peer = req
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|info| info.0.ip());
+    if !state.auth.allow(peer) {
+        let mut response = text(StatusCode::TOO_MANY_REQUESTS, "Too many requests.");
+        response
+            .headers_mut()
+            .insert(header::RETRY_AFTER, HeaderValue::from_static("5"));
+        return response;
+    }
+    let providers = offered(&state).await;
+    let path = state.team_path.clone();
+    let team = blocking(move || Ok(team::read_team(&path)?.name))
+        .await
+        .ok()
+        .flatten();
+    Json(wenlan_types::team::TeamProviders { providers, team }).into_response()
+}
+
 /// Logs once, at start, whether sign-in is on and, if not, why.
 pub(super) async fn announce(state: &TeamState) {
     if state.auth.providers.is_empty() {

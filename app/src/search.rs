@@ -4065,6 +4065,77 @@ pub async fn team_new_member_key(
     client.post_empty(&path).await
 }
 
+/// Invites a person to sign in with their own Google or GitHub account; the
+/// answer holds their one-time invite link.
+#[tauri::command]
+pub async fn team_invite(
+    state: tauri::State<'_, State>,
+    name: String,
+    email: Option<String>,
+    spaces: Vec<team::TeamSpaceAccess>,
+) -> Result<team::TeamInviteLink, String> {
+    let client = daemon_client(&state).await;
+    client
+        .post_json(
+            "/api/team/invites",
+            &team::TeamInviteRequest {
+                name,
+                email,
+                spaces,
+            },
+        )
+        .await
+}
+
+/// A new sign-in invite link for a person; the old one stops working.
+#[tauri::command]
+pub async fn team_new_invite_link(
+    state: tauri::State<'_, State>,
+    id: String,
+) -> Result<team::TeamInviteLink, String> {
+    let client = daemon_client(&state).await;
+    client
+        .post_empty(&format!(
+            "/api/team/members/{}/invite",
+            percent_encode_path_segment(&id)
+        ))
+        .await
+}
+
+/// Lets in the account waiting for the owner on a person's invite.
+#[tauri::command]
+pub async fn team_approve_member(
+    state: tauri::State<'_, State>,
+    id: String,
+) -> Result<team::TeamMember, String> {
+    let client = daemon_client(&state).await;
+    client
+        .post_empty(&format!(
+            "/api/team/members/{}/approve",
+            percent_encode_path_segment(&id)
+        ))
+        .await
+}
+
+/// A person's account was taken over: every sign-in, AI tool key and linked
+/// account ends, and a new key is made (in the answer, shown once).
+#[tauri::command]
+pub async fn team_member_compromised(
+    state: tauri::State<'_, State>,
+    id: String,
+    url: Option<String>,
+) -> Result<team::TeamMemberKey, String> {
+    let client = daemon_client(&state).await;
+    let mut path = format!(
+        "/api/team/members/{}/compromised",
+        percent_encode_path_segment(&id)
+    );
+    if let Some(url) = url.filter(|u| !u.trim().is_empty()) {
+        path.push_str(&format!("?url={}", percent_encode_path_segment(&url)));
+    }
+    client.post_empty(&path).await
+}
+
 /// Hosts a local Space for the team.
 #[tauri::command]
 pub async fn team_host_space(

@@ -2,7 +2,7 @@
 // Who can use a Space of the team this computer hosts (one box, opened from
 // the Space and from its row on the team page), and the pieces the team page
 // shares with it: a person's menu, the access choice, an invite link.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
@@ -31,16 +31,50 @@ function accessOf(member: TeamMember, space: string): TeamAccess {
   return member.spaces.find((entry) => entry.space === space)?.access ?? "write";
 }
 
-export function MemberMenu({ member, onNewCode, onRemoveFromSpace, onRemoveFromTeam }: {
+/** How a person signs in, as the small tag after their name: the account
+ *  linked, an open invite, an account waiting for the owner (its email
+ *  masked by the server), or only an invite link's key. */
+export function memberTag(t: TFunction, member: TeamMember): string {
+  const signIn = member.sign_in;
+  if (signIn?.waiting_email) return t("team.signIn.tagWaiting", { email: signIn.waiting_email.replace("***", "•••") });
+  const provider = signIn?.providers?.[0];
+  if (provider === "google") return t("team.signIn.tagGoogle");
+  if (provider === "github") return t("team.signIn.tagGitHub");
+  if (signIn?.invited) return t("team.signIn.tagInvited");
+  return t("team.signIn.tagLink");
+}
+
+/** Whether the person signs in through the server rather than by a key. */
+export function usesSignIn(member: TeamMember): boolean {
+  const signIn = member.sign_in;
+  return Boolean(signIn && ((signIn.providers?.length ?? 0) > 0 || signIn.invited || signIn.waiting_email));
+}
+
+/** The "⋯" menu of a person. It is placed in the viewport (`fixed`) from the
+ *  button, so the box it opens in, which scrolls, never clips it. */
+export function MemberMenu({ member, onNewCode, onCompromised, onRemoveFromSpace, onRemoveFromTeam }: {
   readonly member: TeamMember;
   readonly onNewCode: () => void;
+  /** Their account was taken over: ends every sign-in and key. */
+  readonly onCompromised?: () => void;
   /** Absent outside one Space's box. */
   readonly onRemoveFromSpace?: () => void;
   readonly onRemoveFromTeam: () => void;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
+  const [place, setPlace] = useState<{ right: number; top?: number; bottom?: number } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  useLayoutEffect(() => {
+    if (!open || !buttonRef.current) return;
+    const rect = buttonRef.current.getBoundingClientRect();
+    const right = Math.max(8, window.innerWidth - rect.right);
+    // Below the button, or above it when the window ends too soon.
+    setPlace(rect.bottom + 240 > window.innerHeight
+      ? { right, bottom: window.innerHeight - rect.top + 4 }
+      : { right, top: rect.bottom + 4 });
+  }, [open]);
   useEffect(() => {
     if (!open) return;
     const away = (event: MouseEvent) => { if (!ref.current?.contains(event.target as Node)) setOpen(false); };
@@ -50,21 +84,35 @@ export function MemberMenu({ member, onNewCode, onRemoveFromSpace, onRemoveFromT
       event.stopPropagation();
       setOpen(false);
     };
+    const close = () => setOpen(false);
     document.addEventListener("mousedown", away);
     document.addEventListener("keydown", escape, true);
+    window.addEventListener("resize", close);
+    window.addEventListener("scroll", close, true);
     return () => {
       document.removeEventListener("mousedown", away);
       document.removeEventListener("keydown", escape, true);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", close, true);
     };
   }, [open]);
   const pick = (action: () => void) => () => { setOpen(false); action(); };
   return (
     <div className="team-menu" ref={ref}>
-      <button type="button" className="team-menu-button" aria-haspopup="menu" aria-expanded={open} aria-label={t("team.moreFor", { name: member.name })} onClick={() => setOpen(!open)}>⋯</button>
+      <button type="button" ref={buttonRef} className="team-menu-button" aria-haspopup="menu" aria-expanded={open} aria-label={t("team.moreFor", { name: member.name })} onClick={() => setOpen(!open)}>⋯</button>
       {open && (
-        <ul className="team-menu-list" role="menu">
+        <ul className="team-menu-list" role="menu" style={place ?? { visibility: "hidden" }}>
           <li role="none"><button type="button" role="menuitem" onClick={pick(onNewCode)}>{t("team.page.newLink")}</button></li>
+          {onCompromised && (
+            <li role="none">
+              <button type="button" role="menuitem" className="team-menu-two-line" onClick={pick(onCompromised)}>
+                <span>{t("team.signIn.compromised")}</span>
+                <span className="team-menu-sub">{t("team.signIn.compromisedHint")}</span>
+              </button>
+            </li>
+          )}
           {onRemoveFromSpace && <li role="none"><button type="button" role="menuitem" onClick={pick(onRemoveFromSpace)}>{t("team.menuRemoveFromSpace")}</button></li>}
+          <li role="separator" className="team-menu-separator" />
           <li role="none"><button type="button" role="menuitem" data-danger="true" onClick={pick(onRemoveFromTeam)}>{t("team.menuRemoveFromTeam")}</button></li>
         </ul>
       )}
@@ -108,7 +156,13 @@ export function teamAccessText(t: TFunction, space: string, status: TeamStatus |
 
 /** An invite link shown once, in the box it was made in. It is not printed:
  *  the button copies it, so no address or key is on screen. */
-export function IssuedCode({ name, code, onDone }: { readonly name: string; readonly code: string; readonly onDone: () => void }) {
+export function IssuedCode({ name, code, kind = "key", onDone }: {
+  readonly name: string;
+  readonly code: string;
+  /** "invite": a link to sign in with their own account, not a key. */
+  readonly kind?: "key" | "invite";
+  readonly onDone: () => void;
+}) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -127,8 +181,8 @@ export function IssuedCode({ name, code, onDone }: { readonly name: string; read
         <button type="button" className="share-primary" onClick={() => void copy()}>{t(copied ? "team.copied" : "team.page.copyLink")}</button>
       </div>
       <span className="share-hint">{t("team.page.linkPrivate")}</span>
-      <span className="share-hint">{t("team.page.linkGets", { name })}</span>
-      <span className="share-hint team-issued-tool-hint">{t("team.page.linkAiTool")}</span>
+      <span className="share-hint">{t(kind === "invite" ? "team.signIn.linkAccountGets" : "team.page.linkGets", { name })}</span>
+      {kind === "key" && <span className="share-hint team-issued-tool-hint">{t("team.page.linkAiTool")}</span>}
       {/* When the clipboard is refused, the link is shown to copy by hand. */}
       {failed && <input className="share-input team-code" readOnly value={code} aria-label={t("team.page.linkFor", { name })} onFocus={(event) => event.currentTarget.select()} />}
       <div className="team-issued-done"><button type="button" className="share-link" onClick={onDone}>{t("team.codeDone")}</button></div>

@@ -66,13 +66,42 @@ describe("team member controls", () => {
     expect(container.querySelectorAll("[contenteditable=true], input:not([readonly]), textarea:not([readonly])").length).toBeGreaterThan(0);
   });
 
-  it("with no key, /app shows one sentence and sends nothing", () => {
-    const fetch = vi.fn();
-    vi.stubGlobal("fetch", fetch);
+  /** A server whose sign-in is off (or older): no session, no providers. */
+  const signedOut = (providers: unknown = { providers: [] }) =>
+    vi.fn(async (url: string) => (url === "/auth/providers" ? new Response(JSON.stringify(providers)) : new Response("", { status: 401 })));
+
+  it("with no key and sign-in off, /app shows one sentence", async () => {
+    vi.stubGlobal("fetch", signedOut());
     render(<TeamMemberApp><p>inside</p></TeamMemberApp>);
-    expect(screen.getByTestId("team-web-message").textContent).toBe(i18n.t("teamWeb.openInvite"));
+    await waitFor(() => expect(screen.getByTestId("team-web-message").textContent).toBe(i18n.t("teamWeb.openInvite")));
     expect(screen.queryByText("inside")).toBeNull();
-    expect(fetch).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("team-web-signin")).toBeNull();
+  });
+
+  it("with no key and sign-in on, /app shows the sign-in page with a button for each provider", async () => {
+    vi.stubGlobal("fetch", signedOut({ providers: ["google", "github"], team: "Acme" }));
+    render(<TeamMemberApp><p>inside</p></TeamMemberApp>);
+    expect(await screen.findByRole("heading", { name: "Sign in to Acme" })).toBeInTheDocument();
+    expect(screen.getByText("Use the account you joined with.")).toBeInTheDocument();
+    expect(screen.getByText("New here? Open the invite link you were sent.")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Sign in with Google" })).toHaveAttribute("href", "/auth/start/google?purpose=signin");
+    expect(screen.getByRole("link", { name: "Sign in with GitHub" })).toHaveAttribute("href", "/auth/start/github?purpose=signin");
+    expect(screen.queryByText("inside")).toBeNull();
+    expect(screen.queryByTestId("team-web-message")).toBeNull();
+  });
+
+  it("offers only the providers that are on", async () => {
+    vi.stubGlobal("fetch", signedOut({ providers: ["github"], team: "Acme" }));
+    render(<TeamMemberApp><p>inside</p></TeamMemberApp>);
+    await screen.findByTestId("team-web-signin");
+    expect(screen.queryByRole("link", { name: "Sign in with Google" })).toBeNull();
+    expect(screen.getByRole("link", { name: "Sign in with GitHub" })).toBeInTheDocument();
+  });
+
+  it("a signed-in browser session opens the app without a key", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ member_id: "m", name: "Dana", spaces: [], signed_in_with: "browser" }))));
+    render(<TeamMemberApp><p>inside</p></TeamMemberApp>);
+    await screen.findByText("inside");
   });
 
   it("a refused key shows the expired sentence", async () => {
@@ -80,14 +109,21 @@ describe("team member controls", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 401 })));
     render(<TeamMemberApp><p>inside</p></TeamMemberApp>);
     await waitFor(() => expect(screen.getByTestId("team-web-message").textContent).toBe(i18n.t("teamWeb.expired")));
+    expect(screen.queryByTestId("team-web-signin")).toBeNull();
   });
 
   it("a live key opens the app", async () => {
     window.localStorage.setItem(TEAM_KEY_STORAGE, "live");
-    const fetch = vi.fn(async () => new Response(JSON.stringify({ member_id: "m", name: "Ari", spaces: [] })));
+    // The session is asked first and has nothing; then the key answers.
+    const fetch = vi.fn(async (_url: string, init: RequestInit) => (
+      (init.headers as Record<string, string> | undefined)?.Authorization === "Bearer live"
+        ? new Response(JSON.stringify({ member_id: "m", name: "Ari", spaces: [] }))
+        : new Response("", { status: 401 })
+    ));
     vi.stubGlobal("fetch", fetch);
     render(<TeamMemberApp><p>inside</p></TeamMemberApp>);
     await screen.findByText("inside");
     expect(fetch).toHaveBeenCalledWith("/team/v1/me", expect.objectContaining({ headers: { Authorization: "Bearer live" } }));
+    expect(window.localStorage.getItem(TEAM_KEY_STORAGE)).toBe("live");
   });
 });

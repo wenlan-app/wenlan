@@ -5,9 +5,15 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { i18n } from "../../../i18n";
 import { listShares, teamStatus, type Page, type SharedStatus } from "../../../lib/tauri";
-import { ScopeProvider, useScope, useScopeState } from "./scope";
+import { ScopeProvider, useScope, useScopeState, useShownScope } from "./scope";
+import { isWebBuild } from "../../../web/runtime";
 import { ScopeSwitcher } from "./ScopeSwitcher";
 import { scopedFolders } from "../pages/PageInventoryPanel";
+
+vi.mock("../../../web/runtime", async () => {
+  const actual = await vi.importActual<typeof import("../../../web/runtime")>("../../../web/runtime");
+  return { ...actual, isWebBuild: vi.fn(() => false) };
+});
 
 vi.mock("../../../lib/tauri", async () => {
   const actual = await vi.importActual<typeof import("../../../lib/tauri")>("../../../lib/tauri");
@@ -120,5 +126,26 @@ describe("folders on one side", () => {
     expect(teamSide("Acme/Product")).toBe(true);
     expect(teamSide("Work")).toBe(false);
     expect(teamSide("Empty")).toBe(false);
+  });
+});
+
+describe("the window's scope", () => {
+  function ShownProbe() {
+    const scope = useShownScope();
+    return <p data-testid="shown">{["Wedding", "Product"].map((s) => `${s}:${scope.inScope(s)}`).join(" ")}</p>;
+  }
+
+  it("shows a joined team's Spaces in a browser, which has no switch", async () => {
+    vi.mocked(isWebBuild).mockReturnValue(true);
+    vi.mocked(listShares).mockResolvedValue([share("Product", { host: "https://team.example.com", team: acme })]);
+    wrap(<ShownProbe />);
+    await waitFor(() => expect(screen.getByTestId("shown")).toHaveTextContent("Wedding:true Product:true"));
+  });
+
+  it("keeps the switch's Private side on the desktop", async () => {
+    vi.mocked(isWebBuild).mockReturnValue(false);
+    vi.mocked(listShares).mockResolvedValue([share("Product", { host: "https://team.example.com", team: acme })]);
+    wrap(<ShownProbe />);
+    await waitFor(() => expect(screen.getByTestId("shown")).toHaveTextContent("Wedding:true Product:false"));
   });
 });

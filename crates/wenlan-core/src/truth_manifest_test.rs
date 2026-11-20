@@ -352,9 +352,12 @@ fn manifest_counts_match_the_spec() {
     // Then 388 after POST `/api/person/browser-pass` (a one-time pass for
     // `wenlan open`; never the person key, no page text).
     // Personal adoption, settings, checkout and skill routes, and project review/opt-in.
+    // Then 411 after the four hosted team sign-in routes (POST
+    // `/api/team/invites`, `/api/team/members/{id}/invite`, `/approve` and
+    // `/compromised`): invite and account changes, no page text.
     assert_eq!(
         HTTP_READERS.len(),
-        407,
+        411,
         "registered (method, path, handler) triples"
     );
     // 61 tools with the read-only `list_skills` and `search_skills`; 63
@@ -367,7 +370,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        419,
+        423,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -375,7 +378,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        402,
+        406,
         "main builder entries"
     );
     assert_eq!(
@@ -582,7 +585,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::None)
             .count(),
-        397 // 19 personal setup, checkout, skill and rule-proposal routes plus the existing 378.
+        401 // 19 personal setup, checkout, skill and rule-proposal routes plus the existing 378, and the four team sign-in routes, all with no page markers.
     );
 }
 
