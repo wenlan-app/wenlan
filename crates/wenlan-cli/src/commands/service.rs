@@ -221,28 +221,6 @@ async fn wait_for_registered_stopped() -> Result<()> {
     }
 }
 
-/// Unload the loaded job after [`verify_registered_stopped`] proved it is
-/// inactive and bound to the selected data root, then confirm it is gone.
-#[cfg(target_os = "macos")]
-fn bootout_verified_launchd_job() -> Result<()> {
-    if loaded_launchd_job()?.is_none() {
-        return Ok(());
-    }
-    verify_registered_stopped()?;
-    let target = format!("gui/{}/{}", current_user_id()?, SERVICE_LABEL);
-    let output = std::process::Command::new("launchctl")
-        .args(["bootout", &target])
-        .output()
-        .context("spawn launchctl bootout")?;
-    if !output.status.success() && loaded_launchd_job()?.is_some() {
-        anyhow::bail!(
-            "launchctl bootout failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
-    require_unloaded_launchd_job()
-}
-
 #[cfg(target_os = "macos")]
 fn require_unloaded_launchd_job() -> Result<()> {
     if loaded_launchd_job()?.is_some() {
@@ -709,6 +687,12 @@ pub async fn install() -> Result<()> {
     #[cfg(not(target_os = "macos"))]
     let m = manager()?;
 
+    // A loaded macOS job blocks the replacement below, and the CLI never
+    // unloads one itself. Refuse before the shutdown, not after it: refusing
+    // later would leave the daemon this command stopped down for good.
+    #[cfg(target_os = "macos")]
+    require_unloaded_launchd_job()?;
+
     // Gracefully stop any daemon that is currently answering, and wait for it
     // to fully exit, before reinstalling. Swapping the binary under a live
     // process would otherwise leave the OLD daemon running until something
@@ -728,11 +712,8 @@ pub async fn install() -> Result<()> {
     if is_installed() {
         wait_for_registered_stopped().await?;
     }
-    // The loaded job was just proven stopped and bound to the selected data
-    // root, so replacing it is ours to do: unload it rather than refuse and
-    // leave the daemon we stopped above down.
     #[cfg(target_os = "macos")]
-    bootout_verified_launchd_job()?;
+    require_unloaded_launchd_job()?;
 
     // Apply RUST_LOG=info to every platform. launchd consumes
     // `EnvironmentVariables`, systemd-user consumes `Environment=`. winsw +
