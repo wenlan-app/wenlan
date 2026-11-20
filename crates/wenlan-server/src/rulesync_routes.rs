@@ -386,6 +386,10 @@ struct Delivery<Content = Vec<u8>> {
     kind: Kind,
     delivered: Snapshot<Content>,
     observed: Option<Snapshot<Content>>,
+    // A person's decision used this observed version. A newer edit needs a
+    // fresh decision while delivery of the reviewed version is outstanding.
+    #[serde(default)]
+    reviewed: bool,
     at: i64,
 }
 
@@ -1053,7 +1057,7 @@ impl Setup {
             let (Ok(before), Ok(after)) = (text(previous), text(&current)) else {
                 continue;
             };
-            if previous != &current {
+            if previous != &current && !record.reviewed {
                 let Ok(changes) = rulesync_layers::edits(before, after) else {
                     continue;
                 };
@@ -1748,7 +1752,7 @@ impl Setup {
             if matches!(request.action, PullbackAction::AllTools) {
                 let delivery = manifest
                     .delivered
-                    .get(&scope.path)
+                    .get_mut(&scope.path)
                     .context("file is no longer managed")?;
                 let expected = delivery.observed.as_ref().unwrap_or(&delivery.delivered);
                 ensure!(
@@ -1757,6 +1761,8 @@ impl Setup {
                 );
                 manifest.master.shared =
                     promote_changes(&manifest.master.shared, &scope.before, &scope.after)?;
+                delivery.observed = Some(expected.clone());
+                delivery.reviewed = true;
             }
             self.save(&manifest)?;
             return sync(&root, &mut manifest);
@@ -1779,36 +1785,49 @@ impl Setup {
             (None, 1, _) => card.paths.first().map(PathBuf::as_path),
             (None, _, _) => bail!("choose a file to resolve the conflicting edits"),
         };
-        for draft in drafts
-            .iter()
-            .filter(|draft| card.paths.contains(&draft.path))
-        {
-            if matches!(request.action, PullbackAction::Dismiss) {
-                let delivery = manifest
-                    .delivered
-                    .get_mut(&draft.path)
-                    .context("file is no longer managed")?;
-                delivery.observed = Some(draft.current.clone());
-            } else if path == Some(draft.path.as_path()) {
-                match request.action {
-                    PullbackAction::ToolOnly => accept_tool_edit(&mut manifest, draft)?,
-                    PullbackAction::AllTools => {
-                        let delivery = &manifest.delivered[&draft.path];
-                        let before = rulesync_layers::only_personal(text(
-                            delivery.observed.as_ref().unwrap_or(&delivery.delivered),
-                        )?)?;
-                        let after = rulesync_layers::only_personal(text(&draft.current)?)?;
-                        manifest.master.shared =
-                            promote_changes(&manifest.master.shared, &before, &after)?;
-                        manifest
-                            .delivered
-                            .get_mut(&draft.path)
-                            .context("file is no longer managed")?
-                            .observed = Some(draft.current.clone());
-                    }
-                    PullbackAction::Dismiss => unreachable!(),
-                }
+        let reviewed = || {
+            drafts
+                .iter()
+                .filter(|draft| card.paths.contains(&draft.path))
+        };
+        let all_tools = request.action == PullbackAction::AllTools;
+        if all_tools {
+            for draft in reviewed() {
+                ensure!(
+                    root.read(&draft.path, false)? == draft.current,
+                    "the tool edited {} again. Run rules sync",
+                    draft.path.display()
+                );
             }
+        }
+        for draft in reviewed() {
+            let selected = path == Some(draft.path.as_path());
+            match request.action {
+                PullbackAction::ToolOnly => {
+                    if selected {
+                        accept_tool_edit(&mut manifest, draft)?;
+                    }
+                    continue;
+                }
+                PullbackAction::AllTools if selected => {
+                    let delivery = &manifest.delivered[&draft.path];
+                    let before = rulesync_layers::only_personal(text(
+                        delivery.observed.as_ref().unwrap_or(&delivery.delivered),
+                    )?)?;
+                    let after = rulesync_layers::only_personal(text(&draft.current)?)?;
+                    manifest.master.shared =
+                        promote_changes(&manifest.master.shared, &before, &after)?;
+                }
+                PullbackAction::AllTools | PullbackAction::Dismiss => {}
+            }
+            // Use the exact reviewed version as the expected input for each
+            // delivery, including the alternatives the person did not choose.
+            let delivery = manifest
+                .delivered
+                .get_mut(&draft.path)
+                .context("file is no longer managed")?;
+            delivery.observed = Some(draft.current.clone());
+            delivery.reviewed |= all_tools;
         }
         self.save(&manifest)?;
         sync(&root, &mut manifest)
@@ -2111,6 +2130,7 @@ fn settle(manifest: &mut Manifest, operation: Pending) {
                 kind,
                 delivered: operation.desired,
                 observed: None,
+                reviewed: false,
                 at: chrono::Utc::now().timestamp(),
             },
         );
@@ -2189,7 +2209,8 @@ fn inspect(root: &FileRoot, manifest: &Manifest) -> Result<Pullback> {
             blocked.insert(path.clone(), "The file metadata changed without a rules edit. Check its permissions and sync again.".into());
             continue;
         }
-        let needs_review = changes.iter().any(|change| change.removed.is_empty());
+        let needs_review =
+            delivery.reviewed || changes.iter().any(|change| change.removed.is_empty());
         let (_, _, diff) = describe_change(&path.display().to_string(), &before, &after);
         drafts.push(Draft {
             path: path.clone(),
@@ -2366,6 +2387,19 @@ mod tests {
                     |target, skills| self.setup.render_adopted_skills(target, skills),
                 )
                 .unwrap()
+        }
+
+        fn sync_review(&self, root: &FileRoot, manifest: &mut Manifest) -> Result<RulesSyncReport> {
+            self.setup.sync_locked(
+                root,
+                manifest,
+                &[],
+                |target, text| {
+                    let path = if target == "codexcli" { CODEX } else { CLAUDE };
+                    Ok(BTreeMap::from([(path.into(), text.as_bytes().to_vec())]))
+                },
+                |target, skills| self.setup.render_adopted_skills(target, skills),
+            )
         }
 
         fn text(&self, path: &str) -> String {
@@ -2859,6 +2893,7 @@ mod tests {
                 },
                 delivered: root.read(&protected, true).unwrap(),
                 observed: None,
+                reviewed: false,
                 at: 0,
             },
         );
@@ -3604,6 +3639,135 @@ mod tests {
         assert_eq!(result.proposals[0].files, [CLAUDE, CODEX]);
         assert!(f.text(CODEX).contains("Codex's wording."));
         assert!(f.text(CLAUDE).contains("Claude's wording."));
+    }
+
+    #[test]
+    fn rulesync_all_tools_review_replaces_both_competing_edits() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let codex = f.text(CODEX).replace("One rule.", "Codex's wording.");
+        let claude = f.text(CLAUDE).replace("One rule.", "Claude's wording.");
+        f.write(CODEX, &codex);
+        f.write(CLAUDE, &claude);
+        let proposed = f.sync_with("");
+        assert_eq!(proposed.proposals.len(), 1, "{proposed:?}");
+        assert_eq!(proposed.proposals[0].files, [CLAUDE, CODEX]);
+
+        let mut decision = PullbackDecision {
+            id: proposed.proposals[0].id.clone(),
+            action: PullbackAction::AllTools,
+            file: None,
+        };
+        let error = f
+            .setup
+            .review_using(&decision, |_, _| panic!("review had no chosen edit"))
+            .unwrap_err();
+        assert!(error.to_string().contains("choose a file"));
+        assert_eq!(f.text(CODEX), codex);
+        assert_eq!(f.text(CLAUDE), claude);
+
+        decision.file = Some(CLAUDE.into());
+        let reviewed = f
+            .setup
+            .review_using(&decision, |root, manifest| f.sync_review(root, manifest))
+            .unwrap();
+        assert!(reviewed.blocked.is_empty(), "{reviewed:?}");
+        assert!(reviewed.proposals.is_empty(), "{reviewed:?}");
+        assert_eq!(f.text(CLAUDE), claude);
+        assert_eq!(
+            f.text(CODEX),
+            codex.replace("Codex's wording.", "Claude's wording.")
+        );
+        let state = f.setup.load().unwrap().unwrap();
+        assert!(state.master.overrides.is_empty());
+        assert!(state.scope_reviews.is_empty());
+        assert!(f.sync_with("").written.is_empty());
+    }
+
+    #[test]
+    fn rulesync_all_tools_review_preserves_an_edit_after_the_decision() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let claude = f.text(CLAUDE).replace("One rule.", "Claude's wording.");
+        let codex = f.text(CODEX).replace("One rule.", "Codex's wording.");
+        f.write(CLAUDE, &claude);
+        f.write(CODEX, &codex);
+        let proposed = f.sync_with("");
+        assert_eq!(proposed.proposals.len(), 1, "{proposed:?}");
+        let decision = PullbackDecision {
+            id: proposed.proposals[0].id.clone(),
+            action: PullbackAction::AllTools,
+            file: Some(CLAUDE.into()),
+        };
+        let newer = codex.replace("Codex's wording.", "Edited during review.");
+        let reviewed = f
+            .setup
+            .review_using(&decision, |root, manifest| {
+                f.write(CODEX, &newer);
+                f.sync_review(root, manifest)
+            })
+            .unwrap();
+        assert_eq!(f.text(CODEX), newer);
+        assert_eq!(f.text(CLAUDE), claude);
+        assert_eq!(reviewed.proposals.len(), 1, "{reviewed:?}");
+        assert_eq!(reviewed.proposals[0].files, [CODEX]);
+        assert_ne!(reviewed.proposals[0].id, decision.id);
+        assert!(reviewed.proposals[0]
+            .diff
+            .contains("+Edited during review."));
+        assert!(reviewed.blocked.iter().any(|line| line.starts_with(CODEX)));
+        assert!(f.setup.load().unwrap().unwrap().master.overrides.is_empty());
+
+        let next = f.sync_with("");
+        assert_eq!(next.proposals, reviewed.proposals);
+        assert_eq!(f.text(CODEX), newer);
+        let dismiss = PullbackDecision {
+            id: next.proposals[0].id.clone(),
+            action: PullbackAction::Dismiss,
+            file: None,
+        };
+        let dismissed = f
+            .setup
+            .review_using(&dismiss, |root, manifest| f.sync_review(root, manifest))
+            .unwrap();
+        assert!(dismissed.blocked.is_empty(), "{dismissed:?}");
+        assert!(dismissed.proposals.is_empty(), "{dismissed:?}");
+        assert_eq!(
+            f.text(CODEX),
+            codex.replace("Codex's wording.", "Claude's wording.")
+        );
+    }
+
+    #[test]
+    fn rulesync_tool_only_review_leaves_the_other_proposal_pending() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let claude = f.text(CLAUDE).replace("One rule.", "Claude's wording.");
+        let codex = format!(
+            "{}New rule for Codex.\n",
+            f.text(CODEX).replace("One rule.", "Codex's wording.")
+        );
+        f.write(CLAUDE, &claude);
+        f.write(CODEX, &codex);
+        let proposed = f.sync_with("");
+        assert_eq!(proposed.proposals.len(), 1, "{proposed:?}");
+        assert_eq!(proposed.proposals[0].files, [CLAUDE, CODEX]);
+        let decision = PullbackDecision {
+            id: proposed.proposals[0].id.clone(),
+            action: PullbackAction::ToolOnly,
+            file: Some(CLAUDE.into()),
+        };
+        let reviewed = f
+            .setup
+            .review_using(&decision, |root, manifest| f.sync_review(root, manifest))
+            .unwrap();
+        assert_eq!(reviewed.proposals.len(), 1, "{reviewed:?}");
+        assert_eq!(reviewed.proposals[0].files, [CODEX]);
+        assert_eq!(f.text(CLAUDE), claude);
+        assert_eq!(f.text(CODEX), codex);
+        let state = f.setup.load().unwrap().unwrap();
+        assert_eq!(state.master.shared, SHARED);
+        assert_eq!(state.master.overrides.len(), 1);
     }
 
     #[test]

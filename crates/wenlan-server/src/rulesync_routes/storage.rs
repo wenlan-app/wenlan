@@ -215,6 +215,7 @@ fn map_contents<From, To>(
                             .as_ref()
                             .map(&mut map_snapshot)
                             .transpose()?,
+                        reviewed: delivery.reviewed,
                         at: delivery.at,
                     },
                 ))
