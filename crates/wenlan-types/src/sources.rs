@@ -323,7 +323,8 @@ pub struct Source {
     pub last_sync_error_detail: Option<String>,
     /// Space every new document from this source lands in, fixed at
     /// registration. `None` keeps today's behavior (unfiled, or the
-    /// Obsidian first-tag rule). Only `okf` sources set it.
+    /// Obsidian first-tag rule). `okf` sources always set it; `directory`
+    /// sources set it when added with a Space named.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub space: Option<String>,
     /// `okf` sources: files in the document queue that were not yet prepared

@@ -1072,7 +1072,7 @@ Arguments:
 
 Options:
 
-- `--type <SOURCE_TYPE>`: Kind of source. `okf` imports an OKF bundle (for example an OpenWiki folder) into one Space; pass --space to choose it. Possible values: `directory` (A folder or single file of documents), `okf` (An OKF knowledge bundle). Default: `directory`.
+- `--type <SOURCE_TYPE>`: Kind of source. `okf` imports an OKF bundle (for example an OpenWiki folder). Pass --space to put the pages in one Space. Possible values: `directory` (A folder or single file of documents), `okf` (An OKF knowledge bundle). Default: `directory`.
 
 #### `wenlan sources save`
 
