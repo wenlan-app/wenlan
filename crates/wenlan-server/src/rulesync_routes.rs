@@ -5069,7 +5069,7 @@ mod tests {
         assert_eq!(
             json["blocked"],
             serde_json::json!([
-                ".claude/skills/new-skill: Skill changes need your approval. Run `wenlan skills proposals` to review them.",
+                ".claude/skills/new-skill: Skill changes need your approval. Run `wenlan skills pending` to review them.",
                 ".codex/AGENTS.md: Rule changes need your approval. Use `wenlan rules review` with the proposal below."
             ])
         );

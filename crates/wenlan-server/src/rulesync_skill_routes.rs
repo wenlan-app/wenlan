@@ -22,7 +22,7 @@ use wenlan_types::rulesync::RulesSyncReport;
 use wenlan_types::rulesync_skill::{
     SaveSkillRequest, SaveSkillResult, SavedSkillScope, SavedSkillTool, SkillDeliveryPreview,
     SkillPermissionChange, SkillProposal, SkillProposalChanges, SkillProposalOrigin,
-    SkillProposalsResponse, SkillReviewAction, SkillReviewRequest,
+    SkillProposalsResponse, SkillReviewAction, SkillReviewRequest, PENDING_SKILLS_COMMAND,
 };
 use wenlan_types::skill_registry::{InstalledSkill, InstalledSkillRow, Scope, Verdict};
 
@@ -1400,13 +1400,12 @@ pub(crate) fn collect_tool_proposals(
             continue;
         }
         if store.state.proposals.len() >= MAX_AGENT_PROPOSALS * 2 {
-            blocked.insert(folder, "The skill review queue is full. Review some entries with `wenlan skills proposals`, then sync again.".into());
+            blocked.insert(folder, format!("The skill review queue is full. Review some entries with `{PENDING_SKILLS_COMMAND}`, then sync again."));
             continue;
         }
         blocked.insert(
             folder.clone(),
-            "Skill changes need your approval. Run `wenlan skills proposals` to review them."
-                .into(),
+            format!("Skill changes need your approval. Run `{PENDING_SKILLS_COMMAND}` to review them."),
         );
         let draft = Draft {
             name: name.into(),

@@ -889,6 +889,20 @@ mod catalog_tests {
     use std::collections::BTreeSet;
 
     #[test]
+    fn rulesync_skill_review_hint_parses_with_the_real_cli() {
+        use clap::Parser;
+        use wenlan_types::rulesync_skill::PENDING_SKILLS_COMMAND;
+
+        let cli = Cli::try_parse_from(PENDING_SKILLS_COMMAND.split_ascii_whitespace()).unwrap();
+        assert!(matches!(
+            cli.command,
+            super::Commands::Skills {
+                command: Some(super::commands::skills::SkillsCmd::Pending)
+            }
+        ));
+    }
+
+    #[test]
     fn project_rule_commands_take_one_space_and_no_yes_flag() {
         use super::commands::wiki::{ProjectRulesAction, WikiCommand};
         use super::Commands;
