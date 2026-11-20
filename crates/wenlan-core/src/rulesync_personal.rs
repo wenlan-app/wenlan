@@ -583,10 +583,8 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
 pub struct PersonalMaster<Content = Vec<u8>> {
     pub shared: String,
     pub overlays: BTreeMap<String, String>,
-    #[serde(default)]
     pub codex_sync_replaced: bool,
     pub skills: Vec<AdoptedSkill<Content>>,
-    #[serde(default)]
     pub overrides: BTreeMap<String, LocalText>,
 }
 

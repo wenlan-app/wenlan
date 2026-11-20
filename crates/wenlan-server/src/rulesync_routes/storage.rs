@@ -10,12 +10,14 @@ use anyhow::{bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use super::{AdoptedSkill, Delivery, Manifest, Pending, PersonalMaster, Setup};
+use super::{
+    AdoptedSkill, Delivery, Manifest, Pending, PersonalMaster, Setup, UnsupportedRulesyncState,
+};
 use crate::rulesync_apply::{ApplyOutcome, Snapshot};
 
 const MANIFEST: &str = "personal.json";
 const BLOBS: &str = "personal-blobs";
-const FORMAT: u32 = 2;
+const FORMAT: u32 = 3;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -63,14 +65,9 @@ impl Setup {
             Snapshot::Absent => return Ok(None),
             _ => bail!("unexpected personal rules master file type"),
         };
-        let stored: StoredSetup = serde_json::from_slice(&bytes).context(
-            "unsupported or damaged personal rules state. For an earlier format, run wenlan rules restore with the earlier build and the same tool home and data directory",
-        )?;
-        ensure!(
-            stored.format == FORMAT,
-            "unsupported personal rules state format {}",
-            stored.format
-        );
+        let stored: StoredSetup =
+            serde_json::from_slice(&bytes).context(UnsupportedRulesyncState)?;
+        ensure!(stored.format == FORMAT, UnsupportedRulesyncState);
 
         let mut cache = BTreeMap::<String, Vec<u8>>::new();
         let loaded = map_contents(&stored.state, |hash| {
@@ -208,7 +205,6 @@ fn map_contents<From, To>(
             .iter()
             .map(|(path, snap)| Ok((path.clone(), map_snapshot(snap)?)))
             .collect::<Result<_>>()?,
-        exact_skill_backups: manifest.exact_skill_backups.clone(),
         delivered: manifest
             .delivered
             .iter()

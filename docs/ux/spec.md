@@ -943,8 +943,9 @@ and wait for evidence that people need them.
   Tests `ux_skill_15_rulesync_adopt_and_restore_exact_bytes_and_links`, `codex_delivery_reports_its_link_and_managed_state`, `personal_rules_dry_run_labels_skill_sources`, `adopted_skill_updates_share_the_registry_check_without_applying`, `personal_rules_dry_run_announces_retired_codex_script`, `adoption_replaces_the_codex_header_and_restore_keeps_the_script`, `personal_rules_dry_run_leaves_an_oversized_skill_unmanaged`, `personal_rules_dry_run_names_git_destinations_and_plans_codex_link_replacement`, `rulesync_personal_lifecycle_keeps_the_harness_read_only`, `rulesync_more_personal_targets_round_trip_with_pinned_binary` and `rulesync_adds_cursor_to_the_existing_adoption_and_restores_every_tool`.
 
 - **UX-SKILL-16** `shipped` `save_skill` in a local AI tool proposes the
-  skill's text and files. `wenlan skills save` saves an approved local skill
-  directly when the person runs it. Wenlan also detects a new or edited skill
+  skill's text and files. `wenlan skills save` saves the source directly when
+  the person runs it. Wenlan offers delivery to enrolled tools for review.
+  Wenlan also detects a new or edited skill
   in a tool's folder. It offers that content for the current tool or all
   supported tools. The person's terminal shows the complete proposal and
   asks for typed `yes` before accepting it. The review for an edited skill

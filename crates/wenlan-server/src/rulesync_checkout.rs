@@ -18,7 +18,7 @@ use crate::rulesync_apply::{ApplyOptions, ApplyOutcome, FileRoot, Snapshot};
 use crate::rulesync_layers;
 use crate::rulesync_routes::{
     prepare_checkout_displaced, read_stage, rendered_skill_with_assets, report,
-    require_local_person, text, with_bytes, write_skill_files, Setup,
+    require_local_person, text, with_bytes, write_skill_files, Setup, UnsupportedRulesyncState,
 };
 use crate::state::SharedState;
 
@@ -47,12 +47,34 @@ async fn checkout(
 struct Checkout {
     repo: PathBuf,
     files: BTreeMap<PathBuf, Snapshot>,
-    #[serde(default)]
     skills: BTreeMap<PathBuf, SkillDelivery>,
-    #[serde(default)]
     pending: Option<PendingDelivery>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     unresolved: Vec<PendingDelivery>,
+}
+
+const CHECKOUT_FORMAT: u32 = 1;
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CheckoutRecord<State> {
+    format: u32,
+    checkout: State,
+}
+
+fn read_checkout(bytes: &[u8]) -> Result<Checkout> {
+    let stored: CheckoutRecord<Checkout> =
+        serde_json::from_slice(bytes).context(UnsupportedRulesyncState)?;
+    ensure!(stored.format == CHECKOUT_FORMAT, UnsupportedRulesyncState);
+    ensure!(
+        stored
+            .checkout
+            .pending
+            .iter()
+            .chain(&stored.checkout.unresolved)
+            .all(|pending| pending.stage.is_some()),
+        UnsupportedRulesyncState
+    );
+    Ok(stored.checkout)
 }
 
 #[derive(Serialize, Deserialize)]
@@ -66,9 +88,7 @@ struct PendingDelivery {
     path: PathBuf,
     digest: String,
     skill_source: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     stage: Option<CheckoutStage>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     rules_baseline: Option<Snapshot>,
 }
 
@@ -228,7 +248,7 @@ pub(crate) fn open(
             repo,
             ..Checkout::default()
         },
-        Snapshot::File { bytes, .. } => serde_json::from_slice(bytes)?,
+        Snapshot::File { bytes, .. } => read_checkout(bytes)?,
         _ => anyhow::bail!("checkout record must be a regular file"),
     };
     let directory = PathBuf::from(format!("checkouts/{key}/rules"));
@@ -287,7 +307,7 @@ pub(crate) fn refresh(
             let Snapshot::File { bytes, .. } = &state else {
                 continue;
             };
-            let checkout: Checkout = serde_json::from_slice(bytes)?;
+            let checkout = read_checkout(bytes)?;
             let directory = PathBuf::from(format!("checkouts/{key}/rules"));
             let job = Job {
                 setup,
@@ -572,17 +592,16 @@ impl Job<'_> {
         for pending in std::mem::take(&mut checkout.unresolved) {
             let path = &pending.path;
             let destination = self.directory.join(path);
+            let stage = pending.stage.as_ref().context(UnsupportedRulesyncState)?;
             let recovered = self.root.read(&destination, false).and_then(|current| {
-                if let Some(stage) = &pending.stage {
-                    self.root.recover_stage(
-                        &destination,
-                        &stage.seen,
-                        &stage.desired,
-                        &current,
-                        stage.options(self.root),
-                    )?;
-                    self.sync_parents(&destination)?;
-                }
+                self.root.recover_stage(
+                    &destination,
+                    &stage.seen,
+                    &stage.desired,
+                    &current,
+                    stage.options(self.root),
+                )?;
+                self.sync_parents(&destination)?;
                 Ok(current)
             });
             if let Ok(current) = recovered {
@@ -591,12 +610,7 @@ impl Job<'_> {
                     checkout.settle(pending, current);
                     continue;
                 }
-                if current == Snapshot::Absent
-                    || pending
-                        .stage
-                        .as_ref()
-                        .is_some_and(|stage| current == stage.seen)
-                {
+                if current == Snapshot::Absent || current == stage.seen {
                     continue;
                 }
             }
@@ -709,7 +723,13 @@ impl Job<'_> {
     }
 
     fn save(&self, path: &Path, seen: &Snapshot, checkout: &Checkout) -> Result<Snapshot> {
-        let desired = with_bytes(seen, serde_json::to_vec(checkout)?);
+        let desired = with_bytes(
+            seen,
+            serde_json::to_vec(&CheckoutRecord {
+                format: CHECKOUT_FORMAT,
+                checkout,
+            })?,
+        );
         ensure!(
             self.root.apply(path, seen, &desired, false)? == ApplyOutcome::Applied,
             "checkout receipt changed during sync"
@@ -896,7 +916,7 @@ mod tests {
                 .any(|item| item.starts_with(path.to_str().unwrap())));
         }
         let record = root.read(state_path, false).unwrap();
-        let saved: Checkout = serde_json::from_str(text(&record).unwrap()).unwrap();
+        let saved = read_checkout(text(&record).unwrap().as_bytes()).unwrap();
         assert_eq!(saved.files[&rule_path], approved_rule);
         assert_eq!(
             saved.skills[&skill_path].digest,
@@ -977,11 +997,11 @@ mod tests {
         };
 
         let state = root.read(state_path, false).unwrap();
-        let checkout = serde_json::from_str(text(&state).unwrap()).unwrap();
+        let checkout = read_checkout(text(&state).unwrap().as_bytes()).unwrap();
         let report = job.run(state_path, state, checkout, None, &[]).unwrap();
         assert!(report.blocked.is_empty(), "{report:?}");
         let record = root.read(state_path, false).unwrap();
-        let saved: Checkout = serde_json::from_str(text(&record).unwrap()).unwrap();
+        let saved = read_checkout(text(&record).unwrap().as_bytes()).unwrap();
         assert_eq!(text(&saved.files[&path]).unwrap(), personal);
         let current = root.read(&job.directory.join(&path), false).unwrap();
         assert_eq!(
@@ -1053,7 +1073,12 @@ mod tests {
                 path: path.clone(),
                 digest: digest.clone(),
                 skill_source: Some("lost-access".to_owned()),
-                stage: None,
+                stage: Some(CheckoutStage {
+                    id: uuid::Uuid::new_v4().simple().to_string(),
+                    displaced: None,
+                    seen: Snapshot::Absent,
+                    desired: approved.clone(),
+                }),
                 rules_baseline: None,
             }),
             ..Checkout::default()
@@ -1085,7 +1110,7 @@ mod tests {
                 .blocked
                 .iter()
                 .any(|warning| warning.starts_with(path.to_str().unwrap())));
-            let saved = serde_json::from_str(recorded).unwrap();
+            let saved = read_checkout(recorded.as_bytes()).unwrap();
             std::fs::write(&destination, text(&approved).unwrap()).unwrap();
             job.run(state_path, record, saved, Some(&master), &[])
                 .unwrap();
@@ -1096,7 +1121,7 @@ mod tests {
         );
         let record = root.read(state_path, false).unwrap();
         assert!(!text(&record).unwrap().contains(&digest));
-        let saved: Checkout = serde_json::from_str(text(&record).unwrap()).unwrap();
+        let saved = read_checkout(text(&record).unwrap().as_bytes()).unwrap();
         assert!(saved.skills.is_empty());
         assert!(saved.pending.is_none());
     }

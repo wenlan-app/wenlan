@@ -37,7 +37,9 @@ use crate::error::ServerError;
 use crate::route_registry::{post, TrackedRouter};
 use crate::rulesync_apply::{ApplyOptions, ApplyOutcome, FileMode, FileRoot, Snapshot};
 use crate::rulesync_layers;
-use crate::rulesync_registry::{self, ApprovedSkills, ManagedSkill, SkillHome, SkillModes};
+use crate::rulesync_registry::{
+    self, ApprovedSkills, ManagedSkill, SavedSkillDeliveries, SkillHome, SkillModes,
+};
 use crate::state::SharedState;
 
 mod displaced;
@@ -233,6 +235,19 @@ fn path_blocked(blocked: &BTreeSet<PathBuf>, path: &Path) -> bool {
 const HARNESS_READ_ONLY: &str =
     "Wenlan leaves ~/.agents untouched. Use a tool path outside the harness.";
 
+#[derive(Debug)]
+pub(crate) struct UnsupportedRulesyncState;
+
+impl std::fmt::Display for UnsupportedRulesyncState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(
+            "Unsupported or damaged rulesync state. Run `wenlan rules restore` with the build that wrote it and the same tool home and data directory. Then archive the old rulesync data and adopt again.",
+        )
+    }
+}
+
+impl std::error::Error for UnsupportedRulesyncState {}
+
 impl Setup {
     fn delivery_status(&self) -> BTreeMap<String, DeliveryStatus> {
         let Ok(home) = FileRoot::open_home(&self.home) else {
@@ -291,17 +306,20 @@ pub(crate) fn sync_registry_now() -> Result<RulesSyncReport> {
     let Some(mut manifest) = setup.load()? else {
         return Ok(result);
     };
+    rulesync_registry::check_skill_format(&setup.data)?;
     let root = FileRoot::open_home(&setup.home)?;
     setup.recover(&root, &mut manifest)?;
     ensure!(manifest.adopted, "finish restoring the local setup first");
     result.message = "Checked installed skills".into();
     let blocked = setup.pull_back(&root, &mut manifest, &mut result)?;
     let session = RenderSession::new(&setup.binary);
+    let saved = rulesync_registry::saved_skill_deliveries(&setup.data)?;
     setup.sync_registry(
         &root,
         &mut manifest,
         &blocked,
         &mut result,
+        &saved,
         |renderer, skills| setup.render_skills(&session, renderer, skills),
     )?;
     Ok(result)
@@ -398,7 +416,6 @@ struct Delivery<Content = Vec<u8>> {
     observed: Option<Snapshot<Content>>,
     // A person's decision used this observed version. A newer edit needs a
     // fresh decision while delivery of the reviewed version is outstanding.
-    #[serde(default)]
     reviewed: bool,
     at: i64,
 }
@@ -477,32 +494,19 @@ struct Manifest<Content = Vec<u8>> {
     /// Every destination's original bytes, mode or exact link value. This
     /// whole map reaches disk before the first tool file changes.
     backup: BTreeMap<PathBuf, Snapshot<Content>>,
-    /// Older journals omitted directories inside regular adopted packages.
-    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
-    exact_skill_backups: BTreeSet<PathBuf>,
     delivered: BTreeMap<PathBuf, Delivery<Content>>,
     pending: Vec<Pending<Content>>,
-    #[serde(default)]
     stages: BTreeMap<PathBuf, PendingStage>,
-    #[serde(default)]
     recovery_issues: BTreeMap<PathBuf, String>,
     adopted: bool,
     /// Journaled destinations of an addition that has not enrolled yet.
-    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     extension_paths: BTreeSet<PathBuf>,
-    #[serde(default)]
     settings_only: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     settings_batch: Option<settings::SettingsBatch>,
-    #[serde(default)]
     registry_skipped: BTreeMap<String, BTreeSet<PathBuf>>,
-    #[serde(default)]
     unmanaged_skills: BTreeSet<PathBuf>,
-    #[serde(default)]
     worktree_writes: BTreeMap<PathBuf, PathBuf>,
-    #[serde(default)]
     scope_reviews: BTreeMap<String, ScopeReview>,
-    #[serde(default)]
     delivery_issues: BTreeMap<PathBuf, RuleDeliveryIssue>,
 }
 
@@ -517,7 +521,6 @@ impl Manifest {
         Self {
             master,
             backup,
-            exact_skill_backups: BTreeSet::new(),
             delivered: BTreeMap::new(),
             pending: Vec::new(),
             stages: BTreeMap::new(),
@@ -573,9 +576,12 @@ struct ExpectedRegistrySkill {
     snapshot: Option<ManagedSkill>,
 }
 
-struct RegistryInputs<'a> {
-    approved: &'a BTreeMap<PathBuf, ManagedSkill>,
-    reviewed: Option<&'a BTreeMap<SavedSkillTool, ApprovedSkills>>,
+enum RegistryInputs<'a> {
+    Sync(&'a SavedSkillDeliveries),
+    Review {
+        approved: &'a BTreeMap<PathBuf, ManagedSkill>,
+        sources: &'a BTreeMap<SavedSkillTool, ApprovedSkills>,
+    },
 }
 
 struct RegistryPlan {
@@ -636,7 +642,7 @@ impl SkillReviewDelivery {
                             bytes: 0,
                             sha256: format!("{:x}", Sha256::digest(b"directory")),
                         },
-                        permissions: mode.map_or_else(|| "default".into(), |mode| mode.to_string()),
+                        permissions: mode.to_string(),
                         directory: true,
                     }),
                     Snapshot::Absent => None,
@@ -733,6 +739,7 @@ impl Setup {
 
     fn adoptable_manifest(&self) -> Result<Option<Manifest>> {
         let manifest = self.load_if_present()?;
+        rulesync_registry::check_skill_format(&self.data)?;
         if let Some(manifest) = manifest.as_ref().filter(|manifest| !manifest.settings_only) {
             ensure!(
                 manifest.adopted,
@@ -943,9 +950,6 @@ impl Setup {
         } else {
             manifest.adopted = false;
             manifest.settings_only = false;
-            manifest
-                .exact_skill_backups
-                .extend(adopted_skill_folders(&manifest.master).map(Path::to_owned));
             manifest.unmanaged_skills.append(&mut skipped);
             manifest.worktree_writes.append(&mut worktree_writes);
             BatchMode::Adopt
@@ -983,9 +987,6 @@ impl Setup {
             result.written.push(path.display().to_string());
         }
         if let Some(master) = extension {
-            manifest
-                .exact_skill_backups
-                .extend(adopted_skill_folders(&master).map(Path::to_owned));
             extend_personal_master(&mut manifest.master, master);
             manifest.unmanaged_skills.append(&mut skipped);
             manifest.worktree_writes.append(&mut worktree_writes);
@@ -1106,10 +1107,10 @@ impl Setup {
             )?;
         }
         ensure!(
-            op.desired.matches(&actual) || op.seen.matches(&actual),
+            op.desired == actual || op.seen == actual,
             "changed during an interrupted write. Save your edit and compare it with the retained backup before retrying"
         );
-        Ok(op.desired.matches(&actual))
+        Ok(op.desired == actual)
     }
 
     fn apply_batch(
@@ -1154,7 +1155,7 @@ impl Setup {
             if (reviewing
                 && !root
                     .read(&op.path, op.allow_link)
-                    .is_ok_and(|actual| op.seen.matches(&actual)))
+                    .is_ok_and(|actual| op.seen == actual))
                 || manifest.pending.iter().any(|pending| {
                     op.path.starts_with(&pending.path) || pending.path.starts_with(&op.path)
                 })
@@ -1320,18 +1321,18 @@ impl Setup {
             };
             if is_harness_path(&path) {
                 result.blocked.push(format!(
-                    "{}: An earlier adoption recorded this path in ~/.agents. Use the retained backup to restore it manually.",
+                    "{}: {HARNESS_READ_ONLY} The retained backup is available for manual recovery.",
                     path.display()
                 ));
                 continue;
             }
             let original = manifest.backup[&path].clone();
             let seen = match root.read(&path, true) {
-                Ok(current) if extension_only && original.matches(&current) => {
+                Ok(current) if extension_only && original == current => {
                     manifest.delivered.remove(&path);
                     continue;
                 }
-                Ok(current) if delivered.delivered.matches(&current) => current,
+                Ok(current) if delivered.delivered == current => current,
                 _ => {
                     result
                         .blocked
@@ -1432,6 +1433,7 @@ impl Setup {
         let _lock = self.lock()?;
         let root = FileRoot::open_home(&self.home)?;
         let mut manifest = self.load()?.context("run wenlan rules adopt first")?;
+        rulesync_registry::check_skill_format(&self.data)?;
         let recovered = self.recover(&root, &mut manifest)?;
         let mut result = self.sync_member(&root, &mut manifest, generated)?;
         if let Some(recovery) = recovered {
@@ -1678,8 +1680,16 @@ impl Setup {
         if had_issues || !manifest.delivery_issues.is_empty() {
             self.save(manifest)?;
         }
-        self.sync_skills(root, manifest, &blocked, &mut result, &render_skills)?;
-        self.sync_registry(root, manifest, &blocked, &mut result, render_skills)?;
+        let saved = rulesync_registry::saved_skill_deliveries(&self.data)?;
+        self.sync_skills(
+            root,
+            manifest,
+            &blocked,
+            &mut result,
+            &saved,
+            &render_skills,
+        )?;
+        self.sync_registry(root, manifest, &blocked, &mut result, &saved, render_skills)?;
         Ok(result)
     }
 
@@ -1771,14 +1781,17 @@ impl Setup {
         manifest: &mut Manifest,
         blocked: &BTreeSet<PathBuf>,
         result: &mut RulesSyncReport,
+        saved: &SavedSkillDeliveries,
         render: impl Fn(&str, &SkillPackages) -> Result<SkillFiles>,
     ) -> Result<()> {
-        let approved = rulesync_registry::approved_local_folders(&self.data)?;
-        let inputs = RegistryInputs {
-            approved: &approved,
-            reviewed: None,
-        };
-        let plan = self.plan_registry(root, manifest, blocked, result, inputs, render)?;
+        let plan = self.plan_registry(
+            root,
+            manifest,
+            blocked,
+            result,
+            RegistryInputs::Sync(saved),
+            render,
+        )?;
         self.apply_registry(root, manifest, result, plan)
     }
 
@@ -1816,9 +1829,9 @@ impl Setup {
                 .push("Run `wenlan rules adopt` to enroll a destination for this skill.".into());
         }
         let root = FileRoot::open_home(&self.home)?;
-        let inputs = RegistryInputs {
+        let inputs = RegistryInputs::Review {
             approved,
-            reviewed: Some(reviewed),
+            sources: reviewed,
         };
         let plan = self.plan_registry(
             &root,
@@ -1890,15 +1903,23 @@ impl Setup {
         inputs: RegistryInputs<'_>,
         render: impl Fn(&str, &SkillPackages) -> Result<SkillFiles>,
     ) -> Result<RegistryPlan> {
-        let reviewing = inputs.reviewed.is_some();
-        let installed = if reviewing {
-            BTreeMap::new()
-        } else {
-            rulesync_registry::installed_sources()?
+        let (installed, reviewed, approved) = match inputs {
+            RegistryInputs::Sync(saved) => (
+                rulesync_registry::installed_sources()?,
+                None,
+                &saved.folders,
+            ),
+            RegistryInputs::Review { sources, approved } => {
+                (BTreeMap::new(), Some(sources), approved)
+            }
         };
+        let reviewing = reviewed.is_some();
         let scanner = SkillHome::open(&self.home)?;
         let adopted = self.managed_skills(manifest);
         let mut active = installed.keys().cloned().collect::<BTreeSet<_>>();
+        if let RegistryInputs::Sync(saved) = inputs {
+            active.extend(saved.names.values().flatten().cloned());
+        }
         let mut expected = BTreeMap::new();
         let mut targets: BTreeSet<_> = manifest
             .active_deliveries()
@@ -1924,23 +1945,19 @@ impl Setup {
         let mut writes = Vec::new();
         for id in targets {
             let target = personal_target(&id).context("unknown personal skill target")?;
-            let saved;
-            let local = if let Some(reviewed) = inputs.reviewed {
-                let Some(local) = reviewed.get(&target.tool) else {
-                    continue;
-                };
-                local
-            } else {
-                saved = rulesync_registry::approved_skills(&self.data, target.id)?;
-                &saved
+            let local = reviewed.and_then(|sources| sources.get(&target.tool));
+            let sources: BTreeMap<_, _> = match inputs {
+                RegistryInputs::Sync(saved) => installed
+                    .iter()
+                    .filter(|(name, _)| !saved.names[&target.tool].contains(*name))
+                    .collect(),
+                RegistryInputs::Review { .. } => {
+                    let Some(local) = local else {
+                        continue;
+                    };
+                    local.files.iter().collect()
+                }
             };
-            active.extend(local.files.keys().cloned());
-            active.extend(local.reviewed.iter().cloned());
-            let mut sources: BTreeMap<_, _> = installed.iter().collect();
-            sources.extend(local.files.iter());
-            if !reviewing {
-                sources.retain(|name, _| !local.reviewed.contains(*name));
-            }
             if sources.is_empty() {
                 continue;
             }
@@ -1978,13 +1995,9 @@ impl Setup {
                 let matches = |path: &PathBuf, skill: &ManagedSkill| {
                     path.file_name() == emitted.file_name() && skill.tool == target.tool
                 };
-                let selected = inputs
-                    .approved
-                    .iter()
-                    .find(|(path, skill)| matches(path, skill));
+                let selected = approved.iter().find(|(path, skill)| matches(path, skill));
                 let adopted_folder = local
-                    .files
-                    .contains_key(name)
+                    .is_some_and(|local| local.files.contains_key(name))
                     .then(|| adopted.iter().find(|(path, skill)| matches(path, skill)))
                     .flatten();
                 let folder =
@@ -2020,7 +2033,10 @@ impl Setup {
                 if folder == default_folder
                     && is_harness_path(&emitted)
                     && !manifest.delivered.contains_key(folder)
-                    && !matches!(root.read(&emitted, true), Ok(Snapshot::Absent))
+                    && !matches!(
+                        FileRoot::open(&self.home)?.read(&emitted, true),
+                        Ok(Snapshot::Absent)
+                    )
                 {
                     result.blocked.push(format!(
                         "{}: Codex can already read a skill at {}. Choose another name to avoid a duplicate.",
@@ -2034,7 +2050,7 @@ impl Setup {
                     continue;
                 }
                 let baseline = adopted.get(folder);
-                let approved = inputs.approved.get(folder);
+                let approved = approved.get(folder);
                 let current = match scanner.checked_package(folder, target.tool, baseline, approved)
                 {
                     Ok(current) => current,
@@ -2047,9 +2063,7 @@ impl Setup {
                 };
                 if baseline.is_none()
                     && !approved.is_some_and(|approved| {
-                        current
-                            .as_ref()
-                            .is_some_and(|actual| approved.matches(actual))
+                        current.as_ref().is_some_and(|actual| approved == actual)
                     })
                     && root.read(folder, false)? != Snapshot::Absent
                 {
@@ -2067,7 +2081,7 @@ impl Setup {
                     folder,
                     name,
                     files: &delivery.files,
-                    modes: local.modes.get(name),
+                    modes: local.and_then(|local| local.modes.get(name)),
                     snapshot: current.as_ref(),
                 };
                 let planned =
@@ -2182,21 +2196,16 @@ impl Setup {
         manifest: &mut Manifest,
         blocked: &BTreeSet<PathBuf>,
         result: &mut RulesSyncReport,
+        saved: &SavedSkillDeliveries,
         render: &impl Fn(&str, &SkillPackages) -> Result<SkillFiles>,
     ) -> Result<()> {
-        let approved = rulesync_registry::approved_local_folders(&self.data)?;
-        let mut replacements = BTreeMap::new();
-        for target in PERSONAL_TARGETS {
-            replacements.insert(
-                target.id.to_owned(),
-                rulesync_registry::approved_skills(&self.data, target.id)?,
-            );
-        }
         let mut by_target: BTreeMap<String, Vec<SkillPath>> = BTreeMap::new();
         for (path, delivery) in manifest.active_deliveries() {
             if !matches!(delivery.kind, Kind::Skill)
                 || path_blocked(blocked, path)
-                || approved.keys().any(|folder| path.starts_with(folder))
+                || path
+                    .ancestors()
+                    .any(|folder| saved.folders.contains_key(folder))
             {
                 continue;
             }
@@ -2206,10 +2215,10 @@ impl Setup {
                     .push(format!("{} is missing from the master", path.display()));
                 continue;
             };
-            if replacements.get(&spec.target).is_some_and(|sources| {
-                let name = &manifest.master.skills[spec.index].name;
-                sources.files.contains_key(name) || sources.reviewed.contains(name)
-            }) {
+            let tool = personal_target(&spec.target)
+                .context("unknown personal skill target")?
+                .tool;
+            if saved.names[&tool].contains(&manifest.master.skills[spec.index].name) {
                 continue;
             }
             by_target.entry(spec.target.clone()).or_default().push(spec);
@@ -2296,18 +2305,11 @@ impl Setup {
             }
         }
         for (folder, skill) in &mut packages {
-            let track_modes = manifest.exact_skill_backups.contains(folder)
-                || manifest.backup.get(folder) == Some(&Snapshot::Absent)
-                    && manifest.delivered.get(folder).is_some_and(|record| {
-                        matches!(record.delivered, Snapshot::Directory { mode: Some(_) })
-                    });
             for (path, record) in manifest.active_deliveries() {
                 if let Ok(relative) = path.strip_prefix(folder) {
                     let snapshot = record.observed.as_ref().unwrap_or(&record.delivered);
-                    if track_modes {
-                        if let Snapshot::Directory { mode: Some(mode) } = snapshot {
-                            skill.directories.insert(relative.to_owned(), *mode);
-                        }
+                    if let Snapshot::Directory { mode } = snapshot {
+                        skill.directories.insert(relative.to_owned(), *mode);
                     }
                     if matches!(record.kind, Kind::Skill | Kind::RegistrySkill { .. })
                         && matches!(snapshot, Snapshot::File { .. })
@@ -2334,6 +2336,7 @@ impl Setup {
         let _lock = self.lock()?;
         let root = FileRoot::open_home(&self.home)?;
         let mut manifest = self.load()?.context("run wenlan rules adopt first")?;
+        rulesync_registry::check_skill_format(&self.data)?;
         self.recover(&root, &mut manifest)?;
         if let Some(scope) = manifest.scope_reviews.remove(&request.id) {
             if matches!(request.action, PullbackAction::AllTools) {
@@ -2643,7 +2646,7 @@ fn plan_registry_entries(
         // rename destination or metadata edit when its receipt differs.
         let up_to_date = manifest.delivered.get(&path).is_some_and(|record| {
             record.observed.is_none()
-                && record.delivered.matches(&desired)
+                && record.delivered == desired
                 && match (&record.kind, &kind) {
                     (Kind::RegistryDirectory { name: old }, Kind::RegistryDirectory { name })
                     | (
@@ -2673,13 +2676,7 @@ fn plan_registry_entries(
             path.display()
         );
         let seen = package_entry(root, folder, &path, snapshot)?;
-        if let (
-            Snapshot::Directory {
-                mode: Some(current),
-            },
-            Some(mode),
-        ) = (&seen, mode)
-        {
+        if let (Snapshot::Directory { mode: current }, Some(mode)) = (&seen, mode) {
             if !reviewing && *current != mode {
                 result.blocked.push(format!(
                     "{}: Destination permissions are {current}, but the approved copy uses {mode}. The existing directory was kept.",
@@ -2771,9 +2768,9 @@ fn registry_removals(
                 .backup
                 .get(path)
                 .cloned()
-                .unwrap_or(Snapshot::Absent);
+                .context("the backup is incomplete")?;
             let seen = root.read(path, true)?;
-            if !record.delivered.matches(&seen) {
+            if record.delivered != seen {
                 result
                     .blocked
                     .push(format!("{} changed since delivery", path.display()));
@@ -3237,10 +3234,8 @@ fn adopted_skill_folders(master: &PersonalMaster) -> impl Iterator<Item = &Path>
 /// the approved result and applying it will only settle the delivery receipt.
 fn record_originals(manifest: &mut Manifest, operations: &[Pending], adopting: bool) {
     let adopted_folders: BTreeSet<_> = adopted_skill_folders(&manifest.master).collect();
-    let known_folders = manifest
-        .exact_skill_backups
-        .iter()
-        .map(PathBuf::as_path)
+    let known_folders = adopted_folders
+        .into_iter()
         .chain(manifest.delivered.iter().filter_map(|(path, delivery)| {
             (matches!(delivery.kind, Kind::RegistryDirectory { .. })
                 && manifest.backup.get(path) == Some(&Snapshot::Absent))
@@ -3261,9 +3256,6 @@ fn record_originals(manifest: &mut Manifest, operations: &[Pending], adopting: b
             op.seen.clone()
         } else if in_folder(&known_folders) {
             // Adoption recorded every existing entry, including empty dirs.
-            Snapshot::Absent
-        } else if in_folder(&adopted_folders) && !op.seen.is_directory() {
-            // Older adoptions recorded every file, but not every directory.
             Snapshot::Absent
         } else {
             op.seen.clone()
@@ -3898,9 +3890,12 @@ mod tests {
             "{pending:?}"
         );
         {
-            let _lock = f.setup.lock().unwrap();
-            let proposal =
-                rulesync_registry::accept_only_tool_proposal(&f.setup.home, &f.setup.data).unwrap();
+            let proposal = rulesync_registry::accept_only_tool_proposal(
+                &f.setup,
+                Some(wenlan_types::rulesync_skill::SavedSkillScope::Shared),
+                render_skills,
+            )
+            .unwrap();
             assert_eq!(proposal.name, "metadata-rich");
         }
         let approved = run_sync();
@@ -4231,8 +4226,7 @@ mod tests {
         fs::set_permissions(&script, fs::Permissions::from_mode(0o751)).unwrap();
         f.sync_with("");
         {
-            let _lock = f.setup.lock().unwrap();
-            rulesync_registry::accept_only_tool_proposal(&f.setup.home, &f.setup.data).unwrap();
+            accept_fixture_tool_proposal(&f).unwrap();
         }
         let delivered = f.sync_with("");
         assert!(delivered.blocked.is_empty(), "{delivered:?}");
@@ -4449,9 +4443,7 @@ mod tests {
             "{pending:?}"
         );
         {
-            let _lock = f.setup.lock().unwrap();
-            let proposal =
-                rulesync_registry::accept_only_tool_proposal(&f.setup.home, &f.setup.data).unwrap();
+            let proposal = accept_fixture_tool_proposal(&f).unwrap();
             let [file] = proposal.files.as_slice() else {
                 panic!("expected only SKILL.md in the proposal");
             };
@@ -4513,8 +4505,7 @@ mod tests {
                 .any(|line| line.contains("need your approval")),
             "{pending:?}"
         );
-        let proposal =
-            rulesync_registry::accept_only_tool_proposal(&f.setup.home, &f.setup.data).unwrap();
+        let proposal = accept_fixture_tool_proposal(&f).unwrap();
         assert_eq!(proposal.files.len(), 1);
         assert_eq!(proposal.files[0].path, "SKILL.md");
         assert!(proposal.files[0]
@@ -4539,9 +4530,7 @@ mod tests {
                 .any(|line| line.contains("invisible")),
             "{blocked:?}"
         );
-        assert!(
-            rulesync_registry::accept_only_tool_proposal(&f.setup.home, &f.setup.data).is_err()
-        );
+        assert!(accept_fixture_tool_proposal(&f).is_err());
     }
 
     #[test]
@@ -4568,8 +4557,7 @@ mod tests {
                 .any(|line| line.contains("need your approval")),
             "{pending:?}"
         );
-        let proposal =
-            rulesync_registry::accept_only_tool_proposal(&f.setup.home, &f.setup.data).unwrap();
+        let proposal = accept_fixture_tool_proposal(&f).unwrap();
         assert!(proposal
             .files
             .iter()
@@ -4612,7 +4600,7 @@ mod tests {
             .replace("Original body.", "Edited body.");
         fs::write(file, &edited).unwrap();
         f.sync_with("");
-        rulesync_registry::accept_only_tool_proposal(&f.setup.home, &f.setup.data).unwrap();
+        accept_fixture_tool_proposal(&f).unwrap();
         let synced = f.sync_with("");
         let mode = fs::metadata(&destination).unwrap().permissions().mode() & 0o7777;
         assert!(
@@ -4654,8 +4642,7 @@ mod tests {
                 .any(|line| line.contains("need your approval")),
             "{pending:?}"
         );
-        let proposal =
-            rulesync_registry::accept_only_tool_proposal(&f.setup.home, &f.setup.data).unwrap();
+        let proposal = accept_fixture_tool_proposal(&f).unwrap();
         assert!(proposal.files.iter().any(|file| file.path == "helper.py"));
         let synced = f.sync_with("");
         assert!(synced.blocked.is_empty(), "{synced:?}");
@@ -4680,8 +4667,7 @@ mod tests {
         f.adopt_from_plan();
         fs::remove_file(&cursor_asset).unwrap();
         f.sync_with("");
-        let proposal =
-            rulesync_registry::accept_only_tool_proposal(&f.setup.home, &f.setup.data).unwrap();
+        let proposal = accept_fixture_tool_proposal(&f).unwrap();
         assert_eq!(proposal.changes.unwrap().removed, ["helper.py"]);
         let delivered = f.sync_with("");
         assert!(delivered.blocked.is_empty(), "{delivered:?}");
@@ -4712,7 +4698,7 @@ mod tests {
         let other = claude.join("helper.py");
         fs::write(&other, "# Saved Claude-only helper\n").unwrap();
         f.sync_with("");
-        rulesync_registry::accept_only_tool_proposal_with_scope(&f.setup.home, &f.setup.data, None)
+        rulesync_registry::accept_only_tool_proposal(&f.setup, None, fixture_skill_renderer)
             .unwrap();
         let initial = f.sync_with("");
         assert!(initial.blocked.is_empty(), "{initial:?}");
@@ -4790,6 +4776,16 @@ mod tests {
         assert_eq!(f.text(".codex/skills/example/SKILL.md"), edited);
     }
 
+    fn accept_fixture_tool_proposal(
+        f: &Fixture,
+    ) -> Result<wenlan_types::rulesync_skill::SkillProposal> {
+        rulesync_registry::accept_only_tool_proposal(
+            &f.setup,
+            Some(wenlan_types::rulesync_skill::SavedSkillScope::Shared),
+            fixture_skill_renderer,
+        )
+    }
+
     fn preview_step1e_skill(f: &Fixture) -> wenlan_types::rulesync_skill::SkillDeliveryPreview {
         use wenlan_types::rulesync_skill::SaveSkillResult;
 
@@ -4846,6 +4842,71 @@ mod tests {
         preview
     }
 
+    // Fake homes are inside the repository. Give these fixtures the
+    // same destination access as a tool home outside a Git worktree.
+    fn allow_fixture_tool_folders(f: &Fixture) {
+        let _lock = f.setup.lock().unwrap();
+        let mut manifest = f.setup.load().unwrap().unwrap();
+        let mut worktrees = DeliveryWorktrees::new(&f.setup.home).unwrap();
+        for target in PERSONAL_TARGETS {
+            if let Some(worktree) = worktrees.at(target.folder()).unwrap() {
+                assert!(f._temp.path().starts_with(&worktree));
+                manifest
+                    .worktree_writes
+                    .insert(target.folder().to_owned(), worktree);
+            }
+        }
+        f.setup.save(&manifest).unwrap();
+    }
+
+    #[test]
+    fn rulesync_step1f_rejects_saved_approvals_without_recipients() {
+        let f = Fixture::new();
+        fs::remove_dir_all(f.setup.home.join(".codex")).unwrap();
+        write_step1d_skill(&f, ".claude", "Original body.", "# Original helper\n");
+        f.adopt_from_plan();
+        allow_fixture_tool_folders(&f);
+        f.write(".claude/skills/example/helper.py", "# Reviewed helper\n");
+        share_step1e_skill(&f);
+
+        fs::create_dir(f.setup.home.join(".cursor")).unwrap();
+        f.write(".cursor/AGENTS.md", "Cursor's rules.\n");
+        let plan = f
+            .setup
+            .preview_adoption_using(fixture_skill_renderer)
+            .unwrap();
+        f.setup
+            .adopt_using(&plan.token, fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        let state = f.setup.data.join("skills.json");
+        let mut stored: serde_json::Value =
+            serde_json::from_slice(&fs::read(&state).unwrap()).unwrap();
+        stored["state"]["kept"]["example"]
+            .as_object_mut()
+            .unwrap()
+            .remove("shared_reviewed");
+        fs::write(&state, serde_json::to_vec(&stored).unwrap()).unwrap();
+        let before = step1e_tree(&f.setup.home);
+
+        let root = FileRoot::open_home(&f.setup.home).unwrap();
+        let _lock = f.setup.lock().unwrap();
+        let mut manifest = f.setup.load().unwrap().unwrap();
+        let sync = f.sync_review(&root, &mut manifest);
+        let received = f
+            .setup
+            .home
+            .join(".cursor/skills/example/SKILL.md")
+            .exists();
+        assert!(
+            !received,
+            "sync delivered a skill from an older approval to Cursor: {sync:?}"
+        );
+        let message = format!("{:#}", sync.unwrap_err());
+        assert!(message.contains("wenlan rules restore"), "{message}");
+        assert!(message.contains("adopt again"), "{message}");
+        assert_eq!(step1e_tree(&f.setup.home), before);
+    }
+
     #[test]
     fn rulesync_step1e_reverting_a_blocked_peer_cannot_expand_an_approval() {
         let f = Fixture::new();
@@ -4855,7 +4916,7 @@ mod tests {
         f.adopt_from_plan();
         fs::write(claude.join("helper.py"), "# Claude-only helper\n").unwrap();
         f.sync_with("");
-        rulesync_registry::accept_only_tool_proposal_with_scope(&f.setup.home, &f.setup.data, None)
+        rulesync_registry::accept_only_tool_proposal(&f.setup, None, fixture_skill_renderer)
             .unwrap();
         assert!(f.sync_with("").blocked.is_empty());
 
@@ -4970,7 +5031,7 @@ mod tests {
         let common = "# Same approved helper\n";
         fs::write(claude.join("helper.py"), common).unwrap();
         f.sync_with("");
-        rulesync_registry::accept_only_tool_proposal_with_scope(&f.setup.home, &f.setup.data, None)
+        rulesync_registry::accept_only_tool_proposal(&f.setup, None, fixture_skill_renderer)
             .unwrap();
         assert!(f.sync_with("").blocked.is_empty());
         fs::write(cursor.join("helper.py"), common).unwrap();
@@ -5070,7 +5131,7 @@ mod tests {
         f.adopt_from_plan();
         fs::write(claude.join("helper.py"), "# Claude-only helper\n").unwrap();
         f.sync_with("");
-        rulesync_registry::accept_only_tool_proposal_with_scope(&f.setup.home, &f.setup.data, None)
+        rulesync_registry::accept_only_tool_proposal(&f.setup, None, fixture_skill_renderer)
             .unwrap();
         assert!(f.sync_with("").blocked.is_empty());
 
@@ -5158,50 +5219,25 @@ mod tests {
     }
 
     #[test]
-    fn rulesync_step1e_restores_from_a_v2_journal_without_nested_directory_entries() {
+    fn rulesync_step1f_refuses_the_v2_journal_without_mutating_tool_paths() {
         let f = Fixture::new();
-        let folder = write_step1d_skill(&f, ".claude", "Original body.", "# Helper\n");
-        let docs = ".claude/skills/example/docs";
-        let guide = ".claude/skills/example/docs/guide.md";
-        fs::create_dir(f.setup.home.join(docs)).unwrap();
-        f.write(guide, "Original guide\n");
-        let original = step1e_tree(&f.setup.home);
+        write_step1d_skill(&f, ".claude", "Original body.", "# Helper\n");
         f.adopt_from_plan();
-
+        let before = step1e_tree(&f.setup.home);
         let path = f.setup.data.join("personal.json");
         let mut journal: serde_json::Value =
             serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-        assert_eq!(journal["format"], 2);
-        let state = journal["state"].as_object_mut().unwrap();
-        state.remove("exact_skill_backups");
-        for section in ["backup", "delivered"] {
-            state[section]
-                .as_object_mut()
-                .unwrap()
-                .remove(docs)
-                .unwrap();
-        }
-        let package = ".claude/skills/example";
-        state.get_mut("backup").unwrap()[package]
-            .as_object_mut()
-            .unwrap()
-            .remove("mode");
-        state.get_mut("delivered").unwrap()[package]["delivered"]
-            .as_object_mut()
-            .unwrap()
-            .remove("mode");
-        // An older writer approved removal of the file but never recorded its
-        // directory. The journal retains the original file bytes and mode.
-        state.get_mut("delivered").unwrap()[guide]["delivered"] =
-            serde_json::json!({"kind": "absent"});
-        fs::write(path, serde_json::to_vec(&journal).unwrap()).unwrap();
-        fs::remove_dir_all(folder.join("docs")).unwrap();
+        journal["format"] = 2.into();
+        let bytes = serde_json::to_vec(&journal).unwrap();
+        fs::write(&path, &bytes).unwrap();
 
-        let restored = f.setup.restore().unwrap();
-        assert!(restored.blocked.is_empty(), "{restored:?}");
-        let mut expected = original;
-        expected.insert(docs.into(), Snapshot::private_directory());
-        assert_eq!(step1e_tree(&f.setup.home), expected);
+        for result in [f.setup.sync(&[]), f.setup.restore()] {
+            let message = format!("{:#}", result.unwrap_err());
+            assert!(message.contains("wenlan rules restore"), "{message}");
+            assert!(message.contains("adopt again"), "{message}");
+        }
+        assert_eq!(fs::read(path).unwrap(), bytes);
+        assert_eq!(step1e_tree(&f.setup.home), before);
     }
 
     fn step1e_tree(home: &Path) -> BTreeMap<PathBuf, Snapshot> {
@@ -6160,7 +6196,7 @@ mod tests {
     }
 
     #[test]
-    fn rulesync_legacy_harness_delivery_keeps_its_backup_without_writes() {
+    fn rulesync_refuses_to_write_to_the_harness_even_with_a_receipt() {
         let f = Fixture::new();
         f.adopt_from_plan();
         let protected = PathBuf::from(".agents/AGENTS.md");
@@ -6291,8 +6327,9 @@ mod tests {
         assert!(manifest
             .delivered
             .contains_key(Path::new(".codex/skills/local/SKILL.md")));
-        assert!(rulesync_registry::approved_local_folders(&f.setup.data)
+        assert!(rulesync_registry::saved_skill_deliveries(&f.setup.data)
             .unwrap()
+            .folders
             .is_empty());
     }
 
@@ -6435,7 +6472,7 @@ mod tests {
         let manifest_file = f.setup.data.join("personal.json");
         let stored: serde_json::Value =
             serde_json::from_slice(&fs::read(&manifest_file).unwrap()).unwrap();
-        assert_eq!(stored["format"], 2);
+        assert_eq!(stored["format"], 3);
         let files = &stored["state"]["master"]["skills"][0]["files"];
         let hash = files["file-0.txt"].as_str().unwrap();
         assert_eq!(hash.len(), 64);
@@ -6822,7 +6859,7 @@ mod tests {
             operations.push(Pending {
                 path: folder.clone(),
                 seen: root.read(&folder, true).unwrap(),
-                desired: Snapshot::directory(),
+                desired: Snapshot::private_directory(),
                 kind: Some(Kind::Directory),
                 allow_link: true,
             });
@@ -6937,10 +6974,9 @@ mod tests {
             fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
         }
         let original = f.text(CLAUDE);
-        let error = f.setup.restore().unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("run wenlan rules restore with the earlier build"));
+        let message = f.setup.restore().unwrap_err().to_string();
+        assert!(message.contains("wenlan rules restore"), "{message}");
+        assert!(message.contains("adopt again"), "{message}");
         assert_eq!(fs::read(path).unwrap(), old);
         assert_eq!(f.text(CLAUDE), original);
         assert!(!f.setup.data.join("personal-blobs").exists());

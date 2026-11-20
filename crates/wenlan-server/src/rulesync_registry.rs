@@ -12,13 +12,11 @@ use wenlan_types::{rulesync::RulesSyncReport, skill_registry::LocalSkill};
 #[path = "rulesync_skill_routes.rs"]
 mod saved_skills;
 #[cfg(test)]
+pub(crate) use saved_skills::{accept_only_tool_proposal, review_only_tool_proposal};
 pub(crate) use saved_skills::{
-    accept_only_tool_proposal, accept_only_tool_proposal_with_scope, review_only_tool_proposal,
-};
-pub(crate) use saved_skills::{
-    approved_local_folders, approved_skills, authored_rows, clear_review_holds,
-    collect_tool_proposals, register, remove_saved_source, ApprovedSkills, ManagedSkill, SkillHome,
-    SkillModes,
+    authored_rows, check_skill_format, clear_review_holds, collect_tool_proposals, register,
+    remove_saved_source, saved_skill_deliveries, ApprovedSkills, ManagedSkill,
+    SavedSkillDeliveries, SkillHome, SkillModes,
 };
 
 // The registry swaps source directories in place. A snapshot taken during

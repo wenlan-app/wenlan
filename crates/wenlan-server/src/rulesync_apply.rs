@@ -93,8 +93,7 @@ pub(crate) enum Snapshot<Content = Vec<u8>> {
     /// Directory entry only. The applier can create or replace an empty
     /// directory. Its children are planned and applied independently.
     Directory {
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        mode: Option<FileMode>,
+        mode: FileMode,
     },
 }
 
@@ -138,11 +137,6 @@ impl Snapshot {
         Self::File { bytes, mode }
     }
 
-    #[cfg(test)]
-    pub(crate) fn directory() -> Self {
-        Self::Directory { mode: None }
-    }
-
     pub(crate) fn private_directory() -> Self {
         Self::directory_with_mode(if cfg!(unix) { 0o700 } else { 0 })
     }
@@ -152,16 +146,11 @@ impl Snapshot {
     }
 
     pub(crate) fn directory_with_permissions(mode: FileMode) -> Self {
-        Self::Directory { mode: Some(mode) }
+        Self::Directory { mode }
     }
 
     pub(crate) fn is_directory(&self) -> bool {
         matches!(self, Self::Directory { .. })
-    }
-
-    pub(crate) fn matches(&self, actual: &Self) -> bool {
-        // Earlier journals recorded only the type of a directory.
-        matches!(self, Self::Directory { mode: None }) && actual.is_directory() || self == actual
     }
 }
 
@@ -426,15 +415,13 @@ impl FileRoot {
             );
         };
         self.check_directory_leaf(&parent, name)?;
-        if !seen.matches(&read_leaf(&parent, name, true)?) {
+        if *seen != read_leaf(&parent, name, true)? {
             return Ok(ApplyOutcome::ChangedSincePlan);
         }
-        if desired.matches(seen) {
+        if desired == seen {
             return Ok(ApplyOutcome::Applied);
         }
-        if let (Snapshot::Directory { .. }, Snapshot::Directory { mode: Some(mode) }) =
-            (seen, desired)
-        {
+        if let (Snapshot::Directory { .. }, Snapshot::Directory { mode }) = (seen, desired) {
             // Change metadata on the open directory without replacing its subtree.
             let directory = parent.open_dir_nofollow(name)?;
             let Some(current_parent) = self.open_parent(relative_parent, false)? else {
@@ -442,9 +429,10 @@ impl FileRoot {
             };
             if !same_directory(&parent, &current_parent)?
                 || !same_directory(&directory, &current_parent.open_dir_nofollow(name)?)?
-                || !seen.matches(&Snapshot::directory_with_permissions(FileMode::of(
-                    &directory.dir_metadata()?,
-                )))
+                || *seen
+                    != Snapshot::directory_with_permissions(FileMode::of(
+                        &directory.dir_metadata()?,
+                    ))
             {
                 return Ok(ApplyOutcome::ChangedSincePlan);
             }
@@ -525,8 +513,7 @@ impl FileRoot {
                 // The incoming hardlink is created before replacement. If
                 // the original is still in place, a partial incoming write
                 // may be the only entry.
-                desired.matches(&entry)
-                    || (seen.matches(actual) && matches!(desired, Snapshot::File { .. }))
+                *desired == entry || (seen == actual && matches!(desired, Snapshot::File { .. }))
             }
             Err(error) => return Err(error),
         };
@@ -537,7 +524,7 @@ impl FileRoot {
                 move_displaced(&dir, &displaced)?;
                 #[cfg(unix)]
                 displaced.0.open(".")?.sync_all()?;
-            } else if !matches_leaf(&dir, Path::new(STAGED), seen)? || !desired.matches(actual) {
+            } else if !matches_leaf(&dir, Path::new(STAGED), seen)? || desired != actual {
                 return Err(io::Error::other(format!(
                     "an unexpected entry is saved in {name}/{STAGED}. Check it before retrying"
                 )));
@@ -653,12 +640,9 @@ fn create_directory(parent: &Dir, name: &Path) -> io::Result<()> {
     parent.create_dir_with(name, &builder)
 }
 
-fn create_planned_directory(parent: &Dir, name: &Path, mode: Option<FileMode>) -> io::Result<()> {
+fn create_planned_directory(parent: &Dir, name: &Path, mode: FileMode) -> io::Result<()> {
     create_directory(parent, name)?;
-    if let Some(mode) = mode {
-        mode.set_directory(&parent.open_dir_nofollow(name)?)?;
-    }
-    Ok(())
+    mode.set_directory(&parent.open_dir_nofollow(name)?)
 }
 
 fn require_private_permissions(metadata: &Metadata, description: &str) -> io::Result<()> {
@@ -712,7 +696,7 @@ fn read_leaf_with(
     }
     if metadata.is_dir() {
         return Ok(Snapshot::Directory {
-            mode: Some(FileMode::of(&metadata)),
+            mode: FileMode::of(&metadata),
         });
     }
     if !metadata.is_file() {
@@ -764,7 +748,7 @@ fn check_file_size(len: u64) -> io::Result<()> {
 }
 
 fn matches_leaf(parent: &Dir, name: &Path, expected: &Snapshot) -> io::Result<bool> {
-    if !expected.matches(&read_leaf(parent, name, true)?) {
+    if *expected != read_leaf(parent, name, true)? {
         return Ok(false);
     }
     if expected.is_directory() {
@@ -1328,15 +1312,21 @@ mod tests {
         symlink(referent, &path).unwrap();
         let seen = root.read(name, true).unwrap();
         assert_eq!(
-            root.apply(name, &seen, &Snapshot::directory(), true)
+            root.apply(name, &seen, &Snapshot::private_directory(), true)
                 .unwrap(),
             ApplyOutcome::Applied
         );
         assert!(root.read(name, false).unwrap().is_directory());
         let late_child = path.join("personal-notes");
-        let result = root.apply_inner(name, &Snapshot::directory(), &seen, direct(true), || {
-            fs::write(&late_child, b"new skill notes").unwrap();
-        });
+        let result = root.apply_inner(
+            name,
+            &Snapshot::private_directory(),
+            &seen,
+            direct(true),
+            || {
+                fs::write(&late_child, b"new skill notes").unwrap();
+            },
+        );
         assert_eq!(result.unwrap(), ApplyOutcome::ChangedSincePlan);
         assert_eq!(fs::read(&late_child).unwrap(), b"new skill notes");
         assert_eq!(
@@ -1346,7 +1336,7 @@ mod tests {
 
         fs::remove_file(late_child).unwrap();
         assert_eq!(
-            root.apply(name, &Snapshot::directory(), &seen, true)
+            root.apply(name, &Snapshot::private_directory(), &seen, true)
                 .unwrap(),
             ApplyOutcome::Applied
         );
