@@ -55949,8 +55949,14 @@ impl MemoryDB {
         // projection before this boundary; all other callers must supply
         // delimiter-free source, which is stored without transformation.
         let content = crate::export::provenance::validate_canonical_page_content(content)?;
-        let source_ids_json = serde_json::to_string(&source_memory_ids)
-            .map_err(|e| WenlanError::VectorDb(format!("serialize source_memory_ids: {e}")))?;
+        let source_ids_json =
+            if basis.preserve_source_links {
+                None
+            } else {
+                Some(serde_json::to_string(&source_memory_ids).map_err(|e| {
+                    WenlanError::VectorDb(format!("serialize source_memory_ids: {e}"))
+                })?)
+            };
         // Prepare the vector before taking the DB lock. The subsequent
         // transaction writes it with the exact sanitized body; on an embedding
         // failure we clear the vector instead of leaving an old body vector
@@ -56230,7 +56236,14 @@ impl MemoryDB {
         let lifecycle_changelog = changelog
             .and_then(|value| citation_provenance::normalize_summary(value, citations_bind));
         let changelog = lifecycle_changelog.as_deref().or(changelog);
-        if let Err(e) = Self::dual_write_page_citations(&conn, id, citations_bind).await {
+        let captured = if basis.preserve_source_links {
+            // Preserve the evidence edges while invalidating the render cache.
+            // Its old marker positions cannot describe the new prose.
+            page_export::capture_history_on(&conn, id).await
+        } else {
+            Self::dual_write_page_citations(&conn, id, citations_bind).await
+        };
+        if let Err(e) = captured {
             let _ = conn.execute("ROLLBACK", ()).await;
             return Err(WenlanError::VectorDb(format!(
                 "update_page_content citations: {e}"
@@ -56246,7 +56259,7 @@ impl MemoryDB {
                 // from being overwritten. Authored pages never take this path.
                 "UPDATE pages SET \
                    content = ?1, \
-                   source_memory_ids = ?2, \
+                   source_memory_ids = COALESCE(?2, source_memory_ids), \
                    version = version + 1, \
                    last_compiled = ?3, \
                    last_modified = ?3, \
@@ -56264,7 +56277,7 @@ impl MemoryDB {
             } else if require_stale {
                 "UPDATE pages SET \
                    content = ?1, \
-                   source_memory_ids = ?2, \
+                   source_memory_ids = COALESCE(?2, source_memory_ids), \
                    version = version + 1, \
                    last_compiled = ?3, \
                    last_modified = ?3, \
@@ -56283,7 +56296,7 @@ impl MemoryDB {
             } else {
                 "UPDATE pages SET \
                    content = ?1, \
-                   source_memory_ids = ?2, \
+                   source_memory_ids = COALESCE(?2, source_memory_ids), \
                    version = version + 1, \
                    last_compiled = ?3, \
                    last_modified = ?3, \
@@ -56453,7 +56466,7 @@ impl MemoryDB {
             let mut sql = if require_stale {
                 "UPDATE pages SET \
                    content = ?1, \
-                   source_memory_ids = ?2, \
+                   source_memory_ids = COALESCE(?2, source_memory_ids), \
                    version = version + 1, \
                    last_compiled = ?3, \
                    last_modified = ?3, \
@@ -56471,7 +56484,7 @@ impl MemoryDB {
             } else {
                 "UPDATE pages SET \
                    content = ?1, \
-                   source_memory_ids = ?2, \
+                   source_memory_ids = COALESCE(?2, source_memory_ids), \
                    version = version + 1, \
                    last_compiled = ?3, \
                    last_modified = ?3, \
@@ -56620,77 +56633,80 @@ impl MemoryDB {
             )));
         }
 
-        // G6 Stage 2 PR 2b: snapshot the memory locators the (now-retired)
-        // page_sources/page_evidence prune used to remove, reading `edges`
-        // directly since both tables stop writing in this PR -- the
-        // memory-kind `cites` set for this page, minus the new source list.
-        let removed_locators: Vec<String> = {
-            let mut rows = match conn
-                .query(
-                    "SELECT dst_id FROM edges
-                     WHERE edge_type = 'cites' AND src_kind = 'page' AND src_id = ?1
-                       AND dst_kind = 'memory' AND valid_until IS NULL",
-                    libsql::params![id],
-                )
-                .await
-            {
-                Ok(rows) => rows,
-                Err(e) => {
-                    let _ = conn.execute("ROLLBACK", ()).await;
-                    return Err(WenlanError::VectorDb(format!(
-                        "update_page_content removed scan: {e}"
-                    )));
-                }
-            };
-            let mut current = Vec::new();
-            loop {
-                match rows.next().await {
-                    Ok(Some(row)) => current.push(row.get::<String>(0).unwrap_or_default()),
-                    Ok(None) => break,
+        if !basis.preserve_source_links {
+            // G6 Stage 2 PR 2b: snapshot the memory locators the (now-retired)
+            // page_sources/page_evidence prune used to remove, reading `edges`
+            // directly since both tables stop writing in this PR -- the
+            // memory-kind `cites` set for this page, minus the new source list.
+            let removed_locators: Vec<String> = {
+                let mut rows = match conn
+                    .query(
+                        "SELECT dst_id FROM edges
+                         WHERE edge_type = 'cites' AND src_kind = 'page' AND src_id = ?1
+                           AND dst_kind = 'memory' AND valid_until IS NULL",
+                        libsql::params![id],
+                    )
+                    .await
+                {
+                    Ok(rows) => rows,
                     Err(e) => {
                         let _ = conn.execute("ROLLBACK", ()).await;
                         return Err(WenlanError::VectorDb(format!(
-                            "update_page_content removed row: {e}"
+                            "update_page_content removed scan: {e}"
                         )));
                     }
+                };
+                let mut current = Vec::new();
+                loop {
+                    match rows.next().await {
+                        Ok(Some(row)) => current.push(row.get::<String>(0).unwrap_or_default()),
+                        Ok(None) => break,
+                        Err(e) => {
+                            let _ = conn.execute("ROLLBACK", ()).await;
+                            return Err(WenlanError::VectorDb(format!(
+                                "update_page_content removed row: {e}"
+                            )));
+                        }
+                    }
+                }
+                current.retain(|sid| !source_memory_ids.contains(&sid.as_str()));
+                current
+            };
+
+            // Retire the pruned locators' canonical edges. Kept sids are
+            // re-asserted just below via `insert_resolved_page_evidence`'s
+            // dual-write. G6 Stage 2 PR 2b (item 4): the D7 refcount guard that
+            // used to keep an edge active when the new `pages.citations` value
+            // still listed it retires along with `cites_backed_by_page_citations`
+            // -- the column is a pure render cache now, so it no longer gates
+            // whether a pruned source's edge retracts.
+            for locator in &removed_locators {
+                let edge_id = crate::provenance::compute_edge_id(
+                    "cites", "page", id, "memory", locator, locator,
+                );
+                if let Err(e) = Self::dual_write_invalidate_edge(&conn, &edge_id, None).await {
+                    let _ = conn.execute("ROLLBACK", ()).await;
+                    return Err(WenlanError::VectorDb(format!(
+                        "update_page_content retire edge: {e}"
+                    )));
                 }
             }
-            current.retain(|sid| !source_memory_ids.contains(&sid.as_str()));
-            current
-        };
 
-        // Retire the pruned locators' canonical edges. Kept sids are
-        // re-asserted just below via `insert_resolved_page_evidence`'s
-        // dual-write. G6 Stage 2 PR 2b (item 4): the D7 refcount guard that
-        // used to keep an edge active when the new `pages.citations` value
-        // still listed it retires along with `cites_backed_by_page_citations`
-        // -- the column is a pure render cache now, so it no longer gates
-        // whether a pruned source's edge retracts.
-        for locator in &removed_locators {
-            let edge_id =
-                crate::provenance::compute_edge_id("cites", "page", id, "memory", locator, locator);
-            if let Err(e) = Self::dual_write_invalidate_edge(&conn, &edge_id, None).await {
+            if let Err(e) = Self::insert_resolved_page_evidence(
+                &conn,
+                id,
+                source_memory_ids,
+                now_ts,
+                link_reason,
+                receipt.map(|r| r.operation_id),
+            )
+            .await
+            {
                 let _ = conn.execute("ROLLBACK", ()).await;
                 return Err(WenlanError::VectorDb(format!(
-                    "update_page_content retire edge: {e}"
+                    "update_page evidence insert: {e}"
                 )));
             }
-        }
-
-        if let Err(e) = Self::insert_resolved_page_evidence(
-            &conn,
-            id,
-            source_memory_ids,
-            now_ts,
-            link_reason,
-            receipt.map(|r| r.operation_id),
-        )
-        .await
-        {
-            let _ = conn.execute("ROLLBACK", ()).await;
-            return Err(WenlanError::VectorDb(format!(
-                "update_page evidence insert: {e}"
-            )));
         }
 
         if let Some((source_id, expected_memory_version)) = page_growth_guard {

@@ -247,7 +247,7 @@ pub async fn page_write_with_citation_snapshot(
                 knowledge_path,
                 citations,
                 None,
-                false,
+                basis.preserve_source_links,
                 false,
                 None,
                 agent,

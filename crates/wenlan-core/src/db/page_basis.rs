@@ -880,6 +880,9 @@ pub(super) async fn confirm_page_basis_on_conn(
 /// edit) is what every writer that predates the page basis passes.
 #[derive(Debug, Clone, Default)]
 pub struct BasisWrite {
+    /// Server-owned links survive a hosted refresh or acceptance of its card.
+    /// The writer supplies no replacement sources or citation records.
+    pub preserve_source_links: bool,
     pub research_write: Option<super::research_write::ResearchWriteFence>,
     pub citation_snapshots: Vec<super::CitationSourceSnapshot>,
     /// The history row is flagged as a minor edit (typo, formatting).

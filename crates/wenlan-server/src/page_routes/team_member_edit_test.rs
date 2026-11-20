@@ -321,6 +321,7 @@ async fn a_member_save_guarded_to_a_space_the_page_left_writes_nothing() {
             edited_by: "shared_person:m-amy",
             knowledge_path: None,
             basis: wenlan_core::db::BasisWrite {
+                preserve_source_links: false,
                 research_write: None,
                 citation_snapshots: Vec::new(),
                 minor: false,

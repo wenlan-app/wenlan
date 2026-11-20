@@ -2419,6 +2419,7 @@ pub async fn handle_update_page(
             edited_by: &edited_by,
             knowledge_path: page_root.as_deref(),
             basis: wenlan_core::db::BasisWrite {
+                preserve_source_links: false,
                 research_write: None,
                 citation_snapshots: Vec::new(),
                 minor: minor.unwrap_or(false),
@@ -2736,8 +2737,7 @@ async fn handle_refresh_page_inner(
         None => None,
     };
     // Validate the body before touching the filesystem. Empty content would
-    // produce an empty md. An empty source list is checked against the page
-    // below: it is accepted only for a page that has no sources to drop.
+    // produce an empty md.
     if req.content.trim().is_empty() {
         return Err(ServerError::ValidationError(
             "content must not be empty".into(),
@@ -2797,11 +2797,13 @@ async fn handle_refresh_page_inner(
         .await
         .map_err(|e| ServerError::Internal(e.to_string()))?;
 
-    let existing = db
-        .get_page(&id)
-        .await
-        .map_err(|e| ServerError::Internal(e.to_string()))?
-        .ok_or_else(|| ServerError::ValidationError(format!("page {} not found", id)))?;
+    let existing = if private {
+        db.get_page(&id).await
+    } else {
+        db.get_shared_page_scoped(&id, &scope).await
+    }
+    .map_err(|e| ServerError::Internal(e.to_string()))?
+    .ok_or_else(|| ServerError::ValidationError(format!("page {} not found", id)))?;
     // A note outside the caller's Space answers exactly as a missing one, so
     // a locked agent learns nothing about it, not even that it exists.
     if !scope.matches(existing.space.as_deref()) {
@@ -2840,14 +2842,12 @@ async fn handle_refresh_page_inner(
     {
         return Err(page_read_required_conflict(&id, existing.version));
     }
-    if req.source_memory_ids.is_empty() && !existing.source_memory_ids.is_empty() {
-        let message = if private {
+    if private && req.source_memory_ids.is_empty() && !existing.source_memory_ids.is_empty() {
+        return Err(ServerError::ValidationError(
             "source_memory_ids must not be empty for a page that has sources; \
              refresh keeps the page linked to its sources"
-        } else {
-            "Edit this page in the team app to keep its source links."
-        };
-        return Err(ServerError::ValidationError(message.into()));
+                .into(),
+        ));
     }
 
     // Ownership gate (spec §5.1/§5.2): agent refresh is a machine write. A
@@ -2935,7 +2935,7 @@ async fn handle_refresh_page_inner(
             &db,
             &existing,
             &req.content,
-            &req.source_memory_ids,
+            private.then_some(req.source_memory_ids.as_slice()),
             source_revision,
             "agent_refresh",
             proposer,
@@ -2983,6 +2983,7 @@ async fn handle_refresh_page_inner(
         &db,
         wenlan_core::post_write::PageWrite::AgentUpdate {
             basis: wenlan_core::db::BasisWrite {
+                preserve_source_links: !private,
                 research_write: research_write.clone(),
                 citation_snapshots: Vec::new(),
                 minor: req.minor.unwrap_or(false),

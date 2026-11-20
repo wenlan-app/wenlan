@@ -502,6 +502,134 @@ async fn hosted_revision_history_omits_host_prompts_and_previous_bodies() {
 }
 
 #[tokio::test]
+async fn hosted_refresh_has_the_same_outcome_with_and_without_hidden_sources() {
+    const SOURCE: &str = "fixture-refresh-evidence";
+    const BEFORE: &str = "Design review starts Tuesday.";
+    const AFTER: &str = "Design review starts Tuesday. Bring the checklist.";
+    const PROPOSED: &str = "Design review starts Tuesday. Bring the final checklist.";
+    let (app, db, _scratch) = fixture().await;
+    db.upsert_documents(vec![RawDocument {
+        source: "memory".into(),
+        source_id: SOURCE.into(),
+        title: "Fictional reminder".into(),
+        content: BEFORE.into(),
+        space: Some(SPACE.into()),
+        confirmed: Some(true),
+        ..Default::default()
+    }])
+    .await
+    .unwrap();
+    let mut outcomes = Vec::new();
+    for (title, sources) in [
+        ("Unlinked design note", vec![]),
+        ("Linked design note", vec![SOURCE.to_string()]),
+    ] {
+        let page = wenlan_core::post_write::create_page_with_floor(
+            &db,
+            wenlan_types::requests::CreateConceptRequest {
+                title: title.into(),
+                content: BEFORE.into(),
+                summary: None,
+                entity_id: None,
+                space: Some(SPACE.to_string()).into(),
+                source_memory_ids: sources.clone(),
+                creation_kind: Some("authored".into()),
+                workspace: Some(SPACE.into()),
+            },
+            AGENT,
+            None,
+            1,
+        )
+        .await
+        .unwrap();
+        let id = page.id;
+        let before = db.get_page(&id).await.unwrap().unwrap();
+        let path = format!("/api/pages/{id}");
+        let (status, _) = request(&app, Method::PUT, &path, json!({"content": AFTER}), true).await;
+        assert_eq!(
+            status,
+            StatusCode::CONFLICT,
+            "a human page requires a version"
+        );
+        let (status, response) = request(
+            &app,
+            Method::PUT,
+            &path,
+            json!({"content": AFTER, "expected_version": before.version}),
+            true,
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "hidden sources must not refuse refresh"
+        );
+        assert!(!response.to_string().contains(SOURCE));
+        outcomes.push(response);
+
+        let after = db.get_page(&id).await.unwrap().unwrap();
+        assert_eq!(after.version, before.version + 1);
+        assert!(after.content.contains("Bring the checklist."));
+        assert!(
+            after.source_memory_ids == sources,
+            "refresh dropped source links"
+        );
+        let evidence = db.get_page_evidence(&id).await.unwrap();
+        assert_eq!(evidence.len(), sources.len());
+        let (stale, _) = request(
+            &app,
+            Method::PUT,
+            &path,
+            json!({"content": AFTER, "expected_version": before.version}),
+            true,
+        )
+        .await;
+        assert_eq!(stale, StatusCode::CONFLICT);
+
+        assert!(db.set_page_review_required(&id, true).await.unwrap());
+        let (status, proposal) = request(
+            &app,
+            Method::PUT,
+            &path,
+            json!({
+                "content": PROPOSED,
+                "expected_version": after.version,
+                "person_asked": "Use the final checklist."
+            }),
+            true,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(proposal["gated"], true);
+        assert!(!proposal.to_string().contains(SOURCE));
+        assert_eq!(
+            db.get_page(&id).await.unwrap().unwrap().content,
+            after.content
+        );
+        let card = proposal["revision_card_id"].as_str().unwrap();
+        wenlan_core::post_write::accept_pending_revision_with_knowledge_path(
+            &db, card, "human", None,
+        )
+        .await
+        .unwrap();
+        let accepted = db.get_page(&id).await.unwrap().unwrap();
+        assert_eq!(accepted.content, PROPOSED);
+        assert!(
+            accepted.source_memory_ids == sources,
+            "review dropped source links"
+        );
+        assert_eq!(
+            db.get_page_evidence(&id).await.unwrap().len(),
+            sources.len()
+        );
+    }
+    assert!(
+        outcomes[0] == outcomes[1],
+        "one refresh response disclosed source presence"
+    );
+}
+
+#[tokio::test]
 async fn hosted_forwarding_does_not_admit_private_readers() {
     let (app, _, _scratch) = fixture().await;
     for (method, path) in [
