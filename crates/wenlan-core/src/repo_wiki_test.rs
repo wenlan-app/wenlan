@@ -383,7 +383,7 @@ fn publish_pushes_the_wiki_branch_without_touching_the_working_copy() {
     let worktree = dir.path().join("data/repo-wiki/site");
     let publish_once = |pages: Vec<Page>| {
         publish(PublishInput {
-            rules: Vec::new(),
+            rules: Some(Vec::new()),
             publisher: "me".to_string(),
             binding: &binding,
             pages,
@@ -563,7 +563,7 @@ fn publish_refuses_a_folder_holding_files_wenlan_did_not_write() {
         vec![locator(&binding.repo_root, "src/lib.rs", 1, 2)],
     )]);
     let error = publish(PublishInput {
-        rules: Vec::new(),
+        rules: Some(Vec::new()),
         publisher: "me".to_string(),
         binding: &binding,
         pages: vec![page("p1", "Module map", "x")],
@@ -606,7 +606,7 @@ fn publish_with_no_selected_pages_does_nothing() {
         take_over: false,
     };
     let result = publish(PublishInput {
-        rules: Vec::new(),
+        rules: Some(Vec::new()),
         publisher: "me".to_string(),
         binding: &binding,
         pages: vec![],
@@ -971,7 +971,7 @@ fn publish_input<'a>(
     worktree: &Path,
 ) -> PublishInput<'a> {
     PublishInput {
-        rules: Vec::new(),
+        rules: Some(Vec::new()),
         publisher: "me".to_string(),
         binding,
         pages,
@@ -1225,7 +1225,7 @@ fn a_page_file_edited_in_the_repository_is_found_and_kept() {
 
     // Not taken back: the edit stays and nothing is offered.
     let kept = publish(PublishInput {
-        rules: Vec::new(),
+        rules: Some(Vec::new()),
         publisher: "me".to_string(),
         prepared: Some(prepared),
         ..publish_input(
@@ -1246,7 +1246,7 @@ fn a_page_file_edited_in_the_repository_is_found_and_kept() {
     let mut seen = binding.clone();
     seen.kept_edits = kept.kept_edits.clone().unwrap();
     let again = publish(PublishInput {
-        rules: Vec::new(),
+        rules: Some(Vec::new()),
         publisher: "me".to_string(),
         prepared: Some(prepare(&seen, &worktree).unwrap()),
         ..publish_input(
@@ -1269,7 +1269,7 @@ fn a_page_file_edited_in_the_repository_is_found_and_kept() {
     taken[0].content = prepared.edits[0].body.clone();
     taken[0].version = 2;
     let back = publish(PublishInput {
-        rules: Vec::new(),
+        rules: Some(Vec::new()),
         publisher: "me".to_string(),
         taken_back: BTreeSet::from([page_file.clone()]),
         took_back: 1,
@@ -1467,7 +1467,7 @@ fn edits_people_push_to_the_wiki_branch_survive_the_next_publish() {
     let mut changed = pages.clone();
     changed[0].title = "Module map".into();
     let next = publish(PublishInput {
-        rules: Vec::new(),
+        rules: Some(Vec::new()),
         publisher: "me".to_string(),
         prepared: Some(prepared),
         ..publish_input(
@@ -1656,7 +1656,7 @@ fn ux_skill_7_project_rules_reach_agents_md_without_any_wiki_page() {
     let store = dir.path().join("data/repo-wiki.json");
     let binding = bind_at(&store, "site", &clone, None, None).unwrap();
     let published = publish(PublishInput {
-        rules: vec!["Run the affected tests before a push.".to_string()],
+        rules: Some(vec!["Run the affected tests before a push.".to_string()]),
         publisher: "me".to_string(),
         binding: &binding,
         pages: vec![],
@@ -1686,6 +1686,540 @@ fn ux_skill_7_project_rules_reach_agents_md_without_any_wiki_page() {
     let files = sh(&origin, &["ls-tree", "-r", "--name-only", REPO_WIKI_BRANCH]);
     assert!(!files.contains("wenlan/"), "{files}");
     assert!(!files.contains(".gitattributes"), "{files}");
+}
+
+/// A rule taken away in Wenlan leaves the repository's `AGENTS.md` at the
+/// next wiki pull request, the last one too: the block is taken out rather
+/// than "nothing to publish" leaving the old rules on the default branch.
+#[test]
+fn ux_skill_7_a_removed_rule_leaves_agents_md_even_the_last_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let (origin, clone) = repo_with_origin(dir.path());
+    let store = dir.path().join("data/repo-wiki.json");
+    bind_at(&store, "site", &clone, None, None).unwrap();
+    let publish_rules = |rules: &[&str]| {
+        let binding = binding_at(&store, "site").unwrap().unwrap();
+        let published = publish(PublishInput {
+            rules: Some(rules.iter().map(|rule| rule.to_string()).collect()),
+            publisher: "me".to_string(),
+            binding: &binding,
+            pages: vec![],
+            left_out: 0,
+            code_bases: &HashMap::new(),
+            anchors: &CodeAnchors::new(),
+            concept_paths: &ConceptPathMap::new(),
+            worktree: dir.path().join("data/repo-wiki/site"),
+            gh: None,
+            now: 1,
+            prepared: None,
+            taken_back: BTreeSet::new(),
+            took_back: 0,
+        })
+        .unwrap();
+        record_publish_at(&store, "site", &published).unwrap();
+        published.result.status
+    };
+    let merge = || {
+        sh(&clone, &["fetch", "--quiet", "origin"]);
+        sh(
+            &clone,
+            &[
+                "merge",
+                "--quiet",
+                "--ff-only",
+                &format!("origin/{REPO_WIKI_BRANCH}"),
+            ],
+        );
+        sh(&clone, &["push", "--quiet", "origin", "main"]);
+    };
+    let on_branch = |file: &str| sh(&origin, &["show", &format!("{REPO_WIKI_BRANCH}:{file}")]);
+
+    assert_eq!(
+        publish_rules(&["Rule A.", "Rule B."]),
+        RepoWikiPublishStatus::Pushed
+    );
+    merge();
+
+    // One of two taken away: only the other one is left.
+    assert_eq!(publish_rules(&["Rule B."]), RepoWikiPublishStatus::Pushed);
+    let agents = on_branch("AGENTS.md");
+    assert!(!agents.contains("Rule A."), "{agents}");
+    assert!(agents.contains("- Rule B."), "{agents}");
+    merge();
+
+    // The last one taken away: the pull request takes the block out.
+    assert_eq!(publish_rules(&[]), RepoWikiPublishStatus::Pushed);
+    let files = sh(&origin, &["ls-tree", "-r", "--name-only", REPO_WIKI_BRANCH]);
+    assert!(!files.lines().any(|f| f == "AGENTS.md"), "{files}");
+    let claude = on_branch("CLAUDE.md");
+    assert_eq!(claude, "# Notes\n\nKeep it small.");
+    merge();
+
+    // Nothing of Wenlan's left in the repository: nothing to publish again.
+    assert_eq!(publish_rules(&[]), RepoWikiPublishStatus::NothingToPublish);
+}
+
+/// Publish `rules` (and a page resting on `src/lib.rs`, when `with_page`)
+/// for the Space "site", recording the publish as the server does.
+fn publish_site(
+    dir: &Path,
+    store: &Path,
+    rules: Option<&[&str]>,
+    with_page: bool,
+) -> RepoWikiPublishStatus {
+    publish_site_with(dir, store, rules, with_page, None).status
+}
+
+fn publish_site_with(
+    dir: &Path,
+    store: &Path,
+    rules: Option<&[&str]>,
+    with_page: bool,
+    gh: Option<PathBuf>,
+) -> RepoWikiPublishResult {
+    let binding = binding_at(store, "site").unwrap().unwrap();
+    let code_bases = if with_page {
+        HashMap::from([(
+            "p1".to_string(),
+            vec![locator(&binding.repo_root, "src/lib.rs", 1, 2)],
+        )])
+    } else {
+        HashMap::new()
+    };
+    let anchors = anchors_for(
+        &code_bases,
+        &[("src/lib.rs", "fn a() {}\nfn b() {}\nfn c() {}\n")],
+    );
+    let published = publish(PublishInput {
+        rules: rules.map(|rules| rules.iter().map(|rule| rule.to_string()).collect()),
+        publisher: "me".to_string(),
+        binding: &binding,
+        pages: if with_page {
+            vec![page("p1", "Page one", "Body.")]
+        } else {
+            vec![]
+        },
+        left_out: 0,
+        code_bases: &code_bases,
+        anchors: &anchors,
+        concept_paths: &ConceptPathMap::new(),
+        worktree: dir.join("data/repo-wiki/site"),
+        gh,
+        now: 1,
+        prepared: None,
+        taken_back: BTreeSet::new(),
+        took_back: 0,
+    })
+    .unwrap();
+    record_publish_at(store, "site", &published).unwrap();
+    published.result
+}
+
+fn merge_wiki_branch(clone: &Path) {
+    sh(clone, &["fetch", "--quiet", "origin"]);
+    sh(
+        clone,
+        &[
+            "merge",
+            "--quiet",
+            "--ff-only",
+            &format!("origin/{REPO_WIKI_BRANCH}"),
+        ],
+    );
+    sh(clone, &["push", "--quiet", "origin", "main"]);
+}
+
+/// Rules that could not be read are not "no rules": the repository keeps
+/// the ones it has, with and without pages.
+#[test]
+fn ux_skill_7_rules_that_could_not_be_read_stay_in_agents_md() {
+    let dir = tempfile::tempdir().unwrap();
+    let (origin, clone) = repo_with_origin(dir.path());
+    let store = dir.path().join("data/repo-wiki.json");
+    bind_at(&store, "site", &clone, None, None).unwrap();
+    assert_eq!(
+        publish_site(dir.path(), &store, Some(&["Rule A.", "Rule B."]), false),
+        RepoWikiPublishStatus::Pushed
+    );
+    merge_wiki_branch(&clone);
+
+    // No pages: nothing to publish, and the rules stay where they are.
+    assert_eq!(
+        publish_site(dir.path(), &store, None, false),
+        RepoWikiPublishStatus::NothingToPublish
+    );
+    let main = sh(&origin, &["show", "main:AGENTS.md"]);
+    assert!(main.contains("- Rule A.\n- Rule B.\n"), "{main}");
+
+    // With a page: the block gains the wiki pointer and keeps the rules.
+    assert_eq!(
+        publish_site(dir.path(), &store, None, true),
+        RepoWikiPublishStatus::Pushed
+    );
+    let agents = sh(&origin, &["show", &format!("{REPO_WIKI_BRANCH}:AGENTS.md")]);
+    assert!(agents.contains("## Wiki"), "{agents}");
+    assert!(
+        agents.contains("## Rules for this project\n\n- Rule A.\n- Rule B.\n<!-- WENLAN:END -->"),
+        "{agents}"
+    );
+}
+
+/// The last rule taken away while the wiki pull request that added it is
+/// still open: the pull request no longer carries it.
+#[test]
+fn ux_skill_7_a_removed_last_rule_leaves_the_open_pull_request() {
+    let dir = tempfile::tempdir().unwrap();
+    let (origin, clone) = repo_with_origin(dir.path());
+    let store = dir.path().join("data/repo-wiki.json");
+    bind_at(&store, "site", &clone, None, None).unwrap();
+    assert_eq!(
+        publish_site(dir.path(), &store, Some(&["Rule A."]), false),
+        RepoWikiPublishStatus::Pushed
+    );
+    let files = sh(&origin, &["ls-tree", "-r", "--name-only", REPO_WIKI_BRANCH]);
+    assert!(files.lines().any(|f| f == "AGENTS.md"), "{files}");
+
+    assert_eq!(
+        publish_site(dir.path(), &store, Some(&[]), false),
+        RepoWikiPublishStatus::Pushed
+    );
+    let files = sh(&origin, &["ls-tree", "-r", "--name-only", REPO_WIKI_BRANCH]);
+    assert!(!files.lines().any(|f| f == "AGENTS.md"), "{files}");
+    let claude = sh(&origin, &["show", &format!("{REPO_WIKI_BRANCH}:CLAUDE.md")]);
+    assert_eq!(claude, "# Notes\n\nKeep it small.");
+    let diff = sh(&origin, &["diff", "--stat", "main", REPO_WIKI_BRANCH]);
+    assert!(diff.is_empty(), "{diff}");
+
+    // Settled: nothing more to send.
+    assert_eq!(
+        publish_site(dir.path(), &store, Some(&[]), false),
+        RepoWikiPublishStatus::NothingToPublish
+    );
+}
+
+/// Make `clone`'s `origin` look like `github.com/o/r` while fetches and
+/// pushes still reach the bare `origin` on disk.
+fn github_like(root: &Path, clone: &Path, origin: &Path) {
+    let ssh = root.join("fake-ssh");
+    std::fs::write(
+        &ssh,
+        format!(
+            "#!/bin/sh\nfor a; do cmd=$a; done\n\
+             cmd=$(printf %s \"$cmd\" | sed -e \"s|'/*o/r.git'|'{}'|\" -e 's|^git-|git |')\n\
+             exec sh -c \"$cmd\"\n",
+            origin.display()
+        ),
+    )
+    .unwrap();
+    make_executable(&ssh);
+    sh(clone, &["config", "core.sshCommand", ssh.to_str().unwrap()]);
+    sh(
+        clone,
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            "ssh://git@github.com/o/r.git",
+        ],
+    );
+    // A host may rewrite GitHub's ssh addresses to https; this longer match
+    // wins and keeps the address as it is.
+    sh(
+        clone,
+        &[
+            "config",
+            "url.ssh://git@github.com/o/r.git.insteadOf",
+            "ssh://git@github.com/o/r.git",
+        ],
+    );
+}
+
+#[cfg(unix)]
+fn make_executable(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+#[cfg(not(unix))]
+fn make_executable(_: &Path) {}
+
+/// A stand-in `gh`: it logs each call, lists the URL in `state` as the open
+/// pull request, `pr create` opens one and `pr close` closes it.
+fn fake_gh(root: &Path) -> (PathBuf, PathBuf, PathBuf) {
+    let gh = root.join("fake-gh");
+    let log = root.join("gh.log");
+    let state = root.join("gh.state");
+    std::fs::write(&state, "").unwrap();
+    std::fs::write(
+        &gh,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' --- \"$@\" >> '{log}'\n\
+             case \"$1 $2\" in\n\
+             'pr list') cat '{state}' ;;\n\
+             'pr create') echo https://github.com/o/r/pull/7; \
+             echo https://github.com/o/r/pull/7 > '{state}' ;;\n\
+             'pr close') : > '{state}' ;;\n\
+             esac\n",
+            log = log.display(),
+            state = state.display()
+        ),
+    )
+    .unwrap();
+    make_executable(&gh);
+    (gh, log, state)
+}
+
+fn remote_sha(origin: &Path, branch: &str) -> String {
+    sh(origin, &["rev-parse", branch])
+}
+
+#[cfg(unix)]
+#[test]
+fn ux_skill_7_a_removed_last_rule_closes_the_open_pull_request() {
+    let dir = tempfile::tempdir().unwrap();
+    let (origin, clone) = repo_with_origin(dir.path());
+    github_like(dir.path(), &clone, &origin);
+    let (gh, log, _) = fake_gh(dir.path());
+    let store = dir.path().join("data/repo-wiki.json");
+    bind_at(&store, "site", &clone, None, None).unwrap();
+    let opened = publish_site_with(
+        dir.path(),
+        &store,
+        Some(&["Rule A."]),
+        false,
+        Some(gh.clone()),
+    );
+    assert_eq!(opened.status, RepoWikiPublishStatus::PrOpened);
+    let before = remote_sha(&origin, REPO_WIKI_BRANCH);
+
+    let closed = publish_site_with(dir.path(), &store, Some(&[]), false, Some(gh));
+    assert_eq!(closed.status, RepoWikiPublishStatus::NoChanges);
+    let calls = std::fs::read_to_string(&log).unwrap();
+    assert!(
+        calls.contains(
+            "---\npr\nclose\nhttps://github.com/o/r/pull/7\n--repo\no/r\n--comment\n\
+             Wenlan: every rule was removed, nothing left to change.\n--delete-branch\n"
+        ),
+        "{calls}"
+    );
+    assert_eq!(calls.matches("\ncreate\n").count(), 1, "{calls}");
+    // Closed, not pushed to.
+    assert_eq!(remote_sha(&origin, REPO_WIKI_BRANCH), before);
+}
+
+#[cfg(unix)]
+#[test]
+fn ux_skill_7_the_pull_request_taking_rules_out_says_so() {
+    let dir = tempfile::tempdir().unwrap();
+    let (origin, clone) = repo_with_origin(dir.path());
+    github_like(dir.path(), &clone, &origin);
+    let (gh, log, state) = fake_gh(dir.path());
+    let store = dir.path().join("data/repo-wiki.json");
+    bind_at(&store, "site", &clone, None, None).unwrap();
+    let opened = publish_site_with(
+        dir.path(),
+        &store,
+        Some(&["Rule A."]),
+        false,
+        Some(gh.clone()),
+    );
+    assert_eq!(opened.status, RepoWikiPublishStatus::PrOpened);
+    merge_wiki_branch(&clone);
+    std::fs::write(&state, "").unwrap();
+
+    let removal = publish_site_with(dir.path(), &store, Some(&[]), false, Some(gh.clone()));
+    assert_eq!(removal.status, RepoWikiPublishStatus::PrOpened);
+    let calls = std::fs::read_to_string(&log).unwrap();
+    let body = calls.rsplit("--body\n").next().unwrap();
+    assert!(
+        body.contains("Every project rule was removed in Wenlan, so this takes them out"),
+        "{body}"
+    );
+
+    // Asked again while that pull request is open: nothing new to push.
+    std::fs::write(&state, "https://github.com/o/r/pull/7\n").unwrap();
+    assert_eq!(
+        publish_site_with(dir.path(), &store, Some(&[]), false, Some(gh)).status,
+        RepoWikiPublishStatus::NoChanges
+    );
+}
+
+/// A wiki branch left behind after its pull request was closed is not an
+/// open pull request: nothing is pushed to it and none is opened.
+#[cfg(unix)]
+#[test]
+fn ux_skill_7_a_stale_wiki_branch_gets_no_new_pull_request() {
+    let dir = tempfile::tempdir().unwrap();
+    let (origin, clone) = repo_with_origin(dir.path());
+    github_like(dir.path(), &clone, &origin);
+    let (gh, log, state) = fake_gh(dir.path());
+    let store = dir.path().join("data/repo-wiki.json");
+    bind_at(&store, "site", &clone, None, None).unwrap();
+    let opened = publish_site_with(
+        dir.path(),
+        &store,
+        Some(&["Rule A."]),
+        false,
+        Some(gh.clone()),
+    );
+    assert_eq!(opened.status, RepoWikiPublishStatus::PrOpened);
+    // The person closed it and kept the branch.
+    std::fs::write(&state, "").unwrap();
+    let before = remote_sha(&origin, REPO_WIKI_BRANCH);
+
+    let again = publish_site_with(dir.path(), &store, Some(&[]), false, Some(gh));
+    assert_eq!(again.status, RepoWikiPublishStatus::NothingToPublish);
+    let calls = std::fs::read_to_string(&log).unwrap();
+    assert_eq!(calls.matches("\ncreate\n").count(), 1, "{calls}");
+    assert!(!calls.contains("\nclose\n"), "{calls}");
+    assert_eq!(remote_sha(&origin, REPO_WIKI_BRANCH), before);
+}
+
+#[test]
+fn ux_skill_7_taking_rules_out_keeps_the_persons_own_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let (origin, clone) = repo_with_origin(dir.path());
+    std::fs::write(clone.join("AGENTS.md"), "# Team\n\nOur own line.\n").unwrap();
+    sh(&clone, &["add", "AGENTS.md"]);
+    sh(&clone, &["commit", "--quiet", "-m", "agents"]);
+    sh(&clone, &["push", "--quiet", "origin", "main"]);
+    let store = dir.path().join("data/repo-wiki.json");
+    bind_at(&store, "site", &clone, None, None).unwrap();
+    assert_eq!(
+        publish_site(dir.path(), &store, Some(&["Rule A."]), false),
+        RepoWikiPublishStatus::Pushed
+    );
+    merge_wiki_branch(&clone);
+    assert_eq!(
+        publish_site(dir.path(), &store, Some(&[]), false),
+        RepoWikiPublishStatus::Pushed
+    );
+    let agents = sh(&origin, &["show", &format!("{REPO_WIKI_BRANCH}:AGENTS.md")]);
+    assert_eq!(agents, "# Team\n\nOur own line.");
+}
+
+/// With nothing new, a block another Wenlan wrote, or one from before
+/// publishers were named that this Wenlan never pushed, is left alone.
+#[test]
+fn ux_skill_7_nothing_new_leaves_another_wenlans_rules_alone() {
+    for (block, pushed_before) in [
+        ("<!-- WENLAN:START -->\n<!-- wenlan-publisher: someone-else -->\n## Rules for this project\n\n- Theirs.\n<!-- WENLAN:END -->\n", true),
+        ("<!-- WENLAN:START -->\n## Rules for this project\n\n- Old.\n<!-- WENLAN:END -->\n", false),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let (origin, clone) = repo_with_origin(dir.path());
+        let store = dir.path().join("data/repo-wiki.json");
+        bind_at(&store, "site", &clone, None, None).unwrap();
+        if pushed_before {
+            // This Wenlan pushed once; its branch is gone since, and another
+            // Wenlan keeps the repository now.
+            assert_eq!(
+                publish_site(dir.path(), &store, Some(&["Mine."]), false),
+                RepoWikiPublishStatus::Pushed
+            );
+            sh(&origin, &["branch", "-D", REPO_WIKI_BRANCH]);
+        }
+        std::fs::write(clone.join("AGENTS.md"), block).unwrap();
+        sh(&clone, &["add", "AGENTS.md"]);
+        sh(&clone, &["commit", "--quiet", "-m", "agents"]);
+        sh(&clone, &["push", "--quiet", "origin", "main"]);
+        for _ in 0..2 {
+            assert_eq!(
+                publish_site(dir.path(), &store, Some(&[]), false),
+                RepoWikiPublishStatus::NothingToPublish
+            );
+        }
+        let branches = sh(&origin, &["branch", "--list"]);
+        assert!(!branches.contains(REPO_WIKI_BRANCH), "{branches}");
+    }
+}
+
+/// Unread rules in an open pull request that is not merged yet stay in it.
+#[test]
+fn ux_skill_7_unread_rules_stay_in_the_open_pull_request() {
+    let dir = tempfile::tempdir().unwrap();
+    let (origin, clone) = repo_with_origin(dir.path());
+    let store = dir.path().join("data/repo-wiki.json");
+    bind_at(&store, "site", &clone, None, None).unwrap();
+    assert_eq!(
+        publish_site(dir.path(), &store, Some(&["Rule A."]), false),
+        RepoWikiPublishStatus::Pushed
+    );
+    assert_eq!(
+        publish_site(dir.path(), &store, None, true),
+        RepoWikiPublishStatus::Pushed
+    );
+    let agents = sh(&origin, &["show", &format!("{REPO_WIKI_BRANCH}:AGENTS.md")]);
+    assert!(agents.contains("## Wiki"), "{agents}");
+    assert!(
+        agents.contains("- Rule A.\n<!-- WENLAN:END -->"),
+        "{agents}"
+    );
+}
+
+/// A checkout that turns line endings into CRLF (Git for Windows) neither
+/// hides the rules nor loses them.
+#[test]
+fn ux_skill_7_rules_survive_a_crlf_checkout() {
+    let dir = tempfile::tempdir().unwrap();
+    let (origin, clone) = repo_with_origin(dir.path());
+    std::fs::write(clone.join("AGENTS.md"), "# Team\n\nOur own line.\n").unwrap();
+    sh(&clone, &["add", "AGENTS.md"]);
+    sh(&clone, &["commit", "--quiet", "-m", "agents"]);
+    sh(&clone, &["push", "--quiet", "origin", "main"]);
+    sh(&clone, &["config", "core.autocrlf", "true"]);
+    let store = dir.path().join("data/repo-wiki.json");
+    bind_at(&store, "site", &clone, None, None).unwrap();
+    assert_eq!(
+        publish_site(dir.path(), &store, Some(&["Rule A.", "Rule B."]), false),
+        RepoWikiPublishStatus::Pushed
+    );
+    merge_wiki_branch(&clone);
+    let checkout = std::fs::read_to_string(dir.path().join("data/repo-wiki/site/AGENTS.md"));
+    assert!(checkout.unwrap().contains("\r\n"), "the checkout is CRLF");
+
+    // Unread, with a page: both rules stay.
+    assert_eq!(
+        publish_site(dir.path(), &store, None, true),
+        RepoWikiPublishStatus::Pushed
+    );
+    let agents = sh(&origin, &["show", &format!("{REPO_WIKI_BRANCH}:AGENTS.md")]);
+    assert!(
+        agents.contains("- Rule A.\n- Rule B.\n<!-- WENLAN:END -->"),
+        "{agents}"
+    );
+    assert!(!agents.contains('\r'), "{agents:?}");
+    merge_wiki_branch(&clone);
+
+    // Every rule removed: they leave, the pointer and the person's text stay.
+    assert_eq!(
+        publish_site(dir.path(), &store, Some(&[]), false),
+        RepoWikiPublishStatus::Pushed
+    );
+    let agents = sh(&origin, &["show", &format!("{REPO_WIKI_BRANCH}:AGENTS.md")]);
+    assert!(
+        agents.starts_with("# Team\n\nOur own line.\n\n"),
+        "{agents}"
+    );
+    assert!(agents.contains("## Wiki"), "{agents}");
+    assert!(!agents.contains("Rule A."), "{agents}");
+}
+
+#[test]
+fn the_block_is_read_and_written_in_the_files_own_line_endings() {
+    let crlf = "# Team\r\n\r\n<!-- WENLAN:START -->\r\n## Rules for this project\r\n\r\n- One.\r\n- Two.\r\n<!-- WENLAN:END -->\r\n\r\nAfter.\r\n";
+    assert!(block_holds_rules(crlf));
+    assert_eq!(block_rule_lines(crlf), vec!["One.", "Two."]);
+    assert_eq!(remove_block(crlf), "# Team\r\n\r\nAfter.\r\n");
+    let upserted = upsert_agents_rules_block("# Team\r\n", &["Three.".to_string()]);
+    assert_eq!(
+        upserted,
+        "# Team\r\n\r\n<!-- WENLAN:START -->\r\n## Rules for this project\r\n\r\n- Three.\r\n<!-- WENLAN:END -->\r\n"
+    );
+    // A heading without the blank line after it still gives every rule.
+    let tight =
+        "<!-- WENLAN:START -->\n## Rules for this project\n- One.\n- Two.\n<!-- WENLAN:END -->";
+    assert_eq!(block_rule_lines(tight), vec!["One.", "Two."]);
 }
 
 #[test]
@@ -1733,7 +2267,7 @@ fn a_second_wenlan_does_not_replace_what_another_keeps_in_the_repository() {
             vec![locator(&binding.repo_root, "src/lib.rs", 1, 2)],
         )]);
         let published = publish(PublishInput {
-            rules: vec![rule.to_string()],
+            rules: Some(vec![rule.to_string()]),
             publisher: publisher_id_at(&store).unwrap(),
             binding: &binding,
             pages: vec![page(id, title, "Body.")],
