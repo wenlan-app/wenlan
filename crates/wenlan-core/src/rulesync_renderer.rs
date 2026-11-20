@@ -600,6 +600,14 @@ mod tests {
         fs::write(&outside, "unrelated rule fixture\n").unwrap();
         let binary = stage.join("probe");
         fs::copy("/bin/cat", &binary).unwrap();
+        // A copied platform binary keeps Apple's signature and is killed at
+        // launch; an ad-hoc signature lets the copy run as the probe.
+        let signed = Command::new("/usr/bin/codesign")
+            .args(["--force", "--sign", "-"])
+            .arg(&binary)
+            .status()
+            .unwrap();
+        assert!(signed.success(), "ad-hoc signing the probe failed");
         let result = renderer_command(&binary, &stage, &output, &work)
             .unwrap()
             .env_clear()
