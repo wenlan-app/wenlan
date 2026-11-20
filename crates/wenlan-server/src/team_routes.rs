@@ -1011,6 +1011,7 @@ struct JoinPageStrings {
     private: &'static str,
     expired: &'static str,
     sign_in_google: &'static str,
+    sign_in_github: &'static str,
 }
 
 const JOIN_PAGE_EN: JoinPageStrings = JoinPageStrings {
@@ -1036,6 +1037,7 @@ const JOIN_PAGE_EN: JoinPageStrings = JoinPageStrings {
     private: "Keep this private. It lets an AI tool act as you.",
     expired: "This link no longer works. Ask whoever invited you for a new one.",
     sign_in_google: "Sign in with Google",
+    sign_in_github: "Sign in with GitHub",
 };
 
 const JOIN_PAGE_ZH_HANS: JoinPageStrings = JoinPageStrings {
@@ -1062,6 +1064,7 @@ const JOIN_PAGE_ZH_HANS: JoinPageStrings = JoinPageStrings {
     private: "请妥善保管。AI 工具可以用它以你的身份操作。",
     expired: "这个链接已经失效。请让邀请你的人重新发一个。",
     sign_in_google: "用 Google 登录",
+    sign_in_github: "用 GitHub 登录",
 };
 
 const JOIN_PAGE_ZH_HANT: JoinPageStrings = JoinPageStrings {
@@ -1087,6 +1090,7 @@ const JOIN_PAGE_ZH_HANT: JoinPageStrings = JoinPageStrings {
     private: "請妥善保管。AI 工具可以用它以你的身分操作。",
     expired: "這個連結已經失效。請讓邀請你的人重新傳一個。",
     sign_in_google: "用 Google 登入",
+    sign_in_github: "用 GitHub 登入",
 };
 
 fn join_page_strings(headers: &HeaderMap) -> &'static JoinPageStrings {
@@ -1162,8 +1166,8 @@ p { margin:8px 0; }
 a { color:#5146b8; }
 button,select { font:inherit; }
 button { border:0; border-radius:8px; cursor:pointer; }
-#accept { margin:18px 0 4px; padding:10px 22px; background:#5751c9; color:white; font-weight:600; }
-#accept:disabled,#connect:disabled { opacity:.55; cursor:default; }
+#accept,#accept-github { margin:18px 8px 4px 0; padding:10px 22px; background:#5751c9; color:white; font-weight:600; }
+#accept:disabled,#accept-github:disabled,#connect:disabled { opacity:.55; cursor:default; }
 .more { margin-top:28px; color:#66676b; font-size:.9rem; }
 #connect { margin-top:8px; padding:6px 10px; background:#e8e7e2; color:#202124; font-size:.9rem; }
 [hidden] { display:none !important; }
@@ -1205,6 +1209,7 @@ pre { max-width:100%; margin:0; padding:12px; overflow:auto; border-radius:8px; 
 <main>
 <h1>%%HEADING%%</h1>
 <button id="accept" type="button">%%ACCEPT%%</button>
+<button id="accept-github" type="button" hidden>%%ACCEPT%%</button>
 <p id="error" hidden>%%EXPIRED%%</p>
 <div class="more">
 <p>%%PASTE%%</p>
@@ -1236,6 +1241,8 @@ pre { max-width:100%; margin:0; padding:12px; overflow:auto; border-radius:8px; 
   const text = %%SCRIPT_STRINGS%%;
   const connect = document.getElementById('connect');
   const accept = document.getElementById('accept');
+  const acceptGithub = document.getElementById('accept-github');
+  const providers = %%PROVIDERS%%;
   const error = document.getElementById('error');
   const setup = document.getElementById('setup');
   const chooser = document.getElementById('chooser');
@@ -1267,6 +1274,13 @@ pre { max-width:100%; margin:0; padding:12px; overflow:auto; border-radius:8px; 
     invite = window.location.hash.slice(1);
     window.history.replaceState(null, '', window.location.pathname + window.location.search);
     accept.textContent = text.sign_in_google;
+    // With no provider list (sign-in off) the Google button stays and the
+    // server answers it; otherwise only the configured providers show.
+    if (providers.length && !providers.includes('google')) accept.hidden = true;
+    if (providers.includes('github')) {
+      acceptGithub.textContent = text.sign_in_github;
+      acceptGithub.hidden = false;
+    }
     connect.parentElement.hidden = true;
   }
 
@@ -1275,29 +1289,40 @@ pre { max-width:100%; margin:0; padding:12px; overflow:auto; border-radius:8px; 
     error.hidden = false;
     connect.disabled = false;
     accept.disabled = false;
+    acceptGithub.disabled = false;
   };
+
+  // Start signing in with an invite: the token goes in a body, and the
+  // answer is where to send the browser.
+  const startInvite = async (provider) => {
+    accept.disabled = true;
+    acceptGithub.disabled = true;
+    error.hidden = true;
+    try {
+      const response = await fetch('/auth/invite/' + provider, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: invite }),
+        credentials: 'same-origin',
+        cache: 'no-store',
+        referrerPolicy: 'no-referrer'
+      });
+      if (!response.ok) throw new Error('invite refused');
+      const started = await response.json();
+      window.location.assign(started.url);
+    } catch (_) {
+      fail();
+    }
+  };
+  acceptGithub.addEventListener('click', () => {
+    if (invite) startInvite('github');
+  });
 
   // Accept: open Wenlan here, in this browser. The key is checked first,
   // then kept for this address only, and the page moves to /app.
   accept.addEventListener('click', async () => {
     if (invite) {
-      accept.disabled = true;
-      error.hidden = true;
-      try {
-        const response = await fetch('/auth/invite/google', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token: invite }),
-          credentials: 'same-origin',
-          cache: 'no-store',
-          referrerPolicy: 'no-referrer'
-        });
-        if (!response.ok) throw new Error('invite refused');
-        const started = await response.json();
-        window.location.assign(started.url);
-      } catch (_) {
-        fail();
-      }
+      startInvite('google');
       return;
     }
     const key = window.location.hash.slice(1);
@@ -1431,7 +1456,12 @@ pre { max-width:100%; margin:0; padding:12px; overflow:auto; border-radius:8px; 
 </html>
 "#;
 
-fn render_join_page(name: Option<&str>, strings: &JoinPageStrings, nonce: &str) -> String {
+fn render_join_page(
+    name: Option<&str>,
+    strings: &JoinPageStrings,
+    nonce: &str,
+    providers: &[String],
+) -> String {
     let (heading, name) = match name {
         Some(name) => (strings.heading, name),
         None => (strings.unnamed_heading, strings.unnamed_team),
@@ -1458,7 +1488,11 @@ fn render_join_page(name: Option<&str>, strings: &JoinPageStrings, nonce: &str) 
     for (marker, value) in escaped {
         page = page.replace(marker, &value);
     }
-    page.replace("%%SCRIPT_STRINGS%%", &join_page_script_strings(strings))
+    let providers = serde_json::to_string(providers)
+        .expect("provider names serialize")
+        .replace('<', "\\u003c");
+    page.replace("%%PROVIDERS%%", &providers)
+        .replace("%%SCRIPT_STRINGS%%", &join_page_script_strings(strings))
 }
 
 /// GET /join — where an invite link opens in a browser. The key after `#`
@@ -1470,7 +1504,8 @@ async fn team_join_page(State(state): State<TeamState>, headers: HeaderMap) -> R
         .and_then(|file| file.name);
     let strings = join_page_strings(&headers);
     let nonce = uuid::Uuid::new_v4().simple().to_string();
-    let page = render_join_page(name.as_deref(), strings, &nonce);
+    let providers = auth::offered(&state).await;
+    let page = render_join_page(name.as_deref(), strings, &nonce, &providers);
     let csp = format!(
         "default-src 'none'; script-src 'nonce-{nonce}'; style-src 'nonce-{nonce}'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
     );

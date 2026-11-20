@@ -1817,7 +1817,7 @@ carrying the authority of agreement.
 | `core/db/scoped_pages.rs::list_pages_scoped` | `pub` | no | **yes** | `server/knowledge_routes.rs::handle_list_knowledge_folders`, `server/page_routes.rs::handle_export_pages`, `server/repo_wiki_routes.rs::exportable_pages` | `core/db/scoped_pages.rs::list_pages_scoped_inner` |
 | `core/db/scoped_pages.rs::list_pages_scoped_browse` | `pub` | no | **yes** | `server/page_routes.rs::list_visible_browse_pages` | `core/db/scoped_pages.rs::list_pages_scoped_inner` |
 | `core/document_enrichment.rs::refresh_okf_linkers` | `private` | no | no | — | `core/db/okf_concepts.rs::refresh_okf_concept_linkers` |
-| `core/document_enrichment.rs::run_document_enrichment_slice` | `pub` | no | **yes** | `server/scheduler/ambient.rs::run_document_enrichment_slice_tick`, `server/scheduler/ambient.rs::run_import_document_prep_slice` | `core/document_enrichment.rs::run_document_enrichment_with_request_budget` |
+| `core/document_enrichment.rs::run_document_enrichment_slice` | `pub` | no | **yes** | `server/scheduler/ambient.rs::run_document_enrichment_slice_tick`, `server/scheduler/ambient.rs::run_import_document_prep_slice`, `server/source_routes.rs::prepare_queued_documents` | `core/document_enrichment.rs::run_document_enrichment_with_request_budget` |
 | `core/document_enrichment.rs::run_document_enrichment_with_profile` | `pub` | no | no | — | `core/document_enrichment.rs::run_document_enrichment_with_request_budget` |
 | `core/eval/answer_quality.rs::run_e2e_context_eval` | `pub` | no | no | — | `core/eval/answer_quality.rs::generate_e2e_answers_for_question` |
 | `core/eval/answer_quality.rs::run_e2e_context_eval_longmemeval` | `pub` | no | no | — | `core/eval/answer_quality.rs::generate_e2e_answers_for_question` |

@@ -720,6 +720,56 @@ fn another_email_is_refused_with_a_masked_address_and_the_invite_survives() {
 }
 
 #[test]
+fn an_invite_matches_any_one_of_the_verified_emails_and_only_verified_ones_are_passed() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(TEAM_FILE);
+    let (dee, token) = invited(&path, Some("dee@work.example"));
+    let gh = |sub: &str| identity("https://github.com", sub, "dee@home.example");
+    // None of the verified addresses is the invited one: nothing changes.
+    let refused = redeem_invite(
+        &path,
+        &token,
+        gh("5"),
+        &[
+            "dee@home.example".to_string(),
+            "dee@old.example".to_string(),
+        ],
+        EmailTrust::Trusted,
+    )
+    .unwrap();
+    assert!(matches!(
+        refused,
+        InviteOutcome::Refused(InviteRefusal::EmailMismatch { .. })
+    ));
+    // No verified address at all cannot match an invite that names one.
+    let none = redeem_invite(&path, &token, gh("5"), &[], EmailTrust::Trusted).unwrap();
+    assert!(matches!(
+        none,
+        InviteOutcome::Refused(InviteRefusal::EmailMismatch { .. })
+    ));
+    assert!(read_team(&path).unwrap().members[0].identities.is_empty());
+    // The invited one is the second of three, in another case: linked at once.
+    let linked = redeem_invite(
+        &path,
+        &token,
+        gh("5"),
+        &[
+            "dee@home.example".to_string(),
+            "DEE@Work.Example".to_string(),
+            "dee@old.example".to_string(),
+        ],
+        EmailTrust::Trusted,
+    )
+    .unwrap();
+    let InviteOutcome::Linked(member) = linked else {
+        panic!("expected Linked, got {linked:?}");
+    };
+    assert_eq!(member.id, dee.id);
+    assert!(member.invite.is_none());
+    assert_eq!(member.identities[0].subject, "5");
+}
+
+#[test]
 fn an_invite_without_an_email_works_for_whoever_holds_it() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join(TEAM_FILE);

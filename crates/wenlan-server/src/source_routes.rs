@@ -342,8 +342,12 @@ pub async fn handle_add_source(
         return Err(ServerError::ValidationError(message));
     }
 
+    // An OKF bundle always lands in one Space (the header's, else the
+    // default). A folder lands in one only when the caller names it
+    // (`wenlan sources add <path> --space X`); without a name its pages stay
+    // unfiled, as before.
     let mut space = None;
-    if st == SourceType::Okf {
+    if st == SourceType::Okf || (st == SourceType::Directory && header_space.is_some()) {
         let db = {
             let s = state.read().await;
             s.db.clone().ok_or(ServerError::DbNotInitialized)?
@@ -755,6 +759,9 @@ pub(crate) struct BatchCounts {
 pub(crate) struct DirectorySyncOutcome {
     pub(crate) stats: SyncStatsResponse,
     pub(crate) newly_queued: usize,
+    /// Every file this sync left queued at its current content, newly or
+    /// from an earlier sync that was not prepared yet.
+    pub(crate) queued_paths: Vec<String>,
 }
 
 /// Core Directory-source sync: root-guard + cheap mtime/hash diff + deletion
@@ -814,6 +821,7 @@ pub(crate) async fn sync_directory_source(
                 skipped_files: Vec::new(),
             },
             newly_queued: 0,
+            queued_paths: Vec::new(),
         });
     };
 
@@ -897,6 +905,7 @@ pub(crate) async fn sync_directory_source(
     let mut file_errors: usize = 0;
     let mut gdrive_errors: usize = 0;
     let mut renamed_files: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut queued_paths: Vec<String> = Vec::new();
 
     for file_path in &files {
         let file_key = file_path.to_string_lossy().to_string();
@@ -1111,6 +1120,7 @@ pub(crate) async fn sync_directory_source(
                 if !already_queued {
                     newly_queued += 1;
                 }
+                queued_paths.push(file_key);
             }
             Err(e) => {
                 tracing::error!("[sync] enqueue failed for {}: {}", file_path.display(), e);
@@ -1143,7 +1153,69 @@ pub(crate) async fn sync_directory_source(
     Ok(DirectorySyncOutcome {
         stats,
         newly_queued,
+        queued_paths,
     })
+}
+
+/// How long a sync request spends preparing the files it queued before it
+/// leaves the rest to the background lane.
+/// Sized for a few changed files, so adding a large folder still returns
+/// quickly.
+const SYNC_PREP_BUDGET: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Parse, embed and write the source page of each file in `paths` that waits
+/// for its first preparation, without a model, the same step the import lane
+/// runs (`run_import_document_prep_slice`). Model enrichment stays with the
+/// ambient lap. Holds the ambient run lock like `wenlan sweep`, so it never
+/// runs beside the scheduler's own slice. Stops at [`SYNC_PREP_BUDGET`] and
+/// returns how many files it left for the background.
+async fn prepare_queued_documents(
+    state: &Arc<RwLock<ServerState>>,
+    db: &Arc<wenlan_core::db::MemoryDB>,
+    source_id: &str,
+    paths: &[String],
+) -> usize {
+    if paths.is_empty() {
+        return 0;
+    }
+    let deadline = tokio::time::Instant::now() + SYNC_PREP_BUDGET;
+    let (prompts, ambient_run_lock) = {
+        let s = state.read().await;
+        (s.prompts.clone(), s.ambient_run_lock.clone())
+    };
+    let Ok(_ambient_run_guard) = tokio::time::timeout_at(deadline, ambient_run_lock.lock()).await
+    else {
+        return paths.len();
+    };
+    let knowledge_path = wenlan_core::config::load_config().knowledge_path_or_default();
+    for (done, path) in paths.iter().enumerate() {
+        if tokio::time::Instant::now() >= deadline {
+            return paths.len() - done;
+        }
+        let entry = match db.claim_fresh_document(source_id, path).await {
+            Ok(Some(entry)) => entry,
+            Ok(None) => continue,
+            Err(error) => {
+                tracing::warn!("[sync] could not claim {path} to prepare it now: {error}");
+                continue;
+            }
+        };
+        let slice = std::panic::AssertUnwindSafe(
+            wenlan_core::document_enrichment::run_document_enrichment_slice(
+                db,
+                &entry,
+                Some(&knowledge_path),
+                None,
+                &prompts,
+            ),
+        );
+        if futures::FutureExt::catch_unwind(slice).await.is_err() {
+            tracing::error!("[sync] preparing {path} PANICKED; it waits for the background lane");
+            wenlan_core::document_enrichment::pause_document_enrichment_after_panic(db, &entry)
+                .await;
+        }
+    }
+    0
 }
 
 /// POST /api/sources/{id}/sync — Trigger a sync for a source.
@@ -1197,7 +1269,16 @@ pub async fn handle_sync_source(
 
     if matches!(source.source_type, SourceType::Directory | SourceType::Okf) {
         let outcome = sync_directory_source(db.clone(), &source, &config).await?;
-        if outcome.newly_queued > 0 {
+        // Prepare what this sync queued now, so a changed file's text and its
+        // source page are current when the request returns instead of after
+        // the background lane gets to it (`wenlan sources add` again). An
+        // OKF bundle keeps its own batched import.
+        let left = if source.source_type == SourceType::Directory {
+            prepare_queued_documents(&state, &db, &source.id, &outcome.queued_paths).await
+        } else {
+            0
+        };
+        if outcome.newly_queued > 0 || left > 0 {
             // Give newly queued files the bounded import lane so they are
             // prepared and searchable without waiting for the idle gate.
             crate::import_routes::request_import_priority(&state, &db, None).await;
@@ -1546,6 +1627,155 @@ mod tests {
 
         assert_eq!(source.source_type, SourceType::Directory);
         assert_eq!(source.path, file_path);
+    }
+
+    /// Run only the folder diff of a sync, without preparing what it queued.
+    async fn sync_only(state: &Arc<RwLock<ServerState>>, source_id: &str) -> SyncStatsResponse {
+        let db = state.read().await.db.clone().expect("test db");
+        let config = wenlan_core::config::load_config();
+        let source = config
+            .sources
+            .iter()
+            .find(|source| source.id == source_id)
+            .cloned()
+            .expect("registered source");
+        sync_directory_source(db, &source, &config)
+            .await
+            .expect("directory sync should succeed")
+            .stats
+    }
+
+    #[tokio::test]
+    async fn a_folder_added_with_a_space_keeps_it_and_one_without_stays_unfiled() {
+        let _lock = crate::TEST_DATA_DIR_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
+        let _env = DataDirGuard::new();
+        let (db, _db_dir) = new_test_db().await;
+        db.create_space("work", None, false).await.unwrap();
+        let state = Arc::new(RwLock::new(ServerState {
+            db: Some(db.clone()),
+            ..ServerState::default()
+        }));
+        let roots = [tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap()];
+        let mut spaces = Vec::new();
+        for (root, header) in roots.iter().zip([Some("work"), None]) {
+            std::fs::write(root.path().join("note.md"), "# Deploy notes").unwrap();
+            let Json(source) = handle_add_source(
+                State(state.clone()),
+                crate::space_header::SpaceHeader(header.map(str::to_string)),
+                Json(AddSourceRequest {
+                    source_type: "directory".to_string(),
+                    path: root.path().to_string_lossy().to_string(),
+                    follow_changes: None,
+                }),
+            )
+            .await
+            .expect("folder source should register");
+            spaces.push(source.space);
+        }
+        assert_eq!(spaces, [Some("work".to_string()), None]);
+
+        let missing = tempfile::tempdir().unwrap();
+        std::fs::write(missing.path().join("note.md"), "# Deploy notes").unwrap();
+        assert!(
+            handle_add_source(
+                State(state),
+                crate::space_header::SpaceHeader(Some("nowhere".to_string())),
+                Json(AddSourceRequest {
+                    source_type: "directory".to_string(),
+                    path: missing.path().to_string_lossy().to_string(),
+                    follow_changes: None,
+                }),
+            )
+            .await
+            .is_err(),
+            "a Space that does not exist is refused, not silently unfiled"
+        );
+    }
+
+    #[tokio::test]
+    async fn re_syncing_a_changed_file_updates_its_text_before_returning() {
+        let _lock = crate::TEST_DATA_DIR_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
+        let _env = DataDirGuard::new();
+        let source_root = tempfile::tempdir().unwrap();
+        let knowledge_root = tempfile::tempdir().unwrap();
+        let source_id = "directory-notes".to_string();
+        wenlan_core::config::save_config(&Config {
+            sources: vec![Source {
+                display_name: None,
+                id: source_id.clone(),
+                source_type: SourceType::Directory,
+                path: source_root.path().to_path_buf(),
+                status: SyncStatus::Active,
+                last_sync: None,
+                file_count: 0,
+                memory_count: 0,
+                last_sync_errors: 0,
+                last_sync_error_detail: None,
+                space: None,
+                queued_files: 0,
+                waiting_files: 0,
+            }],
+            knowledge_path: Some(knowledge_root.path().to_path_buf()),
+            ..Config::default()
+        })
+        .unwrap();
+        let (db, _db_dir) = new_test_db().await;
+        let state = Arc::new(RwLock::new(ServerState {
+            db: Some(db.clone()),
+            ..ServerState::default()
+        }));
+        let file = source_root.path().join("deploy.md");
+        let file_key = file.to_string_lossy().to_string();
+        let doc_source_id = wenlan_core::sources::directory::document_source_id(
+            &source_id,
+            &file,
+            Some(knowledge_root.path()),
+        );
+        let page_id = wenlan_core::document_enrichment::source_page_id(&source_id, &file_key);
+
+        for version in [
+            "one: we deploy on Fridays",
+            "two: we deploy on Tuesdays now",
+        ] {
+            std::fs::write(
+                &file,
+                format!("# Deploy notes\n\nVersion {version}, after the checklist passes.\n"),
+            )
+            .unwrap();
+            let Json(stats) = handle_sync_source(State(state.clone()), Path(source_id.clone()))
+                .await
+                .expect("directory sync should succeed");
+            assert_eq!(stats.ingested, 1);
+
+            // No background lane runs in this test: the sync itself must
+            // have prepared the file.
+            let chunks = db
+                .get_memories_by_source_id("memory", &doc_source_id)
+                .await
+                .unwrap();
+            assert!(
+                chunks.iter().any(|chunk| chunk.content.contains(version)),
+                "the stored text is the file's current version ({version})"
+            );
+            let page = db.get_page(&page_id).await.unwrap().expect("source page");
+            assert!(
+                page.content.contains(version),
+                "the source page shows the current version ({version}): {}",
+                page.content
+            );
+            let entry = db
+                .get_queue_entry(&source_id, &file_key)
+                .await
+                .unwrap()
+                .expect("queue row");
+            assert_ne!(entry.status, "pending", "nothing is left waiting");
+        }
     }
 
     #[tokio::test]
@@ -2158,9 +2388,9 @@ mod tests {
             ..ServerState::default()
         }));
 
-        let Json(stats) = handle_sync_source(State(state), Path(source_id.clone()))
-            .await
-            .expect("directory sync should succeed");
+        // The folder diff alone: the request also prepares what it
+        // queued, covered by `re_syncing_a_changed_file_updates_its_text_before_returning`.
+        let stats = sync_only(&state, &source_id).await;
 
         assert_eq!(stats.files_found, 2);
         assert_eq!(stats.ingested, 1);
@@ -2578,9 +2808,9 @@ mod tests {
             db: Some(db.clone()),
             ..ServerState::default()
         }));
-        let Json(stats) = handle_sync_source(State(state), Path(source_id.clone()))
-            .await
-            .expect("directory sync should succeed");
+        // The folder diff alone: the request also prepares what it
+        // queued, covered by `re_syncing_a_changed_file_updates_its_text_before_returning`.
+        let stats = sync_only(&state, &source_id).await;
 
         assert_eq!(
             stats.errors, 0,
@@ -2672,9 +2902,9 @@ mod tests {
             db: Some(db.clone()),
             ..ServerState::default()
         }));
-        let Json(stats) = handle_sync_source(State(state), Path(source_id.clone()))
-            .await
-            .expect("directory sync should succeed");
+        // The folder diff alone: the request also prepares what it
+        // queued, covered by `re_syncing_a_changed_file_updates_its_text_before_returning`.
+        let stats = sync_only(&state, &source_id).await;
 
         assert_eq!(stats.errors, 0);
         assert_eq!(stats.ingested, 1, "the occupied target must be enqueued");
