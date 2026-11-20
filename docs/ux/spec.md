@@ -907,8 +907,8 @@ and wait for evidence that people need them.
   fresh review. Wenlan backs up every destination before writing
   and replaces the adopted links with managed files or folders.
   The skill diff uses pinned rulesync's staged output for each tool.
-  If a renderer drops or changes a frontmatter field, Wenlan delivers the
-  master skill folder byte-for-byte and says why. Unsafe paths and links
+  If rulesync rejects a skill's frontmatter, or drops or changes a field,
+  Wenlan delivers that skill folder byte-for-byte and says why. Unsafe paths and links
   stay in place with a reason in the plan. Adoption stages the files again
   and checks their bytes against the approved plan before writing.
   The preview names any Git worktree that contains a delivery destination.

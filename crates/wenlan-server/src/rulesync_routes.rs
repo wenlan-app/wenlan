@@ -2344,7 +2344,7 @@ fn plan_skill_deliveries(
 fn render_personal_skills<'a>(
     target: &PersonalTarget,
     sources: impl IntoIterator<Item = (&'a str, &'a SkillFiles)>,
-    render: impl FnOnce(&str, &SkillPackages) -> Result<SkillFiles>,
+    render: impl Fn(&str, &SkillPackages) -> Result<SkillFiles>,
 ) -> Result<Vec<SkillDelivery>> {
     let sources: Vec<_> = sources.into_iter().collect();
     let mut names = BTreeSet::new();
@@ -2374,15 +2374,22 @@ fn render_personal_skills<'a>(
         });
         candidates.push((name, files, candidate));
     }
-    let output = if staged.is_empty() {
-        BTreeMap::new()
-    } else {
-        render(target.skills.renderer, &staged)?
-    };
+    let mut output = BTreeMap::new();
+    let mut rejected = BTreeSet::new();
+    if !staged.is_empty() {
+        render_skill_batch(
+            target.skills.renderer,
+            staged,
+            &render,
+            &mut output,
+            &mut rejected,
+        )?;
+    }
     Ok(candidates
         .into_iter()
         .map(|(name, files, candidate)| {
             let rendered = candidate.and_then(|_| {
+                ensure!(!rejected.contains(name), rulesync_renderer::SkillRejected);
                 let folder = Path::new(target.skills.staged).join(name);
                 rendered_personal_skill(&folder, files, &output)
             });
@@ -2398,6 +2405,32 @@ fn render_personal_skills<'a>(
             }
         })
         .collect())
+}
+
+fn render_skill_batch(
+    renderer: &str,
+    mut staged: SkillPackages,
+    render: &impl Fn(&str, &SkillPackages) -> Result<SkillFiles>,
+    output: &mut SkillFiles,
+    rejected: &mut BTreeSet<String>,
+) -> Result<()> {
+    match render(renderer, &staged) {
+        Ok(files) => output.extend(files),
+        Err(error) if error.is::<rulesync_renderer::SkillRejected>() => {
+            // Keep the normal batch. Retry with smaller groups only when
+            // rulesync identified a bad package, discarding the partial output.
+            if staged.len() == 1 {
+                rejected.extend(staged.into_keys());
+            } else {
+                let pivot = staged.keys().nth(staged.len() / 2).unwrap().clone();
+                let second = staged.split_off(&pivot);
+                render_skill_batch(renderer, staged, render, output, rejected)?;
+                render_skill_batch(renderer, second, render, output, rejected)?;
+            }
+        }
+        Err(error) => return Err(error),
+    }
+    Ok(())
 }
 
 fn rendered_personal_skill(
@@ -2993,6 +3026,12 @@ mod tests {
             }
         }
         let result = command.output()?;
+        if feature == "skills"
+            && result.status.code() == Some(1)
+            && result.stderr.starts_with(b"Invalid frontmatter in ")
+        {
+            return Err(rulesync_renderer::SkillRejected.into());
+        }
         ensure!(
             result.status.success(),
             "{target} {feature}: {}",
@@ -3529,6 +3568,47 @@ mod tests {
         assert_eq!(f.text(CODEX), original_codex);
         assert_eq!(f.text(cursor), original_cursor);
         assert_eq!(f.text(skill), original_skill);
+    }
+
+    #[test]
+    #[ignore = "requires the local pinned rulesync binary and an isolated test home"]
+    fn rulesync_preview_byte_copies_a_package_rejected_by_the_pin() {
+        let f = Fixture::new();
+        let binary = PathBuf::from(std::env::var_os("WENLAN_TEST_RULESYNC_BINARY").unwrap());
+        let rejected = "---\nname: rejected\ndescription: Fixture\npaths: 42\n---\n\nBody.\n";
+        let valid = "---\nname: valid\ndescription: Fixture\n---\n\nBody.\n";
+        for (name, text) in [("rejected", rejected), ("valid", valid)] {
+            let folder = f.setup.home.join(".cursor/skills").join(name);
+            fs::create_dir_all(&folder).unwrap();
+            fs::write(folder.join("SKILL.md"), text).unwrap();
+        }
+        let renderer = |target: &str, skills: &SkillPackages| {
+            render_fixture_skills(&f.setup.data, &binary, target, skills)
+        };
+        let calls = std::cell::Cell::new(0);
+        let error = f
+            .setup
+            .preview_adoption_using(|_, _| {
+                calls.set(calls.get() + 1);
+                bail!("rulesync checksum mismatch")
+            })
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("checksum mismatch"));
+        assert_eq!(calls.get(), 1);
+        assert!(!f.setup.data.join("personal.json").exists());
+        let plan = f.setup.preview_adoption_using(renderer).unwrap();
+        let copies: Vec<_> = plan
+            .skills
+            .iter()
+            .filter(|skill| skill.byte_copy_reason.is_some())
+            .map(|skill| skill.path.as_str())
+            .collect();
+        assert_eq!(copies, [".cursor/skills/rejected"]);
+        f.setup
+            .adopt_using(&plan.token, fixture_rule_renderer, renderer)
+            .unwrap();
+        assert_eq!(f.text(".cursor/skills/rejected/SKILL.md"), rejected);
+        assert_ne!(f.text(".cursor/skills/valid/SKILL.md"), valid);
     }
 
     #[test]

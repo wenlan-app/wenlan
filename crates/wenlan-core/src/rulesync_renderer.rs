@@ -4,11 +4,15 @@
 use anyhow::{bail, ensure, Context, Result};
 use sha2::{Digest, Sha256};
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Seek};
+use std::io::{self, Read, Seek};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 
 pub const PINNED_VERSION: &str = "43.11.0";
+
+#[derive(Debug, thiserror::Error)]
+#[error("rulesync rejected the skill's frontmatter")]
+pub struct SkillRejected;
 
 struct Pin {
     name: &'static str,
@@ -151,20 +155,41 @@ fn render_staged(
         selection.targets,
         selection.features,
     );
-    run_generate(&mut command)?;
+    run_generate(&mut command, selection.features)?;
     validate_tree(&output)?;
     Ok(())
 }
 
-fn run_generate(command: &mut Command) -> Result<()> {
-    // Either stream can contain source text, including on successful runs.
-    let status = command
+const INVALID_FRONTMATTER: &[u8] = b"Invalid frontmatter in ";
+
+fn run_generate(command: &mut Command, features: &[&str]) -> Result<()> {
+    // Only recognize the pin's package diagnostic. The renderer and the
+    // sandbox launcher can both exit nonzero, and their text stays private.
+    let mut child = command
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
+        .stderr(Stdio::piped())
+        .spawn()
         .context("launch the staged rulesync renderer")?;
+    let mut diagnostic = Vec::new();
+    let mut stderr = child.stderr.take().context("read renderer diagnostics")?;
+    let read = (&mut stderr)
+        .take(INVALID_FRONTMATTER.len() as u64)
+        .read_to_end(&mut diagnostic)
+        .and_then(|_| io::copy(&mut stderr, &mut io::sink()));
+    drop(stderr);
+    let status = child
+        .wait()
+        .context("wait for the staged rulesync renderer")?;
+    read.context("read renderer diagnostics")?;
+    if features == ["skills"] && is_skill_rejection(status.code(), &diagnostic) {
+        return Err(SkillRejected.into());
+    }
     ensure!(status.success(), "rulesync generation failed ({status})");
     Ok(())
+}
+
+fn is_skill_rejection(code: Option<i32>, diagnostic: &[u8]) -> bool {
+    code == Some(1) && diagnostic.starts_with(INVALID_FRONTMATTER)
 }
 
 fn validate_selection(targets: &[String], features: &[&str]) -> Result<()> {
@@ -576,9 +601,28 @@ mod tests {
             .env_clear()
             .args(["-c", "/bin/cat \"$1\"; /bin/cat \"$1\" >&2; exit 7", "sh"])
             .arg(input);
-        let error = run_generate(&mut command).unwrap_err().to_string();
+        let error = run_generate(&mut command, &["rules"])
+            .unwrap_err()
+            .to_string();
         assert!(error.contains('7'), "{error}");
         assert!(!error.contains(source), "{error}");
+    }
+
+    #[test]
+    fn only_pinned_package_errors_are_recoverable() {
+        assert!(is_skill_rejection(
+            Some(1),
+            b"Invalid frontmatter in SKILL.md"
+        ));
+        assert!(!is_skill_rejection(Some(1), b"unshare: unshare failed"));
+        assert!(!is_skill_rejection(
+            Some(71),
+            b"sandbox-exec: sandbox_apply"
+        ));
+        assert!(!is_skill_rejection(
+            None,
+            b"Invalid frontmatter in SKILL.md"
+        ));
     }
 
     #[cfg(target_os = "macos")]
