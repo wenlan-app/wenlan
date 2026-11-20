@@ -523,6 +523,23 @@ impl WenlanClient {
             .context("parsing /api/ambient/sweep response")
     }
 
+    /// POST /api/steep — run every Steep phase once now, page writing
+    /// included, with the models chosen in `wenlan steep configure`. A full
+    /// pass on an on-device model can take many minutes (the daemon's own
+    /// deadline for it is 20), so the request waits longer than that.
+    pub async fn run_steep(&self) -> Result<wenlan_types::responses::SteepResponse> {
+        const STEEP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(25 * 60);
+        let url = format!("{}/api/steep", self.base_url);
+        let resp = self
+            .send(
+                self.http.post(&url).timeout(STEEP_TIMEOUT),
+                &format!("POST {url} failed"),
+            )
+            .await?;
+        let resp = ensure_ok(resp, &url).await?;
+        resp.json().await.context("parsing /api/steep response")
+    }
+
     /// GET /api/sources — list registered sources.
     pub async fn list_sources(&self) -> Result<Vec<Source>> {
         self.get_json("/api/sources", true).await

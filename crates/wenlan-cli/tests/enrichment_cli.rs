@@ -480,3 +480,41 @@ fn disable_verification_connection_failure_does_not_fall_back_to_disk() {
         original
     );
 }
+
+/// `wenlan steep run` asks the daemon for one full Steep pass now and says
+/// how many pages it wrote, or why it wrote none.
+#[test]
+fn steep_run_does_one_pass_now_and_counts_new_pages() {
+    let made = serde_json::json!({
+        "memories_decayed": 0, "recaps_generated": 0, "distilled": 1, "pending_remaining": 0,
+        "phases": [{"name": "emergence", "duration_ms": 900, "items_processed": 1,
+                    "error": null, "nudge": "Notable", "headline": "Release process"}]
+    })
+    .to_string();
+    let (base, requests) = spawn_stub(vec![response(&made)]);
+    cli(&base)
+        .args(["steep", "run", "--format", "table"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1 new page."));
+    let request = requests.recv().expect("steep request");
+    assert!(request.starts_with("POST /api/steep "), "{request}");
+
+    let none = serde_json::json!({
+        "memories_decayed": 0, "recaps_generated": 0, "distilled": 0, "pending_remaining": 2,
+        "phases": [{"name": "emergence", "duration_ms": 5, "items_processed": 0,
+                    "error": "no page model", "nudge": "Silent", "headline": null}]
+    })
+    .to_string();
+    let (base, _requests) = spawn_stub(vec![response(&none)]);
+    cli(&base)
+        .args(["steep", "run", "--format", "table"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("No new pages this time."))
+        .stdout(predicate::str::contains("wenlan steep status"))
+        .stdout(predicate::str::contains("2 suggested changes"))
+        .stdout(predicate::str::contains(
+            "emergence did not finish: no page model",
+        ));
+}

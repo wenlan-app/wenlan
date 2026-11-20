@@ -82,6 +82,8 @@ pub enum EnrichmentCommand {
     },
     /// Turn off all model-backed background work without removing providers.
     Disable,
+    /// Steep once now: organize what came in and write new pages from it.
+    Run,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -294,8 +296,13 @@ pub async fn run_key(command: KeyCommand) -> anyhow::Result<()> {
     }
 }
 
-pub async fn run_enrichment(command: EnrichmentCommand) -> anyhow::Result<()> {
+pub async fn run_enrichment(
+    client: &WenlanClient,
+    command: EnrichmentCommand,
+    format: crate::output::ResolvedFormat,
+) -> anyhow::Result<()> {
     match command {
+        EnrichmentCommand::Run => run_steep_now(client, format).await,
         EnrichmentCommand::Status => {
             print_enrichment_status().await;
             Ok(())
@@ -307,6 +314,53 @@ pub async fn run_enrichment(command: EnrichmentCommand) -> anyhow::Result<()> {
         } => configure_enrichment(everyday, synthesis, yes).await,
         EnrichmentCommand::Disable => disable_enrichment().await,
     }
+}
+
+/// `wenlan steep run`: the same full pass the background runs every few
+/// hours, now. Page writing uses the page model from `steep configure`;
+/// without one nothing is written and the person is told how to choose one.
+async fn run_steep_now(
+    client: &WenlanClient,
+    format: crate::output::ResolvedFormat,
+) -> anyhow::Result<()> {
+    if matches!(format, crate::output::ResolvedFormat::Table) {
+        println!("Steeping now. With an on-device model this can take several minutes.");
+    }
+    let report = client.run_steep().await?;
+    if matches!(format, crate::output::ResolvedFormat::Json) {
+        return crate::output::print_json(&report);
+    }
+    print!("{}", steep_run_summary(&report));
+    Ok(())
+}
+
+/// What `wenlan steep run` prints for a finished pass.
+pub(crate) fn steep_run_summary(report: &wenlan_types::responses::SteepResponse) -> String {
+    let mut out = String::new();
+    match report.distilled {
+        0 => {
+            out.push_str("No new pages this time.\n");
+            out.push_str(
+                "  A page is written once at least 3 related memories are waiting and a page model is chosen (`wenlan steep status`).\n",
+            );
+        }
+        1 => out.push_str("1 new page. See it with `wenlan pages`.\n"),
+        n => out.push_str(&format!("{n} new pages. See them with `wenlan pages`.\n")),
+    }
+    if report.pending_remaining > 0 {
+        out.push_str(&format!(
+            "{} suggested changes wait for you (`wenlan curate`).\n",
+            report.pending_remaining
+        ));
+    }
+    for phase in report.phases.iter().filter(|phase| phase.error.is_some()) {
+        out.push_str(&format!(
+            "  {} did not finish: {}\n",
+            phase.name,
+            phase.error.as_deref().unwrap_or_default()
+        ));
+    }
+    out
 }
 
 /// Persist the cross-encoder reranker mode to config. The daemon reads it at
