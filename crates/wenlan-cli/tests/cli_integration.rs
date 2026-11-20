@@ -178,14 +178,22 @@ fn ownership_refusal_never_reaches_any_supervisor_control() {
         cli_with_isolated_runtime(&runtime)
             .env("WENLAN_BIND_ADDR", address.to_string())
             .env("WENLAN_TEST_LAUNCHCTL_LOG", &log)
-            .args(arguments)
+            .args(&arguments)
             .assert()
             .failure()
             .stderr(predicate::str::contains(
                 "does not prove the selected data root",
             ));
         server.join().unwrap();
-        assert!(fs::read_to_string(&log).unwrap_or_default().is_empty());
+        // `background on` reads launchd's job state (`launchctl print`)
+        // before the shutdown that refuses here, so a refused install never
+        // leaves the service down. Reading is not control: no bootstrap,
+        // bootout, kickstart or other launchctl verb may run.
+        let calls = fs::read_to_string(&log).unwrap_or_default();
+        assert!(
+            calls.lines().all(|call| call.starts_with("print ")),
+            "{arguments:?} reached launchctl control: {calls}"
+        );
         assert!(!runtime.data.path().join("autostart.off").exists());
     }
 }
