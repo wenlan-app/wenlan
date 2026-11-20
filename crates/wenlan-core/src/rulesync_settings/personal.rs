@@ -1,0 +1,1289 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Native, home-scoped settings and the credential-free personal source.
+
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    io::ErrorKind,
+    path::{Path, PathBuf},
+    sync::LazyLock,
+};
+
+use anyhow::{ensure, Context, Result};
+use cap_fs_ext::{DirExt as _, FollowSymlinks, OpenOptionsFollowExt as _};
+use cap_std::fs::{Dir, OpenOptions};
+use regex::Regex;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+
+use super::{
+    document::{self, Format, Part},
+    is_env_name, validate_text, MAX_SETTINGS_BYTES,
+};
+use crate::{
+    rulesync_personal::{check_delivery_paths, personal_target},
+    skill_registry::printable,
+};
+use wenlan_types::rulesync::AdoptionChange;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum Feature {
+    Mcp,
+    Hook,
+    Permission,
+}
+
+impl Feature {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Mcp => "MCP server",
+            Self::Hook => "hook",
+            Self::Permission => "permission",
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Shape {
+    Map,
+    Leaves,
+    Hooks,
+    Decisions,
+    PolicyRules,
+    Items,
+    Field,
+}
+
+#[derive(Clone, Copy)]
+struct Section(Feature, &'static [&'static str], Shape);
+
+use Feature::{Hook, Mcp, Permission};
+use Shape::Map as Named;
+use Shape::{Decisions, Field, Hooks, Items, Leaves, PolicyRules};
+
+#[derive(Clone)]
+pub struct Location {
+    pub tool: &'static str,
+    pub path: PathBuf,
+    format: Format,
+    sections: &'static [Section],
+    initial: &'static str,
+}
+
+fn json_file(tool: &'static str, path: &str, sections: &'static [Section]) -> Location {
+    Location {
+        tool,
+        path: path.into(),
+        format: Format::Json,
+        sections,
+        initial: "{}\n",
+    }
+}
+
+fn versioned(
+    tool: &'static str,
+    path: &str,
+    sections: &'static [Section],
+    initial: &'static str,
+) -> Location {
+    Location {
+        initial,
+        ..json_file(tool, path, sections)
+    }
+}
+
+fn toml_file(tool: &'static str, path: &str, sections: &'static [Section]) -> Location {
+    Location {
+        tool,
+        path: path.into(),
+        format: Format::Toml,
+        sections,
+        initial: "",
+    }
+}
+
+const HOOKS: &[Section] = &[Section(Hook, &["hooks"], Hooks)];
+const OPENCODE: &[Section] = &[
+    Section(Mcp, &["mcp", "servers"], Named),
+    Section(Mcp, &["mcp"], Named),
+    Section(Permission, &["permissions"], PolicyRules),
+    Section(Permission, &["permission"], Leaves),
+];
+
+fn defaults() -> Vec<Location> {
+    vec![
+        json_file("claudecode", ".claude.json", &[Section(Mcp, &["mcpServers"], Named)]),
+        json_file("claudecode", ".claude/settings.json", &[
+            Section(Hook, &["hooks"], Hooks),
+            Section(Permission, &["permissions"], Decisions),
+            Section(Permission, &["sandbox"], Leaves),
+        ]),
+        toml_file("codexcli", ".codex/config.toml", &[
+            Section(Mcp, &["mcp_servers"], Named),
+            Section(Permission, &["permissions"], Leaves),
+            Section(Permission, &["default_permissions"], Field),
+            Section(Permission, &["approval_policy"], Field),
+            Section(Permission, &["approvals_reviewer"], Field),
+            Section(Permission, &["sandbox_mode"], Field),
+            Section(Permission, &["sandbox_workspace_write"], Leaves),
+        ]),
+        json_file("codexcli", ".codex/hooks.json", HOOKS),
+        json_file("geminicli", ".gemini/settings.json", &[
+            Section(Mcp, &["mcpServers"], Named),
+            Section(Hook, &["hooks"], Hooks),
+            Section(Permission, &["tools", "allowed"], Items),
+            Section(Permission, &["tools", "exclude"], Items),
+            Section(Permission, &["tools", "core"], Items),
+            Section(Permission, &["tools", "sandbox"], Field),
+            Section(Permission, &["mcp", "allowed"], Items),
+            Section(Permission, &["mcp", "excluded"], Items),
+        ]),
+        json_file("antigravity-ide", ".gemini/config/mcp_config.json", &[Section(Mcp, &["mcpServers"], Named)]),
+        json_file("antigravity-ide", ".gemini/config/hooks.json", &[Section(Hook, &[], Named)]),
+        json_file("antigravity-ide", ".gemini/antigravity-cli/settings.json", &[
+            Section(Permission, &["permissions"], Decisions),
+        ]),
+        json_file("copilotcli", ".copilot/mcp-config.json", &[Section(Mcp, &["mcpServers"], Named)]),
+        versioned("copilotcli", ".copilot/hooks/copilot-hooks.json", HOOKS, "{\"version\":1}\n"),
+        json_file("copilotcli", ".copilot/settings.json", &[
+            Section(Permission, &["defaultPermissionMode"], Field),
+            Section(Permission, &["allowedUrls"], Items),
+            Section(Permission, &["permissions"], Leaves),
+        ]),
+        json_file("cursor", ".cursor/mcp.json", &[Section(Mcp, &["mcpServers"], Named)]),
+        versioned("cursor", ".cursor/hooks.json", HOOKS, "{\"version\":1}\n"),
+        versioned("cursor", ".cursor/cli-config.json", &[Section(Permission, &["permissions"], Decisions)],
+            "{\"version\":1,\"editor\":{\"vimMode\":false},\"permissions\":{\"allow\":[],\"deny\":[]}}\n"),
+        json_file("cursor", ".cursor/permissions.json", &[
+            Section(Permission, &["mcpAllowlist"], Items),
+            Section(Permission, &["terminalAllowlist"], Items),
+            Section(Permission, &["autoRun", "allow_instructions"], Items),
+            Section(Permission, &["autoRun", "block_instructions"], Items),
+        ]),
+        json_file("opencode", ".config/opencode/opencode.jsonc", OPENCODE),
+        json_file("opencode", ".config/opencode/opencode.json", OPENCODE),
+        versioned("musecode", ".config/muse/settings.json", &[Section(Mcp, &["mcp_servers"], Named)],
+            "{\"schema_version\":1}\n"),
+    ]
+}
+
+const POLICIES: &[Section] = &[Section(Permission, &["rule"], PolicyRules)];
+const COMMAND_RULES: &[Section] = &[Section(Permission, &["rules"], PolicyRules)];
+
+pub struct Catalog {
+    pub locations: Vec<Location>,
+    pub notes: Vec<String>,
+}
+
+impl Catalog {
+    pub fn read(home: &Path) -> Result<Self> {
+        let root = Dir::open_ambient_dir(home, cap_std::ambient_authority())?;
+        let mut locations = defaults();
+        let defaults_len = locations.len();
+        let mut notes = Vec::new();
+        for (dir, ext) in [
+            (".copilot/hooks", "json"),
+            (".gemini/policies", "toml"),
+            (".codex/rules", "rules"),
+            (".config/opencode/plugins", ""),
+        ] {
+            let dir_path = Path::new(dir);
+            let Ok(Some(directory)) = open_parent(&root, dir_path) else {
+                if present(&root, dir_path) {
+                    notes.push(format!(
+                        "{dir}: unmanaged because the directory is linked or unreadable."
+                    ));
+                }
+                continue;
+            };
+            if ext.is_empty() {
+                if directory.entries()?.next().is_some() {
+                    notes.push(format!(
+                        "{dir}: executable plugins and their hooks stay unmanaged."
+                    ));
+                }
+                continue;
+            }
+            for entry in directory.entries()?.take(2048) {
+                let name = entry?.file_name();
+                let path = dir_path.join(name);
+                if path.extension().and_then(|ext| ext.to_str()) != Some(ext) {
+                    continue;
+                }
+                if !path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| safe_identifier(name) && !credential_key(name))
+                {
+                    notes.push(format!(
+                        "{dir}: a settings filename was omitted because it is unsafe."
+                    ));
+                    continue;
+                }
+                let native = path.to_str().context("settings path is not UTF-8")?;
+                match ext {
+                    "json" if locations.iter().all(|location| location.path != path) => {
+                        locations.push(versioned("copilotcli", native, HOOKS, "{\"version\":1}\n"));
+                    }
+                    "toml" => locations.push(toml_file("geminicli", native, POLICIES)),
+                    "rules" => locations.push(Location {
+                        tool: "codexcli",
+                        path,
+                        format: Format::CommandRules,
+                        sections: COMMAND_RULES,
+                        initial: "",
+                    }),
+                    _ => {}
+                }
+            }
+        }
+        // Keep preferred destinations ordered ahead of fallback paths.
+        locations[defaults_len..].sort_by(|left, right| left.path.cmp(&right.path));
+        notes.sort();
+        notes.dedup();
+        Ok(Self { locations, notes })
+    }
+
+    pub fn retain_managed_locations<'a>(&mut self, paths: impl IntoIterator<Item = &'a Path>) {
+        for path in paths {
+            let (Some(parent), Some(ext), Some(name)) = (
+                path.parent().and_then(Path::to_str),
+                path.extension().and_then(|ext| ext.to_str()),
+                path.file_name().and_then(|name| name.to_str()),
+            ) else {
+                continue;
+            };
+            if !safe_identifier(name) || self.locations.iter().any(|location| location.path == path)
+            {
+                continue;
+            }
+            let location = match (parent.replace('\\', "/").as_str(), ext) {
+                (".copilot/hooks", "json") => versioned(
+                    "copilotcli",
+                    &path.to_string_lossy(),
+                    HOOKS,
+                    "{\"version\":1}\n",
+                ),
+                (".gemini/policies", "toml") => {
+                    toml_file("geminicli", &path.to_string_lossy(), POLICIES)
+                }
+                (".codex/rules", "rules") => Location {
+                    tool: "codexcli",
+                    path: path.to_owned(),
+                    format: Format::CommandRules,
+                    sections: COMMAND_RULES,
+                    initial: "",
+                },
+                _ => continue,
+            };
+            self.locations.push(location);
+        }
+    }
+}
+
+fn open_parent(root: &Dir, path: &Path) -> std::io::Result<Option<Dir>> {
+    let mut directory = root.try_clone()?;
+    for component in path.components() {
+        match directory.open_dir_nofollow(Path::new(component.as_os_str())) {
+            Ok(next) => directory = next,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(Some(directory))
+}
+
+fn present(root: &Dir, path: &Path) -> bool {
+    root.symlink_metadata(path).is_ok()
+}
+
+fn read_local(root: &Dir, path: &Path) -> Result<Option<Vec<u8>>> {
+    let Some(parent) = open_parent(root, path.parent().context("invalid settings path")?)? else {
+        return Ok(None);
+    };
+    let name = path.file_name().context("invalid settings name")?;
+    let metadata = match parent.symlink_metadata(name) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    ensure!(
+        metadata.is_file() && metadata.len() <= MAX_SETTINGS_BYTES,
+        "settings file is unsafe or too large"
+    );
+    let mut options = OpenOptions::new();
+    options.read(true).follow(FollowSymlinks::No);
+    #[cfg(unix)]
+    {
+        use cap_std::fs::OpenOptionsExt as _;
+        options.custom_flags(rustix::fs::OFlags::NONBLOCK.bits() as i32);
+    }
+    let file = parent.open_with(name, &options)?;
+    ensure!(
+        file.metadata()?.is_file(),
+        "settings file changed during inspection"
+    );
+    super::read_limited(file).map(Some)
+}
+
+/// A native settings identity. Arrays have stable, format-specific member
+/// identities so an unowned sibling can remain byte-for-byte in place.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct Key {
+    pub feature: Feature,
+    pub name: Vec<String>,
+    member: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Entry {
+    pub key: Key,
+    pub value: Value,
+    container: Vec<String>,
+}
+
+impl Entry {
+    pub fn label(&self) -> String {
+        let name = self.key.name.join(".");
+        let name = if let Some(member) = self
+            .key
+            .member
+            .as_deref()
+            .filter(|member| !member.is_empty())
+        {
+            format!("{name} [{member}]")
+        } else {
+            name
+        };
+        format!("{} {}", self.key.feature.label(), printable(&name))
+    }
+
+    pub fn preview(&self) -> Result<String> {
+        Ok(format!(
+            "{} = {}",
+            self.label(),
+            printable(&serde_json::to_string(&self.value)?)
+        ))
+    }
+}
+
+pub struct Document {
+    // The full native document must never enter a preview or source.
+    raw: Value,
+    entries: BTreeMap<Key, Vec<(Entry, Option<usize>)>>,
+}
+
+impl Location {
+    pub fn display(&self) -> String {
+        self.path
+            .iter()
+            .map(|part| part.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/")
+    }
+
+    pub fn document(&self, bytes: Option<&[u8]>) -> Result<Document> {
+        ensure!(
+            bytes.is_none_or(|bytes| bytes.len() as u64 <= MAX_SETTINGS_BYTES),
+            "settings file exceeds 10 MiB"
+        );
+        let raw = document::read(self.format, bytes.unwrap_or(self.initial.as_bytes()))?;
+        let mut doc = Document {
+            raw,
+            entries: BTreeMap::new(),
+        };
+        for &Section(feature, path, shape) in self.sections {
+            doc.extract(self, feature, path, shape);
+        }
+        Ok(doc)
+    }
+
+    pub fn edit(&self, bytes: Option<&[u8]>, entry: &Entry) -> Result<Vec<u8>> {
+        ensure!(
+            reviewable(self.tool, entry),
+            "the settings entry contains possible credentials"
+        );
+        let bytes = bytes.unwrap_or(self.initial.as_bytes());
+        let doc = self.document(Some(bytes))?;
+        let mut path = entry
+            .container
+            .iter()
+            .map(|part| Part::Key(part))
+            .collect::<Vec<_>>();
+        if entry.key.member.is_some() {
+            let index = match doc.entries.get(&entry.key).map(Vec::as_slice) {
+                Some([(old, Some(index))]) if old.container == entry.container => *index,
+                Some(_) => anyhow::bail!("this entry is ambiguous or moved to a different list"),
+                None => lookup(&doc.raw, entry.container.iter().map(String::as_str))
+                    .and_then(Value::as_array)
+                    .map_or(0, Vec::len),
+            };
+            path.push(Part::Index(index));
+        }
+        let next = document::edit(self.format, bytes, &path, entry.value.clone())?;
+        let checked = self.document(Some(&next))?;
+        ensure!(
+            checked.entry(&entry.key) == Some(entry),
+            "the native settings entry did not round trip"
+        );
+        Ok(next)
+    }
+
+    /// A whole-file backup and exchange would also copy unrelated secrets.
+    /// Such files can be inspected, but are ineligible for automatic writes.
+    pub fn snapshot_safe(&self, bytes: &[u8], doc: &Document) -> bool {
+        static JSON_TEXT: LazyLock<Regex> = LazyLock::new(|| {
+            Regex::new(r#"(?s)"(?:[^"\\]|\\.)*"|//[^\r\n]*|/\*.*?\*/"#)
+                .expect("JSON strings and comments")
+        });
+        std::str::from_utf8(bytes).is_ok_and(|text| {
+            if self.format == Format::Json {
+                JSON_TEXT
+                    .find_iter(text)
+                    .map(|item| item.as_str())
+                    .filter(|item| item.starts_with('/'))
+                    .all(|comment| !text_risky(self.tool, comment))
+            } else {
+                text.lines()
+                    .filter_map(|line| line.split_once('#').map(|(_, comment)| comment))
+                    .all(|comment| !text_risky(self.tool, comment))
+            }
+        }) && material_safe(self.tool, &doc.raw)
+    }
+
+    fn entry(&self, feature: Feature, path: &[&str], value: Value) -> Entry {
+        Entry {
+            key: Key {
+                feature,
+                name: path.iter().map(|name| (*name).into()).collect(),
+                member: None,
+            },
+            container: path.iter().map(|name| (*name).into()).collect(),
+            value,
+        }
+    }
+}
+
+impl Document {
+    pub fn entry(&self, key: &Key) -> Option<&Entry> {
+        match self.entries.get(key).map(Vec::as_slice) {
+            Some([(entry, _)]) => Some(entry),
+            _ => None,
+        }
+    }
+
+    pub fn has(&self, key: &Key) -> bool {
+        self.entries.contains_key(key)
+    }
+
+    pub fn reviewable_entries<'a>(&'a self, tool: &'a str) -> impl Iterator<Item = &'a Entry> {
+        self.entries
+            .values()
+            .filter_map(move |entries| match entries.as_slice() {
+                [(entry, _)] if reviewable(tool, entry) => Some(entry),
+                _ => None,
+            })
+    }
+
+    fn extract(&mut self, location: &Location, feature: Feature, path: &[&str], shape: Shape) {
+        let Some(value) = lookup(&self.raw, path.iter().copied()) else {
+            return;
+        };
+        let mut found = Vec::new();
+        match shape {
+            Shape::Map => {
+                if let Some(map) = value.as_object() {
+                    for (name, value) in map {
+                        if location.tool == "opencode"
+                            && path == ["mcp"]
+                            && (name == "servers" || map.contains_key("servers"))
+                        {
+                            continue;
+                        }
+                        if feature == Hook && !value.is_object() {
+                            continue;
+                        }
+                        let mut entry_path = path.to_vec();
+                        entry_path.push(name);
+                        found.push((location.entry(feature, &entry_path, value.clone()), None));
+                    }
+                }
+            }
+            Field if !value.is_object() => {
+                found.push((location.entry(feature, path, value.clone()), None))
+            }
+            Leaves => {
+                collect_leaves(location, feature, &mut path.to_vec(), value, &mut found);
+            }
+            Decisions | Hooks => {
+                if let Some(map) = value.as_object() {
+                    for (name, value) in map {
+                        if let Some(items) = value.as_array().filter(|_| {
+                            shape == Hooks || matches!(name.as_str(), "allow" | "deny" | "ask")
+                        }) {
+                            for (index, item) in items.iter().enumerate() {
+                                let mut full = path.to_vec();
+                                full.push(name);
+                                let mut entry = location.entry(feature, &full, item.clone());
+                                entry.key.member = Some(if shape == Hooks {
+                                    hook_identity(item, items)
+                                } else {
+                                    entry.key.name =
+                                        path.iter().map(|name| (*name).into()).collect();
+                                    item.as_str()
+                                        .map(str::to_owned)
+                                        .unwrap_or_else(|| item.to_string())
+                                });
+                                found.push((entry, Some(index)));
+                            }
+                        } else if shape == Decisions {
+                            let mut full = path.to_vec();
+                            full.push(name);
+                            found.push((location.entry(feature, &full, value.clone()), None));
+                        }
+                    }
+                }
+            }
+            PolicyRules | Items => {
+                if let Some(items) = value.as_array() {
+                    for (index, item) in items.iter().enumerate() {
+                        let mut entry = location.entry(feature, path, item.clone());
+                        let mut identity = item.clone();
+                        if shape == PolicyRules {
+                            if let Some(fields) = identity.as_object_mut() {
+                                for key in ["decision", "effect", "justification", "deny_message"] {
+                                    fields.remove(key);
+                                }
+                            }
+                        }
+                        entry.key.member = Some(
+                            identity
+                                .as_str()
+                                .map_or_else(|| identity.to_string(), str::to_owned),
+                        );
+                        found.push((entry, Some(index)));
+                    }
+                }
+            }
+            Field => {}
+        }
+        for (entry, index) in found {
+            self.entries
+                .entry(entry.key.clone())
+                .or_default()
+                .push((entry, index));
+        }
+    }
+}
+
+fn collect_leaves<'a>(
+    location: &Location,
+    feature: Feature,
+    path: &mut Vec<&'a str>,
+    value: &'a Value,
+    found: &mut Vec<(Entry, Option<usize>)>,
+) {
+    if let Some(map) = value.as_object() {
+        for (key, value) in map {
+            path.push(key);
+            collect_leaves(location, feature, path, value, found);
+            path.pop();
+        }
+    } else {
+        found.push((location.entry(feature, path, value.clone()), None));
+    }
+}
+
+fn lookup<'a, 'b>(value: &'a Value, mut path: impl Iterator<Item = &'b str>) -> Option<&'a Value> {
+    path.try_fold(value, |value, name| value.get(name))
+}
+
+fn hook_identity(value: &Value, siblings: &[Value]) -> String {
+    let identity = |item: &Value| {
+        ["id", "name", "matcher"].into_iter().find_map(|field| {
+            item.get(field)
+                .and_then(Value::as_str)
+                .map(|name| format!("{field} {name}"))
+        })
+    };
+    if let Some(id) = identity(value) {
+        return id;
+    }
+    if siblings
+        .iter()
+        .filter(|item| identity(item).is_none())
+        .count()
+        == 1
+    {
+        return String::new();
+    }
+    // Flat formats have no required ID. With several unnamed commands their
+    // native command is the only identity that survives a reorder.
+    ["command", "bash", "powershell", "prompt"]
+        .into_iter()
+        .find_map(|field| value.get(field).and_then(Value::as_str))
+        .unwrap_or_default()
+        .to_owned()
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct Adoption {
+    pub sources: BTreeMap<PathBuf, Vec<Entry>>,
+    pub notes: Vec<String>,
+}
+
+impl Adoption {
+    pub fn discover(home: &Path) -> Result<Self> {
+        let catalog = Catalog::read(home)?;
+        let root = Dir::open_ambient_dir(home, cap_std::ambient_authority())?;
+        let mut adoption = Self {
+            sources: BTreeMap::new(),
+            notes: catalog.notes,
+        };
+        for location in catalog.locations {
+            let path = location.display();
+            if check_delivery_paths(home, [location.path.as_path()]).is_err() {
+                if present(&root, &location.path) {
+                    adoption.notes.push(format!(
+                        "{path}: unmanaged because it aliases the shared harness or has an unsafe path."
+                    ));
+                }
+                continue;
+            }
+            let bytes = match read_local(&root, &location.path) {
+                Ok(Some(bytes)) => bytes,
+                Ok(None) => continue,
+                Err(_) => {
+                    adoption.notes.push(format!(
+                        "{path}: unmanaged because the file is linked, unreadable, or too large."
+                    ));
+                    continue;
+                }
+            };
+            let Ok(doc) = location.document(Some(&bytes)) else {
+                adoption.notes.push(format!("{path}: unmanaged because its settings format is invalid, duplicate, or unsupported."));
+                continue;
+            };
+            let mut accepted = Vec::new();
+            let snapshot_safe = location.snapshot_safe(&bytes, &doc);
+            for entries in doc.entries.into_values() {
+                let entry = &entries[0].0;
+                if !reviewable(location.tool, entry) {
+                    let label = entry
+                        .key
+                        .name
+                        .last()
+                        .filter(|name| safe_identifier(name) && !credential_key(name));
+                    let entry_label = label.map_or_else(String::new, |name| format!(" {name}"));
+                    adoption.notes.push(format!("{path}: skipped {}{entry_label} because it contains possible credentials or unsafe text.", entry.key.feature.label()));
+                } else if entries.len() > 1 {
+                    adoption.notes.push(format!(
+                        "{path}: skipped {} because its native identity is ambiguous.",
+                        entry.label()
+                    ));
+                } else {
+                    accepted.push(entry.clone());
+                }
+            }
+            if !accepted.is_empty() {
+                if !snapshot_safe {
+                    adoption.notes.push(format!("{path}: safe entries can be imported, but Wenlan cannot write or back up this file while it contains possible credentials."));
+                }
+                adoption.sources.insert(location.path, accepted);
+            }
+        }
+        adoption.notes.sort();
+        adoption.notes.dedup();
+        Ok(adoption)
+    }
+
+    pub fn preview(&self) -> Result<Vec<AdoptionChange>> {
+        self.sources.iter().map(|(path, entries)| {
+            let path = path.iter().map(|part| part.to_string_lossy()).collect::<Vec<_>>().join("/");
+            let mut diff = String::from("Import personal settings. Existing file bytes stay in place until a managed entry needs delivery.\n");
+            for entry in entries {
+                diff.push_str(&format!("+{}\n", entry.preview()?));
+            }
+            Ok(AdoptionChange { path, added: entries.len(), removed: 0, diff })
+        }).collect()
+    }
+}
+
+fn safe_identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 160
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+        && !text_risky("", value)
+}
+
+fn credential_key(key: &str) -> bool {
+    let key = key.to_ascii_lowercase().replace(['-', '_', '.', ' '], "");
+    [
+        "apikey",
+        "password",
+        "passwd",
+        "passphrase",
+        "secret",
+        "privatekey",
+        "accesskey",
+        "token",
+        "authorization",
+        "cookie",
+        "credential",
+        "clientsecret",
+        "sessionid",
+    ]
+    .iter()
+    .any(|word| key.contains(word))
+}
+
+fn exact_reference(tool: &str, value: &str) -> bool {
+    let value = value
+        .strip_prefix("Bearer ")
+        .or_else(|| value.strip_prefix("Basic "))
+        .unwrap_or(value);
+    let wrapped = |open, close| {
+        value
+            .strip_prefix(open)
+            .and_then(|text| text.strip_suffix(close))
+            .is_some_and(is_env_name)
+    };
+    match tool {
+        "claudecode" => wrapped("${", "}"),
+        "geminicli" => wrapped("${", "}") || value.strip_prefix('$').is_some_and(is_env_name),
+        "cursor" => wrapped("${env:", "}"),
+        "opencode" => wrapped("{env:", "}"),
+        // Codex's env-valued fields use bare variable names below.
+        _ => false,
+    }
+}
+
+fn text_risky(tool: &str, value: &str) -> bool {
+    static RISK: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(
+        r"(?i)(?:[a-z][a-z0-9+.-]*://[^/\s?#]*@|[a-z][a-z0-9+.-]*://[^\s]*[?#]|\b(?:sk[-_]|gh[pousr]_|github_pat_|xox[baprs]-|AKIA|eyJ[a-zA-Z0-9_-]+\.)[a-z0-9_./+=-]{6,}|(?:^|\s)-(?:u|H|p|e)(?:\s+|=)[^\s]+|(?:^|\s)--(?:key|auth|header|env|client[-_]?secret)(?:\s+|=)[^\s]+|-----BEGIN [A-Z ]*PRIVATE KEY-----|\$\{[^}\n]+:-[^}\n]+|\b(?:api[-_]?key|client[-_]?secret|password|passwd|secret|token)\s*[:=]\s*[^\s]+)",
+    ).expect("settings credential indicators")
+    });
+    if exact_reference(tool, value) {
+        return false;
+    }
+    RISK.is_match(value)
+        || validate_text(value).is_err()
+        || value
+            .split(|ch: char| !(ch.is_ascii_alphanumeric() || "-_".contains(ch)))
+            .any(|word| {
+                word.len() >= 24
+                    && word.bytes().any(|b| b.is_ascii_uppercase())
+                    && word.bytes().any(|b| b.is_ascii_lowercase())
+                    && word.bytes().filter(u8::is_ascii_digit).count() >= 3
+            })
+}
+
+fn material_safe(tool: &str, value: &Value) -> bool {
+    match value {
+        Value::Object(map) => map.iter().all(|(name, value)| {
+            if text_risky(tool, name) {
+                return false;
+            }
+            let native_name = name.to_ascii_lowercase();
+            if matches!(native_name.as_str(), "bearer_token_env_var" | "env_vars")
+                && tool == "codexcli"
+            {
+                return value.as_str().is_some_and(is_env_name)
+                    || value.as_array().is_some_and(|names| {
+                        names
+                            .iter()
+                            .all(|name| name.as_str().is_some_and(is_env_name))
+                    });
+            }
+            if native_name == "env_http_headers" && tool == "codexcli" {
+                return value.as_object().is_some_and(|map| {
+                    map.iter().all(|(key, name)| {
+                        !text_risky(tool, key) && name.as_str().is_some_and(is_env_name)
+                    })
+                });
+            }
+            if matches!(
+                native_name.as_str(),
+                "env" | "environment" | "headers" | "http_headers" | "httpheaders"
+            ) {
+                return value.as_object().is_some_and(|map| {
+                    map.iter().all(|(key, value)| {
+                        !text_risky(tool, key)
+                            && value
+                                .as_str()
+                                .is_some_and(|value| exact_reference(tool, value))
+                    })
+                });
+            }
+            if credential_key(name) || native_name == "auth" && !value.is_object() {
+                return value
+                    .as_str()
+                    .is_some_and(|value| exact_reference(tool, value));
+            }
+            material_safe(tool, value)
+        }),
+        Value::Array(items) => {
+            items.windows(2).all(|pair| {
+                !pair[0].as_str().is_some_and(|name| {
+                    name.starts_with('-')
+                        && (credential_key(name)
+                            || matches!(
+                                name,
+                                "-u" | "-H"
+                                    | "-p"
+                                    | "-e"
+                                    | "--auth"
+                                    | "--key"
+                                    | "--header"
+                                    | "--env"
+                            ))
+                }) || pair[1]
+                    .as_str()
+                    .is_some_and(|value| exact_reference(tool, value))
+            }) && items.iter().all(|item| material_safe(tool, item))
+        }
+        Value::String(value) => !text_risky(tool, value),
+        _ => true,
+    }
+}
+
+pub fn reviewable(tool: &str, entry: &Entry) -> bool {
+    entry
+        .container
+        .iter()
+        .all(|name| !text_risky(tool, name) && !credential_key(name))
+        && entry
+            .key
+            .member
+            .as_deref()
+            .is_none_or(|name| !text_risky(tool, name))
+        && (!entry.container.iter().any(|name| is_literal_carrier(name))
+            || entry
+                .value
+                .as_str()
+                .is_some_and(|value| exact_reference(tool, value)))
+        && material_safe(tool, &entry.value)
+}
+
+fn is_literal_carrier(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "env" | "environment" | "headers" | "http_headers" | "httpheaders"
+    )
+}
+
+fn reference_free(text: &str) -> bool {
+    !text.contains(['$', '%', '{', '}']) && !text.contains('\\')
+}
+
+#[derive(PartialEq, Eq)]
+enum PortableMcp {
+    Stdio(Vec<String>),
+    Http(String),
+}
+
+fn portable_mcp(tool: &str, value: &Value) -> Option<PortableMcp> {
+    let mut fields = value.as_object()?.clone();
+    let tag_key = if tool == "musecode" {
+        "transport"
+    } else {
+        "type"
+    };
+    let tag = fields.remove(tag_key);
+    let tag = match tag.as_ref() {
+        Some(Value::String(tag)) => Some(tag.as_str()),
+        Some(_) => return None,
+        None => None,
+    };
+    let result = if let Some(command) = fields.remove("command") {
+        let command = if tool == "opencode" {
+            if tag != Some("local") {
+                return None;
+            }
+            command
+                .as_array()?
+                .iter()
+                .map(|part| part.as_str().map(str::to_owned))
+                .collect::<Option<Vec<_>>>()?
+        } else {
+            let supported = match tool {
+                "copilotcli" => matches!(tag, None | Some("stdio" | "local")),
+                "musecode" => tag == Some("stdio"),
+                "claudecode" | "cursor" => matches!(tag, None | Some("stdio")),
+                _ => tag.is_none(),
+            };
+            if !supported {
+                return None;
+            }
+            let mut parts = vec![command.as_str()?.to_owned()];
+            if let Some(args) = fields.remove("args") {
+                for argument in args.as_array()? {
+                    parts.push(argument.as_str()?.to_owned());
+                }
+            }
+            parts
+        };
+        if command.is_empty()
+            || command[0].is_empty()
+            || command[0].starts_with('.')
+            || command.iter().any(|arg| !reference_free(arg))
+        {
+            return None;
+        }
+        PortableMcp::Stdio(command)
+    } else {
+        let url_field = match tool {
+            "antigravity-ide" => "serverUrl",
+            "geminicli" => "httpUrl",
+            _ => "url",
+        };
+        let http_tag = match tool {
+            "antigravity-ide" | "geminicli" | "codexcli" => None,
+            "opencode" => Some("remote"),
+            "musecode" => Some("streamable_http"),
+            _ => Some("http"),
+        };
+        let url = fields.remove(url_field)?.as_str()?.to_owned();
+        if tag != http_tag
+            || !reference_free(&url)
+            || !url.starts_with("https://") && !url.starts_with("http://")
+        {
+            return None;
+        }
+        PortableMcp::Http(url)
+    };
+    fields.is_empty().then_some(result)
+}
+
+fn native_mcp(tool: &str, portable: &PortableMcp) -> Value {
+    match portable {
+        PortableMcp::Stdio(command) => match tool {
+            "opencode" => json!({"type":"local", "command":command}),
+            "musecode" => json!({"transport":"stdio", "command":command[0], "args":command[1..]}),
+            "copilotcli" => json!({"type":"stdio", "command":command[0], "args":command[1..]}),
+            _ => json!({"command":command[0], "args":command[1..]}),
+        },
+        PortableMcp::Http(url) => match tool {
+            "opencode" => json!({"type":"remote", "url":url}),
+            "musecode" => json!({"transport":"streamable_http", "url":url}),
+            "antigravity-ide" => json!({"serverUrl":url}),
+            "geminicli" => json!({"httpUrl":url}),
+            "codexcli" => json!({"url":url}),
+            _ => json!({"type":"http", "url":url}),
+        },
+    }
+}
+
+/// Translate only the common server fields, or a hook with the same event and
+/// native schema. Tool-specific keys, substitutions and policies remain local.
+pub fn project(from: &Location, to: &Location, entry: &Entry, current: &Document) -> Option<Entry> {
+    if from.tool == to.tool {
+        return None;
+    }
+    let next = match entry.key.feature {
+        Mcp => {
+            let portable = portable_mcp(from.tool, &entry.value)?;
+            let &Section(_, path, _) = to.sections.iter().find(|section| section.0 == Mcp)?;
+            let mut path = path.to_vec();
+            if to.tool == "opencode"
+                && current.raw.get("mcp").is_some_and(|mcp| {
+                    mcp.is_object()
+                        && mcp.get("servers").is_none()
+                        && mcp.as_object().is_some_and(|map| {
+                            map.values().any(|value| {
+                                matches!(
+                                    value.get("type").and_then(Value::as_str),
+                                    Some("local" | "remote")
+                                )
+                            })
+                        })
+                })
+            {
+                path = vec!["mcp"];
+            }
+            path.push(entry.key.name.last()?);
+            let value = native_mcp(to.tool, &portable);
+            if portable_mcp(to.tool, &value)? != portable {
+                return None;
+            }
+            to.entry(Mcp, &path, value)
+        }
+        Hook if matches!(
+            (from.tool, to.tool),
+            ("claudecode", "codexcli") | ("codexcli", "claudecode")
+        ) =>
+        {
+            if !to.sections.iter().any(|section| section.0 == Hook) {
+                return None;
+            }
+            let event = entry.container.last()?;
+            if !matches!(
+                event.as_str(),
+                "SessionStart" | "PreToolUse" | "PostToolUse" | "Stop"
+            ) {
+                return None;
+            }
+            let group = entry.value.as_object()?;
+            let hooks = group.get("hooks")?.as_array()?;
+            if group.len() != 1
+                || hooks.is_empty()
+                || hooks.iter().any(|hook| {
+                    hook.as_object().is_none_or(|hook| hook.len() != 2)
+                        || hook.get("type").and_then(Value::as_str) != Some("command")
+                        || !hook
+                            .get("command")
+                            .and_then(Value::as_str)
+                            .is_some_and(|command| {
+                                reference_free(command) && !command.starts_with('.')
+                            })
+                })
+            {
+                return None;
+            }
+            entry.clone()
+        }
+        _ => return None,
+    };
+    reviewable(to.tool, &next).then_some(next)
+}
+
+pub fn equivalent(location: &Location, left: &Entry, right: &Entry) -> bool {
+    left == right
+        || left.key == right.key
+            && left.key.feature == Mcp
+            && portable_mcp(location.tool, &left.value)
+                .is_some_and(|value| portable_mcp(location.tool, &right.value) == Some(value))
+}
+
+/// Only enrolled, native home paths can receive shared settings.
+pub fn enrolled(home: &Path, location: &Location, tools: &BTreeSet<&str>) -> bool {
+    tools.contains(location.tool)
+        && personal_target(location.tool).is_some_and(|target| {
+            home.join(target.folder()).is_dir() || home.join(&location.path).is_file()
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn file(path: &str) -> Location {
+        defaults()
+            .into_iter()
+            .find(|location| location.path == Path::new(path))
+            .unwrap()
+    }
+
+    #[test]
+    fn rulesync_personal_settings_use_home_paths_on_macos_linux_windows() {
+        let expected = [
+            ("claudecode", ".claude.json"),
+            ("claudecode", ".claude/settings.json"),
+            ("codexcli", ".codex/config.toml"),
+            ("codexcli", ".codex/hooks.json"),
+            ("codexcli", ".codex/rules/default.rules"),
+            ("geminicli", ".gemini/settings.json"),
+            ("geminicli", ".gemini/policies/user.toml"),
+            ("antigravity-ide", ".gemini/config/mcp_config.json"),
+            ("antigravity-ide", ".gemini/config/hooks.json"),
+            ("antigravity-ide", ".gemini/antigravity-cli/settings.json"),
+            ("copilotcli", ".copilot/mcp-config.json"),
+            ("copilotcli", ".copilot/hooks/copilot-hooks.json"),
+            ("copilotcli", ".copilot/hooks/local.json"),
+            ("copilotcli", ".copilot/settings.json"),
+            ("cursor", ".cursor/mcp.json"),
+            ("cursor", ".cursor/hooks.json"),
+            ("cursor", ".cursor/cli-config.json"),
+            ("cursor", ".cursor/permissions.json"),
+            ("opencode", ".config/opencode/opencode.jsonc"),
+            ("opencode", ".config/opencode/opencode.json"),
+            ("musecode", ".config/muse/settings.json"),
+        ];
+        let fixture = tempfile::tempdir().unwrap();
+        for path in [
+            ".gemini/policies/user.toml",
+            ".codex/rules/default.rules",
+            ".copilot/hooks/local.json",
+        ] {
+            let path = fixture.path().join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, "").unwrap();
+        }
+        let catalog = Catalog::read(fixture.path()).unwrap();
+        assert_eq!(catalog.locations.len(), expected.len());
+        for (tool, path) in expected {
+            let location = catalog
+                .locations
+                .iter()
+                .find(|location| location.path == Path::new(path))
+                .unwrap();
+            assert_eq!(location.tool, tool);
+            assert_eq!(location.display(), path);
+            assert!(!location.path.is_absolute());
+            let parts: Vec<_> = location
+                .path
+                .iter()
+                .map(|part| part.to_str().unwrap())
+                .collect();
+            for (root, separator) in [
+                ("/Users/fixture", "/"),
+                ("/home/fixture", "/"),
+                (r"C:\Users\fixture", "\\"),
+            ] {
+                assert_eq!(
+                    format!("{root}{separator}{}", parts.join(separator)),
+                    format!("{root}{separator}{}", path.replace('/', separator))
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rulesync_personal_settings_keep_jsonc_and_toml_siblings_byte_stable() {
+        let cursor = file(".cursor/mcp.json");
+        let current = br#"{
+    "mcpServers": {
+        "\u006fwned": { "command": "before" },
+        // A comment belongs to the independent server.
+        "other" :  { "command":  "other" },
+    },
+    "other-settings":   [ true, /* keep */ 42 ],
+}"#;
+        let doc = cursor.document(Some(current)).unwrap();
+        let mut owned = doc
+            .reviewable_entries(cursor.tool)
+            .find(|entry| entry.key.name.last().unwrap() == "owned")
+            .unwrap()
+            .clone();
+        owned.value["command"] = json!("after");
+        let result = cursor.edit(Some(current), &owned).unwrap();
+        let expected = std::str::from_utf8(current)
+            .unwrap()
+            .replace("{ \"command\": \"before\" }", "{\"command\":\"after\"}");
+        assert_eq!(result, expected.as_bytes());
+        let mut new = owned.clone();
+        *new.key.name.last_mut().unwrap() = "added".into();
+        *new.container.last_mut().unwrap() = "added".into();
+        let result = cursor.edit(Some(&result), &new).unwrap();
+        assert!(std::str::from_utf8(&result)
+            .unwrap()
+            .contains("\"other\" :  { \"command\":  \"other\" },"));
+
+        let codex = file(".codex/config.toml");
+        let current = b"# top comment\nmodel = 'fixture' # keep this\n\n[mcp_servers.owned]\ncommand = 'before'\n\n[mcp_servers.other]\ncommand='other' # this comment belongs to other\n\n[unrelated]\nkeep = [ 2, 1 ]\n";
+        let doc = codex.document(Some(current)).unwrap();
+        let mut owned = doc
+            .reviewable_entries(codex.tool)
+            .find(|entry| entry.key.name.last().unwrap() == "owned")
+            .unwrap()
+            .clone();
+        owned.value["command"] = json!("after");
+        let result = codex.edit(Some(current), &owned).unwrap();
+        let text = std::str::from_utf8(&result).unwrap();
+        assert!(text.starts_with("# top comment\nmodel = 'fixture' # keep this\n"));
+        assert!(text.contains("[mcp_servers.other]\ncommand='other' # this comment belongs to other\n\n[unrelated]\nkeep = [ 2, 1 ]\n"), "{text}");
+    }
+
+    #[test]
+    fn rulesync_personal_settings_native_references_are_backup_safe_but_comments_are_checked() {
+        let cursor = file(".cursor/mcp.json");
+        let cfg = br#"{"mcpServers":{"reference":{"type":"http","url":"https://example.invalid/mcp","headers":{"Authorization":"Bearer ${env:EXAMPLE_TOKEN}"}}}}"#;
+        let doc = cursor.document(Some(cfg)).unwrap();
+        assert!(cursor.snapshot_safe(cfg, &doc));
+
+        let mut commented = b"/* note\nsome settings\npassword = synthetic-marker\n*/\n".to_vec();
+        commented.extend(cfg);
+        let doc = cursor.document(Some(&commented)).unwrap();
+        assert!(!cursor.snapshot_safe(&commented, &doc));
+    }
+
+    #[test]
+    fn rulesync_personal_settings_accept_only_native_credential_references() {
+        let path = tempfile::tempdir().unwrap();
+        let root = path.path();
+        fs::create_dir_all(root.join(".cursor")).unwrap();
+        fs::create_dir_all(root.join(".config/opencode")).unwrap();
+        fs::write(root.join(".cursor/mcp.json"), serde_json::to_vec(&json!({"mcpServers": {
+            "preserved": {"type":"http", "url":"https://example.invalid/mcp",
+                "headers":{"Authorization":"Bearer ${env:EXAMPLE_TOKEN}"}},
+            "bad-arg": {"command":"server","args":["--api-key","fixture-argument-marker"]},
+            "bad-url": {"type":"http","url":"https://example.invalid/mcp?other=fixture-query-marker"},
+            "bad-key": {"command":"server","nested":{"clientSecret":{"value":"fixture-nested-marker"}}},
+            "bad-header": {"type":"http","url":"https://example.invalid/mcp","headers":{"Custom":"fixture-header-marker"}},
+            "bad-env": {"command":"server","env":{"CUSTOM":"fixture-environment-marker"}},
+            "wrong-syntax": {"command":"server","env":{"CUSTOM":"${EXAMPLE_TOKEN}"}}
+        }})).unwrap()).unwrap();
+        fs::write(root.join(".config/opencode/opencode.jsonc"), br#"{
+            "mcp":{"servers":{"kept":{"type":"local","command":["fixture"],"environment":{"API_KEY":"{env:EXAMPLE_TOKEN}"}},
+            "held":{"type":"local","command":["fixture"],"environment":{"GENERIC":"fixture-opencode-marker"}}}}}
+        "#).unwrap();
+        let adoption = Adoption::discover(root).unwrap();
+        let preview = serde_json::to_string(&adoption.preview().unwrap()).unwrap();
+        let notes = adoption.notes.join("\n");
+        let source = serde_json::to_string(&adoption.sources).unwrap();
+        assert_eq!(adoption.sources.values().map(Vec::len).sum::<usize>(), 2);
+        assert!(
+            preview.contains("${env:EXAMPLE_TOKEN}") && preview.contains("{env:EXAMPLE_TOKEN}")
+        );
+        for name in [
+            "bad-arg",
+            "bad-url",
+            "bad-key",
+            "bad-env",
+            "bad-header",
+            "wrong-syntax",
+            "held",
+        ] {
+            assert!(
+                notes.contains(&format!("skipped MCP server {name}")),
+                "{name}"
+            );
+        }
+        for serialized in [preview, notes, source] {
+            assert!(!serialized.contains("-marker"));
+        }
+    }
+
+    #[test]
+    fn rulesync_personal_settings_patch_supported_codex_and_gemini_permissions() {
+        let fixture = tempfile::tempdir().unwrap();
+        for path in [".codex/rules", ".gemini/policies"] {
+            fs::create_dir_all(fixture.path().join(path)).unwrap();
+        }
+        let codex = b"# fixture comment\nprefix_rule(pattern = [\"git\", [\"status\", \"diff\"]], decision = \"deny\") # keep\n";
+        let gemini = b"# fixture comment\n[[rule]]\ntoolName = 'run_shell_command'\ncommandPrefix = 'git status'\ndecision = 'ask_user'\n\n[[rule]]\ntoolName = 'read_file'\ndecision = 'deny' # keep\n";
+        for (path, bytes) in [
+            (".codex/rules/default.rules", codex.as_slice()),
+            (".gemini/policies/user.toml", gemini.as_slice()),
+        ] {
+            fs::write(fixture.path().join(path), bytes).unwrap();
+            let location = Catalog::read(fixture.path())
+                .unwrap()
+                .locations
+                .into_iter()
+                .find(|location| location.path == Path::new(path))
+                .unwrap();
+            let doc = location.document(Some(bytes)).unwrap();
+            let mut permission = doc
+                .reviewable_entries(location.tool)
+                .find(|entry| {
+                    entry.value.get("pattern").is_some()
+                        || entry.value.get("commandPrefix").is_some()
+                })
+                .unwrap()
+                .clone();
+            permission.value["decision"] = json!("allow");
+            let updated = location.edit(Some(bytes), &permission).unwrap();
+            let updated = std::str::from_utf8(&updated).unwrap();
+            assert!(updated.starts_with("# fixture comment\n"));
+            assert!(updated.contains("# keep"));
+            if location.tool == "geminicli" {
+                assert!(updated
+                    .contains("[[rule]]\ntoolName = 'read_file'\ndecision = 'deny' # keep\n"));
+            }
+        }
+    }
+}
