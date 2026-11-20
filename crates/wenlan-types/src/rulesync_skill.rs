@@ -44,6 +44,27 @@ pub enum SavedSkillScope {
 pub enum SavedSkillTool {
     ClaudeCode,
     Codex,
+    GeminiCli,
+    Antigravity,
+    CopilotCli,
+    Cursor,
+    OpenCode,
+    MuseCode,
+}
+
+impl SavedSkillTool {
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::ClaudeCode => "Claude Code",
+            Self::Codex => "Codex",
+            Self::GeminiCli => "Gemini CLI",
+            Self::Antigravity => "Antigravity",
+            Self::CopilotCli => "GitHub Copilot CLI",
+            Self::Cursor => "Cursor",
+            Self::OpenCode => "OpenCode",
+            Self::MuseCode => "Muse Code",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

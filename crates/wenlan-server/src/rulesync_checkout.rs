@@ -744,7 +744,7 @@ impl Job<'_> {
         } else {
             &["rules", "skills"]
         };
-        for target in rulesync_personal::adoption_inputs() {
+        for target in ["claudecode", "codexcli"] {
             let stage = rulesync_renderer::new_stage(&self.setup.data)?;
             let output = stage.path().join("output");
             let mut roots = Vec::new();
@@ -757,7 +757,7 @@ impl Job<'_> {
             }
             skills.stage(&stage.path().join("project"))?;
             let personal = stage.path().join("personal");
-            write_root_rule(&personal, &master.rule_text(&target.tool, generated)?)?;
+            write_root_rule(&personal, &master.rule_text(target, generated)?)?;
             roots.push(personal);
             std::fs::create_dir(&output)?;
             rulesync_renderer::render(
@@ -766,7 +766,7 @@ impl Job<'_> {
                 &roots,
                 &output,
                 false,
-                &[target.tool],
+                &[target.into()],
                 features,
             )?;
             let mut files = BTreeMap::new();

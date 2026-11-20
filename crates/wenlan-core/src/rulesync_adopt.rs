@@ -62,6 +62,7 @@ pub struct Adoption {
     pub skill_locations: BTreeMap<PathBuf, Option<SkillUpstream>>,
     /// Existing skill locations that will stay in place outside delivery.
     pub skipped: BTreeMap<PathBuf, String>,
+    pub skipped_tools: Vec<String>,
     pub worktree_writes: BTreeMap<PathBuf, PathBuf>,
     pub worktree_notes: Vec<String>,
 }
@@ -210,6 +211,7 @@ pub fn discover(home: &Path, targets: &[AdoptionTarget]) -> Result<Adoption> {
         links,
         skill_locations,
         skipped,
+        skipped_tools: Vec::new(),
         worktree_writes: BTreeMap::new(),
         worktree_notes: Vec::new(),
     })

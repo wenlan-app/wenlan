@@ -193,7 +193,7 @@ async fn run_inner(
 }
 
 fn adoption_plan() -> Result<AdoptionPlan> {
-    rulesync_personal::plan_adoption(&rulesync_personal::system_home()?)
+    rulesync_personal::plan_adoption_offline(&rulesync_personal::system_home()?)
 }
 
 fn confirm(question: &str) -> Result<bool> {

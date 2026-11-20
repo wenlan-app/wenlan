@@ -915,6 +915,12 @@ and wait for evidence that people need them.
   Codex adoption replaces the legacy harness-generated header with a
   Wenlan-managed header. The preview says the old sync script becomes
   unused for this file and stays in place.
+  With `WENLAN_RULESYNC=1`, adoption also covers the personal folders for
+  Gemini CLI, Antigravity, GitHub Copilot CLI, Cursor, OpenCode, and Muse Code.
+  The plan names the tools it skips because their folders are absent. Gemini
+  CLI owns the delivery to the legacy Gemini rule path and Antigravity's
+  own overlay goes to its config rule path. Cursor receives Markdown at
+  `~/.cursor/AGENTS.md`; its automatic loading of that file is unverified.
   A skill that exceeds 32 MiB total or 2048 files and directories stays
   where it is, unmanaged. The preview states the limit it exceeded.
   `wenlan rules restore` asks the person again and uses that backup to

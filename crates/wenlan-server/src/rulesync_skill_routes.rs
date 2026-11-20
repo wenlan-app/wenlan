@@ -513,23 +513,15 @@ impl SkillStore {
     }
 }
 
-fn renderer_tool(target: &str) -> Option<SavedSkillTool> {
-    match target {
-        "claudecode" => Some(SavedSkillTool::ClaudeCode),
-        "codexcli" => Some(SavedSkillTool::Codex),
-        _ => None,
-    }
-}
-
 /// Read under the same setup lock as the renderer and proposal operations.
 pub(crate) fn approved_skill_sources(
     data: &Path,
     target: &str,
 ) -> Result<BTreeMap<String, SkillFiles>> {
-    let Some(tool) = renderer_tool(target) else {
+    let Some(target) = rulesync_personal::personal_target(target) else {
         return Ok(BTreeMap::new());
     };
-    Ok(SkillStore::open(data)?.state.sources(tool))
+    Ok(SkillStore::open(data)?.state.sources(target.tool))
 }
 
 pub(crate) fn approved_local_folders(data: &Path) -> Result<BTreeMap<PathBuf, ManagedSkill>> {
@@ -596,12 +588,10 @@ impl SkillHome {
     }
 
     fn candidates(&self) -> BTreeMap<PathBuf, SavedSkillTool> {
-        let sources = rulesync_personal::adoption_inputs()
-            .into_iter()
-            .filter_map(|target| Some((target.skills_path?, renderer_tool(&target.tool)?)));
         let mut paths = BTreeMap::new();
-        for (path, tool) in sources {
-            let Ok(Some(dir)) = self.below(&path) else {
+        for target in rulesync_personal::PERSONAL_TARGETS {
+            let path = Path::new(target.skills.destination);
+            let Ok(Some(dir)) = self.below(path) else {
                 continue;
             };
             let Ok(entries) = dir.entries() else {
@@ -612,7 +602,7 @@ impl SkillHome {
                 if name.to_str().is_some_and(skills::skill_name)
                     && entry.file_type().is_ok_and(|kind| kind.is_dir())
                 {
-                    paths.insert(path.join(name), tool);
+                    paths.insert(path.join(name), target.tool);
                 }
             }
         }
@@ -930,6 +920,50 @@ mod tests {
         assert_eq!(fs::read(&file).unwrap(), b"Changed during review.\n");
         collect_tool_proposals(&home, &data, &BTreeMap::new(), &BTreeSet::new()).unwrap();
         assert!(SkillStore::open(&data).unwrap().state.proposals.is_empty());
+    }
+
+    #[test]
+    fn rulesync_skill_new_tool_can_keep_or_share_an_edit() {
+        let scratch = tempfile::tempdir().unwrap();
+        let (data, home) = make_test_dirs(&scratch);
+        let gemini = SavedSkillTool::GeminiCli;
+        let folder = PathBuf::from(".gemini/skills/own");
+        let initial = "Gemini skill.\n";
+        let file = write(&home, ".gemini/skills/own/SKILL.md", initial);
+        for (scope, contents) in [
+            (SavedSkillScope::Tool { tool: gemini }, initial),
+            (SavedSkillScope::Shared, "Shared skill.\n"),
+        ] {
+            fs::write(&file, contents).unwrap();
+            let blocked =
+                collect_tool_proposals(&home, &data, &BTreeMap::new(), &BTreeSet::new()).unwrap();
+            assert_eq!(blocked.len(), 1);
+            assert!(blocked.contains_key(&folder));
+            let mut store = SkillStore::open(&data).unwrap();
+            let (id, draft) = store.state.proposals.first_key_value().unwrap();
+            let proposal = draft.preview(id.clone()).unwrap();
+            assert_eq!(proposal.origin, SkillProposalOrigin::Tool { tool: gemini });
+            assert_eq!(proposal.scope, SavedSkillScope::Tool { tool: gemini });
+            store
+                .state
+                .review(
+                    &home,
+                    proposal.id,
+                    SkillReviewAction::Accept,
+                    Some(scope),
+                    |_| Ok(()),
+                )
+                .unwrap();
+            store.save().unwrap();
+            for target in rulesync_personal::PERSONAL_TARGETS {
+                let sources = approved_skill_sources(&data, target.id).unwrap();
+                if target.tool == gemini || scope == SavedSkillScope::Shared {
+                    assert_eq!(sources["own"][Path::new("SKILL.md")], contents.as_bytes());
+                } else {
+                    assert!(sources.is_empty());
+                }
+            }
+        }
     }
 
     #[test]

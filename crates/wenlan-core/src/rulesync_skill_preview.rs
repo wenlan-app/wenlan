@@ -7,6 +7,7 @@ use anyhow::{bail, ensure, Context, Result};
 use serde_yaml::{Mapping, Value};
 
 use crate::{
+    rulesync_personal::personal_target,
     skill_registry::without_leading_bom,
     store::format::{normalize_line_ends, split_frontmatter},
 };
@@ -32,6 +33,44 @@ const CLAUDE_FIELDS: &[&str] = &[
     "metadata",
 ];
 const CODEX_FIELDS: &[&str] = &["disable-model-invocation", "metadata"];
+const ANTIGRAVITY_FIELDS: &[&str] = &[
+    "license",
+    "compatibility",
+    "disable-slash-command",
+    "disable-model-invocation",
+    "metadata",
+];
+const COPILOT_FIELDS: &[&str] = &["license", "user-invocable", "disable-model-invocation"];
+const CURSOR_FIELDS: &[&str] = &[
+    "paths",
+    "disable-model-invocation",
+    "user-invocable",
+    "icon",
+    "color",
+    "metadata",
+];
+const OPENCODE_FIELDS: &[&str] = &[
+    "license",
+    "compatibility",
+    "metadata",
+    "allowed-tools",
+    "disable-model-invocation",
+];
+const MUSE_FIELDS: &[&str] = &["license", "compatibility", "metadata"];
+
+/// The pinned writer places some section fields before the common fields.
+fn field_order(renderer: &str) -> Result<(&'static [&'static str], &'static [&'static str])> {
+    Ok(match renderer {
+        "claudecode" => (&[], CLAUDE_FIELDS),
+        "codexcli" => (&[], CODEX_FIELDS),
+        "antigravity-ide" => (ANTIGRAVITY_FIELDS, &[]),
+        "copilotcli" => (&["allowed-tools", "argument-hint"], COPILOT_FIELDS),
+        "cursor" => (&[], CURSOR_FIELDS),
+        "opencode" => (&[], OPENCODE_FIELDS),
+        "musecode" => (&[], MUSE_FIELDS),
+        _ => bail!("there is no read-only skill preview for {renderer}"),
+    })
+}
 
 struct Document {
     native: Mapping,
@@ -39,12 +78,19 @@ struct Document {
 }
 
 impl Document {
-    fn from_installed(target: &str, bytes: &[u8]) -> Result<Self> {
+    fn from_installed(renderer: &str, bytes: &[u8]) -> Result<Self> {
         let text = without_leading_bom(std::str::from_utf8(bytes)?);
         let text = normalize_line_ends(text);
         let split = split_frontmatter(&text)?.context("SKILL.md needs YAML frontmatter")?;
-        let raw = split.frontmatter;
+        let mut raw = split.frontmatter;
+        if renderer == "cursor" {
+            if let Some(globs) = raw.remove("globs") {
+                raw.entry("paths".into()).or_insert(globs);
+            }
+        }
+        let (leading, trailing) = field_order(renderer)?;
         let mut native = Mapping::new();
+        copy_fields(&raw, &mut native, leading);
         for key in ["name", "description"] {
             let value = raw
                 .get(key)
@@ -53,29 +99,42 @@ impl Document {
             native.insert(key.into(), value.into());
         }
         ensure!(
-            ["targets", "claudecode", "codexcli"]
+            ["targets", "claudecode", "codexcli", renderer]
                 .iter()
                 .all(|key| !raw.contains_key(*key)),
             "SKILL.md contains rulesync-specific options; adopt a tool-installed skill instead"
         );
-        let fields = match target {
-            "claudecode" => CLAUDE_FIELDS,
-            "codexcli" => CODEX_FIELDS,
-            _ => bail!("there is no read-only skill preview for {target}"),
-        };
-        for key in fields {
-            if let Some(value) = raw.get(*key).filter(|value| !value.is_null()) {
-                native.insert((*key).into(), value.clone());
+        copy_fields(&raw, &mut native, trailing);
+        if !matches!(renderer, "claudecode" | "codexcli") {
+            for (key, value) in &raw {
+                ensure!(
+                    value.is_null() || native.contains_key(key),
+                    "the {renderer} skill renderer does not preserve frontmatter field `{}`",
+                    key.as_str().unwrap_or("(non-text key)")
+                );
             }
         }
-        validate_fields(target, &mut native)?;
+        validate_fields(renderer, &mut native)?;
         let body = split.body.trim().to_owned();
         Ok(Self { native, body })
     }
 }
 
+fn copy_fields(raw: &Mapping, native: &mut Mapping, keys: &[&str]) {
+    for key in keys {
+        if let Some(value) = raw.get(*key).filter(|value| !value.is_null()) {
+            native.insert((*key).into(), value.clone());
+        }
+    }
+}
+
 fn validate_fields(target: &str, fields: &mut Mapping) -> Result<()> {
-    for key in ["disable-model-invocation", "user-invocable", "background"] {
+    for key in [
+        "disable-model-invocation",
+        "disable-slash-command",
+        "user-invocable",
+        "background",
+    ] {
         ensure!(
             fields.get(key).is_none_or(Value::is_bool),
             "`{key}` must be true or false"
@@ -103,12 +162,12 @@ fn validate_fields(target: &str, fields: &mut Mapping) -> Result<()> {
     }
     if let Some(metadata) = fields.get("metadata") {
         let metadata = metadata.as_mapping().context("`metadata` must be a map")?;
-        if target == "codexcli" {
+        if matches!(target, "codexcli" | "musecode") {
             ensure!(
                 metadata.values().all(Value::is_string),
-                "Codex skill metadata needs text values"
+                "skill metadata needs text values"
             );
-            if metadata.is_empty() {
+            if metadata.is_empty() && target == "codexcli" {
                 fields.remove("metadata");
             }
         }
@@ -121,26 +180,41 @@ fn validate_fields(target: &str, fields: &mut Mapping) -> Result<()> {
 }
 
 pub(super) fn preview(target: &str, bytes: &[u8]) -> Result<Vec<u8>> {
-    let document = Document::from_installed(target, bytes)?;
+    let renderer = personal_target(target)
+        .context("unknown personal skill target")?
+        .skills
+        .renderer;
+    let document = Document::from_installed(renderer, bytes)?;
     let mut yaml = String::new();
     emit_map(&mut yaml, &document.native, 0)?;
     Ok(skill_file(yaml, &document.body).into_bytes())
 }
 
-/// Retain the Claude options of an already installed skill when staging it.
-/// Rulesync takes these options from its `claudecode` section during generate.
+/// Stage installed metadata in the pinned renderer's native target section.
+/// Codex's supported fields are read from the source root.
 pub(super) fn stage(target: &str, bytes: &[u8]) -> Result<Vec<u8>> {
-    let mut document = Document::from_installed(target, bytes)?;
-    if target == "claudecode" {
-        let mut section = Mapping::new();
-        for field in CLAUDE_FIELDS {
-            if let Some(value) = document.native.remove(*field) {
-                section.insert((*field).into(), value);
-            }
+    let renderer = personal_target(target)
+        .context("unknown personal skill target")?
+        .skills
+        .renderer;
+    let mut document = Document::from_installed(renderer, bytes)?;
+    if renderer != "codexcli" {
+        let (leading, trailing) = field_order(renderer)?;
+        let section: Mapping = leading
+            .iter()
+            .chain(trailing)
+            .filter_map(|key| {
+                document
+                    .native
+                    .remove(*key)
+                    .map(|value| ((*key).into(), value))
+            })
+            .collect();
+        if !section.is_empty() {
+            document
+                .native
+                .insert(renderer.into(), Value::Mapping(section));
         }
-        document
-            .native
-            .insert("claudecode".into(), Value::Mapping(section));
     }
     let mut yaml = String::new();
     emit_map(&mut yaml, &document.native, 0)?;

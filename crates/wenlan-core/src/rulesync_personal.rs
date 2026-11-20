@@ -12,6 +12,7 @@ use cap_std::fs::{Dir, Metadata};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use wenlan_types::rulesync::{AdoptionChange, AdoptionPlan, AdoptionSkill, AdoptionSkillOutcome};
+use wenlan_types::rulesync_skill::SavedSkillTool;
 
 use crate::rulesync_adopt::{
     self, AdoptedSkill, Adoption, AdoptionEntry, AdoptionLink, AdoptionTarget,
@@ -127,26 +128,158 @@ pub fn system_home() -> Result<PathBuf> {
     dirs::home_dir().context("cannot find the home directory")
 }
 
-/// These are migration inputs from the existing harness, not output path
-/// definitions. Renderer output paths come from the pinned rulesync process.
-pub fn adoption_inputs() -> [AdoptionTarget; 2] {
-    [
+/// One v43.11.0 global output, with a home-relative delivery path.
+#[derive(Clone, Copy)]
+pub struct GlobalOutput {
+    pub renderer: &'static str,
+    pub staged: &'static str,
+    pub destination: &'static str,
+}
+
+impl GlobalOutput {
+    const fn native(renderer: &'static str, path: &'static str) -> Self {
+        Self::mapped(renderer, path, path)
+    }
+
+    const fn mapped(
+        renderer: &'static str,
+        staged: &'static str,
+        destination: &'static str,
+    ) -> Self {
+        Self {
+            renderer,
+            staged,
+            destination,
+        }
+    }
+}
+
+pub struct PersonalTarget {
+    /// Stable key in the adoption master and delivery manifest.
+    pub id: &'static str,
+    pub agent: &'static str,
+    pub tool: SavedSkillTool,
+    pub rules: GlobalOutput,
+    pub skills: GlobalOutput,
+}
+
+impl PersonalTarget {
+    pub fn folder(&self) -> &Path {
+        Path::new(self.rules.destination)
+            .parent()
+            .expect("tool folder")
+    }
+
+    fn adoption_input(&self) -> AdoptionTarget {
         AdoptionTarget {
-            tool: "claudecode".into(),
-            rules_path: Some(".claude/CLAUDE.md".into()),
-            skills_path: Some(".claude/skills".into()),
-        },
-        AdoptionTarget {
-            tool: "codexcli".into(),
-            rules_path: Some(".codex/AGENTS.md".into()),
-            skills_path: Some(".codex/skills".into()),
-        },
-    ]
+            tool: self.id.into(),
+            rules_path: Some(self.rules.destination.into()),
+            skills_path: Some(self.skills.destination.into()),
+        }
+    }
+
+    fn skipped_note(&self) -> String {
+        format!(
+            "Skipped {} because ~/{} is absent.",
+            self.tool.display_name(),
+            plan_path(self.folder())
+        )
+    }
+}
+
+const CLAUDE_TARGET: PersonalTarget = PersonalTarget {
+    id: "claudecode",
+    agent: "claude-code",
+    tool: SavedSkillTool::ClaudeCode,
+    rules: GlobalOutput::native("claudecode", ".claude/CLAUDE.md"),
+    skills: GlobalOutput::native("claudecode", ".claude/skills"),
+};
+
+const CODEX_TARGET: PersonalTarget = PersonalTarget {
+    id: "codexcli",
+    agent: "codex",
+    tool: SavedSkillTool::Codex,
+    rules: GlobalOutput::native("codexcli", ".codex/AGENTS.md"),
+    skills: GlobalOutput::mapped("codexcli", ".agents/skills", ".codex/skills"),
+};
+
+pub const PERSONAL_TARGETS: &[PersonalTarget] = &[
+    CLAUDE_TARGET,
+    CODEX_TARGET,
+    PersonalTarget {
+        id: "geminicli",
+        agent: "gemini-cli",
+        tool: SavedSkillTool::GeminiCli,
+        rules: GlobalOutput::native("antigravity-ide", ".gemini/GEMINI.md"),
+        skills: GlobalOutput::mapped("opencode", ".config/opencode/skills", ".gemini/skills"),
+    },
+    PersonalTarget {
+        id: "antigravity-ide",
+        agent: "antigravity",
+        tool: SavedSkillTool::Antigravity,
+        rules: GlobalOutput::mapped(
+            "antigravity-ide",
+            ".gemini/GEMINI.md",
+            ".gemini/config/GEMINI.md",
+        ),
+        skills: GlobalOutput::native("antigravity-ide", ".gemini/config/skills"),
+    },
+    PersonalTarget {
+        id: "copilotcli",
+        agent: "copilot-cli",
+        tool: SavedSkillTool::CopilotCli,
+        rules: GlobalOutput::native("copilotcli", ".copilot/copilot-instructions.md"),
+        skills: GlobalOutput::native("copilotcli", ".copilot/skills"),
+    },
+    PersonalTarget {
+        id: "cursor",
+        agent: "cursor",
+        tool: SavedSkillTool::Cursor,
+        rules: GlobalOutput::mapped("codexcli", ".codex/AGENTS.md", ".cursor/AGENTS.md"),
+        skills: GlobalOutput::native("cursor", ".cursor/skills"),
+    },
+    PersonalTarget {
+        id: "opencode",
+        agent: "opencode",
+        tool: SavedSkillTool::OpenCode,
+        rules: GlobalOutput::native("opencode", ".config/opencode/AGENTS.md"),
+        skills: GlobalOutput::native("opencode", ".config/opencode/skills"),
+    },
+    PersonalTarget {
+        id: "musecode",
+        agent: "muse-code",
+        tool: SavedSkillTool::MuseCode,
+        rules: GlobalOutput::mapped("codexcli", ".codex/AGENTS.md", ".config/muse/AGENTS.md"),
+        skills: GlobalOutput::native("musecode", ".config/muse/skills"),
+    },
+];
+
+pub fn personal_target(id: &str) -> Option<&'static PersonalTarget> {
+    PERSONAL_TARGETS.iter().find(|target| target.id == id)
 }
 
 pub fn discover_adoption(home: &Path) -> Result<Adoption> {
-    let targets = adoption_inputs();
+    discover_targets(home, PERSONAL_TARGETS)
+}
+
+fn discover_targets(home: &Path, candidates: &[PersonalTarget]) -> Result<Adoption> {
+    let root = Dir::open_ambient_dir(home, cap_std::ambient_authority())?;
+    let mut targets = Vec::new();
+    let mut skipped_tools = Vec::new();
+    for target in candidates {
+        match root.symlink_metadata(target.folder()) {
+            Ok(_) => targets.push(target.adoption_input()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                skipped_tools.push(target.skipped_note());
+            }
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("inspect {}", target.folder().display()));
+            }
+        }
+    }
     let mut adoption = rulesync_adopt::discover(home, &targets)?;
+    adoption.skipped_tools = skipped_tools;
     check_delivery_paths(home, adoption.files.keys().map(PathBuf::as_path))?;
     for skill in &mut adoption.skills {
         let entry = Path::new("SKILL.md");
@@ -198,11 +331,11 @@ pub fn fingerprint(value: &impl Serialize) -> Result<String> {
     Ok(format!("{:x}", hash.finalize()))
 }
 
-const ADOPTION_TOKEN_VERSION: &str = "adopt-3";
+const ADOPTION_TOKEN_VERSION: &str = "adopt-4";
 const ADOPTION_FIELDS: [&str; 6] = [
     "file entries",
     "skill locations and upstreams",
-    "skipped skills",
+    "skipped paths",
     "personal rules",
     "personal skill master",
     "Git worktree destinations",
@@ -233,7 +366,7 @@ fn adoption_digests(adoption: &Adoption) -> Result<[String; ADOPTION_FIELDS.len(
     Ok([
         fingerprint(&files)?,
         fingerprint(&adoption.skill_locations)?,
-        fingerprint(&adoption.skipped)?,
+        fingerprint(&(&adoption.skipped, &adoption.skipped_tools))?,
         fingerprint(&(
             &adoption.shared,
             &adoption.overlays,
@@ -267,6 +400,15 @@ pub fn verify_adoption_token(adoption: &Adoption, token: &str) -> Result<()> {
 /// No staging, renderer, daemon, database, or data-root lookup on this path.
 pub fn plan_adoption(home: &Path) -> Result<AdoptionPlan> {
     adoption_plan(&discover_adoption(home)?)
+}
+
+/// The standalone read-only plan also works before the opt-in writer is enabled.
+pub fn plan_adoption_offline(home: &Path) -> Result<AdoptionPlan> {
+    if enabled() {
+        plan_adoption(home)
+    } else {
+        adoption_plan(&discover_targets(home, &[CLAUDE_TARGET, CODEX_TARGET])?)
+    }
 }
 
 /// The home-relative path a person reads in the plan, with `/` between parts on
@@ -345,6 +487,7 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
         notes.push("~/.agents/scripts/sync-codex-agents.sh becomes unused for Codex AGENTS.md after adoption. The script stays in place for you to keep or remove.".into());
     }
     notes.push("~/.agents is left untouched. Wenlan replaces adopted links at their tool paths and leaves the shared sources in place.".into());
+    notes.extend(adoption.skipped_tools.iter().cloned());
     notes.extend(adoption.worktree_notes.iter().cloned());
     Ok(AdoptionPlan {
         token: format!(
@@ -628,6 +771,100 @@ pub fn reject_secret_lines(text: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rulesync_adoption_imports_installed_overlays_and_skips_missing_tools() {
+        let home = tempfile::tempdir().unwrap();
+        for (path, text) in [
+            (".agents/AGENTS.md", "Shared rule.\n"),
+            (".gemini/GEMINI.md", "Shared rule.\nGemini only.\n"),
+            (
+                ".gemini/config/GEMINI.md",
+                "Shared rule.\nAntigravity only.\n",
+            ),
+            (
+                ".copilot/copilot-instructions.md",
+                "Shared rule.\nCopilot only.\n",
+            ),
+        ] {
+            let path = home.path().join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, text).unwrap();
+        }
+        let adoption = discover_adoption(home.path()).unwrap();
+        assert_eq!(
+            adoption.overlays,
+            BTreeMap::from([
+                ("geminicli".into(), "Gemini only.\n".into()),
+                ("antigravity-ide".into(), "Antigravity only.\n".into()),
+                ("copilotcli".into(), "Copilot only.\n".into()),
+            ])
+        );
+        let plan = adoption_plan(&adoption).unwrap();
+        assert_eq!(plan.files.len(), 3);
+        for tool in ["Claude Code", "Codex", "Cursor", "OpenCode", "Muse Code"] {
+            assert!(plan
+                .notes
+                .iter()
+                .any(|note| note.starts_with(&format!("Skipped {tool} "))));
+        }
+        assert!(!home.path().join(".cursor").exists());
+        assert!(!home.path().join(".config").exists());
+    }
+
+    #[test]
+    fn rulesync_personal_destinations_are_portable_and_have_one_owner() {
+        let expected = [
+            ("claudecode", ".claude/CLAUDE.md", ".claude/skills"),
+            ("codexcli", ".codex/AGENTS.md", ".codex/skills"),
+            ("geminicli", ".gemini/GEMINI.md", ".gemini/skills"),
+            (
+                "antigravity-ide",
+                ".gemini/config/GEMINI.md",
+                ".gemini/config/skills",
+            ),
+            (
+                "copilotcli",
+                ".copilot/copilot-instructions.md",
+                ".copilot/skills",
+            ),
+            ("cursor", ".cursor/AGENTS.md", ".cursor/skills"),
+            (
+                "opencode",
+                ".config/opencode/AGENTS.md",
+                ".config/opencode/skills",
+            ),
+            ("musecode", ".config/muse/AGENTS.md", ".config/muse/skills"),
+        ];
+        assert_eq!(PERSONAL_TARGETS.len(), expected.len());
+        let mut destinations = std::collections::BTreeSet::new();
+        for (id, rules, skills) in expected {
+            let target = personal_target(id).unwrap();
+            for (actual, expected) in [
+                (target.rules.destination, rules),
+                (target.skills.destination, skills),
+            ] {
+                let path = Path::new(actual);
+                assert!(path.starts_with(target.folder()));
+                assert!(!is_harness_path(path));
+                assert!(destinations.insert(plan_path(path).to_ascii_lowercase()));
+                assert_eq!(plan_path(path), expected);
+                for home in ["/Users/Test User", "/home/test-user", "C:/Users/Test User"] {
+                    let home = Path::new(home);
+                    assert_eq!(home.join(path), home.join(expected));
+                    let resolved = home.join(path);
+                    let relative = resolved.strip_prefix(home).unwrap();
+                    assert_eq!(plan_path(relative), expected);
+                }
+            }
+        }
+        let gemini = personal_target("geminicli").unwrap();
+        let windows_relative = plan_path(Path::new(gemini.rules.destination)).replace('/', "\\");
+        assert_eq!(
+            format!("%USERPROFILE%\\{windows_relative}"),
+            r"%USERPROFILE%\.gemini\GEMINI.md"
+        );
+    }
 
     #[test]
     fn line_changes_include_deletions_and_final_newline_changes() {

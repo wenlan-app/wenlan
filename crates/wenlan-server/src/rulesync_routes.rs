@@ -14,10 +14,10 @@ use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use wenlan_core::rulesync_adopt::{AdoptedSkill, Adoption, AdoptionEntry};
 use wenlan_core::rulesync_personal::{
-    adoption_inputs, check_delivery_paths, describe_change, discover_adoption, fingerprint,
-    is_harness_path, line_changes, merge_rule_text, promote_changes, stage_adopted_skill,
-    system_home, verify_adoption_token, write_root_rule, DeliveryWorktrees, LineChange, LocalText,
-    PersonalMaster,
+    check_delivery_paths, describe_change, discover_adoption, fingerprint, is_harness_path,
+    line_changes, merge_rule_text, personal_target, promote_changes, stage_adopted_skill,
+    system_home, verify_adoption_token, write_root_rule, DeliveryWorktrees, GlobalOutput,
+    LineChange, LocalText, PersonalMaster, PERSONAL_TARGETS,
 };
 use wenlan_core::rulesync_renderer;
 use wenlan_core::rulesync_team::{self, TeamRuleLayer};
@@ -25,7 +25,6 @@ use wenlan_types::rulesync::{
     AdoptPreviewRequest, AdoptRequest, AdoptedSkillUpdate, AdoptionPlan, PullbackAction,
     PullbackCard, PullbackDecision, RulesSyncReport,
 };
-use wenlan_types::rulesync_skill::SavedSkillTool;
 
 use crate::error::ServerError;
 use crate::route_registry::{post, TrackedRouter};
@@ -216,19 +215,7 @@ fn recorded_delivery(
 }
 
 fn agent_for_target(target: &str) -> &str {
-    match target {
-        "claudecode" => "claude-code",
-        "codexcli" => "codex",
-        _ => target,
-    }
-}
-
-fn renderer_skill_tool(target: &str) -> Option<SavedSkillTool> {
-    match target {
-        "claudecode" => Some(SavedSkillTool::ClaudeCode),
-        "codexcli" => Some(SavedSkillTool::Codex),
-        _ => None,
-    }
+    personal_target(target).map_or(target, |tool| tool.agent)
 }
 
 fn path_blocked(blocked: &BTreeSet<PathBuf>, path: &Path) -> bool {
@@ -245,13 +232,11 @@ impl Setup {
             return BTreeMap::new();
         };
         let mut tools = BTreeMap::new();
-        for candidate in adoption_inputs() {
-            let Some(path) = candidate.rules_path else {
-                continue;
-            };
-            if matches!(home.read(&path, true), Ok(Snapshot::Symlink { .. })) {
+        for candidate in PERSONAL_TARGETS {
+            let path = Path::new(candidate.rules.destination);
+            if matches!(home.read(path, true), Ok(Snapshot::Symlink { .. })) {
                 tools.insert(
-                    agent_for_target(&candidate.tool).into(),
+                    candidate.agent.into(),
                     DeliveryStatus {
                         path: self.home.join(path),
                         at: None,
@@ -646,19 +631,14 @@ impl Setup {
             self.check_adoption_home(home)?;
         }
         self.adopt_using(&request.token, |target, source, skills| {
-            let mut features = Vec::new();
-            if source.is_some() {
-                features.push("rules");
-            }
+            let mut output = source.map_or_else(
+                || Ok(BTreeMap::new()),
+                |source| self.render_rule(target, source),
+            )?;
             if !skills.is_empty() {
-                features.push("skills");
+                output.extend(self.render_adopted_skills(target, skills)?);
             }
-            self.render_tree(target, &features, |input| {
-                if let Some(source) = source {
-                    write_root_rule(input, source)?;
-                }
-                stage_adopted_skills(input, target, skills)
-            })
+            Ok(output)
         })
     }
 
@@ -670,31 +650,34 @@ impl Setup {
         self.unrecorded_adoption()?;
         let adoption = discover_adoption(&self.home)?;
         verify_adoption_token(&adoption, token)?;
+        if adoption.files.is_empty() {
+            let mut result = report("No installed tool files to adopt");
+            append_skipped_tools(&mut result, &adoption.skipped_tools);
+            return Ok(result);
+        }
         let root = FileRoot::open_home(&self.home)?;
         let _lock = self.lock()?;
         self.unrecorded_adoption()?;
         let master = PersonalMaster::new(&adoption);
-        let inputs = adoption_inputs();
-        for input in &inputs {
-            let rule = input.rules_path.as_deref().and_then(|path| {
-                let AdoptionEntry::File(wanted) = &adoption.files.get(path)?.after else {
+        for target in PERSONAL_TARGETS {
+            let path = Path::new(target.rules.destination);
+            let rule = adoption.files.get(path).and_then(|file| {
+                let AdoptionEntry::File(wanted) = &file.after else {
                     return None;
                 };
-                Some((path, wanted))
+                Some(wanted)
             });
             let skills = master
                 .skills
                 .iter()
-                .filter(|skill| skill.locations.contains_key(&input.tool))
+                .filter(|skill| skill.locations.contains_key(target.id))
                 .collect::<Vec<_>>();
             if rule.is_none() && skills.is_empty() {
                 continue;
             }
-            let source = rule
-                .map(|_| master.rule_text(&input.tool, &[]))
-                .transpose()?;
-            let mut output = render(&input.tool, source.as_deref(), &skills)?;
-            if let Some((path, wanted)) = rule {
+            let source = rule.map(|_| master.rule_text(target.id, &[])).transpose()?;
+            let mut output = render(target.id, source.as_deref(), &skills)?;
+            if let Some(wanted) = rule {
                 let actual = output
                     .get(path)
                     .context("rulesync no longer renders the planned rules file")?;
@@ -704,7 +687,7 @@ impl Setup {
                     path.display()
                 );
             }
-            check_rendered_adoption_skills(&input.tool, &adoption, &skills, &mut output)?;
+            check_rendered_adoption_skills(target.id, &adoption, &skills, &mut output)?;
         }
         verify_adoption_token(&discover_adoption(&self.home)?, token)
             .context("the source changed during rendering")?;
@@ -719,9 +702,9 @@ impl Setup {
     ) -> Result<RulesSyncReport> {
         let mut operations = Vec::new();
         let mut backup = BTreeMap::new();
-        let rules: BTreeMap<_, _> = adoption_inputs()
-            .into_iter()
-            .filter_map(|input| input.rules_path.map(|path| (path, input.tool)))
+        let rules: BTreeMap<_, _> = PERSONAL_TARGETS
+            .iter()
+            .map(|target| (Path::new(target.rules.destination), target.id))
             .collect();
         let links = adoption.links;
         for (path, change) in adoption.files {
@@ -761,9 +744,9 @@ impl Setup {
                 AdoptionEntry::Directory => Snapshot::Directory,
                 _ => bail!("unexpected adoption output at {}", path.display()),
             };
-            let kind = match rules.get(&path) {
+            let kind = match rules.get(path.as_path()) {
                 Some(tool) => Kind::Rule {
-                    target: tool.clone(),
+                    target: (*tool).into(),
                     source: master.rule_text(tool, &[])?,
                     base: master.base_rule_text(tool, &[]),
                 },
@@ -806,6 +789,7 @@ impl Setup {
                 .message
                 .push_str(". Skill paths marked unmanaged in the plan stayed in place.");
         }
+        append_skipped_tools(&mut result, &adoption.skipped_tools);
         Ok(result)
     }
 
@@ -1462,15 +1446,19 @@ impl Setup {
         let previous_skips = std::mem::take(&mut manifest.registry_skipped);
         let mut worktrees = DeliveryWorktrees::new(&self.home)?;
         let mut operations = Vec::new();
-        for target in targets {
-            let local = rulesync_registry::approved_skill_sources(&self.data, &target)?;
+        for id in targets {
+            let target = personal_target(&id).context("unknown personal skill target")?;
+            if !matches!(root.read(target.folder(), false), Ok(Snapshot::Directory)) {
+                continue;
+            }
+            let local = rulesync_registry::approved_skill_sources(&self.data, target.id)?;
             let mut sources = installed.clone();
             sources.extend(local.clone());
             active.extend(sources.keys().cloned());
             if sources.is_empty() {
                 continue;
             }
-            let output = self.render_tree(&target, &["skills"], |input| {
+            let output = self.render_tree(target.skills.renderer, &["skills"], |input| {
                 for (name, files) in &sources {
                     write_skill_files(input, name, files)?;
                 }
@@ -1481,7 +1469,7 @@ impl Setup {
                 Err(error) => {
                     result
                         .blocked
-                        .push(format!("{target} installed skills: {error:#}"));
+                        .push(format!("{id} installed skills: {error:#}"));
                     continue;
                 }
             };
@@ -1490,22 +1478,20 @@ impl Setup {
                     continue;
                 };
                 let emitted = emitted.as_path();
-                let default_folder = personal_skill_destination(&target, emitted)?;
+                let default_folder = personal_skill_destination(target.skills, emitted)?;
                 let selected = approved.iter().find(|(path, skill)| {
-                    path.file_name() == emitted.file_name()
-                        && Some(skill.tool) == renderer_skill_tool(&target)
+                    path.file_name() == emitted.file_name() && skill.tool == target.tool
                 });
                 let adopted_folder = local
                     .contains_key(name)
                     .then(|| {
                         adopted.iter().find(|(path, skill)| {
-                            path.file_name() == emitted.file_name()
-                                && Some(skill.tool) == renderer_skill_tool(&target)
+                            path.file_name() == emitted.file_name() && skill.tool == target.tool
                         })
                     })
                     .flatten();
                 let folder =
-                    if !is_harness_path(emitted) && manifest.delivered.contains_key(emitted) {
+                    if emitted == default_folder && manifest.delivered.contains_key(emitted) {
                         emitted
                     } else {
                         selected
@@ -1528,7 +1514,7 @@ impl Setup {
                     continue;
                 }
                 if folder == default_folder
-                    && folder != emitted
+                    && is_harness_path(emitted)
                     && !manifest.delivered.contains_key(folder)
                     && !matches!(root.read(emitted, true), Ok(Snapshot::Absent))
                 {
@@ -1742,10 +1728,10 @@ impl Setup {
     ) -> Result<()> {
         let approved = rulesync_registry::approved_local_folders(&self.data)?;
         let mut replacements = BTreeMap::new();
-        for target in adoption_inputs() {
+        for target in PERSONAL_TARGETS {
             replacements.insert(
-                target.tool.clone(),
-                rulesync_registry::approved_skill_sources(&self.data, &target.tool)?,
+                target.id.to_owned(),
+                rulesync_registry::approved_skill_sources(&self.data, target.id)?,
             );
         }
         let mut by_target: BTreeMap<String, Vec<SkillPath>> = BTreeMap::new();
@@ -1840,13 +1826,13 @@ impl Setup {
         let mut packages = BTreeMap::new();
         for adopted in &manifest.master.skills {
             for (target, folders) in &adopted.locations {
-                if let Some(tool) = renderer_skill_tool(target) {
+                if let Some(spec) = personal_target(target) {
                     packages.extend(folders.iter().filter(|path| !is_harness_path(path)).map(
                         |folder| {
                             (
                                 folder.clone(),
                                 ManagedSkill {
-                                    tool,
+                                    tool: spec.tool,
                                     files: BTreeMap::new(),
                                 },
                             )
@@ -1856,16 +1842,16 @@ impl Setup {
             }
         }
         for (path, record) in &manifest.delivered {
-            if matches!(record.kind, Kind::RegistryDirectory { .. }) && !is_harness_path(path) {
-                let tool = if path.starts_with(".claude") {
-                    SavedSkillTool::ClaudeCode
-                } else {
-                    SavedSkillTool::Codex
-                };
-                packages.entry(path.clone()).or_insert(ManagedSkill {
-                    tool,
-                    files: BTreeMap::new(),
-                });
+            if matches!(record.kind, Kind::RegistryDirectory { .. }) {
+                if let Some(target) = PERSONAL_TARGETS
+                    .iter()
+                    .find(|target| path.starts_with(target.skills.destination))
+                {
+                    packages.entry(path.clone()).or_insert(ManagedSkill {
+                        tool: target.tool,
+                        files: BTreeMap::new(),
+                    });
+                }
             }
         }
         for (folder, skill) in &mut packages {
@@ -1988,7 +1974,13 @@ impl Setup {
     }
 
     fn render_rule(&self, target: &str, source: &str) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
-        self.render_tree(target, &["rules"], |input| write_root_rule(input, source))
+        let rules = personal_target(target)
+            .context("unknown personal rule target")?
+            .rules;
+        let rendered = self.render_tree(rules.renderer, &["rules"], |input| {
+            write_root_rule(input, source)
+        })?;
+        personal_rule_destination(rules, rendered)
     }
 
     fn render_adopted_skills(
@@ -1996,7 +1988,11 @@ impl Setup {
         target: &str,
         skills: &[&AdoptedSkill],
     ) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
-        self.render_tree(target, &["skills"], |input| {
+        let skills_renderer = personal_target(target)
+            .context("unknown personal skill target")?
+            .skills
+            .renderer;
+        self.render_tree(skills_renderer, &["skills"], |input| {
             stage_adopted_skills(input, target, skills)
         })
     }
@@ -2010,6 +2006,9 @@ impl Setup {
         if layers.is_empty() {
             return self.render_rule(target, source);
         }
+        let rules = personal_target(target)
+            .context("unknown personal rule target")?
+            .rules;
         let stage = rulesync_renderer::new_stage(&self.data)?;
         let team = stage.path().join("team");
         let personal = stage.path().join("personal");
@@ -2023,11 +2022,12 @@ impl Setup {
             &[team, personal],
             &output,
             true,
-            &[target.into()],
+            &[rules.renderer.into()],
             &["rules"],
         )?;
         let mut rendered = BTreeMap::new();
         read_stage(&output, &output, &mut rendered)?;
+        let rendered = personal_rule_destination(rules, rendered)?;
         let expected = layers
             .iter()
             .map(rulesync_layers::key)
@@ -2080,18 +2080,24 @@ struct SkillPath {
     relative: PathBuf,
 }
 
-fn personal_skill_destination(target: &str, emitted: &Path) -> Result<PathBuf> {
-    if target == "codexcli" {
-        // The renderer stages Codex skills under .agents/skills. Codex also
-        // reads its own directory, which keeps personal copies out of the harness.
-        let folder = adoption_inputs()
-            .into_iter()
-            .find(|input| input.tool == target)
-            .and_then(|input| input.skills_path)
-            .context("Codex skill delivery folder is missing")?;
-        return Ok(folder.join(emitted.file_name().context("rendered skill has no name")?));
-    }
-    Ok(emitted.to_owned())
+fn personal_rule_destination(
+    rules: GlobalOutput,
+    mut rendered: BTreeMap<PathBuf, Vec<u8>>,
+) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
+    let bytes = rendered
+        .remove(Path::new(rules.staged))
+        .with_context(|| format!("rulesync did not render {}", rules.staged))?;
+    Ok(BTreeMap::from([(rules.destination.into(), bytes)]))
+}
+
+fn personal_skill_destination(skills: GlobalOutput, emitted: &Path) -> Result<PathBuf> {
+    ensure!(
+        emitted.parent() == Some(Path::new(skills.staged)),
+        "rulesync emitted a skill outside {}",
+        skills.staged
+    );
+    let name = emitted.file_name().context("rendered skill has no name")?;
+    Ok(Path::new(skills.destination).join(name))
 }
 
 fn skill_path(skills: &[AdoptedSkill], path: &Path) -> Option<SkillPath> {
@@ -2549,6 +2555,13 @@ pub(crate) fn report(message: &str) -> RulesSyncReport {
     }
 }
 
+fn append_skipped_tools(report: &mut RulesSyncReport, skipped: &[String]) {
+    for note in skipped {
+        report.message.push('\n');
+        report.message.push_str(note);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2633,6 +2646,225 @@ mod tests {
         fn write(&self, path: &str, text: &str) {
             fs::write(self.setup.home.join(path), text).unwrap();
         }
+    }
+
+    fn render_fixture_tree(
+        data: &Path,
+        binary: &Path,
+        target: &str,
+        feature: &str,
+        stage_input: impl FnOnce(&Path) -> Result<()>,
+    ) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
+        let stage = rulesync_renderer::new_stage(data)?;
+        let input = stage.path().join("input");
+        let output = stage.path().join("home");
+        let runtime = stage.path().join("tmp");
+        for path in [&input, &output, &runtime] {
+            fs::create_dir(path)?;
+        }
+        stage_input(&input)?;
+        let mut command = std::process::Command::new(binary);
+        command
+            .env_clear()
+            .env("HOME", &output)
+            .env("HOME_DIR", &output)
+            .env("USERPROFILE", &output)
+            .env("TMPDIR", &runtime)
+            .env("DO_NOT_TRACK", "1")
+            .current_dir(&output)
+            .args([
+                "generate",
+                "--global",
+                "--output-roots",
+                ".",
+                "--targets",
+                target,
+            ])
+            .args(["--features", feature, "--input-roots"])
+            .arg(input);
+        #[cfg(windows)]
+        {
+            command
+                .env("APPDATA", &output)
+                .env("LOCALAPPDATA", &output)
+                .env("TMP", &runtime)
+                .env("TEMP", &runtime);
+            if let Some(root) = std::env::var_os("SystemRoot") {
+                command.env("SystemRoot", root);
+            }
+        }
+        let result = command.output()?;
+        ensure!(
+            result.status.success(),
+            "{target} {feature}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let mut tree = BTreeMap::new();
+        read_stage(&output, &output, &mut tree)?;
+        Ok(tree)
+    }
+
+    fn personal_targets_round_trip(binary: Option<&Path>) {
+        let f = Fixture::new();
+        let mut originals = BTreeMap::new();
+        let install = |path: &Path, data: &str| {
+            let path = f.setup.home.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, data).unwrap();
+        };
+        for target in PERSONAL_TARGETS {
+            let rules = Path::new(target.rules.destination);
+            let overlay = format!("{} only.\n", target.id);
+            install(rules, &overlay);
+            originals.insert(rules.to_owned(), overlay.into_bytes());
+            let folder = Path::new(target.skills.destination).join("example");
+            for (leaf, content) in [
+                (
+                    "SKILL.md",
+                    format!(
+                        "---\nname: example\ndescription: Skill for {}\n---\nBody.\n",
+                        target.id
+                    ),
+                ),
+                ("guide.txt", format!("{} guide.\n", target.id)),
+            ] {
+                let path = folder.join(leaf);
+                install(&path, &content);
+                originals.insert(path, content.into_bytes());
+            }
+        }
+        let render_rules = |target: &str, source: &str| {
+            let spec = personal_target(target).unwrap().rules;
+            let staged = if let Some(binary) = binary {
+                render_fixture_tree(&f.setup.data, binary, spec.renderer, "rules", |input| {
+                    write_root_rule(input, source)
+                })?
+            } else {
+                BTreeMap::from([(PathBuf::from(spec.staged), source.as_bytes().to_vec())])
+            };
+            personal_rule_destination(spec, staged)
+        };
+        let render_skills = |target: &str, skills: &[&AdoptedSkill]| {
+            let spec = personal_target(target).unwrap().skills;
+            if let Some(binary) = binary {
+                render_fixture_tree(&f.setup.data, binary, spec.renderer, "skills", |input| {
+                    stage_adopted_skills(input, target, skills)
+                })
+            } else {
+                Ok(skills
+                    .iter()
+                    .flat_map(|skill| {
+                        let folder = Path::new(spec.staged).join(&skill.name);
+                        skill
+                            .files
+                            .iter()
+                            .map(move |(path, bytes)| (folder.join(path), bytes.clone()))
+                    })
+                    .collect())
+            }
+        };
+        let sync = |root: &FileRoot, manifest: &mut Manifest| {
+            f.setup
+                .sync_locked(root, manifest, &[], render_rules, render_skills)
+        };
+        let run_sync = || {
+            let _lock = f.setup.lock().unwrap();
+            let root = FileRoot::open_home(&f.setup.home).unwrap();
+            let mut manifest = f.setup.load().unwrap().unwrap();
+            sync(&root, &mut manifest).unwrap()
+        };
+        let plan = wenlan_core::rulesync_personal::plan_adoption(&f.setup.home).unwrap();
+        let adopted = f
+            .setup
+            .adopt_using(&plan.token, |target, source, skills| {
+                let mut files = render_rules(target, source.unwrap())?;
+                files.extend(render_skills(target, skills)?);
+                Ok(files)
+            })
+            .unwrap();
+        let written = adopted.written.iter().collect::<BTreeSet<_>>();
+        assert_eq!(written.len(), adopted.written.len());
+        assert_eq!(f.setup.delivery_status().len(), PERSONAL_TARGETS.len());
+        for target in PERSONAL_TARGETS {
+            let rules = f.text(target.rules.destination);
+            assert!(rules.contains("One rule."));
+            assert!(rules.contains(&format!("{} only.", target.id)));
+            assert!(f.setup.delivery_status()[target.agent].at.is_some());
+        }
+        let fresh = run_sync();
+        assert!(
+            fresh.written.is_empty() && fresh.proposals.is_empty() && fresh.blocked.is_empty(),
+            "{fresh:?}"
+        );
+
+        for (source, change, action) in [
+            (
+                ".gemini/config/GEMINI.md",
+                "Antigravity local addition.\n",
+                PullbackAction::ToolOnly,
+            ),
+            (
+                ".config/muse/AGENTS.md",
+                "Shared from Muse Code.\n",
+                PullbackAction::AllTools,
+            ),
+        ] {
+            f.write(source, &format!("{}{change}", f.text(source)));
+            let pending = run_sync();
+            let [card] = pending.proposals.as_slice() else {
+                panic!("expected one proposal, got {pending:?}");
+            };
+            assert_eq!(Path::new(&card.files[0]), Path::new(source));
+            assert!(card.diff.contains(change.trim()));
+            let applied = f
+                .setup
+                .review_using(
+                    &PullbackDecision {
+                        id: card.id.clone(),
+                        action,
+                        file: None,
+                    },
+                    sync,
+                )
+                .unwrap();
+            assert!(
+                applied.blocked.is_empty() && applied.proposals.is_empty(),
+                "{applied:?}"
+            );
+            for target in PERSONAL_TARGETS {
+                let path = target.rules.destination;
+                let copies = f.text(path).matches(change.trim()).count();
+                assert_eq!(
+                    copies,
+                    usize::from(action == PullbackAction::AllTools || path == source),
+                    "{path}"
+                );
+            }
+        }
+        assert!(run_sync().proposals.is_empty());
+        let restored = f.setup.restore().unwrap();
+        assert!(restored.blocked.is_empty(), "{restored:?}");
+        for (path, before) in originals {
+            assert_eq!(
+                fs::read(f.setup.home.join(&path)).unwrap(),
+                before,
+                "{}",
+                path.display()
+            );
+        }
+        assert_eq!(f.text(".agents/AGENTS.md"), SHARED);
+    }
+
+    #[test]
+    fn rulesync_more_personal_targets_round_trip() {
+        personal_targets_round_trip(None);
+    }
+
+    #[test]
+    #[ignore = "requires the local pinned rulesync binary and an isolated test home"]
+    fn rulesync_more_personal_targets_round_trip_with_pinned_binary() {
+        let binary = PathBuf::from(std::env::var_os("WENLAN_TEST_RULESYNC_BINARY").unwrap());
+        personal_targets_round_trip(Some(&binary));
     }
 
     #[test]
@@ -3101,13 +3333,22 @@ mod tests {
         let shared = Path::new(".agents/skills/public-skill");
         let claude = Path::new(".claude/skills/public-skill");
         assert_eq!(
-            personal_skill_destination("codexcli", shared).unwrap(),
+            personal_skill_destination(personal_target("codexcli").unwrap().skills, shared)
+                .unwrap(),
             Path::new(".codex/skills/public-skill")
         );
         assert_eq!(
-            personal_skill_destination("claudecode", claude).unwrap(),
+            personal_skill_destination(personal_target("claudecode").unwrap().skills, claude)
+                .unwrap(),
             claude
         );
+        let gemini = personal_target("geminicli").unwrap();
+        let opencode = Path::new(".config/opencode/skills/public-skill");
+        assert_eq!(
+            personal_skill_destination(gemini.skills, opencode).unwrap(),
+            Path::new(".gemini/skills/public-skill")
+        );
+        assert!(personal_skill_destination(gemini.skills, shared).is_err());
     }
 
     #[cfg(unix)]

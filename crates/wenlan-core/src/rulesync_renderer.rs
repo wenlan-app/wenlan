@@ -636,10 +636,7 @@ mod tests {
         let data = home.path().join("Wenlan \"測試\"").join("rulesync");
         fs::create_dir_all(&data).unwrap();
         let rule = "Keep the personal rules fixture in staging.";
-        for (target, destination) in [
-            ("claudecode", ".claude/CLAUDE.md"),
-            ("codexcli", ".codex/AGENTS.md"),
-        ] {
+        for target in crate::rulesync_personal::PERSONAL_TARGETS {
             let stage = new_stage(&data).unwrap();
             let input = stage.path().join("master");
             let output = stage.path().join("output");
@@ -651,11 +648,11 @@ mod tests {
                 &[input],
                 &output,
                 true,
-                &[target.into()],
+                &[target.rules.renderer.into()],
                 &["rules"],
             )
-            .unwrap_or_else(|error| panic!("{target}: {error:#}"));
-            assert!(fs::read_to_string(output.join(destination))
+            .unwrap_or_else(|error| panic!("{}: {error:#}", target.id));
+            assert!(fs::read_to_string(output.join(target.rules.staged))
                 .unwrap()
                 .contains(rule));
         }

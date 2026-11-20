@@ -111,6 +111,13 @@ pub struct SaveSkillArgs {
 pub enum SavedSkillToolArg {
     ClaudeCode,
     Codex,
+    GeminiCli,
+    Antigravity,
+    CopilotCli,
+    Cursor,
+    #[value(name = "opencode")]
+    OpenCode,
+    MuseCode,
 }
 
 impl From<SavedSkillToolArg> for SavedSkillScope {
@@ -119,6 +126,12 @@ impl From<SavedSkillToolArg> for SavedSkillScope {
             tool: match tool {
                 SavedSkillToolArg::ClaudeCode => SavedSkillTool::ClaudeCode,
                 SavedSkillToolArg::Codex => SavedSkillTool::Codex,
+                SavedSkillToolArg::GeminiCli => SavedSkillTool::GeminiCli,
+                SavedSkillToolArg::Antigravity => SavedSkillTool::Antigravity,
+                SavedSkillToolArg::CopilotCli => SavedSkillTool::CopilotCli,
+                SavedSkillToolArg::Cursor => SavedSkillTool::Cursor,
+                SavedSkillToolArg::OpenCode => SavedSkillTool::OpenCode,
+                SavedSkillToolArg::MuseCode => SavedSkillTool::MuseCode,
             },
         }
     }
@@ -385,27 +398,17 @@ fn complete_skill_preview(files: &[SkillPreviewFile]) -> bool {
             .any(|file| file.path == "SKILL.md" && file.text.is_some())
 }
 
-fn saved_skill_scope_words(scope: SavedSkillScope) -> &'static str {
+fn saved_skill_scope_words(scope: SavedSkillScope) -> String {
     match scope {
-        SavedSkillScope::Shared => "shared",
-        SavedSkillScope::Tool {
-            tool: SavedSkillTool::ClaudeCode,
-        } => "Claude Code-only",
-        SavedSkillScope::Tool {
-            tool: SavedSkillTool::Codex,
-        } => "Codex-only",
+        SavedSkillScope::Shared => "shared".into(),
+        SavedSkillScope::Tool { tool } => format!("{}-only", tool.display_name()),
     }
 }
 
 fn skill_proposal_summary(proposal: &SkillProposal) -> String {
     let origin = match &proposal.origin {
         SkillProposalOrigin::Agent { agent } => one_line(agent),
-        SkillProposalOrigin::Tool {
-            tool: SavedSkillTool::ClaudeCode,
-        } => "the Claude Code skills folder".into(),
-        SkillProposalOrigin::Tool {
-            tool: SavedSkillTool::Codex,
-        } => "the Codex skills folder".into(),
+        SkillProposalOrigin::Tool { tool } => format!("the {} skills folder", tool.display_name()),
     };
     format!(
         "{}  {} ({})\nFrom {origin}\n",

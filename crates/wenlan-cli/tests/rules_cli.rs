@@ -64,6 +64,40 @@ fn personal_rules_dry_run_reads_existing_files_without_daemon_or_data_root() {
 }
 
 #[test]
+fn personal_rules_dry_run_reports_extended_targets_only_with_the_flag() {
+    let state = tempfile::tempdir().unwrap();
+    let home = state.path().join("ai-tools/home");
+    let rules = ".gemini/GEMINI.md";
+    fs::create_dir_all(home.join(".gemini")).unwrap();
+    fs::write(home.join(rules), "Gemini only.\r\n").unwrap();
+
+    for flag in [None, Some("1")] {
+        let mut cmd = personal_rules_cli(state.path());
+        if let Some(flag) = flag {
+            cmd.env("WENLAN_RULESYNC", flag);
+        }
+        let output = cmd
+            .args(["rules", "adopt", "--dry-run", "--format", "json"])
+            .assert()
+            .success();
+        let plan: AdoptionPlan = serde_json::from_slice(&output.get_output().stdout).unwrap();
+        assert_eq!(
+            plan.files.iter().any(|file| file.path == rules),
+            flag.is_some()
+        );
+        assert_eq!(
+            plan.notes
+                .iter()
+                .any(|note| note.starts_with("Skipped Antigravity ")),
+            flag.is_some()
+        );
+    }
+    assert_eq!(fs::read(home.join(rules)).unwrap(), b"Gemini only.\r\n");
+    assert!(!home.join(".gemini/config").exists());
+    assert!(!state.path().join("unused-data-root").exists());
+}
+
+#[test]
 fn personal_rules_dry_run_labels_skill_sources() {
     let state = tempfile::tempdir().unwrap();
     let home = state.path().join("ai-tools/home");
