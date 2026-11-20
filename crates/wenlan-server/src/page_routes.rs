@@ -3472,7 +3472,7 @@ pub async fn handle_get_page_revisions(
                 .await?;
         wenlan_core::page_history::build_page_history(
             &db,
-            &id,
+            &page,
             &mut entries,
             &visible,
             include_text,

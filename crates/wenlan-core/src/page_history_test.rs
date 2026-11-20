@@ -87,7 +87,8 @@ async fn one_list_holds_both_edits_and_a_source_update_with_texts() {
 
     let mut entries = changelog(&db, "b").await;
     let visible: HashSet<String> = ["a".to_string()].into();
-    let history = build_page_history(&db, "b", &mut entries, &visible, true, None)
+    let note = db.get_page("b").await.unwrap().unwrap();
+    let history = build_page_history(&db, &note, &mut entries, &visible, true, None)
         .await
         .unwrap();
     assert!(entries
@@ -123,7 +124,7 @@ async fn one_list_holds_both_edits_and_a_source_update_with_texts() {
     assert!(history.windows(2).all(|w| w[0].at >= w[1].at));
 
     // A source the caller may not see is left out, and no text without asking.
-    let hidden = build_page_history(&db, "b", &mut entries, &HashSet::new(), false, None)
+    let hidden = build_page_history(&db, &note, &mut entries, &HashSet::new(), false, None)
         .await
         .unwrap();
     assert!(hidden
@@ -131,7 +132,7 @@ async fn one_list_holds_both_edits_and_a_source_update_with_texts() {
         .all(|h| h.kind != PageHistoryKind::SourceUpdate));
     let plain = build_page_history(
         &db,
-        "b",
+        &note,
         &mut changelog(&db, "b").await,
         &visible,
         false,
@@ -198,7 +199,8 @@ async fn the_first_version_is_listed_as_the_pages_birth_with_its_text() {
 
     let mut entries = changelog(&db, "ai").await;
     entries.retain(|entry| entry.version != 1);
-    let history = build_page_history(&db, "ai", &mut entries, &HashSet::new(), true, None)
+    let note = db.get_page("ai").await.unwrap().unwrap();
+    let history = build_page_history(&db, &note, &mut entries, &HashSet::new(), true, None)
         .await
         .unwrap();
     let versions: Vec<_> = history.iter().map(|item| item.version).collect();
@@ -216,9 +218,10 @@ async fn the_first_version_is_listed_as_the_pages_birth_with_its_text() {
     // A page the person made in the app is theirs from birth.
     // ("unknown" is the actor the app's own create passes.)
     made_by(&db, "mine", "My own note.", "unknown").await;
+    let note = db.get_page("mine").await.unwrap().unwrap();
     let history = build_page_history(
         &db,
-        "mine",
+        &note,
         &mut real_changelog(&db, "mine").await,
         &HashSet::new(),
         false,
@@ -354,9 +357,10 @@ async fn ux_hist_3_the_history_route_lists_a_burst_of_saves_once() {
     edit(&db, "a", "One. Two.", "manual_edit").await;
     edit(&db, "a", "One. Two. Three.", "manual_edit").await;
     edit(&db, "a", "One. Two. Three. Four.", "manual_edit").await;
+    let note = db.get_page("a").await.unwrap().unwrap();
     let history = build_page_history(
         &db,
-        "a",
+        &note,
         &mut changelog(&db, "a").await,
         &HashSet::new(),
         false,

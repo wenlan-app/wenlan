@@ -118,6 +118,8 @@ async fn hosted_reads_skip_private_retrieval_and_library_onboarding() {
 
 #[tokio::test]
 async fn hosted_readers_keep_shared_pages_without_private_memory_data() {
+    use wenlan_core::db::citation_provenance::count_citation_memory_lookups;
+
     const PRIVATE_ID: &str = "fixture-private-evidence";
     const PRIVATE_TEXT: &str = "design citrinefixtureproof";
     const SHARED_TITLE: &str = "Design meeting";
@@ -138,7 +140,7 @@ async fn hosted_readers_keep_shared_pages_without_private_memory_data() {
         &db,
         wenlan_types::requests::CreateConceptRequest {
             title: SHARED_TITLE.into(),
-            content: SHARED_TEXT.into(),
+            content: "The design meeting is on the calendar.".into(),
             summary: None,
             entity_id: None,
             space: Some(SPACE.to_string()).into(),
@@ -152,12 +154,15 @@ async fn hosted_readers_keep_shared_pages_without_private_memory_data() {
     )
     .await
     .unwrap();
+    db.update_page_content(&page.id, SHARED_TEXT, &[PRIVATE_ID], "agent_refresh")
+        .await
+        .unwrap();
     let proof = json!([{
         "occurrence": 1, "marker": 1, "source_kind": "memory",
         "locator": PRIVATE_ID, "score": 1.0, "status": "verified",
     }]);
     let history = json!([{
-        "version": 1, "at": 1, "edited_by": "agent_refresh",
+        "version": 2, "at": 1, "edited_by": "agent_refresh",
         "incoming_source_ids": [PRIVATE_ID], "sources_added": 1,
     }]);
     db.set_page_citations_with_changelog(&page.id, Some(&proof.to_string()), &history.to_string())
@@ -176,9 +181,15 @@ async fn hosted_readers_keep_shared_pages_without_private_memory_data() {
     assert_eq!(status, StatusCode::OK);
     assert!(local["results"].to_string().contains(PRIVATE_TEXT));
     let source_path = format!("/api/pages/{}/sources", page.id);
-    let (status, local) = request(&app, Method::GET, &source_path, Value::Null, false).await;
+    let ((status, local), lookups) =
+        count_citation_memory_lookups(request(&app, Method::GET, &source_path, Value::Null, false))
+            .await;
     assert_eq!(status, StatusCode::OK);
     assert!(local.to_string().contains(PRIVATE_TEXT));
+    assert!(
+        lookups > 0,
+        "the local control must resolve the private citation"
+    );
 
     for rerank in [false, true] {
         let recall = post_as_member(
@@ -204,15 +215,31 @@ async fn hosted_readers_keep_shared_pages_without_private_memory_data() {
     );
     assert!(brief.get("getting_started").is_none());
 
-    let (_, sources) = request(&app, Method::GET, &source_path, Value::Null, true).await;
-    assert_eq!(sources, json!([]));
+    let ((status, sources), lookups) =
+        count_citation_memory_lookups(request(&app, Method::GET, &source_path, Value::Null, true))
+            .await;
+    assert_eq!((status, sources, lookups), (StatusCode::OK, json!([]), 0));
+    let revision_path = format!("/api/pages/{}/revisions", page.id);
+    let ((status, revisions), lookups) = count_citation_memory_lookups(request(
+        &app,
+        Method::GET,
+        &revision_path,
+        Value::Null,
+        true,
+    ))
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(revisions["history"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| item["version"] == 1));
+    assert_eq!(
+        lookups, 0,
+        "hosted revisions looked up private memory to identify the first author"
+    );
     let consumers = [
         (Method::GET, format!("/api/pages/{}", page.id), SHARED_TEXT),
-        (
-            Method::GET,
-            format!("/api/pages/{}/revisions", page.id),
-            "agent_refresh",
-        ),
         (Method::GET, "/api/pages".to_string(), SHARED_TITLE),
         (Method::POST, "/api/pages/search".to_string(), SHARED_TITLE),
         (
@@ -227,6 +254,8 @@ async fn hosted_readers_keep_shared_pages_without_private_memory_data() {
         ),
         (Method::GET, "/api/memory/graph".to_string(), SHARED_TITLE),
     ];
+    assert!(revisions.to_string().contains("agent_refresh"));
+    assert!(!revisions.to_string().contains(PRIVATE_ID));
     for (method, path, expected) in consumers {
         let (status, body) = request(&app, method, &path, query.clone(), true).await;
         assert_eq!(status, StatusCode::OK, "{path}");

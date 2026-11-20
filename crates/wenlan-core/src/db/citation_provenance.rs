@@ -11,6 +11,21 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use wenlan_types::{pages::PageCitation, source_lifecycle::*};
 
+#[cfg(any(test, feature = "test-query-observer"))]
+tokio::task_local! {
+    static MEMORY_LOOKUPS: std::cell::Cell<usize>;
+}
+
+#[cfg(any(test, feature = "test-query-observer"))]
+pub async fn count_citation_memory_lookups<F: std::future::Future>(read: F) -> (F::Output, usize) {
+    MEMORY_LOOKUPS
+        .scope(std::cell::Cell::new(0), async {
+            let result = read.await;
+            (result, MEMORY_LOOKUPS.with(std::cell::Cell::get))
+        })
+        .await
+}
+
 fn sql(error: libsql::Error) -> WenlanError {
     WenlanError::VectorDb(format!("citation provenance: {error}"))
 }
@@ -383,6 +398,8 @@ async fn downgrade_on(
             historical.insert(citation.locator.clone());
             continue;
         }
+        #[cfg(any(test, feature = "test-query-observer"))]
+        let _ = MEMORY_LOOKUPS.try_with(|count| count.set(count.get() + 1));
         let mut rows=conn.query("SELECT DISTINCT source,source_id FROM memories WHERE (source_id=?1 OR id=?1) AND NULLIF(space,?3) IS ?2 AND COALESCE(pending_revision,0)=0 LIMIT 2",libsql::params![citation.locator.as_str(),space,UNFILED_SPACE_ID]).await.map_err(sql)?;
         let mut sources = Vec::new();
         while let Some(row) = rows.next().await.map_err(sql)? {

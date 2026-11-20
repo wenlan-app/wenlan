@@ -11,6 +11,7 @@
 
 use crate::db::{MemoryDB, PageHistoryEntry};
 use crate::error::WenlanError;
+use crate::pages::Page;
 use crate::read_scope::ReadScope;
 use std::collections::{HashMap, HashSet};
 use wenlan_types::responses::{
@@ -158,12 +159,13 @@ pub async fn basis_page_ids(db: &MemoryDB, page_id: &str) -> Result<Vec<String>,
 /// changelog too. Hosted revisions use only saved bodies from the given Space.
 pub async fn build_page_history(
     db: &MemoryDB,
-    page_id: &str,
+    page: &Page,
     entries: &mut [PageChangelogEntry],
     visible_bases: &HashSet<String>,
     include_text: bool,
     shared_scope: Option<&ReadScope>,
 ) -> Result<Vec<PageHistoryItem>, WenlanError> {
+    let page_id = page.id.as_str();
     let own = match shared_scope {
         Some(scope) => {
             db.list_shared_page_history(page_id, scope, HISTORY_SCAN)
@@ -208,13 +210,10 @@ pub async fn build_page_history(
         birth.filter(|birth| !entries.iter().any(|entry| entry.version == birth.version))
     {
         let person = if birth.version == 1 {
-            match db.get_page(page_id).await? {
-                Some(page) => {
-                    crate::sentences::first_version_author(&page, &own)
-                        == Some(crate::authorship::VersionAuthor::Person)
-                }
-                None => false,
-            }
+            // The authorized page already carries the authorship inputs.
+            page.kind != "entity"
+                && crate::sentences::first_version_author(page, &own)
+                    == Some(crate::authorship::VersionAuthor::Person)
         } else {
             crate::authorship::version_author(&birth.edited_by, "")
                 == crate::authorship::VersionAuthor::Person
