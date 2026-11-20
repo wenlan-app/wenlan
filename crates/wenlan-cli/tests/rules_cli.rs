@@ -548,7 +548,7 @@ fn ux_skill_14_plain_rules_lists_a_saved_rule_with_where_it_came_from() {
 
 #[cfg(unix)]
 #[test]
-fn personal_rules_dry_run_names_git_destinations_and_leaves_shared_codex_aliases() {
+fn personal_rules_dry_run_names_git_destinations_and_plans_codex_link_replacement() {
     let state = tempfile::tempdir().unwrap();
     let home = state.path().join("ai-tools/home");
     for repo in [".agents", ".claude"] {
@@ -589,6 +589,7 @@ fn personal_rules_dry_run_names_git_destinations_and_leaves_shared_codex_aliases
         .args(["rules", "adopt", "--dry-run", "--format", "table"])
         .assert()
         .success()
+        .stdout(predicate::str::contains("~/.agents is left untouched."))
         .stdout(predicate::str::contains(
             "~/.agents/skills is inside the Git repository agents-harness. Wenlan reads the shared skills there and leaves that directory in place.",
         ))
@@ -596,9 +597,9 @@ fn personal_rules_dry_run_names_git_destinations_and_leaves_shared_codex_aliases
             "~/.claude/skills is inside the Git repository claude-config. Wenlan will manage 1 skill folder there, and its writes can appear as changes in that repository.",
         ))
         .stdout(predicate::str::contains(
-            ".codex/skills/sample — skipped",
+            ".codex/skills/sample — plain copy in the personal master",
         ))
-        .stdout(predicate::str::contains("A second copy would make Codex list the skill twice"));
+        .stdout(predicate::str::contains("symlink -> ../../.agents/skills/sample"));
     assert!(codex.join("sample").is_symlink());
     assert!(!state.path().join("unused-data-root").exists());
 }

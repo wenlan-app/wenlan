@@ -533,7 +533,9 @@ pub(crate) fn approved_skill_sources(
 }
 
 pub(crate) fn approved_local_folders(data: &Path) -> Result<BTreeMap<PathBuf, ManagedSkill>> {
-    Ok(SkillStore::open(data)?.state.approved_local)
+    let mut folders = SkillStore::open(data)?.state.approved_local;
+    folders.retain(|path, _| !rulesync_personal::is_harness_path(path));
+    Ok(folders)
 }
 
 pub(crate) fn authored_rows() -> Result<Vec<InstalledSkillRow>> {
@@ -596,8 +598,7 @@ impl SkillHome {
     fn candidates(&self) -> BTreeMap<PathBuf, SavedSkillTool> {
         let sources = rulesync_personal::adoption_inputs()
             .into_iter()
-            .filter_map(|target| Some((target.skills_path?, renderer_tool(&target.tool)?)))
-            .chain([(PathBuf::from(".agents/skills"), SavedSkillTool::Codex)]);
+            .filter_map(|target| Some((target.skills_path?, renderer_tool(&target.tool)?)));
         let mut paths = BTreeMap::new();
         for (path, tool) in sources {
             let Ok(Some(dir)) = self.below(&path) else {
@@ -935,13 +936,13 @@ mod tests {
     fn rulesync_skill_managed_asset_edit_can_be_dismissed_or_shared() {
         let scratch = tempfile::tempdir().unwrap();
         let (data, home) = make_test_dirs(&scratch);
-        write(&home, ".agents/skills/own/SKILL.md", "The body.\n");
+        write(&home, ".codex/skills/own/SKILL.md", "The body.\n");
         let asset = write(
             &home,
-            ".agents/skills/own/assets/notes.md",
+            ".codex/skills/own/assets/notes.md",
             "The old asset.\n",
         );
-        let folder = PathBuf::from(".agents/skills/own");
+        let folder = PathBuf::from(".codex/skills/own");
         let current = SkillHome::open(&home)
             .unwrap()
             .package(&folder, SavedSkillTool::Codex)
@@ -950,7 +951,7 @@ mod tests {
         let managed = BTreeMap::from([(folder.clone(), current)]);
         write(
             &home,
-            ".agents/skills/own/scripts/.claude/.cc-writes/log",
+            ".codex/skills/own/scripts/.claude/.cc-writes/log",
             "Local tool state.\n",
         );
         assert!(

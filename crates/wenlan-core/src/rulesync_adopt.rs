@@ -840,11 +840,6 @@ impl<'a> SkillDiscovery<'a> {
             return Ok(());
         };
         let copying_link = node.link.is_some();
-        if tool == "codexcli" && copying_link && tree.skill.shared {
-            self.skipped.insert(path.to_owned(),
-                "this alias and the shared skill resolve to the same folder. A second copy would make Codex list the skill twice".into());
-            return Ok(());
-        }
         ensure!(
             copying_link || !tree.nested_link,
             "the skill folder contains linked assets; replace those links with regular files before adopting it"
@@ -1217,8 +1212,14 @@ mod tests {
             AdoptionSkillOutcome::PlainCopy
         );
         assert!(home.join(".claude/skills/alias").is_symlink());
-        assert!(matches!(
+        assert_eq!(
             outcomes[".codex/skills/checked-out"],
+            AdoptionSkillOutcome::TrackedUpstream {
+                upstream: sources["checked-out"].clone().unwrap(),
+            }
+        );
+        assert!(matches!(
+            outcomes[".agents/skills/checked-out"],
             AdoptionSkillOutcome::Skipped { .. }
         ));
     }

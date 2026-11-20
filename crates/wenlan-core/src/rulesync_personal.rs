@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{BufWriter, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use anyhow::{bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -21,6 +21,43 @@ pub use delivery_worktrees::DeliveryWorktrees;
 
 pub const RULE_PRECEDENCE: &str =
     "When instructions disagree, project rules come first, followed by team rules and personal rules.";
+
+/// The harness is a migration source. Personal delivery owns paths in the
+/// tools' own directories and never owns any part of the harness checkout.
+pub fn is_harness_path(path: &Path) -> bool {
+    matches!(path.components().next(), Some(Component::Normal(name))
+        if name.as_encoded_bytes().eq_ignore_ascii_case(b".agents"))
+}
+
+/// The applier never follows a destination's parent links. Also protect
+/// the physical source directory if the harness itself is a symlink.
+pub fn check_delivery_paths<'a>(
+    home: &Path,
+    paths: impl IntoIterator<Item = &'a Path>,
+) -> Result<()> {
+    let harness = home.join(".agents");
+    let alias = match fs::symlink_metadata(&harness) {
+        Ok(metadata) if metadata.is_symlink() => match harness.canonicalize() {
+            Ok(target) => Some((home.canonicalize()?, target)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error).context("resolve the ~/.agents harness"),
+        },
+        Ok(_) => None,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error).context("inspect the ~/.agents harness"),
+    };
+    for path in paths {
+        ensure!(
+            !is_harness_path(path)
+                && alias
+                    .as_ref()
+                    .is_none_or(|(home, target)| !home.join(path).starts_with(target)),
+            "{} is inside the read-only ~/.agents harness. Choose a tool path outside it.",
+            path.display()
+        );
+    }
+    Ok(())
+}
 
 /// One switch for every writer to the person's tool folders.
 pub fn enabled() -> bool {
@@ -56,6 +93,7 @@ pub fn adoption_inputs() -> [AdoptionTarget; 2] {
 pub fn discover_adoption(home: &Path) -> Result<Adoption> {
     let targets = adoption_inputs();
     let mut adoption = rulesync_adopt::discover(home, &targets)?;
+    check_delivery_paths(home, adoption.files.keys().map(PathBuf::as_path))?;
     for skill in &mut adoption.skills {
         let entry = Path::new("SKILL.md");
         skill.locations.retain(|target, folders| {
@@ -176,6 +214,7 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
     if adoption.codex_sync_replaced {
         notes.push("~/.agents/scripts/sync-codex-agents.sh becomes unused for Codex AGENTS.md after adoption. The script stays in place for you to keep or remove.".into());
     }
+    notes.push("~/.agents is left untouched. Wenlan replaces adopted links at their tool paths and leaves the shared sources in place.".into());
     notes.extend(adoption.worktree_notes.iter().cloned());
     Ok(AdoptionPlan {
         token: fingerprint(adoption)?,
