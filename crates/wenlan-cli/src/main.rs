@@ -776,7 +776,9 @@ async fn main() -> anyhow::Result<ExitCode> {
         }
         Commands::Models { command } => commands::setup::run_model(command).await?,
         Commands::Keys { command } => commands::setup::run_key(command).await?,
-        Commands::Steep { command } => commands::setup::run_enrichment(command).await?,
+        Commands::Steep { command } => {
+            commands::setup::run_enrichment(&client, command, format).await?
+        }
         Commands::Connect(args) => {
             commands::mcp::run_connect(&client, args, cli.quiet).await?;
         }

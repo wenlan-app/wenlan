@@ -235,7 +235,7 @@ wenlan stop
 wenlan restart
 ```
 
-**`wenlan steep <status|configure|disable>`**
+**`wenlan steep <status|configure|disable|run>`**
 
 Models and provider keys are capability only; they do not authorize automatic
 model calls. Inspect the two job groups, confirm exact hard-pinned sources, or
@@ -245,7 +245,13 @@ turn model-backed background work off while keeping providers installed:
 wenlan steep status
 wenlan steep configure --everyday on-device --synthesis on-device
 wenlan steep disable
+wenlan steep run
 ```
+
+`run` does one full pass now instead of waiting for the background: it
+organizes what came in and writes new pages from it with the page model chosen
+in `configure`, then says how many pages it made. With no page model chosen it
+writes nothing and says so.
 
 `configure` shows what each job does and discloses cloud cost/data transfer or
 on-device CPU/GPU/RAM use before confirmation. An unavailable hard pin pauses;
@@ -1628,6 +1634,14 @@ Turn off all model-backed background work without removing providers.
 
 ```text
 wenlan steep disable [OPTIONS]
+```
+
+#### `wenlan steep run`
+
+Steep once now: organize what came in and write new pages from it.
+
+```text
+wenlan steep run [OPTIONS]
 ```
 
 ### `wenlan outbox`
