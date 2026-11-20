@@ -8,6 +8,7 @@
 //! requests plus rendered output.
 
 use assert_cmd::Command;
+use predicates::prelude::PredicateBooleanExt;
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
@@ -289,10 +290,19 @@ fn sources_add_okf_sends_the_type_and_space_and_renders_the_batch() {
 }
 
 #[test]
-fn sources_add_directory_refuses_a_space_flag() {
+fn sources_add_directory_sends_the_space_it_names() {
     let dir = tempfile::tempdir().expect("tempdir");
+    let abs = std::fs::canonicalize(dir.path()).expect("canonicalize");
+    let abs_str = abs.to_string_lossy().to_string();
+    let mut source: serde_json::Value =
+        serde_json::from_str(&source_json("directory-notes", &abs_str)).unwrap();
+    source["space"] = "Research".into();
+
+    let (base, recorded) = spawn_stub(vec![source.to_string(), stats_json(1, 1, 0, 0)]);
+
     cli()
-        .env("WENLAN_HOST", "http://127.0.0.1:9")
+        .env("WENLAN_HOST", &base)
+        .env_remove("WENLAN_SPACE")
         .args([
             "sources",
             "add",
@@ -301,8 +311,17 @@ fn sources_add_directory_refuses_a_space_flag() {
             dir.path().to_str().unwrap(),
         ])
         .assert()
-        .failure()
-        .stderr(predicates::str::contains("not supported by this command"));
+        .success()
+        .stderr(predicates::str::contains("added before").not());
+
+    let reqs = recorded.lock().unwrap().clone();
+    let add = reqs
+        .iter()
+        .find(|r| r.method == "POST" && r.path == "/api/sources")
+        .expect("POST /api/sources");
+    let body: serde_json::Value = serde_json::from_str(&add.body).expect("JSON body");
+    assert_eq!(body["source_type"], "directory");
+    assert_eq!(add.space_header.as_deref(), Some("Research"));
 }
 
 #[test]

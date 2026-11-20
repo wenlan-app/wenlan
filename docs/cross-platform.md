@@ -169,6 +169,47 @@ bash scripts/smoke-linux.sh
 
 Builds the multi-arch daemon image (linux/arm64 for native Apple Silicon speed via OrbStack / Docker Desktop), starts a container, exercises the HTTP API, asserts responses, tears down. Runtime ~3 minutes after the first build.
 
+## Rules and skills renderer
+
+Wenlan stages the source, output, scratch home and executable before rendering.
+It verifies the staged executable against the SHA-256 for the local platform in
+[`THIRD_PARTY_NOTICES`](../THIRD_PARTY_NOTICES). The child runs with a cleared
+environment, explicit staging paths and `DO_NOT_TRACK=1`. Windows also receives
+its `SystemRoot` and staged profile, app-data and temp paths. Wenlan reports the
+exit status without retaining the child's output, which can contain source text.
+
+On macOS, `sandbox-exec` denies network access. The renderer can read the staging
+tree, the system runtime paths listed in its profile (including `/usr/share/icu`),
+and the individual ancestor directories of the canonical stage path. Writes are
+limited to staged output, scratch and `/dev/null`. A session that cannot apply
+the profile cannot render through this path.
+
+On Linux x86_64 and aarch64, Wenlan checks whether the daemon can create a network
+namespace with `unshare -n` or `unshare -Urn`. If `unshare` is unavailable or the
+kernel refuses both modes, the verified renderer runs directly. Windows x86_64
+also launches it directly. These direct launches have the daemon's filesystem and
+network permissions. The staged paths and allowlisted environment constrain which
+data is supplied to the executable.
+
+Run the portable checks with `cargo test -p wenlan-core --lib rulesync_renderer::tests::`.
+On macOS, run `macos_sandbox_allows_staged_reads_and_denies_unrelated_reads` with
+`-- --ignored` from a native session that permits `sandbox-exec`. The
+`renders_rules_with_local_pinned_binary` test also takes `-- --ignored` and
+requires `WENLAN_TEST_RULESYNC_BINARY` to point to the release executable for the
+test host. Run it on each supported platform to verify native launch and output.
+
+In a macOS session that permits `sandbox-exec`, run the personal rules fixture
+with the pinned rulesync executable for your architecture. The test uses the
+same renderer and staging layout as adoption and checks the generated Claude
+Code and Codex files.
+
+```bash
+WENLAN_NO_AUTOSTART=1 WENLAN_TEST_RULESYNC_BINARY=/path/to/rulesync-darwin-arm64 \
+  cargo test --locked -p wenlan-core --lib \
+  rulesync_renderer::tests::macos_sandbox_renders_personal_rules_with_pinned_binary \
+  -- --ignored --exact
+```
+
 ## Microsoft runtime on Windows
 
 Windows installers and the release ZIP ship the x64 MSVC 14.x CRT and OpenMP

@@ -15,7 +15,7 @@ use super::{
     deliver, fetch_skill, folder_name, front_matter_field, head_commit, hidden_from_the_person,
     import_local_fully_shown, list_installed, preview_files, read_additions, read_record,
     runnable_files, safety, scan_local, search, store_skill, Endpoints, Fetch, FetchedSkill,
-    InstalledSkill, RegistryError, Verdict,
+    InstalledSkill, LocalSkill, RegistryError, Verdict,
 };
 
 /// The skills folders of the AI tools installed on this computer. A tool
@@ -205,11 +205,22 @@ pub fn store_and_deliver(
     request: &SkillInstallRequest,
     now: i64,
 ) -> Result<SkillInstallResult, RegistryError> {
+    let skill = store_checked(root, fetched, verdict, request, now)?;
+    deliver_result(root, skill, tool_dirs)
+}
+
+/// Keep the checked skill in Wenlan's source store for delivery by its owner.
+pub fn store_checked(
+    root: &Path,
+    fetched: &FetchedSkill,
+    verdict: Verdict,
+    request: &SkillInstallRequest,
+    now: i64,
+) -> Result<InstalledSkill, RegistryError> {
     if let Some(reason) = hidden_from_the_person(&fetched.files) {
         return Err(RegistryError::Refused(reason));
     }
-    let skill = store_skill(root, fetched, verdict, request.scope.clone(), now)?;
-    deliver_result(root, skill, tool_dirs)
+    store_skill(root, fetched, verdict, request.scope.clone(), now)
 }
 
 /// Every skill Wenlan holds, with the person's additions.
@@ -234,6 +245,34 @@ pub fn import_named(
     now: i64,
 ) -> SkillImportResult {
     let found = scan_local(root, tool_dirs);
+    import_from_scan(root, &found, names, now, |skill| {
+        if let Err(error) = deliver(root, &skill.name, tool_dirs) {
+            log::warn!(
+                "[skills] took in {} but could not copy it: {error}",
+                skill.name
+            );
+        }
+    })
+}
+
+/// Take in named skills from a fresh scan. This step does not write to the
+/// tools so the caller can send the new sources to its single applier.
+pub fn store_local_named(
+    root: &Path,
+    found: &[LocalSkill],
+    names: Vec<String>,
+    now: i64,
+) -> SkillImportResult {
+    import_from_scan(root, found, names, now, |_| {})
+}
+
+fn import_from_scan(
+    root: &Path,
+    found: &[LocalSkill],
+    names: Vec<String>,
+    now: i64,
+    after_import: impl Fn(&InstalledSkill),
+) -> SkillImportResult {
     let mut out = SkillImportResult {
         imported: Vec::new(),
         failed: Vec::new(),
@@ -245,9 +284,7 @@ pub fn import_named(
         };
         match import_local_fully_shown(root, Path::new(&local.path), now) {
             Ok(skill) => {
-                if let Err(error) = deliver(root, &skill.name, tool_dirs) {
-                    log::warn!("[skills] took in {name} but could not copy it: {error}");
-                }
+                after_import(&skill);
                 out.imported.push(name);
             }
             Err(error) => out.failed.push((name, error.to_string())),

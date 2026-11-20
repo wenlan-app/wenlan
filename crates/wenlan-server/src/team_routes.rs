@@ -29,12 +29,14 @@ use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
 use serde::{Deserialize, Serialize};
 use tower::ServiceExt;
+use wenlan_core::rulesync_team::{self, ReviewError};
 use wenlan_core::shared_space::{self, remote, Scope};
 use wenlan_core::team::{self, Member};
 use wenlan_types::team::{
     TeamAccess, TeamAddMemberRequest, TeamFileList, TeamHostSpaceRequest, TeamJoinRequest,
     TeamJoinResponse, TeamMember, TeamMemberKey, TeamMembershipRequest, TeamRenameRequest,
-    TeamRole, TeamStartRequest, TeamStatus, TeamUpdateMemberRequest, DEFAULT_TEAM_PORT,
+    TeamRole, TeamRulesDecisionRequest, TeamStartRequest, TeamStatus, TeamUpdateMemberRequest,
+    DEFAULT_TEAM_PORT,
 };
 
 use crate::error::ServerError;
@@ -120,8 +122,15 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
 
 /// GET /api/team/firewall — on Windows, whether other computers get
 /// through Windows Firewall to this computer's team listener; `null`
-/// elsewhere, or when the rules cannot be read.
+/// elsewhere, when the rules cannot be read, or when the listener is on
+/// this computer only (no other computer is meant to get through).
 pub async fn handle_firewall() -> Json<Option<wenlan_types::team::TeamFirewall>> {
+    let local_only = listening()
+        .and_then(|addr| addr.parse::<std::net::SocketAddr>().ok())
+        .is_some_and(|addr| addr.ip().is_loopback());
+    if local_only {
+        return Json(None);
+    }
     Json(crate::team_firewall::check().await)
 }
 
@@ -711,7 +720,7 @@ pub async fn handle_start_team(
             .await
             .map_err(|e| ServerError::Internal(e.to_string()))?;
     }
-    let listen = format!("0.0.0.0:{port}");
+    let listen = listen_addr(url.as_deref(), port);
     let name = req.name.clone();
     {
         let listen = listen.clone();
@@ -792,6 +801,24 @@ pub async fn handle_forget_membership(
     let url = remote::check_url(&query.url).map_err(ServerError::ValidationError)?;
     blocking(move || shared_space::forget_membership(&shared_space::settings_path(), &url)).await?;
     Ok(Json(serde_json::json!({ "left": true })))
+}
+
+/// Where the team listener listens for a team started at `url`: only this
+/// computer (loopback) when the invite address is this computer itself
+/// (`127.0.0.1`, `localhost`, `::1`), so a local-only team is never open
+/// to the network; otherwise every network, so teammates can reach it.
+fn listen_addr(url: Option<&str>, port: u16) -> String {
+    let host = url
+        .and_then(|url| reqwest::Url::parse(url).ok())
+        .and_then(|url| url.host().map(|host| host.to_owned()));
+    match host {
+        Some(url::Host::Ipv4(ip)) if ip.is_loopback() => format!("127.0.0.1:{port}"),
+        Some(url::Host::Ipv6(ip)) if ip.is_loopback() => format!("[::1]:{port}"),
+        Some(url::Host::Domain(name)) if name.eq_ignore_ascii_case("localhost") => {
+            format!("127.0.0.1:{port}")
+        }
+        _ => format!("0.0.0.0:{port}"),
+    }
 }
 
 /// Addresses others can likely reach this computer at on `port`: its
@@ -1028,6 +1055,14 @@ fn team_router(state: TeamState) -> axum::Router {
         .route("/team/v1/admin/{*rest}", any(team_admin))
         .route("/team/v1/spaces/{space}/files", get(team_files))
         .route("/team/v1/spaces/{space}/file", get(team_file))
+        .route(
+            "/team/v1/spaces/{space}/rules/proposals",
+            get(team_rule_proposals),
+        )
+        .route(
+            "/team/v1/spaces/{space}/rules/proposals/{proposal}/decision",
+            post(team_rule_decision),
+        )
         .route(
             "/team/v1/spaces/{space}/versions/{page}/{name}",
             put(team_put_version),
@@ -1828,6 +1863,8 @@ async fn auth_logout_all(
 enum RouteClass {
     /// `/mcp` and `/mcp/<space>`: AI tools.
     Mcp,
+    /// A Write member decides on proposals for the team Rules page.
+    RulesReview,
     /// `/team/v1/me`.
     Me,
     /// `/team/v1/app/*`: the web app's gate.
@@ -1852,6 +1889,12 @@ fn route_class(path: &str) -> RouteClass {
     let under = |prefix: &str| path == prefix || path.starts_with(&format!("{prefix}/"));
     if under("/mcp") {
         RouteClass::Mcp
+    } else if path
+        .strip_prefix("/team/v1/spaces/")
+        .and_then(|rest| rest.split_once('/'))
+        .is_some_and(|(_, rest)| rest == "rules/proposals" || rest.starts_with("rules/proposals/"))
+    {
+        RouteClass::RulesReview
     } else if path == "/team/v1/me" {
         RouteClass::Me
     } else if under(app_gate::PREFIX) {
@@ -1880,6 +1923,7 @@ fn route_class(path: &str) -> RouteClass {
 /// admin by browser session is a later change.)
 const ROUTE_TABLE: &[(RouteClass, [bool; 3])] = &[
     (RouteClass::Mcp, [true, true, false]),
+    (RouteClass::RulesReview, [false, false, true]),
     (RouteClass::Me, [true, false, true]),
     (RouteClass::App, [true, false, true]),
     (RouteClass::Logout, [false, false, true]),
@@ -2268,10 +2312,93 @@ async fn team_files(
         Ok(found) => found,
         Err(refused) => return refused,
     };
-    match tokio::task::spawn_blocking(move || team::list_folder_files(&folder)).await {
-        Ok(files) => Json(TeamFileList { access, files }).into_response(),
+    let listed = tokio::task::spawn_blocking(move || {
+        let rules = rulesync_team::hosted_manifest(&state.team_path, &state.settings_path, &space)?;
+        let files = team::list_folder_files(&folder);
+        Ok::<_, wenlan_core::error::WenlanError>(TeamFileList {
+            access,
+            files,
+            rules,
+        })
+    })
+    .await;
+    match listed {
+        Ok(Ok(list)) => Json(list).into_response(),
+        Ok(Err(error)) => {
+            tracing::warn!("[team] shared Rules manifest cannot be read: {error}");
+            StatusCode::SERVICE_UNAVAILABLE.into_response()
+        }
         Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
     }
+}
+
+async fn team_rule_proposals(
+    State(state): State<TeamState>,
+    Extension(member): Extension<Member>,
+    Extension(credential): Extension<team::Credential>,
+    Path(space): Path<String>,
+) -> Response {
+    if let Err(refused) = space_folder(&state, &member, &space) {
+        return refused;
+    }
+    let result = tokio::task::spawn_blocking(move || {
+        rulesync_team::pending_proposals(
+            &state.team_path,
+            &state.settings_path,
+            &space,
+            &member.id,
+            credential.kind(),
+        )
+    })
+    .await;
+    match result {
+        Ok(Ok(proposals)) => Json(proposals).into_response(),
+        Ok(Err(error)) => rules_review_error(error),
+        Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
+}
+
+async fn team_rule_decision(
+    State(state): State<TeamState>,
+    Extension(member): Extension<Member>,
+    Extension(credential): Extension<team::Credential>,
+    Path((space, proposal)): Path<(String, String)>,
+    Json(decision): Json<TeamRulesDecisionRequest>,
+) -> Response {
+    if let Err(refused) = space_folder(&state, &member, &space) {
+        return refused;
+    }
+    let result = tokio::task::spawn_blocking(move || {
+        rulesync_team::decide_proposal(
+            &state.team_path,
+            &state.settings_path,
+            &space,
+            &member.id,
+            credential.kind(),
+            &proposal,
+            decision.accept,
+        )
+    })
+    .await;
+    match result {
+        Ok(Ok(())) => StatusCode::NO_CONTENT.into_response(),
+        Ok(Err(error)) => rules_review_error(error),
+        Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
+}
+
+fn rules_review_error(error: ReviewError) -> Response {
+    use wenlan_core::error::WenlanError;
+    let status = match &error {
+        ReviewError::Forbidden => StatusCode::FORBIDDEN,
+        ReviewError::NotConfigured | ReviewError::Failed(WenlanError::NotFound(_)) => {
+            StatusCode::NOT_FOUND
+        }
+        ReviewError::Failed(WenlanError::Conflict(_)) => StatusCode::CONFLICT,
+        ReviewError::Failed(WenlanError::Validation(_)) => StatusCode::UNPROCESSABLE_ENTITY,
+        _ => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    };
+    (status, error.to_string()).into_response()
 }
 
 #[derive(Debug, Deserialize)]
@@ -2318,6 +2445,26 @@ async fn team_put_version(
         Ok(found) => found,
         Err(refused) => return refused,
     };
+    if rulesync_team::is_master_page(&page) {
+        let stored = tokio::task::spawn_blocking(move || {
+            rulesync_team::receive_proposal(
+                &state.team_path,
+                &state.settings_path,
+                &member.id,
+                &space,
+                &page,
+                &name,
+                &body,
+            )
+        })
+        .await;
+        return match stored {
+            Ok(Ok(true)) => StatusCode::CREATED.into_response(),
+            Ok(Ok(false)) => StatusCode::OK.into_response(),
+            Ok(Err(error)) => rules_review_error(error),
+            Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+        };
+    }
     if access != TeamAccess::Write {
         return (
             StatusCode::FORBIDDEN,

@@ -984,7 +984,7 @@ async fn readable_rules_page(
 /// need neither a model, the accept, nor the setting (UX-SKILL-10); the lines
 /// Wenlan derived from pages follow, only once accepted and with the setting
 /// on.
-async fn read_rules_for_space(
+async fn read_personal_rules_for_space(
     db: &MemoryDB,
     own: &OwnRulePages,
     space: &wenlan_types::Space,
@@ -1020,6 +1020,60 @@ async fn read_rules_for_space(
         saved_rules_page_ids: Vec::new(),
         lines,
     })
+}
+
+async fn read_rules_for_space(
+    db: &MemoryDB,
+    own: &OwnRulePages,
+    space: &wenlan_types::Space,
+) -> Result<SpaceRulesResponse, ServerError> {
+    let mut response = read_personal_rules_for_space(db, own, space).await?;
+    if wenlan_core::rulesync_personal::enabled() {
+        crate::repo_wiki_routes::include_reviewed_project_rules(db, space, &mut response.lines)
+            .await?;
+        let name = space.name.clone();
+        let shared = tokio::task::spawn_blocking(move || {
+            let settings = wenlan_core::shared_space::settings_path();
+            wenlan_core::rulesync_team::project_layer_for_local_space(&settings, &name)
+        })
+        .await
+        .map_err(|error| ServerError::Internal(error.to_string()))??;
+        if let Some(layer) = shared {
+            let lines = &mut response.lines;
+            lines.retain(|line| line.general || line.kind != wenlan_types::SkillLineKind::Rule);
+            let mut seen: HashSet<_> = lines
+                .iter()
+                .map(|line| line.text.trim().to_lowercase())
+                .collect();
+            for text in layer
+                .markdown
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+            {
+                let text = text.strip_prefix("- ").unwrap_or(text);
+                if seen.insert(text.to_lowercase()) {
+                    lines.push(SkillLine {
+                        id: wenlan_core::rulesync_personal::fingerprint(&(&layer.id, text))
+                            .map_err(|error| ServerError::Internal(error.to_string()))?,
+                        kind: wenlan_types::SkillLineKind::Rule,
+                        text: text.to_owned(),
+                        source_page_id: String::new(),
+                        source_page_title: "Shared Rules".into(),
+                        source_revision: 0,
+                        source_revision_at: 0,
+                        source_quote: String::new(),
+                        person_edited: false,
+                        general: false,
+                        hand_written: false,
+                        saved_from: None,
+                        saved_by: None,
+                    });
+                }
+            }
+        }
+    }
+    Ok(response)
 }
 
 /// The pages folder and database of a request, read without holding the
@@ -1128,7 +1182,7 @@ async fn general_lines(
         if Some(space.id.as_str()) == except {
             continue;
         }
-        for line in read_rules_for_space(db, own, &space).await?.lines {
+        for line in read_personal_rules_for_space(db, own, &space).await?.lines {
             if line.general && seen.insert(line.text.trim().to_lowercase()) {
                 out.push((space.id.clone(), line));
             }
@@ -1863,6 +1917,53 @@ async fn rules_by_layer(
     Ok((general, layers))
 }
 
+pub(crate) async fn general_tool_rules(state: &SharedState) -> Result<Vec<String>, ServerError> {
+    let (db, page_root) = db_and_page_root(state).await?;
+    let own = OwnRulePages::load(&db, page_root.as_deref()).await?;
+    let general: Vec<_> = general_lines(&db, &own, None)
+        .await?
+        .into_iter()
+        .map(|(_, line)| line)
+        .collect();
+    Ok(skill_grow::tool_rules(&general))
+}
+
+fn rulesync_delivery_row(
+    id: String,
+    display_name: Option<String>,
+    connected: bool,
+    file: Option<crate::rulesync_routes::DeliveryStatus>,
+    rule_count: usize,
+) -> ToolRulesDelivery {
+    let state = match (connected, &file) {
+        (false, _) => RulesDeliveryState::NotConnected,
+        (true, Some(file)) if file.blocked.is_some() => RulesDeliveryState::Blocked,
+        (true, Some(_)) => RulesDeliveryState::Delivered,
+        (true, None) => RulesDeliveryState::OnRequest,
+    };
+    ToolRulesDelivery {
+        display_name: display_name
+            .or_else(|| wenlan_core::db::known_client_display_name(&id).map(str::to_owned))
+            .unwrap_or_else(|| id.clone()),
+        id,
+        connected,
+        method: if file.is_some() {
+            RulesDeliveryMethod::File
+        } else {
+            RulesDeliveryMethod::Mcp
+        },
+        path: file.as_ref().map(|file| file.path.display().to_string()),
+        state,
+        blocked_reason: file
+            .as_ref()
+            .and_then(|file| file.blocked)
+            .filter(|_| connected)
+            .map(str::to_owned),
+        delivered_at: file.and_then(|file| file.at).filter(|_| connected),
+        rule_count,
+    }
+}
+
 /// Report, for every AI tool, how the rules used in every Space reach it,
 /// worked out now from the files as they are. Nothing is written. The file
 /// reads run off the async runtime.
@@ -1874,6 +1975,32 @@ async fn rules_delivery(
     let (general, _) = rules_by_layer(db, page_root).await?;
     let rule_count = skill_grow::tool_rules(&general).len();
     let agents = db.list_agents().await?;
+    if wenlan_core::rulesync_personal::enabled() {
+        let mut deliveries = tokio::task::spawn_blocking(crate::rulesync_routes::delivery_status)
+            .await
+            .map_err(|error| ServerError::Internal(error.to_string()))?;
+        let mut tools = Vec::new();
+        for agent in agents {
+            let file = deliveries.remove(&agent.name);
+            tools.push(rulesync_delivery_row(
+                agent.name,
+                agent.display_name,
+                agent.enabled,
+                file,
+                rule_count,
+            ));
+        }
+        for (agent, file) in deliveries {
+            tools.push(rulesync_delivery_row(
+                agent,
+                None,
+                true,
+                Some(file),
+                rule_count,
+            ));
+        }
+        return Ok(RulesDeliveryResponse { tools });
+    }
     let connected: HashSet<&'static str> = agents
         .iter()
         .filter(|agent| agent.enabled)
@@ -2006,9 +2133,25 @@ async fn rules_delivery(
     Ok(RulesDeliveryResponse { tools })
 }
 
+/// The refusal for `GET /api/skills/delivery` asked by anyone but the person.
+pub(crate) const DELIVERY_NEEDS_THE_PERSON: &str =
+    "rules_delivery_needs_the_person: only the person sees which AI tools get their rules \
+     and the rule files on this computer";
+
+/// `GET /api/skills/delivery` — for each AI tool, whether it gets the rules
+/// and the file it reads them from. Those are paths in the person's home
+/// folder, so only the person (the app, `wenlan`, the page `wenlan open`
+/// opened, each with the person key) sees them; an AI tool or any other
+/// program on this computer is refused.
 pub async fn handle_rules_delivery(
     State(state): State<SharedState>,
+    headers: HeaderMap,
 ) -> Result<Json<RulesDeliveryResponse>, ServerError> {
+    if !crate::memory_routes::caller_is_person(&headers) {
+        return Err(ServerError::ValidationError(
+            DELIVERY_NEEDS_THE_PERSON.into(),
+        ));
+    }
     let (db, page_root) = db_and_page_root(&state).await?;
     let delivery = rules_delivery(&db, page_root.as_deref(), &SkillDirs::system()).await?;
     Ok(Json(delivery))
@@ -2028,7 +2171,18 @@ async fn sync_rules_files(
     let home = wenlan_core::config::wenlan_home();
     let (general, mut layers) = rules_by_layer(db, page_root).await?;
     sync_rules_layer(&home, &home, &skill_grow::rules_layer_files(None, &general));
-    sync_tool_rules(db, dirs, &general).await;
+    if wenlan_core::rulesync_personal::enabled() {
+        let rules = skill_grow::tool_rules(&general);
+        match tokio::task::spawn_blocking(move || crate::rulesync_routes::sync_from_pages(&rules))
+            .await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => tracing::warn!(%error, "[rules setup] automatic delivery stopped"),
+            Err(error) => tracing::warn!(%error, "[rules setup] automatic delivery worker failed"),
+        }
+    } else {
+        sync_tool_rules(db, dirs, &general).await;
+    }
     let spaces = home.join("spaces");
     // Folders of Spaces that no longer exist still lose the files Wenlan wrote.
     if !has_symlink_below(&home, &spaces) {

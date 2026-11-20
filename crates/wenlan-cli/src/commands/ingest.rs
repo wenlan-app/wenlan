@@ -8,8 +8,9 @@
 //! success), then POST /api/sources/{id}/sync, then render the returned stats
 //! and, when the import left material no page uses yet (GET /api/steep/new),
 //! one line naming the next step for the mode Wenlan is in.
-//! An OKF bundle lands in the Space sent by the client's Space header, else
-//! the default Space. No DB access, no new endpoints (per AGENTS.md crate
+//! The pages land in the Space sent by the client's Space header (`--space`).
+//! Without one, an OKF bundle lands in the default Space and a folder's pages
+//! stay unfiled. No DB access, no new endpoints (per AGENTS.md crate
 //! boundaries).
 
 use anyhow::{Context, Result};
@@ -18,6 +19,7 @@ use std::path::PathBuf;
 
 use crate::client::{SyncStats, WenlanClient};
 use crate::output::{print_json, ResolvedFormat};
+use wenlan_types::sources::Source;
 
 #[derive(clap::Subcommand)]
 pub enum SourcesCommand {
@@ -28,7 +30,7 @@ pub enum SourcesCommand {
         /// Path to a directory or file to add as a source.
         path: PathBuf,
         /// Kind of source. `okf` imports an OKF bundle (for example an
-        /// OpenWiki folder) into one Space; pass --space to choose it.
+        /// OpenWiki folder). Pass --space to put the pages in one Space.
         #[arg(long = "type", value_enum, default_value_t = SourceKind::Directory)]
         source_type: SourceKind,
     },
@@ -78,13 +80,14 @@ pub async fn run_sources(
     format: ResolvedFormat,
     quiet: bool,
     command: SourcesCommand,
+    space: Option<&str>,
 ) -> Result<()> {
     match command {
         SourcesCommand::Read(_) => {
             unreachable!("sources read returns before a daemon client is made")
         }
         SourcesCommand::Add { path, source_type } => {
-            run(client, format, quiet, path, source_type).await
+            run_in_space(client, format, quiet, path, source_type, space).await
         }
         SourcesCommand::Save {
             url,
@@ -189,13 +192,31 @@ pub async fn run(
     path: PathBuf,
     source_type: SourceKind,
 ) -> Result<()> {
+    run_in_space(client, format, quiet, path, source_type, None).await
+}
+
+/// [`run`] for a client that sends `space` as its Space header, so a
+/// source added before under another Space gets one line saying where its
+/// pages stay.
+async fn run_in_space(
+    client: &WenlanClient,
+    format: ResolvedFormat,
+    quiet: bool,
+    path: PathBuf,
+    source_type: SourceKind,
+    space: Option<&str>,
+) -> Result<()> {
     // Resolve to an absolute, canonical path so the daemon stores a stable key
     // and an idempotent re-run matches the existing registration.
     let abs = std::fs::canonicalize(&path)
         .with_context(|| format!("resolving path: {}", path.display()))?;
     let abs_str = abs.to_string_lossy().to_string();
 
-    let id = register_source(client, source_type, &abs_str).await?;
+    let source = register_source(client, source_type, &abs_str).await?;
+    if let Some(line) = earlier_space_line(space, source.space.as_deref()) {
+        eprintln!("wenlan: {line}");
+    }
+    let id = source.id;
     let stats = client.sync_source(&id).await?;
 
     if quiet {
@@ -232,8 +253,24 @@ fn next_step_line(background: bool, waiting: Option<u32>) -> Option<&'static str
     })
 }
 
+/// One line when `--space` named a Space but the source was added before
+/// with another one (or none): its pages stay where they are.
+fn earlier_space_line(requested: Option<&str>, registered: Option<&str>) -> Option<String> {
+    let requested = requested.map(str::trim).filter(|space| !space.is_empty())?;
+    if registered == Some(requested) {
+        return None;
+    }
+    Some(match registered {
+        Some(earlier) => {
+            format!("this source was added before to Space \"{earlier}\"; its pages stay there")
+        }
+        None => "this source was added before without a Space; its pages stay in Uncategorized"
+            .to_string(),
+    })
+}
+
 /// Register `abs_path` as a source of `source_type`, idempotently, returning
-/// its id.
+/// it.
 ///
 /// The happy path is a single POST /api/sources. If the path is already
 /// registered the POST fails (the daemon rejects a duplicate), so we recover
@@ -244,9 +281,9 @@ async fn register_source(
     client: &WenlanClient,
     source_type: SourceKind,
     abs_path: &str,
-) -> Result<String> {
+) -> Result<Source> {
     match client.add_source(source_type.as_str(), abs_path).await {
-        Ok(source) => Ok(source.id),
+        Ok(source) => Ok(source),
         Err(add_err) => {
             let existing = client.list_sources().await.ok().and_then(|sources| {
                 sources
@@ -254,7 +291,7 @@ async fn register_source(
                     .find(|s| s.path.to_string_lossy() == abs_path)
             });
             match existing {
-                Some(s) => Ok(s.id),
+                Some(s) => Ok(s),
                 None => Err(add_err),
             }
         }
@@ -313,6 +350,20 @@ mod tests {
             queued_files: None,
             waiting_files: None,
         }
+    }
+
+    #[test]
+    fn re_adding_under_another_space_says_where_the_pages_stay() {
+        assert_eq!(earlier_space_line(None, Some("work")), None);
+        assert_eq!(earlier_space_line(Some("work"), Some("work")), None);
+        assert_eq!(
+            earlier_space_line(Some("work"), Some("home")).as_deref(),
+            Some("this source was added before to Space \"home\"; its pages stay there")
+        );
+        assert_eq!(
+            earlier_space_line(Some("work"), None).as_deref(),
+            Some("this source was added before without a Space; its pages stay in Uncategorized")
+        );
     }
 
     #[test]

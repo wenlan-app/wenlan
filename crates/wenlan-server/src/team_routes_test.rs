@@ -1353,6 +1353,132 @@ fn no_store(response: &Response) -> bool {
 }
 
 #[tokio::test]
+async fn rulesync_team_project_review_requires_a_current_write_session() {
+    let (f, _) = session_fixture();
+    team::owner_key(&f.state.team_path, "Team owner").unwrap();
+    std::fs::write(
+        f.state.settings_path.with_file_name("repo-wiki.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "bindings": [{
+                "space": "Design",
+                "repo_root": f._dir.path().join("repo"),
+                "folder": "wiki",
+                "remote_url": "https://github.com/acme/design.git",
+            }]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let seed = rulesync_team::update_hosted_rules(&f.state.settings_path, "Design", "Initial rule")
+        .unwrap();
+    rulesync_team::decide_local_space_proposal(&f.state.settings_path, "Design", &seed, true)
+        .unwrap();
+    let files = "/team/v1/spaces/Design/files";
+    let (status, body) = call(&f.state, Method::GET, files, Some(&f.reader.1), vec![]).await;
+    assert_eq!(status, StatusCode::OK);
+    let list: TeamFileList = serde_json::from_slice(&body).unwrap();
+    let rules = list.rules.unwrap();
+    assert_eq!(rules.project.as_ref().unwrap().space, "Design");
+    let revision = rules
+        .file
+        .rsplit('/')
+        .next()
+        .and_then(version::version_sha)
+        .unwrap();
+
+    let mut page = wenlan_core::store::format::page::PageFile::new("Rules", "Review every edit");
+    page.id = Some(rules.page_id.clone());
+    let text = version::render(
+        &page,
+        &version::VersionMeta {
+            parent: Some(revision.into()),
+            merged: Vec::new(),
+            body_digest: version::body_digest(&page.body),
+            author: version::Author {
+                member: f.reader.0.id.clone(),
+                kind: version::AuthorKind::Ai,
+                agent: None,
+            },
+            ts: "2026-11-18T05:00:00Z".into(),
+            archived: false,
+            locked: true,
+            proposal: true,
+            decides: None,
+            device: None,
+        },
+    );
+    let proposal = version::sha256_hex(text.as_bytes());
+    let name = version::version_file_name(&proposal);
+    let upload = format!("/team/v1/spaces/Design/versions/{}/{name}", rules.page_id);
+    let (status, _) = call(
+        &f.state,
+        Method::PUT,
+        &upload,
+        Some(&f.reader.1),
+        text.into_bytes(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let forged = version_text(&rules.page_id, &f.writer.0.id, "Unapproved team rules");
+    let forged_name = version::version_file_name(&version::sha256_hex(forged.as_bytes()));
+    let forged_path = format!(
+        "/team/v1/spaces/Design/versions/{}/{forged_name}",
+        rules.page_id
+    );
+    let (status, _) = call(
+        &f.state,
+        Method::PUT,
+        &forged_path,
+        Some(&f.writer.1),
+        forged.into_bytes(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+
+    let review = "/team/v1/spaces/Design/rules/proposals";
+    let (status, _) = call(&f.state, Method::GET, review, Some(&f.writer.1), vec![]).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let writer = f.state.sessions.create(&f.writer.0.id).unwrap();
+    let reader = f.state.sessions.create(&f.reader.0.id).unwrap();
+    let response = browser(&f.state, Method::GET, review, Some(&writer), None, None).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(response_text(response).await.contains(&proposal));
+    let decision = format!("{review}/{proposal}/decision");
+    let accept = |token: &str| {
+        team_router(f.state.clone()).oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri(&decision)
+                .header(header::COOKIE, format!("__Host-wenlan-session={token}"))
+                .header(header::ORIGIN, ORIGIN)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"accept":true}"#))
+                .unwrap(),
+        )
+    };
+    assert_eq!(
+        accept(&reader).await.unwrap().status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        accept(&writer).await.unwrap().status(),
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        accept(&writer).await.unwrap().status(),
+        StatusCode::CONFLICT
+    );
+    let approved = rulesync_team::hosted_project_layer(&f.state.settings_path, "Design")
+        .unwrap()
+        .unwrap();
+    assert_eq!(approved.markdown, "Review every edit");
+
+    team::update_member(&f.state.team_path, &f.reader.0.id, None, Some(&[])).unwrap();
+    let (status, _) = call(&f.state, Method::GET, files, Some(&f.reader.1), vec![]).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
 async fn a_session_cookie_reaches_me_and_the_app_gate_and_nothing_else() {
     let (f, _) = session_fixture();
     let token = f.state.sessions.create(&f.writer.0.id).unwrap();
@@ -1801,4 +1927,44 @@ async fn logout_all_ends_every_session_of_the_member_and_nobody_elses() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
+}
+
+/// A team started at a loopback invite address (`--url http://127.0.0.1:…`)
+/// listens on this computer only, never on the network; any other address
+/// still listens on every network so teammates can reach it.
+#[test]
+fn local_only_team_listens_on_loopback_only() {
+    for url in [
+        "http://127.0.0.1:17944",
+        "http://localhost:17944",
+        "http://LOCALHOST:17944",
+        "http://[::1]:17944",
+        "http://127.0.0.2:17944",
+    ] {
+        let addr: std::net::SocketAddr = listen_addr(Some(url), 17944)
+            .parse()
+            .unwrap_or_else(|_| panic!("{url}: not a socket address"));
+        assert!(addr.ip().is_loopback(), "{url} listened on {addr}");
+        assert_eq!(addr.port(), 17944);
+    }
+    for url in [
+        Some("http://192.168.1.20:7879"),
+        Some("http://100.101.102.103:7879"),
+        Some("https://wenlan.example.com"),
+        None,
+    ] {
+        assert_eq!(listen_addr(url, 7879), "0.0.0.0:7879", "{url:?}");
+    }
+}
+
+/// The loopback address really binds loopback only: the socket the team
+/// listener would open is not on an unspecified (every network) address.
+#[tokio::test]
+async fn local_only_team_binds_loopback_socket() {
+    let listener = tokio::net::TcpListener::bind(listen_addr(Some("http://127.0.0.1:0"), 0))
+        .await
+        .unwrap();
+    let local = listener.local_addr().unwrap();
+    assert!(local.ip().is_loopback(), "bound {local}");
+    assert!(!local.ip().is_unspecified());
 }

@@ -402,3 +402,49 @@ fn both_routers_put_the_person_gate_in_front_of_every_route() {
         );
     }
 }
+
+/// Which AI tools get the rules, and the rule files in the person's home
+/// folder, are the person's to see: a program on this computer without the
+/// key (or with a wrong one) is refused before anything is read.
+#[tokio::test]
+async fn rules_delivery_needs_the_person_key() {
+    test_key();
+    async fn get(headers: &[(&str, &str)]) -> (StatusCode, serde_json::Value) {
+        let mut request = HttpRequest::builder()
+            .method("GET")
+            .uri("/api/skills/delivery");
+        for (name, value) in headers {
+            request = request.header(*name, *value);
+        }
+        let response = crate::router::build_router(state())
+            .oneshot(request.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap_or_default())
+    }
+    let mut strangers: Vec<Vec<(&str, String)>> = vec![vec![]];
+    strangers.extend(marker_without_the_key());
+    for headers in strangers {
+        let headers: Vec<_> = headers.iter().map(|(n, v)| (*n, v.as_str())).collect();
+        let (status, answer) = get(&headers).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{headers:?}");
+        assert!(
+            refusal(&answer).starts_with("rules_delivery_needs_the_person"),
+            "{headers:?}: {answer}"
+        );
+    }
+    // With the key the person check passes (this test daemon has no store).
+    let (_, answer) = get(&[
+        (CALLER_HEADER, PERSON_CALLER_VALUE),
+        (PERSON_KEY_HEADER, test_key()),
+    ])
+    .await;
+    assert!(
+        !refusal(&answer).starts_with("rules_delivery_needs_the_person"),
+        "{answer}"
+    );
+}

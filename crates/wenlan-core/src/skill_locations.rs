@@ -24,6 +24,9 @@ pub struct SkillsLocation {
 /// Resolve either an app client type (`codex_cli`) or its canonical daemon
 /// agent id (`codex`). Unknown tools have no filesystem skill surface here.
 pub fn skills_location(tool: &str) -> Option<SkillsLocation> {
+    if crate::rulesync_personal::enabled() {
+        return None;
+    }
     let (base, tail): (SkillsBase, &'static [&'static str]) = match tool {
         "claude_code" | "claude-code" => (SkillsBase::Home, &[".claude", "skills"]),
         // OpenAI's user-scope Agent Skills directory for Codex. The installed
@@ -168,6 +171,9 @@ pub const WINDSURF_RULES_MAX_CHARS: usize = 6_000;
 /// Windows location where it differs. Tools reached only through MCP, and
 /// tools whose file is not documented, have none.
 pub fn rules_location(tool: &str, windows: bool) -> Option<RulesLocation> {
+    if crate::rulesync_personal::enabled() {
+        return None;
+    }
     let block = |tool, base, folder, file| RulesLocation {
         tool,
         base,

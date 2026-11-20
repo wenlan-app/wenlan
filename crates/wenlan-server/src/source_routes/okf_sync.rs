@@ -444,6 +444,8 @@ pub(super) async fn sync_okf_source_in_batches(
     Ok(DirectorySyncOutcome {
         stats,
         newly_queued,
+        // An OKF bundle keeps its own batched import.
+        queued_paths: Vec::new(),
     })
 }
 
@@ -476,6 +478,7 @@ fn blocked_outcome() -> DirectorySyncOutcome {
             skipped_files: Vec::new(),
         },
         newly_queued: 0,
+        queued_paths: Vec::new(),
     }
 }
 

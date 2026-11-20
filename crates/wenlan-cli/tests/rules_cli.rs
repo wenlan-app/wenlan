@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! `wenlan rules add` and `wenlan rules remove` against a scripted stand-in
-//! for the daemon.
+//! Terminal entry points for saving Space rules and managing personal setup.
 
 mod common;
 
@@ -8,6 +7,8 @@ use assert_cmd::Command;
 use common::spawn_stub;
 use predicates::prelude::*;
 use serde_json::json;
+use std::{fs, path::Path};
+use wenlan_types::rulesync::{AdoptionPlan, AdoptionSkillOutcome};
 
 fn cli(base: &str) -> Command {
     let mut cmd = Command::cargo_bin("wenlan").unwrap();
@@ -17,6 +18,246 @@ fn cli(base: &str) -> Command {
         .env_remove("WENLAN_SPACE")
         .env_remove("WENLAN_DEFAULT_SPACE");
     cmd
+}
+
+fn personal_rules_cli(state: &Path) -> Command {
+    let home = state.join("ai-tools/home");
+    let mut cmd = cli("unreachable://no-daemon");
+    cmd.env("HOME", &home)
+        .env("CODEX_HOME", home.join(".codex"))
+        .env("WENLAN_DEV_STATE_DIR", state)
+        .env("WENLAN_DATA_DIR", state.join("unused-data-root"))
+        .env_remove("WENLAN_RULESYNC")
+        .env_remove("WENLAN_SESSION")
+        .env_remove("CODEX_THREAD_ID");
+    cmd
+}
+
+#[test]
+fn personal_rules_dry_run_reads_existing_files_without_daemon_or_data_root() {
+    let state = tempfile::tempdir().unwrap();
+    let home = state.path().join("ai-tools/home");
+    fs::create_dir_all(home.join(".agents")).unwrap();
+    fs::create_dir_all(home.join(".codex")).unwrap();
+    let master = home.join(".agents/AGENTS.md");
+    let codex = home.join(".codex/AGENTS.md");
+    fs::write(&master, "Keep shared rules.\n").unwrap();
+    fs::write(&codex, "Keep Codex rules.\n").unwrap();
+
+    let output = personal_rules_cli(state.path())
+        .env("WENLAN_DEFAULT_SPACE", "Clinic")
+        .args(["rules", "adopt", "--dry-run", "--format", "json"])
+        .assert()
+        .success();
+    let plan: AdoptionPlan = serde_json::from_slice(&output.get_output().stdout).unwrap();
+    let change = plan
+        .files
+        .iter()
+        .find(|change| Path::new(&change.path) == Path::new(".codex/AGENTS.md"))
+        .expect("Codex migration plan");
+    assert_eq!((change.added, change.removed), (1, 0));
+    assert!(change.diff.contains("+Keep shared rules."));
+    assert_eq!(fs::read_to_string(master).unwrap(), "Keep shared rules.\n");
+    assert_eq!(fs::read_to_string(codex).unwrap(), "Keep Codex rules.\n");
+    assert!(!home.join(".claude").exists());
+    assert!(!state.path().join("unused-data-root").exists());
+}
+
+#[test]
+fn personal_rules_dry_run_labels_skill_sources() {
+    let state = tempfile::tempdir().unwrap();
+    let home = state.path().join("ai-tools/home");
+    for path in [".agents/skills/locked", ".codex/skills/handmade"] {
+        let skill = home.join(path);
+        fs::create_dir_all(&skill).unwrap();
+        let name = skill.file_name().unwrap().to_str().unwrap();
+        fs::write(
+            skill.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: Fixture skill\n---\nSkill contents\n"),
+        )
+        .unwrap();
+    }
+    fs::write(home.join(".agents/.skill-lock.json"), br#"{"skills":{"locked":{
+        "sourceType":"github","source":"owner/project","sourceUrl":"https://github.com/owner/project.git",
+        "skillPath":"library/locked/SKILL.md"
+    }}}"#).unwrap();
+    personal_rules_cli(state.path())
+        .args(["rules", "adopt", "--dry-run", "--format", "table"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            ".agents/skills/locked — skipped (Wenlan reads this shared source",
+        ))
+        .stdout(predicate::str::contains(
+            ".codex/skills/handmade — plain copy in the personal master",
+        ));
+    assert!(!state.path().join("unused-data-root").exists());
+}
+
+#[test]
+fn personal_rules_dry_run_shows_the_rendered_skill() {
+    let state = tempfile::tempdir().unwrap();
+    let folder = state.path().join("ai-tools/home/.codex/skills/folding");
+    fs::create_dir_all(&folder).unwrap();
+    let initial = "---\nname: folding\ndescription: A long description with enough words to make the standard formatter wrap it over multiple lines while retaining every word.\n---\n\nBody.\n";
+    let path = folder.join("SKILL.md");
+    fs::write(&path, initial).unwrap();
+    personal_rules_cli(state.path())
+        .args(["rules", "adopt", "--dry-run", "--format", "table"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("+description: >-\n"))
+        .stdout(predicate::str::contains(
+            "+  over multiple lines while retaining every word.\n",
+        ));
+    assert_eq!(fs::read_to_string(path).unwrap(), initial);
+    assert!(!state.path().join("unused-data-root").exists());
+}
+
+#[test]
+fn personal_rules_dry_run_announces_retired_codex_script() {
+    let state = tempfile::tempdir().unwrap();
+    let home = state.path().join("ai-tools/home");
+    let script = home.join(".agents/scripts/sync-codex-agents.sh");
+    let codex = home.join(".codex/AGENTS.md");
+    fs::create_dir_all(script.parent().unwrap()).unwrap();
+    fs::create_dir_all(codex.parent().unwrap()).unwrap();
+    let old = "<!-- Generated by ~/.agents/scripts/sync-codex-agents.sh. Edit the adapter, then rerun. -->";
+    fs::write(&script, "#!/bin/sh\n").unwrap();
+    let original = format!("{old}\nKeep my Codex rules.\n");
+    fs::write(&codex, &original).unwrap();
+
+    let output = personal_rules_cli(state.path())
+        .args(["rules", "adopt", "--dry-run", "--format", "json"])
+        .assert()
+        .success();
+    let plan: AdoptionPlan = serde_json::from_slice(&output.get_output().stdout).unwrap();
+    let diff = &plan
+        .files
+        .iter()
+        .find(|file| file.path == ".codex/AGENTS.md")
+        .unwrap()
+        .diff;
+    assert!(diff
+        .lines()
+        .any(|line| line.starts_with("+<!-- Managed by Wenlan.")));
+    assert!(diff.contains(&format!("-{old}")));
+    assert!(!diff.contains(&format!("+{old}")));
+    assert!(plan.notes[0].contains("sync-codex-agents.sh becomes unused"));
+    personal_rules_cli(state.path())
+        .args(["rules", "adopt", "--dry-run", "--format", "table"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "script stays in place for you to keep or remove",
+        ));
+    assert_eq!(fs::read_to_string(codex).unwrap(), original);
+    assert_eq!(fs::read_to_string(script).unwrap(), "#!/bin/sh\n");
+}
+
+#[test]
+fn personal_rules_dry_run_leaves_an_oversized_skill_unmanaged() {
+    let state = tempfile::tempdir().unwrap();
+    let relative = ".codex/skills/video-shotcraft";
+    let skill = state.path().join("ai-tools/home").join(relative);
+    fs::create_dir_all(&skill).unwrap();
+    fs::write(skill.join("SKILL.md"), "An existing skill\n").unwrap();
+    let audio = skill.join("audio.mp3");
+    let size = 32 * 1024 * 1024;
+    // The audio file is within the limit by itself. The whole skill exceeds it.
+    fs::File::create(&audio).unwrap().set_len(size).unwrap();
+
+    let output = personal_rules_cli(state.path())
+        .args(["rules", "adopt", "--dry-run", "--format", "json"])
+        .assert()
+        .success();
+    let plan: AdoptionPlan = serde_json::from_slice(&output.get_output().stdout).unwrap();
+    let item = plan
+        .skills
+        .iter()
+        .find(|item| item.path == relative)
+        .unwrap();
+    let AdoptionSkillOutcome::Skipped { reason } = &item.outcome else {
+        panic!("expected an unmanaged skip, got {:?}", item.outcome);
+    };
+    assert!(reason.contains("32 MiB total import limit"));
+    assert!(reason.contains("audio.mp3"));
+    let changes = plan
+        .files
+        .iter()
+        .filter(|file| Path::new(&file.path).starts_with(relative))
+        .collect::<Vec<_>>();
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].path, relative);
+    assert_eq!((changes[0].added, changes[0].removed), (0, 0));
+    assert!(changes[0].diff.contains("Stays where it is, not managed."));
+    personal_rules_cli(state.path())
+        .args(["rules", "adopt", "--dry-run", "--format", "table"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("stays where it is, not managed"));
+    assert_eq!(fs::metadata(&audio).unwrap().len(), size);
+    assert_eq!(
+        fs::read_to_string(skill.join("SKILL.md")).unwrap(),
+        "An existing skill\n"
+    );
+    assert!(!state.path().join("unused-data-root").exists());
+}
+
+#[test]
+fn personal_rules_setup_refuses_the_strict_space_pin() {
+    let state = tempfile::tempdir().unwrap();
+    personal_rules_cli(state.path())
+        .env("WENLAN_SPACE", "Clinic")
+        .args(["rules", "adopt", "--dry-run"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "WENLAN_SPACE limits this terminal",
+        ));
+}
+
+#[test]
+fn personal_rules_setup_requires_interactive_confirmation() {
+    let state = tempfile::tempdir().unwrap();
+    for args in [
+        &["rules", "adopt"][..],
+        &["rules", "restore"],
+        &["rules", "settings", "local-settings"],
+        &[
+            "rules",
+            "review",
+            "card-1",
+            "all-tools",
+            "--file",
+            "rules.md",
+        ],
+    ] {
+        personal_rules_cli(state.path())
+            .args(args)
+            .write_stdin("yes\n")
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("from your own terminal"));
+        personal_rules_cli(state.path())
+            .args(args)
+            .arg("--yes")
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("unexpected argument '--yes'"));
+    }
+}
+
+#[test]
+fn personal_rules_settings_preview_refuses_non_local_daemon() {
+    let state = tempfile::tempdir().unwrap();
+    personal_rules_cli(state.path())
+        .env("WENLAN_HOST", "http://192.0.2.1:17917")
+        .args(["rules", "settings", "local-settings", "--dry-run"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("daemon on this computer"));
+    assert!(!state.path().join("unused-data-root").exists());
 }
 
 fn saved() -> String {
@@ -303,4 +544,62 @@ fn ux_skill_14_plain_rules_lists_a_saved_rule_with_where_it_came_from() {
         )
         .stdout(predicate::str::contains("written by you").not());
     assert_eq!(sent(&received)[0].0, "GET /api/skills/rules");
+}
+
+#[cfg(unix)]
+#[test]
+fn personal_rules_dry_run_names_git_destinations_and_plans_codex_link_replacement() {
+    let state = tempfile::tempdir().unwrap();
+    let home = state.path().join("ai-tools/home");
+    for repo in [".agents", ".claude"] {
+        let folder = home.join(repo).join("skills/sample");
+        fs::create_dir_all(&folder).unwrap();
+        fs::write(
+            folder.join("SKILL.md"),
+            "---\nname: sample\ndescription: Fixture skill\n---\n\nInstructions.\n",
+        )
+        .unwrap();
+    }
+    for (root, name) in [(".agents", "agents-harness"), (".claude", "claude-config")] {
+        let git = |args: &[&str]| {
+            let output = std::process::Command::new("git")
+                .arg("-C")
+                .arg(home.join(root))
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        git(&["init", "--quiet"]);
+        git(&[
+            "remote",
+            "add",
+            "origin",
+            &format!("https://github.com/fixture/{name}.git"),
+        ]);
+    }
+    let codex = home.join(".codex/skills");
+    fs::create_dir_all(&codex).unwrap();
+    std::os::unix::fs::symlink("../../.agents/skills/sample", codex.join("sample")).unwrap();
+    personal_rules_cli(state.path())
+        .args(["rules", "adopt", "--dry-run", "--format", "table"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("~/.agents is left untouched."))
+        .stdout(predicate::str::contains(
+            "~/.agents/skills is inside the Git repository agents-harness. Wenlan reads the shared skills there and leaves that directory in place.",
+        ))
+        .stdout(predicate::str::contains(
+            "~/.claude/skills is inside the Git repository claude-config. Wenlan will manage 1 skill folder there, and its writes can appear as changes in that repository.",
+        ))
+        .stdout(predicate::str::contains(
+            ".codex/skills/sample — plain copy in the personal master",
+        ))
+        .stdout(predicate::str::contains("symlink -> ../../.agents/skills/sample"));
+    assert!(codex.join("sample").is_symlink());
+    assert!(!state.path().join("unused-data-root").exists());
 }

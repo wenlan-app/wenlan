@@ -471,6 +471,19 @@ jobs:
               - '.github/workflows/ci.yml'
               - 'scripts/ci_test_plan.test.py'
             macos:
+              # The one rulesync writer (UX-SKILL-15..17) has per-platform sandbox, link and file-swap branches.
+              - 'crates/wenlan-cli/tests/rules_cli.rs'
+              - 'crates/wenlan-core/src/repo_wiki_project_rules_test.rs'
+              - 'crates/wenlan-core/src/skill_registry.rs'
+              - 'crates/wenlan-server/src/rulesync_registry.rs'
+              - 'crates/wenlan-server/src/rulesync_routes.rs'
+              - 'crates/wenlan-server/src/rulesync_settings_routes.rs'
+              - 'crates/wenlan-core/src/rulesync_adopt.rs'
+              - 'crates/wenlan-core/src/rulesync_settings.rs'
+              - 'crates/wenlan-core/src/rulesync_renderer.rs'
+              - 'crates/wenlan-server/src/rulesync_apply.rs'
+              - 'crates/wenlan-core/src/rulesync_skill_origin.rs'
+              - 'crates/wenlan-server/src/rulesync_checkout.rs'
               - 'scripts/setup-macos-openssl.sh'
               - 'scripts/setup-macos-openssl.test.sh'
               # macOS owns launchd/host-activity behavior and native code.
@@ -613,6 +626,19 @@ jobs:
               - '.github/workflows/ci.yml'
               - '.github/workflows/release.yml'
             windows:
+              # The one rulesync writer (UX-SKILL-15..17) has per-platform sandbox, link and file-swap branches.
+              - 'crates/wenlan-cli/tests/rules_cli.rs'
+              - 'crates/wenlan-core/src/repo_wiki_project_rules_test.rs'
+              - 'crates/wenlan-core/src/skill_registry.rs'
+              - 'crates/wenlan-server/src/rulesync_registry.rs'
+              - 'crates/wenlan-server/src/rulesync_routes.rs'
+              - 'crates/wenlan-server/src/rulesync_settings_routes.rs'
+              - 'crates/wenlan-core/src/rulesync_adopt.rs'
+              - 'crates/wenlan-core/src/rulesync_settings.rs'
+              - 'crates/wenlan-core/src/rulesync_renderer.rs'
+              - 'crates/wenlan-server/src/rulesync_apply.rs'
+              - 'crates/wenlan-core/src/rulesync_skill_origin.rs'
+              - 'crates/wenlan-server/src/rulesync_checkout.rs'
               # Windows owns cfg-bearing CLI/server paths, native ORT/Vulkan,
               # and packaging. Shared Rust stays on Ubuntu; MCP's Unix/non-Unix
               # branches compile in the focused mcp-platform job.

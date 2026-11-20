@@ -9,7 +9,7 @@
 //! already here (it may hold this person's own pages): it is made under
 //! `<name> (<team>)` instead (the server's host until the team is named).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use wenlan_types::team::TeamMe;
@@ -25,7 +25,7 @@ pub(super) async fn follow_teams(db: &MemoryDB, settings_path: &Path) {
         Ok(shares) => shares,
         Err(_) => return,
     };
-    let mut hosts: BTreeSet<(String, String)> = shares
+    let mut hosts: BTreeMap<String, String> = shares
         .iter()
         .filter_map(|(_, settings)| settings.host.as_ref())
         .map(|host| (host.url.clone(), host.key.clone()))
@@ -39,9 +39,19 @@ pub(super) async fn follow_teams(db: &MemoryDB, settings_path: &Path) {
         );
     }
     for (url, key) in hosts {
-        let me = match remote::me(&url, &key).await {
+        let me = match remote::me_sync(&url, &key).await {
             Ok(me) => me,
             Err(reason) => {
+                if matches!(
+                    reason,
+                    remote::SyncError::Revoked(_) | remote::SyncError::Refused(_)
+                ) {
+                    if let Err(error) =
+                        super::clear_team_rule_layer(settings_path, &url, &key, None)
+                    {
+                        log::warn!("[shared_space] team {url}: cannot clear the refused Rules layer: {error}");
+                    }
+                }
                 log::debug!("[shared_space] team {url}: not followed this time: {reason}");
                 continue;
             }

@@ -132,12 +132,12 @@ enum Commands {
         #[arg(short, long, default_value_t = 10)]
         limit: usize,
     },
-    /// Read the working rules for a Space, or save and remove one of your own (add, remove).
+    /// Read and save working rules for a Space, or manage your personal AI-tool setup.
     Rules {
         #[command(subcommand)]
         command: Option<commands::skills::RulesCmd>,
     },
-    /// List, find and take in skills your AI tools can use (list, search, show, scan, import, install, remove).
+    /// Find, save, review and install skills your AI tools can use.
     Skills {
         #[command(subcommand)]
         command: Option<commands::skills::SkillsCmd>,
@@ -386,6 +386,30 @@ async fn main() -> anyhow::Result<ExitCode> {
     }
     let environment_agent = std::env::var("WENLAN_AGENT_NAME").ok();
     let agent_name = resolve_agent_name(cli.agent_name.as_deref(), environment_agent.as_deref());
+    // A personal adoption preview reads only the tool files. It does not look
+    // up a Space, build a daemon client or recover a stopped daemon.
+    if let Commands::Rules {
+        command: Some(commands::skills::RulesCmd::Setup(command)),
+    } = &cli.command
+    {
+        if cli.space.is_some() || cli.all_spaces {
+            anyhow::bail!("Personal rules setup does not take --space or --all-spaces");
+        }
+        if std::env::var_os("WENLAN_SPACE")
+            .is_some_and(|space| !space.to_string_lossy().trim().is_empty())
+        {
+            anyhow::bail!("WENLAN_SPACE limits this terminal to one Space. Run personal rules setup without WENLAN_SPACE.");
+        }
+        commands::rulesync::run(
+            command,
+            cli.format.resolve(),
+            cli.quiet,
+            agent_name.is_some(),
+            cli.session.as_deref(),
+        )
+        .await?;
+        return Ok(ExitCode::SUCCESS);
+    }
     // Commands that are an MCP tool under a CLI name go through `wenlan-mcp`,
     // not the daemon client below, so they behave as they do in an AI tool.
     let tool_backed = matches!(
@@ -477,10 +501,30 @@ async fn main() -> anyhow::Result<ExitCode> {
     for warning in &resolved_session.warnings {
         eprintln!("wenlan: {warning}");
     }
+    let project_rules = match &cli.command {
+        Commands::Wiki { command } if command.is_project_rules() => Some(command),
+        _ => None,
+    };
     let session = resolved_session.session;
-    let base_client = client::WenlanClient::from_env_with_context(agent_name.as_deref(), None)?
-        .with_session(session.clone())?
-        .with_recovery(recovery_enabled);
+    let rules_checkout = project_rules.is_some_and(commands::wiki::WikiCommand::is_rules_checkout);
+    let base_client = if let Some(command) = project_rules {
+        if cli.all_spaces {
+            anyhow::bail!("Repository rule proposals belong to one Space. Use --space <Space>.");
+        }
+        if rules_checkout
+            && (cli.space.is_some()
+                || std::env::var_os("WENLAN_SPACE")
+                    .is_some_and(|space| !space.to_string_lossy().trim().is_empty()))
+        {
+            anyhow::bail!("The checkout selects its own readable project layers. Run without --space or WENLAN_SPACE.");
+        }
+        command.require_project_rules_caller(agent_name.is_some() || session.is_some())?;
+        client::WenlanClient::for_local_rules()?
+    } else {
+        client::WenlanClient::from_env_with_context(agent_name.as_deref(), None)?
+            .with_session(session.clone())?
+            .with_recovery(recovery_enabled)
+    };
     let is_brief_update = matches!(
         &cli.command,
         Commands::Brief(args) if args.is_update()
@@ -502,6 +546,7 @@ async fn main() -> anyhow::Result<ExitCode> {
         }
     );
     let operation = match &cli.command {
+        Commands::Wiki { .. } if rules_checkout => None,
         Commands::Rules { .. } if is_rule_beyond_one_space => None,
         Commands::Recall { .. } | Commands::Memories { .. } | Commands::Rules { .. } => {
             Some(CliSpaceOperation::Read)
@@ -512,14 +557,13 @@ async fn main() -> anyhow::Result<ExitCode> {
     };
     let is_lint = matches!(&cli.command, Commands::Lint { .. });
     let is_export = matches!(&cli.command, Commands::Export { .. });
-    // An OKF import and `sources save` each write into one Space.
-    let is_okf_import = matches!(
+    // `sources add` (a folder, a file or an OKF bundle) and `sources save`
+    // each write into one Space.
+    let writes_one_space = matches!(
         &cli.command,
         Commands::Sources {
-            command: commands::ingest::SourcesCommand::Add {
-                source_type: commands::ingest::SourceKind::Okf,
-                ..
-            } | commands::ingest::SourcesCommand::Save { .. }
+            command: commands::ingest::SourcesCommand::Add { .. }
+                | commands::ingest::SourcesCommand::Save { .. }
         }
     );
     let mut effective_cli_space = cli.space.clone();
@@ -601,12 +645,18 @@ async fn main() -> anyhow::Result<ExitCode> {
             Err(error) => return Err(error),
         };
         effective_cli_space = context.space.clone();
-        client::WenlanClient::from_env_with_context(
-            agent_name.as_deref(),
-            context.space.as_deref(),
-        )?
-        .with_session(session.clone())?
-        .with_recovery(recovery_enabled)
+        if project_rules.is_some() {
+            // These person-only requests identify the Space in the path. Keep
+            // the direct local connection and leave daemon recovery disabled.
+            base_client
+        } else {
+            client::WenlanClient::from_env_with_context(
+                agent_name.as_deref(),
+                context.space.as_deref(),
+            )?
+            .with_session(session.clone())?
+            .with_recovery(recovery_enabled)
+        }
     } else if is_brief_update {
         let strict_space = std::env::var("WENLAN_SPACE").ok();
         effective_cli_space =
@@ -633,10 +683,11 @@ async fn main() -> anyhow::Result<ExitCode> {
         )?
         .with_session(session.clone())?
         .with_recovery(recovery_enabled)
-    } else if is_okf_import {
-        // An OKF import or a saved source writes into one Space: `--space X`
-        // or a strict `WENLAN_SPACE` pin picks it, otherwise the daemon's
-        // default Space.
+    } else if writes_one_space {
+        // An added or saved source writes into one Space: `--space X` or a
+        // strict `WENLAN_SPACE` pin picks it. Otherwise an OKF bundle or a
+        // saved document goes to the daemon's default Space and a folder's
+        // pages stay unfiled.
         if cli.all_spaces {
             anyhow::bail!("--all-spaces is valid only for read commands");
         }
@@ -764,7 +815,14 @@ async fn main() -> anyhow::Result<ExitCode> {
                 .await?
         }
         Commands::Sources { command } => {
-            commands::ingest::run_sources(&client, format, cli.quiet, command).await?
+            commands::ingest::run_sources(
+                &client,
+                format,
+                cli.quiet,
+                command,
+                effective_cli_space.as_deref(),
+            )
+            .await?
         }
         Commands::Capture {
             text,
@@ -827,6 +885,53 @@ mod catalog_tests {
     use super::Cli;
     use clap::CommandFactory;
     use std::collections::BTreeSet;
+
+    #[test]
+    fn project_rule_commands_take_one_space_and_no_yes_flag() {
+        use super::commands::wiki::{ProjectRulesAction, WikiCommand};
+        use super::Commands;
+        use clap::Parser;
+
+        let list = Cli::try_parse_from(["wenlan", "--space", "Clinic", "wiki", "rules-proposals"])
+            .unwrap();
+        assert_eq!(list.space.as_deref(), Some("Clinic"));
+        assert!(matches!(
+            list.command,
+            Commands::Wiki {
+                command: WikiCommand::RulesProposals
+            }
+        ));
+
+        let review = Cli::try_parse_from([
+            "wenlan",
+            "wiki",
+            "rules-review",
+            "card",
+            "accept",
+            "--space",
+            "Clinic",
+        ])
+        .unwrap();
+        assert_eq!(review.space.as_deref(), Some("Clinic"));
+        assert!(matches!(
+            review.command,
+            Commands::Wiki {
+                command: WikiCommand::RulesReview {
+                    action: ProjectRulesAction::Accept,
+                    ..
+                }
+            }
+        ));
+        assert!(Cli::try_parse_from([
+            "wenlan",
+            "wiki",
+            "rules-review",
+            "card",
+            "dismiss",
+            "--yes"
+        ])
+        .is_err());
+    }
 
     /// Every top-level clap subcommand must have a row in the M5 truth
     /// manifest, and the manifest must not list a command that no longer

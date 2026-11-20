@@ -2199,6 +2199,8 @@ async fn ux_skill_10_many_saves_in_a_row_do_not_queue_a_sync_each() {
             .and_then(|runs| runs.get(&library).copied())
             .unwrap_or(0)
     };
+    // A scratch database can reuse an address counted by an earlier test.
+    let previous_runs = runs();
     {
         // While one sync is held up, twenty more saves ask for one each.
         let held = SKILLS_MUTATION_LOCK.lock().await;
@@ -2216,7 +2218,7 @@ async fn ux_skill_10_many_saves_in_a_row_do_not_queue_a_sync_each() {
         tokio::time::sleep(std::time::Duration::from_millis(25)).await;
     }
     assert!(!running(), "the background sync never finished");
-    let runs = runs();
+    let runs = runs() - previous_runs;
     assert!((1..=2).contains(&runs), "{runs} syncs for twenty requests");
     assert!(std::fs::read_to_string(&general)
         .unwrap()
@@ -2942,7 +2944,30 @@ async fn ux_skill_8_delivery_reports_each_tool_from_the_files_as_they_are() {
     let tools = delivery_in(&scratch, &isolated).await;
     assert_eq!(state_of(&tools, "codex"), RulesDeliveryState::IsolatedRun);
     assert_eq!(state_of(&tools, "cursor"), RulesDeliveryState::OnRequest);
-    let served = handle_rules_delivery(axum::extract::State(scratch.shared.clone()))
+    let person = person_headers();
+    // Only the person sees the tools' rule files: an AI tool or any other
+    // program on this computer is refused, paths and all.
+    let refused = handle_rules_delivery(
+        axum::extract::State(scratch.shared.clone()),
+        HeaderMap::new(),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        refused
+            .to_string()
+            .contains("rules_delivery_needs_the_person"),
+        "{refused}"
+    );
+    let mut tool = person.clone();
+    tool.insert("x-agent-name", "codex".parse().unwrap());
+    assert!(
+        handle_rules_delivery(axum::extract::State(scratch.shared.clone()), tool)
+            .await
+            .is_err(),
+        "a tool that also sends the person marker is still a tool"
+    );
+    let served = handle_rules_delivery(axum::extract::State(scratch.shared.clone()), person)
         .await
         .unwrap()
         .0;

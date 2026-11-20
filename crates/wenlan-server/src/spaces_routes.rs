@@ -346,6 +346,9 @@ async fn shared_sync(
     )
     .await?;
     wake_embedding_for_memories(counts.memories_applied);
+    if wenlan_core::rulesync_personal::enabled() {
+        crate::skill_grow::sync_rules_files_quietly(&db, page_root.as_deref()).await;
+    }
     Ok(Json(counts))
 }
 
@@ -375,9 +378,6 @@ async fn host_sync(
         ));
     };
     let (url, key) = crate::team_routes::join_parts(&host.code, host.key.as_deref())?;
-    let me = remote::me(&url, &key)
-        .await
-        .map_err(ServerError::ValidationError)?;
     let remote_space = host
         .space
         .as_deref()
@@ -385,7 +385,31 @@ async fn host_sync(
         .filter(|space| !space.is_empty())
         .unwrap_or(name.trim())
         .to_string();
+    let rulesync = wenlan_core::rulesync_personal::enabled();
+    let me = if rulesync {
+        match wenlan_core::shared_space::team_space_grant_for_sync(
+            settings,
+            &url,
+            &key,
+            &remote_space,
+        )
+        .await
+        {
+            Ok(me) => me,
+            Err(error) => {
+                crate::skill_grow::sync_rules_files_quietly(db, page_root).await;
+                return Err(error.into());
+            }
+        }
+    } else {
+        remote::me(&url, &key)
+            .await
+            .map_err(ServerError::ValidationError)?
+    };
     let Some(remote_entry) = me.spaces.iter().find(|entry| entry.space == remote_space) else {
+        if rulesync {
+            crate::skill_grow::sync_rules_files_quietly(db, page_root).await;
+        }
         return Err(ServerError::ValidationError(format!(
             "the team server does not let {} use {remote_space:?}",
             me.name
@@ -427,8 +451,11 @@ async fn host_sync(
             }),
         },
     )
-    .await?;
-    Ok(Json(counts))
+    .await;
+    if rulesync {
+        crate::skill_grow::sync_rules_files_quietly(db, page_root).await;
+    }
+    Ok(Json(counts?))
 }
 
 async fn space_scope(

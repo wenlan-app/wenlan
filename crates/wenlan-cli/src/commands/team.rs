@@ -26,7 +26,9 @@ pub enum TeamCmd {
         person: Option<String>,
         /// The address others reach this computer at, put in every invite
         /// link. Left out, Wenlan picks one: its Tailscale address first,
-        /// else its address on the local network.
+        /// else its address on the local network. A loopback address
+        /// (`http://127.0.0.1:<PORT>`, `localhost`) keeps the team on this
+        /// computer only: nothing else on the network can reach it.
         #[arg(long)]
         url: Option<String>,
         /// The port the team listens on. Left out, 7879.

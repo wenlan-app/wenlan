@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.22.4](https://github.com/wenlan-app/wenlan/compare/v0.22.3...v0.22.4) (2026-11-20)
+
+
+### Features
+
+* **team:** GitHub sign-in for the team server ([#1338](https://github.com/wenlan-app/wenlan/issues/1338)) ([51c7be9](https://github.com/wenlan-app/wenlan/commit/51c7be92edd6cbbfb308d59457a6b50f7aea5a1e))
+* **team:** sign-in invites bound to one person ([#1333](https://github.com/wenlan-app/wenlan/issues/1333)) ([1d0f8b6](https://github.com/wenlan-app/wenlan/commit/1d0f8b603447b1da3b221d859e0199a38aecfc76))
+
+
+### Bug Fixes
+
+* **macos:** restart a signed launchd job and keep an older app copy from taking over ([#1335](https://github.com/wenlan-app/wenlan/issues/1335)) ([8b53847](https://github.com/wenlan-app/wenlan/commit/8b53847d6bfde0724a1dc4a92e93acaa0881685d))
+* **repo-wiki:** point AI tools at read_space_rules and keep the Space name out of the wiki PR (UX-SKILL-7) ([#1337](https://github.com/wenlan-app/wenlan/issues/1337)) ([c5c5425](https://github.com/wenlan-app/wenlan/commit/c5c542563d770f3021a1c2bcd22047f41e9935e9))
+* **repo-wiki:** take removed rules out of AGENTS.md, the last one too (UX-SKILL-7) ([#1332](https://github.com/wenlan-app/wenlan/issues/1332)) ([e92abe3](https://github.com/wenlan-app/wenlan/commit/e92abe387f2e302d25ee8e2a9269a429375f74d0))
+* **sources:** `sources add --space` for folders; re-adding a changed file updates it right away ([#1339](https://github.com/wenlan-app/wenlan/issues/1339)) ([67ebc6a](https://github.com/wenlan-app/wenlan/commit/67ebc6a988a21410ddeaf37c626a1dca84d840bc))
+
 ## [0.22.3](https://github.com/wenlan-app/wenlan/compare/v0.22.2...v0.22.3) (2026-11-19)
 
 

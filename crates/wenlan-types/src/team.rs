@@ -160,8 +160,9 @@ pub struct TeamStartRequest {
     /// The address put in invite links. Left out: the first suggested one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
-    /// The port the team listener listens on, on every network of this
-    /// computer. Left out: [`DEFAULT_TEAM_PORT`].
+    /// The port the team listener listens on: on every network of this
+    /// computer, or on this computer only when `url` is a loopback address
+    /// (`127.0.0.1`, `localhost`, `::1`). Left out: [`DEFAULT_TEAM_PORT`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub port: Option<u16>,
 }
@@ -350,6 +351,60 @@ pub struct TeamMe {
 pub struct TeamFileList {
     pub access: TeamAccess,
     pub files: Vec<String>,
+    /// The approved Rules page version in the team-wide Space.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rules: Option<TeamRulesManifest>,
+}
+
+/// An approved Rules page version listed with its shared Space files.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamRulesManifest {
+    pub team: TeamInfo,
+    pub page_id: String,
+    pub file: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<TeamRulesProject>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skills: Vec<TeamProjectSkill>,
+}
+
+/// A project master follows the Space's grant and is rendered for its bound repo.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamRulesProject {
+    pub space: String,
+    pub space_id: String,
+    /// A digest of the repository identity. Checkout paths and remote credentials stay local.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_id: Option<String>,
+}
+
+/// An installed project skill's text files, approved by the person on the host.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TeamProjectSkill {
+    pub name: String,
+    pub files: Vec<TeamProjectSkillFile>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TeamProjectSkillFile {
+    pub path: String,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamRulesProposal {
+    pub id: String,
+    pub author: String,
+    pub markdown: String,
+    pub base: String,
+    pub proposed_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamRulesDecisionRequest {
+    pub accept: bool,
 }
 
 /// Body of `POST /api/team/join` on a member's computer.

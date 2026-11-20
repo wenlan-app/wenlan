@@ -11,12 +11,14 @@ pub enum SelectorPrecedence {
     BodyThenHeader,
     QueryThenHeader,
     HeaderOnly,
+    PathOnly,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Capability {
     UnauthenticatedLocal,
     CallerAssertedAgentTrust,
+    AuthenticatedPerson,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

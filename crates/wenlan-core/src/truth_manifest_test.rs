@@ -351,17 +351,18 @@ fn manifest_counts_match_the_spec() {
     // (UX-SKILL-14): two receipts, with no page text.
     // Then 388 after POST `/api/person/browser-pass` (a one-time pass for
     // `wenlan open`; never the person key, no page text).
-    // Then 392 after the four hosted team sign-in routes (POST
+    // Personal adoption, settings, checkout and skill routes, and project review/opt-in.
+    // Then 411 after the four hosted team sign-in routes (POST
     // `/api/team/invites`, `/api/team/members/{id}/invite`, `/approve` and
     // `/compromised`): invite and account changes, no page text.
     assert_eq!(
         HTTP_READERS.len(),
-        392,
+        411,
         "registered (method, path, handler) triples"
     );
     // 61 tools with the read-only `list_skills` and `search_skills`; 63
-    // with `add_rule` and `remove_rule`.
-    assert_eq!(MCP_READERS.len(), 63, "#[tool( declarations");
+    // with `add_rule` and `remove_rule`, and 64 with `save_skill`.
+    assert_eq!(MCP_READERS.len(), 64, "#[tool( declarations");
     // No hand-bumped CLI count here: `wenlan-cli`'s
     // `catalog_tests::truth_manifest_cli_rows_match_clap_subcommands` derives
     // the expected set from clap's `Commands` enum, which this crate cannot see.
@@ -369,7 +370,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        404,
+        423,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -377,7 +378,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        387,
+        406,
         "main builder entries"
     );
     assert_eq!(
@@ -400,7 +401,7 @@ fn manifest_counts_match_the_spec() {
     // rules, Space suggestions, suggestion list and its three actions, plus
     // GET `/api/skills/record`).
     // +1: POST `/api/pages/{id}/restore-version`. +1: GET `/api/pages/{id}/look/data`.
-    assert_eq!(bearing, 108, "page-bearing HTTP routes");
+    assert_eq!(bearing, 109, "page-bearing HTTP routes");
 }
 
 #[test]
@@ -584,7 +585,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::None)
             .count(),
-        382 // Existing 273 plus 22 research workflow routes, 7 custom-theme routes, a memory's conversation lines, the nights undo, the memory restore, the two trust scan routes, keeping a session original, the 12 sharing routes, one tidy's undo, the three old-pass routes and the four linked-vault routes, the two set-aside routes, the plain Brief lines, the seven team routes and naming the team, the three AI-memory routes, the four team start/stop/membership routes, the six page look routes and the team firewall status and a source's unreadable files, twelve skill routes, how the rules reach each AI tool, the seven skill registry routes, and saving and removing a rule, and the browser pass for `wenlan open`, and the four team sign-in routes, all with no page markers.
+        401 // 19 personal setup, checkout, skill and rule-proposal routes plus the existing 378, and the four team sign-in routes, all with no page markers.
     );
 }
 

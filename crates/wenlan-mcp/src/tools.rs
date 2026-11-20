@@ -13,6 +13,9 @@ use rmcp::{
     tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler,
 };
 use serde::{Deserialize, Deserializer, Serialize};
+use wenlan_types::rulesync_skill::{
+    SaveSkillRequest, SaveSkillResult, SavedSkillFile, SavedSkillScope, SavedSkillTool,
+};
 
 /// Deserialize an `Option<usize>` that also accepts stringified numbers (e.g. `"10"`).
 /// MCP clients like Claude Desktop sometimes send numeric params as strings.
@@ -140,7 +143,7 @@ impl ToolProfile {
 const QUERY_ONLY_TOOL_NAMES: &[&str] = &["brief", "recall", "get_page_sources", "read_space_rules"];
 /// What the `daily` profile lists: reading, saving, writing and reshaping
 /// pages, the approved working rules and saving one the person asks for,
-/// the skills Wenlan holds and the search for more, and writing pages on demand. Left out are the review queues, health
+/// listing, finding and proposing skills, and writing pages on demand. Left out are the review queues, health
 /// checks and repairs, entities, folders, version history, reliance tracking
 /// and the organize and research runs; a person reaches those with
 /// `wenlan connect <client> --all-tools` or `wenlan tool call` in a terminal.
@@ -156,6 +159,7 @@ pub const DAILY_TOOL_NAMES: &[&str] = &[
     "remove_rule",
     "list_skills",
     "search_skills",
+    "save_skill",
     "capture",
     "save_source",
     "keep_original",
@@ -205,9 +209,9 @@ const WEB_WRITE_LIFTED_TOOL_NAMES: &[&str] = &["forget", "rename_page", "delete_
 /// `list_entities` and `read_entity`, then the exact-source read description, then by `theme`'s,
 /// then by `keep_original`'s, then by `set_page_space`'s, then by `restore_page_version`'s (347), then by the two page-look tools,
 /// then by `list_skills`'s (322) and `search_skills`'s (399),
-/// then by `add_rule`'s (611) and `remove_rule`'s (435).
+/// then by `add_rule`'s (611), `remove_rule`'s (435) and `save_skill`'s (196).
 #[cfg(test)]
-const DESCRIPTION_BUDGET_CHARS: usize = 23029;
+const DESCRIPTION_BUDGET_CHARS: usize = 23225;
 const QUERY_ONLY_REFUSAL_MESSAGE: &str =
     "This tool is not available in the query-only profile. Allowed tools: brief, recall, get_page_sources, read_space_rules.";
 const WEB_WRITE_REFUSAL_MESSAGE: &str =
@@ -1798,6 +1802,44 @@ pub struct SearchSkillsParams {
     pub include_warnings: Option<bool>,
 }
 
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SaveSkillParams {
+    #[schemars(description = "The skill's name, using lowercase letters, numbers and hyphens.")]
+    pub name: String,
+    #[schemars(description = "When and why an AI tool should use the skill.")]
+    pub description: String,
+    #[schemars(description = "The Markdown body of SKILL.md without YAML front matter.")]
+    pub body: String,
+    #[serde(default)]
+    #[schemars(description = "Optional text files to include alongside SKILL.md.")]
+    pub files: Vec<SaveSkillFileParam>,
+    #[schemars(description = "Share across managed tools or use only in one tool.")]
+    pub scope: SaveSkillScopeParam,
+}
+
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SaveSkillFileParam {
+    #[schemars(description = "File path relative to the skill folder.")]
+    pub path: String,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SaveSkillScopeParam {
+    Shared,
+    Tool { tool: SaveSkillToolParam },
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SaveSkillToolParam {
+    ClaudeCode,
+    Codex,
+}
+
 /// What `search_skills` answers: the passing skills, and how many with
 /// warnings were left out.
 #[derive(Debug, Serialize)]
@@ -3251,6 +3293,54 @@ impl WenlanMcpServer {
             with_warnings_not_shown: found - skills.len(),
             skills,
         })
+    }
+
+    pub async fn save_skill_impl(
+        &self,
+        params: SaveSkillParams,
+    ) -> Result<CallToolResult, McpError> {
+        if let Some(refusal) = self.local_only_refusal("save_skill") {
+            return Ok(refusal);
+        }
+        if crate::lock_state::locked_space().is_some() {
+            return Ok(CallToolResult::error(vec![ContentBlock::text(
+                "This connection is limited to one Space. Propose a personal skill from an unrestricted local connection.",
+            )]));
+        }
+        let scope = match params.scope {
+            SaveSkillScopeParam::Shared => SavedSkillScope::Shared,
+            SaveSkillScopeParam::Tool { tool } => SavedSkillScope::Tool {
+                tool: match tool {
+                    SaveSkillToolParam::ClaudeCode => SavedSkillTool::ClaudeCode,
+                    SaveSkillToolParam::Codex => SavedSkillTool::Codex,
+                },
+            },
+        };
+        let request = SaveSkillRequest {
+            name: params.name,
+            description: params.description,
+            body: params.body,
+            files: params
+                .files
+                .into_iter()
+                .map(|file| SavedSkillFile {
+                    path: file.path,
+                    text: file.text,
+                })
+                .collect(),
+            scope,
+        };
+        let result: SaveSkillResult = try_call!(
+            self.client.post("/api/skills/registry/save", &request),
+            "save_skill"
+        );
+        if !matches!(result, SaveSkillResult::Proposed { .. }) {
+            return Err(McpError::internal_error(
+                "expected a pending skill proposal",
+                None,
+            ));
+        }
+        query_success(result)
     }
 
     /// Resolve the source_agent for a write operation.
@@ -7495,6 +7585,23 @@ impl WenlanMcpServer {
     }
 
     #[tool(
+        description = "Propose a personal skill with its SKILL.md body, optional text files and tool scope. The person previews and accepts it with `wenlan skills review` before it reaches their tools. Local stdio only.",
+        annotations(
+            title = "Propose a skill",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn save_skill(
+        &self,
+        Parameters(params): Parameters<SaveSkillParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.save_skill_impl(params).await
+    }
+
+    #[tool(
         description = "List folders in the Wiki, optionally filtered by Space. Folder organization does not change Spaces, entities, or page content.",
         annotations(
             title = "List folders",
@@ -7945,6 +8052,7 @@ const LOCAL_ONLY_TOOL_NAMES: &[&str] = &[
     // The person's own skills folders, and a search this computer makes.
     "list_skills",
     "search_skills",
+    "save_skill",
     "propose_research_dispute",
     "read_research_dispute",
     "read_organize_run",
@@ -8090,6 +8198,7 @@ impl ServerHandler for WenlanMcpServer {
         let tools = if crate::lock_state::is_locked() || self.space_pin.is_some() {
             tools
                 .into_iter()
+                .filter(|tool| tool.name != "save_skill")
                 .map(strip_space_from_tool_schema)
                 .collect()
         } else {
@@ -15910,6 +16019,7 @@ mod tests {
             ("remove_rule", (false, true, false)),
             ("list_skills", (true, false, false)),
             ("search_skills", (true, false, true)),
+            ("save_skill", (false, false, false)),
             ("read_source", (false, false, false)),
             ("read_organize_run", (true, false, false)),
             ("update_organize_run", (false, false, false)),
@@ -16301,6 +16411,7 @@ mod tests {
             "remove_rule",
             "list_skills",
             "search_skills",
+            "save_skill",
             "set_page_look",
             "capture",
             "check_reply",
