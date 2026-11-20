@@ -649,7 +649,14 @@ impl PersonalMaster {
     /// edited lines into the shared master and leave its other rules local.
     pub fn promote_tool_edit(&mut self, target: &str, before: &str, edited: &str) -> Result<bool> {
         let original = self.overlays.get(target).map(String::as_str).unwrap_or("");
-        let (shared, overlay) = promote_changes(&self.shared, original, before, edited)?;
+        let (shared, overlay) = promote_changes(
+            target,
+            self.codex_sync_replaced,
+            &self.shared,
+            original,
+            before,
+            edited,
+        )?;
         let moved_from_overlay = overlay != original;
         self.shared = shared;
         if moved_from_overlay {
@@ -794,46 +801,89 @@ pub fn merge_rule_text(base: &str, left: &str, right: &str) -> Result<String> {
 }
 
 fn promote_changes(
+    target: &str,
+    codex_sync_replaced: bool,
     shared: &str,
     overlay: &str,
     before: &str,
     edited: &str,
 ) -> Result<(String, String)> {
+    let base = rulesync_adopt::personal_rule_body(shared, overlay, target, codex_sync_replaced);
+    let header_line_count = rulesync_adopt::personal_rule_body("", "", target, codex_sync_replaced)
+        .split_inclusive('\n')
+        .count();
+    let shared_end = rulesync_adopt::personal_rule_body(shared, "", target, codex_sync_replaced)
+        .split_inclusive('\n')
+        .count();
+    let base_lines: Vec<_> = base.split_inclusive('\n').collect();
+    let before_lines: Vec<_> = before.split_inclusive('\n').collect();
+    let mut before_to_base = vec![None; before_lines.len()];
+    let mut base_at = 0;
+    let mut before_at = 0;
+    for change in line_changes(&base, before)? {
+        let unchanged = change.start - base_at;
+        for offset in 0..unchanged {
+            before_to_base[before_at + offset] = Some(base_at + offset);
+        }
+        base_at = change.start + change.removed.len();
+        before_at += unchanged + change.added.len();
+    }
+    for offset in 0..base_lines.len() - base_at {
+        before_to_base[before_at + offset] = Some(base_at + offset);
+    }
+    ensure!(before_at + base_lines.len() - base_at == before_lines.len());
     let mut shared: Vec<String> = shared.split_inclusive('\n').map(str::to_owned).collect();
     let mut overlay: Vec<String> = overlay.split_inclusive('\n').map(str::to_owned).collect();
-    for change in line_changes(before, edited)? {
+    let mut changes_to_shared = Vec::new();
+    for change in line_changes(before, edited)?.into_iter().rev() {
         if !change.removed.is_empty() {
-            if let Some(at) = unique_anchor(&shared, &change.removed, "shared rules")? {
+            let mapped: Vec<_> = (change.start..change.start + change.removed.len())
+                .map(|before_at| before_to_base.get(before_at).copied().flatten())
+                .collect();
+            let base_at = mapped
+                .first()
+                .copied()
+                .flatten()
+                .context("this change includes text outside the authored rules")?;
+            ensure!(
+                mapped
+                    .iter()
+                    .enumerate()
+                    .all(|(offset, at)| *at == Some(base_at + offset)),
+                "this change does not map to one authored rule section"
+            );
+            let end = base_at + change.removed.len();
+            ensure!(
+                base_at >= header_line_count,
+                "this change targets the managed tool header"
+            );
+            if base_at < shared_end {
+                ensure!(
+                    end <= shared_end,
+                    "this change crosses the shared and tool overlay boundary"
+                );
+                let at = base_at - header_line_count;
+                ensure!(at + change.removed.len() <= shared.len());
                 shared.splice(at..at + change.removed.len(), change.added);
                 continue;
             }
-            let at = unique_anchor(&overlay, &change.removed, "this tool's overlay")?
-                .context("this change has no matching shared or tool overlay rule")?;
+            let at = base_at - shared_end;
+            ensure!(at + change.removed.len() <= overlay.len());
             overlay.drain(at..at + change.removed.len());
         }
         if !change.added.is_empty() {
-            if let Some(last) = shared.last_mut() {
-                if !last.ends_with('\n') {
-                    last.push('\n');
-                }
-            }
-            shared.extend(change.added);
+            changes_to_shared.push(change.added);
         }
     }
+    for addition in changes_to_shared.into_iter().rev() {
+        if let Some(last) = shared.last_mut() {
+            if !last.ends_with('\n') {
+                last.push('\n');
+            }
+        }
+        shared.extend(addition);
+    }
     Ok((shared.concat(), overlay.concat()))
-}
-
-fn unique_anchor(text: &[String], removed: &[String], scope: &str) -> Result<Option<usize>> {
-    let mut matches = text
-        .windows(removed.len())
-        .enumerate()
-        .filter_map(|(at, lines)| (lines == removed).then_some(at));
-    let first = matches.next();
-    ensure!(
-        matches.next().is_none(),
-        "this change matches multiple places in {scope}"
-    );
-    Ok(first)
 }
 
 pub fn write_root_rule(input: &Path, text: &str) -> Result<()> {
@@ -998,13 +1048,159 @@ mod tests {
     }
 
     #[test]
-    fn a_shared_change_requires_an_unambiguous_anchor() {
-        assert!(promote_changes("x\nx\n", "", "x\n", "y\n").is_err());
+    fn promotion_uses_edit_position_to_disambiguate_repeated_rules() {
         assert_eq!(
-            promote_changes("x\ny\n", "", "x\n", "z\n").unwrap(),
+            promote_changes("cursor", false, "x\nx\n", "", "x\nx\n", "y\nx\n").unwrap(),
+            ("y\nx\n".into(), String::new())
+        );
+        assert_eq!(
+            promote_changes("cursor", false, "x\ny\n", "", "x\ny\n", "z\ny\n")
+                .unwrap(),
             ("z\ny\n".into(), String::new())
         );
-        assert!(promote_changes("x\n", "y\ny\n", "y\n", "z\n").is_err());
+        assert_eq!(
+            promote_changes(
+                "cursor",
+                false,
+                "x\n",
+                "y\ny\n",
+                "x\ny\ny\n",
+                "x\nz\ny\n"
+            )
+            .unwrap(),
+            ("x\nz\n".into(), "y\n".into())
+        );
+    }
+
+    #[test]
+    fn all_tools_promotion_targets_the_edited_overlay_occurrence() {
+        let mut master = PersonalMaster {
+            shared: "Repeated rule.\n".into(),
+            overlays: BTreeMap::from([("cursor".into(), "Repeated rule.\n".into())]),
+            codex_sync_replaced: false,
+            skills: Vec::new(),
+            overrides: BTreeMap::new(),
+        };
+        let before = master.base_rule_text("cursor", &[]);
+
+        assert!(
+            master
+                .promote_tool_edit("cursor", &before, "Repeated rule.\nEdited tool rule.\n")
+                .unwrap()
+        );
+        assert_eq!(master.shared, "Repeated rule.\nEdited tool rule.\n");
+        assert_eq!(master.overlays.get("cursor").unwrap(), "");
+    }
+
+    #[test]
+    fn promotion_maps_codex_overlay_edits_past_the_managed_header() {
+        let mut master = PersonalMaster {
+            shared: "Shared rule.\n".into(),
+            overlays: BTreeMap::from([("codexcli".into(), "Codex rule.\n".into())]),
+            codex_sync_replaced: true,
+            skills: Vec::new(),
+            overrides: BTreeMap::new(),
+        };
+        let before = master.base_rule_text("codexcli", &[]);
+        let edited = before.replace("Codex rule.", "Edited Codex rule.");
+
+        assert!(master
+            .promote_tool_edit("codexcli", &before, &edited)
+            .unwrap());
+        assert_eq!(master.shared, "Shared rule.\nEdited Codex rule.\n");
+        assert_eq!(master.overlays.get("codexcli").unwrap(), "");
+    }
+
+    #[test]
+    fn promotion_maps_edits_after_an_accepted_local_insertion() {
+        let mut master = PersonalMaster {
+            shared: "Shared rule.\n".into(),
+            overlays: BTreeMap::from([("cursor".into(), "Cursor rule.\n".into())]),
+            codex_sync_replaced: false,
+            skills: Vec::new(),
+            overrides: BTreeMap::new(),
+        };
+        let base = master.base_rule_text("cursor", &[]);
+        let local = "Shared rule.\nAccepted local insertion.\nCursor rule.\n";
+        master.overrides.insert(
+            "cursor".into(),
+            LocalText {
+                base,
+                edited: local.into(),
+            },
+        );
+        let before = master.rule_text("cursor", &[]).unwrap();
+        let edited = before.replace("Cursor rule.", "Edited Cursor rule.");
+
+        assert!(master
+            .promote_tool_edit("cursor", &before, &edited)
+            .unwrap());
+        assert_eq!(master.shared, "Shared rule.\nEdited Cursor rule.\n");
+        assert_eq!(master.overlays.get("cursor").unwrap(), "");
+    }
+
+    #[test]
+    fn promotion_keeps_multiple_appended_overlay_edits_in_file_order() {
+        let mut master = PersonalMaster {
+            shared: "Shared rule.\n".into(),
+            overlays: BTreeMap::from([(
+                "cursor".into(),
+                "First rule.\nMiddle rule.\nLast rule.\n".into(),
+            )]),
+            codex_sync_replaced: false,
+            skills: Vec::new(),
+            overrides: BTreeMap::new(),
+        };
+        let before = master.base_rule_text("cursor", &[]);
+        let edited = before.replace("First rule.", "Edited first rule.")
+            .replace("Last rule.", "Edited last rule.");
+
+        assert!(master
+            .promote_tool_edit("cursor", &before, &edited)
+            .unwrap());
+        assert_eq!(
+            master.shared,
+            "Shared rule.\nEdited first rule.\nEdited last rule.\n"
+        );
+        assert_eq!(master.overlays.get("cursor").unwrap(), "Middle rule.\n");
+    }
+
+    #[test]
+    fn promotion_refuses_edits_inside_unmanaged_text_but_keeps_new_additions() {
+        assert!(promote_changes(
+            "cursor",
+            false,
+            "Shared rule.\n",
+            "",
+            "Shared rule.\nGenerated or local text.\n",
+            "Shared rule.\nEdited generated or local text.\n",
+        )
+        .is_err());
+
+        assert_eq!(
+            promote_changes(
+                "cursor",
+                false,
+                "Shared rule.\n",
+                "",
+                "Shared rule.\n## How I work\n- generated rule\n",
+                "Shared rule.\n## How I work\n- generated rule\nNew rule\n",
+            )
+            .unwrap(),
+            ("Shared rule.\nNew rule\n".into(), String::new())
+        );
+        assert_eq!(
+            promote_changes(
+                "cursor",
+                false,
+                "",
+                "",
+                "## How I work\n- generated rule\n",
+                "## How I work\n- generated rule\nNew rule\n",
+            )
+            .unwrap(),
+            ("New rule\n".into(), String::new())
+        );
     }
 
     #[test]

@@ -3635,6 +3635,45 @@ mod tests {
     }
 
     #[test]
+    fn rulesync_shares_the_edited_occurrence_of_a_repeated_rule() {
+        let f = Fixture::new();
+        let cursor = ".cursor/AGENTS.md";
+        fs::create_dir(f.setup.home.join(".cursor")).unwrap();
+        f.write(cursor, &format!("{SHARED}One rule.\nKeep this local.\n"));
+        f.adopt_from_plan();
+        f.write(
+            cursor,
+            &format!("{SHARED}Edited overlay rule.\nKeep this local.\n"),
+        );
+        let pending = f.sync_with("");
+        let [card] = pending.proposals.as_slice() else {
+            panic!("expected one Cursor review card, got {pending:?}");
+        };
+        let result = f
+            .setup
+            .review_using(
+                &PullbackDecision {
+                    id: card.id.clone(),
+                    action: PullbackAction::AllTools,
+                    file: None,
+                },
+                |root, manifest| f.sync_review(root, manifest),
+            )
+            .unwrap();
+        assert!(result.blocked.is_empty(), "{result:?}");
+        for path in [cursor, CLAUDE, CODEX] {
+            let text = f.text(path);
+            assert_eq!(text.matches("One rule.").count(), 1, "{path}: {text}");
+            assert_eq!(
+                text.matches("Edited overlay rule.").count(),
+                1,
+                "{path}: {text}"
+            );
+            assert_eq!(text.contains("Keep this local."), path == cursor);
+        }
+    }
+
+    #[test]
     fn rulesync_more_tools_share_an_edited_overlay_rule() {
         let f = Fixture::new();
         let edited = ".config/opencode/AGENTS.md";
