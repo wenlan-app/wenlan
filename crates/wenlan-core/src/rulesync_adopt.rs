@@ -101,7 +101,13 @@ pub struct AdoptionFile {
 /// Resolved content and permissions approved for a link to be detached.
 /// The tool file applier separately records the raw link for exact restore.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct AdoptionLink(ResolvedLink);
+pub struct AdoptionLink {
+    resolved: ResolvedLink,
+    // The equivalent target spelling may change between preview and apply.
+    // Only the resolved bytes and modes are part of the approval.
+    #[serde(skip)]
+    symlink_hops: usize,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 enum ResolvedLink {
@@ -129,12 +135,19 @@ impl ResolvedFile {
 }
 
 impl AdoptionLink {
-    fn rule(bytes: &[u8], mode: u32) -> Self {
-        Self(ResolvedLink::Rule(ResolvedFile::new(bytes, mode)))
+    fn rule(bytes: &[u8], mode: u32, symlink_hops: usize) -> Self {
+        Self {
+            resolved: ResolvedLink::Rule(ResolvedFile::new(bytes, mode)),
+            symlink_hops,
+        }
+    }
+
+    pub fn symlink_hops(&self) -> usize {
+        self.symlink_hops
     }
 
     pub fn file_mode(&self, relative: &Path) -> Option<u32> {
-        match &self.0 {
+        match &self.resolved {
             ResolvedLink::Rule(file) => relative.as_os_str().is_empty().then_some(file.mode),
             ResolvedLink::Skill { files, .. } => files.get(relative).map(|file| file.mode),
         }
@@ -142,7 +155,7 @@ impl AdoptionLink {
 
     pub fn matches(&self, home: &Path, path: &Path) -> Result<bool> {
         let home = Home::open(home)?;
-        let current = match &self.0 {
+        let current = match &self.resolved {
             ResolvedLink::Rule(_) => {
                 let mut sources = BTreeSet::new();
                 let Some(file) =
@@ -150,7 +163,7 @@ impl AdoptionLink {
                 else {
                     return Ok(false);
                 };
-                Self::rule(file.text.as_bytes(), file.mode)
+                Self::rule(file.text.as_bytes(), file.mode, file.node.symlink_hops)
             }
             ResolvedLink::Skill { .. } => {
                 let Some(node) = home
@@ -162,7 +175,7 @@ impl AdoptionLink {
                 SkillTree::read(&home, &node, "")?.link(&node)
             }
         };
-        Ok(current == *self)
+        Ok(current.resolved == self.resolved)
     }
 }
 
@@ -235,7 +248,7 @@ struct Node {
     path: PathBuf,
     metadata: Metadata,
     link: Option<PathBuf>,
-    through_link: bool,
+    symlink_hops: usize,
 }
 
 impl Home {
@@ -321,7 +334,7 @@ impl Home {
                         path: candidate,
                         metadata,
                         link,
-                        through_link: link_count != 0,
+                        symlink_hops: link_count,
                     }));
                 }
                 ensure!(metadata.is_dir(), "{} is not a folder", candidate.display());
@@ -338,7 +351,7 @@ impl Home {
             path: resolved,
             metadata,
             link,
-            through_link: link_count != 0,
+            symlink_hops: link_count,
         }))
     }
 
@@ -580,7 +593,7 @@ fn discover_rules(
         if let Some(parent) = path.parent().filter(|path| !path.as_os_str().is_empty()) {
             if let Some(node) = home.resolve(parent)? {
                 ensure!(
-                    !node.through_link,
+                    node.symlink_hops == 0,
                     "{} has a symlinked parent",
                     path.display()
                 );
@@ -636,7 +649,10 @@ fn discover_rules(
             current.map_or(AdoptionEntry::Missing, |file| match file.node.link {
                 Some(target) => {
                     let bytes = file.text.into_bytes();
-                    links.insert(path.clone(), AdoptionLink::rule(&bytes, file.mode));
+                    links.insert(
+                        path.clone(),
+                        AdoptionLink::rule(&bytes, file.mode, file.node.symlink_hops),
+                    );
                     AdoptionEntry::Symlink {
                         target,
                         bytes: Some(bytes),
@@ -958,7 +974,7 @@ impl<'a> SkillDiscovery<'a> {
 
     fn scan(&mut self, path: &Path, tool: Option<&str>) -> Result<()> {
         let node = match self.home.resolve(path) {
-            Ok(Some(node)) if !node.through_link => node,
+            Ok(Some(node)) if node.symlink_hops == 0 => node,
             Ok(None) => return Ok(()),
             Ok(Some(_)) => {
                 self.skipped.insert(
@@ -1142,21 +1158,24 @@ impl SkillTree {
     }
 
     fn link(&self, node: &Node) -> AdoptionLink {
-        AdoptionLink(ResolvedLink::Skill {
-            mode: permission_mode(&node.metadata),
-            directories: self.dirs.clone(),
-            files: self
-                .skill
-                .files
-                .iter()
-                .map(|(path, bytes)| {
-                    (
-                        path.clone(),
-                        ResolvedFile::new(bytes, self.file_modes[path]),
-                    )
-                })
-                .collect(),
-        })
+        AdoptionLink {
+            resolved: ResolvedLink::Skill {
+                mode: permission_mode(&node.metadata),
+                directories: self.dirs.clone(),
+                files: self
+                    .skill
+                    .files
+                    .iter()
+                    .map(|(path, bytes)| {
+                        (
+                            path.clone(),
+                            ResolvedFile::new(bytes, self.file_modes[path]),
+                        )
+                    })
+                    .collect(),
+            },
+            symlink_hops: node.symlink_hops,
+        }
     }
 
     fn visit(
@@ -1191,7 +1210,7 @@ impl SkillTree {
             let entry = home.resolve(&source)?.with_context(|| {
                 format!("{} disappeared during skill discovery", source.display())
             })?;
-            self.nested_link |= entry.through_link;
+            self.nested_link |= entry.symlink_hops != 0;
             ensure!(
                 entry.path.starts_with(root),
                 "{} points outside its skill folder",

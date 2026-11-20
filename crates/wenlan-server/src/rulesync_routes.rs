@@ -15,9 +15,9 @@ use serde::{Deserialize, Serialize};
 use wenlan_core::rulesync_adopt::{AdoptedSkill, Adoption, AdoptionEntry};
 use wenlan_core::rulesync_personal::{
     check_delivery_paths, describe_change, discover_adoption, fingerprint, is_harness_path,
-    line_changes, merge_rule_text, personal_target, promote_changes, stage_adopted_skill,
-    system_home, verify_adoption_token, write_root_rule, DeliveryWorktrees, GlobalOutput,
-    LineChange, LocalText, PersonalMaster, PERSONAL_TARGETS,
+    line_changes, merge_rule_text, personal_target, stage_adopted_skill, system_home,
+    verify_adoption_token, write_root_rule, DeliveryWorktrees, GlobalOutput, LineChange, LocalText,
+    PersonalMaster, PERSONAL_TARGETS,
 };
 use wenlan_core::rulesync_renderer;
 use wenlan_core::rulesync_team::{self, TeamRuleLayer};
@@ -689,8 +689,8 @@ impl Setup {
             }
             check_rendered_adoption_skills(target.id, &adoption, &skills, &mut output)?;
         }
-        verify_adoption_token(&discover_adoption(&self.home)?, token)
-            .context("the source changed during rendering")?;
+        let adoption = discover_adoption(&self.home)?;
+        verify_adoption_token(&adoption, token).context("the source changed during rendering")?;
         self.apply_adoption(&root, adoption, master)
     }
 
@@ -762,6 +762,11 @@ impl Setup {
                 allow_link: true,
             });
         }
+        // Detach aliases before an operation changes their approved referents.
+        // In a chain the most distant link must go first.
+        operations.sort_by_key(|op| {
+            std::cmp::Reverse(links.get(&op.path).map_or(0, |link| link.symlink_hops()))
+        });
         let mut manifest = match self.unrecorded_adoption()? {
             Some(mut manifest) => {
                 self.recover(root, &mut manifest)?;
@@ -1899,8 +1904,34 @@ impl Setup {
                     root.read(&scope.path, false)? == *expected,
                     "the tool edited this file again. Run rules sync"
                 );
-                manifest.master.shared =
-                    promote_changes(&manifest.master.shared, &scope.before, &scope.after)?;
+                let Kind::Rule {
+                    target,
+                    base,
+                    source,
+                } = &delivery.kind
+                else {
+                    bail!("the proposal no longer belongs to a managed rule");
+                };
+                if manifest
+                    .master
+                    .promote_tool_edit(target, &scope.before, &scope.after)?
+                {
+                    // Pull-back already kept this edit locally. Remove that
+                    // copy from the override now that the shared master has it.
+                    let local = current_rule_source(&manifest.master, target, base, source)?;
+                    let previous = merge_rule_text(&scope.after, &scope.before, &local)?;
+                    if previous == *base {
+                        manifest.master.overrides.remove(target);
+                    } else {
+                        manifest.master.overrides.insert(
+                            target.clone(),
+                            LocalText {
+                                base: base.clone(),
+                                edited: previous,
+                            },
+                        );
+                    }
+                }
                 delivery.observed = Some(expected.clone());
                 delivery.reviewed = true;
             }
@@ -1951,12 +1982,14 @@ impl Setup {
                 }
                 PullbackAction::AllTools if selected => {
                     let delivery = &manifest.delivered[&draft.path];
+                    let Kind::Rule { target, .. } = &delivery.kind else {
+                        bail!("the proposal no longer belongs to a managed rule");
+                    };
                     let before = rulesync_layers::only_personal(text(
                         delivery.observed.as_ref().unwrap_or(&delivery.delivered),
                     )?)?;
                     let after = rulesync_layers::only_personal(text(&draft.current)?)?;
-                    manifest.master.shared =
-                        promote_changes(&manifest.master.shared, &before, &after)?;
+                    manifest.master.promote_tool_edit(target, &before, &after)?;
                 }
                 PullbackAction::AllTools | PullbackAction::Dismiss => {}
             }
@@ -2528,10 +2561,7 @@ fn accept_tool_edit(manifest: &mut Manifest, draft: &Draft) -> Result<()> {
         bail!("a skill proposal must be resolved in the skill's source");
     };
     let baseline = delivery.observed.as_ref().unwrap_or(&delivery.delivered);
-    let previous = match manifest.master.overrides.get(target) {
-        Some(local) => merge_rule_text(&local.base, &local.edited, base)?,
-        None => source.clone(),
-    };
+    let previous = current_rule_source(&manifest.master, target, base, source)?;
     let before = rulesync_layers::only_personal(text(baseline)?)?;
     let after = rulesync_layers::only_personal(text(&draft.current)?)?;
     let edited = merge_rule_text(&before, &after, &previous)?;
@@ -2544,6 +2574,18 @@ fn accept_tool_edit(manifest: &mut Manifest, draft: &Draft) -> Result<()> {
     );
     delivery.observed = Some(draft.current.clone());
     Ok(())
+}
+
+fn current_rule_source(
+    master: &PersonalMaster,
+    target: &str,
+    base: &str,
+    source: &str,
+) -> Result<String> {
+    match master.overrides.get(target) {
+        Some(local) => merge_rule_text(&local.base, &local.edited, base),
+        None => Ok(source.to_owned()),
+    }
 }
 
 pub(crate) fn report(message: &str) -> RulesSyncReport {
@@ -2615,7 +2657,7 @@ mod tests {
                     &mut manifest,
                     &[],
                     |target, text| {
-                        let path = if target == "codexcli" { CODEX } else { CLAUDE };
+                        let path = personal_target(target).unwrap().rules.destination;
                         Ok(BTreeMap::from([(
                             PathBuf::from(path),
                             format!("{pin_banner}{text}").into_bytes(),
@@ -2632,7 +2674,7 @@ mod tests {
                 manifest,
                 &[],
                 |target, text| {
-                    let path = if target == "codexcli" { CODEX } else { CLAUDE };
+                    let path = personal_target(target).unwrap().rules.destination;
                     Ok(BTreeMap::from([(path.into(), text.as_bytes().to_vec())]))
                 },
                 |target, skills| self.setup.render_adopted_skills(target, skills),
@@ -2865,6 +2907,88 @@ mod tests {
     fn rulesync_more_personal_targets_round_trip_with_pinned_binary() {
         let binary = PathBuf::from(std::env::var_os("WENLAN_TEST_RULESYNC_BINARY").unwrap());
         personal_targets_round_trip(Some(&binary));
+    }
+
+    #[test]
+    fn rulesync_more_tools_share_an_edited_overlay_rule() {
+        let f = Fixture::new();
+        let edited = ".config/opencode/AGENTS.md";
+        let uninstalled = ".config/muse";
+        fs::create_dir_all(f.setup.home.join(edited).parent().unwrap()).unwrap();
+        f.write(edited, "OpenCode only.\nKeep this local.\n");
+        f.adopt_from_plan();
+        f.write(
+            edited,
+            &f.text(edited).replace("OpenCode only.", "Now shared."),
+        );
+        let pending = f.sync_with("");
+        assert_eq!(pending.proposals.len(), 1, "{pending:?}");
+        assert!(pending.proposals[0].reason.contains("Kept for this tool"));
+        assert!(!f.text(CODEX).contains("Now shared."));
+
+        let result = f
+            .setup
+            .review_using(
+                &PullbackDecision {
+                    id: pending.proposals[0].id.clone(),
+                    action: PullbackAction::AllTools,
+                    file: None,
+                },
+                |root, manifest| f.sync_review(root, manifest),
+            )
+            .unwrap();
+        assert!(
+            result.blocked.is_empty() && result.proposals.is_empty(),
+            "{result:?}"
+        );
+        for path in [CLAUDE, CODEX, edited] {
+            assert_eq!(f.text(path).matches("Now shared.").count(), 1, "{path}");
+            assert!(!f.text(path).contains("OpenCode only."), "{path}");
+            assert_eq!(f.text(path).contains("Keep this local."), path == edited);
+        }
+        assert!(!f.setup.home.join(uninstalled).exists());
+        assert!(f.setup.restore().unwrap().blocked.is_empty());
+        assert_eq!(f.text(edited), "OpenCode only.\nKeep this local.\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rulesync_more_tools_restore_a_link_to_another_adopted_rule() {
+        let f = Fixture::new();
+        let gemini = ".gemini/GEMINI.md";
+        let antigravity = ".gemini/config/GEMINI.md";
+        let original = "Local rule.\n";
+        let link = "../GEMINI.md";
+        let path = f.setup.home.join(antigravity);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        f.write(gemini, original);
+        std::os::unix::fs::symlink(link, &path).unwrap();
+        let plan = wenlan_core::rulesync_personal::plan_adoption(&f.setup.home).unwrap();
+        let adopted = f
+            .setup
+            .adopt_using(&plan.token, |target, source, _| {
+                let spec = personal_target(target).unwrap().rules;
+                personal_rule_destination(
+                    spec,
+                    BTreeMap::from([(spec.staged.into(), source.unwrap().as_bytes().to_vec())]),
+                )
+            })
+            .unwrap();
+        for path in [gemini, antigravity] {
+            assert_eq!(
+                adopted
+                    .written
+                    .iter()
+                    .filter(|value| value.as_str() == path)
+                    .count(),
+                1
+            );
+            assert_eq!(f.text(path), format!("{SHARED}{original}"));
+        }
+        assert!(!fs::symlink_metadata(&path).unwrap().is_symlink());
+        assert!(f.setup.restore().unwrap().blocked.is_empty());
+        assert_eq!(f.text(gemini), original);
+        assert_eq!(fs::read_link(path).unwrap(), Path::new(link));
     }
 
     #[test]
@@ -4087,21 +4211,38 @@ mod tests {
     #[test]
     fn run9_restore_removes_created_ancestors_after_a_crash_during_exchange() {
         let f = Fixture::new();
-        fs::remove_file(f.setup.home.join(CLAUDE)).unwrap();
-        fs::remove_dir(f.setup.home.join(".claude")).unwrap();
+        let home = &f.setup.home;
+        let folder = home.join(".claude/skills/example");
+        let source = home.join(".agents/skills/example");
+        let link = "../../.agents/skills/example";
+        fs::create_dir_all(source.join("nested")).unwrap();
+        fs::create_dir_all(folder.parent().unwrap()).unwrap();
+        fs::write(
+            source.join("SKILL.md"),
+            "---\nname: example\ndescription: Fixture\n---\n",
+        )
+        .unwrap();
+        fs::write(source.join("nested/asset.txt"), b"original asset").unwrap();
+        std::os::unix::fs::symlink(link, &folder).unwrap();
         let codex_before = f.text(CODEX);
-        // Force a nontrivial replacement after Claude's absent root was created.
+        // Force an exchange after the tool skill link has become directories
+        // and files owned by the applier.
         f.write(CODEX, &format!("<!-- Generated by ~/.agents/scripts/sync-codex-agents.sh. Rerun. -->\n{codex_before}"));
         let codex_before = f.text(CODEX);
         run9_crash_during_file_apply(&f, "displaced:AGENTS.md");
-        assert!(f.setup.home.join(CLAUDE).is_file());
+        assert!(!fs::symlink_metadata(&folder).unwrap().is_symlink());
+        assert_eq!(
+            fs::read(folder.join("nested/asset.txt")).unwrap(),
+            b"original asset"
+        );
         assert_ne!(f.text(CODEX), codex_before);
         let receipt = f.setup.restore().unwrap();
         assert!(receipt.blocked.is_empty(), "{receipt:?}");
         assert_eq!(f.text(CODEX), codex_before);
-        assert!(
-            !f.setup.home.join(".claude").exists(),
-            "restore left a directory that was absent before adoption"
+        assert_eq!(fs::read_link(folder).unwrap(), Path::new(link));
+        assert_eq!(
+            fs::read(source.join("nested/asset.txt")).unwrap(),
+            b"original asset"
         );
         assert_eq!(
             fs::read_dir(f.setup.home.join(".codex")).unwrap().count(),

@@ -557,6 +557,19 @@ impl PersonalMaster {
             None => Ok(base),
         }
     }
+
+    /// Promote a shared edit in place. For a tool overlay, move just the
+    /// edited lines into the shared master and leave its other rules local.
+    pub fn promote_tool_edit(&mut self, target: &str, before: &str, edited: &str) -> Result<bool> {
+        let original = self.overlays.get(target).map(String::as_str).unwrap_or("");
+        let (shared, overlay) = promote_changes(&self.shared, original, before, edited)?;
+        let moved_from_overlay = overlay != original;
+        self.shared = shared;
+        if moved_from_overlay {
+            self.overlays.insert(target.to_owned(), overlay);
+        }
+        Ok(moved_from_overlay)
+    }
 }
 
 pub fn join_text(first: &str, second: &str) -> String {
@@ -693,34 +706,47 @@ pub fn merge_rule_text(base: &str, left: &str, right: &str) -> Result<String> {
     Ok(result)
 }
 
-/// Accept a tool's edit into the shared rules only while its original lines
-/// identify exactly one place there. Appended material is put at the end.
-pub fn promote_changes(shared: &str, before: &str, edited: &str) -> Result<String> {
+fn promote_changes(
+    shared: &str,
+    overlay: &str,
+    before: &str,
+    edited: &str,
+) -> Result<(String, String)> {
     let mut shared: Vec<String> = shared.split_inclusive('\n').map(str::to_owned).collect();
+    let mut overlay: Vec<String> = overlay.split_inclusive('\n').map(str::to_owned).collect();
     for change in line_changes(before, edited)? {
-        if change.removed.is_empty() {
+        if !change.removed.is_empty() {
+            if let Some(at) = unique_anchor(&shared, &change.removed, "shared rules")? {
+                shared.splice(at..at + change.removed.len(), change.added);
+                continue;
+            }
+            let at = unique_anchor(&overlay, &change.removed, "this tool's overlay")?
+                .context("this change has no matching shared or tool overlay rule")?;
+            overlay.drain(at..at + change.removed.len());
+        }
+        if !change.added.is_empty() {
             if let Some(last) = shared.last_mut() {
                 if !last.ends_with('\n') {
                     last.push('\n');
                 }
             }
             shared.extend(change.added);
-            continue;
         }
-        let mut matches = shared
-            .windows(change.removed.len())
-            .enumerate()
-            .filter_map(|(at, lines)| (lines == change.removed).then_some(at));
-        let at = matches
-            .next()
-            .context("this change has no matching shared rule")?;
-        ensure!(
-            matches.next().is_none(),
-            "this change matches multiple shared rules"
-        );
-        shared.splice(at..at + change.removed.len(), change.added);
     }
-    Ok(shared.concat())
+    Ok((shared.concat(), overlay.concat()))
+}
+
+fn unique_anchor(text: &[String], removed: &[String], scope: &str) -> Result<Option<usize>> {
+    let mut matches = text
+        .windows(removed.len())
+        .enumerate()
+        .filter_map(|(at, lines)| (lines == removed).then_some(at));
+    let first = matches.next();
+    ensure!(
+        matches.next().is_none(),
+        "this change matches multiple places in {scope}"
+    );
+    Ok(first)
 }
 
 pub fn write_root_rule(input: &Path, text: &str) -> Result<()> {
@@ -886,8 +912,12 @@ mod tests {
 
     #[test]
     fn a_shared_change_requires_an_unambiguous_anchor() {
-        assert!(promote_changes("x\nx\n", "x\n", "y\n").is_err());
-        assert_eq!(promote_changes("x\ny\n", "x\n", "z\n").unwrap(), "z\ny\n");
+        assert!(promote_changes("x\nx\n", "", "x\n", "y\n").is_err());
+        assert_eq!(
+            promote_changes("x\ny\n", "", "x\n", "z\n").unwrap(),
+            ("z\ny\n".into(), String::new())
+        );
+        assert!(promote_changes("x\n", "y\ny\n", "y\n", "z\n").is_err());
     }
 
     #[test]
