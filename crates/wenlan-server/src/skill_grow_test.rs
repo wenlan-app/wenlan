@@ -2199,6 +2199,8 @@ async fn ux_skill_10_many_saves_in_a_row_do_not_queue_a_sync_each() {
             .and_then(|runs| runs.get(&library).copied())
             .unwrap_or(0)
     };
+    // A scratch database can reuse an address counted by an earlier test.
+    let previous_runs = runs();
     {
         // While one sync is held up, twenty more saves ask for one each.
         let held = SKILLS_MUTATION_LOCK.lock().await;
@@ -2216,7 +2218,7 @@ async fn ux_skill_10_many_saves_in_a_row_do_not_queue_a_sync_each() {
         tokio::time::sleep(std::time::Duration::from_millis(25)).await;
     }
     assert!(!running(), "the background sync never finished");
-    let runs = runs();
+    let runs = runs() - previous_runs;
     assert!((1..=2).contains(&runs), "{runs} syncs for twenty requests");
     assert!(std::fs::read_to_string(&general)
         .unwrap()
