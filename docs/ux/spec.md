@@ -911,6 +911,7 @@ and wait for evidence that people need them.
   Wenlan delivers that skill folder byte-for-byte and says why. Unsafe paths and links
   stay in place with a reason in the plan. Adoption stages the files again
   and checks their bytes against the approved plan before writing.
+  On Windows, the plan lists linked rule files and skill folders as unmanaged.
   The preview names any Git worktree that contains a delivery destination.
   The preview says `~/.agents` is left untouched. Wenlan reads its shared
   sources and replaces adopted links at the tool paths. Personal Codex

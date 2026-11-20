@@ -63,6 +63,8 @@ pub struct Adoption {
     pub skill_byte_copies: BTreeMap<PathBuf, String>,
     /// Existing skill locations that will stay in place outside delivery.
     pub skipped: BTreeMap<PathBuf, String>,
+    /// Linked rule files that stay in place outside delivery.
+    pub skipped_rules: BTreeMap<PathBuf, String>,
     pub skipped_tools: Vec<String>,
     pub added_tools: Vec<String>,
     pub worktree_writes: BTreeMap<PathBuf, PathBuf>,
@@ -184,6 +186,14 @@ impl AdoptionLink {
 /// Discover rules, source references, and current skill subsets without writing
 /// to the home, data root, or a renderer's staging folder.
 pub fn discover(home: &Path, targets: &[AdoptionTarget]) -> Result<Adoption> {
+    discover_with_platform(home, targets, cfg!(windows))
+}
+
+fn discover_with_platform(
+    home: &Path,
+    targets: &[AdoptionTarget],
+    is_windows: bool,
+) -> Result<Adoption> {
     for target in targets {
         for path in [&target.rules_path, &target.skills_path]
             .into_iter()
@@ -201,9 +211,15 @@ pub fn discover(home: &Path, targets: &[AdoptionTarget]) -> Result<Adoption> {
     let shared_file = load_text(&home, Path::new(SHARED_RULES), &mut sources)?;
     let shared = shared_file.as_ref().map_or("", |file| file.text.as_str());
     let shared_path = shared_file.as_ref().map(|file| file.node.path.as_path());
-    let (overlays, mut files, mut links, codex_sync_replaced) =
-        discover_rules(&home, targets, shared, shared_path, &mut sources)?;
-    let mut skills = SkillDiscovery::new(&home, &mut sources, &mut files, &mut links);
+    let (overlays, mut files, mut links, codex_sync_replaced, skipped_rules) = discover_rules(
+        &home,
+        targets,
+        shared,
+        shared_path,
+        &mut sources,
+        is_windows,
+    )?;
+    let mut skills = SkillDiscovery::new(&home, &mut sources, &mut files, &mut links, is_windows);
     skills.scan(Path::new(SHARED_SKILLS), None)?;
     for target in targets {
         if let Some(dir) = target
@@ -227,6 +243,7 @@ pub fn discover(home: &Path, targets: &[AdoptionTarget]) -> Result<Adoption> {
         skill_locations,
         skill_byte_copies: BTreeMap::new(),
         skipped,
+        skipped_rules,
         skipped_tools: Vec::new(),
         added_tools: Vec::new(),
         worktree_writes: BTreeMap::new(),
@@ -577,6 +594,7 @@ type RuleDiscovery = (
     BTreeMap<PathBuf, AdoptionFile>,
     BTreeMap<PathBuf, AdoptionLink>,
     bool,
+    BTreeMap<PathBuf, String>,
 );
 
 fn discover_rules(
@@ -585,10 +603,12 @@ fn discover_rules(
     shared: &str,
     shared_path: Option<&Path>,
     sources: &mut BTreeSet<PathBuf>,
+    is_windows: bool,
 ) -> Result<RuleDiscovery> {
     let mut overlays = BTreeMap::new();
     let mut previous = BTreeMap::new();
     let mut links = BTreeMap::new();
+    let mut skipped_rules = BTreeMap::new();
     let mut codex_sync_replaced = false;
     for target in targets {
         let Some(path) = &target.rules_path else {
@@ -602,6 +622,17 @@ fn discover_rules(
                     path.display()
                 );
             }
+        }
+        if !symlink_replacement_supported(is_windows)
+            && home
+                .resolve(path)?
+                .is_some_and(|node| node.link.is_some() && node.metadata.is_file())
+        {
+            skipped_rules.insert(
+                path.clone(),
+                "Windows cannot replace a linked rule file; this rule stays in place".into(),
+            );
+            continue;
         }
         let current = load_text(home, path, sources)?;
         let bootstrap = match target.tool.as_str() {
@@ -678,7 +709,11 @@ fn discover_rules(
             },
         )?;
     }
-    Ok((overlays, files, links, codex_sync_replaced))
+    Ok((overlays, files, links, codex_sync_replaced, skipped_rules))
+}
+
+fn symlink_replacement_supported(is_windows: bool) -> bool {
+    !is_windows
 }
 
 pub(super) fn personal_rule_body(
@@ -953,6 +988,7 @@ struct SkillDiscovery<'a> {
     sources: &'a mut BTreeSet<PathBuf>,
     files: &'a mut BTreeMap<PathBuf, AdoptionFile>,
     links: &'a mut BTreeMap<PathBuf, AdoptionLink>,
+    is_windows: bool,
     skills: BTreeMap<(String, PathBuf), SkillTree>,
     locations: BTreeMap<PathBuf, Option<SkillUpstream>>,
     skipped: BTreeMap<PathBuf, String>,
@@ -964,12 +1000,14 @@ impl<'a> SkillDiscovery<'a> {
         sources: &'a mut BTreeSet<PathBuf>,
         files: &'a mut BTreeMap<PathBuf, AdoptionFile>,
         links: &'a mut BTreeMap<PathBuf, AdoptionLink>,
+        is_windows: bool,
     ) -> Self {
         Self {
             home,
             sources,
             files,
             links,
+            is_windows,
             skills: BTreeMap::new(),
             locations: BTreeMap::new(),
             skipped: BTreeMap::new(),
@@ -1019,6 +1057,14 @@ impl<'a> SkillDiscovery<'a> {
         let Some(node) = self.home.resolve(path)? else {
             return Ok(());
         };
+        if !symlink_replacement_supported(self.is_windows) && tool.is_some() && node.link.is_some()
+        {
+            self.skipped.insert(
+                path.to_owned(),
+                "Windows cannot replace a linked skill directory; this skill stays in place".into(),
+            );
+            return Ok(());
+        }
         if !node.metadata.is_dir() || self.home.resolve(&node.path.join("SKILL.md"))?.is_none() {
             return Ok(());
         }
@@ -1262,6 +1308,49 @@ mod tests {
             rules_path: rules.map(PathBuf::from),
             skills_path: skills.map(PathBuf::from),
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn windows_leaves_linked_rule_and_skill_replacements_unmanaged() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path();
+        put(home, "source/rules.md", "Tool rule\n");
+        put(home, "source/skill/SKILL.md", "Skill content\n");
+        link(home, ".claude/AGENTS.md", home.join("source/rules.md"));
+        link(home, ".claude/skills/linked", home.join("source/skill"));
+
+        let adoption = discover_with_platform(
+            home,
+            &[target(
+                "claudecode",
+                Some(".claude/AGENTS.md"),
+                Some(".claude/skills"),
+            )],
+            true,
+        )
+        .unwrap();
+
+        assert!(adoption
+            .skipped_rules
+            .contains_key(Path::new(".claude/AGENTS.md")));
+        assert!(adoption
+            .skipped
+            .contains_key(Path::new(".claude/skills/linked")));
+        assert!(!adoption.files.contains_key(Path::new(".claude/AGENTS.md")));
+        assert!(!adoption
+            .files
+            .contains_key(Path::new(".claude/skills/linked")));
+        assert!(!adoption.links.contains_key(Path::new(".claude/AGENTS.md")));
+        assert!(!adoption
+            .links
+            .contains_key(Path::new(".claude/skills/linked")));
+    }
+
+    #[test]
+    fn symlink_replacement_policy_is_platform_independent() {
+        assert!(!symlink_replacement_supported(true));
+        assert!(symlink_replacement_supported(false));
     }
 
     #[cfg(unix)]

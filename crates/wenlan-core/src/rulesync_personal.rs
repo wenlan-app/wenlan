@@ -323,13 +323,13 @@ fn discover_targets(
         adoption.shared.clone_from(&master.shared);
         for target in installed {
             let path = Path::new(target.rules.destination);
-            let after = rulesync_adopt::personal_rule_body(
-                &adoption.shared,
-                &adoption.overlays[target.id],
-                target.id,
-                adoption.codex_sync_replaced,
-            );
             if let Some(file) = adoption.files.get_mut(path) {
+                let after = rulesync_adopt::personal_rule_body(
+                    &adoption.shared,
+                    &adoption.overlays[target.id],
+                    target.id,
+                    adoption.codex_sync_replaced,
+                );
                 file.after = AdoptionEntry::File(after.into_bytes());
             }
         }
@@ -431,6 +431,7 @@ fn adoption_digests(adoption: &Adoption) -> Result<[String; ADOPTION_FIELDS.len(
         fingerprint(&(&adoption.skill_locations, &adoption.skill_byte_copies))?,
         fingerprint(&(
             &adoption.skipped,
+            &adoption.skipped_rules,
             &adoption.skipped_tools,
             &adoption.added_tools,
         ))?,
@@ -537,7 +538,7 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
             diff,
         });
     }
-    for (path, reason) in &adoption.skipped {
+    for (path, reason) in adoption.skipped.iter().chain(&adoption.skipped_rules) {
         files.push(AdoptionChange {
             path: plan_path(path),
             added: 0,
