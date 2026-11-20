@@ -28,17 +28,25 @@ use crate::route_registry::{get, post, TrackedRouter};
 use crate::state::{ServerState, SharedState};
 use axum::{
     extract::{Path, State},
+    http::HeaderMap,
     response::Json,
 };
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use wenlan_core::db::MemoryDB;
 use wenlan_core::repo_wiki;
+use wenlan_core::{rulesync_team, shared_space};
 use wenlan_types::repo_wiki::{
-    BindRepoWikiRequest, RepoDocFixState, RepoDocsReply, RepoDocsRequest, RepoWikiAgent,
-    RepoWikiBinding, RepoWikiGithubRequest, RepoWikiGithubStatus, RepoWikiPublishResult,
-    RepoWikiSuggestion,
+    BindRepoWikiRequest, ProjectRuleProposal, RepoDocFixState, RepoDocsReply, RepoDocsRequest,
+    RepoWikiAgent, RepoWikiBinding, RepoWikiGithubRequest, RepoWikiGithubStatus,
+    RepoWikiPublishResult, RepoWikiSuggestion,
 };
+use wenlan_types::rulesync::{ProjectTeamRulesRequest, SharedRulesProposalRequest};
+use wenlan_types::team::{TeamRulesDecisionRequest, TeamRulesProposal};
+
+static PROJECT_RULES_TRANSACTION: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<SharedState> {
     router
@@ -53,9 +61,420 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
         .route("/api/spaces/{name}/wiki/run", post(handle_run_now))
         .route("/api/spaces/{name}/wiki/docs", post(handle_docs))
         .route(
+            "/api/spaces/{name}/wiki/rules/proposals",
+            post(handle_rule_proposals),
+        )
+        .route(
+            "/api/spaces/{name}/wiki/rules/proposals/{id}/accept",
+            post(handle_accept_rule_proposal),
+        )
+        .route(
+            "/api/spaces/{name}/wiki/rules/proposals/{id}/dismiss",
+            post(handle_dismiss_rule_proposal),
+        )
+        .route(
+            "/api/spaces/{name}/wiki/rules/team",
+            post(handle_project_team_rules),
+        )
+        .route(
+            "/api/spaces/{name}/wiki/shared-rules/proposals",
+            post(handle_shared_rule_proposals),
+        )
+        .route(
+            "/api/spaces/{name}/wiki/shared-rules/propose",
+            post(handle_propose_shared_rules),
+        )
+        .route(
+            "/api/spaces/{name}/wiki/shared-rules/proposals/{id}/decision",
+            post(handle_shared_rule_decision),
+        )
+        .route(
             "/api/spaces/{name}/wiki/github",
             get(handle_github_status).post(handle_github_setup),
         )
+}
+
+async fn project_rule_space(
+    db: &MemoryDB,
+    space: &str,
+) -> Result<wenlan_types::Space, ServerError> {
+    db.get_space(space)
+        .await?
+        .ok_or_else(|| ServerError::NotFound("Space not found".into()))
+}
+
+fn require_project_review(headers: &HeaderMap) -> Result<(), ServerError> {
+    crate::rulesync_routes::require_local_person(headers)?;
+    if !wenlan_core::rulesync_personal::enabled() {
+        return Err(ServerError::Conflict("WENLAN_RULESYNC is off".into()));
+    }
+    Ok(())
+}
+
+fn team_rules_key(space: &wenlan_types::Space) -> String {
+    format!("rulesync.project.team:{}", space.id)
+}
+
+async fn handle_project_team_rules(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+    headers: HeaderMap,
+    Json(request): Json<ProjectTeamRulesRequest>,
+) -> Result<Json<ProjectTeamRulesRequest>, ServerError> {
+    require_project_review(&headers)?;
+    let _serial = PROJECT_RULES_TRANSACTION.lock().await;
+    let db = db_of(&state).await?;
+    let space = project_rule_space(&db, &registered_space(&db, &name).await?).await?;
+    let name = space.name.clone();
+    let team = request.team.clone();
+    blocking(move || {
+        if repo_wiki::binding_at(&repo_wiki::store_path(), &name)?.is_none() {
+            return Err(wenlan_core::WenlanError::NotFound(
+                "bind this Space to a repository first".into(),
+            ));
+        }
+        let settings = shared_space::settings_path();
+        if shared_space::share_settings_at(&settings, &shared_space::Scope::Space(name))?
+            .is_some_and(|share| share.host.is_some())
+        {
+            return Err(wenlan_core::WenlanError::Validation(
+                "change the team rules opt-in on the project host".into(),
+            ));
+        }
+        if let Some(team) = team {
+            if !rulesync_team::load_layers(&settings)?
+                .iter()
+                .any(|layer| layer.id == team)
+            {
+                return Err(wenlan_core::WenlanError::NotFound(
+                    "no readable team Rules layer with that ID".into(),
+                ));
+            }
+        }
+        Ok(())
+    })
+    .await?;
+    db.set_app_metadata(
+        &team_rules_key(&space),
+        request.team.as_deref().unwrap_or(""),
+    )
+    .await?;
+    Ok(Json(request))
+}
+
+async fn handle_shared_rule_proposals(
+    State(state): State<SharedState>,
+    Path(space): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<TeamRulesProposal>>, ServerError> {
+    require_project_review(&headers)?;
+    let db = db_of(&state).await?;
+    let space = registered_space(&db, &space).await?;
+    blocking(move || {
+        rulesync_team::local_space_proposals(&shared_space::settings_path(), &space)
+            .map_err(team_rule_error)
+    })
+    .await
+    .map(Json)
+}
+
+async fn handle_propose_shared_rules(
+    State(state): State<SharedState>,
+    Path(space): Path<String>,
+    headers: HeaderMap,
+    Json(request): Json<SharedRulesProposalRequest>,
+) -> Result<Json<String>, ServerError> {
+    require_project_review(&headers)?;
+    let db = db_of(&state).await?;
+    let space = registered_space(&db, &space).await?;
+    blocking(move || {
+        rulesync_team::update_hosted_rules(
+            &shared_space::settings_path(),
+            &space,
+            &request.markdown,
+        )
+        .map_err(team_rule_error)
+    })
+    .await
+    .map(Json)
+}
+
+async fn handle_shared_rule_decision(
+    State(state): State<SharedState>,
+    Path((space, id)): Path<(String, String)>,
+    headers: HeaderMap,
+    Json(request): Json<TeamRulesDecisionRequest>,
+) -> Result<Json<()>, ServerError> {
+    require_project_review(&headers)?;
+    let db = db_of(&state).await?;
+    let space = registered_space(&db, &space).await?;
+    blocking(move || {
+        rulesync_team::decide_local_space_proposal(
+            &shared_space::settings_path(),
+            &space,
+            &id,
+            request.accept,
+        )
+        .map_err(team_rule_error)
+    })
+    .await?;
+    crate::skill_grow::sync_rules_files_quietly(&db, page_root_of(&state).await.as_deref()).await;
+    Ok(Json(()))
+}
+
+fn team_rule_error(error: rulesync_team::ReviewError) -> wenlan_core::WenlanError {
+    match error {
+        rulesync_team::ReviewError::Forbidden => {
+            wenlan_core::WenlanError::Validation(error.to_string())
+        }
+        rulesync_team::ReviewError::NotConfigured => {
+            wenlan_core::WenlanError::NotFound(error.to_string())
+        }
+        rulesync_team::ReviewError::Failed(error) => error,
+    }
+}
+
+fn markdown_rules(markdown: &str) -> Vec<String> {
+    markdown
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(|line| line.strip_prefix("- ").unwrap_or(line).to_owned())
+        .collect()
+}
+
+async fn handle_rule_proposals(
+    State(state): State<SharedState>,
+    Path(space): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<ProjectRuleProposal>>, ServerError> {
+    require_project_review(&headers)?;
+    let db = db_of(&state).await?;
+    let space = registered_space(&db, &space).await?;
+    let proposals =
+        blocking(move || repo_wiki::project_rule_proposals_at(&repo_wiki::store_path(), &space))
+            .await?;
+    Ok(Json(proposals))
+}
+
+async fn handle_accept_rule_proposal(
+    State(state): State<SharedState>,
+    Path((space, id)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Result<Json<ProjectRuleProposal>, ServerError> {
+    review_project_rule(state, space, id, headers, true).await
+}
+
+async fn handle_dismiss_rule_proposal(
+    State(state): State<SharedState>,
+    Path((space, id)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Result<Json<ProjectRuleProposal>, ServerError> {
+    review_project_rule(state, space, id, headers, false).await
+}
+
+#[derive(Default, Serialize, Deserialize)]
+struct ProjectRuleEdits {
+    added: BTreeMap<String, String>,
+    removed: BTreeSet<String>,
+}
+
+impl ProjectRuleEdits {
+    fn edit(&mut self, proposal: &ProjectRuleProposal) {
+        for line in &proposal.removed_rules {
+            self.added.remove(line);
+            self.removed.insert(line.clone());
+        }
+        for line in &proposal.added_rules {
+            self.removed.remove(line);
+            self.added.insert(
+                line.clone(),
+                format!("{} @ {}", proposal.path, proposal.revision),
+            );
+        }
+    }
+
+    fn project(&self, rules: &mut Vec<String>) {
+        rules.retain(|line| {
+            !self
+                .removed
+                .contains(&wenlan_core::skill_grow::tool_file_text(line))
+        });
+        let base: BTreeSet<_> = rules
+            .iter()
+            .map(|line| wenlan_core::skill_grow::tool_file_text(line))
+            .collect();
+        rules.extend(
+            self.added
+                .keys()
+                .filter(|line| !base.contains(*line))
+                .cloned(),
+        );
+    }
+}
+
+fn edits_key(space: &wenlan_types::Space) -> String {
+    format!("rulesync.project.edits:{}", space.id)
+}
+
+async fn project_edits(db: &MemoryDB, key: &str) -> Result<ProjectRuleEdits, ServerError> {
+    match db.get_app_metadata(key).await? {
+        Some(value) => {
+            serde_json::from_str(&value).map_err(|error| ServerError::Internal(error.to_string()))
+        }
+        None => Ok(ProjectRuleEdits::default()),
+    }
+}
+
+pub(crate) async fn include_reviewed_project_rules(
+    db: &MemoryDB,
+    space: &wenlan_types::Space,
+    lines: &mut Vec<wenlan_types::SkillLine>,
+) -> Result<(), ServerError> {
+    let edits = project_edits(db, &edits_key(space)).await?;
+    lines.retain(|line| {
+        line.general
+            || line.kind != wenlan_types::SkillLineKind::Rule
+            || !edits
+                .removed
+                .contains(&wenlan_core::skill_grow::tool_file_text(&line.text))
+    });
+    let existing: BTreeSet<_> = lines
+        .iter()
+        .map(|line| wenlan_core::skill_grow::tool_file_text(&line.text))
+        .collect();
+    for (text, origin) in edits.added {
+        if existing.contains(&text) {
+            continue;
+        }
+        let id = wenlan_core::rulesync_personal::fingerprint(&(&space.id, &origin, &text))
+            .map_err(|error| ServerError::Internal(error.to_string()))?;
+        lines.push(wenlan_types::SkillLine {
+            id,
+            kind: wenlan_types::SkillLineKind::Rule,
+            text,
+            source_page_id: String::new(),
+            source_page_title: origin,
+            source_revision: 0,
+            source_revision_at: 0,
+            source_quote: String::new(),
+            person_edited: false,
+            general: false,
+            hand_written: false,
+            saved_from: None,
+            saved_by: None,
+        });
+    }
+    Ok(())
+}
+
+async fn review_project_rule(
+    state: SharedState,
+    space: String,
+    id: String,
+    headers: HeaderMap,
+    accept: bool,
+) -> Result<Json<ProjectRuleProposal>, ServerError> {
+    require_project_review(&headers)?;
+    let _serial = PROJECT_RULES_TRANSACTION.lock().await;
+    let (db, page_root) = {
+        let state = state.read().await;
+        (
+            state.db.clone().ok_or(ServerError::DbNotInitialized)?,
+            state
+                .lint_config
+                .page_root()
+                .map(std::path::Path::to_path_buf),
+        )
+    };
+    let space = project_rule_space(&db, &registered_space(&db, &space).await?).await?;
+    if shared_space::share_settings_at(
+        &shared_space::settings_path(),
+        &shared_space::Scope::Space(space.name.clone()),
+    )?
+    .is_some_and(|share| share.host.is_some())
+    {
+        return Err(ServerError::ValidationError(
+            "project rule review needs write access to this Space".into(),
+        ));
+    }
+    let name = space.name.clone();
+    let requested = id.clone();
+    let proposal = blocking(move || {
+        repo_wiki::project_rule_proposals_at(&repo_wiki::store_path(), &name)?
+            .into_iter()
+            .find(|proposal| proposal.id == requested)
+            .ok_or_else(|| {
+                wenlan_core::WenlanError::NotFound("no pending project rule proposal".into())
+            })
+    })
+    .await?;
+    if accept {
+        if let Some(reason) = &proposal.blocked {
+            return Err(ServerError::Conflict(reason.clone()));
+        }
+        let settings = shared_space::settings_path();
+        let hosted = rulesync_team::hosted_project_layer(&settings, &space.name)?;
+        if let Some(layer) = hosted {
+            let mut rules = markdown_rules(&layer.markdown);
+            let mut edits = ProjectRuleEdits::default();
+            edits.edit(&proposal);
+            edits.project(&mut rules);
+            let markdown = rules
+                .iter()
+                .map(|line| format!("- {line}\n"))
+                .collect::<String>();
+            let name = space.name.clone();
+            blocking(move || {
+                let queued = rulesync_team::queue_proposal(
+                    &settings,
+                    &layer.id,
+                    &layer.revision,
+                    &markdown,
+                )?;
+                rulesync_team::decide_local_space_proposal(&settings, &name, &queued, true)
+                    .map_err(team_rule_error)?;
+                repo_wiki::approve_project_rule_proposal_at(
+                    &repo_wiki::store_path(),
+                    &name,
+                    &id,
+                    &rules,
+                )
+            })
+            .await?;
+            return Ok(Json(proposal));
+        }
+        let mut rules = crate::skill_grow::project_rules(&db, page_root.as_deref(), &space.name)
+            .await
+            .ok_or_else(|| ServerError::Conflict("the Space rules could not be read".into()))?;
+        let key = edits_key(&space);
+        let mut edits = project_edits(&db, &key).await?;
+        edits.edit(&proposal);
+        edits.project(&mut rules);
+        wenlan_core::rulesync_personal::reject_secret_lines(&rules.join("\n"))
+            .map_err(|error| ServerError::ValidationError(error.to_string()))?;
+        db.set_app_metadata(
+            &key,
+            &serde_json::to_string(&edits)
+                .map_err(|error| ServerError::Internal(error.to_string()))?,
+        )
+        .await?;
+        blocking(move || {
+            repo_wiki::approve_project_rule_proposal_at(
+                &repo_wiki::store_path(),
+                &space.name,
+                &id,
+                &rules,
+            )
+        })
+        .await?;
+    } else {
+        blocking(move || {
+            repo_wiki::dismiss_project_rule_proposal_at(&repo_wiki::store_path(), &space.name, &id)
+        })
+        .await?;
+    }
+    Ok(Json(proposal))
 }
 
 async fn db_of(state: &Arc<RwLock<ServerState>>) -> Result<Arc<MemoryDB>, ServerError> {
@@ -484,7 +903,8 @@ async fn gather(
     space: &str,
     binding: &RepoWikiBinding,
 ) -> Result<Gathered, ServerError> {
-    let pages = exportable_pages(db, space).await?;
+    let mut pages = exportable_pages(db, space).await?;
+    pages.retain(|page| !rulesync_team::is_master_page(&page.id));
     let code_bases = db
         .code_basis_locators_by_page()
         .await
@@ -752,6 +1172,12 @@ pub(crate) async fn publish_space(
     space: &str,
     page_root: Option<&std::path::Path>,
 ) -> Result<RepoWikiPublishResult, ServerError> {
+    let rulesync = wenlan_core::rulesync_personal::enabled();
+    let _project_serial = if rulesync {
+        Some(PROJECT_RULES_TRANSACTION.lock().await)
+    } else {
+        None
+    };
     let store = repo_wiki::store_path();
     let lookup_space = space.to_owned();
     let lookup_store = store.clone();
@@ -787,7 +1213,34 @@ pub(crate) async fn publish_space(
         failed,
     } = taken;
     let now = chrono::Utc::now().timestamp();
-    let rules = crate::skill_grow::project_rules(db, page_root, space).await;
+    let mut rules = crate::skill_grow::project_rules(db, page_root, space).await;
+    let mut team_rules = Vec::new();
+    if rulesync {
+        let settings = shared_space::settings_path();
+        if shared_space::share_settings_at(&settings, &shared_space::Scope::Space(space.into()))?
+            .is_some_and(|share| share.host.is_some())
+        {
+            return Err(ServerError::Conflict(
+                "publish the rules from the project host".into(),
+            ));
+        }
+        if let Some(layer) = rulesync_team::hosted_project_layer(&settings, space)? {
+            rules = Some(markdown_rules(&layer.markdown));
+        }
+        let space = project_rule_space(db, space).await?;
+        if let Some(selected) = db
+            .get_app_metadata(&team_rules_key(&space))
+            .await?
+            .filter(|value| !value.is_empty())
+        {
+            if let Some(layer) = rulesync_team::load_layers(&settings)?
+                .into_iter()
+                .find(|layer| layer.id == selected)
+            {
+                team_rules = markdown_rules(&layer.markdown);
+            }
+        }
+    }
     let space = space.to_owned();
     let result = blocking(move || {
         let Gathered {
@@ -797,7 +1250,7 @@ pub(crate) async fn publish_space(
             concept_paths,
             anchors,
         } = gathered;
-        let published = repo_wiki::publish(repo_wiki::PublishInput {
+        let input = repo_wiki::PublishInput {
             binding: &binding,
             pages,
             left_out,
@@ -812,7 +1265,12 @@ pub(crate) async fn publish_space(
             prepared,
             taken_back,
             took_back,
-        })?;
+        };
+        let published = if rulesync {
+            repo_wiki::publish_with_project_rules(input, &store, &team_rules)?
+        } else {
+            repo_wiki::publish(input)?
+        };
         repo_wiki::settle_doc_fixes_at(&store, &space, &published.applied, &published.gone)?;
         let mut published = published;
         if let Some(kept) = published.kept_edits.as_mut() {

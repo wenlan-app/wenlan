@@ -28,6 +28,9 @@ use wenlan_types::repo_wiki::{
 };
 use wenlan_types::CodeBasisLocator;
 
+#[path = "repo_wiki_project_rules.rs"]
+mod project_rules;
+
 const STORE_FILE: &str = "repo-wiki.json";
 const WORKTREES_DIR: &str = "repo-wiki";
 const AGENTS_START: &str = "<!-- WENLAN:START -->";
@@ -1950,6 +1953,9 @@ struct PrBody<'a> {
     rules: usize,
     /// Every project rule was removed in Wenlan, and this takes them out.
     rules_removed: bool,
+    project_paths: &'a [String],
+    project_adoptions: &'a [String],
+    team_rules: bool,
     fixes: Vec<&'a RepoDocFix>,
     /// `owner/name` on GitHub, for links to the code.
     slug: Option<&'a str>,
@@ -1966,6 +1972,9 @@ fn pr_body_for_test(binding: &RepoWikiBinding, fixes: Vec<&RepoDocFix>) -> Strin
         kept: 0,
         rules: 0,
         rules_removed: false,
+        project_paths: &[],
+        project_adoptions: &[],
+        team_rules: false,
         fixes,
         slug: None,
         base: "main",
@@ -1981,6 +1990,9 @@ fn pr_body(body: PrBody<'_>) -> String {
         kept,
         rules,
         rules_removed,
+        project_paths,
+        project_adoptions,
+        team_rules,
         fixes,
         slug,
         base,
@@ -2011,6 +2023,33 @@ fn pr_body(body: PrBody<'_>) -> String {
             " Every project rule was removed in Wenlan, so this takes them out of Wenlan's part \
              of `AGENTS.md`; the rest of the file is unchanged.",
         );
+    }
+    if !project_paths.is_empty() {
+        out.push_str("\n\nProject rules are updated in ");
+        out.push_str(
+            &project_paths
+                .iter()
+                .map(|path| format!("`{path}`"))
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+        out.push('.');
+        if team_rules {
+            out.push_str(" This update carries this project's rules and the opted-in team rules. Their visibility follows repository access.");
+        } else {
+            out.push_str(" This update carries only this project's rules. Their visibility follows repository access.");
+        }
+    }
+    if !project_adoptions.is_empty() {
+        out.push_str(" Wenlan's marked section is added to ");
+        out.push_str(
+            &project_adoptions
+                .iter()
+                .map(|path| format!("`{path}`"))
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+        out.push_str(" alongside the file's existing instructions. Review the section in the diff before merging.");
     }
     if !fixes.is_empty() {
         out.push_str(&format!(
@@ -2206,6 +2245,54 @@ pub fn frontmatter_origin_id(text: &str) -> Option<&str> {
 /// taken back into Wenlan first (`input.taken_back`), and files people
 /// changed on the open wiki branch are kept as they are.
 pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
+    publish_inner(input, None, &[])
+}
+
+/// Publish with the pinned, project-mode rulesync renderer. The bound Space
+/// supplies the approved rules in `input.rules`, and the wiki PR delivers
+/// the resulting files. A renderer failure stops project delivery.
+pub fn publish_with_project_rules(
+    input: PublishInput<'_>,
+    store: &Path,
+    team: &[String],
+) -> Result<Published, WenlanError> {
+    let mut project = project_rules::Project::open(store, input.binding)?;
+    project.check_links(Path::new(&input.binding.repo_root))?;
+    project.check_links(&input.worktree)?;
+    publish_inner(input, Some((store, &mut project)), team)
+}
+
+pub fn project_rule_proposals_at(
+    store: &Path,
+    space: &str,
+) -> Result<Vec<wenlan_types::repo_wiki::ProjectRuleProposal>, WenlanError> {
+    project_rules::proposals(store, space)
+}
+
+/// Only call after authorizing the person to edit this Space and reading its
+/// current approved rules. A repository edit never changes the master on its own.
+pub fn approve_project_rule_proposal_at(
+    store: &Path,
+    space: &str,
+    id: &str,
+    approved_rules: &[String],
+) -> Result<(), WenlanError> {
+    project_rules::decide(store, space, id, Some(approved_rules))
+}
+
+pub fn dismiss_project_rule_proposal_at(
+    store: &Path,
+    space: &str,
+    id: &str,
+) -> Result<(), WenlanError> {
+    project_rules::decide(store, space, id, None)
+}
+
+fn publish_inner(
+    input: PublishInput<'_>,
+    mut project: Option<(&Path, &mut project_rules::Project)>,
+    team: &[String],
+) -> Result<Published, WenlanError> {
     let binding = input.binding;
     let waiting = std::cell::Cell::new(0);
     let kept = std::cell::Cell::new(0);
@@ -2249,7 +2336,7 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
                     | RepoWikiPublishStatus::PrUpdated
             )
     });
-    if nothing_new && !pushed_before && !binding.take_over {
+    if nothing_new && !pushed_before && !binding.take_over && project.is_none() {
         return Ok(nothing(result(
             RepoWikiPublishStatus::NothingToPublish,
             0,
@@ -2268,7 +2355,7 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
     };
     // With nothing new, a repository that cannot be looked at now stays as
     // it was, as before: there is nothing to tell the person.
-    if nothing_new && prepared.is_err() {
+    if nothing_new && prepared.is_err() && project.is_none() {
         if let (Some(rules), Err(error)) = (input.rules.as_ref(), prepared.as_ref()) {
             if rules.is_empty() && remote.is_ok() {
                 log::warn!(
@@ -2351,7 +2438,7 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
                 .unwrap_or_default()
         }
     };
-    if nothing_new && !rules_to_take_out {
+    if nothing_new && !rules_to_take_out && project.is_none() {
         return Ok(nothing(result(
             RepoWikiPublishStatus::NothingToPublish,
             0,
@@ -2449,7 +2536,54 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
         }
     }
     waiting.set(held);
-    if ready.is_empty() && !open_fix && !rules_given && !rules_to_take_out {
+    let project_plan = if let Some((store, project)) = &mut project {
+        let mut command = git(&input.worktree);
+        command.args(["rev-parse", "--verify", "HEAD"]);
+        let revision = run(command, "git rev-parse project rules base")?;
+        let staged = if rules_known {
+            project_rules::render(store, &rules, team)
+        } else {
+            Err(WenlanError::Conflict(
+                "the bound Space's approved rules are unavailable".into(),
+            ))
+        };
+        let observed = project.inspect(
+            &repo,
+            &revision,
+            prepared.branch_at.as_deref(),
+            &prepared.carried,
+            staged
+                .as_ref()
+                .into_iter()
+                .flat_map(|files| files.keys().cloned()),
+        )?;
+        let holds_wiki = !ready.is_empty()
+            || tree_blob(
+                &repo,
+                &revision,
+                &format!("{folder}/{}", crate::repo_wiki_ci::CODE_FILE),
+            )
+            .is_some();
+        let plan = observed.plan(
+            &staged?,
+            holds_wiki.then_some(folder.as_str()),
+            &input.publisher,
+            &rules,
+            binding.take_over,
+            published_before,
+        )?;
+        Some((revision, plan))
+    } else {
+        None
+    };
+    if ready.is_empty()
+        && !open_fix
+        && !rules_given
+        && !rules_to_take_out
+        && !project_plan
+            .as_ref()
+            .is_some_and(|(_, plan)| plan.changes())
+    {
         return Ok(nothing(result(
             RepoWikiPublishStatus::NothingToPublish,
             0,
@@ -2573,7 +2707,7 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
             .join(crate::repo_wiki_ci::CODE_FILE)
             .is_file();
     let writes_block = export || rules_given || rules_to_take_out;
-    if writes_block {
+    if writes_block && project.is_none() {
         maintain_agent_files(
             &input.worktree,
             holds_wiki.then_some(folder.as_str()),
@@ -2594,6 +2728,9 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
     let mut command = git(&input.worktree);
     command.args(["add", "--all"]);
     run(command, "git add")?;
+    if let Some((_, plan)) = &project_plan {
+        plan.stage(&input.worktree)?;
+    }
     let page_count = pages.len();
     let settled = |result| Published {
         result,
@@ -2673,6 +2810,11 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
             .map_err(|error| WenlanError::Generic(format!("git diff: {error}")))?
             .success()
     {
+        if let (Some((_, project)), Some((base_commit, plan)), Some(branch_at)) =
+            (&mut project, &project_plan, &prepared.branch_at)
+        {
+            project.remember_delivery(&repo, base_commit, branch_at, plan, true)?;
+        }
         // Nothing new, but the pull request is still open: keep pointing at it.
         let open = match (input.gh.as_ref(), github_slug(&remote)) {
             (Some(gh), Some(slug)) => open_pull_request(gh, &input.worktree, &slug)
@@ -2691,6 +2833,16 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
     // Only the branch as it was when this was prepared is replaced: a
     // commit someone pushed since, even one a later fetch brought in, stops
     // the push.
+    let unconfirmed_delivery =
+        if let (Some((_, project)), Some((base_commit, plan))) = (&mut project, &project_plan) {
+            let mut command = git(&input.worktree);
+            command.args(["rev-parse", "--verify", "HEAD"]);
+            let commit = run(command, "git rev-parse project rules delivery")?;
+            project.remember_delivery(&repo, base_commit, &commit, plan, false)?;
+            Some(commit)
+        } else {
+            None
+        };
     let mut command = git(&input.worktree);
     command.args([
         "push",
@@ -2703,12 +2855,19 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
         &format!("HEAD:refs/heads/{REPO_WIKI_BRANCH}"),
     ]);
     run(command, "git push")?;
+    if let (Some((_, project)), Some(commit)) = (&mut project, &unconfirmed_delivery) {
+        project.confirm_delivery(commit)?;
+    }
 
     // A branch with nothing in it but the default branch: no pull request
     // is offered for it.
     let compare_url = slug.as_ref().filter(|_| !unchanged).map(|slug| {
         format!("https://github.com/{slug}/compare/{base}...{REPO_WIKI_BRANCH}?expand=1")
     });
+    let project_paths = project_plan
+        .as_ref()
+        .map(|(_, plan)| plan.paths())
+        .unwrap_or_default();
     let body = pr_body(PrBody {
         binding,
         pages: page_count,
@@ -2721,6 +2880,11 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
             0
         },
         rules_removed: rules_to_take_out && !unchanged,
+        project_paths: &project_paths,
+        project_adoptions: project_plan
+            .as_ref()
+            .map_or(&[], |(_, plan)| plan.adopted.as_slice()),
+        team_rules: !team.is_empty(),
         fixes: binding
             .doc_fixes
             .iter()

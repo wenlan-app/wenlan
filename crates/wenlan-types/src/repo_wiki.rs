@@ -20,6 +20,19 @@ pub const EARLIER_REPO_WIKI_FOLDER: &str = "wiki";
 /// while its pull request is open, every publish updates that pull request.
 pub const REPO_WIKI_BRANCH: &str = "wenlan/wiki";
 
+/// A repository change waiting for review in its bound Space.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectRuleProposal {
+    pub id: String,
+    pub path: String,
+    pub revision: String,
+    pub diff: String,
+    pub added_rules: Vec<String>,
+    pub removed_rules: Vec<String>,
+    /// A reason the diff cannot be accepted as a set of Rules page edits.
+    pub blocked: Option<String>,
+}
+
 /// The AI tool a daily run starts in the background.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

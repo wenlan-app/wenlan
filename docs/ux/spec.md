@@ -638,6 +638,9 @@ and wait for evidence that people need them.
   take them away the same way; with the setting off, the rules the person
   wrote themselves stay (UX-SKILL-10). Wenlan never changes or removes a file
   there that it did not write.
+  With `WENLAN_RULESYNC=1` (pending acceptance), an adopted personal setup
+  has one local master for shared and tool-specific rules and each skill's
+  target list. Wenlan keeps the rule pages and their provenance available.
   原文：「現在只想要把這層整合好再 .wenlan」（2026-11-15 22:20Z）；「AGENTS 檔案可以分層 不論是個人還是空間/專案/repo」（2026-11-15 22:39Z）。
 - **UX-SKILL-7** `shipped` For a Space connected to a repository, the wiki
   pull request also puts that Space's own rules (rules only, not decisions or
@@ -651,6 +654,13 @@ and wait for evidence that people need them.
   Space are the person's habits and never go into a repository. Nothing
   reaches the repository until the person merges.
   原文：「空間如果是 repo，那就直接對應上了」（2026-11-15 22:26Z）；「原本說就會寫 wiki folders 這點也要看要不要一起修改？」（2026-11-15 22:51Z）。「照 Astra 做」（2026-11-20 選擇卡：每條不附來源，整段加一行提示用 read_space_rules 查；PR 說明不寫空間名）；英文字句待 Qi-Xuan 確認。
+  With the opt-in rulesync writer (pending acceptance), the Space also
+  renders project instructions for the supported tools through the wiki
+  pull request. The pull request shows the proposed adoption of hand-written
+  instructions. Wenlan keeps the repository's hand-written content and
+  reports edits as Space proposals. An accepted proposal changes the Space
+  rules for the next pull request. A symlink or suspected credential
+  blocks delivery.
 - **UX-SKILL-8** `shipped` The rules used in every Space (rules only, not
   decisions or pitfalls) are also kept in
   each connected AI tool's own always-read file, in one part marked as
@@ -697,14 +707,30 @@ and wait for evidence that people need them.
   `&#64;`, the marks of an HTML comment with `&lt;!--` and `--&gt;`, and
   characters that do not show are left out, so no rule, the person's own
   included, makes a tool load another file or hides text from the person.
+  With the opt-in writer (UX-SKILL-6), Wenlan owns the whole file after
+  per-file adoption (UX-SKILL-15). Pinned rulesync renders into private
+  staging with networking disabled. Wenlan records the delivered bytes and
+  checks each destination against the plan before applying an atomic write.
+  A symlink needs explicit adoption. The opt-in writer places rules and skills
+  by default.
   原文：「為啥要外掛？直接把我們的規則同步過去工具，工具就會讀啊？」（2026-11-15 23:28Z）；「要有信心，馬上就要做了」（2026-11-17 05:01Z）。寫入工具檔案的補充（2026-11-17，審查發現）：規則只當文字寫入，`@` 與 HTML 註解改寫、看不見的字元拿掉；英文字句待 Qi-Xuan 確認。
 - **UX-SKILL-9** `shipped` In a Space shared with teammates, each person's
   "How I work" page stays on their own computer and is not sent to the
-  others. A page a teammate wrote can still give that Space a rule, but never
-  one of this person's rules for every Space, so it never reaches this
-  person's own AI tools' files. Rules for the whole team go through the
-  repo's `AGENTS.md` in a PR (UX-SKILL-7).
+  others. With the opt-in writer, the hosted `everyone` Space has an approved
+  Rules page for the team. A repository-bound Space has its own Rules page.
+  Each member receives the team layer and only the project layers they can
+  read. The member's private checkout render uses the layers for that repo
+  and their personal rules. The text states that project rules come first,
+  followed by team rules and personal rules. An offline member keeps the
+  last synced layer and sees its date. A refused sync removes its access and
+  layer. Read holders, AI tools, and tool-file edits can submit proposals.
+  A person with Write on that Space can decide each proposal once. Shared
+  rule text that looks like a credential is refused. A wiki pull request
+  carries the bound project's rules and its opted-in team section. Anyone
+  with repository read access can read that copy (UX-SKILL-7).
   原文：「我們這改動包含團隊了嗎？」「可以下個 PR 繼續開搞」（2026-11-15 23:30Z）。
+  原文：「除了介面都做完」（2026-11-20 08:15Z）；「不只是 by 項目，還有 by team 層級的設計」（2026-11-20 08:01Z）。英文字句待 Qi-Xuan 確認。
+  Test: `rulesync_team_uses_space_grants_and_retains_only_approved_offline_layers`.
 - **UX-SKILL-10** `shipped` A rule the person writes themselves counts at
   once, with no model and no accept. On a page in a folder named Rules (規則,
   规则; any depth, any app language), each top-level bullet the person wrote is
@@ -728,6 +754,11 @@ and wait for evidence that people need them.
   Space only; a page in no Space and outside every Space's folder gives rules
   used in every Space. The setting and a No do not silence them;
   `#not-for-ai-tools` on the page does.
+  An edit pulled back from a tool has unknown authorship. A deletion or
+  replacement of an existing line stays with that tool by default. New text
+  and conflicting edits to the same line wait for the person to review them
+  using `wenlan rules review`. The person can accept a change for one tool or
+  share it across tools.
   原文：決定 4：「A rule the person writes themselves counts at once. AI tools get it and `wenlan rules` prints it, with no model needed. Rules the AI derives from pages still need the person's accept.」Qi-Xuan 以輸入「A」回答此題（2026-11-16 22:30Z；題目與決定記錄於 `/mnt/project-files/readme-2026-11/cover-v3/2026-11-16-app-changes-from-cover.md`，決定 4）。存成規則的補充（2026-11-17）：見 UX-SKILL-14；這句補充的英文字句待 Qi-Xuan 確認。連結改名的補充（2026-11-17，審查發現）：Wenlan 自己改連結不算人寫的；英文字句待 Qi-Xuan 確認。
 - **UX-SKILL-11** `shipped` A rules page shows two things. Under each rule,
   where it came from: a link "from" the page it was taken from, or "written
@@ -761,6 +792,9 @@ and wait for evidence that people need them.
   own with Accept and No, one box for each Space that has any, on the Rules
   list and on a rules page of that Space; they do not count until accepted
   (UX-SKILL-1).
+  The opt-in writer uses its delivery record for the status. When rulesync
+  has no output for a connected tool, the status is "not written, reads via
+  MCP."
   原文：決定 3：「A rules page shows two things. Under each rule, the page it came from. At the top of the page, which AI tools the rules are used in. Wording limit: say the tool is connected and the rules were delivered; never say the AI always follows them.」Qi-Xuan 以輸入「A」回答此題（2026-11-16 22:28Z–22:30Z；記錄於 `/mnt/project-files/readme-2026-11/cover-v3/2026-11-16-app-changes-from-cover.md`，決定 3）；草圖 `Main.dc.html` 右側規則頁（「用在 … 已連接，規則已送達」「來自〈…〉」「你寫的」「AI 從你的頁面整理出一條，還沒算數」「接受／不要」）。
 - **UX-SKILL-12** `shipped` Skills are reached the same way from every door.
   The skills Wenlan holds (each with where it is used, where it came from and
@@ -810,6 +844,8 @@ and wait for evidence that people need them.
   accounts read the key; Wenlan says so in its log.
   Pending owner confirmation (2026-11-17): Wenlan also refuses to install or take in a skill with a text file that holds tag characters (U+E0000 to U+E007F) or direction override or isolate controls (U+202A to U+202E, U+2066 to U+2069); the app's preview writes out every other character that would not show as the same visible mark the terminal prints and says how many there are, a byte-order mark at the very start of a file is not shown, in the app or in the terminal, and does not keep the skill's name and description from being read, and the installed file is always the author's own, that mark included.
   原文：待 Qi-Xuan 確認。交辦內容（2026-11-17）：AI 工具不能把檔案放進每個工具的資料夾，也不能替人點頭（UX-WHO-2）；終端機裡要由人明確確認，不能有 `--yes`。本機金鑰的補充（2026-11-18）：說明「現在任何本機程式只要帶上 `x-wenlan-caller: person` 就被當成你」並提議由 Wenlan 第一次啟動時產生只有你的帳號讀得到的金鑰、app 和 `wenlan` 自動帶上、沒帶對的不算你之後，Qi-Xuan 回「要」，再回「那可以」；英文字句待 Qi-Xuan 確認。看不見字元的補充（2026-11-17 交辦，實測發現 6b）：標籤字元和改變文字方向的控制字元直接拒絕，其他看不見的字元在 app 預覽裡標出來；英文字句待 Qi-Xuan 確認。
+  The opt-in writer also requires the terminal confirmation for adopting the
+  existing skill locations and restoring their local backup (UX-SKILL-15).
 - **UX-SKILL-14** `shipped` When the person explicitly asks for a rule to be
   saved, it counts at once, with no model and no accept. They ask in an AI
   tool on this computer ("save this as a rule: ...", which the tool does with
@@ -852,6 +888,36 @@ and wait for evidence that people need them.
   remove a rule, the page is not sent to the others in a team Space, and
   Wenlan refuses a save or a removal while it listens beyond this computer.
   原文：選擇卡（2026-11-17 08:29Z）：人在 AI 工具或用 `wenlan` 明確說「存成規則」時立即算數；規則清單顯示是從哪個工具存的；一步就能移除；AI 自己整理出來的規則仍要人點頭。App 裡的補充（2026-11-17 交辦）：「a rule saved through an AI tool or the terminal to show where it was saved from and be removable in one click」；這段補充的英文字句待 Qi-Xuan 確認。細節待 Qi-Xuan 確認：每次一條、最多 300 字、純文字句子；每個工具每天十條、全部合計三十條；沒有 Space 也沒說每個 Space 就拒絕；鎖定在一個 Space 的連線只能存在那個 Space；工具名稱是工具自己報的，「終端機」只代表指令沒帶工具名稱；AI 工具只能用 `remove_rule` 移除自己存的；鎖定頁面上的卡片被拒絕就不算；團隊成員暫不開放。
+
+- **UX-SKILL-15** `pending` `wenlan rules adopt --dry-run` reads the
+  existing files and links and prints a per-file diff and line counts. It
+  can run with no daemon and creates no files. Adoption shows the same plan
+  and asks the person to type `yes` at their terminal. A changed plan
+  needs a fresh review. Wenlan backs up every destination before writing
+  and replaces the adopted links with managed files or folders.
+  `wenlan rules restore` asks the person again and uses that backup to
+  restore the original bytes and link targets. It keeps any destination
+  that has changed since delivery available for review.
+  原文：「我希望能把現有電腦上的一套改成用 wenlan 這套，目標就是減少摩擦和增加開發體驗，包含技能等等這些」（2026-11-20 08:11Z）。英譯待 Qi-Xuan 確認："I want to switch the setup on my current computer to Wenlan's system to reduce friction and improve the development experience, including skills."
+  Tests `rulesync_adopt_and_restore_exact_bytes_and_links` and `codex_delivery_reports_its_link_and_managed_state`.
+
+- **UX-SKILL-16** `pending` `save_skill` in a local AI tool proposes the
+  skill's text and files. `wenlan skills save` saves an approved local skill
+  directly when the person runs it. Wenlan also detects a new or edited skill
+  in a tool's folder. It offers that content for the current tool or all
+  supported tools. The person's terminal shows the complete proposal and
+  asks for typed `yes` before accepting it. Only accepted source files are
+  eligible for delivery. Invisible characters and bidirectional controls
+  in new skill text are refused.
+  Tests `rulesync_skill_agent_proposal_survives_reopen_and_requires_review` and `ux_skill_16_review_needs_one_scope_and_has_no_confirmation_flag`.
+
+- **UX-SKILL-17** `pending` `wenlan rules settings` asks the person to
+  preview a local rulesync settings source and type `yes` before applying it.
+  The preview shows the additions to MCP servers, hooks and permissions.
+  Existing entries are kept. Conflicting entries, credentials in the source,
+  symlinks and changed destinations stop the apply. Settings stay on this
+  computer and are applied only through this command.
+  Tests in `rulesync_settings` and `rulesync_settings_routes`.
 
 ## From the terminal
 

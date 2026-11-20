@@ -346,6 +346,9 @@ async fn shared_sync(
     )
     .await?;
     wake_embedding_for_memories(counts.memories_applied);
+    if wenlan_core::rulesync_personal::enabled() {
+        crate::skill_grow::sync_rules_files_quietly(&db, page_root.as_deref()).await;
+    }
     Ok(Json(counts))
 }
 
@@ -427,8 +430,11 @@ async fn host_sync(
             }),
         },
     )
-    .await?;
-    Ok(Json(counts))
+    .await;
+    if wenlan_core::rulesync_personal::enabled() {
+        crate::skill_grow::sync_rules_files_quietly(db, page_root).await;
+    }
+    Ok(Json(counts?))
 }
 
 async fn space_scope(

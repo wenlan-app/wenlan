@@ -1013,6 +1013,49 @@ async fn read_rules_for_space(
     // The same sentence is told once; the person's own wording comes first.
     let mut seen = HashSet::new();
     lines.retain(|line| seen.insert(line.text.trim().to_lowercase()));
+    if wenlan_core::rulesync_personal::enabled() {
+        crate::repo_wiki_routes::include_reviewed_project_rules(db, space, &mut lines).await?;
+        let name = space.name.clone();
+        let shared = tokio::task::spawn_blocking(move || {
+            let settings = wenlan_core::shared_space::settings_path();
+            wenlan_core::rulesync_team::project_layer_for_local_space(&settings, &name)
+        })
+        .await
+        .map_err(|error| ServerError::Internal(error.to_string()))??;
+        if let Some(layer) = shared {
+            lines.retain(|line| line.general || line.kind != wenlan_types::SkillLineKind::Rule);
+            seen = lines
+                .iter()
+                .map(|line| line.text.trim().to_lowercase())
+                .collect();
+            for text in layer
+                .markdown
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+            {
+                let text = text.strip_prefix("- ").unwrap_or(text);
+                if seen.insert(text.to_lowercase()) {
+                    lines.push(SkillLine {
+                        id: wenlan_core::rulesync_personal::fingerprint(&(&layer.id, text))
+                            .map_err(|error| ServerError::Internal(error.to_string()))?,
+                        kind: wenlan_types::SkillLineKind::Rule,
+                        text: text.to_owned(),
+                        source_page_id: String::new(),
+                        source_page_title: "Shared Rules".into(),
+                        source_revision: 0,
+                        source_revision_at: 0,
+                        source_quote: String::new(),
+                        person_edited: false,
+                        general: false,
+                        hand_written: false,
+                        saved_from: None,
+                        saved_by: None,
+                    });
+                }
+            }
+        }
+    }
     Ok(SpaceRulesResponse {
         space_id: space.id.clone(),
         space_name: space.name.clone(),
@@ -1863,6 +1906,48 @@ async fn rules_by_layer(
     Ok((general, layers))
 }
 
+pub(crate) async fn general_tool_rules(state: &SharedState) -> Result<Vec<String>, ServerError> {
+    let (db, page_root) = db_and_page_root(state).await?;
+    let (general, _) = rules_by_layer(&db, page_root.as_deref()).await?;
+    Ok(skill_grow::tool_rules(&general))
+}
+
+fn rulesync_delivery_row(
+    id: String,
+    display_name: Option<String>,
+    connected: bool,
+    file: Option<crate::rulesync_routes::DeliveryStatus>,
+    rule_count: usize,
+) -> ToolRulesDelivery {
+    let state = match (connected, &file) {
+        (false, _) => RulesDeliveryState::NotConnected,
+        (true, Some(file)) if file.blocked.is_some() => RulesDeliveryState::Blocked,
+        (true, Some(_)) => RulesDeliveryState::Delivered,
+        (true, None) => RulesDeliveryState::OnRequest,
+    };
+    ToolRulesDelivery {
+        display_name: display_name
+            .or_else(|| wenlan_core::db::known_client_display_name(&id).map(str::to_owned))
+            .unwrap_or_else(|| id.clone()),
+        id,
+        connected,
+        method: if file.is_some() {
+            RulesDeliveryMethod::File
+        } else {
+            RulesDeliveryMethod::Mcp
+        },
+        path: file.as_ref().map(|file| file.path.display().to_string()),
+        state,
+        blocked_reason: file
+            .as_ref()
+            .and_then(|file| file.blocked)
+            .filter(|_| connected)
+            .map(str::to_owned),
+        delivered_at: file.and_then(|file| file.at).filter(|_| connected),
+        rule_count,
+    }
+}
+
 /// Report, for every AI tool, how the rules used in every Space reach it,
 /// worked out now from the files as they are. Nothing is written. The file
 /// reads run off the async runtime.
@@ -1874,6 +1959,32 @@ async fn rules_delivery(
     let (general, _) = rules_by_layer(db, page_root).await?;
     let rule_count = skill_grow::tool_rules(&general).len();
     let agents = db.list_agents().await?;
+    if wenlan_core::rulesync_personal::enabled() {
+        let mut deliveries = tokio::task::spawn_blocking(crate::rulesync_routes::delivery_status)
+            .await
+            .map_err(|error| ServerError::Internal(error.to_string()))?;
+        let mut tools = Vec::new();
+        for agent in agents {
+            let file = deliveries.remove(&agent.name);
+            tools.push(rulesync_delivery_row(
+                agent.name,
+                agent.display_name,
+                agent.enabled,
+                file,
+                rule_count,
+            ));
+        }
+        for (agent, file) in deliveries {
+            tools.push(rulesync_delivery_row(
+                agent,
+                None,
+                true,
+                Some(file),
+                rule_count,
+            ));
+        }
+        return Ok(RulesDeliveryResponse { tools });
+    }
     let connected: HashSet<&'static str> = agents
         .iter()
         .filter(|agent| agent.enabled)
@@ -2028,7 +2139,18 @@ async fn sync_rules_files(
     let home = wenlan_core::config::wenlan_home();
     let (general, mut layers) = rules_by_layer(db, page_root).await?;
     sync_rules_layer(&home, &home, &skill_grow::rules_layer_files(None, &general));
-    sync_tool_rules(db, dirs, &general).await;
+    if wenlan_core::rulesync_personal::enabled() {
+        let rules = skill_grow::tool_rules(&general);
+        match tokio::task::spawn_blocking(move || crate::rulesync_routes::sync_from_pages(&rules))
+            .await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => tracing::warn!(%error, "[rules setup] automatic delivery stopped"),
+            Err(error) => tracing::warn!(%error, "[rules setup] automatic delivery worker failed"),
+        }
+    } else {
+        sync_tool_rules(db, dirs, &general).await;
+    }
     let spaces = home.join("spaces");
     // Folders of Spaces that no longer exist still lose the files Wenlan wrote.
     if !has_symlink_below(&home, &spaces) {

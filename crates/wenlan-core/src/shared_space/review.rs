@@ -14,6 +14,9 @@
 //!
 //! One page shows one card at a time: another member's proposal is staged
 //! only while the page has no open card, the newest first.
+//!
+//! Team Rules use the same proposal format. A signed-in Write member
+//! decides on the host, which commits the approved version.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -25,6 +28,7 @@ use crate::db::revision_cards::{OpenPageCard, PageCardState};
 use crate::error::WenlanError;
 use crate::pages::Page;
 use crate::post_write::Writer;
+use crate::rulesync_team;
 use crate::store::format::page::{PageFile, PageKind};
 
 /// What this Wenlan shared and staged, by scope.
@@ -61,11 +65,12 @@ impl Pass<'_> {
     /// Shares the AI tools' cards, stages the others' proposals, and writes
     /// a decision for each card decided here. Runs after the page steps, so
     /// an accepted card's page is already written as a version.
-    pub(super) async fn review(
+    pub(super) async fn review<'a>(
         &self,
         proposals: &HashMap<String, Vec<PageVersion>>,
-        decisions: &HashMap<String, Vec<PageVersion>>,
+        decisions: &'a HashMap<String, Vec<PageVersion>>,
         heads: &HashMap<String, String>,
+        team_approvals: impl Iterator<Item = &'a str>,
     ) -> Result<(), WenlanError> {
         let key = review_key(&self.scope.key());
         let mut review: Review = match self.db.get_app_metadata(&key).await? {
@@ -78,6 +83,7 @@ impl Pass<'_> {
             .flatten()
             .filter_map(|decision| decision.meta.decides.as_ref())
             .map(|decides| decides.proposal.as_str())
+            .chain(team_approvals)
             .collect();
 
         // Proposals of others staged here.
@@ -149,12 +155,14 @@ impl Pass<'_> {
             }
         }
 
-        // An AI tool's new card here becomes a proposal.
-        if !self.settings.read_only {
+        // An AI tool's new card here becomes a proposal. A Read member
+        // may propose changes to the team Rules page only.
+        {
             for card in &open {
                 if review.shared.contains_key(&card.card_id)
                     || staged_ids.contains(&card.card_id)
                     || !self.space_pages.contains_key(&card.page_id)
+                    || (self.settings.read_only && !rulesync_team::is_master_page(&card.page_id))
                     || !shareable(card)
                 {
                     continue;
@@ -197,7 +205,10 @@ impl Pass<'_> {
                 .collect();
             let mut changes: Vec<(String, Card)> = Vec::new();
             for (page_id, list) in proposals {
-                if !self.space_pages.contains_key(page_id) {
+                // The authoritative team Rules card is decided on the
+                // host by a Write member's authenticated person session.
+                if !self.space_pages.contains_key(page_id) || rulesync_team::is_master_page(page_id)
+                {
                     continue;
                 }
                 let newest = list
@@ -325,6 +336,12 @@ impl Pass<'_> {
         head: Option<&String>,
         author: Author,
     ) -> Result<Option<String>, WenlanError> {
+        if rulesync_team::is_master_page(&page.id) {
+            let Some(head) = head else { return Ok(None) };
+            return self
+                .propose_team_rules(&page.id, body, head, author, now_ts())
+                .await;
+        }
         if !version::is_safe_id(&page.id) {
             return Ok(None);
         }
@@ -359,6 +376,49 @@ impl Pass<'_> {
         self.write_kind(&member, version::PROPOSALS_DIR, &page.id, text)
             .await
             .map(Some)
+    }
+
+    pub(super) async fn propose_team_rules(
+        &self,
+        page: &str,
+        body: &str,
+        head: &str,
+        author: Author,
+        timestamp: String,
+    ) -> Result<Option<String>, WenlanError> {
+        let member = if self.settings.hosted && author.member == self.settings.member_id {
+            let Some(owner) = &self.team_owner else {
+                return Ok(None);
+            };
+            owner.clone()
+        } else {
+            author.member
+        };
+        let folder = self.folder.clone();
+        let page = page.to_string();
+        let body = body.to_string();
+        let head = head.to_string();
+        let result = tokio::task::spawn_blocking(move || {
+            rulesync_team::write_proposal(
+                &folder,
+                &page,
+                &member,
+                author.kind,
+                &head,
+                &body,
+                &timestamp,
+            )
+        })
+        .await
+        .map_err(|error| WenlanError::Generic(format!("team Rules proposal task: {error}")))?;
+        match result {
+            Ok(sha) => Ok(Some(sha)),
+            Err(WenlanError::Validation(_)) => {
+                log::warn!("[shared_space] a team Rules edit could not be shared as a proposal");
+                Ok(None)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     /// Stages `proposal` as a card on `page`, naming the member whose AI
@@ -399,7 +459,10 @@ impl Pass<'_> {
 
     /// Writes this person's decision on proposal `sha`.
     async fn decide(&self, page_id: &str, sha: &str, accepted: bool) -> Result<(), WenlanError> {
-        if self.settings.read_only || !version::is_safe_id(page_id) {
+        if self.settings.read_only
+            || !version::is_safe_id(page_id)
+            || rulesync_team::is_master_page(page_id)
+        {
             return Ok(());
         }
         let mut file = PageFile::new("", "");

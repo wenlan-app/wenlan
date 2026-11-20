@@ -16,8 +16,12 @@
 //! replaces `author/` and keeps the additions.
 
 use std::collections::BTreeMap;
+use std::io::{ErrorKind, Read};
 use std::path::{Component, Path, PathBuf};
 
+use anyhow::{bail, ensure, Context};
+use cap_fs_ext::{DirExt as _, FollowSymlinks, OpenOptionsFollowExt as _};
+use cap_std::fs::{Dir, OpenOptions};
 use futures::future::BoxFuture;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -828,13 +832,144 @@ fn ready_files(dir: &Path, record: &InstalledSkill) -> Result<Vec<SkillFile>, Re
     let mut files = Vec::new();
     read_tree(&author, &author, false, &mut files)?;
     let additions = std::fs::read_to_string(meta(dir).join(ADDITIONS_FILE)).unwrap_or_default();
-    for file in &mut files {
-        if file.path == "SKILL.md" {
-            let text = String::from_utf8_lossy(&file.bytes).to_string();
-            file.bytes = compose_skill_md(&text, &record.scope, &additions).into_bytes();
-        }
-    }
+    compose_ready_files(&mut files, &record.scope, &additions);
     Ok(files)
+}
+
+fn compose_ready_files(files: &mut [SkillFile], scope: &Scope, additions: &str) {
+    for file in files.iter_mut().filter(|file| file.path == "SKILL.md") {
+        let text = String::from_utf8_lossy(&file.bytes);
+        file.bytes = compose_skill_md(&text, scope, additions).into_bytes();
+    }
+}
+
+/// Snapshot the held skills that belong in the personal tool setup. A read
+/// error aborts the snapshot so the applier cannot mistake it for a removal.
+pub fn personal_sources(
+    root: &Path,
+) -> anyhow::Result<BTreeMap<String, BTreeMap<PathBuf, Vec<u8>>>> {
+    let Some(root) = optional_dir(Dir::open_ambient_dir(root, cap_std::ambient_authority()))?
+    else {
+        return Ok(BTreeMap::new());
+    };
+    let Some(skills) = optional_dir(root.open_dir_nofollow("skills"))? else {
+        return Ok(BTreeMap::new());
+    };
+    let mut sources = BTreeMap::new();
+    for entry in skills.entries()? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str().filter(|name| !name.starts_with('.')) else {
+            continue;
+        };
+        let kind = entry.file_type()?;
+        ensure!(!kind.is_symlink(), "the stored skill {name} is a symlink");
+        if !kind.is_dir() {
+            continue;
+        }
+        let skill = skills.open_dir_nofollow(name)?;
+        let Some(control) = optional_dir(skill.open_dir_nofollow(META_DIR))? else {
+            continue;
+        };
+        let record: InstalledSkill = serde_json::from_reader(open_regular(&control, RECORD_FILE)?)
+            .with_context(|| format!("read registry record for {name}"))?;
+        if record.scope != Scope::All {
+            continue;
+        }
+        ensure!(
+            record.name == name && local_name(Path::new(name)).as_deref() == Some(name),
+            "invalid registry name for {name}"
+        );
+        ensure!(
+            record.verdict != Verdict::Fail,
+            "{name} failed its skill checks"
+        );
+        let author = control.open_dir_nofollow(AUTHOR_DIR)?;
+        let mut files = Vec::new();
+        let mut total = 0;
+        read_personal_author(&author, "", &mut files, &mut total)
+            .with_context(|| format!("read stored author files for {name}"))?;
+        ensure!(
+            files.iter().any(|file| file.path == "SKILL.md") && hash_files(&files) == record.hash,
+            "the stored author files for {name} differ from the version Wenlan took in"
+        );
+        if let Some(reason) = hidden_from_the_person(&files) {
+            bail!("{name} contains text the preview cannot show in full. {reason}");
+        }
+        let mut additions = String::new();
+        open_regular(&control, ADDITIONS_FILE)?.read_to_string(&mut additions)?;
+        compose_ready_files(&mut files, &record.scope, &additions);
+        sources.insert(
+            record.name,
+            files
+                .into_iter()
+                .map(|file| (PathBuf::from(file.path), file.bytes))
+                .collect(),
+        );
+    }
+    Ok(sources)
+}
+
+fn optional_dir(dir: std::io::Result<Dir>) -> std::io::Result<Option<Dir>> {
+    match dir {
+        Ok(dir) => Ok(Some(dir)),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+fn open_regular(dir: &Dir, name: &str) -> anyhow::Result<cap_std::fs::File> {
+    let mut options = OpenOptions::new();
+    options.read(true).follow(FollowSymlinks::No);
+    #[cfg(unix)]
+    {
+        use cap_std::fs::OpenOptionsExt as _;
+        options.custom_flags(rustix::fs::OFlags::NONBLOCK.bits() as i32);
+    }
+    let file = dir
+        .open_with(name, &options)
+        .with_context(|| format!("open stored skill file {name}"))?;
+    ensure!(file.metadata()?.is_file(), "{name} is not a regular file");
+    Ok(file)
+}
+
+fn read_personal_author(
+    dir: &Dir,
+    prefix: &str,
+    files: &mut Vec<SkillFile>,
+    total: &mut u64,
+) -> anyhow::Result<()> {
+    for entry in dir.entries()? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name = name.to_str().context("skill file name is not UTF-8")?;
+        let path = format!("{prefix}{name}");
+        ensure!(safe_relative(&path), "invalid stored skill path {path}");
+        let kind = entry.file_type()?;
+        if kind.is_dir() {
+            read_personal_author(
+                &dir.open_dir_nofollow(name)?,
+                &format!("{path}/"),
+                files,
+                total,
+            )?;
+            continue;
+        }
+        ensure!(kind.is_file(), "{path} is not a regular file");
+        ensure!(files.len() < MAX_FILES, "stored skill has too many files");
+        let limit = MAX_FILE_BYTES.min(MAX_TOTAL_BYTES - *total);
+        let mut bytes = Vec::new();
+        open_regular(dir, name)?
+            .take(limit + 1)
+            .read_to_end(&mut bytes)?;
+        ensure!(
+            bytes.len() as u64 <= limit,
+            "stored skill exceeds its size limit"
+        );
+        *total += bytes.len() as u64;
+        files.push(SkillFile { path, bytes });
+    }
+    Ok(())
 }
 
 /// Write `dir` again from its `.wenlan/` folder: a fresh ready copy beside
@@ -1018,6 +1153,9 @@ pub fn deliver(
     tool_dirs: &[PathBuf],
 ) -> Result<(Vec<PathBuf>, Vec<PathBuf>), RegistryError> {
     let (dir, record) = find(root, name).ok_or(RegistryError::NotFound)?;
+    if crate::rulesync_personal::enabled() {
+        return Ok((Vec::new(), tool_dirs.to_vec()));
+    }
     let mut files = Vec::new();
     read_tree(&dir, &dir, true, &mut files)?;
     files.push(SkillFile {
@@ -1049,10 +1187,12 @@ pub fn deliver(
 /// Remove the tool copies Wenlan wrote and the skill from the Wenlan folder.
 pub fn remove(root: &Path, name: &str, tool_dirs: &[PathBuf]) -> Result<(), RegistryError> {
     let (dir, _) = find(root, name).ok_or(RegistryError::NotFound)?;
-    for tool in tool_dirs {
-        let target = tool.join(name);
-        if target.join(MANAGED_MARKER).is_file() {
-            std::fs::remove_dir_all(&target).map_err(io_err(&target))?;
+    if !crate::rulesync_personal::enabled() {
+        for tool in tool_dirs {
+            let target = tool.join(name);
+            if target.join(MANAGED_MARKER).is_file() {
+                std::fs::remove_dir_all(&target).map_err(io_err(&target))?;
+            }
         }
     }
     std::fs::remove_dir_all(&dir).map_err(io_err(&dir))
@@ -1121,6 +1261,37 @@ fn local_name(dir: &Path) -> Option<String> {
 /// Wenlan wrote (they carry the marker) and folders without SKILL.md are
 /// left out; a name found in two tools is listed once.
 pub fn scan_local(root: &Path, tool_dirs: &[PathBuf]) -> Vec<LocalSkill> {
+    scan_local_where(root, tool_dirs, |_| true)
+}
+
+/// The opt-in writer's scan reads only source folders under the selected
+/// AI-tool home. This also keeps a scratch scan from following links into the
+/// person's usual setup.
+pub fn scan_local_in_home(root: &Path, tool_dirs: &[PathBuf], home: &Path) -> Vec<LocalSkill> {
+    if !std::fs::symlink_metadata(home).is_ok_and(|meta| meta.is_dir()) {
+        return Vec::new();
+    }
+    let Ok(home) = std::fs::canonicalize(home) else {
+        return Vec::new();
+    };
+    let under_home =
+        |dir: &Path| std::fs::canonicalize(dir).is_ok_and(|path| path.starts_with(&home));
+    let tool_dirs: Vec<_> = tool_dirs
+        .iter()
+        .filter(|dir| under_home(dir))
+        .cloned()
+        .collect();
+    scan_local_where(root, &tool_dirs, |dir| {
+        under_home(dir)
+            && std::fs::symlink_metadata(dir.join("SKILL.md")).is_ok_and(|m| m.is_file())
+    })
+}
+
+fn scan_local_where(
+    root: &Path,
+    tool_dirs: &[PathBuf],
+    allow: impl Fn(&Path) -> bool,
+) -> Vec<LocalSkill> {
     let held: std::collections::HashSet<String> =
         all_records(root).into_iter().map(|(_, r)| r.name).collect();
     let mut out: Vec<LocalSkill> = Vec::new();
@@ -1134,10 +1305,11 @@ pub fn scan_local(root: &Path, tool_dirs: &[PathBuf]) -> Vec<LocalSkill> {
             let Some(name) = local_name(&dir) else {
                 continue;
             };
-            if !dir.is_dir()
-                || dir.join(MANAGED_MARKER).exists()
-                || held.contains(&name)
+            if held.contains(&name)
                 || out.iter().any(|s| s.name == name)
+                || !allow(&dir)
+                || !dir.is_dir()
+                || dir.join(MANAGED_MARKER).exists()
             {
                 continue;
             }

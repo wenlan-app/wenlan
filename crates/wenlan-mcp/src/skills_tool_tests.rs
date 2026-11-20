@@ -37,6 +37,21 @@ fn found() -> serde_json::Value {
     ]})
 }
 
+fn skill_to_save() -> SaveSkillParams {
+    SaveSkillParams {
+        name: "meeting-notes".into(),
+        description: "Turn transcripts into decisions.".into(),
+        body: "Record each decision and its owner.".into(),
+        files: vec![SaveSkillFileParam {
+            path: "examples/notes.md".into(),
+            text: "Decisions and owners".into(),
+        }],
+        scope: SaveSkillScopeParam::Tool {
+            tool: SaveSkillToolParam::Codex,
+        },
+    }
+}
+
 async fn sent(mock: &MockServer) -> Vec<(String, String)> {
     mock.received_requests()
         .await
@@ -143,8 +158,7 @@ async fn ux_skill_12_search_skills_hides_warned_skills_until_asked() {
 }
 
 /// UX-SKILL-13: an AI tool has no way to put a skill into the person's tool
-/// folders. The only skill tools are the two readers, they only ever GET,
-/// and no tool is named for installing, taking in or removing a skill.
+/// folders. The skill readers only GET and save_skill only queues proposals.
 #[tokio::test]
 async fn ux_skill_13_no_tool_installs_takes_in_or_removes_a_skill() {
     let names: Vec<String> = WenlanMcpServer::tool_router()
@@ -152,16 +166,22 @@ async fn ux_skill_13_no_tool_installs_takes_in_or_removes_a_skill() {
         .into_iter()
         .map(|tool| tool.name.to_string())
         .collect();
-    let about_skills: Vec<&str> = names
+    let mut about_skills: Vec<&str> = names
         .iter()
         .map(String::as_str)
         .filter(|name| name.contains("skill"))
         .collect();
-    assert_eq!(about_skills, ["list_skills", "search_skills"]);
+    about_skills.sort_unstable();
+    assert_eq!(about_skills, ["list_skills", "save_skill", "search_skills"]);
     for tool in WenlanMcpServer::tool_router().list_all() {
         if tool.name.contains("skill") {
             let hints = tool.annotations.expect("annotations");
-            assert_eq!(hints.read_only_hint, Some(true), "{}", tool.name);
+            assert_eq!(
+                hints.read_only_hint,
+                Some(tool.name != "save_skill"),
+                "{}",
+                tool.name
+            );
             assert_eq!(hints.destructive_hint, Some(false), "{}", tool.name);
         }
     }
@@ -198,6 +218,79 @@ async fn ux_skill_13_no_tool_installs_takes_in_or_removes_a_skill() {
     );
 }
 
+/// UX-SKILL-16: the MCP submission uses AI attribution and only returns a proposal.
+#[tokio::test]
+async fn ux_skill_16_save_skill_only_proposes() {
+    let mock = MockServer::start().await;
+    let reply = serde_json::json!({
+        "status": "proposed",
+        "proposal": {"id": "card", "name": "meeting-notes",
+                     "origin": {"kind": "agent", "agent": "agent"},
+                     "scope": {"kind": "tool", "tool": "codex"},
+                     "files": [{"path": "SKILL.md", "text": "Record each decision and its owner.",
+                                "cut": false, "marked": 0}]}
+    });
+    Mock::given(method("POST"))
+        .and(path("/api/skills/registry/save"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&reply))
+        .mount(&mock)
+        .await;
+    let result = server(mock.uri(), TransportMode::Stdio)
+        .save_skill_impl(skill_to_save())
+        .await
+        .unwrap();
+    assert_eq!(result.structured_content, Some(reply));
+
+    let requests = mock.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 1);
+    let request = &requests[0];
+    assert_eq!(
+        request
+            .headers
+            .get("x-agent-name")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "agent"
+    );
+    assert!(!request.headers.contains_key("x-wenlan-caller"));
+    assert!(!request.headers.contains_key("x-wenlan-person-key"));
+    let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+    assert_eq!(
+        body,
+        serde_json::json!({
+            "name": "meeting-notes",
+            "description": "Turn transcripts into decisions.",
+            "body": "Record each decision and its owner.",
+            "files": [{"path": "examples/notes.md", "text": "Decisions and owners"}],
+            "scope": {"kind": "tool", "tool": "codex"},
+        })
+    );
+}
+
+#[tokio::test]
+async fn save_skill_refuses_a_pinned_space_and_unexpected_save_receipt() {
+    let mock = MockServer::start().await;
+    let local = server(mock.uri(), TransportMode::Stdio);
+    let pinned = crate::lock_state::with_session_pin(
+        Some("Clinic".into()),
+        local.save_skill_impl(skill_to_save()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(pinned.is_error, Some(true));
+    assert!(sent(&mock).await.is_empty());
+
+    Mock::given(method("POST"))
+        .and(path("/api/skills/registry/save"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "status": "saved", "name": "meeting-notes", "delivery": null,
+        })))
+        .mount(&mock)
+        .await;
+    assert!(local.save_skill_impl(skill_to_save()).await.is_err());
+}
+
 /// The person's skills folders are this computer's: a remote connection (a
 /// teammate's AI tool, a web connector) neither lists the tools nor reaches
 /// the daemon through them.
@@ -214,6 +307,7 @@ async fn skill_tools_are_local_stdio_only() {
             })
             .await
             .unwrap(),
+        remote.save_skill_impl(skill_to_save()).await.unwrap(),
     ] {
         assert_eq!(result.is_error, Some(true));
     }
@@ -244,7 +338,7 @@ fn ux_skill_12_the_everyday_tools_include_the_skill_readers() {
         .into_iter()
         .map(|tool| tool.name.to_string())
         .collect();
-    for name in ["list_skills", "search_skills"] {
+    for name in ["list_skills", "search_skills", "save_skill"] {
         assert!(listed.iter().any(|tool| tool == name), "{name}: {listed:?}");
     }
 }

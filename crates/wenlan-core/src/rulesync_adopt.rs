@@ -1,0 +1,1207 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Read-only import of the personal harness, before rulesync renders it.
+
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::ffi::OsString;
+use std::io::{ErrorKind, Read};
+use std::path::{Component, Path, PathBuf};
+
+use anyhow::{bail, ensure, Context, Result};
+use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
+use cap_std::fs::{Dir, Metadata, OpenOptions};
+use serde::{Deserialize, Serialize};
+
+const SHARED_RULES: &str = ".agents/AGENTS.md";
+const SHARED_SKILLS: &str = ".agents/skills";
+const CLAUDE_OVERLAY: &str = ".agents/adapters/claude/CLAUDE.md";
+const CODEX_OVERLAY: &str = ".agents/adapters/codex/AGENTS.codex.md";
+const MAX_RULE_BYTES: u64 = 1024 * 1024;
+const MAX_CLAUDE_IMPORTS: usize = 256;
+const MAX_SKILL_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_SKILL_ENTRIES: usize = 2048;
+
+/// A tool's paths relative to the supplied home. More than one descriptor can
+/// name the same tool if it has an additional skill location to discover.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AdoptionTarget {
+    pub tool: String,
+    pub rules_path: Option<PathBuf>,
+    pub skills_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Adoption {
+    pub shared: String,
+    pub overlays: BTreeMap<String, String>,
+    pub skills: Vec<AdoptedSkill>,
+    /// Paths relative to the adopted home, including resolved link targets.
+    pub sources: BTreeSet<PathBuf>,
+    pub files: BTreeMap<PathBuf, AdoptionFile>,
+    /// Existing skill locations that could not be imported and will stay in place.
+    pub skipped: BTreeMap<PathBuf, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdoptedSkill {
+    pub name: String,
+    pub shared: bool,
+    pub targets: BTreeSet<String>,
+    /// The skill folder, relative to home, under which each tool uses this copy.
+    pub locations: BTreeMap<String, BTreeSet<PathBuf>>,
+    /// Paths relative to the skill folder.
+    pub files: BTreeMap<PathBuf, Vec<u8>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub enum AdoptionEntry {
+    Missing,
+    File(Vec<u8>),
+    Symlink {
+        target: PathBuf,
+        /// File content observed through the link, or None for a directory link.
+        bytes: Option<Vec<u8>>,
+    },
+    Directory,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AdoptionFile {
+    pub before: AdoptionEntry,
+    pub after: AdoptionEntry,
+}
+
+/// Discover rules, source references, and current skill subsets without writing
+/// to the home, data root, or a renderer's staging folder.
+pub fn discover(home: &Path, targets: &[AdoptionTarget]) -> Result<Adoption> {
+    for target in targets {
+        for path in [&target.rules_path, &target.skills_path]
+            .into_iter()
+            .flatten()
+        {
+            ensure!(
+                normal_relative(path),
+                "invalid adoption path {}",
+                path.display()
+            );
+        }
+    }
+    let home = Home::open(home)?;
+    let mut sources = BTreeSet::new();
+    let shared_file = load_text(&home, Path::new(SHARED_RULES), &mut sources)?;
+    let shared = shared_file.as_ref().map_or("", |file| file.text.as_str());
+    let shared_path = shared_file.as_ref().map(|file| file.node.path.as_path());
+    let (overlays, mut files) = discover_rules(&home, targets, shared, shared_path, &mut sources)?;
+    let mut skills = SkillDiscovery::new(&home, &mut sources, &mut files);
+    skills.scan(Path::new(SHARED_SKILLS), None)?;
+    for target in targets {
+        if let Some(dir) = target
+            .skills_path
+            .as_deref()
+            .filter(|dir| *dir != Path::new(SHARED_SKILLS))
+        {
+            skills.scan(dir, Some(&target.tool))?;
+        }
+    }
+    let (skills, skipped) = skills.finish();
+    Ok(Adoption {
+        shared: shared.to_owned(),
+        overlays,
+        skills,
+        sources,
+        files,
+        skipped,
+    })
+}
+
+fn normal_relative(path: &Path) -> bool {
+    !path.as_os_str().is_empty()
+        && path.to_str().is_some()
+        && path
+            .components()
+            .all(|part| matches!(part, Component::Normal(_)))
+}
+
+struct Home {
+    dir: Dir,
+    supplied: PathBuf,
+    canonical: PathBuf,
+}
+
+struct Node {
+    path: PathBuf,
+    metadata: Metadata,
+    link: Option<PathBuf>,
+    through_link: bool,
+}
+
+impl Home {
+    fn open(path: &Path) -> Result<Self> {
+        let supplied = std::path::absolute(path)?;
+        let canonical = supplied.canonicalize().context("resolve adoption home")?;
+        let dir = Dir::open_ambient_dir(&canonical, cap_std::ambient_authority())
+            .context("open adoption home")?;
+        Ok(Self {
+            dir,
+            supplied,
+            canonical,
+        })
+    }
+
+    fn relative_target<'a>(&self, path: &'a Path) -> Result<&'a Path> {
+        if path.is_absolute() {
+            return path
+                .strip_prefix(&self.canonical)
+                .or_else(|_| path.strip_prefix(&self.supplied))
+                .with_context(|| format!("{} is outside the adoption home", path.display()));
+        }
+        Ok(path)
+    }
+
+    /// Resolve absolute imports and symlinks only when their absolute prefix
+    /// is this home. Relative traversal may cross skill folders inside it.
+    /// All metadata and byte reads use the same filesystem capability.
+    fn resolve(&self, path: &Path) -> Result<Option<Node>> {
+        let mut remaining = components(self.relative_target(path)?)?;
+        let mut resolved = PathBuf::new();
+        let mut link = None;
+        let mut link_count = 0;
+        while let Some(part) = remaining.pop_front() {
+            if part == ".." {
+                ensure!(
+                    resolved.pop(),
+                    "{} leaves the adoption home",
+                    path.display()
+                );
+                continue;
+            }
+            let candidate = resolved.join(&part);
+            let Some(metadata) = optional(self.dir.symlink_metadata(&candidate))
+                .with_context(|| format!("inspect {}", candidate.display()))?
+            else {
+                ensure!(link_count == 0, "broken symlink at {}", path.display());
+                return Ok(None);
+            };
+            if metadata.is_symlink() {
+                link_count += 1;
+                ensure!(link_count <= 40, "symlink cycle at {}", path.display());
+                let target = self
+                    .dir
+                    .read_link_contents(&candidate)
+                    .with_context(|| format!("read symlink {}", candidate.display()))?;
+                ensure!(
+                    target.to_str().is_some(),
+                    "{} has a non-UTF-8 symlink target",
+                    candidate.display()
+                );
+                if remaining.is_empty() && link.is_none() {
+                    link = Some(target.clone());
+                }
+                if target.is_absolute() {
+                    resolved.clear();
+                }
+                let mut target_components = components(self.relative_target(&target)?)?;
+                target_components.append(&mut remaining);
+                remaining = target_components;
+            } else {
+                if remaining.is_empty() {
+                    return Ok(Some(Node {
+                        path: candidate,
+                        metadata,
+                        link,
+                        through_link: link_count != 0,
+                    }));
+                }
+                ensure!(metadata.is_dir(), "{} is not a folder", candidate.display());
+                resolved = candidate;
+            }
+        }
+        let relative = if resolved.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            &resolved
+        };
+        let metadata = self.dir.symlink_metadata(relative)?;
+        Ok(Some(Node {
+            path: resolved,
+            metadata,
+            link,
+            through_link: link_count != 0,
+        }))
+    }
+
+    fn names(&self, node: &Node) -> Result<Vec<OsString>> {
+        ensure!(
+            node.metadata.is_dir(),
+            "{} is not a folder",
+            node.path.display()
+        );
+        let root = self.dir.open_dir_nofollow(&node.path)?;
+        let mut names = root
+            .entries()?
+            .map(|entry| entry.map(|entry| entry.file_name()))
+            .collect::<std::io::Result<Vec<_>>>()?;
+        names.sort();
+        Ok(names)
+    }
+
+    fn bytes(&self, node: &Node, limit: u64) -> Result<Vec<u8>> {
+        ensure!(
+            node.metadata.is_file(),
+            "{} is not a regular file",
+            node.path.display()
+        );
+        ensure!(
+            node.metadata.len() <= limit,
+            "{} exceeds the import size limit",
+            node.path.display()
+        );
+        let mut options = OpenOptions::new();
+        options.read(true).follow(FollowSymlinks::No);
+        #[cfg(unix)]
+        {
+            use cap_std::fs::OpenOptionsExt as _;
+            options.custom_flags(rustix::fs::OFlags::NONBLOCK.bits() as i32);
+        }
+        let file = self
+            .dir
+            .open_with(&node.path, &options)
+            .with_context(|| format!("open {}", node.path.display()))?;
+        ensure!(
+            file.metadata()?.is_file(),
+            "{} changed while reading",
+            node.path.display()
+        );
+        let mut bytes = Vec::new();
+        file.take(limit + 1).read_to_end(&mut bytes)?;
+        ensure!(
+            bytes.len() as u64 <= limit,
+            "{} exceeds the import size limit",
+            node.path.display()
+        );
+        Ok(bytes)
+    }
+}
+
+fn components(path: &Path) -> Result<VecDeque<OsString>> {
+    let mut out = VecDeque::new();
+    for part in path.components() {
+        match part {
+            Component::Normal(part) => out.push_back(part.to_owned()),
+            Component::ParentDir => out.push_back(OsString::from("..")),
+            Component::CurDir => {}
+            _ => bail!("invalid adoption path {}", path.display()),
+        }
+    }
+    Ok(out)
+}
+
+fn optional<T>(result: std::io::Result<T>) -> std::io::Result<Option<T>> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+struct LoadedText {
+    node: Node,
+    text: String,
+}
+
+fn load_text(
+    home: &Home,
+    path: &Path,
+    sources: &mut BTreeSet<PathBuf>,
+) -> Result<Option<LoadedText>> {
+    let relative = home.relative_target(path)?;
+    ensure_rule_source(relative)?;
+    let Some(node) = home.resolve(relative)? else {
+        return Ok(None);
+    };
+    ensure_rule_source(&node.path)?;
+    let text = String::from_utf8(home.bytes(&node, MAX_RULE_BYTES)?)
+        .with_context(|| format!("{} is not readable UTF-8", path.display()))?;
+    sources.extend([relative.to_path_buf(), node.path.clone()]);
+    Ok(Some(LoadedText { node, text }))
+}
+
+fn ensure_rule_source(path: &Path) -> Result<()> {
+    for tool in [".claude", ".codex"] {
+        if let Ok(relative) = path.strip_prefix(tool) {
+            ensure!(
+                !relative.starts_with("hooks")
+                    && !matches!(
+                        relative.to_str(),
+                        Some("settings.json" | "settings.local.json" | "config.toml")
+                    ),
+                "{} is a tool configuration file",
+                path.display()
+            );
+        }
+    }
+    Ok(())
+}
+
+type RuleDiscovery = (BTreeMap<String, String>, BTreeMap<PathBuf, AdoptionFile>);
+
+fn discover_rules(
+    home: &Home,
+    targets: &[AdoptionTarget],
+    shared: &str,
+    shared_path: Option<&Path>,
+    sources: &mut BTreeSet<PathBuf>,
+) -> Result<RuleDiscovery> {
+    let mut overlays = BTreeMap::new();
+    let mut previous = BTreeMap::new();
+    for target in targets {
+        let Some(path) = &target.rules_path else {
+            continue;
+        };
+        if let Some(parent) = path.parent().filter(|path| !path.as_os_str().is_empty()) {
+            if let Some(node) = home.resolve(parent)? {
+                ensure!(
+                    !node.through_link,
+                    "{} has a symlinked parent",
+                    path.display()
+                );
+            }
+        }
+        let current = load_text(home, path, sources)?;
+        let bootstrap = match target.tool.as_str() {
+            "claudecode" | "claude-code" => Some((Path::new(CLAUDE_OVERLAY), true)),
+            "codexcli" | "codex" => Some((Path::new(CODEX_OVERLAY), false)),
+            _ => None,
+        };
+        let claude = matches!(bootstrap, Some((_, true)));
+        let current_overlay = current
+            .as_ref()
+            .map(|file| rule_overlay(home, path, file, claude, shared, shared_path, sources))
+            .transpose()?
+            .unwrap_or_default();
+        let mut overlay = current_overlay;
+        if let Some((adapter, _)) = bootstrap {
+            if let Some(file) = load_text(home, adapter, sources)? {
+                if current
+                    .as_ref()
+                    .is_none_or(|existing| existing.text != file.text)
+                {
+                    let adapter_overlay =
+                        rule_overlay(home, adapter, &file, claude, shared, shared_path, sources)?;
+                    overlay = merge_variants(&adapter_overlay, &overlay);
+                }
+            }
+        }
+        overlays
+            .entry(target.tool.clone())
+            .and_modify(|existing: &mut String| {
+                *existing = merge_variants(existing, &overlay);
+            })
+            .or_insert(overlay);
+        previous.insert(
+            (target.tool.as_str(), path),
+            current.map_or(AdoptionEntry::Missing, |file| match file.node.link {
+                Some(target) => AdoptionEntry::Symlink {
+                    target,
+                    bytes: Some(file.text.into_bytes()),
+                },
+                None => AdoptionEntry::File(file.text.into_bytes()),
+            }),
+        );
+    }
+    let mut files = BTreeMap::new();
+    for ((tool, path), before) in previous {
+        let mut after = shared.to_owned();
+        append_text(&mut after, &overlays[tool]);
+        record_file(
+            &mut files,
+            path.clone(),
+            AdoptionFile {
+                before,
+                after: AdoptionEntry::File(after.into_bytes()),
+            },
+        )?;
+    }
+    Ok((overlays, files))
+}
+
+fn rule_overlay(
+    home: &Home,
+    path: &Path,
+    file: &LoadedText,
+    claude: bool,
+    shared: &str,
+    shared_path: Option<&Path>,
+    sources: &mut BTreeSet<PathBuf>,
+) -> Result<String> {
+    if !claude {
+        return Ok(without_shared(shared, &file.text));
+    }
+    let mut imports = Imports {
+        home,
+        shared_path,
+        sources,
+        stack: BTreeSet::new(),
+        remaining: MAX_CLAUDE_IMPORTS,
+        included_shared: false,
+    };
+    let body = imports.expand(path, file, 0)?;
+    Ok(if imports.included_shared {
+        body
+    } else {
+        without_shared(shared, &body)
+    })
+}
+
+struct Imports<'a> {
+    home: &'a Home,
+    shared_path: Option<&'a Path>,
+    sources: &'a mut BTreeSet<PathBuf>,
+    stack: BTreeSet<PathBuf>,
+    remaining: usize,
+    included_shared: bool,
+}
+
+impl Imports<'_> {
+    fn expand(&mut self, path: &Path, file: &LoadedText, depth: usize) -> Result<String> {
+        use pulldown_cmark::{Event, Parser, Tag};
+
+        ensure!(
+            depth <= 5,
+            "Claude rule imports exceed five levels at {}",
+            path.display()
+        );
+        ensure!(
+            self.stack.insert(file.node.path.clone()),
+            "Claude rule import cycle at {}",
+            path.display()
+        );
+        let literal = Parser::new(&file.text)
+            .into_offset_iter()
+            .filter_map(|(event, range)| match event {
+                Event::Start(Tag::CodeBlock(_))
+                | Event::Code(_)
+                | Event::Html(_)
+                | Event::InlineHtml(_) => Some(range),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let imports = crate::skill_grow::lines_outside_code_fences(&file.text)
+            .into_iter()
+            .filter_map(|(range, line)| {
+                let import = line.trim().strip_prefix('@')?;
+                let offset = range.start + (line.len() - line.trim_start().len());
+                if import.is_empty()
+                    || import.contains(char::is_whitespace)
+                    || literal.iter().any(|code| code.contains(&offset))
+                {
+                    None
+                } else {
+                    Some((range, import))
+                }
+            });
+        let mut body = String::new();
+        let mut copied_to = 0;
+        for (range, import) in imports {
+            ensure!(
+                self.remaining > 0,
+                "too many Claude rule imports in {}",
+                path.display()
+            );
+            self.remaining -= 1;
+            let imported_path = match import.strip_prefix("~/") {
+                Some(path) => PathBuf::from(path),
+                None => path.parent().unwrap_or(Path::new("")).join(import),
+            };
+            let Some(imported) = load_text(self.home, &imported_path, self.sources)? else {
+                // A bare @mention can be plain prose. A path-shaped directive must resolve.
+                ensure!(
+                    !import.contains(['/', '\\']) && Path::new(import).extension().is_none(),
+                    "Claude rule import {} is missing",
+                    imported_path.display()
+                );
+                continue;
+            };
+            body.push_str(&file.text[copied_to..range.start]);
+            let ending = &file.text[range.end..];
+            let ending = if ending.starts_with("\r\n") {
+                "\r\n"
+            } else if ending.starts_with('\n') {
+                "\n"
+            } else {
+                ""
+            };
+            if self.shared_path == Some(&imported.node.path) {
+                self.included_shared = true;
+            } else {
+                let expanded = self.expand(&imported_path, &imported, depth + 1)?;
+                body.push_str(&expanded);
+                if !expanded.ends_with('\n') {
+                    body.push_str(ending);
+                }
+            }
+            ensure!(
+                body.len() as u64 <= MAX_RULE_BYTES,
+                "expanded Claude rules exceed the import size limit at {}",
+                path.display()
+            );
+            copied_to = range.end + ending.len();
+        }
+        body.push_str(&file.text[copied_to..]);
+        ensure!(
+            body.len() as u64 <= MAX_RULE_BYTES,
+            "expanded Claude rules exceed the import size limit at {}",
+            path.display()
+        );
+        self.stack.remove(&file.node.path);
+        Ok(body)
+    }
+}
+
+fn append_text(out: &mut String, text: &str) {
+    if !out.is_empty() && !out.ends_with('\n') && !text.is_empty() {
+        out.push('\n');
+    }
+    out.push_str(text);
+}
+
+fn line_key(line: &str) -> &str {
+    line.strip_suffix("\r\n")
+        .or_else(|| line.strip_suffix('\n'))
+        .unwrap_or(line)
+}
+
+/// Remove a copied shared block by occurrence. If an older generated file
+/// includes hand edits in the block, align nonblank lines in sequence and keep
+/// the unmatched ones. A repeated line outside that alignment survives.
+fn without_shared(shared: &str, tool: &str) -> String {
+    let shared = shared
+        .split_inclusive('\n')
+        .map(line_key)
+        .collect::<Vec<_>>();
+    if shared.is_empty() {
+        return tool.to_owned();
+    }
+    let raw = tool.split_inclusive('\n').collect::<Vec<_>>();
+    let keys = raw.iter().map(|line| line_key(line)).collect::<Vec<_>>();
+    if let Some(at) = keys.windows(shared.len()).position(|block| block == shared) {
+        return raw[..at]
+            .iter()
+            .chain(&raw[at + shared.len()..])
+            .copied()
+            .collect();
+    }
+    let shared = shared
+        .into_iter()
+        .filter(|line| !line.trim().is_empty())
+        .collect::<Vec<_>>();
+    let tool_nonblank = keys
+        .into_iter()
+        .enumerate()
+        .filter(|(_, line)| !line.trim().is_empty())
+        .collect::<Vec<_>>();
+    let tool_keys = tool_nonblank
+        .iter()
+        .map(|(_, line)| *line)
+        .collect::<Vec<_>>();
+    let duplicates = crate::authorship::lcs_pairs(&shared, &tool_keys)
+        .into_iter()
+        .map(|(_, tool_line)| tool_nonblank[tool_line].0)
+        .collect::<BTreeSet<_>>();
+    raw.into_iter()
+        .enumerate()
+        .filter_map(|(at, line)| (!duplicates.contains(&at)).then_some(line))
+        .collect()
+}
+
+/// The adapter and its tool copy can each have unique edits. Align their
+/// occurrences and join the gaps without turning headings or lines into sets.
+fn merge_variants(adapter: &str, current: &str) -> String {
+    if adapter == current {
+        return current.to_owned();
+    }
+    let old = adapter.split_inclusive('\n').collect::<Vec<_>>();
+    let new = current.split_inclusive('\n').collect::<Vec<_>>();
+    let old_keys = old.iter().map(|line| line_key(line)).collect::<Vec<_>>();
+    let new_keys = new.iter().map(|line| line_key(line)).collect::<Vec<_>>();
+    let mut only_in_adapter = BTreeMap::new();
+    for key in &old_keys {
+        *only_in_adapter.entry(*key).or_insert(0usize) += 1;
+    }
+    for key in &new_keys {
+        if let Some(count) = only_in_adapter.get_mut(key) {
+            *count = count.saturating_sub(1);
+        }
+    }
+    let mut append_adapter = |out: &mut String, lines: &[&str]| {
+        for line in lines {
+            let count = only_in_adapter
+                .get_mut(line_key(line))
+                .expect("counted adapter line");
+            if *count > 0 {
+                append_text(out, line);
+                *count -= 1;
+            }
+        }
+    };
+    let mut out = String::new();
+    let mut old_at = 0;
+    let mut new_at = 0;
+    for (left, right) in crate::authorship::lcs_pairs(&old_keys, &new_keys) {
+        append_adapter(&mut out, &old[old_at..left]);
+        for line in &new[new_at..=right] {
+            append_text(&mut out, line);
+        }
+        old_at = left + 1;
+        new_at = right + 1;
+    }
+    append_adapter(&mut out, &old[old_at..]);
+    for line in &new[new_at..] {
+        append_text(&mut out, line);
+    }
+    out
+}
+
+fn record_file(
+    files: &mut BTreeMap<PathBuf, AdoptionFile>,
+    path: PathBuf,
+    file: AdoptionFile,
+) -> Result<()> {
+    ensure!(
+        files.get(&path).is_none_or(|existing| existing == &file),
+        "different adoption content for {}",
+        path.display()
+    );
+    files.insert(path, file);
+    Ok(())
+}
+
+struct SkillDiscovery<'a> {
+    home: &'a Home,
+    sources: &'a mut BTreeSet<PathBuf>,
+    files: &'a mut BTreeMap<PathBuf, AdoptionFile>,
+    skills: BTreeMap<(String, PathBuf), SkillTree>,
+    skipped: BTreeMap<PathBuf, String>,
+}
+
+impl<'a> SkillDiscovery<'a> {
+    fn new(
+        home: &'a Home,
+        sources: &'a mut BTreeSet<PathBuf>,
+        files: &'a mut BTreeMap<PathBuf, AdoptionFile>,
+    ) -> Self {
+        Self {
+            home,
+            sources,
+            files,
+            skills: BTreeMap::new(),
+            skipped: BTreeMap::new(),
+        }
+    }
+
+    fn scan(&mut self, path: &Path, tool: Option<&str>) -> Result<()> {
+        let node = match self.home.resolve(path) {
+            Ok(Some(node)) if !node.through_link => node,
+            Ok(None) => return Ok(()),
+            Ok(Some(_)) => {
+                self.skipped.insert(
+                    path.to_owned(),
+                    "the skills directory is reached through a symlink".into(),
+                );
+                return Ok(());
+            }
+            Err(error) => {
+                self.skipped.insert(path.to_owned(), format!("{error:#}"));
+                return Ok(());
+            }
+        };
+        for name in self
+            .home
+            .names(&node)
+            .with_context(|| format!("list skills in {}", path.display()))?
+        {
+            let skill_path = path.join(&name);
+            let Some(name) = name.to_str() else {
+                self.skipped.insert(
+                    PathBuf::from(skill_path.to_string_lossy().into_owned()),
+                    "the skill folder name is not UTF-8".into(),
+                );
+                continue;
+            };
+            if name.starts_with('.') {
+                continue;
+            }
+            if let Err(error) = self.scan_one(&skill_path, name, tool) {
+                self.skipped.insert(skill_path, format!("{error:#}"));
+            }
+        }
+        Ok(())
+    }
+
+    fn scan_one(&mut self, path: &Path, name: &str, tool: Option<&str>) -> Result<()> {
+        let Some(node) = self.home.resolve(path)? else {
+            return Ok(());
+        };
+        if !node.metadata.is_dir() || self.home.resolve(&node.path.join("SKILL.md"))?.is_none() {
+            return Ok(());
+        }
+        let mut key = (name.to_owned(), node.path.clone());
+        if tool.is_some() && node.link.is_some() && !self.skills.contains_key(&key) {
+            if let Some((shared, _)) = self
+                .skills
+                .iter()
+                .find(|((_, source), tree)| source == &node.path && tree.skill.shared)
+            {
+                // A tool may link a shared skill under a local alias.
+                key = shared.clone();
+            }
+        }
+        let tree = match self.skills.entry(key) {
+            std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(SkillTree::read(self.home, &node, name)?)
+            }
+        };
+        match tool {
+            Some(tool) => {
+                tree.skill.targets.insert(tool.to_owned());
+                tree.skill
+                    .locations
+                    .entry(tool.to_owned())
+                    .or_default()
+                    .insert(path.to_owned());
+            }
+            None => tree.skill.shared = true,
+        }
+        self.sources.insert(path.to_owned());
+        self.sources.extend(tree.sources.iter().cloned());
+        if let Some(target) = node.link {
+            record_file(
+                self.files,
+                path.to_owned(),
+                AdoptionFile {
+                    before: AdoptionEntry::Symlink {
+                        target,
+                        bytes: None,
+                    },
+                    after: AdoptionEntry::Directory,
+                },
+            )?;
+            for dir in &tree.dirs {
+                record_file(
+                    self.files,
+                    path.join(dir),
+                    AdoptionFile {
+                        before: AdoptionEntry::Missing,
+                        after: AdoptionEntry::Directory,
+                    },
+                )?;
+            }
+            for (relative, bytes) in &tree.skill.files {
+                record_file(
+                    self.files,
+                    path.join(relative),
+                    AdoptionFile {
+                        before: AdoptionEntry::Missing,
+                        after: AdoptionEntry::File(bytes.clone()),
+                    },
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    fn finish(self) -> (Vec<AdoptedSkill>, BTreeMap<PathBuf, String>) {
+        let mut skills = self
+            .skills
+            .into_values()
+            .map(|tree| tree.skill)
+            .collect::<Vec<_>>();
+        skills.sort_by(|left, right| {
+            left.name
+                .cmp(&right.name)
+                .then_with(|| right.shared.cmp(&left.shared))
+                .then_with(|| left.locations.cmp(&right.locations))
+        });
+        (skills, self.skipped)
+    }
+}
+
+struct SkillTree {
+    skill: AdoptedSkill,
+    dirs: BTreeSet<PathBuf>,
+    sources: BTreeSet<PathBuf>,
+    remaining_bytes: u64,
+}
+
+impl SkillTree {
+    fn read(home: &Home, node: &Node, name: &str) -> Result<Self> {
+        let mut tree = Self {
+            skill: AdoptedSkill {
+                name: name.to_owned(),
+                shared: false,
+                targets: BTreeSet::new(),
+                locations: BTreeMap::new(),
+                files: BTreeMap::new(),
+            },
+            dirs: BTreeSet::new(),
+            sources: BTreeSet::new(),
+            remaining_bytes: MAX_SKILL_BYTES,
+        };
+        tree.visit(home, &node.path, node, Path::new(""), &mut BTreeSet::new())?;
+        let entry = tree
+            .skill
+            .files
+            .get(Path::new("SKILL.md"))
+            .context("missing regular SKILL.md")?;
+        std::str::from_utf8(entry).context("SKILL.md is not readable UTF-8")?;
+        Ok(tree)
+    }
+
+    fn visit(
+        &mut self,
+        home: &Home,
+        root: &Path,
+        node: &Node,
+        within: &Path,
+        parents: &mut BTreeSet<PathBuf>,
+    ) -> Result<()> {
+        ensure!(
+            parents.insert(node.path.clone()),
+            "skill symlink cycle at {}",
+            node.path.display()
+        );
+        for name in home.names(node)? {
+            let name = name
+                .to_str()
+                .context("skill has a file name that is not UTF-8")?;
+            // Version-control databases and locally generated dependencies
+            // are not part of the skill source delivered by this migration.
+            if matches!(name, ".git" | ".DS_Store" | "node_modules" | "__pycache__") {
+                continue;
+            }
+            ensure!(
+                self.skill.files.len() + self.dirs.len() < MAX_SKILL_ENTRIES,
+                "skill exceeds the import entry limit"
+            );
+            let source = node.path.join(name);
+            let entry = home.resolve(&source)?.with_context(|| {
+                format!("{} disappeared during skill discovery", source.display())
+            })?;
+            ensure!(
+                entry.path.starts_with(root),
+                "{} points outside its skill folder",
+                source.display()
+            );
+            self.sources.extend([source, entry.path.clone()]);
+            let relative = within.join(name);
+            if entry.metadata.is_dir() {
+                self.dirs.insert(relative.clone());
+                self.visit(home, root, &entry, &relative, parents)?;
+            } else {
+                let bytes = home.bytes(&entry, self.remaining_bytes)?;
+                self.remaining_bytes -= bytes.len() as u64;
+                self.skill.files.insert(relative, bytes);
+            }
+        }
+        parents.remove(&node.path);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn put(home: &Path, path: &str, bytes: impl AsRef<[u8]>) {
+        let path = home.join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, bytes).unwrap();
+    }
+
+    fn target(tool: &str, rules: Option<&str>, skills: Option<&str>) -> AdoptionTarget {
+        AdoptionTarget {
+            tool: tool.into(),
+            rules_path: rules.map(PathBuf::from),
+            skills_path: skills.map(PathBuf::from),
+        }
+    }
+
+    #[cfg(unix)]
+    fn link(home: &Path, path: &str, target: impl AsRef<Path>) {
+        let path = home.join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(target, path).unwrap();
+    }
+
+    #[test]
+    fn claude_imports_and_adapter_edits_are_adopted_without_duplicate_shared_lines() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path();
+        let shared = "Shared\nRepeated\nMiddle\nRepeated\n";
+        let adapter = "@~/.agents/AGENTS.md\n# Claude\nAdapter line\n";
+        let actual = "@~/.agents/AGENTS.md\n# Claude\nAdapter line\nActual line\n@parts/more.md\nRepeated\n```md\n@./literal.md\n```\n";
+        put(home, SHARED_RULES, shared);
+        put(home, CLAUDE_OVERLAY, adapter);
+        put(home, ".claude/CLAUDE.md", actual);
+        put(home, ".claude/parts/more.md", "Extra\n@lower/detail.md\n");
+        put(
+            home,
+            ".claude/parts/lower/detail.md",
+            "Tail without a newline",
+        );
+        put(
+            home,
+            ".claude/settings.json",
+            "An unrelated settings file\n",
+        );
+
+        let adoption = discover(
+            home,
+            &[target("claudecode", Some(".claude/CLAUDE.md"), None)],
+        )
+        .unwrap();
+        let overlay = "# Claude\nAdapter line\nActual line\nExtra\nTail without a newline\nRepeated\n```md\n@./literal.md\n```\n";
+        assert_eq!(adoption.shared, shared);
+        assert_eq!(adoption.overlays["claudecode"], overlay);
+        assert_eq!(adoption.files.len(), 1);
+        assert_eq!(
+            adoption.files[Path::new(".claude/CLAUDE.md")],
+            AdoptionFile {
+                before: AdoptionEntry::File(actual.as_bytes().to_vec()),
+                after: AdoptionEntry::File(format!("{shared}{overlay}").into_bytes()),
+            }
+        );
+        assert!(adoption
+            .sources
+            .contains(Path::new(".claude/parts/lower/detail.md")));
+        assert!(!adoption
+            .sources
+            .contains(Path::new(".claude/settings.json")));
+        assert_eq!(
+            fs::read_to_string(home.join(".claude/CLAUDE.md")).unwrap(),
+            actual
+        );
+        assert!(!home.join(".rulesync").exists());
+    }
+
+    #[test]
+    fn shared_occurrences_and_overlay_variants_preserve_intentional_repeats() {
+        let shared = "repeat\nanchor\nrepeat\nlast\n";
+        let tool = "repeat\r\nhand edit\r\nanchor\r\nrepeat\r\nlast\r\nrepeat\r\n";
+        assert_eq!(without_shared(shared, tool), "hand edit\r\nrepeat\r\n");
+        let adapter = "header\nfrom adapter\nreuse\nreuse\n";
+        let current = "opening note\nheader\nreuse\nfrom tool\nreuse\nreuse\n";
+        assert_eq!(
+            merge_variants(adapter, current),
+            "opening note\nheader\nfrom adapter\nreuse\nfrom tool\nreuse\nreuse\n"
+        );
+        assert_eq!(
+            merge_variants("first\nsecond\n", "second\nfirst\n"),
+            "second\nfirst\n"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn codex_adoption_records_raw_link_and_resolved_file_separately() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path();
+        let shared = "# Shared\n\ncommon\n";
+        let adapter = "# Codex\n\nfrom adapter\n";
+        let actual = format!("<!-- source header -->\n\n{shared}\n{adapter}hand edit\n");
+        let link_path = ".codex/AGENTS.md";
+        let resolved = ".agents/generated/AGENTS.md";
+        let raw_link = Path::new("../.agents/generated/AGENTS.md");
+        put(home, SHARED_RULES, shared);
+        put(home, CODEX_OVERLAY, adapter);
+        put(home, resolved, &actual);
+        link(home, link_path, raw_link);
+
+        let adoption = discover(home, &[target("codexcli", Some(link_path), None)]).unwrap();
+        let overlay = format!("<!-- source header -->\n\n\n{adapter}hand edit\n");
+        assert_eq!(adoption.overlays["codexcli"], overlay);
+        assert_eq!(
+            adoption.files[Path::new(link_path)],
+            AdoptionFile {
+                before: AdoptionEntry::Symlink {
+                    target: raw_link.to_path_buf(),
+                    bytes: Some(actual.as_bytes().to_vec())
+                },
+                after: AdoptionEntry::File(format!("{shared}{overlay}").into_bytes()),
+            }
+        );
+        assert!(adoption.sources.contains(Path::new(resolved)));
+        assert_eq!(fs::read_link(home.join(link_path)).unwrap(), raw_link);
+    }
+
+    #[test]
+    fn claude_examples_and_explicit_configuration_imports_are_handled_safely() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path();
+        let target = target("claudecode", Some(".claude/CLAUDE.md"), None);
+        let literal =
+            "    @./indented-example.md\n\n<!--\n@./comment-example.md\n-->\n\n@somebody\n";
+        put(home, ".claude/CLAUDE.md", literal);
+        let adoption = discover(home, std::slice::from_ref(&target)).unwrap();
+        assert_eq!(adoption.overlays["claudecode"], literal);
+        put(home, ".claude/settings.json", "excluded\n");
+        put(home, ".claude/CLAUDE.md", "@./settings.json\n");
+        assert!(discover(home, &[target])
+            .unwrap_err()
+            .to_string()
+            .contains("tool configuration file"));
+    }
+
+    #[test]
+    fn claude_import_cycles_stop_discovery() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path();
+        put(home, ".claude/CLAUDE.md", "@./nested.md\n");
+        put(home, ".claude/nested.md", "@./CLAUDE.md\n");
+        let error = discover(
+            home,
+            &[target("claudecode", Some(".claude/CLAUDE.md"), None)],
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("import cycle"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn skills_keep_per_tool_link_subsets_and_distinct_hand_installed_copies() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path();
+        put(home, ".agents/skills/common/SKILL.md", "shared content\n");
+        put(
+            home,
+            ".agents/skills/common/assets/image.bin",
+            [0, 0xff, 0xfe],
+        );
+        put(
+            home,
+            ".agents/skills/common/.git/config",
+            "unrelated metadata\n",
+        );
+        fs::create_dir(home.join(".agents/skills/common/empty")).unwrap();
+        put(home, ".agents/skills/unselected/SKILL.md", "no tool link\n");
+        put(home, ".claude/skills/private/SKILL.md", "Claude copy\n");
+        put(home, ".codex/skills/private/SKILL.md", "Codex copy\n");
+        let raw_link = "../../.agents/skills/common";
+        link(home, ".claude/skills/common", raw_link);
+        let adoption = discover(
+            home,
+            &[
+                target("claudecode", None, Some(".claude/skills")),
+                target("codexcli", None, Some(".agents/skills")),
+                target("codexcli", None, Some(".codex/skills")),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(adoption.skills.len(), 4);
+        let shared = &adoption.skills[0];
+        assert!(shared.shared);
+        assert_eq!(shared.targets, BTreeSet::from(["claudecode".into()]));
+        assert_eq!(
+            shared.locations["claudecode"],
+            BTreeSet::from([PathBuf::from(".claude/skills/common")])
+        );
+        assert_eq!(shared.files[Path::new("assets/image.bin")], [0, 0xff, 0xfe]);
+        assert!(!shared.files.contains_key(Path::new(".git/config")));
+        for (tool, body) in [
+            ("claudecode", "Claude copy\n"),
+            ("codexcli", "Codex copy\n"),
+        ] {
+            let private = adoption
+                .skills
+                .iter()
+                .find(|skill| skill.name == "private" && skill.targets.contains(tool))
+                .unwrap();
+            assert!(!private.shared);
+            assert_eq!(private.targets.len(), 1);
+            assert_eq!(private.files[Path::new("SKILL.md")], body.as_bytes());
+        }
+        assert!(adoption.skills[3].targets.is_empty());
+        assert_eq!(
+            adoption.files[Path::new(".claude/skills/common")],
+            AdoptionFile {
+                before: AdoptionEntry::Symlink {
+                    target: PathBuf::from(raw_link),
+                    bytes: None
+                },
+                after: AdoptionEntry::Directory,
+            }
+        );
+        assert_eq!(
+            adoption.files[Path::new(".claude/skills/common/empty")].after,
+            AdoptionEntry::Directory
+        );
+        assert_eq!(
+            adoption.files[Path::new(".claude/skills/common/SKILL.md")],
+            AdoptionFile {
+                before: AdoptionEntry::Missing,
+                after: AdoptionEntry::File(b"shared content\n".to_vec()),
+            }
+        );
+        assert!(!adoption
+            .files
+            .keys()
+            .any(|path| path.starts_with(".claude/skills/private")
+                || path.starts_with(".codex/skills/private")));
+        assert_eq!(
+            fs::read_link(home.join(".claude/skills/common")).unwrap(),
+            Path::new(raw_link)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn links_are_confined_to_the_supplied_home_and_skill_assets_to_their_package() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("scratch-home");
+        put(temp.path(), "outside.md", "do not read\n");
+        put(&home, "unrelated/private.md", "do not read\n");
+        put(&home, ".claude/skills/local/SKILL.md", "hand-installed\n");
+        link(
+            &home,
+            ".claude/skills/local/private.md",
+            home.join("unrelated/private.md"),
+        );
+        link(&home, ".claude/skills/off-home", temp.path());
+        let adoption =
+            discover(&home, &[target("claudecode", None, Some(".claude/skills"))]).unwrap();
+        assert!(adoption.skills.is_empty());
+        assert!(adoption.files.is_empty());
+        assert!(adoption.sources.is_empty());
+        assert!(adoption.skipped[Path::new(".claude/skills/local")]
+            .contains("outside its skill folder"));
+        assert!(adoption.skipped[Path::new(".claude/skills/off-home")]
+            .contains("outside the adoption home"));
+
+        link(&home, ".codex/AGENTS.md", "../../outside.md");
+        let error =
+            discover(&home, &[target("codexcli", Some(".codex/AGENTS.md"), None)]).unwrap_err();
+        assert!(error.to_string().contains("leaves the adoption home"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_tool_alias_keeps_the_shared_skill_and_its_actual_installation_name() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path();
+        let source = ".agents/skills/portable/SKILL.md";
+        let alias = ".claude/skills/local-name";
+        put(home, source, "shared skill\n");
+        link(home, alias, home.join(".agents/skills/portable"));
+        let adoption =
+            discover(home, &[target("claudecode", None, Some(".claude/skills"))]).unwrap();
+        assert_eq!(adoption.skills.len(), 1);
+        assert_eq!(adoption.skills[0].name, "portable");
+        assert_eq!(
+            adoption.skills[0].locations["claudecode"],
+            BTreeSet::from([PathBuf::from(alias)])
+        );
+        assert!(adoption.files.contains_key(Path::new(alias)));
+    }
+}

@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! `wenlan rules add` and `wenlan rules remove` against a scripted stand-in
-//! for the daemon.
+//! Terminal entry points for saving Space rules and managing personal setup.
 
 mod common;
 
@@ -8,6 +7,8 @@ use assert_cmd::Command;
 use common::spawn_stub;
 use predicates::prelude::*;
 use serde_json::json;
+use std::{fs, path::Path};
+use wenlan_types::rulesync::AdoptionPlan;
 
 fn cli(base: &str) -> Command {
     let mut cmd = Command::cargo_bin("wenlan").unwrap();
@@ -17,6 +18,92 @@ fn cli(base: &str) -> Command {
         .env_remove("WENLAN_SPACE")
         .env_remove("WENLAN_DEFAULT_SPACE");
     cmd
+}
+
+fn personal_rules_cli(state: &Path) -> Command {
+    let home = state.join("ai-tools/home");
+    let mut cmd = cli("unreachable://no-daemon");
+    cmd.env("HOME", &home)
+        .env("CODEX_HOME", home.join(".codex"))
+        .env("WENLAN_DEV_STATE_DIR", state)
+        .env("WENLAN_DATA_DIR", state.join("unused-data-root"))
+        .env_remove("WENLAN_RULESYNC")
+        .env_remove("WENLAN_SESSION")
+        .env_remove("CODEX_THREAD_ID");
+    cmd
+}
+
+#[test]
+fn personal_rules_dry_run_reads_existing_files_without_daemon_or_data_root() {
+    let state = tempfile::tempdir().unwrap();
+    let home = state.path().join("ai-tools/home");
+    fs::create_dir_all(home.join(".agents")).unwrap();
+    fs::create_dir_all(home.join(".codex")).unwrap();
+    let master = home.join(".agents/AGENTS.md");
+    let codex = home.join(".codex/AGENTS.md");
+    fs::write(&master, "Keep shared rules.\n").unwrap();
+    fs::write(&codex, "Keep Codex rules.\n").unwrap();
+
+    let output = personal_rules_cli(state.path())
+        .env("WENLAN_DEFAULT_SPACE", "Clinic")
+        .args(["rules", "adopt", "--dry-run", "--format", "json"])
+        .assert()
+        .success();
+    let plan: AdoptionPlan = serde_json::from_slice(&output.get_output().stdout).unwrap();
+    let change = plan
+        .files
+        .iter()
+        .find(|change| Path::new(&change.path) == Path::new(".codex/AGENTS.md"))
+        .expect("Codex migration plan");
+    assert_eq!((change.added, change.removed), (1, 0));
+    assert!(change.diff.contains("+Keep shared rules."));
+    assert_eq!(fs::read_to_string(master).unwrap(), "Keep shared rules.\n");
+    assert_eq!(fs::read_to_string(codex).unwrap(), "Keep Codex rules.\n");
+    assert!(!home.join(".claude").exists());
+    assert!(!state.path().join("unused-data-root").exists());
+}
+
+#[test]
+fn personal_rules_setup_refuses_the_strict_space_pin() {
+    let state = tempfile::tempdir().unwrap();
+    personal_rules_cli(state.path())
+        .env("WENLAN_SPACE", "Clinic")
+        .args(["rules", "adopt", "--dry-run"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "WENLAN_SPACE limits this terminal",
+        ));
+}
+
+#[test]
+fn personal_rules_setup_requires_interactive_confirmation() {
+    let state = tempfile::tempdir().unwrap();
+    for args in [
+        &["rules", "adopt"][..],
+        &["rules", "restore"],
+        &[
+            "rules",
+            "review",
+            "card-1",
+            "all-tools",
+            "--file",
+            "rules.md",
+        ],
+    ] {
+        personal_rules_cli(state.path())
+            .args(args)
+            .write_stdin("yes\n")
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("from your own terminal"));
+        personal_rules_cli(state.path())
+            .args(args)
+            .arg("--yes")
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("unexpected argument '--yes'"));
+    }
 }
 
 fn saved() -> String {
