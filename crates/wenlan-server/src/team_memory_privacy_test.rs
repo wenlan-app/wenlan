@@ -52,6 +52,15 @@ async fn post_as_member(app: &AppRouter, path: &str, body: Value) -> Value {
     body
 }
 
+async fn create_member_draft(app: &AppRouter, title: &str, content: &str) -> Value {
+    post_as_member(
+        app,
+        "/api/pages/drafts",
+        json!({"draft_id": wenlan_core::pages::new_page_id(), "title": title, "content": content}),
+    )
+    .await
+}
+
 async fn fixture() -> (AppRouter, Arc<MemoryDB>, tempfile::TempDir) {
     let scratch = tempfile::tempdir().unwrap();
     let db = Arc::new(
@@ -273,6 +282,66 @@ async fn hosted_draft_publish_requires_a_real_publication_to_replay() {
         StatusCode::CONFLICT,
         "ordinary edit is not a publication"
     );
+}
+
+#[tokio::test]
+async fn hosted_draft_publish_conflict_only_identifies_shared_pages() {
+    let (app, db, _scratch) = fixture().await;
+    for (title, hidden) in [("How I work", true), ("Team conventions", false)] {
+        let page = post_as_member(
+            &app,
+            "/api/pages",
+            json!({"title": title, "content": "Fictional notes."}),
+        )
+        .await;
+        let id = page["id"].as_str().unwrap();
+        if hidden {
+            let space = db.get_space(SPACE).await.unwrap().unwrap();
+            let state = serde_json::from_value(json!({
+                "space_id": space.id, "space_name": SPACE, "status": "accepted", "rules_page_id": id
+            }))
+            .unwrap();
+            db.set_space_rules_state(&state).await.unwrap();
+        }
+        let (status, _) = request(
+            &app,
+            Method::GET,
+            &format!("/api/pages/{id}"),
+            Value::Null,
+            true,
+        )
+        .await;
+        assert_eq!(
+            status,
+            if hidden {
+                StatusCode::NOT_FOUND
+            } else {
+                StatusCode::OK
+            }
+        );
+        let draft = create_member_draft(&app, &title.to_uppercase(), "Draft wording.").await;
+        let draft_id = draft["page"]["id"].as_str().unwrap();
+        let (status, conflict) = request(
+            &app,
+            Method::POST,
+            &format!("/api/pages/drafts/{draft_id}/publish"),
+            json!({"expected_version": draft["page"]["version"]}),
+            true,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(conflict["code"], "page_title_conflict");
+        if hidden {
+            assert!(
+                conflict.get("existing_page_id").is_none()
+                    && conflict.get("existing_page_title").is_none(),
+                "a hidden page's identity appeared in a title conflict: {conflict}"
+            );
+        } else {
+            assert_eq!(conflict["existing_page_id"], id);
+            assert_eq!(conflict["existing_page_title"], title);
+        }
+    }
 }
 
 #[tokio::test]

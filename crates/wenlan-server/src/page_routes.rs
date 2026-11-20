@@ -1560,9 +1560,16 @@ async fn visible_conflict_identity(
     existing_page_id: &str,
     wanted_key: &str,
     expected_scope: &str,
+    shared_only: bool,
 ) -> Option<(String, String)> {
     match db
-        .conflict_identity_snapshot(&view.grant, existing_page_id, wanted_key, expected_scope)
+        .conflict_identity_snapshot(
+            &view.grant,
+            existing_page_id,
+            wanted_key,
+            expected_scope,
+            shared_only,
+        )
         .await
     {
         Ok(identity) => identity,
@@ -1840,6 +1847,7 @@ pub async fn handle_publish_page_draft(
                 &existing_page_id,
                 &wenlan_core::db::MemoryDB::page_title_key(&existing_page_title),
                 &scope,
+                !private,
             )
             .await;
             let mut body = serde_json::json!({
@@ -4936,7 +4944,8 @@ mod conflict_identity_tests {
         let page = publish(&db, PAGE, "Secret Plan").await;
         let wanted = MemoryDB::page_title_key("  secret PLAN ");
         let got =
-            visible_conflict_identity(&db, &TruthView::automatic(), PAGE, &wanted, SCOPE).await;
+            visible_conflict_identity(&db, &TruthView::automatic(), PAGE, &wanted, SCOPE, false)
+                .await;
         assert_eq!(got, Some((page.id, page.title)));
     }
 
@@ -4947,7 +4956,8 @@ mod conflict_identity_tests {
         db.delete_page(PAGE).await.unwrap();
         let wanted = MemoryDB::page_title_key("Secret Plan");
         assert_eq!(
-            visible_conflict_identity(&db, &TruthView::automatic(), PAGE, &wanted, SCOPE).await,
+            visible_conflict_identity(&db, &TruthView::automatic(), PAGE, &wanted, SCOPE, false)
+                .await,
             None
         );
     }
@@ -4980,7 +4990,8 @@ mod conflict_identity_tests {
         overwrite_title(&tmp, PAGE, "Innocuous Note").await;
         let wanted = MemoryDB::page_title_key("Secret Plan");
         assert_eq!(
-            visible_conflict_identity(&db, &TruthView::automatic(), PAGE, &wanted, SCOPE).await,
+            visible_conflict_identity(&db, &TruthView::automatic(), PAGE, &wanted, SCOPE, false)
+                .await,
             None
         );
     }
@@ -4992,7 +5003,8 @@ mod conflict_identity_tests {
         overwrite_title(&tmp, PAGE, "SECRET plan").await;
         let wanted = MemoryDB::page_title_key("Secret Plan");
         let got =
-            visible_conflict_identity(&db, &TruthView::automatic(), PAGE, &wanted, SCOPE).await;
+            visible_conflict_identity(&db, &TruthView::automatic(), PAGE, &wanted, SCOPE, false)
+                .await;
         // The identity comes from the reloaded row, never the stale capture.
         assert_eq!(got, Some((page.id, "SECRET plan".to_string())));
     }
@@ -5022,7 +5034,8 @@ mod conflict_identity_tests {
         overwrite_column(&tmp, PAGE, "space", "another-space").await;
         let wanted = MemoryDB::page_title_key("Secret Plan");
         assert_eq!(
-            visible_conflict_identity(&db, &TruthView::automatic(), PAGE, &wanted, SCOPE).await,
+            visible_conflict_identity(&db, &TruthView::automatic(), PAGE, &wanted, SCOPE, false)
+                .await,
             None
         );
     }
@@ -5037,7 +5050,8 @@ mod conflict_identity_tests {
         overwrite_column(&tmp, PAGE, "kind", "entity").await;
         let wanted = MemoryDB::page_title_key("Secret Plan");
         assert_eq!(
-            visible_conflict_identity(&db, &TruthView::automatic(), PAGE, &wanted, SCOPE).await,
+            visible_conflict_identity(&db, &TruthView::automatic(), PAGE, &wanted, SCOPE, false)
+                .await,
             None
         );
     }
