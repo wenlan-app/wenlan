@@ -141,11 +141,33 @@ pub(crate) async fn basis_refs(
     }
     let ids: Vec<String> = entries.iter().map(|e| e.basis_page_id.clone()).collect();
     let visible = visible_ids_for(db, grant, scope, &ids, private).await?;
-    Ok(entries
-        .into_iter()
-        .filter(|entry| private || visible.contains(&entry.basis_page_id))
-        .map(|entry| to_ref(entry, &visible))
-        .collect())
+    refs_for_visible_pages(db, scope, entries, &visible, private).await
+}
+
+async fn refs_for_visible_pages(
+    db: &MemoryDB,
+    scope: &ReadScope,
+    entries: Vec<PageBasisEntry>,
+    visible: &HashSet<String>,
+    private: bool,
+) -> Result<Vec<BasisRef>, ServerError> {
+    let mut refs = Vec::new();
+    for entry in entries {
+        if private
+            || (visible.contains(&entry.basis_page_id)
+                && (entry.current_version == Some(entry.confirmed_version)
+                    || db
+                        .member_can_read_page_version(
+                            &entry.basis_page_id,
+                            scope,
+                            entry.confirmed_version,
+                        )
+                        .await?))
+        {
+            refs.push(to_ref(entry, visible));
+        }
+    }
+    Ok(refs)
 }
 
 /// The non-ok bases of many notes, keyed by the citing note (a list or a
@@ -170,19 +192,14 @@ pub(crate) async fn non_ok_basis_by_citer(
         .map(|e| e.basis_page_id.clone())
         .collect();
     let visible = visible_ids_for(db, grant, scope, &ids, private).await?;
-    Ok(by_citer
-        .into_iter()
-        .map(|(citer, entries)| {
-            (
-                citer,
-                entries
-                    .into_iter()
-                    .filter(|entry| private || visible.contains(&entry.basis_page_id))
-                    .map(|entry| to_ref(entry, &visible))
-                    .collect(),
-            )
-        })
-        .collect())
+    let mut refs = HashMap::new();
+    for (citer, entries) in by_citer {
+        let entries = refs_for_visible_pages(db, scope, entries, &visible, private).await?;
+        if !entries.is_empty() {
+            refs.insert(citer, entries);
+        }
+    }
+    Ok(refs)
 }
 
 /// Every basis of a note just written, for the write response: the same shape
@@ -244,10 +261,14 @@ pub(crate) async fn require_basis_visible(
     }
     let ids: Vec<String> = marks.iter().map(|(id, _)| id.clone()).collect();
     let visible = visible_ids_for(db, &MUTATION_GRANT, scope, &ids, private).await?;
-    match ids.iter().find(|id| !visible.contains(*id)) {
-        Some(id) => Err(ServerError::NotFound(format!("page {id} not found"))),
-        None => Ok(()),
+    for (id, version) in marks {
+        if !visible.contains(id)
+            || (!private && !db.member_can_read_page_version(id, scope, *version).await?)
+        {
+            return Err(ServerError::NotFound(format!("page {id} not found")));
+        }
     }
+    Ok(())
 }
 
 /// Both notes of a basis pair must be visible, or the pair reads as absent.
@@ -314,6 +335,13 @@ pub async fn handle_mark_basis(
     let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
     let private = crate::team_actor::can_read_private_memories(&headers);
     require_pair_visible(&db, &MUTATION_GRANT, &scope, &id, &basis_id, private).await?;
+    if !private
+        && !db
+            .member_can_read_page_version(&basis_id, &scope, req.version)
+            .await?
+    {
+        return Err(ServerError::NotFound("basis version not found".into()));
+    }
     // A team member is recorded as themselves, never as the owner.
     let actor = member
         .as_ref()
@@ -323,7 +351,14 @@ pub async fn handle_mark_basis(
     // Space after the check above is not marked.
     let space_guard = (scope != wenlan_core::read_scope::ReadScope::Global).then(|| scope.clone());
     let entry = db
-        .mark_page_basis_in(&id, &basis_id, req.version, &actor, space_guard.as_ref())
+        .mark_page_basis_for(
+            &id,
+            &basis_id,
+            req.version,
+            &actor,
+            space_guard.as_ref(),
+            !private,
+        )
         .await
         .map_err(basis_error)?;
     Ok(Json(
@@ -335,10 +370,12 @@ pub async fn handle_mark_basis(
 pub async fn handle_unmark_basis(
     State(state): State<Arc<RwLock<ServerState>>>,
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
+    headers: HeaderMap,
     Path((id, basis_id)): Path<(String, String)>,
 ) -> Result<Json<BasisRemoveResponse>, ServerError> {
     let db = open_db(&state).await?;
     let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
+    let private = crate::team_actor::can_read_private_memories(&headers);
     // Only the citing note has to be visible: removing a basis the caller can
     // no longer read must still work.
     let visible = visible_ids(&db, &MUTATION_GRANT, &scope, std::slice::from_ref(&id)).await?;
@@ -346,7 +383,7 @@ pub async fn handle_unmark_basis(
         return Err(ServerError::NotFound(format!("page {id} not found")));
     }
     let removed = db
-        .unmark_page_basis(&id, &basis_id)
+        .unmark_page_basis_for(&id, &basis_id, (!private).then_some(&scope))
         .await
         .map_err(basis_error)?;
     Ok(Json(BasisRemoveResponse { removed }))

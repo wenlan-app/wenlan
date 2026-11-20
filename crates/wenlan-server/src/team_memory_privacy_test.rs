@@ -124,6 +124,7 @@ async fn hosted_readers_keep_shared_pages_without_private_memory_data() {
     const PRIVATE_TEXT: &str = "design citrinefixtureproof";
     const SHARED_TITLE: &str = "Design meeting";
     const SHARED_TEXT: &str = "The design meeting starts Tuesday. [1]";
+    const PUBLISHED_TEXT: &str = "The design meeting starts Tuesday.";
     let (app, db, _scratch) = fixture().await;
     db.upsert_documents(vec![RawDocument {
         source: "memory".into(),
@@ -199,12 +200,12 @@ async fn hosted_readers_keep_shared_pages_without_private_memory_data() {
         )
         .await;
         assert_eq!(recall["results"], json!([]));
-        assert_eq!(recall["supplemental_pages"][0]["content"], SHARED_TEXT);
+        assert_eq!(recall["supplemental_pages"][0]["content"], PUBLISHED_TEXT);
     }
     let brief = post_as_member(&app, "/api/brief", json!({"topic": "design"})).await;
     assert_eq!(
         brief["related_context"]["results"][0]["content"],
-        SHARED_TEXT
+        PUBLISHED_TEXT
     );
     assert_eq!(
         brief["related_context"]["results"]
@@ -239,7 +240,11 @@ async fn hosted_readers_keep_shared_pages_without_private_memory_data() {
         "hosted revisions looked up private memory to identify the first author"
     );
     let consumers = [
-        (Method::GET, format!("/api/pages/{}", page.id), SHARED_TEXT),
+        (
+            Method::GET,
+            format!("/api/pages/{}", page.id),
+            PUBLISHED_TEXT,
+        ),
         (Method::GET, "/api/pages".to_string(), SHARED_TITLE),
         (Method::POST, "/api/pages/search".to_string(), SHARED_TITLE),
         (
@@ -262,7 +267,7 @@ async fn hosted_readers_keep_shared_pages_without_private_memory_data() {
         let wire = body.to_string();
         assert!(wire.contains(expected), "{path} lost the shared page");
         assert!(
-            !wire.contains(PRIVATE_ID) && !wire.contains(PRIVATE_TEXT),
+            !wire.contains(PRIVATE_ID) && !wire.contains(PRIVATE_TEXT) && !wire.contains("[1]"),
             "{path}"
         );
     }

@@ -169,6 +169,7 @@ pub use page_basis::{
     BASIS_STATE_PENDING, BASIS_STATE_UNAVAILABLE,
 };
 pub use presence_review::ReviewOutcome;
+pub use scoped_pages::MemberPageTarget;
 pub use truth_exposure::{
     CutoverFence, CutoverLease, CutoverPhase, TruthMarkerAudit, TRUTH_CUTOVER_FENCE_KEY,
     TRUTH_CUTOVER_GENERATION_KEY,
@@ -56036,7 +56037,33 @@ impl MemoryDB {
         // no CAS below would see the move. The check is repeated in the
         // write's own transaction; a note no longer in that Space gets
         // nothing, and the caller re-reads it to tell why.
-        if let Some(scope) = basis.space_guard.as_ref() {
+        if basis.member_write {
+            let authorize = async {
+                let scope = basis
+                    .space_guard
+                    .as_ref()
+                    .filter(|scope| matches!(scope, crate::read_scope::ReadScope::Space(_)))
+                    .ok_or_else(|| WenlanError::NotFound("page not found".into()))?;
+                for id in std::iter::once(id).chain(
+                    basis
+                        .marks
+                        .iter()
+                        .chain(&basis.confirm)
+                        .map(|(id, _)| id.as_str()),
+                ) {
+                    if !Self::member_page_access_on(&conn, id, scope, MemberPageTarget::Published)
+                        .await?
+                    {
+                        return Err(WenlanError::NotFound("page not found".into()));
+                    }
+                }
+                Ok(())
+            };
+            if let Err(error) = authorize.await {
+                let _ = conn.execute("ROLLBACK", ()).await;
+                return Err(error);
+            }
+        } else if let Some(scope) = basis.space_guard.as_ref() {
             let space = match conn
                 .query("SELECT space FROM pages WHERE id = ?1", libsql::params![id])
                 .await
@@ -57659,7 +57686,8 @@ impl MemoryDB {
         id: &str,
         expected_version: Option<i64>,
     ) -> Result<Option<i64>, WenlanError> {
-        self.archive_page_recorded(id, expected_version, None).await
+        self.archive_page_recorded(id, expected_version, None, None)
+            .await
     }
 
     /// [`Self::archive_page_versioned`] (or, with `expected_version`,
@@ -57672,12 +57700,20 @@ impl MemoryDB {
         id: &str,
         expected_version: Option<i64>,
         audit: Option<PageRemovalAudit<'_>>,
+        shared_scope: Option<&crate::read_scope::ReadScope>,
     ) -> Result<Option<i64>, WenlanError> {
         let conn = self.conn.lock().await;
         conn.execute("BEGIN", ())
             .await
             .map_err(|e| WenlanError::VectorDb(format!("archive_page begin: {e}")))?;
         let result = async {
+            if let Some(scope) = shared_scope {
+                if !Self::member_page_access_on(&conn, id, scope, MemberPageTarget::Published)
+                    .await?
+                {
+                    return Err(WenlanError::NotFound("page not found".into()));
+                }
+            }
             let version = Self::archive_page_on_conn(&conn, id, expected_version).await?;
             if let (Some(version), Some(audit)) = (version, audit) {
                 Self::record_page_removal_on_conn(&conn, id, "page_archive", version, audit)

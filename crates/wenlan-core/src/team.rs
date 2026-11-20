@@ -1405,7 +1405,7 @@ pub fn check_member_version(
 
 #[derive(Default)]
 pub struct SharedFolderPages {
-    pub(crate) shared: HashSet<String>,
+    pub(crate) shared: std::collections::HashMap<String, String>,
     pub(crate) deleted: HashSet<String>,
 }
 
@@ -1413,7 +1413,10 @@ pub struct SharedFolderPages {
 /// For a verified deletion, members still receive the archive. An old
 /// version with a private reference is withheld until it can be replaced.
 pub fn can_serve_version(page: &str, name: &str, bytes: &[u8], pages: &SharedFolderPages) -> bool {
-    let shared = pages.shared.contains(page);
+    if crate::rulesync_team::is_master_page(page) {
+        return false;
+    }
+    let shared = pages.shared.contains_key(page);
     if !shared && !pages.deleted.contains(page) {
         return false;
     }
@@ -1423,7 +1426,7 @@ pub fn can_serve_version(page: &str, name: &str, bytes: &[u8], pages: &SharedFol
                 || (read.meta.archived
                     && read.meta.parent.is_some()
                     && version::file_kind(&read.meta) == version::PAGES_DIR))
-            && !shared_space::rewrite::has_unshared_references(&read.page, &pages.shared)
+            && crate::member_view::MemberSnapshot::matches(&read, &pages.shared)
     })
 }
 
@@ -1453,7 +1456,7 @@ pub fn list_folder_files(folder: &Path, pages: &SharedFolderPages) -> Vec<String
     {
         let pages_dir = members_dir.join(&member).join(kind);
         for page in dirs(&pages_dir) {
-            if !pages.shared.contains(&page) && !pages.deleted.contains(&page) {
+            if !pages.shared.contains_key(&page) && !pages.deleted.contains(&page) {
                 continue;
             }
             let Ok(entries) = std::fs::read_dir(pages_dir.join(&page)) else {

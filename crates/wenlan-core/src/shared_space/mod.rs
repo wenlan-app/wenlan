@@ -2125,6 +2125,17 @@ async fn pass(
             shared
         });
     }
+    if settings.hosted {
+        let eligible = db.shared_folder_pages(&space).await?;
+        local.retain(|id, _| {
+            // The project master has its own approval and download flow.
+            let allowed = eligible.shared.contains_key(id) || rulesync_team::is_master_page(id);
+            if !allowed {
+                left_out.insert(id.clone());
+            }
+            allowed
+        });
+    }
     let name = match scope {
         Scope::Space(space) => space.clone(),
         Scope::Page(id) => local
@@ -2204,6 +2215,7 @@ async fn pass(
         knowledge_path,
         space_pages: local
             .values()
+            .filter(|page| !rulesync_team::is_master_page(&page.id))
             .map(|page| (page.id.clone(), page.title.clone()))
             .collect(),
         names: space_file
@@ -2523,10 +2535,38 @@ impl Pass<'_> {
             version: Some(page.version),
             space: here_space.clone(),
         };
-        if let Some(head) = head
-            .as_ref()
-            .filter(|head| self.version_state(head.winner) == state)
-        {
+        if let Some(head) = head.as_ref().filter(|head| {
+            let mut seen = self.version_state(head.winner);
+            if self.settings.hosted && !rulesync_team::is_master_page(&page.id) {
+                seen.body_digest = version::body_digest(
+                    &self.shared_body(&head.winner.page.body, &head.winner.page.citations),
+                );
+            }
+            seen == state
+        }) {
+            if self.settings.hosted
+                && !rulesync_team::is_master_page(&page.id)
+                && !crate::member_view::MemberSnapshot::matches(head.winner, &self.space_pages)
+            {
+                // The body can be unchanged while the version stops being
+                // safe to share (for example, a basis was permanently
+                // deleted). Follow the old head with a shareable snapshot.
+                let sha = self
+                    .export_page(
+                        page,
+                        versions,
+                        Some(head),
+                        Some(head.winner),
+                        Some(&head.winner.sha),
+                    )
+                    .await?;
+                if let Some(sha) = sha {
+                    counts.exported += 1;
+                    return Ok(Some(at(&sha)));
+                }
+                counts.skipped += 1;
+                return Ok(None);
+            }
             // Already the head (an edit made here and elsewhere alike, or a
             // version taken earlier).
             return Ok(Some(at(&head.winner.sha)));
@@ -3331,7 +3371,7 @@ impl Pass<'_> {
         let (mut citations, mut basis) = local_sources(db, page).await?;
         // A source another member gave a sentence that is still on the page
         // stays: this Wenlan has no record of it, the version it came in does.
-        if let Some(parent) = parent {
+        if let Some(parent) = parent.or(base.filter(|_| parent_sha.is_some())) {
             let markers: HashSet<u32> = citations.iter().map(|c| c.marker).collect();
             for citation in &parent.page.citations {
                 if !markers.contains(&citation.marker)
@@ -3388,7 +3428,11 @@ impl Pass<'_> {
             device: self.own_device(),
         };
         let member = meta.author.member.clone();
-        let text = version::render(&file, &meta);
+        let text = if self.settings.hosted || self.settings.host.is_some() {
+            crate::member_view::MemberSnapshot::new(&file, &meta, &self.space_pages).render()
+        } else {
+            version::render(&file, &meta)
+        };
         let name = version::version_file_name(&version::sha256_hex(text.as_bytes()));
         match version::parse(&name, text.as_bytes()) {
             Ok(read) if read.page.body == shared_body && read.page.title == page.title => {}
@@ -3479,7 +3523,11 @@ impl Pass<'_> {
             decides: None,
             device: self.own_device(),
         };
-        let text = version::render(&page, &meta);
+        let text = if self.settings.hosted || self.settings.host.is_some() {
+            crate::member_view::MemberSnapshot::new(&page, &meta, &self.space_pages).render()
+        } else {
+            version::render(&page, &meta)
+        };
         self.write(&id, text).await.map(Some)
     }
 

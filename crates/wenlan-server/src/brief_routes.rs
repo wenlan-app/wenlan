@@ -141,8 +141,11 @@ pub async fn handle_read_brief(
         }));
     };
     let Some(brief) = db.get_brief_by_space_name(&space).await? else {
-        let (code_basis_pending, code_basis_pending_explained) =
-            code_basis_pending_for(&db, &space).await;
+        let (code_basis_pending, code_basis_pending_explained) = if private {
+            code_basis_pending_for(&db, &space).await
+        } else {
+            (None, false)
+        };
         return Ok(Json(BriefReadResponse {
             state: BriefReadState::BriefNotCreated,
             space: Some(space),
@@ -240,8 +243,11 @@ pub async fn handle_read_brief(
         }
     };
 
-    let (code_basis_pending, code_basis_pending_explained) =
-        code_basis_pending_for(&db, &space).await;
+    let (code_basis_pending, code_basis_pending_explained) = if private {
+        code_basis_pending_for(&db, &space).await
+    } else {
+        (None, false)
+    };
 
     // A Brief that was actually read is listed on the session card when the
     // caller names its session. This is bookkeeping beside the read: it never

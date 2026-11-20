@@ -48,6 +48,9 @@ dirs = "6"
 semver = "1"
 wenlan-types = { workspace = true }
 
+[features]
+in-process-test = []
+
 [dev-dependencies]
 tempfile = "3"
 portpicker = "0.1"

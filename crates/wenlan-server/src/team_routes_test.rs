@@ -8,6 +8,9 @@ use axum::http::Method;
 use wenlan_core::shared_space::{version, SpaceMember};
 use wenlan_types::team::{TeamFileList, TeamSpaceAccess};
 
+#[path = "team_member_view_test.rs"]
+mod member_view;
+
 struct Fixture {
     _dir: tempfile::TempDir,
     state: TeamState,
@@ -246,7 +249,8 @@ async fn authenticated_team_reader_sees_shared_page_without_seeded_host_memory()
     let (status, body) = call(&f.state, Method::GET, &page_path, Some(&f.reader.1), vec![]).await;
     assert_eq!(status, StatusCode::OK);
     let body = String::from_utf8(body).unwrap();
-    assert!(body.contains(SHARED));
+    assert!(body.contains("The design meeting starts on Tuesday."));
+    assert!(!body.contains("[1]"));
     assert!(!body.contains(PRIVATE_ID) && !body.contains(PRIVATE_TEXT));
     let sources = format!("/team/v1/app{source_path}");
     let (status, body) = call(&f.state, Method::GET, &sources, Some(&f.reader.1), vec![]).await;
@@ -1356,7 +1360,7 @@ async fn a_writers_proposals_and_decisions_land_in_their_own_folders() {
             author: version::Author {
                 member: f.writer.0.id.clone(),
                 kind: version::AuthorKind::Ai,
-                agent: Some("claude-code".into()),
+                agent: None,
             },
             ts: "2026-11-11T05:00:00Z".into(),
             archived: false,

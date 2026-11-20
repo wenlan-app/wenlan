@@ -118,9 +118,8 @@ async function http(
 }
 
 /**
- * A member never gets a path on the server: the gate drops `storage_path`
- * and the daemon adds `space_path`, the file as the member sees it (each
- * Space a top folder). Put it where the file tree reads a page's place.
+ * The daemon gives members a `space_path` built from the Space, folder,
+ * and page ID. Put it where the file tree reads a page's place.
  */
 function withSpacePaths(value: any): any {
   if (Array.isArray(value)) return value.map(withSpacePaths);

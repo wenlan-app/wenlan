@@ -14,7 +14,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::store::format::page::{Basis, Citation, Locator, PageFile, SOURCES_END, SOURCES_START};
+use crate::store::format::page::{Basis, Citation, Locator, SOURCES_END, SOURCES_START};
 
 const LEGACY_QUOTE_LOCATOR: &str = "shared:quote";
 const PRIVATE_SOURCE_LOCATOR: &str = "shared:private-source";
@@ -106,7 +106,7 @@ pub(crate) fn rewrite_body(body: &str, citations: &[Citation], ctx: &RewriteCont
         } else if out.ends_with(' ') {
             match body[end..].chars().next() {
                 Some(' ') => cursor += 1,
-                Some('.' | ',' | ';' | ':' | '!' | '?') => {
+                None | Some('.' | ',' | ';' | ':' | '!' | '?' | '\n' | '\r') => {
                     out.pop();
                 }
                 _ => {}
@@ -118,7 +118,11 @@ pub(crate) fn rewrite_body(body: &str, citations: &[Citation], ctx: &RewriteCont
 }
 
 /// Legacy quotes and placeholders carry no target that can be verified.
-pub(crate) fn has_unshared_references(page: &PageFile, shared_page_ids: &HashSet<String>) -> bool {
+#[cfg(test)]
+pub(crate) fn has_unshared_references(
+    page: &crate::store::format::page::PageFile,
+    shared_page_ids: &HashSet<String>,
+) -> bool {
     page.citations
         .iter()
         .map(|citation| &citation.locator)

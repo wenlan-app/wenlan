@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use super::MemoryDB;
+use super::{MemberPageTarget, MemoryDB};
 use crate::error::WenlanError;
 use crate::pages::{Page, PageDraftDeleteOutcome, PageDraftPublishOutcome, PageDraftUpdateOutcome};
 use crate::read_scope::ReadScope;
@@ -203,25 +203,6 @@ impl MemoryDB {
             .ok_or_else(|| WenlanError::NotFound(format!("Page draft {id}")))
     }
 
-    async fn owns_draft_on_conn(
-        conn: &libsql::Connection,
-        id: &str,
-        member_id: &str,
-    ) -> Result<bool, WenlanError> {
-        let mut rows = conn
-            .query(
-                "SELECT 1 FROM page_draft_create_requests WHERE page_id=?1 AND owner_member_id=?2",
-                libsql::params![id, member_id],
-            )
-            .await
-            .map_err(|e| WenlanError::VectorDb(format!("load Page draft owner: {e}")))?;
-        Ok(rows
-            .next()
-            .await
-            .map_err(|e| WenlanError::VectorDb(format!("read Page draft owner: {e}")))?
-            .is_some())
-    }
-
     /// The browser gate uses an owned draft's Space to route its mutation.
     pub async fn get_member_page_draft(
         &self,
@@ -229,7 +210,14 @@ impl MemoryDB {
         member_id: &str,
     ) -> Result<Option<Page>, WenlanError> {
         let conn = self.conn.lock().await;
-        if !Self::owns_draft_on_conn(&conn, id, member_id).await? {
+        if !Self::member_page_access_on(
+            &conn,
+            id,
+            &ReadScope::Global,
+            MemberPageTarget::OwnedDraft(member_id),
+        )
+        .await?
+        {
             return Ok(None);
         }
         Ok(Self::page_draft_on_conn(&conn, id)
@@ -248,27 +236,14 @@ impl MemoryDB {
             return Err(not_found());
         }
         if let Some(member_id) = member_id {
-            let visible = if page.status == "draft" {
-                Self::owns_draft_on_conn(conn, &page.id, member_id).await?
-            } else {
-                let predicate = super::scoped_pages::shared_page_predicate("p.");
-                let mut rows = conn
-                    .query(
-                        &format!("SELECT 1 FROM pages p WHERE p.id=?1 AND {predicate}"),
-                        [page.id.as_str()],
-                    )
-                    .await
-                    .map_err(|e| {
-                        WenlanError::VectorDb(format!("check published Page visibility: {e}"))
-                    })?;
-                rows.next()
-                    .await
-                    .map_err(|e| {
-                        WenlanError::VectorDb(format!("read published Page visibility: {e}"))
-                    })?
-                    .is_some()
-            };
-            if !visible {
+            if !Self::member_page_access_on(
+                conn,
+                &page.id,
+                scope,
+                MemberPageTarget::PublishedOrOwnedDraft(member_id),
+            )
+            .await?
+            {
                 return Err(not_found());
             }
         }
@@ -668,9 +643,17 @@ impl MemoryDB {
             return Err(WenlanError::NotFound(format!("Page draft {id}")));
         }
         if let Some(member_id) = member_id {
-            if requested_space.is_none()
-                || current.space != requested_space
-                || !Self::owns_draft_on_conn(&tx, id, member_id).await?
+            let scope = requested_space
+                .clone()
+                .map(ReadScope::Space)
+                .ok_or_else(|| WenlanError::NotFound(format!("Page draft {id}")))?;
+            if !Self::member_page_access_on(
+                &tx,
+                id,
+                &scope,
+                MemberPageTarget::OwnedDraft(member_id),
+            )
+            .await?
             {
                 return Err(WenlanError::NotFound(format!("Page draft {id}")));
             }

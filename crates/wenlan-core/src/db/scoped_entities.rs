@@ -1102,10 +1102,7 @@ impl MemoryDB {
         scope: &ReadScope,
     ) -> Result<wenlan_types::KnowledgeGraphResponse, WenlanError> {
         let conn = self.conn.lock().await;
-        let (mut pages, page_links) = page_graph_rows(&conn, scope, &HashSet::new(), false).await?;
-        for page in &mut pages {
-            page.entity_id = None;
-        }
+        let (pages, page_links) = page_graph_rows(&conn, scope, &HashSet::new(), false).await?;
         Ok(wenlan_types::KnowledgeGraphResponse {
             entities: Vec::new(),
             relations: Vec::new(),
@@ -1144,9 +1141,10 @@ async fn page_graph_rows(
     } else {
         format!("AND {}", super::scoped_pages::shared_page_predicate("p."))
     };
+    let entity = if private { "p.entity_id" } else { "NULL" };
     let page_sql = format!(
         "SELECT p.id, p.title, p.space, COALESCE(p.creation_kind, 'distilled'), \
-                    p.entity_id, p.last_modified \
+                    {entity}, p.last_modified \
              FROM pages p \
              WHERE p.status = 'active' \
                AND COALESCE(p.kind, 'concept') != 'entity' \

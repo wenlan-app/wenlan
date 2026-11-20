@@ -7,11 +7,15 @@ use crate::telemetry::TelemetryEvent;
 use axum::{
     extract::{Path, State},
     http::HeaderMap,
-    response::Json,
+    response::{IntoResponse, Json, Response},
 };
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use wenlan_core::member_view::{
+    self, MemberCreate, MemberDraft, MemberManualWrite, MemberMove, MemberPage, MemberPageDetail,
+    MemberPageEntry, MemberPages, MemberRemoval, MemberRestore, MemberRevisions, MemberWrite,
+};
 use wenlan_types::requests::{
     CreatePageDraftRequest, ExportFormat, ExportPagesRequest, MovePageRequest,
     PageDraftVersionRequest, SearchPagesRequest, UpdatePageDraftRequest,
@@ -22,6 +26,54 @@ use wenlan_types::responses::{
     PageRemovalStatus,
 };
 use wenlan_types::{WriteOutcome, WriteSpaceSource, WriteSpaceTarget};
+
+/// Local and forwarded calls share route handlers but have different wire types.
+pub enum PageResponse<Local, Member> {
+    Local(Local),
+    Member(Member),
+}
+
+impl<Local, Member> std::fmt::Debug for PageResponse<Local, Member> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Local(_) => "Local response",
+            Self::Member(_) => "Member response",
+        })
+    }
+}
+
+impl<Local: serde::Serialize, Member: serde::Serialize> IntoResponse
+    for PageResponse<Local, Member>
+{
+    fn into_response(self) -> Response {
+        match self {
+            Self::Local(body) => Json(body).into_response(),
+            Self::Member(body) => Json(body).into_response(),
+        }
+    }
+}
+
+impl<Local, Member: From<Local>> PageResponse<Local, Member> {
+    fn for_caller(local: Local, private: bool) -> Self {
+        if private {
+            Self::Local(local)
+        } else {
+            Self::Member(local.into())
+        }
+    }
+}
+
+#[cfg(test)]
+impl<Local: serde::de::DeserializeOwned, Member: serde::Serialize> PageResponse<Local, Member> {
+    pub(crate) fn into_test_json(self) -> Json<Local> {
+        Json(match self {
+            Self::Local(body) => body,
+            Self::Member(body) => {
+                serde_json::from_value(serde_json::to_value(body).unwrap()).unwrap()
+            }
+        })
+    }
+}
 
 pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<SharedState> {
     router
@@ -137,7 +189,7 @@ pub async fn handle_list_pages(
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
     view: crate::truth_guard::TruthView,
     axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
-) -> Result<Json<PageInventoryResponse>, ServerError> {
+) -> Result<PageResponse<PageInventoryResponse, MemberPages<MemberPageEntry>>, ServerError> {
     let status = params.get("status").map(|s| s.as_str()).unwrap_or("active");
     let space = params
         .get("space")
@@ -183,6 +235,28 @@ pub async fn handle_list_pages(
         private,
     )
     .await?;
+    if !private {
+        let mut locations = member_page_locations(
+            &db,
+            page_root.as_deref(),
+            &headers,
+            header_space.as_deref(),
+            &page_ids,
+        )
+        .await;
+        return Ok(PageResponse::Member(MemberPages {
+            pages: pages
+                .into_iter()
+                .map(|page| {
+                    let basis = basis_by_page.remove(&page.id).unwrap_or_default();
+                    let location = locations.remove(&page.id);
+                    let mut entry = member_view::inventory(member_view::page(page), basis);
+                    entry.space_path = location;
+                    entry
+                })
+                .collect(),
+        }));
+    }
     // The states shown are checked against the files as they read now, so a
     // list read without a Brief first does not call a changed note current.
     if !page_ids.is_empty() {
@@ -208,21 +282,16 @@ pub async fn handle_list_pages(
     } else {
         HashMap::new()
     };
-    Ok(Json(PageInventoryResponse {
+    Ok(PageResponse::Local(PageInventoryResponse {
         pages: pages
             .into_iter()
-            .map(|mut page| {
-                if !private {
-                    remove_private_provenance(&mut page);
-                }
-                PageInventoryEntry {
-                    basis: basis_by_page.remove(&page.id).unwrap_or_default(),
-                    code_basis: code_basis_by_page.remove(&page.id).unwrap_or_default(),
-                    storage_path: filenames.get(&page.id).cloned(),
-                    folder_path: folders.get(&page.id).cloned(),
-                    tags: wenlan_core::page_markdown::page_tags(&page.content),
-                    page,
-                }
+            .map(|page| PageInventoryEntry {
+                basis: basis_by_page.remove(&page.id).unwrap_or_default(),
+                code_basis: code_basis_by_page.remove(&page.id).unwrap_or_default(),
+                storage_path: filenames.get(&page.id).cloned(),
+                folder_path: folders.get(&page.id).cloned(),
+                tags: wenlan_core::page_markdown::page_tags(&page.content),
+                page,
             })
             .collect(),
     }))
@@ -235,7 +304,7 @@ pub async fn handle_get_page(
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
     view: crate::truth_guard::TruthView,
     Path(id): Path<String>,
-) -> Result<Json<PageReadResponse>, ServerError> {
+) -> Result<PageResponse<PageReadResponse, MemberPageDetail>, ServerError> {
     let private = crate::team_actor::can_read_private_memories(&headers);
     let (db, page_root) = {
         let s = state.read().await;
@@ -265,7 +334,11 @@ pub async fn handle_get_page(
     let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
     // Q1 browse surface: a shadow id resolves 200 here, so read the unfenced
     // `_browse` twin (mutation/export by-id reads keep fenced `get_page_scoped`).
-    let impact_fence = db.try_get_page_fence(&id).await?;
+    let impact_fence = if private {
+        db.try_get_page_fence(&id).await?
+    } else {
+        None
+    };
     let page = if private {
         db.get_page_scoped_browse(&id, &scope).await
     } else {
@@ -280,24 +353,40 @@ pub async fn handle_get_page(
     } else {
         None
     };
-    let page = if let Some(member) = routing_member {
+    if let Some(member) = routing_member {
         // The gate probes the Space before forwarding a mutation of the member's own draft.
-        db.get_member_page_draft(&id, &member.id)
-            .await?
-            .map(|mut page| {
-                page.title.clear();
-                page.content.clear();
-                page.summary = None;
-                page
-            })
-    } else {
-        page
-    };
+        if let Some(draft) = db.get_member_page_draft(&id, &member.id).await? {
+            return Ok(PageResponse::Member(MemberPageDetail::draft_space(draft)));
+        }
+    }
     match wenlan_core::truth_adapter::filter_page(&db, &view.grant, page)
         .await
         .map_err(|e| ServerError::SearchFailed(e.to_string()))?
     {
-        Some(mut page) => {
+        Some(page) => {
+            if !private
+                && header_space.is_none()
+                && crate::team_actor::from_headers(&headers).is_some()
+            {
+                return Ok(PageResponse::Member(MemberPageDetail::draft_space(page)));
+            }
+            let (basis, linked_changed) =
+                page_related_notes(&db, &view.grant, &scope, &id, private).await?;
+            if !private {
+                let mut locations = member_page_locations(
+                    &db,
+                    page_root.as_deref(),
+                    &headers,
+                    header_space.as_deref(),
+                    std::slice::from_ref(&id),
+                )
+                .await;
+                let mut detail = member_view::read(member_view::page(page), basis, linked_changed);
+                detail.page.space_path = locations.remove(&id);
+                return Ok(PageResponse::Member(MemberPageDetail::Page(Box::new(
+                    detail,
+                ))));
+            }
             // A note read in full is listed on the session card when the caller
             // names its AI session. Only after scope and truth authorization,
             // so a hidden note is never recorded.
@@ -345,38 +434,6 @@ pub async fn handle_get_page(
                 }),
                 _ => None,
             };
-            // Every basis of this note, in any state, plus (agents only, but
-            // computed for every caller) the notes it links to that changed
-            // after it did.
-            let basis = crate::page_basis_routes::basis_refs(
-                &db,
-                &view.grant,
-                &scope,
-                db.list_page_basis(&id).await?,
-                private,
-            )
-            .await?;
-            let linked_ids: Vec<(String, String, i64)> = db.linked_changed(&id).await?;
-            let linked_visible = crate::page_basis_routes::visible_ids_for(
-                &db,
-                &view.grant,
-                &scope,
-                &linked_ids
-                    .iter()
-                    .map(|(page_id, _, _)| page_id.clone())
-                    .collect::<Vec<_>>(),
-                private,
-            )
-            .await?;
-            let linked_changed = linked_ids
-                .into_iter()
-                .filter(|(page_id, _, _)| linked_visible.contains(page_id))
-                .map(|(page_id, title, version)| wenlan_types::LinkedChanged {
-                    page_id,
-                    title,
-                    version,
-                })
-                .collect();
             let mut selection_impacts = Vec::new();
             // Only a Full page may disclose its source information.
             let full = !wenlan_core::truth_adapter::filter_page_refs(
@@ -445,11 +502,8 @@ pub async fn handle_get_page(
                     }
                 }
             }
-            if !private {
-                remove_private_provenance(&mut page);
-            }
             let body = Some(wenlan_core::page_body::body_parts(&page.content));
-            Ok(Json(PageReadResponse {
+            Ok(PageResponse::Local(PageReadResponse {
                 selection_impacts,
                 code_basis: db.list_page_code_basis(&id).await?,
                 basis,
@@ -472,6 +526,84 @@ pub async fn handle_get_page(
         // not there, and the existing not-found answer is the honest one.
         None => Err(ServerError::NotFound("page not found".to_string())),
     }
+}
+
+async fn member_page_locations(
+    db: &Arc<wenlan_core::db::MemoryDB>,
+    root: Option<&std::path::Path>,
+    headers: &HeaderMap,
+    space: Option<&str>,
+    ids: &[String],
+) -> HashMap<String, String> {
+    let Some(root) = root else {
+        return HashMap::new();
+    };
+    let Some(view) = crate::member_folders::view(
+        db,
+        root,
+        crate::team_actor::from_headers(headers).is_some(),
+        space,
+    )
+    .await
+    else {
+        return HashMap::new();
+    };
+    let db = db.clone();
+    let root = root.to_owned();
+    let ids = ids.to_vec();
+    tokio::task::spawn_blocking(move || {
+        let ids: Vec<_> = ids.iter().map(String::as_str).collect();
+        wenlan_core::export::knowledge::KnowledgeWriter::new(root, &db)
+            .live_page_filenames(&ids)
+            .into_iter()
+            .filter_map(|(id, path)| {
+                let location = view.page_location(&id, &path)?;
+                Some((id, location))
+            })
+            .collect()
+    })
+    .await
+    .unwrap_or_default()
+}
+
+async fn page_related_notes(
+    db: &wenlan_core::db::MemoryDB,
+    grant: &wenlan_core::truth_contract::TruthGrant,
+    scope: &wenlan_core::read_scope::ReadScope,
+    id: &str,
+    private: bool,
+) -> Result<
+    (
+        Vec<wenlan_types::BasisRef>,
+        Vec<wenlan_types::LinkedChanged>,
+    ),
+    ServerError,
+> {
+    let basis = crate::page_basis_routes::basis_refs(
+        db,
+        grant,
+        scope,
+        db.list_page_basis(id).await?,
+        private,
+    )
+    .await?;
+    let linked = db.linked_changed(id).await?;
+    let linked_ids: Vec<_> = linked
+        .iter()
+        .map(|(page_id, _, _)| page_id.clone())
+        .collect();
+    let visible =
+        crate::page_basis_routes::visible_ids_for(db, grant, scope, &linked_ids, private).await?;
+    let linked_changed = linked
+        .into_iter()
+        .filter(|(page_id, _, _)| visible.contains(page_id))
+        .map(|(page_id, title, version)| wenlan_types::LinkedChanged {
+            page_id,
+            title,
+            version,
+        })
+        .collect();
+    Ok((basis, linked_changed))
 }
 
 /// GET /api/pages/{id}/sources
@@ -538,20 +670,6 @@ pub async fn handle_get_page_sources(
         .collect();
 
     Ok(Json(result))
-}
-
-/// Keep the published page text and page-to-page bases. The host's source
-/// IDs, citation verification, and source-driven change metadata stay local.
-fn remove_private_provenance(page: &mut wenlan_types::Page) {
-    page.source_memory_ids.clear();
-    page.citations.clear();
-    page.entity_id = None;
-    page.sources_updated_count = 0;
-    page.stale_reason = None;
-    page.pending_rebuild = None;
-    page.refresh_blocked_reason = None;
-    page.last_delta_summary = None;
-    page.changelog = None;
 }
 
 /// Refuse a page mutation that targets an entity's page, naming the entity and
@@ -640,7 +758,7 @@ pub async fn handle_archive_page(
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
     crate::team_actor::TeamActor(member): crate::team_actor::TeamActor,
     Path(id): Path<String>,
-) -> Result<Json<PageRemovalResponse>, ServerError> {
+) -> Result<PageResponse<PageRemovalResponse, MemberRemoval>, ServerError> {
     let _rules = crate::skill_grow::RulesPageWrite::begin(&state, Some(&id)).await;
     let (db, page_root) = {
         let s = state.read().await;
@@ -675,6 +793,12 @@ pub async fn handle_archive_page(
         session.as_ref(),
     )
     .await
+    .map(|Json(response)| {
+        PageResponse::for_caller(
+            response,
+            crate::team_actor::can_read_private_memories(&headers),
+        )
+    })
 }
 
 /// Who an archive or restore is recorded as (`page_history.actor`).
@@ -684,7 +808,8 @@ fn remover_actor(remover: &wenlan_core::post_write::PageRemover<'_>) -> String {
             wenlan_core::db::page_history_actor::PERSON_ACTOR.to_string()
         }
         wenlan_core::post_write::PageRemover::Member(actor) => (*actor).to_string(),
-        wenlan_core::post_write::PageRemover::Ai(agent) => {
+        wenlan_core::post_write::PageRemover::Ai(agent)
+        | wenlan_core::post_write::PageRemover::MemberAi(agent) => {
             wenlan_core::db::page_history_actor::ai_actor(agent)
         }
     }
@@ -696,7 +821,9 @@ fn page_remover<'a>(
     headers: &HeaderMap,
     agent: &'a str,
 ) -> wenlan_core::post_write::PageRemover<'a> {
-    if crate::memory_routes::caller_is_person(headers) {
+    if !crate::team_actor::can_read_private_memories(headers) {
+        wenlan_core::post_write::PageRemover::MemberAi(agent)
+    } else if crate::memory_routes::caller_is_person(headers) {
         wenlan_core::post_write::PageRemover::Person
     } else {
         wenlan_core::post_write::PageRemover::Ai(agent)
@@ -817,7 +944,8 @@ pub async fn handle_restore_page(
     view: crate::truth_guard::TruthView,
     Path(id): Path<String>,
     Json(req): Json<wenlan_types::requests::RestorePageRequest>,
-) -> Result<Json<wenlan_types::responses::RestorePageResponse>, ServerError> {
+) -> Result<PageResponse<wenlan_types::responses::RestorePageResponse, MemberRestore>, ServerError>
+{
     let _rules = crate::skill_grow::RulesPageWrite::begin(&state, Some(&id)).await;
     let (db, page_root) = {
         let state = state.read().await;
@@ -856,13 +984,14 @@ pub async fn handle_restore_page(
     }
     // Under a new title this also updates other pages' links to the old one,
     // as a rename does; the counts ride the response.
-    let mut response = wenlan_core::post_write::restore_page(
+    let mut response = wenlan_core::post_write::restore_page_for(
         &db,
         &id,
         req.title.as_deref(),
         req.expected_version,
         &scope,
         page_root.as_deref(),
+        member.is_some(),
     )
     .await
     .map_err(restore_error)?;
@@ -899,7 +1028,10 @@ pub async fn handle_restore_page(
             }
         }
     }
-    Ok(Json(response))
+    Ok(PageResponse::for_caller(
+        response,
+        crate::team_actor::can_read_private_memories(&headers),
+    ))
 }
 
 fn restore_error(error: wenlan_core::db::RestorePageError) -> ServerError {
@@ -1055,7 +1187,8 @@ pub async fn handle_delete_page(
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
     Path(id): Path<String>,
     axum::extract::Query(query): axum::extract::Query<DeletePageQuery>,
-) -> Result<Json<PageRemovalResponse>, ServerError> {
+) -> Result<PageResponse<PageRemovalResponse, MemberRemoval>, ServerError> {
+    let private = crate::team_actor::can_read_private_memories(&headers);
     let _rules = crate::skill_grow::RulesPageWrite::begin(&state, Some(&id)).await;
     let (db, page_root) = {
         let s = state.read().await;
@@ -1084,7 +1217,8 @@ pub async fn handle_delete_page(
             header_space.as_deref(),
             session.as_ref(),
         )
-        .await;
+        .await
+        .map(|Json(response)| PageResponse::for_caller(response, private));
     }
 
     let knowledge_path = wenlan_core::config::load_config().knowledge_path_or_default();
@@ -1103,13 +1237,16 @@ pub async fn handle_delete_page(
         );
     }
 
-    Ok(Json(PageRemovalResponse {
-        status: PageRemovalStatus::Deleted,
-        restorable: false,
-        version: None,
-        projection_status: None,
-        projection_error: None,
-    }))
+    Ok(PageResponse::for_caller(
+        PageRemovalResponse {
+            status: PageRemovalStatus::Deleted,
+            restorable: false,
+            version: None,
+            projection_status: None,
+            projection_error: None,
+        },
+        private,
+    ))
 }
 
 /// POST /api/pages/search
@@ -1119,7 +1256,10 @@ pub async fn handle_search_pages(
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
     view: crate::truth_guard::TruthView,
     Json(req): Json<SearchPagesRequest>,
-) -> Result<Json<serde_json::Value>, ServerError> {
+) -> Result<
+    PageResponse<wenlan_types::responses::SearchPagesResponse, MemberPages<MemberPage>>,
+    ServerError,
+> {
     let db = {
         let s = state.read().await;
         s.db.clone().ok_or(ServerError::DbNotInitialized)?
@@ -1136,9 +1276,10 @@ pub async fn handle_search_pages(
         let pages =
             hosted_page_candidates(&db, &req.query, limit, req.page_type.as_deref(), &scope)
                 .await?;
-        let mut pages = wenlan_core::truth_adapter::filter_pages(&db, &view.grant, pages).await?;
-        pages.iter_mut().for_each(remove_private_provenance);
-        return Ok(Json(serde_json::json!({ "pages": pages })));
+        let pages = wenlan_core::truth_adapter::filter_pages(&db, &view.grant, pages).await?;
+        return Ok(PageResponse::Member(MemberPages {
+            pages: pages.into_iter().map(member_view::page).collect(),
+        }));
     }
     let literal = if req.page_type.is_none() && req.query.chars().any(is_cjk_char) {
         db.pages_containing_text(&req.query, limit, &scope)
@@ -1158,7 +1299,9 @@ pub async fn handle_search_pages(
     let results = wenlan_core::truth_adapter::filter_pages(&db, &view.grant, results)
         .await
         .map_err(|e| ServerError::SearchFailed(e.to_string()))?;
-    Ok(Json(serde_json::json!({ "pages": results })))
+    Ok(PageResponse::Local(
+        wenlan_types::responses::SearchPagesResponse { pages: results },
+    ))
 }
 
 async fn hosted_page_candidates(
@@ -1191,10 +1334,7 @@ pub(crate) async fn search_hosted_page_hits(
         wenlan_core::truth_adapter::filter_page_refs(db, grant, pages, |p| p.id.as_str()).await?;
     Ok(pages
         .into_iter()
-        .map(|mut page| {
-            remove_private_provenance(&mut page);
-            wenlan_core::db::MemoryDB::search_result_from_page(page)
-        })
+        .map(wenlan_core::member_view::search_hit)
         .collect())
 }
 
@@ -1215,10 +1355,13 @@ pub async fn handle_create_page(
     headers: HeaderMap,
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
     Json(wire): Json<wenlan_types::requests::CreatePageWithBasisRequest>,
-) -> Result<Json<CreatePageResponse>, ServerError> {
-    if !crate::team_actor::can_read_private_memories(&headers)
+) -> Result<PageResponse<CreatePageResponse, MemberCreate>, ServerError> {
+    let private = crate::team_actor::can_read_private_memories(&headers);
+    if !private
         && (!wire.create.source_memory_ids.is_empty()
             || wire.create.entity_id.is_some()
+            || !wire.code_basis.is_empty()
+            || !wire.citation_targets.is_empty()
             || wire.organize_run_id.is_some())
     {
         return Err(hosted_page_source_refusal());
@@ -1262,7 +1405,7 @@ pub async fn handle_create_page(
             Err(_) => telemetry.record(TelemetryEvent::WikiError),
         }
     }
-    result
+    result.map(|Json(response)| PageResponse::for_caller(response, private))
 }
 
 /// A wait for the shared write lock longer than this is logged.
@@ -1449,7 +1592,9 @@ async fn handle_create_page_inner(
                 warnings.push(format!("code_basis was not recorded: {error}"));
             }
         }
-        written_code_basis = db.list_page_code_basis(&result.id).await?;
+        if private {
+            written_code_basis = db.list_page_code_basis(&result.id).await?;
+        }
     } else if !prepared_code_basis.is_empty() {
         warnings.push(
             "code_basis was not recorded: this call resolved to an existing note and wrote \
@@ -1522,7 +1667,7 @@ fn page_draft_error(err: wenlan_core::WenlanError) -> ServerError {
     }
 }
 
-fn draft_not_found() -> ServerError {
+pub(crate) fn draft_not_found() -> ServerError {
     ServerError::Structured {
         status: axum::http::StatusCode::NOT_FOUND,
         body: serde_json::json!({
@@ -1623,7 +1768,7 @@ pub async fn handle_move_page(
     view: crate::truth_guard::TruthView,
     Path(id): Path<String>,
     Json(mut req): Json<MovePageRequest>,
-) -> Result<Json<MovePageResponse>, ServerError> {
+) -> Result<PageResponse<MovePageResponse, MemberMove>, ServerError> {
     let _rules = crate::skill_grow::RulesPageWrite::begin(&state, Some(&id)).await;
     let (db, root) = {
         let s = state.read().await;
@@ -1633,7 +1778,11 @@ pub async fn handle_move_page(
         )
     };
     let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
-    let page = db.get_page_scoped(&id, &scope).await?;
+    let page = if actor.is_some() {
+        db.get_shared_page_scoped(&id, &scope).await?
+    } else {
+        db.get_page_scoped(&id, &scope).await?
+    };
     let page = wenlan_core::truth_adapter::filter_page(&db, &view.grant, page)
         .await?
         .filter(wenlan_core::pages::is_active_file_page)
@@ -1655,7 +1804,21 @@ pub async fn handle_move_page(
         None => None,
     };
     if let Some(member_view) = &member_view {
-        req.expected_storage_path = member_view.file_path(&req.expected_storage_path)?;
+        let current = {
+            let db = db.clone();
+            let root = root.clone();
+            let id = id.clone();
+            tokio::task::spawn_blocking(move || {
+                wenlan_core::export::knowledge::KnowledgeWriter::new(root, &db)
+                    .live_page_filenames(&[&id])
+                    .remove(&id)
+            })
+            .await
+            .map_err(|e| ServerError::Internal(e.to_string()))?
+        }
+        .ok_or_else(|| ServerError::NotFound("page file not found".into()))?;
+        req.expected_storage_path =
+            member_view.file_path(&id, &req.expected_storage_path, &current)?;
         req.folder_path = member_view.folder_path(&req.folder_path)?;
     }
     let projection_write = db.begin_page_projection_write();
@@ -1672,15 +1835,13 @@ pub async fn handle_move_page(
     })
     .await
     .map_err(|e| ServerError::Internal(e.to_string()))??;
-    // The answer keeps the server path; for a member the gate takes it out
-    // and `member_folders::add_space_paths` puts the path they see beside it.
-    if member_view
-        .as_ref()
-        .is_some_and(|member_view| member_view.shown(&storage_path).is_none())
-    {
-        return Err(ServerError::Internal("page moved outside the Space".into()));
+    if let Some(view) = member_view {
+        let space_path = view
+            .page_location(&id, &storage_path)
+            .ok_or_else(|| ServerError::Internal("page moved outside the Space".into()))?;
+        return Ok(PageResponse::Member(MemberMove { space_path }));
     }
-    Ok(Json(MovePageResponse { storage_path }))
+    Ok(PageResponse::Local(MovePageResponse { storage_path }))
 }
 
 /// 404 unless page or draft `id` is filed in `pinned`, the Space the team
@@ -1690,10 +1851,16 @@ async fn member_page_in_pinned_space(
     id: &str,
     pinned: Option<&str>,
 ) -> Result<(), ServerError> {
-    let page = db.get_page(id).await?;
-    match page {
-        Some(page) if crate::team_actor::in_pinned_space(page.space.as_deref(), pinned) => Ok(()),
-        _ => Err(ServerError::NotFound(format!("page {id} not found"))),
+    let scope = wenlan_core::read_scope::ReadScope::Space(
+        crate::team_actor::required_space(pinned)?.into(),
+    );
+    if db
+        .member_can_access_page(id, &scope, wenlan_core::db::MemberPageTarget::Published)
+        .await?
+    {
+        Ok(())
+    } else {
+        Err(ServerError::NotFound("page not found".into()))
     }
 }
 
@@ -1718,7 +1885,7 @@ pub async fn handle_create_page_draft(
     crate::team_actor::TeamActor(actor): crate::team_actor::TeamActor,
     view: crate::truth_guard::TruthView,
     Json(req): Json<CreatePageDraftRequest>,
-) -> Result<Json<PageDraftResponse>, ServerError> {
+) -> Result<PageResponse<PageDraftResponse, MemberDraft>, ServerError> {
     let db = draft_db(&state).await?;
     // A team member's draft goes only in the Space the team gate checked.
     let space = if actor.is_some() {
@@ -1745,16 +1912,24 @@ pub async fn handle_create_page_draft(
     // A repeated create answers with the draft as it is now, which the owner
     // may since have moved: a member sees it only while it is still in the
     // Space the team gate checked.
-    if actor.is_some()
-        && !crate::team_actor::in_pinned_space(page.space.as_deref(), space.as_deref())
-    {
-        return Err(draft_not_found());
+    if let Some(member) = &actor {
+        let scope = wenlan_core::read_scope::ReadScope::Space(space.ok_or_else(draft_not_found)?);
+        if !db
+            .member_can_access_page(
+                &page.id,
+                &scope,
+                wenlan_core::db::MemberPageTarget::OwnedDraft(&member.id),
+            )
+            .await?
+        {
+            return Err(draft_not_found());
+        }
     }
-    let mut page = filter_draft_echo(&db, &view, page).await?;
+    let page = filter_draft_echo(&db, &view, page).await?;
     if actor.is_some() {
-        remove_private_provenance(&mut page);
+        return Ok(PageResponse::Member(member_view::draft(page)));
     }
-    Ok(Json(draft_response(&db, page).await?))
+    Ok(PageResponse::Local(draft_response(&db, page).await?))
 }
 
 /// PUT /api/pages/drafts/{id}
@@ -1765,7 +1940,7 @@ pub async fn handle_update_page_draft(
     view: crate::truth_guard::TruthView,
     Path(id): Path<String>,
     Json(req): Json<UpdatePageDraftRequest>,
-) -> Result<Json<PageDraftResponse>, ServerError> {
+) -> Result<PageResponse<PageDraftResponse, MemberDraft>, ServerError> {
     let db = draft_db(&state).await?;
     if actor.is_some() && (header_space.is_none() || req.space != header_space) {
         return Err(draft_not_found());
@@ -1783,11 +1958,11 @@ pub async fn handle_update_page_draft(
         .map_err(page_draft_error)?
     {
         wenlan_core::pages::PageDraftUpdateOutcome::Updated(page) => {
-            let mut page = filter_draft_echo(&db, &view, page).await?;
+            let page = filter_draft_echo(&db, &view, page).await?;
             if actor.is_some() {
-                remove_private_provenance(&mut page);
+                return Ok(PageResponse::Member(member_view::draft(page)));
             }
-            Ok(Json(draft_response(&db, page).await?))
+            Ok(PageResponse::Local(draft_response(&db, page).await?))
         }
         wenlan_core::pages::PageDraftUpdateOutcome::VersionConflict { current_version } => {
             Err(draft_version_conflict(current_version))
@@ -1804,7 +1979,7 @@ pub async fn handle_publish_page_draft(
     view: crate::truth_guard::TruthView,
     Path(id): Path<String>,
     Json(req): Json<PageDraftVersionRequest>,
-) -> Result<Json<PageDraftResponse>, ServerError> {
+) -> Result<PageResponse<PageDraftResponse, MemberDraft>, ServerError> {
     let private = crate::team_actor::can_read_private_memories(&headers);
     let mut rules =
         crate::skill_grow::RulesPageWrite::begin(&state, private.then_some(id.as_str())).await;
@@ -1878,14 +2053,14 @@ pub async fn handle_publish_page_draft(
         projection_error: None,
     };
     response.projection_status = Some(PageProjectionStatus::NotConfigured);
-    if let Some(page_root) = page_root {
+    if let Some(page_root) = page_root.as_ref() {
         let projection =
             wenlan_core::export::knowledge::KnowledgeProjectionWrite::new(page_root.clone(), &db);
         match projection.write_page_gated(&db, &response.page).await {
             Ok(Some(path)) => {
                 response.projection_status = Some(PageProjectionStatus::Synced);
                 response.storage_path = std::path::Path::new(&path)
-                    .strip_prefix(&page_root)
+                    .strip_prefix(page_root)
                     .ok()
                     .map(|relative| {
                         relative
@@ -1907,9 +2082,18 @@ pub async fn handle_publish_page_draft(
         }
     }
     if !private {
-        remove_private_provenance(&mut response.page);
+        let mut draft = member_view::draft(response.page);
+        draft.projection_status = response.projection_status;
+        if let (Some(root), Some(path)) = (page_root.as_deref(), response.storage_path.as_deref()) {
+            if let Some(view) =
+                crate::member_folders::view(&db, root, true, header_space.as_deref()).await
+            {
+                draft.space_path = view.page_location(&id, path);
+            }
+        }
+        return Ok(PageResponse::Member(draft));
     }
-    Ok(Json(response))
+    Ok(PageResponse::Local(response))
 }
 
 /// DELETE /api/pages/drafts/{id}
@@ -2175,11 +2359,14 @@ pub async fn handle_export_page(
 /// capability; no content-refresh or delete/recreate path is involved.
 pub async fn handle_rename_page(
     State(state): State<Arc<RwLock<ServerState>>>,
+    headers: HeaderMap,
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
     Path(id): Path<String>,
     Json(req): Json<wenlan_types::requests::RenamePageRequest>,
 ) -> Result<Json<wenlan_types::responses::RenamePageResponse>, ServerError> {
-    let _rules = crate::skill_grow::RulesPageWrite::begin(&state, Some(&id)).await;
+    let private = crate::team_actor::can_read_private_memories(&headers);
+    let _rules =
+        crate::skill_grow::RulesPageWrite::begin(&state, private.then_some(id.as_str())).await;
     let (db, page_root) = {
         let state = state.read().await;
         (
@@ -2192,13 +2379,14 @@ pub async fn handle_rename_page(
     };
     let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
     Ok(Json(
-        wenlan_core::post_write::rename_page(
+        wenlan_core::post_write::rename_page_for(
             &db,
             &id,
             &req.title,
             req.expected_version,
             &scope,
             page_root.as_deref(),
+            !private,
         )
         .await?,
     ))
@@ -2372,7 +2560,11 @@ pub async fn handle_update_page(
     crate::team_actor::TeamActor(actor): crate::team_actor::TeamActor,
     Path(id): Path<String>,
     Json(wire): Json<wenlan_types::requests::ManualPageEditRequest>,
-) -> Result<Json<wenlan_types::responses::ManualPageWriteResponse>, ServerError> {
+) -> Result<
+    PageResponse<wenlan_types::responses::ManualPageWriteResponse, MemberManualWrite>,
+    ServerError,
+> {
+    let private = actor.is_none();
     let _rules = crate::skill_grow::RulesPageWrite::begin(&state, Some(&id)).await;
     let wenlan_types::requests::ManualPageEditRequest {
         edit: req,
@@ -2399,10 +2591,7 @@ pub async fn handle_update_page(
     // desktop member's edit has when it syncs). Everything else is the same.
     let edited_by = match &actor {
         Some(member) => {
-            if !crate::team_actor::in_pinned_space(before.space.as_deref(), header_space.as_deref())
-            {
-                return Err(ServerError::NotFound(format!("page {id} not found")));
-            }
+            member_page_in_pinned_space(&db, &id, header_space.as_deref()).await?;
             member.edited_by()
         }
         None => "manual_edit".to_string(),
@@ -2446,6 +2635,7 @@ pub async fn handle_update_page(
                 // Space the team gate checked, checked again in the write's
                 // own transaction: a move in between is not seen above.
                 space_guard: member_space_guard(actor.is_some(), header_space.as_deref()),
+                member_write: !private,
                 person_asked: None,
                 restored_from: None,
                 follows: false,
@@ -2504,12 +2694,15 @@ pub async fn handle_update_page(
                 }
                 None => (PageProjectionStatus::NotConfigured, None),
             };
-            Ok(Json(ManualPageWriteResponse {
-                basis_confirm: result.basis_confirm,
-                ok: true,
-                projection_status,
-                projection_error,
-            }))
+            Ok(PageResponse::for_caller(
+                ManualPageWriteResponse {
+                    basis_confirm: result.basis_confirm,
+                    ok: true,
+                    projection_status,
+                    projection_error,
+                },
+                private,
+            ))
         }
         // The gate's warning says which version the page moved to.
         WriteOutcome::Refused => Err(ServerError::Conflict(match result.warnings.first() {
@@ -2546,9 +2739,14 @@ pub async fn handle_refresh_page(
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
     headers: HeaderMap,
     Json(req): Json<wenlan_types::requests::RefreshPageRequest>,
-) -> Result<Json<wenlan_types::responses::PageWriteResponse>, ServerError> {
+) -> Result<PageResponse<wenlan_types::responses::PageWriteResponse, MemberWrite>, ServerError> {
     let private = crate::team_actor::can_read_private_memories(&headers);
-    if !private && (!req.source_memory_ids.is_empty() || req.organize_run_id.is_some()) {
+    if !private
+        && (!req.source_memory_ids.is_empty()
+            || !req.code_basis.is_empty()
+            || !req.citation_targets.is_empty()
+            || req.organize_run_id.is_some())
+    {
         return Err(hosted_page_source_refusal());
     }
     let _rules = crate::skill_grow::RulesPageWrite::begin(&state, Some(&id)).await;
@@ -2603,7 +2801,7 @@ pub async fn handle_refresh_page(
         Ok(_) => {}
         Err(_) => telemetry.record(TelemetryEvent::WikiError),
     }
-    result.map(|(_, response)| Json(response))
+    result.map(|(_, response)| PageResponse::for_caller(response, private))
 }
 
 fn hosted_page_source_refusal() -> ServerError {
@@ -2997,6 +3195,7 @@ async fn handle_refresh_page_inner(
         wenlan_core::post_write::PageWrite::AgentUpdate {
             basis: wenlan_core::db::BasisWrite {
                 preserve_source_links: !private,
+                member_write: !private,
                 research_write: research_write.clone(),
                 citation_snapshots: Vec::new(),
                 minor: req.minor.unwrap_or(false),
@@ -3118,7 +3317,11 @@ async fn handle_refresh_page_inner(
         result.outcome,
         wenlan_types::responses::PageWriteResponse {
             write_outcome: Some(page_refresh_outcome(result.outcome)),
-            code_basis: db.list_page_code_basis(&id).await?,
+            code_basis: if private {
+                db.list_page_code_basis(&id).await?
+            } else {
+                Vec::new()
+            },
             basis: crate::page_basis_routes::written_basis(&db, &scope, &id, private).await?,
             ok: true,
             revision_card_id: result.revision_card_id,
@@ -3406,7 +3609,10 @@ pub async fn handle_get_page_revisions(
     view: crate::truth_guard::TruthView,
     Path(id): Path<String>,
     axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
-) -> Result<Json<wenlan_types::responses::ListPageRevisionsResponse>, ServerError> {
+) -> Result<
+    PageResponse<wenlan_types::responses::ListPageRevisionsResponse, MemberRevisions>,
+    ServerError,
+> {
     // `?include=text` (comma list) includes the bodies this reader can see.
     let private = crate::team_actor::can_read_private_memories(&headers);
     let include_text = params
@@ -3450,18 +3656,6 @@ pub async fn handle_get_page_revisions(
     } else {
         Vec::new()
     };
-    if !private {
-        for entry in &mut entries {
-            entry.incoming_source_ids = None;
-            entry.citations_summary = None;
-            entry.sources_added = None;
-            entry.sources_removed = None;
-            entry.char_delta = None;
-            entry.delta_summary = None;
-            entry.person_asked = None;
-            entry.text = None;
-        }
-    }
     // UX-HIST-1: the one history merges the person's edits, AI edits and the
     // new versions of the pages this one relies on. A relied-on page this
     // caller may not read in full, or outside its Space, is left out.
@@ -3470,26 +3664,48 @@ pub async fn handle_get_page_revisions(
         let visible =
             crate::page_basis_routes::visible_ids_for(&db, &view.grant, &scope, &bases, private)
                 .await?;
+        if !private {
+            let history = wenlan_core::page_history::build_member_page_history(
+                &db,
+                &page,
+                entries,
+                &visible,
+                include_text,
+                &scope,
+            )
+            .await?;
+            return Ok(PageResponse::Member(history));
+        }
         wenlan_core::page_history::build_page_history(
             &db,
             &page,
             &mut entries,
             &visible,
             include_text,
-            (!private).then_some(&scope),
+            None,
         )
         .await?
     } else {
         Vec::new()
     };
-    Ok(Json(wenlan_types::responses::ListPageRevisionsResponse {
-        page_id: id,
-        current_version: page.version,
-        user_edited: page.user_edited,
-        stale_reason: if private { page.stale_reason } else { None },
-        entries,
-        history,
-    }))
+    if !private {
+        return Ok(PageResponse::Member(MemberRevisions::new(
+            &page,
+            entries,
+            history,
+            &Default::default(),
+        )));
+    }
+    Ok(PageResponse::Local(
+        wenlan_types::responses::ListPageRevisionsResponse {
+            page_id: id,
+            current_version: page.version,
+            user_edited: page.user_edited,
+            stale_reason: page.stale_reason,
+            entries,
+            history,
+        },
+    ))
 }
 /// POST /api/pages/{id}/review
 ///

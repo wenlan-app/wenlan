@@ -21,6 +21,7 @@ pub mod events;
 pub mod folder_space;
 pub mod import;
 pub mod lint;
+pub mod member_view;
 pub mod memory;
 pub mod memory_type;
 pub mod narrative;

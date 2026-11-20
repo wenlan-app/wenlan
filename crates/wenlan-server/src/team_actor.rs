@@ -10,11 +10,13 @@
 
 use std::sync::LazyLock;
 
-use axum::extract::{FromRequestParts, MatchedPath, Request};
+use axum::extract::{FromRequestParts, MatchedPath, Request, State};
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
+use wenlan_core::db::MemberPageTarget;
+use wenlan_core::read_scope::ReadScope;
 use wenlan_core::shared_space::version::{Author, AuthorKind};
 
 /// The secret the gate proves it is this process with.
@@ -100,37 +102,112 @@ pub(crate) fn required_space(pinned: Option<&str>) -> Result<&str, crate::error:
     pinned.ok_or_else(|| crate::error::ServerError::NotFound("Space not found".into()))
 }
 
-/// Limit authenticated forwarding to the browser and MCP calls audited for
-/// that distinction. Match Axum's route template, never a client-supplied ID.
-pub(crate) async fn guard_private_memory(req: Request, next: Next) -> Response {
+/// Daemon calls used by hosted MCP in addition to the browser catalog.
+pub(crate) const MCP_CALLS: &[(&str, &str)] = &[
+    ("POST", "/api/memory/search"),
+    ("POST", "/api/brief"),
+    ("GET", "/api/skills/rules"),
+    ("POST", "/api/skills/record"),
+    ("POST", "/api/pages"),
+    ("POST", "/api/pages/{id}/rename"),
+    ("PUT", "/api/pages/{id}"),
+    ("DELETE", "/api/pages/{id}"),
+];
+
+/// Check the route template before exposing any row or entering a mutation.
+pub(crate) async fn guard_private_memory(
+    State(state): State<crate::state::SharedState>,
+    req: Request,
+    next: Next,
+) -> Response {
     if !req.headers().contains_key(SECRET_HEADER) {
         return next.run(req).await;
     }
     if can_read_private_memories(req.headers()) {
         return StatusCode::FORBIDDEN.into_response();
     }
-    let admitted = req.extensions().get::<MatchedPath>().is_some_and(|path| {
-        let path = path.as_str();
-        crate::team_routes::is_member_app_call(req.method(), path)
-            || matches!(
-                (req.method(), path),
-                (&Method::POST, "/api/memory/search" | "/api/brief")
-                    | (&Method::GET, "/api/skills/rules")
-                    | (
-                        &Method::POST,
-                        "/api/skills/record" | "/api/pages" | "/api/pages/{id}/rename"
-                    )
-                    | (&Method::PUT | &Method::DELETE, "/api/pages/{id}")
-            )
-    });
-    if !admitted {
+    let route = req
+        .extensions()
+        .get::<MatchedPath>()
+        .map(MatchedPath::as_str)
+        .unwrap_or("");
+    let method = req.method().as_str();
+    if !crate::team_routes::is_member_app_call(req.method(), route)
+        && !MCP_CALLS.contains(&(method, route))
+    {
         return (
             StatusCode::FORBIDDEN,
             axum::Json(serde_json::json!({"error": "This route is unavailable to team members."})),
         )
             .into_response();
     }
-    next.run(req).await
+    let draft_route = route.starts_with("/api/pages/drafts/");
+    let refused = || {
+        if draft_route {
+            crate::page_routes::draft_not_found().into_response()
+        } else {
+            crate::error::ServerError::NotFound("page not found".into()).into_response()
+        }
+    };
+    let member = from_headers(req.headers());
+    let pinned = req
+        .headers()
+        .get(crate::space_header::HEADER_NAME)
+        .or_else(|| req.headers().get(crate::space_header::HEADER_NAME_LEGACY))
+        .and_then(|value| std::str::from_utf8(value.as_bytes()).ok())
+        .map(str::trim)
+        .filter(|space| !space.is_empty());
+    // The browser can discover the Space for one opaque ID. The route's
+    // unpinned response to that lookup has only the ID and Space name.
+    if pinned.is_none()
+        && !matches!((method, route), ("GET", "/api/health"))
+        && !(method == "GET" && route == "/api/pages/{id}" && member.is_some())
+    {
+        return refused();
+    }
+    if req.method() != Method::GET {
+        let ids: Vec<_> = route
+            .split('/')
+            .zip(req.uri().path().split('/'))
+            .filter_map(|(segment, id)| matches!(segment, "{id}" | "{basis_id}").then_some(id))
+            .collect();
+        if !ids.is_empty() {
+            let Some(pinned) = pinned else {
+                return refused();
+            };
+            let target = if draft_route {
+                let Some(member) = member.as_ref() else {
+                    return refused();
+                };
+                if req.method() == Method::PUT {
+                    MemberPageTarget::OwnedDraft(&member.id)
+                } else {
+                    MemberPageTarget::PublishedOrOwnedDraft(&member.id)
+                }
+            } else {
+                MemberPageTarget::Published
+            };
+            let Some(db) = state.read().await.db.clone() else {
+                return StatusCode::SERVICE_UNAVAILABLE.into_response();
+            };
+            let scope = ReadScope::Space(pinned.to_owned());
+            for id in ids {
+                match db.member_can_access_page(id, &scope, target).await {
+                    Ok(true) => {}
+                    Ok(false) => return refused(),
+                    Err(error) => {
+                        tracing::warn!("member page authorization failed: {error}");
+                        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+                    }
+                }
+            }
+        }
+    }
+    let response = next.run(req).await;
+    if response.status().is_server_error() {
+        return response.status().into_response();
+    }
+    response
 }
 
 /// The member these headers name, when they carry this process's secret.
@@ -172,15 +249,6 @@ where
     }
 }
 
-/// Whether a page or draft filed under `page_space` may be changed by a
-/// member call pinned to `pinned`: only in the Space the gate checked.
-pub(crate) fn in_pinned_space(page_space: Option<&str>, pinned: Option<&str>) -> bool {
-    match (page_space.map(str::trim), pinned.map(str::trim)) {
-        (Some(page), Some(pinned)) => !page.is_empty() && page == pinned,
-        _ => false,
-    }
-}
-
 #[cfg(test)]
 #[path = "team_memory_privacy_test.rs"]
 mod memory_privacy_tests;
@@ -218,13 +286,5 @@ mod tests {
         let mut map = headers(secret(), "person", "m-wang");
         map.insert(MEMBER_NAME_HEADER, HeaderValue::from_str("王小明").unwrap());
         assert_eq!(from_headers(&map).unwrap().name, "王小明");
-    }
-
-    #[test]
-    fn a_member_changes_only_the_pinned_space() {
-        assert!(in_pinned_space(Some("Alpha"), Some("Alpha")));
-        assert!(!in_pinned_space(Some("Beta"), Some("Alpha")));
-        assert!(!in_pinned_space(None, Some("Alpha")));
-        assert!(!in_pinned_space(Some("Alpha"), None));
     }
 }

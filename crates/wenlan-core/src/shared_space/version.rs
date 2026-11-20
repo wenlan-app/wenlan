@@ -431,7 +431,7 @@ impl Versioned for PageVersion {
     }
 }
 
-pub(super) fn ts_key(ts: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+pub(crate) fn ts_key(ts: &str) -> Option<chrono::DateTime<chrono::Utc>> {
     chrono::DateTime::parse_from_rfc3339(ts)
         .ok()
         .map(|at| at.with_timezone(&chrono::Utc))

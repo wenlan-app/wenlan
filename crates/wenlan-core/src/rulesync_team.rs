@@ -19,7 +19,7 @@ use crate::team::{self, CredentialKind, Member, TeamFile};
 
 pub const SPACE: &str = "everyone";
 const TITLE: &str = "Rules";
-const ID_PREFIX: &str = "team-rules-";
+pub(crate) const ID_PREFIX: &str = "team-rules-";
 const ACCEPTS: &str = "accepts_team_proposal";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,6 +72,20 @@ pub fn hosted_project_layer(
         return Ok(None);
     }
     hosted.layer(settings_path, &rules).map(Some)
+}
+
+/// The exact approved master for a hosted Space. Do not consult local
+/// Rules-folder pages, a member's cached layer, or pending proposals.
+pub fn approved_hosted_rules(
+    settings_path: &Path,
+    space: &str,
+) -> Result<Option<(String, String)>, WenlanError> {
+    let Some(hosted) = hosted_rules(&team_path(settings_path), settings_path, space)? else {
+        return Ok(None);
+    };
+    Ok(hosted
+        .head()?
+        .map(|rules| (hosted.info.id, rules.page.body)))
 }
 
 /// Reads the project master for this exact local Space, using its current team grant.
@@ -408,6 +422,7 @@ fn check_approved(rules: &version::PageVersion, id: &str) -> Result<(), WenlanEr
         || !rules.meta.locked
         || rules.meta.archived
         || version::file_kind(&rules.meta) != version::PAGES_DIR
+        || !crate::member_view::MemberSnapshot::approved_rules_match(rules)
     {
         return Err(validation("invalid approved team Rules version"));
     }

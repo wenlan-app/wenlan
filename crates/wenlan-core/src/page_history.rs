@@ -165,6 +165,41 @@ pub async fn build_page_history(
     include_text: bool,
     shared_scope: Option<&ReadScope>,
 ) -> Result<Vec<PageHistoryItem>, WenlanError> {
+    build_page_history_inner(db, page, entries, visible_bases, include_text, shared_scope)
+        .await
+        .map(|(items, _)| items)
+}
+
+pub async fn build_member_page_history(
+    db: &MemoryDB,
+    page: &Page,
+    mut entries: Vec<PageChangelogEntry>,
+    visible_bases: &HashSet<String>,
+    include_text: bool,
+    scope: &ReadScope,
+) -> Result<crate::member_view::MemberRevisions, WenlanError> {
+    let (items, witnessed) = build_page_history_inner(
+        db,
+        page,
+        &mut entries,
+        visible_bases,
+        include_text,
+        Some(scope),
+    )
+    .await?;
+    Ok(crate::member_view::MemberRevisions::new(
+        page, entries, items, &witnessed,
+    ))
+}
+
+async fn build_page_history_inner(
+    db: &MemoryDB,
+    page: &Page,
+    entries: &mut Vec<PageChangelogEntry>,
+    visible_bases: &HashSet<String>,
+    include_text: bool,
+    shared_scope: Option<&ReadScope>,
+) -> Result<(Vec<PageHistoryItem>, HashSet<i64>), WenlanError> {
     let page_id = page.id.as_str();
     let own = match shared_scope {
         Some(scope) => {
@@ -175,7 +210,14 @@ pub async fn build_page_history(
     };
     let texts = texts_by_version(&own);
     if shared_scope.is_some() {
-        entries.retain(|entry| texts.contains_key(&entry.version));
+        entries.retain_mut(|entry| {
+            let Some(row) = own.iter().find(|row| row.version == entry.version) else {
+                return false;
+            };
+            entry.at = row.created_at;
+            entry.text = include_text.then(|| row.content.clone());
+            true
+        });
     }
     if include_text {
         for entry in entries.iter_mut() {
@@ -185,7 +227,11 @@ pub async fn build_page_history(
     let mut items: Vec<PageHistoryItem> = entries
         .iter()
         .map(|entry| PageHistoryItem {
-            changed_sentences: changed_sentences_at(&own, entry.version),
+            changed_sentences: if shared_scope.is_some() {
+                changed_between(&own, entry.version - 1, Some(entry.version))
+            } else {
+                changed_sentences_at(&own, entry.version)
+            },
             kind: kind_of_edit(&entry.edited_by),
             at: entry.at,
             version: Some(entry.version),
@@ -240,7 +286,11 @@ pub async fn build_page_history(
             delta_summary: None,
             text: include_text.then(|| birth.content.clone()),
             source: None,
-            changed_sentences: changed_sentences_at(&own, birth.version),
+            changed_sentences: if shared_scope.is_some() {
+                changed_between(&own, birth.version - 1, Some(birth.version))
+            } else {
+                changed_sentences_at(&own, birth.version)
+            },
             person_asked: None,
             restored_from: None,
             first_version: None,
@@ -321,6 +371,13 @@ pub async fn build_page_history(
                     .await?
             }
         };
+        if shared_scope.is_some()
+            && !rows
+                .iter()
+                .any(|row| row.version == basis.confirmed_version)
+        {
+            continue;
+        }
         // A version this page has not been checked against yet is always an
         // update; an older one counts when it was written after this page
         // started relying on the source.
@@ -356,7 +413,7 @@ pub async fn build_page_history(
         b.at.cmp(&a.at)
             .then_with(|| b.version.unwrap_or(0).cmp(&a.version.unwrap_or(0)))
     });
-    Ok(items)
+    Ok((items, texts.keys().copied().collect()))
 }
 
 #[cfg(test)]

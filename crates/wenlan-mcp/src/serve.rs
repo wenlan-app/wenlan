@@ -271,8 +271,7 @@ pub async fn run_serve_with_profile(
 /// caller authenticates the member's Space grant before every request and
 /// supplies the daemon client with its internal team forwarding credential.
 pub fn team_member_service(
-    origin_url: String,
-    daemon_client: reqwest::Client,
+    daemon_client: WenlanClient,
     member_id: String,
     space: String,
     tool_profile: ToolProfile,
@@ -286,7 +285,7 @@ pub fn team_member_service(
             let identity =
                 AgentIdentity::new("remote-mcp".into(), false).for_team_member(member_id.clone());
             Ok(WenlanMcpServer::new_with_identity(
-                WenlanClient::with_http_client(origin_url.clone(), daemon_client.clone()),
+                daemon_client.clone(),
                 TransportMode::Http,
                 identity,
                 None,

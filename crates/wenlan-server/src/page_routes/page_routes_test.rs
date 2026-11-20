@@ -71,7 +71,8 @@ async fn page_inventory_reports_live_files_after_scope_and_keeps_drafts_null() {
         axum::extract::Query(params.clone()),
     )
     .await
-    .unwrap();
+    .unwrap()
+    .into_test_json();
     assert_eq!(inventory.pages.len(), 1);
     assert_eq!(inventory.pages[0].page.id, visible_id);
     assert_eq!(
@@ -87,7 +88,8 @@ async fn page_inventory_reports_live_files_after_scope_and_keeps_drafts_null() {
         axum::extract::Query(params.clone()),
     )
     .await
-    .unwrap();
+    .unwrap()
+    .into_test_json();
     assert_eq!(inventory.pages[0].storage_path, None);
     let mut params = params;
     params.insert("status".into(), "draft".into());
@@ -99,7 +101,8 @@ async fn page_inventory_reports_live_files_after_scope_and_keeps_drafts_null() {
         axum::extract::Query(params),
     )
     .await
-    .unwrap();
+    .unwrap()
+    .into_test_json();
     assert_eq!(inventory.pages.len(), 1);
     assert_eq!(inventory.pages[0].page.id, draft_id);
     assert_eq!(inventory.pages[0].storage_path, None);

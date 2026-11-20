@@ -110,18 +110,27 @@ pub async fn handle_clear_default_space(
 pub async fn handle_list_spaces(
     State(state): State<Arc<RwLock<ServerState>>>,
     headers: axum::http::HeaderMap,
-) -> Result<Json<Vec<wenlan_core::db::Space>>, ServerError> {
+    crate::space_header::SpaceHeader(pinned): crate::space_header::SpaceHeader,
+) -> Result<
+    crate::page_routes::PageResponse<
+        Vec<wenlan_core::db::Space>,
+        Vec<wenlan_core::member_view::MemberSpace>,
+    >,
+    ServerError,
+> {
+    use crate::page_routes::PageResponse;
     let db = {
         let s = state.read().await;
         s.db.clone().ok_or(ServerError::DbNotInitialized)?
     };
-    let spaces = if crate::team_actor::can_read_private_memories(&headers) {
-        db.list_spaces().await
-    } else {
-        db.list_spaces_without_private_counts().await
+    if !crate::team_actor::can_read_private_memories(&headers) {
+        let space = crate::team_actor::required_space(pinned.as_deref())?;
+        let space = db.get_space_without_private_counts(space).await?;
+        return Ok(PageResponse::Member(
+            space.into_iter().map(Into::into).collect(),
+        ));
     }
-    .map_err(|e| ServerError::Internal(e.to_string()))?;
-    Ok(Json(spaces))
+    Ok(PageResponse::Local(db.list_spaces().await?))
 }
 
 pub async fn handle_create_space(

@@ -3211,7 +3211,7 @@ impl WenlanMcpServer {
                 SpaceRuleUseOutcome::ChangedPlan => SkillReportKind::ChangedPlan,
             },
         };
-        let response: serde_json::Value = try_call!(
+        let response: wenlan_types::skills::SkillReportResponse = try_call!(
             self.client.post("/api/skills/record", &request),
             "report_space_rule_use"
         );
@@ -5911,6 +5911,12 @@ impl WenlanMcpServer {
             )]));
         }
         let client = self.session_client(session).await;
+        if self.agent_identity.team_member().is_some() {
+            use wenlan_types::member_view::{HostedPageRead, MemberPageRead};
+            let page: MemberPageRead =
+                try_call!(client.get(&format!("/api/pages/{page_id}")), "read_page");
+            return query_success(HostedPageRead::from(page));
+        }
         let page: wenlan_types::responses::PageReadResponse =
             try_call!(client.get(&format!("/api/pages/{page_id}")), "read_page");
         // Only the note read itself is listed on the session card; the
@@ -6152,6 +6158,14 @@ impl WenlanMcpServer {
         ];
         if let Some(space) = space {
             query.push(("space", space));
+        }
+        if self.agent_identity.team_member().is_some() {
+            use wenlan_types::member_view::{HostedPageList, MemberPageEntry, MemberPages};
+            let pages: MemberPages<MemberPageEntry> = try_call!(
+                self.client.get_with_query("/api/pages", &query),
+                "list_pages"
+            );
+            return query_success(HostedPageList::from(pages));
         }
         let resp: PageInventoryResponse = try_call!(
             self.client.get_with_query("/api/pages", &query),

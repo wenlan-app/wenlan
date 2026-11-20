@@ -377,14 +377,20 @@ pub async fn handle_get_repair_page(
 ) -> Result<Json<wenlan_types::responses::PageReadResponse>, ServerError> {
     require_target(&state, &id, target_allows_page).await?;
     // A repair read is not an AI session's lookup: no session header travels.
-    crate::page_routes::handle_get_page(
+    let result = crate::page_routes::handle_get_page(
         State(state),
         axum::http::HeaderMap::new(),
         space,
         view,
         Path(id),
     )
-    .await
+    .await?;
+    match result {
+        crate::page_routes::PageResponse::Local(page) => Ok(Json(page)),
+        crate::page_routes::PageResponse::Member(_) => {
+            Err(ServerError::Internal("local page required".into()))
+        }
+    }
 }
 
 #[cfg(test)]
