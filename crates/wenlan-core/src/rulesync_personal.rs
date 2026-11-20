@@ -269,10 +269,19 @@ pub fn plan_adoption(home: &Path) -> Result<AdoptionPlan> {
     adoption_plan(&discover_adoption(home)?)
 }
 
+/// The home-relative path a person reads in the plan, with `/` between parts on
+/// every platform so the same plan reads the same on Windows.
+fn plan_path(path: &Path) -> String {
+    path.components()
+        .map(|part| part.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
     let mut files = Vec::new();
     for (path, file) in &adoption.files {
-        let path = path.to_string_lossy().into_owned();
+        let path = plan_path(path);
         let entry_text = |entry: &AdoptionEntry| match entry {
             AdoptionEntry::File(bytes) => match std::str::from_utf8(bytes) {
                 Ok(text) if !text.contains('\0') => text.to_owned(),
@@ -306,7 +315,7 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
     }
     for (path, reason) in &adoption.skipped {
         files.push(AdoptionChange {
-            path: path.to_string_lossy().into_owned(),
+            path: plan_path(path),
             added: 0,
             removed: 0,
             diff: format!("Skipped ({reason}). Stays where it is, not managed.\n"),
@@ -316,7 +325,7 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
         .skill_locations
         .iter()
         .map(|(path, upstream)| AdoptionSkill {
-            path: path.to_string_lossy().into_owned(),
+            path: plan_path(path),
             outcome: upstream
                 .clone()
                 .map_or(AdoptionSkillOutcome::PlainCopy, |upstream| {
@@ -324,7 +333,7 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
                 }),
         })
         .chain(adoption.skipped.iter().map(|(path, reason)| AdoptionSkill {
-            path: path.to_string_lossy().into_owned(),
+            path: plan_path(path),
             outcome: AdoptionSkillOutcome::Skipped {
                 reason: reason.clone(),
             },

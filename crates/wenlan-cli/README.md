@@ -514,7 +514,7 @@ Options:
 
 #### `wenlan rules restore`
 
-Restore the original files and links from the adoption backup.
+Restore the original files and links from the local setup backup.
 
 ```text
 wenlan rules restore [OPTIONS]
