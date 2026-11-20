@@ -45,6 +45,7 @@ use crate::state::SharedState;
 
 mod displaced;
 mod personal_files;
+mod personal_settings;
 mod settings;
 mod storage;
 
@@ -411,6 +412,10 @@ enum Kind {
     PersonalFile,
     Directory,
     Settings,
+    // Settle entry ownership with the settings receipt, including on recovery.
+    PersonalSettings {
+        entries: Vec<wenlan_core::rulesync_settings::personal::Key>,
+    },
     RegistrySkill {
         name: String,
     },
@@ -526,6 +531,8 @@ struct Manifest<Content = Vec<u8>> {
     extension_paths: BTreeSet<PathBuf>,
     settings_only: bool,
     settings_batch: Option<settings::SettingsBatch>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    personal_settings: personal_settings::Source,
     registry_skipped: BTreeMap<String, BTreeSet<PathBuf>>,
     unmanaged_skills: BTreeSet<PathBuf>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -569,6 +576,7 @@ impl Manifest {
             extension_paths: BTreeSet::new(),
             settings_only: false,
             settings_batch: None,
+            personal_settings: BTreeMap::new(),
             registry_skipped: BTreeMap::new(),
             unmanaged_skills: BTreeSet::new(),
             unmanaged_personal_files: BTreeMap::new(),
@@ -818,7 +826,7 @@ impl Setup {
     }
 
     fn discover_for_adoption(&self, manifest: Option<&Manifest>) -> Result<Adoption> {
-        if let Some(manifest) = manifest.filter(|manifest| manifest.adopted) {
+        let mut adoption = if let Some(manifest) = manifest.filter(|manifest| manifest.adopted) {
             discover_additional_adoption(
                 &self.home,
                 &manifest.master,
@@ -826,7 +834,9 @@ impl Setup {
             )
         } else {
             discover_adoption(&self.home)
-        }
+        }?;
+        personal_settings::prepare_adoption(&self.home, &mut adoption, manifest)?;
+        Ok(adoption)
     }
 
     fn preview_adoption_using(
@@ -843,7 +853,7 @@ impl Setup {
             && manifest.is_some_and(|manifest| manifest.adopted)
         {
             plan.notes
-                .push("No additional tools, commands or subagents found.".into());
+                .push("No additional tools, commands, subagents or settings found.".into());
         }
         Ok(plan)
     }
@@ -875,10 +885,11 @@ impl Setup {
         let already_adopted = manifest.as_ref().is_some_and(|manifest| manifest.adopted);
         if adoption.files.is_empty()
             && adoption.overlays.is_empty()
+            && adoption.settings.sources.is_empty()
             && (!already_adopted || adoption.skipped_personal_files.is_empty())
         {
             let mut result = report(if already_adopted {
-                "No additional tools, commands or subagents found"
+                "No additional tools, commands, subagents or settings found"
             } else {
                 "No installed tool files to adopt"
             });
@@ -1047,13 +1058,26 @@ impl Setup {
             manifest.worktree_writes.append(&mut worktree_writes);
             BatchMode::Adopt
         };
+        let existing_settings = adoption
+            .settings
+            .sources
+            .keys()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let settings = personal_settings::adopt(
+            &self.home,
+            root,
+            &mut manifest,
+            adoption.settings,
+            &mut operations,
+        )?;
         let mut result = if !adoption.added_tools.is_empty() {
             report(&format!(
                 "Added {} to the local tool setup",
                 adoption.added_tools.join(", ")
             ))
         } else if extending && !operations.is_empty() {
-            report("Added commands and subagents to the local tool setup")
+            report("Added personal sources to the local tool setup")
         } else if extending {
             report("No additional tool files were eligible for adoption")
         } else {
@@ -1081,7 +1105,14 @@ impl Setup {
                     path.display()
                 );
             }
-            result.written.push(path.display().to_string());
+            if !existing_settings.contains(&path) {
+                result.written.push(path.display().to_string());
+            }
+        }
+        if settings != 0 {
+            result
+                .message
+                .push_str(&format!(". Imported {settings} personal setting(s)."));
         }
         if let Some(master) = extension {
             manifest.unmanaged_personal_files.retain(|path, _| {
@@ -2122,6 +2153,7 @@ impl Setup {
             &saved,
             &render_skills,
         )?;
+        self.sync_personal_settings(root, manifest, &mut result)?;
         self.sync_registry(root, manifest, &blocked, &mut result, &saved, render_skills)?;
         Ok(result)
     }
@@ -2844,6 +2876,11 @@ impl Setup {
         let mut manifest = self.load()?.context("run wenlan rules adopt first")?;
         rulesync_registry::check_skill_format(&self.data)?;
         self.recover(&root, &mut manifest)?;
+        if let Some(blocked) = self.review_personal_settings(&root, &mut manifest, request)? {
+            let mut result = sync(&root, &mut manifest)?;
+            result.blocked.extend(blocked);
+            return Ok(result);
+        }
         if let Some(scope) = manifest.scope_reviews.remove(&request.id) {
             if matches!(request.action, PullbackAction::AllTools) {
                 let delivery = manifest
@@ -3925,9 +3962,17 @@ fn settle(manifest: &mut Manifest, operation: Pending) -> Result<()> {
         return Ok(());
     }
     if let Some(kind) = operation.kind {
-        if matches!(kind, Kind::Settings) {
-            settings::settle(manifest, &operation.path);
-        }
+        let kind = match kind {
+            Kind::Settings => {
+                settings::settle(manifest, &operation.path);
+                Kind::Settings
+            }
+            Kind::PersonalSettings { entries } => {
+                personal_settings::settle(manifest, &operation.path, &entries);
+                Kind::Settings
+            }
+            kind => kind,
+        };
         manifest.delivered.insert(
             operation.path,
             Delivery {
@@ -4420,6 +4465,456 @@ mod tests {
             }
             Ok(())
         })
+    }
+
+    #[test]
+    fn rulesync_personal_settings_adopt_review_merge_and_restore() {
+        let f = Fixture::new();
+        let home = &f.setup.home;
+        let files = [
+            (".claude.json", r#"{ "mcpServers": { "shared": {"command":"before"}, "second": {"command":"second-before"} }, "unrelated": {"keep":  true} }"#),
+            (".codex/config.toml", "# keep comment\nmodel = 'fixture' # preserve\n\n[mcp_servers.shared]\ncommand = 'before'\n"),
+            (".gemini/settings.json", r#"{ "mcpServers": { "gemini-own": {"command":"gemini-local"} }, "model": {"name":"leave-alone"} }"#),
+            (".gemini/config/mcp_config.json", r#"{ "mcpServers": { "antigravity-own": {"command":"antigravity-local"} } }"#),
+            (".copilot/mcp-config.json", r#"{ "mcpServers": { "copilot-own": {"type":"stdio","command":"copilot-local"} } }"#),
+            (".cursor/mcp.json", r#"{ "mcpServers": { "shared": { "command": "cursor-only" }, "other" : { "command" : "exact" } }, "anything":  7 }"#),
+            (".config/opencode/opencode.jsonc", "// keep this comment\n{ \"mcp\": { \"servers\": { \"opencode-own\": {\"type\":\"local\", \"command\":[\"native\"]}, }, }, }\n"),
+            (".config/muse/settings.json", r#"{ "schema_version": 1, "mcp_servers": { "muse-own": {"transport":"stdio","command":"muse-local"} } }"#),
+            (".claude/settings.json", r#"{ "hooks": {"SessionStart":[{"hooks":[{"type":"command","command":"before-hook"}]}]}, "permissions":{"allow":["Bash(fixture)"],"defaultMode":"default"}, "model":  "keep" }"#),
+            (".codex/hooks.json", "{}\n"),
+            (".cursor/cli-config.json", r#"{ "version":1, "permissions":{"deny":["Shell(fixture)"]} }"#),
+        ];
+        for (path, original) in files {
+            let path = home.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, original).unwrap();
+        }
+        let preview = f
+            .setup
+            .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        for path in [
+            ".claude.json",
+            ".codex/config.toml",
+            ".gemini/settings.json",
+            ".gemini/config/mcp_config.json",
+            ".copilot/mcp-config.json",
+            ".cursor/mcp.json",
+            ".config/opencode/opencode.jsonc",
+            ".config/muse/settings.json",
+            ".claude/settings.json",
+            ".cursor/cli-config.json",
+        ] {
+            assert!(
+                preview.files.iter().any(|change| change.path == path
+                    && change.diff.contains("Import personal settings")),
+                "{path}"
+            );
+        }
+        let adopted = f
+            .setup
+            .adopt_using(
+                &preview.token,
+                fixture_rule_renderer,
+                fixture_skill_renderer,
+            )
+            .unwrap();
+        assert!(adopted.message.contains("Imported"));
+        for (path, before) in files {
+            assert_eq!(
+                fs::read(home.join(path)).unwrap(),
+                before.as_bytes(),
+                "{path}"
+            );
+        }
+
+        let claude = home.join(".claude.json");
+        let after = files[0].1.replace("\"before\"", "\"after\"");
+        fs::write(&claude, &after).unwrap();
+        let pull = f.sync_with("");
+        let proposal = pull
+            .proposals
+            .iter()
+            .find(|card| card.id.starts_with("setting-"))
+            .unwrap();
+        assert!(proposal.diff.contains("after"));
+        assert!(proposal.diff.contains(".cursor/mcp.json"));
+        assert!(proposal
+            .diff
+            .contains("conflicts with a separate or unreviewed entry"));
+        assert_eq!(
+            fs::read_to_string(home.join(".cursor/mcp.json")).unwrap(),
+            files[5].1
+        );
+
+        fs::write(&claude, after.replace("\"after\"", "\"changed-again\"")).unwrap();
+        let decision = PullbackDecision {
+            id: proposal.id.clone(),
+            action: PullbackAction::AllTools,
+            file: None,
+        };
+        let rejected = f
+            .setup
+            .review_using(&decision, |root, manifest| f.sync_review(root, manifest));
+        assert!(rejected.is_err());
+        fs::write(&claude, &after).unwrap();
+        let delivered = f
+            .setup
+            .review_using(&decision, |root, manifest| f.sync_review(root, manifest))
+            .unwrap();
+        assert!(delivered
+            .blocked
+            .iter()
+            .any(|note| note.contains(".cursor/mcp.json")));
+        for (path, _) in files
+            .into_iter()
+            .take(8)
+            .filter(|(path, _)| *path != ".cursor/mcp.json")
+        {
+            assert!(
+                fs::read_to_string(home.join(path))
+                    .unwrap()
+                    .contains("after"),
+                "{path}"
+            );
+        }
+        assert_eq!(
+            fs::read_to_string(home.join(".cursor/mcp.json")).unwrap(),
+            files[5].1
+        );
+        assert!(
+            fs::read_to_string(home.join(".config/opencode/opencode.jsonc"))
+                .unwrap()
+                .starts_with("// keep this comment\n")
+        );
+
+        fs::write(&claude, after.replace("second-before", "second-after")).unwrap();
+        let next = f.sync_with("");
+        let next = next
+            .proposals
+            .iter()
+            .find(|card| card.id.starts_with("setting-"))
+            .unwrap();
+        f.setup
+            .review_using(
+                &PullbackDecision {
+                    id: next.id.clone(),
+                    action: PullbackAction::AllTools,
+                    file: None,
+                },
+                |root, manifest| f.sync_review(root, manifest),
+            )
+            .unwrap();
+        let cursor = fs::read_to_string(home.join(".cursor/mcp.json")).unwrap();
+        assert!(cursor.contains(
+            "\"shared\": { \"command\": \"cursor-only\" }, \"other\" : { \"command\" : \"exact\" }"
+        ));
+        assert!(cursor.contains("second-after"));
+        assert!(cursor.contains("\"anything\":  7"));
+
+        let settings = home.join(".claude/settings.json");
+        fs::write(&settings, files[8].1.replace("before-hook", "after-hook")).unwrap();
+        let pull = f.sync_with("");
+        let hook = pull
+            .proposals
+            .iter()
+            .find(|card| card.diff.contains("after-hook"))
+            .unwrap();
+        f.setup
+            .review_using(
+                &PullbackDecision {
+                    id: hook.id.clone(),
+                    action: PullbackAction::AllTools,
+                    file: None,
+                },
+                |root, manifest| f.sync_review(root, manifest),
+            )
+            .unwrap();
+        assert!(fs::read_to_string(home.join(".codex/hooks.json"))
+            .unwrap()
+            .contains("after-hook"));
+        fs::write(
+            &settings,
+            files[8]
+                .1
+                .replace("before-hook", "after-hook")
+                .replace("\"defaultMode\":\"default\"", "\"defaultMode\":\"plan\""),
+        )
+        .unwrap();
+        let pull = f.sync_with("");
+        let permission = pull
+            .proposals
+            .iter()
+            .find(|card| card.diff.contains("defaultMode"))
+            .unwrap();
+        assert!(permission.diff.contains("No other enrolled tool"));
+        f.setup
+            .review_using(
+                &PullbackDecision {
+                    id: permission.id.clone(),
+                    action: PullbackAction::ToolOnly,
+                    file: None,
+                },
+                |root, manifest| f.sync_review(root, manifest),
+            )
+            .unwrap();
+        let clean = f.sync_with("");
+        assert!(
+            clean.proposals.is_empty() && clean.written.is_empty() && clean.blocked.is_empty(),
+            "{clean:?}"
+        );
+
+        let restored = f.setup.restore().unwrap();
+        assert!(restored.blocked.is_empty(), "{restored:?}");
+        for (path, before) in files {
+            assert_eq!(
+                fs::read(home.join(path)).unwrap(),
+                before.as_bytes(),
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
+    fn rulesync_personal_settings_rejects_literals_in_sources_journal_and_pullback() {
+        fn contains_sentinel(dir: &Path) -> bool {
+            fs::read_dir(dir).unwrap().any(|entry| {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    contains_sentinel(&path)
+                } else {
+                    String::from_utf8_lossy(&fs::read(path).unwrap()).contains("synthetic-sentinel")
+                }
+            })
+        }
+        let f = Fixture::new();
+        let home = &f.setup.home;
+        let codex = home.join(".codex/config.toml");
+        let cursor = home.join(".cursor/mcp.json");
+        fs::create_dir_all(cursor.parent().unwrap()).unwrap();
+        let original = r#"{ "mcpServers": {"held":{"command":"example","env":{"UNLABELED":"synthetic-sentinel-env"}}, "good":{"command":"before"}}, "sessionToken":"synthetic-sentinel-unrelated" }"#;
+        let claude = home.join(".claude.json");
+        fs::write(&claude, original).unwrap();
+        fs::write(&codex, b"# safe fixture\n").unwrap();
+        let cursor_original = r#"{ "mcpServers": {"other":{"command":"local"}}, "account":{"password":"synthetic-sentinel-other"} }"#;
+        fs::write(&cursor, cursor_original).unwrap();
+
+        let preview = f
+            .setup
+            .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        let shown = serde_json::to_string(&preview).unwrap();
+        assert!(shown.contains("skipped MCP server held"));
+        assert!(shown.contains("cannot write or back up"));
+        assert!(!shown.contains("synthetic-sentinel"));
+        assert!(!f.setup.data.join("personal.json").exists());
+
+        let changed = original.replace("\"before\"", "\"stale\"");
+        fs::write(&claude, &changed).unwrap();
+        assert!(f
+            .setup
+            .adopt_using(
+                &preview.token,
+                fixture_rule_renderer,
+                fixture_skill_renderer
+            )
+            .is_err());
+        assert!(!f.setup.data.join("personal.json").exists());
+        fs::write(&claude, original).unwrap();
+        f.setup
+            .adopt_using(
+                &preview.token,
+                fixture_rule_renderer,
+                fixture_skill_renderer,
+            )
+            .unwrap();
+        assert_eq!(fs::read_to_string(&claude).unwrap(), original);
+
+        let risky = original.replace("\"before\"", "\"fixture --token synthetic-sentinel-edit\"");
+        fs::write(&claude, &risky).unwrap();
+        let result = f.sync_with("");
+        assert!(result.proposals.is_empty());
+        let report = serde_json::to_string(&result).unwrap();
+        assert!(report.contains("possible credentials"));
+        assert!(!report.contains("synthetic-sentinel"));
+        assert!(!contains_sentinel(&f.setup.data));
+
+        let safe_edit = original.replace("\"before\"", "\"after\"");
+        fs::write(&claude, &safe_edit).unwrap();
+        let pull = f.sync_with("");
+        let card = pull
+            .proposals
+            .iter()
+            .find(|card| card.id.starts_with("setting-"))
+            .unwrap();
+        let reviewed = f
+            .setup
+            .review_using(
+                &PullbackDecision {
+                    id: card.id.clone(),
+                    action: PullbackAction::AllTools,
+                    file: None,
+                },
+                |root, manifest| f.sync_review(root, manifest),
+            )
+            .unwrap();
+        assert!(reviewed
+            .blocked
+            .iter()
+            .any(|reason| reason.contains(".cursor/mcp.json")
+                && reason.contains("possible credentials")));
+        assert_eq!(fs::read_to_string(&claude).unwrap(), safe_edit);
+        assert_eq!(fs::read_to_string(&cursor).unwrap(), cursor_original);
+        assert!(fs::read_to_string(&codex).unwrap().contains("after"));
+        assert!(!contains_sentinel(&f.setup.data));
+        assert!(f.setup.restore().unwrap().blocked.is_empty());
+        assert_eq!(fs::read(&codex).unwrap(), b"# safe fixture\n");
+        assert_eq!(fs::read_to_string(&cursor).unwrap(), cursor_original);
+    }
+
+    #[test]
+    fn rulesync_personal_settings_blocks_only_the_conflicting_entry_and_retries() {
+        let f = Fixture::new();
+        let home = &f.setup.home;
+        let claude = home.join(".claude.json");
+        let codex = home.join(".codex/config.toml");
+        let cursor = home.join(".cursor/mcp.json");
+        fs::create_dir_all(cursor.parent().unwrap()).unwrap();
+        fs::write(&cursor, "{}\n").unwrap();
+        fs::write(
+            &claude,
+            r#"{"mcpServers":{"example":{"command":"before"}}}"#,
+        )
+        .unwrap();
+        let preview = f
+            .setup
+            .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        f.setup
+            .adopt_using(
+                &preview.token,
+                fixture_rule_renderer,
+                fixture_skill_renderer,
+            )
+            .unwrap();
+        fs::write(&claude, r#"{"mcpServers":{"example":{"command":"after"}}}"#).unwrap();
+        let pull = f.sync_with("");
+        let card = pull
+            .proposals
+            .iter()
+            .find(|card| card.id.starts_with("setting-"))
+            .unwrap();
+        let independent = "# independent\n[mcp_servers.example]\ncommand = 'occupied'\n\n[mcp_servers.other]\ncommand = 'unrelated' # exact spelling\n";
+        let result = f
+            .setup
+            .review_using(
+                &PullbackDecision {
+                    id: card.id.clone(),
+                    action: PullbackAction::AllTools,
+                    file: None,
+                },
+                |root, manifest| {
+                    // The independent tool wrote the name after the decision was saved.
+                    fs::write(&codex, independent)?;
+                    f.sync_review(root, manifest)
+                },
+            )
+            .unwrap();
+        assert!(result.blocked.iter().any(
+            |reason| reason.contains(".codex/config.toml") && reason.contains("unowned entry")
+        ));
+        assert_eq!(fs::read_to_string(&codex).unwrap(), independent);
+        assert!(fs::read_to_string(&cursor).unwrap().contains("after"));
+
+        let coincident = "[mcp_servers.example]\ncommand = 'after'\nargs = []\n";
+        fs::write(&codex, coincident).unwrap();
+        let result = f.sync_with("");
+        assert!(result.blocked.iter().any(
+            |reason| reason.contains(".codex/config.toml") && reason.contains("unowned entry")
+        ));
+        assert_eq!(fs::read_to_string(&codex).unwrap(), coincident);
+
+        fs::write(
+            &codex,
+            "# independent\n[mcp_servers.other]\ncommand = 'unrelated' # exact spelling\n",
+        )
+        .unwrap();
+        let retry = f.sync_with("");
+        assert!(
+            retry
+                .written
+                .iter()
+                .any(|path| Path::new(path) == Path::new(".codex/config.toml")),
+            "{retry:?}"
+        );
+        assert!(fs::read_to_string(&codex)
+            .unwrap()
+            .contains("command = 'unrelated' # exact spelling"));
+        assert!(fs::read_to_string(&codex).unwrap().contains("after"));
+    }
+
+    #[test]
+    fn rulesync_personal_settings_stays_home_scoped_and_offers_new_entries() {
+        let f = Fixture::new();
+        let home = &f.setup.home;
+        let project = home.join("projects/demo/.claude");
+        fs::create_dir_all(&project).unwrap();
+        let foreign = r#"{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"fixture-project-only"}]}]}}"#;
+        fs::write(project.join("settings.json"), foreign).unwrap();
+        let team = f.setup.data.join("team/.rulesync");
+        fs::create_dir_all(&team).unwrap();
+        fs::write(team.join("hooks.json"), foreign).unwrap();
+        let preview = f
+            .setup
+            .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        assert!(!serde_json::to_string(&preview)
+            .unwrap()
+            .contains("fixture-project-only"));
+        f.setup
+            .adopt_using(
+                &preview.token,
+                fixture_rule_renderer,
+                fixture_skill_renderer,
+            )
+            .unwrap();
+
+        let path = home.join(".claude/settings.json");
+        fs::write(
+            &path,
+            foreign.replace("fixture-project-only", "fixture-personal"),
+        )
+        .unwrap();
+        let sync = f.sync_with("");
+        assert!(sync.message.contains("1 additional personal setting"));
+        assert!(sync.proposals.is_empty());
+        assert_eq!(
+            fs::read_to_string(project.join("settings.json")).unwrap(),
+            foreign
+        );
+        assert!(!home.join(".codex/hooks.json").exists());
+        let adoption = f
+            .setup
+            .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        assert!(adoption
+            .files
+            .iter()
+            .any(|file| file.path == ".claude/settings.json"));
+        assert!(!serde_json::to_string(&adoption)
+            .unwrap()
+            .contains("fixture-project-only"));
+        f.setup
+            .adopt_using(
+                &adoption.token,
+                fixture_rule_renderer,
+                fixture_skill_renderer,
+            )
+            .unwrap();
+        assert!(!f
+            .sync_with("")
+            .message
+            .contains("additional personal setting"));
     }
 
     fn personal_targets_round_trip(binary: Option<&Path>) {

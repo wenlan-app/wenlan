@@ -34,6 +34,44 @@ fn personal_rules_cli(state: &Path) -> Command {
 }
 
 #[test]
+fn personal_rules_dry_run_previews_safe_settings_only_with_the_flag() {
+    let state = tempfile::tempdir().unwrap();
+    let home = state.path().join("ai-tools/home");
+    fs::create_dir_all(home.join(".claude")).unwrap();
+    let path = home.join(".claude.json");
+    let original = br#"{"mcpServers":{"visible":{"command":"fixture-adopt"},"held":{"command":"fixture-hidden","env":{"MY_LOGIN":"synthetic-only-sentinel"}}}}"#;
+    fs::write(&path, original).unwrap();
+    for enabled in [false, true] {
+        let mut cmd = personal_rules_cli(state.path());
+        if enabled {
+            cmd.env("WENLAN_RULESYNC", "1");
+        }
+        let output = cmd
+            .args(["rules", "adopt", "--dry-run", "--format", "json"])
+            .assert()
+            .success();
+        let stdout = std::str::from_utf8(&output.get_output().stdout).unwrap();
+        let plan: AdoptionPlan = serde_json::from_str(stdout).unwrap();
+        assert_eq!(
+            plan.files
+                .iter()
+                .any(|file| file.path == ".claude.json" && file.diff.contains("fixture-adopt")),
+            enabled
+        );
+        assert_eq!(
+            plan.notes
+                .iter()
+                .any(|note| note.contains("skipped MCP server held")),
+            enabled
+        );
+        assert!(!stdout.contains("synthetic-only-sentinel"));
+        assert!(!stdout.contains("fixture-hidden"));
+        assert_eq!(fs::read(&path).unwrap(), original);
+        assert!(!state.path().join("unused-data-root").exists());
+    }
+}
+
+#[test]
 fn personal_rules_dry_run_reads_existing_files_without_daemon_or_data_root() {
     let state = tempfile::tempdir().unwrap();
     let home = state.path().join("ai-tools/home");
