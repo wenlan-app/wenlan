@@ -2006,9 +2006,25 @@ async fn rules_delivery(
     Ok(RulesDeliveryResponse { tools })
 }
 
+/// The refusal for `GET /api/skills/delivery` asked by anyone but the person.
+pub(crate) const DELIVERY_NEEDS_THE_PERSON: &str =
+    "rules_delivery_needs_the_person: only the person sees which AI tools get their rules \
+     and the rule files on this computer";
+
+/// `GET /api/skills/delivery` — for each AI tool, whether it gets the rules
+/// and the file it reads them from. Those are paths in the person's home
+/// folder, so only the person (the app, `wenlan`, the page `wenlan open`
+/// opened, each with the person key) sees them; an AI tool or any other
+/// program on this computer is refused.
 pub async fn handle_rules_delivery(
     State(state): State<SharedState>,
+    headers: HeaderMap,
 ) -> Result<Json<RulesDeliveryResponse>, ServerError> {
+    if !crate::memory_routes::caller_is_person(&headers) {
+        return Err(ServerError::ValidationError(
+            DELIVERY_NEEDS_THE_PERSON.into(),
+        ));
+    }
     let (db, page_root) = db_and_page_root(&state).await?;
     let delivery = rules_delivery(&db, page_root.as_deref(), &SkillDirs::system()).await?;
     Ok(Json(delivery))

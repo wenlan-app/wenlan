@@ -2942,7 +2942,30 @@ async fn ux_skill_8_delivery_reports_each_tool_from_the_files_as_they_are() {
     let tools = delivery_in(&scratch, &isolated).await;
     assert_eq!(state_of(&tools, "codex"), RulesDeliveryState::IsolatedRun);
     assert_eq!(state_of(&tools, "cursor"), RulesDeliveryState::OnRequest);
-    let served = handle_rules_delivery(axum::extract::State(scratch.shared.clone()))
+    let person = person_headers();
+    // Only the person sees the tools' rule files: an AI tool or any other
+    // program on this computer is refused, paths and all.
+    let refused = handle_rules_delivery(
+        axum::extract::State(scratch.shared.clone()),
+        HeaderMap::new(),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        refused
+            .to_string()
+            .contains("rules_delivery_needs_the_person"),
+        "{refused}"
+    );
+    let mut tool = person.clone();
+    tool.insert("x-agent-name", "codex".parse().unwrap());
+    assert!(
+        handle_rules_delivery(axum::extract::State(scratch.shared.clone()), tool)
+            .await
+            .is_err(),
+        "a tool that also sends the person marker is still a tool"
+    );
+    let served = handle_rules_delivery(axum::extract::State(scratch.shared.clone()), person)
         .await
         .unwrap()
         .0;

@@ -134,8 +134,9 @@ pub struct TeamStartRequest {
     /// The address put in invite links. Left out: the first suggested one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
-    /// The port the team listener listens on, on every network of this
-    /// computer. Left out: [`DEFAULT_TEAM_PORT`].
+    /// The port the team listener listens on: on every network of this
+    /// computer, or on this computer only when `url` is a loopback address
+    /// (`127.0.0.1`, `localhost`, `::1`). Left out: [`DEFAULT_TEAM_PORT`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub port: Option<u16>,
 }
