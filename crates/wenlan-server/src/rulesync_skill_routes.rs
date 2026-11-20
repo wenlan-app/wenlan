@@ -15,20 +15,21 @@ use wenlan_core::rulesync_adopt::{
     skip_skill_asset, MAX_ADOPTED_SKILL_BYTES, MAX_ADOPTED_SKILL_DEPTH, MAX_ADOPTED_SKILL_ENTRIES,
 };
 use wenlan_core::rulesync_personal::{self, fingerprint};
+use wenlan_core::rulesync_renderer::RenderSession;
 use wenlan_core::rulesync_skill::{self as skills, SkillFiles};
 use wenlan_core::skill_registry;
 use wenlan_types::rulesync::RulesSyncReport;
 use wenlan_types::rulesync_skill::{
-    SaveSkillRequest, SaveSkillResult, SavedSkillScope, SavedSkillTool, SkillPermissionChange,
-    SkillProposal, SkillProposalChanges, SkillProposalOrigin, SkillProposalsResponse,
-    SkillReviewAction, SkillReviewRequest,
+    SaveSkillRequest, SaveSkillResult, SavedSkillScope, SavedSkillTool, SkillDeliveryPreview,
+    SkillPermissionChange, SkillProposal, SkillProposalChanges, SkillProposalOrigin,
+    SkillProposalsResponse, SkillReviewAction, SkillReviewRequest,
 };
 use wenlan_types::skill_registry::{InstalledSkill, InstalledSkillRow, Scope, Verdict};
 
 use crate::error::ServerError;
 use crate::route_registry::{get, post, TrackedRouter};
 use crate::rulesync_apply::{ApplyOutcome, FileMode, FileRoot, Snapshot};
-use crate::rulesync_routes::{require_local_person, Setup};
+use crate::rulesync_routes::{require_local_person, Setup, SkillPackages, SkillReviewDelivery};
 use crate::state::SharedState;
 
 const SKILL_STATE: &str = "skills.json";
@@ -169,26 +170,115 @@ async fn review_skill(
     require_local_person(&headers)?;
     work_on_disk(move || {
         let setup = Setup::system().map_err(validation)?;
-        let lock = setup.lock().map_err(failed_store)?;
+        let _lock = setup.lock().map_err(failed_store)?;
         let mut store = SkillStore::open(&setup.data).map_err(failed_store)?;
-        let name = store
-            .state
-            .review(
-                &setup.home,
-                request.id,
-                request.action,
-                request.scope,
-                refuse_installed_name,
-            )
-            .map_err(conflict)?;
-        store.save().map_err(failed_store)?;
-        drop(lock);
-        Ok(match request.action {
-            SkillReviewAction::Accept => saved(name),
-            SkillReviewAction::Dismiss => SaveSkillResult::Dismissed { name },
-        })
+        if request.action == SkillReviewAction::Dismiss {
+            let name = store
+                .state
+                .review(
+                    &setup.home,
+                    request.id,
+                    request.action,
+                    request.scope,
+                    refuse_installed_name,
+                )
+                .map_err(conflict)?;
+            store.save().map_err(failed_store)?;
+            return Ok(SaveSkillResult::Dismissed { name });
+        }
+        let session = RenderSession::new(&setup.binary);
+        let approved = prepare_skill_review(
+            &setup,
+            &mut store,
+            &request.id,
+            request.scope,
+            refuse_installed_name,
+            |target, skills| setup.render_skills(&session, target, skills),
+        )
+        .map_err(conflict)?;
+        if request.action == SkillReviewAction::Preview {
+            return Ok(SaveSkillResult::ReviewPreview {
+                proposal: approved.proposal,
+                delivery: approved.preview,
+            });
+        }
+        accept_skill_review(&setup, store, approved, request.token.as_deref())
     })
     .await
+}
+
+struct PreparedSkillReview {
+    proposal: SkillProposal,
+    preview: SkillDeliveryPreview,
+    delivery: SkillReviewDelivery,
+}
+
+fn prepare_skill_review(
+    setup: &Setup,
+    store: &mut SkillStore,
+    id: &str,
+    scope: Option<SavedSkillScope>,
+    check_name: impl FnOnce(&str) -> Result<()>,
+    render: impl Fn(&str, &SkillPackages) -> Result<SkillFiles>,
+) -> Result<PreparedSkillReview> {
+    let proposal = store
+        .state
+        .proposals
+        .get(id)
+        .context("this skill proposal is no longer current")?
+        .preview(id.to_owned())?;
+    let scope = scope.unwrap_or(proposal.scope);
+    let name = store.state.review(
+        &setup.home,
+        id.to_owned(),
+        SkillReviewAction::Accept,
+        Some(scope),
+        check_name,
+    )?;
+    let sources = rulesync_personal::PERSONAL_TARGETS
+        .iter()
+        .filter(|target| match scope {
+            SavedSkillScope::Shared => true,
+            SavedSkillScope::Tool { tool } => tool == target.tool,
+        })
+        .map(|target| {
+            (
+                target.tool,
+                store.state.sources_matching(target.tool, Some(&name)),
+            )
+        })
+        .collect();
+    let delivery = setup.plan_skill_review(&sources, &store.state.approved_local, render)?;
+    let files = delivery.changes();
+    let blocked = delivery.report.blocked.clone();
+    let preview = SkillDeliveryPreview {
+        token: fingerprint(&(id, scope, &files, &blocked))?,
+        files,
+        blocked,
+    };
+    Ok(PreparedSkillReview {
+        proposal,
+        preview,
+        delivery,
+    })
+}
+
+fn accept_skill_review(
+    setup: &Setup,
+    store: SkillStore,
+    approved: PreparedSkillReview,
+    token: Option<&str>,
+) -> Result<SaveSkillResult, ServerError> {
+    if token != Some(&approved.preview.token) {
+        return Err(conflict(anyhow::anyhow!(
+            "The skill delivery changed or hasn't been previewed. Review it again before accepting."
+        )));
+    }
+    store.save().map_err(failed_store)?;
+    Ok(saved_with_delivery(
+        approved.proposal.name,
+        setup.apply_skill_review(approved.delivery),
+    ))
 }
 
 async fn work_on_disk<T: Send + 'static>(
@@ -211,7 +301,11 @@ fn refuse_installed_name(name: &str) -> Result<()> {
 }
 
 fn saved(name: String) -> SaveSkillResult {
-    let delivery = match super::invoke_delivery() {
+    saved_with_delivery(name, super::invoke_delivery())
+}
+
+fn saved_with_delivery(name: String, delivery: Result<RulesSyncReport>) -> SaveSkillResult {
+    let delivery = match delivery {
         Ok(report) => report,
         Err(error) => RulesSyncReport {
             written: Vec::new(),
@@ -629,8 +723,16 @@ impl SkillState<Vec<u8>> {
     }
 
     fn sources(&self, tool: SavedSkillTool) -> ApprovedSkills {
+        self.sources_matching(tool, None)
+    }
+
+    fn sources_matching(&self, tool: SavedSkillTool, only: Option<&str>) -> ApprovedSkills {
         let mut sources = ApprovedSkills::default();
-        for (name, skill) in &self.kept {
+        for (name, skill) in self
+            .kept
+            .iter()
+            .filter(|(name, _)| only.is_none_or(|only| *name == only))
+        {
             let (files, modes) = match (skill.tools.get(&tool), &skill.shared) {
                 (Some(files), _) => (files, skill.tool_modes.get(&tool)),
                 (None, Some(files)) => (files, Some(&skill.shared_modes)),
@@ -953,6 +1055,15 @@ pub(crate) fn approved_local_folders(data: &Path) -> Result<BTreeMap<PathBuf, Ma
 
 #[cfg(test)]
 pub(crate) fn accept_only_tool_proposal(home: &Path, data: &Path) -> Result<SkillProposal> {
+    accept_only_tool_proposal_with_scope(home, data, Some(SavedSkillScope::Shared))
+}
+
+#[cfg(test)]
+pub(crate) fn accept_only_tool_proposal_with_scope(
+    home: &Path,
+    data: &Path,
+    scope: Option<SavedSkillScope>,
+) -> Result<SkillProposal> {
     let mut store = SkillStore::open(data)?;
     ensure!(
         store.state.proposals.len() == 1,
@@ -972,11 +1083,45 @@ pub(crate) fn accept_only_tool_proposal(home: &Path, data: &Path) -> Result<Skil
         home,
         proposal.id.clone(),
         SkillReviewAction::Accept,
-        Some(SavedSkillScope::Shared),
+        scope,
         |_| Ok(()),
     )?;
     store.save()?;
     Ok(proposal)
+}
+
+#[cfg(test)]
+pub(crate) fn review_only_tool_proposal(
+    setup: &Setup,
+    token: Option<&str>,
+    render: impl Fn(&str, &SkillPackages) -> Result<SkillFiles>,
+) -> Result<SaveSkillResult, ServerError> {
+    let _lock = setup.lock().map_err(failed_store)?;
+    let mut store = SkillStore::open(&setup.data).map_err(failed_store)?;
+    let (id, _) = store
+        .state
+        .proposals
+        .first_key_value()
+        .context("missing tool skill proposal")
+        .map_err(conflict)?;
+    let id = id.clone();
+    let prepared = prepare_skill_review(
+        setup,
+        &mut store,
+        &id,
+        Some(SavedSkillScope::Shared),
+        |_| Ok(()),
+        render,
+    )
+    .map_err(conflict)?;
+    if token.is_some() {
+        accept_skill_review(setup, store, prepared, token)
+    } else {
+        Ok(SaveSkillResult::ReviewPreview {
+            proposal: prepared.proposal,
+            delivery: prepared.preview,
+        })
+    }
 }
 
 pub(crate) fn authored_rows() -> Result<Vec<InstalledSkillRow>> {
@@ -1003,13 +1148,13 @@ pub(crate) fn remove_saved_source(name: &str) -> Result<bool> {
     Ok(true)
 }
 
-struct SkillHome {
+pub(crate) struct SkillHome {
     dir: Dir,
     root: FileRoot,
 }
 
 impl SkillHome {
-    fn open(home: &Path) -> Result<Self> {
+    pub(crate) fn open(home: &Path) -> Result<Self> {
         let root = FileRoot::open_home(home)?;
         let parent = Dir::open_ambient_dir(
             home.parent().context("tool home has no parent")?,
@@ -1086,6 +1231,19 @@ impl SkillHome {
         }))
     }
 
+    pub(crate) fn has_unapproved_edit(
+        &self,
+        folder: &Path,
+        tool: SavedSkillTool,
+        baseline: Option<&ManagedSkill>,
+        approved: Option<&ManagedSkill>,
+    ) -> Result<bool> {
+        Ok(match self.package(folder, tool)? {
+            Some(current) => !unchanged_tool_skill(&current, baseline, approved),
+            None => baseline.is_some_and(|skill| skill.files.contains_key(Path::new("SKILL.md"))),
+        })
+    }
+
     fn read_files(
         &self,
         dir: &Dir,
@@ -1148,6 +1306,19 @@ struct PackageRead {
     entries: usize,
 }
 
+fn unchanged_tool_skill(
+    current: &ManagedSkill,
+    baseline: Option<&ManagedSkill>,
+    approved: Option<&ManagedSkill>,
+) -> bool {
+    baseline.is_some_and(|skill| skill.files == current.files)
+        || approved.is_some_and(|approved| approved.matches(current))
+        || (baseline.is_none()
+            && current
+                .files
+                .contains_key(Path::new(skill_registry::MANAGED_MARKER)))
+}
+
 /// Capture unapproved skill bytes. Returned package roots must remain blocked
 /// from delivery until the person accepts the observed bytes.
 /// The caller holds the setup lock through both discovery and delivery.
@@ -1193,14 +1364,7 @@ pub(crate) fn collect_tool_proposals(
             }
         };
         let files = current.files();
-        if baseline.is_some_and(|skill| skill.files == current.files)
-            || store
-                .state
-                .approved_local
-                .get(&folder)
-                .is_some_and(|approved| approved.matches(&current))
-            || (baseline.is_none() && files.contains_key(Path::new(skill_registry::MANAGED_MARKER)))
-        {
+        if unchanged_tool_skill(&current, baseline, store.state.approved_local.get(&folder)) {
             continue;
         }
         if store.state.ignored.get(&folder) == Some(&fingerprint(&current)?) {

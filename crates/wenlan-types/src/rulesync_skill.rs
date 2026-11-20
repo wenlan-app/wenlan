@@ -111,6 +111,27 @@ pub struct SkillFileDigest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SkillDeliveryPreview {
+    pub token: String,
+    pub files: Vec<SkillDeliveryChange>,
+    pub blocked: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SkillDeliveryChange {
+    /// Home-relative destination, including the tool's folder.
+    pub path: String,
+    pub before: Option<SkillDeliveryFile>,
+    pub after: Option<SkillDeliveryFile>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SkillDeliveryFile {
+    pub digest: SkillFileDigest,
+    pub permissions: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SkillProposalOrigin {
     Agent { agent: String },
@@ -126,6 +147,10 @@ pub enum SaveSkillResult {
     },
     Proposed {
         proposal: SkillProposal,
+    },
+    ReviewPreview {
+        proposal: SkillProposal,
+        delivery: SkillDeliveryPreview,
     },
     Dismissed {
         name: String,
@@ -145,11 +170,14 @@ pub struct SkillReviewRequest {
     /// Choose the original tool or shared scope when accepting a tool's change.
     #[serde(default)]
     pub scope: Option<SavedSkillScope>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SkillReviewAction {
+    Preview,
     Accept,
     Dismiss,
 }

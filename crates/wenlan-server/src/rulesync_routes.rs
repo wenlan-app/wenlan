@@ -12,6 +12,7 @@ use anyhow::{bail, ensure, Context, Result};
 use axum::{extract::State, http::HeaderMap, Json};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use wenlan_core::rulesync_adopt::{AdoptedSkill, Adoption, AdoptionEntry};
 use wenlan_core::rulesync_personal::{
     additional_targets, adoption_plan, adoption_token, check_delivery_paths,
@@ -28,12 +29,15 @@ use wenlan_types::rulesync::{
     AdoptPreviewRequest, AdoptRequest, AdoptedSkillUpdate, AdoptionPlan, PullbackAction,
     PullbackCard, PullbackDecision, RulesSyncReport,
 };
+use wenlan_types::rulesync_skill::{
+    SavedSkillTool, SkillDeliveryChange, SkillDeliveryFile, SkillFileDigest,
+};
 
 use crate::error::ServerError;
 use crate::route_registry::{post, TrackedRouter};
 use crate::rulesync_apply::{ApplyOptions, ApplyOutcome, FileRoot, Snapshot};
 use crate::rulesync_layers;
-use crate::rulesync_registry::{self, ManagedSkill};
+use crate::rulesync_registry::{self, ApprovedSkills, ManagedSkill, SkillHome};
 use crate::state::SharedState;
 
 mod displaced;
@@ -561,7 +565,72 @@ struct ScopeReview {
 struct ExpectedRegistrySkill {
     name: String,
     wanted: BTreeSet<PathBuf>,
-    approved_local_matches: bool,
+    approved_local_paths: Option<BTreeSet<PathBuf>>,
+}
+
+struct RegistryInputs<'a> {
+    approved: &'a BTreeMap<PathBuf, ManagedSkill>,
+    reviewed: Option<&'a BTreeMap<SavedSkillTool, ApprovedSkills>>,
+}
+
+struct RegistryPlan {
+    operations: Vec<Pending>,
+    expected: BTreeMap<PathBuf, ExpectedRegistrySkill>,
+    active: BTreeSet<String>,
+    previous_skips: BTreeMap<String, BTreeSet<PathBuf>>,
+    reviewed: bool,
+}
+
+struct ReviewedRegistryPlan {
+    root: FileRoot,
+    manifest: Manifest,
+    plan: RegistryPlan,
+}
+
+pub(crate) struct SkillReviewDelivery {
+    delivery: Option<ReviewedRegistryPlan>,
+    pub(crate) report: RulesSyncReport,
+}
+
+impl SkillReviewDelivery {
+    pub(crate) fn changes(&self) -> Vec<SkillDeliveryChange> {
+        let Some(delivery) = &self.delivery else {
+            return Vec::new();
+        };
+        let removals = registry_removals(&delivery.manifest, &delivery.plan, &BTreeSet::new());
+        let mut changes: Vec<_> = delivery
+            .plan
+            .operations
+            .iter()
+            .chain(&removals)
+            .filter(|op| op.seen != op.desired)
+            .filter_map(|op| {
+                let file = |snapshot: &Snapshot| match snapshot {
+                    Snapshot::File { bytes, mode } => Some(SkillDeliveryFile {
+                        digest: SkillFileDigest {
+                            bytes: bytes.len(),
+                            sha256: format!("{:x}", Sha256::digest(bytes)),
+                        },
+                        permissions: mode.to_string(),
+                    }),
+                    _ => None,
+                };
+                let (before, after) = (file(&op.seen), file(&op.desired));
+                (before.is_some() || after.is_some()).then(|| SkillDeliveryChange {
+                    path: op
+                        .path
+                        .iter()
+                        .map(|part| part.to_string_lossy())
+                        .collect::<Vec<_>>()
+                        .join("/"),
+                    before,
+                    after,
+                })
+            })
+            .collect();
+        changes.sort_by(|left, right| left.path.cmp(&right.path));
+        changes
+    }
 }
 
 pub(crate) struct Setup {
@@ -1609,8 +1678,102 @@ impl Setup {
         result: &mut RulesSyncReport,
         render: impl Fn(&str, &SkillPackages) -> Result<SkillFiles>,
     ) -> Result<()> {
-        let installed = rulesync_registry::installed_sources()?;
         let approved = rulesync_registry::approved_local_folders(&self.data)?;
+        let inputs = RegistryInputs {
+            approved: &approved,
+            reviewed: None,
+        };
+        let plan = self.plan_registry(root, manifest, blocked, result, inputs, render)?;
+        self.apply_registry(root, manifest, blocked, result, plan)
+    }
+
+    pub(crate) fn plan_skill_review(
+        &self,
+        reviewed: &BTreeMap<SavedSkillTool, ApprovedSkills>,
+        approved: &BTreeMap<PathBuf, ManagedSkill>,
+        render: impl Fn(&str, &SkillPackages) -> Result<SkillFiles>,
+    ) -> Result<SkillReviewDelivery> {
+        let mut report = report("Adopt the tool setup before delivering saved skills");
+        let Some(mut manifest) = self.load()? else {
+            return Ok(SkillReviewDelivery {
+                delivery: None,
+                report,
+            });
+        };
+        ensure!(
+            manifest.pending.is_empty() && manifest.extension_paths.is_empty(),
+            "Run `wenlan rules sync` to recover the pending tool setup before reviewing this skill"
+        );
+        if !manifest.adopted {
+            return Ok(SkillReviewDelivery {
+                delivery: None,
+                report,
+            });
+        }
+        report.message = "Checked the approved skill's delivery".into();
+        let root = FileRoot::open_home(&self.home)?;
+        let inputs = RegistryInputs {
+            approved,
+            reviewed: Some(reviewed),
+        };
+        let plan = self.plan_registry(
+            &root,
+            &mut manifest,
+            &BTreeSet::new(),
+            &mut report,
+            inputs,
+            render,
+        )?;
+        Ok(SkillReviewDelivery {
+            delivery: Some(ReviewedRegistryPlan {
+                root,
+                manifest,
+                plan,
+            }),
+            report,
+        })
+    }
+
+    pub(crate) fn apply_skill_review(
+        &self,
+        mut review: SkillReviewDelivery,
+    ) -> Result<RulesSyncReport> {
+        if let Some(ReviewedRegistryPlan {
+            root,
+            mut manifest,
+            plan,
+        }) = review.delivery
+        {
+            self.apply_registry(
+                &root,
+                &mut manifest,
+                &BTreeSet::new(),
+                &mut review.report,
+                plan,
+            )?;
+        }
+        Ok(review.report)
+    }
+
+    fn plan_registry(
+        &self,
+        root: &FileRoot,
+        manifest: &mut Manifest,
+        blocked: &BTreeSet<PathBuf>,
+        result: &mut RulesSyncReport,
+        inputs: RegistryInputs<'_>,
+        render: impl Fn(&str, &SkillPackages) -> Result<SkillFiles>,
+    ) -> Result<RegistryPlan> {
+        let installed = if inputs.reviewed.is_some() {
+            BTreeMap::new()
+        } else {
+            rulesync_registry::installed_sources()?
+        };
+        let scanner = inputs
+            .reviewed
+            .map(|_| SkillHome::open(&self.home))
+            .transpose()?;
+        let approved = inputs.approved;
         let adopted = self.managed_skills(manifest);
         let mut active = installed.keys().cloned().collect::<BTreeSet<_>>();
         let mut expected = BTreeMap::<PathBuf, ExpectedRegistrySkill>::new();
@@ -1629,7 +1792,11 @@ impl Setup {
                 .iter()
                 .flat_map(|skill| skill.targets.iter().cloned()),
         );
-        let previous_skips = std::mem::take(&mut manifest.registry_skipped);
+        let previous_skips = if scanner.is_some() {
+            manifest.registry_skipped.clone()
+        } else {
+            std::mem::take(&mut manifest.registry_skipped)
+        };
         let mut worktrees = DeliveryWorktrees::new(&self.home)?;
         let mut operations = Vec::new();
         for id in targets {
@@ -1640,20 +1807,32 @@ impl Setup {
             ) {
                 continue;
             }
-            let local = rulesync_registry::approved_skills(&self.data, target.id)?;
-            let mut sources = installed.clone();
-            sources.extend(local.files.clone());
-            active.extend(sources.keys().cloned());
+            let saved;
+            let local = if let Some(reviewed) = inputs.reviewed {
+                let Some(local) = reviewed.get(&target.tool) else {
+                    continue;
+                };
+                local
+            } else {
+                saved = rulesync_registry::approved_skills(&self.data, target.id)?;
+                &saved
+            };
+            let mut sources: BTreeMap<_, _> = installed.iter().collect();
+            sources.extend(local.files.iter());
+            active.extend(sources.keys().copied().cloned());
             if sources.is_empty() {
                 continue;
             }
             let deliveries = render_personal_skills(
                 target,
-                sources.iter().map(|(name, files)| (name.as_str(), files)),
+                sources.iter().map(|(name, files)| (name.as_str(), *files)),
                 &render,
             );
             let deliveries = match deliveries {
                 Ok(deliveries) => deliveries,
+                Err(error) if scanner.is_some() => {
+                    return Err(error.context(format!("stage skills for {id}")))
+                }
                 Err(error) => {
                     result
                         .blocked
@@ -1661,7 +1840,7 @@ impl Setup {
                     continue;
                 }
             };
-            for (name, delivery) in sources.keys().zip(deliveries) {
+            for (name, delivery) in sources.keys().copied().zip(deliveries) {
                 let emitted = Path::new(target.skills.staged).join(name);
                 let emitted = emitted.as_path();
                 let default_folder = personal_skill_destination(target.skills, emitted)?;
@@ -1715,6 +1894,33 @@ impl Setup {
                         .or_default()
                         .insert(folder.to_owned());
                     continue;
+                }
+                if let Some(scanner) = &scanner {
+                    if let Some(paths) = manifest.registry_skipped.get_mut(name) {
+                        paths.remove(folder);
+                    }
+                    let unreviewed = scanner.has_unapproved_edit(
+                        folder,
+                        target.tool,
+                        adopted.get(folder),
+                        approved.get(folder),
+                    );
+                    match unreviewed {
+                        Ok(false) => {}
+                        Ok(true) => {
+                            result.blocked.push(format!(
+                                "{}: This skill has local edits. Run `wenlan rules sync` to review them.",
+                                folder.display(),
+                            ));
+                            continue;
+                        }
+                        Err(error) => {
+                            result
+                                .blocked
+                                .push(format!("{}: {error:#}", folder.display()));
+                            continue;
+                        }
+                    }
                 }
                 let owned = manifest.delivered.get(folder).is_some_and(|record| {
                     matches!(&record.kind, Kind::RegistryDirectory { name: installed } if installed == name)
@@ -1889,30 +2095,63 @@ impl Setup {
                         ExpectedRegistrySkill {
                             name: name.clone(),
                             wanted,
-                            approved_local_matches: snapshot.is_some(),
+                            approved_local_paths: snapshot.map(|skill| {
+                                skill
+                                    .files
+                                    .keys()
+                                    .chain(skill.directories.keys())
+                                    .cloned()
+                                    .collect()
+                            }),
                         },
                     );
                 }
             }
         }
+        manifest
+            .registry_skipped
+            .retain(|_, paths| !paths.is_empty());
+        Ok(RegistryPlan {
+            operations,
+            expected,
+            active,
+            previous_skips,
+            reviewed: scanner.is_some(),
+        })
+    }
+
+    fn apply_registry(
+        &self,
+        root: &FileRoot,
+        manifest: &mut Manifest,
+        blocked: &BTreeSet<PathBuf>,
+        result: &mut RulesSyncReport,
+        mut plan: RegistryPlan,
+    ) -> Result<()> {
+        let operations = std::mem::take(&mut plan.operations);
+        let written: BTreeSet<_> = operations
+            .iter()
+            .filter(|op| op.seen != op.desired && matches!(op.desired, Snapshot::File { .. }))
+            .map(|op| op.path.clone())
+            .collect();
         for (path, status) in self.sync_batch(root, manifest, operations, result)? {
             if status == ApplyOutcome::Applied {
-                if matches!(manifest.delivered[&path].kind, Kind::RegistrySkill { .. }) {
+                if written.contains(&path) {
                     result.written.push(path.display().to_string());
                 }
             } else {
                 if let Some(folder) = path
                     .ancestors()
-                    .find(|folder| expected.contains_key(*folder))
+                    .find(|folder| plan.expected.contains_key(*folder))
                 {
-                    expected.remove(folder);
+                    plan.expected.remove(folder);
                 }
                 result
                     .blocked
                     .push(format!("{} changed during sync", path.display()));
             }
         }
-        let operations = registry_removals(manifest, &expected, &active, &approved, blocked);
+        let operations = registry_removals(manifest, &plan, blocked);
         for (path, status) in self.sync_batch(root, manifest, operations, result)? {
             if status != ApplyOutcome::Applied {
                 result
@@ -1920,7 +2159,7 @@ impl Setup {
                     .push(format!("{} changed since delivery", path.display()));
             }
         }
-        if manifest.registry_skipped != previous_skips {
+        if manifest.registry_skipped != plan.previous_skips {
             self.save(manifest)?;
         }
         Ok(())
@@ -2202,7 +2441,7 @@ impl Setup {
         personal_rule_destination(rules, rendered)
     }
 
-    fn render_skills(
+    pub(crate) fn render_skills(
         &self,
         session: &RenderSession<'_>,
         renderer: &str,
@@ -2304,9 +2543,7 @@ struct SkillPath {
 
 fn registry_removals(
     manifest: &Manifest,
-    expected: &BTreeMap<PathBuf, ExpectedRegistrySkill>,
-    active: &BTreeSet<String>,
-    approved: &BTreeMap<PathBuf, ManagedSkill>,
+    plan: &RegistryPlan,
     blocked: &BTreeSet<PathBuf>,
 ) -> Vec<Pending> {
     let mut operations: Vec<_> = manifest
@@ -2317,12 +2554,17 @@ fn registry_removals(
             }
             let stale = path
                 .ancestors()
-                .find_map(|folder| expected.get_key_value(folder))
+                .find_map(|folder| plan.expected.get_key_value(folder))
                 .filter(|(_, expected)| !expected.wanted.contains(path));
+            if plan.reviewed && stale.is_none() {
+                return None;
+            }
             let (kind, remove) = match &record.kind {
                 Kind::RegistryDirectory { name }
                 | Kind::RegistryAssetDirectory { name }
-                | Kind::RegistrySkill { name } => (record.kind.clone(), !active.contains(name)),
+                | Kind::RegistrySkill { name } => {
+                    (record.kind.clone(), !plan.active.contains(name))
+                }
                 Kind::Skill => (
                     Kind::RegistrySkill {
                         name: stale?.1.name.clone(),
@@ -2337,13 +2579,10 @@ fn registry_removals(
             // An approved deletion in the editing tool is already absent. Keep
             // that observation as a delivery receipt while retaining the backup.
             let approved_absence = stale.is_some_and(|(folder, expected)| {
-                expected.approved_local_matches
-                    && path.strip_prefix(folder).ok().is_some_and(|relative| {
-                        approved.get(folder).is_some_and(|skill| {
-                            !skill.files.contains_key(relative)
-                                && !skill.directories.contains_key(relative)
-                        })
-                    })
+                expected.approved_local_paths.as_ref().is_some_and(|paths| {
+                    path.strip_prefix(folder)
+                        .is_ok_and(|relative| !paths.contains(relative))
+                })
             });
             let seen = if approved_absence {
                 Snapshot::Absent
@@ -2437,7 +2676,7 @@ fn skill_path(skills: &[AdoptedSkill], path: &Path) -> Option<SkillPath> {
     None
 }
 
-type SkillPackages = BTreeMap<String, SkillFiles>;
+pub(crate) type SkillPackages = BTreeMap<String, SkillFiles>;
 
 struct SkillDelivery {
     files: SkillFiles,
@@ -4204,6 +4443,95 @@ mod tests {
             fs::read_to_string(cursor_asset).unwrap(),
             "# Cursor helper\n"
         );
+    }
+
+    #[test]
+    fn rulesync_step1d_shared_preview_names_a_differing_tool_variant_it_overwrites() {
+        use wenlan_types::rulesync_skill::SaveSkillResult;
+
+        let f = Fixture::new();
+        write_step1d_skill(&f, ".codex", "Original body.", "# Original helper\n");
+        let claude = write_step1d_skill(&f, ".claude", "Original body.", "# Original helper\n");
+        let cursor = write_step1d_skill(&f, ".cursor", "Original body.", "# Original helper\n");
+        f.adopt_from_plan();
+        let other = claude.join("helper.py");
+        fs::write(&other, "# Saved Claude-only helper\n").unwrap();
+        f.sync_with("");
+        rulesync_registry::accept_only_tool_proposal_with_scope(&f.setup.home, &f.setup.data, None)
+            .unwrap();
+        let initial = f.sync_with("");
+        assert!(initial.blocked.is_empty(), "{initial:?}");
+        assert_eq!(
+            fs::read_to_string(&other).unwrap(),
+            "# Saved Claude-only helper\n"
+        );
+
+        let entry = cursor.join("SKILL.md");
+        let edited = fs::read_to_string(&entry)
+            .unwrap()
+            .replace("Original body.", "Cursor edit.");
+        fs::write(&entry, &edited).unwrap();
+        fs::write(cursor.join("new-notes.txt"), "New asset.\n").unwrap();
+        f.sync_with("");
+        let review = |token| {
+            rulesync_registry::review_only_tool_proposal(&f.setup, token, fixture_skill_renderer)
+        };
+        let SaveSkillResult::ReviewPreview { proposal, delivery } = review(None).unwrap() else {
+            panic!("expected a shared review preview");
+        };
+        assert!(!proposal.files.iter().any(|file| file.path == "helper.py"));
+        assert!(delivery.blocked.is_empty(), "{delivery:?}");
+        let planned: BTreeSet<_> = delivery
+            .files
+            .iter()
+            .map(|file| file.path.as_str())
+            .collect();
+        assert_eq!(
+            planned,
+            BTreeSet::from([
+                ".claude/skills/example/SKILL.md",
+                ".claude/skills/example/helper.py",
+                ".claude/skills/example/new-notes.txt",
+                ".codex/skills/example/SKILL.md",
+                ".codex/skills/example/new-notes.txt",
+            ])
+        );
+        assert_eq!(
+            fs::read_to_string(&other).unwrap(),
+            "# Saved Claude-only helper\n"
+        );
+        assert!(!claude.join("new-notes.txt").exists());
+
+        // The same proposal id must not authorize a changed set of destinations.
+        fs::write(&other, "# Another Claude edit during review\n").unwrap();
+        assert!(review(Some(&delivery.token)).is_err());
+        assert_eq!(
+            fs::read_to_string(&other).unwrap(),
+            "# Another Claude edit during review\n"
+        );
+        assert!(!claude.join("new-notes.txt").exists());
+        fs::write(&other, "# Saved Claude-only helper\n").unwrap();
+
+        let SaveSkillResult::Saved {
+            delivery: Some(delivered),
+            ..
+        } = review(Some(&delivery.token)).unwrap()
+        else {
+            panic!("expected a saved skill");
+        };
+        assert!(delivered.blocked.is_empty(), "{delivered:?}");
+        let written: BTreeSet<_> = delivered
+            .written
+            .iter()
+            .map(|path| path.replace(std::path::MAIN_SEPARATOR, "/"))
+            .collect();
+        assert_eq!(written, planned.into_iter().map(str::to_owned).collect());
+        assert_eq!(fs::read_to_string(&other).unwrap(), "# Original helper\n");
+        assert_eq!(
+            fs::read_to_string(claude.join("new-notes.txt")).unwrap(),
+            "New asset.\n"
+        );
+        assert_eq!(f.text(".codex/skills/example/SKILL.md"), edited);
     }
 
     #[test]
