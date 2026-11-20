@@ -449,11 +449,16 @@ fn clear_team_rule_layer(
     space: Option<&str>,
 ) -> Result<(), WenlanError> {
     change_settings(path, |store| {
-        if store
-            .memberships
-            .get(url)
-            .is_some_and(|membership| membership.key != key)
-        {
+        let current_key = match store.memberships.get(url) {
+            Some(membership) => membership.key == key,
+            None => store.spaces.values().any(|share| {
+                share
+                    .host
+                    .as_ref()
+                    .is_some_and(|host| host.url == url && host.key == key)
+            }),
+        };
+        if !current_key {
             return (false, ());
         }
         let mut changed = match space {
@@ -473,6 +478,32 @@ fn clear_team_rule_layer(
         }
         (changed, ())
     })
+}
+
+/// Manual sync checks the member's grant before it requests a Space file
+/// list. Retire cached Rules even if that preflight refuses the sync.
+pub async fn team_space_grant_for_sync(
+    path: &Path,
+    url: &str,
+    key: &str,
+    space: &str,
+) -> Result<wenlan_types::team::TeamMe, WenlanError> {
+    let me = match remote::me_sync(url, key).await {
+        Ok(me) => me,
+        Err(error) => {
+            if matches!(
+                error,
+                remote::SyncError::Revoked(_) | remote::SyncError::Refused(_)
+            ) {
+                clear_team_rule_layer(path, url, key, None)?;
+            }
+            return Err(WenlanError::Validation(error.to_string()));
+        }
+    };
+    if !me.spaces.iter().any(|grant| grant.space == space) {
+        clear_team_rule_layer(path, url, key, Some(space))?;
+    }
+    Ok(me)
 }
 
 fn remove_cached_rule_scope(store: &mut SettingsStore, url: &str, space: &str) -> bool {
@@ -511,6 +542,7 @@ fn remember_team_rule_pull(
                         && before.name == layer.name
                         && before.revision == layer.revision
                         && before.project == layer.project
+                        && before.skills == layer.skills
                         && before.synced_at.get(..10) == layer.synced_at.get(..10)
                 }) {
                     return (false, ());

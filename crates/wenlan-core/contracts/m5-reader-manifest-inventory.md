@@ -1744,7 +1744,7 @@ carrying the authority of agreement.
 | `server/skill_grow.rs::handle_undo_space_rules` | `pub` | no | no | — | `core/db.rs::get_page` |
 | `server/skill_grow.rs::load_rules_folders` | `private` | no | no | `server/skill_grow.rs::load` | `core/db.rs::get_page` |
 | `server/skill_grow.rs::process_space` | `private` | no | no | `server/skill_grow.rs::refresh_unlocked` | `server/skill_grow.rs::accept_space` |
-| `server/skill_grow.rs::readable_rules_page` | `private` | no | no | `server/skill_grow.rs::read_rules_for_space` | `core/db.rs::get_page` |
+| `server/skill_grow.rs::readable_rules_page` | `private` | no | no | `server/skill_grow.rs::read_personal_rules_for_space` | `core/db.rs::get_page` |
 | `server/skill_grow.rs::refresh_unlocked` | `private` | no | no | `server/skill_grow.rs::refresh_with` | `server/skill_grow.rs::pages_for_space` |
 | `server/skill_grow.rs::source_line_is_eligible` | `private` | no | no | `server/skill_grow.rs::eligible_lines` | `core/db.rs::get_page` |
 | `server/skill_grow.rs::write_maintained_rules_page` | `private` | no | no | `server/skill_grow.rs::process_space` | `core/db.rs::get_page` |
@@ -1938,10 +1938,10 @@ carrying the authority of agreement.
 | `server/sentence_routes.rs::handle_recheck_sentence` | `pub` | no | no | — | `core/sentences.rs::recheck_sentence`, `server/sentence_routes.rs::require_visible_page` |
 | `server/sentence_routes.rs::handle_reject_sentence_proposal` | `pub` | no | no | — | `server/sentence_routes.rs::require_visible_page` |
 | `server/sentence_routes.rs::handle_revert_sentences` | `pub` | no | no | — | `server/sentence_routes.rs::require_visible_page` |
-| `server/skill_grow.rs::eligible_lines` | `private` | no | no | `server/skill_grow.rs::accept_space`, `server/skill_grow.rs::handle_space_suggestions`, `server/skill_grow.rs::process_space`, `server/skill_grow.rs::read_rules_for_space` | `server/skill_grow.rs::source_line_is_eligible` |
+| `server/skill_grow.rs::eligible_lines` | `private` | no | no | `server/skill_grow.rs::accept_space`, `server/skill_grow.rs::handle_space_suggestions`, `server/skill_grow.rs::process_space`, `server/skill_grow.rs::read_personal_rules_for_space` | `server/skill_grow.rs::source_line_is_eligible` |
 | `server/skill_grow.rs::load` | `private` | yes | no | — | `server/skill_grow.rs::load_rules_folders` |
 | `server/skill_grow.rs::load_saved` | `private` | no | no | `server/skill_grow.rs::load` | `server/skill_grow/saved_rules.rs::page_of` |
-| `server/skill_grow.rs::read_rules_for_space` | `private` | no | no | `server/skill_grow.rs::approved_rule_ids`, `server/skill_grow.rs::general_lines`, `server/skill_grow.rs::handle_read_rules`, `server/skill_grow.rs::handle_self_report`, `server/skill_grow.rs::project_rules`, `server/skill_grow.rs::rules_by_layer` | `server/skill_grow.rs::readable_rules_page` |
+| `server/skill_grow.rs::read_personal_rules_for_space` | `private` | no | no | `server/skill_grow.rs::general_lines`, `server/skill_grow.rs::read_rules_for_space` | `server/skill_grow.rs::readable_rules_page` |
 | `server/skill_grow.rs::refresh_with` | `private` | no | no | `server/skill_grow.rs::handle_refresh`, `server/skill_grow.rs::run_nightly_if_due` | `server/skill_grow.rs::refresh_unlocked` |
 | `server/skill_grow/saved_rules.rs::handle_save_rule` | `pub` | no | no | — | `server/skill_grow/saved_rules.rs::save_rule_in` |
 | `server/skill_grow/saved_rules.rs::page_ids` | `pub(super)` | yes | no | — | `server/skill_grow/saved_rules.rs::page_of` |

@@ -984,7 +984,7 @@ async fn readable_rules_page(
 /// need neither a model, the accept, nor the setting (UX-SKILL-10); the lines
 /// Wenlan derived from pages follow, only once accepted and with the setting
 /// on.
-async fn read_rules_for_space(
+async fn read_personal_rules_for_space(
     db: &MemoryDB,
     own: &OwnRulePages,
     space: &wenlan_types::Space,
@@ -1013,8 +1013,24 @@ async fn read_rules_for_space(
     // The same sentence is told once; the person's own wording comes first.
     let mut seen = HashSet::new();
     lines.retain(|line| seen.insert(line.text.trim().to_lowercase()));
+    Ok(SpaceRulesResponse {
+        space_id: space.id.clone(),
+        space_name: space.name.clone(),
+        rules_page_id,
+        saved_rules_page_ids: Vec::new(),
+        lines,
+    })
+}
+
+async fn read_rules_for_space(
+    db: &MemoryDB,
+    own: &OwnRulePages,
+    space: &wenlan_types::Space,
+) -> Result<SpaceRulesResponse, ServerError> {
+    let mut response = read_personal_rules_for_space(db, own, space).await?;
     if wenlan_core::rulesync_personal::enabled() {
-        crate::repo_wiki_routes::include_reviewed_project_rules(db, space, &mut lines).await?;
+        crate::repo_wiki_routes::include_reviewed_project_rules(db, space, &mut response.lines)
+            .await?;
         let name = space.name.clone();
         let shared = tokio::task::spawn_blocking(move || {
             let settings = wenlan_core::shared_space::settings_path();
@@ -1023,8 +1039,9 @@ async fn read_rules_for_space(
         .await
         .map_err(|error| ServerError::Internal(error.to_string()))??;
         if let Some(layer) = shared {
+            let lines = &mut response.lines;
             lines.retain(|line| line.general || line.kind != wenlan_types::SkillLineKind::Rule);
-            seen = lines
+            let mut seen: HashSet<_> = lines
                 .iter()
                 .map(|line| line.text.trim().to_lowercase())
                 .collect();
@@ -1056,13 +1073,7 @@ async fn read_rules_for_space(
             }
         }
     }
-    Ok(SpaceRulesResponse {
-        space_id: space.id.clone(),
-        space_name: space.name.clone(),
-        rules_page_id,
-        saved_rules_page_ids: Vec::new(),
-        lines,
-    })
+    Ok(response)
 }
 
 /// The pages folder and database of a request, read without holding the
@@ -1171,7 +1182,7 @@ async fn general_lines(
         if Some(space.id.as_str()) == except {
             continue;
         }
-        for line in read_rules_for_space(db, own, &space).await?.lines {
+        for line in read_personal_rules_for_space(db, own, &space).await?.lines {
             if line.general && seen.insert(line.text.trim().to_lowercase()) {
                 out.push((space.id.clone(), line));
             }
@@ -1908,7 +1919,12 @@ async fn rules_by_layer(
 
 pub(crate) async fn general_tool_rules(state: &SharedState) -> Result<Vec<String>, ServerError> {
     let (db, page_root) = db_and_page_root(state).await?;
-    let (general, _) = rules_by_layer(&db, page_root.as_deref()).await?;
+    let own = OwnRulePages::load(&db, page_root.as_deref()).await?;
+    let general: Vec<_> = general_lines(&db, &own, None)
+        .await?
+        .into_iter()
+        .map(|(_, line)| line)
+        .collect();
     Ok(skill_grow::tool_rules(&general))
 }
 

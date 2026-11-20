@@ -662,6 +662,12 @@ impl Setup {
         self.recover(&root, &mut manifest)?;
         manifest.adopted = false;
         self.save(&manifest)?;
+        crate::rulesync_checkout::refresh(
+            self,
+            &wenlan_core::shared_space::settings_path(),
+            None,
+            &[],
+        );
         let mut result = report("Restored the local setup from its adoption backup");
         let mut owned: Vec<_> = manifest.delivered.keys().cloned().collect();
         // Children go before their parent that may become a symlink again.
@@ -726,10 +732,11 @@ impl Setup {
         manifest: &mut Manifest,
         generated: &[String],
     ) -> Result<RulesSyncReport> {
+        ensure!(manifest.adopted, "finish restoring the local setup first");
         let settings = wenlan_core::shared_space::settings_path();
         let layers = rulesync_team::load_layers(&settings)?;
         self.capture_team_edits(root, manifest, &settings, &layers)?;
-        crate::rulesync_checkout::refresh(self, &settings, &manifest.master, generated);
+        crate::rulesync_checkout::refresh(self, &settings, Some(&manifest.master), generated);
         self.sync_locked(root, manifest, generated, |target, source| {
             self.render_member_rule(target, source, &layers)
         })
@@ -1571,7 +1578,11 @@ fn write_skill(input: &Path, skill: &AdoptedSkill) -> Result<()> {
     write_skill_files(input, &skill.name, &skill.files)
 }
 
-fn write_skill_files(input: &Path, name: &str, files: &BTreeMap<PathBuf, Vec<u8>>) -> Result<()> {
+pub(crate) fn write_skill_files(
+    input: &Path,
+    name: &str,
+    files: &BTreeMap<PathBuf, Vec<u8>>,
+) -> Result<()> {
     let name = Path::new(name);
     ensure!(
         name.components().count() == 1 && safe_relative(name),
@@ -1602,7 +1613,7 @@ fn rendered_skill_file<'a>(
     Ok(rendered_skill_root(output, skill)?.and_then(|root| output.get(&root.join(file))))
 }
 
-fn rendered_skill_root<'a>(
+pub(crate) fn rendered_skill_root<'a>(
     output: &'a BTreeMap<PathBuf, Vec<u8>>,
     skill: &str,
 ) -> Result<Option<&'a Path>> {

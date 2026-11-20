@@ -50,6 +50,9 @@ const MAX_TOTAL_BYTES: u64 = 5 * 1024 * 1024;
 const MAX_NAME_PROBES: usize = 40;
 const SEARCH_LIMIT: usize = 30;
 
+#[path = "skill_registry_project_sync.rs"]
+pub(crate) mod project_sync;
+
 /// Where the four services live. Tests point these at a fake.
 #[derive(Debug, Clone)]
 pub struct Endpoints {

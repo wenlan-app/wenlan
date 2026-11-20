@@ -719,8 +719,12 @@ and wait for evidence that people need them.
   others. With the opt-in writer, the hosted `everyone` Space has an approved
   Rules page for the team. A repository-bound Space has its own Rules page.
   Each member receives the team layer and only the project layers they can
-  read. The member's private checkout render uses the layers for that repo
-  and their personal rules. The text states that project rules come first,
+  read. `wenlan repo rules-checkout` renders the matching repo layers and
+  personal rules into a private directory on the member's machine. It also
+  renders approved project skills from those Spaces. Shared skills have a
+  plain name and description and Markdown or text files. A refused sync
+  removes the revoked project's rules and skills from that directory.
+  The text states that project rules come first,
   followed by team rules and personal rules. An offline member keeps the
   last synced layer and sees its date. A refused sync removes its access and
   layer. Read holders, AI tools, and tool-file edits can submit proposals.
@@ -730,7 +734,8 @@ and wait for evidence that people need them.
   with repository read access can read that copy (UX-SKILL-7).
   原文：「我們這改動包含團隊了嗎？」「可以下個 PR 繼續開搞」（2026-11-15 23:30Z）。
   原文：「除了介面都做完」（2026-11-20 08:15Z）；「不只是 by 項目，還有 by team 層級的設計」（2026-11-20 08:01Z）。英文字句待 Qi-Xuan 確認。
-  Test: `rulesync_team_uses_space_grants_and_retains_only_approved_offline_layers`.
+  Tests `rulesync_team_uses_space_grants_and_retains_only_approved_offline_layers`
+  and `rulesync_checkout_recovers_then_prunes_revoked_skill_before_a_render_failure`.
 - **UX-SKILL-10** `shipped` A rule the person writes themselves counts at
   once, with no model and no accept. On a page in a folder named Rules (規則,
   规则; any depth, any app language), each top-level bullet the person wrote is

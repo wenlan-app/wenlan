@@ -301,6 +301,8 @@ pub struct TeamRulesManifest {
     pub file: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project: Option<TeamRulesProject>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skills: Vec<TeamProjectSkill>,
 }
 
 /// A project master follows the Space's grant and is rendered for its bound repo.
@@ -311,6 +313,21 @@ pub struct TeamRulesProject {
     /// A digest of the repository identity. Checkout paths and remote credentials stay local.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo_id: Option<String>,
+}
+
+/// An installed project skill's text files, approved by the person on the host.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TeamProjectSkill {
+    pub name: String,
+    pub files: Vec<TeamProjectSkillFile>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TeamProjectSkillFile {
+    pub path: String,
+    pub text: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

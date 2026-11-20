@@ -5,6 +5,7 @@ use std::fs;
 use wenlan_types::team::{TeamAccess, TeamFileList, TeamSpaceAccess};
 
 use crate::rulesync_team::{self, ReviewError};
+use crate::skill_registry::{project_sync::store_test_skill, Scope as SkillScope, SkillFile};
 use crate::team::{self, CredentialKind, Member};
 
 const URL: &str = "http://team.invalid";
@@ -354,4 +355,153 @@ fn rulesync_team_rejects_credentials_before_shipping_a_proposal() {
             .unwrap()
             .is_empty()
     );
+}
+
+#[test]
+fn rulesync_team_shares_only_approved_safe_skills_from_the_exact_project() {
+    let fixture = Fixture::new();
+    let root = fixture.settings.parent().unwrap();
+    let scope = |name: &str| SkillScope::Space { name: name.into() };
+    let file = |path: &str, body: &str| SkillFile {
+        path: path.into(),
+        bytes: body.as_bytes().to_vec(),
+    };
+    let skill_document = |name: &str, extra: &str| {
+        format!("---\r\nname: {name}\r\ndescription: A registry fixture\r\n{extra}---\r\nUse the approved source.\r\n")
+    };
+    store_test_skill(root, SkillScope::All, "personal-only", vec![]);
+    store_test_skill(
+        root,
+        scope(OTHER),
+        "other-project",
+        vec![file("notes.txt", "Private project skill")],
+    );
+    store_test_skill(
+        root,
+        scope(PROJECT),
+        "project-checklist",
+        vec![
+            file("SKILL.md", &skill_document("project-checklist", "")),
+            file("docs/checklist.md", "Approved checklist"),
+        ],
+    );
+    store_test_skill(
+        root,
+        scope(PROJECT),
+        "with-credential",
+        vec![file("notes.txt", &format!("API_KEY={}", team::new_key()))],
+    );
+    store_test_skill(
+        root,
+        scope(PROJECT),
+        "with-script",
+        vec![file("scripts/tool.sh", "#!/bin/sh\n")],
+    );
+    store_test_skill(
+        root,
+        scope(PROJECT),
+        "with-renderer-directives",
+        vec![file(
+            "SKILL.md",
+            &skill_document("with-renderer-directives", "targets: [claudecode]\r\n"),
+        )],
+    );
+    store_test_skill(
+        root,
+        scope(PROJECT),
+        "with-nested-skill",
+        vec![file("docs/skill.md", &skill_document("another-skill", ""))],
+    );
+
+    let (settings, _, _) = fixture.pull("reader", &fixture.reader.1, rulesync_team::SPACE);
+    let (_, mirror, host) = fixture.pull("reader", &fixture.reader.1, PROJECT);
+    assert!(rulesync_team::load_layers(&settings).unwrap()[0]
+        .skills
+        .is_empty());
+    assert!(!remote::mirror_folder(&settings, URL, OTHER).exists());
+    assert!(!mirror.join("skills").exists());
+    let original = rulesync_team::load_project_layers(&settings)
+        .unwrap()
+        .remove(0);
+    assert_eq!(
+        original
+            .skills
+            .iter()
+            .map(|skill| skill.name.as_str())
+            .collect::<Vec<_>>(),
+        ["project-checklist"]
+    );
+    assert!(original.skills[0]
+        .files
+        .iter()
+        .any(|file| file.path == "docs/checklist.md" && file.text == "Approved checklist"));
+    let document = &original.skills[0].files[0];
+    assert_eq!(document.path, "SKILL.md");
+    assert!(document
+        .text
+        .starts_with("---\nname: project-checklist\ndescription: A registry fixture\n---\n"));
+    assert!(document.text.ends_with("Use the approved source.\r\n"));
+    let saved = fs::read_to_string(&settings).unwrap();
+    assert!(
+        !saved.contains("with-credential")
+            && !saved.contains("personal-only")
+            && !saved.contains("other-project")
+    );
+    let folder = team::hosted_folder(&fixture.settings, PROJECT)
+        .unwrap()
+        .unwrap();
+    let manifest = rulesync_team::hosted_manifest(&fixture.team, &fixture.settings, PROJECT)
+        .unwrap()
+        .unwrap();
+    let approved = fs::read(team::served_path(&folder, &manifest.file).unwrap()).unwrap();
+    let invalid_bundle = |skills| {
+        let mut manifest = manifest.clone();
+        manifest.skills = skills;
+        let list = TeamFileList {
+            access: TeamAccess::Read,
+            files: team::list_folder_files(&folder),
+            rules: Some(manifest),
+        };
+        assert!(rulesync_team::pulled_layer(&host, &list, &approved).is_err());
+    };
+    let mut unsafe_path = manifest.skills.clone();
+    unsafe_path[0].files[0].path = "../unsafe.md".into();
+    invalid_bundle(unsafe_path);
+    let mut unsafe_metadata = manifest.skills.clone();
+    unsafe_metadata[0].files[0].text = skill_document(
+        "project-checklist",
+        "claudecode:\r\n  scheduled-task: fixture\r\n",
+    )
+    .replace("\r\n", "\n");
+    invalid_bundle(unsafe_metadata);
+
+    store_test_skill(
+        root,
+        scope(PROJECT),
+        "project-checklist",
+        vec![file("docs/checklist.md", "Updated checklist")],
+    );
+    fixture.pull("reader", &fixture.reader.1, PROJECT);
+    let updated = rulesync_team::load_project_layers(&settings)
+        .unwrap()
+        .remove(0);
+    assert_eq!(updated.revision, original.revision);
+    assert!(updated.skills[0]
+        .files
+        .iter()
+        .any(|file| file.text == "Updated checklist"));
+
+    team::update_member(&fixture.team, &fixture.reader.0.id, None, Some(&[])).unwrap();
+    let member = team::authenticate(&fixture.team, &fixture.reader.1)
+        .unwrap()
+        .unwrap()
+        .member;
+    let me = member.me(&team::hosted_spaces(&fixture.settings).unwrap());
+    remember_membership(&settings, URL, &fixture.reader.1, &me).unwrap();
+    assert!(rulesync_team::load_project_layers(&settings)
+        .unwrap()
+        .is_empty());
+    assert!(!fs::read_to_string(&settings)
+        .unwrap()
+        .contains("Updated checklist"));
 }

@@ -5,14 +5,15 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use wenlan_types::team::{
-    TeamAccess, TeamFileList, TeamInfo, TeamRole, TeamRulesManifest, TeamRulesProject,
-    TeamRulesProposal,
+    TeamAccess, TeamFileList, TeamInfo, TeamProjectSkill, TeamRole, TeamRulesManifest,
+    TeamRulesProject, TeamRulesProposal,
 };
 
 use crate::error::WenlanError;
 use crate::repo_wiki;
 use crate::rulesync_personal::reject_secret_lines;
 use crate::shared_space::{self, remote, version};
+use crate::skill_registry::{self, project_sync};
 use crate::store::format::page::PageFile;
 use crate::team::{self, CredentialKind, Member, TeamFile};
 
@@ -30,6 +31,8 @@ pub struct TeamRuleLayer {
     pub synced_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project: Option<TeamRulesProject>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skills: Vec<TeamProjectSkill>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -68,7 +71,7 @@ pub fn hosted_project_layer(
         // clearing existing repo rules before that proposal is approved.
         return Ok(None);
     }
-    layer(&hosted.info, hosted.project, &rules, rules.meta.ts.clone()).map(Some)
+    hosted.layer(settings_path, &rules).map(Some)
 }
 
 /// Reads the project master for this exact local Space, using its current team grant.
@@ -80,6 +83,7 @@ pub fn project_layer_for_local_space(
         shared_space::cached_project_rule_layer_for_space(settings_path, local_space)?
     {
         check_markdown(&layer.markdown)?;
+        check_skills(layer.project.is_some(), &layer.skills)?;
         return Ok(Some(layer));
     }
     hosted_project_layer(settings_path, local_space)
@@ -96,6 +100,7 @@ fn load_scope_layers(
     {
         check_markdown(&layer.markdown)?;
         check_markdown(&layer.name)?;
+        check_skills(layer.project.is_some(), &layer.skills)?;
         if layers
             .get(&layer.id)
             .is_none_or(|cached| cached.synced_at < layer.synced_at)
@@ -118,7 +123,7 @@ fn load_scope_layers(
             let Some(rules) = hosted.head()? else {
                 continue;
             };
-            let local = layer(&hosted.info, hosted.project, &rules, rules.meta.ts.clone())?;
+            let local = hosted.layer(settings_path, &rules)?;
             layers.insert(local.id.clone(), local);
         }
     }
@@ -311,6 +316,41 @@ impl HostedRules {
         Ok(approved_head(&self.history(), &self.page_id)?.cloned())
     }
 
+    fn skills(&self, settings_path: &Path) -> Vec<TeamProjectSkill> {
+        let Some(project) = &self.project else {
+            return Vec::new();
+        };
+        let registry = if settings_path == shared_space::settings_path() {
+            skill_registry::default_wenlan_root()
+        } else {
+            settings_path
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .to_path_buf()
+        };
+        match project_sync::project_sources(&registry, &project.space) {
+            Ok(skills) => skills,
+            Err(_) => {
+                log::warn!("[team Rules] the project skill registry could not be read");
+                Vec::new()
+            }
+        }
+    }
+
+    fn layer(
+        &self,
+        settings_path: &Path,
+        rules: &version::PageVersion,
+    ) -> Result<TeamRuleLayer, WenlanError> {
+        layer(
+            &self.info,
+            self.project.clone(),
+            rules,
+            rules.meta.ts.clone(),
+            self.skills(settings_path),
+        )
+    }
+
     fn lock(&self) -> Result<File, WenlanError> {
         fs::create_dir_all(&self.folder)?;
         let file = open_lock(&self.folder.join("rules.lock"))?;
@@ -409,6 +449,7 @@ pub fn hosted_manifest(
         return Ok(None);
     };
     Ok(hosted.head()?.map(|rules| TeamRulesManifest {
+        skills: hosted.skills(settings_path),
         file: format!(
             "{}/{}/{}/{}/{}",
             version::MEMBERS_DIR,
@@ -428,6 +469,7 @@ fn layer(
     project: Option<TeamRulesProject>,
     rules: &version::PageVersion,
     synced_at: String,
+    skills: Vec<TeamProjectSkill>,
 ) -> Result<TeamRuleLayer, WenlanError> {
     let name = info.name.as_deref().unwrap_or("Team");
     check_markdown(name)?;
@@ -442,7 +484,15 @@ fn layer(
         revision: rules.sha.clone(),
         synced_at,
         project,
+        skills,
     })
+}
+
+fn check_skills(project: bool, skills: &[TeamProjectSkill]) -> Result<(), WenlanError> {
+    if !project && !skills.is_empty() {
+        return Err(validation("project skills need a project Rules scope"));
+    }
+    project_sync::validate(skills).map_err(|error| validation(error.to_string()))
 }
 
 /// Reads only the approved version named by the authenticated pull response.
@@ -508,7 +558,15 @@ pub(crate) fn pulled_layer(
         ));
     }
     check_approved(&rules, id)?;
-    layer(&manifest.team, manifest.project.clone(), &rules, now()).map(Some)
+    check_skills(manifest.project.is_some(), &manifest.skills)?;
+    layer(
+        &manifest.team,
+        manifest.project.clone(),
+        &rules,
+        now(),
+        manifest.skills.clone(),
+    )
+    .map(Some)
 }
 
 /// Queue edits to the last approved layer for the next shared Space push.
