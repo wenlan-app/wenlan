@@ -13,7 +13,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use wenlan_types::rulesync::{AdoptionChange, AdoptionPlan, AdoptionSkill, AdoptionSkillOutcome};
 
-use crate::rulesync_adopt::{self, AdoptedSkill, Adoption, AdoptionEntry, AdoptionTarget};
+use crate::rulesync_adopt::{
+    self, AdoptedSkill, Adoption, AdoptionEntry, AdoptionLink, AdoptionTarget,
+};
 
 #[path = "rulesync_delivery_worktrees.rs"]
 mod delivery_worktrees;
@@ -161,6 +163,7 @@ pub fn discover_adoption(home: &Path) -> Result<Adoption> {
                 Err(error) => {
                     for folder in folders.iter() {
                         adoption.files.retain(|path, _| !path.starts_with(folder));
+                        adoption.links.remove(folder);
                         adoption.skill_locations.remove(folder);
                         adoption.skipped.insert(
                             folder.clone(),
@@ -195,7 +198,7 @@ pub fn fingerprint(value: &impl Serialize) -> Result<String> {
     Ok(format!("{:x}", hash.finalize()))
 }
 
-const ADOPTION_TOKEN_VERSION: &str = "adopt-2";
+const ADOPTION_TOKEN_VERSION: &str = "adopt-3";
 const ADOPTION_FIELDS: [&str; 6] = [
     "file entries",
     "skill locations and upstreams",
@@ -206,11 +209,29 @@ const ADOPTION_FIELDS: [&str; 6] = [
 ];
 
 fn adoption_digests(adoption: &Adoption) -> Result<[String; ADOPTION_FIELDS.len()]> {
+    #[derive(Serialize)]
+    enum ApprovedEntry<'a> {
+        Entry(&'a AdoptionEntry),
+        Link(&'a AdoptionLink),
+    }
+
+    let files = adoption
+        .files
+        .iter()
+        .map(|(path, file)| {
+            let before = adoption
+                .links
+                .get(path)
+                .map_or(ApprovedEntry::Entry(&file.before), ApprovedEntry::Link);
+            (path, (before, &file.after))
+        })
+        .collect::<BTreeMap<_, _>>();
     // Bind approval to the file operations and the master they create.
+    // Link spelling is saved from the live entry at apply time for restore.
     // A worktree's friendly Git name is display-only. Its actual location
     // matters because adoption authorizes future writes there.
     Ok([
-        fingerprint(&adoption.files)?,
+        fingerprint(&files)?,
         fingerprint(&adoption.skill_locations)?,
         fingerprint(&adoption.skipped)?,
         fingerprint(&(

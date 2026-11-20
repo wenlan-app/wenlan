@@ -47,6 +47,14 @@ struct StoredSetup {
 }
 
 impl Setup {
+    pub(super) fn load_if_present(&self) -> Result<Option<Manifest>> {
+        match std::fs::symlink_metadata(self.data.join(MANIFEST)) {
+            Ok(_) => self.load(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error).context("check for a local setup backup"),
+        }
+    }
+
     pub(super) fn load(&self) -> Result<Option<Manifest>> {
         let root = self.data_files()?.with_private_directories();
         let path = Path::new(MANIFEST);
@@ -233,6 +241,7 @@ fn map_contents<From, To>(
                 })
             })
             .collect::<Result<_>>()?,
+        recovery_issues: manifest.recovery_issues.clone(),
         adopted: manifest.adopted,
         registry_skipped: manifest.registry_skipped.clone(),
         unmanaged_skills: manifest.unmanaged_skills.clone(),

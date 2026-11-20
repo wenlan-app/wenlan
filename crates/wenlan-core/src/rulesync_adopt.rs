@@ -10,6 +10,7 @@ use anyhow::{bail, ensure, Context, Result};
 use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::fs::{Dir, Metadata, OpenOptions};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use wenlan_types::rulesync::SkillUpstream;
 
 #[path = "rulesync_skill_origin.rs"]
@@ -57,6 +58,7 @@ pub struct Adoption {
     /// Paths relative to the adopted home, including resolved link targets.
     pub sources: BTreeSet<PathBuf>,
     pub files: BTreeMap<PathBuf, AdoptionFile>,
+    pub links: BTreeMap<PathBuf, AdoptionLink>,
     pub skill_locations: BTreeMap<PathBuf, Option<SkillUpstream>>,
     /// Existing skill locations that will stay in place outside delivery.
     pub skipped: BTreeMap<PathBuf, String>,
@@ -95,6 +97,74 @@ pub struct AdoptionFile {
     pub after: AdoptionEntry,
 }
 
+/// Resolved content and permissions approved for a link to be detached.
+/// The tool file applier separately records the raw link for exact restore.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AdoptionLink(ResolvedLink);
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+enum ResolvedLink {
+    Rule(ResolvedFile),
+    Skill {
+        mode: u32,
+        directories: BTreeMap<PathBuf, u32>,
+        files: BTreeMap<PathBuf, ResolvedFile>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct ResolvedFile {
+    digest: [u8; 32],
+    mode: u32,
+}
+
+impl ResolvedFile {
+    fn new(bytes: &[u8], mode: u32) -> Self {
+        Self {
+            digest: Sha256::digest(bytes).into(),
+            mode,
+        }
+    }
+}
+
+impl AdoptionLink {
+    fn rule(bytes: &[u8], mode: u32) -> Self {
+        Self(ResolvedLink::Rule(ResolvedFile::new(bytes, mode)))
+    }
+
+    pub fn file_mode(&self, relative: &Path) -> Option<u32> {
+        match &self.0 {
+            ResolvedLink::Rule(file) => relative.as_os_str().is_empty().then_some(file.mode),
+            ResolvedLink::Skill { files, .. } => files.get(relative).map(|file| file.mode),
+        }
+    }
+
+    pub fn matches(&self, home: &Path, path: &Path) -> Result<bool> {
+        let home = Home::open(home)?;
+        let current = match &self.0 {
+            ResolvedLink::Rule(_) => {
+                let mut sources = BTreeSet::new();
+                let Some(file) =
+                    load_text(&home, path, &mut sources)?.filter(|file| file.node.link.is_some())
+                else {
+                    return Ok(false);
+                };
+                Self::rule(file.text.as_bytes(), file.mode)
+            }
+            ResolvedLink::Skill { .. } => {
+                let Some(node) = home
+                    .resolve(path)?
+                    .filter(|node| node.link.is_some() && node.metadata.is_dir())
+                else {
+                    return Ok(false);
+                };
+                SkillTree::read(&home, &node, "")?.link(&node)
+            }
+        };
+        Ok(current == *self)
+    }
+}
+
 /// Discover rules, source references, and current skill subsets without writing
 /// to the home, data root, or a renderer's staging folder.
 pub fn discover(home: &Path, targets: &[AdoptionTarget]) -> Result<Adoption> {
@@ -115,9 +185,9 @@ pub fn discover(home: &Path, targets: &[AdoptionTarget]) -> Result<Adoption> {
     let shared_file = load_text(&home, Path::new(SHARED_RULES), &mut sources)?;
     let shared = shared_file.as_ref().map_or("", |file| file.text.as_str());
     let shared_path = shared_file.as_ref().map(|file| file.node.path.as_path());
-    let (overlays, mut files, codex_sync_replaced) =
+    let (overlays, mut files, mut links, codex_sync_replaced) =
         discover_rules(&home, targets, shared, shared_path, &mut sources)?;
-    let mut skills = SkillDiscovery::new(&home, &mut sources, &mut files);
+    let mut skills = SkillDiscovery::new(&home, &mut sources, &mut files, &mut links);
     skills.scan(Path::new(SHARED_SKILLS), None)?;
     for target in targets {
         if let Some(dir) = target
@@ -137,6 +207,7 @@ pub fn discover(home: &Path, targets: &[AdoptionTarget]) -> Result<Adoption> {
         skills,
         sources,
         files,
+        links,
         skill_locations,
         skipped,
         worktree_writes: BTreeMap::new(),
@@ -285,6 +356,11 @@ impl Home {
     }
 
     fn bytes(&self, node: &Node, limit: u64, limit_label: &str) -> Result<Vec<u8>> {
+        self.read_file(node, limit, limit_label)
+            .map(|(bytes, _)| bytes)
+    }
+
+    fn read_file(&self, node: &Node, limit: u64, limit_label: &str) -> Result<(Vec<u8>, u32)> {
         ensure!(
             node.metadata.is_file(),
             "{} is not a regular file",
@@ -312,13 +388,25 @@ impl Home {
             node.path.display()
         );
         let mut bytes = Vec::new();
-        file.take(limit + 1).read_to_end(&mut bytes)?;
+        (&file).take(limit + 1).read_to_end(&mut bytes)?;
         ensure!(
             bytes.len() as u64 <= limit,
             "{} exceeds {limit_label}",
             node.path.display()
         );
-        Ok(bytes)
+        Ok((bytes, permission_mode(&file.metadata()?)))
+    }
+}
+
+fn permission_mode(metadata: &Metadata) -> u32 {
+    #[cfg(unix)]
+    {
+        use cap_std::fs::PermissionsExt as _;
+        metadata.permissions().mode() & 0o7777
+    }
+    #[cfg(windows)]
+    {
+        u32::from(metadata.permissions().readonly())
     }
 }
 
@@ -346,6 +434,7 @@ fn optional<T>(result: std::io::Result<T>) -> std::io::Result<Option<T>> {
 struct LoadedText {
     node: Node,
     text: String,
+    mode: u32,
 }
 
 fn load_text(
@@ -366,9 +455,9 @@ fn load_text(
     let Some(node) = home.resolve_checked(relative, check)? else {
         return Ok(None);
     };
-    let text =
-        String::from_utf8(home.bytes(&node, MAX_RULE_BYTES, "the rule file import size limit")?)
-            .with_context(|| format!("{} is not readable UTF-8", path.display()))?;
+    let (bytes, mode) = home.read_file(&node, MAX_RULE_BYTES, "the rule file import size limit")?;
+    let text = String::from_utf8(bytes)
+        .with_context(|| format!("{} is not readable UTF-8", path.display()))?;
     if let Some(format) = format {
         ensure!(
             format.is_rule_text(&text),
@@ -377,7 +466,7 @@ fn load_text(
         );
     }
     sources.extend([relative.to_path_buf(), node.path.clone()]);
-    Ok(Some(LoadedText { node, text }))
+    Ok(Some(LoadedText { node, text, mode }))
 }
 
 fn ensure_rule_source(path: &Path, leaf: bool) -> Result<()> {
@@ -467,6 +556,7 @@ fn toml_has_settings(value: &toml::Value) -> bool {
 type RuleDiscovery = (
     BTreeMap<String, String>,
     BTreeMap<PathBuf, AdoptionFile>,
+    BTreeMap<PathBuf, AdoptionLink>,
     bool,
 );
 
@@ -479,6 +569,7 @@ fn discover_rules(
 ) -> Result<RuleDiscovery> {
     let mut overlays = BTreeMap::new();
     let mut previous = BTreeMap::new();
+    let mut links = BTreeMap::new();
     let mut codex_sync_replaced = false;
     for target in targets {
         let Some(path) = &target.rules_path else {
@@ -541,10 +632,14 @@ fn discover_rules(
         previous.insert(
             (target.tool.as_str(), path),
             current.map_or(AdoptionEntry::Missing, |file| match file.node.link {
-                Some(target) => AdoptionEntry::Symlink {
-                    target,
-                    bytes: Some(file.text.into_bytes()),
-                },
+                Some(target) => {
+                    let bytes = file.text.into_bytes();
+                    links.insert(path.clone(), AdoptionLink::rule(&bytes, file.mode));
+                    AdoptionEntry::Symlink {
+                        target,
+                        bytes: Some(bytes),
+                    }
+                }
                 None => AdoptionEntry::File(file.text.into_bytes()),
             }),
         );
@@ -561,7 +656,7 @@ fn discover_rules(
             },
         )?;
     }
-    Ok((overlays, files, codex_sync_replaced))
+    Ok((overlays, files, links, codex_sync_replaced))
 }
 
 pub(super) fn personal_rule_body(
@@ -835,6 +930,7 @@ struct SkillDiscovery<'a> {
     home: &'a Home,
     sources: &'a mut BTreeSet<PathBuf>,
     files: &'a mut BTreeMap<PathBuf, AdoptionFile>,
+    links: &'a mut BTreeMap<PathBuf, AdoptionLink>,
     skills: BTreeMap<(String, PathBuf), SkillTree>,
     locations: BTreeMap<PathBuf, Option<SkillUpstream>>,
     skipped: BTreeMap<PathBuf, String>,
@@ -845,11 +941,13 @@ impl<'a> SkillDiscovery<'a> {
         home: &'a Home,
         sources: &'a mut BTreeSet<PathBuf>,
         files: &'a mut BTreeMap<PathBuf, AdoptionFile>,
+        links: &'a mut BTreeMap<PathBuf, AdoptionLink>,
     ) -> Self {
         Self {
             home,
             sources,
             files,
+            links,
             skills: BTreeMap::new(),
             locations: BTreeMap::new(),
             skipped: BTreeMap::new(),
@@ -916,7 +1014,9 @@ impl<'a> SkillDiscovery<'a> {
         let tree = match self.skills.entry(key) {
             std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
             std::collections::btree_map::Entry::Vacant(entry) => {
-                entry.insert(SkillTree::read(self.home, &node, name)?)
+                let mut tree = SkillTree::read(self.home, &node, name)?;
+                tree.skill.upstream = skill_origin::discover(self.home, &node.path);
+                entry.insert(tree)
             }
         };
         self.sources.insert(path.to_owned());
@@ -940,6 +1040,9 @@ impl<'a> SkillDiscovery<'a> {
             .entry(tool.to_owned())
             .or_default()
             .insert(path.to_owned());
+        if copying_link {
+            self.links.insert(path.to_owned(), tree.link(&node));
+        }
         record_file(
             self.files,
             path.to_owned(),
@@ -954,7 +1057,7 @@ impl<'a> SkillDiscovery<'a> {
             },
         )?;
         if copying_link {
-            for dir in &tree.dirs {
+            for dir in tree.dirs.keys() {
                 record_file(
                     self.files,
                     path.join(dir),
@@ -1002,7 +1105,8 @@ impl<'a> SkillDiscovery<'a> {
 
 struct SkillTree {
     skill: AdoptedSkill,
-    dirs: BTreeSet<PathBuf>,
+    dirs: BTreeMap<PathBuf, u32>,
+    file_modes: BTreeMap<PathBuf, u32>,
     sources: BTreeSet<PathBuf>,
     remaining_bytes: u64,
     nested_link: bool,
@@ -1017,9 +1121,10 @@ impl SkillTree {
                 targets: BTreeSet::new(),
                 locations: BTreeMap::new(),
                 files: BTreeMap::new(),
-                upstream: skill_origin::discover(home, &node.path),
+                upstream: None,
             },
-            dirs: BTreeSet::new(),
+            dirs: BTreeMap::new(),
+            file_modes: BTreeMap::new(),
             sources: BTreeSet::new(),
             remaining_bytes: MAX_ADOPTED_SKILL_BYTES,
             nested_link: false,
@@ -1032,6 +1137,24 @@ impl SkillTree {
             .context("missing regular SKILL.md")?;
         std::str::from_utf8(entry).context("SKILL.md is not readable UTF-8")?;
         Ok(tree)
+    }
+
+    fn link(&self, node: &Node) -> AdoptionLink {
+        AdoptionLink(ResolvedLink::Skill {
+            mode: permission_mode(&node.metadata),
+            directories: self.dirs.clone(),
+            files: self
+                .skill
+                .files
+                .iter()
+                .map(|(path, bytes)| {
+                    (
+                        path.clone(),
+                        ResolvedFile::new(bytes, self.file_modes[path]),
+                    )
+                })
+                .collect(),
+        })
     }
 
     fn visit(
@@ -1075,10 +1198,11 @@ impl SkillTree {
             self.sources.extend([source, entry.path.clone()]);
             let relative = within.join(name);
             if entry.metadata.is_dir() {
-                self.dirs.insert(relative.clone());
+                self.dirs
+                    .insert(relative.clone(), permission_mode(&entry.metadata));
                 self.visit(home, root, &entry, &relative, parents)?;
             } else {
-                let bytes = home.bytes(
+                let (bytes, mode) = home.read_file(
                     &entry,
                     self.remaining_bytes,
                     &format!(
@@ -1087,6 +1211,7 @@ impl SkillTree {
                     ),
                 )?;
                 self.remaining_bytes -= bytes.len() as u64;
+                self.file_modes.insert(relative.clone(), mode);
                 self.skill.files.insert(relative, bytes);
             }
         }

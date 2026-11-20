@@ -89,11 +89,10 @@ impl Snapshot {
         }
     }
 
-    #[cfg(unix)]
     pub(crate) fn file_with_mode(bytes: Vec<u8>, mode: u32) -> Self {
         Self::File {
             bytes,
-            mode: FileMode(mode & 0o777),
+            mode: FileMode(mode),
         }
     }
 }
@@ -144,6 +143,12 @@ mod link_target {
 pub(crate) enum ApplyOutcome {
     Applied,
     ChangedSincePlan,
+}
+
+pub(crate) struct ApplyOptions<'a> {
+    pub(crate) allow_symlink: bool,
+    pub(crate) displaced: Option<(&'a FileRoot, &'a Path)>,
+    pub(crate) verify_source: Option<&'a dyn Fn() -> io::Result<bool>>,
 }
 
 pub(crate) struct FileRoot {
@@ -277,11 +282,8 @@ impl FileRoot {
     }
 
     /// Check the current entry against the planned snapshot before committing.
-    /// On macOS and Linux, retain and recheck the exact displaced entry, so a
-    /// save that reaches the pathname during the final check is recoverable.
-    /// An editor that writes through an open handle after that entry has been
-    /// checked and removed is outside this pathname-level guarantee. Windows
-    /// replacement and removal have a final check-to-mutation interval.
+    /// Internal state belongs exclusively to Wenlan. Tool files additionally
+    /// use a journaled recovery path for the inode held by a running editor.
     pub(crate) fn apply(
         &self,
         path: &Path,
@@ -289,7 +291,26 @@ impl FileRoot {
         desired: &Snapshot,
         allow_symlink: bool,
     ) -> io::Result<ApplyOutcome> {
-        self.apply_inner(path, seen, desired, allow_symlink, || {})
+        self.apply_with(
+            path,
+            seen,
+            desired,
+            ApplyOptions {
+                allow_symlink,
+                displaced: None,
+                verify_source: None,
+            },
+        )
+    }
+
+    pub(crate) fn apply_with(
+        &self,
+        path: &Path,
+        seen: &Snapshot,
+        desired: &Snapshot,
+        options: ApplyOptions<'_>,
+    ) -> io::Result<ApplyOutcome> {
+        self.apply_inner(path, seen, desired, options, || {})
     }
 
     fn apply_inner(
@@ -297,7 +318,7 @@ impl FileRoot {
         path: &Path,
         seen: &Snapshot,
         desired: &Snapshot,
-        allow_symlink: bool,
+        options: ApplyOptions<'_>,
         before_commit: impl FnOnce(),
     ) -> io::Result<ApplyOutcome> {
         let (relative_parent, name) = entry_path(path)?;
@@ -305,7 +326,7 @@ impl FileRoot {
         if let Snapshot::File { bytes, .. } = desired {
             check_file_size(bytes.len() as u64)?;
         }
-        if !allow_symlink
+        if !options.allow_symlink
             && (matches!(seen, Snapshot::Symlink { .. })
                 || matches!(desired, Snapshot::Symlink { .. }))
         {
@@ -328,29 +349,41 @@ impl FileRoot {
         if seen == desired {
             return Ok(ApplyOutcome::Applied);
         }
+        let displaced = recovery_location(&parent, options.displaced)?;
         let mut staged = Stage::new(&parent)?;
-        staged.write(desired)?;
-        let Some(current_parent) = self.open_parent(relative_parent, false)? else {
-            return Ok(ApplyOutcome::ChangedSincePlan);
-        };
-        self.check_directory_leaf(&current_parent, name)?;
-        if !same_directory(&parent, &current_parent)? || !matches_leaf(&parent, name, seen)? {
-            return Ok(ApplyOutcome::ChangedSincePlan);
-        }
-        before_commit();
-
-        match commit(&mut staged, name, seen, desired) {
-            Err(error)
-                if !staged.preserve
-                    && matches!(
-                        error.kind(),
-                        io::ErrorKind::AlreadyExists | io::ErrorKind::NotFound
-                    ) =>
-            {
-                Ok(ApplyOutcome::ChangedSincePlan)
+        let result = (|| {
+            staged.write(desired)?;
+            before_commit();
+            let Some(current_parent) = self.open_parent(relative_parent, false)? else {
+                return Ok(ApplyOutcome::ChangedSincePlan);
+            };
+            self.check_directory_leaf(&current_parent, name)?;
+            if !same_directory(&parent, &current_parent)? || !matches_leaf(&parent, name, seen)? {
+                return Ok(ApplyOutcome::ChangedSincePlan);
             }
-            other => other,
+            if let Some(verify) = options.verify_source {
+                if !verify()? || !matches_leaf(&parent, name, seen)? {
+                    return Ok(ApplyOutcome::ChangedSincePlan);
+                }
+            }
+            match commit(&mut staged, name, seen, desired, displaced.as_ref()) {
+                Err(error)
+                    if !staged.preserve
+                        && matches!(
+                            error.kind(),
+                            io::ErrorKind::AlreadyExists | io::ErrorKind::NotFound
+                        ) =>
+                {
+                    Ok(ApplyOutcome::ChangedSincePlan)
+                }
+                other => other,
+            }
+        })();
+        if !staged.preserve {
+            staged.preserve = true;
+            staged.clean()?;
         }
+        result
     }
 
     fn open_parent(&self, path: &Path, create: bool) -> io::Result<Option<Dir>> {
@@ -439,7 +472,11 @@ fn entry_path(path: &Path) -> io::Result<(&Path, &Path)> {
 fn same_directory(first: &Dir, second: &Dir) -> io::Result<bool> {
     let first = first.dir_metadata()?;
     let second = second.dir_metadata()?;
-    Ok((first.dev(), first.ino()) == (second.dev(), second.ino()))
+    Ok(same_identity(&first, &second))
+}
+
+fn same_identity(first: &Metadata, second: &Metadata) -> bool {
+    (first.dev(), first.ino()) == (second.dev(), second.ino())
 }
 
 fn create_directory(parent: &Dir, name: &Path) -> io::Result<()> {
@@ -562,8 +599,54 @@ fn matches_leaf(parent: &Dir, name: &Path, expected: &Snapshot) -> io::Result<bo
 }
 
 const STAGED: &str = "entry";
+fn stage_name(id: &str) -> io::Result<String> {
+    if id.len() != 32 || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(invalid_path());
+    }
+    Ok(format!(".wenlan-rules-stage-{id}"))
+}
 
-/// Its name is exclusive and the only entry is the staged or displaced leaf.
+fn recovery_location<'a>(
+    parent: &Dir,
+    option: Option<(&FileRoot, &'a Path)>,
+) -> io::Result<Option<(Dir, &'a Path)>> {
+    option
+        .map(|(root, path)| {
+            let (directory, name) = entry_path(path)?;
+            let directory = root.open_parent(directory, false)?.ok_or_else(invalid_path)?;
+            if directory.dir_metadata()?.dev() != parent.dir_metadata()?.dev() {
+                return Err(io::Error::new(
+                    io::ErrorKind::CrossesDevices,
+                    "place Wenlan's rulesync data on the same volume as this tool file to keep concurrent saves recoverable",
+                ));
+            }
+            Ok((directory, name))
+        })
+        .transpose()
+}
+
+fn move_displaced(dir: &Dir, displaced: &(Dir, &Path)) -> io::Result<()> {
+    let (directory, name) = displaced;
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    rustix::fs::renameat_with(
+        dir,
+        STAGED,
+        directory,
+        *name,
+        rustix::fs::RenameFlags::NOREPLACE,
+    )?;
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    match directory.symlink_metadata(name) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            dir.rename(STAGED, directory, *name)?
+        }
+        Err(error) => return Err(error),
+        Ok(_) => return Err(io::Error::from(io::ErrorKind::AlreadyExists)),
+    }
+    Ok(())
+}
+
+/// The private directory holds the staged or displaced leaf.
 /// Cleanup never recurses, even when a concurrent save adds to a directory.
 struct Stage<'a> {
     parent: &'a Dir,
@@ -574,7 +657,7 @@ struct Stage<'a> {
 
 impl<'a> Stage<'a> {
     fn new(parent: &'a Dir) -> io::Result<Self> {
-        let name = format!(".wenlan-rules-stage-{}", uuid::Uuid::new_v4().simple());
+        let name = stage_name(&uuid::Uuid::new_v4().simple().to_string())?;
         let path = Path::new(&name);
         create_directory(parent, path)?;
         let dir = parent.open_dir_nofollow(path)?;
@@ -618,14 +701,22 @@ impl<'a> Stage<'a> {
             }
         }
     }
+
+    fn clean(&self) -> io::Result<()> {
+        match self.dir.symlink_metadata(STAGED) {
+            Ok(metadata) if metadata.is_dir() => self.dir.remove_dir(STAGED)?,
+            Ok(_) => self.dir.remove_file_or_symlink(STAGED)?,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => (),
+            Err(error) => return Err(error),
+        }
+        self.dir.try_clone()?.remove_open_dir()
+    }
 }
 
 impl Drop for Stage<'_> {
     fn drop(&mut self) {
         if !self.preserve {
-            let _ = self.dir.remove_file_or_symlink(STAGED);
-            let _ = self.dir.remove_dir(STAGED);
-            let _ = self.parent.remove_dir(&self.name);
+            let _ = self.clean();
         }
     }
 }
@@ -636,6 +727,7 @@ fn commit(
     name: &Path,
     seen: &Snapshot,
     desired: &Snapshot,
+    displaced: Option<&(Dir, &Path)>,
 ) -> io::Result<ApplyOutcome> {
     use rustix::fs::{renameat_with, RenameFlags};
 
@@ -656,6 +748,11 @@ fn commit(
     stage.preserve = true;
     let verify = matches_leaf(&stage.dir, held, seen);
     if matches!(verify, Ok(true)) {
+        if let Some(displaced) = displaced {
+            // Keep the same inode reachable after verification. An editor may
+            // still write through a handle it opened before the exchange.
+            move_displaced(&stage.dir, displaced)?;
+        }
         stage.preserve = false;
         return Ok(ApplyOutcome::Applied);
     }
@@ -695,7 +792,16 @@ fn commit(
     name: &Path,
     seen: &Snapshot,
     desired: &Snapshot,
+    displaced: Option<&(Dir, &Path)>,
 ) -> io::Result<ApplyOutcome> {
+    if let Some((directory, recovery)) = displaced {
+        // Link the original before replacing the Windows destination.
+        // Existing handles retain the same object even after replacement.
+        stage.parent.hard_link(name, directory, recovery)?;
+        if !matches_leaf(stage.parent, name, seen)? {
+            return Ok(ApplyOutcome::ChangedSincePlan);
+        }
+    }
     match (seen, desired) {
         (Snapshot::Absent, Snapshot::File { .. }) => {
             stage.dir.hard_link(STAGED, stage.parent, name)?;
@@ -722,6 +828,14 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
+    fn direct(allow_symlink: bool) -> ApplyOptions<'static> {
+        ApplyOptions {
+            allow_symlink,
+            displaced: None,
+            verify_source: None,
+        }
+    }
+
     fn root() -> (TempDir, FileRoot) {
         let scratch = tempfile::tempdir().unwrap();
         let root = FileRoot::open(scratch.path()).unwrap();
@@ -744,6 +858,53 @@ mod tests {
         );
         assert_eq!(fs::read(path).unwrap(), b"editor save\n");
         assert_eq!(fs::read_dir(scratch.path()).unwrap().count(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run9_adoption_rechecks_the_link_referent_after_staging() {
+        use std::os::unix::fs::symlink;
+        use wenlan_core::rulesync_adopt::{discover, AdoptionTarget};
+
+        let (scratch, root) = root();
+        let path = Path::new("AGENTS.md");
+        let installed = scratch.path().join(path);
+        let source = scratch.path().join("source.md");
+        fs::write(&source, b"Approved rules.\n").unwrap();
+        symlink("source.md", &installed).unwrap();
+        let adoption = discover(
+            scratch.path(),
+            &[AdoptionTarget {
+                tool: "codexcli".into(),
+                rules_path: Some(path.into()),
+                skills_path: None,
+            }],
+        )
+        .unwrap();
+        let verify = || {
+            adoption.links[path]
+                .matches(scratch.path(), path)
+                .map_err(io::Error::other)
+        };
+        let seen = root.read(path, true).unwrap();
+        let desired = Snapshot::file(b"Approved rules.\n".to_vec());
+        assert_eq!(
+            root.apply_inner(
+                path,
+                &seen,
+                &desired,
+                ApplyOptions {
+                    verify_source: Some(&verify),
+                    ..direct(true)
+                },
+                || fs::write(source, b"Saved while staging.\n").unwrap(),
+            )
+            .unwrap(),
+            ApplyOutcome::ChangedSincePlan,
+        );
+        assert_eq!(fs::read_link(&installed).unwrap().as_os_str(), "source.md");
+        assert_eq!(fs::read(installed).unwrap(), b"Saved while staging.\n");
+        assert_eq!(fs::read_dir(scratch.path()).unwrap().count(), 2);
     }
 
     #[test]
@@ -925,7 +1086,7 @@ mod tests {
             let path = scratch.path().join(name);
             fs::write(&path, b"planned").unwrap();
             let seen = root.read(name, false).unwrap();
-            let result = root.apply_inner(name, &seen, &desired, false, || {
+            let result = root.apply_inner(name, &seen, &desired, direct(false), || {
                 let save = scratch.path().join("editor-save");
                 fs::write(&save, b"editor save").unwrap();
                 fs::rename(save, &path).unwrap();
@@ -942,7 +1103,7 @@ mod tests {
         let name = Path::new("rules");
         let path = scratch.path().join(name);
         let desired = Snapshot::file(b"generated".to_vec());
-        let result = root.apply_inner(name, &Snapshot::Absent, &desired, false, || {
+        let result = root.apply_inner(name, &Snapshot::Absent, &desired, direct(false), || {
             fs::write(&path, b"editor save").unwrap();
         });
         assert_eq!(result.unwrap(), ApplyOutcome::ChangedSincePlan);
@@ -969,7 +1130,7 @@ mod tests {
         );
         assert_eq!(root.read(name, false).unwrap(), Snapshot::Directory);
         let late_child = path.join("personal-notes");
-        let result = root.apply_inner(name, &Snapshot::Directory, &seen, true, || {
+        let result = root.apply_inner(name, &Snapshot::Directory, &seen, direct(true), || {
             fs::write(&late_child, b"new skill notes").unwrap();
         });
         assert_eq!(result.unwrap(), ApplyOutcome::ChangedSincePlan);
