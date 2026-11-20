@@ -234,6 +234,7 @@ pub(crate) fn open(
     let directory = PathBuf::from(format!("checkouts/{key}/rules"));
     let job = Job {
         setup,
+        session: &rulesync_renderer::RenderSession::new(&setup.binary),
         settings: shared_space::settings_path(),
         root: &root,
         directory: &directory,
@@ -247,12 +248,14 @@ pub(crate) fn open(
 
 pub(crate) fn refresh(
     setup: &Setup,
+    session: &rulesync_renderer::RenderSession<'_>,
     settings: &Path,
     master: Option<&PersonalMaster>,
     generated: &[String],
 ) {
     fn refresh_inner(
         setup: &Setup,
+        session: &rulesync_renderer::RenderSession<'_>,
         settings: &Path,
         master: Option<&PersonalMaster>,
         generated: &[String],
@@ -288,6 +291,7 @@ pub(crate) fn refresh(
             let directory = PathBuf::from(format!("checkouts/{key}/rules"));
             let job = Job {
                 setup,
+                session,
                 settings: settings.to_path_buf(),
                 root: &root,
                 directory: &directory,
@@ -303,13 +307,14 @@ pub(crate) fn refresh(
         }
         Ok(())
     }
-    if let Err(error) = refresh_inner(setup, settings, master, generated) {
+    if let Err(error) = refresh_inner(setup, session, settings, master, generated) {
         tracing::warn!(%error, "[rules setup] checkout receipts could not be read");
     }
 }
 
 struct Job<'a> {
     setup: &'a Setup,
+    session: &'a rulesync_renderer::RenderSession<'a>,
     settings: PathBuf,
     root: &'a FileRoot,
     directory: &'a Path,
@@ -760,8 +765,7 @@ impl Job<'_> {
             write_root_rule(&personal, &master.rule_text(target, generated)?)?;
             roots.push(personal);
             std::fs::create_dir(&output)?;
-            rulesync_renderer::render(
-                &self.setup.binary,
+            self.session.render(
                 stage.path(),
                 &roots,
                 &output,
@@ -831,6 +835,7 @@ mod tests {
         let root = FileRoot::open(&setup.data).unwrap();
         let job = Job {
             setup: &setup,
+            session: &rulesync_renderer::RenderSession::new(&setup.binary),
             settings: scratch.path().join("settings.toml"),
             root: &root,
             directory: Path::new("checkouts/example/rules"),
@@ -919,6 +924,7 @@ mod tests {
         let root = FileRoot::open(data).unwrap();
         let job = Job {
             setup: &setup,
+            session: &rulesync_renderer::RenderSession::new(&setup.binary),
             settings: data.join("settings.toml"),
             root: &root,
             directory: Path::new("checkouts/example/rules"),
@@ -1033,6 +1039,7 @@ mod tests {
         let root = FileRoot::open(&setup.data).unwrap();
         let job = Job {
             setup: &setup,
+            session: &rulesync_renderer::RenderSession::new(&setup.binary),
             settings: scratch.path().join("settings.toml"),
             root: &root,
             directory: Path::new("checkouts/example/rules"),

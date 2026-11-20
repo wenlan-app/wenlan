@@ -21,7 +21,7 @@ use wenlan_core::rulesync_personal::{
     GlobalOutput, HarnessGuard, LineChange, LocalText, PersonalMaster, PersonalTarget,
     PERSONAL_TARGETS,
 };
-use wenlan_core::rulesync_renderer;
+use wenlan_core::rulesync_renderer::{self, RenderSession};
 use wenlan_core::rulesync_skill::SkillFiles;
 use wenlan_core::rulesync_team::{self, TeamRuleLayer};
 use wenlan_types::rulesync::{
@@ -292,12 +292,13 @@ pub(crate) fn sync_registry_now() -> Result<RulesSyncReport> {
     ensure!(manifest.adopted, "finish restoring the local setup first");
     result.message = "Checked installed skills".into();
     let blocked = setup.pull_back(&root, &mut manifest, &mut result)?;
+    let session = RenderSession::new(&setup.binary);
     setup.sync_registry(
         &root,
         &mut manifest,
         &blocked,
         &mut result,
-        |renderer, skills| setup.render_skills(renderer, skills),
+        |renderer, skills| setup.render_skills(&session, renderer, skills),
     )?;
     Ok(result)
 }
@@ -646,7 +647,10 @@ impl Setup {
 
     fn preview_adoption(&self, expected_home: &Path) -> Result<AdoptionPlan> {
         self.check_adoption_home(expected_home)?;
-        self.preview_adoption_using(|renderer, skills| self.render_skills(renderer, skills))
+        let session = RenderSession::new(&self.binary);
+        self.preview_adoption_using(|renderer, skills| {
+            self.render_skills(&session, renderer, skills)
+        })
     }
 
     fn discover_for_adoption(&self, manifest: Option<&Manifest>) -> Result<Adoption> {
@@ -675,10 +679,11 @@ impl Setup {
         if let Some(home) = &request.home {
             self.check_adoption_home(home)?;
         }
+        let session = RenderSession::new(&self.binary);
         self.adopt_using(
             &request.token,
-            |target, source| self.render_rule(target, source),
-            |renderer, skills| self.render_skills(renderer, skills),
+            |target, source| self.render_rule(&session, target, source),
+            |renderer, skills| self.render_skills(&session, renderer, skills),
         )
     }
 
@@ -1124,6 +1129,7 @@ impl Setup {
         if !manifest.settings_only {
             crate::rulesync_checkout::refresh(
                 self,
+                &RenderSession::new(&self.binary),
                 &wenlan_core::shared_space::settings_path(),
                 None,
                 &[],
@@ -1272,13 +1278,20 @@ impl Setup {
         let settings = wenlan_core::shared_space::settings_path();
         let layers = rulesync_team::load_layers(&settings)?;
         self.capture_team_edits(root, manifest, &settings, &layers)?;
-        crate::rulesync_checkout::refresh(self, &settings, Some(&manifest.master), generated);
+        let session = RenderSession::new(&self.binary);
+        crate::rulesync_checkout::refresh(
+            self,
+            &session,
+            &settings,
+            Some(&manifest.master),
+            generated,
+        );
         self.sync_locked(
             root,
             manifest,
             generated,
-            |target, source| self.render_member_rule(target, source, &layers),
-            |renderer, skills| self.render_skills(renderer, skills),
+            |target, source| self.render_member_rule(&session, target, source, &layers),
+            |renderer, skills| self.render_skills(&session, renderer, skills),
         )
     }
 
@@ -2128,18 +2141,28 @@ impl Setup {
         sync(&root, &mut manifest)
     }
 
-    fn render_rule(&self, target: &str, source: &str) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
+    fn render_rule(
+        &self,
+        session: &RenderSession<'_>,
+        target: &str,
+        source: &str,
+    ) -> Result<SkillFiles> {
         let rules = personal_target(target)
             .context("unknown personal rule target")?
             .rules;
-        let rendered = self.render_tree(rules.renderer, &["rules"], |input| {
+        let rendered = self.render_tree(session, rules.renderer, &["rules"], |input| {
             write_root_rule(input, source)
         })?;
         personal_rule_destination(rules, rendered)
     }
 
-    fn render_skills(&self, renderer: &str, skills: &SkillPackages) -> Result<SkillFiles> {
-        self.render_tree(renderer, &["skills"], |input| {
+    fn render_skills(
+        &self,
+        session: &RenderSession<'_>,
+        renderer: &str,
+        skills: &SkillPackages,
+    ) -> Result<SkillFiles> {
+        self.render_tree(session, renderer, &["skills"], |input| {
             for (name, files) in skills {
                 write_skill_files(input, name, files)?;
             }
@@ -2149,12 +2172,13 @@ impl Setup {
 
     fn render_member_rule(
         &self,
+        session: &RenderSession<'_>,
         target: &str,
         source: &str,
         layers: &[TeamRuleLayer],
     ) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
         if layers.is_empty() {
-            return self.render_rule(target, source);
+            return self.render_rule(session, target, source);
         }
         let rules = personal_target(target)
             .context("unknown personal rule target")?
@@ -2166,8 +2190,7 @@ impl Setup {
         fs::create_dir(&output)?;
         rulesync_layers::stage(&team, "Team", layers)?;
         write_root_rule(&personal, source)?;
-        rulesync_renderer::render(
-            &self.binary,
+        session.render(
             stage.path(),
             &[team, personal],
             &output,
@@ -2198,6 +2221,7 @@ impl Setup {
 
     fn render_tree(
         &self,
+        session: &RenderSession<'_>,
         target: &str,
         features: &[&str],
         stage_input: impl FnOnce(&Path) -> Result<()>,
@@ -2211,8 +2235,7 @@ impl Setup {
         fs::create_dir(&input)?;
         fs::create_dir(&output)?;
         stage_input(&input)?;
-        rulesync_renderer::render(
-            &self.binary,
+        session.render(
             stage.path(),
             &[input],
             &output,

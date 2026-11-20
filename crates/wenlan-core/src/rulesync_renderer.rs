@@ -3,6 +3,7 @@
 
 use anyhow::{bail, ensure, Context, Result};
 use sha2::{Digest, Sha256};
+use std::cell::OnceCell;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek};
 use std::path::{Component, Path, PathBuf};
@@ -65,6 +66,67 @@ pub fn new_stage(parent: &Path) -> Result<tempfile::TempDir> {
         .context("create private rulesync stage")
 }
 
+/// Renders in one operation can execute the same verified private snapshot.
+/// The installed executable is opened on first use. Each invocation still
+/// uses fresh input, output, and writable scratch directories.
+pub struct RenderSession<'a> {
+    source: &'a Path,
+    verified: OnceCell<Result<VerifiedBinary, String>>,
+}
+
+struct VerifiedBinary {
+    _dir: tempfile::TempDir,
+    path: PathBuf,
+}
+
+impl<'a> RenderSession<'a> {
+    pub fn new(source: &'a Path) -> Self {
+        Self {
+            source,
+            verified: OnceCell::new(),
+        }
+    }
+
+    pub fn render(
+        &self,
+        stage: &Path,
+        input_roots: &[PathBuf],
+        output: &Path,
+        global: bool,
+        targets: &[String],
+        features: &[&str],
+    ) -> Result<()> {
+        validate_selection(targets, features)?;
+        render_staged(
+            self,
+            stage,
+            input_roots,
+            output,
+            Selection {
+                global,
+                targets,
+                features,
+            },
+        )
+    }
+
+    fn binary(&self, parent: &Path) -> Result<&Path> {
+        self.verified
+            .get_or_init(|| self.verify(parent).map_err(|error| format!("{error:#}")))
+            .as_ref()
+            .map(|binary| binary.path.as_path())
+            .map_err(|error| anyhow::anyhow!(error.clone()))
+    }
+
+    fn verify(&self, parent: &Path) -> Result<VerifiedBinary> {
+        let pin = pin_for(std::env::consts::OS, std::env::consts::ARCH)?;
+        let dir = new_stage(parent)?;
+        let path = dir.path().join(pin.name);
+        copy_verified_binary(self.source, &path, &pin)?;
+        Ok(VerifiedBinary { _dir: dir, path })
+    }
+}
+
 /// Render one or more staged source trees into an empty staged output directory.
 /// `stage` must be a private directory owned by the caller for this operation.
 /// Its disjoint input and output trees must already exist. Discard the output
@@ -78,18 +140,7 @@ pub fn render(
     targets: &[String],
     features: &[&str],
 ) -> Result<()> {
-    validate_selection(targets, features)?;
-    render_staged(
-        binary,
-        stage,
-        input_roots,
-        output,
-        Selection {
-            global,
-            targets,
-            features,
-        },
-    )
+    RenderSession::new(binary).render(stage, input_roots, output, global, targets, features)
 }
 
 /// The explicit local settings preview is the only caller that can render
@@ -109,7 +160,7 @@ pub(crate) fn render_settings(
         "expected explicit settings features"
     );
     render_staged(
-        binary,
+        &RenderSession::new(binary),
         stage,
         &[input.to_owned()],
         output,
@@ -128,7 +179,7 @@ struct Selection<'a> {
 }
 
 fn render_staged(
-    binary: &Path,
+    renderer: &RenderSession<'_>,
     stage: &Path,
     input_roots: &[PathBuf],
     output: &Path,
@@ -139,13 +190,11 @@ fn render_staged(
         .prefix("rulesync-runtime-")
         .tempdir_in(&stage)
         .context("create private rulesync runtime directory")?;
-    let pin = pin_for(std::env::consts::OS, std::env::consts::ARCH)?;
-    let verified = runtime.path().join(pin.name);
     let work = runtime.path().join("work");
     fs::create_dir(&work).context("create rulesync scratch directory")?;
-    copy_verified_binary(binary, &verified, &pin)?;
+    let binary = renderer.binary(stage.parent().context("rulesync stage has no parent")?)?;
 
-    let mut command = renderer_command(&verified, &stage, &output, &work)?;
+    let mut command = renderer_command(binary, &stage, &output, &work)?;
     configure_generate(
         &mut command,
         &input_roots,
@@ -419,6 +468,8 @@ fn renderer_command(binary: &Path, stage: &Path, output: &Path, runtime: &Path) 
         (deny process-exec (require-not (literal (param \"RENDERER\"))))
         (deny file-read* (require-all
             (require-not (subpath (param \"STAGE_ROOT\")))
+            (require-not (literal (param \"RENDERER\")))
+            (require-not (literal (param \"RENDERER_DIR\")))
             (require-not (subpath \"/usr/lib\"))
             (require-not (subpath \"/System/Library/dyld\"))
             (require-not (subpath \"/private/var/db/dyld\"))
@@ -462,6 +513,10 @@ fn renderer_command(binary: &Path, stage: &Path, output: &Path, runtime: &Path) 
         ("OUTPUT_ROOT=", output),
         ("RUNTIME_ROOT=", runtime),
         ("RENDERER=", binary),
+        (
+            "RENDERER_DIR=",
+            binary.parent().context("staged renderer has no parent")?,
+        ),
     ] {
         let mut param = OsString::from(name);
         param.push(path);
@@ -623,6 +678,32 @@ mod tests {
             None,
             b"Invalid frontmatter in SKILL.md"
         ));
+    }
+
+    #[test]
+    #[ignore = "requires the local pinned rulesync binary"]
+    fn render_session_reuses_only_its_verified_snapshot() {
+        let binary = PathBuf::from(std::env::var_os("WENLAN_TEST_RULESYNC_BINARY").unwrap());
+        let parent = new_stage(&std::env::temp_dir()).unwrap();
+        let installed = parent.path().join("test-rulesync");
+        fs::copy(&binary, &installed).unwrap();
+        let session = RenderSession::new(&installed);
+        let verified = session.binary(parent.path()).unwrap().to_owned();
+        assert_ne!(verified, installed);
+
+        fs::remove_file(&installed).unwrap();
+        fs::write(&installed, b"different executable").unwrap();
+        assert_eq!(session.binary(parent.path()).unwrap(), verified);
+        assert_eq!(
+            fs::metadata(&verified).unwrap().len(),
+            fs::metadata(&binary).unwrap().len()
+        );
+        let err = RenderSession::new(&installed)
+            .binary(parent.path())
+            .unwrap_err();
+        assert!(err.to_string().contains("checksum mismatch"));
+        drop(session);
+        assert!(!verified.exists());
     }
 
     #[cfg(target_os = "macos")]
