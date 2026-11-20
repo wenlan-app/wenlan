@@ -267,7 +267,7 @@ async fn team_join_page_takes_an_invite_out_of_the_address_before_sending_it_in_
     let page = response_text(join_page_response(&f.state, None).await).await;
     let read = page.find("startsWith('inv_')").unwrap();
     let clear = page.find("window.history.replaceState(null, ''").unwrap();
-    let send = page.find("fetch('/auth/invite/google'").unwrap();
+    let send = page.find("fetch('/auth/invite/' + provider").unwrap();
     assert!(read < clear && clear < send, "cleared right after reading");
     let sent = &page[send..];
     let sent = &sent[..sent.find("window.location.assign(started.url)").unwrap()];

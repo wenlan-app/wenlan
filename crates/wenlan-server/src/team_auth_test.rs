@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Sign-in against a fake OpenID Connect provider: a local server with
 //! discovery, signing keys and a token endpoint, whose id tokens are signed
-//! with a throwaway RSA key (a test fixture, used nowhere else).
+//! with a throwaway RSA key (a test fixture, used nowhere else). GitHub is
+//! tested against a second local fake with its token endpoint and API.
 
 use super::super::team_router;
 use super::*;
@@ -106,10 +107,123 @@ async fn serve_fake() -> Arc<Fake> {
     fake
 }
 
+const GH_ACCESS_TOKEN: &str = "gho_fake_access_token_value";
+const GH_CODE: &str = "the-code";
+
+/// An API call the fake saw: path, `Authorization`, `User-Agent`.
+type ApiCall = (String, Option<String>, Option<String>);
+
+/// A fake GitHub: the token endpoint checks the code, the client secret and
+/// the PKCE verifier against the challenge the test says the login sent.
+struct FakeGh {
+    base: String,
+    user: Mutex<Value>,
+    emails: Mutex<Value>,
+    challenge: Mutex<Option<String>>,
+    token_forms: Mutex<Vec<HashMap<String, String>>>,
+    api_calls: Mutex<Vec<ApiCall>>,
+}
+
+impl FakeGh {
+    fn set(&self, user: Value, emails: Value) {
+        *self.user.lock().unwrap() = user;
+        *self.emails.lock().unwrap() = emails;
+    }
+
+    fn urls(&self) -> GithubUrls {
+        GithubUrls {
+            authorize: format!("{}/authorize", self.base),
+            token: format!("{}/token", self.base),
+            api: format!("{}/api", self.base),
+        }
+    }
+}
+
+async fn serve_github() -> Arc<FakeGh> {
+    use axum::routing::{get, post};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let fake = Arc::new(FakeGh {
+        base,
+        user: Mutex::new(json!({})),
+        emails: Mutex::new(json!([])),
+        challenge: Mutex::new(None),
+        token_forms: Mutex::new(Vec::new()),
+        api_calls: Mutex::new(Vec::new()),
+    });
+    fn recorded(fake: &FakeGh, path: &str, headers: &HeaderMap) {
+        let get = |name: &str| {
+            headers
+                .get(name)
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string)
+        };
+        fake.api_calls.lock().unwrap().push((
+            path.to_string(),
+            get("authorization"),
+            get("user-agent"),
+        ));
+    }
+    let app = axum::Router::new()
+        .route(
+            "/token",
+            post(
+                |State(fake): State<Arc<FakeGh>>,
+                 axum::Form(form): axum::Form<HashMap<String, String>>| async move {
+                    fake.token_forms.lock().unwrap().push(form.clone());
+                    let challenge = fake.challenge.lock().unwrap().clone();
+                    let pkce_ok = match (form.get("code_verifier"), challenge) {
+                        (Some(verifier), Some(challenge)) => {
+                            URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes())) == challenge
+                        }
+                        _ => false,
+                    };
+                    let ok = form.get("code").map(String::as_str) == Some(GH_CODE)
+                        && form.get("client_secret").map(String::as_str) == Some("gh-secret")
+                        && pkce_ok;
+                    // GitHub answers a refusal with 200 and an `error`.
+                    if ok {
+                        Json(json!({
+                            "access_token": GH_ACCESS_TOKEN,
+                            "token_type": "bearer",
+                            "scope": "read:user,user:email",
+                        }))
+                    } else {
+                        Json(json!({"error": "bad_verification_code"}))
+                    }
+                },
+            ),
+        )
+        .route(
+            "/api/user",
+            get(
+                |State(fake): State<Arc<FakeGh>>, headers: HeaderMap| async move {
+                    recorded(&fake, "/user", &headers);
+                    Json(fake.user.lock().unwrap().clone())
+                },
+            ),
+        )
+        .route(
+            "/api/user/emails",
+            get(
+                |State(fake): State<Arc<FakeGh>>, headers: HeaderMap| async move {
+                    recorded(&fake, "/user/emails", &headers);
+                    Json(fake.emails.lock().unwrap().clone())
+                },
+            ),
+        )
+        .with_state(fake.clone());
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    fake
+}
+
 struct Env {
     _dir: tempfile::TempDir,
     state: TeamState,
     fake: Arc<Fake>,
+    gh: Arc<FakeGh>,
     amy: (Member, String),
     bo: (Member, String),
 }
@@ -120,6 +234,7 @@ async fn env() -> Env {
 
 async fn env_with(ttl: Duration, burst: f64, refill: f64, url: Option<&str>) -> Env {
     let fake = serve_fake().await;
+    let gh = serve_github().await;
     let dir = tempfile::tempdir().unwrap();
     let team_path = dir.path().join(team::TEAM_FILE);
     let amy = team::add_member(&team_path, "Amy", &[]).unwrap();
@@ -130,12 +245,10 @@ async fn env_with(ttl: Duration, burst: f64, refill: f64, url: Option<&str>) -> 
         .redirect(openidconnect::reqwest::redirect::Policy::none())
         .build()
         .unwrap();
-    let auth = AuthState::new(vec![Provider::new(
-        "google",
-        &fake.issuer,
-        CLIENT_ID,
-        "client-secret",
-    )])
+    let auth = AuthState::new(vec![
+        Provider::new("google", &fake.issuer, CLIENT_ID, "client-secret"),
+        Provider::github_with_urls("gh-client", "gh-secret", gh.urls()),
+    ])
     .tuned(ttl, burst, refill)
     .with_http(http);
     Env {
@@ -149,6 +262,7 @@ async fn env_with(ttl: Duration, burst: f64, refill: f64, url: Option<&str>) -> 
         },
         _dir: dir,
         fake,
+        gh,
         amy,
         bo,
     }
@@ -930,7 +1044,7 @@ async fn sign_in_is_off_without_https_or_a_provider() {
     let on = env().await;
     let response = send(
         &on,
-        request(Method::GET, "/auth/start/github?purpose=signin", &[]),
+        request(Method::GET, "/auth/start/gitlab?purpose=signin", &[]),
     )
     .await;
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
@@ -1047,7 +1161,7 @@ fn provider_settings_come_from_the_environment_or_the_file_and_the_environment_w
     assert_eq!(found[0].client_secret, "file-secret");
     // Environment alone, and half a configuration is none.
     let both = |name: &str| Some(format!("env-{name}"));
-    assert_eq!(load_providers(&dir.path().join("none.json"), both).len(), 1);
+    assert_eq!(load_providers(&dir.path().join("none.json"), both).len(), 2);
     let half = |name: &str| (name == GOOGLE_CLIENT_ID_ENV).then(|| "id".to_string());
     assert!(load_providers(&dir.path().join("none.json"), half).is_empty());
     // A broken file is none; an issuer that is not https is not taken.
@@ -1369,4 +1483,495 @@ fn only_gmail_and_hosted_domains_are_trusted_to_own_their_email() {
         google_email_trust("a@gmail.com.evil.example", false),
         Untrusted
     );
+}
+
+// ===== GitHub =====
+
+fn gh_user(id: Value, login: &str) -> Value {
+    json!({"id": id, "login": login, "name": "Someone"})
+}
+
+fn gh_email(address: &str, verified: bool, primary: bool) -> Value {
+    json!({"email": address, "verified": verified, "primary": primary, "visibility": null})
+}
+
+/// What a login begun for GitHub sent the browser to; the fake learns the
+/// PKCE challenge so it can check the verifier it is given.
+fn parse_github_started(env: &Env, url: &str, id: String) -> Started {
+    let parsed = url::Url::parse(url).unwrap();
+    let get = |k: &str| {
+        parsed
+            .query_pairs()
+            .find(|(n, _)| n == k)
+            .map(|(_, v)| v.to_string())
+            .unwrap_or_default()
+    };
+    assert!(url.starts_with(&format!("{}/authorize?", env.gh.base)));
+    assert_eq!(get("code_challenge_method"), "S256");
+    assert!(!get("code_challenge").is_empty());
+    assert_eq!(get("client_id"), "gh-client");
+    assert_eq!(get("scope"), "read:user user:email");
+    assert_eq!(
+        get("redirect_uri"),
+        format!("{ORIGIN}/auth/callback/github")
+    );
+    assert!(parsed.query_pairs().all(|(n, _)| n != "nonce"));
+    *env.gh.challenge.lock().unwrap() = Some(get("code_challenge"));
+    Started {
+        id,
+        state: get("state"),
+        nonce: String::new(),
+        challenge: get("code_challenge"),
+        url: url.to_string(),
+    }
+}
+
+async fn start_github_sign_in(env: &Env) -> Started {
+    let response = send(
+        env,
+        request(Method::GET, "/auth/start/github?purpose=signin", &[]),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::FOUND);
+    let id = login_cookie_of(&response);
+    let url = response.headers()[header::LOCATION].to_str().unwrap();
+    parse_github_started(env, url, id)
+}
+
+async fn start_github_post(env: &Env, uri: &str, headers: &[(&str, String)]) -> Started {
+    let response = send(env, request(Method::POST, uri, headers)).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let id = login_cookie_of(&response);
+    let answer: Value = serde_json::from_str(&body(response).await).unwrap();
+    parse_github_started(env, answer["url"].as_str().unwrap(), id)
+}
+
+async fn start_github_invite(env: &Env, token: &str) -> Started {
+    let mut req = invite_request(token, vec![origin_header()]);
+    *req.uri_mut() = "/auth/invite/github".parse().unwrap();
+    let response = send(env, req).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let id = login_cookie_of(&response);
+    let answer: Value = serde_json::from_str(&body(response).await).unwrap();
+    parse_github_started(env, answer["url"].as_str().unwrap(), id)
+}
+
+async fn github_callback_with(
+    env: &Env,
+    started: &Started,
+    code: &str,
+    state: &str,
+    extra_cookies: Vec<String>,
+) -> Response {
+    let mut cookies = extra_cookies;
+    cookies.push(format!("{LOGIN_COOKIE}={}", started.id));
+    send(
+        env,
+        request(
+            Method::GET,
+            &format!("/auth/callback/github?code={code}&state={state}"),
+            &[("cookie", cookies.join("; "))],
+        ),
+    )
+    .await
+}
+
+async fn github_callback(env: &Env, started: &Started) -> Response {
+    github_callback_with(env, started, GH_CODE, &started.state, vec![]).await
+}
+
+/// The access token is in no header and no body of a response.
+async fn assert_no_token_leak(response: Response) {
+    let headers = format!("{:?}", response.headers());
+    assert!(!headers.contains(GH_ACCESS_TOKEN));
+    assert!(!body(response).await.contains(GH_ACCESS_TOKEN));
+}
+
+fn github_member(env: &Env, member: &Member, id: &str) {
+    team::link_identity(
+        &env.state.team_path,
+        &member.id,
+        Identity {
+            issuer: GITHUB_ISSUER.into(),
+            subject: id.into(),
+            email: None,
+            linked_at: String::new(),
+        },
+    )
+    .unwrap();
+}
+
+#[tokio::test]
+async fn a_github_member_signs_in_by_numeric_id_and_a_rename_changes_nothing() {
+    let env = env().await;
+    github_member(&env, &env.amy.0, "4242");
+    for login in ["amy", "amy-renamed"] {
+        env.gh.set(
+            gh_user(json!(4242), login),
+            json!([gh_email("a@x.org", true, true)]),
+        );
+        let started = start_github_sign_in(&env).await;
+        let response = github_callback(&env, &started).await;
+        assert_eq!(response.status(), StatusCode::FOUND, "{login}");
+        assert_eq!(response.headers()[header::LOCATION], "/app");
+        assert!(hardened(&response));
+        let token = session_of(&response);
+        assert_eq!(
+            env.state.sessions.lookup(&token).as_deref(),
+            Some(env.amy.0.id.as_str())
+        );
+        assert_no_token_leak(response).await;
+    }
+    // The token request carried the verifier, the secret, the callback and
+    // the code; the API calls carried the token as a Bearer and a
+    // User-Agent.
+    let form = env.gh.token_forms.lock().unwrap()[0].clone();
+    assert_eq!(form["client_id"], "gh-client");
+    assert_eq!(form["client_secret"], "gh-secret");
+    assert_eq!(
+        form["redirect_uri"],
+        format!("{ORIGIN}/auth/callback/github")
+    );
+    assert!(!form["code_verifier"].is_empty());
+    let calls = env.gh.api_calls.lock().unwrap().clone();
+    assert_eq!(calls[0].0, "/user");
+    assert_eq!(calls[1].0, "/user/emails");
+    for (_, auth, agent) in &calls {
+        assert_eq!(
+            auth.as_deref(),
+            Some(format!("Bearer {GH_ACCESS_TOKEN}").as_str())
+        );
+        assert_eq!(agent.as_deref(), Some("wenlan-team-server"));
+    }
+    // An account that is not a member is told nothing more.
+    env.gh.set(gh_user(json!(9), "amy"), json!([]));
+    let started = start_github_sign_in(&env).await;
+    let response = github_callback(&env, &started).await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn a_github_login_is_refused_for_a_bad_state_code_or_verifier() {
+    let env = env().await;
+    github_member(&env, &env.amy.0, "4242");
+    env.gh.set(gh_user(json!(4242), "amy"), json!([]));
+    // A state that is not the transaction's.
+    let started = start_github_sign_in(&env).await;
+    let response = github_callback_with(&env, &started, GH_CODE, "other-state", vec![]).await;
+    assert_refused(&response, &env);
+    assert!(env.gh.token_forms.lock().unwrap().is_empty());
+    // A code GitHub does not accept.
+    let started = start_github_sign_in(&env).await;
+    let response = github_callback_with(&env, &started, "wrong", &started.state, vec![]).await;
+    assert_refused(&response, &env);
+    // A verifier that does not hash to the challenge sent (the fake treats
+    // a missing one the same way).
+    let started = start_github_sign_in(&env).await;
+    *env.gh.challenge.lock().unwrap() = Some("not-the-challenge".into());
+    let response = github_callback(&env, &started).await;
+    assert_refused(&response, &env);
+    assert_no_token_leak(response).await;
+    // The login is gone after a refusal.
+    *env.gh.challenge.lock().unwrap() = Some(started.challenge.clone());
+    assert_refused(&github_callback(&env, &started).await, &env);
+}
+
+#[tokio::test]
+async fn a_github_answer_without_a_numeric_id_is_refused() {
+    let env = env().await;
+    github_member(&env, &env.amy.0, "4242");
+    for user in [
+        json!({"login": "amy"}),
+        json!({"id": "4242", "login": "amy"}),
+        json!({"id": null, "login": "amy"}),
+        json!({"id": 0, "login": "amy"}),
+        json!({"id": -5, "login": "amy"}),
+    ] {
+        env.gh.set(user.clone(), json!([]));
+        let started = start_github_sign_in(&env).await;
+        let response = github_callback(&env, &started).await;
+        assert_refused(&response, &env);
+    }
+}
+
+#[tokio::test]
+async fn a_github_account_with_no_verified_email_can_still_sign_in() {
+    let env = env().await;
+    github_member(&env, &env.amy.0, "7");
+    env.gh.set(
+        gh_user(json!(7), "amy"),
+        json!([gh_email("a@x.org", false, true)]),
+    );
+    let started = start_github_sign_in(&env).await;
+    assert_eq!(
+        github_callback(&env, &started).await.status(),
+        StatusCode::FOUND
+    );
+}
+
+#[tokio::test]
+async fn an_invite_is_matched_by_any_verified_github_email() {
+    let env = env().await;
+    let (dee, token) = invite_member(&env, Some("Dee@Work.example"));
+    env.gh.set(
+        gh_user(json!(555), "dee"),
+        json!([
+            gh_email("dee@home.example", true, true),
+            gh_email("dee@work.example", true, false),
+        ]),
+    );
+    let started = start_github_invite(&env, &token).await;
+    assert!(!started.url.contains("inv_"));
+    let response = github_callback(&env, &started).await;
+    assert_eq!(response.status(), StatusCode::FOUND);
+    let session = session_of(&response);
+    assert_eq!(
+        env.state.sessions.lookup(&session).as_deref(),
+        Some(dee.id.as_str())
+    );
+    let now = env.member(&dee);
+    assert!(now.invite.is_none(), "trusted: linked at once, no approval");
+    assert_eq!(now.identities.len(), 1);
+    assert_eq!(now.identities[0].issuer, GITHUB_ISSUER);
+    assert_eq!(now.identities[0].subject, "555");
+    // The shown address is the primary verified one.
+    assert_eq!(now.identities[0].email.as_deref(), Some("dee@home.example"));
+}
+
+#[tokio::test]
+async fn an_unverified_github_email_does_not_match_an_invite() {
+    let env = env().await;
+    let (dee, token) = invite_member(&env, Some("dee@work.example"));
+    env.gh.set(
+        gh_user(json!(555), "dee"),
+        json!([
+            gh_email("dee@home.example", true, true),
+            gh_email("dee@work.example", false, false),
+        ]),
+    );
+    let started = start_github_invite(&env, &token).await;
+    let response = github_callback(&env, &started).await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let text = body(response).await;
+    assert!(text.contains("d***@work.example"), "{text}");
+    assert!(!text.contains("dee@work.example"));
+    // Nothing changed, and the invite still works for the right account.
+    let now = env.member(&dee);
+    assert!(now.identities.is_empty() && now.invite.is_some());
+    env.gh.set(
+        gh_user(json!(555), "dee"),
+        json!([gh_email("dee@work.example", true, true)]),
+    );
+    let started = start_github_invite(&env, &token).await;
+    assert_eq!(
+        github_callback(&env, &started).await.status(),
+        StatusCode::FOUND
+    );
+}
+
+#[tokio::test]
+async fn an_invite_without_an_email_works_for_a_github_account_with_none() {
+    let env = env().await;
+    let (dee, token) = invite_member(&env, None);
+    env.gh.set(gh_user(json!(8), "dee"), json!([]));
+    let started = start_github_invite(&env, &token).await;
+    assert_eq!(
+        github_callback(&env, &started).await.status(),
+        StatusCode::FOUND
+    );
+    assert_eq!(env.member(&dee).identities[0].subject, "8");
+}
+
+#[tokio::test]
+async fn a_key_holder_links_github_and_another_member_cannot_take_it() {
+    let env = env().await;
+    env.gh.set(
+        gh_user(json!(31), "amy"),
+        json!([gh_email("a@x.org", true, true)]),
+    );
+    let bearer = |key: &str| ("authorization", format!("Bearer {key}"));
+    let started = start_github_post(
+        &env,
+        "/auth/link/github",
+        &[origin_header(), bearer(&env.amy.1)],
+    )
+    .await;
+    assert_eq!(
+        github_callback(&env, &started).await.status(),
+        StatusCode::FOUND
+    );
+    let linked = env.member(&env.amy.0);
+    assert_eq!(linked.identities.len(), 1);
+    assert_eq!(linked.identities[0].issuer, GITHUB_ISSUER);
+    assert_eq!(linked.identities[0].subject, "31");
+    // Bo cannot link the same account.
+    let started = start_github_post(
+        &env,
+        "/auth/link/github",
+        &[origin_header(), bearer(&env.bo.1)],
+    )
+    .await;
+    assert_eq!(
+        github_callback(&env, &started).await.status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert!(env.member(&env.bo.0).identities.is_empty());
+}
+
+#[tokio::test]
+async fn github_reauth_needs_an_account_already_linked_to_this_member() {
+    let env = env().await;
+    github_member(&env, &env.amy.0, "31");
+    let old = env.state.sessions.create(&env.amy.0.id).unwrap();
+    let cookie = format!("{}={old}", team_session::COOKIE_NAME);
+    // An account that is not Amy's is refused and the session is kept.
+    env.gh.set(gh_user(json!(99), "mallory"), json!([]));
+    let started = start_github_post(
+        &env,
+        "/auth/reauth/github",
+        &[origin_header(), ("cookie", cookie.clone())],
+    )
+    .await;
+    // GitHub has no max_age: none is invented.
+    assert!(!started.url.contains("max_age"));
+    let response = github_callback_with(
+        &env,
+        &started,
+        GH_CODE,
+        &started.state,
+        vec![cookie.clone()],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert!(set_cookie_value(&response, team_session::COOKIE_NAME).is_none());
+    assert!(env.state.sessions.lookup(&old).is_some());
+    assert!(!env.state.sessions.fresh(&old, REAUTH_WINDOW));
+    // Amy's own account makes a fresh new session.
+    env.gh.set(gh_user(json!(31), "amy"), json!([]));
+    let started = start_github_post(
+        &env,
+        "/auth/reauth/github",
+        &[origin_header(), ("cookie", cookie.clone())],
+    )
+    .await;
+    let response =
+        github_callback_with(&env, &started, GH_CODE, &started.state, vec![cookie]).await;
+    assert_eq!(response.status(), StatusCode::FOUND);
+    let new = session_of(&response);
+    assert_ne!(new, old);
+    assert!(env.state.sessions.lookup(&old).is_none());
+    assert!(env.state.sessions.fresh(&new, REAUTH_WINDOW));
+}
+
+#[test]
+fn github_settings_come_from_the_environment_or_the_file_and_the_environment_wins() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join(AUTH_FILE);
+    let none = |_: &str| None;
+    std::fs::write(
+        &file,
+        r#"{"github": {"client_id": "file-id", "client_secret": "file-secret", "issuer": "https://evil.example"}}"#,
+    )
+    .unwrap();
+    let found = load_providers(&file, none);
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].name, "github");
+    assert_eq!(found[0].client_id, "file-id");
+    assert_eq!(found[0].issuer, GITHUB_ISSUER);
+    let Kind::GitHub(urls) = &found[0].kind else {
+        panic!("a GitHub provider");
+    };
+    assert_eq!(urls.authorize, "https://github.com/login/oauth/authorize");
+    assert_eq!(urls.token, "https://github.com/login/oauth/access_token");
+    assert_eq!(urls.api, "https://api.github.com");
+    // The environment wins, per value, and does not disturb Google.
+    let env = |name: &str| (name == GITHUB_CLIENT_ID_ENV).then(|| "env-id".to_string());
+    let found = load_providers(&file, env);
+    assert_eq!(found[0].client_id, "env-id");
+    assert_eq!(found[0].client_secret, "file-secret");
+    // Both providers at once; either alone suffices; half is none.
+    let both = |name: &str| Some(format!("env-{name}"));
+    let found = load_providers(&dir.path().join("none.json"), both);
+    assert_eq!(
+        found.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
+        ["google", "github"]
+    );
+    let half = |name: &str| (name == GITHUB_CLIENT_SECRET_ENV).then(|| "s".to_string());
+    assert!(load_providers(&dir.path().join("none.json"), half).is_empty());
+    assert!(!format!("{:?}", found[1]).contains("env-WENLAN_TEAM_GITHUB_CLIENT_SECRET"));
+}
+
+#[tokio::test]
+async fn github_alone_turns_sign_in_on_and_google_routes_stay_404() {
+    let env = env().await;
+    let github_only = AuthState::new(vec![Provider::github_with_urls(
+        "gh-client",
+        "gh-secret",
+        env.gh.urls(),
+    )]);
+    let state = TeamState {
+        auth: Arc::new(github_only),
+        ..env.state.clone()
+    };
+    assert_eq!(offered_names(&state).await, ["github"]);
+    let response = team_router(state.clone())
+        .oneshot(request(
+            Method::GET,
+            "/auth/start/google?purpose=signin",
+            &[],
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let response = team_router(state)
+        .oneshot(request(
+            Method::GET,
+            "/auth/start/github?purpose=signin",
+            &[],
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FOUND);
+}
+
+async fn offered_names(state: &TeamState) -> Vec<String> {
+    offered(state).await
+}
+
+#[test]
+fn the_route_table_and_join_page_cover_github() {
+    use team::CredentialKind::{BrowserSession, LegacyKey, ToolKey};
+    assert_eq!(
+        super::super::route_class("/auth/callback/github"),
+        super::super::RouteClass::AuthPublic
+    );
+    assert_eq!(
+        super::super::route_class("/auth/invite/github"),
+        super::super::RouteClass::AuthPublic
+    );
+    assert!(super::super::credential_may_reach(
+        LegacyKey,
+        "/auth/link/github"
+    ));
+    assert!(!super::super::credential_may_reach(
+        ToolKey,
+        "/auth/link/github"
+    ));
+    assert!(super::super::credential_may_reach(
+        BrowserSession,
+        "/auth/reauth/github"
+    ));
+    assert!(!super::super::credential_may_reach(
+        LegacyKey,
+        "/auth/reauth/github"
+    ));
+    let page = super::super::render_join_page(
+        None,
+        &super::super::JOIN_PAGE_EN,
+        "n",
+        &["google".to_string(), "github".to_string()],
+    );
+    assert!(page.contains("id=\"accept-github\""));
+    assert!(page.contains("const providers = [\"google\",\"github\"];"));
+    assert!(page.contains("\"sign_in_github\":\"Sign in with GitHub\""));
 }
