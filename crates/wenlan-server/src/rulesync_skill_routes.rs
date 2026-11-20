@@ -10,6 +10,7 @@ use axum::{http::HeaderMap, Json};
 use cap_fs_ext::DirExt as _;
 use cap_std::fs::Dir;
 use serde::{Deserialize, Serialize};
+use wenlan_core::rulesync_adopt::skip_skill_asset;
 use wenlan_core::rulesync_personal::{self, fingerprint};
 use wenlan_core::rulesync_skill::{self as skills, SkillFiles};
 use wenlan_core::skill_registry;
@@ -657,7 +658,7 @@ impl SkillHome {
             let entry = entry?;
             let name = entry.file_name();
             let name = name.to_str().context("a skill asset name is not UTF-8")?;
-            if matches!(name, ".git" | ".DS_Store" | "node_modules" | "__pycache__") {
+            if skip_skill_asset(name) {
                 continue;
             }
             result.entries += 1;
@@ -920,6 +921,11 @@ mod tests {
             .unwrap()
             .unwrap();
         let managed = BTreeMap::from([(folder.clone(), current)]);
+        write(
+            &home,
+            ".agents/skills/own/scripts/.claude/.cc-writes/log",
+            "Local tool state.\n",
+        );
         assert!(collect_tool_proposals(&home, &data, &managed)
             .unwrap()
             .is_empty());

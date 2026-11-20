@@ -28,6 +28,15 @@ const MAX_CLAUDE_IMPORTS: usize = 256;
 const MAX_SKILL_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_SKILL_ENTRIES: usize = 2048;
 
+/// A skill bundle excludes local tool state, version control, and caches.
+/// Its portable assets, including `agents/openai.yaml`, are still included.
+pub fn skip_skill_asset(name: &str) -> bool {
+    matches!(
+        name,
+        ".claude" | ".codex" | ".git" | ".DS_Store" | "node_modules" | "__pycache__"
+    )
+}
+
 /// A tool's paths relative to the supplied home. More than one descriptor can
 /// name the same tool if it has an additional skill location to discover.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -930,9 +939,7 @@ impl SkillTree {
             let name = name
                 .to_str()
                 .context("skill has a file name that is not UTF-8")?;
-            // Version-control databases and locally generated dependencies
-            // are not part of the skill source delivered by this migration.
-            if matches!(name, ".git" | ".DS_Store" | "node_modules" | "__pycache__") {
+            if skip_skill_asset(name) {
                 continue;
             }
             ensure!(
@@ -988,6 +995,33 @@ mod tests {
             rules_path: rules.map(PathBuf::from),
             skills_path: skills.map(PathBuf::from),
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn adoption_omits_nested_tool_private_skill_state() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path();
+        for file in [
+            "SKILL.md",
+            "agents/openai.yaml",
+            ".claude/.cc-writes",
+            "scripts/.claude/.cc-writes/log",
+        ] {
+            put(home, &format!("src/own/{file}"), "skill content\n");
+        }
+        link(home, ".codex/skills/own", home.join("src/own"));
+
+        let adoption = discover(home, &[target("codexcli", None, Some(".codex/skills"))]).unwrap();
+        assert_eq!(
+            adoption.skills[0].files.keys().collect::<Vec<_>>(),
+            [Path::new("SKILL.md"), Path::new("agents/openai.yaml")]
+        );
+        assert!(adoption
+            .files
+            .keys()
+            .all(|path| !path.starts_with(".codex/skills/own/.claude")
+                && !path.starts_with(".codex/skills/own/scripts/.claude")));
     }
 
     #[cfg(unix)]
