@@ -823,6 +823,18 @@ impl WenlanClient {
             .await
     }
 
+    pub(crate) async fn adopted_skill_updates_as_person(
+        &self,
+    ) -> Result<Vec<wenlan_types::rulesync::AdoptedSkillUpdate>> {
+        self.post_json_as_person(
+            "/api/rules/setup/skill-updates",
+            &serde_json::json!({}),
+            None,
+            true,
+        )
+        .await
+    }
+
     pub(crate) async fn review_rules_as_person(
         &self,
         request: &PullbackDecision,

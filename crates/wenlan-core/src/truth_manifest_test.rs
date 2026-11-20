@@ -354,7 +354,7 @@ fn manifest_counts_match_the_spec() {
     // Personal adoption, settings, checkout and skill routes, and project review/opt-in.
     assert_eq!(
         HTTP_READERS.len(),
-        405,
+        406,
         "registered (method, path, handler) triples"
     );
     // 61 tools with the read-only `list_skills` and `search_skills`; 63
@@ -367,7 +367,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        417,
+        418,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -375,7 +375,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        400,
+        401,
         "main builder entries"
     );
     assert_eq!(
@@ -582,7 +582,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::None)
             .count(),
-        395 // Seventeen new rulesync rows plus the existing 378, including 22 research workflow routes, 7 custom-theme routes, a memory's conversation lines, the nights undo, the memory restore, the two trust scan routes, keeping a session original, the 12 sharing routes, one tidy's undo, the three old-pass routes and the four linked-vault routes, the two set-aside routes, the plain Brief lines, the seven team routes and naming the team, the three AI-memory routes, the four team start/stop/membership routes, the six page look routes and the team firewall status and a source's unreadable files, twelve skill routes, how the rules reach each AI tool, the seven skill registry routes, and saving and removing a rule, and the browser pass for `wenlan open`, all with no page markers.
+        396 // 18 personal setup, checkout and skill routes plus the existing 378.
     );
 }
 

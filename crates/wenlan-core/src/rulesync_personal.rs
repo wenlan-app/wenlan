@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use wenlan_types::rulesync::{AdoptionChange, AdoptionPlan};
+use wenlan_types::rulesync::{AdoptionChange, AdoptionPlan, AdoptionSkill, AdoptionSkillOutcome};
 
 use crate::rulesync_adopt::{self, AdoptedSkill, Adoption, AdoptionEntry, AdoptionTarget};
 
@@ -104,9 +104,29 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
             diff: format!("Skipped ({reason})\n"),
         });
     }
+    let mut skills = adoption
+        .skill_locations
+        .iter()
+        .map(|(path, upstream)| AdoptionSkill {
+            path: path.to_string_lossy().into_owned(),
+            outcome: upstream
+                .clone()
+                .map_or(AdoptionSkillOutcome::PlainCopy, |upstream| {
+                    AdoptionSkillOutcome::TrackedUpstream { upstream }
+                }),
+        })
+        .chain(adoption.skipped.iter().map(|(path, reason)| AdoptionSkill {
+            path: path.to_string_lossy().into_owned(),
+            outcome: AdoptionSkillOutcome::Skipped {
+                reason: reason.clone(),
+            },
+        }))
+        .collect::<Vec<_>>();
+    skills.sort_by(|first, second| first.path.cmp(&second.path));
     Ok(AdoptionPlan {
         token: fingerprint(adoption)?,
         files,
+        skills,
     })
 }
 

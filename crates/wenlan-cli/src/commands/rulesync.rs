@@ -10,7 +10,8 @@ use clap::{Subcommand, ValueEnum};
 use serde::Serialize;
 use wenlan_core::{rulesync_personal, skill_registry::printable};
 use wenlan_types::rulesync::{
-    AdoptRequest, AdoptionPlan, PullbackAction, PullbackDecision, RulesSyncReport,
+    AdoptRequest, AdoptedSkillUpdate, AdoptionPlan, AdoptionSkillOutcome, PullbackAction,
+    PullbackDecision, RulesSyncReport, SkillUpdateStatus, SkillUpstream,
 };
 use wenlan_types::rulesync_settings::{SettingsApplyRequest, SettingsPlan, SettingsPreviewRequest};
 
@@ -29,6 +30,8 @@ pub enum RulesSetupCmd {
     Restore,
     /// Collect tool edits for review and deliver current personal rules and skills.
     Sync,
+    /// Check adopted skills for upstream releases and list offers for review.
+    SkillUpdates,
     /// Preview local MCP servers, hooks and permissions and confirm before applying.
     Settings {
         /// A local rulesync source folder.
@@ -93,7 +96,9 @@ async fn run_inner(
     ensure!(
         matches!(
             command,
-            RulesSetupCmd::Sync | RulesSetupCmd::Settings { dry_run: true, .. }
+            RulesSetupCmd::Sync
+                | RulesSetupCmd::SkillUpdates
+                | RulesSetupCmd::Settings { dry_run: true, .. }
         ) || (io::stdin().is_terminal() && io::stdout().is_terminal()),
         "Run this command from your own terminal and type yes when asked."
     );
@@ -118,6 +123,12 @@ async fn run_inner(
             client.restore_rules_as_person().await?
         }
         RulesSetupCmd::Sync => client.sync_rules_as_person().await?,
+        RulesSetupCmd::SkillUpdates => {
+            let updates = client.adopted_skill_updates_as_person().await?;
+            return show(format, quiet, &updates, |updates| {
+                updates_for_a_person(updates)
+            });
+        }
         RulesSetupCmd::Settings { source, dry_run } => {
             let source = std::path::absolute(source)?;
             let plan = client
@@ -224,11 +235,74 @@ pub(super) fn terminal_json(value: &impl Serialize) -> Result<String> {
 }
 
 fn plan_for_a_person(plan: &AdoptionPlan) -> String {
-    render_plan(
-        "Personal rules and skills adoption plan",
+    let mut out = String::from("Personal rules and skills adoption plan\n");
+    if !plan.skills.is_empty() {
+        out.push_str("\nSkill folders\n");
+        for skill in &plan.skills {
+            let status = match &skill.outcome {
+                AdoptionSkillOutcome::TrackedUpstream { upstream } => {
+                    format!("tracked upstream from {}", upstream_label(upstream))
+                }
+                AdoptionSkillOutcome::PlainCopy => "plain copy in the personal master".into(),
+                AdoptionSkillOutcome::Skipped { reason } => {
+                    format!("skipped ({})", one_line(reason))
+                }
+            };
+            writeln!(&mut out, "  {} — {status}", file_label(&skill.path)).unwrap();
+        }
+    }
+    out.push_str(&render_plan(
+        "File changes",
         "No existing files to adopt.",
         &plan.files,
-    )
+    ));
+    out
+}
+
+fn upstream_label(upstream: &SkillUpstream) -> String {
+    let (source, directory) = match upstream {
+        SkillUpstream::GitHub {
+            repository,
+            directory,
+            ..
+        } => (format!("GitHub {repository}"), directory),
+        SkillUpstream::Npm {
+            package,
+            version,
+            directory,
+        } => (format!("npm {package}@{version}"), directory),
+    };
+    if directory.is_empty() {
+        one_line(&source)
+    } else {
+        one_line(&format!("{source} ({directory})"))
+    }
+}
+
+fn updates_for_a_person(updates: &[AdoptedSkillUpdate]) -> String {
+    if updates.is_empty() {
+        return "No adopted skills track an upstream.\n".into();
+    }
+    let mut out = String::new();
+    for update in updates {
+        let status = match &update.status {
+            SkillUpdateStatus::Current => "current".into(),
+            SkillUpdateStatus::Available { revision } => {
+                format!("{} available to review", one_line(revision))
+            }
+            SkillUpdateStatus::Unavailable { reason } => {
+                format!("check unavailable ({})", one_line(reason))
+            }
+        };
+        writeln!(
+            &mut out,
+            "{} — {} — {status}",
+            one_line(&update.name),
+            upstream_label(&update.upstream)
+        )
+        .unwrap();
+    }
+    out
 }
 
 fn settings_plan_for_a_person(plan: &SettingsPlan) -> String {
@@ -320,6 +394,7 @@ mod tests {
                 removed: 1,
                 diff: "-old\n+\u{1b}[2J\n+🐈\u{202e}\u{7f}".into(),
             }],
+            skills: Vec::new(),
         };
         let text = plan_for_a_person(&plan);
         assert!(text.contains("tool<U+000A>settings.md (+2 / -1)"));

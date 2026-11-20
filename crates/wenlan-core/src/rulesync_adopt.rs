@@ -10,6 +10,11 @@ use anyhow::{bail, ensure, Context, Result};
 use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::fs::{Dir, Metadata, OpenOptions};
 use serde::{Deserialize, Serialize};
+use wenlan_types::rulesync::SkillUpstream;
+
+#[path = "rulesync_skill_origin.rs"]
+mod skill_origin;
+pub(crate) use skill_origin::checkout_update;
 
 const SHARED_RULES: &str = ".agents/AGENTS.md";
 const SHARED_SKILLS: &str = ".agents/skills";
@@ -37,6 +42,7 @@ pub struct Adoption {
     /// Paths relative to the adopted home, including resolved link targets.
     pub sources: BTreeSet<PathBuf>,
     pub files: BTreeMap<PathBuf, AdoptionFile>,
+    pub skill_locations: BTreeMap<PathBuf, Option<SkillUpstream>>,
     /// Existing skill locations that could not be imported and will stay in place.
     pub skipped: BTreeMap<PathBuf, String>,
 }
@@ -50,6 +56,8 @@ pub struct AdoptedSkill {
     pub locations: BTreeMap<String, BTreeSet<PathBuf>>,
     /// Paths relative to the skill folder.
     pub files: BTreeMap<PathBuf, Vec<u8>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream: Option<SkillUpstream>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -102,6 +110,7 @@ pub fn discover(home: &Path, targets: &[AdoptionTarget]) -> Result<Adoption> {
             skills.scan(dir, Some(&target.tool))?;
         }
     }
+    let skill_locations = std::mem::take(&mut skills.locations);
     let (skills, skipped) = skills.finish();
     Ok(Adoption {
         shared: shared.to_owned(),
@@ -109,6 +118,7 @@ pub fn discover(home: &Path, targets: &[AdoptionTarget]) -> Result<Adoption> {
         skills,
         sources,
         files,
+        skill_locations,
         skipped,
     })
 }
@@ -680,6 +690,7 @@ struct SkillDiscovery<'a> {
     sources: &'a mut BTreeSet<PathBuf>,
     files: &'a mut BTreeMap<PathBuf, AdoptionFile>,
     skills: BTreeMap<(String, PathBuf), SkillTree>,
+    locations: BTreeMap<PathBuf, Option<SkillUpstream>>,
     skipped: BTreeMap<PathBuf, String>,
 }
 
@@ -694,6 +705,7 @@ impl<'a> SkillDiscovery<'a> {
             sources,
             files,
             skills: BTreeMap::new(),
+            locations: BTreeMap::new(),
             skipped: BTreeMap::new(),
         }
     }
@@ -807,6 +819,8 @@ impl<'a> SkillDiscovery<'a> {
                 )?;
             }
         }
+        self.locations
+            .insert(path.to_owned(), tree.skill.upstream.clone());
         Ok(())
     }
 
@@ -842,6 +856,7 @@ impl SkillTree {
                 targets: BTreeSet::new(),
                 locations: BTreeMap::new(),
                 files: BTreeMap::new(),
+                upstream: skill_origin::discover(home, &node.path),
             },
             dirs: BTreeSet::new(),
             sources: BTreeSet::new(),
@@ -932,6 +947,148 @@ mod tests {
         let path = home.join(path);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::os::unix::fs::symlink(target, path).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn adopted_skills_keep_verified_installer_sources_and_plain_copies() {
+        use crate::rulesync_personal::{adoption_plan, PersonalMaster};
+        use wenlan_types::rulesync::AdoptionSkillOutcome;
+
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path();
+        let git = |path: &str, args: &[&str]| {
+            let result = std::process::Command::new("git")
+                .arg("-C")
+                .arg(home.join(path))
+                .args([
+                    "-c",
+                    "core.hooksPath=/dev/null",
+                    "-c",
+                    "commit.gpgsign=false",
+                ])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            String::from_utf8(result.stdout).unwrap().trim().to_string()
+        };
+        put(home, ".agents/skills/locked/SKILL.md", "Locked skill\n");
+        put(home, ".agents/skills/checked-out/SKILL.md", "Git skill\n");
+        put(home, ".agents/local/handmade/SKILL.md", "Plain skill\n");
+        put(home, ".agents/.skill-lock.json", br#"{"skills":{"locked":{
+            "sourceType":"github","source":"another/project","sourceUrl":"https://github.com/another/project.git",
+            "skillPath":"library/locked/SKILL.md","skillFolderHash":"0123456789abcdef0123456789abcdef01234567"
+        }}}"#);
+        git(".agents", &["init", "-q"]);
+        git(
+            ".agents",
+            &[
+                "remote",
+                "add",
+                "origin",
+                "git@github.com:owner/harness.git",
+            ],
+        );
+        git(".agents", &["add", "--", "skills"]);
+        git(
+            ".agents",
+            &[
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.test",
+                "commit",
+                "-qm",
+                "skills",
+            ],
+        );
+        let revision = git(".agents", &["rev-parse", "HEAD"]);
+        git(".agents/local/handmade", &["init", "-q"]);
+
+        put(
+            home,
+            "install/node_modules/acpx/skills/acpx/SKILL.md",
+            "Package skill\n",
+        );
+        put(
+            home,
+            "install/node_modules/acpx/package.json",
+            br#"{"name":"acpx","version":"0.14.0"}"#,
+        );
+        put(
+            home,
+            "install/package-lock.json",
+            br#"{"packages":{"node_modules/acpx":{
+            "version":"0.14.0","resolved":"https://registry.npmjs.org/acpx/-/acpx-0.14.0.tgz"
+        }}}"#,
+        );
+        for (name, source) in [
+            ("alias", ".agents/skills/locked"),
+            ("checked-out", ".agents/skills/checked-out"),
+            ("plain", ".agents/local/handmade"),
+            ("acpx", "install/node_modules/acpx/skills/acpx"),
+        ] {
+            link(home, &format!(".codex/skills/{name}"), home.join(source));
+        }
+
+        let adoption = discover(home, &[target("codexcli", None, Some(".codex/skills"))]).unwrap();
+        let loaded: PersonalMaster =
+            serde_json::from_slice(&serde_json::to_vec(&PersonalMaster::new(&adoption)).unwrap())
+                .unwrap();
+        let sources = loaded
+            .skills
+            .into_iter()
+            .map(|skill| (skill.name, skill.upstream))
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(
+            sources["checked-out"],
+            Some(SkillUpstream::GitHub {
+                repository: "owner/harness".into(),
+                directory: "skills/checked-out".into(),
+                revision: Some(revision),
+                checkout: Some(".agents".into()),
+            })
+        );
+        assert_eq!(
+            sources["locked"],
+            Some(SkillUpstream::GitHub {
+                repository: "another/project".into(),
+                directory: "library/locked".into(),
+                revision: None,
+                checkout: None,
+            })
+        );
+        assert_eq!(
+            sources["acpx"],
+            Some(SkillUpstream::Npm {
+                package: "acpx".into(),
+                version: "0.14.0".into(),
+                directory: "skills/acpx".into(),
+            })
+        );
+        assert_eq!(sources["plain"], None);
+        let outcomes = adoption_plan(&adoption)
+            .unwrap()
+            .skills
+            .into_iter()
+            .map(|skill| (skill.path, skill.outcome))
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(
+            outcomes[".codex/skills/alias"],
+            AdoptionSkillOutcome::TrackedUpstream {
+                upstream: sources["locked"].clone().unwrap(),
+            }
+        );
+        assert_eq!(
+            outcomes[".codex/skills/plain"],
+            AdoptionSkillOutcome::PlainCopy
+        );
+        assert!(home.join(".codex/skills/alias").is_symlink());
     }
 
     #[test]

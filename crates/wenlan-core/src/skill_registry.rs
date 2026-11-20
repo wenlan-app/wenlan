@@ -25,6 +25,7 @@ use cap_std::fs::{Dir, OpenOptions};
 use futures::future::BoxFuture;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use wenlan_types::rulesync::{AdoptedSkillUpdate, SkillUpdateStatus, SkillUpstream};
 
 // The shapes every channel reads live in `wenlan-types`.
 pub use wenlan_types::skill_registry::{
@@ -157,7 +158,7 @@ fn encode(value: &str) -> String {
     out
 }
 
-fn valid_source(source: &str) -> bool {
+pub(crate) fn valid_source(source: &str) -> bool {
     let mut parts = source.split('/');
     let (Some(owner), Some(repo), None) = (parts.next(), parts.next(), parts.next()) else {
         return false;
@@ -171,6 +172,30 @@ fn valid_source(source: &str) -> bool {
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
     };
     ok(owner) && ok(repo)
+}
+
+pub(crate) fn valid_npm_name(name: &str) -> bool {
+    fn component(value: &str) -> bool {
+        !value.is_empty()
+            && !value.starts_with(['.', '_'])
+            && value.bytes().all(|byte| {
+                byte.is_ascii_lowercase()
+                    || byte.is_ascii_digit()
+                    || matches!(byte, b'-' | b'_' | b'.')
+            })
+    }
+    name.len() <= 214
+        && if let Some(scoped) = name.strip_prefix('@') {
+            scoped
+                .split_once('/')
+                .is_some_and(|(scope, name)| component(scope) && component(name))
+        } else {
+            component(name)
+        }
+}
+
+pub(crate) fn valid_npm_version(version: &str) -> bool {
+    semver::Version::parse(version).is_ok()
 }
 
 fn valid_skill_id(id: &str) -> bool {
@@ -1219,22 +1244,21 @@ pub async fn refresh_one(
     if record.source == LOCAL_SOURCE {
         return Ok(outcome("unchanged"));
     }
-    let head = head_commit(http, endpoints, &record.source).await?;
-    if head == record.commit {
-        return Ok(outcome("unchanged"));
-    }
-    let fetched = fetch_skill(
+    let Some(fetched) = latest_github_skill(
         http,
         endpoints,
         &record.source,
         &record.skill_id,
-        &head,
-        Some(&record.repo_path),
+        &record.repo_path,
+        Some(&record.commit),
     )
-    .await?;
+    .await?
+    else {
+        return Ok(outcome("unchanged"));
+    };
     if fetched.hash == record.hash {
         let mut moved = record.clone();
-        moved.commit = head;
+        moved.commit.clone_from(&fetched.commit);
         write_record(&dir, &moved)?;
         return Ok(outcome("unchanged"));
     }
@@ -1244,6 +1268,119 @@ pub async fn refresh_one(
     }
     store_skill(root, &fetched, report.verdict, record.scope.clone(), now)?;
     Ok(outcome("updated"))
+}
+
+async fn latest_github_skill(
+    http: &dyn Fetch,
+    endpoints: &Endpoints,
+    source: &str,
+    skill_id: &str,
+    directory: &str,
+    revision: Option<&str>,
+) -> Result<Option<FetchedSkill>, RegistryError> {
+    let head = head_commit(http, endpoints, source).await?;
+    if revision == Some(head.as_str()) {
+        return Ok(None);
+    }
+    fetch_skill(http, endpoints, source, skill_id, &head, Some(directory))
+        .await
+        .map(Some)
+}
+
+/// Offer releases for adopted skills through the registry's update check.
+/// The master and its tool files keep their approved bytes until the person
+/// decides what to do with the offer.
+pub async fn adopted_updates(
+    http: &dyn Fetch,
+    endpoints: &Endpoints,
+    home: &Path,
+    skills: &[crate::rulesync_adopt::AdoptedSkill],
+) -> Vec<AdoptedSkillUpdate> {
+    let mut updates = Vec::new();
+    for skill in skills {
+        let Some(upstream) = &skill.upstream else {
+            continue;
+        };
+        let result = match upstream {
+            SkillUpstream::GitHub {
+                repository,
+                directory,
+                revision,
+                ..
+            } => {
+                match latest_github_skill(
+                    http,
+                    endpoints,
+                    repository,
+                    &skill.name,
+                    directory,
+                    revision.as_deref(),
+                )
+                .await
+                {
+                    Ok(Some(fetched)) if fetched.repo_path == *directory => {
+                        let same = fetched.files.len() == skill.files.len()
+                            && fetched.files.iter().all(|file| {
+                                skill.files.get(Path::new(&file.path)) == Some(&file.bytes)
+                            });
+                        Ok((!same).then_some(fetched.commit))
+                    }
+                    Ok(Some(_)) => Err(RegistryError::NotFound),
+                    Ok(None) => Ok(None),
+                    Err(error) => crate::rulesync_adopt::checkout_update(home, upstream)
+                        .map_or(Err(error), |head| Ok(Some(head))),
+                }
+            }
+            SkillUpstream::Npm {
+                package, version, ..
+            } => newer_npm_release(http, package, version).await,
+        };
+        let status = match result {
+            Ok(Some(revision)) => SkillUpdateStatus::Available { revision },
+            Ok(None) => SkillUpdateStatus::Current,
+            Err(error) => SkillUpdateStatus::Unavailable {
+                reason: error.to_string(),
+            },
+        };
+        updates.push(AdoptedSkillUpdate {
+            name: skill.name.clone(),
+            upstream: upstream.clone(),
+            status,
+        });
+    }
+    updates
+}
+
+async fn newer_npm_release(
+    http: &dyn Fetch,
+    package: &str,
+    installed: &str,
+) -> Result<Option<String>, RegistryError> {
+    if !valid_npm_name(package) {
+        return Err(RegistryError::Refused("invalid npm package name".into()));
+    }
+    let current = semver::Version::parse(installed)
+        .map_err(|_| RegistryError::Refused("invalid installed npm version".into()))?;
+    let url = format!("https://registry.npmjs.org/{}/latest", encode(package));
+    let response = http.get(&url).await.map_err(RegistryError::Network)?;
+    if response.status != 200 {
+        return Err(RegistryError::Network(format!(
+            "npm registry answered {}",
+            response.status
+        )));
+    }
+    let invalid = || RegistryError::Network("unreadable npm release".into());
+    let release: serde_json::Value =
+        serde_json::from_slice(&response.body).map_err(|_| invalid())?;
+    if release["name"].as_str() != Some(package) {
+        return Err(invalid());
+    }
+    let latest = semver::Version::parse(release["version"].as_str().ok_or_else(invalid)?)
+        .map_err(|_| invalid())?;
+    Ok(latest
+        .cmp_precedence(&current)
+        .is_gt()
+        .then(|| latest.to_string()))
 }
 
 // ── Skills already on this computer ─────────────────────────────────────

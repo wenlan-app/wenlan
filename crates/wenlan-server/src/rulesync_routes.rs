@@ -21,7 +21,8 @@ use wenlan_core::rulesync_personal::{
 use wenlan_core::rulesync_renderer;
 use wenlan_core::rulesync_team::{self, TeamRuleLayer};
 use wenlan_types::rulesync::{
-    AdoptRequest, PullbackAction, PullbackCard, PullbackDecision, RulesSyncReport,
+    AdoptRequest, AdoptedSkillUpdate, PullbackAction, PullbackCard, PullbackDecision,
+    RulesSyncReport,
 };
 use wenlan_types::rulesync_skill::SavedSkillTool;
 
@@ -37,6 +38,7 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
         .route("/api/rules/setup/adopt", post(adopt))
         .route("/api/rules/setup/restore", post(restore))
         .route("/api/rules/setup/sync", post(sync))
+        .route("/api/rules/setup/skill-updates", post(skill_updates))
         .route("/api/rules/setup/review", post(review))
 }
 
@@ -73,6 +75,32 @@ async fn sync(
     headers: HeaderMap,
 ) -> Result<Json<RulesSyncReport>, ServerError> {
     execute(state, headers, Operation::Sync).await
+}
+
+async fn skill_updates(headers: HeaderMap) -> Result<Json<Vec<AdoptedSkillUpdate>>, ServerError> {
+    use wenlan_core::skill_registry::{self, Endpoints, ReqwestFetch};
+
+    require_local_person(&headers)?;
+    if !wenlan_core::rulesync_personal::enabled() {
+        return Err(ServerError::ValidationError(
+            "WENLAN_RULESYNC is off".into(),
+        ));
+    }
+    let (home, skills) = tokio::task::spawn_blocking(|| {
+        let setup = Setup::system()?;
+        let manifest = setup
+            .load()?
+            .filter(|manifest| manifest.adopted)
+            .context("run wenlan rules adopt first")?;
+        Ok::<_, anyhow::Error>((setup.home, manifest.master.skills))
+    })
+    .await
+    .map_err(|error| ServerError::Internal(error.to_string()))?
+    .map_err(|error| ServerError::Conflict(error.to_string()))?;
+    let http = ReqwestFetch::new().map_err(ServerError::Internal)?;
+    Ok(Json(
+        skill_registry::adopted_updates(&http, &Endpoints::default(), &home, &skills).await,
+    ))
 }
 
 async fn review(

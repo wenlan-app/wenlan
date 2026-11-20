@@ -8,6 +8,58 @@ pub struct AdoptionPlan {
     /// Binds approval to the exact files seen by the preview.
     pub token: String,
     pub files: Vec<AdoptionChange>,
+    #[serde(default)]
+    pub skills: Vec<AdoptionSkill>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdoptionSkill {
+    pub path: String,
+    #[serde(flatten)]
+    pub outcome: AdoptionSkillOutcome,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum AdoptionSkillOutcome {
+    TrackedUpstream { upstream: SkillUpstream },
+    PlainCopy,
+    Skipped { reason: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SkillUpstream {
+    GitHub {
+        repository: String,
+        /// Empty for a skill in the repository root.
+        directory: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        revision: Option<String>,
+        /// Home-relative checkout for local tracking if the remote requires authentication.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        checkout: Option<std::path::PathBuf>,
+    },
+    Npm {
+        package: String,
+        version: String,
+        directory: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdoptedSkillUpdate {
+    pub name: String,
+    pub upstream: SkillUpstream,
+    pub status: SkillUpdateStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum SkillUpdateStatus {
+    Current,
+    Available { revision: String },
+    Unavailable { reason: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

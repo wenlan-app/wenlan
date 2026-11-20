@@ -528,6 +528,22 @@ Collect tool edits for review and deliver current personal rules and skills.
 wenlan rules sync [OPTIONS]
 ```
 
+#### `wenlan rules skill-updates`
+
+Check adopted skills for upstream releases and list offers for review.
+
+```text
+wenlan rules skill-updates [OPTIONS]
+```
+
+#### `wenlan rules skill-updates`
+
+Check adopted skills for upstream releases and list offers for review.
+
+```text
+wenlan rules skill-updates [OPTIONS]
+```
+
 #### `wenlan rules settings`
 
 Preview local MCP servers, hooks and permissions and confirm before applying.

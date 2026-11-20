@@ -64,6 +64,32 @@ fn personal_rules_dry_run_reads_existing_files_without_daemon_or_data_root() {
 }
 
 #[test]
+fn personal_rules_dry_run_labels_skill_sources() {
+    let state = tempfile::tempdir().unwrap();
+    let home = state.path().join("ai-tools/home");
+    for path in [".agents/skills/locked", ".codex/skills/handmade"] {
+        let skill = home.join(path);
+        fs::create_dir_all(&skill).unwrap();
+        fs::write(skill.join("SKILL.md"), "Skill contents\n").unwrap();
+    }
+    fs::write(home.join(".agents/.skill-lock.json"), br#"{"skills":{"locked":{
+        "sourceType":"github","source":"owner/project","sourceUrl":"https://github.com/owner/project.git",
+        "skillPath":"library/locked/SKILL.md"
+    }}}"#).unwrap();
+    personal_rules_cli(state.path())
+        .args(["rules", "adopt", "--dry-run", "--format", "table"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            ".agents/skills/locked — tracked upstream from GitHub owner/project (library/locked)",
+        ))
+        .stdout(predicate::str::contains(
+            ".codex/skills/handmade — plain copy in the personal master",
+        ));
+    assert!(!state.path().join("unused-data-root").exists());
+}
+
+#[test]
 fn personal_rules_setup_refuses_the_strict_space_pin() {
     let state = tempfile::tempdir().unwrap();
     personal_rules_cli(state.path())

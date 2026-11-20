@@ -83,6 +83,86 @@ fn repo_fake(commit: &str, skill_md: &str) -> Fake {
 }
 
 #[tokio::test]
+async fn adopted_skill_updates_share_the_registry_check_without_applying() {
+    use crate::rulesync_adopt::AdoptedSkill;
+
+    let scratch = tempfile::tempdir().unwrap();
+    let make_skill = |name: &str, upstream| AdoptedSkill {
+        name: name.into(),
+        shared: true,
+        targets: Default::default(),
+        locations: Default::default(),
+        files: [(PathBuf::from("SKILL.md"), SKILL_MD.as_bytes().to_vec())].into(),
+        upstream,
+    };
+    let npm = |name: &str, version: &str| {
+        make_skill(
+            name,
+            Some(SkillUpstream::Npm {
+                package: name.into(),
+                version: version.into(),
+                directory: "skills".into(),
+            }),
+        )
+    };
+    let skills = [
+        make_skill(
+            "meeting-notes",
+            Some(SkillUpstream::GitHub {
+                repository: "o/r".into(),
+                directory: "skills/meeting-notes".into(),
+                revision: Some(SHA.into()),
+                checkout: None,
+            }),
+        ),
+        npm("acpx", "0.9.0"),
+        npm("ahead", "0.14.0"),
+        make_skill("plain", None),
+    ];
+    let fake = repo_fake(SHA2, "New upstream content")
+        .with(
+            "https://api/repos/o/r/commits/HEAD",
+            200,
+            format!(r#"{{"sha":"{SHA2}"}}"#),
+        )
+        .with(
+            "https://registry.npmjs.org/acpx/latest",
+            200,
+            br#"{"name":"acpx","version":"0.10.0"}"#,
+        )
+        .with(
+            "https://registry.npmjs.org/ahead/latest",
+            200,
+            br#"{"name":"ahead","version":"0.9.0"}"#,
+        );
+    let updates = adopted_updates(&fake, &ep(), scratch.path(), &skills).await;
+    assert_eq!(
+        updates
+            .iter()
+            .map(|update| (&*update.name, &update.status))
+            .collect::<Vec<_>>(),
+        [
+            (
+                "meeting-notes",
+                &SkillUpdateStatus::Available {
+                    revision: SHA2.into()
+                }
+            ),
+            (
+                "acpx",
+                &SkillUpdateStatus::Available {
+                    revision: "0.10.0".into()
+                }
+            ),
+            ("ahead", &SkillUpdateStatus::Current),
+        ]
+    );
+    assert_eq!(fake.seen().len(), 6);
+    assert!(std::fs::read_dir(scratch.path()).unwrap().next().is_none());
+    assert_eq!(skills[0].files[Path::new("SKILL.md")], SKILL_MD.as_bytes());
+}
+
+#[tokio::test]
 async fn search_uses_skills_sh_first() {
     let fake = Fake::default().with(
         "https://s/api/search?q=meeting%20notes&limit=30",

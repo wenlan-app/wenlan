@@ -386,6 +386,7 @@ main|post|/api/skills/rules/{id}/remove|wenlan_server::skill_grow::saved_rules::
 main|get|/api/skills/delivery|wenlan_server::skill_grow::handle_rules_delivery
 main|post|/api/rules/setup/adopt|wenlan_server::rulesync_routes::adopt
 main|post|/api/rules/setup/restore|wenlan_server::rulesync_routes::restore
+main|post|/api/rules/setup/skill-updates|wenlan_server::rulesync_routes::skill_updates
 main|post|/api/rules/setup/sync|wenlan_server::rulesync_routes::sync
 main|post|/api/rules/setup/review|wenlan_server::rulesync_routes::review
 main|post|/api/rules/setup/settings/preview|wenlan_server::rulesync_settings_routes::preview
