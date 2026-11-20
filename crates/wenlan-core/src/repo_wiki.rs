@@ -1026,7 +1026,8 @@ pub const AGENTS_BLOCK_MAX_RULES: usize = 30;
 /// The text between [`AGENTS_START`] and [`AGENTS_END`]: where the wiki is
 /// (when the repository holds one, in `folder`), then the Space's own project
 /// rules, one per line, without their source pages (the repository may be
-/// public; the page titles are the person's).
+/// public; the page titles are the person's), and one line under them that
+/// says where an AI tool finds a rule's source ([`RULES_HINT`]).
 fn agents_block(folder: Option<&str>, rules: &[String], publisher: Option<&str>) -> String {
     let mut block = format!("{AGENTS_START}\n");
     if let Some(publisher) = publisher {
@@ -1049,6 +1050,7 @@ fn agents_block(folder: Option<&str>, rules: &[String], publisher: Option<&str>)
         for rule in rules {
             block.push_str(&format!("- {rule}\n"));
         }
+        block.push_str(&format!("\n{RULES_HINT}\n"));
     }
     block.push_str(AGENTS_END);
     block
@@ -1066,6 +1068,12 @@ fn block_rules(rules: &[String]) -> Vec<String> {
 }
 
 const RULES_HEADING: &str = "## Rules for this project";
+
+/// The line under the rules: they carry no sources in the repository, and an
+/// AI tool connected to the Space can ask Wenlan for them. Not a bullet, so
+/// it is never read back as a rule.
+const RULES_HINT: &str = "For a rule's source or reason, use `read_space_rules` if Wenlan is \
+                          connected to this project's Space.";
 
 /// The line ending a file uses: CRLF when it has any, LF otherwise.
 fn line_ending(text: &str) -> &'static str {
@@ -1977,10 +1985,9 @@ fn pr_body(body: PrBody<'_>) -> String {
         slug,
         base,
     } = body;
-    let mut out = format!(
-        "Written by [Wenlan](https://wenlan.app) from the `{}` Space.",
-        binding.space
-    );
+    // The Space is not named: its name is the person's, and the repository
+    // may be public.
+    let mut out = String::from("Written by [Wenlan](https://wenlan.app).");
     if pages > 0 {
         out.push_str(&format!(
             " {pages} wiki page{} in `{}/`, each ending with the code lines it relies on. \
@@ -1991,9 +1998,9 @@ fn pr_body(body: PrBody<'_>) -> String {
     }
     if rules > 0 {
         out.push_str(&format!(
-            "{}`AGENTS.md` {} {rules} project rule{} from the person's own pages \
-             in that Space, under \"Rules for this project\". Read them before merging: \
-             they come from notes, not from the code.",
+            "{}`AGENTS.md` {} {rules} project rule{} under \"Rules for this project\", from \
+             notes approved in Wenlan. Check their wording before merging: they come from notes, \
+             not from the code.",
             if pages > 0 { "\n\n" } else { " " },
             if pages > 0 { "also carries" } else { "carries" },
             plural(rules)

@@ -642,11 +642,15 @@ and wait for evidence that people need them.
 - **UX-SKILL-7** `shipped` For a Space connected to a repository, the wiki
   pull request also puts that Space's own rules (rules only, not decisions or
   pitfalls) in Wenlan's part of the
-  repository's `AGENTS.md`, without the names of the pages they come from, and
-  says so in its description. Lines used in every Space are the person's
-  habits and never go into a repository. Nothing reaches the repository until
-  the person merges.
-  原文：「空間如果是 repo，那就直接對應上了」（2026-11-15 22:26Z）；「原本說就會寫 wiki folders 這點也要看要不要一起修改？」（2026-11-15 22:51Z）。
+  repository's `AGENTS.md`, without the names of the pages they come from.
+  One line under the rules, only when there are rules, says: "For a rule's
+  source or reason, use `read_space_rules` if Wenlan is connected to this
+  project's Space." The pull request's description says what it changes and
+  that the rules come from notes approved in Wenlan, asks the reviewer to
+  check their wording, and does not name the Space. Lines used in every
+  Space are the person's habits and never go into a repository. Nothing
+  reaches the repository until the person merges.
+  原文：「空間如果是 repo，那就直接對應上了」（2026-11-15 22:26Z）；「原本說就會寫 wiki folders 這點也要看要不要一起修改？」（2026-11-15 22:51Z）。「照 Astra 做」（2026-11-20 選擇卡：每條不附來源，整段加一行提示用 read_space_rules 查；PR 說明不寫空間名）；英文字句待 Qi-Xuan 確認。
 - **UX-SKILL-8** `shipped` The rules used in every Space (rules only, not
   decisions or pitfalls) are also kept in
   each connected AI tool's own always-read file, in one part marked as
