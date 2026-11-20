@@ -173,8 +173,8 @@ Space
 | AI（MCP） | `brief`（讀）、`handoff`（寫） | `update_brief` 從預設清單拿掉（HTTP 保留） |
 | 技能 | 不需要專門技能：人說「交接一下」「上次做到哪」，AI 直接叫上面兩個工具 | `/handoff`、`/brief` 兩個技能與 Codex `$wenlan handoff/brief` 子指令（舊名保留為隱藏別名一段時間） |
 | 終端機 | `wenlan brief`、`wenlan handoff`（含 `--file`），與 MCP 同名（兩個門同一件事） | `wenlan brief update`（併入 `handoff`） |
-| 掛勾 | 開場帶出（現在到哪 + 這個 Space 的規則）、壓縮後交接、結束記號 | — |
-| `/how-i-work` 技能 | — | 拿掉（Qi-Xuan 22:47Z「去掉 how I work...這簡直是混進來的」）。它原本讓 AI 開工時讀這個 Space 的規則（`read_space_rules`）。拿掉後，只屬於某個 Space、沒寫進工具規則檔的規則，改由開場掛勾一起帶出；MCP `read_space_rules` 保留。Claude Code、Codex、其他工具三份與 `plugin-contract.json`、`agent_skills_bundle.rs` 一併處理；規則傳遞歸側欄那條線，動工前跟它對齊 |
+| 掛勾 | 開場帶出現在到哪、壓縮後交接、結束記號 | — |
+| `/how-i-work` 技能 | — | 拿掉（Qi-Xuan 22:47Z「去掉 how I work...這簡直是混進來的」）。不另補：接了 repo 的 Space，規則經由 PR 進 repo 的 AGENTS.md（UX-SKILL-7）；所有 Space 共用的規則進各工具自己的規則檔（UX-SKILL-8）（Qi-Xuan 22:50Z「Space 的規則不是本來就會從 AGENTS.md 項目中讀取嗎？」）。沒接 repo 的 Space 自己的規則，仍由 AI 透過 MCP `read_space_rules` 去問，維持現狀。三份技能與 `plugin-contract.json`、`agent_skills_bundle.rs` 一併處理；動工前跟規則那條線對齊 |
 
 ## 7. 自動交接（v3 改寫：Qi-Xuan 20:43Z「我以為體驗是會自動交接？」）
 
@@ -203,6 +203,14 @@ Space
 - **一份為準**：同一段工作，正式交接（人叫的或 AI 被叫的）只有一份；補交接只在沒有正式交接時發生；兩者都用編號＋版本（UX-HAND-2、3），不會互蓋。
 - **背景模型只在第 2 步**：只補「停了沒交接、又沒人開工」的個人 Space 對話；不做每晚全面補寫。
 - **團隊 Space**：自動交接與補交接都照 UX-HAND-10，私人對話來的文字不進共享 Space。
+
+### 7.1 交接與壓縮摘要（Qi-Xuan 22:50Z「那交接跟 compact summary 又該怎麼互動？」）
+
+- 壓縮摘要是工具寫給「同一段對話自己」接著做的，長、什麼都有；交接是「這件事一行現況」，給下一個 AI 與其他人。**摘要是材料，交接是結果。**
+- 壓縮後，AI 依摘要更新它那件事的那一行（UX-HAND-14）。
+- Wenlan 不改工具的摘要；只保留每段對話**最新一份**摘要當細節，新的取代舊的，不累積（UX-HAND-11）。
+- 下一個 AI：先拿到每件事一行；接哪件事，就拿那件事最新的摘要當細節（UX-HAND-17）。
+- 同一段對話壓縮後：Claude Code 會以 `compact` 來源重跑開場掛勾，Wenlan 再放回「現在到哪」，AI 不因壓縮而忘了同 Space 其他事的狀況。
 
 ## 8. 連不上
 
