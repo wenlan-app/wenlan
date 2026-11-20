@@ -329,6 +329,97 @@ fn effective_slot(theme: &ThemeFile, slot: &Slot) -> Option<Rgb> {
     }
 }
 
+fn hex(Rgb(r, g, b): Rgb) -> String {
+    format!("#{r:02X}{g:02X}{b:02X}")
+}
+
+/// Whether `color` as `fg` meets every contrast pair `fg` is held to.
+fn readable_as(theme: &ThemeFile, fg: &str, color: Rgb) -> bool {
+    CONTRAST_PAIRS
+        .iter()
+        .filter(|(pair_fg, _, _)| *pair_fg == fg)
+        .all(|(_, bg, min)| {
+            slot(bg)
+                .and_then(|bg_slot| effective_slot(theme, bg_slot))
+                .is_none_or(|b| contrast_ratio(color, b) + 1e-9 >= *min)
+        })
+}
+
+/// The color closest to `start` that `fg` can take and still pass every
+/// contrast pair it is in: `start` itself, or `start` moved step by step
+/// toward white or black, whichever passes first. `None` when no step does.
+fn readable_toward(theme: &ThemeFile, fg: &str, start: Rgb) -> Option<Rgb> {
+    readable_steps(theme, fg, start).map(|(color, _)| color)
+}
+
+/// [`readable_toward`] with how many 5% steps it took (0 = `start` passes).
+fn readable_steps(theme: &ThemeFile, fg: &str, start: Rgb) -> Option<(Rgb, u32)> {
+    if readable_as(theme, fg, start) {
+        return Some((start, 0));
+    }
+    let mix = |Rgb(r, g, b): Rgb, to: u8, t: f64| {
+        let m = |c: u8| (f64::from(c) + (f64::from(to) - f64::from(c)) * t).round() as u8;
+        Rgb(m(r), m(g), m(b))
+    };
+    let lighter_first = theme.base == ThemeBase::Dark;
+    (1..=20).find_map(|step| {
+        let t = f64::from(step) / 20.0;
+        let (first, second) = if lighter_first { (255, 0) } else { (0, 255) };
+        [mix(start, first, t), mix(start, second, t)]
+            .into_iter()
+            .find(|c| readable_as(theme, fg, *c))
+            .map(|c| (c, step))
+    })
+}
+
+/// How far (in 5% steps toward white or black) a color the theme set may be
+/// moved to stay readable. A 10% shift keeps the color the tool chose; a
+/// color further off is refused with a color to try instead.
+const NUDGE_STEPS: u32 = 2;
+
+/// Text slots filled in when a theme leaves them out, in the order they
+/// depend on each other (`textOnAccent` is read on `accent`).
+const FILL_ORDER: &[&str] = &[
+    "accent",
+    "text",
+    "textSecondary",
+    "textTertiary",
+    "link",
+    "danger",
+    "textOnAccent",
+];
+
+/// The theme as Wenlan applies it. A text color the theme left out keeps
+/// the base's built-in value unless that would be unreadable on the colors
+/// the theme did set; it is then moved just far enough to pass. A color the
+/// theme set that misses its contrast bar by a little (at most
+/// [`NUDGE_STEPS`]) is moved the same way; one further off is left for the
+/// check to refuse. So "a purple background and a purple accent" passes on
+/// the first try instead of failing on a text color nobody chose.
+pub fn complete_theme(theme: &ThemeFile) -> ThemeFile {
+    let mut done = theme.clone();
+    if theme.colors.values().any(|v| parse_hex6(v).is_none())
+        || theme.colors.keys().any(|k| slot(k).is_none())
+    {
+        return done;
+    }
+    for fg in FILL_ORDER {
+        let Some(fg_slot) = slot(fg) else { continue };
+        let Some(current) = effective_slot(&done, fg_slot) else {
+            continue;
+        };
+        let set_by_theme = theme.colors.contains_key(*fg);
+        match readable_steps(&done, fg, current) {
+            Some((_, 0)) | None => {}
+            Some((color, steps)) if !set_by_theme || steps <= NUDGE_STEPS => {
+                done.colors.insert((*fg).to_string(), hex(color));
+            }
+            Some(_) => {}
+        }
+    }
+    done
+}
+
 /// Every check a theme must pass before the app may apply it. `dir` is the
 /// theme's own folder, used to check the images it names.
 pub fn check_theme(theme: &ThemeFile, dir: &Path) -> Vec<ThemeProblem> {
@@ -394,9 +485,12 @@ pub fn check_theme(theme: &ThemeFile, dir: &Path) -> Vec<ThemeProblem> {
             };
             let ratio = contrast_ratio(a, b);
             if ratio + 1e-9 < *min {
+                let hint = readable_toward(theme, fg, a)
+                    .map(|c| format!(" Try {} for {fg}.", hex(c)))
+                    .unwrap_or_default();
                 problems.push(problem(
                     format!("colors.{fg}"),
-                    format!("{fg} on {bg} has contrast {ratio:.1}:1; it needs at least {min}:1 to stay readable."),
+                    format!("{fg} on {bg} has contrast {ratio:.1}:1; it needs at least {min}:1 to stay readable.{hint}"),
                 ));
             }
         }
@@ -597,7 +691,7 @@ pub fn read_theme_file(dir: &Path) -> Result<(ThemeFile, Vec<u8>), ThemeProblem>
             format!("theme.json is not a valid theme: {e}"),
         )
     })?;
-    Ok((theme, bytes))
+    Ok((complete_theme(&theme), bytes))
 }
 
 /// Check one theme folder by id under `root`.
@@ -840,6 +934,7 @@ pub fn check_unsaved(
     if !valid_theme_id(id) {
         return (vec![invalid_id_problem()], BTreeMap::new());
     }
+    let theme = &complete_theme(theme);
     let problems = check_theme(theme, &root.join(id));
     let tokens = if problems.is_empty() {
         theme_tokens(theme)
@@ -859,6 +954,7 @@ pub fn save_theme(
     if !valid_theme_id(id) {
         return Err(vec![invalid_id_problem()]);
     }
+    let theme = &complete_theme(theme);
     let dir = root.join(id);
     let problems = check_theme(theme, &dir);
     if !problems.is_empty() {

@@ -1589,6 +1589,7 @@ const PERSON_ASKED_RETRY_HINT: &str = "If the person explicitly asked you in thi
 #[serde(rename_all = "lowercase")]
 pub enum ThemeAction {
     List,
+    Save,
     Check,
     Apply,
     Reset,
@@ -1597,15 +1598,72 @@ pub enum ThemeAction {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ThemeParams {
     #[schemars(
-        description = "list: themes, their check results and the folder to write themes in. check: run every check on one theme. apply: use a theme in the app (refused if it fails a check). reset: back to Wenlan's built-in themes."
+        description = "list: the themes there are, which one is in use, and an example theme. save: check `theme` and save it as `id` (nothing is saved if a check fails; every problem comes back with a fix). apply: use theme `id` in the app; pass `theme` too to save and apply in one call. check: run every check on saved theme `id`. reset: back to Wenlan's built-in look."
     )]
     pub action: ThemeAction,
     #[schemars(
-        description = "Theme id, which is its folder name (lowercase letters, digits, dashes), for check and apply."
+        description = "Theme id: lowercase letters, digits and dashes, such as `purple` or `night-bunny`. Needed for save, check and apply."
     )]
     #[serde(default)]
     pub id: Option<String>,
+    #[schemars(
+        description = "For save and apply: the theme as a JSON object. {\"name\": \"Purple\", \"base\": \"dark\" or \"light\", \"colors\": {slot: \"#RRGGBB\"}} is enough; every color left out keeps the base's value and text you leave out is kept readable for you. Color slots: background, surface, card, sidebar, text, textSecondary, textTertiary, border, accent, textOnAccent, accentWarm, link, danger, warning, success, graphProject, graphTool, graphOrg, graphPerson, graphConcept, graphMemory, graphPage, graphEdge. Optional: \"fonts\": {\"heading\", \"body\", \"mono\"} from list's allowed_fonts; \"radius\": 0 to 2.5 (1 is the default)."
+    )]
+    #[serde(default)]
+    pub theme: Option<serde_json::Value>,
 }
+
+/// The theme an AI tool passes to `theme` save/apply, made into a theme
+/// file. The file format's own bookkeeping (`schema`) and the author are
+/// filled in, so the tool only describes the look. Fields the format does
+/// not have are left out and named, rather than failing the whole theme.
+fn theme_file_from_tool(
+    value: serde_json::Value,
+    author: &str,
+) -> Result<(wenlan_types::theme::ThemeFile, Vec<String>), String> {
+    const FIELDS: &[&str] = &[
+        "schema", "name", "base", "author", "colors", "fonts", "radius", "images", "advanced",
+    ];
+    let serde_json::Value::Object(mut object) = value else {
+        return Err("Pass `theme` as a JSON object, such as {\"name\": \"Purple\", \"base\": \"dark\", \"colors\": {\"background\": \"#1E1530\", \"accent\": \"#B794F4\"}}.".to_string());
+    };
+    let ignored: Vec<String> = object
+        .keys()
+        .filter(|key| !FIELDS.contains(&key.as_str()))
+        .cloned()
+        .collect();
+    for key in &ignored {
+        object.remove(key);
+    }
+    object
+        .entry("schema")
+        .or_insert(serde_json::json!(wenlan_types::theme::THEME_SCHEMA_VERSION));
+    object.entry("base").or_insert(serde_json::json!("dark"));
+    if !author.trim().is_empty() {
+        object
+            .entry("author")
+            .or_insert(serde_json::json!(author.trim()));
+    }
+    let theme = serde_json::from_value(serde_json::Value::Object(object))
+        .map_err(|e| format!("This theme could not be read: {e}. Nothing was saved."))?;
+    Ok((theme, ignored))
+}
+
+/// How a theme names the AI tool that made it (display only).
+fn theme_author(agent: &str) -> String {
+    let tool = agent.split('@').next().unwrap_or_default().trim();
+    match tool {
+        "claude-code" => "Claude Code".to_string(),
+        "claude-ai" | "claude" => "Claude".to_string(),
+        "codex" | "codex-mcp-client" => "Codex".to_string(),
+        "cursor" => "Cursor".to_string(),
+        "" | "unknown" | "mcp" => String::new(),
+        other => other.to_string(),
+    }
+}
+
+/// An example a tool can copy for `theme` save; it passes every check.
+const THEME_EXAMPLE: &str = r##"theme(action="save", id="purple", theme={"name": "Purple", "base": "dark", "colors": {"background": "#1E1530", "surface": "#271C3D", "sidebar": "#181026", "accent": "#B794F4", "link": "#C9A9F7"}})"##;
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct DeletePageParams {
@@ -5528,11 +5586,89 @@ impl WenlanMcpServer {
                 )])
             })
         };
+        // Save `theme` as `id` when one was passed: checked first, so a
+        // refusal lists every problem and nothing is written.
+        let mut saved_note = String::new();
+        if let (ThemeAction::Save | ThemeAction::Apply, Some(value)) =
+            (&params.action, params.theme.clone())
+        {
+            let id = match need_id(&params.id) {
+                Ok(id) => id,
+                Err(result) => return Ok(result),
+            };
+            let author = theme_author(&self.agent_identity.current());
+            let (theme, ignored) = match theme_file_from_tool(value, &author) {
+                Ok(read) => read,
+                Err(message) => {
+                    return Ok(CallToolResult::error(vec![ContentBlock::text(message)]))
+                }
+            };
+            let check: ThemeCheckResponse = try_call!(
+                self.client.post(
+                    "/api/themes/check",
+                    &CheckThemeRequest {
+                        id: id.clone(),
+                        theme: Some(theme.clone())
+                    }
+                ),
+                "theme check"
+            );
+            if !check.ok {
+                let body = serde_json::to_string_pretty(&check.problems).unwrap_or_default();
+                return Ok(CallToolResult::error(vec![ContentBlock::text(format!(
+                    "Theme {id} was not saved: fix these and call save again.\n{body}"
+                ))]));
+            }
+            let saved: wenlan_types::theme::ThemeDetail = try_call!(
+                self.client.put(&format!("/api/themes/{id}"), &theme),
+                "theme save"
+            );
+            saved_note = format!("Saved theme {id}.");
+            let adjusted: Vec<String> = theme
+                .colors
+                .iter()
+                .filter_map(|(slot, asked)| {
+                    let kept = saved.theme.colors.get(slot)?;
+                    (!kept.eq_ignore_ascii_case(asked)).then(|| format!("{slot} {asked} -> {kept}"))
+                })
+                .collect();
+            if !adjusted.is_empty() {
+                saved_note.push_str(&format!(
+                    " Moved slightly so text stays readable: {}.",
+                    adjusted.join(", ")
+                ));
+            }
+            if !ignored.is_empty() {
+                saved_note.push_str(&format!(
+                    " Left out fields a theme does not have: {}.",
+                    ignored.join(", ")
+                ));
+            }
+            if matches!(params.action, ThemeAction::Save) {
+                let body = serde_json::to_string_pretty(&saved).unwrap_or_default();
+                return Ok(CallToolResult::success(vec![ContentBlock::text(format!(
+                    "{saved_note} Call theme(action=\"apply\", id=\"{id}\") to use it.\n{body}"
+                ))]));
+            }
+        }
         let text = match params.action {
             ThemeAction::List => {
                 let list: ThemeListResponse =
                     try_call!(self.client.get("/api/themes"), "theme list");
-                serde_json::to_string_pretty(&list)
+                let intro = if list.themes.is_empty() {
+                    "No custom themes yet; Wenlan's built-in look is in use."
+                } else {
+                    "Custom themes:"
+                };
+                return Ok(CallToolResult::success(vec![ContentBlock::text(format!(
+                    "{intro}\n{}\n\nTo make one, save it and apply it, for example:\n{THEME_EXAMPLE}\nthen theme(action=\"apply\", id=\"purple\"). Or pass `theme` to apply to do both at once.",
+                    serde_json::to_string_pretty(&list).unwrap_or_default()
+                ))]));
+            }
+            ThemeAction::Save => {
+                return Ok(CallToolResult::error(vec![ContentBlock::text(format!(
+                    "Pass the theme to save as `theme`, for example:\n{THEME_EXAMPLE}"
+                ))]));
             }
             ThemeAction::Check => {
                 let id = match need_id(&params.id) {
@@ -5574,7 +5710,12 @@ impl WenlanMcpServer {
                     ),
                     "theme apply"
                 );
-                serde_json::to_string_pretty(&active)
+                return Ok(CallToolResult::success(vec![ContentBlock::text(format!(
+                    "{saved_note}{}Theme {} is in use; the app switches within a few seconds.\n{}",
+                    if saved_note.is_empty() { "" } else { " " },
+                    active.id.as_deref().unwrap_or_default(),
+                    serde_json::to_string_pretty(&active).unwrap_or_default()
+                ))]));
             }
             ThemeAction::Reset => {
                 let active: ActiveThemeResponse = try_call!(
@@ -7304,7 +7445,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "Change how the Wenlan app looks: colors, fonts, corners, a background image and a corner sticker. list gives the themes folder; write <id>/theme.json there (see the wenlan-theme skill), run check, fix every problem, then apply. reset restores the default. Local only.",
+        description = "Change how the Wenlan app looks: colors, fonts and corners (\"make Wenlan purple\"). Call apply with an id and a `theme` object to save and use it in one step; list shows the themes there are and an example. Text you leave out is kept readable; a refusal lists every problem with a fix. reset goes back to the built-in look. Local only.",
         annotations(
             title = "Theme",
             read_only_hint = false,
@@ -16464,3 +16605,7 @@ mod skills_tool_tests;
 #[cfg(test)]
 #[path = "rules_tool_tests.rs"]
 mod rules_tool_tests;
+
+#[cfg(test)]
+#[path = "theme_tool_tests.rs"]
+mod theme_tool_tests;

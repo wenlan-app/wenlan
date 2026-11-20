@@ -322,3 +322,63 @@ fn saving_refuses_a_failing_theme_and_keeps_the_old_file() {
     );
     assert!(save_theme(root, "../x", &detail.theme).is_err());
 }
+
+#[test]
+fn a_few_colors_pass_first_try_because_left_out_text_stays_readable() {
+    // What an AI tool writes for "make Wenlan purple": a background and an
+    // accent, nothing else. The built-in dark text on accent (#11131A) is too
+    // dark for a mid purple, so on its own this would fail its check.
+    let raw = parse(
+        r##"{"schema":1,"name":"Purple","base":"dark",
+            "colors":{"background":"#2A1B3D","accent":"#7C3AED"}}"##,
+    );
+    let tmp = tempfile::tempdir().unwrap();
+    let fill = complete_theme(&raw);
+    assert_eq!(check_theme(&fill, tmp.path()), vec![], "{fill:?}");
+    // The background is kept; the accent, just short of 3:1 on it, is
+    // lightened a little rather than refused.
+    assert_eq!(fill.colors["background"], "#2A1B3D");
+    let accent = parse_hex6(&fill.colors["accent"]).unwrap();
+    assert_ne!(fill.colors["accent"], "#7C3AED");
+    assert!(contrast_ratio(accent, parse_hex6("#2A1B3D").unwrap()) >= 3.0);
+    let on_accent = parse_hex6(&fill.colors["textOnAccent"]).unwrap();
+    assert!(contrast_ratio(on_accent, accent) >= 4.5);
+
+    // Saving and the unsaved check give the same verdict.
+    let saved = save_theme(tmp.path(), "purple", &raw).unwrap();
+    assert_eq!(saved.problems, vec![]);
+    assert_eq!(check_theme_id(tmp.path(), "purple"), vec![]);
+    let (problems, tokens) = check_unsaved(tmp.path(), "purple", &raw);
+    assert_eq!(problems, vec![]);
+    assert!(tokens.contains_key("--mem-text-on-accent"));
+
+    // A hand-written file with the same few colors passes too.
+    write_theme(
+        tmp.path(),
+        "by-hand",
+        r##"{"schema":1,"name":"By hand","base":"dark","colors":{"background":"#2A1B3D","accent":"#7C3AED"}}"##,
+    );
+    assert_eq!(check_theme_id(tmp.path(), "by-hand"), vec![]);
+}
+
+#[test]
+fn a_color_the_theme_set_is_refused_with_a_readable_color_to_try() {
+    let theme = parse(
+        r##"{"schema":1,"name":"Dim","base":"dark","colors":{"background":"#2A1B3D","text":"#5A4A6A"}}"##,
+    );
+    let problems = check_theme(&complete_theme(&theme), Path::new("."));
+    let text = problems
+        .iter()
+        .find(|p| p.field == "colors.text")
+        .expect("text is refused");
+    let tried = text.message.split("Try ").nth(1).expect("a color to try");
+    let tried = &tried[..7];
+    let mut fixed = theme.clone();
+    fixed.colors.insert("text".into(), tried.to_string());
+    assert!(
+        check_theme(&complete_theme(&fixed), Path::new("."))
+            .iter()
+            .all(|p| p.field != "colors.text"),
+        "the suggested {tried} passes"
+    );
+}

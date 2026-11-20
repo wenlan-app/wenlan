@@ -4,16 +4,33 @@ You design the theme; Wenlan checks it and applies it. Be creative with the
 user's idea, but every value must pass Wenlan's checks, and nothing is applied
 until it does.
 
-## 1. Find the folder
+## 1. Colors, fonts and corners: one call
 
-Call `theme(action="list")`. It returns `themes_dir`, the themes already
-there, and which one is in use. To change an existing theme, read its
-`theme.json` first and edit it in place.
+Pick an id: lowercase letters, digits and dashes, such as `purple` or
+`night-bunny`. Then save and apply in one call:
 
-## 2. Write the theme
+```
+theme(action="apply", id="purple", theme={"name": "Purple", "base": "dark",
+  "colors": {"background": "#1E1530", "surface": "#271C3D", "sidebar": "#181026",
+             "accent": "#B794F4", "link": "#C9A9F7"}})
+```
 
-Pick an id: lowercase letters, digits and dashes, such as `night-bunny`.
-Write `<themes_dir>/<id>/theme.json`:
+Set only the colors the idea needs. Wenlan fills in the file's bookkeeping
+(`schema`, and `author` as this AI tool), keeps every text color you leave out
+readable on your colors, and moves a color that is only just too faint a
+little, saying which. When it still refuses, each problem comes back with a
+color to try: fix those and call again. `theme(action="list")` shows the
+themes there are and which one is in use; `theme(action="save", ...)` saves
+without applying.
+
+## 2. With a background image or a sticker
+
+Images are files, so this one goes through the themes folder. Call
+`theme(action="list")` for `themes_dir`, put the images and
+`<themes_dir>/<id>/theme.json` there, then run
+`theme(action="check", id="<id>")` until it passes, and
+`theme(action="apply", id="<id>")`. To change an existing theme, read its
+`theme.json` first and edit it in place. A full file:
 
 ```json
 {
@@ -54,7 +71,8 @@ Rules the checks enforce:
   `graphConcept`, `graphMemory`, `graphPage`, `graphEdge`.
 - Text must stay readable: `text` and `textSecondary` need 4.5:1 contrast on
   the backgrounds, `textTertiary` 3:1, and `textOnAccent` 4.5:1 on `accent`.
-  Pick a darker background or a lighter text before giving up on an idea.
+  Text you leave out is kept readable for you; for a color you set, pick a
+  darker background or a lighter text before giving up on an idea.
 - Fonts come from a fixed list (check reports it): Fraunces, Instrument Sans,
   JetBrains Mono, Georgia, Times New Roman, Palatino, Helvetica Neue, Arial,
   Verdana, Menlo, Courier New, PingFang TC/SC, Noto Sans/Serif CJK TC, and
@@ -73,13 +91,10 @@ example a small star pattern drawn with a script). Do not copy a brand's or a
 character's artwork; when the user names a character, make an original look
 in that spirit and say so.
 
-## 3. Check, fix, apply
+## 3. Tell the user
 
-1. `theme(action="check", id="<id>")`. Fix every problem it lists in
-   `theme.json` and check again. Never apply a theme that fails.
-2. `theme(action="apply", id="<id>")`. The app switches within a few seconds.
-3. Tell the user in one or two sentences what you made, and that they can go
-   back with `$wenlan theme reset` or with "Back to default" in the app's
-   Appearance settings.
+Say in one or two sentences what you made, and that they can go back with
+`$wenlan theme reset` or with "Back to default" in the app's Appearance
+settings.
 
-`theme(action="reset")` goes back to the built-in themes.
+`theme(action="reset")` goes back to the built-in look.
