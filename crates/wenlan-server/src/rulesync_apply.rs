@@ -8,6 +8,7 @@ use cap_std::fs::{DirBuilderExt as _, OpenOptionsExt as _, PermissionsExt as _};
 use serde::{Deserialize, Serialize};
 use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
+use wenlan_core::rulesync_adopt::MAX_ADOPTED_SKILL_BYTES;
 use wenlan_core::rulesync_personal::{is_harness_path, HarnessGuard};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -238,6 +239,9 @@ impl FileRoot {
     ) -> io::Result<ApplyOutcome> {
         let (relative_parent, name) = entry_path(path)?;
         self.check_tool_path(path)?;
+        if let Snapshot::File { bytes, .. } = desired {
+            check_file_size(bytes.len() as u64)?;
+        }
         if !allow_symlink
             && (matches!(seen, Snapshot::Symlink { .. })
                 || matches!(desired, Snapshot::Symlink { .. }))
@@ -409,12 +413,13 @@ fn read_leaf(parent: &Dir, name: &Path, allow_symlink: bool) -> io::Result<Snaps
             "unsupported file type",
         ));
     }
+    check_file_size(metadata.len())?;
     let mut options = OpenOptions::new();
     options.read(true).follow(FollowSymlinks::No);
     #[cfg(unix)]
     // A FIFO substituted after the metadata check must not block the writer.
     options.custom_flags(rustix::fs::OFlags::NONBLOCK.bits() as i32);
-    let mut file = parent.open_with(name, &options)?;
+    let file = parent.open_with(name, &options)?;
     let metadata = file.metadata()?;
     if !metadata.is_file() {
         return Err(io::Error::new(
@@ -422,12 +427,28 @@ fn read_leaf(parent: &Dir, name: &Path, allow_symlink: bool) -> io::Result<Snaps
             "file type changed",
         ));
     }
+    check_file_size(metadata.len())?;
     let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)?;
+    file.take(MAX_ADOPTED_SKILL_BYTES + 1)
+        .read_to_end(&mut bytes)?;
+    check_file_size(bytes.len() as u64)?;
     Ok(Snapshot::File {
         bytes,
         mode: FileMode::of(&metadata),
     })
+}
+
+fn check_file_size(len: u64) -> io::Result<()> {
+    if len > MAX_ADOPTED_SKILL_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::FileTooLarge,
+            format!(
+                "file exceeds the {} MiB rulesync limit. Move the large file aside before trying again",
+                MAX_ADOPTED_SKILL_BYTES / (1024 * 1024)
+            ),
+        ));
+    }
+    Ok(())
 }
 
 fn matches_leaf(parent: &Dir, name: &Path, expected: &Snapshot) -> io::Result<bool> {

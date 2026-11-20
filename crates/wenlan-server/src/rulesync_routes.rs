@@ -204,6 +204,9 @@ fn recorded_delivery(
         Ok(Snapshot::Directory) => (None, Some("not_a_file")),
         Ok(Snapshot::Absent) => (None, Some("managed_file_missing")),
         Ok(Snapshot::File { .. }) => (None, Some("local_edit_pending")),
+        Err(error) if error.kind() == std::io::ErrorKind::FileTooLarge => {
+            (None, Some("file_too_large"))
+        }
         Err(_) => (None, Some("not_readable")),
     }
 }
@@ -3438,6 +3441,22 @@ mod tests {
         assert_eq!(fs::read(path).unwrap(), old);
         assert_eq!(f.text(CLAUDE), original);
         assert!(!f.setup.data.join("personal-blobs").exists());
+    }
+
+    #[test]
+    fn run9_status_rejects_an_oversized_managed_file_before_reading() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        fs::OpenOptions::new()
+            .write(true)
+            .open(f.setup.home.join(CODEX))
+            .unwrap()
+            .set_len(32 * 1024 * 1024 + 1)
+            .unwrap();
+        assert_eq!(
+            f.setup.delivery_status()["codex"].blocked,
+            Some("file_too_large")
+        );
     }
 
     #[test]
