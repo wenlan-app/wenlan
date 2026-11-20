@@ -703,9 +703,46 @@ async fn hosted_revision_history_keeps_published_bodies_and_omits_host_prompts()
 }
 
 #[tokio::test]
+async fn hosted_revision_birth_omits_the_hosts_local_tool_name() {
+    const HOST_TOOL: &str = "host-local-tool-fixture";
+    const SHARED_TEXT: &str = "The shared design checklist.";
+    let (app, db, _scratch) = fixture().await;
+    let page = wenlan_core::post_write::create_page(
+        &db,
+        wenlan_types::requests::CreateConceptRequest {
+            title: "Design checklist".into(),
+            content: SHARED_TEXT.into(),
+            summary: None,
+            entity_id: None,
+            space: Some(SPACE.into()).into(),
+            source_memory_ids: Vec::new(),
+            creation_kind: Some("authored".into()),
+            workspace: Some(SPACE.into()),
+        },
+        HOST_TOOL,
+        None,
+    )
+    .await
+    .unwrap();
+    let path = format!("/api/pages/{}/revisions?include=text", page.id);
+    let (status, local) = request(&app, Method::GET, &path, Value::Null, false).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(local["history"][0]["agent"], HOST_TOOL);
+
+    let (status, member) = request(&app, Method::GET, &path, Value::Null, true).await;
+    assert_eq!(status, StatusCode::OK);
+    let birth = &member["history"][0];
+    assert_eq!(birth["version"], 1);
+    assert_eq!(birth["kind"], "ai_edit");
+    assert_eq!(birth["text"], SHARED_TEXT);
+    assert!(birth.get("agent").is_none(), "{birth}");
+}
+
+#[tokio::test]
 async fn hosted_revision_history_excludes_versions_before_a_move_into_the_space() {
     const UNPUBLISHED: &str = "Private wording before the Space move.";
     const PUBLISHED: &str = "First body shared with the team.";
+    const PRIVATE_EDITOR: &str = "private-editor-fixture";
     let (app, db, _scratch) = fixture().await;
     db.create_space("Personal", None, false).await.unwrap();
     let draft = db
@@ -716,6 +753,10 @@ async fn hosted_revision_history_excludes_versions_before_a_move_into_the_space(
         .publish_page_draft(&draft.id, draft.version)
         .await
         .unwrap();
+    db.update_page_content(&draft.id, UNPUBLISHED, &[], "agent_refresh")
+        .await
+        .unwrap();
+    let private = db.get_page(&draft.id).await.unwrap().unwrap();
     db.update_page_content(&draft.id, PUBLISHED, &[], "manual_edit")
         .await
         .unwrap();
@@ -728,11 +769,22 @@ async fn hosted_revision_history_excludes_versions_before_a_move_into_the_space(
     )
     .await
     .unwrap();
+    let history = json!([{
+        "version": private.version, "at": 1, "edited_by": "agent_refresh",
+        "agent": PRIVATE_EDITOR,
+    }]);
+    db.set_page_citations_with_changelog(&draft.id, None, &history.to_string())
+        .await
+        .unwrap();
     let path = format!("/api/pages/{}/revisions?include=text", draft.id);
+    let (status, local) = request(&app, Method::GET, &path, Value::Null, false).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(local["entries"][0]["agent"], PRIVATE_EDITOR);
     let (status, hosted) = request(&app, Method::GET, &path, Value::Null, true).await;
     assert_eq!(status, StatusCode::OK);
     let wire = hosted.to_string();
     assert!(!wire.contains(UNPUBLISHED));
+    assert_eq!(hosted["entries"], json!([]), "{wire}");
     assert!(
         wire.contains(PUBLISHED),
         "the version at the move was published"

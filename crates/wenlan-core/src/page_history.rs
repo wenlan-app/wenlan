@@ -156,11 +156,11 @@ pub async fn basis_page_ids(db: &MemoryDB, page_id: &str) -> Result<Vec<String>,
 }
 
 /// The merged history, newest first, with requested texts attached to the
-/// changelog too. Hosted revisions use only saved bodies from the given Space.
+/// changelog too. Hosted revisions keep only versions witnessed in the given Space.
 pub async fn build_page_history(
     db: &MemoryDB,
     page: &Page,
-    entries: &mut [PageChangelogEntry],
+    entries: &mut Vec<PageChangelogEntry>,
     visible_bases: &HashSet<String>,
     include_text: bool,
     shared_scope: Option<&ReadScope>,
@@ -173,8 +173,11 @@ pub async fn build_page_history(
         }
         None => db.list_page_history(page_id, HISTORY_SCAN).await?,
     };
+    let texts = texts_by_version(&own);
+    if shared_scope.is_some() {
+        entries.retain(|entry| texts.contains_key(&entry.version));
+    }
     if include_text {
-        let texts = texts_by_version(&own);
         for entry in entries.iter_mut() {
             entry.text = texts.get(&entry.version).map(|text| (*text).to_string());
         }
@@ -218,7 +221,8 @@ pub async fn build_page_history(
             crate::authorship::version_author(&birth.edited_by, "")
                 == crate::authorship::VersionAuthor::Person
         };
-        let agent = if birth.edited_by == "agent_create" {
+        // The local actor field is private attribution for the first version.
+        let agent = if shared_scope.is_none() && birth.edited_by == "agent_create" {
             db.page_birth_agent(page_id).await?
         } else {
             None
@@ -268,7 +272,10 @@ pub async fn build_page_history(
     // Archives and restores, with who did them when that was recorded. A
     // restore already has its changelog entry; an archive has only its
     // history row.
-    let lifecycle = db.page_lifecycle_rows(page_id).await?;
+    let mut lifecycle = db.page_lifecycle_rows(page_id).await?;
+    if shared_scope.is_some() {
+        lifecycle.retain(|(version, _, _, _)| texts.contains_key(version));
+    }
     for item in &mut items {
         if item.edited_by.as_deref() == Some("restore") {
             item.kind = PageHistoryKind::Restored;
