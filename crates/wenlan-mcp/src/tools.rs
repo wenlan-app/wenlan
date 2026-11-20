@@ -1891,11 +1891,17 @@ pub enum SaveSkillScopeParam {
     Tool { tool: SaveSkillToolParam },
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SaveSkillToolParam {
     ClaudeCode,
     Codex,
+    GeminiCli,
+    Antigravity,
+    CopilotCli,
+    Cursor,
+    OpenCode,
+    MuseCode,
 }
 
 /// What `search_skills` answers: the passing skills, and how many with
@@ -3371,6 +3377,12 @@ impl WenlanMcpServer {
                 tool: match tool {
                     SaveSkillToolParam::ClaudeCode => SavedSkillTool::ClaudeCode,
                     SaveSkillToolParam::Codex => SavedSkillTool::Codex,
+                    SaveSkillToolParam::GeminiCli => SavedSkillTool::GeminiCli,
+                    SaveSkillToolParam::Antigravity => SavedSkillTool::Antigravity,
+                    SaveSkillToolParam::CopilotCli => SavedSkillTool::CopilotCli,
+                    SaveSkillToolParam::Cursor => SavedSkillTool::Cursor,
+                    SaveSkillToolParam::OpenCode => SavedSkillTool::OpenCode,
+                    SaveSkillToolParam::MuseCode => SavedSkillTool::MuseCode,
                 },
             },
         };
@@ -8514,6 +8526,36 @@ mod tests {
         assert!(daily.query_only_refusal("lint").is_none());
         assert!(daily.web_write_refusal("lint").is_none());
         assert!(daily.local_only_refusal("lint").is_none());
+    }
+
+    #[test]
+    fn save_skill_tool_parameter_schema_matches_all_supported_targets() {
+        let expected = [
+            ("claude_code", SaveSkillToolParam::ClaudeCode),
+            ("codex", SaveSkillToolParam::Codex),
+            ("gemini_cli", SaveSkillToolParam::GeminiCli),
+            ("antigravity", SaveSkillToolParam::Antigravity),
+            ("copilot_cli", SaveSkillToolParam::CopilotCli),
+            ("cursor", SaveSkillToolParam::Cursor),
+            ("open_code", SaveSkillToolParam::OpenCode),
+            ("muse_code", SaveSkillToolParam::MuseCode),
+        ];
+        let schema = schemars::schema_for!(SaveSkillToolParam);
+        let schema_json = serde_json::to_value(schema).unwrap();
+        let schema_variants = schema_json["enum"].as_array().unwrap();
+        assert_eq!(
+            schema_variants,
+            &expected
+                .iter()
+                .map(|(value, _)| serde_json::Value::String((*value).into()))
+                .collect::<Vec<_>>()
+        );
+
+        for (target, expected_param) in expected {
+            let parameter: SaveSkillToolParam = serde_json::from_value(serde_json::json!(target))
+                .unwrap_or_else(|error| panic!("{target} should deserialize: {error}"));
+            assert_eq!(parameter, expected_param);
+        }
     }
 
     #[test]
