@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Signing in to the team server's web with an OpenID Connect provider
-//! (Google today; the code is written for any OIDC issuer, so another one
-//! is configuration).
+//! Signing in to the team server's web with Google (OpenID Connect; the code
+//! is written for any OIDC issuer, so another one is configuration) or with
+//! GitHub (plain OAuth 2.0, which has no id token).
 //!
 //! Sign-in is on only when the team's address (`WENLAN_TEAM_URL`, else the
-//! saved one) is `https://` and a provider has a client id and secret. Then
+//! saved one) is `https://` and at least one provider has a client id and
+//! secret. Either provider alone is enough. Then
 //! the callback address is built from that address alone, never from a
 //! request's `Host`. Otherwise every route here answers 404.
 //!
@@ -15,11 +16,21 @@
 //! completes in that browser. A transaction lives ten minutes and is used
 //! once: the first callback that presents it consumes it, right or wrong.
 //!
-//! The callback checks the id token's signature, issuer, audience, expiry
-//! and nonce (the `openidconnect` crate), and that the provider calls the
-//! email verified. Who someone is stays `(issuer, subject)`; the email is
+//! The Google callback checks the id token's signature, issuer, audience,
+//! expiry and nonce (the `openidconnect` crate), and that the provider calls
+//! the email verified. Who someone is stays `(issuer, subject)`; the email is
 //! shown and never looked up. A callback never reads `code`, `state` or a
 //! cookie into a log line, and a failure names no more than a fixed label.
+//!
+//! GitHub is the authorization code flow with PKCE (S256, never downgraded)
+//! and the client secret. It has no id token and no nonce, so the binding is
+//! the transaction, its `state` and the PKCE verifier. The callback trades
+//! the code for an access token, calls `GET /user` and `GET /user/emails`
+//! with it, and drops it; the token is never stored or logged. The account is
+//! `("https://github.com", numeric id)`: the id never changes, the `login`
+//! can, so the login is never used. The verified emails are every address on
+//! `/user/emails` marked verified; GitHub verifies an address by mailing it,
+//! so they count as [`team::EmailTrust::Trusted`].
 //!
 //! What a sign-in may do:
 //!
@@ -34,14 +45,19 @@
 //!   URL) is bound to the transaction by its hash. The callback hands the
 //!   account to core's `redeem_invite_hash`, which does every check and the
 //!   change in one lock: the member gets the account and a new session
-//!   (Google accounts with a Gmail address or a company domain, `hd`, are
+//!   (Google accounts with a Gmail address or a company domain, `hd`, and any
+//!   GitHub account with the invited address among its verified emails, are
 //!   trusted to own the invited email), or waits for the owner's approval
 //!   when the email matches but the provider does not vouch for it. A wrong
 //!   email names the invited one masked (`a***@example.com`).
 //! - **Reauth**: succeeds only when the account is already one of this
-//!   member's, and the provider says the member authenticated just now
-//!   (`max_age=0` and the id token's `auth_time`). It sets the new
-//!   session's freshness for the routes that make long-lived credentials.
+//!   member's. With Google the provider must also say the member
+//!   authenticated just now (`max_age=0` and the id token's `auth_time`).
+//!   GitHub has no such parameter, so a GitHub reauth only guarantees that a
+//!   fresh authorization round trip came back with an account already
+//!   linked to this member, not that the person typed a password again.
+//!   Either way it sets the new session's freshness for the routes that make
+//!   long-lived credentials.
 //!
 //! Every success makes a new session token and ends the one the browser
 //! presented. Every answer on these routes is `Cache-Control: no-store`,
@@ -86,6 +102,18 @@ pub const GOOGLE_CLIENT_SECRET_ENV: &str = "WENLAN_TEAM_GOOGLE_CLIENT_SECRET";
 /// The file (in the data root, next to `team.json`) that can hold the same.
 pub const AUTH_FILE: &str = "team-auth.json";
 const GOOGLE_ISSUER: &str = "https://accounts.google.com";
+/// The GitHub client id, from the environment.
+pub const GITHUB_CLIENT_ID_ENV: &str = "WENLAN_TEAM_GITHUB_CLIENT_ID";
+/// The GitHub client secret, from the environment.
+pub const GITHUB_CLIENT_SECRET_ENV: &str = "WENLAN_TEAM_GITHUB_CLIENT_SECRET";
+/// The issuer string a GitHub account is kept under.
+pub const GITHUB_ISSUER: &str = "https://github.com";
+/// GitHub refuses API calls without a `User-Agent`.
+const GITHUB_USER_AGENT: &str = "wenlan-team-server";
+/// What the GitHub sign-in asks to read: the profile and the email list.
+const GITHUB_SCOPE: &str = "read:user user:email";
+/// The most a GitHub answer may weigh before it is refused.
+const GITHUB_BODY_CAP: usize = 1 << 20;
 
 /// The login cookie's name (`__Host-`: Secure, `Path=/`, no `Domain`).
 const LOGIN_COOKIE: &str = "__Host-wenlan-login";
@@ -109,14 +137,44 @@ const REFILL_PER_SEC: f64 = 0.5;
 
 // ===== Provider configuration =====
 
-/// One OpenID Connect provider this server signs people in with.
+/// The three GitHub addresses a sign-in talks to. Production uses
+/// [`GithubUrls::default`]; a test points them at a local fake.
+#[derive(Clone, Debug)]
+pub(crate) struct GithubUrls {
+    pub(crate) authorize: String,
+    pub(crate) token: String,
+    /// The API base, without a trailing slash (`/user` is added).
+    pub(crate) api: String,
+}
+
+impl Default for GithubUrls {
+    fn default() -> Self {
+        Self {
+            authorize: "https://github.com/login/oauth/authorize".into(),
+            token: "https://github.com/login/oauth/access_token".into(),
+            api: "https://api.github.com".into(),
+        }
+    }
+}
+
+/// How a provider proves who someone is.
+#[derive(Clone)]
+pub(crate) enum Kind {
+    /// OpenID Connect: discovery, an id token, a nonce.
+    Oidc,
+    /// GitHub's OAuth 2.0: no id token; `/user` and `/user/emails`.
+    GitHub(GithubUrls),
+}
+
+/// One provider this server signs people in with.
 #[derive(Clone)]
 pub(crate) struct Provider {
-    /// The name in the routes (`google`).
+    /// The name in the routes (`google`, `github`).
     pub(crate) name: String,
     pub(crate) issuer: String,
     pub(crate) client_id: String,
     client_secret: String,
+    pub(crate) kind: Kind,
 }
 
 impl std::fmt::Debug for Provider {
@@ -137,6 +195,20 @@ impl Provider {
             issuer: issuer.into(),
             client_id: client_id.into(),
             client_secret: client_secret.into(),
+            kind: Kind::Oidc,
+        }
+    }
+
+    /// A GitHub provider at GitHub's own addresses.
+    pub(crate) fn github(client_id: &str, client_secret: &str) -> Self {
+        Self::github_with_urls(client_id, client_secret, GithubUrls::default())
+    }
+
+    /// A GitHub provider at the given addresses (a test's fake server).
+    pub(crate) fn github_with_urls(client_id: &str, client_secret: &str, urls: GithubUrls) -> Self {
+        Self {
+            kind: Kind::GitHub(urls),
+            ..Self::new("github", GITHUB_ISSUER, client_id, client_secret)
         }
     }
 }
@@ -152,6 +224,7 @@ struct FileProvider {
 #[derive(Deserialize)]
 struct AuthFile {
     google: Option<FileProvider>,
+    github: Option<FileProvider>,
 }
 
 fn read_auth_file(path: &Path) -> Option<AuthFile> {
@@ -184,39 +257,70 @@ fn read_auth_file(path: &Path) -> Option<AuthFile> {
     }
 }
 
-/// The providers with a complete configuration: the environment first, then
-/// `team-auth.json` at `file`, for each of the client id and secret.
-pub(crate) fn load_providers(file: &Path, env: impl Fn(&str) -> Option<String>) -> Vec<Provider> {
-    let from_file = read_auth_file(file).and_then(|f| f.google);
+/// A client id and secret, the environment first, then the file, each on
+/// its own. `None` when either is missing (a half configuration is warned
+/// about, never used).
+fn credentials(
+    label: &str,
+    id_env: &str,
+    secret_env: &str,
+    file: Option<&FileProvider>,
+    env: &impl Fn(&str) -> Option<String>,
+) -> Option<(String, String)> {
     let pick = |env_name: &str, from_file: Option<&String>| {
         env(env_name)
             .or_else(|| from_file.map(|v| v.trim().to_string()))
             .filter(|v| !v.is_empty())
     };
-    let id = pick(
-        GOOGLE_CLIENT_ID_ENV,
-        from_file.as_ref().and_then(|g| g.client_id.as_ref()),
-    );
-    let secret = pick(
-        GOOGLE_CLIENT_SECRET_ENV,
-        from_file.as_ref().and_then(|g| g.client_secret.as_ref()),
-    );
-    let issuer = from_file
-        .as_ref()
-        .and_then(|g| g.issuer.as_deref())
-        .map(str::trim)
-        .filter(|i| i.starts_with("https://"))
-        .unwrap_or(GOOGLE_ISSUER);
+    let id = pick(id_env, file.and_then(|f| f.client_id.as_ref()));
+    let secret = pick(secret_env, file.and_then(|f| f.client_secret.as_ref()));
     match (id, secret) {
-        (Some(id), Some(secret)) => vec![Provider::new("google", issuer, &id, &secret)],
-        (None, None) => Vec::new(),
+        (Some(id), Some(secret)) => Some((id, secret)),
+        (None, None) => None,
         _ => {
             tracing::warn!(
-                "[team] Google sign-in needs both {GOOGLE_CLIENT_ID_ENV} and {GOOGLE_CLIENT_SECRET_ENV} (or both in {AUTH_FILE}); one is missing."
+                "[team] {label} sign-in needs both {id_env} and {secret_env} (or both in {AUTH_FILE}); one is missing."
             );
-            Vec::new()
+            None
         }
     }
+}
+
+/// The providers with a complete configuration: the environment first, then
+/// `team-auth.json` at `file`, for each of the client id and secret.
+pub(crate) fn load_providers(file: &Path, env: impl Fn(&str) -> Option<String>) -> Vec<Provider> {
+    let parsed = read_auth_file(file);
+    let (google, github) = match parsed {
+        Some(f) => (f.google, f.github),
+        None => (None, None),
+    };
+    let mut providers = Vec::new();
+    if let Some((id, secret)) = credentials(
+        "Google",
+        GOOGLE_CLIENT_ID_ENV,
+        GOOGLE_CLIENT_SECRET_ENV,
+        google.as_ref(),
+        &env,
+    ) {
+        let issuer = google
+            .as_ref()
+            .and_then(|g| g.issuer.as_deref())
+            .map(str::trim)
+            .filter(|i| i.starts_with("https://"))
+            .unwrap_or(GOOGLE_ISSUER);
+        providers.push(Provider::new("google", issuer, &id, &secret));
+    }
+    // GitHub's addresses are fixed; a file's `issuer` is not read for it.
+    if let Some((id, secret)) = credentials(
+        "GitHub",
+        GITHUB_CLIENT_ID_ENV,
+        GITHUB_CLIENT_SECRET_ENV,
+        github.as_ref(),
+        &env,
+    ) {
+        providers.push(Provider::github(&id, &secret));
+    }
+    providers
 }
 
 // ===== State =====
@@ -474,12 +578,18 @@ fn limiter_key(ip: IpAddr) -> IpAddr {
     }
 }
 
+/// Where the provider sends the browser back: built from the configured
+/// address alone, never from a request's `Host`.
+fn callback_url(origin: &str, provider: &Provider) -> String {
+    format!("{origin}/auth/callback/{}", provider.name)
+}
+
 fn client_for(
     meta: &CoreProviderMetadata,
     provider: &Provider,
     origin: &str,
 ) -> Result<OidcClient, Failure> {
-    let redirect = RedirectUrl::new(format!("{origin}/auth/callback/{}", provider.name))
+    let redirect = RedirectUrl::new(callback_url(origin, provider))
         .map_err(|_| Failure::Unavailable("bad callback address"))?;
     Ok(CoreClient::from_provider_metadata(
         meta.clone(),
@@ -493,7 +603,13 @@ fn client_for(
 struct Account {
     issuer: String,
     subject: String,
+    /// The address shown with the account (Google's, or GitHub's primary
+    /// verified one).
     email: Option<String>,
+    /// Every address the provider vouches for as this account's: Google's
+    /// one, GitHub's every verified one.
+    verified_emails: Vec<String>,
+    /// Only Google says when the person authenticated.
     auth_time: Option<DateTime<Utc>>,
     /// The id token carries a `hd` (hosted domain) claim: a company account.
     hosted_domain: bool,
@@ -695,11 +811,24 @@ async fn site(state: &TeamState) -> Option<String> {
         .filter(|origin| origin.starts_with("https://"))
 }
 
+/// The names of the providers a page may offer: none when sign-in is off.
+pub(super) async fn offered(state: &TeamState) -> Vec<String> {
+    if site(state).await.is_none() {
+        return Vec::new();
+    }
+    state
+        .auth
+        .providers
+        .iter()
+        .map(|p| p.name.clone())
+        .collect()
+}
+
 /// Logs once, at start, whether sign-in is on and, if not, why.
 pub(super) async fn announce(state: &TeamState) {
     if state.auth.providers.is_empty() {
         tracing::info!(
-            "[team] sign-in is off: no provider is configured ({GOOGLE_CLIENT_ID_ENV} and {GOOGLE_CLIENT_SECRET_ENV}, or {AUTH_FILE})."
+            "[team] sign-in is off: no provider is configured ({GOOGLE_CLIENT_ID_ENV} and {GOOGLE_CLIENT_SECRET_ENV}, {GITHUB_CLIENT_ID_ENV} and {GITHUB_CLIENT_SECRET_ENV}, or {AUTH_FILE})."
         );
     } else if site(state).await.is_none() {
         tracing::info!(
@@ -734,29 +863,60 @@ async fn begin(
 ) -> Result<(String, String), Failure> {
     let origin = site(state).await.ok_or(Failure::Off)?;
     let provider = state.auth.provider(provider).ok_or(Failure::Off)?;
-    let meta = state.auth.metadata(provider, false).await?;
-    let client = client_for(&meta, provider, &origin)?;
-    let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
-    let mut request = client
-        .authorize_url(
-            CoreAuthenticationFlow::AuthorizationCode,
-            CsrfToken::new_random,
-            Nonce::new_random,
-        )
-        .add_scope(Scope::new("email".into()))
-        .set_pkce_challenge(challenge);
-    if matches!(purpose, Purpose::Reauth { .. }) {
-        // The provider must authenticate the person again now; the
-        // callback checks `auth_time` against it.
-        request = request.set_max_age(Duration::ZERO);
-    }
-    let (url, csrf, nonce) = request.url();
+    let (url, csrf_state, nonce, verifier) = match &provider.kind {
+        Kind::Oidc => {
+            let meta = state.auth.metadata(provider, false).await?;
+            let client = client_for(&meta, provider, &origin)?;
+            let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
+            let mut request = client
+                .authorize_url(
+                    CoreAuthenticationFlow::AuthorizationCode,
+                    CsrfToken::new_random,
+                    Nonce::new_random,
+                )
+                .add_scope(Scope::new("email".into()))
+                .set_pkce_challenge(challenge);
+            if matches!(purpose, Purpose::Reauth { .. }) {
+                // The provider must authenticate the person again now; the
+                // callback checks `auth_time` against it.
+                request = request.set_max_age(Duration::ZERO);
+            }
+            let (url, csrf, nonce) = request.url();
+            (
+                url.to_string(),
+                csrf.secret().clone(),
+                nonce.secret().clone(),
+                verifier.secret().clone(),
+            )
+        }
+        Kind::GitHub(urls) => {
+            // GitHub has no `max_age` and no nonce: a reauth is the same
+            // round trip as any other, and the binding is the transaction.
+            let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
+            let csrf = CsrfToken::new_random();
+            let mut url = url::Url::parse(&urls.authorize)
+                .map_err(|_| Failure::Unavailable("bad authorize address"))?;
+            url.query_pairs_mut()
+                .append_pair("client_id", &provider.client_id)
+                .append_pair("redirect_uri", &callback_url(&origin, provider))
+                .append_pair("scope", GITHUB_SCOPE)
+                .append_pair("state", csrf.secret())
+                .append_pair("code_challenge", challenge.as_str())
+                .append_pair("code_challenge_method", "S256");
+            (
+                url.to_string(),
+                csrf.secret().clone(),
+                String::new(),
+                verifier.secret().clone(),
+            )
+        }
+    };
     let replacing = team_session::cookie_value(headers, LOGIN_COOKIE);
     let id = state.auth.put(
         Transaction {
-            state: csrf.secret().clone(),
-            nonce: nonce.secret().clone(),
-            pkce_verifier: verifier.secret().clone(),
+            state: csrf_state,
+            nonce,
+            pkce_verifier: verifier,
             provider: provider.name.clone(),
             purpose,
             created_at: Instant::now(),
@@ -764,7 +924,7 @@ async fn begin(
         },
         replacing.as_deref(),
     )?;
-    Ok((url.to_string(), login_cookie(&id)))
+    Ok((url, login_cookie(&id)))
 }
 
 /// `GET /auth/start/{provider}?purpose=signin`: sends the browser to the
@@ -976,6 +1136,7 @@ async fn finish(
         issuer,
         subject,
         email,
+        verified_emails,
         auth_time,
         hosted_domain,
     } = verified_account(state, provider, &origin, &tx, code).await?;
@@ -1009,24 +1170,24 @@ async fn finish(
                 .id
         }
         Purpose::Invite { token_hash } => {
-            let email = email.ok_or(Failure::Refused("no email"))?;
-            let trust = if provider.name == "google" {
-                google_email_trust(&email, hosted_domain)
-            } else {
-                team::EmailTrust::Untrusted
+            let trust = match (&provider.kind, email.as_deref()) {
+                (Kind::GitHub(_), _) => team::EmailTrust::Trusted,
+                (Kind::Oidc, Some(email)) => google_email_trust(email, hosted_domain),
+                (Kind::Oidc, None) => return Err(Failure::Refused("no email")),
             };
             let identity = Identity {
                 issuer: issuer.clone(),
                 subject: subject.clone(),
-                email: Some(email.clone()),
+                email,
                 linked_at: String::new(),
             };
             let path = state.team_path.clone();
             let hash = token_hash.clone();
-            let outcome =
-                blocking(move || team::redeem_invite_hash(&path, &hash, identity, &[email], trust))
-                    .await
-                    .map_err(|_| Failure::Unavailable("the invite cannot be used"))?;
+            let outcome = blocking(move || {
+                team::redeem_invite_hash(&path, &hash, identity, &verified_emails, trust)
+            })
+            .await
+            .map_err(|_| Failure::Unavailable("the invite cannot be used"))?;
             match outcome {
                 team::InviteOutcome::Linked(member) => member.id,
                 team::InviteOutcome::PendingApproval(_) => {
@@ -1063,11 +1224,15 @@ async fn finish(
             if !theirs {
                 return Err(Failure::Refused("not an account of this member"));
             }
-            let at = auth_time.ok_or(Failure::Refused("no auth_time"))?;
-            let now = Utc::now();
-            let window = chrono::Duration::from_std(REAUTH_WINDOW).unwrap_or_default();
-            if at > now + CLOCK_SKEW || now - at > window || at < tx.created_wall - CLOCK_SKEW {
-                return Err(Failure::Refused("not a fresh authentication"));
+            // Only an OIDC provider can say when the person authenticated;
+            // GitHub's reauth is the round trip and the linked account.
+            if matches!(provider.kind, Kind::Oidc) {
+                let at = auth_time.ok_or(Failure::Refused("no auth_time"))?;
+                let now = Utc::now();
+                let window = chrono::Duration::from_std(REAUTH_WINDOW).unwrap_or_default();
+                if at > now + CLOCK_SKEW || now - at > window || at < tx.created_wall - CLOCK_SKEW {
+                    return Err(Failure::Refused("not a fresh authentication"));
+                }
             }
             member.id
         }
@@ -1101,6 +1266,9 @@ async fn verified_account(
     code: &str,
 ) -> Result<Account, Failure> {
     let http = state.auth.http()?;
+    if let Kind::GitHub(urls) = &provider.kind {
+        return github_account(http, urls, provider, origin, tx, code).await;
+    }
     let meta = state.auth.metadata(provider, false).await?;
     match exchange(http, &meta, provider, origin, tx, code).await {
         Err(Failure::Refused(reason)) if reason == "id token not accepted" => {
@@ -1144,10 +1312,130 @@ async fn exchange(
     Ok(Account {
         issuer: claims.issuer().as_str().to_string(),
         subject: claims.subject().as_str().to_string(),
+        verified_emails: email.iter().cloned().collect(),
         email,
         auth_time: claims.auth_time(),
         // The signature was checked above, so the payload is the provider's.
         hosted_domain: has_hosted_domain(&id_token.to_string()),
+    })
+}
+
+// ===== GitHub =====
+
+/// Reads a GitHub answer as JSON: a success status, a bounded size, and
+/// nothing of it logged.
+async fn github_json(
+    response: openidconnect::reqwest::Response,
+    what: &'static str,
+) -> Result<serde_json::Value, Failure> {
+    if !response.status().is_success() {
+        return Err(Failure::Refused(what));
+    }
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|_| Failure::Unavailable("GitHub could not be read"))?;
+    if bytes.len() > GITHUB_BODY_CAP {
+        return Err(Failure::Refused(what));
+    }
+    serde_json::from_slice(&bytes).map_err(|_| Failure::Refused(what))
+}
+
+/// The account GitHub proved: trades the code (with the PKCE verifier and
+/// the client secret) for an access token, reads `/user` and `/user/emails`
+/// with it, and drops it. Nothing here logs the token or a response body.
+async fn github_account(
+    http: &openidconnect::reqwest::Client,
+    urls: &GithubUrls,
+    provider: &Provider,
+    origin: &str,
+    tx: &Transaction,
+    code: &str,
+) -> Result<Account, Failure> {
+    let form = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("client_id", &provider.client_id)
+        .append_pair("client_secret", &provider.client_secret)
+        .append_pair("code", code)
+        .append_pair("redirect_uri", &callback_url(origin, provider))
+        .append_pair("code_verifier", &tx.pkce_verifier)
+        .finish();
+    let response = http
+        .post(&urls.token)
+        .header(header::ACCEPT.as_str(), "application/json")
+        .header(header::USER_AGENT.as_str(), GITHUB_USER_AGENT)
+        .header(
+            header::CONTENT_TYPE.as_str(),
+            "application/x-www-form-urlencoded",
+        )
+        .body(form)
+        .send()
+        .await
+        .map_err(|_| Failure::Unavailable("GitHub could not be reached"))?;
+    let answer = github_json(response, "code exchange failed").await?;
+    // GitHub answers a bad code with 200 and an `error` field.
+    let access_token = answer
+        .get("access_token")
+        .and_then(|v| v.as_str())
+        .filter(|t| !t.is_empty())
+        .ok_or(Failure::Refused("code exchange failed"))?;
+    let bearer = answer
+        .get("token_type")
+        .and_then(|v| v.as_str())
+        .is_some_and(|t| t.eq_ignore_ascii_case("bearer"));
+    if !bearer {
+        return Err(Failure::Refused("unexpected token type"));
+    }
+
+    let get = |path: &str| {
+        http.get(format!("{}{path}", urls.api.trim_end_matches('/')))
+            .bearer_auth(access_token)
+            .header(header::ACCEPT.as_str(), "application/vnd.github+json")
+            .header(header::USER_AGENT.as_str(), GITHUB_USER_AGENT)
+    };
+    let user = get("/user")
+        .send()
+        .await
+        .map_err(|_| Failure::Unavailable("GitHub could not be reached"))?;
+    let user = github_json(user, "GitHub profile refused").await?;
+    // The numeric id is the subject; the login can be renamed.
+    let id = user
+        .get("id")
+        .and_then(|v| v.as_u64())
+        .filter(|id| *id > 0)
+        .ok_or(Failure::Refused("no numeric id"))?;
+
+    let emails = get("/user/emails")
+        .send()
+        .await
+        .map_err(|_| Failure::Unavailable("GitHub could not be reached"))?;
+    let emails = github_json(emails, "GitHub emails refused").await?;
+    let list = emails
+        .as_array()
+        .ok_or(Failure::Refused("GitHub emails not a list"))?;
+    let mut verified = Vec::new();
+    let mut primary = None;
+    for entry in list {
+        let address = entry
+            .get("email")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|e| !e.is_empty());
+        let is_verified = entry.get("verified").and_then(|v| v.as_bool()) == Some(true);
+        if let (Some(address), true) = (address, is_verified) {
+            if entry.get("primary").and_then(|v| v.as_bool()) == Some(true) && primary.is_none() {
+                primary = Some(address.to_string());
+            }
+            verified.push(address.to_string());
+        }
+    }
+    let email = primary.or_else(|| verified.first().cloned());
+    Ok(Account {
+        issuer: GITHUB_ISSUER.to_string(),
+        subject: id.to_string(),
+        email,
+        verified_emails: verified,
+        auth_time: None,
+        hosted_domain: false,
     })
 }
 

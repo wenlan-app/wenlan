@@ -910,7 +910,8 @@ pub const INVITE_DAYS: i64 = 7;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EmailTrust {
     /// The provider vouches the person owns the mailbox now (a Gmail
-    /// address, or an account of a company domain).
+    /// address, an account of a company domain, or a GitHub verified
+    /// email).
     Trusted,
     /// The provider calls the email verified but that does not show the
     /// person owns it now: a matching email waits for the owner's approval.
@@ -1086,8 +1087,10 @@ pub fn invite_usable(path: &Path, token_hash: &str) -> Result<bool, WenlanError>
 }
 
 /// Uses an invite token for the signed-in account `identity`.
-/// `verified_emails` are the addresses the provider vouches for as the
-/// account's; `trust` says how far to believe them (see [`EmailTrust`]).
+/// `verified_emails` are all the addresses the provider vouches for as the
+/// account's (one for Google, every verified one for GitHub); the invite
+/// matches when any one of them is the invited address. `trust` says how far
+/// to believe them (see [`EmailTrust`]).
 /// See [`redeem_invite_hash`].
 pub fn redeem_invite(
     path: &Path,
