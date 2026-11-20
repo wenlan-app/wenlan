@@ -251,7 +251,7 @@ impl Setup {
         let Ok(Some(manifest)) = self.load() else {
             return tools;
         };
-        for (path, delivery) in &manifest.delivered {
+        for (path, delivery) in manifest.active_deliveries() {
             let Kind::Rule { target, .. } = &delivery.kind else {
                 continue;
             };
@@ -409,6 +409,7 @@ struct Pending<Content = Vec<u8>> {
 
 enum BatchMode {
     Adopt,
+    Extend,
     Continue,
     Settings,
 }
@@ -477,6 +478,9 @@ struct Manifest<Content = Vec<u8>> {
     #[serde(default)]
     recovery_issues: BTreeMap<PathBuf, String>,
     adopted: bool,
+    /// Journaled destinations of an addition that has not enrolled yet.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    extension_paths: BTreeSet<PathBuf>,
     #[serde(default)]
     settings_only: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -494,6 +498,12 @@ struct Manifest<Content = Vec<u8>> {
 }
 
 impl Manifest {
+    fn active_deliveries(&self) -> impl Iterator<Item = (&PathBuf, &Delivery)> {
+        self.delivered
+            .iter()
+            .filter(|(path, _)| !self.extension_paths.contains(*path))
+    }
+
     fn new(master: PersonalMaster, backup: BTreeMap<PathBuf, Snapshot>) -> Self {
         Self {
             master,
@@ -503,6 +513,7 @@ impl Manifest {
             stages: BTreeMap::new(),
             recovery_issues: BTreeMap::new(),
             adopted: false,
+            extension_paths: BTreeSet::new(),
             settings_only: false,
             settings_batch: None,
             registry_skipped: BTreeMap::new(),
@@ -626,7 +637,7 @@ impl Setup {
                 "The previous setup is incomplete. Run `wenlan rules restore` before adopting again."
             );
             ensure!(
-                manifest.pending.is_empty(),
+                manifest.pending.is_empty() && manifest.extension_paths.is_empty(),
                 "A setup write is pending. Run `wenlan rules sync` before adopting another tool."
             );
         }
@@ -789,35 +800,38 @@ impl Setup {
         operations.sort_by_key(|op| {
             std::cmp::Reverse(links.get(&op.path).map_or(0, |link| link.symlink_hops()))
         });
-        let mut manifest = match self.adoptable_manifest()? {
-            Some(mut manifest) => {
-                self.recover(root, &mut manifest)?;
-                for (path, snapshot) in backup {
-                    ensure!(
-                        !manifest.backup.contains_key(&path),
-                        "{} already belongs to the local setup backup",
-                        path.display()
-                    );
-                    manifest.backup.insert(path, snapshot);
-                }
-                if manifest.settings_only {
-                    manifest.master = master;
-                } else {
-                    extend_personal_master(&mut manifest.master, master);
-                }
-                // An interrupted extension keeps the combined backup and
-                // journal, just like the initial adoption.
-                manifest.adopted = false;
-                manifest.settings_only = false;
-                manifest
+        let (mut manifest, extension) = if let Some(mut manifest) = self.adoptable_manifest()? {
+            self.recover(root, &mut manifest)?;
+            for (path, snapshot) in backup {
+                ensure!(
+                    !manifest.backup.contains_key(&path),
+                    "{} already belongs to the local setup backup",
+                    path.display()
+                );
+                manifest.backup.insert(path, snapshot);
             }
-            None => Manifest::new(master, backup),
+            if manifest.settings_only {
+                manifest.master = master;
+                (manifest, None)
+            } else {
+                (manifest, Some(master))
+            }
+        } else {
+            (Manifest::new(master, backup), None)
         };
-        let skipped_skills = !adoption.skipped.is_empty();
-        manifest
-            .unmanaged_skills
-            .extend(adoption.skipped.into_keys());
-        manifest.worktree_writes.extend(adoption.worktree_writes);
+        let extending = extension.is_some();
+        let mut skipped = adoption.skipped.into_keys().collect::<BTreeSet<_>>();
+        let skipped_skills = !skipped.is_empty();
+        let mut worktree_writes = adoption.worktree_writes;
+        let mode = if extending {
+            BatchMode::Extend
+        } else {
+            manifest.adopted = false;
+            manifest.settings_only = false;
+            manifest.unmanaged_skills.append(&mut skipped);
+            manifest.worktree_writes.append(&mut worktree_writes);
+            BatchMode::Adopt
+        };
         let mut result = if adoption.added_tools.is_empty() {
             report("Adopted the local tool setup")
         } else {
@@ -826,14 +840,36 @@ impl Setup {
                 adoption.added_tools.join(", ")
             ))
         };
-        for (path, status) in self.apply_adoption_batch(root, &mut manifest, operations, &links)? {
+        let outcomes = self
+            .run_batch(root, &mut manifest, operations, mode, Some(&links))
+            .with_context(|| {
+                if extending {
+                    "The tool addition stopped. Run `wenlan rules sync` to recover the addition"
+                } else {
+                    "Adoption stopped. Run `wenlan rules restore` to recover the setup"
+                }
+            })?;
+        for (path, status) in outcomes {
             if status != ApplyOutcome::Applied {
+                if extending {
+                    bail!(
+                        "{} changed during the tool addition. Run rules sync to recover the addition",
+                        path.display()
+                    );
+                }
                 bail!(
                     "{} changed during adoption. Run rules restore to roll back completed files",
                     path.display()
                 );
             }
             result.written.push(path.display().to_string());
+        }
+        if let Some(master) = extension {
+            extend_personal_master(&mut manifest.master, master);
+            manifest.unmanaged_skills.append(&mut skipped);
+            manifest.worktree_writes.append(&mut worktree_writes);
+            manifest.extension_paths.clear();
+            self.save(&manifest)?;
         }
         if skipped_skills {
             result
@@ -844,7 +880,32 @@ impl Setup {
         Ok(result)
     }
 
-    fn recover(&self, root: &FileRoot, manifest: &mut Manifest) -> Result<()> {
+    fn recover(&self, root: &FileRoot, manifest: &mut Manifest) -> Result<Option<RulesSyncReport>> {
+        self.recover_pending(root, manifest)?;
+        if manifest.extension_paths.is_empty() {
+            return Ok(None);
+        }
+        let mut result =
+            report("Rolled back the interrupted tool addition. Earlier tools are still managed");
+        self.restore_deliveries(root, manifest, &mut result, true)?;
+        let pending: BTreeSet<_> = manifest.pending.iter().map(|op| &op.path).collect();
+        manifest.extension_paths.retain(|path| {
+            if pending.contains(path) || manifest.delivered.contains_key(path) {
+                true
+            } else {
+                manifest.backup.remove(path);
+                false
+            }
+        });
+        if !manifest.extension_paths.is_empty() {
+            result.message =
+                "Some files from the interrupted addition still need attention. Earlier tools are still managed".into();
+        }
+        self.save(manifest)?;
+        Ok(Some(result))
+    }
+
+    fn recover_pending(&self, root: &FileRoot, manifest: &mut Manifest) -> Result<()> {
         if manifest.pending.is_empty() {
             return Ok(());
         }
@@ -940,16 +1001,6 @@ impl Setup {
         self.run_batch(root, manifest, operations, mode, None)
     }
 
-    fn apply_adoption_batch(
-        &self,
-        root: &FileRoot,
-        manifest: &mut Manifest,
-        operations: Vec<Pending>,
-        links: &BTreeMap<PathBuf, wenlan_core::rulesync_adopt::AdoptionLink>,
-    ) -> Result<Vec<(PathBuf, ApplyOutcome)>> {
-        self.run_batch(root, manifest, operations, BatchMode::Adopt, Some(links))
-    }
-
     fn run_batch(
         &self,
         root: &FileRoot,
@@ -959,6 +1010,7 @@ impl Setup {
         links: Option<&BTreeMap<PathBuf, wenlan_core::rulesync_adopt::AdoptionLink>>,
     ) -> Result<Vec<(PathBuf, ApplyOutcome)>> {
         let adopting = matches!(mode, BatchMode::Adopt);
+        let extending = matches!(mode, BatchMode::Extend);
         let stop_on_conflict = !matches!(mode, BatchMode::Continue);
         if operations.is_empty() {
             if adopting {
@@ -968,7 +1020,7 @@ impl Setup {
             return Ok(Vec::new());
         }
         check_delivery_paths(&self.home, operations.iter().map(|op| op.path.as_path()))?;
-        let operations = journal_missing_parents(root, manifest, operations)?;
+        let operations = journal_missing_parents(root, manifest, operations, extending)?;
         let mut outcomes = Vec::with_capacity(operations.len());
         let mut ready = Vec::with_capacity(operations.len());
         for op in operations {
@@ -1001,6 +1053,9 @@ impl Setup {
                     )
                 }),
         );
+        if extending {
+            manifest.extension_paths.extend(batch_paths.iter().cloned());
+        }
         let first = manifest.pending.len();
         manifest.pending.append(&mut ready);
         self.save(manifest)?;
@@ -1061,7 +1116,9 @@ impl Setup {
         let _lock = self.lock()?;
         let root = FileRoot::open_home(&self.home)?;
         let mut manifest = self.load()?.context("no local setup backup")?;
-        self.recover(&root, &mut manifest)?;
+        if let Some(result) = self.recover(&root, &mut manifest)? {
+            return Ok(result);
+        }
         manifest.adopted = false;
         manifest.settings_batch = None;
         if !manifest.settings_only {
@@ -1073,13 +1130,37 @@ impl Setup {
             );
         }
         let mut result = report("Restored the managed files from the local setup backup");
+        self.restore_deliveries(&root, &mut manifest, &mut result, false)?;
+        if manifest.delivered.is_empty() && manifest.pending.is_empty() {
+            self.retire_backup()?;
+        } else {
+            result.message =
+                "Some paths could not be restored. The backup is still available".into();
+        }
+        Ok(result)
+    }
+
+    fn restore_deliveries(
+        &self,
+        root: &FileRoot,
+        manifest: &mut Manifest,
+        result: &mut RulesSyncReport,
+        extension_only: bool,
+    ) -> Result<()> {
+        let selected = |path: &Path| !extension_only || manifest.extension_paths.contains(path);
         result.blocked.extend(
             manifest
                 .recovery_issues
                 .iter()
+                .filter(|(path, _)| selected(path))
                 .map(|(path, reason)| format!("{}: {reason}", path.display())),
         );
-        let mut owned: Vec<_> = manifest.delivered.keys().cloned().collect();
+        let mut owned: Vec<_> = manifest
+            .delivered
+            .keys()
+            .filter(|path| selected(path))
+            .cloned()
+            .collect();
         // Children go before their parent that may become a symlink again.
         owned.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
         let mut operations = Vec::new();
@@ -1101,6 +1182,10 @@ impl Setup {
                 .clone();
             let delivered = &manifest.delivered[&path];
             let seen = match root.read(&path, true) {
+                Ok(current) if extension_only && current == original => {
+                    manifest.delivered.remove(&path);
+                    continue;
+                }
                 Ok(current) if current == delivered.delivered => current,
                 _ => {
                     result
@@ -1117,13 +1202,13 @@ impl Setup {
                 allow_link: true,
             });
         }
-        if operations.is_empty() && (!manifest.delivered.is_empty() || !manifest.pending.is_empty())
+        if !extension_only
+            && operations.is_empty()
+            && (!manifest.delivered.is_empty() || !manifest.pending.is_empty())
         {
-            self.save(&manifest)?;
+            self.save(manifest)?;
         }
-        for (path, status) in
-            self.apply_batch(&root, &mut manifest, operations, BatchMode::Continue)?
-        {
+        for (path, status) in self.apply_batch(root, manifest, operations, BatchMode::Continue)? {
             if status == ApplyOutcome::Applied {
                 result.written.push(path.display().to_string());
             } else {
@@ -1132,13 +1217,7 @@ impl Setup {
                     .push(format!("{} changed during restore", path.display()));
             }
         }
-        if manifest.delivered.is_empty() && manifest.pending.is_empty() {
-            self.retire_backup()?;
-        } else {
-            result.message =
-                "Some paths could not be restored. The backup is still available".into();
-        }
-        Ok(result)
+        Ok(())
     }
 
     fn sync_batch(
@@ -1171,8 +1250,16 @@ impl Setup {
         let _lock = self.lock()?;
         let root = FileRoot::open_home(&self.home)?;
         let mut manifest = self.load()?.context("run wenlan rules adopt first")?;
-        self.recover(&root, &mut manifest)?;
-        self.sync_member(&root, &mut manifest, generated)
+        let recovered = self.recover(&root, &mut manifest)?;
+        let mut result = self.sync_member(&root, &mut manifest, generated)?;
+        if let Some(recovery) = recovered {
+            result.message = format!("{}.\n{}", recovery.message, result.message);
+            result.written.extend(recovery.written);
+            result.blocked.extend(recovery.blocked);
+            result.blocked.sort_unstable();
+            result.blocked.dedup();
+        }
+        Ok(result)
     }
 
     fn sync_member(
@@ -1221,8 +1308,7 @@ impl Setup {
             .collect::<Result<_>>()?;
         let keys: BTreeSet<_> = accessible.keys().cloned().collect();
         let paths: Vec<_> = manifest
-            .delivered
-            .iter()
+            .active_deliveries()
             .filter_map(|(path, record)| {
                 (matches!(record.kind, Kind::Rule { .. }) && !is_harness_path(path))
                     .then_some(path.clone())
@@ -1310,7 +1396,7 @@ impl Setup {
         );
         let mut result = report("Checked the local tool setup");
         let added = additional_targets(&self.home, &manifest.master)?;
-        if !added.is_empty() {
+        if !added.is_empty() && manifest.extension_paths.is_empty() {
             let tools = added
                 .iter()
                 .map(|target| target.tool.display_name())
@@ -1322,7 +1408,10 @@ impl Setup {
         }
         let blocked = self.pull_back(root, manifest, &mut result)?;
         let had_issues = !std::mem::take(&mut manifest.delivery_issues).is_empty();
-        let paths: Vec<_> = manifest.delivered.keys().cloned().collect();
+        let paths: Vec<_> = manifest
+            .active_deliveries()
+            .map(|(path, _)| path.clone())
+            .collect();
         let mut operations = Vec::new();
         for path in paths {
             if blocked.contains(&path) {
@@ -1495,9 +1584,8 @@ impl Setup {
         let mut active = installed.keys().cloned().collect::<BTreeSet<_>>();
         let mut expected = BTreeMap::<PathBuf, BTreeSet<PathBuf>>::new();
         let mut targets: BTreeSet<_> = manifest
-            .delivered
-            .values()
-            .filter_map(|delivery| match &delivery.kind {
+            .active_deliveries()
+            .filter_map(|(_, delivery)| match &delivery.kind {
                 Kind::Rule { target, .. } => Some(target.clone()),
                 _ => None,
             })
@@ -1794,7 +1882,7 @@ impl Setup {
             );
         }
         let mut by_target: BTreeMap<String, Vec<SkillPath>> = BTreeMap::new();
-        for (path, delivery) in &manifest.delivered {
+        for (path, delivery) in manifest.active_deliveries() {
             if !matches!(delivery.kind, Kind::Skill)
                 || path_blocked(blocked, path)
                 || approved.keys().any(|folder| path.starts_with(folder))
@@ -1880,7 +1968,7 @@ impl Setup {
                 }
             }
         }
-        for (path, record) in &manifest.delivered {
+        for (path, record) in manifest.active_deliveries() {
             if matches!(record.kind, Kind::RegistryDirectory { .. }) {
                 if let Some(target) = PERSONAL_TARGETS
                     .iter()
@@ -1894,7 +1982,7 @@ impl Setup {
             }
         }
         for (folder, skill) in &mut packages {
-            for (path, record) in &manifest.delivered {
+            for (path, record) in manifest.active_deliveries() {
                 if let Ok(relative) = path.strip_prefix(folder) {
                     if matches!(record.kind, Kind::Skill | Kind::RegistrySkill { .. }) {
                         skill.files.insert(
@@ -2460,6 +2548,7 @@ fn journal_missing_parents(
     root: &FileRoot,
     manifest: &mut Manifest,
     operations: Vec<Pending>,
+    extending: bool,
 ) -> Result<Vec<Pending>> {
     let explicit: BTreeSet<_> = operations
         .iter()
@@ -2490,6 +2579,11 @@ fn journal_missing_parents(
                 let absent = path_blocked(&replacing_links, path)
                     || root.read(path, false)? == Snapshot::Absent;
                 if absent {
+                    ensure!(
+                        !extending || !manifest.backup.contains_key(path),
+                        "{} already belongs to the local setup backup",
+                        path.display()
+                    );
                     manifest
                         .backup
                         .entry(path.to_owned())
@@ -2572,7 +2666,7 @@ struct Pullback {
 fn inspect(root: &FileRoot, manifest: &Manifest) -> Result<Pullback> {
     let mut drafts = Vec::new();
     let mut blocked = manifest.recovery_issues.clone();
-    for (path, delivery) in &manifest.delivered {
+    for (path, delivery) in manifest.active_deliveries() {
         if blocked.contains_key(path) {
             continue;
         }
@@ -4641,7 +4735,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn rulesync_restores_the_existing_setup_after_an_interrupted_extension() {
+    fn rulesync_keeps_the_existing_setup_after_an_interrupted_extension() {
         let f = Fixture::new();
         let claude = f.text(CLAUDE);
         let codex = f.text(CODEX);
@@ -4665,6 +4759,10 @@ mod tests {
 
         let interrupted = f.setup.load().unwrap().unwrap();
         assert!(!interrupted.pending.is_empty());
+        assert!(
+            interrupted.adopted,
+            "a staged addition disabled the existing setup"
+        );
         for (path, backup) in &before.backup {
             assert_eq!(&interrupted.backup[path], backup);
             assert_eq!(
@@ -4674,11 +4772,86 @@ mod tests {
         }
         let receipt = f.setup.restore().unwrap();
         assert!(receipt.blocked.is_empty(), "{receipt:?}");
-        assert_eq!(f.text(CLAUDE), claude);
-        assert_eq!(f.text(CODEX), codex);
+        let recovered = f.setup.load().unwrap().unwrap();
+        assert!(recovered.adopted);
+        assert_eq!(recovered.master.overlays, before.master.overlays);
+        assert_eq!(recovered.backup, before.backup);
         assert_eq!(f.text(cursor), "Cursor original.\r\n");
         assert_eq!(fs::read_link(folder).unwrap(), Path::new(link));
+        let synced = f.sync_with("<!-- Updated renderer -->\n");
+        assert!(synced.blocked.is_empty(), "{synced:?}");
+        assert!(f.text(CLAUDE).starts_with("<!-- Updated renderer -->\n"));
+        assert!(f.text(CODEX).starts_with("<!-- Updated renderer -->\n"));
+        assert_eq!(f.text(cursor), "Cursor original.\r\n");
+        let receipt = f.setup.restore().unwrap();
+        assert!(receipt.blocked.is_empty(), "{receipt:?}");
+        assert_eq!(f.text(CLAUDE), claude);
+        assert_eq!(f.text(CODEX), codex);
         assert!(!f.setup.data.join("personal.json").exists());
+    }
+
+    #[test]
+    fn rulesync_recovers_a_conflicted_addition_without_disabling_existing_tools() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let _lock = f.setup.lock().unwrap();
+        let root = FileRoot::open_home(&f.setup.home).unwrap();
+        let mut manifest = f.setup.load().unwrap().unwrap();
+        let original_paths = manifest.backup.keys().cloned().collect::<Vec<_>>();
+        let cursor = ".cursor/AGENTS.md";
+        let gemini = ".gemini/GEMINI.md";
+        let muse = ".config/muse/AGENTS.md";
+        let mut operations = Vec::new();
+        for path in [cursor, gemini, muse] {
+            fs::create_dir_all(f.setup.home.join(path).parent().unwrap()).unwrap();
+            f.write(path, "Original overlay.\n");
+            let seen = root.read(Path::new(path), false).unwrap();
+            manifest.backup.insert(path.into(), seen.clone());
+            operations.push(Pending {
+                path: path.into(),
+                seen: seen.clone(),
+                desired: with_bytes(&seen, b"Adopted rules.\n".to_vec()),
+                kind: Some(Kind::Rule {
+                    target: "cursor".into(),
+                    source: String::new(),
+                    base: String::new(),
+                }),
+                allow_link: false,
+            });
+        }
+        f.write(muse, "Saved while the addition was applying.\n");
+        let outcomes = f
+            .setup
+            .run_batch(&root, &mut manifest, operations, BatchMode::Extend, None)
+            .unwrap();
+        assert_eq!(
+            outcomes,
+            [
+                (cursor.into(), ApplyOutcome::Applied),
+                (gemini.into(), ApplyOutcome::Applied),
+                (muse.into(), ApplyOutcome::ChangedSincePlan),
+            ]
+        );
+        assert_eq!(f.text(cursor), "Adopted rules.\n");
+        assert_eq!(f.text(gemini), "Adopted rules.\n");
+        f.write(gemini, "Original overlay.\n");
+
+        let mut manifest = f.setup.load().unwrap().unwrap();
+        let recovery = f.setup.recover(&root, &mut manifest).unwrap().unwrap();
+        assert_eq!(recovery.written, [cursor]);
+        assert!(recovery.blocked.is_empty(), "{recovery:?}");
+        assert!(manifest.adopted && manifest.extension_paths.is_empty());
+        assert_eq!(
+            manifest.backup.into_keys().collect::<Vec<_>>(),
+            original_paths
+        );
+        assert_eq!(f.text(cursor), "Original overlay.\n");
+        assert_eq!(f.text(gemini), "Original overlay.\n");
+        assert_eq!(f.text(muse), "Saved while the addition was applying.\n");
+        drop(_lock);
+        let synced = f.sync_with("<!-- Updated renderer -->\n");
+        assert!(synced.blocked.is_empty(), "{synced:?}");
+        assert_eq!(synced.written, [CLAUDE, CODEX]);
     }
 
     #[cfg(unix)]

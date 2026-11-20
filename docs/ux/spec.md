@@ -926,7 +926,9 @@ and wait for evidence that people need them.
   The initial plan names the tools it skips because their folders are
   absent. When another tool appears, sync offers it for adoption. The next
   adoption preview shows the added tool's rule overlay and skills. Approval
-  adds its files to the existing backup and leaves existing deliveries in place. Gemini
+  adds its files to the existing backup and leaves existing deliveries in place.
+  If an addition stops early, sync or restore rolls back that addition and
+  keeps earlier tools enrolled. Gemini
   CLI owns the delivery to the legacy Gemini rule path and Antigravity's
   own overlay goes to its config rule path. Cursor receives Markdown at
   `~/.cursor/AGENTS.md`. Automatic loading by Cursor is unverified.
