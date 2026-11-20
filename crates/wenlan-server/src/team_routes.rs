@@ -95,6 +95,16 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
             put(handle_update_member).delete(handle_remove_member),
         )
         .route("/api/team/members/{id}/key", post(handle_new_member_key))
+        .route("/api/team/invites", post(handle_create_invite))
+        .route("/api/team/members/{id}/invite", post(handle_reissue_invite))
+        .route(
+            "/api/team/members/{id}/approve",
+            post(handle_approve_member),
+        )
+        .route(
+            "/api/team/members/{id}/compromised",
+            post(handle_compromised),
+        )
         .route("/api/team/spaces", post(handle_host_space))
         .route("/api/team/join", post(handle_join))
         .route("/api/team/start", post(handle_start_team))
@@ -307,6 +317,10 @@ pub async fn handle_team_status() -> Result<Json<TeamStatus>, ServerError> {
             url: env_value(TEAM_URL_ENV).or(file.url.clone()),
             suggested_urls: suggested_urls(port),
             remote: None,
+            sign_in: Some(auth::configured(
+                &path,
+                env_value(TEAM_URL_ENV).or(file.url.clone()).as_deref(),
+            )),
         })
     })
     .await?;
@@ -352,7 +366,7 @@ fn member_key(
     })
 }
 
-/// POST /api/team/members — adds a member. Their key is in the answer this
+/// POST /api/team/members: adds a member. Their key is in the answer this
 /// once; only its hash is kept.
 pub async fn handle_add_member(
     Json(mut req): Json<TeamAddMemberRequest>,
@@ -409,6 +423,7 @@ pub async fn handle_remove_member(Path(id): Path<String>) -> Result<Json<TeamMem
         ));
     }
     let member = blocking(move || team::remove_member(&team::team_path(), &id)).await?;
+    LIVE_SESSIONS.delete_member(&member.id);
     Ok(Json(member.to_wire()))
 }
 
@@ -418,7 +433,7 @@ pub struct NewKeyQuery {
     pub url: Option<String>,
 }
 
-/// POST /api/team/members/{id}/key — a new key for a member; the old one
+/// POST /api/team/members/{id}/key: a new key for a member; the old one
 /// stops working. The key is in the answer this once.
 pub async fn handle_new_member_key(
     Path(id): Path<String>,
@@ -441,6 +456,101 @@ pub async fn handle_new_member_key(
     Ok(Json(member_key(member, key, url.as_deref())?))
 }
 
+/// The address invite links use, checked, or the reason there is none.
+async fn invite_address() -> Result<String, ServerError> {
+    link_address()
+        .await?
+        .and_then(|url| remote::check_url(url.trim()).ok())
+        .ok_or_else(|| {
+            ServerError::Conflict(
+                "set the address people reach this server at (WENLAN_TEAM_URL) first".into(),
+            )
+        })
+}
+
+fn invite_link_of(member: Member, token: &str, base: &str) -> wenlan_types::team::TeamInviteLink {
+    wenlan_types::team::TeamInviteLink {
+        member: member.to_wire(),
+        link: wenlan_types::team::invite_link(base, token),
+    }
+}
+
+/// POST /api/team/invites: a member with no key and a sign-in invite link,
+/// for the owner to give them. The link is in the answer this once.
+pub async fn handle_create_invite(
+    Json(req): Json<wenlan_types::team::TeamInviteRequest>,
+) -> Result<Json<wenlan_types::team::TeamInviteLink>, ServerError> {
+    if let Some(owned) = managed_elsewhere().await? {
+        return Ok(Json(
+            on_server(&owned, reqwest::Method::POST, "/invites", json_of(&req)).await?,
+        ));
+    }
+    let base = invite_address().await?;
+    let (member, token) = blocking(move || {
+        team::create_invited_member(
+            &team::team_path(),
+            &req.name,
+            req.email.as_deref(),
+            &req.spaces,
+        )
+    })
+    .await?;
+    Ok(Json(invite_link_of(member, &token, &base)))
+}
+
+/// POST /api/team/members/{id}/invite: a new sign-in invite link for a
+/// member; the old one stops working.
+pub async fn handle_reissue_invite(
+    Path(id): Path<String>,
+) -> Result<Json<wenlan_types::team::TeamInviteLink>, ServerError> {
+    if let Some(owned) = managed_elsewhere().await? {
+        let path = format!("/members/{}/invite", encoded(&id));
+        return Ok(Json(
+            on_server(&owned, reqwest::Method::POST, &path, None).await?,
+        ));
+    }
+    let base = invite_address().await?;
+    let (member, token) = blocking(move || team::reissue_invite(&team::team_path(), &id)).await?;
+    Ok(Json(invite_link_of(member, &token, &base)))
+}
+
+/// POST /api/team/members/{id}/approve: lets in the account waiting on the
+/// member's invite.
+pub async fn handle_approve_member(
+    Path(id): Path<String>,
+) -> Result<Json<TeamMember>, ServerError> {
+    if let Some(owned) = managed_elsewhere().await? {
+        let path = format!("/members/{}/approve", encoded(&id));
+        return Ok(Json(
+            on_server(&owned, reqwest::Method::POST, &path, None).await?,
+        ));
+    }
+    let member = blocking(move || team::approve_pending(&team::team_path(), &id)).await?;
+    Ok(Json(member.to_wire()))
+}
+
+/// POST /api/team/members/{id}/compromised: the member's account was taken
+/// over: every sign-in, AI tool key and linked account ends, and a new key
+/// is made (in the answer this once).
+pub async fn handle_compromised(
+    Path(id): Path<String>,
+    Query(query): Query<NewKeyQuery>,
+) -> Result<Json<TeamMemberKey>, ServerError> {
+    if let Some(owned) = managed_elsewhere().await? {
+        let path = format!("/members/{}/compromised", encoded(&id));
+        return Ok(Json(
+            on_server(&owned, reqwest::Method::POST, &path, None).await?,
+        ));
+    }
+    let url = match query.url.filter(|url| !url.trim().is_empty()) {
+        Some(url) => Some(url),
+        None => link_address().await?,
+    };
+    let (member, key) = blocking(move || team::reset_compromised(&team::team_path(), &id)).await?;
+    LIVE_SESSIONS.delete_member(&member.id);
+    Ok(Json(member_key(member, key, url.as_deref())?))
+}
+
 /// The address put in invite links when the caller gives none: the one
 /// the owner set (or `WENLAN_TEAM_URL`).
 async fn link_address() -> Result<Option<String>, ServerError> {
@@ -450,7 +560,7 @@ async fn link_address() -> Result<Option<String>, ServerError> {
     blocking(|| Ok(team::read_team(&team::team_path())?.url)).await
 }
 
-/// POST /api/team/spaces — hosts a Space of this Wenlan for the team: it is
+/// POST /api/team/spaces: hosts a Space of this Wenlan for the team: it is
 /// shared through a folder of this Wenlan's own, which members reach only
 /// through the team listener. Runs the first pass and returns its counts.
 pub async fn handle_host_space(
@@ -542,7 +652,7 @@ async fn server_name(db: &wenlan_core::db::MemoryDB) -> Result<String, ServerErr
         .unwrap_or_else(|| "Team server".to_string()))
 }
 
-/// POST /api/team/join — on a member's computer: reads a join code, asks
+/// POST /api/team/join: on a member's computer: reads a join code, asks
 /// the server who the key belongs to, and returns the Spaces they can use.
 /// Nothing is joined yet.
 pub async fn handle_join(
@@ -563,7 +673,7 @@ pub async fn handle_join(
     Ok(Json(TeamJoinResponse { url, me }))
 }
 
-/// POST /api/team/start — makes this computer a team's server: names the
+/// POST /api/team/start: makes this computer a team's server: names the
 /// team, names its owner (the person here, as the team sees what they
 /// write), and turns the team listener on, now and after every restart.
 pub async fn handle_start_team(
@@ -618,7 +728,7 @@ pub async fn handle_start_team(
     handle_team_status().await
 }
 
-/// POST /api/team/stop — turns the team listener off: members' computers
+/// POST /api/team/stop: turns the team listener off: members' computers
 /// stop syncing with this one until it is on again. The team, its people
 /// and Spaces stay. (A listener set by `WENLAN_TEAM_ADDR` stays on.)
 pub async fn handle_stop_team() -> Result<Json<TeamStatus>, ServerError> {
@@ -627,7 +737,7 @@ pub async fn handle_stop_team() -> Result<Json<TeamStatus>, ServerError> {
     handle_team_status().await
 }
 
-/// POST /api/team/membership — keeps that this computer is on the team an
+/// POST /api/team/membership: keeps that this computer is on the team an
 /// invite link is for, even before any Space is open to this person; their
 /// Spaces follow as the team opens them, and an owner manages it from here.
 pub async fn handle_remember_membership(
@@ -736,6 +846,12 @@ type McpService = rmcp::transport::streamable_http_server::StreamableHttpService
     rmcp::transport::streamable_http_server::session::local::LocalSessionManager,
 >;
 
+/// The browser sessions of the team listener. One for the whole process, so
+/// the daemon's own `/api/team` calls (a member removed, an account taken
+/// over) end a member's sessions as the listener's own calls do.
+static LIVE_SESSIONS: LazyLock<Arc<crate::team_session::SessionStore>> =
+    LazyLock::new(Arc::default);
+
 #[derive(Clone)]
 struct TeamState {
     team_path: PathBuf,
@@ -766,7 +882,7 @@ pub async fn serve_team_listener(shared: SharedState, shutdown: ShutdownHandle) 
         settings_path: shared_space::settings_path(),
         daemon_url: format!("http://127.0.0.1:{port}"),
         mcp: Arc::default(),
-        sessions: Arc::default(),
+        sessions: LIVE_SESSIONS.clone(),
         auth: Arc::new(auth::AuthState::from_config(&team::team_path())),
     };
     let kept = {
@@ -920,6 +1036,7 @@ fn team_router(state: TeamState) -> axum::Router {
         .route("/mcp/{*space}", any(team_mcp_in))
         .route("/team/v1/app/{*call}", any(app_gate::handle))
         .route("/auth/logout", post(auth_logout))
+        .route("/auth/logout-all", post(auth_logout_all))
         .layer(middleware::from_fn(wenlan_mcp::serve::guard_initialization))
         .layer(middleware::from_fn(capped_body))
         .layer(middleware::from_fn_with_state(
@@ -946,9 +1063,15 @@ fn team_router(state: TeamState) -> axum::Router {
         .merge(auth_checked)
         .layer(middleware::from_fn_with_state(state.clone(), auth::guard))
         .layer(middleware::from_fn(auth::headers));
+    // Which providers sign-in offers, asked before anyone has signed in:
+    // `[]` when it is off, never a 404, so a page can tell "off" from "gone".
+    let providers = axum::Router::new()
+        .route("/auth/providers", get(auth::providers))
+        .layer(middleware::from_fn(auth::headers));
     axum::Router::new()
         .route("/health", get(team_health))
         .merge(sign_in)
+        .merge(providers)
         .route(wenlan_types::team::JOIN_PATH, get(team_join_page))
         .route("/app", get(crate::web_static::team_app))
         .route("/app/", get(crate::web_static::team_app))
@@ -1676,6 +1799,30 @@ async fn auth_logout(State(state): State<TeamState>, req: Request) -> Response {
     response
 }
 
+/// `POST /auth/logout-all`: ends every browser session of the member who
+/// calls, this one included, and clears this browser's cookie. Their AI tool
+/// keys are not touched. A cookie route, so [`require_session`] has already
+/// held it to this server's exact origin.
+async fn auth_logout_all(
+    State(state): State<TeamState>,
+    Extension(member): Extension<Member>,
+) -> Response {
+    state.sessions.delete_member(&member.id);
+    let mut response = StatusCode::NO_CONTENT.into_response();
+    let headers = response.headers_mut();
+    headers.insert(
+        header::SET_COOKIE,
+        HeaderValue::from_str(&crate::team_session::clear_cookie())
+            .expect("the cookie attributes are a valid header"),
+    );
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    headers.insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("no-referrer"),
+    );
+    response
+}
+
 /// The kinds of path the team listener serves behind a credential.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RouteClass {
@@ -1685,11 +1832,13 @@ enum RouteClass {
     Me,
     /// `/team/v1/app/*`: the web app's gate.
     App,
-    /// `/auth/logout`: ends a browser session, so only a browser has one.
+    /// `/auth/logout` and `/auth/logout-all`: end a browser session (or all
+    /// of a member's), so only a browser has one.
     Logout,
-    /// `/auth/start/*`, `/auth/callback/*` and `/auth/invite/*`: sign-in,
-    /// before anyone has a credential. They are not behind [`require_member`]; the row is here
-    /// so every `/auth` path is in this table.
+    /// `/auth/start/*`, `/auth/callback/*`, `/auth/invite/*` and
+    /// `/auth/providers`: sign-in, before anyone has a credential. They are
+    /// not behind [`require_member`]; the row is here so every `/auth` path
+    /// is in this table.
     AuthPublic,
     /// `/auth/link/*`: start linking a provider account to the caller.
     AuthLink,
@@ -1707,9 +1856,13 @@ fn route_class(path: &str) -> RouteClass {
         RouteClass::Me
     } else if under(app_gate::PREFIX) {
         RouteClass::App
-    } else if path == "/auth/logout" {
+    } else if path == "/auth/logout" || path == "/auth/logout-all" {
         RouteClass::Logout
-    } else if under("/auth/start") || under("/auth/callback") || under("/auth/invite") {
+    } else if under("/auth/start")
+        || under("/auth/callback")
+        || under("/auth/invite")
+        || path == "/auth/providers"
+    {
         RouteClass::AuthPublic
     } else if under("/auth/link") {
         RouteClass::AuthLink
@@ -1794,7 +1947,11 @@ struct MeWithPeople {
     people: Vec<wenlan_types::team::TeamPerson>,
 }
 
-async fn team_me(State(state): State<TeamState>, Extension(member): Extension<Member>) -> Response {
+async fn team_me(
+    State(state): State<TeamState>,
+    Extension(member): Extension<Member>,
+    Extension(credential): Extension<team::Credential>,
+) -> Response {
     let settings = state.settings_path.clone();
     let team_path = state.team_path.clone();
     let read = tokio::task::spawn_blocking(move || {
@@ -1805,7 +1962,15 @@ async fn team_me(State(state): State<TeamState>, Extension(member): Extension<Me
     .await;
     match read {
         Ok(Ok((hosted, file))) => Json(MeWithPeople {
-            me: member.me(&hosted),
+            me: wenlan_types::team::TeamMe {
+                signed_in_with: Some(match credential {
+                    team::Credential::BrowserSession => {
+                        wenlan_types::team::TeamSignedInWith::Browser
+                    }
+                    _ => wenlan_types::team::TeamSignedInWith::Key,
+                }),
+                ..member.me(&hosted)
+            },
             people: team::people_sharing_with(&file, &member, &hosted),
         })
         .into_response(),

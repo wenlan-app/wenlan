@@ -958,7 +958,12 @@ async fn a_member_learns_only_the_names_of_people_in_their_spaces() {
 #[test]
 fn the_route_table_gives_a_browser_session_the_web_only() {
     use team::CredentialKind::{BrowserSession, LegacyKey, ToolKey};
-    for path in ["/team/v1/me", "/team/v1/app/api/pages", "/auth/logout"] {
+    for path in [
+        "/team/v1/me",
+        "/team/v1/app/api/pages",
+        "/auth/logout",
+        "/auth/logout-all",
+    ] {
         assert!(credential_may_reach(BrowserSession, path), "{path}");
     }
     for path in [
@@ -976,6 +981,8 @@ fn the_route_table_gives_a_browser_session_the_web_only() {
     }
     assert!(!credential_may_reach(LegacyKey, "/auth/logout"));
     assert!(!credential_may_reach(ToolKey, "/auth/logout"));
+    assert!(!credential_may_reach(LegacyKey, "/auth/logout-all"));
+    assert!(!credential_may_reach(ToolKey, "/auth/logout-all"));
 }
 
 #[test]
@@ -1680,4 +1687,118 @@ async fn an_unknown_or_malformed_cookie_is_401() {
     }
     let response = browser(&f.state, Method::GET, "/team/v1/me", None, None, None).await;
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn me_says_how_the_request_signed_in_and_which_accounts_are_linked() {
+    let (f, _) = session_fixture();
+    let json = |response: Response| async move {
+        let bytes = to_bytes(response.into_body(), 1 << 20).await.unwrap();
+        serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()
+    };
+    // A key: no account yet.
+    let by_key = browser(
+        &f.state,
+        Method::GET,
+        "/team/v1/me",
+        None,
+        None,
+        Some(&f.writer.1),
+    )
+    .await;
+    assert_eq!(by_key.status(), StatusCode::OK);
+    let by_key = json(by_key).await;
+    assert_eq!(by_key["signed_in_with"], "key");
+    assert!(by_key.get("accounts").is_none());
+
+    // The same member with a GitHub account, by cookie: the provider and
+    // the email, never the subject id.
+    team::link_identity(
+        &f.state.team_path,
+        &f.writer.0.id,
+        team::Identity {
+            issuer: "https://github.com".into(),
+            subject: "subject-4242".into(),
+            email: Some("amy@example.com".into()),
+            linked_at: String::new(),
+        },
+    )
+    .unwrap();
+    let token = f.state.sessions.create(&f.writer.0.id).unwrap();
+    let by_cookie = browser(
+        &f.state,
+        Method::GET,
+        "/team/v1/me",
+        Some(&token),
+        None,
+        None,
+    )
+    .await;
+    let text = {
+        let bytes = to_bytes(by_cookie.into_body(), 1 << 20).await.unwrap();
+        String::from_utf8(bytes.to_vec()).unwrap()
+    };
+    assert!(!text.contains("subject-4242"));
+    let me: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(me["signed_in_with"], "browser");
+    assert_eq!(me["accounts"][0]["provider"], "github");
+    assert_eq!(me["accounts"][0]["email"], "amy@example.com");
+}
+
+#[tokio::test]
+async fn logout_all_ends_every_session_of_the_member_and_nobody_elses() {
+    let (f, _) = session_fixture();
+    let uri = "/auth/logout-all";
+    let mine = f.state.sessions.create(&f.writer.0.id).unwrap();
+    let mine_elsewhere = f.state.sessions.create(&f.writer.0.id).unwrap();
+    let theirs = f.state.sessions.create(&f.reader.0.id).unwrap();
+
+    // The server's exact origin only, and only from a browser.
+    for origin in [None, Some("https://evil.example")] {
+        let response = browser(&f.state, Method::POST, uri, Some(&mine), origin, None).await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{origin:?}");
+    }
+    let response = browser(&f.state, Method::POST, uri, None, None, Some(&f.writer.1)).await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert!(f.state.sessions.lookup(&mine_elsewhere).is_some());
+
+    let response = browser(&f.state, Method::POST, uri, Some(&mine), Some(ORIGIN), None).await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    assert!(response.headers()[header::SET_COOKIE]
+        .to_str()
+        .unwrap()
+        .contains("Max-Age=0"));
+    for token in [&mine, &mine_elsewhere] {
+        let me = browser(
+            &f.state,
+            Method::GET,
+            "/team/v1/me",
+            Some(token),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(me.status(), StatusCode::UNAUTHORIZED);
+    }
+    let me = browser(
+        &f.state,
+        Method::GET,
+        "/team/v1/me",
+        Some(&theirs),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(me.status(), StatusCode::OK);
+    // Their AI tool keys are untouched.
+    let (status, _) = call(
+        &f.state,
+        Method::GET,
+        "/team/v1/me",
+        Some(&f.writer.1),
+        vec![],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
 }

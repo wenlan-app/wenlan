@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { forwardRef, useEffect, useMemo, useRef } from "react";
-import { GearSix, SidebarSimple, SignOut } from "@phosphor-icons/react";
+import { GearSix, SidebarSimple } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 import IdentityCard from "./IdentityCard";
 import { PrimaryNavigation, SIDEBAR_RECENT_LISTED } from "./navigation/PrimaryNavigation";
@@ -16,7 +16,8 @@ import { movePinnedPage, unpinPage, usePinnedPages } from "./navigation/pinnedPa
 import { ICONS_SIDEBAR_WIDTH, type SidebarMode } from "./navigation/navigationPreferences";
 import "./navigation/notes-sidebar.css";
 import { isWebBuild } from "../../web/runtime";
-import { forgetTeamKey, isTeamMemberMode } from "../../web/team";
+import { isTeamMemberMode } from "../../web/team";
+import { TeamAccountMenu } from "../../web/TeamAccountMenu";
 
 interface SidebarProps {
   readonly activeNavigation?: GlobalNavigation | null;
@@ -238,17 +239,11 @@ export default function Sidebar({
             </button>
           )}
           {teamMember && (
-            <button
-              aria-label={t("teamWeb.forget")}
+            <TeamAccountMenu
               className={compact ? "notes-rail-button" : "notes-primary-link"}
-              data-testid="team-web-forget"
-              onClick={forgetTeamKey}
-              title={compact ? t("teamWeb.forget") : undefined}
-              type="button"
-            >
-              <span aria-hidden="true" className="notes-navigation-glyph"><SignOut /></span>
-              {!compact && <span>{t("teamWeb.forget")}</span>}
-            </button>
+              compact={compact}
+              glyphClassName="notes-navigation-glyph"
+            />
           )}
           {!web && <IdentityCard
             compact={compact}

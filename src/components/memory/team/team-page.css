@@ -248,7 +248,72 @@
 }
 
 .team-people-box {
-  width: min(520px, calc(100vw - 32px));
+  width: min(580px, calc(100vw - 32px));
+}
+
+.team-people-tag {
+  flex: none;
+  color: var(--mem-text-secondary);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.team-people-letin {
+  flex: none;
+  padding: 4px 12px;
+  font-size: 13px;
+}
+
+.team-people-name {
+  min-width: 0;
+}
+
+.team-invite-full {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.team-invite-full h2 {
+  margin: 0;
+}
+
+.team-invite-via {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.team-invite-via legend {
+  padding: 0;
+  margin-bottom: 4px;
+}
+
+.team-invite-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 6px 0;
+}
+
+.team-invite-choice input {
+  margin-top: 4px;
+  accent-color: var(--mem-accent-indigo);
+}
+
+.team-invite-choice-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.team-invite-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .team-people-head {

@@ -1,0 +1,208 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* A team server's `/app` before and after sign-in: the sign-in page and the
+   account menu at the bottom of the sidebar. Theme colors only come from the
+   `--mem-*` variables, so dark and light both follow the page. */
+
+.team-signin {
+  width: 100vw;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  box-sizing: border-box;
+  background: var(--bg-secondary, var(--mem-bg));
+  color: var(--mem-text, var(--text-primary));
+  font-family: var(--mem-font-body, inherit);
+}
+
+.team-signin-column {
+  width: min(380px, 100%);
+}
+
+.team-signin-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--mem-r-8, 8px);
+  background: var(--mem-accent-indigo);
+  color: var(--mem-text-on-accent, #fff);
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.team-signin-title {
+  margin: 18px 0 6px;
+  font-family: var(--mem-font-heading, inherit);
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.team-signin-hint {
+  margin: 0 0 26px;
+  color: var(--mem-text-secondary);
+  font-size: 15px;
+}
+
+.team-signin-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.team-signin-button {
+  display: flex;
+  width: 100%;
+  min-height: 46px;
+  box-sizing: border-box;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 0 20px;
+  border: 1px solid var(--mem-border);
+  border-radius: var(--mem-r-8, 8px);
+  background: var(--mem-surface);
+  color: var(--mem-text);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.team-signin-button:hover { background: var(--mem-hover); }
+.team-signin-button:focus-visible { outline: 2px solid var(--mem-accent-page); outline-offset: 2px; }
+
+.team-signin-new {
+  margin: 26px 0 0;
+  color: var(--mem-text-secondary);
+  font-size: 13px;
+}
+
+/* The account menu: a row at the bottom of the sidebar, and a menu above it. */
+.team-account-row .team-account-face {
+  display: inline-flex;
+  flex: 0 0 22px;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--mem-hover-strong);
+  color: var(--mem-text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.team-account-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.team-account-menu {
+  position: fixed;
+  z-index: 60;
+  width: min(322px, calc(100vw - 28px));
+  box-sizing: border-box;
+  padding: 6px;
+  border: 1px solid var(--mem-popover-border, var(--mem-border));
+  border-radius: var(--mem-r-10, 10px);
+  background: var(--mem-popover, var(--mem-surface));
+  box-shadow: var(--mem-popover-shadow, 0 10px 30px rgba(0, 0, 0, 0.18));
+  color: var(--mem-text);
+  font-size: 14.5px;
+}
+
+.team-account-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 10px 12px;
+}
+
+.team-account-big {
+  display: inline-flex;
+  flex: 0 0 36px;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--mem-accent-indigo) 22%, var(--mem-surface));
+  color: var(--mem-text);
+  font-weight: 600;
+}
+
+.team-account-who { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.team-account-who b { font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.team-account-who span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--mem-text-secondary);
+  font-size: 13px;
+  min-width: 0;
+}
+.team-account-who span > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.team-account-separator { height: 1px; margin: 5px 4px; background: var(--mem-border); }
+
+.team-account-item {
+  display: flex;
+  width: 100%;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: var(--mem-r-6, 6px);
+  background: transparent;
+  color: var(--mem-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.team-account-item:hover { background: var(--mem-hover); }
+.team-account-item:focus-visible { outline: 2px solid var(--mem-accent-page); outline-offset: -2px; }
+.team-account-item-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.team-account-item-sub { color: var(--mem-text-secondary); font-size: 12.5px; }
+.team-account-item svg { flex: none; margin-top: 2px; color: var(--mem-text-secondary); }
+
+.team-account-quiet {
+  margin: 0;
+  padding: 8px 10px 6px;
+  color: var(--mem-text-secondary);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.team-account-quiet button {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--mem-text);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.team-account-save {
+  margin: 4px 4px 6px;
+  padding: 14px;
+  border-radius: var(--mem-r-9, 9px);
+  background: color-mix(in srgb, var(--mem-accent-indigo) 12%, var(--mem-popover, var(--mem-surface)));
+}
+.team-account-save b { display: block; font-size: 14.5px; font-weight: 600; }
+.team-account-save p { margin: 4px 0 12px; color: var(--mem-text-secondary); font-size: 13px; line-height: 1.45; }
+.team-account-save .team-signin-button { min-height: 38px; margin-top: 8px; font-size: 14px; background: var(--mem-popover, var(--mem-surface)); }
+.team-account-save .team-signin-button:first-of-type { margin-top: 0; }
+.team-account-error { margin: 8px 0 0; color: var(--mem-danger); font-size: 12.5px; }

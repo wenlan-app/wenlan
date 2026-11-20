@@ -270,6 +270,8 @@ mod tests {
                 .collect(),
             team: None,
             role: Default::default(),
+            signed_in_with: None,
+            accounts: Vec::new(),
         }
     }
 

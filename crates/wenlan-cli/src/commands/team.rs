@@ -881,6 +881,7 @@ mod tests {
             added_at: "2026-11-15T00:00:00Z".into(),
             removed_at: removed.then(|| "2026-11-15T01:00:00Z".into()),
             role: Default::default(),
+            sign_in: None,
         }
     }
 

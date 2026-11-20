@@ -1327,6 +1327,20 @@ export interface TeamMember {
   /** "owner" for the person who manages the team from their own computer
    *  (a server nobody sits at); left out for everyone else. */
   role?: TeamRole;
+  /** How they sign in. Left out for someone who has only a key, and by an
+   *  older server. */
+  sign_in?: TeamMemberSignIn | null;
+}
+
+/** How a member signs in, as the owner sees it: never a whole email. */
+export interface TeamMemberSignIn {
+  /** Providers with an account linked ("google", "github"). */
+  providers?: string[];
+  /** An invite is open and nobody has used it yet. */
+  invited?: boolean;
+  /** An account used the invite and waits for the owner: its email, already
+   *  masked by the server (`e***@studio.io`). */
+  waiting_email?: string | null;
 }
 
 /** The team a server is for: the same id and name for everyone on it.
@@ -1355,6 +1369,9 @@ export interface TeamStatus {
   /** Set when this is the team server elsewhere that this person owns and
    *  manages from here: that server's address. This computer hosts nothing. */
   remote?: string | null;
+  /** This server signs people in with Google or GitHub. Left out by an older
+   *  server. */
+  sign_in?: boolean;
 }
 
 /** A member and the key shown this once: show only `join_code`. */
@@ -1391,6 +1408,34 @@ export async function teamRemoveMember(id: string): Promise<TeamMember> {
 
 export async function teamNewMemberKey(id: string, url?: string): Promise<TeamMemberKey> {
   return invoke("team_new_member_key", { id, url: url ?? null });
+}
+
+/** A member made by an invite, and the link to give them, shown this once. */
+export interface TeamInviteLink {
+  member: TeamMember;
+  link: string;
+}
+
+/** Invites someone who signs in with their own Google or GitHub account.
+ *  With an `email`, only an account with that address may use the link. */
+export async function teamInvite(name: string, email?: string, spaces: TeamSpaceAccess[] = []): Promise<TeamInviteLink> {
+  return invoke("team_invite", { name, email: email ?? null, spaces });
+}
+
+/** A new sign-in invite link for a member; the old one stops working. */
+export async function teamNewInviteLink(id: string): Promise<TeamInviteLink> {
+  return invoke("team_new_invite_link", { id });
+}
+
+/** Lets in the account that is waiting on a member's invite. */
+export async function teamApproveMember(id: string): Promise<TeamMember> {
+  return invoke("team_approve_member", { id });
+}
+
+/** A member's account was taken over: every sign-in, AI tool key and linked
+ *  account ends, and a new key is made (in the answer, shown once). */
+export async function teamMemberCompromised(id: string, url?: string): Promise<TeamMemberKey> {
+  return invoke("team_member_compromised", { id, url: url ?? null });
 }
 
 export async function teamHostSpace(space: string): Promise<SharedSyncCounts> {

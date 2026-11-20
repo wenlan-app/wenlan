@@ -1975,3 +1975,83 @@ fn the_route_table_and_join_page_cover_github() {
     assert!(page.contains("const providers = [\"google\",\"github\"];"));
     assert!(page.contains("\"sign_in_github\":\"Sign in with GitHub\""));
 }
+
+#[tokio::test]
+async fn providers_lists_what_is_on_and_is_an_empty_list_when_off() {
+    let env = env().await;
+    async fn ask(env: &Env) -> Response {
+        send(env, request(Method::GET, "/auth/providers", &[])).await
+    }
+    let response = ask(&env).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(hardened(&response));
+    let listed: wenlan_types::team::TeamProviders =
+        serde_json::from_str(&body(response).await).unwrap();
+    assert_eq!(listed.providers, ["google", "github"]);
+    assert_eq!(listed.team, None);
+    team::rename_team(&env.state.team_path, "Acme").unwrap();
+    let response = ask(&env).await;
+    let listed: wenlan_types::team::TeamProviders =
+        serde_json::from_str(&body(response).await).unwrap();
+    assert_eq!(listed.team.as_deref(), Some("Acme"));
+
+    // Off for every reason sign-in can be off: an empty list, not a 404, and
+    // it needs no credential.
+    let http = env_with(
+        TRANSACTION_TTL,
+        BURST,
+        REFILL_PER_SEC,
+        Some("http://team.example.com"),
+    )
+    .await;
+    let mut no_provider = env_with(TRANSACTION_TTL, BURST, REFILL_PER_SEC, Some(ORIGIN)).await;
+    no_provider.state.auth = Arc::default();
+    for off in [&http, &no_provider] {
+        let response = ask(off).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let listed: wenlan_types::team::TeamProviders =
+            serde_json::from_str(&body(response).await).unwrap();
+        assert!(listed.providers.is_empty());
+    }
+    assert_eq!(
+        super::super::route_class("/auth/providers"),
+        super::super::RouteClass::AuthPublic
+    );
+}
+
+#[tokio::test]
+async fn providers_is_rate_limited_like_the_rest_of_sign_in() {
+    let env = env_with(TRANSACTION_TTL, 2.0, 0.0, Some(ORIGIN)).await;
+    let mut statuses = Vec::new();
+    for _ in 0..4 {
+        let response = send(&env, request(Method::GET, "/auth/providers", &[])).await;
+        statuses.push(response.status());
+    }
+    assert_eq!(statuses[0], StatusCode::OK);
+    assert_eq!(statuses[3], StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[test]
+fn sign_in_is_configured_only_with_a_provider_and_an_https_address() {
+    let dir = tempfile::tempdir().unwrap();
+    let team_path = dir.path().join(team::TEAM_FILE);
+    let none = |_: &str| None;
+    let github = |name: &str| {
+        (name == GITHUB_CLIENT_ID_ENV || name == GITHUB_CLIENT_SECRET_ENV).then(|| "x".to_string())
+    };
+    let https = Some("https://team.example.com");
+    // No provider anywhere: off, whatever the address.
+    assert!(!configured_with(&team_path, https, none));
+    assert!(configured_with(&team_path, https, github));
+    assert!(configured_with(
+        &team_path,
+        Some(" HTTPS://team.example.com "),
+        github
+    ));
+    assert!(!configured_with(
+        &team_path,
+        Some("http://team.example.com"),
+        github
+    ));
+    assert!(!configured_with(&team_path, None, github));
+}

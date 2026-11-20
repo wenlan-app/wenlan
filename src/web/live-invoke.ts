@@ -7,7 +7,7 @@ import type { RenamePageResponse, RestorePageResponse } from "../lib/tauri";
 import { archiveFixturePage, restoreFixturePage } from "../../e2e/tauriMock/pageRestore";
 import { isWebBuild } from "./runtime";
 import { MEMBER_THEME_COMMANDS } from "./memberThemes";
-import { isTeamMemberMode, readTeamKey, teamCallAllowed, TeamCallUnavailable, TEAM_GATE_PREFIX } from "./team";
+import { isTeamMemberMode, readTeamKey, resetTeamMe, teamCallAllowed, TeamCallUnavailable, teamCredential, TEAM_GATE_PREFIX } from "./team";
 
 declare const __WENLAN_SOURCE_PREVIEW__: boolean;
 const sourcePreviewEnabled = () => isWebBuild()
@@ -87,8 +87,9 @@ async function http(
   const team = isTeamMemberMode();
   const personKey = !team && extraHeaders?.["x-wenlan-caller"] === "person" ? readPersonKey() : null;
   if (team && !teamCallAllowed(method, path)) throw new TeamCallUnavailable(`${method} ${path.split("?")[0]}`);
-  const key = team ? readTeamKey() : null;
-  if (team && !key) throw new TeamCallUnavailable(`${method} ${path.split("?")[0]}`);
+  // A member signed in with a browser session sends the cookie; with no key
+  // in this browser the cookie is all there is.
+  const key = team && teamCredential() !== "browser" ? readTeamKey() : null;
   const base = team ? TEAM_GATE_PREFIX : isWebBuild() ? "" : "/daemon";
   const res = await fetch(`${base}${path}`, {
     method,
@@ -96,13 +97,15 @@ async function http(
       ...(body !== undefined ? { "content-type": "application/json" } : undefined),
       // The gate builds a new call from the member its key names; headers
       // meant for the local daemon would only be dropped there.
-      ...(team ? { Authorization: `Bearer ${key}` } : extraHeaders),
+      ...(team ? (key ? { Authorization: `Bearer ${key}` } : undefined) : extraHeaders),
       ...(personKey ? { [PERSON_KEY_HEADER]: personKey } : undefined),
     },
-    ...(team ? { credentials: "omit" as const, cache: "no-store" as const } : undefined),
+    ...(team ? { credentials: key ? ("omit" as const) : ("same-origin" as const), cache: "no-store" as const } : undefined),
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   const text = await res.text();
+  // A session that ended: who this browser is has to be asked again.
+  if (team && res.status === 401) resetTeamMe();
   if (!res.ok) {
     throw new HttpError(
       res.status,
@@ -685,6 +688,10 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   team_update_member: (a) => put(`/api/team/members/${enc(String(a.id))}`, { name: a.name ?? undefined, spaces: a.spaces ?? undefined }),
   team_remove_member: (a) => del(`/api/team/members/${enc(String(a.id))}`),
   team_new_member_key: (a) => post(`/api/team/members/${enc(String(a.id))}/key${a.url ? `?url=${encodeURIComponent(String(a.url))}` : ""}`, {}),
+  team_invite: (a) => post("/api/team/invites", { name: String(a.name), email: a.email ?? undefined, spaces: a.spaces ?? [] }),
+  team_new_invite_link: (a) => post(`/api/team/members/${enc(String(a.id))}/invite`, {}),
+  team_approve_member: (a) => post(`/api/team/members/${enc(String(a.id))}/approve`, {}),
+  team_member_compromised: (a) => post(`/api/team/members/${enc(String(a.id))}/compromised${a.url ? `?url=${encodeURIComponent(String(a.url))}` : ""}`, {}),
   team_host_space: (a) => post("/api/team/spaces", { space: String(a.space), ...(a.everyone ? { everyone: a.everyone } : {}) }),
   team_join: (a) => post("/api/team/join", { code: String(a.code), key: a.key ?? undefined }),
   team_start: (a) => post("/api/team/start", { name: String(a.name), person: String(a.person), url: a.url ?? undefined }),

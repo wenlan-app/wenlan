@@ -29,7 +29,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use wenlan_types::team::{
-    TeamAccess, TeamInfo, TeamMe, TeamMember, TeamPerson, TeamRole, TeamSpaceAccess,
+    TeamAccess, TeamInfo, TeamLinkedAccount, TeamMe, TeamMember, TeamMemberSignIn, TeamPerson,
+    TeamRole, TeamSpaceAccess,
 };
 
 use crate::error::WenlanError;
@@ -204,7 +205,53 @@ impl Member {
             added_at: self.added_at.clone(),
             removed_at: self.removed_at.clone(),
             role: self.role,
+            sign_in: self.sign_in(),
         }
+    }
+
+    /// How they sign in, for the owner's list: the providers with a linked
+    /// account, an open invite, or an account waiting to be let in (its
+    /// email masked). `None` for a member who has only a key.
+    pub fn sign_in(&self) -> Option<TeamMemberSignIn> {
+        let mut providers: Vec<String> = Vec::new();
+        for identity in &self.identities {
+            if let Some(name) = provider_of_issuer(&identity.issuer) {
+                if !providers.iter().any(|p| p == name) {
+                    providers.push(name.to_string());
+                }
+            }
+        }
+        let pending = self
+            .invite
+            .as_ref()
+            .and_then(|invite| invite.pending.as_ref());
+        let waiting_email = pending.map(|account| {
+            account
+                .email
+                .as_deref()
+                .map(mask_email)
+                .unwrap_or_else(|| "***".to_string())
+        });
+        let sign_in = TeamMemberSignIn {
+            providers,
+            invited: self.invite.is_some() && pending.is_none(),
+            waiting_email,
+        };
+        (sign_in != TeamMemberSignIn::default()).then_some(sign_in)
+    }
+
+    /// The accounts linked to them, for their own menu: the provider and the
+    /// email it last showed. Never a subject id.
+    pub fn linked_accounts(&self) -> Vec<TeamLinkedAccount> {
+        self.identities
+            .iter()
+            .filter_map(|identity| {
+                Some(TeamLinkedAccount {
+                    provider: provider_of_issuer(&identity.issuer)?.to_string(),
+                    email: identity.email.clone(),
+                })
+            })
+            .collect()
     }
 
     /// Who they are and every Space they can use, their own and everyone's
@@ -237,6 +284,8 @@ impl Member {
                 .collect(),
             team: self.team.clone(),
             role: self.role,
+            signed_in_with: None,
+            accounts: self.linked_accounts(),
         }
     }
 
@@ -952,6 +1001,16 @@ fn new_invite_token() -> Result<String, WenlanError> {
     getrandom::fill(&mut bytes)
         .map_err(|error| WenlanError::Generic(format!("no random bytes for an invite: {error}")))?;
     Ok(format!("inv_{}", hex::encode(bytes)))
+}
+
+/// The provider a linked account's issuer stands for (`google`, `github`);
+/// `None` for an issuer this build does not name.
+pub fn provider_of_issuer(issuer: &str) -> Option<&'static str> {
+    match issuer.trim_end_matches('/') {
+        "https://accounts.google.com" => Some("google"),
+        "https://github.com" => Some("github"),
+        _ => None,
+    }
 }
 
 /// The SHA-256 the server keeps of an invite token (lowercase hex).
