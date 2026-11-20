@@ -26,7 +26,7 @@
   justify-content: center;
   width: 36px;
   height: 36px;
-  border-radius: var(--mem-r-8, 8px);
+  border-radius: var(--mem-r-8);
   background: var(--mem-accent-indigo);
   color: var(--mem-text-on-accent, #fff);
   font-size: 17px;
@@ -65,7 +65,7 @@
   gap: 10px;
   padding: 0 20px;
   border: 1px solid var(--mem-border);
-  border-radius: var(--mem-r-8, 8px);
+  border-radius: var(--mem-r-8);
   background: var(--mem-surface);
   color: var(--mem-text);
   font: inherit;
@@ -115,7 +115,7 @@
   box-sizing: border-box;
   padding: 6px;
   border: 1px solid var(--mem-popover-border, var(--mem-border));
-  border-radius: var(--mem-r-10, 10px);
+  border-radius: var(--mem-r-10);
   background: var(--mem-popover, var(--mem-surface));
   box-shadow: var(--mem-popover-shadow, 0 10px 30px rgba(0, 0, 0, 0.18));
   color: var(--mem-text);
@@ -163,7 +163,7 @@
   gap: 10px;
   padding: 9px 10px;
   border: 0;
-  border-radius: var(--mem-r-6, 6px);
+  border-radius: var(--mem-r-6);
   background: transparent;
   color: var(--mem-text);
   font: inherit;
@@ -198,7 +198,7 @@
 .team-account-save {
   margin: 4px 4px 6px;
   padding: 14px;
-  border-radius: var(--mem-r-9, 9px);
+  border-radius: var(--mem-r-9);
   background: color-mix(in srgb, var(--mem-accent-indigo) 12%, var(--mem-popover, var(--mem-surface)));
 }
 .team-account-save b { display: block; font-size: 14.5px; font-weight: 600; }
