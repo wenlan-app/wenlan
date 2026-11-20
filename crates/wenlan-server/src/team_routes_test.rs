@@ -1807,3 +1807,43 @@ async fn an_unknown_or_malformed_cookie_is_401() {
     let response = browser(&f.state, Method::GET, "/team/v1/me", None, None, None).await;
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
+
+/// A team started at a loopback invite address (`--url http://127.0.0.1:…`)
+/// listens on this computer only, never on the network; any other address
+/// still listens on every network so teammates can reach it.
+#[test]
+fn local_only_team_listens_on_loopback_only() {
+    for url in [
+        "http://127.0.0.1:17944",
+        "http://localhost:17944",
+        "http://LOCALHOST:17944",
+        "http://[::1]:17944",
+        "http://127.0.0.2:17944",
+    ] {
+        let addr: std::net::SocketAddr = listen_addr(Some(url), 17944)
+            .parse()
+            .unwrap_or_else(|_| panic!("{url}: not a socket address"));
+        assert!(addr.ip().is_loopback(), "{url} listened on {addr}");
+        assert_eq!(addr.port(), 17944);
+    }
+    for url in [
+        Some("http://192.168.1.20:7879"),
+        Some("http://100.101.102.103:7879"),
+        Some("https://wenlan.example.com"),
+        None,
+    ] {
+        assert_eq!(listen_addr(url, 7879), "0.0.0.0:7879", "{url:?}");
+    }
+}
+
+/// The loopback address really binds loopback only: the socket the team
+/// listener would open is not on an unspecified (every network) address.
+#[tokio::test]
+async fn local_only_team_binds_loopback_socket() {
+    let listener = tokio::net::TcpListener::bind(listen_addr(Some("http://127.0.0.1:0"), 0))
+        .await
+        .unwrap();
+    let local = listener.local_addr().unwrap();
+    assert!(local.ip().is_loopback(), "bound {local}");
+    assert!(!local.ip().is_unspecified());
+}

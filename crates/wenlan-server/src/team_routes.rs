@@ -112,8 +112,15 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
 
 /// GET /api/team/firewall — on Windows, whether other computers get
 /// through Windows Firewall to this computer's team listener; `null`
-/// elsewhere, or when the rules cannot be read.
+/// elsewhere, when the rules cannot be read, or when the listener is on
+/// this computer only (no other computer is meant to get through).
 pub async fn handle_firewall() -> Json<Option<wenlan_types::team::TeamFirewall>> {
+    let local_only = listening()
+        .and_then(|addr| addr.parse::<std::net::SocketAddr>().ok())
+        .is_some_and(|addr| addr.ip().is_loopback());
+    if local_only {
+        return Json(None);
+    }
     Json(crate::team_firewall::check().await)
 }
 
@@ -603,7 +610,7 @@ pub async fn handle_start_team(
             .await
             .map_err(|e| ServerError::Internal(e.to_string()))?;
     }
-    let listen = format!("0.0.0.0:{port}");
+    let listen = listen_addr(url.as_deref(), port);
     let name = req.name.clone();
     {
         let listen = listen.clone();
@@ -684,6 +691,24 @@ pub async fn handle_forget_membership(
     let url = remote::check_url(&query.url).map_err(ServerError::ValidationError)?;
     blocking(move || shared_space::forget_membership(&shared_space::settings_path(), &url)).await?;
     Ok(Json(serde_json::json!({ "left": true })))
+}
+
+/// Where the team listener listens for a team started at `url`: only this
+/// computer (loopback) when the invite address is this computer itself
+/// (`127.0.0.1`, `localhost`, `::1`), so a local-only team is never open
+/// to the network; otherwise every network, so teammates can reach it.
+fn listen_addr(url: Option<&str>, port: u16) -> String {
+    let host = url
+        .and_then(|url| reqwest::Url::parse(url).ok())
+        .and_then(|url| url.host().map(|host| host.to_owned()));
+    match host {
+        Some(url::Host::Ipv4(ip)) if ip.is_loopback() => format!("127.0.0.1:{port}"),
+        Some(url::Host::Ipv6(ip)) if ip.is_loopback() => format!("[::1]:{port}"),
+        Some(url::Host::Domain(name)) if name.eq_ignore_ascii_case("localhost") => {
+            format!("127.0.0.1:{port}")
+        }
+        _ => format!("0.0.0.0:{port}"),
+    }
 }
 
 /// Addresses others can likely reach this computer at on `port`: its
