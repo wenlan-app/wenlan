@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Apply a planned change within an opened directory. Callers serialize their
 //! writes. Adoption also records the plan and backup before calling `apply`.
 

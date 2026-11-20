@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Private, checkout-specific renders. The repository and its Git index are never the destination.
 
 use std::collections::{BTreeMap, BTreeSet};

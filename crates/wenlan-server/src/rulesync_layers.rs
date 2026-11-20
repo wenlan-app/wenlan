@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Keep edits to shared instructions separate from the local rule master.
 
 use std::collections::{BTreeMap, BTreeSet};
