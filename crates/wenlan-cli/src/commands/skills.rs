@@ -411,6 +411,14 @@ fn complete_skill_proposal(proposal: &SkillProposal) -> bool {
 }
 
 fn push_skill_changes(out: &mut String, changes: &SkillProposalChanges) {
+    for change in &changes.permissions {
+        out.push_str(&format!(
+            "\n{} permissions change from {} to {}.\n",
+            file_label(&change.path),
+            one_line(&change.before),
+            one_line(&change.after)
+        ));
+    }
     for file in &changes.oversized {
         out.push_str(&format!(
             "\n{} is too large to preview.\n",
@@ -1336,6 +1344,7 @@ mod tests {
             files: Vec::new(),
             changes: Some(SkillProposalChanges {
                 removed: vec!["examples/old.md".into()],
+                permissions: Vec::new(),
                 oversized: vec![wenlan_types::rulesync_skill::OversizedSkillFile {
                     path: "helper.py".into(),
                     before: None,

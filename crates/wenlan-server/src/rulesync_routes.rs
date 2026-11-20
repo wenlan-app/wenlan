@@ -1737,6 +1737,14 @@ impl Setup {
                 for (relative, mode) in modes.into_iter().flat_map(|modes| &modes.directories) {
                     let path = folder.join(relative);
                     match root.read(&path, false) {
+                        Ok(Snapshot::Directory {
+                            mode: Some(current),
+                        }) if current != *mode => {
+                            result.blocked.push(format!(
+                                "{}: Destination permissions are {current}, but the approved copy uses {mode}. The existing directory was kept.",
+                                path.display()
+                            ));
+                        }
                         Ok(Snapshot::Directory { .. }) => {}
                         Ok(Snapshot::Absent) if mode.permits_child_writes() => {
                             directories.insert(path, Snapshot::directory_with_permissions(*mode));
@@ -4046,6 +4054,80 @@ mod tests {
         assert_eq!(
             fs::read_to_string(folder.join("helper.py")).unwrap(),
             edited_asset
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rulesync_step1d_reports_an_existing_directory_mode_mismatch() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let f = Fixture::new();
+        let source = write_step1d_skill(&f, ".claude", "Original body.", "# Helper\n");
+        let destination = write_step1d_skill(&f, ".codex", "Original body.", "# Helper\n");
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o750)).unwrap();
+        fs::set_permissions(&destination, fs::Permissions::from_mode(0o755)).unwrap();
+        f.adopt_from_plan();
+        let file = source.join("SKILL.md");
+        let edited = fs::read_to_string(&file)
+            .unwrap()
+            .replace("Original body.", "Edited body.");
+        fs::write(file, &edited).unwrap();
+        f.sync_with("");
+        rulesync_registry::accept_only_tool_proposal(&f.setup.home, &f.setup.data).unwrap();
+        let synced = f.sync_with("");
+        let mode = fs::metadata(&destination).unwrap().permissions().mode() & 0o7777;
+        assert!(
+            mode == 0o750
+                || synced
+                    .blocked
+                    .iter()
+                    .any(|line| line.contains(".codex/skills/example")
+                        && line.contains("permissions")),
+            "mode {mode:o}, {synced:?}"
+        );
+        assert_eq!(
+            fs::read_to_string(destination.join("SKILL.md")).unwrap(),
+            edited
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rulesync_step1d_shared_asset_mode_only_edit_is_reviewable() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let f = Fixture::new();
+        let source = write_step1d_skill(&f, ".claude", "Original body.", "# Helper\n");
+        let destination = write_step1d_skill(&f, ".codex", "Original body.", "# Helper\n");
+        let source_asset = source.join("helper.py");
+        let destination_asset = destination.join("helper.py");
+        for asset in [&source_asset, &destination_asset] {
+            fs::set_permissions(asset, fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        f.adopt_from_plan();
+        fs::set_permissions(&source_asset, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let pending = f.sync_with("");
+        assert!(
+            pending
+                .blocked
+                .iter()
+                .any(|line| line.contains("need your approval")),
+            "{pending:?}"
+        );
+        let proposal =
+            rulesync_registry::accept_only_tool_proposal(&f.setup.home, &f.setup.data).unwrap();
+        assert!(proposal.files.iter().any(|file| file.path == "helper.py"));
+        let synced = f.sync_with("");
+        assert!(synced.blocked.is_empty(), "{synced:?}");
+        assert_eq!(
+            fs::metadata(&destination_asset)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o7777,
+            0o755
         );
     }
 

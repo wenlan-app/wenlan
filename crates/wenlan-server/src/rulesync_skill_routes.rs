@@ -19,9 +19,9 @@ use wenlan_core::rulesync_skill::{self as skills, SkillFiles};
 use wenlan_core::skill_registry;
 use wenlan_types::rulesync::RulesSyncReport;
 use wenlan_types::rulesync_skill::{
-    SaveSkillRequest, SaveSkillResult, SavedSkillScope, SavedSkillTool, SkillProposal,
-    SkillProposalChanges, SkillProposalOrigin, SkillProposalsResponse, SkillReviewAction,
-    SkillReviewRequest,
+    SaveSkillRequest, SaveSkillResult, SavedSkillScope, SavedSkillTool, SkillPermissionChange,
+    SkillProposal, SkillProposalChanges, SkillProposalOrigin, SkillProposalsResponse,
+    SkillReviewAction, SkillReviewRequest,
 };
 use wenlan_types::skill_registry::{InstalledSkill, InstalledSkillRow, Scope, Verdict};
 
@@ -304,29 +304,56 @@ struct ToolSkillChanges<Content = Vec<u8>> {
     removed_paths: BTreeSet<PathBuf>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     previous: BTreeMap<PathBuf, Content>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    previous_modes: BTreeMap<PathBuf, FileMode>,
 }
 
 impl ToolSkillChanges<Vec<u8>> {
-    fn between(before: &SkillFiles, after: &SkillFiles) -> Option<Self> {
+    fn between(before: &ManagedSkill, after: &ManagedSkill) -> Option<Self> {
         let changed_paths: BTreeSet<_> = after
+            .files
             .iter()
-            .filter(|(path, bytes)| before.get(*path) != Some(*bytes))
+            .filter(|(path, snapshot)| before.files.get(*path) != Some(*snapshot))
             .map(|(path, _)| path.clone())
             .collect();
         let removed_paths: BTreeSet<_> = before
+            .files
             .keys()
-            .filter(|path| !after.contains_key(*path))
+            .filter(|path| !after.files.contains_key(*path))
             .cloned()
             .collect();
-        let previous = changed_paths
-            .iter()
-            .filter_map(|path| before.get(path).map(|bytes| (path.clone(), bytes.clone())))
-            .collect();
+        let mut previous = BTreeMap::new();
+        let mut previous_modes = BTreeMap::new();
+        for path in &changed_paths {
+            if let Some(Snapshot::File { bytes, mode }) = before.files.get(path) {
+                previous.insert(path.clone(), bytes.clone());
+                if matches!(&after.files[path], Snapshot::File { mode: next, .. } if mode != next) {
+                    previous_modes.insert(path.clone(), *mode);
+                }
+            }
+        }
         (!changed_paths.is_empty() || !removed_paths.is_empty()).then_some(Self {
             changed_paths,
             removed_paths,
             previous,
+            previous_modes,
         })
+    }
+
+    fn permissions(&self, current: &ManagedSkill) -> Vec<SkillPermissionChange> {
+        self.previous_modes
+            .iter()
+            .filter_map(|(path, before)| {
+                let Snapshot::File { mode: after, .. } = current.files.get(path)? else {
+                    return None;
+                };
+                Some(SkillPermissionChange {
+                    path: path.to_string_lossy().into_owned(),
+                    before: before.to_string(),
+                    after: after.to_string(),
+                })
+            })
+            .collect()
     }
 }
 
@@ -374,6 +401,7 @@ impl Draft {
                                     })
                                     .collect::<Result<_>>()?,
                                 oversized: preview.oversized,
+                                permissions: changes.permissions(snapshot),
                             }),
                         )
                     }
@@ -721,6 +749,7 @@ fn map_skill_state<From, To>(
                                 changed_paths: changes.changed_paths,
                                 removed_paths: changes.removed_paths,
                                 previous: map_skill_files(changes.previous, map)?,
+                                previous_modes: changes.previous_modes,
                             })
                         })
                         .transpose()?,
@@ -1164,7 +1193,7 @@ pub(crate) fn collect_tool_proposals(
             }
         };
         let files = current.files();
-        if baseline.is_some_and(|skill| skill.files() == files)
+        if baseline.is_some_and(|skill| skill.files == current.files)
             || store
                 .state
                 .approved_local
@@ -1190,8 +1219,7 @@ pub(crate) fn collect_tool_proposals(
             blocked.insert(folder, "Rename the skill folder to use lowercase letters, digits, and hyphens, then run `wenlan rules sync`.".into());
             continue;
         };
-        let changes =
-            baseline.and_then(|baseline| ToolSkillChanges::between(&baseline.files(), &files));
+        let changes = baseline.and_then(|baseline| ToolSkillChanges::between(baseline, &current));
         let validation = match &changes {
             Some(changes) => skills::preview_changes(
                 name,

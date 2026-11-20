@@ -86,6 +86,15 @@ pub struct SkillProposalChanges {
     pub removed: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub oversized: Vec<OversizedSkillFile>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub permissions: Vec<SkillPermissionChange>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SkillPermissionChange {
+    pub path: String,
+    pub before: String,
+    pub after: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

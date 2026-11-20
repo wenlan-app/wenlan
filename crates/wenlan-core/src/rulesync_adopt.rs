@@ -191,7 +191,11 @@ impl AdoptionLink {
                 else {
                     return Ok(false);
                 };
-                SkillTree::read(&home, &node, "")?.link(&node)
+                let tree = SkillTree::read(&home, &node, "")?;
+                if tree.nested_link {
+                    return Ok(false);
+                }
+                tree.link(&node)
             }
         };
         Ok(current.resolved == self.resolved)
@@ -1387,6 +1391,26 @@ mod tests {
         assert!(!adoption
             .links
             .contains_key(Path::new(".claude/skills/linked")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rulesync_step1d_checks_link_assets_again_before_detaching() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path();
+        put(home, "source/skill/SKILL.md", "Skill content\n");
+        put(home, "source/skill/guide.txt", "Same contents\n");
+        put(home, "source/skill/alias.txt", "Same contents\n");
+        let destination = Path::new(".claude/skills/example");
+        link(home, ".claude/skills/example", home.join("source/skill"));
+        let adoption =
+            discover(home, &[target("claudecode", None, Some(".claude/skills"))]).unwrap();
+        let expected = &adoption.links[destination];
+        assert!(expected.matches(home, destination).unwrap());
+
+        fs::remove_file(home.join("source/skill/alias.txt")).unwrap();
+        link(home, "source/skill/alias.txt", Path::new("guide.txt"));
+        assert!(!expected.matches(home, destination).unwrap());
     }
 
     #[test]
