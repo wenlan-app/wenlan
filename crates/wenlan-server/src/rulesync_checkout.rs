@@ -359,9 +359,14 @@ impl Job<'_> {
                     *delivered = current;
                     continue;
                 }
-                let after = text(&current)
-                    .and_then(|text| rulesync_layers::remove_inaccessible(text, &keys));
-                let after = after.unwrap_or_else(|_| remaining.clone());
+                let after = text(&current).and_then(|current| {
+                    rulesync_layers::edits(before, current)?;
+                    rulesync_layers::remove_inaccessible(current, &keys)
+                });
+                let Ok(after) = after else {
+                    blocked.insert(path.clone(), "Cannot remove a shared rules section because its markers changed. Reconcile the checkout rules and sync again.");
+                    continue;
+                };
                 let desired = with_bytes(&current, after.into_bytes());
                 if self.replace(path, &current, &desired)? {
                     *delivered = with_bytes(delivered, remaining.into_bytes());
@@ -377,6 +382,9 @@ impl Job<'_> {
         };
         let mut observed = BTreeMap::new();
         for (path, delivered) in &checkout.files {
+            if blocked.contains_key(path) {
+                continue;
+            }
             let current = self.root.read(&self.directory.join(path), false)?;
             if current != *delivered {
                 let before = text(delivered)?;
@@ -523,13 +531,17 @@ impl Job<'_> {
         let mut observed = BTreeMap::new();
         for (path, delivery) in &checkout.skills {
             let current = self.root.read(&self.directory.join(path), false)?;
+            let matches_delivery =
+                current == Snapshot::Absent || fingerprint(&current)? == delivery.digest;
             if !allowed.contains(delivery.source.as_str()) {
-                if self.replace(path, &current, &Snapshot::Absent)? {
+                if !matches_delivery {
+                    blocked.insert(path.clone(), "The removed skill was edited. Reconcile the local file and sync again to finish removing it.");
+                } else if self.replace(path, &current, &Snapshot::Absent)? {
                     retired.push(path.clone());
                 } else {
                     blocked.insert(path.clone(), "Changed while Wenlan was removing a skill. Sync again to finish removing it.");
                 }
-            } else if current == Snapshot::Absent || fingerprint(&current)? == delivery.digest {
+            } else if matches_delivery {
                 observed.insert(path.clone(), current);
             } else {
                 blocked.insert(path.clone(), "The installed skill was edited. Reconcile the change with the Space's approved skill and sync again.");
@@ -642,6 +654,88 @@ mod tests {
         let skills = ProjectSkills::from_layers(&[layer("one"), layer("two")]).unwrap();
         assert!(skills.packages.is_empty());
         assert!(skills.conflicts.contains("checked-procedure"));
+    }
+
+    #[test]
+    fn rulesync_checkout_preserves_edited_files_and_receipts_on_withdrawal() {
+        let scratch = tempfile::tempdir().unwrap();
+        let setup = Setup {
+            home: scratch.path().join("home"),
+            data: scratch.path().to_owned(),
+            binary: scratch.path().join("unavailable-renderer"),
+        };
+        std::fs::create_dir(&setup.home).unwrap();
+        let repo = scratch.path().join("repo");
+        std::fs::create_dir(&repo).unwrap();
+        let root = FileRoot::open(&setup.data).unwrap();
+        let job = Job {
+            setup: &setup,
+            settings: scratch.path().join("settings.toml"),
+            root: &root,
+            directory: Path::new("checkouts/example/rules"),
+        };
+        let rule_path = PathBuf::from("AGENTS.md");
+        let approved_rule = format!(
+            "<!-- WENLAN SHARED RULES {} {} -->\n## Project rules\n\nLast synced date.\n\nUse the project checklist.\n<!-- END WENLAN SHARED RULES -->\nOriginal advice.\n",
+            "a".repeat(64),
+            "b".repeat(64),
+        );
+        let edited_rule = approved_rule.replace("<!-- END", "<!-- EDITED END")
+            + "Personal note added after delivery.\n";
+        let skill_path = PathBuf::from(".agents/skills/project-only/SKILL.md");
+        let approved_skill = Snapshot::file(b"approved project-only skill\n".to_vec());
+        let edited_skill =
+            Snapshot::file(b"approved project-only skill\nPersonal edit.\n".to_vec());
+        let approved_rule = Snapshot::file(approved_rule.into_bytes());
+        let edited_rule = Snapshot::file(edited_rule.into_bytes());
+        let edited = [(&rule_path, &edited_rule), (&skill_path, &edited_skill)];
+        for (path, snapshot) in edited {
+            assert!(job.replace(path, &Snapshot::Absent, snapshot).unwrap());
+        }
+        let checkout = Checkout {
+            repo,
+            files: BTreeMap::from([(rule_path.clone(), approved_rule.clone())]),
+            skills: BTreeMap::from([(
+                skill_path.clone(),
+                SkillDelivery {
+                    source: "lost-access".into(),
+                    digest: fingerprint(&approved_skill).unwrap(),
+                },
+            )]),
+            ..Checkout::default()
+        };
+        let state_path = Path::new("checkouts/example.json");
+        let state = job.save(state_path, &Snapshot::Absent, &checkout).unwrap();
+        let master =
+            PersonalMaster::new(&rulesync_personal::discover_adoption(&setup.home).unwrap());
+        let report = job
+            .run(state_path, state, checkout, Some(&master), &[])
+            .unwrap();
+
+        let changed: Vec<_> = edited
+            .into_iter()
+            .filter(|(path, snapshot)| {
+                &root.read(&job.directory.join(path), false).unwrap() != *snapshot
+            })
+            .map(|(path, _)| path)
+            .collect();
+        assert!(
+            changed.is_empty(),
+            "withdrawal overwrote member edits at {changed:?}"
+        );
+        for (path, _) in edited {
+            assert!(report
+                .blocked
+                .iter()
+                .any(|item| item.starts_with(path.to_str().unwrap())));
+        }
+        let record = root.read(state_path, false).unwrap();
+        let saved: Checkout = serde_json::from_str(text(&record).unwrap()).unwrap();
+        assert_eq!(saved.files[&rule_path], approved_rule);
+        assert_eq!(
+            saved.skills[&skill_path].digest,
+            fingerprint(&approved_skill).unwrap()
+        );
     }
 
     #[test]

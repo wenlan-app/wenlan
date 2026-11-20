@@ -358,6 +358,50 @@ fn rulesync_team_rejects_credentials_before_shipping_a_proposal() {
 }
 
 #[test]
+fn rulesync_team_distinguishes_registry_read_failure_from_empty_inventory() {
+    let fixture = Fixture::new();
+    let root = fixture.settings.parent().unwrap();
+    store_test_skill(
+        root,
+        SkillScope::Space {
+            name: PROJECT.into(),
+        },
+        "project-checklist",
+        vec![],
+    );
+    let read_manifest =
+        || rulesync_team::hosted_manifest(&fixture.team, &fixture.settings, PROJECT);
+    assert_eq!(read_manifest().unwrap().unwrap().skills.len(), 1);
+    let registry = root
+        .join("spaces")
+        .join(crate::space_folders::folder_name(PROJECT))
+        .join("skills");
+    let record = registry
+        .join("project-checklist")
+        .join(crate::skill_registry::META_DIR)
+        .join(crate::skill_registry::RECORD_FILE);
+    let saved_record = record.with_extension("backup");
+    let displaced = registry.with_extension("backup");
+    fs::rename(&registry, &displaced).unwrap();
+    // A plain file in the registry location fails even when tests run with broad permissions.
+    fs::write(&registry, "registry unavailable").unwrap();
+    let remote = read_manifest();
+    let local = rulesync_team::load_project_layers(&fixture.settings);
+    fs::remove_file(&registry).unwrap();
+    let empty = read_manifest().unwrap().unwrap().skills;
+    fs::rename(displaced, &registry).unwrap();
+    fs::rename(&record, &saved_record).unwrap();
+    let partial = read_manifest();
+    fs::rename(saved_record, record).unwrap();
+    assert!(
+        remote.is_err() && local.is_err() && partial.is_err(),
+        "a failed inventory was published: remote={remote:?}, local={local:?}, partial={partial:?}"
+    );
+    assert!(empty.is_empty());
+    assert_eq!(read_manifest().unwrap().unwrap().skills.len(), 1);
+}
+
+#[test]
 fn rulesync_team_shares_only_approved_safe_skills_from_the_exact_project() {
     let fixture = Fixture::new();
     let root = fixture.settings.parent().unwrap();

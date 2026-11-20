@@ -52,8 +52,12 @@ pub(crate) fn project_sources(root: &Path, space: &str) -> anyhow::Result<Vec<Te
         let candidate = match snapshot(&registry, &scope, &name) {
             Ok(Some(candidate)) => candidate,
             Ok(None) => continue,
+            Err(error) if error.is::<std::io::Error>() || error.is::<serde_json::Error>() => {
+                // A partial read cannot establish that a delivery was withdrawn.
+                return Err(error);
+            }
             Err(_) => {
-                log::warn!("[team Rules] an installed project skill did not match its approved source or could not be read");
+                log::warn!("[team Rules] an installed project skill did not match its approved source or the shared text format");
                 continue;
             }
         };

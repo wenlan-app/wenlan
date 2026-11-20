@@ -316,9 +316,9 @@ impl HostedRules {
         Ok(approved_head(&self.history(), &self.page_id)?.cloned())
     }
 
-    fn skills(&self, settings_path: &Path) -> Vec<TeamProjectSkill> {
+    fn skills(&self, settings_path: &Path) -> Result<Vec<TeamProjectSkill>, WenlanError> {
         let Some(project) = &self.project else {
-            return Vec::new();
+            return Ok(Vec::new());
         };
         let registry = if settings_path == shared_space::settings_path() {
             skill_registry::default_wenlan_root()
@@ -328,13 +328,9 @@ impl HostedRules {
                 .unwrap_or_else(|| Path::new("."))
                 .to_path_buf()
         };
-        match project_sync::project_sources(&registry, &project.space) {
-            Ok(skills) => skills,
-            Err(_) => {
-                log::warn!("[team Rules] the project skill registry could not be read");
-                Vec::new()
-            }
-        }
+        project_sync::project_sources(&registry, &project.space).map_err(|_| {
+            WenlanError::Generic("the project skill registry could not be read".into())
+        })
     }
 
     fn layer(
@@ -347,7 +343,7 @@ impl HostedRules {
             self.project.clone(),
             rules,
             rules.meta.ts.clone(),
-            self.skills(settings_path),
+            self.skills(settings_path)?,
         )
     }
 
@@ -448,8 +444,11 @@ pub fn hosted_manifest(
     let Some(hosted) = hosted_rules(team_path, settings_path, space)? else {
         return Ok(None);
     };
-    Ok(hosted.head()?.map(|rules| TeamRulesManifest {
-        skills: hosted.skills(settings_path),
+    let Some(rules) = hosted.head()? else {
+        return Ok(None);
+    };
+    Ok(Some(TeamRulesManifest {
+        skills: hosted.skills(settings_path)?,
         file: format!(
             "{}/{}/{}/{}/{}",
             version::MEMBERS_DIR,
