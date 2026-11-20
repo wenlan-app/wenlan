@@ -26,7 +26,9 @@ use wenlan_types::{
         ListMemoriesResponse, MemoryDetailResponse, MergeEntityResponse, PageReadResponse,
         PendingRevisionItem, RevisionDismissResponse, SearchMemoryResponse, StoreMemoryResponse,
     },
-    rulesync::{AdoptRequest, PullbackDecision, RulesSyncReport},
+    rulesync::{
+        AdoptPreviewRequest, AdoptRequest, AdoptionPlan, PullbackDecision, RulesSyncReport,
+    },
     sources::Source,
     BriefHistoryResponse, BriefReadRequest, BriefReadResponse, BriefUpdateReceipt,
     BriefUpdateRequest, BriefVersionResponse, EntityDetail, OutboxDrainReport,
@@ -797,6 +799,14 @@ impl WenlanClient {
             "that is not a rule id; `wenlan rules` prints each saved rule's id"
         );
         self.post_json(&format!("/api/skills/rules/{id}/remove"), request)
+            .await
+    }
+
+    pub(crate) async fn preview_adoption_as_person(
+        &self,
+        request: &AdoptPreviewRequest,
+    ) -> Result<AdoptionPlan> {
+        self.post_json_as_person("/api/rules/setup/adopt/preview", request, None, true)
             .await
     }
 

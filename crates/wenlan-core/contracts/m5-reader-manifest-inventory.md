@@ -895,6 +895,7 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/spaces/{name}/star` | main | yes | automatic | `none` | `handle_toggle_space_starred` | opaque response type — fail-closed |
 | `POST` | `/api/spaces/{name}/wiki/docs` | main | no | not_applicable | `none` | — | receipt only: the doc fix just recorded or declined (repository file text, not page text) and the open count |
 | `POST` | `/api/rules/setup/adopt` | main | no | not_applicable | `none` | — | local tool setup receipt with relative paths and local file diffs |
+| `POST` | `/api/rules/setup/adopt/preview` | main | no | not_applicable | `none` | — | read-only local adoption plan for the authenticated person |
 | `POST` | `/api/rules/setup/checkout` | main | no | not_applicable | `none` | — | checkout-specific rules receipt and private output path |
 | `POST` | `/api/rules/setup/restore` | main | no | not_applicable | `none` | — | local tool setup restoration receipt |
 | `POST` | `/api/rules/setup/skill-updates` | main | no | not_applicable | `none` | — | release metadata for personally adopted tools, no page text |

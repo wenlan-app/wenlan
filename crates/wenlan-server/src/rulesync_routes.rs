@@ -16,13 +16,14 @@ use wenlan_core::rulesync_adopt::{AdoptedSkill, Adoption, AdoptionEntry};
 use wenlan_core::rulesync_personal::{
     adoption_inputs, check_delivery_paths, describe_change, discover_adoption, fingerprint,
     is_harness_path, line_changes, merge_rule_text, promote_changes, stage_adopted_skill,
-    system_home, write_root_rule, DeliveryWorktrees, LineChange, LocalText, PersonalMaster,
+    system_home, verify_adoption_token, write_root_rule, DeliveryWorktrees, LineChange, LocalText,
+    PersonalMaster,
 };
 use wenlan_core::rulesync_renderer;
 use wenlan_core::rulesync_team::{self, TeamRuleLayer};
 use wenlan_types::rulesync::{
-    AdoptRequest, AdoptedSkillUpdate, PullbackAction, PullbackCard, PullbackDecision,
-    RulesSyncReport,
+    AdoptPreviewRequest, AdoptRequest, AdoptedSkillUpdate, AdoptionPlan, PullbackAction,
+    PullbackCard, PullbackDecision, RulesSyncReport,
 };
 use wenlan_types::rulesync_skill::SavedSkillTool;
 
@@ -38,6 +39,7 @@ mod storage;
 pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<SharedState> {
     router
         .route("/api/rules/setup/adopt", post(adopt))
+        .route("/api/rules/setup/adopt/preview", post(adopt_preview))
         .route("/api/rules/setup/restore", post(restore))
         .route("/api/rules/setup/sync", post(sync))
         .route("/api/rules/setup/skill-updates", post(skill_updates))
@@ -55,6 +57,28 @@ pub(crate) fn require_local_person(headers: &HeaderMap) -> Result<(), ServerErro
         ));
     }
     Ok(())
+}
+
+fn require_personal_rules_writer(headers: &HeaderMap) -> Result<(), ServerError> {
+    require_local_person(headers)?;
+    if !wenlan_core::rulesync_personal::enabled() {
+        return Err(ServerError::ValidationError(
+            "WENLAN_RULESYNC is off".into(),
+        ));
+    }
+    Ok(())
+}
+
+async fn adopt_preview(
+    headers: HeaderMap,
+    Json(request): Json<AdoptPreviewRequest>,
+) -> Result<Json<AdoptionPlan>, ServerError> {
+    require_personal_rules_writer(&headers)?;
+    tokio::task::spawn_blocking(move || Setup::system()?.preview_adoption(&request.home))
+        .await
+        .map_err(|error| ServerError::Internal(error.to_string()))?
+        .map(Json)
+        .map_err(|error| ServerError::Conflict(format!("{error:#}")))
 }
 
 async fn adopt(
@@ -82,12 +106,7 @@ async fn sync(
 async fn skill_updates(headers: HeaderMap) -> Result<Json<Vec<AdoptedSkillUpdate>>, ServerError> {
     use wenlan_core::skill_registry::{self, Endpoints, ReqwestFetch};
 
-    require_local_person(&headers)?;
-    if !wenlan_core::rulesync_personal::enabled() {
-        return Err(ServerError::ValidationError(
-            "WENLAN_RULESYNC is off".into(),
-        ));
-    }
+    require_personal_rules_writer(&headers)?;
     let (home, skills) = tokio::task::spawn_blocking(|| {
         let setup = Setup::system()?;
         let manifest = setup
@@ -125,12 +144,7 @@ async fn execute(
     headers: HeaderMap,
     operation: Operation,
 ) -> Result<Json<RulesSyncReport>, ServerError> {
-    require_local_person(&headers)?;
-    if !wenlan_core::rulesync_personal::enabled() {
-        return Err(ServerError::ValidationError(
-            "WENLAN_RULESYNC is off".into(),
-        ));
-    }
+    require_personal_rules_writer(&headers)?;
     let generated = if matches!(operation, Operation::Sync | Operation::Review(_)) {
         crate::skill_grow::general_tool_rules(&state).await?
     } else {
@@ -139,7 +153,7 @@ async fn execute(
     let result = tokio::task::spawn_blocking(move || {
         let setup = Setup::system()?;
         match operation {
-            Operation::Adopt(request) => setup.adopt(&request.token),
+            Operation::Adopt(request) => setup.adopt(&request),
             Operation::Restore => setup.restore(),
             Operation::Sync => setup.sync(&generated),
             Operation::Review(request) => setup.review(&request, &generated),
@@ -574,8 +588,33 @@ impl Setup {
         Ok(lock)
     }
 
-    fn adopt(&self, token: &str) -> Result<RulesSyncReport> {
-        self.adopt_using(token, |target, source, skills| {
+    fn check_adoption_home(&self, expected: &Path) -> Result<()> {
+        ensure!(
+            expected.is_absolute() && self.home.canonicalize()? == expected,
+            "The CLI and daemon use different tool homes. Check HOME and WENLAN_DEV_STATE_DIR."
+        );
+        Ok(())
+    }
+
+    fn require_unrecorded_adoption(&self) -> Result<()> {
+        match fs::symlink_metadata(self.data.join("personal.json")) {
+            Ok(_) => bail!("An adoption backup already exists. Run `wenlan rules restore` before adopting again."),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error).context("check for an existing adoption backup"),
+        }
+    }
+
+    fn preview_adoption(&self, expected_home: &Path) -> Result<AdoptionPlan> {
+        self.check_adoption_home(expected_home)?;
+        self.require_unrecorded_adoption()?;
+        wenlan_core::rulesync_personal::plan_adoption(&self.home)
+    }
+
+    fn adopt(&self, request: &AdoptRequest) -> Result<RulesSyncReport> {
+        if let Some(home) = &request.home {
+            self.check_adoption_home(home)?;
+        }
+        self.adopt_using(&request.token, |target, source, skills| {
             let mut features = Vec::new();
             if source.is_some() {
                 features.push("rules");
@@ -597,17 +636,12 @@ impl Setup {
         token: &str,
         render: impl Fn(&str, Option<&str>, &[&AdoptedSkill]) -> Result<BTreeMap<PathBuf, Vec<u8>>>,
     ) -> Result<RulesSyncReport> {
+        self.require_unrecorded_adoption()?;
         let adoption = discover_adoption(&self.home)?;
-        ensure!(
-            fingerprint(&adoption)? == token,
-            "the adoption plan changed. Review it again"
-        );
+        verify_adoption_token(&adoption, token)?;
         let root = FileRoot::open(&self.home)?;
         let _lock = self.lock()?;
-        ensure!(
-            self.load()?.is_none(),
-            "an adoption is already recorded. Restore it before adopting again"
-        );
+        self.require_unrecorded_adoption()?;
         let master = PersonalMaster::new(&adoption);
         let inputs = adoption_inputs();
         for input in &inputs {
@@ -641,10 +675,8 @@ impl Setup {
             }
             check_rendered_adoption_skills(&input.tool, &adoption, &skills, &mut output)?;
         }
-        ensure!(
-            fingerprint(&discover_adoption(&self.home)?)? == token,
-            "the source changed during rendering. Review the plan again"
-        );
+        verify_adoption_token(&discover_adoption(&self.home)?, token)
+            .context("the source changed during rendering")?;
         self.apply_adoption(&root, adoption, master)
     }
 
@@ -2345,6 +2377,182 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn rulesync_adoption_subprocess() {
+        let Some(root) = std::env::var_os("WENLAN_ADOPTION_TEST_ROOT").map(PathBuf::from) else {
+            return;
+        };
+        let setup = Setup {
+            home: root.join("home"),
+            data: root.join("data"),
+            binary: PathBuf::from("unused"),
+        };
+        if let Ok(token) = std::env::var("WENLAN_ADOPTION_TEST_TOKEN") {
+            let result = setup.adopt_using(&token, |target, source, skills| {
+                assert!(skills.is_empty());
+                let path = if target == "codexcli" { CODEX } else { CLAUDE };
+                Ok(BTreeMap::from([(
+                    path.into(),
+                    source.unwrap().as_bytes().to_vec(),
+                )]))
+            });
+            match result {
+                Ok(report) => println!(
+                    "\nadoption result {}",
+                    serde_json::to_string(&report).unwrap()
+                ),
+                Err(error) => println!("\nadoption error {error:#}"),
+            }
+        } else {
+            let plan = setup
+                .preview_adoption(&setup.home.canonicalize().unwrap())
+                .unwrap();
+            println!(
+                "\nadoption preview {}",
+                serde_json::to_string(&plan).unwrap()
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    fn adoption_subprocess(fixture: &Fixture, with_git: bool, token: Option<&str>) -> String {
+        let root = fixture._temp.path();
+        let work = root.join(if with_git { "preview-cwd" } else { "apply-cwd" });
+        let tmp = work.join("tmp");
+        fs::create_dir_all(&tmp).unwrap();
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "rulesync_routes::tests::rulesync_adoption_subprocess",
+                "--nocapture",
+            ])
+            .current_dir(&work)
+            .env("TMPDIR", &tmp)
+            .env("HOME", &fixture.setup.home)
+            .env("CODEX_HOME", fixture.setup.home.join(".codex"))
+            .env("WENLAN_DATA_DIR", &fixture.setup.data)
+            .env("WENLAN_NO_AUTOSTART", "1")
+            .env_remove("WENLAN_SESSION")
+            .env("WENLAN_ADOPTION_TEST_ROOT", root)
+            .env_remove("WENLAN_ADOPTION_TEST_TOKEN");
+        if !with_git {
+            command.env("PATH", &tmp);
+        }
+        if let Some(token) = token {
+            command.env("WENLAN_ADOPTION_TEST_TOKEN", token);
+        }
+        let output = command.output().unwrap();
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(
+            output.status.success(),
+            "{stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        stdout
+            .lines()
+            .find(|line| line.starts_with("adoption "))
+            .expect(&stdout)
+            .to_owned()
+    }
+
+    #[cfg(unix)]
+    fn preview_in_subprocess(fixture: &Fixture, with_git: bool) -> AdoptionPlan {
+        let stdout = adoption_subprocess(fixture, with_git, None);
+        serde_json::from_str(stdout.strip_prefix("adoption preview ").unwrap()).unwrap()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rulesync_adoption_accepts_the_same_content_across_process_environments() {
+        let fixture = Fixture::new();
+        let git = |args: &[&str]| {
+            let output = std::process::Command::new("git")
+                .env_clear()
+                .env("PATH", std::env::var_os("PATH").unwrap())
+                .env("HOME", &fixture.setup.home)
+                .arg("-C")
+                .arg(fixture.setup.home.join(".codex"))
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        git(&["init", "--quiet"]);
+        git(&[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/fixture/approved-tools.git",
+        ]);
+
+        let plan = preview_in_subprocess(&fixture, true);
+        let without_git = preview_in_subprocess(&fixture, false);
+        assert!(plan
+            .notes
+            .iter()
+            .any(|note| note.contains("repository approved-tools")));
+        assert_ne!(plan.notes, without_git.notes);
+        assert_eq!(plan.files, without_git.files);
+        assert_eq!(plan.skills, without_git.skills);
+        assert_eq!(plan.token, without_git.token);
+        assert!(!fixture.setup.data.join("personal.lock").exists());
+
+        let stdout = adoption_subprocess(&fixture, false, Some(&plan.token));
+        let report: RulesSyncReport =
+            serde_json::from_str(stdout.strip_prefix("adoption result ").expect(&stdout)).unwrap();
+        assert_eq!(report.written, [CLAUDE, CODEX]);
+        assert_eq!(fixture.text(CLAUDE), format!("{SHARED}Claude only.\n"));
+        let backup = fs::read(fixture.setup.data.join("personal.json")).unwrap();
+        let duplicate = adoption_subprocess(&fixture, false, Some(&plan.token));
+        assert!(
+            duplicate.contains("An adoption backup already exists"),
+            "{duplicate}"
+        );
+        assert_eq!(
+            fs::read(fixture.setup.data.join("personal.json")).unwrap(),
+            backup
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rulesync_adoption_refuses_a_file_edit_between_processes() {
+        let fixture = Fixture::new();
+        let plan = preview_in_subprocess(&fixture, true);
+        fixture.write(CODEX, "Saved after preview.\n");
+        let stdout = adoption_subprocess(&fixture, false, Some(&plan.token));
+        assert!(
+            stdout.starts_with("adoption error The adoption plan changed in file entries."),
+            "{stdout}"
+        );
+        assert_eq!(fixture.text(CODEX), "Saved after preview.\n");
+        assert_eq!(fixture.text(CLAUDE), "@~/.agents/AGENTS.md\nClaude only.\n");
+        assert!(!fixture.setup.data.join("personal.json").exists());
+    }
+
+    #[test]
+    fn rulesync_adoption_refuses_a_different_cli_tool_home() {
+        let fixture = Fixture::new();
+        let other = fixture._temp.path().canonicalize().unwrap();
+        let error = fixture.setup.preview_adoption(&other).unwrap_err();
+        assert!(error.to_string().contains("different tool homes"));
+        let error = fixture
+            .setup
+            .adopt(&AdoptRequest {
+                token: String::new(),
+                home: Some(other),
+            })
+            .unwrap_err();
+        assert!(error.to_string().contains("different tool homes"));
+        assert!(!fixture.setup.data.join("personal.lock").exists());
+    }
+
     #[test]
     fn rulesync_blocked_paths_explain_how_to_review_the_change() {
         let f = Fixture::new();
@@ -2841,7 +3049,9 @@ mod tests {
             adoption.files[Path::new(file)].after,
             AdoptionEntry::File(rendered.to_vec())
         );
-        let token = fingerprint(&adoption).unwrap();
+        let token = wenlan_core::rulesync_personal::adoption_plan(&adoption)
+            .unwrap()
+            .token;
 
         let rule_path = |target: &str| if target == "codexcli" { CODEX } else { CLAUDE };
         let error = f

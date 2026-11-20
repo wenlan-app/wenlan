@@ -10,8 +10,8 @@ use clap::{Subcommand, ValueEnum};
 use serde::Serialize;
 use wenlan_core::{rulesync_personal, skill_registry::printable};
 use wenlan_types::rulesync::{
-    AdoptRequest, AdoptedSkillUpdate, AdoptionPlan, AdoptionSkillOutcome, PullbackAction,
-    PullbackDecision, RulesSyncReport, SkillUpdateStatus, SkillUpstream,
+    AdoptPreviewRequest, AdoptRequest, AdoptedSkillUpdate, AdoptionPlan, AdoptionSkillOutcome,
+    PullbackAction, PullbackDecision, RulesSyncReport, SkillUpdateStatus, SkillUpstream,
 };
 use wenlan_types::rulesync_settings::{SettingsApplyRequest, SettingsPlan, SettingsPreviewRequest};
 
@@ -106,14 +106,20 @@ async fn run_inner(
     let client = WenlanClient::for_local_rules()?;
     let report = match command {
         RulesSetupCmd::Adopt { .. } => {
-            let plan = adoption_plan()?;
+            let expected = AdoptPreviewRequest {
+                home: rulesync_personal::system_home()?.canonicalize()?,
+            };
+            let plan = client.preview_adoption_as_person(&expected).await?;
             // The person must see the same plan even with --quiet or --format json.
             println!("{}", plan_for_a_person(&plan));
             if !confirm("Back up these files and links and let Wenlan manage them?")? {
                 return Ok(());
             }
             client
-                .adopt_rules_as_person(&AdoptRequest { token: plan.token })
+                .adopt_rules_as_person(&AdoptRequest {
+                    token: plan.token,
+                    home: Some(expected.home),
+                })
                 .await?
         }
         RulesSetupCmd::Restore => {

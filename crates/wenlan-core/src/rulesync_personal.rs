@@ -143,6 +143,54 @@ pub fn fingerprint(value: &impl Serialize) -> Result<String> {
     Ok(format!("{:x}", hash.finalize()))
 }
 
+const ADOPTION_TOKEN_VERSION: &str = "adopt-2";
+const ADOPTION_FIELDS: [&str; 6] = [
+    "file entries",
+    "skill locations and upstreams",
+    "skipped skills",
+    "personal rules",
+    "personal skill master",
+    "Git worktree destinations",
+];
+
+fn adoption_digests(adoption: &Adoption) -> Result<[String; ADOPTION_FIELDS.len()]> {
+    // Bind approval to the file operations and the master they create.
+    // A worktree's friendly Git name is display-only. Its actual location
+    // matters because adoption authorizes future writes there.
+    Ok([
+        fingerprint(&adoption.files)?,
+        fingerprint(&adoption.skill_locations)?,
+        fingerprint(&adoption.skipped)?,
+        fingerprint(&(
+            &adoption.shared,
+            &adoption.overlays,
+            adoption.codex_sync_replaced,
+        ))?,
+        fingerprint(&adoption.skills)?,
+        fingerprint(&adoption.worktree_writes)?,
+    ])
+}
+
+pub fn verify_adoption_token(adoption: &Adoption, token: &str) -> Result<()> {
+    let mut parts = token.split(':');
+    ensure!(
+        parts.next() == Some(ADOPTION_TOKEN_VERSION)
+            && parts.clone().count() == ADOPTION_FIELDS.len(),
+        "Unsupported adoption approval token. Review the plan with the current Wenlan CLI."
+    );
+    for ((field, actual), expected) in ADOPTION_FIELDS
+        .into_iter()
+        .zip(adoption_digests(adoption)?)
+        .zip(parts)
+    {
+        ensure!(
+            actual == expected,
+            "The adoption plan changed in {field}. Review it again."
+        );
+    }
+    Ok(())
+}
+
 /// No staging, renderer, daemon, database, or data-root lookup on this path.
 pub fn plan_adoption(home: &Path) -> Result<AdoptionPlan> {
     adoption_plan(&discover_adoption(home)?)
@@ -217,7 +265,10 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
     notes.push("~/.agents is left untouched. Wenlan replaces adopted links at their tool paths and leaves the shared sources in place.".into());
     notes.extend(adoption.worktree_notes.iter().cloned());
     Ok(AdoptionPlan {
-        token: fingerprint(adoption)?,
+        token: format!(
+            "{ADOPTION_TOKEN_VERSION}:{}",
+            adoption_digests(adoption)?.join(":")
+        ),
         files,
         skills,
         notes,

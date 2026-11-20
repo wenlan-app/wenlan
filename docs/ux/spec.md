@@ -896,9 +896,10 @@ and wait for evidence that people need them.
 
 - **UX-SKILL-15** `pending` `wenlan rules adopt --dry-run` reads the
   existing files and links and prints a per-file diff and line counts. It
-  can run with no daemon and creates no files. Adoption shows the same plan
-  and asks the person to type `yes` at their terminal. A changed plan
-  needs a fresh review. Wenlan backs up every destination before writing
+  can run with no daemon and creates no files. Interactive adoption shows
+  the daemon's read-only preview and asks the person to type `yes` at
+  their terminal. A changed plan names the part that changed and needs a
+  fresh review. Wenlan backs up every destination before writing
   and replaces the adopted links with managed files or folders.
   The skill diff shows the rendered `SKILL.md` the tool receives. Adoption
   verifies that preview against pinned rulesync output before applying it.
