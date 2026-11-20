@@ -1386,6 +1386,7 @@ carrying the authority of agreement.
 | `core/db.rs::try_update_page_content` | `private` | no | no | — | `core/db.rs::append_page_history_with_minor`, `core/db/sentence_history.rs::stamp_page_citations` |
 | `core/db/citation_provenance.rs::capture_kind_on` | `private` | no | no | — | `core/db/citation_provenance.rs::page_on` |
 | `core/db/citation_provenance.rs::preserved_on` | `private` | no | no | — | `core/db/citation_provenance.rs::page_on` |
+| `core/db/citation_provenance.rs::retain_refresh_citations_on` | `pub(super)` | no | no | — | `core/db/citation_provenance.rs::page_on` |
 | `core/db/citation_provenance.rs::source_lifecycle` | `pub` | no | **yes** | `server/source_lifecycle_routes.rs::read` | `core/db/citation_provenance.rs::page_on` |
 | `core/db/citation_sources.rs::citation_page_source` | `pub(crate)` | no | no | — | `core/db/citation_sources.rs::read_page_on` |
 | `core/db/citation_sources.rs::guard_on` | `pub(super)` | no | no | — | `core/db/citation_sources.rs::read_page_on` |

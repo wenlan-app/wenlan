@@ -3060,17 +3060,16 @@ async fn handle_refresh_page_inner(
         if let Some(opt) = &summary_update {
             db.update_page_summary(&id, opt.as_deref()).await?;
         }
-        // Only the staleness this write saw is cleared: a landed write moved
-        // the source revision one past the fence it was checked against, an
-        // unchanged one left it there. A source change or stale mark that
-        // arrived after the write moved it further and stays.
-        let settled_revision = if result.outcome == WriteOutcome::Wrote {
-            source_revision + 1
-        } else {
-            source_revision
-        };
-        db.clear_page_staleness_at_revision(&id, settled_revision)
-            .await?;
+        // A hosted refresh edits the prose without consuming local source updates.
+        if private {
+            let settled_revision = if result.outcome == WriteOutcome::Wrote {
+                source_revision + 1
+            } else {
+                source_revision
+            };
+            db.clear_page_staleness_at_revision(&id, settled_revision)
+                .await?;
+        }
         if let Some(root) = page_root {
             // Re-read so a concurrent human edit cannot be replaced by the
             // original refresh snapshot. Projection failure is post-commit.

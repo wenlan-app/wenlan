@@ -305,6 +305,37 @@ async fn preserved_on(
         .map(|saved| (page, saved)))
 }
 
+/// Carry local targets onto the landing body while the page write holds the
+/// transaction. Citation work can refresh the stored map without a version bump.
+pub(super) async fn retain_refresh_citations_on(
+    conn: &libsql::Connection,
+    id: &str,
+    content: &str,
+) -> Result<Option<String>, WenlanError> {
+    let Some(page) = page_on(conn, id).await? else {
+        return Ok(None);
+    };
+    let citations = match page.citations.as_deref() {
+        Some(json) => serde_json::from_str(json).unwrap_or_default(),
+        None => match preserved_on(conn, id).await? {
+            Some((_, saved)) => effective_map(
+                &page.content,
+                &saved.citations,
+                &saved.affected_locators,
+                &saved.historical_locators,
+            ),
+            None => Vec::new(),
+        },
+    };
+    let kept =
+        crate::citations::retain_unchanged_sentence_references(&page.content, content, &citations);
+    if kept.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(serde_json::to_string(&kept)?))
+    }
+}
+
 /// Shared by scoped/unscoped by-id readers and sentence evidence. Reads only
 /// the already authorized page identity and cannot expose another Space's map.
 pub(super) async fn apply_on(

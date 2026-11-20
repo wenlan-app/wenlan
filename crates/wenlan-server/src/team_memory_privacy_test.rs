@@ -839,6 +839,91 @@ async fn hosted_refresh_has_the_same_outcome_with_and_without_hidden_sources() {
 }
 
 #[tokio::test]
+async fn hosted_refresh_preserves_citation_targets_on_unchanged_sentences() {
+    const SOURCE: &str = "fixture-citation-target";
+    const BEFORE: &str = "Design review starts Tuesday [1]. The room has a whiteboard [2].";
+    const AFTER: &str = "Design review starts Tuesday [1]. Bring the checklist.";
+    let (app, db, _scratch) = fixture().await;
+    db.upsert_documents(vec![RawDocument {
+        source: "memory".into(),
+        source_id: SOURCE.into(),
+        title: "Fictional notice".into(),
+        content: BEFORE.into(),
+        space: Some(SPACE.into()),
+        confirmed: Some(true),
+        ..Default::default()
+    }])
+    .await
+    .unwrap();
+    let written = post_as_member(
+        &app,
+        "/api/pages",
+        json!({"title": "Cited agenda", "content": BEFORE}),
+    )
+    .await;
+    let id = written["id"].as_str().unwrap();
+    let citations = [1, 2].map(|n| json!({
+        "occurrence": n, "marker": n, "source_kind": "memory", "locator": SOURCE, "score": 1.0, "status": "verified"
+    }));
+    db.set_page_citations_with_changelog(id, Some(&json!(citations).to_string()), "[]")
+        .await
+        .unwrap();
+    let before = db.get_page(id).await.unwrap().unwrap();
+    assert_eq!(before.citations.len(), 2);
+    let (status, response) = request(
+        &app,
+        Method::PUT,
+        &format!("/api/pages/{id}"),
+        json!({"content": AFTER, "expected_version": before.version}),
+        true,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(!response.to_string().contains(SOURCE));
+    let after = db.get_page(id).await.unwrap().unwrap();
+    assert_eq!(after.content, AFTER);
+    assert_eq!(
+        after
+            .citations
+            .iter()
+            .map(|citation| (citation.marker, citation.locator.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(1, SOURCE)],
+        "the untouched sentence lost its local citation target"
+    );
+}
+
+#[tokio::test]
+async fn hosted_identical_refresh_does_not_acknowledge_pending_private_updates() {
+    const TEXT: &str = "Design review starts Tuesday.";
+    let (app, db, _scratch) = fixture().await;
+    let written = post_as_member(
+        &app,
+        "/api/pages",
+        json!({"title": "Shared agenda", "content": TEXT}),
+    )
+    .await;
+    let id = written["id"].as_str().unwrap();
+    db.set_page_stale(id, "source_updated").await.unwrap();
+    let version = db.get_page(id).await.unwrap().unwrap().version;
+    let (status, response) = request(
+        &app,
+        Method::PUT,
+        &format!("/api/pages/{id}"),
+        json!({"content": TEXT, "expected_version": version}),
+        true,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(response["write_outcome"], "unchanged");
+    assert_eq!(
+        db.get_page_stale_reason(id).await.unwrap().as_deref(),
+        Some("source_updated"),
+        "an identical hosted refresh acknowledged a pending local source update"
+    );
+}
+
+#[tokio::test]
 async fn hosted_forwarding_does_not_admit_private_readers() {
     let (app, _, _scratch) = fixture().await;
     for (method, path) in [

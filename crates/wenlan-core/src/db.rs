@@ -56222,13 +56222,23 @@ impl MemoryDB {
         // rolled back together with the UPDATE if a CAS guard fails below.
         // Each citation records the source version it was checked against,
         // in the transaction of the body it was computed for.
-        let stamped_citations = match sentence_history::stamp_page_citations(
-            &conn,
-            id,
-            citations_bind,
-            Some(content),
-            Some(source_memory_ids),
-        )
+        let stamped_citations = match async {
+            let retained = if basis.preserve_source_links {
+                citation_provenance::retain_refresh_citations_on(&conn, id, content)
+                    .await
+                    .map_err(|error| libsql::Error::Misuse(error.to_string()))?
+            } else {
+                None
+            };
+            sentence_history::stamp_page_citations(
+                &conn,
+                id,
+                retained.as_deref().or(citations_bind),
+                Some(content),
+                (!basis.preserve_source_links).then_some(source_memory_ids),
+            )
+            .await
+        }
         .await
         {
             Ok(stamped) => stamped,
@@ -56244,8 +56254,7 @@ impl MemoryDB {
             .and_then(|value| citation_provenance::normalize_summary(value, citations_bind));
         let changelog = lifecycle_changelog.as_deref().or(changelog);
         let captured = if basis.preserve_source_links {
-            // Preserve the evidence edges while invalidating the render cache.
-            // Its old marker positions cannot describe the new prose.
+            // Retaining some marker targets does not change the source links.
             page_export::capture_history_on(&conn, id).await
         } else {
             Self::dual_write_page_citations(&conn, id, citations_bind).await
