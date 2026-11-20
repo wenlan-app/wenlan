@@ -16,7 +16,7 @@ use crate::route_registry::{post, TrackedRouter};
 use crate::rulesync_apply::{ApplyOutcome, FileRoot, Snapshot};
 use crate::rulesync_layers;
 use crate::rulesync_routes::{
-    read_stage, rendered_skill_root, report, require_local_person, text, with_bytes,
+    read_stage, rendered_skill_with_assets, report, require_local_person, text, with_bytes,
     write_skill_files, Setup,
 };
 use crate::state::SharedState;
@@ -149,9 +149,9 @@ impl ProjectSkills {
         rendered: &mut RenderedCheckout,
     ) -> Result<()> {
         for (name, files) in &self.packages {
-            let root = rendered_skill_root(output, name)?
-                .with_context(|| format!("rulesync did not render project skill {name}"))?
-                .to_path_buf();
+            let assets = files.iter().map(|(path, file)| (path, &file.bytes));
+            let root = rendered_skill_with_assets(output, name, assets)?
+                .with_context(|| format!("rulesync did not render project skill {name}"))?;
             for (relative, file) in files {
                 let path = root.join(relative);
                 let bytes = output.remove(&path).with_context(|| {

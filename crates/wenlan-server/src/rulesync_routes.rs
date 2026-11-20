@@ -1191,7 +1191,7 @@ impl Setup {
                 }
                 Ok(())
             });
-            let output = match output {
+            let mut output = match output {
                 Ok(tree) => tree,
                 Err(error) => {
                     result
@@ -1200,10 +1200,11 @@ impl Setup {
                     continue;
                 }
             };
-            for name in sources.keys() {
-                let Some(emitted) = rendered_skill_root(&output, name)? else {
+            for (name, files) in &sources {
+                let Some(emitted) = rendered_skill_with_assets(&mut output, name, files)? else {
                     continue;
                 };
+                let emitted = emitted.as_path();
                 let selected = approved.iter().find(|(path, skill)| {
                     path.file_name() == emitted.file_name()
                         && Some(skill.tool) == renderer_skill_tool(&target)
@@ -1462,7 +1463,7 @@ impl Setup {
                 .map(|path| &manifest.master.skills[path.index])
                 .filter(|skill| names.insert(&skill.name))
                 .collect::<Vec<_>>();
-            let output = match render(&target, &skills) {
+            let mut output = match render(&target, &skills) {
                 Ok(tree) => tree,
                 Err(error) => {
                     result.blocked.push(format!("{target} skills: {error:#}"));
@@ -1474,7 +1475,7 @@ impl Setup {
                 .map(|skill| {
                     Ok((
                         skill.name.as_str(),
-                        rendered_skill_root(&output, &skill.name)?,
+                        rendered_skill_with_assets(&mut output, &skill.name, &skill.files)?,
                     ))
                 })
                 .collect::<Result<_>>()?;
@@ -1486,10 +1487,11 @@ impl Setup {
                     Snapshot::Absent
                 } else {
                     let Some(bytes) = roots[skill.name.as_str()]
+                        .as_deref()
                         .and_then(|root| output.get(&root.join(&spec.relative)))
                     else {
                         result.blocked.push(format!(
-                            "{} was absent from rulesync output",
+                            "{}: rulesync omitted the skill. Check the master's SKILL.md and sync again.",
                             spec.installed.display()
                         ));
                         continue;
@@ -1791,7 +1793,7 @@ fn safe_relative(path: &Path) -> bool {
             .all(|part| matches!(part, std::path::Component::Normal(_)))
 }
 
-pub(crate) fn rendered_skill_root<'a>(
+fn rendered_skill_root<'a>(
     output: &'a BTreeMap<PathBuf, Vec<u8>>,
     skill: &str,
 ) -> Result<Option<&'a Path>> {
@@ -1803,6 +1805,24 @@ pub(crate) fn rendered_skill_root<'a>(
     let root = roots.next();
     ensure!(roots.next().is_none(), "ambiguous staged skill destination");
     Ok(root)
+}
+
+/// Missing auxiliary files are still part of the approved package. A rendered
+/// SKILL.md is required to establish that this target gets the package at all.
+pub(crate) fn rendered_skill_with_assets<'a>(
+    output: &mut BTreeMap<PathBuf, Vec<u8>>,
+    name: &str,
+    files: impl IntoIterator<Item = (&'a PathBuf, &'a Vec<u8>)>,
+) -> Result<Option<PathBuf>> {
+    let Some(folder) = rendered_skill_root(output, name)?.map(Path::to_owned) else {
+        return Ok(None);
+    };
+    for (path, bytes) in files {
+        output
+            .entry(folder.join(path))
+            .or_insert_with(|| bytes.clone());
+    }
+    Ok(Some(folder))
 }
 
 pub(crate) fn read_stage(
@@ -2224,6 +2244,48 @@ mod tests {
         assert!(rulesync_registry::approved_local_folders(&f.setup.data)
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn rulesync_carries_an_unrendered_codex_sidecar_through_sync() {
+        let f = Fixture::new();
+        let folder = ".codex/skills/social";
+        let sidecar = ".codex/skills/social/agents/openai.yaml";
+        fs::create_dir_all(f.setup.home.join(folder).join("agents")).unwrap();
+        let skill = "---\nname: social\ndescription: Writing workflow\n---\nBody.\n";
+        f.write(&format!("{folder}/SKILL.md"), skill);
+        f.write(sidecar, "interface:\n  display_name: Writing\n");
+        f.adopt_from_plan();
+
+        let root = FileRoot::open(&f.setup.home).unwrap();
+        let mut manifest = f.setup.load().unwrap().unwrap();
+        let updated = "interface:\n  display_name: Social writing\n";
+        manifest.master.skills[0]
+            .files
+            .insert("agents/openai.yaml".into(), updated.as_bytes().to_vec());
+        let report = f
+            .setup
+            .sync_locked(
+                &root,
+                &mut manifest,
+                &[],
+                |target, text| {
+                    let path = if target == "codexcli" { CODEX } else { CLAUDE };
+                    Ok(BTreeMap::from([(path.into(), text.as_bytes().to_vec())]))
+                },
+                |_, _| {
+                    Ok(BTreeMap::from([(
+                        ".agents/skills/social/SKILL.md".into(),
+                        skill.as_bytes().to_vec(),
+                    )]))
+                },
+            )
+            .unwrap();
+
+        assert!(report.blocked.is_empty(), "{report:?}");
+        assert_eq!(report.written, [sidecar]);
+        assert_eq!(f.text(sidecar), updated);
+        assert!(!f.setup.home.join(".agents/skills/social").exists());
     }
 
     #[cfg(unix)]
