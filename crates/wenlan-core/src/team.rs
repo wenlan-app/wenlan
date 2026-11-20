@@ -1403,8 +1403,13 @@ pub fn check_member_version(
     Ok(version::file_kind(&read.meta))
 }
 
-/// Paths of every file in a hosted Space's folder, as the team listener
-/// lists them: `space.json`, then each version file.
+/// A hosted version is whole and contains no legacy private-source quotes.
+pub fn can_serve_version(name: &str, bytes: &[u8]) -> bool {
+    version::parse(name, bytes)
+        .is_ok_and(|read| !shared_space::rewrite::has_legacy_quotes(&read.page))
+}
+
+/// Paths the team listener can serve: `space.json` and published versions.
 pub fn list_folder_files(folder: &Path) -> Vec<String> {
     let mut files = Vec::new();
     if folder.join(shared_space::SPACE_FILE).is_file() {
@@ -1435,8 +1440,12 @@ pub fn list_folder_files(folder: &Path) -> Vec<String> {
             };
             let mut names: Vec<String> = entries
                 .flatten()
-                .filter_map(|entry| entry.file_name().into_string().ok())
-                .filter(|name| version::version_sha(name).is_some())
+                .filter_map(|entry| {
+                    let name = entry.file_name().into_string().ok()?;
+                    version::version_sha(&name)?;
+                    let bytes = std::fs::read(entry.path()).ok()?;
+                    can_serve_version(&name, &bytes).then_some(name)
+                })
                 .collect();
             names.sort();
             for name in names {

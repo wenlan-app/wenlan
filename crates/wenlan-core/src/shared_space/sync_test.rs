@@ -612,11 +612,14 @@ async fn nothing_outside_the_shared_space_reaches_the_folder() {
             "{private:?} is in the folder:\n{all}"
         );
     }
-    // The shared page and its cited words are there, without where they came
-    // from.
+    // The note and its markers are shared. Its unpublished sources are not.
     assert!(all.contains("Fish or pasta [1]. Budget agreed [2]."));
-    assert!(all.contains("“We said fish is fine for Grandma.” (from Qi-Xuan's conversation)"));
-    assert!(all.contains("[2]: (from Qi-Xuan's conversation) · shared:quote"));
+    assert!(
+        !all.contains("We said fish is fine for Grandma."),
+        "a shared snapshot included an unpublished memory excerpt"
+    );
+    assert!(all.contains("[1]: Unavailable source · shared:private-source"));
+    assert!(all.contains("[2]: Unavailable source · shared:private-source"));
 
     // The page as B gets it keeps its words, and a later sync of A writes
     // nothing new: the rewritten version is the page's version.

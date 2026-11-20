@@ -114,8 +114,12 @@ async fn response_text(response: Response) -> String {
 fn version_text(page: &str, member: &str, body: &str) -> String {
     let mut file = wenlan_core::store::format::page::PageFile::new("Plan", body);
     file.id = Some(page.into());
+    render_test_version(&file, member)
+}
+
+fn render_test_version(file: &wenlan_core::store::format::page::PageFile, member: &str) -> String {
     version::render(
-        &file,
+        file,
         &version::VersionMeta {
             parent: None,
             merged: Vec::new(),
@@ -649,6 +653,66 @@ async fn a_key_reads_only_its_members_spaces() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn hosted_files_withhold_old_snapshots_with_private_quotes() {
+    use wenlan_core::store::format::page::{Citation, Locator, PageFile};
+    let f = fixture();
+    let id = "page_legacy";
+    let mut legacy = PageFile::new("Team notes", "The meeting starts on Tuesday. [1]");
+    legacy.id = Some(id.into());
+    legacy.citations.push(Citation {
+        marker: 1,
+        label: "“Fixture excerpt” (from Server's conversation)".into(),
+        locator: Locator::Other("shared:quote".into()),
+    });
+    let old = render_test_version(&legacy, "server");
+    let (old_sha, _) = version::write_version(&f.folder, "server", id, &old).unwrap();
+    let old_path = format!(
+        "members/server/pages/{id}/{}",
+        version::version_file_name(&old_sha)
+    );
+    let safe = version_text("page_safe", "server", "A published note.");
+    let (safe_sha, _) = version::write_version(&f.folder, "server", "page_safe", &safe).unwrap();
+    let safe_path = format!(
+        "members/server/pages/page_safe/{}",
+        version::version_file_name(&safe_sha)
+    );
+    let (status, files) = call(
+        &f.state,
+        Method::GET,
+        "/team/v1/spaces/Design/files",
+        Some(&f.reader.1),
+        vec![],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let list: TeamFileList = serde_json::from_slice(&files).unwrap();
+    let (download, _) = call(
+        &f.state,
+        Method::GET,
+        &format!("/team/v1/spaces/Design/file?path={old_path}"),
+        Some(&f.reader.1),
+        vec![],
+    )
+    .await;
+    assert_eq!(
+        (list.files.contains(&old_path), download),
+        (false, StatusCode::NOT_FOUND),
+        "an old private-source snapshot must be absent from the inventory and downloads"
+    );
+    assert!(list.files.contains(&safe_path));
+    let (status, body) = call(
+        &f.state,
+        Method::GET,
+        &format!("/team/v1/spaces/Design/file?path={safe_path}"),
+        Some(&f.reader.1),
+        vec![],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, safe.into_bytes());
 }
 
 #[tokio::test]

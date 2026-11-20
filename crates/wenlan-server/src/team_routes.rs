@@ -2426,11 +2426,21 @@ async fn team_file(
         return (StatusCode::BAD_REQUEST, "not a file of the Space").into_response();
     };
     match tokio::fs::read(&file).await {
-        Ok(bytes) => (
-            [(header::CONTENT_TYPE, "text/markdown; charset=utf-8")],
-            Body::from(bytes),
-        )
-            .into_response(),
+        Ok(bytes)
+            if query.path == shared_space::SPACE_FILE
+                || query
+                    .path
+                    .rsplit('/')
+                    .next()
+                    .is_some_and(|name| team::can_serve_version(name, &bytes)) =>
+        {
+            (
+                [(header::CONTENT_TYPE, "text/markdown; charset=utf-8")],
+                Body::from(bytes),
+            )
+                .into_response()
+        }
+        Ok(_) => StatusCode::NOT_FOUND.into_response(),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             StatusCode::NOT_FOUND.into_response()
         }

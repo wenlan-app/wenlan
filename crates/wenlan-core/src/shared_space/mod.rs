@@ -2832,9 +2832,8 @@ impl Pass<'_> {
             if self.library {
                 let mut file = PageFile::new(&merged.title, &merged.body);
                 file.citations = merged.citations.clone();
-                let quote =
-                    crate::store::format::page::Locator::Other(rewrite::QUOTE_LOCATOR.to_string());
-                file.citations.retain(|citation| citation.locator != quote);
+                file.citations
+                    .retain(|citation| !rewrite::is_private_placeholder(&citation.locator));
                 let json = crate::store::rebuild::pages::citations_of(&file, id, &mut Vec::new());
                 self.db.set_page_citations(id, json.as_deref()).await?;
             }
@@ -3147,14 +3146,14 @@ impl Pass<'_> {
     /// computer has the memories and pages they cite, so the page here links
     /// back to them and its memories count as written into a page (nightly
     /// organize does not write them again). A Space or page share keeps
-    /// sources private, as quotes.
+    /// sources private.
     async fn apply_sources(&self, id: &str, head: &PageVersion) -> Result<(), WenlanError> {
         if !self.library {
             return Ok(());
         }
         let mut file = head.page.clone();
-        let quote = crate::store::format::page::Locator::Other(rewrite::QUOTE_LOCATOR.to_string());
-        file.citations.retain(|citation| citation.locator != quote);
+        file.citations
+            .retain(|citation| !rewrite::is_private_placeholder(&citation.locator));
         let json = crate::store::rebuild::pages::citations_of(&file, id, &mut Vec::new());
         self.db.set_page_citations(id, json.as_deref()).await
     }
@@ -3316,25 +3315,7 @@ impl Pass<'_> {
             Some(_) => (None, Vec::new()),
             None => base_of(&history, versions, head, base),
         };
-        let (citations, basis) = local_sources(db, page).await?;
-        let memory_ids: Vec<String> = citations
-            .iter()
-            .filter_map(|citation| match &citation.locator {
-                crate::store::format::page::Locator::Wenlan { id, .. } => Some(id.clone()),
-                crate::store::format::page::Locator::Other(text) => {
-                    text.strip_prefix("wenlan:").map(str::to_string)
-                }
-            })
-            .filter(|id| !self.space_pages.contains_key(id))
-            .collect();
-        let cited_text = db.export_memory_texts(&memory_ids).await?;
-        let ctx = rewrite::RewriteContext {
-            space_pages: &self.space_pages,
-            cited_text: &cited_text,
-            member_name: &self.settings.member_name,
-            keep_all: self.library,
-        };
-        let (mut citations, mut basis) = rewrite::rewrite_sources(&citations, &basis, &ctx);
+        let (mut citations, mut basis) = local_sources(db, page).await?;
         // A source another member gave a sentence that is still on the page
         // stays: this Wenlan has no record of it, the version it came in does.
         if let Some(parent) = parent {
@@ -3369,8 +3350,7 @@ impl Pass<'_> {
         }
         file.created = Some(page.created_at.clone());
         file.modified = Some(page.last_modified.clone());
-        file.citations = citations;
-        file.basis = basis;
+        (file.citations, file.basis) = self.shared_sources(&citations, &basis);
         let meta = VersionMeta {
             parent: parent
                 .map(|parent| parent.sha.clone())
@@ -3482,8 +3462,25 @@ impl Pass<'_> {
             decides: None,
             device: self.own_device(),
         };
-        let text = version::render(&winner.page, &meta);
+        let mut page = winner.page.clone();
+        (page.citations, page.basis) = self.shared_sources(&page.citations, &page.basis);
+        let text = version::render(&page, &meta);
         self.write(&id, text).await.map(Some)
+    }
+
+    fn shared_sources(
+        &self,
+        citations: &[Citation],
+        basis: &[Basis],
+    ) -> (Vec<Citation>, Vec<Basis>) {
+        rewrite::rewrite_sources(
+            citations,
+            basis,
+            &rewrite::RewriteContext {
+                space_pages: &self.space_pages,
+                keep_all: self.library,
+            },
+        )
     }
 
     async fn write(&self, page_id: &str, text: String) -> Result<String, WenlanError> {
