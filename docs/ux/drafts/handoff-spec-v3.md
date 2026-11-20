@@ -214,6 +214,8 @@ Space
 
 - **跨工具**（Qi-Xuan 22:51Z「而且不只一個工具的」）：一件事常有 Claude Code 與 Codex 的對話，各自壓縮。那件事的一行現況只有一份，最後壓縮的那個工具的 AI 來更新（同時改照編號＋版本，UX-HAND-3）；摘要每段對話各留最新一份。下一個 AI 接這件事時，拿到那一行，加上各對話最新摘要（新的在前，總量有上限）。Codex 的摘要在它的對話紀錄裡（rollout 的壓縮項目），Wenlan 讀對話時一併取得；Codex 是否有壓縮後掛勾，實作前確認。Wenlan 讀不到壓縮摘要的工具（Cursor、Gemini 等）只能靠它們用 `handoff`，或由下一個 AI 補交接。
 
+- **依據**（Qi-Xuan 22:59Z「這是主流的做法嗎 第一性原理」）：AI 只記得同一段對話裡的內容，新對話從空白開始，所以跨對話一定要寫在對話之外。Anthropic〈Effective harnesses for long-running agents〉每段工作結束寫 `claude-progress.txt` 與 git commit，新對話先讀它們，並明說 "compaction isn't sufficient"。業界交接工具（§10 參考）同樣寫交接檔給下一段對話。Wenlan 的不同：自動、每件事一句、跨工具、人也看得到。
+
 ## 8. 連不上
 
 | 情況 | v1 做法 |
