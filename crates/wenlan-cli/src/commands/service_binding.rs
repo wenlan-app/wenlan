@@ -65,7 +65,12 @@ fn parse_launchd_job(output: &str) -> Option<LaunchdJob> {
     let mut depth = 0usize;
     for line in output.lines().map(str::trim) {
         let top_level = depth <= 1;
-        if line.ends_with(" = {") {
+        // Dictionaries open with ` = {`, but nested values inside them (the
+        // `LWCR` launch-constraint block of a signed job, for one) open with
+        // ` => {`. Both close with `}`, so both must count, or the closing
+        // brace of a `=> {` value drops the depth early and a later nested
+        // `state = active` reads as a second job state.
+        if line.ends_with(" = {") || line.ends_with(" => {") {
             depth += 1;
         } else if line == "}" {
             depth = depth.saturating_sub(1);
@@ -277,6 +282,37 @@ mod tests {
         )
         .is_err());
         assert!(verify_launchd_running_root("unreadable", selected.path()).is_err());
+    }
+    /// The shape `launchctl print` gives a notarized release's job: the
+    /// `LWCR` block nests ` => {` values, and the coalitions that follow
+    /// carry their own `state = active`. Before the parser counted ` => {`,
+    /// every stop/start of a signed install refused here.
+    fn signed_job_fixture(root: &Path, state: &str, pid: Option<u32>) -> String {
+        let pid = pid
+            .map(|pid| format!("\tpid = {pid}\n"))
+            .unwrap_or_default();
+        format!(
+            "gui/501/com.wenlan.server = {{\n\tactive count = 0\n\tpath = /Users/me/Library/LaunchAgents/com.wenlan.server.plist\n\ttype = LaunchAgent\n\tstate = {state}\n\n\tprogram = /Applications/Wenlan.app/Contents/MacOS/wenlan-server\n\targuments = {{\n\t\t/Applications/Wenlan.app/Contents/MacOS/wenlan-server\n\t}}\n\n\tinherited environment = {{\n\t\tSSH_AUTH_SOCK => /var/run/listeners\n\t}}\n\n\tdefault environment = {{\n\t\tPATH => /usr/bin:/bin:/usr/sbin:/sbin\n\t}}\n\n\tenvironment = {{\n\t\tRUST_LOG => info\n\t\tWENLAN_DATA_DIR => {root}\n\t\tXPC_SERVICE_NAME => com.wenlan.server\n\t}}\n\n\tLWCR = {{\n\t\t\"reqs\" => {{\n\t\t\t\"signing-identifier\" => \"wenlan-server\"\n\t\t\t\"team-identifier\" => \"TEAMID\"\n\t\t}}\n\t\t\"vers\" => 1\n\t}}\n\n\tdomain = gui/501 [100098]\n{pid}\truns = 1\n\tlast exit code = 0\n\n\tsemaphores = {{\n\t\tsuccessful exit => 0\n\t}}\n\n\tresource coalition = {{\n\t\tID = 4961\n\t\ttype = resource\n\t\tstate = active\n\t\tactive count = 1\n\t}}\n\n\tjetsam coalition = {{\n\t\tID = 4962\n\t\ttype = jetsam\n\t\tstate = active\n\t}}\n\n\tjob state = exited\n}}\n",
+            root = root.display()
+        )
+    }
+    #[test]
+    fn signed_launchd_job_with_launch_constraints_is_parsed() {
+        let selected = tempfile::tempdir().unwrap();
+        let old = tempfile::tempdir().unwrap();
+        let stopped = signed_job_fixture(selected.path(), "not running", None);
+        assert!(verify_launchd_stopped(&stopped, selected.path()).is_ok());
+        assert!(verify_launchd_stopped(
+            &signed_job_fixture(old.path(), "not running", None),
+            selected.path()
+        )
+        .is_err());
+        let running = signed_job_fixture(selected.path(), "running", Some(7198));
+        assert!(verify_launchd_stopped(&running, selected.path()).is_err());
+        assert_eq!(
+            verify_launchd_running_root(&running, selected.path()).unwrap(),
+            7198
+        );
     }
     #[test]
     fn registration_requires_proof_and_honors_argument_precedence() {

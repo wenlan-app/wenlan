@@ -560,6 +560,49 @@ pub fn server_plist_program_outside_bundle() -> Option<String> {
     Some(program)
 }
 
+/// The `.app` bundle that contains `path`, if any.
+fn enclosing_app_bundle(path: &Path) -> Option<&Path> {
+    path.ancestors().find(|ancestor| {
+        ancestor
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("app"))
+    })
+}
+
+/// The release a macOS `.app` bundle declares in its `Info.plist`.
+fn bundle_release(bundle: &Path) -> Option<semver::Version> {
+    let info = plist::Value::from_file(bundle.join("Contents/Info.plist")).ok()?;
+    let version = info
+        .as_dictionary()?
+        .get("CFBundleShortVersionString")?
+        .as_string()?;
+    semver::Version::parse(crate::release_part(version)).ok()
+}
+
+/// Whether the registered daemon `server_program` lives in another, newer
+/// Wenlan bundle than the running app's. An older copy left on disk (a
+/// second `Wenlan.app` in `~/Applications`, a stale login item) must not
+/// take the registration over: that stops the newer daemon and points
+/// launchd at older binaries than the data was last opened with.
+fn server_owned_by_newer_bundle(
+    server_program: &str,
+    exe_canonical: &Path,
+    own_release: &str,
+    bundle_release: impl Fn(&Path) -> Option<semver::Version>,
+) -> bool {
+    let Some(server_bundle) = enclosing_app_bundle(Path::new(server_program)) else {
+        return false;
+    };
+    if enclosing_app_bundle(exe_canonical) == Some(server_bundle) {
+        return false;
+    }
+    let Ok(own) = semver::Version::parse(crate::release_part(own_release)) else {
+        return false;
+    };
+    bundle_release(server_bundle).is_some_and(|theirs| theirs > own)
+}
+
 fn remove_legacy_app_plist_file_if_owned() -> Result<()> {
     let plist = legacy_app_plist_path()?;
     if !plist.exists() {
@@ -1417,6 +1460,27 @@ fn first_run_install_if_needed_at_path(
         })
         .unwrap_or(true);
 
+    if server_plist_stale {
+        let registered = server_plist_path()
+            .ok()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .and_then(|content| plist_first_program(&content));
+        if let Some(program) = registered.filter(|program| {
+            server_owned_by_newer_bundle(
+                program,
+                exe_canonical,
+                env!("CARGO_PKG_VERSION"),
+                bundle_release,
+            )
+        }) {
+            log::warn!(
+                "[first-run] leaving LaunchAgents to the newer Wenlan at {program}; this copy ({}) is older",
+                exe_canonical.display()
+            );
+            return Ok(());
+        }
+    }
+
     if !app_plist_stale && !server_plist_stale {
         if let Err(e) = remove_legacy_app_plist_file_if_owned() {
             log::warn!("[first-run] legacy app plist cleanup failed: {e}");
@@ -1766,6 +1830,61 @@ mod tests {
     use std::sync::Mutex;
 
     use crate::test_env::EnvGuard;
+
+    #[test]
+    fn older_copy_leaves_a_newer_bundles_registration_alone() {
+        let release =
+            |version: &'static str| move |_: &Path| Some(semver::Version::parse(version).unwrap());
+        let server = "/Applications/Wenlan.app/Contents/MacOS/wenlan-server";
+        let older_copy = Path::new("/Users/me/Applications/Wenlan.app/Contents/MacOS/wenlan-app");
+        assert!(server_owned_by_newer_bundle(
+            server,
+            older_copy,
+            "0.21.4",
+            release("0.22.2")
+        ));
+        // Same or older registered release: this copy may take over.
+        assert!(!server_owned_by_newer_bundle(
+            server,
+            older_copy,
+            "0.22.2",
+            release("0.22.2")
+        ));
+        assert!(!server_owned_by_newer_bundle(
+            server,
+            older_copy,
+            "0.23.0",
+            release("0.22.2")
+        ));
+        // Build metadata is not a newer release.
+        assert!(!server_owned_by_newer_bundle(
+            server,
+            older_copy,
+            "0.22.2+abc",
+            release("0.22.2")
+        ));
+        // Our own bundle, a bundle with no readable version, or a program
+        // outside any bundle never block the install.
+        let own = Path::new("/Applications/Wenlan.app/Contents/MacOS/wenlan-app");
+        assert!(!server_owned_by_newer_bundle(
+            server,
+            own,
+            "0.21.4",
+            release("0.22.2")
+        ));
+        assert!(!server_owned_by_newer_bundle(
+            server,
+            older_copy,
+            "0.21.4",
+            |_: &Path| None
+        ));
+        assert!(!server_owned_by_newer_bundle(
+            "/Users/me/.wenlan/bin/wenlan-server",
+            older_copy,
+            "0.21.4",
+            release("0.22.2")
+        ));
+    }
 
     /// Build an ExitStatus from a plain exit code. The two platforms disagree
     /// about what `from_raw` takes — unix wants the wait(2) encoding, where

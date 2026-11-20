@@ -207,6 +207,42 @@ fn loaded_launchd_job() -> Result<Option<String>> {
     Err(OwnershipRefusal("loaded launchd job could not be measured".into()).into())
 }
 
+/// launchd reports a job as running for a moment after its process answered
+/// a graceful shutdown. Give the supervisor that moment before treating the
+/// registration as still active; the last refusal stands after the deadline.
+async fn wait_for_registered_stopped() -> Result<()> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        match verify_registered_stopped() {
+            Ok(()) => return Ok(()),
+            Err(error) if std::time::Instant::now() >= deadline => return Err(error),
+            Err(_) => tokio::time::sleep(std::time::Duration::from_millis(200)).await,
+        }
+    }
+}
+
+/// Unload the loaded job after [`verify_registered_stopped`] proved it is
+/// inactive and bound to the selected data root, then confirm it is gone.
+#[cfg(target_os = "macos")]
+fn bootout_verified_launchd_job() -> Result<()> {
+    if loaded_launchd_job()?.is_none() {
+        return Ok(());
+    }
+    verify_registered_stopped()?;
+    let target = format!("gui/{}/{}", current_user_id()?, SERVICE_LABEL);
+    let output = std::process::Command::new("launchctl")
+        .args(["bootout", &target])
+        .output()
+        .context("spawn launchctl bootout")?;
+    if !output.status.success() && loaded_launchd_job()?.is_some() {
+        anyhow::bail!(
+            "launchctl bootout failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    require_unloaded_launchd_job()
+}
+
 #[cfg(target_os = "macos")]
 fn require_unloaded_launchd_job() -> Result<()> {
     if loaded_launchd_job()?.is_some() {
@@ -690,10 +726,13 @@ pub async fn install() -> Result<()> {
     }
 
     if is_installed() {
-        verify_registered_stopped()?;
+        wait_for_registered_stopped().await?;
     }
+    // The loaded job was just proven stopped and bound to the selected data
+    // root, so replacing it is ours to do: unload it rather than refuse and
+    // leave the daemon we stopped above down.
     #[cfg(target_os = "macos")]
-    require_unloaded_launchd_job()?;
+    bootout_verified_launchd_job()?;
 
     // Apply RUST_LOG=info to every platform. launchd consumes
     // `EnvironmentVariables`, systemd-user consumes `Environment=`. winsw +
@@ -1002,6 +1041,9 @@ fn print_service_diagnostics() {
 
 // Supervisors start proven inactive registrations; they never force-stop.
 async fn start_after_graceful_stop() -> Result<()> {
+    if is_installed() {
+        wait_for_registered_stopped().await?;
+    }
     start_registered(false)
 }
 

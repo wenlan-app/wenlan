@@ -1417,6 +1417,11 @@ fn app_release() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
+fn daemon_is_newer(daemon: &str, app: &str) -> bool {
+    let parse = |version: &str| semver::Version::parse(crate::release_part(version)).ok();
+    matches!((parse(daemon), parse(app)), (Some(daemon), Some(app)) if daemon > app)
+}
+
 fn versions_match(daemon: &str, app: &str) -> bool {
     crate::release_part(daemon) == crate::release_part(app)
 }
@@ -1546,6 +1551,25 @@ pub async fn heal_version_mismatch(
             daemon: daemon_version,
             app: app_version,
             matched: true,
+            restarted: false,
+            owner: owner_label(owner),
+            error: None,
+            program,
+        };
+    }
+
+    // A restart starts whatever launchd has registered; it cannot bring a
+    // daemon newer than this app down to the app's release. Usually this app
+    // is the stale copy (an old `Wenlan.app` left in `~/Applications`), and
+    // stopping the newer daemon only takes the service away.
+    if daemon_is_newer(&daemon_version, &app_version) {
+        log::warn!(
+            "[daemon-version] daemon v{daemon_version} is newer than this app v{app_version}; not restarting it"
+        );
+        return DaemonVersionReport {
+            daemon: daemon_version,
+            app: app_version,
+            matched: false,
             restarted: false,
             owner: owner_label(owner),
             error: None,
@@ -1959,6 +1983,15 @@ mod tests {
         );
     }
     use super::*;
+
+    #[test]
+    fn only_a_strictly_newer_daemon_release_is_left_running() {
+        assert!(daemon_is_newer("0.22.2", "0.21.4"));
+        assert!(!daemon_is_newer("0.21.4", "0.22.2"));
+        assert!(!daemon_is_newer("0.22.2+abc", "0.22.2"));
+        assert!(!daemon_is_newer("", "0.22.2"));
+        assert!(!daemon_is_newer("garbage", "0.22.2"));
+    }
     use crate::lifecycle::LaunchdOwnership;
 
     #[test]

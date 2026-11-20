@@ -117,11 +117,19 @@ root is the selected root, and that PID is the only listener on the daemon port;
 the command still fails if the shutdown response names a different PID. New Linux registrations persist `WENLAN_DATA_DIR` and `WENLAN_BIND_ADDR`.
 
 macOS updates require the previous job to be unloaded, even after its daemon has
-exited. The CLI writes the confirmed plist and uses `bootstrap` without implicit
-unload/remove behavior; starting a verified inactive loaded job uses `kickstart`
-without `-k`. If an update reports that the old job is still loaded, inspect and
-boot out that confirmed job using the steps below, then retry. Other root's loaded
+exited. Once the CLI has proven the loaded job inactive (launchd gets up to five
+seconds to report a gracefully stopped job as exited) and bound to the selected
+root, it boots that job out itself, writes the confirmed plist, and uses
+`bootstrap`; starting a verified inactive loaded job uses `kickstart` without
+`-k`. The job parser counts the nested ` => {` values of a signed job's `LWCR`
+block, so a notarized install is measured like any other. A loaded job bound to
+another root, or one whose state cannot be measured, is still refused; inspect
+and boot out that job using the steps below, then retry. Other root's loaded
 configuration cannot be replaced merely by editing the plist on disk.
+
+The desktop app never hands the registration to itself when the registered
+daemon lives in another `Wenlan.app` bundle with a newer release (an old copy
+left in `~/Applications`, say), and it never restarts a daemon newer than itself.
 
 For a one-time upgrade, first inspect the existing service and confirm its
 executable, arguments, and data directory against the store you intend to upgrade:
