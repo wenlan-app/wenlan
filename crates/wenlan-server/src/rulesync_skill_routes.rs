@@ -873,13 +873,10 @@ mod tests {
         let (data, home) = make_test_dirs(&scratch);
         let file = write(&home, ".claude/skills/own/SKILL.md", "Original body.\n");
         let folder = PathBuf::from(".claude/skills/own");
-        assert_eq!(
-            collect_tool_proposals(&home, &data, &BTreeMap::new(), &BTreeSet::new())
-                .unwrap()
-                .into_keys()
-                .collect::<Vec<_>>(),
-            [folder.clone()]
-        );
+        let pending =
+            collect_tool_proposals(&home, &data, &BTreeMap::new(), &BTreeSet::new()).unwrap();
+        assert_eq!(pending.len(), 1);
+        assert!(pending.contains_key(&folder));
         let mut store = SkillStore::open(&data).unwrap();
         let (id, draft) = store.state.proposals.first_key_value().unwrap();
         let proposal = draft.preview(id.clone()).unwrap();
