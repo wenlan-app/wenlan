@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Read-only projection of the installed skill into the v43.11.0 renderer's
-//! output. Adoption checks this projection against the real staged output
-//! before applying any file. The dry-run does not create a staging tree.
+//! Prepare native skill metadata for rulesync and check what it preserved.
+//! Only the legacy, flag-off offline preview projects formatting.
 
 use anyhow::{bail, ensure, Context, Result};
 use serde_yaml::{Mapping, Value};
@@ -216,9 +215,35 @@ pub(super) fn stage(target: &str, bytes: &[u8]) -> Result<Vec<u8>> {
                 .insert(renderer.into(), Value::Mapping(section));
         }
     }
-    let mut yaml = String::new();
-    emit_map(&mut yaml, &document.native, 0)?;
+    let yaml = serde_yaml::to_string(&document.native).context("cannot stage skill frontmatter")?;
     Ok(skill_file(yaml, &document.body).into_bytes())
+}
+
+pub(super) fn check_frontmatter(source: &[u8], rendered: &[u8]) -> Result<()> {
+    let read = |bytes: &[u8]| -> Result<Mapping> {
+        let text = without_leading_bom(std::str::from_utf8(bytes)?);
+        let normalized = normalize_line_ends(text);
+        Ok(split_frontmatter(&normalized)?
+            .context("SKILL.md needs YAML frontmatter")?
+            .frontmatter)
+    };
+    let original = read(source).context("cannot read the source skill frontmatter")?;
+    let output = read(rendered).context("cannot read the rendered skill frontmatter")?;
+    for (field, value) in &original {
+        ensure!(
+            output.get(field) == Some(value),
+            "rulesync did not preserve frontmatter field `{}`",
+            field.as_str().unwrap_or("(non-text key)")
+        );
+    }
+    for field in output.keys() {
+        ensure!(
+            original.contains_key(field),
+            "rulesync added frontmatter field `{}`",
+            field.as_str().unwrap_or("(non-text key)")
+        );
+    }
+    Ok(())
 }
 
 fn skill_file(yaml: String, body: &str) -> String {

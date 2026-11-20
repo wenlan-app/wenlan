@@ -91,6 +91,10 @@ fn personal_rules_dry_run_reports_extended_targets_only_with_the_flag() {
                 .any(|note| note.starts_with("Skipped Antigravity ")),
             flag.is_some()
         );
+        if flag.is_some() {
+            assert!(plan.notes[0].starts_with("Offline inventory"));
+            assert!(plan.token.is_empty());
+        }
     }
     assert_eq!(fs::read(home.join(rules)).unwrap(), b"Gemini only.\r\n");
     assert!(!home.join(".gemini/config").exists());

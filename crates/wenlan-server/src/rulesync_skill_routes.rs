@@ -530,6 +530,34 @@ pub(crate) fn approved_local_folders(data: &Path) -> Result<BTreeMap<PathBuf, Ma
     Ok(folders)
 }
 
+#[cfg(test)]
+pub(crate) fn accept_only_tool_proposal(home: &Path, data: &Path) -> Result<SkillProposal> {
+    let mut store = SkillStore::open(data)?;
+    ensure!(
+        store.state.proposals.len() == 1,
+        "expected one tool skill proposal"
+    );
+    let (id, draft) = store
+        .state
+        .proposals
+        .first_key_value()
+        .context("missing tool proposal")?;
+    ensure!(
+        matches!(draft.source, Candidate::Tool { .. }),
+        "expected a tool edit"
+    );
+    let proposal = draft.preview(id.clone())?;
+    store.state.review(
+        home,
+        proposal.id.clone(),
+        SkillReviewAction::Accept,
+        Some(SavedSkillScope::Shared),
+        |_| Ok(()),
+    )?;
+    store.save()?;
+    Ok(proposal)
+}
+
 pub(crate) fn authored_rows() -> Result<Vec<InstalledSkillRow>> {
     let setup = Setup::system()?;
     if !setup.data.try_exists()? {

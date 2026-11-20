@@ -259,16 +259,42 @@ pub fn personal_target(id: &str) -> Option<&'static PersonalTarget> {
 }
 
 pub fn discover_adoption(home: &Path) -> Result<Adoption> {
-    discover_targets(home, PERSONAL_TARGETS)
+    let (installed, skipped) = installed_targets(home, PERSONAL_TARGETS.iter())?;
+    let mut adoption = discover_targets(home, &installed, None)?;
+    adoption.skipped_tools = skipped;
+    Ok(adoption)
 }
 
-fn discover_targets(home: &Path, candidates: &[PersonalTarget]) -> Result<Adoption> {
+pub fn additional_targets(
+    home: &Path,
+    master: &PersonalMaster,
+) -> Result<Vec<&'static PersonalTarget>> {
+    let candidates = PERSONAL_TARGETS
+        .iter()
+        .filter(|target| !master.overlays.contains_key(target.id));
+    Ok(installed_targets(home, candidates)?.0)
+}
+
+pub fn discover_additional_adoption(home: &Path, master: &PersonalMaster) -> Result<Adoption> {
+    let installed = additional_targets(home, master)?;
+    let mut adoption = discover_targets(home, &installed, Some(master))?;
+    adoption.added_tools = installed
+        .iter()
+        .map(|target| target.tool.display_name().to_owned())
+        .collect();
+    Ok(adoption)
+}
+
+fn installed_targets<'a>(
+    home: &Path,
+    candidates: impl Iterator<Item = &'a PersonalTarget>,
+) -> Result<(Vec<&'a PersonalTarget>, Vec<String>)> {
     let root = Dir::open_ambient_dir(home, cap_std::ambient_authority())?;
     let mut targets = Vec::new();
     let mut skipped_tools = Vec::new();
     for target in candidates {
         match root.symlink_metadata(target.folder()) {
-            Ok(_) => targets.push(target.adoption_input()),
+            Ok(_) => targets.push(target),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 skipped_tools.push(target.skipped_note());
             }
@@ -278,9 +304,44 @@ fn discover_targets(home: &Path, candidates: &[PersonalTarget]) -> Result<Adopti
             }
         }
     }
+    Ok((targets, skipped_tools))
+}
+
+fn discover_targets(
+    home: &Path,
+    installed: &[&PersonalTarget],
+    master: Option<&PersonalMaster>,
+) -> Result<Adoption> {
+    let targets: Vec<_> = installed
+        .iter()
+        .map(|target| target.adoption_input())
+        .collect();
     let mut adoption = rulesync_adopt::discover(home, &targets)?;
-    adoption.skipped_tools = skipped_tools;
+    if let Some(master) = master {
+        // The harness still identifies imported lines and shared skill links.
+        // An already adopted setup uses the current master for delivered rules.
+        adoption.shared.clone_from(&master.shared);
+        for target in installed {
+            let path = Path::new(target.rules.destination);
+            let after = rulesync_adopt::personal_rule_body(
+                &adoption.shared,
+                &adoption.overlays[target.id],
+                target.id,
+                adoption.codex_sync_replaced,
+            );
+            if let Some(file) = adoption.files.get_mut(path) {
+                file.after = AdoptionEntry::File(after.into_bytes());
+            }
+        }
+        adoption.skills.retain(|skill| !skill.locations.is_empty());
+        adoption.skipped.retain(|path, _| !is_harness_path(path));
+    }
     check_delivery_paths(home, adoption.files.keys().map(PathBuf::as_path))?;
+    delivery_worktrees::review_destinations(home, &mut adoption, &targets)?;
+    Ok(adoption)
+}
+
+fn legacy_skill_previews(adoption: &mut Adoption) {
     for skill in &mut adoption.skills {
         let entry = Path::new("SKILL.md");
         skill.locations.retain(|target, folders| {
@@ -311,14 +372,16 @@ fn discover_targets(home: &Path, candidates: &[PersonalTarget]) -> Result<Adopti
             .targets
             .retain(|target| skill.locations.contains_key(target));
     }
-    delivery_worktrees::review_destinations(home, &mut adoption, &targets)?;
-    Ok(adoption)
 }
 
 /// Convert the installed metadata to rulesync's source representation when
 /// staging an adopted skill for this tool. The master retains the original.
 pub fn stage_adopted_skill(target: &str, skill_md: &[u8]) -> Result<Vec<u8>> {
     skill_preview::stage(target, skill_md)
+}
+
+pub fn check_skill_frontmatter(source: &[u8], rendered: &[u8]) -> Result<()> {
+    skill_preview::check_frontmatter(source, rendered)
 }
 
 pub fn fingerprint(value: &impl Serialize) -> Result<String> {
@@ -331,7 +394,7 @@ pub fn fingerprint(value: &impl Serialize) -> Result<String> {
     Ok(format!("{:x}", hash.finalize()))
 }
 
-const ADOPTION_TOKEN_VERSION: &str = "adopt-4";
+const ADOPTION_TOKEN_VERSION: &str = "adopt-5";
 const ADOPTION_FIELDS: [&str; 6] = [
     "file entries",
     "skill locations and upstreams",
@@ -365,8 +428,12 @@ fn adoption_digests(adoption: &Adoption) -> Result<[String; ADOPTION_FIELDS.len(
     // matters because adoption authorizes future writes there.
     Ok([
         fingerprint(&files)?,
-        fingerprint(&adoption.skill_locations)?,
-        fingerprint(&(&adoption.skipped, &adoption.skipped_tools))?,
+        fingerprint(&(&adoption.skill_locations, &adoption.skill_byte_copies))?,
+        fingerprint(&(
+            &adoption.skipped,
+            &adoption.skipped_tools,
+            &adoption.added_tools,
+        ))?,
         fingerprint(&(
             &adoption.shared,
             &adoption.overlays,
@@ -375,6 +442,13 @@ fn adoption_digests(adoption: &Adoption) -> Result<[String; ADOPTION_FIELDS.len(
         fingerprint(&adoption.skills)?,
         fingerprint(&adoption.worktree_writes)?,
     ])
+}
+
+pub fn adoption_token(adoption: &Adoption) -> Result<String> {
+    Ok(format!(
+        "{ADOPTION_TOKEN_VERSION}:{}",
+        adoption_digests(adoption)?.join(":")
+    ))
 }
 
 pub fn verify_adoption_token(adoption: &Adoption, token: &str) -> Result<()> {
@@ -391,7 +465,7 @@ pub fn verify_adoption_token(adoption: &Adoption, token: &str) -> Result<()> {
     {
         ensure!(
             actual == expected,
-            "The adoption plan changed in {field}. Review it again."
+            "The adoption plan changed in {field}. No tool files were written. Review it again."
         );
     }
     Ok(())
@@ -405,9 +479,17 @@ pub fn plan_adoption(home: &Path) -> Result<AdoptionPlan> {
 /// The standalone read-only plan also works before the opt-in writer is enabled.
 pub fn plan_adoption_offline(home: &Path) -> Result<AdoptionPlan> {
     if enabled() {
-        plan_adoption(home)
+        let mut plan = plan_adoption(home)?;
+        plan.token.clear();
+        plan.notes.insert(0, "Offline inventory from the installed files. Run `wenlan rules adopt` with the local daemon to see exact skill deliveries and added tools.".into());
+        Ok(plan)
     } else {
-        adoption_plan(&discover_targets(home, &[CLAUDE_TARGET, CODEX_TARGET])?)
+        let (installed, skipped) =
+            installed_targets(home, [&CLAUDE_TARGET, &CODEX_TARGET].into_iter())?;
+        let mut adoption = discover_targets(home, &installed, None)?;
+        adoption.skipped_tools = skipped;
+        legacy_skill_previews(&mut adoption);
+        adoption_plan(&adoption)
     }
 }
 
@@ -473,16 +555,24 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
                 .map_or(AdoptionSkillOutcome::PlainCopy, |upstream| {
                     AdoptionSkillOutcome::TrackedUpstream { upstream }
                 }),
+            byte_copy_reason: adoption.skill_byte_copies.get(path).cloned(),
         })
         .chain(adoption.skipped.iter().map(|(path, reason)| AdoptionSkill {
             path: plan_path(path),
             outcome: AdoptionSkillOutcome::Skipped {
                 reason: reason.clone(),
             },
+            byte_copy_reason: None,
         }))
         .collect::<Vec<_>>();
     skills.sort_by(|first, second| first.path.cmp(&second.path));
     let mut notes = Vec::new();
+    if !adoption.added_tools.is_empty() {
+        notes.push(format!(
+            "Add to the existing setup: {}.",
+            adoption.added_tools.join(", ")
+        ));
+    }
     if adoption.codex_sync_replaced {
         notes.push("~/.agents/scripts/sync-codex-agents.sh becomes unused for Codex AGENTS.md after adoption. The script stays in place for you to keep or remove.".into());
     }
@@ -490,10 +580,7 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
     notes.extend(adoption.skipped_tools.iter().cloned());
     notes.extend(adoption.worktree_notes.iter().cloned());
     Ok(AdoptionPlan {
-        token: format!(
-            "{ADOPTION_TOKEN_VERSION}:{}",
-            adoption_digests(adoption)?.join(":")
-        ),
+        token: adoption_token(adoption)?,
         files,
         skills,
         notes,
