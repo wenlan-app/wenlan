@@ -62,7 +62,7 @@ async fn execute<T: Send + 'static>(
     let result = tokio::task::spawn_blocking(move || {
         let setup = Setup::system()?;
         let _lock = setup.lock()?;
-        let root = FileRoot::open(&setup.home).context("open local AI-tool home")?;
+        let root = FileRoot::open_home(&setup.home).context("open local AI-tool home")?;
         let rendered = rulesync_settings::render_source(&setup.binary, &setup.data, &source)?;
         let plan = plan_rendered(&root, &setup.home, &source, rendered)?;
         finish(&root, plan)
@@ -247,7 +247,7 @@ mod tests {
     #[test]
     fn rulesync_settings_rejects_changed_source_and_destinations_before_any_writes() {
         let temp = tempfile::tempdir().unwrap();
-        let root = FileRoot::open(temp.path()).unwrap();
+        let root = FileRoot::open_home(temp.path()).unwrap();
         let home = temp.path();
         let source = home.join(".rulesync");
         let first = plan_rendered(&root, home, &source, rendered("source")).unwrap();
@@ -282,7 +282,7 @@ mod tests {
         let existing =
             br#"{"sessionToken":"fixture-live-value","mcpServers":{"local":{"command":"local"}}}"#;
         fs::write(home.join(".claude.json"), existing).unwrap();
-        let root = FileRoot::open(home).unwrap();
+        let root = FileRoot::open_home(home).unwrap();
         let plan = plan_rendered(&root, home, &source, rendered("source")).unwrap();
         let token = plan.response.token.clone();
         assert!(!serde_json::to_string(&plan.response)
@@ -308,6 +308,33 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn rulesync_settings_refuse_a_physical_harness_alias() {
+        use std::os::unix::fs::symlink;
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path();
+        // Exercise the mixed-case lookup on case-insensitive volumes too.
+        fs::create_dir(home.join(".Codex")).unwrap();
+        if !home.join(".codex").exists() {
+            fs::rename(home.join(".Codex"), home.join(".codex")).unwrap();
+        }
+        let physical = fs::canonicalize(home.join(".codex")).unwrap();
+        fs::write(physical.join("config.toml"), b"# harness settings\n").unwrap();
+        symlink(&physical, home.join(".agents")).unwrap();
+        let root = FileRoot::open_home(home).unwrap();
+        let result = plan_rendered(&root, home, home, rendered("source")).and_then(|plan| {
+            let token = plan.response.token.clone();
+            apply_plan(&root, plan, &token)
+        });
+        assert!(result.is_err() || !result.unwrap().blocked.is_empty());
+        assert_eq!(
+            fs::read(physical.join("config.toml")).unwrap(),
+            b"# harness settings\n"
+        );
+        assert!(!home.join(".claude.json").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn rulesync_settings_never_follows_a_destination_link() {
         use std::os::unix::fs::symlink;
         let temp = tempfile::tempdir().unwrap();
@@ -316,7 +343,7 @@ mod tests {
         let target = outside.path().join("config.json");
         fs::write(&target, "{}").unwrap();
         symlink(&target, home.join(".claude.json")).unwrap();
-        let root = FileRoot::open(home).unwrap();
+        let root = FileRoot::open_home(home).unwrap();
         assert!(plan_rendered(&root, home, home, rendered("source")).is_err());
         assert_eq!(fs::read(&target).unwrap(), b"{}");
     }

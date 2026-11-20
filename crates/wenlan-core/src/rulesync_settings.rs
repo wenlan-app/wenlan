@@ -889,7 +889,11 @@ impl<'de> Deserialize<'de> for UniqueJson {
     }
 }
 
-fn parse_json(bytes: &[u8]) -> Result<Map<String, Value>> {
+pub(crate) fn parse_jsonc_value(bytes: &[u8]) -> Result<Value> {
+    parse_unique_json(&without_jsonc(bytes)?)
+}
+
+fn parse_unique_json(bytes: &[u8]) -> Result<Value> {
     let UniqueJson(value) = serde_json::from_slice(bytes).map_err(|error| {
         anyhow::anyhow!(
             "invalid or duplicate JSON settings at line {}, column {}",
@@ -897,7 +901,11 @@ fn parse_json(bytes: &[u8]) -> Result<Map<String, Value>> {
             error.column()
         )
     })?;
-    match value {
+    Ok(value)
+}
+
+fn parse_json(bytes: &[u8]) -> Result<Map<String, Value>> {
+    match parse_unique_json(bytes)? {
         Value::Object(map) => Ok(map),
         _ => bail!("JSON settings must be an object"),
     }

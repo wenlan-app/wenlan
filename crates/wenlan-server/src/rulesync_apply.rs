@@ -8,6 +8,7 @@ use cap_std::fs::{DirBuilderExt as _, OpenOptionsExt as _, PermissionsExt as _};
 use serde::{Deserialize, Serialize};
 use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
+use wenlan_core::rulesync_personal::{is_harness_path, HarnessGuard};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct FileMode(u32);
@@ -146,6 +147,8 @@ pub(crate) enum ApplyOutcome {
 
 pub(crate) struct FileRoot {
     dir: Dir,
+    harness: Option<HarnessGuard>,
+    tool_home: bool,
 }
 
 impl FileRoot {
@@ -161,7 +164,25 @@ impl FileRoot {
         let ambient_parent = Dir::open_ambient_dir(parent, cap_std::ambient_authority())?;
         Ok(Self {
             dir: ambient_parent.open_dir_nofollow(Path::new(name))?,
+            harness: None,
+            tool_home: false,
         })
+    }
+
+    pub(crate) fn open_home(home: &Path) -> io::Result<Self> {
+        let mut root = Self::open(home)?;
+        root.harness = Some(HarnessGuard::new(home)?);
+        root.tool_home = true;
+        Ok(root)
+    }
+
+    pub(crate) fn open_data(home: &Path, path: &Path) -> io::Result<Self> {
+        let guard = HarnessGuard::new(home)?;
+        guard.check_absolute(path)?;
+        let mut root = Self::open(path)?;
+        guard.check(&root.dir.dir_metadata()?)?;
+        root.harness = Some(guard);
+        Ok(root)
     }
 
     pub(crate) fn read(&self, path: &Path, allow_symlink: bool) -> io::Result<Snapshot> {
@@ -184,10 +205,10 @@ impl FileRoot {
     }
 
     pub(crate) fn remove_private_directory(&self, path: &Path) -> io::Result<()> {
-        match self.dir.open_dir_nofollow(path) {
-            Ok(directory) => directory.remove_open_dir_all(),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(error),
+        entry_path(path)?;
+        match self.open_parent(path, false)? {
+            Some(directory) => directory.remove_open_dir_all(),
+            None => Ok(()),
         }
     }
 
@@ -216,6 +237,7 @@ impl FileRoot {
         before_commit: impl FnOnce(),
     ) -> io::Result<ApplyOutcome> {
         let (relative_parent, name) = entry_path(path)?;
+        self.check_tool_path(path)?;
         if !allow_symlink
             && (matches!(seen, Snapshot::Symlink { .. })
                 || matches!(desired, Snapshot::Symlink { .. }))
@@ -232,6 +254,7 @@ impl FileRoot {
                 },
             );
         };
+        self.check_directory_leaf(&parent, name)?;
         if read_leaf(&parent, name, true)? != *seen {
             return Ok(ApplyOutcome::ChangedSincePlan);
         }
@@ -243,6 +266,7 @@ impl FileRoot {
         let Some(current_parent) = self.open_parent(relative_parent, false)? else {
             return Ok(ApplyOutcome::ChangedSincePlan);
         };
+        self.check_directory_leaf(&current_parent, name)?;
         if !same_directory(&parent, &current_parent)? || !matches_leaf(&parent, name, seen)? {
             return Ok(ApplyOutcome::ChangedSincePlan);
         }
@@ -263,9 +287,16 @@ impl FileRoot {
     }
 
     fn open_parent(&self, path: &Path, create: bool) -> io::Result<Option<Dir>> {
+        self.check_tool_path(path)?;
         let mut parent = self.dir.try_clone()?;
+        if let Some(guard) = &self.harness {
+            guard.check(&parent.dir_metadata()?)?;
+        }
         for part in path.components() {
-            let part = Path::new(part.as_os_str());
+            let Component::Normal(part) = part else {
+                return Err(invalid_path());
+            };
+            let part = Path::new(part);
             parent = match parent.open_dir_nofollow(part) {
                 Ok(dir) => dir,
                 Err(error) if error.kind() == io::ErrorKind::NotFound && create => {
@@ -279,8 +310,35 @@ impl FileRoot {
                 Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
                 Err(error) => return Err(error),
             };
+            if let Some(guard) = &self.harness {
+                guard.check(&parent.dir_metadata()?)?;
+            }
         }
         Ok(Some(parent))
+    }
+
+    fn check_tool_path(&self, path: &Path) -> io::Result<()> {
+        if self.tool_home && is_harness_path(path) {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "inside the read-only ~/.agents harness. Choose a path outside it",
+            ));
+        }
+        Ok(())
+    }
+
+    fn check_directory_leaf(&self, parent: &Dir, name: &Path) -> io::Result<()> {
+        if let Some(guard) = &self.harness {
+            match parent.symlink_metadata(name) {
+                Ok(metadata) if metadata.is_dir() => {
+                    guard.check(&parent.open_dir_nofollow(name)?.dir_metadata()?)?;
+                }
+                Ok(_) => (),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => (),
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(())
     }
 }
 

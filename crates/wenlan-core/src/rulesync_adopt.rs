@@ -192,6 +192,14 @@ impl Home {
     /// is this home. Relative traversal may cross skill folders inside it.
     /// All metadata and byte reads use the same filesystem capability.
     fn resolve(&self, path: &Path) -> Result<Option<Node>> {
+        self.resolve_checked(path, |_, _| Ok(()))
+    }
+
+    fn resolve_checked(
+        &self,
+        path: &Path,
+        mut check: impl FnMut(&Path, bool) -> Result<()>,
+    ) -> Result<Option<Node>> {
         let mut remaining = components(self.relative_target(path)?)?;
         let mut resolved = PathBuf::new();
         let mut link = None;
@@ -206,6 +214,7 @@ impl Home {
                 continue;
             }
             let candidate = resolved.join(&part);
+            check(&candidate, remaining.is_empty())?;
             let Some(metadata) = optional(self.dir.symlink_metadata(&candidate))
                 .with_context(|| format!("inspect {}", candidate.display()))?
             else {
@@ -345,33 +354,114 @@ fn load_text(
     sources: &mut BTreeSet<PathBuf>,
 ) -> Result<Option<LoadedText>> {
     let relative = home.relative_target(path)?;
-    ensure_rule_source(relative)?;
-    let Some(node) = home.resolve(relative)? else {
+    let mut format = None;
+    let mut check = |candidate: &Path, leaf: bool| {
+        ensure_rule_source(candidate, leaf)?;
+        if leaf {
+            format = RuleSourceFormat::from_path(candidate).or(format);
+        }
+        Ok(())
+    };
+    check(relative, true)?;
+    let Some(node) = home.resolve_checked(relative, check)? else {
         return Ok(None);
     };
-    ensure_rule_source(&node.path)?;
     let text =
         String::from_utf8(home.bytes(&node, MAX_RULE_BYTES, "the rule file import size limit")?)
             .with_context(|| format!("{} is not readable UTF-8", path.display()))?;
+    if let Some(format) = format {
+        ensure!(
+            format.is_rule_text(&text),
+            "{} is a tool configuration file or cannot be checked for configuration keys",
+            path.display()
+        );
+    }
     sources.extend([relative.to_path_buf(), node.path.clone()]);
     Ok(Some(LoadedText { node, text }))
 }
 
-fn ensure_rule_source(path: &Path) -> Result<()> {
-    for tool in [".claude", ".codex"] {
-        if let Ok(relative) = path.strip_prefix(tool) {
-            ensure!(
-                !relative.starts_with("hooks")
-                    && !matches!(
-                        relative.to_str(),
-                        Some("settings.json" | "settings.local.json" | "config.toml")
-                    ),
-                "{} is a tool configuration file",
-                path.display()
-            );
+fn ensure_rule_source(path: &Path, leaf: bool) -> Result<()> {
+    let mut components = path.iter();
+    let tool_hooks = components
+        .next()
+        .and_then(|part| part.to_str())
+        .is_some_and(|part| {
+            part.eq_ignore_ascii_case(".claude") || part.eq_ignore_ascii_case(".codex")
+        })
+        && components
+            .next()
+            .and_then(|part| part.to_str())
+            .is_some_and(|part| part.eq_ignore_ascii_case("hooks"));
+    let settings_file = leaf
+        && path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| {
+                let name = name.to_ascii_lowercase();
+                matches!(name.as_str(), ".claude.json" | "config.toml")
+                    || (name.starts_with("settings") && name.ends_with(".json"))
+            });
+    ensure!(
+        !tool_hooks && !settings_file,
+        "{} is a tool configuration file",
+        path.display()
+    );
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum RuleSourceFormat {
+    Json,
+    Toml,
+}
+
+impl RuleSourceFormat {
+    fn from_path(path: &Path) -> Option<Self> {
+        let extension = path.extension()?.to_str()?;
+        if extension.eq_ignore_ascii_case("json") {
+            Some(Self::Json)
+        } else if extension.eq_ignore_ascii_case("toml") {
+            Some(Self::Toml)
+        } else {
+            None
         }
     }
-    Ok(())
+
+    fn is_rule_text(self, text: &str) -> bool {
+        match self {
+            Self::Json => crate::rulesync_settings::parse_jsonc_value(text.as_bytes())
+                .is_ok_and(|value| !json_has_settings(&value)),
+            Self::Toml => text
+                .parse::<toml::Value>()
+                .is_ok_and(|value| !toml_has_settings(&value)),
+        }
+    }
+}
+
+fn is_settings_key(key: &str) -> bool {
+    ["mcpServers", "mcp_servers", "hooks", "env"]
+        .iter()
+        .any(|name| key.eq_ignore_ascii_case(name))
+}
+
+fn json_has_settings(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Object(values) => values
+            .iter()
+            .any(|(key, value)| is_settings_key(key) || json_has_settings(value)),
+        serde_json::Value::Array(values) => values.iter().any(json_has_settings),
+        _ => false,
+    }
+}
+
+fn toml_has_settings(value: &toml::Value) -> bool {
+    match value {
+        toml::Value::Table(values) => values
+            .iter()
+            .any(|(key, value)| is_settings_key(key) || toml_has_settings(value)),
+        toml::Value::Array(values) => values.iter().any(toml_has_settings),
+        _ => false,
+    }
 }
 
 type RuleDiscovery = (
@@ -1341,6 +1431,138 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("tool configuration file"));
+    }
+
+    fn rejected_config_import(home: &Path, imported: &str) -> bool {
+        put(home, ".claude/CLAUDE.md", format!("@~/{imported}\n"));
+        let targets = [target("claudecode", Some(".claude/CLAUDE.md"), None)];
+        let Err(error) = discover(home, &targets) else {
+            return false;
+        };
+        let message = format!("{error:#}");
+        assert!(message.contains("tool configuration file"), "{message}");
+        assert!(!message.contains("DUMMY_CREDENTIAL"), "{message}");
+        true
+    }
+
+    #[test]
+    fn claude_rule_import_rejects_configuration_names_case_insensitively() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path();
+        let mut admitted = Vec::new();
+        let json = r#"{"profile":"DUMMY_CREDENTIAL"}"#;
+        for (path, content) in [
+            (".claude.json", json),
+            ("parts/SETTINGS.JsOn", json),
+            (".CoDeX/nested/SeTtInGs.LoCaL.JsOn", json),
+            ("parts/SeTtInGs.Managed.JsOn", json),
+            (
+                ".cLaUdE/nested/CoNfIg.ToMl",
+                "profile = 'DUMMY_CREDENTIAL'\n",
+            ),
+            (".CoDeX/HoOkS/script.md", "DUMMY_CREDENTIAL\n"),
+        ] {
+            put(home, path, content);
+            if !rejected_config_import(home, path) {
+                admitted.push(path);
+            }
+        }
+        assert!(admitted.is_empty(), "admitted configuration: {admitted:?}");
+    }
+
+    #[test]
+    fn claude_rule_import_rejects_configuration_keys_in_json_and_toml() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path();
+        let mut admitted = Vec::new();
+        for (path, content) in [
+            (
+                "parts/servers.JsOn",
+                r#"{"mCpSeRvErS":{"test":"DUMMY_CREDENTIAL"}}"#,
+            ),
+            (
+                "parts/variables.json",
+                r#"{"profiles":[{"EnV":{"TOKEN":"DUMMY_CREDENTIAL"}}]}"#,
+            ),
+            (
+                "parts/commands.ToMl",
+                "[HoOkS]\ncommand = 'DUMMY_CREDENTIAL'\n",
+            ),
+            (
+                "parts/variables.toml",
+                "[[profiles]]\nEnV.TOKEN = 'DUMMY_CREDENTIAL'\n",
+            ),
+            (
+                "parts/codex-servers.toml",
+                "[mcp_servers.test]\nurl = 'DUMMY_CREDENTIAL'\n",
+            ),
+            (
+                "parts/duplicate.json",
+                r#"{"profile":{"env":{"TOKEN":"DUMMY_CREDENTIAL"}},"profile":{}}"#,
+            ),
+            ("parts/partial.toml", "[env]\nTOKEN = 'DUMMY_CREDENTIAL\n"),
+        ] {
+            put(home, path, content);
+            if !rejected_config_import(home, path) {
+                admitted.push(path);
+            }
+        }
+        assert!(admitted.is_empty(), "admitted configuration: {admitted:?}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn claude_rule_import_rejects_configuration_reached_through_links() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path();
+        let json = r#"{"profile":"DUMMY_CREDENTIAL"}"#;
+        put(home, ".claude.json", json);
+        link(home, "parts/direct.md", "../.claude.json");
+        put(home, "parts/renamed.md", json);
+        link(home, "parts/SeTtInGs.JsOn", "renamed.md");
+        link(home, "parts/chain.md", "SeTtInGs.JsOn");
+        put(
+            home,
+            "parts/hidden.JsOn",
+            r#"{"env":{"TOKEN":"DUMMY_CREDENTIAL"}}"#,
+        );
+        link(home, "parts/resolved.md", "hidden.JsOn");
+        put(
+            home,
+            "parts/structured.md",
+            r#"{"env":{"TOKEN":"DUMMY_CREDENTIAL"}}"#,
+        );
+        link(home, "parts/requested.JsOn", "structured.md");
+        link(home, "parts/renamed-format.md", "requested.JsOn");
+
+        let admitted: Vec<_> = [
+            "parts/direct.md",
+            "parts/chain.md",
+            "parts/resolved.md",
+            "parts/requested.JsOn",
+            "parts/renamed-format.md",
+        ]
+        .into_iter()
+        .filter(|path| !rejected_config_import(home, path))
+        .collect();
+        assert!(admitted.is_empty(), "admitted configuration: {admitted:?}");
+    }
+
+    #[test]
+    fn claude_rule_import_keeps_json_and_toml_with_no_configuration_keys() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path();
+        let json = "{\n// Terms used in sample rules.\n\"glossary\":[\"mcpServers\",\"hooks\",\"env\"],\n}\n";
+        let toml = "glossary = ['mcpServers', 'hooks', 'env']\n";
+        put(home, ".claude/CLAUDE.md", "@~/terms.JsOn\n@~/terms.ToMl\n");
+        put(home, "terms.JsOn", json);
+        put(home, "terms.ToMl", toml);
+        let adoption = discover(
+            home,
+            &[target("claudecode", Some(".claude/CLAUDE.md"), None)],
+        )
+        .unwrap();
+        assert_eq!(adoption.overlays["claudecode"], format!("{json}{toml}"));
     }
 
     #[test]

@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::{AdoptedSkill, Delivery, Manifest, Pending, PersonalMaster, Setup};
-use crate::rulesync_apply::{ApplyOutcome, FileRoot, Snapshot};
+use crate::rulesync_apply::{ApplyOutcome, Snapshot};
 
 const MANIFEST: &str = "personal.json";
 const BLOBS: &str = "personal-blobs";
@@ -48,7 +48,7 @@ struct StoredSetup {
 
 impl Setup {
     pub(super) fn load(&self) -> Result<Option<Manifest>> {
-        let root = FileRoot::open(&self.data)?;
+        let root = self.data_files()?;
         let path = Path::new(MANIFEST);
         let bytes = match root.read(path, false)? {
             Snapshot::File { bytes, .. } => bytes,
@@ -91,7 +91,7 @@ impl Setup {
     }
 
     pub(super) fn save(&self, manifest: &Manifest) -> Result<()> {
-        let root = FileRoot::open(&self.data)?;
+        let root = self.data_files()?;
         let mut saved = BTreeSet::new();
         let mut added_blob = false;
         let state = map_contents(manifest, |bytes| {
@@ -135,7 +135,7 @@ impl Setup {
     }
 
     pub(super) fn retire_backup(&self) -> Result<()> {
-        let root = FileRoot::open(&self.data)?;
+        let root = self.data_files()?;
         let path = Path::new(MANIFEST);
         let seen = root.read(path, false)?;
         ensure!(

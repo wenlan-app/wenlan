@@ -569,7 +569,7 @@ struct SkillHome {
 
 impl SkillHome {
     fn open(home: &Path) -> Result<Self> {
-        let root = FileRoot::open(home)?;
+        let root = FileRoot::open_home(home)?;
         let parent = Dir::open_ambient_dir(
             home.parent().context("tool home has no parent")?,
             cap_std::ambient_authority(),

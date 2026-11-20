@@ -234,7 +234,7 @@ const HARNESS_READ_ONLY: &str =
 
 impl Setup {
     fn delivery_status(&self) -> BTreeMap<String, DeliveryStatus> {
-        let Ok(home) = FileRoot::open(&self.home) else {
+        let Ok(home) = FileRoot::open_home(&self.home) else {
             return BTreeMap::new();
         };
         let mut tools = BTreeMap::new();
@@ -292,7 +292,7 @@ pub(crate) fn sync_registry_now() -> Result<RulesSyncReport> {
     let Some(mut manifest) = setup.load()? else {
         return Ok(result);
     };
-    let root = FileRoot::open(&setup.home)?;
+    let root = FileRoot::open_home(&setup.home)?;
     setup.recover(&root, &mut manifest)?;
     ensure!(manifest.adopted, "finish restoring the local setup first");
     result.message = "Checked installed skills".into();
@@ -309,7 +309,7 @@ pub(crate) fn registry_delivery_status(name: &str) -> Result<(Vec<PathBuf>, Vec<
     let Some(manifest) = setup.load()? else {
         return Ok((Vec::new(), Vec::new()));
     };
-    let root = FileRoot::open(&setup.home)?;
+    let root = FileRoot::open_home(&setup.home)?;
     let current = manifest
         .delivered
         .iter()
@@ -344,7 +344,7 @@ pub(crate) fn registry_pending_paths(name: &str) -> Result<Vec<PathBuf>> {
     let Some(manifest) = setup.load()? else {
         return Ok(Vec::new());
     };
-    let root = FileRoot::open(&setup.home)?;
+    let root = FileRoot::open_home(&setup.home)?;
     Ok(manifest
         .delivered
         .iter()
@@ -537,21 +537,16 @@ impl Setup {
         })
     }
 
+    pub(crate) fn data_files(&self) -> Result<FileRoot> {
+        Ok(FileRoot::open_data(&self.home, &self.data)?)
+    }
+
     pub(crate) fn lock(&self) -> Result<fs::File> {
-        if let Ok(home) = self.home.canonicalize() {
-            let data_parent = self.data.parent().context("rulesync has no data parent")?;
-            let data = data_parent.canonicalize()?.join(
-                self.data
-                    .file_name()
-                    .context("rulesync has no data directory name")?,
-            );
-            let harness = home.join(".agents");
-            let resolved_harness = harness.canonicalize().unwrap_or(harness);
-            ensure!(
-                !data.strip_prefix(&home).is_ok_and(is_harness_path)
-                    && !data.starts_with(&resolved_harness),
-                "Rulesync data would be stored inside ~/.agents. Choose a Wenlan data directory outside the harness."
-            );
+        let guard = wenlan_core::rulesync_personal::HarnessGuard::new(&self.home)?;
+        let data_parent = self.data.parent().context("rulesync has no data parent")?;
+        guard.check_absolute(data_parent)?;
+        if self.data.try_exists()? {
+            guard.check_absolute(&self.data)?;
         }
         if !self.data.try_exists()? {
             let mut builder = fs::DirBuilder::new();
@@ -643,7 +638,7 @@ impl Setup {
         self.require_unrecorded_adoption()?;
         let adoption = discover_adoption(&self.home)?;
         verify_adoption_token(&adoption, token)?;
-        let root = FileRoot::open(&self.home)?;
+        let root = FileRoot::open_home(&self.home)?;
         let _lock = self.lock()?;
         self.require_unrecorded_adoption()?;
         let master = PersonalMaster::new(&adoption);
@@ -890,7 +885,7 @@ impl Setup {
 
     fn restore(&self) -> Result<RulesSyncReport> {
         let _lock = self.lock()?;
-        let root = FileRoot::open(&self.home)?;
+        let root = FileRoot::open_home(&self.home)?;
         let mut manifest = self.load()?.context("no local adoption backup")?;
         self.recover(&root, &mut manifest)?;
         manifest.adopted = false;
@@ -987,7 +982,7 @@ impl Setup {
 
     fn sync(&self, generated: &[String]) -> Result<RulesSyncReport> {
         let _lock = self.lock()?;
-        let root = FileRoot::open(&self.home)?;
+        let root = FileRoot::open_home(&self.home)?;
         let mut manifest = self.load()?.context("run wenlan rules adopt first")?;
         self.recover(&root, &mut manifest)?;
         self.sync_member(&root, &mut manifest, generated)
@@ -1745,7 +1740,7 @@ impl Setup {
         sync: impl FnOnce(&FileRoot, &mut Manifest) -> Result<RulesSyncReport>,
     ) -> Result<RulesSyncReport> {
         let _lock = self.lock()?;
-        let root = FileRoot::open(&self.home)?;
+        let root = FileRoot::open_home(&self.home)?;
         let mut manifest = self.load()?.context("run wenlan rules adopt first")?;
         self.recover(&root, &mut manifest)?;
         if let Some(scope) = manifest.scope_reviews.remove(&request.id) {
@@ -2363,13 +2358,13 @@ mod tests {
         fn adopt_from_plan(&self) {
             let adoption = discover_adoption(&self.setup.home).unwrap();
             let master = PersonalMaster::new(&adoption);
-            let root = FileRoot::open(&self.setup.home).unwrap();
+            let root = FileRoot::open_home(&self.setup.home).unwrap();
             let _lock = self.setup.lock().unwrap();
             self.setup.apply_adoption(&root, adoption, master).unwrap();
         }
 
         fn sync_with(&self, pin_banner: &str) -> RulesSyncReport {
-            let root = FileRoot::open(&self.setup.home).unwrap();
+            let root = FileRoot::open_home(&self.setup.home).unwrap();
             let _lock = self.setup.lock().unwrap();
             let mut manifest = self.setup.load().unwrap().unwrap();
             self.setup
@@ -2848,7 +2843,8 @@ mod tests {
     #[test]
     fn rulesync_rejects_a_batch_with_a_harness_destination_before_saving() {
         let f = Fixture::new();
-        let root = FileRoot::open(&f.setup.home).unwrap();
+        let root = FileRoot::open_home(&f.setup.home).unwrap();
+        let originals = FileRoot::open(&f.setup.home).unwrap();
         let _lock = f.setup.lock().unwrap();
         let mut manifest = Manifest::new(
             PersonalMaster::new(&discover_adoption(&f.setup.home).unwrap()),
@@ -2858,7 +2854,7 @@ mod tests {
             .into_iter()
             .map(|path| Pending {
                 path: path.into(),
-                seen: root.read(Path::new(path), true).unwrap(),
+                seen: originals.read(Path::new(path), true).unwrap(),
                 desired: Snapshot::file(b"unexpected replacement\n".to_vec()),
                 kind: None,
                 allow_link: true,
@@ -2927,9 +2923,7 @@ mod tests {
         std::os::unix::fs::symlink(".agents", &link).unwrap();
         f.setup.data = link.join("rulesync");
         let error = f.setup.lock().unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("data would be stored inside ~/.agents"));
+        assert!(error.to_string().contains("read-only ~/.agents"));
         assert!(!f.setup.data.exists());
     }
 
@@ -2991,7 +2985,7 @@ mod tests {
             .unwrap();
         f.adopt_from_plan();
 
-        let root = FileRoot::open(&f.setup.home).unwrap();
+        let root = FileRoot::open_home(&f.setup.home).unwrap();
         let mut manifest = f.setup.load().unwrap().unwrap();
         let report = f
             .setup
@@ -3039,7 +3033,7 @@ mod tests {
         f.write(sidecar, "interface:\n  display_name: Writing\n");
         f.adopt_from_plan();
 
-        let root = FileRoot::open(&f.setup.home).unwrap();
+        let root = FileRoot::open_home(&f.setup.home).unwrap();
         let mut manifest = f.setup.load().unwrap().unwrap();
         let updated = "interface:\n  display_name: Social writing\n";
         manifest.master.skills[0]
@@ -3119,7 +3113,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(f.text(file).as_bytes(), rendered);
-        let root = FileRoot::open(&f.setup.home).unwrap();
+        let root = FileRoot::open_home(&f.setup.home).unwrap();
         let mut manifest = f.setup.load().unwrap().unwrap();
         let sync = f
             .setup
@@ -3542,7 +3536,7 @@ mod tests {
         let f = Fixture::new();
         f.adopt_from_plan();
         {
-            let root = FileRoot::open(&f.setup.home).unwrap();
+            let root = FileRoot::open_home(&f.setup.home).unwrap();
             let _lock = f.setup.lock().unwrap();
             let mut manifest = f.setup.load().unwrap().unwrap();
             f.setup

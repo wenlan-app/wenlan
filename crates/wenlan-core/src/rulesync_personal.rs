@@ -7,6 +7,8 @@ use std::io::{BufWriter, Write};
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{bail, ensure, Context, Result};
+use cap_fs_ext::{DirExt as _, MetadataExt as _};
+use cap_std::fs::{Dir, Metadata};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use wenlan_types::rulesync::{AdoptionChange, AdoptionPlan, AdoptionSkill, AdoptionSkillOutcome};
@@ -29,32 +31,82 @@ pub fn is_harness_path(path: &Path) -> bool {
         if name.as_encoded_bytes().eq_ignore_ascii_case(b".agents"))
 }
 
-/// The applier never follows a destination's parent links. Also protect
-/// the physical source directory if the harness itself is a symlink.
+/// Compare directory identities so aliases and case differences cannot turn
+/// the migration source into a write destination.
+pub struct HarnessGuard(Option<(u64, u64)>);
+
+impl HarnessGuard {
+    pub fn new(home: &Path) -> std::io::Result<Self> {
+        let harness = home.join(".agents");
+        match Dir::open_ambient_dir(&harness, cap_std::ambient_authority()) {
+            Ok(dir) => {
+                let metadata = dir.dir_metadata()?;
+                Ok(Self(Some((metadata.dev(), metadata.ino()))))
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self(None)),
+            Err(error) => Err(error),
+        }
+    }
+
+    pub fn check(&self, metadata: &Metadata) -> std::io::Result<()> {
+        if self.0 == Some((metadata.dev(), metadata.ino())) {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "inside the read-only ~/.agents harness. Choose a path outside it",
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Data and its staging directories can be placed outside the tool home.
+    /// Check the canonical ancestors of their selected root.
+    pub fn check_absolute(&self, path: &Path) -> std::io::Result<()> {
+        for ancestor in path.canonicalize()?.ancestors() {
+            let dir = Dir::open_ambient_dir(ancestor, cap_std::ambient_authority())?;
+            self.check(&dir.dir_metadata()?)?;
+        }
+        Ok(())
+    }
+}
+
+/// Preview only existing physical parents. A planned adoption may replace a
+/// symlinked skill folder before applying its child entries.
 pub fn check_delivery_paths<'a>(
     home: &Path,
     paths: impl IntoIterator<Item = &'a Path>,
 ) -> Result<()> {
-    let harness = home.join(".agents");
-    let alias = match fs::symlink_metadata(&harness) {
-        Ok(metadata) if metadata.is_symlink() => match harness.canonicalize() {
-            Ok(target) => Some((home.canonicalize()?, target)),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-            Err(error) => return Err(error).context("resolve the ~/.agents harness"),
-        },
-        Ok(_) => None,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(error) => return Err(error).context("inspect the ~/.agents harness"),
-    };
+    let guard = HarnessGuard::new(home).context("inspect the ~/.agents harness")?;
+    let root = Dir::open_ambient_dir(home, cap_std::ambient_authority())?;
     for path in paths {
         ensure!(
-            !is_harness_path(path)
-                && alias
-                    .as_ref()
-                    .is_none_or(|(home, target)| !home.join(path).starts_with(target)),
+            !is_harness_path(path),
             "{} is inside the read-only ~/.agents harness. Choose a tool path outside it.",
             path.display()
         );
+        let mut directory = root.try_clone()?;
+        guard.check(&directory.dir_metadata()?)?;
+        for component in path.parent().into_iter().flat_map(Path::components) {
+            let Component::Normal(name) = component else {
+                bail!("delivery path must be relative to the tool home");
+            };
+            directory = match directory.open_dir_nofollow(name) {
+                Ok(child) => child,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+                Err(error) => {
+                    if directory
+                        .symlink_metadata(name)
+                        .is_ok_and(|meta| meta.is_symlink())
+                    {
+                        break;
+                    }
+                    return Err(error).with_context(|| format!("inspect {}", path.display()));
+                }
+            };
+            guard
+                .check(&directory.dir_metadata()?)
+                .map_err(|error| anyhow::anyhow!("{} is {error}", path.display()))?;
+        }
     }
     Ok(())
 }

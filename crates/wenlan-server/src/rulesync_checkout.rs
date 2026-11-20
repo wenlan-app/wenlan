@@ -190,7 +190,7 @@ pub(crate) fn open(
     let repo = repo_wiki::repository_top_level(repo)?;
     let key = fingerprint(&repo)?;
     let state_path = PathBuf::from(format!("checkouts/{key}.json"));
-    let root = FileRoot::open(&setup.data)?;
+    let root = setup.data_files()?;
     let state = root.read(&state_path, false)?;
     let checkout = match &state {
         Snapshot::Absent => Checkout {
@@ -231,7 +231,7 @@ pub(crate) fn refresh(
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
             Err(error) => return Err(error.into()),
         };
-        let root = FileRoot::open(&setup.data)?;
+        let root = setup.data_files()?;
         for entry in entries {
             let entry = entry?;
             if !entry.file_type()?.is_file() {
