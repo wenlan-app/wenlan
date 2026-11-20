@@ -885,6 +885,9 @@ struct TeamState {
     settings_path: PathBuf,
     /// The daemon's own loopback address, which MCP reaches it at.
     daemon_url: String,
+    /// Dispatch the forwarded browser request without a listening socket.
+    #[cfg(test)]
+    in_process_daemon: Option<crate::router::AppRouter>,
     /// One MCP service per member, Space and access, so a connection's
     /// session stays with the service that made it.
     mcp: McpCache,
@@ -908,6 +911,8 @@ pub async fn serve_team_listener(shared: SharedState, shutdown: ShutdownHandle) 
         team_path: team::team_path(),
         settings_path: shared_space::settings_path(),
         daemon_url: format!("http://127.0.0.1:{port}"),
+        #[cfg(test)]
+        in_process_daemon: None,
         mcp: Arc::default(),
         sessions: LIVE_SESSIONS.clone(),
         auth: Arc::new(auth::AuthState::from_config(&team::team_path())),

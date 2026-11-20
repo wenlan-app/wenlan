@@ -524,6 +524,28 @@ async fn forward(
             .header(header::CONTENT_TYPE, "application/json")
             .body(body.to_vec());
     }
+    #[cfg(test)]
+    if let Some(daemon) = &state.in_process_daemon {
+        use tower::ServiceExt;
+
+        let built = call.build().expect("valid daemon forwarding request");
+        let bytes = built
+            .body()
+            .and_then(reqwest::Body::as_bytes)
+            .unwrap_or_default();
+        let mut request = axum::http::Request::builder()
+            .method(built.method().clone())
+            .uri(path_and_query)
+            .body(Body::from(bytes.to_vec()))
+            .expect("valid in-process forwarding request");
+        *request.headers_mut() = built.headers().clone();
+        let answer = daemon.clone().oneshot(request).await.unwrap();
+        let status = answer.status();
+        let bytes = axum::body::to_bytes(answer.into_body(), usize::MAX)
+            .await
+            .unwrap_or_default();
+        return Ok((status, bytes.to_vec()));
+    }
     match call.send().await {
         Ok(answer) => {
             let status = StatusCode::from_u16(answer.status().as_u16())

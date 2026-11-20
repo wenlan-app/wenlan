@@ -256,6 +256,7 @@ async fn env_with(ttl: Duration, burst: f64, refill: f64, url: Option<&str>) -> 
             settings_path: dir.path().join("settings.json"),
             team_path,
             daemon_url: "http://127.0.0.1:9".into(),
+            in_process_daemon: None,
             mcp: Arc::default(),
             sessions: Arc::default(),
             auth: Arc::new(auth),

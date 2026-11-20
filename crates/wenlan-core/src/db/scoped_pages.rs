@@ -945,7 +945,11 @@ impl MemoryDB {
         {
             Some(row) => {
                 let mut page = Self::row_to_page(&row)?;
-                super::citation_provenance::apply_on(&conn, &mut page).await?;
+                // Hosted readers don't disclose source evidence. Resolving
+                // each locator here would still touch the host's memories.
+                if reader != PageReader::Shared {
+                    super::citation_provenance::apply_on(&conn, &mut page).await?;
+                }
                 Ok(Some(page))
             }
             None => Ok(None),

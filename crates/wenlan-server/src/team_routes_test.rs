@@ -59,6 +59,7 @@ fn fixture() -> Fixture {
             team_path,
             settings_path,
             daemon_url: "http://127.0.0.1:9".into(),
+            in_process_daemon: None,
             mcp: Arc::default(),
             sessions: Arc::default(),
             auth: Arc::default(),
@@ -109,6 +110,178 @@ async fn response_text(response: Response) -> String {
         .await
         .unwrap();
     String::from_utf8(bytes.to_vec()).unwrap()
+}
+
+async fn fixture_with_daemon() -> (Fixture, Arc<wenlan_core::db::MemoryDB>) {
+    let mut fixture = fixture();
+    let db = Arc::new(
+        wenlan_core::db::MemoryDB::new(
+            &fixture._dir.path().join("daemon"),
+            Arc::new(wenlan_core::events::NoopEmitter),
+        )
+        .await
+        .unwrap(),
+    );
+    db.create_space("Design", None, false).await.unwrap();
+    let state = crate::state::ServerState {
+        db: Some(db.clone()),
+        ..Default::default()
+    };
+    fixture.state.in_process_daemon = Some(crate::router::build_router(Arc::new(
+        tokio::sync::RwLock::new(state),
+    )));
+    (fixture, db)
+}
+
+#[tokio::test]
+async fn authenticated_team_reader_sees_shared_page_without_seeded_host_memory() {
+    const PRIVATE_ID: &str = "fixture-authenticated-evidence";
+    const PRIVATE_TEXT: &str = "fictional amber envelope for the design";
+    const SHARED: &str = "The design meeting starts on Tuesday. [1]";
+    let (f, db) = fixture_with_daemon().await;
+    db.upsert_documents(vec![wenlan_core::sources::RawDocument {
+        source: "memory".into(),
+        source_id: PRIVATE_ID.into(),
+        title: "Fixture reminder".into(),
+        content: PRIVATE_TEXT.into(),
+        space: Some("Design".into()),
+        confirmed: Some(true),
+        ..Default::default()
+    }])
+    .await
+    .unwrap();
+    let page = wenlan_core::post_write::create_page_with_floor(
+        &db,
+        wenlan_types::requests::CreateConceptRequest {
+            title: "Fixture page".into(),
+            content: SHARED.into(),
+            summary: None,
+            entity_id: None,
+            space: Some("Design".to_string()).into(),
+            source_memory_ids: vec![PRIVATE_ID.into()],
+            creation_kind: Some("distilled".into()),
+            workspace: Some("Design".into()),
+        },
+        "fixture",
+        None,
+        1,
+    )
+    .await
+    .unwrap();
+    let citations = serde_json::json!([{
+        "occurrence": 1, "marker": 1, "source_kind": "memory",
+        "locator": PRIVATE_ID, "score": 1.0, "status": "verified",
+    }]);
+    db.set_page_citations(&page.id, Some(&citations.to_string()))
+        .await
+        .unwrap();
+
+    let source_path = format!("/api/pages/{}/sources", page.id);
+    let host = f
+        .state
+        .in_process_daemon
+        .as_ref()
+        .unwrap()
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(&source_path)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(host.status(), StatusCode::OK);
+    let host = response_text(host).await;
+    assert!(host.contains(PRIVATE_ID) && host.contains(PRIVATE_TEXT));
+
+    let page_path = format!("/team/v1/app/api/pages/{}", page.id);
+    let (status, body) = call(&f.state, Method::GET, &page_path, Some(&f.reader.1), vec![]).await;
+    assert_eq!(status, StatusCode::OK);
+    let body = String::from_utf8(body).unwrap();
+    assert!(body.contains(SHARED));
+    assert!(!body.contains(PRIVATE_ID) && !body.contains(PRIVATE_TEXT));
+    let sources = format!("/team/v1/app{source_path}");
+    let (status, body) = call(&f.state, Method::GET, &sources, Some(&f.reader.1), vec![]).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+        serde_json::json!([])
+    );
+    for (member, expected) in [
+        (None, StatusCode::UNAUTHORIZED),
+        (Some(f.outsider.1.as_str()), StatusCode::NOT_FOUND),
+    ] {
+        let (status, _) = call(&f.state, Method::GET, &sources, member, vec![]).await;
+        assert_eq!(status, expected);
+    }
+}
+
+#[tokio::test]
+async fn authenticated_team_writer_can_save_and_publish_a_draft_kept_off_read_routes() {
+    use serde_json::{json, Value};
+
+    let (f, _) = fixture_with_daemon().await;
+    let (status, body) = call(
+        &f.state,
+        Method::POST,
+        "/team/v1/app/api/pages/drafts",
+        Some(&f.writer.1),
+        serde_json::to_vec(&json!({
+            "draft_id": "page_00000000-0000-4000-8000-00000000e241",
+            "title": "Draft schedule",
+            "content": "First draft.",
+        }))
+        .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "draft creation");
+    let draft: Value = serde_json::from_slice(&body).unwrap();
+    let id = draft["page"]["id"].as_str().unwrap();
+    let page_path = format!("/team/v1/app/api/pages/{id}");
+    let (status, _) = call(&f.state, Method::GET, &page_path, Some(&f.reader.1), vec![]).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    let draft_path = format!("/team/v1/app/api/pages/drafts/{id}");
+    let (status, body) = call(
+        &f.state,
+        Method::PUT,
+        &draft_path,
+        Some(&f.writer.1),
+        serde_json::to_vec(&json!({
+            "title": "Team schedule",
+            "content": "Published schedule.",
+            "expected_version": draft["page"]["version"],
+        }))
+        .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "draft save");
+    let saved: Value = serde_json::from_slice(&body).unwrap();
+    let publish =
+        serde_json::to_vec(&json!({"expected_version": saved["page"]["version"]})).unwrap();
+    let publish_path = format!("{draft_path}/publish");
+    for _ in 0..2 {
+        let (status, body) = call(
+            &f.state,
+            Method::POST,
+            &publish_path,
+            Some(&f.writer.1),
+            publish.clone(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "draft publication");
+        let published: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(published["page"]["status"], "active");
+        assert_eq!(
+            published["page"]["version"].as_i64(),
+            saved["page"]["version"].as_i64().map(|v| v + 1)
+        );
+    }
+    let (status, body) = call(&f.state, Method::GET, &page_path, Some(&f.reader.1), vec![]).await;
+    assert_eq!(status, StatusCode::OK);
+    let published: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(published["page"]["content"], "Published schedule.");
 }
 
 fn version_text(page: &str, member: &str, body: &str) -> String {
