@@ -30,6 +30,11 @@ impl Batch {
         Ok(Some(Self::prepare_paths(root, files)?))
     }
 
+    pub(super) fn prepare_file(root: &FileRoot, path: &Path) -> Result<PathBuf> {
+        let batch = Self::prepare_paths(root, BTreeMap::from([(0, path.to_owned())]))?;
+        Ok(batch.directory.join(file_name(0)))
+    }
+
     fn prepare_paths(root: &FileRoot, files: BTreeMap<usize, PathBuf>) -> Result<Self> {
         let directory = Path::new(DIRECTORY).join(uuid::Uuid::new_v4().simple().to_string());
         // The mapping is durable before the first replacement. The held

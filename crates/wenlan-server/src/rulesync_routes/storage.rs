@@ -241,6 +241,7 @@ fn map_contents<From, To>(
                 })
             })
             .collect::<Result<_>>()?,
+        stages: manifest.stages.clone(),
         recovery_issues: manifest.recovery_issues.clone(),
         adopted: manifest.adopted,
         registry_skipped: manifest.registry_skipped.clone(),

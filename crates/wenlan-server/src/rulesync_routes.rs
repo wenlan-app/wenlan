@@ -414,6 +414,28 @@ enum BatchMode {
     Continue,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PendingStage {
+    id: String,
+    displaced: Option<PathBuf>,
+}
+
+impl PendingStage {
+    fn options<'a>(
+        &'a self,
+        data: &'a FileRoot,
+        allow_symlink: bool,
+        verify_source: Option<&'a dyn Fn() -> std::io::Result<bool>>,
+    ) -> ApplyOptions<'a> {
+        ApplyOptions {
+            allow_symlink,
+            displaced: self.displaced.as_deref().map(|path| (data, path)),
+            stage_id: Some(&self.id),
+            verify_source,
+        }
+    }
+}
+
 #[derive(Default)]
 struct BatchDirectories {
     parents: BTreeSet<PathBuf>,
@@ -452,6 +474,8 @@ struct Manifest<Content = Vec<u8>> {
     delivered: BTreeMap<PathBuf, Delivery<Content>>,
     pending: Vec<Pending<Content>>,
     #[serde(default)]
+    stages: BTreeMap<PathBuf, PendingStage>,
+    #[serde(default)]
     recovery_issues: BTreeMap<PathBuf, String>,
     adopted: bool,
     #[serde(default)]
@@ -473,6 +497,7 @@ impl Manifest {
             backup,
             delivered: BTreeMap::new(),
             pending: Vec::new(),
+            stages: BTreeMap::new(),
             recovery_issues: BTreeMap::new(),
             adopted: false,
             registry_skipped: BTreeMap::new(),
@@ -766,6 +791,7 @@ impl Setup {
         if manifest.pending.is_empty() {
             return Ok(());
         }
+        let data = self.data_files()?;
         let pending = std::mem::take(&mut manifest.pending);
         // Child entries are not reachable while a journaled directory link
         // is still in place. Decide them from the corresponding link state.
@@ -788,9 +814,10 @@ impl Setup {
         let mut directories = BatchDirectories::default();
         manifest.recovery_issues.clear();
         for op in pending {
-            let recovery = Self::recover_entry(root, &op, &linked);
+            let recovery = self.recover_entry(root, &data, manifest, &op, &linked);
             match recovery {
                 Ok(completed) => {
+                    manifest.stages.remove(&op.path);
                     if completed {
                         directories.record(&op);
                         settle(manifest, op)?;
@@ -809,7 +836,10 @@ impl Setup {
     }
 
     fn recover_entry(
+        &self,
         root: &FileRoot,
+        data: &FileRoot,
+        manifest: &Manifest,
         op: &Pending,
         linked: &BTreeMap<PathBuf, bool>,
     ) -> Result<bool> {
@@ -827,6 +857,15 @@ impl Setup {
             return Ok(restored);
         }
         let actual = root.read(&op.path, op.allow_link)?;
+        if let Some(stage) = manifest.stages.get(&op.path) {
+            root.recover_stage(
+                &op.path,
+                &op.seen,
+                &op.desired,
+                &actual,
+                stage.options(data, op.allow_link, None),
+            )?;
+        }
         ensure!(
             actual == op.desired || actual == op.seen,
             "changed during an interrupted write. Save your edit and compare it with the retained backup before retrying"
@@ -872,6 +911,7 @@ impl Setup {
             return Ok(Vec::new());
         }
         check_delivery_paths(&self.home, operations.iter().map(|op| op.path.as_path()))?;
+        let operations = journal_missing_parents(root, manifest, operations)?;
         let mut outcomes = Vec::with_capacity(operations.len());
         let mut ready = Vec::with_capacity(operations.len());
         for op in operations {
@@ -888,32 +928,52 @@ impl Setup {
         }
         let data = self.data_files()?;
         let displaced = displaced::Batch::prepare(&data, &ready)?;
+        let batch_paths = ready.iter().map(|op| op.path.clone()).collect::<Vec<_>>();
+        manifest.stages.extend(
+            ready
+                .iter()
+                .enumerate()
+                .filter(|(_, op)| op.seen != op.desired)
+                .map(|(index, op)| {
+                    (
+                        op.path.clone(),
+                        PendingStage {
+                            id: uuid::Uuid::new_v4().simple().to_string(),
+                            displaced: displaced.as_ref().and_then(|batch| batch.location(index)),
+                        },
+                    )
+                }),
+        );
         let first = manifest.pending.len();
         manifest.pending.append(&mut ready);
         self.save(manifest)?;
         let mut directories = BatchDirectories::default();
         let mut failed = BTreeSet::new();
-        for (index, operation) in manifest.pending.split_off(first).into_iter().enumerate() {
+        for operation in manifest.pending.split_off(first) {
             let path = operation.path.clone();
             let status = if path_blocked(&failed, &path) {
                 ApplyOutcome::ChangedSincePlan
             } else {
-                let link = links.and_then(|links| links.get(&path));
-                let verify = || {
-                    link.map_or(Ok(true), |expected| expected.matches(&self.home, &path))
-                        .map_err(std::io::Error::other)
-                };
-                let retained = displaced.as_ref().and_then(|batch| batch.location(index));
-                root.apply_with(
-                    &path,
-                    &operation.seen,
-                    &operation.desired,
-                    ApplyOptions {
-                        allow_symlink: operation.allow_link,
-                        displaced: retained.as_deref().map(|path| (&data, path)),
-                        verify_source: link.map(|_| &verify as _),
-                    },
-                )?
+                if let Some(stage) = manifest.stages.get(&path) {
+                    let link = links.and_then(|links| links.get(&path));
+                    let verify = || {
+                        link.map_or(Ok(true), |expected| expected.matches(&self.home, &path))
+                            .map_err(std::io::Error::other)
+                    };
+                    root.apply_with(
+                        &path,
+                        &operation.seen,
+                        &operation.desired,
+                        stage.options(&data, operation.allow_link, link.map(|_| &verify as _)),
+                    )?
+                } else {
+                    root.apply(
+                        &path,
+                        &operation.seen,
+                        &operation.desired,
+                        operation.allow_link,
+                    )?
+                }
             };
             outcomes.push((path.clone(), status));
             if status == ApplyOutcome::Applied {
@@ -932,6 +992,9 @@ impl Setup {
         }
         if adopting {
             manifest.adopted = failed.is_empty();
+        }
+        for path in batch_paths {
+            manifest.stages.remove(&path);
         }
         self.save(manifest)?;
         Ok(outcomes)
@@ -2162,6 +2225,10 @@ pub(crate) fn with_bytes(seen: &Snapshot, bytes: Vec<u8>) -> Snapshot {
     }
 }
 
+pub(crate) fn prepare_checkout_displaced(root: &FileRoot, path: &Path) -> Result<PathBuf> {
+    displaced::Batch::prepare_file(root, path)
+}
+
 fn same_rule_lines(actual: &[u8], expected: &[u8]) -> Result<bool> {
     let actual = std::str::from_utf8(actual)?;
     let expected = std::str::from_utf8(expected)?;
@@ -2178,6 +2245,61 @@ fn without_revoked_rules(snapshot: &Snapshot, accessible: &BTreeSet<String>) -> 
         return Ok(snapshot.clone());
     }
     Ok(with_bytes(snapshot, after.into_bytes()))
+}
+
+/// Treat missing parents like any other adoption destination. This records
+/// their original absence before they are created and restores children first.
+fn journal_missing_parents(
+    root: &FileRoot,
+    manifest: &mut Manifest,
+    operations: Vec<Pending>,
+) -> Result<Vec<Pending>> {
+    let explicit: BTreeSet<_> = operations
+        .iter()
+        .filter(|op| op.desired == Snapshot::Directory)
+        .map(|op| op.path.clone())
+        .collect();
+    let replacing_links: BTreeSet<_> = operations
+        .iter()
+        .filter(|op| {
+            op.desired == Snapshot::Directory && matches!(op.seen, Snapshot::Symlink { .. })
+        })
+        .map(|op| op.path.clone())
+        .collect();
+    let mut checked = BTreeSet::new();
+    let mut batch = Vec::with_capacity(operations.len());
+    for op in operations {
+        if op.kind.is_some() && op.desired != Snapshot::Absent {
+            let ancestors: Vec<_> = op
+                .path
+                .ancestors()
+                .skip(1)
+                .filter(|path| !path.as_os_str().is_empty())
+                .collect();
+            for path in ancestors.into_iter().rev() {
+                if explicit.contains(path) || !checked.insert(path.to_owned()) {
+                    continue;
+                }
+                let absent = path_blocked(&replacing_links, path)
+                    || root.read(path, false)? == Snapshot::Absent;
+                if absent {
+                    manifest
+                        .backup
+                        .entry(path.to_owned())
+                        .or_insert(Snapshot::Absent);
+                    batch.push(Pending {
+                        path: path.to_owned(),
+                        seen: Snapshot::Absent,
+                        desired: Snapshot::Directory,
+                        kind: Some(Kind::Directory),
+                        allow_link: false,
+                    });
+                }
+            }
+        }
+        batch.push(op);
+    }
+    Ok(batch)
 }
 
 fn settle(manifest: &mut Manifest, operation: Pending) -> Result<()> {
@@ -3592,6 +3714,120 @@ mod tests {
         eprintln!("1000 files: adopt {adoption_saves} saves in {adoption_time:?}, sync {sync_saves} saves in {sync_time:?}, restore {restore_saves} saves in {restore_time:?}");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn run9_crash_during_file_apply_helper() {
+        let Some(root) = std::env::var_os("WENLAN_TEST_FILE_APPLY_ROOT").map(PathBuf::from) else {
+            return;
+        };
+        let setup = Setup {
+            home: root.join("home"),
+            data: root.join("data"),
+            binary: "unused".into(),
+        };
+        let adoption = discover_adoption(&setup.home).unwrap();
+        let master = PersonalMaster::new(&adoption);
+        let home = FileRoot::open_home(&setup.home).unwrap();
+        let _lock = setup.lock().unwrap();
+        setup.apply_adoption(&home, adoption, master).unwrap();
+        panic!("the injected process exit was not reached");
+    }
+
+    #[cfg(unix)]
+    fn run9_crash_during_file_apply(f: &Fixture, point: &str) {
+        let child = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg("--exact")
+            .arg("rulesync_routes::tests::run9_crash_during_file_apply_helper")
+            .env("WENLAN_TEST_FILE_APPLY_ROOT", f._temp.path())
+            .env("WENLAN_TEST_FILE_APPLY_CRASH", point)
+            .output()
+            .unwrap();
+        assert_eq!(child.status.code(), Some(76), "{child:?}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run9_restore_recovers_a_crash_with_a_staged_asset_in_an_adopted_skill() {
+        let f = Fixture::new();
+        let home = &f.setup.home;
+        let folder = home.join(".claude/skills/example");
+        let source = home.join(".agents/skills/example");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(folder.parent().unwrap()).unwrap();
+        fs::write(
+            source.join("SKILL.md"),
+            "---\nname: example\ndescription: Fixture\n---\n",
+        )
+        .unwrap();
+        fs::write(source.join("asset.txt"), b"source asset").unwrap();
+        std::os::unix::fs::symlink("../../.agents/skills/example", &folder).unwrap();
+        run9_crash_during_file_apply(&f, "staged:asset.txt");
+        assert!(fs::read_dir(&folder).unwrap().flatten().any(|entry| {
+            entry
+                .file_name()
+                .as_encoded_bytes()
+                .starts_with(b".wenlan-rules-stage-")
+        }));
+
+        let receipt = f.setup.restore().unwrap();
+        assert!(receipt.blocked.is_empty(), "{receipt:?}");
+        assert_eq!(
+            fs::read_link(folder).unwrap().as_os_str(),
+            "../../.agents/skills/example"
+        );
+        assert_eq!(fs::read(source.join("asset.txt")).unwrap(), b"source asset");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run9_restore_removes_created_ancestors_after_a_crash_during_exchange() {
+        let f = Fixture::new();
+        fs::remove_file(f.setup.home.join(CLAUDE)).unwrap();
+        fs::remove_dir(f.setup.home.join(".claude")).unwrap();
+        let codex_before = f.text(CODEX);
+        // Force a nontrivial replacement after Claude's absent root was created.
+        f.write(CODEX, &format!("<!-- Generated by ~/.agents/scripts/sync-codex-agents.sh. Rerun. -->\n{codex_before}"));
+        let codex_before = f.text(CODEX);
+        run9_crash_during_file_apply(&f, "displaced:AGENTS.md");
+        assert!(f.setup.home.join(CLAUDE).is_file());
+        assert_ne!(f.text(CODEX), codex_before);
+        let receipt = f.setup.restore().unwrap();
+        assert!(receipt.blocked.is_empty(), "{receipt:?}");
+        assert_eq!(f.text(CODEX), codex_before);
+        assert!(
+            !f.setup.home.join(".claude").exists(),
+            "restore left a directory that was absent before adoption"
+        );
+        assert_eq!(
+            fs::read_dir(f.setup.home.join(".codex")).unwrap().count(),
+            1
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run9_restore_preserves_special_permission_bits() {
+        use std::os::unix::fs::PermissionsExt as _;
+        for mode in [0o1750, 0o2750, 0o4750] {
+            let f = Fixture::new();
+            let path = f.setup.home.join(CLAUDE);
+            fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
+            let original = fs::metadata(&path).unwrap().permissions().mode() & 0o7777;
+            if mode != 0o1750 && original != mode {
+                // Some test sandboxes silently strip setuid and setgid.
+                continue;
+            }
+            assert_eq!(original, mode);
+            f.adopt_from_plan();
+            assert!(f.setup.restore().unwrap().blocked.is_empty());
+            assert_eq!(
+                fs::metadata(path).unwrap().permissions().mode() & 0o7777,
+                mode
+            );
+        }
+    }
+
+    #[cfg(unix)]
     #[test]
     fn rulesync_restores_after_interruption_in_the_middle_of_adoption() {
         let f = Fixture::new();

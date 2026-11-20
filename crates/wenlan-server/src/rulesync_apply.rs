@@ -17,7 +17,7 @@ pub(crate) struct FileMode(u32);
 impl FileMode {
     #[cfg(unix)]
     fn of(metadata: &Metadata) -> Self {
-        Self(metadata.permissions().mode() & 0o777)
+        Self(metadata.permissions().mode() & 0o7777)
     }
 
     #[cfg(windows)]
@@ -27,7 +27,13 @@ impl FileMode {
 
     #[cfg(unix)]
     fn set(self, file: &cap_std::fs::File) -> io::Result<()> {
-        file.set_permissions(cap_std::fs::Permissions::from_mode(self.0 & 0o777))
+        file.set_permissions(cap_std::fs::Permissions::from_mode(self.0 & 0o7777))?;
+        if self != Self::of(&file.metadata()?) {
+            return Err(io::Error::other(
+                "could not preserve the planned file permissions",
+            ));
+        }
+        Ok(())
     }
 
     #[cfg(windows)]
@@ -148,6 +154,7 @@ pub(crate) enum ApplyOutcome {
 pub(crate) struct ApplyOptions<'a> {
     pub(crate) allow_symlink: bool,
     pub(crate) displaced: Option<(&'a FileRoot, &'a Path)>,
+    pub(crate) stage_id: Option<&'a str>,
     pub(crate) verify_source: Option<&'a dyn Fn() -> io::Result<bool>>,
 }
 
@@ -298,6 +305,7 @@ impl FileRoot {
             ApplyOptions {
                 allow_symlink,
                 displaced: None,
+                stage_id: None,
                 verify_source: None,
             },
         )
@@ -332,7 +340,9 @@ impl FileRoot {
         {
             return Err(symlink_denied());
         }
-        let create = *seen == Snapshot::Absent && *desired != Snapshot::Absent;
+        let create = *seen == Snapshot::Absent
+            && *desired != Snapshot::Absent
+            && !(self.tool_home && options.stage_id.is_some());
         let Some(parent) = self.open_parent(relative_parent, create)? else {
             return Ok(
                 if *seen == Snapshot::Absent && *desired == Snapshot::Absent {
@@ -350,9 +360,14 @@ impl FileRoot {
             return Ok(ApplyOutcome::Applied);
         }
         let displaced = recovery_location(&parent, options.displaced)?;
-        let mut staged = Stage::new(&parent)?;
+        let mut staged = Stage::new(&parent, options.stage_id)?;
         let result = (|| {
             staged.write(desired)?;
+            if options.stage_id.is_some() && matches!(desired, Snapshot::File { .. }) {
+                staged.dir.hard_link(STAGED, &staged.dir, INCOMING)?;
+            }
+            #[cfg(test)]
+            crash_at("staged", name);
             before_commit();
             let Some(current_parent) = self.open_parent(relative_parent, false)? else {
                 return Ok(ApplyOutcome::ChangedSincePlan);
@@ -384,6 +399,64 @@ impl FileRoot {
             staged.clean()?;
         }
         result
+    }
+
+    /// Inspect only a stage named in the batch saved before this mutation.
+    pub(crate) fn recover_stage(
+        &self,
+        path: &Path,
+        seen: &Snapshot,
+        desired: &Snapshot,
+        actual: &Snapshot,
+        options: ApplyOptions<'_>,
+    ) -> io::Result<()> {
+        let Some(id) = options.stage_id else {
+            return Ok(());
+        };
+        let (relative_parent, _) = entry_path(path)?;
+        let Some(parent) = self.open_parent(relative_parent, false)? else {
+            return Ok(());
+        };
+        let name = stage_name(id)?;
+        let dir = match parent.open_dir_nofollow(&name) {
+            Ok(dir) => dir,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error),
+        };
+        let entry = read_leaf(&dir, Path::new(STAGED), true)?;
+        let incoming = match dir.symlink_metadata(INCOMING) {
+            Ok(metadata) if metadata.is_file() => dir
+                .symlink_metadata(STAGED)
+                .is_ok_and(|staged| staged.is_file() && same_identity(&staged, &metadata)),
+            Ok(_) => return Err(io::Error::other("invalid rulesync staging entry")),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                // The incoming hardlink is created before replacement. If
+                // the original is still in place, a partial incoming write
+                // may be the only entry.
+                entry == *desired || (*actual == *seen && matches!(desired, Snapshot::File { .. }))
+            }
+            Err(error) => return Err(error),
+        };
+        if entry != Snapshot::Absent && !incoming {
+            if matches!(entry, Snapshot::File { .. }) {
+                let displaced = recovery_location(&parent, options.displaced)?
+                    .ok_or_else(|| io::Error::other("a displaced file requires manual recovery"))?;
+                move_displaced(&dir, &displaced)?;
+                #[cfg(unix)]
+                displaced.0.open(".")?.sync_all()?;
+            } else if !matches_leaf(&dir, Path::new(STAGED), seen)? || actual != desired {
+                return Err(io::Error::other(format!(
+                    "an unexpected entry is saved in {name}/{STAGED}. Check it before retrying"
+                )));
+            }
+        }
+        let stage = Stage {
+            parent: &parent,
+            dir,
+            name,
+            preserve: true,
+        };
+        stage.clean()
     }
 
     fn open_parent(&self, path: &Path, create: bool) -> io::Result<Option<Dir>> {
@@ -599,6 +672,8 @@ fn matches_leaf(parent: &Dir, name: &Path, expected: &Snapshot) -> io::Result<bo
 }
 
 const STAGED: &str = "entry";
+const INCOMING: &str = "incoming";
+
 fn stage_name(id: &str) -> io::Result<String> {
     if id.len() != 32 || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err(invalid_path());
@@ -646,7 +721,20 @@ fn move_displaced(dir: &Dir, displaced: &(Dir, &Path)) -> io::Result<()> {
     Ok(())
 }
 
-/// The private directory holds the staged or displaced leaf.
+#[cfg(test)]
+fn crash_at(point: &str, name: &Path) {
+    if std::env::var("WENLAN_TEST_FILE_APPLY_CRASH")
+        .ok()
+        .as_deref()
+        == Some(&format!("{point}:{}", name.display()))
+    {
+        // Simulate a daemon exit before any destructors or batch checkpoints.
+        std::process::exit(76);
+    }
+}
+
+/// The private directory holds the staged or displaced leaf and may also
+/// contain a second link identifying the incoming file.
 /// Cleanup never recurses, even when a concurrent save adds to a directory.
 struct Stage<'a> {
     parent: &'a Dir,
@@ -656,8 +744,11 @@ struct Stage<'a> {
 }
 
 impl<'a> Stage<'a> {
-    fn new(parent: &'a Dir) -> io::Result<Self> {
-        let name = stage_name(&uuid::Uuid::new_v4().simple().to_string())?;
+    fn new(parent: &'a Dir, id: Option<&str>) -> io::Result<Self> {
+        let name = match id {
+            Some(id) => stage_name(id)?,
+            None => stage_name(&uuid::Uuid::new_v4().simple().to_string())?,
+        };
         let path = Path::new(&name);
         create_directory(parent, path)?;
         let dir = parent.open_dir_nofollow(path)?;
@@ -703,11 +794,13 @@ impl<'a> Stage<'a> {
     }
 
     fn clean(&self) -> io::Result<()> {
-        match self.dir.symlink_metadata(STAGED) {
-            Ok(metadata) if metadata.is_dir() => self.dir.remove_dir(STAGED)?,
-            Ok(_) => self.dir.remove_file_or_symlink(STAGED)?,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => (),
-            Err(error) => return Err(error),
+        for leaf in [STAGED, INCOMING] {
+            match self.dir.symlink_metadata(leaf) {
+                Ok(metadata) if metadata.is_dir() => self.dir.remove_dir(leaf)?,
+                Ok(_) => self.dir.remove_file_or_symlink(leaf)?,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => (),
+                Err(error) => return Err(error),
+            }
         }
         self.dir.try_clone()?.remove_open_dir()
     }
@@ -742,6 +835,8 @@ fn commit(
     } else {
         renameat_with(&stage.dir, held, parent, name, RenameFlags::EXCHANGE)?;
     }
+    #[cfg(test)]
+    crash_at("displaced", name);
 
     // From this point the stage contains the displaced entry. Leave it
     // reachable if we cannot establish that it is safe to discard.
@@ -832,6 +927,7 @@ mod tests {
         ApplyOptions {
             allow_symlink,
             displaced: None,
+            stage_id: None,
             verify_source: None,
         }
     }
