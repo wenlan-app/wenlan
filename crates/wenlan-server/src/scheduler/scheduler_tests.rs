@@ -4573,12 +4573,12 @@ async fn maintenance_slices_detect_page_merge_cards_and_route_stale_pages() {
 
     let first_stale = run_stage(wenlan_core::maintenance::MaintenanceStage::StalePage).await;
     let second_stale = run_stage(wenlan_core::maintenance::MaintenanceStage::StalePage).await;
+    // Both pages are refreshed: the person's page goes sentence by sentence
+    // (UX-WHO-2), so their sentence stays and no whole-page card is staged.
     assert_eq!(
         first_stale.stale_machine_refreshed + second_stale.stale_machine_refreshed,
-        1
+        2
     );
-    // The person's page goes sentence by sentence (UX-WHO-2): their sentence
-    // stays, and no whole-page card is staged for it.
     assert_eq!(
         first_stale.stale_human_cards + second_stale.stale_human_cards,
         0
