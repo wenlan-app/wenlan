@@ -1040,13 +1040,17 @@ impl MemoryDB {
         let sql = format!(
             "SELECT p.id, p.title, 0, p.incarnation, s.id,
                     COALESCE((SELECT MAX(h.version) FROM page_history h
-                               WHERE h.page_id=p.id AND h.edited_by='space_move'), 0)
+                               WHERE h.page_id=p.id AND h.edited_by='space_move'), 0),
+                    NULL, NULL, NULL
                FROM pages p JOIN spaces s ON s.name=p.workspace
               WHERE p.workspace = ?1 AND {shared}
              UNION ALL
              SELECT substr(m.key, {id_start}), '', 1,
                     CASE WHEN json_valid(m.value) THEN json_extract(m.value, '$.stay') END,
-                    NULL, NULL
+                    NULL, NULL,
+                    CASE WHEN json_valid(m.value) THEN json_extract(m.value, '$.event_id') END,
+                    CASE WHEN json_valid(m.value) THEN json_extract(m.value, '$.parent_hash') END,
+                    CASE WHEN json_valid(m.value) THEN json_extract(m.value, '$.archive_hash') END
                FROM app_metadata m JOIN spaces s ON s.id =
                     CASE WHEN json_valid(m.value) THEN json_extract(m.value, '$.space')
                          ELSE m.value END
@@ -1083,11 +1087,29 @@ impl MemoryDB {
             let id = row.get::<String>(0).map_err(error)?;
             if row.get::<i64>(2).map_err(error)? == 1 {
                 pages.deleted.insert(id.clone());
+                let event_id = row.get::<Option<String>>(6).map_err(error)?;
+                let parent_hash = row.get::<Option<String>>(7).map_err(error)?;
+                let archive_hash = row.get::<Option<String>>(8).map_err(error)?;
+                if let Some(event_id) = event_id.filter(|event_id| !event_id.is_empty()) {
+                    pages.deletions.insert(
+                        id.clone(),
+                        crate::team::SharedDeletion {
+                            event_id,
+                            parent_hash,
+                            archive_hash,
+                        },
+                    );
+                }
                 if let Some(stay) = row.get::<Option<String>>(3).map_err(error)? {
                     if let Some(receipt) = receipts.get(&id).filter(|receipt| receipt.stay == stay)
                     {
                         pages.authorized.insert(id.clone(), receipt.hashes.clone());
-                        if let Some(archive) = &receipt.final_archive {
+                        if let Some(archive) = pages
+                            .deletions
+                            .get(&id)
+                            .and_then(|deletion| deletion.archive_hash.as_ref())
+                            .filter(|archive| receipt.hashes.contains(*archive))
+                        {
                             pages.final_archives.insert(id.clone(), archive.clone());
                         }
                     }
@@ -1156,17 +1178,13 @@ impl MemoryDB {
     ) -> Result<(), WenlanError> {
         let key = format!("{SHARED_PAGE_DELETION_PREFIX}{id}");
         let error = |e| WenlanError::VectorDb(format!("shared page deletion: {e}"));
-        // The ID may have been reused. Only its current generation's eligibility
-        // can authorize an archive after the page row is gone.
-        conn.execute("DELETE FROM app_metadata WHERE key = ?1", [key.as_str()])
-            .await
-            .map_err(error)?;
         let shared = shared_page_predicate("p.");
         let mut rows = conn.query(
             &format!(
-                "SELECT p.incarnation, s.id,
+                "SELECT p.version, p.incarnation, s.id,
                         COALESCE((SELECT MAX(v.version) FROM page_history v
-                                  WHERE v.page_id=p.id AND v.edited_by='space_move'), 0)
+                                  WHERE v.page_id=p.id AND v.edited_by='space_move'), 0),
+                        h.value
                    FROM pages p
                    JOIN spaces s ON s.name = p.workspace
                    JOIN app_metadata h ON h.key = 'shared_space.held:' || s.name
@@ -1180,22 +1198,132 @@ impl MemoryDB {
         )
         .await
         .map_err(error)?;
-        let Some(row) = rows.next().await.map_err(error)? else {
-            return Ok(());
-        };
-        let incarnation: String = row.get(0).map_err(error)?;
-        let space_id: String = row.get(1).map_err(error)?;
-        let start: i64 = row.get(2).map_err(error)?;
+        let mut shared_record = None;
+        if let Some(row) = rows.next().await.map_err(error)? {
+            let page_version: i64 = row.get(0).map_err(error)?;
+            let incarnation: String = row.get(1).map_err(error)?;
+            let space_id: String = row.get(2).map_err(error)?;
+            let start: i64 = row.get(3).map_err(error)?;
+            let held_json: String = row.get(4).map_err(error)?;
+            let stay = crate::shared_space::version::stay_token(&incarnation, &space_id, start);
+            let held = serde_json::from_str::<serde_json::Value>(&held_json).ok();
+            let held_page = held.as_ref().and_then(|held| held.get(id));
+            let parent_hash = held_page
+                .filter(|held| {
+                    held.get("version").and_then(serde_json::Value::as_i64) == Some(page_version)
+                })
+                .and_then(|held| held.get("sha"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned);
+            shared_record = Some((space_id, stay, parent_hash));
+        }
         drop(rows);
-        let stay = crate::shared_space::version::stay_token(&incarnation, &space_id, start);
-        let value = serde_json::json!({"space": space_id, "stay": stay}).to_string();
+        // This private tombstone is written for every deletion, including IDs
+        // that were never shared. Only the optional space/stay fields make it
+        // visible to a member's shared-folder projection.
+        let event_id = uuid::Uuid::new_v4().simple().to_string();
+        let mut record = serde_json::json!({"event_id": event_id});
+        if let Some((space, stay, parent_hash)) = shared_record {
+            record["space"] = serde_json::Value::String(space);
+            record["stay"] = serde_json::Value::String(stay);
+            if let Some(parent_hash) = parent_hash {
+                record["parent_hash"] = serde_json::Value::String(parent_hash);
+            }
+        }
+        let value = record.to_string();
         conn.execute(
-            "INSERT INTO app_metadata(key, value) VALUES (?1, ?2)",
+            "INSERT OR REPLACE INTO app_metadata(key, value) VALUES (?1, ?2)",
             libsql::params![key, value],
         )
         .await
         .map_err(error)?;
         Ok(())
+    }
+
+    /// Bind the first verified archive to this exact durable deletion event.
+    /// A later folder winner or restored page cannot reassign the binding.
+    pub async fn bind_shared_deletion_archive(
+        &self,
+        id: &str,
+        deletion_id: &str,
+        archive_hash: &str,
+    ) -> Result<bool, WenlanError> {
+        if archive_hash.len() != 64
+            || !archive_hash
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Ok(false);
+        }
+        let key = format!("{SHARED_PAGE_DELETION_PREFIX}{id}");
+        let conn = self.conn.lock().await;
+        let error = |e| WenlanError::VectorDb(format!("bind shared deletion archive: {e}"));
+        let mut rows = conn
+            .query(
+                "SELECT value FROM app_metadata WHERE key = ?1",
+                [key.as_str()],
+            )
+            .await
+            .map_err(error)?;
+        let Some(row) = rows.next().await.map_err(error)? else {
+            return Ok(false);
+        };
+        let old_value: String = row.get(0).map_err(error)?;
+        drop(rows);
+        let Ok(mut record) = serde_json::from_str::<serde_json::Value>(&old_value) else {
+            return Ok(false);
+        };
+        let pinned_parent = record
+            .get("parent_hash")
+            .and_then(serde_json::Value::as_str);
+        if record.get("event_id").and_then(serde_json::Value::as_str) != Some(deletion_id)
+            || record
+                .get("space")
+                .and_then(serde_json::Value::as_str)
+                .is_none_or(str::is_empty)
+            || record
+                .get("stay")
+                .and_then(serde_json::Value::as_str)
+                .is_none_or(str::is_empty)
+            || pinned_parent.is_none_or(|hash| {
+                hash.len() != 64
+                    || !hash
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            })
+            || record
+                .get("archive_hash")
+                .is_some_and(|value| !value.is_null())
+        {
+            return Ok(false);
+        }
+        record["archive_hash"] = serde_json::Value::String(archive_hash.to_owned());
+        let changed = conn
+            .execute(
+                "UPDATE app_metadata SET value = ?2 WHERE key = ?1 AND value = ?3",
+                libsql::params![key, record.to_string(), old_value],
+            )
+            .await
+            .map_err(error)?;
+        Ok(changed == 1)
+    }
+
+    /// Whether a page ID has any durable deletion event, regardless of its
+    /// member visibility. Used to refuse a stale sync resurrection.
+    pub(super) async fn shared_page_was_deleted_on(
+        conn: &libsql::Connection,
+        id: &str,
+    ) -> Result<bool, WenlanError> {
+        let key = format!("{SHARED_PAGE_DELETION_PREFIX}{id}");
+        let mut rows = conn
+            .query("SELECT 1 FROM app_metadata WHERE key = ?1", [key.as_str()])
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("shared page deletion lookup: {e}")))?;
+        Ok(rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("shared page deletion lookup: {e}")))?
+            .is_some())
     }
 
     pub async fn get_shared_page_scoped(

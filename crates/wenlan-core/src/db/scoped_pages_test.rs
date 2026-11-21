@@ -63,6 +63,102 @@ fn page(id: &str, workspace: Option<&str>) -> Page {
 }
 
 #[tokio::test]
+async fn delete_records_never_shared_page_durably() {
+    let (db, _tmp) = test_db().await;
+    let id = "never-shared-delete";
+    let now = chrono::Utc::now().to_rfc3339();
+    db.insert_page(
+        id,
+        "Private page",
+        None,
+        "Private content",
+        None,
+        None,
+        &["private-memory"],
+        &now,
+    )
+    .await
+    .unwrap();
+
+    let conn = db.conn.lock().await;
+    super::MemoryDB::record_shared_page_deletion_on(&conn, id)
+        .await
+        .unwrap();
+    let key = format!("shared_space.deleted:{id}");
+    let mut rows = conn
+        .query(
+            "SELECT value FROM app_metadata WHERE key = ?1",
+            [key.as_str()],
+        )
+        .await
+        .unwrap();
+    assert!(
+        rows.next().await.unwrap().is_some(),
+        "every deletion needs a private durable tombstone even when the page was never shared"
+    );
+}
+
+#[tokio::test]
+async fn shared_deletion_archive_binding_is_single_assignment_per_event() {
+    let (db, _tmp) = test_db().await;
+    let id = "page-delete-cas";
+    let key = format!("shared_space.deleted:{id}");
+    let value = serde_json::json!({
+        "event_id": "deletion-event-a",
+        "space": "project",
+        "stay": "stay-a",
+        "parent_hash": "a".repeat(64),
+    })
+    .to_string();
+    {
+        let conn = db.conn.lock().await;
+        conn.execute(
+            "INSERT INTO app_metadata(key, value) VALUES (?1, ?2)",
+            libsql::params![key.as_str(), value],
+        )
+        .await
+        .unwrap();
+        assert!(super::MemoryDB::shared_page_was_deleted_on(&conn, id)
+            .await
+            .unwrap());
+    }
+
+    let archive = "b".repeat(64);
+    assert!(db
+        .bind_shared_deletion_archive(id, "deletion-event-a", &archive)
+        .await
+        .unwrap());
+    assert!(!db
+        .bind_shared_deletion_archive(id, "deletion-event-a", &"c".repeat(64))
+        .await
+        .unwrap());
+    assert!(!db
+        .bind_shared_deletion_archive(id, "stale-event", &"d".repeat(64))
+        .await
+        .unwrap());
+
+    let conn = db.conn.lock().await;
+    let mut rows = conn
+        .query(
+            "SELECT value FROM app_metadata WHERE key = ?1",
+            [key.as_str()],
+        )
+        .await
+        .unwrap();
+    let record: serde_json::Value = serde_json::from_str(
+        &rows
+            .next()
+            .await
+            .unwrap()
+            .unwrap()
+            .get::<String>(0)
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(record["archive_hash"], archive);
+}
+
+#[tokio::test]
 async fn search_memory_scopes_before_vector_limit() {
     let (db, _tmp) = test_db().await;
     db.upsert_documents(vec![memory_doc("work-memory", "work")])
