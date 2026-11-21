@@ -7,14 +7,17 @@ use crate::{
 };
 use axum::{
     extract::{Path, Query, State},
-    http::HeaderMap,
-    response::Json,
+    http::{HeaderMap, HeaderValue},
+    response::{IntoResponse, Json, Response},
 };
 use std::{future::Future, sync::Arc};
-use wenlan_core::{db::MemoryDB, read_scope::ReadScope};
+use wenlan_core::{
+    db::{BriefUpdateOutcome, MemoryDB},
+    read_scope::ReadScope,
+};
 use wenlan_types::{
     BriefHistoryResponse, BriefReadRequest, BriefReadResponse, BriefReadState, BriefRelatedContext,
-    BriefUpdateReceipt, BriefUpdateRequest, BriefVersionResponse, SearchResult,
+    BriefUpdateRequest, BriefVersionResponse, SearchResult,
 };
 
 pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<SharedState> {
@@ -30,6 +33,7 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
 
 const HISTORY_DEFAULT_LIMIT: usize = 20;
 const HISTORY_MAX_LIMIT: usize = 200;
+pub(crate) const OPERATION_OUTCOME_HEADER: &str = "x-wenlan-operation-outcome";
 
 #[derive(Debug, serde::Deserialize)]
 pub struct BriefHistoryQuery {
@@ -307,7 +311,7 @@ pub async fn handle_update_brief(
     State(state): State<SharedState>,
     headers: HeaderMap,
     Json(request): Json<BriefUpdateRequest>,
-) -> Result<Json<BriefUpdateReceipt>, ServerError> {
+) -> Result<Response, ServerError> {
     let (db, status_root, projection_lock) = {
         let state = state.read().await;
         (
@@ -317,9 +321,20 @@ pub async fn handle_update_brief(
         )
     };
     let session = crate::session_routes::extract_session_ref(&headers);
-    let mut receipt = db
-        .apply_brief_update_in_session(&request, session.as_ref())
+    let outcome = db
+        .apply_brief_update_in_session_outcome(&request, session.as_ref())
         .await?;
+    let mut receipt = match outcome {
+        BriefUpdateOutcome::Applied(receipt) => receipt,
+        BriefUpdateOutcome::Duplicate(receipt) => {
+            let mut response = Json(receipt).into_response();
+            response.headers_mut().insert(
+                OPERATION_OUTCOME_HEADER,
+                HeaderValue::from_static("duplicate"),
+            );
+            return Ok(response);
+        }
+    };
     let _projection_guard = projection_lock.lock().await;
 
     match (
@@ -342,7 +357,7 @@ pub async fn handle_update_brief(
         ),
     }
 
-    Ok(Json(receipt))
+    Ok(Json(receipt).into_response())
 }
 
 /// GET /api/brief/history — successful Brief updates for the resolved Space,
@@ -399,8 +414,8 @@ pub async fn handle_brief_version(
 
 /// GET /api/brief/plain — the plain lines the night wrote for the resolved
 /// Space's Brief (UX-SPACE-2), for the Space's page. Lines written for an
-/// older Brief version still answer: the page shows them until the next
-/// night, and falls back to the Brief's own words for an item without one.
+/// older Brief version are withheld so the page falls back to the current
+/// Brief's own words until the next night writes the new version.
 pub async fn handle_brief_plain(
     State(state): State<SharedState>,
     SpaceHeader(header_space): SpaceHeader,
@@ -417,7 +432,13 @@ pub async fn handle_brief_plain(
     let Some(record) = db.get_space(&space).await? else {
         return Ok(Json(wenlan_types::BriefPlainView::default()));
     };
-    let plain = crate::brief_plain_night::load(&db, &record.id).await;
+    let current_version = db
+        .get_brief_by_space_name(&space)
+        .await?
+        .map(|brief| brief.version);
+    let plain = crate::brief_plain_night::load(&db, &record.id)
+        .await
+        .filter(|plain| Some(plain.brief_version) == current_version);
     Ok(Json(match plain {
         Some(plain) => wenlan_types::BriefPlainView {
             space: Some(space),
