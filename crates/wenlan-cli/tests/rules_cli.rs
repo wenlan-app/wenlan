@@ -169,19 +169,40 @@ fn personal_rules_dry_run_announces_retired_codex_script() {
         .args(["rules", "adopt", "--dry-run", "--format", "json"])
         .assert()
         .success();
-    let plan: AdoptionPlan = serde_json::from_slice(&output.get_output().stdout).unwrap();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr).into_owned();
+    let plan: AdoptionPlan = serde_json::from_str(&stdout)
+        .unwrap_or_else(|error| panic!("plan is not JSON ({error}):\n{stdout}\nstderr:\n{stderr}"));
+    let paths: Vec<&str> = plan.files.iter().map(|file| file.path.as_str()).collect();
+    let context = format!(
+        "plan.files paths: {paths:?}\nplan.notes: {:#?}\nfull plan:\n{stdout}\nstderr:\n{stderr}",
+        plan.notes
+    );
     let diff = &plan
         .files
         .iter()
         .find(|file| file.path == ".codex/AGENTS.md")
-        .unwrap()
+        .unwrap_or_else(|| panic!("no .codex/AGENTS.md in the plan\n{context}"))
         .diff;
-    assert!(diff
-        .lines()
-        .any(|line| line.starts_with("+<!-- Managed by Wenlan.")));
-    assert!(diff.contains(&format!("-{old}")));
-    assert!(!diff.contains(&format!("+{old}")));
-    assert!(plan.notes[0].contains("sync-codex-agents.sh becomes unused"));
+    assert!(
+        diff.lines()
+            .any(|line| line.starts_with("+<!-- Managed by Wenlan.")),
+        "no managed header added\ndiff:\n{diff:?}\n{context}"
+    );
+    assert!(
+        diff.contains(&format!("-{old}")),
+        "legacy header not removed\ndiff:\n{diff:?}\n{context}"
+    );
+    assert!(
+        !diff.contains(&format!("+{old}")),
+        "legacy header kept\ndiff:\n{diff:?}\n{context}"
+    );
+    assert!(
+        plan.notes
+            .first()
+            .is_some_and(|note| note.contains("sync-codex-agents.sh becomes unused")),
+        "retired script not announced\n{context}"
+    );
     personal_rules_cli(state.path())
         .args(["rules", "adopt", "--dry-run", "--format", "table"])
         .assert()
