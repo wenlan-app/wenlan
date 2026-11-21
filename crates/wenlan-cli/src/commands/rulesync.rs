@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Preview and manage the personal rules and skills on this computer.
+//! Preview and manage the personal tool setup on this computer.
 
 use std::fmt::Write;
 use std::io::{self, IsTerminal};

@@ -23,6 +23,10 @@ pub(super) struct SettingsBatch {
 }
 
 impl SettingsBatch {
+    pub(super) fn holds(&self, path: &Path) -> bool {
+        self.remaining.contains(path)
+    }
+
     fn check_source(&self, digest: &str) -> Result<()> {
         ensure!(
             self.source_digest == digest,

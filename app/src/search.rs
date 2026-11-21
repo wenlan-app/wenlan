@@ -2197,7 +2197,7 @@ pub async fn confirm_memory(
     let client = daemon_client(&state).await;
     let req = requests::ConfirmRequest { confirmed };
     let resp: responses::ConfirmResponse = client
-        .post_json(
+        .post_json_as_person(
             &format!(
                 "/api/memory/confirm/{}",
                 percent_encode_path_segment(&source_id)
@@ -2227,7 +2227,7 @@ pub async fn set_stability_cmd(
     if stability == "confirmed" {
         let req = requests::ConfirmRequest { confirmed: true };
         let resp: responses::ConfirmResponse = client
-            .post_json(&format!("/api/memory/confirm/{}", encoded_id), &req)
+            .post_json_as_person(&format!("/api/memory/confirm/{}", encoded_id), &req)
             .await?;
         if !resp.updated {
             return Err(format!("memory {} not found", source_id));
