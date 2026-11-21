@@ -303,12 +303,18 @@ export async function removeTeamTool(id: string): Promise<TeamTool[] | null> {
   }
 }
 
+/** Unlinks the member's Google or GitHub account; resolves to the accounts
+ *  left. Refused with `last_sign_in` when it is their only way in. */
+export function unlinkAccount(provider: string): Promise<Answer<TeamLinkedAccount[]>> {
+  return answer(`/team/v1/account/accounts/${encodeURIComponent(provider)}`, undefined, "DELETE");
+}
+
 /** What a call that may need a fresh sign-in answers. */
 export type Answer<T> = { ok: true; value: T } | { ok: false; error: string };
 
-async function answer<T>(path: string, body?: unknown): Promise<Answer<T>> {
+async function answer<T>(path: string, body?: unknown, method = "POST"): Promise<Answer<T>> {
   try {
-    const response = await fetch(path, accountInit({ method: "POST", body: body === undefined ? undefined : JSON.stringify(body) }));
+    const response = await fetch(path, accountInit({ method, body: body === undefined ? undefined : JSON.stringify(body) }));
     if (response.ok) {
       const text = await response.text();
       return { ok: true, value: (text ? JSON.parse(text) : null) as T };

@@ -524,6 +524,56 @@ fn reset_compromised_works_on_the_owner() {
 }
 
 #[test]
+fn unlinking_drops_that_provider_but_never_the_last_way_in() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(TEAM_FILE);
+    let (amy, key) = add_member(&path, "Amy", &[]).unwrap();
+    let link = |issuer: &str, subject: &str| {
+        let (issuer, subject) = (issuer.to_string(), subject.to_string());
+        change_team(&path, |file| {
+            file.members[0].identities.push(Identity {
+                issuer: issuer.clone(),
+                subject: subject.clone(),
+                email: Some("a@example.com".into()),
+                linked_at: now(),
+            });
+            Ok(())
+        })
+        .unwrap();
+    };
+    link("https://accounts.google.com", "g1");
+    link("https://github.com", "7");
+
+    let left = unlink_provider(&path, &amy.id, "google").unwrap();
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].provider, "github");
+    assert!(
+        member_by_identity(&path, "https://accounts.google.com", "g1")
+            .unwrap()
+            .is_none()
+    );
+    assert!(unlink_provider(&path, &amy.id, "google").is_err());
+    // The key still works after the accounts go.
+    assert!(unlink_provider(&path, &amy.id, "github")
+        .unwrap()
+        .is_empty());
+    assert!(authenticate(&path, &key).unwrap().is_some());
+
+    // Someone who signs in only with Google cannot unlink it.
+    link("https://accounts.google.com", "g2");
+    change_team(&path, |file| {
+        file.members[0].key_sha256 = None;
+        Ok(())
+    })
+    .unwrap();
+    assert!(matches!(
+        unlink_provider(&path, &amy.id, "google"),
+        Err(WenlanError::Validation(_))
+    ));
+    assert_eq!(read_team(&path).unwrap().members[0].identities.len(), 1);
+}
+
+#[test]
 fn member_by_id_sees_a_removed_member_as_removed() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join(TEAM_FILE);

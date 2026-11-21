@@ -1272,6 +1272,10 @@ fn team_router(state: TeamState) -> axum::Router {
             axum::routing::delete(device::revoke),
         )
         .route("/team/v1/account/desktop-link", post(device::desktop_link))
+        .route(
+            "/team/v1/account/accounts/{provider}",
+            axum::routing::delete(device::unlink),
+        )
         .layer(middleware::from_fn(wenlan_mcp::serve::guard_initialization))
         .layer(middleware::from_fn(capped_body))
         .layer(middleware::from_fn_with_state(
@@ -2123,7 +2127,8 @@ enum RouteClass {
     /// code. (`/auth/device` and `/auth/device/token`, which need nobody,
     /// are [`RouteClass::AuthPublic`].)
     AuthDevice,
-    /// `/team/v1/account/*`: the caller's own AI tools and desktop link.
+    /// `/team/v1/account/*`: the caller's own AI tools, desktop link and
+    /// linked Google or GitHub accounts.
     Account,
     /// Everything else: sync, owner admin.
     Other,

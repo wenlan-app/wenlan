@@ -519,6 +519,34 @@ pub(super) async fn revoke(
     }
 }
 
+/// `DELETE /team/v1/account/accounts/{provider}`: unlinks the caller's
+/// Google or GitHub account. Refused (409 `last_sign_in`) when it is the
+/// only way they sign in. Their browser sessions keep going; the account no
+/// longer signs anyone in. Answers the accounts left.
+pub(super) async fn unlink(
+    State(state): State<TeamState>,
+    Extension(member): Extension<Member>,
+    UrlPath(provider): UrlPath<String>,
+) -> Response {
+    if !matches!(provider.as_str(), "google" | "github") {
+        return error(StatusCode::NOT_FOUND, "unknown_provider");
+    }
+    let path = state.team_path.clone();
+    let member_id = member.id.clone();
+    match tokio::task::spawn_blocking(move || team::unlink_provider(&path, &member_id, &provider))
+        .await
+    {
+        Ok(Ok(left)) => Json(left).into_response(),
+        Ok(Err(wenlan_core::error::WenlanError::NotFound(_))) => {
+            error(StatusCode::NOT_FOUND, "not_linked")
+        }
+        Ok(Err(wenlan_core::error::WenlanError::Validation(_))) => {
+            error(StatusCode::CONFLICT, "last_sign_in")
+        }
+        _ => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
+}
+
 /// `POST /team/v1/account/desktop-link`: a one-time link with a new member
 /// key for the desktop app (`<address>/join#wlt_…`). Only for a browser
 /// session that signed in again just now: a member who has a key already

@@ -198,8 +198,8 @@ invites and AI tool keys. Pages are not affected.
   once more with `WENLAN_TEAM_NEW_OWNER_LINK=1` and join with the new link.
   Remove the owner's AI tools with `wenlan team keys` and
   `wenlan team revoke-key`. Turn sign-in back on when the account is safe.
-  This version has no way to unlink the owner's own Google or GitHub
-  account.
+  If you'd rather not use that account again, unlink it from the web under
+  your name › **Google and GitHub**.
 
 ### From a terminal
 
@@ -351,6 +351,9 @@ redirect URIs of a separate test OAuth app. Then open
   comes from the proxy's address and shares one limit.
 - Turning an account off at Google or GitHub does not remove the member.
   Remove them in Wenlan.
+- Anyone can unlink their Google or GitHub account from the web, under
+  their name › **Google and GitHub**. Their only way to sign in can't be
+  unlinked.
 
 If a member's Google or GitHub account was taken over, the owner chooses
 **Account taken over…** in that member's menu: every browser session and AI

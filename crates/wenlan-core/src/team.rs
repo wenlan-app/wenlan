@@ -1027,6 +1027,32 @@ pub fn provider_of_issuer(issuer: &str) -> Option<&'static str> {
     }
 }
 
+/// Unlinks every account of `provider` (`google`, `github`) from a member.
+/// Refused when it would leave them no way in: no legacy key and no other
+/// linked account. Answers the accounts left.
+pub fn unlink_provider(
+    path: &Path,
+    member_id: &str,
+    provider: &str,
+) -> Result<Vec<TeamLinkedAccount>, WenlanError> {
+    change_team(path, |file| {
+        let member = find_active(file, member_id)?;
+        let of_provider =
+            |identity: &Identity| provider_of_issuer(&identity.issuer) == Some(provider);
+        if !member.identities.iter().any(of_provider) {
+            return Err(WenlanError::NotFound(format!("no {provider} account")));
+        }
+        let others = member.identities.iter().filter(|i| !of_provider(i)).count();
+        if member.key_sha256.is_none() && others == 0 {
+            return Err(WenlanError::Validation(
+                "this is the only way this member signs in".into(),
+            ));
+        }
+        member.identities.retain(|identity| !of_provider(identity));
+        Ok(member.linked_accounts())
+    })
+}
+
 /// The SHA-256 the server keeps of an invite token (lowercase hex).
 pub fn invite_token_sha256(token: &str) -> String {
     key_hash(token)
