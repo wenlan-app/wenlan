@@ -15,6 +15,7 @@ pub mod brief_routes;
 pub mod briefing_routes;
 pub mod check_routes;
 pub mod cloud_files;
+pub mod cloud_locator;
 pub mod code_basis_routes;
 pub mod community_routes;
 pub mod config_routes;
