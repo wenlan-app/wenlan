@@ -14,7 +14,7 @@ import { pinPage, unpinPage, usePinnedPages } from "../navigation/pinnedPages";
 import { HOW_I_WORK_QUERY_KEYS, howIWorkPageTitle } from "../skills/howIWorkModel";
 import { SpaceRulesAsk } from "../skills/SpaceRulesAsk";
 import { RulesToolsHeader } from "../skills/RulesToolsHeader";
-import { RulesSetupReviews } from "../skills/RulesSetupReviews";
+import { RulesSetupSettings } from "../skills/RulesSetupSettings";
 import { useRulesSetup, useRulesSkillUpdates } from "../skills/useRulesSetup";
 import { useScope } from "../team/scope";
 import { archivePageFromList, canArchivePage } from "./archiveWikiPage";
@@ -333,12 +333,8 @@ export function SectionListPage({
         )}
       </header>
 
-      {rulesSetup && (
-        <div>
-          <RulesToolsHeader delivers setupOnly skillUpdates={skillUpdates?.size} />
-          {section === "rules" && <RulesSetupReviews status={rulesSetup} />}
-        </div>
-      )}
+      {rulesSetup && (section === "rules" ? <RulesSetupSettings />
+        : <RulesToolsHeader delivers setupOnly skillUpdates={skillUpdates?.size} />)}
       {section === "docs" && folder === null && !exampleWiki && <SpaceFoldersPrompt noteCount={sections.loaded ? sections.pages.length : null} />}
       {pending.map((item) => <SpaceRulesAsk key={item.space_id} space={{ id: item.space_id, name: item.space_name }} onOpenPage={onOpenPageId} variant="pending" />)}
 

@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Poll delivered rule files for the scope pullback step of Sync.
+//! Discover personal changes and deliver accepted content under the setup lock.
 
 use std::{
     collections::BTreeMap,
     fs, io,
     path::{Path, PathBuf},
+    sync::atomic::{AtomicI64, Ordering},
     time::SystemTime,
 };
 
@@ -14,10 +15,21 @@ use fs2::FileExt;
 use super::{
     group_drafts, inspect_rule, needs_conflict_card, record_scope_review,
     storage::{save_manifest, BlobHash, StoredSetup, MANIFEST},
-    Code, Kind, Setup,
+    Code, Kind, Manifest, Setup,
 };
 use crate::rulesync_apply::{FileMode, FileRoot, Snapshot};
+use crate::state::SharedState;
+use wenlan_core::rulesync_renderer::RenderSession;
+use wenlan_core::rulesync_team;
+
 use wenlan_core::rulesync_personal::{enabled, is_harness_path};
+
+static LAST_CHECK: AtomicI64 = AtomicI64::new(0);
+
+pub(super) fn last_checked_at() -> Option<i64> {
+    let stamp = LAST_CHECK.load(Ordering::Relaxed);
+    (stamp > 0).then_some(stamp)
+}
 
 #[derive(Default)]
 pub struct RulesWatch {
@@ -37,10 +49,39 @@ impl RulesWatch {
     /// Keep filesystem work off the Tokio executor and retain the cache after
     /// recoverable failures. Report only fixed operation names, without causes
     /// that can contain absolute paths or rule text.
-    pub async fn check(mut self, data: PathBuf) -> Self {
+    pub async fn check(mut self, data: PathBuf, state: &SharedState) -> Self {
+        if !enabled()
+            || matches!(fs::symlink_metadata(data.join(MANIFEST)), Err(error) if error.kind() == io::ErrorKind::NotFound)
+        {
+            return Self::default();
+        }
+        let generated = match crate::skill_grow::general_tool_rules(state).await {
+            Ok(rules) => Some(rules),
+            Err(_) => {
+                tracing::warn!("rules watch could not read approved rules; will retry");
+                None
+            }
+        };
         match tokio::task::spawn_blocking(move || {
-            if let Err(error) = self.round(enabled(), &data, Setup::tool_home) {
-                tracing::warn!(reason = %error, "rules watch failed; will retry");
+            let result = self.round(true, &data, Setup::tool_home, |setup, root, manifest| {
+                let Some(generated) = generated else {
+                    return Ok(());
+                };
+                let layers =
+                    rulesync_team::load_layers(&wenlan_core::shared_space::settings_path())?;
+                let session = RenderSession::new(&setup.binary);
+                setup.watch_delivery(
+                    root,
+                    manifest,
+                    &generated,
+                    |target, source| setup.render_member_rule(&session, target, source, &layers),
+                    |target, skills| setup.render_skills(&session, target, skills),
+                )
+            });
+            match result {
+                Ok(true) => LAST_CHECK.store(chrono::Utc::now().timestamp(), Ordering::Relaxed),
+                Ok(false) => (),
+                Err(_) => tracing::warn!("rules watch round failed; will retry"),
             }
             self
         })
@@ -59,15 +100,16 @@ impl RulesWatch {
         enabled: bool,
         data: &Path,
         resolve_home: impl FnOnce() -> Result<PathBuf>,
-    ) -> Result<()> {
+        deliver: impl FnOnce(&Setup, &FileRoot, &mut Manifest) -> Result<()>,
+    ) -> Result<bool> {
         if !enabled {
-            return Ok(());
+            return Ok(false);
         }
         match fs::symlink_metadata(data.join(MANIFEST)) {
             Ok(_) => (),
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 self.rules.clear();
-                return Ok(());
+                return Ok(false);
             }
             Err(error) => return Err(error).context("check for rules setup"),
         }
@@ -81,7 +123,7 @@ impl RulesWatch {
         match FileExt::try_lock_exclusive(&lock) {
             Ok(()) => (),
             Err(error) if error.raw_os_error() == fs2::lock_contended_error().raw_os_error() => {
-                return Ok(());
+                return Ok(false);
             }
             Err(error) => return Err(error).context("acquire rules setup lock"),
         }
@@ -91,11 +133,15 @@ impl RulesWatch {
             .filter(|stored| stored.state.adopted && !stored.state.settings_only)
         else {
             self.rules.clear();
-            return Ok(());
+            return Ok(false);
         };
         // Leave interrupted operations to the existing Sync/review recovery path.
-        if !stored.state.pending.is_empty() || !stored.state.stages.is_empty() {
-            return Ok(());
+        if !stored.state.pending.is_empty()
+            || !stored.state.stages.is_empty()
+            || !stored.state.extension_paths.is_empty()
+            || stored.state.settings_batch.is_some()
+        {
+            return Ok(false);
         }
 
         let home = resolve_home().context("resolve tool home")?;
@@ -124,12 +170,6 @@ impl RulesWatch {
                 changed.push(path);
             }
         }
-        if changed.is_empty() {
-            return Ok(());
-        }
-
-        // Resolve private backup blobs only when a tool file differs from
-        // the stored receipt. Conflicts may remain outstanding across rounds.
         let mut manifest = stored
             .load_contents(&data_root)
             .context("load rules setup receipts")?;
@@ -162,7 +202,9 @@ impl RulesWatch {
         if changed {
             save_manifest(&data_root, &manifest).context("save scope reviews")?;
         }
-        Ok(())
+        let setup = Setup::new(home, data.to_owned());
+        deliver(&setup, &root, &mut manifest)?;
+        Ok(true)
     }
 
     fn read_rule(&mut self, root: &FileRoot, path: &Path) -> Result<Option<&WatchedRule>> {
@@ -208,7 +250,9 @@ impl RulesWatch {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rulesync_routes::tests::{Fixture, CLAUDE, CODEX};
+    use crate::rulesync_routes::tests::{
+        fixture_rule_renderer, fixture_skill_renderer, Fixture, CLAUDE, CODEX,
+    };
     use crate::rulesync_routes::{
         discover_adoption, Manifest, PersonalMaster, PullbackAction, PullbackDecision,
         PullbackKind, MANIFEST_SAVES,
@@ -216,7 +260,22 @@ mod tests {
     use std::{collections::BTreeMap, fs, path::PathBuf, time::SystemTime};
 
     fn round(watch: &mut RulesWatch, f: &Fixture) -> Result<()> {
-        watch.round(true, &f.setup.data, || Ok(f.setup.home.clone()))
+        watch
+            .round(
+                true,
+                &f.setup.data,
+                || Ok(f.setup.home.clone()),
+                |setup, root, manifest| {
+                    setup.watch_delivery(
+                        root,
+                        manifest,
+                        &[],
+                        fixture_rule_renderer,
+                        fixture_skill_renderer,
+                    )
+                },
+            )
+            .map(|_| ())
     }
 
     fn edit(f: &Fixture) {
@@ -245,6 +304,119 @@ mod tests {
         let mut files = BTreeMap::new();
         walk(root, root, &mut files);
         files
+    }
+
+    fn accept_rule(f: &Fixture) {
+        let mut manifest = f.setup.load().unwrap().unwrap();
+        manifest.master.shared.push_str("\nAccepted in Wenlan.\n");
+        f.setup.save(&manifest).unwrap();
+    }
+
+    fn assert_delivered(f: &Fixture) {
+        for path in [CLAUDE, CODEX] {
+            assert!(
+                f.text(path).contains("Accepted in Wenlan."),
+                "round did not deliver to {path}"
+            );
+        }
+    }
+
+    #[test]
+    fn rulesync_watch_delivery_positive() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        accept_rule(&f);
+        round(&mut RulesWatch::default(), &f).unwrap();
+        assert_delivered(&f);
+    }
+
+    #[test]
+    fn rulesync_watch_delivery_open_card() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        edit(&f);
+        let mut watch = RulesWatch::default();
+        round(&mut watch, &f).unwrap();
+        assert_eq!(f.setup.status().unwrap().proposals.len(), 1);
+        accept_rule(&f);
+        let before = files(&f.setup.home);
+        round(&mut watch, &f).unwrap();
+        assert_eq!(
+            files(&f.setup.home),
+            before,
+            "open card allowed a tool write"
+        );
+    }
+
+    #[test]
+    fn rulesync_watch_delivery_stops_for_staged_writes() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        accept_rule(&f);
+        let mut manifest = f.setup.load().unwrap().unwrap();
+        manifest.stages.insert(
+            CODEX.into(),
+            super::super::PendingStage {
+                id: "interrupted-stage".into(),
+                displaced: None,
+            },
+        );
+        f.setup.save(&manifest).unwrap();
+        let before = files(&f.setup.home);
+        round(&mut RulesWatch::default(), &f).unwrap();
+        assert_eq!(files(&f.setup.home), before);
+    }
+
+    #[test]
+    fn rulesync_watch_delivery_stops_for_a_skill_proposal() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        accept_rule(&f);
+        let skill = ".claude/skills/fresh/SKILL.md";
+        fs::create_dir_all(f.setup.home.join(skill).parent().unwrap()).unwrap();
+        f.write(
+            skill,
+            "---\nname: fresh\ndescription: Review a new skill\n---\nSkill body.\n",
+        );
+        let before = files(&f.setup.home);
+        round(&mut RulesWatch::default(), &f).unwrap();
+        assert_eq!(files(&f.setup.home), before);
+        let proposals =
+            super::super::rulesync_registry::pending_skill_reviews(&f.setup.data).unwrap();
+        assert!(proposals.iter().any(|proposal| proposal.name == "fresh"));
+    }
+
+    #[test]
+    fn rulesync_watch_delivery_busy_lock() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        accept_rule(&f);
+        let before = files(&f.setup.home);
+        let lock = f.setup.lock().unwrap();
+        let mut watch = RulesWatch::default();
+        round(&mut watch, &f).unwrap();
+        assert_eq!(
+            files(&f.setup.home),
+            before,
+            "busy lock allowed a tool write"
+        );
+        drop(lock);
+    }
+
+    #[test]
+    fn rulesync_watch_delivery_receipt_mismatch() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        accept_rule(&f);
+        edit(&f);
+        let before = files(&f.setup.home);
+        round(&mut RulesWatch::default(), &f).unwrap();
+        assert_eq!(
+            files(&f.setup.home),
+            before,
+            "receipt mismatch allowed a tool write"
+        );
+        assert_eq!(f.setup.status().unwrap().proposals.len(), 1);
     }
 
     #[test]
@@ -310,7 +482,12 @@ mod tests {
         let mut watch = RulesWatch::default();
         let before = files(&f.setup.home);
         watch
-            .round(true, &f.setup.data, || panic!("absent setup resolved home"))
+            .round(
+                true,
+                &f.setup.data,
+                || panic!("absent setup resolved home"),
+                |_, _, _| unreachable!(),
+            )
             .unwrap();
         {
             let _lock = f.setup.lock().unwrap();
@@ -321,9 +498,12 @@ mod tests {
         }
         let before_data = files(&f.setup.data);
         watch
-            .round(true, &f.setup.data, || {
-                panic!("unadopted setup resolved home")
-            })
+            .round(
+                true,
+                &f.setup.data,
+                || panic!("unadopted setup resolved home"),
+                |_, _, _| unreachable!(),
+            )
             .unwrap();
         assert_eq!(files(&f.setup.data), before_data);
         assert_eq!(files(&f.setup.home), before);
@@ -334,9 +514,12 @@ mod tests {
         edit(&f);
         let before_data = files(&f.setup.data);
         watch
-            .round(false, &f.setup.data, || {
-                panic!("disabled setup resolved home")
-            })
+            .round(
+                false,
+                &f.setup.data,
+                || panic!("disabled setup resolved home"),
+                |_, _, _| unreachable!(),
+            )
             .unwrap();
         assert_eq!(watch.reads, 0);
         assert_eq!(files(&f.setup.data), before_data);
@@ -375,7 +558,12 @@ mod tests {
             scope.spawn(|| {
                 let mut watch = RulesWatch::default();
                 watch
-                    .round(true, &f.setup.data, || panic!("a busy round resolved home"))
+                    .round(
+                        true,
+                        &f.setup.data,
+                        || panic!("a busy round resolved home"),
+                        |_, _, _| unreachable!(),
+                    )
                     .unwrap();
                 sender.send(watch).unwrap();
             });

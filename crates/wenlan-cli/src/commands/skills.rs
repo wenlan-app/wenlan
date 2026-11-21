@@ -74,10 +74,12 @@ pub enum SkillsCmd {
     /// Save your own skill from a Markdown body and optional text files.
     Save(SaveSkillArgs),
     /// List personal skill proposals waiting for your review.
+    #[command(hide = true)]
     Pending,
     /// Show a skill proposal and ask whether to accept or dismiss it.
+    #[command(hide = true)]
     Review {
-        /// A proposal ID printed by `wenlan skills pending`.
+        /// A proposal ID printed by `wenlan rules review`.
         id: String,
         #[arg(value_enum)]
         action: SkillReviewChoice,
@@ -321,7 +323,7 @@ fn read_skill_body_file(path: &Path) -> Result<String> {
     read().with_context(|| format!("reading {}", path.display()))
 }
 
-async fn review_saved_skill(
+pub(super) async fn review_saved_skill(
     client: &WenlanClient,
     format: ResolvedFormat,
     quiet: bool,
@@ -557,7 +559,7 @@ fn saved_skill_scope_words(scope: SavedSkillScope) -> String {
     }
 }
 
-fn skill_proposal_summary(proposal: &SkillProposal) -> String {
+pub(super) fn skill_proposal_summary(proposal: &SkillProposal) -> String {
     let origin = match &proposal.origin {
         SkillProposalOrigin::Agent { agent } => one_line(agent),
         SkillProposalOrigin::Tool { tool } => format!("the {} skills folder", tool.display_name()),
@@ -584,7 +586,7 @@ fn pending_skills_for_a_person(pending: &SkillProposalsResponse) -> String {
     for proposal in &pending.proposals {
         out.push_str(&skill_proposal_summary(proposal));
     }
-    out.push_str("\nReview with `wenlan skills review <id> <accept|dismiss>`.\n");
+    out.push_str("\nReview with `wenlan rules review <id> <all-tools|tool-only|dismiss>`.\n");
     out
 }
 

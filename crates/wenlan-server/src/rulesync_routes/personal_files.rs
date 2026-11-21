@@ -447,7 +447,9 @@ impl Card {
                     .join("\n");
                 (plan, notices)
             }
-            PullbackAction::Dismiss => unreachable!("dismiss does not select a source"),
+            PullbackAction::Dismiss | PullbackAction::Revert => {
+                unreachable!("this answer does not select a source")
+            }
         };
         Ok((
             draft.diff.clone(),
@@ -668,7 +670,7 @@ impl Setup {
                     draft.current.clone(),
                 )]
             }
-            PullbackAction::Dismiss => drafts
+            PullbackAction::Dismiss | PullbackAction::Revert => drafts
                 .map(|draft| {
                     operation(
                         &draft.path,
@@ -682,7 +684,7 @@ impl Setup {
             let source = operations.pop().context("missing sharing source receipt")?;
             ensure!(
                 root.read_personal_file(&source.path, source.allow_link)? == source.seen,
-                "{} changed after the preview. Run rules sync",
+                "{} changed after the preview. Run wenlan rules status --sync",
                 source.path.display()
             );
             Some(source)
@@ -698,7 +700,7 @@ impl Setup {
             for (path, status) in self.apply_batch(root, manifest, batch, BatchMode::Review)? {
                 ensure!(
                     status == ApplyOutcome::Applied,
-                    "{} changed after the preview. Run rules sync",
+                    "{} changed after the preview. Run wenlan rules status --sync",
                     path.display()
                 );
                 if changed.contains(&path) {

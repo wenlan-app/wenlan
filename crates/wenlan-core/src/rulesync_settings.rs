@@ -45,6 +45,29 @@ pub fn render_source(
     source: &Path,
 ) -> Result<RenderedSettings> {
     let inputs = read_sources(source)?;
+    ensure!(!inputs.is_empty(), "no rulesync settings sources found");
+    render_inputs(binary, stage_parent, inputs)
+}
+
+/// The private Wenlan source is optional. An invalid source remains an error.
+pub fn render_local_source(binary: &Path, source: &Path) -> Result<Option<RenderedSettings>> {
+    match fs::symlink_metadata(source) {
+        Ok(_) => (),
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    }
+    let inputs = read_sources(source)?;
+    if inputs.is_empty() {
+        return Ok(None);
+    }
+    render_inputs(binary, source, inputs).map(Some)
+}
+
+fn render_inputs(
+    binary: &Path,
+    stage_parent: &Path,
+    inputs: BTreeMap<&'static str, Vec<u8>>,
+) -> Result<RenderedSettings> {
     let source_digest = fingerprint(&inputs)?;
     let stage = rulesync_renderer::new_stage(stage_parent)?;
     let input = stage.path().join("input");
@@ -102,7 +125,6 @@ fn read_sources(path: &Path) -> Result<BTreeMap<&'static str, Vec<u8>>> {
             break;
         }
     }
-    ensure!(!sources.is_empty(), "no rulesync settings sources found");
     Ok(sources)
 }
 
@@ -185,6 +207,32 @@ pub fn confirmation_token(value: &impl Serialize) -> Result<String> {
     let mut mac = Hmac::<Sha256>::new_from_slice(key).expect("valid HMAC key");
     mac.update(fingerprint(value)?.as_bytes());
     Ok(format!("{:x}", mac.finalize().into_bytes()))
+}
+
+/// Count only MCP server entries and never return their configuration.
+pub fn mcp_server_count(path: &Path, bytes: &[u8]) -> usize {
+    match path.extension().and_then(|ext| ext.to_str()) {
+        Some("json") => without_jsonc(bytes)
+            .ok()
+            .and_then(|bytes| parse_json(&bytes).ok())
+            .and_then(|doc| {
+                doc.get("mcpServers")
+                    .or_else(|| doc.get("mcp"))
+                    .and_then(Value::as_object)
+                    .map(Map::len)
+            })
+            .unwrap_or_default(),
+        Some("toml") => std::str::from_utf8(bytes)
+            .ok()
+            .and_then(|text| toml::from_str::<toml::Table>(text).ok())
+            .and_then(|doc| {
+                doc.get("mcp_servers")
+                    .and_then(toml::Value::as_table)
+                    .map(toml::Table::len)
+            })
+            .unwrap_or_default(),
+        _ => 0,
+    }
 }
 
 pub struct SettingsChange {

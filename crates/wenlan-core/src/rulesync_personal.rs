@@ -1463,6 +1463,7 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
         notes.push("Personal ignore: none supported by the eight tools in this setup.".into());
     }
     Ok(AdoptionPlan {
+        settings: None,
         token: adoption_token(adoption)?,
         files,
         skills,

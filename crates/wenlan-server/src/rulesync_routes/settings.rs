@@ -14,7 +14,7 @@ use wenlan_types::rulesync::{RulesSetupCode as Code, RulesSyncReport};
 use super::{report, BatchMode, Kind, Manifest, Pending, Setup};
 use crate::rulesync_apply::{ApplyOutcome, FileRoot, Snapshot};
 
-pub(crate) const SETTINGS_RESUME_NOTICE: &str = "A settings apply was interrupted. Run `wenlan rules settings` with the same source to review and resume, or run `wenlan rules restore` to undo applied changes.";
+pub(crate) const SETTINGS_RESUME_NOTICE: &str = "A settings apply was interrupted. Open `wenlan rules review` to review and resume, or run `wenlan rules restore` to undo applied changes.";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct SettingsBatch {

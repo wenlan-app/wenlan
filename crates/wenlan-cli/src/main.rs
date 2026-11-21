@@ -909,17 +909,75 @@ mod catalog_tests {
     use std::collections::BTreeSet;
 
     #[test]
-    fn rulesync_skill_review_hint_parses_with_the_real_cli() {
+    fn ux_skill_25_rulesync_action_hints_parse_with_the_real_cli() {
+        use super::commands::{rulesync::RulesSetupCmd, skills::RulesCmd};
         use clap::Parser;
+        use wenlan_types::rulesync::{
+            BRING_IN_COMMAND, RESTORE_COMMAND, STATUS_COMMAND, SYNC_COMMAND, TO_REVIEW_COMMAND,
+        };
         use wenlan_types::rulesync_skill::PENDING_SKILLS_COMMAND;
 
-        let cli = Cli::try_parse_from(PENDING_SKILLS_COMMAND.split_ascii_whitespace()).unwrap();
+        let parse = |hint: &str| {
+            let cli = Cli::try_parse_from(hint.split_ascii_whitespace()).unwrap();
+            let super::Commands::Rules {
+                command: Some(RulesCmd::Setup(action)),
+            } = cli.command
+            else {
+                panic!("invalid setup hint {hint}");
+            };
+            action
+        };
         assert!(matches!(
-            cli.command,
-            super::Commands::Skills {
-                command: Some(super::commands::skills::SkillsCmd::Pending)
-            }
+            parse(BRING_IN_COMMAND),
+            RulesSetupCmd::Adopt { dry_run: false }
         ));
+        assert!(matches!(
+            parse("wenlan rules adopt --dry-run"),
+            RulesSetupCmd::Adopt { dry_run: true }
+        ));
+        assert!(matches!(
+            parse(STATUS_COMMAND),
+            RulesSetupCmd::Status { sync: false }
+        ));
+        assert!(matches!(
+            parse(SYNC_COMMAND),
+            RulesSetupCmd::Status { sync: true }
+        ));
+        assert!(matches!(parse(RESTORE_COMMAND), RulesSetupCmd::Restore));
+        for hint in [TO_REVIEW_COMMAND, PENDING_SKILLS_COMMAND] {
+            assert!(matches!(
+                parse(hint),
+                RulesSetupCmd::Review { id: None, .. }
+            ));
+        }
+        for answer in ["tool-only", "all-tools", "dismiss", "revert"] {
+            assert!(matches!(
+                parse(&format!("{TO_REVIEW_COMMAND} card {answer} --file example")),
+                RulesSetupCmd::Review {
+                    id: Some(_),
+                    answer: Some(_),
+                    file: Some(_)
+                },
+            ));
+        }
+        assert!(matches!(parse("wenlan rules sync"), RulesSetupCmd::Sync));
+        assert!(matches!(
+            parse("wenlan rules skill-updates"),
+            RulesSetupCmd::SkillUpdates
+        ));
+        assert!(matches!(
+            parse("wenlan rules settings source --dry-run"),
+            RulesSetupCmd::Settings { dry_run: true, .. }
+        ));
+        let command = Cli::command();
+        let rules = command.find_subcommand("rules").unwrap();
+        for alias in ["sync", "skill-updates", "settings"] {
+            assert!(rules.find_subcommand(alias).unwrap().is_hide_set());
+        }
+        let skills = command.find_subcommand("skills").unwrap();
+        for alias in ["pending", "review"] {
+            assert!(skills.find_subcommand(alias).unwrap().is_hide_set());
+        }
     }
 
     #[test]

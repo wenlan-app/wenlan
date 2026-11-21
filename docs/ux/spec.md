@@ -1037,7 +1037,7 @@ and wait for evidence that people need them.
   sources and replaces adopted links at the tool paths. Personal Codex
   copies use `~/.codex/skills`.
   The preview shows which skills track a verified upstream and which
-  become plain copies. `wenlan rules skill-updates` offers available
+  become plain copies. `wenlan rules review` offers available
   upstream versions for review without changing the master or tool files.
   Codex adoption replaces the legacy harness-generated header with a
   Wenlan-managed header. The preview says the old sync script becomes
@@ -1089,13 +1089,13 @@ and wait for evidence that people need them.
   with both spellings. Restoring the setup brings back the original spelling.
   Tests `rulesync_skill_agent_proposal_survives_reopen_and_requires_review` and `ux_skill_16_review_needs_one_scope_and_has_no_confirmation_flag`.
 
-- **UX-SKILL-17** `shipped` `wenlan rules settings` asks the person to
-  preview a local rulesync settings source and type `yes` before applying it.
-  The preview shows the additions to MCP servers, hooks and permissions.
-  Existing entries are kept. Conflicting entries, credentials in the source,
-  symlinks and changed destinations stop the apply. Settings stay on this
-  computer and are applied only through this command.
-  Tests `ux_skill_17_rulesync_settings_merges_servers_and_only_previews_staged_additions` and the rest of `rulesync_settings` and `rulesync_settings_routes`.
+- **UX-SKILL-17** `shipped` Bring in previews MCP servers, hooks and
+  permissions from the local rulesync source in Wenlan’s rulesync data.
+  One confirmation covers the whole adoption plan. Later staged changes appear
+  in To review and need approval. Existing entries are kept. Conflicts,
+  credentials in the source, symlinks and changed destinations stop the apply.
+  Tests `ux_skill_17_rulesync_settings_merges_servers_and_only_previews_staged_additions`
+  and `UX-SKILL-22`.
 
 - **UX-SKILL-18** `shipped` With `WENLAN_RULESYNC=1`, the personal
   adoption plan includes existing slash commands and subagents at their
@@ -1110,7 +1110,7 @@ and wait for evidence that people need them.
   On Windows, replacements follow the permission-preservation rules in
   UX-SKILL-15. Wenlan stages new personal files beside their destination
   so they inherit access rules from the destination folder.
-  A hand edit or removal appears in `wenlan rules sync` for review.
+  A hand edit or removal appears in `wenlan rules review`.
   The person can keep it in the originating tool or share it with enrolled
   tools that read the same format. Any `$` or `!` in a command keeps it in
   its own tool because the characters can introduce argument expansion or
@@ -1137,26 +1137,27 @@ and wait for evidence that people need them.
   `rulesync_review_displays_the_selected_plan_before_asking_for_yes` and the
   `rulesync_round4_` and `rulesync_round5_` regression groups.
 
-- **UX-SKILL-19** `shipped` When the daemon enables local rules setup, the
-  Rules and Skills lists show one quiet status line under the tool chips.
-  A tool with a pending review has an amber exclamation mark. Only pending
-  setup reviews get cards, on Rules. Reading status does not run sync. With
-  setup off, its status, cards and Settings controls are hidden.
+- **UX-SKILL-19** `shipped` When local rules setup is enabled, Status opens
+  by default and shows each tool’s state and counts, the last background check,
+  and Sync now. Reading Status makes no tool changes. An amber exclamation
+  mark on a tool that needs review opens To review on Rules. Turning setup
+  off hides the setup controls and cards.
 - **UX-SKILL-20** `shipped` A rule-line scope card says the edit already
-  applies in its tool, and offers Use in all tools and Keep in that tool
-  only. A conflict card offers those choices and No. It says “No puts
-  <tool> back to the earlier version” (“選「不要」，<tool> 改回原本的版本”)
-  underneath, naming all affected source tools when there are competing
-  edits. The app shows the reason, files, and diff. It previews
-  the selected choice and asks for confirmation before applying it.
-- **UX-SKILL-21** `shipped` An available adopted skill update adds a New
-  version badge to the skill row and contributes to the status line on
-  Skills. Finding an update does not apply it or open a card.
-- **UX-SKILL-22** `shipped` In Settings, Bring in opens the daemon’s
-  adoption preview, with affected tools, counts and reasons for skipped
-  items. The preview says the shared setup stays untouched and binds
-  approval to that plan. Restore asks again and says later edits stay
-  where they are for review.
+  applies in its tool. Use in all tools and Keep in that tool only choose the
+  scope. Dismiss clears the card without changing the tool. A conflict card
+  offers the two scope choices and No. It says “No puts <tool> back to the
+  earlier version” (“選「不要」，<tool> 改回原本的版本”), naming every affected
+  tool when edits compete. The terminal calls that answer `revert`. The
+  app previews the selected choice and asks for confirmation.
+  Tests `rulesync_review_refuses_dismiss_when_a_tool_would_be_reverted` and
+  `rulesync_review_refuses_revert_when_a_rule_line_has_nothing_to_put_back`.
+- **UX-SKILL-21** `shipped` An available adopted skill update appears in
+  To review and adds a New version badge to the skill row. Finding a release
+  keeps the adopted version in place. Dismiss applies to that release.
+- **UX-SKILL-22** `shipped` Bring in appears before adoption and opens the
+  daemon’s plan with affected tools, counts, reasons for skipped items,
+  and settings changes. The shared setup stays in place. Approval binds the
+  entire plan. Restore asks again and says later edits stay for review.
 - **UX-SKILL-23** `shipped` Rules setup renders daemon messages from
   localized codes. A missing or unknown code shows a generic message.
   Cards, previews, adoption details and feedback hide paths and file names
@@ -1165,10 +1166,23 @@ and wait for evidence that people need them.
   and added lines with a minus or plus and a red or green tint, and mask
   paths in the changed text. Localized notes explain other changes. The
   final newline note appears only for a newline-only change.
-- **UX-SKILL-24** `shipped` After rules setup is adopted, a tool’s
-  rule-line edit that qualifies for scope review appears on Rules without
-  pressing Sync. The daemon checks every two minutes and the open Rules view
-  refreshes its status. The background check never changes tool files.
+- **UX-SKILL-24** `shipped` The daemon checks every two minutes and the open
+  Rules view refreshes Status and To review. The round skips a held setup lock.
+  It notices tool edits before attempting delivery. An open tool review,
+  interrupted stage, or blocking skill proposal stops all tool writes in that
+  round. Changed receipts surface for review. A clear round delivers approved
+  content through the same writer as Sync now.
+  Tests `rulesync_watch_delivery_open_card`, `rulesync_watch_delivery_busy_lock`,
+  `rulesync_watch_delivery_receipt_mismatch`, and `rulesync_watch_delivery_positive`.
+- **UX-SKILL-25** `shipped` Local rules setup uses the same four action names
+  in the app, CLI help and command hints. In order they are Bring in, Status,
+  To review, and Restore (搬進來、狀態、待確認、還原 in Traditional Chinese and
+  搬进来、状态、待确认、还原 in Simplified Chinese). The CLI verbs are
+  `wenlan rules adopt`, `wenlan rules status`, `wenlan rules review` and
+  `wenlan rules restore`. To review lists tool edits, skill proposals, skill
+  updates and settings changes with the answers each supports.
+  Tests `UX-SKILL-25: names and orders the setup actions` and
+  `ux_skill_25_rulesync_action_hints_parse_with_the_real_cli`.
 
 ## From the terminal
 

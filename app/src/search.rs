@@ -4475,7 +4475,7 @@ pub async fn rules_setup_restore(
 ) -> Result<RulesSyncReport, String> {
     daemon_client(&state)
         .await
-        .post_empty_as_person("/api/rules/setup/restore?rules_and_skills_only=true")
+        .post_empty_as_person("/api/rules/setup/restore")
         .await
 }
 
@@ -4494,6 +4494,54 @@ pub async fn rules_setup_skill_updates(
     daemon_client(&state)
         .await
         .post_empty_as_person("/api/rules/setup/skill-updates")
+        .await
+}
+
+#[tauri::command]
+pub async fn rules_setup_review_list(
+    state: tauri::State<'_, State>,
+) -> Result<wenlan_types::rulesync::RulesReviewList, String> {
+    daemon_client(&state)
+        .await
+        .get_json_as_person("/api/rules/setup/review")
+        .await
+}
+
+#[tauri::command]
+pub async fn rules_setup_skill_review(
+    state: tauri::State<'_, State>,
+    request: wenlan_types::rulesync_skill::SkillReviewRequest,
+) -> Result<wenlan_types::rulesync_skill::SaveSkillResult, String> {
+    daemon_client(&state)
+        .await
+        .post_json_as_person("/api/skills/registry/review", &request)
+        .await
+}
+
+#[tauri::command]
+pub async fn rules_setup_settings_apply(
+    state: tauri::State<'_, State>,
+    token: String,
+) -> Result<RulesSyncReport, String> {
+    let request = wenlan_types::rulesync_settings::SettingsApplyRequest {
+        source: None,
+        token,
+    };
+    daemon_client(&state)
+        .await
+        .post_json_as_person("/api/rules/setup/settings/apply", &request)
+        .await
+}
+
+#[tauri::command]
+pub async fn rules_setup_dismiss_update(
+    state: tauri::State<'_, State>,
+    id: String,
+) -> Result<(), String> {
+    let request = wenlan_types::rulesync::DismissSkillUpdate { id };
+    daemon_client(&state)
+        .await
+        .post_json_as_person("/api/rules/setup/review/dismiss-update", &request)
         .await
 }
 

@@ -68,6 +68,8 @@ pub(super) const ROUTES: &[SensitiveReadRoute] = &[
     row!(Post,"/api/rules/setup/restore","personal_tool_setup",NoSelector,AuthenticatedPerson,Global,NoGate,NotApplicable,GlobalRead),
     row!(Post,"/api/rules/setup/skill-updates","personal_tool_setup",NoSelector,AuthenticatedPerson,Global,NoGate,NotApplicable,GlobalRead),
     row!(Post,"/api/rules/setup/sync","personal_tool_setup",NoSelector,AuthenticatedPerson,Global,NoGate,NotApplicable,GlobalRead),
+    row!(Get,"/api/rules/setup/review","personal_tool_setup",NoSelector,AuthenticatedPerson,Global,NoGate,NotApplicable,GlobalRead),
+    row!(Post,"/api/rules/setup/review/dismiss-update","personal_tool_setup",NoSelector,AuthenticatedPerson,Global,NoGate,NotApplicable,GlobalRead),
     row!(Post,"/api/rules/setup/review","personal_tool_setup",NoSelector,AuthenticatedPerson,Global,NoGate,NotApplicable,GlobalRead),
     row!(Post,"/api/rules/setup/review/preview","personal_tool_setup",NoSelector,AuthenticatedPerson,Global,NoGate,NotApplicable,GlobalRead),
     row!(Post,"/api/rules/setup/settings/preview","personal_tool_setup",NoSelector,AuthenticatedPerson,Global,NoGate,NotApplicable,GlobalRead),
