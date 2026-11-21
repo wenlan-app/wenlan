@@ -909,6 +909,7 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/rules/setup/restore` | main | no | not_applicable | `none` | — | local tool setup restoration receipt |
 | `POST` | `/api/rules/setup/skill-updates` | main | no | not_applicable | `none` | — | release metadata for personally adopted tools, no page text |
 | `POST` | `/api/rules/setup/review` | main | no | not_applicable | `none` | — | local tool setup review receipt with local file diffs |
+| `POST` | `/api/rules/setup/review/preview` | main | no | not_applicable | `none` | — | local tool setup review preview with local file diffs and destination permissions |
 | `POST` | `/api/rules/setup/settings/apply` | main | no | not_applicable | `none` | — | local settings write receipt |
 | `POST` | `/api/rules/setup/settings/preview` | main | no | not_applicable | `none` | — | settings plan contains safe local settings additions |
 | `POST` | `/api/rules/setup/sync` | main | no | not_applicable | `none` | — | local tool setup receipt with local file diffs |

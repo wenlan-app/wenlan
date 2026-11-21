@@ -97,6 +97,13 @@ impl<'a> RenderSession<'a> {
         features: &[&str],
     ) -> Result<()> {
         validate_selection(targets, features)?;
+        ensure!(
+            global
+                || features
+                    .iter()
+                    .all(|feature| matches!(*feature, "rules" | "skills")),
+            "wenlan renders commands and subagents in global scope only"
+        );
         render_staged(
             self,
             stage,
@@ -255,8 +262,8 @@ fn validate_selection(targets: &[String], features: &[&str]) -> Result<()> {
         !features.is_empty()
             && features
                 .iter()
-                .all(|feature| matches!(*feature, "rules" | "skills")),
-        "rulesync supports rendering rules and skills only"
+                .all(|feature| matches!(*feature, "rules" | "skills" | "commands" | "subagents")),
+        "rulesync supports rendering rules, skills, commands and subagents"
     );
     Ok(())
 }

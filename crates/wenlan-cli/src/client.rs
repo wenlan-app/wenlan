@@ -27,7 +27,8 @@ use wenlan_types::{
         PendingRevisionItem, RevisionDismissResponse, SearchMemoryResponse, StoreMemoryResponse,
     },
     rulesync::{
-        AdoptPreviewRequest, AdoptRequest, AdoptionPlan, PullbackDecision, RulesSyncReport,
+        AdoptPreviewRequest, AdoptRequest, AdoptionPlan, PullbackDecision, PullbackPreview,
+        RulesSyncReport,
     },
     sources::Source,
     BriefHistoryResponse, BriefReadRequest, BriefReadResponse, BriefUpdateReceipt,
@@ -889,6 +890,14 @@ impl WenlanClient {
         request: &PullbackDecision,
     ) -> Result<RulesSyncReport> {
         self.post_json_as_person("/api/rules/setup/review", request, None, true)
+            .await
+    }
+
+    pub(crate) async fn preview_rules_review_as_person(
+        &self,
+        request: &PullbackDecision,
+    ) -> Result<PullbackPreview> {
+        self.post_json_as_person("/api/rules/setup/review/preview", request, None, true)
             .await
     }
 

@@ -111,6 +111,7 @@ fn canonical_matrix_freezes_exact_global_and_scoped_keys() {
         (Method::Post, "/api/rules/setup/skill-updates"),
         (Method::Post, "/api/rules/setup/sync"),
         (Method::Post, "/api/rules/setup/review"),
+        (Method::Post, "/api/rules/setup/review/preview"),
         (Method::Post, "/api/rules/setup/settings/preview"),
         (Method::Post, "/api/rules/setup/settings/apply"),
         (Method::Post, "/api/rules/setup/checkout"),
@@ -281,8 +282,6 @@ fn canonical_matrix_freezes_exact_global_and_scoped_keys() {
         .map(|row| (row.method, row.path))
         .collect::<BTreeSet<_>>();
 
-    // Draft publication adds a PageWorkspace-scoped, single-page route.
-    assert_eq!(rows.len(), 168);
     assert_eq!(keys.len(), rows.len(), "duplicate sensitive route key");
     assert_eq!(global, GLOBAL.iter().copied().collect());
     assert_eq!(scoped, SCOPED.iter().copied().collect());

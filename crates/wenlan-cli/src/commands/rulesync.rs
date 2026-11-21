@@ -20,7 +20,7 @@ use crate::{client::WenlanClient, output::ResolvedFormat};
 
 #[derive(Debug, Subcommand)]
 pub enum RulesSetupCmd {
-    /// Bring your existing personal rules and skills under Wenlan management.
+    /// Bring your personal rules, skills, commands and subagents under Wenlan management.
     Adopt {
         /// Preview the changes, or list the installed files while offline.
         #[arg(long)]
@@ -28,7 +28,7 @@ pub enum RulesSetupCmd {
     },
     /// Restore the original files and links from the local setup backup.
     Restore,
-    /// Collect tool edits for review and deliver current personal rules and skills.
+    /// Review local changes and deliver the current personal tool setup.
     Sync,
     /// Check adopted skills for upstream releases and list offers for review.
     SkillUpdates,
@@ -46,7 +46,7 @@ pub enum RulesSetupCmd {
         id: String,
         #[arg(value_enum)]
         action: ReviewAction,
-        /// Choose which file's change to keep when several tools changed the same line.
+        /// Choose the source file when a proposal contains competing edits.
         #[arg(long, value_name = "PATH")]
         file: Option<String>,
     },
@@ -56,7 +56,7 @@ pub enum RulesSetupCmd {
 pub enum ReviewAction {
     /// Keep the change for the tool that made it.
     ToolOnly,
-    /// Use the change in all tools.
+    /// Share the change with all compatible tools.
     AllTools,
     /// Discard the proposal.
     Dismiss,
@@ -177,37 +177,46 @@ async fn run_inner(
                 .await?
         }
         RulesSetupCmd::Review { id, action, file } => {
-            let mut proposal = one_line(id);
-            if let Some(file) = file {
-                proposal.push_str(&format!(" from {}", file_label(file)));
-            }
-            let (action, question) = match action {
-                ReviewAction::ToolOnly => (
-                    PullbackAction::ToolOnly,
-                    format!("Keep proposal {proposal} for this tool only?"),
-                ),
-                ReviewAction::AllTools => (
-                    PullbackAction::AllTools,
-                    format!("Use proposal {proposal} in all tools?"),
-                ),
-                ReviewAction::Dismiss => (
-                    PullbackAction::Dismiss,
-                    format!("Dismiss proposal {proposal}?"),
-                ),
+            let decision = PullbackDecision {
+                id: id.clone(),
+                action: match action {
+                    ReviewAction::ToolOnly => PullbackAction::ToolOnly,
+                    ReviewAction::AllTools => PullbackAction::AllTools,
+                    ReviewAction::Dismiss => PullbackAction::Dismiss,
+                },
+                file: file.clone(),
             };
-            if !confirm(&question)? {
+            let preview = client.preview_rules_review_as_person(&decision).await?;
+            let mut text = printable(&preview.plan);
+            text.push('\n');
+            append_diff(&mut text, &preview.diff);
+            if !review_confirmation(&mut io::stdin().lock(), &mut io::stdout(), &decision, &text)? {
+                println!("Cancelled.");
                 return Ok(());
             }
-            client
-                .review_rules_as_person(&PullbackDecision {
-                    id: id.clone(),
-                    action,
-                    file: file.clone(),
-                })
-                .await?
+            client.review_rules_as_person(&decision).await?
         }
     };
     show(format, quiet, &report, report_for_a_person)
+}
+
+fn review_confirmation(
+    input: &mut dyn io::BufRead,
+    output: &mut dyn io::Write,
+    decision: &PullbackDecision,
+    preview: &str,
+) -> Result<bool> {
+    writeln!(output, "{}", preview.trim_end())?;
+    let mut proposal = one_line(&decision.id);
+    if let Some(file) = &decision.file {
+        proposal.push_str(&format!(" from {}", file_label(file)));
+    }
+    let question = match decision.action {
+        PullbackAction::ToolOnly => format!("Keep proposal {proposal} for this tool only?"),
+        PullbackAction::AllTools => format!("Use proposal {proposal} in all compatible tools?"),
+        PullbackAction::Dismiss => format!("Dismiss proposal {proposal}?"),
+    };
+    person_says_yes(input, output, &question)
 }
 
 fn adoption_plan() -> Result<AdoptionPlan> {
@@ -259,7 +268,7 @@ pub(super) fn terminal_json(value: &impl Serialize) -> Result<String> {
 }
 
 fn plan_for_a_person(plan: &AdoptionPlan) -> String {
-    let mut out = String::from("Personal rules and skills adoption plan\n");
+    let mut out = String::from("Personal tool setup adoption plan\n");
     for note in &plan.notes {
         writeln!(&mut out, "\n{}", one_line(note)).unwrap();
     }
@@ -425,6 +434,38 @@ pub(super) fn file_label(path: &str) -> String {
 mod tests {
     use super::*;
     use wenlan_types::rulesync::AdoptionChange;
+
+    #[test]
+    fn rulesync_review_displays_the_selected_plan_before_asking_for_yes() {
+        let all_tools = "Create directory .codex/prompts with permissions 0700\n\
+            Create .codex/prompts/check.md with permissions 0600\n\
+            Replace .cursor/commands/check.md with permissions 0644\n\
+            Remove .config/opencode/commands/check.md with permissions 0640\n\
+            Skip Gemini CLI. Gemini CLI uses its own native TOML command format.\n";
+        let tool_only = "Keep the existing edit in Claude Code.\n\
+            Skip Codex CLI. This review is for Claude Code only.\n";
+        let source_only = "All-tools stays with its tool (Claude Code).\n\
+            Skip Codex CLI. Left unmanaged: '$' can introduce argument placeholders. The command stays in its originating tool.\n";
+        for (action, preview) in [
+            (PullbackAction::AllTools, all_tools),
+            (PullbackAction::ToolOnly, tool_only),
+            (PullbackAction::AllTools, source_only),
+        ] {
+            let decision = PullbackDecision {
+                id: "proposal".into(),
+                action,
+                file: Some(".claude/commands/check.md".into()),
+            };
+            let mut output = Vec::new();
+            assert!(
+                review_confirmation(&mut &b"yes\n"[..], &mut output, &decision, preview).unwrap()
+            );
+            let output = String::from_utf8(output).unwrap();
+            let (before, _) = output.split_once("Type yes to go on:").unwrap();
+            assert!(before.contains(preview), "{before}");
+            assert!(before.contains(".claude/commands/check.md"), "{before}");
+        }
+    }
 
     #[test]
     fn rules_sync_table_includes_the_block_reason() {
