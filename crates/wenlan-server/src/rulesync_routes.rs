@@ -3660,7 +3660,7 @@ fn check_windows_restore(
         "restore conflict: the backup has no verified Windows permissions. Keep it for manual recovery",
     )?;
     ensure!(
-        *owner == rulesync_personal::windows_process_user()?,
+        *owner == wenlan_core::rulesync_personal::windows_process_user()?,
         "restore conflict: the Windows owner changed since backup"
     );
     Ok(())
