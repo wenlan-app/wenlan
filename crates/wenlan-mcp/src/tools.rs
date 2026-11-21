@@ -7993,7 +7993,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "Hand off to the next session through the Space Brief: replace the summary (guarded by expected_version) and add, edit, move, gate, or complete items. Read brief first and reuse its brief_version and item versions; conflicts are reported, never silently overwritten. Reuse operation_id to retry safely.",
+        description = "Hand off to the next session through the Space Brief: replace the summary (guarded by expected_version) and add, edit, move, gate, or complete items. Needs a summary, at least one mutation, or both. Read brief first and reuse its brief_version and item versions; conflicts are reported, never silently overwritten. Reuse operation_id to retry safely.",
         annotations(
             title = "Handoff",
             read_only_hint = false,
@@ -15385,6 +15385,20 @@ mod tests {
         assert!(
             total <= DESCRIPTION_BUDGET_CHARS,
             "visible tool descriptions total {total} characters, over the {DESCRIPTION_BUDGET_CHARS} budget; trim repetition before raising it"
+        );
+    }
+
+    #[test]
+    fn handoff_description_says_an_empty_call_is_refused() {
+        let tools = make_server(TransportMode::Stdio, "test", None).visible_tools();
+        let handoff = tools
+            .iter()
+            .find(|tool| tool.name == "handoff")
+            .expect("handoff is visible on stdio");
+        let description = handoff.description.as_deref().unwrap_or_default();
+        assert!(
+            description.contains("Needs a summary, at least one mutation, or both."),
+            "handoff must say what an empty call needs: {description}"
         );
     }
 

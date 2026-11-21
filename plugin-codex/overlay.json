@@ -199,17 +199,17 @@
     "handoff": {
       "openai": {
         "display_name": "Wenlan Handoff",
-        "short_description": "End a Codex session with captures and a typed Brief update"
+        "short_description": "End a Codex session with a typed Brief update"
       },
       "replace": [
         {
           "from": [
             "When the session start printed a `Wenlan session:` line, pass its value as",
-            "`session` on `capture`, `write_page` and `update_brief`."
+            "`session` on `write_page` and `handoff`."
           ],
           "to": [
             "Run `echo $CODEX_THREAD_ID` once; when it is non-empty, pass",
-            "`session: \"codex:<that id>\"` on `capture`, `write_page` and `update_brief`."
+            "`session: \"codex:<that id>\"` on `write_page` and `handoff`."
           ]
         }
       ]

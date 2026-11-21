@@ -19,7 +19,7 @@ One thing is automatic, and you switch it on yourself. When you connect a folder
 Your data is stored on your machine:
 
 - `~/.wenlan/pages/` -- wiki pages (Markdown)
-- `~/.wenlan/sessions/` -- session logs (Markdown)
+- `~/.wenlan/sessions/` -- older session logs (Markdown; no longer written)
 - `~/.wenlan/sources/` -- uploaded source documents
 - `~/.wenlan/spaces.toml` -- Space mapping config
 - `~/.wenlan/db/` -- symlink to the platform data directory (macOS: `~/Library/Application Support/wenlan/`; Linux: `~/.local/share/wenlan/`; Windows: `%LOCALAPPDATA%\wenlan\`), with the libSQL database at `<data dir>/memorydb/`
