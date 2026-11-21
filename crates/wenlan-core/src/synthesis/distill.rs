@@ -1474,8 +1474,9 @@ pub(crate) const CANDIDATE_MEM_SNIPPET_CAP: usize = 800;
 /// block of an update-from-sources prompt.
 const BASIS_CONTEXT_CHAR_CAP: usize = 2000;
 
-/// `pages.refresh_blocked_reason` value for a note the automatic refresh skips
-/// because it relies on other notes. Only "Update from sources" rebuilds it.
+/// `pages.refresh_blocked_reason` value older versions set on a note the
+/// automatic refresh skipped because it relies on other notes. Nothing sets it
+/// any more; it is still read and cleared on rows that carry it.
 pub const REFRESH_BLOCKED_HAS_BASIS: &str = "has_basis";
 
 /// The "notes this note relies on" block of an update-from-sources prompt.
@@ -2011,24 +2012,13 @@ pub(crate) async fn refresh_page_with_candidate_sources(
         )));
     }
 
-    // A note that relies on other notes is rebuilt only by an explicit "Update
-    // from sources": the automatic refresh would write over text a person
-    // confirmed against those notes. It is skipped, and the skip is recorded on
-    // the page so it reads as "update blocked" and not as an endless update.
-    // A run that lands or previews a new body clears the marker.
+    // A note that relies on other notes follows its sources like any other
+    // note: when one changes, the automatic refresh rewrites it in place (the
+    // old version stays in its history) and confirms the bases it read. Only
+    // a note the person locked, wrote or edited gets the preview card an
+    // explicit "Update from sources" stages (below), so the person's text is
+    // never written over.
     let has_basis = db.page_has_basis(page_id).await?;
-    if has_basis && reason == RefreshReason::SourceChanged {
-        log::info!(
-            "[refresh] page {page_id} relies on other notes; leaving it to Update from sources"
-        );
-        db.set_page_refresh_blocked_reason_at_fence(
-            page_id,
-            REFRESH_BLOCKED_HAS_BASIS,
-            &page_fence,
-        )
-        .await?;
-        return Ok(RefreshOutcome::default());
-    }
     let bases = if has_basis {
         db.list_basis_context(page_id).await?
     } else {
@@ -2110,12 +2100,25 @@ pub(crate) async fn refresh_page_with_candidate_sources(
     let summary = candidate.summary.clone();
     let user_forced_write = reason == RefreshReason::UserForced && candidate_sources.is_none();
 
-    // "Update from sources" on a note that relies on other notes is a preview:
-    // the run stages a revision card, whatever the note's ownership, and the
-    // card remembers which version of each basis it read. Accepting it
-    // confirms the ones that still match. A note without a basis never takes
-    // this branch.
-    if user_forced_write && has_basis {
+    // "Update from sources" on a note that relies on other notes, and the
+    // automatic refresh of one after a source changed, are a preview: the run
+    // stages a revision card, whatever the note's ownership, and the card
+    // remembers which version of each basis it read. Accepting it confirms the
+    // ones that still match. A note without a basis never takes this branch.
+    let automatic_basis_refresh =
+        has_basis && reason == RefreshReason::SourceChanged && candidate_sources.is_none();
+    let basis_preview = has_basis
+        && (user_forced_write
+            || (automatic_basis_refresh
+                && crate::post_write::machine_write_requires_review(
+                    crate::post_write::Writer::Pipeline(
+                        crate::post_write::PipelineStage::ReDistill,
+                    ),
+                    &page,
+                    false,
+                    crate::sentences::holds_person_sentences(db, &page).await?,
+                )));
+    if basis_preview {
         let old_sources: std::collections::HashSet<&str> =
             page.source_memory_ids.iter().map(String::as_str).collect();
         let new_sources: std::collections::HashSet<&str> =
@@ -2212,6 +2215,13 @@ pub(crate) async fn refresh_page_with_candidate_sources(
     // A user-forced write is fenced on the incarnation it just wrote, so a
     // page recreated under the same id right after that write keeps its own
     // summary.
+    if result.wrote && automatic_basis_refresh {
+        let snapshot: Vec<crate::db::BasisSnapshotEntry> =
+            bases.iter().map(|b| b.snapshot.clone()).collect();
+        db.confirm_basis_snapshot(page_id, &snapshot, reason.edited_by())
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("confirm basis after refresh: {e}")))?;
+    }
     if result.wrote && user_forced_write {
         db.update_page_summary_at_incarnation(page_id, summary.as_deref(), &page_fence.incarnation)
             .await?;

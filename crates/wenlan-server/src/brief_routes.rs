@@ -192,6 +192,7 @@ pub async fn handle_read_brief(
                 )
                 .await
                 .map_err(|error| ServerError::SearchFailed(error.to_string()))?;
+            let results = crate::memory_routes::current_only(results);
             // Only the page-channel rows are page-bearing. Handing the whole
             // batch to the adapter would key memory rows by a memory id, which
             // no page grant covers, and drop legitimate results.

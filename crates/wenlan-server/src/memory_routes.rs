@@ -1249,6 +1249,15 @@ pub(crate) fn partition_search_pages(
 }
 
 /// POST /api/memory/search
+/// Search hits without the memories another memory replaced: what an AI tool
+/// is handed must be what is true now. The app's own search keeps them, muted.
+pub(crate) fn current_only(
+    mut results: Vec<wenlan_types::SearchResult>,
+) -> Vec<wenlan_types::SearchResult> {
+    results.retain(|hit| !hit.is_archived);
+    results
+}
+
 pub async fn handle_search_memory(
     State(state): State<Arc<RwLock<ServerState>>>,
     headers: HeaderMap,
@@ -1376,6 +1385,12 @@ async fn handle_search_memory_inner(
             .map_err(|e| ServerError::SearchFailed(e.to_string()))?
         }
     };
+
+    // An AI tool reads only what is true now. A decision another decision
+    // replaced stays visible but muted in the app; handed to an AI beside the
+    // current one it gets taken as current (design v5 §4), so recall leaves it
+    // out. Its words are still in the memory's history.
+    let results = current_only(results);
 
     // Filter to memory rows ONLY before access_log + agent_activity. Page-channel
     // (PR-B) returns `source="page"` rows whose `source_id` (`page_*`) is NOT a
@@ -4103,6 +4118,62 @@ mod gated_store_tests {
         assert!(
             !hits.contains(&resp.source_id),
             "search must not return the staged correction, got: {hits:?}"
+        );
+    }
+
+    /// An AI tool's recall never hands it a decision another decision
+    /// replaced: beside the current one it would be taken as current. The
+    /// replaced one stays in the memory, not in what the AI reads.
+    #[tokio::test]
+    async fn recall_leaves_out_a_replaced_decision() {
+        let (state, _tmp) = build_state_with_db().await;
+        {
+            let s = state.read().await;
+            let db = s.db.as_ref().unwrap();
+            let now = chrono::Utc::now().timestamp();
+            let decision = |id: &str, content: &str, supersedes: Option<&str>| RawDocument {
+                source: "memory".to_string(),
+                source_id: id.to_string(),
+                title: "Release day".to_string(),
+                content: content.to_string(),
+                memory_type: Some("decision".to_string()),
+                last_modified: now,
+                confirmed: Some(true),
+                supersedes: supersedes.map(str::to_string),
+                supersede_mode: "archive".to_string(),
+                ..Default::default()
+            };
+            db.upsert_documents(vec![decision(
+                "mem_release_old",
+                "Releases ship every Friday afternoon",
+                None,
+            )])
+            .await
+            .unwrap();
+            db.upsert_documents(vec![decision(
+                "mem_release_new",
+                "Releases ship every Tuesday morning",
+                Some("mem_release_old"),
+            )])
+            .await
+            .unwrap();
+            assert!(
+                db.get_memory_detail("mem_release_old")
+                    .await
+                    .unwrap()
+                    .is_some(),
+                "the replaced decision is kept"
+            );
+        }
+        let app = crate::router::build_router(state.clone());
+        let hits = search_source_ids(app, "releases ship").await;
+        assert!(
+            hits.contains(&"mem_release_new".to_string()),
+            "recall returns the current decision, got: {hits:?}"
+        );
+        assert!(
+            !hits.contains(&"mem_release_old".to_string()),
+            "recall leaves out the replaced decision, got: {hits:?}"
         );
     }
 
