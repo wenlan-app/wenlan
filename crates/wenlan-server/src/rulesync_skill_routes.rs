@@ -276,7 +276,18 @@ fn prepare_skill_review(
             )
         })
         .collect();
-    let delivery = setup.plan_skill_review(&sources, &store.state.approved_local, render)?;
+    let explicit_file_modes = proposal
+        .changes
+        .iter()
+        .flat_map(|changes| &changes.permissions)
+        .map(|change| PathBuf::from(&change.path))
+        .collect();
+    let delivery = setup.plan_skill_review(
+        &sources,
+        &store.state.approved_local,
+        &explicit_file_modes,
+        render,
+    )?;
     store
         .state
         .mark_reviewed(&name, scope, delivery.tools.clone());

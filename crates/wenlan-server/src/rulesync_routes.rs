@@ -584,6 +584,7 @@ enum RegistryInputs<'a> {
     Review {
         approved: &'a BTreeMap<PathBuf, ManagedSkill>,
         sources: &'a BTreeMap<SavedSkillTool, ApprovedSkills>,
+        explicit_file_modes: &'a BTreeSet<PathBuf>,
     },
 }
 
@@ -1975,6 +1976,7 @@ impl Setup {
         &self,
         reviewed: &BTreeMap<SavedSkillTool, ApprovedSkills>,
         approved: &BTreeMap<PathBuf, ManagedSkill>,
+        explicit_file_modes: &BTreeSet<PathBuf>,
         render: impl Fn(&str, &SkillPackages) -> Result<SkillFiles>,
     ) -> Result<SkillReviewDelivery> {
         let mut report = report("Checked the approved skill's delivery");
@@ -2008,6 +2010,7 @@ impl Setup {
         let inputs = RegistryInputs::Review {
             approved,
             sources: reviewed,
+            explicit_file_modes,
         };
         let plan = self.plan_registry(
             &root,
@@ -2084,15 +2087,23 @@ impl Setup {
         inputs: RegistryInputs<'_>,
         render: impl Fn(&str, &SkillPackages) -> Result<SkillFiles>,
     ) -> Result<RegistryPlan> {
-        let (installed, reviewed, approved) = match inputs {
+        let (installed, reviewed, approved, explicit_file_modes) = match inputs {
             RegistryInputs::Sync(saved) => (
                 rulesync_registry::installed_sources()?,
                 None,
                 &saved.folders,
+                None,
             ),
-            RegistryInputs::Review { sources, approved } => {
-                (BTreeMap::new(), Some(sources), approved)
-            }
+            RegistryInputs::Review {
+                sources,
+                approved,
+                explicit_file_modes,
+            } => (
+                BTreeMap::new(),
+                Some(sources),
+                approved,
+                Some(explicit_file_modes),
+            ),
         };
         let reviewing = reviewed.is_some();
         let scanner = SkillHome::open(&self.home)?;
@@ -2264,6 +2275,7 @@ impl Setup {
                     files: &delivery.files,
                     modes: local.and_then(|local| local.modes.get(name)),
                     snapshot: current.as_ref(),
+                    explicit_file_modes,
                 };
                 let planned =
                     plan_registry_entries(root, manifest, blocked, result, package, reviewing);
@@ -2772,6 +2784,7 @@ struct RegistryPackage<'a> {
     files: &'a SkillFiles,
     modes: Option<&'a SkillModes>,
     snapshot: Option<&'a ManagedSkill>,
+    explicit_file_modes: Option<&'a BTreeSet<PathBuf>>,
 }
 
 fn skill_case_alias(root: &FileRoot, path: &Path) -> std::io::Result<Option<PathBuf>> {
@@ -2890,6 +2903,7 @@ fn plan_registry_entries(
         files,
         modes,
         snapshot,
+        explicit_file_modes,
     } = package;
     let mut directories = BTreeMap::from([(folder.to_owned(), None)]);
     if let Some(modes) = modes {
@@ -2993,9 +3007,27 @@ fn plan_registry_entries(
             "{} is not a safe file",
             path.display()
         );
-        let desired = match modes.and_then(|modes| modes.files.get(relative)) {
-            Some(mode) => Snapshot::file_with_permissions(bytes.clone(), *mode),
-            None => with_bytes(&seen, bytes.clone()),
+        let source_mode = modes.and_then(|modes| modes.files.get(relative)).copied();
+        let peer_mode = match &seen {
+            Snapshot::File { mode, .. } => Some(*mode),
+            // A case-only rename may have an absent plan entry even though it
+            // replaces a file at the alternate spelling.
+            Snapshot::Absent if reviewing && skill_case_alias(root, &path)?.is_some() => {
+                match root.read(&path, false)? {
+                    Snapshot::File { mode, .. } => Some(mode),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        let mode = if explicit_file_modes.is_some_and(|paths| paths.contains(relative)) {
+            source_mode.or(peer_mode)
+        } else {
+            peer_mode.or(source_mode)
+        };
+        let desired = match mode {
+            Some(mode) => Snapshot::file_with_permissions(bytes.clone(), mode),
+            None => Snapshot::file(bytes.clone()),
         };
         entry(
             path,
@@ -4871,6 +4903,49 @@ mod tests {
             fs::read_to_string(destination.join("SKILL.md")).unwrap(),
             edited
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rulesync_step1g_shared_content_edit_keeps_the_peers_file_mode() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let f = Fixture::new();
+        let source = write_step1d_skill(&f, ".claude", "Original body.", "# Helper\n");
+        let peer = write_step1d_skill(&f, ".codex", "Original body.", "# Helper\n");
+        let source_asset = source.join("helper.py");
+        let peer_asset = peer.join("helper.py");
+        fs::set_permissions(&source_asset, fs::Permissions::from_mode(0o666)).unwrap();
+        fs::set_permissions(&peer_asset, fs::Permissions::from_mode(0o600)).unwrap();
+        for (folder, mode) in [(&source, 0o666), (&peer, 0o600)] {
+            let untouched = folder.join("untouched.txt");
+            fs::write(&untouched, b"Same original contents\n").unwrap();
+            fs::set_permissions(untouched, fs::Permissions::from_mode(mode)).unwrap();
+        }
+        f.adopt_from_plan();
+        allow_fixture_tool_folders(&f);
+        let edited = b"# Updated helper\n";
+        fs::write(&source_asset, edited).unwrap();
+        let preview = share_step1e_skill(&f);
+        let change = preview
+            .files
+            .iter()
+            .find(|change| Path::new(&change.path) == Path::new(".codex/skills/example/helper.py"))
+            .unwrap();
+        assert_eq!(change.before.as_ref().unwrap().permissions, "0600");
+        assert_eq!(change.after.as_ref().unwrap().permissions, "0600");
+        assert!(!preview
+            .files
+            .iter()
+            .any(|change| change.path.ends_with("untouched.txt")));
+        assert!(f.sync_with("").blocked.is_empty());
+        assert_eq!(fs::read(&peer_asset).unwrap(), edited);
+        for path in [peer_asset, peer.join("untouched.txt")] {
+            assert_eq!(
+                fs::metadata(path).unwrap().permissions().mode() & 0o7777,
+                0o600
+            );
+        }
     }
 
     #[cfg(unix)]

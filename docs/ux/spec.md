@@ -957,7 +957,9 @@ and wait for evidence that people need them.
   are eligible for delivery.
   Before approval, the review lists each file or directory the chosen scope
   will create, change, or remove. It also names any saved tool versions the
-  shared version will replace. If a destination is blocked or the delivery
+  shared version will replace. Content edits keep each existing file's
+  permissions. The review shows any planned permission change per destination.
+  If a destination is blocked or the delivery
   plan changes before confirmation, Wenlan asks for a fresh review. A tool
   enrolled later gets its own delivery proposal for a previously reviewed
   shared skill. On a case-insensitive volume, a case-only rename is shown

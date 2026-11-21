@@ -482,7 +482,17 @@ fn skill_review_for_a_person(
                             one_line(&after.permissions)
                         )
                     }
-                    (None, Some(_), Some(_)) => format!("Overwrite {path}"),
+                    (None, Some(before), Some(after)) => {
+                        let mut label = format!("Overwrite {path}");
+                        if before.permissions != after.permissions {
+                            label.push_str(&format!(
+                                ", mode {} → {}",
+                                one_line(&before.permissions),
+                                one_line(&after.permissions)
+                            ));
+                        }
+                        label
+                    }
                     (None, None, None) => continue,
                 };
                 out.push_str(&format!("- {change}\n"));
@@ -1479,8 +1489,14 @@ mod tests {
                 SkillDeliveryChange {
                     renamed_from: None,
                     path: ".claude/skills/meeting-notes/helper.py".into(),
-                    before: Some(file("Old variant")),
-                    after: Some(file("Shared version")),
+                    before: Some(SkillDeliveryFile {
+                        permissions: "0600".into(),
+                        ..file("Old variant")
+                    }),
+                    after: Some(SkillDeliveryFile {
+                        permissions: "0666".into(),
+                        ..file("Shared version")
+                    }),
                 },
                 SkillDeliveryChange {
                     renamed_from: None,
@@ -1509,7 +1525,8 @@ mod tests {
             cleared_overrides: vec![SavedSkillTool::ClaudeCode],
         };
         let rendered = skill_review_for_a_person(&proposal, Some(&delivery));
-        assert!(rendered.contains("- Overwrite .claude/skills/meeting-notes/helper.py\n"));
+        assert!(rendered
+            .contains("- Overwrite .claude/skills/meeting-notes/helper.py, mode 0600 → 0666\n"));
         assert!(rendered.contains("- Remove .codex/skills/meeting-notes/examples/old.md\n"));
         assert!(rendered.contains("- Remove .codex/skills/meeting-notes/examples (directory)\n"));
         assert!(rendered.contains("Replace the saved Claude Code version with the shared version."));
