@@ -141,7 +141,10 @@ and wait for evidence that people need them.
   `import_pending_claims_before_posting_and_leaves_a_replacement_pending`, and
   `import_pending_refuses_symlink_files_and_archive_directories`.
 - **UX-HAND-7** `shipped` A handoff changes the Brief only. It does not write
-  a memory, any AI tool's memory files, or `AGENTS.md`.
+  a memory, a page, any AI tool's memory files, or `AGENTS.md`. Pages stay
+  current another way: a memory change makes the pages that cite it follow,
+  and at night Wenlan checks the pages a session read through recall and
+  changes only a sentence that a new decision contradicts.
   Test `ux_hand_7_handoff_writes_no_memory_rows`; the project-file test bounds
   the offline write to the one handoff file.
 - **UX-HAND-8** `planned` In a team Space, only a writer may hand off. Private
