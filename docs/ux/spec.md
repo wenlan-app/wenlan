@@ -666,7 +666,16 @@ and wait for evidence that people need them.
   changes the answer later. Suggested edits to the person's own skills are still
   asked one by one. The ask, a No and the switch are about what Wenlan takes
   from pages; a rule the person wrote themselves needs none of them
-  (UX-SKILL-10).
+  (UX-SKILL-10). A line nobody sees before every AI tool reads it (a later
+  Space covered by that one yes, or a line new on a night in a Space that
+  already said yes) goes only when what it quotes traces to the person: a
+  sentence they wrote, edited or accepted, one citing a memory that keeps
+  their own words, or one on a page that follows only their pages. A line
+  quoting only what an AI wrote from its own reading is left out; one the
+  person saw on the ask counts by their yes.
+  Tests `after_the_library_yes_a_line_an_ai_wrote_does_not_reach_every_tool_unseen`
+  and `a_rule_from_a_following_page_changes_the_night_after_that_page_catches_up`.
+  原文（後一段）：「上述提到的問題都要修好」（2026-11-21，設計 v5 F4「推斷的點升規則前對到你的原句」）。
   原文：「可以」（2026-11-15 17:33Z，回覆[草圖](https://claude.ai/artifact/EqEaFuewDn2qBRyBrG7eHn)與「put the first ask at the top of the Space page, asked only once?」）；「而且儘量不用一直問用戶，或著第一次問，後面就不問了」（2026-11-15 20:21Z）；「第一次在空間那的改動，要有選項以後都自動，勾掉就是不要」（2026-11-15 21:24Z）。
 - **UX-SKILL-2** `shipped` The accepted "How I work" page is an ordinary
   Wenlan page with Update now, Undo last night and Stop. They sit in a "…"

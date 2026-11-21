@@ -1503,3 +1503,24 @@ fn ux_skill_8_a_rule_is_written_into_tool_files_as_words_only() {
         );
     }
 }
+
+#[test]
+fn a_quote_finds_the_sentences_it_was_taken_from() {
+    let sentences = [
+        "# Review",
+        "Run the narrow test first [1].",
+        "Ship on Fridays only after a dry run.",
+    ];
+    assert_eq!(
+        sentences_quoted("run the narrow test first", &sentences),
+        vec![1]
+    );
+    assert_eq!(
+        sentences_quoted(
+            "Run the narrow test first. Ship on Fridays only after a dry run.",
+            &sentences
+        ),
+        vec![1, 2]
+    );
+    assert!(sentences_quoted("Deploy on Mondays.", &sentences).is_empty());
+}

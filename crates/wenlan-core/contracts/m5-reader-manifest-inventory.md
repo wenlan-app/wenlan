@@ -1921,7 +1921,7 @@ carrying the authority of agreement.
 | `core/sentence_fix.rs::ask_ai_to_fix` | `pub` | no | **yes** | `server/sentence_routes.rs::spawn_ai_fix` | `core/sentences.rs::load_page`, `core/sentences.rs::source_states` |
 | `core/sentences.rs::accept_sentence_proposal` | `pub` | no | **yes** | `server/sentence_routes.rs::handle_accept_sentence_proposal` | `core/sentences.rs::load_page` |
 | `core/sentences.rs::flag_sentence` | `pub` | no | **yes** | `server/sentence_routes.rs::handle_flag_sentence` | `core/sentences.rs::load_page` |
-| `core/sentences.rs::page_sentences` | `pub` | no | **yes** | `server/sentence_routes.rs::handle_get_page_sentences` | `core/sentences.rs::load_page`, `core/sentences.rs::source_states` |
+| `core/sentences.rs::page_sentences` | `pub` | no | **yes** | `server/sentence_routes.rs::handle_get_page_sentences`, `server/skill_grow.rs::of` | `core/sentences.rs::load_page`, `core/sentences.rs::source_states` |
 | `core/sentences.rs::propose_as` | `private` | no | no | — | `core/sentences.rs::load_page` |
 | `core/sentences.rs::reject_sentence_proposal` | `pub` | no | **yes** | `server/sentence_routes.rs::handle_reject_sentence_proposal` | `core/sentences.rs::load_page` |
 | `core/sentences.rs::revert_ai_write` | `pub` | no | **yes** | `server/sentence_routes.rs::handle_revert_sentences` | `core/sentences.rs::load_page` |
