@@ -791,6 +791,18 @@ Options:
 - `--text <TEXT>`: A local JSON file containing edited title and body.
 - `--redactions <REDACTIONS>`: A local JSON object mapping personal source IDs to edited title and body. Sources still require selection during review.
 
+#### `wenlan team withdraw`
+
+Withdraw a team item and its revisions from this host.
+
+```text
+wenlan team withdraw [OPTIONS] <ITEM_ID>
+```
+
+Arguments:
+
+- `<ITEM_ID>`
+
 #### `wenlan team create-space`
 
 Create a group for team pages and memories without sharing a personal Space.

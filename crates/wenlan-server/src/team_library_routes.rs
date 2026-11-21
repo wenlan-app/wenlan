@@ -355,6 +355,7 @@ pub(super) fn routes() -> Router<TeamState> {
     let router = get(brief).install(router, "/team/v1/library/brief");
     let router = post(preview).install(router, "/team/v1/library/preview");
     let router = post(publish).install(router, "/team/v1/library/publish");
+    let router = post(withdraw).install(router, "/team/v1/library/withdraw/{id}");
     let router = post(create_group).install(router, "/team/v1/library/spaces");
     let router = put(set_grant).install(router, "/team/v1/library/members/{id}/grant");
     let router = post(issue_key).install(router, "/team/v1/library/tool-keys");
@@ -535,6 +536,26 @@ async fn publish(
         }
         .await,
     )
+}
+
+async fn withdraw(
+    State(state): State<TeamState>,
+    Extension(member): Extension<Member>,
+    Extension(credential): Extension<team::Credential>,
+    headers: HeaderMap,
+    UrlPath(id): UrlPath<String>,
+) -> MemberResponse {
+    let result = async {
+        human(&state, &credential, &headers)?;
+        let host = host(&state)?;
+        host.migrate(&state).await?;
+        host.library.withdraw(&member.id, &id)
+    }
+    .await;
+    match result {
+        Ok(()) => MemberResponse::status(StatusCode::NO_CONTENT),
+        Err(error) => failure(error),
+    }
 }
 
 async fn create_group(
@@ -931,6 +952,10 @@ pub(super) async fn terminal_action(
                 }
             }
             Ok(TeamTerminalReply::Published { receipt })
+        }
+        TeamTerminalAction::Withdraw { item_id } => {
+            host.library.withdraw(&owner, &item_id)?;
+            Ok(TeamTerminalReply::Done)
         }
         TeamTerminalAction::CreateSpace { name, restricted } => {
             let space = host.library.create_group(&owner, &name, restricted)?;

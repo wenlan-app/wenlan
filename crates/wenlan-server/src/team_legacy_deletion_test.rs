@@ -269,12 +269,22 @@ async fn permanent_source_removal(mode: HostedMode) {
 }
 
 #[tokio::test]
-async fn team_legacy_deletion_after_a_host_forgets_the_source() {
+async fn team_legacy_deletion_after_forget_and_withdraw() {
     let (mut f, db) = fixture_with_hosted_mode(HostedMode::Migrated).await;
+    let withdrawn = create_folder_test_page(&db, "Withdrawn team note", "authored")
+        .await
+        .id;
     let source = "fixture-legacy-source";
     let id = create_dependent_page(&db, source).await;
     sync_hosted_test_folder(&f, &db).await;
     let path = held_path(&f, &id).await;
+    let withdrawn_path = held_path(&f, &withdrawn).await;
+    let (owner, _) = team::owner_key(&f.state.team_path, "Owner").unwrap();
+    let session = browser_session(&f, &owner);
+    let (status, body) = review(&f, &session, &format!("withdraw/{withdrawn}"), Value::Null).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    assert_removed_from_legacy(&f, &withdrawn, &withdrawn_path).await;
+    assert_eq!(library_page(&f, &withdrawn).await, StatusCode::NOT_FOUND);
     assert_eq!(library_page(&f, &id).await, StatusCode::OK);
     assert_eq!(
         db.forget_memory(source, "person", "fixture").await.unwrap(),
@@ -288,4 +298,6 @@ async fn team_legacy_deletion_after_a_host_forgets_the_source() {
     f.set_hosted_mode(HostedMode::Migrated);
     assert_removed_from_legacy(&f, &id, &path).await;
     assert_eq!(library_page(&f, &id).await, StatusCode::NOT_FOUND);
+    assert_removed_from_legacy(&f, &withdrawn, &withdrawn_path).await;
+    assert_eq!(library_page(&f, &withdrawn).await, StatusCode::NOT_FOUND);
 }
