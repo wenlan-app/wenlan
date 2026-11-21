@@ -122,6 +122,7 @@ pub mod store;
 pub mod synthesis;
 pub mod tags;
 pub mod team;
+pub mod team_library;
 pub(crate) mod temporal_query;
 #[cfg(test)]
 pub(crate) mod test_log;
