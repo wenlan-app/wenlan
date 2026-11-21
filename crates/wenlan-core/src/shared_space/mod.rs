@@ -609,6 +609,36 @@ pub fn team_names_by_space(path: &Path) -> Result<BTreeMap<String, Option<String
     Ok(out)
 }
 
+/// The Spaces this person shares with other people, each with the folder it
+/// is shared through: a Space synced with a team server or hosted for a
+/// team, and a Space shared by folder whose `space.json` lists a member other
+/// than this person (their own other computers share their id). A folder
+/// whose `space.json` is missing or cannot be read counts as shared: nothing
+/// says it is not. A folder only this person is in does not.
+pub fn spaces_shared_with_others(path: &Path) -> Result<BTreeMap<String, PathBuf>, WenlanError> {
+    let store = read_settings(path)?;
+    let mut out = BTreeMap::new();
+    for (space, settings) in &store.spaces {
+        let folder = PathBuf::from(&settings.folder);
+        let shared = settings.host.is_some()
+            || settings.hosted
+            || match read_space_file(&folder) {
+                Ok(Some(file)) => file
+                    .members
+                    .iter()
+                    .any(|member| member.id != settings.member_id),
+                // No `space.json` where the settings say it is (an unplugged
+                // drive, a moved folder) tells nothing: only a file that can
+                // be read and lists nobody else is personal.
+                Ok(None) | Err(_) => true,
+            };
+        if shared {
+            out.insert(space.clone(), folder);
+        }
+    }
+    Ok(out)
+}
+
 /// The team this person owns on another computer: its server's url and
 /// their key. `None` when they own none.
 pub fn owned_team(path: &Path) -> Result<Option<(String, String)>, WenlanError> {

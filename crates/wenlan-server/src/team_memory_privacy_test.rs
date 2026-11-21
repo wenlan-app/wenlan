@@ -1028,3 +1028,38 @@ async fn hosted_forwarding_does_not_admit_private_readers() {
         assert_eq!(status, StatusCode::FORBIDDEN, "{path}");
     }
 }
+
+/// A preference the person said once, kept outside any Space, is theirs: a
+/// team member's reads (rules, recall) never return it, while the person's
+/// own tool reading the same Space does (UX-CHAT-5).
+#[tokio::test]
+async fn hosted_reads_never_return_the_persons_preference_kept_outside_any_space() {
+    const PREFERENCE: &str = "I prefer small commits with a clear message.";
+    let (app, db, _scratch) = fixture().await;
+    db.upsert_documents(vec![RawDocument {
+        source: "memory".into(),
+        source_id: "mem_pref".into(),
+        title: PREFERENCE.into(),
+        content: PREFERENCE.into(),
+        memory_type: Some("preference".into()),
+        confirmed: Some(true),
+        ..Default::default()
+    }])
+    .await
+    .unwrap();
+    // The person's own tool is given it ...
+    let (status, own) = request(&app, Method::GET, "/api/skills/rules", Value::Null, false).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(own.to_string().contains(PREFERENCE), "{own}");
+    // ... a team member is not, by rules or by recall.
+    let (status, rules) = request(&app, Method::GET, "/api/skills/rules", Value::Null, true).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(!rules.to_string().contains("small commits"), "{rules}");
+    let recall = post_as_member(
+        &app,
+        "/api/memory/search",
+        json!({"query": "small commits clear message"}),
+    )
+    .await;
+    assert!(!recall.to_string().contains("small commits"), "{recall}");
+}
