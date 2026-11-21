@@ -391,7 +391,8 @@ pub(super) async fn restore_member_projection_on(
         &page.content,
         projected_content,
         &citations,
-    ) else {
+    )?
+    else {
         return Ok(None);
     };
     Ok(Some((restored, serde_json::to_string(&citations)?)))

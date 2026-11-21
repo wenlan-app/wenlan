@@ -70,6 +70,14 @@ impl MemberResponse {
                 return Self::project_problem(*status, body);
             }
             ServerError::NotFound(_) => StatusCode::NOT_FOUND,
+            ServerError::Conflict(message)
+                if message == wenlan_core::citations::MEMBER_CITATION_CONFLICT =>
+            {
+                return Self::problem(
+                    StatusCode::CONFLICT,
+                    wenlan_core::citations::MEMBER_CITATION_CONFLICT,
+                );
+            }
             ServerError::Conflict(_) => StatusCode::CONFLICT,
             ServerError::ValidationError(_) | ServerError::QualityGateRejected { .. } => {
                 StatusCode::UNPROCESSABLE_ENTITY

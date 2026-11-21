@@ -528,15 +528,14 @@ async fn stage_page_revision_card_inner(
         Some(&checked_scope)
     };
     crate::export::provenance::validate_canonical_page_content(content)?;
-    let restored = member_basis
-        .filter(|basis| basis.member_projected_body)
-        .and_then(|_| {
-            crate::citations::restore_unchanged_member_sentence_markers(
-                &page.content,
-                content,
-                &page.citations,
-            )
-        });
+    let restored = match member_basis.filter(|basis| basis.member_projected_body) {
+        Some(_) => crate::citations::restore_unchanged_member_sentence_markers(
+            &page.content,
+            content,
+            &page.citations,
+        )?,
+        None => None,
+    };
     let restored_citations = restored
         .as_ref()
         .map(|(_, citations)| serde_json::to_string(citations))

@@ -362,7 +362,15 @@ fn rewrite_keeps_space_pages_and_hides_other_sources() {
     ];
     let (out, out_basis) = rewrite_sources(&citations, &basis, &ctx(&space_pages));
     assert_eq!(out.len(), 1);
-    assert_eq!(out[0], citations[0]);
+    // A cited version may predate the target's stay in this Space.
+    assert_eq!(
+        out[0],
+        Citation {
+            marker: 1,
+            label: citations[0].label.clone(),
+            locator: Locator::Other("wenlan:page_in".into()),
+        }
+    );
     assert_eq!(
         out_basis,
         vec![Basis {

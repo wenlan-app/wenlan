@@ -132,6 +132,16 @@ fn page_label(title: &str) -> String {
     format!("[[{}]]", clean(title))
 }
 
+/// A version observed before the target entered this Space is not evidence
+/// available to its members. Keep the shared page identity but omit the
+/// host-local version number, for citations and basis lines alike.
+fn shared_locator(locator: &Locator) -> Locator {
+    match locator {
+        Locator::Wenlan { id, .. } => Locator::Other(format!("wenlan:{id}")),
+        locator => locator.clone(),
+    }
+}
+
 /// The sources block as it may be shared.
 pub fn rewrite_sources(
     citations: &[Citation],
@@ -153,7 +163,7 @@ pub fn rewrite_sources(
                 return Some(Citation {
                     marker: markers[&citation.marker],
                     label: page_label(title),
-                    locator: citation.locator.clone(),
+                    locator: shared_locator(&citation.locator),
                 });
             }
             None
@@ -169,13 +179,7 @@ pub fn rewrite_sources(
             let title = ctx.space_pages.get(id)?;
             Some(Basis {
                 label: page_label(title),
-                // A version observed before the target entered this Space is
-                // not evidence available to its members. Keep the shared page
-                // identity but omit the host-local version number.
-                locator: match &line.locator {
-                    Locator::Wenlan { id, .. } => Locator::Other(format!("wenlan:{id}")),
-                    locator => locator.clone(),
-                },
+                locator: shared_locator(&line.locator),
             })
         })
         .collect();

@@ -7,6 +7,8 @@ use wenlan_core::read_scope::ReadScope;
 
 #[path = "team_member_view_round5_test.rs"]
 mod round5;
+#[path = "team_member_view_round6_test.rs"]
+mod round6;
 
 const REPO: &str = "ROUND4_HOST_REPO";
 const CODE_FILE: &str = "ROUND4_HOST_CODE.rs";
