@@ -434,6 +434,7 @@ enum BatchMode {
     Adopt,
     Extend,
     Continue,
+    Restore,
     SealRestore { extension_only: bool },
     Review,
     Settings,
@@ -1154,8 +1155,8 @@ impl Setup {
         let adopting = matches!(mode, BatchMode::Adopt);
         let extending = matches!(mode, BatchMode::Extend);
         let reviewing = matches!(mode, BatchMode::Review);
-        let sealing_restore = matches!(mode, BatchMode::SealRestore { .. });
-        let stop_on_conflict = !matches!(mode, BatchMode::Continue | BatchMode::SealRestore { .. });
+        let restoring = matches!(mode, BatchMode::Restore | BatchMode::SealRestore { .. });
+        let stop_on_conflict = !restoring && !matches!(mode, BatchMode::Continue);
         if operations.is_empty() {
             if adopting {
                 manifest.adopted = true;
@@ -1163,9 +1164,9 @@ impl Setup {
             }
             return Ok(Vec::new());
         }
-        // Skill approvals include their parents. Restore prepares the
-        // directories before it attempts to seal their modes.
-        let operations = if reviewing || sealing_restore {
+        // Skill approvals include their parents. Restore creates only the
+        // directories explicitly recorded as removed by a managed delivery.
+        let operations = if reviewing || restoring {
             operations
         } else {
             with_missing_parents(root, operations, extending.then_some(&manifest.backup))?
@@ -1442,7 +1443,7 @@ impl Setup {
         let moves = plan_case_moves(root, operations.iter())?;
         let move_out = take_case_sources(&moves, &mut operations);
         let mut blocked = BTreeSet::new();
-        for (path, status) in self.apply_batch(root, manifest, move_out, BatchMode::Continue)? {
+        for (path, status) in self.apply_batch(root, manifest, move_out, BatchMode::Restore)? {
             if status == ApplyOutcome::Applied {
                 result.written.push(path.display().to_string());
             } else {
@@ -1470,7 +1471,7 @@ impl Setup {
             .into_iter()
             .partition(|op| op.desired.is_directory());
         for (operations, mode) in [
-            (contents, BatchMode::Continue),
+            (contents, BatchMode::Restore),
             (directories, BatchMode::SealRestore { extension_only }),
         ] {
             for (path, status) in self.apply_batch(root, manifest, operations, mode)? {
@@ -1533,7 +1534,7 @@ impl Setup {
             .collect();
         prepare.sort_by_key(|op| op.path.components().count());
         let mut blocked = BTreeSet::new();
-        for (path, status) in self.apply_batch(root, manifest, prepare, BatchMode::Continue)? {
+        for (path, status) in self.apply_batch(root, manifest, prepare, BatchMode::Restore)? {
             if status != ApplyOutcome::Applied {
                 result.blocked.push(format!(
                     "{} changed while preparing restore",
@@ -5221,6 +5222,47 @@ mod tests {
         let restored = restored.unwrap();
         assert!(restored.blocked.is_empty(), "{restored:?}");
         assert_eq!(after, before);
+    }
+
+    #[test]
+    fn rulesync_step1g_restore_keeps_a_persons_directory_deletion() {
+        let f = Fixture::new();
+        fs::remove_dir_all(f.setup.home.join(".codex")).unwrap();
+        let folder = write_step1d_skill(&f, ".claude", "Original body.", "# Helper\n");
+        let docs = folder.join("docs");
+        let guide = docs.join("guide.md");
+        fs::create_dir(&docs).unwrap();
+        fs::write(&guide, b"Original guide\n").unwrap();
+        f.adopt_from_plan();
+        allow_fixture_tool_folders(&f);
+        fs::remove_file(&guide).unwrap();
+        share_step1e_skill(&f);
+        assert!(docs.is_dir(), "the approval removed the guide only");
+        fs::remove_dir(&docs).unwrap();
+
+        let restored = f.setup.restore().unwrap();
+
+        assert!(
+            !docs.exists(),
+            "restore recreated the directory the person deleted"
+        );
+        for path in [&docs, &guide] {
+            let relative = path.strip_prefix(&f.setup.home).unwrap();
+            assert!(
+                restored
+                    .blocked
+                    .iter()
+                    .any(|message| message.starts_with(&relative.display().to_string())),
+                "{restored:?}"
+            );
+        }
+        let manifest = f.setup.load().unwrap().expect("backup retained");
+        assert!(manifest
+            .delivered
+            .contains_key(Path::new(".claude/skills/example/docs")));
+        assert!(manifest
+            .delivered
+            .contains_key(Path::new(".claude/skills/example/docs/guide.md")));
     }
 
     #[test]
