@@ -26,6 +26,14 @@ works, or `$wenlan` followed by what you want in plain words, such as
 things up, catching up and ending a session also have their own skills:
 `/capture <memory>`, `/recall <query>`, `/brief`, and `/handoff`.
 
+`wenlan setup` also offers two optional Codex user hooks. It prints the exact
+merged `hooks.json` first and changes nothing until you approve (or explicitly
+run it with `--yes`). The SessionStart hook brings the current Brief's one-line
+items and ids into a new thread. The Stop hook reads Codex's local rollout
+token-count events and, once per session at 80%, asks Codex to run a handoff.
+Existing hooks are preserved, rerunning setup does not duplicate entries, and
+Codex asks you to trust each new hook on first use.
+
 ## Development
 
 After editing `plugin-codex`, reinstall it into Codex's plugin cache:
@@ -40,8 +48,9 @@ to the pinned `npx` version in
 [`bin/wenlan-mcp-runner.sh`](bin/wenlan-mcp-runner.sh). It passes
 `--agent-name codex` so captures are labeled as Codex writes.
 
-The skills under `skills/` are generated. Edit the Claude skill of the same
-name in `plugin/skills/<skill>/SKILL.md`. Workflows hidden from the Claude menu
+The skills under `skills/` and the two scripts under `hooks/` are generated.
+Edit the Claude source of the same name in `plugin/skills/<skill>/SKILL.md` or
+`plugin/hooks/`. Workflows hidden from the Claude menu
 (setup, steep, pages, lint, curate, forget, wiki) are generated as reference files
 under `skills/wenlan/references/`, because Codex cannot hide a skill. Steep loads
 only the needed procedure from `references/steep/`; the bare front-door status

@@ -44,6 +44,8 @@ fn plugin_distribution_contains_required_files() {
         "plugin/hooks/hooks.json",
         "plugin/hooks/check-daemon.sh",
         "plugin/hooks/session-context.sh",
+        "plugin/hooks/brief-context.sh",
+        "plugin/hooks/handoff-reminder.sh",
         "plugin/hooks/stop-check.sh",
         "plugin/hooks/prompt-context.sh",
         "plugin/skills/brief/SKILL.md",
@@ -58,6 +60,38 @@ fn plugin_distribution_contains_required_files() {
     ] {
         assert_file(path);
     }
+}
+
+#[test]
+fn ux_hand_2_stop_reminder_is_wired_to_its_behavioral_test() {
+    let hooks = read_json("plugin/hooks/hooks.json");
+    let stop = &hooks["hooks"]["Stop"][0]["hooks"];
+    assert!(
+        stop.as_array()
+            .is_some_and(|entries| entries.iter().any(|entry| {
+                entry["command"]
+                    .as_str()
+                    .is_some_and(|command| command.ends_with("/handoff-reminder.sh"))
+            })),
+        "the 80% reminder must run at end-of-turn through Stop"
+    );
+    let reminder =
+        fs::read_to_string(repo_root().join("plugin/hooks/handoff-reminder.sh")).unwrap();
+    assert!(reminder.contains("used < 80"));
+    assert!(reminder.contains("O_EXCL"));
+    assert_file("plugin/hooks/test-handoff-reminder.sh");
+    assert_file("plugin-codex/hooks/handoff-reminder.sh");
+}
+
+#[test]
+fn ux_hand_5_session_start_brief_is_wired_to_its_behavioral_test() {
+    let hooks = read_json("plugin/hooks/hooks.json").to_string();
+    assert!(hooks.contains("brief-context.sh"));
+    let brief = fs::read_to_string(repo_root().join("plugin/hooks/brief-context.sh")).unwrap();
+    assert!(brief.contains("/api/brief"));
+    assert!(brief.contains("out[:8000]"));
+    assert_file("plugin/hooks/test-brief-context.sh");
+    assert_file("plugin-codex/hooks/brief-context.sh");
 }
 
 #[test]

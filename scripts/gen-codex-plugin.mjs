@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Generates every Codex skill (plugin-codex/skills/<skill>/SKILL.md and
-// agents/openai.yaml) from the Claude skill of the same name plus
-// plugin-codex/overlay.json. A `hidden_routed` skill (hidden from the Claude
+// Generates every Codex skill plus the shared SessionStart/Stop hook scripts
+// from the Claude plugin and plugin-codex/overlay.json. A `hidden_routed` skill
+// (hidden from the Claude
 // menu, reached through /wenlan) becomes a reference file instead,
 // plugin-codex/skills/<codex_reference>, with no frontmatter and no
 // openai.yaml: Codex cannot hide a skill from the user, so the wenlan skill
@@ -35,6 +35,7 @@ import { dirname, relative, resolve } from "node:path";
 
 const OVERLAY_PATH = "plugin-codex/overlay.json";
 const CONTRACT_PATH = "plugin-contract.json";
+const SHARED_HOOK_FILES = ["brief-context.sh", "handoff-reminder.sh"];
 
 const CODEX_RESOLVER_BLOCK = [
   "# The resolver ships inside the installed plugin; the relative path only",
@@ -393,6 +394,12 @@ export function generateAll(root) {
       supporting = finish(name, supporting, contract);
       outputs.push({ path: `${codexRoot}/skills/${ref.replace(/\.md$/, "")}/${file}`, text: supporting });
     }
+  }
+  for (const file of SHARED_HOOK_FILES) {
+    outputs.push({
+      path: `${codexRoot}/hooks/${file}`,
+      text: readFileSync(resolve(root, claudeRoot, "hooks", file), "utf8"),
+    });
   }
   return outputs;
 }

@@ -144,6 +144,8 @@ enum Commands {
     },
     /// Read the current Space Brief, optionally with related context.
     Brief(commands::brief::BriefArgs),
+    /// Hand off work through the Space Brief; keeps a project file if Wenlan is down.
+    Handoff(commands::handoff::HandoffArgs),
     /// List pages or open one by title; read, write, rename, move, delete or restore one (read, write, rename, delete, move, history, restore, links, lock, unlock).
     #[command(args_conflicts_with_subcommands = true)]
     Pages {
@@ -261,7 +263,10 @@ enum Commands {
 /// groups are the short help; `wenlan help all` writes out every group.
 const HELP_GROUPS: &[(&str, &[&str])] = &[
     ("Start", &["setup", "init", "open", "status"]),
-    ("Daily", &["capture", "recall", "brief", "rules", "pages"]),
+    (
+        "Daily",
+        &["capture", "recall", "brief", "handoff", "rules", "pages"],
+    ),
     ("Team", &["team", "login"]),
     (
         "Running",
@@ -289,6 +294,7 @@ const FIRST_PAGE_LINES: &[(&str, &str)] = &[
     ("capture", "Save something"),
     ("recall", "Find memories and pages"),
     ("brief", "Read the Space Brief"),
+    ("handoff", "Hand off work to the next session"),
     ("rules", "Read the working rules"),
     ("pages", "List, read or write pages"),
     ("team", "Start, invite, or join a team"),
@@ -531,7 +537,7 @@ async fn main() -> anyhow::Result<ExitCode> {
     let is_brief_update = matches!(
         &cli.command,
         Commands::Brief(args) if args.is_update()
-    );
+    ) || matches!(&cli.command, Commands::Handoff(_));
     let is_outbox = matches!(&cli.command, Commands::Outbox { .. });
     // A rule for every Space, and the removal of a rule by its id, are not
     // for the Space this folder or the default points at: they carry a
@@ -802,6 +808,16 @@ async fn main() -> anyhow::Result<ExitCode> {
                 args,
                 effective_cli_space,
                 agent_name.as_deref(),
+            )
+            .await?
+        }
+        Commands::Handoff(args) => {
+            commands::handoff::run(
+                &client,
+                format,
+                cli.quiet,
+                args,
+                effective_cli_space.as_deref(),
             )
             .await?
         }

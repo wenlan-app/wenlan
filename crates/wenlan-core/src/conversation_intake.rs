@@ -66,7 +66,12 @@ pub struct FoundConversation {
     pub said: Vec<String>,
     /// The end of the AI's last reply.
     pub last_reply: String,
+    /// The latest person message or AI reply, paired with `last_content_at`.
+    pub last_content: String,
     pub first_at: i64,
+    /// Time of the latest person message or AI reply, excluding metadata and
+    /// tool-only events.
+    pub last_content_at: i64,
     /// The conversation's own last time. A file can be touched long after.
     pub last_at: i64,
     /// Started by a program, or a sub-task of another conversation.
@@ -430,12 +435,13 @@ pub fn read_claude_code(path: &Path) -> Option<FoundConversation> {
     }
     let on_behalf = entries.iter().any(|e| e.projects_user_turn.is_some());
     let mut cwds: HashMap<String, usize> = HashMap::new();
-    let (mut first_at, mut last_at) = (None::<i64>, None::<i64>);
-    let (mut said, mut last_reply) = (Vec::new(), String::new());
+    let (mut first_at, mut last_at, mut last_content_at) = (None::<i64>, None::<i64>, None::<i64>);
+    let (mut said, mut last_reply, mut last_content) = (Vec::new(), String::new(), String::new());
     let (mut automated, mut branch, mut id) = (false, None, None);
     let mut touch = Touched::default();
     for entry in entries {
-        if let Some(at) = entry.timestamp.as_deref().and_then(unix_seconds) {
+        let at = entry.timestamp.as_deref().and_then(unix_seconds);
+        if let Some(at) = at {
             first_at = Some(first_at.map_or(at, |f| f.min(at)));
             last_at = Some(last_at.map_or(at, |l| l.max(at)));
         }
@@ -476,6 +482,12 @@ pub fn read_claude_code(path: &Path) -> Option<FoundConversation> {
                 if let Some(text) = typed {
                     touch.ids_in(&text);
                     said.push(cut(&text, MAX_SAID_CHARS));
+                    if let Some(at) = at {
+                        if last_content_at.is_none_or(|last| at >= last) {
+                            last_content = cut_end(&text, MAX_REPLY_CHARS);
+                        }
+                        last_content_at = Some(last_content_at.map_or(at, |last| last.max(at)));
+                    }
                 }
             }
             Some("assistant") => {
@@ -485,6 +497,12 @@ pub fn read_claude_code(path: &Path) -> Option<FoundConversation> {
                 }
                 if let Some(text) = texts.into_iter().rev().find(|t| !t.trim().is_empty()) {
                     last_reply = cut_end(text.trim(), MAX_REPLY_CHARS);
+                    if let Some(at) = at {
+                        if last_content_at.is_none_or(|last| at >= last) {
+                            last_content = last_reply.clone();
+                        }
+                        last_content_at = Some(last_content_at.map_or(at, |last| last.max(at)));
+                    }
                 }
             }
             _ => {}
@@ -506,7 +524,9 @@ pub fn read_claude_code(path: &Path) -> Option<FoundConversation> {
         branch: branch.filter(|b| b != "HEAD"),
         said: keep_ends(said),
         last_reply,
+        last_content,
         first_at: first_at.unwrap_or(fallback),
+        last_content_at: last_content_at.unwrap_or(0),
         last_at: last_at.unwrap_or(fallback),
         automated,
         on_behalf,
@@ -526,26 +546,29 @@ struct CodexEntry {
 /// One Codex transcript (`~/.codex/sessions/YYYY/MM/DD/rollout-…jsonl`).
 pub fn read_codex(path: &Path) -> Option<FoundConversation> {
     let (len, lines) = transcript_lines(path)?;
-    let (mut first_at, mut last_at) = (None::<i64>, None::<i64>);
-    let (mut said, mut last_reply) = (Vec::<String>::new(), String::new());
+    let (mut first_at, mut last_at, mut last_content_at) = (None::<i64>, None::<i64>, None::<i64>);
+    let (mut said, mut last_reply, mut last_content) =
+        (Vec::<String>::new(), String::new(), String::new());
     let (mut automated, mut cwd, mut branch, mut id) = (false, None, None, None);
     let mut seen_meta = false;
     let mut touch = Touched::default();
     let text_of = |value: &serde_json::Value| value.as_str().map(str::trim).map(str::to_string);
-    let typed = |text: Option<String>, said: &mut Vec<String>| {
+    let typed = |text: Option<String>, said: &mut Vec<String>| -> bool {
         let Some(text) = text.filter(|t| !t.is_empty() && !injected(t)) else {
-            return;
+            return false;
         };
         // Older Codex records a turn twice: as an event and as a message.
         if said.last().map(String::as_str) != Some(cut(&text, MAX_SAID_CHARS).as_str()) {
             said.push(cut(&text, MAX_SAID_CHARS));
         }
+        true
     };
     for raw in lines {
         let Ok(entry) = serde_json::from_slice::<CodexEntry>(&raw) else {
             continue;
         };
-        if let Some(at) = entry.timestamp.as_deref().and_then(unix_seconds) {
+        let at = entry.timestamp.as_deref().and_then(unix_seconds);
+        if let Some(at) = at {
             first_at = Some(first_at.map_or(at, |f| f.min(at)));
             last_at = Some(last_at.map_or(at, |l| l.max(at)));
         }
@@ -577,7 +600,14 @@ pub fn read_codex(path: &Path) -> Option<FoundConversation> {
                 if let Some(text) = &text {
                     touch.ids_in(text);
                 }
-                typed(text, &mut said);
+                if typed(text, &mut said) {
+                    if let Some(at) = at {
+                        if last_content_at.is_none_or(|last| at >= last) {
+                            last_content = said.last().cloned().unwrap_or_default();
+                        }
+                        last_content_at = Some(last_content_at.map_or(at, |last| last.max(at)));
+                    }
+                }
             }
             // A tool call: `apply_patch` names the files it changes; any
             // call's input (a command, a PR title) can name rule ids.
@@ -610,7 +640,14 @@ pub fn read_codex(path: &Path) -> Option<FoundConversation> {
                     .flatten()
                     .filter(|c| c["type"] == "input_text" || c["type"] == "text")
                     .find_map(|c| text_of(&c["text"]).filter(|t| !t.is_empty()));
-                typed(first, &mut said);
+                if typed(first, &mut said) {
+                    if let Some(at) = at {
+                        if last_content_at.is_none_or(|last| at >= last) {
+                            last_content = said.last().cloned().unwrap_or_default();
+                        }
+                        last_content_at = Some(last_content_at.map_or(at, |last| last.max(at)));
+                    }
+                }
             }
             (Some("response_item"), Some("message")) if p["role"] == "assistant" => {
                 let reply = p["content"]
@@ -622,6 +659,12 @@ pub fn read_codex(path: &Path) -> Option<FoundConversation> {
                 if let Some(reply) = reply {
                     touch.ids_in(&reply);
                     last_reply = cut_end(&reply, MAX_REPLY_CHARS);
+                    if let Some(at) = at {
+                        if last_content_at.is_none_or(|last| at >= last) {
+                            last_content = last_reply.clone();
+                        }
+                        last_content_at = Some(last_content_at.map_or(at, |last| last.max(at)));
+                    }
                 }
             }
             _ => {}
@@ -639,7 +682,9 @@ pub fn read_codex(path: &Path) -> Option<FoundConversation> {
         branch,
         said: keep_ends(said),
         last_reply,
+        last_content,
         first_at: first_at.unwrap_or(fallback),
+        last_content_at: last_content_at.unwrap_or(0),
         last_at: last_at.unwrap_or(fallback),
         automated,
         on_behalf: false,

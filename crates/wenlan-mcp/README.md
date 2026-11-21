@@ -62,7 +62,7 @@ wenlan-mcp --origin-url http://127.0.0.1:7879
 
 ## Tools
 
-The local stdio surface is locked at exactly 64 tools. The table below calls
+The local stdio surface is locked at exactly 65 tools. The table below calls
 out the wiki loop, the primary memory loop, and the unique refinement-review
 queue.
 
@@ -92,6 +92,7 @@ queue.
 | `doc_fix` | For a Space connected to a repository: record a fix to a sentence of the repository's own docs (README, `docs/`, `AGENTS.md`, `CLAUDE.md`, `SKILL.md`) that the code no longer agrees with. The old text must occur once in the file; the fix goes into the wiki pull request for the user to review, and a fix the user declined is refused. `checked` records how many docs were read. Local stdio only. |
 | `thing_map` | Read or change the map of what a conversation is working through (questions, options, reasons, decided or dropped; or a topic tree). Changes name the revision read; points the person wrote change only as proposals. Says nothing to the person. |
 | `brief` | Read the current Space Brief; an optional topic appends separately labeled same-Space context. |
+| `handoff` | Hand off this session's work: add, edit, move, gate, or complete Space Brief items; a stale edit returns a conflict and a repeated operation id counts once. |
 | `update_brief` | Hand off to the next session: replace the summary and add, edit, move, gate, or complete items. Local stdio only. |
 | `capture` | Save one durable memory and return its explicit `source_memory_id`. |
 | `save_source` | Save a document read in another app or on the web (email, Notion or Drive page, Slack thread, article) with its link, so notes cite the original. Saving the same link again replaces the copy. |

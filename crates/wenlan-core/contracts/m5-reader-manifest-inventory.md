@@ -553,6 +553,7 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `GET` | `/api/ambient/status` | main | no | not_applicable | `none` | — | no prose fields |
 | `POST` | `/api/ambient/sweep` | main | no | not_applicable | `none` | — | no prose fields |
 | `PATCH` | `/api/brief` | main | no | not_applicable | `none` | — | BriefUpdateReceipt carries no page prose |
+| `POST` | `/api/handoff` | main | no | not_applicable | `none` | — | HandoffReceipt carries no page prose |
 | `POST` | `/api/brief` | main | yes | automatic | `none` | `handle_read_brief` | Brief.last_session_summary, BriefItem.text, SearchResult.content |
 | `GET` | `/api/brief/history` | main | no | not_applicable | `none` | — | Brief update log: Brief text only, no page prose |
 | `GET` | `/api/brief/history/{version}` | main | no | not_applicable | `none` | — | past Brief snapshot: Brief text only, no page prose |
@@ -1026,6 +1027,7 @@ must be demoted individually with a recorded reason. **Every MCP tool is
 | `steep` | yes | automatic | `none` | tool handler |
 | `theme` | no | not_applicable | `none` | — |
 | `thing_map` | no | not_applicable | `none` | — |
+| `handoff` | yes | automatic | `none` | tool handler |
 | `update_brief` | yes | automatic | `none` | tool handler |
 | `write_page` | yes | automatic | `none` | tool handler |
 | `read_source` | no | not_applicable | `none` | exact file or webpage text; rejects page sources |
@@ -1037,12 +1039,10 @@ must be demoted individually with a recorded reason. **Every MCP tool is
 | `add_rule` | no | not_applicable | `none` | receipt for the rule the tool just sent: status, rule id, the saved-rules page's title and where it was saved from; no other page text |
 | `remove_rule` | no | not_applicable | `none` | receipt: status, the rule id sent and the saved-rules page's title; never the rule's text |
 
-## CLI — all 27 `Commands` variants
+## CLI — all 36 `Commands` variants
 
-From `crates/wenlan-cli/src/main.rs`. The count is 27: `Connect` and
-`Brief` are tuple variants, easy to miss when scanning for brace-shaped
-variants, `Outbox` is the last brace variant before `Entities`, and `Sweep`
-follows `Entities`. The CLI
+From `crates/wenlan-cli/src/main.rs`. `Connect`, `Brief`, and `Handoff` are
+tuple variants, easy to miss when scanning for brace-shaped variants. The CLI
 renders daemon responses, so it inherits the daemon's classification and adds
 the projection-directory reader.
 
@@ -1065,6 +1065,7 @@ the projection-directory reader.
 | `wenlan connect` | yes | automatic | `none` | subcommand renderer |
 | `wenlan recall` | yes | automatic | `none` | subcommand renderer |
 | `wenlan brief` | yes | automatic | `none` | subcommand renderer |
+| `wenlan handoff` | yes | automatic | `none` | subcommand renderer |
 | `wenlan rules` | yes | automatic | `none` | subcommand renderer |
 | `wenlan skills` | yes | automatic | `none` | subcommand renderer |
 | `wenlan pages` | yes | automatic | **`collection` + `named_page`** | enforce_projection_directory_invariant |

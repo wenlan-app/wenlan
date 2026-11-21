@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::route_registry::{get, TrackedRouter};
+use crate::route_registry::{get, post, TrackedRouter};
 use crate::{
     brief_files::project_brief_receipt, error::ServerError, space_header::SpaceHeader,
     state::SharedState, telemetry::TelemetryEvent,
@@ -29,6 +29,7 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
         .route("/api/brief/history", get(handle_brief_history))
         .route("/api/brief/plain", get(handle_brief_plain))
         .route("/api/brief/history/{version}", get(handle_brief_version))
+        .route("/api/handoff", post(handle_handoff))
 }
 
 const HISTORY_DEFAULT_LIMIT: usize = 20;
@@ -179,7 +180,7 @@ pub async fn handle_read_brief(
             getting_started,
         }));
     };
-    let Some(brief) = db.get_brief_by_space_name(&space).await? else {
+    let Some(mut brief) = db.get_brief_by_space_name(&space).await? else {
         let (code_basis_pending, code_basis_pending_explained) =
             code_basis_pending_for(&db, &space).await;
         return Ok(PageResponse::Local(BriefReadResponse {
@@ -192,6 +193,17 @@ pub async fn handle_read_brief(
             getting_started,
         }));
     };
+
+    let requested_item = request
+        .item
+        .as_deref()
+        .map(str::trim)
+        .filter(|item| !item.is_empty());
+    for item in brief.active.iter_mut().chain(brief.backlog.iter_mut()) {
+        if requested_item != Some(item.id.as_str()) {
+            item.details = None;
+        }
+    }
 
     let legacy_context_limit = request
         .legacy_context_limit
@@ -377,6 +389,16 @@ pub async fn handle_update_brief(
     }
 
     Ok(Json(receipt).into_response())
+}
+
+/// POST /api/handoff — the canonical Brief write verb. `PATCH /api/brief`
+/// remains a compatibility route and calls the same implementation.
+pub async fn handle_handoff(
+    state: State<SharedState>,
+    headers: HeaderMap,
+    request: Json<wenlan_types::HandoffRequest>,
+) -> Result<Response, ServerError> {
+    handle_update_brief(state, headers, request).await
 }
 
 /// GET /api/brief/history — successful Brief updates for the resolved Space,

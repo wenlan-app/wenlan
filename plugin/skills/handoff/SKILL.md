@@ -4,7 +4,7 @@ description: >
   End a work session. Stores durable captures, writes a narrative session log,
   and automatically applies typed item-level deltas to the current Space Brief.
   Invoked as `/handoff`.
-allowed-tools: ["Bash", "mcp__plugin_wenlan_wenlan__update_brief", "mcp__plugin_wenlan_wenlan__list_pages", "mcp__plugin_wenlan_wenlan__read_page", "mcp__plugin_wenlan_wenlan__write_page", "mcp__plugin_wenlan_wenlan__page_basis", "mcp__plugin_wenlan_wenlan__page_code_basis"]
+allowed-tools: ["Bash", "mcp__plugin_wenlan_wenlan__handoff", "mcp__plugin_wenlan_wenlan__list_pages", "mcp__plugin_wenlan_wenlan__read_page", "mcp__plugin_wenlan_wenlan__write_page", "mcp__plugin_wenlan_wenlan__page_basis", "mcp__plugin_wenlan_wenlan__page_code_basis"]
 ---
 
 # /handoff
@@ -147,10 +147,9 @@ Compare the session outcome with `brief_before` and write one
 ```
 
 Use the existing Brief version instead of `0` when present. When
-`daemon_down=1`, use `expected_version: 0` — the daemon reconciles the
-summary version when it replays the queued file — and author only `add`
-mutations; do not author `edit`, `move`, `set_gate`, or `complete` without a
-Brief snapshot.
+`daemon_down=1`, use `expected_version: 0` — the summary applies only when
+version 0 is still current — and author only `add` mutations;
+do not author `edit`, `move`, `set_gate`, or `complete` without a Brief snapshot.
 If `space` is empty, skip this typed update entirely.
 
 - `add`: genuinely new open work, in `active` or `backlog`, with an optional
@@ -164,26 +163,27 @@ If `space` is empty, skip this typed update entirely.
 - Do not add an unchanged duplicate.
 
 Apply exactly once. When the daemon is up (`daemon_down=0`), call
-`mcp__plugin_wenlan_wenlan__update_brief` with the same `space`,
+`mcp__plugin_wenlan_wenlan__handoff` with the same `space`,
 `operation_id`, `summary`, and `mutations`; it is the same typed request over
 MCP and returns the same receipt. When `daemon_down=1`, use the CLI, which
-queues the file in the outbox for replay:
+writes the stable handoff file into the project folder:
 
 ```bash
-"$W" --format json --space "$space" brief update --file "$update_file"
+"$W" --format json --space "$space" handoff --file "$update_file"
 ```
 
 Do not ask approval for this normal handoff update. Interpret `applied`,
 `conflicts`, `projection_path`, and `warnings` independently. A `"status":
-"queued"` result is success-queued: record the outbox path and report it as
-queued, not applied. Non-overlapping changes may commit while a stale
+"saved_in_project"` result is durable but not applied: record the project path
+and report it as saved for later import. Non-overlapping changes may commit while a stale
 same-item delta conflicts. Re-read before any safe mechanical reconciliation;
 never guess.
 
 Apply the Brief update before Space-scoped captures when this fallback is new.
 That creates the basename Space through the typed handoff path without making a
 read or a capture create state. If this first update fails, stop Space-scoped
-captures and report the exact failure. A queued result is not a failure.
+captures and report the exact failure. A handoff file saved in the project is
+not a failure, but it has not reached the Brief yet.
 
 ## 6. Store durable captures
 

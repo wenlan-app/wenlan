@@ -23,11 +23,24 @@ impl BriefItemState {
 pub struct BriefItem {
     pub id: String,
     pub text: String,
+    /// AI-facing context for this line: goals, decisions, attempts, unknowns, and next steps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<String>,
     pub state: BriefItemState,
     pub added_at: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gate: Option<String>,
     pub version: i64,
+    /// False only for an idle fallback synthesized from a local transcript.
+    #[serde(default = "default_confirmed")]
+    pub confirmed: bool,
+    /// The UI label for an idle fallback ("filled in by Wenlan" / 「Wenlan 補的」).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub filled_by_wenlan: bool,
+}
+
+const fn default_confirmed() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -62,6 +75,9 @@ pub struct BriefReadRequest {
     pub topic: Option<String>,
     #[serde(default, alias = "domain")]
     pub space: Option<String>,
+    /// Return AI-facing details for this item only. Details are omitted by default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub item: Option<String>,
     // Internal compatibility marker: never serialized on the Brief wire.
     #[doc(hidden)]
     #[serde(skip)]
@@ -133,6 +149,8 @@ pub struct BriefSummaryUpdate {
 pub enum BriefMutation {
     Add {
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        details: Option<String>,
         state: BriefItemState,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         added_at: Option<i64>,
@@ -143,6 +161,9 @@ pub enum BriefMutation {
         item_id: String,
         expected_version: i64,
         text: String,
+        /// When absent, preserve the current details.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        details: Option<String>,
     },
     Move {
         item_id: String,
@@ -247,6 +268,22 @@ pub struct BriefUpdateReceipt {
     pub warnings: Vec<String>,
 }
 
+/// The write contract exposed as `handoff` over HTTP, CLI, and MCP.
+/// `update_brief` remains a compatibility HTTP surface with this same shape.
+pub type HandoffRequest = BriefUpdateRequest;
+pub type HandoffReceipt = BriefUpdateReceipt;
+
+pub const HANDOFF_FILE_SCHEMA: &str = "wenlan.handoff.v1";
+
+/// Portable handoff file used when the local daemon cannot be reached.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HandoffFile {
+    pub schema: String,
+    pub request: HandoffRequest,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
+}
+
 /// A Space Brief said for people (UX-SPACE-2): what `GET /api/brief/plain`
 /// answers. The night writes these lines; an empty answer means none were
 /// written yet for this Brief version.
@@ -323,6 +360,7 @@ mod tests {
                 item_id: "item-1".into(),
                 expected_version: 4,
                 text: "ship the release".into(),
+                details: None,
             },
             BriefMutation::Move {
                 item_id: "item-1".into(),

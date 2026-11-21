@@ -106,12 +106,26 @@ fn conv(id: &str, said: &[&str], minutes_ago: i64) -> FoundConversation {
         branch: None,
         said: said.iter().map(|s| s.to_string()).collect(),
         last_reply: "done".into(),
+        last_content: "done".into(),
         first_at: now - minutes_ago * 60 - 600,
+        last_content_at: now - minutes_ago * 60,
         last_at: now - minutes_ago * 60,
         automated: false,
         on_behalf: false,
         touched: Vec::new(),
     }
+}
+
+#[test]
+fn idle_fill_shared_space_list_includes_folder_shared_spaces() {
+    let temp = tempfile::tempdir().unwrap();
+    let settings = temp.path().join("data/shared-spaces.json");
+    let folder = temp.path().join("shared-folder");
+    let scope = wenlan_core::shared_space::Scope::Space("folder-shared".into());
+    wenlan_core::shared_space::join_at(&settings, &scope, &folder, "Tester").unwrap();
+
+    let shared = super::shared_space_names(&settings).unwrap();
+    assert!(shared.contains("folder-shared"));
 }
 
 #[tokio::test]

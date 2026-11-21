@@ -285,6 +285,7 @@ async fn verify(root: &Path, preseeded: bool) {
         mcp.brief_impl(BriefParams {
             session: None,
             topic: None,
+            item: None,
             space: None,
         })
         .await
@@ -307,6 +308,7 @@ async fn verify(root: &Path, preseeded: bool) {
         mcp.brief_impl(BriefParams {
             session: None,
             topic: Some("Atlas authentication decision".into()),
+            item: None,
             space: None,
         })
         .await
@@ -383,6 +385,7 @@ async fn verify(root: &Path, preseeded: bool) {
         mcp.brief_impl(BriefParams {
             session: None,
             topic: None,
+            item: None,
             space: Some(OTHER.into()),
         })
         .await

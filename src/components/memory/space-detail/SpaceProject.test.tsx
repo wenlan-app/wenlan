@@ -23,17 +23,18 @@ beforeEach(() => {
   vi.mocked(skillsFromLibraryEnabled).mockResolvedValue(false);
 });
 describe("A Space's page", () => {
-  it("UX-SPACE-1 opens with the Brief: where it stands, the last handoff and three items, the rest folded", async () => {
+  it("UX-SPACE-1 UX-HAND-3 opens with the Brief and labels Wenlan's unconfirmed fill", async () => {
     vi.mocked(getSpaceBrief).mockResolvedValue({
       summary: "可信度修正都合併了。",
       handed_off_at: Math.floor(Date.now() / 1000) - 7200,
-      active: ["一", "二", "三", "四", "五"].map((line, i) => ({ id: `i${i}`, line, raw: false })),
+      active: ["一", "二", "三", "四", "五"].map((line, i) => ({ id: `i${i}`, line, raw: false, filled_by_wenlan: i === 0 })),
     });
     workspace();
     const brief = await screen.findByRole("region", { name: "Where this stands" });
     expect(within(brief).getByText("可信度修正都合併了。")).toBeInTheDocument();
     expect(within(brief).getByText(/^Last handoff /)).toBeInTheDocument();
-    expect(within(brief).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["一", "二", "三"]);
+    expect(within(brief).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["一Filled in by Wenlan · not confirmed", "二", "三"]);
+    expect(within(brief).getByText("Filled in by Wenlan · not confirmed")).toBeInTheDocument();
     fireEvent.click(within(brief).getByRole("button", { name: "2 more" }));
     expect(within(brief).getAllByRole("listitem")).toHaveLength(5);
     fireEvent.click(within(brief).getByRole("button", { name: "Show less" }));

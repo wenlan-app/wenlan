@@ -1588,7 +1588,7 @@ export async function listWorkingOn(): Promise<WorkingOnItem[]> {
 export interface SpaceBriefView {
   summary: string | null;
   handed_off_at: number | null;
-  active: { id: string; line: string; raw: boolean }[];
+  active: { id: string; line: string; raw: boolean; filled_by_wenlan: boolean }[];
 }
 
 /** Null when the Space has no Brief, or nothing in it to show. */
