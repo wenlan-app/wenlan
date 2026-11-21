@@ -236,7 +236,7 @@ fn team_rule_error(error: rulesync_team::ReviewError) -> wenlan_core::WenlanErro
     }
 }
 
-fn markdown_rules(markdown: &str) -> Vec<String> {
+pub(crate) fn markdown_rules(markdown: &str) -> Vec<String> {
     markdown
         .lines()
         .map(str::trim)
@@ -326,6 +326,20 @@ async fn project_edits(db: &MemoryDB, key: &str) -> Result<ProjectRuleEdits, Ser
         }
         None => Ok(ProjectRuleEdits::default()),
     }
+}
+
+pub(crate) async fn exclude_reviewed_removals(
+    db: &MemoryDB,
+    space: &wenlan_types::Space,
+    rules: &mut Vec<String>,
+) -> Result<(), ServerError> {
+    let edits = project_edits(db, &edits_key(space)).await?;
+    rules.retain(|line| {
+        !edits
+            .removed
+            .contains(&wenlan_core::skill_grow::tool_file_text(line))
+    });
+    Ok(())
 }
 
 pub(crate) async fn include_reviewed_project_rules(

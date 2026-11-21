@@ -67,16 +67,31 @@ pub use wenlan_types::responses::HealthResponse;
 /// GET /api/health - Health check endpoint
 pub async fn handle_health(
     State(state): State<Arc<RwLock<ServerState>>>,
-) -> Result<Json<HealthResponse>, ServerError> {
+    headers: HeaderMap,
+) -> Result<
+    crate::page_routes::PageResponse<HealthResponse, wenlan_core::member_view::MemberHealth>,
+    ServerError,
+> {
+    use crate::page_routes::PageResponse;
     let s = state.read().await;
     let db_initialized = s.db.is_some();
     let root = s.presence_root.clone();
     drop(s);
 
-    Ok(Json(HealthResponse {
+    let version = wenlan_core::version().to_string();
+    if !crate::team_actor::can_read_private_memories(&headers) {
+        return Ok(PageResponse::Member(
+            wenlan_core::member_view::MemberHealth {
+                status: "ok".into(),
+                db_initialized,
+                version,
+            },
+        ));
+    }
+    Ok(PageResponse::Local(HealthResponse {
         status: "ok".to_string(),
         db_initialized,
-        version: wenlan_core::version().to_string(),
+        version,
         data_root: root
             .as_ref()
             .map(|path| path.to_string_lossy().into_owned()),
@@ -1186,10 +1201,17 @@ pub async fn handle_recent_retrievals(
 /// GET /api/pages/recent-changes - Recent page created/revised events.
 pub async fn handle_recent_page_changes(
     State(state): State<Arc<RwLock<ServerState>>>,
+    headers: HeaderMap,
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
     view: crate::truth_guard::TruthView,
     axum::extract::Query(q): axum::extract::Query<RecentLimitQuery>,
-) -> Result<Json<Vec<wenlan_types::PageChange>>, ServerError> {
+) -> Result<
+    crate::page_routes::PageResponse<
+        Vec<wenlan_types::PageChange>,
+        Vec<wenlan_core::member_view::MemberChange>,
+    >,
+    ServerError,
+> {
     let limit = q.limit.unwrap_or(10).clamp(1, 100);
     let db = {
         let s = state.read().await;
@@ -1197,6 +1219,15 @@ pub async fn handle_recent_page_changes(
     };
     let db = db.ok_or(ServerError::DbNotInitialized)?;
     let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
+    if !crate::team_actor::can_read_private_memories(&headers) {
+        let changes = db.list_recent_shared_page_changes(limit, &scope).await?;
+        let changes =
+            wenlan_core::truth_adapter::filter_page_refs(&db, &view.grant, changes, |change| {
+                change.page_id.as_str()
+            })
+            .await?;
+        return Ok(crate::page_routes::PageResponse::Member(changes));
+    }
     let changes = db
         .list_recent_changes_scoped(limit, &scope)
         .await
@@ -1210,27 +1241,39 @@ pub async fn handle_recent_page_changes(
         })
         .await
         .map_err(|e| ServerError::Internal(e.to_string()))?;
-    Ok(Json(changes))
+    Ok(crate::page_routes::PageResponse::Local(changes))
 }
 
 /// GET /api/pages/recent — top-N page activity with badge deltas.
 /// `since_ms` scopes badge derivation only; the feed is always top-N by recency.
 pub async fn handle_recent_pages(
     State(state): State<Arc<RwLock<ServerState>>>,
+    headers: HeaderMap,
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
     view: crate::truth_guard::TruthView,
     axum::extract::Query(q): axum::extract::Query<crate::memory_routes::RecentActivityQuery>,
-) -> Result<Json<Vec<wenlan_types::RecentActivityItem>>, ServerError> {
+) -> Result<
+    crate::page_routes::PageResponse<
+        Vec<wenlan_types::RecentActivityItem>,
+        Vec<wenlan_core::member_view::MemberActivity>,
+    >,
+    ServerError,
+> {
     let db = {
         let s = state.read().await;
         s.db.as_ref().cloned()
     };
     let db = db.ok_or(ServerError::DbNotInitialized)?;
     let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
-    let mut items = db
-        .list_recent_pages_with_badges_scoped(q.limit.unwrap_or(10), q.since_ms, &scope)
-        .await
-        .map_err(|e| ServerError::Internal(e.to_string()))?;
+    let limit = q.limit.unwrap_or(10);
+    let private = crate::team_actor::can_read_private_memories(&headers);
+    let mut items = if private {
+        db.list_recent_pages_with_badges_scoped(limit, q.since_ms, &scope)
+            .await
+    } else {
+        db.list_recent_shared_pages(limit, q.since_ms, &scope).await
+    }
+    .map_err(|e| ServerError::Internal(e.to_string()))?;
     // The feed interleaves pages and memories under one `id` field, so only the
     // page rows may be keyed on it -- a memory source_id carries no truth state
     // and would read as unsupported, dropping memories that this contract says
@@ -1250,7 +1293,16 @@ pub async fn handle_recent_pages(
     items.retain(|item| {
         item.kind != wenlan_types::memory::ActivityKind::Page || visible.contains(&item.id)
     });
-    Ok(Json(items))
+    if private {
+        Ok(crate::page_routes::PageResponse::Local(items))
+    } else {
+        Ok(crate::page_routes::PageResponse::Member(
+            items
+                .into_iter()
+                .map(wenlan_core::member_view::MemberActivity::new)
+                .collect(),
+        ))
+    }
 }
 
 /// POST /api/llm/test — probe an OpenAI-compatible LLM endpoint with a 1-shot prompt.

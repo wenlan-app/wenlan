@@ -90,6 +90,7 @@ async fn edit(
         Json(wire),
     )
     .await
+    .map(PageResponse::into_test_json)
 }
 
 async fn last_writer(db: &wenlan_core::db::MemoryDB, id: &str) -> String {
@@ -158,8 +159,16 @@ async fn publish(
     id: &str,
     version: i64,
 ) -> Result<(), ServerError> {
+    let mut headers = HeaderMap::new();
+    if who.0.is_some() {
+        headers.insert(
+            team_actor::SECRET_HEADER,
+            HeaderValue::from_static(team_actor::secret()),
+        );
+    }
     handle_publish_page_draft(
         State(state.clone()),
+        headers,
         SpaceHeader(space.map(str::to_string)),
         who,
         TruthView::automatic(),
@@ -176,16 +185,11 @@ async fn publish(
 async fn publishing_names_the_member_and_stays_in_the_pinned_space() {
     let (_tmp, db, state) = server().await;
     let amy = actor(team_actor::secret(), "m-amy");
-    let draft = db
-        .create_page_draft_with_id_in_registered_space_and_folder(
-            PAGE,
-            "Plan",
-            "Body",
-            Some("Beta"),
-            "",
-        )
+    let draft = create_draft(&state, Some("Beta"), amy.clone(), PAGE)
         .await
-        .unwrap();
+        .unwrap()
+        .0
+        .page;
     assert!(
         publish(&state, Some("Alpha"), amy.clone(), PAGE, draft.version)
             .await
@@ -220,6 +224,37 @@ async fn publishing_names_the_member_and_stays_in_the_pinned_space() {
     assert_eq!(last_writer(&db, other).await, "publish");
 }
 
+#[tokio::test]
+async fn a_local_draft_publish_respects_an_explicit_space() {
+    let (_tmp, db, state) = server().await;
+    let draft = db
+        .create_page_draft("Plan", "Body", Some("Beta"), None)
+        .await
+        .unwrap();
+    let refused = publish(
+        &state,
+        Some("Alpha"),
+        TeamActor::default(),
+        &draft.id,
+        draft.version,
+    )
+    .await;
+    assert!(refused.is_err(), "the registry declares a scoped route");
+    assert_eq!(
+        db.get_page(&draft.id).await.unwrap().unwrap().status,
+        "draft"
+    );
+    publish(
+        &state,
+        Some("Beta"),
+        TeamActor::default(),
+        &draft.id,
+        draft.version,
+    )
+    .await
+    .unwrap();
+}
+
 async fn create_draft(
     state: &Arc<RwLock<ServerState>>,
     space: Option<&str>,
@@ -240,6 +275,7 @@ async fn create_draft(
         Json(req),
     )
     .await
+    .map(PageResponse::into_test_json)
 }
 
 /// A repeated create answers with the draft as it is now. Once the owner
@@ -313,6 +349,8 @@ async fn a_member_save_guarded_to_a_space_the_page_left_writes_nothing() {
             edited_by: "shared_person:m-amy",
             knowledge_path: None,
             basis: wenlan_core::db::BasisWrite {
+                member_write: true,
+                preserve_source_links: false,
                 research_write: None,
                 citation_snapshots: Vec::new(),
                 minor: false,

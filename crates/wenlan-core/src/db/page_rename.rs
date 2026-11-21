@@ -75,7 +75,7 @@ impl MemoryDB {
         scope: &ReadScope,
         knowledge_path: Option<&Path>,
     ) -> Result<RenamePageResponse, WenlanError> {
-        self.commit_page_title_rename(id, title, expected_version, scope, knowledge_path)
+        self.commit_page_title_rename(id, title, expected_version, scope, knowledge_path, false)
             .await
             .map(|renamed| renamed.response)
     }
@@ -272,6 +272,7 @@ impl MemoryDB {
         expected_version: i64,
         scope: &ReadScope,
         knowledge_path: Option<&Path>,
+        member: bool,
     ) -> Result<PageTitleRename, WenlanError> {
         let title = validate_page_title(title)?;
         if expected_version < 1 {
@@ -283,10 +284,12 @@ impl MemoryDB {
         // Resolve through the same workspace scope as the public Page read so
         // an inaccessible id is indistinguishable from a missing one. The
         // transaction below repeats the binding/version checks before write.
-        let visible = self
-            .get_page_scoped(id, scope)
-            .await?
-            .ok_or_else(|| WenlanError::NotFound("page not found".to_string()))?;
+        let visible = if member {
+            self.get_shared_page_scoped(id, scope).await?
+        } else {
+            self.get_page_scoped(id, scope).await?
+        }
+        .ok_or_else(|| WenlanError::NotFound("page not found".to_string()))?;
         if visible.version != expected_version {
             return Err(WenlanError::Conflict("page version conflict".to_string()));
         }
@@ -374,6 +377,9 @@ impl MemoryDB {
         )> = None;
         let mut projection_written = false;
         let result = async {
+            if member && !Self::member_page_access_on(&conn, id, scope, super::MemberPageTarget::Published).await? {
+                return Err(WenlanError::NotFound("page not found".into()));
+            }
             let mut rows = conn
                 .query(
                     "SELECT id,title,version,status,space,COALESCE(kind,'concept'),

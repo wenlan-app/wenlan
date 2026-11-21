@@ -15,6 +15,16 @@ const MAX_ERROR_RESPONSE_BYTES: usize = 64 * 1024;
 /// HTTP normalises to lowercase.
 const SPACE_HEADER: &str = "x-wenlan-space";
 
+#[cfg(feature = "in-process-test")]
+type InProcessTransport = Arc<
+    dyn Fn(
+            reqwest::Request,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<reqwest::Response, WenlanError>> + Send>,
+        > + Send
+        + Sync,
+>;
+
 /// The MCP connection's resolved caller identity, shared by provenance and
 /// every daemon request header. An explicitly configured name is immutable;
 /// an implicit fallback may be replaced by the MCP initialize handshake.
@@ -105,6 +115,8 @@ pub fn discover_origin_url(cli_url: Option<String>) -> String {
 #[derive(Clone)]
 pub struct WenlanClient {
     client: Client,
+    #[cfg(feature = "in-process-test")]
+    in_process: Option<InProcessTransport>,
     base_url: String,
     agent_identity: Option<AgentIdentity>,
     /// The AI session this clone writes for, sent as `x-wenlan-session`.
@@ -126,13 +138,32 @@ impl WenlanClient {
     }
 
     pub fn new(base_url: String) -> Self {
+        Self::with_http_client(base_url, Client::new())
+    }
+
+    /// Build a client for a daemon transport configured by the caller.
+    pub fn with_http_client(base_url: String, client: Client) -> Self {
         Self {
-            client: Client::new(),
+            client,
+            #[cfg(feature = "in-process-test")]
+            in_process: None,
             base_url,
             agent_identity: None,
             session: None,
             announced: Arc::default(),
         }
+    }
+
+    /// Let the daemon's listener tests exercise real MCP requests through an
+    /// in-process router on hosts where binding a loopback socket is denied.
+    #[cfg(feature = "in-process-test")]
+    pub fn with_in_process_transport<F, Fut>(mut self, send: F) -> Self
+    where
+        F: Fn(reqwest::Request) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = Result<reqwest::Response, WenlanError>> + Send + 'static,
+    {
+        self.in_process = Some(Arc::new(move |request| Box::pin(send(request))));
+        self
     }
 
     /// A clone whose requests carry the caller's session, or `self` unchanged
@@ -237,6 +268,13 @@ impl WenlanClient {
         &self,
         build: impl Fn() -> reqwest::RequestBuilder,
     ) -> Result<reqwest::Response, WenlanError> {
+        #[cfg(feature = "in-process-test")]
+        if let Some(send) = &self.in_process {
+            let request = build()
+                .build()
+                .map_err(|e| WenlanError::Unreachable(e.to_string()))?;
+            return send(request).await;
+        }
         let mut last_err = None;
         for attempt in 0..MAX_RETRIES {
             if attempt > 0 {

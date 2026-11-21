@@ -424,8 +424,9 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
     // skills setup (adopt, preview, restore, skill updates, sync, review,
     // settings preview and apply, checkout, skill save, proposals, review)
     // adds twelve Global routes; project and team rule proposals add seven
-    // Space-scoped routes.
-    assert_eq!(rows.len(), 167);
+    // Space-scoped routes. Draft publish adds one PageWorkspace-scoped
+    // single-id route.
+    assert_eq!(rows.len(), 168);
     assert_eq!(
         rows.iter()
             .filter(|row| row.scope_binding == ScopeBinding::Global)
@@ -436,7 +437,7 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
         rows.iter()
             .filter(|row| row.scope_binding != ScopeBinding::Global)
             .count(),
-        121
+        122
     );
     assert_eq!(
         rows.iter()

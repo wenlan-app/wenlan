@@ -22,6 +22,8 @@ pub enum PageRemover<'a> {
     /// Space it checked; named by their history actor. Archives as the
     /// person does, and may never delete for good.
     Member(&'a str),
+    /// An AI tool authenticated to act in a team member's Space.
+    MemberAi(&'a str),
     /// Anything else, named by its agent name (`unknown` when it sent none).
     Ai(&'a str),
 }
@@ -32,7 +34,7 @@ impl PageRemover<'_> {
         match self {
             Self::Person => "person",
             Self::Member(member) => member,
-            Self::Ai(agent) => agent,
+            Self::Ai(agent) | Self::MemberAi(agent) => agent,
         }
     }
 }
@@ -139,15 +141,30 @@ pub async fn archive_page_as(
     remover: PageRemover<'_>,
     scope: &ReadScope,
 ) -> Result<Option<i64>, PageRemovalError> {
-    let Some(page) = page_in_scope(db, id, scope).await? else {
+    let shared_scope =
+        matches!(remover, PageRemover::Member(_) | PageRemover::MemberAi(_)).then_some(scope);
+    let page = if let Some(scope) = shared_scope {
+        if !matches!(scope, ReadScope::Space(_)) {
+            return Err(PageRemovalError::NotFound);
+        }
+        Some(
+            db.get_shared_page_scoped(id, scope)
+                .await?
+                .ok_or(PageRemovalError::NotFound)?,
+        )
+    } else {
+        page_in_scope(db, id, scope).await?
+    };
+    let Some(page) = page else {
         return Ok(None);
     };
     if page.status != "active" {
         return Ok(None);
     }
     let expected_version = match remover {
-        PageRemover::Person | PageRemover::Member(_) => None,
-        PageRemover::Ai(_) => {
+        PageRemover::Person => None,
+        PageRemover::Member(_) => Some(page.version),
+        PageRemover::Ai(_) | PageRemover::MemberAi(_) => {
             if page_holds_persons_work(db, &page).await? {
                 log::warn!(
                     "[page_removal] refused archive of page {id} by {}: page holds the person's work",
@@ -165,8 +182,12 @@ pub async fn archive_page_as(
         title: &page.title,
     };
     let version = db
-        .archive_page_recorded(id, expected_version, Some(audit))
-        .await?;
+        .archive_page_recorded(id, expected_version, Some(audit), shared_scope)
+        .await
+        .map_err(|error| match error {
+            WenlanError::NotFound(_) => PageRemovalError::NotFound,
+            error => PageRemovalError::Failed(error),
+        })?;
     if version.is_none() && expected_version.is_some() {
         log::warn!(
             "[page_removal] archive of page {id} by {} not applied: page changed while it was being archived",

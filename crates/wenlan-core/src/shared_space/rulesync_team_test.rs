@@ -1,18 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use std::fs;
-use wenlan_types::team::{TeamAccess, TeamFileList, TeamSpaceAccess};
+use std::{fs, sync::Arc};
+use wenlan_types::team::{TeamAccess, TeamSpaceAccess};
 
 use crate::rulesync_team::{self, ReviewError};
 use crate::skill_registry::{project_sync::store_test_skill, Scope as SkillScope, SkillFile};
 use crate::team::{self, CredentialKind, Member};
+use crate::{db::MemoryDB, events::NoopEmitter};
 
 const URL: &str = "http://team.invalid";
 const PROJECT: &str = "Project X";
 const OTHER: &str = "Project Y";
 
 struct Fixture {
+    db: MemoryDB,
     root: tempfile::TempDir,
     team: PathBuf,
     settings: PathBuf,
@@ -21,10 +23,13 @@ struct Fixture {
 }
 
 impl Fixture {
-    fn new() -> Self {
+    async fn new() -> Self {
         let root = tempfile::tempdir().unwrap();
         let server = root.path().join("server");
         fs::create_dir(&server).unwrap();
+        let db = MemoryDB::new(&server.join("memorydb"), Arc::new(NoopEmitter))
+            .await
+            .unwrap();
         let team = server.join(team::TEAM_FILE);
         let settings = server.join(SETTINGS_FILE);
         let (owner, _) = team::owner_key(&team, "Owner").unwrap();
@@ -43,6 +48,7 @@ impl Fixture {
         )
         .unwrap();
         for name in [rulesync_team::SPACE, PROJECT, OTHER] {
+            db.create_space(name, None, false).await.unwrap();
             let scope = Scope::Space(name.into());
             let folder = team::new_hosted_folder(&settings);
             join_at(&settings, &scope, &folder, "Owner").unwrap();
@@ -71,6 +77,7 @@ impl Fixture {
         let reader =
             team::add_member(&team, "Reader", &[grant(PROJECT, TeamAccess::Read)]).unwrap();
         Self {
+            db,
             root,
             team,
             settings,
@@ -79,17 +86,22 @@ impl Fixture {
         }
     }
 
-    fn pull(&self, name: &str, key: &str, space: &str) -> (PathBuf, PathBuf, HostLink) {
+    async fn pull(&self, name: &str, key: &str, space: &str) -> (PathBuf, PathBuf, HostLink) {
         let member = team::authenticate(&self.team, key).unwrap().unwrap().member;
         let hosted = team::hosted_spaces(&self.settings).unwrap();
         let me = member.me(&hosted);
         let grant = me.spaces.iter().find(|entry| entry.space == space).unwrap();
         let server = team::hosted_folder(&self.settings, space).unwrap().unwrap();
-        let list = TeamFileList {
-            access: grant.access,
-            files: team::list_folder_files(&server),
-            rules: rulesync_team::hosted_manifest(&self.team, &self.settings, space).unwrap(),
-        };
+        let pages = self.db.shared_folder_pages(space).await.unwrap();
+        let list = rulesync_team::hosted_file_list(
+            &self.team,
+            &self.settings,
+            space,
+            &server,
+            grant.access,
+            &pages,
+        )
+        .unwrap();
         let settings = self.root.path().join(name).join(SETTINGS_FILE);
         let folder = remote::mirror_folder(&settings, URL, space);
         let host = HostLink {
@@ -120,7 +132,10 @@ impl Fixture {
             fs::copy(original, copy).unwrap();
         }
         let manifest = list.rules.as_ref().unwrap();
-        let approved = fs::read(team::served_path(&server, &manifest.file).unwrap()).unwrap();
+        let approved =
+            rulesync_team::read_hosted_rule_file(&self.team, &self.settings, space, &manifest.file)
+                .unwrap()
+                .unwrap();
         let layer = rulesync_team::pulled_layer(&host, &list, &approved).unwrap();
         remember_team_rule_pull(&settings, &scope, &host, layer).unwrap();
         (settings, folder, host)
@@ -180,17 +195,19 @@ fn grant(space: &str, access: TeamAccess) -> TeamSpaceAccess {
     }
 }
 
-#[test]
-fn rulesync_team_uses_space_grants_and_retains_only_approved_offline_layers() {
-    let fixture = Fixture::new();
+#[tokio::test]
+async fn rulesync_team_uses_space_grants_and_retains_only_approved_offline_layers() {
+    let fixture = Fixture::new().await;
     let reader = team::authenticate(&fixture.team, &fixture.reader.1)
         .unwrap()
         .unwrap()
         .member;
     assert_eq!(reader.access(OTHER), None);
-    let (settings, _, _) = fixture.pull("reader", &fixture.reader.1, rulesync_team::SPACE);
-    let (_, mirror, host) = fixture.pull("reader", &fixture.reader.1, PROJECT);
-    let (writer, _, _) = fixture.pull("writer", &fixture.writer.1, PROJECT);
+    let (settings, _, _) = fixture
+        .pull("reader", &fixture.reader.1, rulesync_team::SPACE)
+        .await;
+    let (_, mirror, host) = fixture.pull("reader", &fixture.reader.1, PROJECT).await;
+    let (writer, _, _) = fixture.pull("writer", &fixture.writer.1, PROJECT).await;
     assert_eq!(rulesync_team::load_layers(&settings).unwrap().len(), 1);
     let original = rulesync_team::load_project_layers(&settings).unwrap();
     assert_eq!(original.len(), 1);
@@ -271,8 +288,8 @@ fn rulesync_team_uses_space_grants_and_retains_only_approved_offline_layers() {
             .markdown,
         "Use the review checklist.\n"
     );
-    fixture.pull("reader", &fixture.reader.1, PROJECT);
-    fixture.pull("writer", &fixture.writer.1, PROJECT);
+    fixture.pull("reader", &fixture.reader.1, PROJECT).await;
+    fixture.pull("writer", &fixture.writer.1, PROJECT).await;
     let approved = rulesync_team::load_project_layers(&settings).unwrap();
     assert_eq!(approved[0].markdown, "Use the review checklist.\n");
     assert_eq!(
@@ -336,10 +353,10 @@ fn rulesync_team_uses_space_grants_and_retains_only_approved_offline_layers() {
     assert!(rulesync_team::load_layers(&settings).unwrap().is_empty());
 }
 
-#[test]
-fn rulesync_team_rejects_credentials_before_shipping_a_proposal() {
-    let fixture = Fixture::new();
-    let (settings, _, _) = fixture.pull("reader", &fixture.reader.1, PROJECT);
+#[tokio::test]
+async fn rulesync_team_rejects_credentials_before_shipping_a_proposal() {
+    let fixture = Fixture::new().await;
+    let (settings, _, _) = fixture.pull("reader", &fixture.reader.1, PROJECT).await;
     let layer = rulesync_team::load_project_layers(&settings)
         .unwrap()
         .remove(0);
@@ -357,9 +374,9 @@ fn rulesync_team_rejects_credentials_before_shipping_a_proposal() {
     );
 }
 
-#[test]
-fn rulesync_team_distinguishes_registry_read_failure_from_empty_inventory() {
-    let fixture = Fixture::new();
+#[tokio::test]
+async fn rulesync_team_distinguishes_registry_read_failure_from_empty_inventory() {
+    let fixture = Fixture::new().await;
     let root = fixture.settings.parent().unwrap();
     store_test_skill(
         root,
@@ -401,9 +418,9 @@ fn rulesync_team_distinguishes_registry_read_failure_from_empty_inventory() {
     assert_eq!(read_manifest().unwrap().unwrap().skills.len(), 1);
 }
 
-#[test]
-fn rulesync_team_shares_only_approved_safe_skills_from_the_exact_project() {
-    let fixture = Fixture::new();
+#[tokio::test]
+async fn rulesync_team_shares_only_approved_safe_skills_from_the_exact_project() {
+    let fixture = Fixture::new().await;
     let root = fixture.settings.parent().unwrap();
     let scope = |name: &str| SkillScope::Space { name: name.into() };
     let file = |path: &str, body: &str| SkillFile {
@@ -457,8 +474,10 @@ fn rulesync_team_shares_only_approved_safe_skills_from_the_exact_project() {
         vec![file("docs/skill.md", &skill_document("another-skill", ""))],
     );
 
-    let (settings, _, _) = fixture.pull("reader", &fixture.reader.1, rulesync_team::SPACE);
-    let (_, mirror, host) = fixture.pull("reader", &fixture.reader.1, PROJECT);
+    let (settings, _, _) = fixture
+        .pull("reader", &fixture.reader.1, rulesync_team::SPACE)
+        .await;
+    let (_, mirror, host) = fixture.pull("reader", &fixture.reader.1, PROJECT).await;
     assert!(rulesync_team::load_layers(&settings).unwrap()[0]
         .skills
         .is_empty());
@@ -494,18 +513,28 @@ fn rulesync_team_shares_only_approved_safe_skills_from_the_exact_project() {
     let folder = team::hosted_folder(&fixture.settings, PROJECT)
         .unwrap()
         .unwrap();
-    let manifest = rulesync_team::hosted_manifest(&fixture.team, &fixture.settings, PROJECT)
-        .unwrap()
-        .unwrap();
-    let approved = fs::read(team::served_path(&folder, &manifest.file).unwrap()).unwrap();
+    let pages = fixture.db.shared_folder_pages(PROJECT).await.unwrap();
+    let list = rulesync_team::hosted_file_list(
+        &fixture.team,
+        &fixture.settings,
+        PROJECT,
+        &folder,
+        TeamAccess::Read,
+        &pages,
+    )
+    .unwrap();
+    let manifest = list.rules.as_ref().unwrap();
+    let approved = rulesync_team::read_hosted_rule_file(
+        &fixture.team,
+        &fixture.settings,
+        PROJECT,
+        &manifest.file,
+    )
+    .unwrap()
+    .unwrap();
     let invalid_bundle = |skills| {
-        let mut manifest = manifest.clone();
-        manifest.skills = skills;
-        let list = TeamFileList {
-            access: TeamAccess::Read,
-            files: team::list_folder_files(&folder),
-            rules: Some(manifest),
-        };
+        let mut list = list.clone();
+        list.rules.as_mut().unwrap().skills = skills;
         assert!(rulesync_team::pulled_layer(&host, &list, &approved).is_err());
     };
     let mut unsafe_path = manifest.skills.clone();
@@ -525,7 +554,7 @@ fn rulesync_team_shares_only_approved_safe_skills_from_the_exact_project() {
         "project-checklist",
         vec![file("docs/checklist.md", "Updated checklist")],
     );
-    fixture.pull("reader", &fixture.reader.1, PROJECT);
+    fixture.pull("reader", &fixture.reader.1, PROJECT).await;
     let updated = rulesync_team::load_project_layers(&settings)
         .unwrap()
         .remove(0);

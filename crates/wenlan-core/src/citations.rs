@@ -131,6 +131,86 @@ pub(crate) fn marker_spans(body: &str) -> Vec<(usize, usize)> {
         .collect()
 }
 
+/// Carry citation records across a body refresh only when the exact sentence
+/// unit, including its markers, occurs once in each body. Occurrence numbers
+/// are positions in the new body's marker stream; marker numbers alone never
+/// establish that a citation still belongs to a sentence.
+pub(crate) fn retain_unchanged_sentence_references(
+    old_body: &str,
+    new_body: &str,
+    old_citations: &[PageCitation],
+) -> Vec<PageCitation> {
+    use std::{collections::HashMap, ops::Range};
+
+    fn unique_unit_markers(
+        body: &str,
+        markers: &[(usize, usize)],
+    ) -> HashMap<String, Option<Range<usize>>> {
+        let mut units = HashMap::new();
+        for unit in crate::authorship::sentence_units(body) {
+            let start = markers.partition_point(|&(start, _)| start < unit.start);
+            let end = markers.partition_point(|&(_, end)| end <= unit.end);
+            units
+                .entry(unit.text)
+                .and_modify(|range| *range = None)
+                .or_insert(Some(start..end));
+        }
+        units
+    }
+
+    if old_citations.is_empty() {
+        return Vec::new();
+    }
+    let old_markers = marker_spans(old_body);
+    // Sparse maps are expected when a prior refresh introduced an unbound
+    // marker. Validate the existing records against their actual occurrences.
+    let mut old_records = vec![None; old_markers.len()];
+    for citation in old_citations {
+        let Some(index) = citation
+            .occurrence
+            .checked_sub(1)
+            .map(|value| value as usize)
+        else {
+            return Vec::new();
+        };
+        let Some((&(start, end), slot)) = old_markers.get(index).zip(old_records.get_mut(index))
+        else {
+            return Vec::new();
+        };
+        if slot.is_some()
+            || old_body[start + 1..end - 1].parse::<u32>().ok() != Some(citation.marker)
+        {
+            return Vec::new();
+        }
+        *slot = Some(citation);
+    }
+
+    let new_markers = marker_spans(new_body);
+    let old_units = unique_unit_markers(old_body, &old_markers);
+    let new_units = unique_unit_markers(new_body, &new_markers);
+    let mut kept = Vec::new();
+    for (text, range) in new_units {
+        let Some((old, new)) = old_units.get(&text).and_then(Clone::clone).zip(range) else {
+            continue;
+        };
+        for (old, new) in old.zip(new) {
+            if let (Some(record), Ok(occurrence)) = (old_records[old], u32::try_from(new + 1)) {
+                let mut citation = record.clone();
+                citation.occurrence = occurrence;
+                // An unchanged sentence can still be in a changed paragraph.
+                if citation.scope != "sentence" {
+                    citation.status = "unevaluated".into();
+                    citation.score = 0.0;
+                    citation.disproven = false;
+                }
+                kept.push(citation);
+            }
+        }
+    }
+    kept.sort_unstable_by_key(|citation| citation.occurrence);
+    kept
+}
+
 /// Exact occurrence groups used by process_citation_output's union check.
 /// An incomplete or mismatched map cannot prove any independent claim safe.
 pub(crate) fn citation_claim_groups(
@@ -1677,6 +1757,77 @@ fn check_numbered_citations(
 
 #[cfg(test)]
 mod tests {
+    fn sentence_reference(occurrence: u32, marker: u32, locator: &str) -> PageCitation {
+        PageCitation {
+            occurrence,
+            marker,
+            source_kind: "external_file".into(),
+            locator: locator.into(),
+            score: 0.91,
+            status: "verified".into(),
+            scope: "sentence".into(),
+            cited_version: Some(4),
+            cited_digest: Some("source-generation-digest".into()),
+            disproven: false,
+            pdf_target: Some(wenlan_types::pages::PdfCitationTarget {
+                attachment_key: "attachment".into(),
+                pdf_digest: "pdf-digest".into(),
+                page: 3,
+                quote: "evidence quote".into(),
+            }),
+            historical: true,
+        }
+    }
+
+    #[test]
+    fn sentence_reference_retention_reindexes_and_preserves_source_state() {
+        let old_body = "First claim [7].\n\nSecond claim [8].";
+        let old_citations = [
+            sentence_reference(1, 7, "file::first"),
+            sentence_reference(2, 8, "file::second"),
+        ];
+        let new_body = "New claim [9].\n\nFirst claim [7].\n\nSecond claim [8].";
+
+        let retained = retain_unchanged_sentence_references(old_body, new_body, &old_citations);
+
+        assert_eq!(retained.len(), 2);
+        assert_eq!((retained[0].occurrence, retained[0].marker), (2, 7));
+        assert_eq!((retained[1].occurrence, retained[1].marker), (3, 8));
+        for (new, old) in retained.iter().zip(old_citations.iter()) {
+            assert_eq!(new.locator, old.locator);
+            assert_eq!(new.status, "verified");
+            assert_eq!(new.cited_version, old.cited_version);
+            assert_eq!(new.cited_digest, old.cited_digest);
+            assert_eq!(new.historical, old.historical);
+            assert_eq!(new.pdf_target, old.pdf_target);
+        }
+        let edited_again = "New claim revised [9].\n\nFirst claim [7].\n\nSecond claim [8].";
+        let kept_again = retain_unchanged_sentence_references(new_body, edited_again, &retained);
+        assert_eq!(
+            kept_again
+                .iter()
+                .map(|citation| citation.occurrence)
+                .collect::<Vec<_>>(),
+            vec![2, 3]
+        );
+    }
+
+    #[test]
+    fn sentence_reference_retention_rejects_changed_or_ambiguous_units() {
+        let old_body = "A claim [1].";
+        let citations = [sentence_reference(1, 1, "file::claim")];
+        assert!(
+            retain_unchanged_sentence_references(old_body, "A changed claim [1].", &citations)
+                .is_empty()
+        );
+        assert!(retain_unchanged_sentence_references(
+            old_body,
+            "A claim [1].\n\nA claim [1].",
+            &citations
+        )
+        .is_empty());
+    }
+
     /// A refusal names the unreadable sources by position and the kind of
     /// target, and nothing about what the memory holds or where it lives.
     #[test]

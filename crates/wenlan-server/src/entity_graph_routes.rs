@@ -425,18 +425,28 @@ pub async fn handle_get_entity_detail(
 /// hazard the reader manifest names in its `/api/pages/{id}/map` demotion note.
 pub async fn handle_get_knowledge_graph(
     State(state): State<Arc<RwLock<ServerState>>>,
+    headers: axum::http::HeaderMap,
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
     view: crate::truth_guard::TruthView,
-) -> Result<Json<wenlan_types::KnowledgeGraphResponse>, ServerError> {
+) -> Result<
+    crate::page_routes::PageResponse<
+        wenlan_types::KnowledgeGraphResponse,
+        wenlan_core::member_view::MemberGraph,
+    >,
+    ServerError,
+> {
     let db = {
         let s = state.read().await;
         s.db.clone().ok_or(ServerError::DbNotInitialized)?
     };
     let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
-    let mut graph = db
-        .get_knowledge_graph_scoped(&scope)
-        .await
-        .map_err(|e| ServerError::SearchFailed(e.to_string()))?;
+    let local = crate::team_actor::can_read_private_memories(&headers);
+    let mut graph = if local {
+        db.get_knowledge_graph_scoped(&scope).await
+    } else {
+        db.get_page_graph_scoped(&scope).await
+    }
+    .map_err(|e| ServerError::SearchFailed(e.to_string()))?;
 
     graph.pages = wenlan_core::truth_adapter::filter_page_refs(
         &db,
@@ -457,7 +467,11 @@ pub async fn handle_get_knowledge_graph(
         };
         endpoint_visible(&link.from) && endpoint_visible(&link.to)
     });
-    Ok(Json(graph))
+    Ok(if local {
+        crate::page_routes::PageResponse::Local(graph)
+    } else {
+        crate::page_routes::PageResponse::Member(graph.into())
+    })
 }
 
 #[derive(Debug, Deserialize)]

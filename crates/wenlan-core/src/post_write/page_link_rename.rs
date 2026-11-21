@@ -95,6 +95,7 @@ pub(crate) async fn update_links_to_renamed_page(
     previous_title: Option<&str>,
     scope: &ReadScope,
     knowledge_path: Option<&Path>,
+    member: bool,
 ) -> Result<LinkRenameCounts, WenlanError> {
     let mut counts = LinkRenameCounts::default();
     let Some(target) = db.get_page(page_id).await? else {
@@ -112,6 +113,17 @@ pub(crate) async fn update_links_to_renamed_page(
     for source in db.rename_link_sources(page_id).await? {
         // A page the caller cannot see is neither written nor counted.
         if !scope.matches(source.workspace.as_deref()) {
+            continue;
+        }
+        if member
+            && !db
+                .member_can_access_page(
+                    &source.page_id,
+                    scope,
+                    crate::db::MemberPageTarget::Published,
+                )
+                .await?
+        {
             continue;
         }
         let rewrite = |content: &str| {

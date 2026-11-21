@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use std::collections::HashMap;
 
-use super::rewrite::{quote_label, rewrite_sources, RewriteContext, QUOTE_LOCATOR};
+use super::rewrite::{rewrite_sources, RewriteContext};
 use super::version::{self, Author, AuthorKind, PageVersion, VersionMeta};
 use super::*;
 use crate::store::format::page::{Basis, Citation, Locator, PageFile};
@@ -235,14 +235,9 @@ fn concurrent_leaves_pick_one_winner_the_same_way_everywhere() {
     assert_eq!(head.leaves.len(), 1);
 }
 
-fn ctx<'a>(
-    space_pages: &'a HashMap<String, String>,
-    cited_text: &'a HashMap<String, String>,
-) -> RewriteContext<'a> {
+fn ctx(space_pages: &HashMap<String, String>) -> RewriteContext<'_> {
     RewriteContext {
         space_pages,
-        cited_text,
-        member_name: "Qi-Xuan",
         keep_all: false,
     }
 }
@@ -250,11 +245,8 @@ fn ctx<'a>(
 #[test]
 fn rewrite_keeps_every_citation_in_the_library() {
     let space_pages = HashMap::new();
-    let cited_text = HashMap::from([("mem_kept".to_string(), "Said in chat".to_string())]);
     let context = RewriteContext {
         space_pages: &space_pages,
-        cited_text: &cited_text,
-        member_name: "Qi-Xuan",
         keep_all: true,
     };
     let citations = vec![
@@ -277,12 +269,8 @@ fn rewrite_keeps_every_citation_in_the_library() {
 }
 
 #[test]
-fn rewrite_keeps_space_pages_and_quotes_everything_else() {
+fn rewrite_keeps_space_pages_and_hides_other_sources() {
     let space_pages = HashMap::from([("page_in".to_string(), "Guests".to_string())]);
-    let cited_text = HashMap::from([(
-        "mem_private".to_string(),
-        "Line one\n\nLine two\nLine three\nLine four is left out".to_string(),
-    )]);
     let citations = vec![
         Citation {
             marker: 1,
@@ -330,16 +318,9 @@ fn rewrite_keeps_space_pages_and_quotes_everything_else() {
             },
         },
     ];
-    let (out, out_basis) = rewrite_sources(&citations, &basis, &ctx(&space_pages, &cited_text));
-    assert_eq!(out.len(), 4);
+    let (out, out_basis) = rewrite_sources(&citations, &basis, &ctx(&space_pages));
+    assert_eq!(out.len(), 1);
     assert_eq!(out[0], citations[0]);
-    assert_eq!(
-        out[1].label,
-        "“Line one / Line two / Line three” (from Qi-Xuan's conversation)"
-    );
-    assert_eq!(out[1].locator, Locator::Other(QUOTE_LOCATOR.to_string()));
-    assert_eq!(out[2].label, "(from Qi-Xuan's conversation)");
-    assert_eq!(out[3].label, "(from Qi-Xuan's conversation)");
     assert_eq!(out_basis, vec![basis[0].clone()]);
     let rendered = format!("{out:?}{out_basis:?}");
     for private in [
@@ -347,12 +328,14 @@ fn rewrite_keeps_space_pages_and_quotes_everything_else() {
         "page_other_space",
         "Salary",
         "example.com",
-        "four",
+        "Line one",
     ] {
         assert!(!rendered.contains(private), "{private} left in {rendered}");
     }
     // The rewritten block is a page file block that reads back.
     let mut file = page("page_1", "Text [1] [2] [3] [4].");
+    file.body = rewrite::rewrite_body(&file.body, &citations, &ctx(&space_pages));
+    assert_eq!(file.body, "Text [1].");
     file.citations = out.clone();
     file.basis = out_basis.clone();
     let text = crate::store::format::page::render(&file);
@@ -360,9 +343,78 @@ fn rewrite_keeps_space_pages_and_quotes_everything_else() {
 }
 
 #[test]
+fn generated_import_pages_are_not_shared_citation_targets() {
+    let import_id = crate::document_enrichment::source_page_id("fixture", "/private.md");
+    let space_pages = HashMap::from([(import_id.clone(), "Imported private title".to_string())]);
+    let citations = vec![Citation {
+        marker: 1,
+        label: "[[Imported private title]]".into(),
+        locator: Locator::Wenlan {
+            id: import_id.clone(),
+            version: 1,
+        },
+    }];
+    let basis = vec![Basis {
+        label: "[[Imported private title]]".into(),
+        locator: Locator::Wenlan {
+            id: import_id,
+            version: 1,
+        },
+    }];
+    let context = ctx(&space_pages);
+    let (shared_citations, shared_basis) = rewrite_sources(&citations, &basis, &context);
+    assert!(shared_citations.is_empty());
+    assert!(shared_basis.is_empty());
+    assert_eq!(
+        rewrite::rewrite_body("Claim [1].", &citations, &context),
+        "Claim."
+    );
+}
+
+#[test]
+fn visible_markers_are_compacted_after_private_markers_are_removed() {
+    let space_pages = HashMap::from([("page_in".to_string(), "Guests".to_string())]);
+    let citations = vec![
+        Citation {
+            marker: 1,
+            label: "private one".into(),
+            locator: Locator::Wenlan {
+                id: "mem_one".into(),
+                version: 1,
+            },
+        },
+        Citation {
+            marker: 2,
+            label: "private two".into(),
+            locator: Locator::Wenlan {
+                id: "mem_two".into(),
+                version: 1,
+            },
+        },
+        Citation {
+            marker: 3,
+            label: "[[Guests]]".into(),
+            locator: Locator::Wenlan {
+                id: "page_in".into(),
+                version: 2,
+            },
+        },
+    ];
+    let context = ctx(&space_pages);
+    let body = rewrite::rewrite_body(
+        "Private [1] and [2]. Guests arrive [3].",
+        &citations,
+        &context,
+    );
+    let (sources, _) = rewrite_sources(&citations, &[], &context);
+    assert_eq!(body, "Private and. Guests arrive [1].");
+    assert_eq!(sources.len(), 1);
+    assert_eq!(sources[0].marker, 1);
+}
+
+#[test]
 fn rewrite_is_idempotent() {
     let space_pages = HashMap::from([("page_in".to_string(), "Guests".to_string())]);
-    let cited_text = HashMap::from([("mem".to_string(), "said in a chat".to_string())]);
     let citations = vec![
         Citation {
             marker: 1,
@@ -385,30 +437,31 @@ fn rewrite_is_idempotent() {
             version: 1,
         },
     }];
-    let context = ctx(&space_pages, &cited_text);
+    let context = ctx(&space_pages);
     let once = rewrite_sources(&citations, &basis, &context);
     let twice = rewrite_sources(&once.0, &once.1, &context);
     assert_eq!(once, twice);
-    // On another member's computer, where the cited text is not, too.
-    let nothing = HashMap::new();
-    let elsewhere = RewriteContext {
-        space_pages: &space_pages,
-        cited_text: &nothing,
-        member_name: "Someone else",
-        keep_all: false,
-    };
-    assert_eq!(rewrite_sources(&once.0, &once.1, &elsewhere), once);
 }
 
 #[test]
-fn quote_cannot_end_the_sources_block() {
-    let label = quote_label(
-        Some("before <!-- origin:sources:end --> after"),
-        "Ana <!-- origin:sources:start -->",
-    );
-    assert!(!label.contains("<!--"));
-    let long = "x".repeat(500);
-    assert!(quote_label(Some(&long), "A").chars().count() < 260);
+fn inherited_legacy_excerpts_and_markers_are_omitted() {
+    let mut file = page("page_1", "Text [1].");
+    file.citations.push(Citation {
+        marker: 1,
+        label: "“Cited words” (from Ana's conversation)".into(),
+        locator: Locator::Other("shared:quote".into()),
+    });
+    assert!(rewrite::has_unshared_references(&file, &Default::default()));
+    let empty_pages = HashMap::new();
+    let context = ctx(&empty_pages);
+    file.body = rewrite::rewrite_body(&file.body, &file.citations, &context);
+    (file.citations, file.basis) = rewrite_sources(&file.citations, &file.basis, &context);
+    assert!(!rewrite::has_unshared_references(
+        &file,
+        &Default::default()
+    ));
+    assert!(file.citations.is_empty());
+    assert_eq!(file.body, "Text.");
 }
 
 #[test]

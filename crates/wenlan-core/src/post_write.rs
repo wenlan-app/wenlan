@@ -70,8 +70,29 @@ pub async fn rename_page(
     scope: &crate::read_scope::ReadScope,
     knowledge_path: Option<&Path>,
 ) -> Result<wenlan_types::responses::RenamePageResponse, WenlanError> {
+    rename_page_for(
+        db,
+        id,
+        title,
+        expected_version,
+        scope,
+        knowledge_path,
+        false,
+    )
+    .await
+}
+
+pub async fn rename_page_for(
+    db: &MemoryDB,
+    id: &str,
+    title: &str,
+    expected_version: i64,
+    scope: &crate::read_scope::ReadScope,
+    knowledge_path: Option<&Path>,
+    member: bool,
+) -> Result<wenlan_types::responses::RenamePageResponse, WenlanError> {
     let renamed = db
-        .commit_page_title_rename(id, title, expected_version, scope, knowledge_path)
+        .commit_page_title_rename(id, title, expected_version, scope, knowledge_path, member)
         .await?;
     let mut response = renamed.response;
     let counts = links_to_retitled_page(
@@ -80,6 +101,7 @@ pub async fn rename_page(
         renamed.previous_title.as_deref(),
         scope,
         knowledge_path,
+        member,
     )
     .await;
     response.links_updated = counts.updated;
@@ -105,13 +127,35 @@ pub async fn restore_page(
     scope: &crate::read_scope::ReadScope,
     knowledge_path: Option<&Path>,
 ) -> Result<wenlan_types::responses::RestorePageResponse, crate::db::RestorePageError> {
+    restore_page_for(
+        db,
+        id,
+        title,
+        expected_version,
+        scope,
+        knowledge_path,
+        false,
+    )
+    .await
+}
+
+pub async fn restore_page_for(
+    db: &MemoryDB,
+    id: &str,
+    title: Option<&str>,
+    expected_version: i64,
+    scope: &crate::read_scope::ReadScope,
+    knowledge_path: Option<&Path>,
+    member: bool,
+) -> Result<wenlan_types::responses::RestorePageResponse, crate::db::RestorePageError> {
     let restored = db
-        .commit_page_restore(id, title, expected_version, scope)
+        .commit_page_restore(id, title, expected_version, scope, member)
         .await?;
     let mut response = restored.response;
     if let Some(previous_title) = restored.previous_title.as_deref() {
         let counts =
-            links_to_retitled_page(db, id, Some(previous_title), scope, knowledge_path).await;
+            links_to_retitled_page(db, id, Some(previous_title), scope, knowledge_path, member)
+                .await;
         response.links_updated = counts.updated;
         response.links_pending_review = counts.pending_review;
         response.links_not_updated = counts.not_updated;
@@ -156,13 +200,21 @@ async fn links_to_retitled_page(
     previous_title: Option<&str>,
     scope: &crate::read_scope::ReadScope,
     knowledge_path: Option<&Path>,
+    member: bool,
 ) -> page_link_rename::LinkRenameCounts {
-    page_link_rename::update_links_to_renamed_page(db, id, previous_title, scope, knowledge_path)
-        .await
-        .unwrap_or_else(|error| {
-            log::warn!("[page_rename] {id} retitled; updating links to it failed: {error}");
-            page_link_rename::LinkRenameCounts::default()
-        })
+    page_link_rename::update_links_to_renamed_page(
+        db,
+        id,
+        previous_title,
+        scope,
+        knowledge_path,
+        member,
+    )
+    .await
+    .unwrap_or_else(|error| {
+        log::warn!("[page_rename] {id} retitled; updating links to it failed: {error}");
+        page_link_rename::LinkRenameCounts::default()
+    })
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

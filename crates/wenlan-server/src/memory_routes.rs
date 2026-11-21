@@ -1256,6 +1256,33 @@ pub async fn handle_search_memory(
     view: crate::truth_guard::TruthView,
     Json(req): Json<SearchMemoryRequest>,
 ) -> Result<Json<SearchMemoryResponse>, ServerError> {
+    if !crate::team_actor::can_read_private_memories(&headers) {
+        let start = std::time::Instant::now();
+        let space = crate::team_actor::required_space(header_space.as_deref())?;
+        let db = {
+            let s = state.read().await;
+            s.db.clone().ok_or(ServerError::DbNotInitialized)?
+        };
+        let scope = crate::read_scope::effective_read_scope(&db, Some(space), None).await?;
+        let pages = if req.query == "recent context" {
+            Vec::new()
+        } else {
+            crate::page_routes::search_hosted_page_hits(
+                &db,
+                &req.query,
+                req.limit.min(3),
+                &scope,
+                &view.grant,
+            )
+            .await?
+        };
+        return Ok(Json(SearchMemoryResponse {
+            results: Vec::new(),
+            took_ms: start.elapsed().as_secs_f64() * 1000.0,
+            supplemental_pages: (!pages.is_empty()).then_some(pages),
+            linked_pages: None,
+        }));
+    }
     let (telemetry, db) = {
         let s = state.read().await;
         (s.telemetry.clone(), s.db.clone())
@@ -1480,9 +1507,14 @@ async fn handle_search_memory_inner(
             // A hit on a note whose basis needs a look says so, in the same
             // shape `read_page` uses. Quiet notes carry nothing.
             let ids: Vec<String> = kept.iter().map(|row| row.source_id.clone()).collect();
-            let mut basis_by_page =
-                crate::page_basis_routes::non_ok_basis_by_citer(&db, &view.grant, &scope, &ids)
-                    .await?;
+            let mut basis_by_page = crate::page_basis_routes::non_ok_basis_by_citer(
+                &db,
+                &view.grant,
+                &scope,
+                &ids,
+                true,
+            )
+            .await?;
             let mut code_basis_by_page =
                 crate::code_basis_routes::non_ok_code_basis_by_page(&db, &ids).await?;
             let kept: Vec<_> = kept

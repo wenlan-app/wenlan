@@ -1690,6 +1690,44 @@ async fn migration_132_reopens_after_interrupted_alter_preserving_ledger_intent(
 }
 
 #[tokio::test]
+async fn legacy_draft_publications_only_replay_local_publish_rows() {
+    let (db, _tmp) = test_db().await;
+    for (writer, replays) in [("publish", true), ("shared_person:writer", false)] {
+        let draft = db
+            .create_page_draft(writer, "Body text", None, None)
+            .await
+            .unwrap();
+        assert!(matches!(
+            db.publish_page_draft_by(&draft.id, draft.version, writer)
+                .await
+                .unwrap(),
+            PageDraftPublishOutcome::Published(_)
+        ));
+        db.conn
+            .lock()
+            .await
+            .execute(
+                "UPDATE page_history SET draft_published_by=NULL WHERE page_id=?1",
+                [draft.id.as_str()],
+            )
+            .await
+            .unwrap();
+        let outcome = db
+            .publish_page_draft_by(&draft.id, draft.version, writer)
+            .await
+            .unwrap();
+        assert!(
+            if replays {
+                matches!(outcome, PageDraftPublishOutcome::Published(_))
+            } else {
+                matches!(outcome, PageDraftPublishOutcome::VersionConflict { .. })
+            },
+            "{writer}: {outcome:?}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn a_member_publish_names_the_member_as_a_person_edit() {
     let (db, _tmp) = test_db().await;
     let member = "shared_person:eb479148ad0d437b936d11fbd001c8e4";

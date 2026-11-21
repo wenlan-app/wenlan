@@ -47,6 +47,7 @@ pub(super) struct PageRevisionCard {
     source_revision: Option<i64>,
     content: String,
     source_memory_ids: Vec<String>,
+    preserve_source_links: bool,
     /// The basis notes an update-from-sources card was written from (R9).
     /// Empty for every other card.
     basis_snapshot: Vec<crate::db::BasisSnapshotEntry>,
@@ -132,6 +133,13 @@ pub(super) async fn resolve_page_revision_card(
     // why a missing base cannot be substituted with the version fence.
     let source_revision = structured.get("source_revision").and_then(|v| v.as_i64());
 
+    let preserve_source_links = structured
+        .get("preserve_source_links")
+        .and_then(|value| value.as_bool())
+        == Some(true)
+        && source_memory_ids.is_empty()
+        && citation_snapshots.is_empty()
+        && structured.get("research_write").is_none();
     Ok(Some(PageRevisionCard {
         page_id,
         revision_id: payload.revision_id,
@@ -148,6 +156,7 @@ pub(super) async fn resolve_page_revision_card(
         // it would panic on both.
         content: payload.full_body.unwrap_or(payload.content),
         source_memory_ids,
+        preserve_source_links,
         basis_snapshot,
         basis_marks,
         citation_snapshots,
@@ -362,6 +371,7 @@ pub(super) async fn accept_page_revision_card_with_edit(
                 space_guard: (!card.citation_snapshots.is_empty()).then_some(citation_scope),
                 confirm_snapshot: card.basis_snapshot.clone(),
                 card_marks: card.basis_marks.clone(),
+                preserve_source_links: card.preserve_source_links,
                 ..crate::db::BasisWrite::default()
             },
             citations_json.as_deref(),

@@ -24,7 +24,7 @@
 //! removed member stays listed with `removed_at`, so the Space's history
 //! keeps their name; their key no longer matches.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -1403,9 +1403,35 @@ pub fn check_member_version(
     Ok(version::file_kind(&read.meta))
 }
 
-/// Paths of every file in a hosted Space's folder, as the team listener
-/// lists them: `space.json`, then each version file.
-pub fn list_folder_files(folder: &Path) -> Vec<String> {
+#[derive(Default)]
+pub struct SharedFolderPages {
+    pub(crate) shared: std::collections::HashMap<String, String>,
+    pub(crate) deleted: HashSet<String>,
+}
+
+/// Versions must belong to this Space and refer only to its shared pages.
+/// For a verified deletion, members still receive the archive. An old
+/// version with a private reference is withheld until it can be replaced.
+pub fn can_serve_version(page: &str, name: &str, bytes: &[u8], pages: &SharedFolderPages) -> bool {
+    if crate::rulesync_team::is_master_page(page) {
+        return false;
+    }
+    let shared = pages.shared.contains_key(page);
+    if !shared && !pages.deleted.contains(page) {
+        return false;
+    }
+    version::parse(name, bytes).is_ok_and(|read| {
+        read.page.id.as_deref() == Some(page)
+            && (shared
+                || (read.meta.archived
+                    && read.meta.parent.is_some()
+                    && version::file_kind(&read.meta) == version::PAGES_DIR))
+            && crate::member_view::MemberSnapshot::matches(&read, &pages.shared)
+    })
+}
+
+/// Paths the team listener can serve: `space.json` and published versions.
+pub fn list_folder_files(folder: &Path, pages: &SharedFolderPages) -> Vec<String> {
     let mut files = Vec::new();
     if folder.join(shared_space::SPACE_FILE).is_file() {
         files.push(shared_space::SPACE_FILE.to_string());
@@ -1430,13 +1456,20 @@ pub fn list_folder_files(folder: &Path) -> Vec<String> {
     {
         let pages_dir = members_dir.join(&member).join(kind);
         for page in dirs(&pages_dir) {
+            if !pages.shared.contains_key(&page) && !pages.deleted.contains(&page) {
+                continue;
+            }
             let Ok(entries) = std::fs::read_dir(pages_dir.join(&page)) else {
                 continue;
             };
             let mut names: Vec<String> = entries
                 .flatten()
-                .filter_map(|entry| entry.file_name().into_string().ok())
-                .filter(|name| version::version_sha(name).is_some())
+                .filter_map(|entry| {
+                    let name = entry.file_name().into_string().ok()?;
+                    version::version_sha(&name)?;
+                    let bytes = std::fs::read(entry.path()).ok()?;
+                    can_serve_version(&page, &name, &bytes, pages).then_some(name)
+                })
                 .collect();
             names.sort();
             for name in names {

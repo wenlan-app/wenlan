@@ -161,10 +161,11 @@ async fn ux_who_2_a_person_asked_write_lands_on_their_sentence_and_history_keeps
     assert_eq!(entry.person_asked.as_deref(), Some(QUOTE));
     let history = crate::page_history::build_page_history(
         &db,
-        "p",
-        &changelog(&db, "p").await,
+        &after,
+        &mut changelog(&db, "p").await,
         &Default::default(),
         false,
+        None,
     )
     .await
     .unwrap();

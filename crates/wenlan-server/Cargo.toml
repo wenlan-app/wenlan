@@ -73,7 +73,8 @@ cc = "1"
 # keeps `save_config` off it (see `default_config_root` in wenlan-core).
 # Resolver 2 keeps a dev-dependency feature out of `cargo build`, so the
 # shipped daemon never has it.
-wenlan-core = { workspace = true, features = ["scratch-config"] }
+wenlan-core = { workspace = true, features = ["scratch-config", "test-query-observer"] }
+wenlan-mcp = { path = "../wenlan-mcp", features = ["in-process-test"] }
 async-trait = { workspace = true }
 hex = { workspace = true }
 # Signs the fake identity provider's id tokens in the sign-in tests.

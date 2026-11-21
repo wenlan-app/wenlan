@@ -16,6 +16,8 @@ eval-harness = []
 # into a normal build, so a shipped daemon never has it. `wenlan-core`'s own
 # tests get the same behaviour through `cfg(test)`.
 scratch-config = []
+# Test-only observation of private citation lookups from the server tests.
+test-query-observer = []
 
 [dependencies]
 wenlan-types = { workspace = true }

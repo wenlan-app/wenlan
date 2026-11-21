@@ -880,6 +880,9 @@ pub(super) async fn confirm_page_basis_on_conn(
 /// edit) is what every writer that predates the page basis passes.
 #[derive(Debug, Clone, Default)]
 pub struct BasisWrite {
+    /// Server-owned links survive a hosted refresh or acceptance of its card.
+    /// The writer supplies no replacement sources or citation records.
+    pub preserve_source_links: bool,
     pub research_write: Option<super::research_write::ResearchWriteFence>,
     pub citation_snapshots: Vec<super::CitationSourceSnapshot>,
     /// The history row is flagged as a minor edit (typo, formatting).
@@ -915,6 +918,8 @@ pub struct BasisWrite {
     /// of it after the caller's check reads as not found: nothing is written,
     /// marked, or staged as a revision card. `None` writes wherever it is.
     pub space_guard: Option<crate::read_scope::ReadScope>,
+    /// A team write also requires its page and named bases to be shared.
+    pub member_write: bool,
     /// UX-WHO-2: the person's own words, quoted verbatim, when they
     /// explicitly asked the AI tool for this change. Rides only a
     /// version-checked `person_asked` write; the sentence gate then lets it
@@ -1134,10 +1139,34 @@ impl MemoryDB {
         added_by: &str,
         space_guard: Option<&crate::read_scope::ReadScope>,
     ) -> Result<PageBasisEntry, BasisError> {
+        self.mark_page_basis_for(
+            page_id,
+            basis_page_id,
+            read_version,
+            added_by,
+            space_guard,
+            false,
+        )
+        .await
+    }
+
+    pub async fn mark_page_basis_for(
+        &self,
+        page_id: &str,
+        basis_page_id: &str,
+        read_version: i64,
+        added_by: &str,
+        space_guard: Option<&crate::read_scope::ReadScope>,
+        member: bool,
+    ) -> Result<PageBasisEntry, BasisError> {
         let conn = self.conn.lock().await;
         let tx = conn
             .transaction_with_behavior(libsql::TransactionBehavior::Immediate)
             .await?;
+        if member {
+            let scope = space_guard.ok_or(BasisError::CiterNotFound)?;
+            Self::authorize_shared_basis_pair(&tx, page_id, basis_page_id, scope).await?;
+        }
         let entry = mark_page_basis_on_conn(
             &tx,
             page_id,
@@ -1157,10 +1186,23 @@ impl MemoryDB {
         page_id: &str,
         basis_page_id: &str,
     ) -> Result<bool, BasisError> {
+        self.unmark_page_basis_for(page_id, basis_page_id, None)
+            .await
+    }
+
+    pub async fn unmark_page_basis_for(
+        &self,
+        page_id: &str,
+        basis_page_id: &str,
+        member_scope: Option<&crate::read_scope::ReadScope>,
+    ) -> Result<bool, BasisError> {
         let conn = self.conn.lock().await;
         let tx = conn
             .transaction_with_behavior(libsql::TransactionBehavior::Immediate)
             .await?;
+        if let Some(scope) = member_scope {
+            Self::authorize_shared_basis_pair(&tx, page_id, basis_page_id, scope).await?;
+        }
         let removed = tx
             .execute(
                 "DELETE FROM page_basis WHERE page_id = ?1 AND basis_page_id = ?2",
@@ -1184,6 +1226,27 @@ impl MemoryDB {
         }
         tx.commit().await?;
         Ok(removed > 0)
+    }
+
+    async fn authorize_shared_basis_pair(
+        conn: &libsql::Connection,
+        page_id: &str,
+        basis_page_id: &str,
+        scope: &crate::read_scope::ReadScope,
+    ) -> Result<(), BasisError> {
+        use super::MemberPageTarget;
+        if !matches!(scope, crate::read_scope::ReadScope::Space(_))
+            || !Self::member_page_access_on(conn, page_id, scope, MemberPageTarget::Published)
+                .await?
+        {
+            return Err(BasisError::CiterNotFound);
+        }
+        if !Self::member_page_access_on(conn, basis_page_id, scope, MemberPageTarget::Published)
+            .await?
+        {
+            return Err(BasisError::BasisNotFound);
+        }
+        Ok(())
     }
 
     /// Confirm the citer has accounted for the basis at `version`. The version

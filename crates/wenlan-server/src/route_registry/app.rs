@@ -60,6 +60,11 @@ impl AppRouter {
         Self { inner }
     }
 
+    #[cfg(test)]
+    pub(crate) fn from_test_router(inner: Router) -> Self {
+        Self::new(inner)
+    }
+
     pub fn into_make_service(self) -> IntoMakeService<Router> {
         self.inner.into_make_service()
     }

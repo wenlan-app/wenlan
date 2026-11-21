@@ -86,15 +86,15 @@ async fn one_list_holds_both_edits_and_a_source_update_with_texts() {
     edit(&db, "a", "The launch moved to 2026-04-01.", "agent_refresh").await;
 
     let mut entries = changelog(&db, "b").await;
-    attach_texts(&db, "b", &mut entries).await.unwrap();
+    let visible: HashSet<String> = ["a".to_string()].into();
+    let note = db.get_page("b").await.unwrap().unwrap();
+    let history = build_page_history(&db, &note, &mut entries, &visible, true, None)
+        .await
+        .unwrap();
     assert!(entries
         .iter()
         .any(|e| e.text.as_deref() == Some("Plans built on Alpha, refined.")));
 
-    let visible: HashSet<String> = ["a".to_string()].into();
-    let history = build_page_history(&db, "b", &entries, &visible, true)
-        .await
-        .unwrap();
     let kinds: Vec<PageHistoryKind> = history.iter().map(|h| h.kind).collect();
     assert!(kinds.contains(&PageHistoryKind::PersonEdit), "{history:#?}");
     assert!(kinds.contains(&PageHistoryKind::AiEdit), "{history:#?}");
@@ -124,15 +124,22 @@ async fn one_list_holds_both_edits_and_a_source_update_with_texts() {
     assert!(history.windows(2).all(|w| w[0].at >= w[1].at));
 
     // A source the caller may not see is left out, and no text without asking.
-    let hidden = build_page_history(&db, "b", &entries, &HashSet::new(), false)
+    let hidden = build_page_history(&db, &note, &mut entries, &HashSet::new(), false, None)
         .await
         .unwrap();
     assert!(hidden
         .iter()
         .all(|h| h.kind != PageHistoryKind::SourceUpdate));
-    let plain = build_page_history(&db, "b", &changelog(&db, "b").await, &visible, false)
-        .await
-        .unwrap();
+    let plain = build_page_history(
+        &db,
+        &note,
+        &mut changelog(&db, "b").await,
+        &visible,
+        false,
+        None,
+    )
+    .await
+    .unwrap();
     assert!(plain
         .iter()
         .all(|h| h.text.is_none() && h.source.as_ref().is_none_or(|s| s.text.is_none())));
@@ -192,8 +199,8 @@ async fn the_first_version_is_listed_as_the_pages_birth_with_its_text() {
 
     let mut entries = changelog(&db, "ai").await;
     entries.retain(|entry| entry.version != 1);
-    attach_texts(&db, "ai", &mut entries).await.unwrap();
-    let history = build_page_history(&db, "ai", &entries, &HashSet::new(), true)
+    let note = db.get_page("ai").await.unwrap().unwrap();
+    let history = build_page_history(&db, &note, &mut entries, &HashSet::new(), true, None)
         .await
         .unwrap();
     let versions: Vec<_> = history.iter().map(|item| item.version).collect();
@@ -211,12 +218,14 @@ async fn the_first_version_is_listed_as_the_pages_birth_with_its_text() {
     // A page the person made in the app is theirs from birth.
     // ("unknown" is the actor the app's own create passes.)
     made_by(&db, "mine", "My own note.", "unknown").await;
+    let note = db.get_page("mine").await.unwrap().unwrap();
     let history = build_page_history(
         &db,
-        "mine",
-        &real_changelog(&db, "mine").await,
+        &note,
+        &mut real_changelog(&db, "mine").await,
         &HashSet::new(),
         false,
+        None,
     )
     .await
     .unwrap();
@@ -348,9 +357,17 @@ async fn ux_hist_3_the_history_route_lists_a_burst_of_saves_once() {
     edit(&db, "a", "One. Two.", "manual_edit").await;
     edit(&db, "a", "One. Two. Three.", "manual_edit").await;
     edit(&db, "a", "One. Two. Three. Four.", "manual_edit").await;
-    let history = build_page_history(&db, "a", &changelog(&db, "a").await, &HashSet::new(), false)
-        .await
-        .unwrap();
+    let note = db.get_page("a").await.unwrap().unwrap();
+    let history = build_page_history(
+        &db,
+        &note,
+        &mut changelog(&db, "a").await,
+        &HashSet::new(),
+        false,
+        None,
+    )
+    .await
+    .unwrap();
     let edits: Vec<_> = history
         .iter()
         .map(|h| (h.first_version, h.version))

@@ -19,7 +19,7 @@ use crate::team::{self, CredentialKind, Member, TeamFile};
 
 pub const SPACE: &str = "everyone";
 const TITLE: &str = "Rules";
-const ID_PREFIX: &str = "team-rules-";
+pub(crate) const ID_PREFIX: &str = "team-rules-";
 const ACCEPTS: &str = "accepts_team_proposal";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,6 +72,20 @@ pub fn hosted_project_layer(
         return Ok(None);
     }
     hosted.layer(settings_path, &rules).map(Some)
+}
+
+/// The exact approved master for a hosted Space. Do not consult local
+/// Rules-folder pages, a member's cached layer, or pending proposals.
+pub fn approved_hosted_rules(
+    settings_path: &Path,
+    space: &str,
+) -> Result<Option<(String, String)>, WenlanError> {
+    let Some(hosted) = hosted_rules(&team_path(settings_path), settings_path, space)? else {
+        return Ok(None);
+    };
+    Ok(hosted
+        .head()?
+        .map(|rules| (hosted.info.id, rules.page.body)))
 }
 
 /// Reads the project master for this exact local Space, using its current team grant.
@@ -316,6 +330,17 @@ impl HostedRules {
         Ok(approved_head(&self.history(), &self.page_id)?.cloned())
     }
 
+    fn file_path(&self, rules: &version::PageVersion) -> String {
+        format!(
+            "{}/{}/{}/{}/{}",
+            version::MEMBERS_DIR,
+            rules.meta.author.member,
+            version::PAGES_DIR,
+            self.page_id,
+            version::version_file_name(&rules.sha)
+        )
+    }
+
     fn skills(&self, settings_path: &Path) -> Result<Vec<TeamProjectSkill>, WenlanError> {
         let Some(project) = &self.project else {
             return Ok(Vec::new());
@@ -397,6 +422,7 @@ fn check_approved(rules: &version::PageVersion, id: &str) -> Result<(), WenlanEr
         || !rules.meta.locked
         || rules.meta.archived
         || version::file_kind(&rules.meta) != version::PAGES_DIR
+        || !crate::member_view::MemberSnapshot::approved_rules_match(rules)
     {
         return Err(validation("invalid approved team Rules version"));
     }
@@ -449,18 +475,54 @@ pub fn hosted_manifest(
     };
     Ok(Some(TeamRulesManifest {
         skills: hosted.skills(settings_path)?,
-        file: format!(
-            "{}/{}/{}/{}/{}",
-            version::MEMBERS_DIR,
-            rules.meta.author.member,
-            version::PAGES_DIR,
-            hosted.page_id,
-            version::version_file_name(&rules.sha)
-        ),
+        file: hosted.file_path(&rules),
         team: hosted.info,
         page_id: hosted.page_id,
         project: hosted.project,
     }))
+}
+
+/// Lists the shared page versions and the approved Rules version for a Space pull.
+pub fn hosted_file_list(
+    team_path: &Path,
+    settings_path: &Path,
+    space: &str,
+    folder: &Path,
+    access: TeamAccess,
+    pages: &team::SharedFolderPages,
+) -> Result<TeamFileList, WenlanError> {
+    let rules = hosted_manifest(team_path, settings_path, space)?;
+    let mut files = team::list_folder_files(folder, pages);
+    // Space pulls require the manifest's approved path in the file list.
+    if let Some(rules) = rules.as_ref().filter(|rules| !files.contains(&rules.file)) {
+        files.push(rules.file.clone());
+    }
+    Ok(TeamFileList {
+        access,
+        files,
+        rules,
+    })
+}
+
+/// Reads the Space's approved Rules version named by its file manifest.
+pub fn read_hosted_rule_file(
+    team_path: &Path,
+    settings_path: &Path,
+    space: &str,
+    path: &str,
+) -> Result<Option<Vec<u8>>, WenlanError> {
+    let Some(hosted) = hosted_rules(team_path, settings_path, space)? else {
+        return Ok(None);
+    };
+    let Some(rules) = hosted
+        .head()?
+        .filter(|rules| hosted.file_path(rules) == path)
+    else {
+        return Ok(None);
+    };
+    let bytes = fs::read(hosted.folder.join(path))?;
+    // The content must still match the version validated by `head`.
+    Ok((version::sha256_hex(&bytes) == rules.sha).then_some(bytes))
 }
 
 fn layer(
