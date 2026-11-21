@@ -4609,6 +4609,7 @@ pub struct SpaceBriefLine {
     pub line: String,
     /// The night has not written this one in plain words yet.
     pub raw: bool,
+    pub filled_by_wenlan: bool,
 }
 
 /// `None` when the Space has no Brief, or nothing in it to show.
@@ -4681,11 +4682,13 @@ fn space_brief_view(brief: Brief, plain: BriefPlainView) -> Option<SpaceBriefVie
                 id: item.id,
                 line: line.clone(),
                 raw: false,
+                filled_by_wenlan: item.filled_by_wenlan,
             },
             None => SpaceBriefLine {
                 line: first_sentence(&item.text),
                 id: item.id,
                 raw: true,
+                filled_by_wenlan: item.filled_by_wenlan,
             },
         })
         .filter(|line| !line.line.is_empty())
@@ -9037,10 +9040,13 @@ mod working_on_tests {
         BriefItem {
             id: id.to_string(),
             text: text.to_string(),
+            details: None,
             state: BriefItemState::Active,
             added_at,
             gate: None,
             version: 1,
+            confirmed: true,
+            filled_by_wenlan: false,
         }
     }
 
@@ -9053,6 +9059,7 @@ mod working_on_tests {
                 item("b", "Merge PR #1210 (head 967c4c6)", 20),
             ],
         );
+        b.active[0].filled_by_wenlan = true;
         b.last_session_summary = "Trust fixes merged (#1236).".into();
         b.last_handoff_at = Some(99);
         let mut plain = BriefPlainView {
@@ -9069,7 +9076,8 @@ mod working_on_tests {
             SpaceBriefLine {
                 id: "b".into(),
                 line: "合併共用空間".into(),
-                raw: false
+                raw: false,
+                filled_by_wenlan: false
             }
         );
         assert_eq!(
@@ -9077,7 +9085,8 @@ mod working_on_tests {
             SpaceBriefLine {
                 id: "a".into(),
                 line: "Windows signing is unresolved.".into(),
-                raw: true
+                raw: true,
+                filled_by_wenlan: true
             }
         );
         let raw = space_brief_view(b, BriefPlainView::default()).unwrap();

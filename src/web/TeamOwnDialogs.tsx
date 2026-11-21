@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { ProviderMark } from "./ProviderMarks";
-import { desktopLink, reauthThen, removeTeamTool, teamTools, type TeamTool } from "./team";
+import { desktopLink, reauthThen, removeTeamTool, teamTools, unlinkAccount, type TeamLinkedAccount, type TeamTool } from "./team";
 import "../components/memory/sharing/sharing.css";
 import "./teamWeb.css";
 
@@ -90,6 +90,61 @@ export function ToolsDialog({ team, onChanged, onClose }: {
         <code data-testid="team-tools-command">wenlan login {window.location.origin}</code>
       </div>
       {failed && <p className="team-account-error" role="alert">{t("teamWeb.toolsFailed")}</p>}
+      <div className="team-own-foot">
+        <button type="button" className="team-device-primary" onClick={onClose}>{t("teamWeb.done")}</button>
+      </div>
+    </Dialog>
+  );
+}
+
+export function AccountsDialog({ accounts: first, onChanged, onClose }: {
+  readonly accounts: readonly TeamLinkedAccount[];
+  /** The accounts left, after an unlink. */
+  readonly onChanged: (accounts: TeamLinkedAccount[]) => void;
+  readonly onClose: () => void;
+}) {
+  const { t } = useTranslation();
+  const [accounts, setAccounts] = useState<readonly TeamLinkedAccount[]>(first);
+  const [asking, setAsking] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const unlink = async (provider: string) => {
+    setError(null);
+    const done = await unlinkAccount(provider);
+    setAsking(null);
+    if (!done.ok) {
+      setError(done.error === "last_sign_in" ? t("teamWeb.accountsLast") : t("teamWeb.accountsFailed"));
+      return;
+    }
+    setAccounts(done.value);
+    onChanged(done.value);
+  };
+  return (
+    <Dialog label={t("teamWeb.accountsTitle")} testId="team-accounts-dialog" onClose={onClose}>
+      <h2>{t("teamWeb.accountsTitle")}</h2>
+      <p>{t("teamWeb.accountsHint")}</p>
+      <ul className="team-own-list">
+        {accounts.map((account) => (
+          <li key={account.provider} data-testid={`team-account-linked-${account.provider}`}>
+            <span className="team-own-account">
+              <ProviderMark provider={account.provider} size={16} />
+              <span>{account.email ?? providerName(account.provider)}</span>
+            </span>
+            {asking === account.provider ? (
+              <span className="team-own-ask">
+                <button type="button" onClick={() => setAsking(null)}>{t("sharing.cancel")}</button>
+                <button type="button" data-testid={`team-account-unlink-yes-${account.provider}`} onClick={() => void unlink(account.provider)}>{t("teamWeb.unlinkYes")}</button>
+              </span>
+            ) : (
+              <button
+                type="button"
+                aria-label={t("teamWeb.unlinkName", { name: providerName(account.provider) })}
+                onClick={() => { setError(null); setAsking(account.provider); }}
+              >{t("teamWeb.unlink")}</button>
+            )}
+          </li>
+        ))}
+      </ul>
+      {error && <p className="team-account-error" role="alert">{error}</p>}
       <div className="team-own-foot">
         <button type="button" className="team-device-primary" onClick={onClose}>{t("teamWeb.done")}</button>
       </div>

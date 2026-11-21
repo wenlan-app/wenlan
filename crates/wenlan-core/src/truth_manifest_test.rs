@@ -358,16 +358,18 @@ fn manifest_counts_match_the_spec() {
     // Then 415 after a member's AI tools: the owner's list and removal
     // (`/api/team/members/{id}/keys`) and this person's own on the teams
     // they joined (`/api/team/my-tools`). Names and dates, never a key.
-    // Then 416 after POST `/api/rules/setup/review/preview` (personal command
+    // Then 416 after POST `/api/handoff` (the canonical Brief write contract).
+    // Then 417 after POST `/api/rules/setup/review/preview` (personal command
     // and subagent review preview; no page text).
     assert_eq!(
         HTTP_READERS.len(),
-        416,
+        417,
         "registered (method, path, handler) triples"
     );
     // 61 tools with the read-only `list_skills` and `search_skills`; 63
-    // with `add_rule` and `remove_rule`, and 64 with `save_skill`.
-    assert_eq!(MCP_READERS.len(), 64, "#[tool( declarations");
+    // with `add_rule` and `remove_rule`, 64 with `save_skill`, and 65 with
+    // the canonical `handoff` Brief writer.
+    assert_eq!(MCP_READERS.len(), 65, "#[tool( declarations");
     // No hand-bumped CLI count here: `wenlan-cli`'s
     // `catalog_tests::truth_manifest_cli_rows_match_clap_subcommands` derives
     // the expected set from clap's `Commands` enum, which this crate cannot see.
@@ -375,7 +377,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        428,
+        429,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -383,7 +385,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        411,
+        412,
         "main builder entries"
     );
     assert_eq!(
@@ -590,7 +592,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::None)
             .count(),
-        406 // 20 personal setup, checkout, skill, review-preview and rule-proposal routes plus the existing 378, the four team sign-in routes and the four AI-tool routes, all with no page markers.
+        407 // 20 personal setup, checkout, skill, review-preview and rule-proposal routes plus the existing 378, the four team sign-in routes, the four AI-tool routes and POST /api/handoff, all with no page markers.
     );
 }
 

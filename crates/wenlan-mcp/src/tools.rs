@@ -165,7 +165,7 @@ pub const DAILY_TOOL_NAMES: &[&str] = &[
     "capture",
     "save_source",
     "keep_original",
-    "update_brief",
+    "handoff",
     "write_page",
     "rename_page",
     "delete_page",
@@ -195,15 +195,21 @@ const WEB_WRITE_TOOL_NAMES: &[&str] = &[
     "forget",
     "delete_page",
     "update_brief",
+    "handoff",
 ];
 /// Local-only tools whose HTTP-transport block the web-write profile lifts.
 /// `write_page` is not listed: only its refresh branch is blocked, inline.
-const WEB_WRITE_LIFTED_TOOL_NAMES: &[&str] =
-    &["forget", "rename_page", "delete_page", "update_brief"];
+const WEB_WRITE_LIFTED_TOOL_NAMES: &[&str] = &[
+    "forget",
+    "rename_page",
+    "delete_page",
+    "update_brief",
+    "handoff",
+];
 /// Web-write tools a hosted team member never sees or calls. The daemon's
 /// `PATCH /api/brief` takes its Space from the request body and is not in the
 /// team actor's `MCP_CALLS`, so member write grants are not enforced there yet.
-const TEAM_MEMBER_WITHHELD_TOOL_NAMES: &[&str] = &["update_brief"];
+const TEAM_MEMBER_WITHHELD_TOOL_NAMES: &[&str] = &["update_brief", "handoff"];
 /// Ceiling for the summed length of every visible stdio tool description:
 /// the total measured by `scripts/measure-mcp-surface.py` when the 30-tool
 /// surface was cut, plus ten percent, raised by 450 for `page_code_basis` and
@@ -223,7 +229,7 @@ const DESCRIPTION_BUDGET_CHARS: usize = 23225;
 const QUERY_ONLY_REFUSAL_MESSAGE: &str =
     "This tool is not available in the query-only profile. Allowed tools: brief, recall, get_page_sources, read_space_rules.";
 const WEB_WRITE_REFUSAL_MESSAGE: &str =
-    "This tool is not available in the web-write profile. Allowed tools: brief, recall, get_page_sources, read_space_rules, report_space_rule_use, read_page, list_pages, capture, write_page, rename_page, forget, delete_page, update_brief.";
+    "This tool is not available in the web-write profile. Allowed tools: brief, recall, get_page_sources, read_space_rules, report_space_rule_use, read_page, list_pages, capture, write_page, rename_page, forget, delete_page, update_brief, handoff.";
 const WEB_WRITE_SPACE_REFUSAL_MESSAGE: &str =
     "Nothing was changed: this item was not found in the Space this connection is limited to.";
 const WEB_WRITE_BAD_ID_MESSAGE: &str =
@@ -679,6 +685,11 @@ pub struct BriefParams {
         description = "Optional topic. Omit it to read only the complete Space Brief; provide it to append separately labeled related context from the same Space."
     )]
     pub topic: Option<String>,
+    #[schemars(
+        description = "Optional Brief item id. When present, that item's AI-facing details are returned; other items remain one-line only."
+    )]
+    #[serde(default)]
+    pub item: Option<String>,
     #[schemars(
         description = "Space (project) whose Brief to read. Uses the locked or configured default Space when omitted."
     )]
@@ -2063,6 +2074,8 @@ pub enum BriefMutationParam {
     /// Add a new item to the Brief.
     Add {
         text: String,
+        #[serde(default)]
+        details: Option<String>,
         state: BriefItemStateParam,
         #[serde(default)]
         gate: Option<String>,
@@ -2072,6 +2085,8 @@ pub enum BriefMutationParam {
         item_id: String,
         expected_version: i64,
         text: String,
+        #[serde(default)]
+        details: Option<String>,
     },
     /// Move an item between active and backlog.
     Move {
@@ -2096,8 +2111,14 @@ pub enum BriefMutationParam {
 impl From<BriefMutationParam> for wenlan_types::brief::BriefMutation {
     fn from(value: BriefMutationParam) -> Self {
         match value {
-            BriefMutationParam::Add { text, state, gate } => Self::Add {
+            BriefMutationParam::Add {
                 text,
+                details,
+                state,
+                gate,
+            } => Self::Add {
+                text,
+                details,
                 state: state.into(),
                 added_at: None,
                 gate,
@@ -2106,10 +2127,12 @@ impl From<BriefMutationParam> for wenlan_types::brief::BriefMutation {
                 item_id,
                 expected_version,
                 text,
+                details,
             } => Self::Edit {
                 item_id,
                 expected_version,
                 text,
+                details,
             },
             BriefMutationParam::Move {
                 item_id,
@@ -3157,7 +3180,13 @@ fn render_brief_items(output: &mut String, label: &str, items: &[wenlan_types::B
         if let Some(gate) = item.gate.as_deref() {
             output.push_str(&format!(" [gate: {gate}]"));
         }
+        if item.filled_by_wenlan {
+            output.push_str(" [filled in by Wenlan / Wenlan 補的; not confirmed]");
+        }
         output.push('\n');
+        if let Some(details) = item.details.as_deref() {
+            output.push_str(&format!("    Details: {details}\n"));
+        }
     }
 }
 
@@ -3954,6 +3983,7 @@ impl WenlanMcpServer {
         let request = wenlan_types::BriefReadRequest {
             topic: params.topic,
             space: effective_space(&params.space),
+            item: params.item,
             legacy_context_limit: None,
         };
         let response: wenlan_types::BriefReadResponse =
@@ -6546,6 +6576,25 @@ impl WenlanMcpServer {
         &self,
         params: UpdateBriefParams,
     ) -> Result<CallToolResult, McpError> {
+        self.handoff_write_impl(params, "/api/brief", "update_brief", false)
+            .await
+    }
+
+    pub async fn handoff_impl(
+        &self,
+        params: UpdateBriefParams,
+    ) -> Result<CallToolResult, McpError> {
+        self.handoff_write_impl(params, "/api/handoff", "handoff", true)
+            .await
+    }
+
+    async fn handoff_write_impl(
+        &self,
+        params: UpdateBriefParams,
+        endpoint: &str,
+        verb: &str,
+        post: bool,
+    ) -> Result<CallToolResult, McpError> {
         if let Some(refusal) = self.refuse_web_write_space_mismatch(&params.space) {
             return Ok(refusal);
         }
@@ -6556,7 +6605,7 @@ impl WenlanMcpServer {
         };
         if params.summary.is_none() && params.mutations.is_empty() {
             return Err(McpError::invalid_params(
-                "update_brief needs a summary or at least one mutation",
+                format!("{verb} needs a summary or at least one mutation"),
                 None,
             ));
         }
@@ -6576,8 +6625,11 @@ impl WenlanMcpServer {
                 }),
             mutations: params.mutations.into_iter().map(Into::into).collect(),
         };
-        let receipt: wenlan_types::brief::BriefUpdateReceipt =
-            try_call!(client.patch("/api/brief", &request), "update_brief");
+        let receipt: wenlan_types::brief::HandoffReceipt = if post {
+            try_call!(client.post(endpoint, &request), verb)
+        } else {
+            try_call!(client.patch(endpoint, &request), verb)
+        };
         let value = serde_json::to_value(receipt)
             .map_err(|error| McpError::internal_error(error.to_string(), None))?;
         Ok(CallToolResult::structured(value))
@@ -7243,7 +7295,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "Read the current Space Brief when resuming project work or when the user asks to catch up. Omit `topic` to return only the complete Brief. Provide `topic` to append separately labeled related context scoped to the same Space. Reads never create or mutate a Brief; the first handoff update can create it.",
+        description = "Read the current Space Brief when resuming project work or when the user asks to catch up. Every item returns its one-line text and id; AI-facing details are omitted unless `item` names that id. Omit `topic` to return only the Brief, or provide it to append separately labeled related context from the same Space. Reads never create or mutate a Brief; the first handoff update can create it.",
         annotations(
             title = "Brief",
             read_only_hint = true,
@@ -7941,6 +7993,23 @@ impl WenlanMcpServer {
     }
 
     #[tool(
+        description = "Hand off to the next session through the Space Brief: replace the summary (guarded by expected_version) and add, edit, move, gate, or complete items. Read brief first and reuse its brief_version and item versions; conflicts are reported, never silently overwritten. Reuse operation_id to retry safely.",
+        annotations(
+            title = "Handoff",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn handoff(
+        &self,
+        Parameters(params): Parameters<UpdateBriefParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.handoff_impl(params).await
+    }
+
+    #[tool(
         description = "Keep the map of what this conversation is working through. Call it only when the shape changes: a new question comes up, an option is added or dropped, a reason matters, or something is decided or reopened. Not every turn. Pick the shape from the conversation: working toward a decision or fixing a problem means a question with options, reasons, and decided / open / dropped; exploring or learning means a topic tree. One short sentence per point, in the conversation's language. Points the person wrote or edited are changed only as proposals. Do not tell the person you updated the map. Read first, then change with the revision you read; on a conflict, read again and redo.",
         annotations(
             title = "Thing map",
@@ -8271,6 +8340,7 @@ const LOCAL_ONLY_TOOL_NAMES: &[&str] = &[
     "lint_repair_apply",
     "lint_repair_verify",
     "update_brief",
+    "handoff",
     "forget",
     "confirm_memory",
     "rename_page",
@@ -8533,7 +8603,7 @@ impl ServerHandler for WenlanMcpServer {
                      get_page_sources to inspect supporting sources, read_space_rules to consult approved Space rules, \
                      report_space_rule_use to record a changed plan, and list_pages and read_page \
                      to browse and read wiki pages. To write: capture saves one durable fact, preference, or decision \
-                     the user asked to keep; update_brief records current project status in the Space Brief; \
+                     the user asked to keep; handoff records where the work stands in the Space Brief (update_brief is the older form of the same write); \
                      write_page creates a page or refreshes one; rename_page changes a page title; \
                      forget removes a memory and delete_page archives a page. \
                      Write, rename, or delete only what the user asked for, never to tidy up or as a side effect, and \
@@ -8573,11 +8643,11 @@ impl ServerHandler for WenlanMcpServer {
              - capture feeds it: one durable insight per call (a preference, decision, correction, or fact), \
                with the why. What to store and what to skip is spelled out in the capture tool description.\n\
              - brief carries work across sessions: read it when resuming project work or when the user asks to \
-               catch up; update_brief hands off to the next session.\n\
+               catch up; handoff writes it for the next session.\n\
              - recall finds one specific thing (\"what's Alice's role?\", \"our auth decision\").\n\
              - get_page_sources shows what a page rests on.\n\n\
              BRIEF vs RECALL: brief is the Space-owned project snapshot; recall is a targeted lookup. \
-             Brief reads never create or mutate state; only update_brief writes.\n\n\
+             Brief reads never create or mutate state; handoff writes.\n\n\
              You set each capture's type and entity yourself, in every mode. When Steep runs automatically, \
              the backend also scores quality, adds tags, and deduplicates in the background; when it runs on \
              demand, distill hands you clusters and steep hands you out of date pages. Either way, focus on what only you know: the \
@@ -9020,6 +9090,7 @@ mod tests {
             "lint_repair_apply",
             "lint_repair_verify",
             "update_brief",
+            "handoff",
             "forget",
             "confirm_memory",
             "delete_page",
@@ -9041,7 +9112,7 @@ mod tests {
                 .get_info()
                 .instructions
                 .expect("standard instructions");
-            assert!(standard.contains("update_brief hands off"));
+            assert!(standard.contains("handoff writes it for the next session"));
 
             let query = make_server_with_profile(transport, "agent", None, ToolProfile::QueryOnly)
                 .get_info()
@@ -9413,12 +9484,13 @@ mod tests {
 
     // ===== web-write profile =====
 
-    const WEB_WRITE_EXPECTED_TOOLS: [&str; 13] = [
+    const WEB_WRITE_EXPECTED_TOOLS: [&str; 14] = [
         "brief",
         "capture",
         "delete_page",
         "forget",
         "get_page_sources",
+        "handoff",
         "list_pages",
         "read_page",
         "read_space_rules",
@@ -9553,14 +9625,21 @@ mod tests {
         let web =
             make_server_with_profile(TransportMode::Http, "web-ai", None, ToolProfile::WebWrite);
         for name in LOCAL_ONLY_TOOL_NAMES {
-            let lifted = ["forget", "rename_page", "delete_page", "update_brief"].contains(name);
+            let lifted = [
+                "forget",
+                "rename_page",
+                "delete_page",
+                "update_brief",
+                "handoff",
+            ]
+            .contains(name);
             assert_eq!(
                 web.local_only_refusal(name).is_none(),
                 lifted,
                 "web-write local-only gate for {name}"
             );
         }
-        assert_eq!(WEB_WRITE_LIFTED_TOOL_NAMES.len(), 4);
+        assert_eq!(WEB_WRITE_LIFTED_TOOL_NAMES.len(), 5);
 
         // Every other profile keeps refusing all of them over HTTP.
         for profile in [ToolProfile::Standard, ToolProfile::QueryOnly] {
@@ -9578,8 +9657,10 @@ mod tests {
     fn web_write_update_brief_reaches_dispatch_but_query_only_refuses_it() {
         let web =
             make_server_with_profile(TransportMode::Http, "web-ai", None, ToolProfile::WebWrite);
-        assert!(web.web_write_refusal("update_brief").is_none());
-        assert!(web.local_only_refusal("update_brief").is_none());
+        for name in ["update_brief", "handoff"] {
+            assert!(web.web_write_refusal(name).is_none(), "{name}");
+            assert!(web.local_only_refusal(name).is_none(), "{name}");
+        }
 
         let query =
             make_server_with_profile(TransportMode::Http, "web-ai", None, ToolProfile::QueryOnly);
@@ -10425,17 +10506,16 @@ mod tests {
             None,
         )
         .with_tool_profile(ToolProfile::WebWrite);
-        assert!(!member
-            .visible_tools()
-            .iter()
-            .any(|tool| tool.name == "update_brief"));
-        let refusal = member
-            .web_write_refusal("update_brief")
-            .expect("a team member must not reach update_brief");
-        assert_eq!(
-            refusal_text(&refusal),
-            "This tool is unavailable in this shared Space."
-        );
+        for name in ["update_brief", "handoff"] {
+            assert!(!member.visible_tools().iter().any(|tool| tool.name == name));
+            let refusal = member
+                .web_write_refusal(name)
+                .unwrap_or_else(|| panic!("a team member must not reach {name}"));
+            assert_eq!(
+                refusal_text(&refusal),
+                "This tool is unavailable in this shared Space."
+            );
+        }
         assert!(member.web_write_refusal("write_page").is_none());
 
         let personal =
@@ -15221,7 +15301,7 @@ mod tests {
             "read_page",
             "capture",
             "brief",
-            "update_brief",
+            "handoff",
             "recall",
         ] {
             assert!(i.contains(tool), "with_instructions must place {tool}");
@@ -15404,7 +15484,7 @@ mod tests {
         let instructions = server_instructions();
         assert!(instructions.contains("BRIEF vs RECALL"));
         assert!(instructions.contains("Brief reads never create or mutate state"));
-        assert!(instructions.contains("only update_brief writes"));
+        assert!(instructions.contains("handoff writes"));
         assert!(!instructions.contains("FIRST THING EVERY SESSION"));
     }
 
@@ -16446,6 +16526,7 @@ mod tests {
             ("set_page_space", (false, false, false)),
             ("steep", (false, false, false)),
             ("thing_map", (false, false, false)),
+            ("handoff", (false, false, false)),
             ("update_brief", (false, false, false)),
             ("write_page", (false, true, false)),
         ]);
@@ -16873,6 +16954,7 @@ mod tests {
             "steep",
             "thing_map",
             "theme",
+            "handoff",
             "update_brief",
             "write_page",
         ]

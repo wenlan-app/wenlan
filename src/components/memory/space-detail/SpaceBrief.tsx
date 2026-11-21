@@ -47,7 +47,12 @@ export function SpaceBrief({ spaceName }: { readonly spaceName: string }) {
         <div className="space-brief-items">
           <h2 className="space-brief-heading">{t("spaceDetail.brief.inProgress")}</h2>
           <ul>
-            {shown.map((item) => <li key={item.id}>{item.line}</li>)}
+            {shown.map((item) => (
+              <li key={item.id}>
+                {item.line}
+                {item.filled_by_wenlan ? <span className="space-brief-filled">{t("spaceDetail.brief.filledByWenlan")}</span> : null}
+              </li>
+            ))}
           </ul>
           {hidden > 0 ? (
             <button type="button" className="space-brief-more" aria-expanded={open} onClick={() => setOpen((value) => !value)}>

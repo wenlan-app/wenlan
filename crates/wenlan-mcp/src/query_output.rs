@@ -92,6 +92,8 @@ pub enum QueryBriefState {
 #[serde(deny_unknown_fields)]
 pub struct QueryBriefItem {
     pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<String>,
     pub gate: Option<String>,
 }
 
@@ -180,6 +182,7 @@ pub fn project_brief(response: &BriefReadResponse) -> Result<QueryBriefOutput, &
                     .iter()
                     .map(|item| QueryBriefItem {
                         text: item.text.clone(),
+                        details: item.details.clone(),
                         gate: item.gate.clone(),
                     })
                     .collect(),
@@ -188,6 +191,7 @@ pub fn project_brief(response: &BriefReadResponse) -> Result<QueryBriefOutput, &
                     .iter()
                     .map(|item| QueryBriefItem {
                         text: item.text.clone(),
+                        details: item.details.clone(),
                         gate: item.gate.clone(),
                     })
                     .collect(),

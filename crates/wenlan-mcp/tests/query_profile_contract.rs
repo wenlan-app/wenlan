@@ -78,6 +78,7 @@ fn brief_params() -> BriefParams {
     BriefParams {
         session: None,
         topic: Some("evidence".into()),
+        item: None,
         space: Some("fixture".into()),
     }
 }

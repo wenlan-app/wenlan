@@ -558,6 +558,7 @@ async fn web_write_serves_the_write_tools_inside_the_pinned_space_only() {
             "delete_page",
             "forget",
             "get_page_sources",
+            "handoff",
             "list_pages",
             "read_page",
             "read_space_rules",
@@ -610,6 +611,24 @@ async fn web_write_serves_the_write_tools_inside_the_pinned_space_only() {
     .await;
     assert_eq!(other_space["result"]["isError"], true, "{other_space}");
     assert!(other_space["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("not found in the Space this connection is limited to"));
+
+    let handoff_other_space = rpc(
+        50,
+        "tools/call",
+        serde_json::json!({"name": "handoff", "arguments": {
+            "space": "personal", "operation_id": "op-handoff-other-space",
+            "summary": {"text": "Wrong Space", "expected_version": 1}
+        }}),
+    )
+    .await;
+    assert_eq!(
+        handoff_other_space["result"]["isError"], true,
+        "{handoff_other_space}"
+    );
+    assert!(handoff_other_space["result"]["content"][0]["text"]
         .as_str()
         .unwrap()
         .contains("not found in the Space this connection is limited to"));

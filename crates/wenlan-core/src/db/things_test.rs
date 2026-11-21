@@ -243,6 +243,7 @@ async fn ux_home_6_a_brief_item_makes_no_thing_and_its_conversation_is_sorted_li
             summary: None,
             mutations: vec![BriefMutation::Add {
                 text: "Ship the new tagline".into(),
+                details: None,
                 state: BriefItemState::Active,
                 added_at: None,
                 gate: None,
@@ -757,6 +758,7 @@ async fn ux_home_6_a_thing_an_older_daemon_made_from_a_brief_item_stays_off_work
         summary: None,
         mutations: vec![BriefMutation::Add {
             text: "0.21 release: remaining before tagging are #1180 and the backfill".into(),
+            details: None,
             state: BriefItemState::Active,
             added_at: None,
             gate: None,
@@ -814,6 +816,7 @@ async fn ux_home_6_a_handoff_summary_never_becomes_a_things_line() {
         summary: None,
         mutations: vec![BriefMutation::Add {
             text: "Later: replay a night".into(),
+            details: None,
             state: BriefItemState::Backlog,
             added_at: None,
             gate: None,

@@ -451,6 +451,7 @@ pub async fn handle_context(
     let request = wenlan_types::BriefReadRequest {
         topic,
         space: req.space,
+        item: None,
         legacy_context_limit: Some(req.max_chunks),
     };
     // `/api/context` reaches every page it serves through the Brief handler, so

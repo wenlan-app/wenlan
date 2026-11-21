@@ -30,7 +30,9 @@ fn conv(said: &[&str]) -> FoundConversation {
         branch: None,
         said: said.iter().map(|s| s.to_string()).collect(),
         last_reply: String::new(),
+        last_content: said.last().copied().unwrap_or_default().into(),
         first_at: 0,
+        last_content_at: 0,
         last_at: 0,
         automated: false,
         on_behalf: false,
@@ -55,7 +57,7 @@ fn ux_thing_1_a_claude_code_conversation_keeps_what_was_typed_and_its_own_last_t
                 "message": {"content": "Caveat: injected"}}),
             claude_user("Also hide finished ones", "2026-11-01T11:00:00Z"),
             claude_ai("Done: a card can be hidden.", "2026-11-01T11:05:00Z"),
-            serde_json::json!({"type": "ai-title", "aiTitle": "Home"}),
+            serde_json::json!({"type": "ai-title", "aiTitle": "Home", "timestamp": "2026-11-01T11:06:00Z"}),
         ],
     );
     let found = read_claude_code(&path).unwrap();
@@ -71,11 +73,16 @@ fn ux_thing_1_a_claude_code_conversation_keeps_what_was_typed_and_its_own_last_t
         ]
     );
     assert_eq!(found.last_reply, "Done: a card can be hidden.");
+    assert_eq!(found.last_content, "Done: a card can be hidden.");
     assert_eq!(
         found.first_at,
         unix_seconds("2026-11-01T10:00:00Z").unwrap()
     );
-    assert_eq!(found.last_at, unix_seconds("2026-11-01T11:05:00Z").unwrap());
+    assert_eq!(
+        found.last_content_at,
+        unix_seconds("2026-11-01T11:05:00Z").unwrap()
+    );
+    assert_eq!(found.last_at, unix_seconds("2026-11-01T11:06:00Z").unwrap());
     assert!(!found.automated && !found.on_behalf);
 }
 
@@ -121,6 +128,8 @@ fn ux_thing_1_a_codex_conversation_reads_its_meta_and_messages() {
                 "payload": {"type": "user_message", "message": "Fix the sitemap"}}),
             serde_json::json!({"type": "response_item", "timestamp": "2026-11-01T09:02:00Z",
                 "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Fixed."}]}}),
+            serde_json::json!({"type": "event_msg", "timestamp": "2026-11-01T09:03:00Z",
+                "payload": {"type": "token_count", "info": {}}}),
         ],
     );
     let found = read_codex(&path).unwrap();
@@ -132,6 +141,12 @@ fn ux_thing_1_a_codex_conversation_reads_its_meta_and_messages() {
     assert_eq!(found.branch.as_deref(), Some("seo"));
     assert_eq!(found.said, vec!["Fix the sitemap"]);
     assert_eq!(found.last_reply, "Fixed.");
+    assert_eq!(found.last_content, "Fixed.");
+    assert_eq!(
+        found.last_content_at,
+        unix_seconds("2026-11-01T09:02:00Z").unwrap()
+    );
+    assert_eq!(found.last_at, unix_seconds("2026-11-01T09:03:00Z").unwrap());
     assert!(!found.automated);
 
     // Newer Codex records the person's turns only as messages; a later

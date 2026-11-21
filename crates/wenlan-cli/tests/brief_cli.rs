@@ -131,6 +131,120 @@ fn session_response() -> String {
 }
 
 #[test]
+fn handoff_command_posts_the_same_file_twice_with_one_operation_id() {
+    let temp = tempfile::tempdir().unwrap();
+    let file = temp.path().join("handoff.json");
+    let request = serde_json::json!({
+        "space": "work",
+        "caller_id": "handoff-cli",
+        "operation_id": "same-operation",
+        "mutations": [{"kind": "add", "text": "one line", "state": "active"}]
+    });
+    std::fs::write(
+        &file,
+        serde_json::json!({
+            "schema": "wenlan.handoff.v1",
+            "session": "claude-code:file-session",
+            "request": request
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let receipt = serde_json::json!({
+        "space": "work", "brief_version": 1,
+        "applied": [{"mutation_index": 0, "kind": "add", "item_id": "item-1", "version": 1}],
+        "conflicts": [], "warnings": []
+    });
+    let (host, recorded) = spawn_stub(vec![
+        response(&receipt.to_string()),
+        response(&receipt.to_string()),
+    ]);
+
+    for _ in 0..2 {
+        cli()
+            .env("WENLAN_HOST", &host)
+            .args(["--space", "work", "handoff", "--file"])
+            .arg(&file)
+            .assert()
+            .success();
+    }
+
+    let recorded = recorded.lock().unwrap();
+    assert_eq!(recorded.len(), 2);
+    assert!(recorded
+        .iter()
+        .all(|call| call.method == "POST" && call.path == "/api/handoff"));
+    assert_eq!(recorded[0].body, recorded[1].body);
+    assert!(recorded
+        .iter()
+        .all(|call| call.session_header.as_deref() == Some("claude-code:file-session")));
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&recorded[0].body).unwrap(),
+        request
+    );
+}
+
+#[test]
+fn ux_hand_6_daemon_down_saves_one_stable_handoff_file_in_the_project() {
+    let temp = tempfile::tempdir().unwrap();
+    std::fs::create_dir(temp.path().join(".git")).unwrap();
+    let nested = temp.path().join("work/nested");
+    std::fs::create_dir_all(&nested).unwrap();
+    std::fs::create_dir_all(temp.path().join(".claude")).unwrap();
+    std::fs::create_dir_all(temp.path().join(".codex")).unwrap();
+    for (relative, content) in [
+        ("AGENTS.md", "project rules"),
+        (".claude/CLAUDE.md", "claude memory"),
+        (".codex/memory.md", "codex memory"),
+    ] {
+        std::fs::write(temp.path().join(relative), content).unwrap();
+    }
+    let input = nested.join("input.json");
+    std::fs::write(
+        &input,
+        serde_json::json!({
+            "space": "work",
+            "caller_id": "handoff-cli",
+            "operation_id": "offline-operation",
+            "mutations": [{"kind": "add", "text": "offline line", "state": "active"}]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let unavailable = format!("http://{}", listener.local_addr().unwrap());
+    drop(listener);
+
+    for _ in 0..2 {
+        cli()
+            .current_dir(&nested)
+            .env("WENLAN_HOST", &unavailable)
+            .args(["--space", "work", "handoff", "--file"])
+            .arg(&input)
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("\"status\": \"saved_in_project\""));
+    }
+
+    let saved = temp.path().join(".wenlan-handoff-offline-operation.json");
+    let handoff: wenlan_types::HandoffFile =
+        serde_json::from_slice(&std::fs::read(saved).unwrap()).unwrap();
+    assert_eq!(handoff.request.operation_id, "offline-operation");
+    assert_eq!(
+        std::fs::read_to_string(temp.path().join("AGENTS.md")).unwrap(),
+        "project rules"
+    );
+    assert_eq!(
+        std::fs::read_to_string(temp.path().join(".claude/CLAUDE.md")).unwrap(),
+        "claude memory"
+    );
+    assert_eq!(
+        std::fs::read_to_string(temp.path().join(".codex/memory.md")).unwrap(),
+        "codex memory"
+    );
+}
+
+#[test]
 fn brief_update_records_the_session_once_then_stamps_the_write() {
     let temp = tempfile::tempdir().unwrap();
     let update = temp.path().join("update.json");

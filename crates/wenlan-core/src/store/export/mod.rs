@@ -262,7 +262,11 @@ pub const DEFERRED_COLUMNS: &[(&str, &str, &[&str])] = &[
             "semantic_unit",
         ],
     ),
-    ("brief_items", "history", &["updated_at"]),
+    (
+        "brief_items",
+        "history",
+        &["updated_at", "details", "confirmed", "filled_by_wenlan"],
+    ),
 ];
 
 /// [`DEFERRED_COLUMNS`] as the manifest lists them.

@@ -54,6 +54,26 @@ async fn json_request(
     (status, serde_json::from_slice(&bytes).unwrap())
 }
 
+async fn handoff_request(
+    app: wenlan_server::router::AppRouter,
+    body: serde_json::Value,
+) -> (StatusCode, serde_json::Value) {
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/handoff")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    (status, serde_json::from_slice(&bytes).unwrap())
+}
+
 fn update(space: &str, operation_id: &str, text: &str) -> serde_json::Value {
     serde_json::json!({
         "space": space,
@@ -268,6 +288,68 @@ async fn patch_commits_safe_changes_reports_stale_conflicts_and_projects_receipt
     assert_eq!(stale.conflicts.len(), 1);
     assert_eq!(stale.applied.len(), 1);
     assert!(temp.path().join("status").join("work.md").is_file());
+}
+
+#[tokio::test]
+async fn ux_hand_1_handoff_route_uses_the_shared_brief_write_contract() {
+    let (app, _temp, db) = fixture().await;
+    let body = update("work", "handoff-route-op", "one shared handoff line");
+
+    let (first_status, first) = handoff_request(app.clone(), body.clone()).await;
+    let (replay_status, replay) = handoff_request(app, body).await;
+
+    assert_eq!(first_status, StatusCode::OK, "{first}");
+    assert_eq!(replay_status, StatusCode::OK, "{replay}");
+    // A replay returns the stored receipt; only the first write projects.
+    let mut first_without_projection = first.clone();
+    first_without_projection
+        .as_object_mut()
+        .unwrap()
+        .remove("projection_path");
+    assert_eq!(first_without_projection, replay);
+    let brief = db.get_brief_by_space_name("work").await.unwrap().unwrap();
+    assert_eq!(brief.active.len(), 1);
+    assert_eq!(brief.active[0].text, "one shared handoff line");
+}
+
+#[tokio::test]
+async fn brief_omits_details_by_default_and_returns_only_requested_item_details() {
+    let (app, _temp, _db) = fixture().await;
+    let mut first = update("work", "details-one", "First line");
+    first["mutations"][0]["details"] = serde_json::json!("First private AI detail");
+    let mut second = update("work", "details-two", "Second line");
+    second["mutations"][0]["details"] = serde_json::json!("Second private AI detail");
+    let (_, first_receipt) = handoff_request(app.clone(), first).await;
+    let (_, second_receipt) = handoff_request(app.clone(), second).await;
+    let first_id = first_receipt["applied"][0]["item_id"].as_str().unwrap();
+    let second_id = second_receipt["applied"][0]["item_id"].as_str().unwrap();
+
+    let (status, default_body) = json_request(
+        app.clone(),
+        Method::POST,
+        serde_json::json!({"space":"work"}),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(default_body["brief"]["active"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|item| item.get("details").is_none()));
+
+    let (_, selected) = json_request(
+        app,
+        Method::POST,
+        serde_json::json!({"space":"work", "item": first_id}),
+        None,
+    )
+    .await;
+    let items = selected["brief"]["active"].as_array().unwrap();
+    let first = items.iter().find(|item| item["id"] == first_id).unwrap();
+    let second = items.iter().find(|item| item["id"] == second_id).unwrap();
+    assert_eq!(first["details"], "First private AI detail");
+    assert!(second.get("details").is_none());
 }
 
 async fn get_request(

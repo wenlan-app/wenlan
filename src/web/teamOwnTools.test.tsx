@@ -98,6 +98,30 @@ describe("a member's own AI tools and desktop link", () => {
     expect(fetch).toHaveBeenCalledWith("/team/v1/account/keys/k1", expect.objectContaining({ method: "DELETE", credentials: "same-origin" }));
   });
 
+  it("unlinks Google or GitHub after asking, but says so when it is the only way in", async () => {
+    const both = { ...COOKIE_ME, accounts: [{ provider: "google", email: "dana@gmail.com" }, { provider: "github", email: "dana@github.com" }] };
+    let left = 2;
+    const fetch = server(both, {
+      "DELETE /team/v1/account/accounts/github": () => { left = 1; return json([both.accounts[0]]); },
+      "DELETE /team/v1/account/accounts/google": () => (left === 1 ? json({ error: "last_sign_in" }, 409) : json([])),
+    });
+    mount();
+    await userEvent.click(await screen.findByTestId("team-account-row"));
+    await userEvent.click(screen.getByTestId("team-account-accounts"));
+    const dialog = await screen.findByTestId("team-accounts-dialog");
+    expect(within(dialog).getByTestId("team-account-linked-github")).toHaveTextContent("dana@github.com");
+    await userEvent.click(within(dialog).getByLabelText("Unlink GitHub"));
+    expect(fetch).not.toHaveBeenCalledWith("/team/v1/account/accounts/github", expect.anything());
+    await userEvent.click(within(dialog).getByTestId("team-account-unlink-yes-github"));
+    await waitFor(() => expect(within(dialog).queryByTestId("team-account-linked-github")).toBeNull());
+    expect(fetch).toHaveBeenCalledWith("/team/v1/account/accounts/github", expect.objectContaining({ method: "DELETE", credentials: "same-origin" }));
+
+    await userEvent.click(within(dialog).getByLabelText("Unlink Google"));
+    await userEvent.click(within(dialog).getByTestId("team-account-unlink-yes-google"));
+    expect(await within(dialog).findByRole("alert", { hidden: true })).toHaveTextContent("This is your only way to sign in");
+    expect(within(dialog).getByTestId("team-account-linked-google")).toBeInTheDocument();
+  });
+
   it("a desktop link first asks to confirm with Google, then comes back and is shown hidden", async () => {
     server(COOKIE_ME, {
       "POST /team/v1/account/desktop-link": () => json({ error: "reauth_required" }, 403),

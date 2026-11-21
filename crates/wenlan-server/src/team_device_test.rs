@@ -146,6 +146,7 @@ async fn a_member_key_connects_a_tool_and_the_key_is_handed_over_once() {
         (Method::GET, "/team/v1/account/keys"),
         (Method::POST, "/auth/device/approve"),
         (Method::POST, "/team/v1/account/desktop-link"),
+        (Method::DELETE, "/team/v1/account/accounts/google"),
     ] {
         let (status, _) = send(&f.state, method, uri, Some(&grant.key), None, Value::Null).await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{uri}");
@@ -548,4 +549,107 @@ fn short_codes_use_only_the_unambiguous_letters() {
     for bad in ["ABCD-EFG", "ABCD-EFG0", "ABCDEFGHI", "IIII-OOOO"] {
         assert_eq!(wenlan_types::team::normalize_user_code(bad), None, "{bad}");
     }
+}
+
+#[tokio::test]
+async fn a_member_unlinks_google_or_github_but_not_their_only_way_in() {
+    let f = fixture();
+    with_url(&f);
+    let link = |member: &str, issuer: &str, subject: &str| {
+        team::link_identity(
+            &f.state.team_path,
+            member,
+            team::Identity {
+                issuer: issuer.into(),
+                subject: subject.into(),
+                email: Some("amy@example.com".into()),
+                linked_at: String::new(),
+            },
+        )
+        .unwrap();
+    };
+    link(&f.writer.0.id, "https://accounts.google.com", "g1");
+    link(&f.writer.0.id, "https://github.com", "7");
+    let session = f.state.sessions.create(&f.writer.0.id).unwrap();
+    let google = "/team/v1/account/accounts/google";
+
+    // From the browser, with only the session: the GitHub account stays.
+    let (status, body) = send(
+        &f.state,
+        Method::DELETE,
+        google,
+        None,
+        Some(&session),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body,
+        json!([{"provider": "github", "email": "amy@example.com"}])
+    );
+    assert!(
+        team::member_by_identity(&f.state.team_path, "https://accounts.google.com", "g1")
+            .unwrap()
+            .is_none()
+    );
+    let (status, body) = send(
+        &f.state,
+        Method::DELETE,
+        google,
+        None,
+        Some(&session),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(
+        (status, body["error"].as_str()),
+        (StatusCode::NOT_FOUND, Some("not_linked"))
+    );
+    let okta = "/team/v1/account/accounts/okta";
+    let (status, _) = send(
+        &f.state,
+        Method::DELETE,
+        okta,
+        None,
+        Some(&session),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    // With the member key too; the key keeps working after the last account.
+    let github = "/team/v1/account/accounts/github";
+    let (status, body) = send(
+        &f.state,
+        Method::DELETE,
+        github,
+        Some(&f.writer.1),
+        None,
+        Value::Null,
+    )
+    .await;
+    assert_eq!((status, body), (StatusCode::OK, json!([])));
+
+    // Someone who signs in only with GitHub cannot unlink it.
+    let (bo, _) = team::create_invited_member(&f.state.team_path, "Bo", None, &[]).unwrap();
+    link(&bo.id, "https://github.com", "8");
+    let bo_session = f.state.sessions.create(&bo.id).unwrap();
+    let (status, body) = send(
+        &f.state,
+        Method::DELETE,
+        github,
+        None,
+        Some(&bo_session),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(
+        (status, body["error"].as_str()),
+        (StatusCode::CONFLICT, Some("last_sign_in"))
+    );
+    assert!(
+        team::member_by_identity(&f.state.team_path, "https://github.com", "8")
+            .unwrap()
+            .is_some()
+    );
 }

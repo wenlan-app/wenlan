@@ -14,10 +14,13 @@ fn brief(items: &[(&str, &str)]) -> Brief {
             .map(|(id, text)| BriefItem {
                 id: (*id).into(),
                 text: (*text).into(),
+                details: None,
                 state: BriefItemState::Active,
                 added_at: 1_790_000_000,
                 gate: None,
                 version: 1,
+                confirmed: true,
+                filled_by_wenlan: false,
             })
             .collect(),
         backlog: vec![],
