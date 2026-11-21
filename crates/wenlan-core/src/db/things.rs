@@ -1035,7 +1035,10 @@ impl MemoryDB {
             .filter(|point| !point.decided)
             .map(|point| point.id)
             .collect();
-        let unread = self.thing_unread_conversations(&thing.id).await?;
+        let mut unread_tools = self.thing_unread_tools(&thing.id, scope).await?;
+        let unread = unread_tools.len();
+        unread_tools.sort();
+        unread_tools.dedup();
         let tidied = self.thing_tidies(&thing.id).await?;
         Ok(Some(ThingDetailResponse {
             thing,
@@ -1046,6 +1049,9 @@ impl MemoryDB {
             dream,
             open_points,
             unread,
+            unread_tools,
+            // The daemon fills this in from what it knows of its own nights.
+            waiting: 0,
             tidied,
         }))
     }

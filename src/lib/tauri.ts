@@ -1667,8 +1667,14 @@ export interface ThingDetail extends ThingSummary {
   };
   /** Points steeped from it that are still open. */
   open_points?: string[];
-  /** Its conversations that went on but could not be read overnight. */
+  /** Its conversations a night cannot read: the transcript was gone, or the
+   *  AI tool keeps none Wenlan can read. */
   unread?: number;
+  /** The tools those came from, each once. */
+  unread_tools?: string[];
+  /** Its conversations due for reading that wait because the latest night
+   *  had no AI model. */
+  waiting?: number;
 }
 
 /** Where a point on a thing's map stands; apart from its kind, since an
@@ -4031,7 +4037,7 @@ export interface SessionHandoffEntry {
 }
 
 /** `recall`: a memory search (label is the query). `brief`: a Space Brief read (label is the Space). `read_page`: a note read in full (label is the note id). */
-export type SessionReadKind = "recall" | "brief" | "read_page";
+export type SessionReadKind = "recall" | "brief" | "read_page" | "recall_page";
 
 export interface SessionReadEntry {
   kind: SessionReadKind;

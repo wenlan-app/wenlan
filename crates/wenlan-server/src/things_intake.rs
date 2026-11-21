@@ -236,6 +236,32 @@ fn group_from(
         })
 }
 
+/// The cutoff of the newest look at which the model a night reads with was
+/// not there (0: none). In memory and per computer: whether this computer can
+/// read right now is not a fact to share through the library.
+static DREAMS_WAITING_SINCE: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
+/// What a look knows of the model the night needs: with it, nothing waits for
+/// one; without it, whatever was quiet by now waits. The cutoff only moves
+/// forward, so the daytime cutoff never undoes a night's.
+fn track_waiting_for_model(group_model_available: bool, now: i64, local_hour: u32) {
+    use std::sync::atomic::Ordering::Relaxed;
+    if group_model_available {
+        DREAMS_WAITING_SINCE.store(0, Relaxed);
+    } else {
+        DREAMS_WAITING_SINCE.fetch_max(dream_quiet_since(now, local_hour), Relaxed);
+    }
+}
+
+/// The cutoff before which due conversations are waiting for a model, if the
+/// latest look had none.
+pub fn dreams_waiting_since() -> Option<i64> {
+    match DREAMS_WAITING_SINCE.load(std::sync::atomic::Ordering::Relaxed) {
+        0 => None,
+        since => Some(since),
+    }
+}
+
 /// One look, now. `None` when it did not run.
 pub async fn look_once(
     shared: &SharedState,
@@ -291,6 +317,15 @@ pub async fn look_once(
     };
 
     let Some(models) = models else {
+        // The night reads with the grouping model alone. Without the
+        // everyday (labelling) model it does not run, but that is not a
+        // wait for AI to be set up: only a missing grouping model, or
+        // background AI turned off, is (UX-CHAT-5).
+        track_waiting_for_model(
+            group_model(shared).await.is_some(),
+            now,
+            chrono::Local::now().hour(),
+        );
         // No everyday model yet (an on-device one waits for an idle
         // computer): the skills night pass only needs the grouping model.
         if NIGHT_HOURS.contains(&chrono::Local::now().hour()) && still_quiet() {
@@ -304,6 +339,8 @@ pub async fn look_once(
             ..LookReport::default()
         }));
     };
+    // The grouping model is here, whether or not this look then reads.
+    track_waiting_for_model(true, 0, 0);
     let mut report = look_with_until(&db, found, &models, language, backoff, &still_quiet).await?;
     report.handoffs_filled = handoffs_filled;
     if !still_quiet() {
@@ -318,6 +355,7 @@ pub async fn look_once(
         local_hour,
         backoff,
         &DaemonWriter(shared.clone()),
+        &wenlan_core::config::load_config().knowledge_path_or_default(),
     )
     .await?;
     report.dreamed = dreamed;
@@ -413,6 +451,7 @@ pub fn dream_quiet_since(now: i64, local_hour: u32) -> i64 {
 
 /// Read the things that went on for points, if any are due. Returns the
 /// things read and the points written.
+#[allow(clippy::too_many_arguments)]
 async fn dream_once(
     db: &MemoryDB,
     models: &IntakeModels,
@@ -421,6 +460,7 @@ async fn dream_once(
     local_hour: u32,
     backoff: &mut Backoff,
     writer: &dyn PointWriter,
+    pages_folder: &std::path::Path,
 ) -> Result<(usize, usize), String> {
     if now < backoff.dream.1 {
         return Ok((0, 0));
@@ -440,7 +480,17 @@ async fn dream_once(
         .into_iter()
         .filter_map(|c| found_session_id(&c).map(|id| (id, c)))
         .collect();
-    match dream_with(db, &due, &found, models.group.as_ref(), language, writer).await {
+    match dream_with(
+        db,
+        &due,
+        &found,
+        models.group.as_ref(),
+        language,
+        writer,
+        Some(pages_folder),
+    )
+    .await
+    {
         Ok(done) => {
             backoff.dream = (0, 0);
             Ok(done)
@@ -462,6 +512,7 @@ pub async fn dream_with(
     model: &dyn LlmProvider,
     language: &str,
     writer: &dyn PointWriter,
+    pages_folder: Option<&std::path::Path>,
 ) -> Result<(usize, usize), String> {
     let mut points_written = 0;
     // One reading per Space a thing's conversations are in: what was said in
@@ -605,6 +656,11 @@ pub async fn dream_with(
         // A conversation one of whose points could not be kept is not marked
         // read, so the next night reads it again instead of losing the point.
         let mut not_kept = std::collections::HashSet::new();
+        // The points this group kept, and the memories they wrote or replaced:
+        // a note citing one of those already follows it, so only the notes
+        // that cite none are checked for a contradiction below.
+        let mut kept_points: Vec<crate::things_read_pages::NewPoint> = Vec::new();
+        let mut following = std::collections::HashSet::new();
         for point in points {
             let (from, found_from) = &conversations[point.from];
             // The Space its label named; else the conversation's or the
@@ -686,6 +742,16 @@ pub async fn dream_with(
                     .replaces
                     .and_then(|p| map.by_memory.get(&prior[p].id).cloned())
             });
+            kept_points.push(crate::things_read_pages::NewPoint {
+                memory_id: id.clone(),
+                text: point.text.clone(),
+                space: point_space.clone(),
+                session_id: from.session_id.clone(),
+            });
+            following.insert(id.clone());
+            if let Some(p) = point.replaces {
+                following.insert(prior[p].id.clone());
+            }
             on_map.push(DreamMapWrite {
                 memory_id: id.clone(),
                 session_id: from.session_id.clone(),
@@ -717,13 +783,7 @@ pub async fn dream_with(
         // With a synced library only the main computer tidies: two computers
         // hiding the same memories could each keep a different one, and the
         // hides sync to both.
-        let tidy_here = tokio::task::spawn_blocking(|| {
-            wenlan_core::shared_space::library::page_writing_allowed_at(
-                &wenlan_core::shared_space::settings_path(),
-            )
-        })
-        .await
-        .unwrap_or(false);
+        let tidy_here = page_writing_here().await;
         let mut tidied = if tidy_here {
             tidy_thing(db, &thing.thing_id, model, writer).await
         } else {
@@ -752,6 +812,38 @@ pub async fn dream_with(
             )
             .await
             .map_err(|e| e.to_string())?;
+        // Then the notes these conversations only read: one sentence of such a
+        // note changes only when a point just kept clearly contradicts it
+        // (design v5 D15). Nothing here fails the night or un-reads a
+        // conversation.
+        let session_ids: Vec<&str> = conversations
+            .iter()
+            .map(|(c, _)| c.session_id.as_str())
+            .collect();
+        // Page text, proposals included, is written only by the main computer
+        // of a shared library (the same gate as the tidy above).
+        let read_pages = if tidy_here {
+            crate::things_read_pages::check_read_pages(
+                db,
+                &session_ids,
+                &kept_points,
+                &following,
+                model,
+                pages_folder,
+            )
+            .await
+        } else {
+            Default::default()
+        };
+        if read_pages != Default::default() {
+            tracing::info!(
+                "[things] {}: {} sentence(s) changed, {} proposed, {} revision card(s) staged on notes that were read",
+                thing.thing_id,
+                read_pages.changed,
+                read_pages.proposed,
+                read_pages.staged
+            );
+        }
         // Then what the work has come to, from every point that stands now,
         // once the night is safely recorded: a failure here loses no point
         // and does not stop the night (UX-VIEW-6).
@@ -764,6 +856,31 @@ pub async fn dream_with(
         }
     }
     Ok((due.len(), points_written))
+}
+
+#[cfg(test)]
+tokio::task_local! {
+    /// Lets a test play a computer that is not the main one of a shared library.
+    pub(crate) static NOT_THE_MAIN_COMPUTER: bool;
+}
+
+/// Whether AI may write page text on this computer: always, unless it shares
+/// the library and another computer is the main one.
+async fn page_writing_here() -> bool {
+    // A test never reads the real data root's shared-library settings: it is
+    // the main computer unless it says otherwise.
+    #[cfg(test)]
+    return !NOT_THE_MAIN_COMPUTER
+        .try_with(|not_main| *not_main)
+        .unwrap_or(false);
+    #[cfg(not(test))]
+    tokio::task::spawn_blocking(|| {
+        wenlan_core::shared_space::library::page_writing_allowed_at(
+            &wenlan_core::shared_space::settings_path(),
+        )
+    })
+    .await
+    .unwrap_or(false)
 }
 
 /// Tidy the memories an AI wrote around one thing's night (UX-GRAPH-7):

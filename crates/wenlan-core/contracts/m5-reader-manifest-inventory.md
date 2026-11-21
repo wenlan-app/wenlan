@@ -553,6 +553,7 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `GET` | `/api/ambient/status` | main | no | not_applicable | `none` | — | no prose fields |
 | `POST` | `/api/ambient/sweep` | main | no | not_applicable | `none` | — | no prose fields |
 | `PATCH` | `/api/brief` | main | no | not_applicable | `none` | — | BriefUpdateReceipt carries no page prose |
+| `POST` | `/api/handoff` | main | no | not_applicable | `none` | — | HandoffReceipt carries no page prose |
 | `POST` | `/api/brief` | main | yes | automatic | `none` | `handle_read_brief` | Brief.last_session_summary, BriefItem.text, SearchResult.content |
 | `GET` | `/api/brief/history` | main | no | not_applicable | `none` | — | Brief update log: Brief text only, no page prose |
 | `GET` | `/api/brief/history/{version}` | main | no | not_applicable | `none` | — | past Brief snapshot: Brief text only, no page prose |
@@ -908,6 +909,7 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/rules/setup/restore` | main | no | not_applicable | `none` | — | local tool setup restoration receipt |
 | `POST` | `/api/rules/setup/skill-updates` | main | no | not_applicable | `none` | — | release metadata for personally adopted tools, no page text |
 | `POST` | `/api/rules/setup/review` | main | no | not_applicable | `none` | — | local tool setup review receipt with local file diffs |
+| `POST` | `/api/rules/setup/review/preview` | main | no | not_applicable | `none` | — | local tool setup review preview with local file diffs and destination permissions |
 | `POST` | `/api/rules/setup/settings/apply` | main | no | not_applicable | `none` | — | local settings write receipt |
 | `POST` | `/api/rules/setup/settings/preview` | main | no | not_applicable | `none` | — | settings plan contains safe local settings additions |
 | `POST` | `/api/rules/setup/sync` | main | no | not_applicable | `none` | — | local tool setup receipt with local file diffs |
@@ -1026,6 +1028,7 @@ must be demoted individually with a recorded reason. **Every MCP tool is
 | `steep` | yes | automatic | `none` | tool handler |
 | `theme` | no | not_applicable | `none` | — |
 | `thing_map` | no | not_applicable | `none` | — |
+| `handoff` | yes | automatic | `none` | tool handler |
 | `update_brief` | yes | automatic | `none` | tool handler |
 | `write_page` | yes | automatic | `none` | tool handler |
 | `read_source` | no | not_applicable | `none` | exact file or webpage text; rejects page sources |
@@ -1037,12 +1040,10 @@ must be demoted individually with a recorded reason. **Every MCP tool is
 | `add_rule` | no | not_applicable | `none` | receipt for the rule the tool just sent: status, rule id, the saved-rules page's title and where it was saved from; no other page text |
 | `remove_rule` | no | not_applicable | `none` | receipt: status, the rule id sent and the saved-rules page's title; never the rule's text |
 
-## CLI — all 27 `Commands` variants
+## CLI — all 36 `Commands` variants
 
-From `crates/wenlan-cli/src/main.rs`. The count is 27: `Connect` and
-`Brief` are tuple variants, easy to miss when scanning for brace-shaped
-variants, `Outbox` is the last brace variant before `Entities`, and `Sweep`
-follows `Entities`. The CLI
+From `crates/wenlan-cli/src/main.rs`. `Connect`, `Brief`, and `Handoff` are
+tuple variants, easy to miss when scanning for brace-shaped variants. The CLI
 renders daemon responses, so it inherits the daemon's classification and adds
 the projection-directory reader.
 
@@ -1065,6 +1066,7 @@ the projection-directory reader.
 | `wenlan connect` | yes | automatic | `none` | subcommand renderer |
 | `wenlan recall` | yes | automatic | `none` | subcommand renderer |
 | `wenlan brief` | yes | automatic | `none` | subcommand renderer |
+| `wenlan handoff` | yes | automatic | `none` | subcommand renderer |
 | `wenlan rules` | yes | automatic | `none` | subcommand renderer |
 | `wenlan skills` | yes | automatic | `none` | subcommand renderer |
 | `wenlan pages` | yes | automatic | **`collection` + `named_page`** | enforce_projection_directory_invariant |
@@ -1544,7 +1546,7 @@ carrying the authority of agreement.
 | `core/db.rs::entity_enrichment_for_claim` | `pub` | no | no | — | `core/db.rs::prepare_entity_enrichment` |
 | `core/db.rs::find_distillation_clusters` | `pub` | no | no | — | `core/db.rs::find_distillation_clusters_scoped` |
 | `core/db.rs::first_active_page` | `pub` | no | no | — | `core/db.rs::list_pages` |
-| `core/db.rs::get_page` | `pub` | no | **yes** | `server/knowledge_routes.rs::handle_resolve_embed`, `server/original_routes.rs::handle_keep_original`, `server/page_map_routes.rs::ensure_page_is_active`, `server/page_map_routes.rs::visible_page`, `server/page_routes.rs::archive_page_for`, `server/page_routes.rs::handle_create_page_inner`, `server/page_routes.rs::handle_delete_page`, `server/page_routes.rs::handle_get_page_sources`, `server/page_routes.rs::handle_refresh_page`, `server/page_routes.rs::handle_refresh_page_inner`, `server/page_routes.rs::handle_restore_page_version`, `server/page_routes.rs::handle_update_page`, `server/page_routes.rs::space_locked_write_error`, `server/sentence_routes.rs::require_visible_page`, `server/skill_grow.rs::handle_undo_space_rules`, `server/skill_grow.rs::load_rules_folders`, `server/skill_grow.rs::readable_rules_page`, `server/skill_grow.rs::source_line_is_eligible`, `server/skill_grow.rs::write_maintained_rules_page`, `server/skill_grow/saved_rules.rs::make_page`, `server/skill_grow/saved_rules.rs::page_of`, `server/skill_grow/saved_rules.rs::save_rule_in`, `server/skill_grow/saved_rules.rs::write_rule_change`, `server/steep_new_routes.rs::handle_steep_new_commit_inner`, `server/steep_routes.rs::handle_steep_claim`, `server/steep_routes.rs::handle_steep_commit` | `core/db.rs::get_page_inner` |
+| `core/db.rs::get_page` | `pub` | no | **yes** | `server/knowledge_routes.rs::handle_resolve_embed`, `server/original_routes.rs::handle_keep_original`, `server/page_map_routes.rs::ensure_page_is_active`, `server/page_map_routes.rs::visible_page`, `server/page_routes.rs::archive_page_for`, `server/page_routes.rs::handle_create_page_inner`, `server/page_routes.rs::handle_delete_page`, `server/page_routes.rs::handle_get_page_sources`, `server/page_routes.rs::handle_refresh_page`, `server/page_routes.rs::handle_refresh_page_inner`, `server/page_routes.rs::handle_restore_page_version`, `server/page_routes.rs::handle_update_page`, `server/page_routes.rs::space_locked_write_error`, `server/sentence_routes.rs::require_visible_page`, `server/skill_grow.rs::handle_undo_space_rules`, `server/skill_grow.rs::load_rules_folders`, `server/skill_grow.rs::readable_rules_page`, `server/skill_grow.rs::source_line_is_eligible`, `server/skill_grow.rs::write_maintained_rules_page`, `server/skill_grow/saved_rules.rs::make_page`, `server/skill_grow/saved_rules.rs::page_of`, `server/skill_grow/saved_rules.rs::save_rule_in`, `server/skill_grow/saved_rules.rs::write_rule_change`, `server/steep_new_routes.rs::handle_steep_new_commit_inner`, `server/steep_routes.rs::handle_steep_claim`, `server/steep_routes.rs::handle_steep_commit`, `server/things_read_pages.rs::candidate`, `server/things_read_pages.rs::change_in_place` | `core/db.rs::get_page_inner` |
 | `core/db.rs::get_page_browse` | `pub` | no | no | — | `core/db.rs::get_page_inner` |
 | `core/db.rs::graph_stream_touches` | `pub` | no | no | — | `core/db.rs::search_entities_by_vector` |
 | `core/db.rs::insert_page_with_kind` | `pub(crate)` | no | no | — | `core/db.rs::insert_page_with_basis` |
@@ -1866,7 +1868,7 @@ carrying the authority of agreement.
 | `core/repair_plan/deterministic.rs::resolve_page_projections` | `private` | no | no | — | `core/repair.rs::capture_page_projection_rollback` |
 | `core/sentence_fix.rs::ask_ai_to_fix` | `pub` | no | **yes** | `server/sentence_routes.rs::spawn_ai_fix` | `core/sentences.rs::source_states` |
 | `core/sentences.rs::load_page` | `private` | no | no | — | `core/db.rs::get_page` |
-| `core/sentences.rs::page_sentences` | `pub` | no | **yes** | `server/sentence_routes.rs::handle_get_page_sentences` | `core/sentences.rs::source_states` |
+| `core/sentences.rs::page_sentences` | `pub` | no | **yes** | `server/sentence_routes.rs::handle_get_page_sentences`, `server/skill_grow.rs::of`, `server/things_read_pages.rs::check_page` | `core/sentences.rs::source_states` |
 | `core/sentences.rs::unit_citations` | `private` | no | no | — | `core/sentences.rs::source_states` |
 | `core/shared_space/library.rs::main_jobs` | `pub(super)` | no | no | — | `core/shared_space/library.rs::write_copy` |
 | `core/shared_space/mod.rs::apply_create` | `private` | no | no | — | `core/shared_space/mod.rs::apply_create_untitled_body`, `core/shared_space/mod.rs::apply_sources`, `core/shared_space/mod.rs::free_title` |
@@ -1962,6 +1964,8 @@ carrying the authority of agreement.
 | `server/steep_routes.rs::handle_steep_claim` | `pub` | no | no | — | `core/db.rs::get_page` |
 | `server/steep_routes.rs::handle_steep_commit` | `pub` | no | no | — | `core/db.rs::get_page`, `core/steep_new.rs::unused_link_targets` |
 | `server/things_intake.rs::dream_once` | `private` | no | no | `server/things_intake.rs::look_once` | `server/things_intake.rs::dream_with` |
+| `server/things_read_pages.rs::candidate` | `private` | no | no | `server/things_read_pages.rs::check_read_pages` | `core/db.rs::get_page` |
+| `server/things_read_pages.rs::change_in_place` | `private` | no | no | `server/things_read_pages.rs::check_page` | `core/db.rs::get_page` |
 | `server/things_routes.rs::handle_connect_night_points` | `pub` | no | no | — | `server/things_intake.rs::connect_old_night_points` |
 
 <!-- m5-reader-sweep:end -->

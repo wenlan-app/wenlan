@@ -921,26 +921,100 @@ impl MemoryDB {
         Ok(())
     }
 
-    /// How many of a thing's conversations went on since a night last read
-    /// them, and could not be read because their transcript was gone.
-    pub async fn thing_unread_conversations(&self, thing_id: &str) -> Result<usize, WenlanError> {
+    /// The AI tools of a thing's conversations a night cannot read, one
+    /// entry per conversation, limited to the caller's Space scope:
+    /// - labelled work conversations that went on since a night last read
+    ///   them and whose transcript was gone;
+    /// - conversations from a tool Wenlan has no transcript reader for. They
+    ///   never get a `conversation_labels` row (labels come only from a
+    ///   scanned transcript), only an `agent_sessions` row from the tool's
+    ///   own MCP calls. Only those active since a night last read the thing
+    ///   (its latest night with points, or the last line of its newest read
+    ///   conversation) count (all of them when no night has), so an old one stops being
+    ///   said once the thing has been read since.
+    pub async fn thing_unread_tools(
+        &self,
+        thing_id: &str,
+        scope: &ReadScope,
+    ) -> Result<Vec<String>, WenlanError> {
+        let readers = wenlan_types::session_context::TRANSCRIPT_TOOLS
+            .iter()
+            .map(|tool| format!("'{tool}'"))
+            .collect::<Vec<_>>()
+            .join(", ");
         let conn = self.conn.lock().await;
         let mut rows = conn
             .query(
-                "SELECT COUNT(*) FROM conversation_labels cl
-                   JOIN thing_sessions ts ON ts.session_id = cl.session_id
-                  WHERE ts.thing_id = ?1 AND cl.work = 1
-                    AND cl.unread_at IS NOT NULL AND cl.unread_at >= cl.last_at
-                    AND (cl.dreamed_at IS NULL OR cl.dreamed_at < cl.last_at)",
+                &format!(
+                    "SELECT cl.tool, cl.space FROM conversation_labels cl
+                       JOIN thing_sessions ts ON ts.session_id = cl.session_id
+                      WHERE ts.thing_id = ?1 AND cl.work = 1
+                        AND cl.unread_at IS NOT NULL AND cl.unread_at >= cl.last_at
+                        AND (cl.dreamed_at IS NULL OR cl.dreamed_at < cl.last_at)
+                     UNION ALL
+                     SELECT s.tool, COALESCE(s.space, '') FROM agent_sessions s
+                       JOIN thing_sessions ts ON ts.session_id = s.id
+                      WHERE ts.thing_id = ?1 AND s.tool NOT IN ({readers})
+                        AND NOT EXISTS (SELECT 1 FROM conversation_labels l
+                                         WHERE l.session_id = s.id)
+                        AND s.last_write_at > MAX(
+                              COALESCE((SELECT MAX(h.ts) FROM thing_history h
+                                WHERE h.thing_id = ?1 AND h.op = 'thing.dream'), 0),
+                              COALESCE((SELECT MAX(l2.dreamed_at) FROM conversation_labels l2
+                                JOIN thing_sessions t2 ON t2.session_id = l2.session_id
+                                WHERE t2.thing_id = ?1), 0))"
+                ),
                 libsql::params![thing_id],
             )
             .await
-            .map_err(db_err("thing unread"))?;
-        let count = match rows.next().await.map_err(db_err("thing unread row"))? {
-            Some(row) => row.get::<i64>(0).unwrap_or(0),
-            None => 0,
-        };
-        Ok(usize::try_from(count).unwrap_or(0))
+            .map_err(db_err("thing unread tools"))?;
+        let mut tools = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(db_err("thing unread tools row"))?
+        {
+            let space = row.get::<String>(1).unwrap_or_default();
+            if scope.matches(Some(space.as_str()).filter(|s| !s.is_empty())) {
+                tools.push(row.get::<String>(0).unwrap_or_default());
+            }
+        }
+        Ok(tools)
+    }
+
+    /// How many of a thing's conversations are due for reading (last line at
+    /// or before `quiet_since`, not read, not gone) in the caller's Space
+    /// scope. The caller passes the cutoff of a night that had no AI to read
+    /// with; the daemon keeps that in memory (`things_intake`).
+    pub async fn thing_waiting_conversations(
+        &self,
+        thing_id: &str,
+        quiet_since: i64,
+        scope: &ReadScope,
+    ) -> Result<usize, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT cl.space FROM conversation_labels cl
+                   JOIN thing_sessions ts ON ts.session_id = cl.session_id
+                   JOIN things t ON t.id = ts.thing_id
+                  WHERE ts.thing_id = ?1 AND cl.work = 1
+                    AND t.merged_into IS NULL AND t.title IS NOT NULL
+                    AND (cl.dreamed_at IS NULL OR cl.last_at > cl.dreamed_at)
+                    AND (cl.unread_at IS NULL OR cl.last_at > cl.unread_at)
+                    AND cl.last_at <= ?2",
+                libsql::params![thing_id, quiet_since],
+            )
+            .await
+            .map_err(db_err("thing waiting"))?;
+        let mut count = 0;
+        while let Some(row) = rows.next().await.map_err(db_err("thing waiting row"))? {
+            let space = row.get::<String>(0).unwrap_or_default();
+            if scope.matches(Some(space.as_str()).filter(|s| !s.is_empty())) {
+                count += 1;
+            }
+        }
+        Ok(count)
     }
 
     /// The Space a night's point goes to when its conversation's label named

@@ -1613,7 +1613,8 @@ pub const EMBEDDING_DIM: usize = 768;
 /// Migration 140 adds `agent_sessions` and `session_id` on `memories`,
 /// `page_history`, and `brief_history`, and backfills one session per past
 /// ChatGPT / Claude.ai import conversation.
-/// Migration 141 adds `session_reads`, what a session looked up in Wenlan.
+/// Migration 141 adds `session_reads`, what a session looked up in Wenlan
+/// (migration 168 lets it also hold the notes a recall returned).
 /// Migration 142 adds `page_code_basis.cited_blob` (the git blob id of the
 /// cited file as last written or confirmed).
 /// Migration 143 adds `page_code_basis.recheck_note`, `recheck_verdict`,
@@ -1633,7 +1634,7 @@ pub const EMBEDDING_DIM: usize = 768;
 /// `entities` table, skip every `version < N` branch, and quietly operate
 /// against a schema it cannot see. Refusing to open is recoverable; writing is
 /// not.
-pub const SCHEMA_VERSION: u32 = 169;
+pub const SCHEMA_VERSION: u32 = 170;
 
 /// The text a `source = 'memory'` row is embedded from: `[space] ` when the
 /// row has a space, its retrieval cue on its own line when it has one, then
@@ -11222,6 +11223,15 @@ impl MemoryDB {
             }
             if version < 169 {
                 self.migrate_169_brief_item_details(version).await?;
+            }
+
+            // Migration 170: `session_reads` may hold `recall_page` rows. See
+            // db/sessions.rs.
+            if ceiling < 170 {
+                return Ok(());
+            }
+            if version < 170 {
+                self.migrate_170_recall_page_reads(version).await?;
             }
         }
 
@@ -37232,6 +37242,37 @@ impl MemoryDB {
         } else {
             Ok(None)
         }
+    }
+
+    /// Whether the memory `source_id` stands as current content: a stored
+    /// memory (not a staged revision), not evicted or folded away by its own
+    /// mode, not hidden by a memory that replaced it, and not muted by an
+    /// archiving superseder. This is what recall hands an AI tool
+    /// (`not_self_archived`, `not_hidden_by_superseder`, `superseder_archives`),
+    /// so a night that grounds a change on a memory asks the same question.
+    pub async fn memory_stands(&self, source_id: &str) -> Result<bool, WenlanError> {
+        let conn = self.conn.lock().await;
+        let sql = format!(
+            "SELECT 1 FROM memories m
+              WHERE m.source = 'memory' AND m.source_id = ?1
+                AND m.pending_revision = 0
+                AND {self_ok}
+                AND {not_hidden}
+                AND NOT {archived}
+              LIMIT 1",
+            self_ok = not_self_archived("m"),
+            not_hidden = not_hidden_by_superseder(&ReadScope::Global, "m"),
+            archived = superseder_archives(&ReadScope::Global, "m"),
+        );
+        let mut rows = conn
+            .query(&sql, libsql::params![source_id])
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("memory_stands: {e}")))?;
+        Ok(rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("memory_stands row: {e}")))?
+            .is_some())
     }
 
     /// Fetch multiple memories by source_id in a single query.

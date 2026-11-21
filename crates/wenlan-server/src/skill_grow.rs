@@ -350,6 +350,157 @@ fn last_page_edit_is_person(page: &wenlan_types::Page) -> bool {
     page.last_edited_at.is_some() && page.last_edited_at == page.human_edited_at
 }
 
+/// Whether a page sentence's own words are the person's: they wrote, edited
+/// or accepted it, or it comes from a page older than per-version history,
+/// where nobody can say. An AI's sentence, or an AI chat's imported words, is
+/// not.
+fn sentence_is_the_persons(author: wenlan_types::authorship::SentenceAuthor) -> bool {
+    use wenlan_types::authorship::SentenceAuthor;
+    matches!(author, SentenceAuthor::Person | SentenceAuthor::Unknown)
+}
+
+/// Whether every sentence of a page is the person's own. A page with no
+/// sentences is not.
+fn page_is_the_persons(sentences: &wenlan_types::authorship::PageSentencesResponse) -> bool {
+    !sentences.sentences.is_empty()
+        && sentences
+            .sentences
+            .iter()
+            .all(|sentence| sentence_is_the_persons(sentence.author))
+}
+
+/// Whether a cited memory keeps something the person said: the line they
+/// typed that a night kept with it, or a line of theirs the AI tool sent with
+/// it when saving.
+async fn memory_keeps_the_persons_words(
+    db: &MemoryDB,
+    memory_id: &str,
+) -> Result<bool, ServerError> {
+    let Some(anchor) = db
+        .memory_said_anchor(memory_id, &wenlan_core::read_scope::ReadScope::Global)
+        .await?
+    else {
+        return Ok(false);
+    };
+    Ok(anchor.line.is_some()
+        || anchor
+            .kept
+            .iter()
+            .any(|line| line.speaker == wenlan_types::conversations::ConversationSpeaker::You))
+}
+
+/// Who wrote what, read once per page for one pass.
+#[derive(Default)]
+struct SentenceReads {
+    pages: HashMap<String, wenlan_types::authorship::PageSentencesResponse>,
+}
+
+impl SentenceReads {
+    async fn of(
+        &mut self,
+        db: &MemoryDB,
+        page_id: &str,
+    ) -> Result<&wenlan_types::authorship::PageSentencesResponse, ServerError> {
+        if !self.pages.contains_key(page_id) {
+            let sentences = wenlan_core::sentences::page_sentences(db, page_id).await?;
+            self.pages.insert(page_id.to_string(), sentences);
+        }
+        Ok(&self.pages[page_id])
+    }
+}
+
+/// Whether a page follows only pages that are wholly the person's: one
+/// step, with every basis still there.
+async fn follows_only_the_persons_pages(
+    db: &MemoryDB,
+    reads: &mut SentenceReads,
+    page_id: &str,
+) -> Result<bool, ServerError> {
+    let bases = db.list_page_basis(page_id).await?;
+    if bases.is_empty() || bases.iter().any(|basis| basis.current_version.is_none()) {
+        return Ok(false);
+    }
+    for basis in bases {
+        if !page_is_the_persons(reads.of(db, &basis.basis_page_id).await?) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Design v5 F4: whether what a line quotes traces to the person. Each quoted
+/// sentence is the person's own, cites a memory that keeps their words, or
+/// sits on a page that follows only the person's pages. What an AI wrote
+/// from its own reading does not count.
+async fn quote_traces_to_person(
+    db: &MemoryDB,
+    reads: &mut SentenceReads,
+    page_id: &str,
+    quote: &str,
+) -> Result<bool, ServerError> {
+    let sentences = reads.of(db, page_id).await?;
+    let texts: Vec<&str> = sentences
+        .sentences
+        .iter()
+        .map(|s| s.text.as_str())
+        .collect();
+    let quoted = skill_grow::sentences_quoted(quote, &texts);
+    if quoted.is_empty() {
+        return Ok(false);
+    }
+    let untraced: Vec<Vec<String>> = quoted
+        .into_iter()
+        .map(|idx| &sentences.sentences[idx])
+        .filter(|sentence| !sentence_is_the_persons(sentence.author))
+        .map(|sentence| {
+            sentence
+                .citations
+                .iter()
+                .filter(|citation| citation.source_kind == "memory")
+                .map(|citation| citation.locator.clone())
+                .collect()
+        })
+        .collect();
+    for memories in untraced {
+        let mut traced = false;
+        for memory in &memories {
+            if memory_keeps_the_persons_words(db, memory).await? {
+                traced = true;
+                break;
+            }
+        }
+        if !traced && !follows_only_the_persons_pages(db, reads, page_id).await? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// F4: the lines Wenlan may add on its own, with no one looking: those
+/// already there (the person saw them, or they traced then), those the
+/// person rewrote, and those whose quote traces to the person now.
+async fn lines_that_trace_to_person(
+    db: &MemoryDB,
+    lines: Vec<SkillLine>,
+    already_there: &[SkillLine],
+) -> Result<Vec<SkillLine>, ServerError> {
+    let mut reads = SentenceReads::default();
+    let mut out = Vec::new();
+    for line in lines {
+        let known = already_there.iter().any(|old| {
+            old.source_page_id == line.source_page_id && old.source_quote == line.source_quote
+        });
+        if known
+            || line.person_edited
+            || quote_traces_to_person(db, &mut reads, &line.source_page_id, &line.source_quote)
+                .await?
+        {
+            out.push(line);
+        }
+    }
+    Ok(out)
+}
+
 async fn source_line_is_eligible(
     db: &MemoryDB,
     expected_space_id: &str,
@@ -2608,17 +2759,24 @@ async fn process_space(
     let mut suggested = false;
     match state.status {
         SpaceRulesStatus::Suggested => {
-            state.lines = lines;
-            if library_answered() && !state.lines.is_empty() {
+            if library_answered() {
                 // The person already said yes once for the whole library:
-                // accept this Space without asking again (UX-SKILL-1).
-                accept_space(db, page_root, &mut state, space.clone()).await?;
-                updated = true;
+                // accept this Space without asking again (UX-SKILL-1). Nobody
+                // sees these lines first, so only those that trace to the
+                // person go (F4).
+                state.lines = lines_that_trace_to_person(db, lines, &[]).await?;
+                if !state.lines.is_empty() {
+                    accept_space(db, page_root, &mut state, space.clone()).await?;
+                    updated = true;
+                }
             } else {
+                state.lines = lines;
                 suggested = !state.lines.is_empty();
             }
         }
         SpaceRulesStatus::Accepted => {
+            // A line new tonight reaches every AI tool unseen (F4).
+            let lines = lines_that_trace_to_person(db, lines, &state.lines).await?;
             updated = write_maintained_rules_page(db, page_root, &mut state, &lines).await?;
         }
         SpaceRulesStatus::ExcludedPrivate
