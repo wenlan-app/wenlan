@@ -71,62 +71,151 @@ pub const RULE_PRECEDENCE: &str =
     "When instructions disagree, project rules come first, followed by team rules and personal rules.";
 
 #[cfg(any(windows, test))]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum WindowsTrustee {
-    System,
-    Administrators,
-    Owner,
-    ProfileUser,
-    Other,
-}
-
-#[cfg(any(windows, test))]
 const WINDOWS_FILE_ALL_ACCESS: u32 = 0x001F_01FF;
 
+/// One allow rule of a Windows access list: its inheritance flags, access
+/// mask and the SID it grants to.
 #[cfg(any(windows, test))]
-struct WindowsAcl<'a> {
-    owner: &'a [u8],
-    owner_is_privileged: bool,
-    protected: bool,
-    has_security_policy: bool,
-    aces: &'a [(u8, u32, WindowsTrustee)],
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct WindowsAce<'a> {
+    flags: u8,
+    mask: u32,
+    sid: &'a [u8],
 }
 
+#[cfg(any(windows, test))]
+#[derive(Clone, Copy)]
+struct WindowsAcl<'a> {
+    owner: &'a [u8],
+    protected: bool,
+    has_security_policy: bool,
+    aces: &'a [WindowsAce<'a>],
+}
+
+#[cfg(any(windows, test))]
+const WINDOWS_OBJECT_INHERIT: u8 = 0x01;
+#[cfg(any(windows, test))]
+const WINDOWS_CONTAINER_INHERIT: u8 = 0x02;
+#[cfg(any(windows, test))]
+const WINDOWS_NO_PROPAGATE: u8 = 0x04;
+#[cfg(any(windows, test))]
+const WINDOWS_INHERIT_ONLY: u8 = 0x08;
+#[cfg(any(windows, test))]
+const WINDOWS_INHERITED: u8 = 0x10;
+
+/// The file-object meaning of a mask's generic bits (FILE_GENERIC_*).
+#[cfg(any(windows, test))]
+fn windows_file_mask(mask: u32) -> u32 {
+    let mut mapped = mask & 0x0FFF_FFFF;
+    for (generic, specific) in [
+        (0x8000_0000, 0x0012_0089),
+        (0x4000_0000, 0x0012_0116),
+        (0x2000_0000, 0x0012_00A0),
+        (0x1000_0000, WINDOWS_FILE_ALL_ACCESS),
+    ] {
+        if mask & generic != 0 {
+            mapped |= specific;
+        }
+    }
+    mapped
+}
+
+/// What an entry's own rules grant (`effective`) and what it hands to its
+/// own children (`inheritable`), each sorted for comparison.
+#[cfg(any(windows, test))]
+type WindowsGrants<'a> = (Vec<(u32, &'a [u8])>, Vec<(u8, u32, &'a [u8])>);
+
+#[cfg(any(windows, test))]
+fn windows_entry_grants<'a>(aces: &[WindowsAce<'a>]) -> WindowsGrants<'a> {
+    let mut effective = Vec::new();
+    let mut inheritable = Vec::new();
+    for ace in aces {
+        if ace.flags & WINDOWS_INHERIT_ONLY == 0 {
+            effective.push((windows_file_mask(ace.mask), ace.sid));
+        }
+        let passes = ace.flags & (WINDOWS_OBJECT_INHERIT | WINDOWS_CONTAINER_INHERIT);
+        if passes != 0 {
+            inheritable.push((
+                ace.flags & (passes | WINDOWS_NO_PROPAGATE),
+                ace.mask,
+                ace.sid,
+            ));
+        }
+    }
+    effective.sort_unstable();
+    inheritable.sort_unstable();
+    (effective, inheritable)
+}
+
+/// What a new child of `parent` would get from inheritance, following the
+/// Windows inheritance rules for allow rules. `creator_owner` is the
+/// CREATOR OWNER SID, which an effective rule replaces with `owner`.
+#[cfg(any(windows, test))]
+fn windows_inherited_grants<'a>(
+    parent: &[WindowsAce<'a>],
+    directory: bool,
+    owner: &'a [u8],
+    creator_owner: &[u8],
+) -> WindowsGrants<'a> {
+    let mut effective = Vec::new();
+    let mut inheritable = Vec::new();
+    for ace in parent {
+        let object = ace.flags & WINDOWS_OBJECT_INHERIT != 0;
+        let container = ace.flags & WINDOWS_CONTAINER_INHERIT != 0;
+        let applies = if directory { container } else { object };
+        if applies {
+            let sid = if ace.sid == creator_owner {
+                owner
+            } else {
+                ace.sid
+            };
+            effective.push((windows_file_mask(ace.mask), sid));
+        }
+        if directory && (object || container) && ace.flags & WINDOWS_NO_PROPAGATE == 0 {
+            let passes = ace.flags & (WINDOWS_OBJECT_INHERIT | WINDOWS_CONTAINER_INHERIT);
+            inheritable.push((passes, ace.mask, ace.sid));
+        }
+    }
+    effective.sort_unstable();
+    inheritable.sort_unstable();
+    (effective, inheritable)
+}
+
+/// An entry is safe to replace when a new entry created in the same parent
+/// gets exactly the same access: the owner matches the parent's, there is
+/// no integrity label or access policy, the access list is not protected,
+/// every rule is inherited, and the rules equal what the parent passes down.
+/// Explicit, protected, labelled or foreign-owned entries are refused.
 #[cfg(any(windows, test))]
 fn windows_acl_problem(
     acl: &WindowsAcl<'_>,
     directory: bool,
-    parent_owner: Option<&[u8]>,
+    parent_owner: &[u8],
+    parent_aces: &[WindowsAce<'_>],
+    creator_owner: &[u8],
 ) -> Option<&'static str> {
-    use WindowsTrustee::{Administrators, Owner, ProfileUser, System};
-
-    if parent_owner.is_some_and(|parent| parent != acl.owner) {
+    if parent_owner != acl.owner {
         return Some("the Windows owner differs from the parent's owner");
     }
     if acl.has_security_policy {
         return Some("the Windows security descriptor has an integrity label or access policy");
     }
-    // An administrator-created entry can be owned by Administrators and
-    // still inherit the separate profile user's grant.
-    let flags = if directory { 0x13 } else { 0x10 };
-    let trustees = if !acl.owner_is_privileged {
-        &[System, Administrators, Owner][..]
-    } else if acl
+    if acl.protected {
+        return Some("the Windows access list is protected from inheritance");
+    }
+    if acl.aces.is_empty() {
+        return Some("the Windows access list is empty");
+    }
+    if acl
         .aces
         .iter()
-        .any(|&(_, _, trustee)| trustee == ProfileUser)
+        .any(|ace| ace.flags & WINDOWS_INHERITED == 0)
     {
-        &[System, Administrators, ProfileUser][..]
-    } else {
-        &[System, Administrators][..]
-    };
-    (acl.protected
-        || acl.aces.len() != trustees.len()
-        || !trustees.iter().all(|trustee| {
-            acl.aces
-                .contains(&(flags, WINDOWS_FILE_ALL_ACCESS, *trustee))
-        }))
-    .then_some("the Windows access list differs from the default inherited profile permissions")
+        return Some("the Windows access list has an explicit entry");
+    }
+    (windows_entry_grants(acl.aces)
+        != windows_inherited_grants(parent_aces, directory, acl.owner, creator_owner))
+    .then_some("the Windows access list differs from what its folder passes down")
 }
 
 #[cfg(any(windows, test))]
@@ -157,186 +246,203 @@ fn rulesync_step1i_windows_rejects_explicit_auditing_and_protected_sacls() {
 }
 
 #[cfg(test)]
-#[test]
-fn rulesync_step1h_windows_refuses_nondefault_access_permissions() {
-    use WindowsTrustee::{Administrators, Other, Owner, System};
+mod windows_acl_rule_tests {
+    use super::{windows_acl_problem, WindowsAce, WindowsAcl, WINDOWS_FILE_ALL_ACCESS};
 
-    for (directory, flags) in [(false, 0x10), (true, 0x13)] {
-        let ordinary = [
-            (flags, 0x001F_01FF, System),
-            (flags, 0x001F_01FF, Administrators),
-            (flags, 0x001F_01FF, Owner),
-        ];
-        let acl = WindowsAcl {
-            owner: b"owner SID",
-            owner_is_privileged: false,
-            protected: false,
-            has_security_policy: false,
-            aces: &ordinary,
-        };
-        let parent_owner = Some(acl.owner);
-        assert_eq!(windows_acl_problem(&acl, directory, parent_owner), None);
-        let system_and_owner = [ordinary[0], ordinary[2]];
-        let rejected_aces = [
-            ("explicit ACE", (flags & !0x10, ordinary[2].1, Owner)),
-            ("restrictive inherited ACE", (flags, 0x0012_0089, Owner)),
-            ("extra trustee", (flags, ordinary[2].1, Other)),
-        ];
-        let mut accepted = Vec::new();
-        for (case, ace) in rejected_aces {
-            let changed = [ordinary[0], ordinary[1], ace];
-            let actual = WindowsAcl {
-                aces: &changed,
-                ..acl
-            };
-            if windows_acl_problem(&actual, directory, parent_owner).is_none() {
-                accepted.push(case);
-            }
-        }
-        for (case, actual, parent) in [
-            (
-                "missing Administrators grant",
-                WindowsAcl {
-                    aces: &system_and_owner,
-                    ..acl
-                },
-                parent_owner,
-            ),
-            (
-                "different owner",
-                WindowsAcl {
-                    owner: b"other SID",
-                    ..acl
-                },
-                parent_owner,
-            ),
-            (
-                "mandatory integrity label",
-                WindowsAcl {
-                    has_security_policy: true,
-                    ..acl
-                },
-                parent_owner,
-            ),
-            (
-                "protected DACL",
-                WindowsAcl {
-                    protected: true,
-                    ..acl
-                },
-                parent_owner,
-            ),
-            ("empty DACL", WindowsAcl { aces: &[], ..acl }, parent_owner),
-        ] {
-            if windows_acl_problem(&actual, directory, parent).is_none() {
-                accepted.push(case);
-            }
-        }
-        assert!(
-            accepted.is_empty(),
-            "accepted {accepted:?}, directory={directory}"
-        );
+    const OWNER: &[u8] = b"owner SID";
+    const CREATOR_OWNER: &[u8] = b"CREATOR OWNER";
+    const FULL: u32 = WINDOWS_FILE_ALL_ACCESS;
+    const READ: u32 = 0x0012_0089;
+
+    fn ace(flags: u8, mask: u32, sid: &'static [u8]) -> WindowsAce<'static> {
+        WindowsAce { flags, mask, sid }
     }
-}
 
-#[cfg(test)]
-#[test]
-fn rulesync_step1j_windows_accepts_only_the_inherited_profile_user_on_administrator_entries() {
-    use WindowsTrustee::{Administrators, Other, Owner, ProfileUser, System};
-
-    for (directory, flags) in [(false, 0x10), (true, 0x13)] {
-        let full = WINDOWS_FILE_ALL_ACCESS;
-        let inherited = [
-            (flags, full, System),
-            (flags, full, Administrators),
-            (flags, full, ProfileUser),
-        ];
+    fn problem(
+        aces: &[WindowsAce<'_>],
+        directory: bool,
+        parent: &[WindowsAce<'_>],
+    ) -> Option<&'static str> {
         let acl = WindowsAcl {
-            owner: b"Administrators SID",
-            owner_is_privileged: true,
+            owner: OWNER,
             protected: false,
             has_security_policy: false,
-            aces: &inherited,
+            aces,
         };
-        let parent = Some(acl.owner);
-        assert_eq!(
-            windows_acl_problem(&acl, directory, parent),
-            None,
-            "the CI runner's profile layout, directory={directory}"
-        );
-        let privileged_only = [inherited[0], inherited[1]];
-        assert_eq!(
-            windows_acl_problem(
-                &WindowsAcl {
-                    aces: &privileged_only,
-                    ..acl
-                },
-                directory,
-                parent
-            ),
-            None
-        );
-        let mut accepted = Vec::new();
-        for (case, ace) in [
-            (
-                "explicit profile-user ACE",
-                (flags & !0x10, full, ProfileUser),
-            ),
-            (
-                "restrictive profile-user ACE",
-                (flags, 0x0012_0089, ProfileUser),
-            ),
-            ("another user", (flags, full, Other)),
-            ("owner instead of profile user", (flags, full, Owner)),
-        ] {
-            let changed = [inherited[0], inherited[1], ace];
-            if windows_acl_problem(
-                &WindowsAcl {
-                    aces: &changed,
-                    ..acl
-                },
-                directory,
-                parent,
-            )
-            .is_none()
-            {
-                accepted.push(case);
-            }
-        }
-        let extra = [
-            inherited[0],
-            inherited[1],
-            inherited[2],
-            (flags, full, Other),
+        windows_acl_problem(&acl, directory, OWNER, parent, CREATOR_OWNER)
+    }
+
+    /// A user profile folder passes full control to SYSTEM, Administrators
+    /// and the user; each file under it inherits those three.
+    fn profile_parent() -> [WindowsAce<'static>; 3] {
+        [
+            ace(0x03, FULL, b"SYSTEM"),
+            ace(0x03, FULL, b"Administrators"),
+            ace(0x03, FULL, OWNER),
+        ]
+    }
+
+    #[test]
+    fn rulesync_windows_accepts_the_profile_layout() {
+        let parent = profile_parent();
+        let file = [
+            ace(0x10, FULL, b"SYSTEM"),
+            ace(0x10, FULL, b"Administrators"),
+            ace(0x10, FULL, OWNER),
         ];
-        if windows_acl_problem(
-            &WindowsAcl {
-                aces: &extra,
-                ..acl
-            },
-            directory,
-            parent,
-        )
-        .is_none()
-        {
-            accepted.push("profile user plus another user");
+        assert_eq!(problem(&file, false, &parent), None);
+        let directory = [
+            ace(0x13, FULL, b"SYSTEM"),
+            ace(0x13, FULL, b"Administrators"),
+            ace(0x13, FULL, OWNER),
+        ];
+        assert_eq!(problem(&directory, true, &parent), None);
+    }
+
+    /// A temporary or second-drive folder (like a CI runner's D:\a\_temp)
+    /// passes down a plain but different list, with a generic CREATOR OWNER
+    /// rule and a read-only grant to Users. A file or folder that only
+    /// inherits that list is accepted.
+    #[test]
+    fn rulesync_windows_accepts_a_plain_inherited_list_that_differs_from_the_profile_default() {
+        let parent = [
+            ace(0x03, FULL, b"SYSTEM"),
+            ace(0x03, FULL, b"Administrators"),
+            ace(0x0B, 0x1000_0000, CREATOR_OWNER),
+            ace(0x03, READ, b"Users"),
+        ];
+        let file = [
+            ace(0x10, FULL, b"SYSTEM"),
+            ace(0x10, FULL, b"Administrators"),
+            ace(0x10, FULL, OWNER),
+            ace(0x10, READ, b"Users"),
+        ];
+        assert_eq!(problem(&file, false, &parent), None);
+        let directory = [
+            ace(0x13, FULL, b"SYSTEM"),
+            ace(0x13, FULL, b"Administrators"),
+            ace(0x10, FULL, OWNER),
+            ace(0x1B, 0x1000_0000, CREATOR_OWNER),
+            ace(0x13, READ, b"Users"),
+        ];
+        assert_eq!(problem(&directory, true, &parent), None);
+    }
+
+    #[test]
+    fn rulesync_windows_refuses_entries_a_replacement_would_not_match() {
+        let parent = profile_parent();
+        for (directory, flags) in [(false, 0x10), (true, 0x13)] {
+            let inherited = [
+                ace(flags, FULL, b"SYSTEM"),
+                ace(flags, FULL, b"Administrators"),
+                ace(flags, FULL, OWNER),
+            ];
+            let base = WindowsAcl {
+                owner: OWNER,
+                protected: false,
+                has_security_policy: false,
+                aces: &inherited,
+            };
+            let explicit = [inherited[0], inherited[1], ace(flags & !0x10, FULL, OWNER)];
+            let restrictive = [inherited[0], inherited[1], ace(flags, READ, OWNER)];
+            let extra = [
+                inherited[0],
+                inherited[1],
+                inherited[2],
+                ace(flags, FULL, b"another user"),
+            ];
+            let missing = [inherited[0], inherited[2]];
+            let cases = [
+                (
+                    "explicit rule",
+                    WindowsAcl {
+                        aces: &explicit,
+                        ..base
+                    },
+                    OWNER,
+                ),
+                (
+                    "restrictive inherited rule",
+                    WindowsAcl {
+                        aces: &restrictive,
+                        ..base
+                    },
+                    OWNER,
+                ),
+                (
+                    "rule the folder does not pass down",
+                    WindowsAcl {
+                        aces: &extra,
+                        ..base
+                    },
+                    OWNER,
+                ),
+                (
+                    "missing inherited rule",
+                    WindowsAcl {
+                        aces: &missing,
+                        ..base
+                    },
+                    OWNER,
+                ),
+                ("empty list", WindowsAcl { aces: &[], ..base }, OWNER),
+                (
+                    "protected list",
+                    WindowsAcl {
+                        protected: true,
+                        ..base
+                    },
+                    OWNER,
+                ),
+                (
+                    "integrity label",
+                    WindowsAcl {
+                        has_security_policy: true,
+                        ..base
+                    },
+                    OWNER,
+                ),
+                (
+                    "foreign owner",
+                    WindowsAcl {
+                        owner: b"other SID",
+                        ..base
+                    },
+                    OWNER,
+                ),
+            ];
+            let mut accepted = Vec::new();
+            for (case, acl, parent_owner) in cases {
+                if windows_acl_problem(&acl, directory, parent_owner, &parent, CREATOR_OWNER)
+                    .is_none()
+                {
+                    accepted.push(case);
+                }
+            }
+            assert!(
+                accepted.is_empty(),
+                "accepted {accepted:?}, directory={directory}"
+            );
         }
-        if windows_acl_problem(
-            &WindowsAcl {
-                protected: true,
-                ..acl
-            },
-            directory,
-            parent,
-        )
-        .is_none()
-        {
-            accepted.push("protected DACL");
-        }
-        assert!(
-            accepted.is_empty(),
-            "accepted {accepted:?}, directory={directory}"
-        );
+    }
+
+    /// A folder whose own list passes nothing further down does not match a
+    /// parent that passes its rules on, since a replacement would inherit them.
+    #[test]
+    fn rulesync_windows_compares_what_a_folder_passes_to_its_children() {
+        let parent = profile_parent();
+        let no_propagation = [
+            ace(0x10, FULL, b"SYSTEM"),
+            ace(0x10, FULL, b"Administrators"),
+            ace(0x10, FULL, OWNER),
+        ];
+        assert!(problem(&no_propagation, true, &parent).is_some());
+        let file_with_inheritance = [
+            ace(0x13, FULL, b"SYSTEM"),
+            ace(0x13, FULL, b"Administrators"),
+            ace(0x13, FULL, OWNER),
+        ];
+        assert!(problem(&file_with_inheritance, false, &parent).is_some());
     }
 }
 
@@ -347,10 +453,7 @@ pub use windows_acl::{
 
 #[cfg(windows)]
 mod windows_acl {
-    use super::{
-        windows_acl_problem, windows_sacl_problem, WindowsAcl, WindowsTrustee,
-        WINDOWS_FILE_ALL_ACCESS,
-    };
+    use super::{windows_acl_problem, windows_sacl_problem, WindowsAce, WindowsAcl};
     use cap_fs_ext::DirExt as _;
     use cap_std::fs::Dir;
     use std::{
@@ -372,19 +475,14 @@ mod windows_acl {
     const SE_DACL_PROTECTED: u16 = 0x1000;
     const SE_SACL_PROTECTED: u16 = 0x2000;
     const ACCESS_ALLOWED_ACE_TYPE: u8 = 0;
-    const WIN_CREATOR_OWNER_SID: i32 = 3;
-    const WIN_CREATOR_GROUP_SID: i32 = 4;
-    const WIN_LOCAL_SYSTEM_SID: i32 = 22;
-    const WIN_BUILTIN_ADMINISTRATORS_SID: i32 = 26;
+    // S-1-3-0, the CREATOR OWNER placeholder an inherited rule replaces with the owner.
+    const CREATOR_OWNER_SID: [u8; 12] = [1, 1, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0];
     const READ_CONTROL: u32 = 0x0002_0000;
     const ACCESS_SYSTEM_SECURITY: u32 = 0x0100_0000;
     const SHARE_READ_WRITE_DELETE: u32 = 0x7;
     const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
     const ERROR_ACCESS_DENIED: i32 = 5;
     const ERROR_PRIVILEGE_NOT_HELD: i32 = 1314;
-    // GetCurrentProcessToken() in processthreadsapi.h is this query-only pseudo-handle.
-    const CURRENT_PROCESS_TOKEN: RawHandle = -4isize as RawHandle;
-    const TOKEN_USER: i32 = 1;
 
     #[repr(C)]
     struct AclHeader {
@@ -415,14 +513,6 @@ mod windows_acl {
         sid: &'a [u8],
     }
 
-    #[repr(C)]
-    struct TokenUserBuffer {
-        sid: *mut c_void,
-        attributes: u32,
-        // SECURITY_MAX_SID_SIZE is 68 bytes. Allow space after the aligned header.
-        sid_storage: [usize; 68_usize.div_ceil(std::mem::size_of::<usize>())],
-    }
-
     #[link(name = "advapi32")]
     unsafe extern "system" {
         fn GetSecurityInfo(
@@ -448,14 +538,6 @@ mod windows_acl {
         ) -> i32;
         fn GetAce(dacl: *mut AclHeader, index: u32, ace: *mut *mut c_void) -> i32;
         fn GetLengthSid(sid: *mut c_void) -> u32;
-        fn IsWellKnownSid(sid: *mut c_void, kind: i32) -> i32;
-        fn GetTokenInformation(
-            token: RawHandle,
-            class: i32,
-            information: *mut c_void,
-            length: u32,
-            return_length: *mut u32,
-        ) -> i32;
     }
 
     #[link(name = "kernel32")]
@@ -666,43 +748,6 @@ mod windows_acl {
         Ok(())
     }
 
-    fn inherited_profile_user(parent: &SecurityDescriptor) -> io::Result<Option<&[u8]>> {
-        let mut user = std::mem::MaybeUninit::<TokenUserBuffer>::uninit();
-        let mut length = 0;
-        // SAFETY: the query-only pseudo-handle is valid for this process, and
-        // the aligned buffer has room for TOKEN_USER and a maximum-size SID.
-        if unsafe {
-            GetTokenInformation(
-                CURRENT_PROCESS_TOKEN,
-                TOKEN_USER,
-                user.as_mut_ptr().cast(),
-                std::mem::size_of::<TokenUserBuffer>() as u32,
-                &mut length,
-            )
-        } == 0
-        {
-            return Err(io::Error::last_os_error());
-        }
-        // SAFETY: the successful TokenUser query initialized the leading SID
-        // pointer and its SID in the buffer. The unused buffer tail is unread.
-        let sid = unsafe { std::ptr::addr_of!((*user.as_ptr()).sid).read() };
-        // SAFETY: the SID and all ACE SIDs remain live during these checks.
-        if unsafe { IsWellKnownSid(sid, WIN_LOCAL_SYSTEM_SID) } != 0 {
-            return Ok(None);
-        }
-        // SAFETY: the SID view is valid for the reported length in the query buffer.
-        let user = unsafe { slice::from_raw_parts(sid.cast::<u8>(), GetLengthSid(sid) as usize) };
-        Ok(parent
-            .allow_aces()?
-            .into_iter()
-            .find(|ace| {
-                matches!(ace.flags, 0x03 | 0x13)
-                    && ace.mask == WINDOWS_FILE_ALL_ACCESS
-                    && ace.sid == user
-            })
-            .map(|ace| ace.sid))
-    }
-
     fn default_windows_acl(
         parent: &Dir,
         entry: &impl AsRawHandle,
@@ -724,100 +769,45 @@ mod windows_acl {
         // SAFETY: any returned SACL is stored in the live descriptor.
         let has_security_policy =
             unsafe { policy.as_ref() }.is_some_and(|list| list.ace_count != 0);
-        // SAFETY: the owner SID and DACL have been validated by Windows and
-        // remain in the descriptor for the duration of these reads.
-        let owner_is_administrators =
-            unsafe { IsWellKnownSid(sd.owner, WIN_BUILTIN_ADMINISTRATORS_SID) != 0 };
-        let owner_is_privileged = owner_is_administrators
-            || unsafe { IsWellKnownSid(sd.owner, WIN_LOCAL_SYSTEM_SID) != 0 };
-        let parent_flags = if owner_is_administrators {
-            DACL_SECURITY_INFORMATION
-        } else {
-            0
+        let parent = SecurityDescriptor::read(parent, DACL_SECURITY_INFORMATION)?;
+        let grants = |sd: &SecurityDescriptor| -> io::Result<Vec<(u8, u32, Vec<u8>)>> {
+            Ok(sd
+                .allow_aces()?
+                .into_iter()
+                .map(|ace| (ace.flags, ace.mask, ace.sid.to_vec()))
+                .collect())
         };
-        let parent = SecurityDescriptor::read(parent, parent_flags)?;
-        let profile_user = if owner_is_administrators {
-            inherited_profile_user(&parent)?
-        } else {
-            None
-        };
-        let mut aces = Vec::new();
-        for ace in sd.allow_aces()? {
-            let sid = ace.sid.as_ptr().cast_mut().cast();
-            // SAFETY: the ACE's SID and the owner SID are in the live descriptor.
-            let trustee = unsafe {
-                if IsWellKnownSid(sid, WIN_LOCAL_SYSTEM_SID) != 0 {
-                    WindowsTrustee::System
-                } else if IsWellKnownSid(sid, WIN_BUILTIN_ADMINISTRATORS_SID) != 0 {
-                    WindowsTrustee::Administrators
-                } else if IsWellKnownSid(sid, WIN_CREATOR_OWNER_SID) == 0
-                    && IsWellKnownSid(sid, WIN_CREATOR_GROUP_SID) == 0
-                    && ace.sid == sd.owner()
-                {
-                    WindowsTrustee::Owner
-                } else if profile_user == Some(ace.sid) {
-                    WindowsTrustee::ProfileUser
-                } else {
-                    WindowsTrustee::Other
-                }
-            };
-            aces.push((ace.flags, ace.mask, trustee));
-        }
-        if profile_user.is_some()
-            && !aces
+        let entry_grants = grants(&sd)?;
+        let parent_grants = grants(&parent)?;
+        let view = |grants: &[(u8, u32, Vec<u8>)]| -> Vec<WindowsAce<'_>> {
+            grants
                 .iter()
-                .any(|&(_, _, trustee)| trustee == WindowsTrustee::ProfileUser)
-        {
-            return Err(io::Error::other(
-                "the Windows access list lacks the inherited profile user's grant",
-            ));
-        }
+                .map(|(flags, mask, sid)| WindowsAce {
+                    flags: *flags,
+                    mask: *mask,
+                    sid,
+                })
+                .collect()
+        };
+        let aces = view(&entry_grants);
+        let parent_aces = view(&parent_grants);
         let acl = WindowsAcl {
             owner: sd.owner(),
-            owner_is_privileged,
             protected: control & SE_DACL_PROTECTED != 0,
             has_security_policy,
             aces: &aces,
         };
-        if let Some(problem) = windows_acl_problem(&acl, directory, Some(parent.owner())) {
+        if let Some(problem) = windows_acl_problem(
+            &acl,
+            directory,
+            parent.owner(),
+            &parent_aces,
+            &CREATOR_OWNER_SID,
+        ) {
             return Err(io::Error::other(problem));
         }
         check_windows_audit(entry)?;
         Ok(acl.owner.to_vec())
-    }
-}
-
-#[cfg(test)]
-#[test]
-fn rulesync_step1g_windows_refuses_explicit_or_unverifiable_access_permissions() {
-    use WindowsTrustee::{Administrators, Owner, System};
-    let access = 0x001F_01FF;
-    let inherited = [
-        (0x10, access, System),
-        (0x10, access, Administrators),
-        (0x10, access, Owner),
-    ];
-    let explicit = [inherited[0], inherited[1], (0, access, Owner)];
-    let acl = WindowsAcl {
-        owner: b"owner SID",
-        owner_is_privileged: false,
-        protected: false,
-        has_security_policy: false,
-        aces: &inherited,
-    };
-    assert_eq!(windows_acl_problem(&acl, false, Some(acl.owner)), None);
-    for changed in [
-        WindowsAcl {
-            aces: &explicit,
-            ..acl
-        },
-        WindowsAcl {
-            protected: true,
-            ..acl
-        },
-        WindowsAcl { aces: &[], ..acl },
-    ] {
-        assert!(windows_acl_problem(&changed, false, Some(acl.owner)).is_some());
     }
 }
 
