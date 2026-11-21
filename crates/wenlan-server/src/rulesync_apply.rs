@@ -42,6 +42,10 @@ impl FileMode {
         !cfg!(unix) || self.0 & 0o700 == 0o700
     }
 
+    pub(crate) fn with_child_writes(self) -> Self {
+        Self(if cfg!(unix) { self.0 | 0o700 } else { 0 })
+    }
+
     #[cfg(unix)]
     fn set_directory(self, dir: &Dir) -> io::Result<()> {
         let file = dir.open(".")?;

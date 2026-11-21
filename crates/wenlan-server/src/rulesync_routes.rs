@@ -5,6 +5,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
+    ops::Bound::{Excluded, Unbounded},
     path::{Path, PathBuf},
 };
 
@@ -433,6 +434,7 @@ enum BatchMode {
     Adopt,
     Extend,
     Continue,
+    SealRestore { extension_only: bool },
     Review,
     Settings,
 }
@@ -1134,7 +1136,8 @@ impl Setup {
         let adopting = matches!(mode, BatchMode::Adopt);
         let extending = matches!(mode, BatchMode::Extend);
         let reviewing = matches!(mode, BatchMode::Review);
-        let stop_on_conflict = !matches!(mode, BatchMode::Continue);
+        let sealing_restore = matches!(mode, BatchMode::SealRestore { .. });
+        let stop_on_conflict = !matches!(mode, BatchMode::Continue | BatchMode::SealRestore { .. });
         if operations.is_empty() {
             if adopting {
                 manifest.adopted = true;
@@ -1142,8 +1145,9 @@ impl Setup {
             }
             return Ok(Vec::new());
         }
-        // A skill approval already includes its missing parent operations.
-        let operations = if reviewing {
+        // Skill approvals include their parents. Restore prepares the
+        // directories before it attempts to seal their modes.
+        let operations = if reviewing || sealing_restore {
             operations
         } else {
             with_missing_parents(root, operations, extending.then_some(&manifest.backup))?
@@ -1197,7 +1201,23 @@ impl Setup {
         let mut failed = BTreeSet::new();
         for operation in manifest.pending.split_off(first) {
             let path = operation.path.clone();
-            let status = if path_blocked(&failed, &path) {
+            // Keep the receipt if closing this directory would prevent a
+            // later retry from restoring a descendant that is still managed.
+            let unfinished_children = match (&mode, &operation.desired) {
+                (BatchMode::SealRestore { extension_only }, Snapshot::Directory { mode })
+                    if !mode.permits_child_writes() =>
+                {
+                    manifest
+                        .delivered
+                        .range::<PathBuf, _>((Excluded(&path), Unbounded))
+                        .take_while(|(child, _)| child.starts_with(&path))
+                        .any(|(child, _)| {
+                            !extension_only || manifest.extension_paths.contains(child)
+                        })
+                }
+                _ => false,
+            };
+            let status = if path_blocked(&failed, &path) || unfinished_children {
                 ApplyOutcome::ChangedSincePlan
             } else {
                 if let Some(stage) = manifest.stages.get(&path) {
@@ -1348,16 +1368,9 @@ impl Setup {
                 allow_link: true,
             });
         }
-        // Recreate deleted parents first. Remove children before deleting a
-        // directory, restoring its mode, or putting back its original link.
-        operations.sort_by_key(|op| {
-            let depth = op.path.components().count();
-            if op.seen == Snapshot::Absent && op.desired.is_directory() {
-                (false, depth)
-            } else {
-                (true, usize::MAX - depth)
-            }
-        });
+        self.prepare_restore_directories(root, manifest, result, &mut operations)?;
+        // Descendants are restored before their parent's final mode or link.
+        operations.sort_by_key(|op| std::cmp::Reverse(op.path.components().count()));
         let mut removing = BTreeSet::new();
         let mut retained = BTreeSet::new();
         for op in &mut operations {
@@ -1391,15 +1404,90 @@ impl Setup {
         {
             self.save(manifest)?;
         }
-        for (path, status) in self.apply_batch(root, manifest, operations, BatchMode::Continue)? {
-            if status == ApplyOutcome::Applied && !retained.contains(&path) {
-                result.written.push(path.display().to_string());
-            } else if status != ApplyOutcome::Applied {
-                result
-                    .blocked
-                    .push(format!("{} changed during restore", path.display()));
+        let (directories, contents) = operations
+            .into_iter()
+            .partition(|op| op.desired.is_directory());
+        for (operations, mode) in [
+            (contents, BatchMode::Continue),
+            (directories, BatchMode::SealRestore { extension_only }),
+        ] {
+            for (path, status) in self.apply_batch(root, manifest, operations, mode)? {
+                if status == ApplyOutcome::Applied && !retained.contains(&path) {
+                    result.written.push(path.display().to_string());
+                } else if status != ApplyOutcome::Applied {
+                    result
+                        .blocked
+                        .push(format!("{} could not be restored yet", path.display()));
+                }
             }
         }
+        Ok(())
+    }
+
+    fn prepare_restore_directories(
+        &self,
+        root: &FileRoot,
+        manifest: &mut Manifest,
+        result: &mut RulesSyncReport,
+        operations: &mut Vec<Pending>,
+    ) -> Result<()> {
+        let parents = operations
+            .iter()
+            .filter(|op| op.seen != op.desired)
+            .flat_map(|op| op.path.ancestors().skip(1))
+            .collect::<BTreeSet<_>>();
+        let modes: BTreeMap<_, _> = operations
+            .iter()
+            .filter(|op| op.desired.is_directory())
+            .filter_map(|op| {
+                let writable = match &op.seen {
+                    Snapshot::Absent => Snapshot::private_directory(),
+                    Snapshot::Directory { mode }
+                        if !mode.permits_child_writes() && parents.contains(op.path.as_path()) =>
+                    {
+                        Snapshot::directory_with_permissions(mode.with_child_writes())
+                    }
+                    _ => return None,
+                };
+                Some((op.path.clone(), writable))
+            })
+            .collect();
+        if modes.is_empty() {
+            return Ok(());
+        }
+        // Keep an active receipt for each temporary mode. If restore is
+        // interrupted, the original and this writable state are journaled.
+        let prepare = operations
+            .iter()
+            .filter_map(|op| {
+                Some(Pending {
+                    path: op.path.clone(),
+                    seen: op.seen.clone(),
+                    desired: modes.get(&op.path)?.clone(),
+                    kind: Some(manifest.delivered.get(&op.path)?.kind.clone()),
+                    allow_link: false,
+                })
+            })
+            .collect();
+        let mut blocked = BTreeSet::new();
+        for (path, status) in self.apply_batch(root, manifest, prepare, BatchMode::Continue)? {
+            if status != ApplyOutcome::Applied {
+                result.blocked.push(format!(
+                    "{} changed while preparing restore",
+                    path.display()
+                ));
+                blocked.insert(path);
+            }
+        }
+        operations.retain_mut(|op| {
+            if path_blocked(&blocked, &op.path) {
+                return false;
+            }
+            if let Some(mode) = modes.get(&op.path) {
+                op.seen = mode.clone();
+            }
+            true
+        });
         Ok(())
     }
 
@@ -4906,6 +4994,78 @@ mod tests {
         let restored = f.setup.restore().unwrap();
         assert!(restored.blocked.is_empty(), "{restored:?}");
         assert_eq!(step1e_tree(&f.setup.home), before);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rulesync_step1f_restores_contents_before_read_only_directory_modes() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let f = Fixture::new();
+        fs::remove_dir_all(f.setup.home.join(".codex")).unwrap();
+        let skill = write_step1d_skill(&f, ".claude", "Original body.", "# Helper\n");
+        let docs = skill.join("docs");
+        let nested = docs.join("nested");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join("guide.md"), b"Original guide\n").unwrap();
+        fs::set_permissions(&nested, fs::Permissions::from_mode(0o551)).unwrap();
+        fs::set_permissions(&docs, fs::Permissions::from_mode(0o555)).unwrap();
+        let before = step1e_tree(&f.setup.home);
+        f.adopt_from_plan();
+        allow_fixture_tool_folders(&f);
+        for path in [&docs, &nested] {
+            fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        fs::remove_dir_all(&docs).unwrap();
+        share_step1e_skill(&f);
+
+        let restored = f.setup.restore();
+        let after = step1e_tree(&f.setup.home);
+        for path in [&docs, &nested] {
+            if path.exists() {
+                fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+            }
+        }
+        let restored = restored.unwrap();
+        assert!(restored.blocked.is_empty(), "{restored:?}");
+        assert_eq!(after, before);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rulesync_step1f_retries_restore_below_an_originally_read_only_directory() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let f = Fixture::new();
+        fs::remove_dir_all(f.setup.home.join(".codex")).unwrap();
+        let skill = write_step1d_skill(&f, ".claude", "Original body.", "# Helper\n");
+        let docs = skill.join("docs");
+        let guide = docs.join("guide.md");
+        fs::create_dir(&docs).unwrap();
+        fs::write(&guide, b"Original guide\n").unwrap();
+        fs::set_permissions(&docs, fs::Permissions::from_mode(0o555)).unwrap();
+        let before = step1e_tree(&f.setup.home);
+        f.adopt_from_plan();
+        allow_fixture_tool_folders(&f);
+        fs::set_permissions(&docs, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::write(&guide, b"Reviewed guide\n").unwrap();
+        share_step1e_skill(&f);
+        fs::write(&guide, b"An edit that still needs attention\n").unwrap();
+
+        let first = f.setup.restore().unwrap();
+        assert!(!first.blocked.is_empty(), "{first:?}");
+        assert_eq!(
+            fs::read(&guide).unwrap(),
+            b"An edit that still needs attention\n"
+        );
+
+        fs::write(&guide, b"Reviewed guide\n").unwrap();
+        let restored = f.setup.restore();
+        let after = step1e_tree(&f.setup.home);
+        fs::set_permissions(&docs, fs::Permissions::from_mode(0o755)).unwrap();
+        let restored = restored.unwrap();
+        assert!(restored.blocked.is_empty(), "{restored:?}");
+        assert_eq!(after, before);
     }
 
     #[test]
