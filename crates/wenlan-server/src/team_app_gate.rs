@@ -700,6 +700,12 @@ pub(super) async fn handle(
         }
     }
 
+    if let Some(host) = &state.library {
+        if !matches!(call.output, View::Health | View::Spaces) {
+            return library_app(host, &state, &member, call, &ids, &given, object.as_ref()).await;
+        }
+    }
+
     // Which Spaces the call runs in: one, or each of the member's.
     let targets: Vec<Option<String>> = match call.space {
         SpaceFrom::NoSpace => {
@@ -986,3 +992,130 @@ fn merge(
 #[cfg(test)]
 #[path = "team_app_gate_test.rs"]
 mod tests;
+
+/// Old browser links remain usable for page reads. Other old page actions
+/// must not forward to the personal database after a hosted Space moved.
+async fn library_app(
+    host: &super::library::Host,
+    state: &TeamState,
+    member: &Member,
+    call: &Call,
+    ids: &[String],
+    query: &[(String, String)],
+    body: Option<&Map<String, Value>>,
+) -> MemberResponse {
+    if !matches!(
+        call.output,
+        View::Page | View::Sources | View::Inventory | View::Search
+    ) {
+        return MemberResponse::problem(
+            StatusCode::CONFLICT,
+            "This action is unavailable on migrated Spaces. Use the team library.",
+        );
+    }
+    let reader = match host.reader(state, member).await {
+        Ok(reader) => reader,
+        Err(error) => return super::library::failure(error),
+    };
+    // The legacy app browses its hosted Spaces. Team-only and ungrouped
+    // records are available through the new team API and MCP.
+    let spaces = reader.info().spaces;
+    let entry = |item: wenlan_types::team_library::TeamItem| -> Option<view::MemberPageEntry> {
+        let space = spaces
+            .iter()
+            .find(|space| Some(&space.id) == item.space_id.as_ref())?;
+        Some(view::MemberPageEntry {
+            page: view::MemberPage {
+                id: item.item_id,
+                title: item.title,
+                content: item.body,
+                space: Some(space.name.clone()),
+                version: item.revision,
+                status: "active".into(),
+                last_modified: String::new(),
+                review_required: false,
+                review_status: "confirmed".into(),
+                creation_kind: "authored".into(),
+                relevance_score: 0.0,
+                truth: None,
+                source_memory_ids: [],
+                sources_updated_count: 0,
+                created_at: String::new(),
+                last_compiled: String::new(),
+                user_edited: false,
+            },
+            tags: Vec::new(),
+            basis: Vec::new(),
+            space_path: None,
+        })
+    };
+    if matches!(call.output, View::Page | View::Sources) {
+        let Some(page) = ids
+            .first()
+            .and_then(|id| reader.page(id).ok())
+            .and_then(entry)
+        else {
+            return not_found();
+        };
+        if matches!(call.output, View::Sources) {
+            return MemberResponse::json(StatusCode::OK, [] as member_view::MemberSources);
+        }
+        return MemberResponse::json(
+            StatusCode::OK,
+            view::MemberPageRead {
+                body: wenlan_core::page_body::body_parts(&page.page.content),
+                page,
+                basis: Vec::new(),
+                linked_changed: Vec::new(),
+            },
+        );
+    }
+    let from_query = |name| {
+        query
+            .iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value.as_str())
+    };
+    let from_body = |name| body.and_then(|body| body.get(name)).and_then(Value::as_str);
+    let space = from_query("space")
+        .or_else(|| from_query("domain"))
+        .or_else(|| from_body("space"))
+        .or_else(|| from_body("domain"));
+    let scope = match space {
+        Some(space) => match reader.space(space) {
+            Some(id) => Some(id),
+            None => return not_found(),
+        },
+        None => None,
+    };
+    let limit = from_query("limit")
+        .and_then(|text| text.parse::<usize>().ok())
+        .unwrap_or(50)
+        .min(200);
+    if matches!(call.output, View::Search) {
+        let topic = from_body("query").unwrap_or_default();
+        let pages = reader
+            .recall(scope.as_deref(), topic, limit)
+            .pages
+            .into_iter()
+            .filter_map(entry)
+            .map(|entry| entry.page)
+            .collect();
+        return MemberResponse::json(StatusCode::OK, view::MemberPages { pages });
+    }
+    let status = from_query("status").unwrap_or("active");
+    let offset = from_query("offset")
+        .and_then(|text| text.parse().ok())
+        .unwrap_or(0);
+    let pages = if status == "active" {
+        reader
+            .pages(scope.as_deref(), limit, offset)
+            .pages
+            .into_iter()
+            .filter_map(entry)
+            .collect()
+    } else {
+        Vec::new()
+    };
+    MemberResponse::json(StatusCode::OK, view::MemberPages { pages })
+}

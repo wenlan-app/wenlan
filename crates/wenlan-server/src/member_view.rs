@@ -329,6 +329,16 @@ member_bodies!(
     MemberBrief,
     MemberRecall,
     MemberProblem,
+    wenlan_types::team_library::TeamItem,
+    wenlan_types::team_library::TeamPages,
+    wenlan_types::team_library::TeamPageSources,
+    wenlan_types::team_library::TeamPageHistory,
+    wenlan_types::team_library::TeamRecall,
+    wenlan_types::team_library::TeamBrief,
+    wenlan_types::team_library::TeamLibraryInfo,
+    wenlan_types::team_library::TeamGroup,
+    wenlan_types::team_library::TeamPublicationPreview,
+    wenlan_types::team_library::TeamPublicationReceipt,
 );
 
 trait ForwardedReply: IntoResponse {

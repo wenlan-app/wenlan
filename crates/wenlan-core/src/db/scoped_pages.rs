@@ -1044,13 +1044,17 @@ impl MemoryDB {
         let sql = format!(
             "SELECT p.id, p.title, 0, p.incarnation, s.id,
                     COALESCE((SELECT MAX(h.version) FROM page_history h
-                               WHERE h.page_id=p.id AND h.edited_by='space_move'), 0)
+                               WHERE h.page_id=p.id AND h.edited_by='space_move'), 0),
+                    p.version,
+                    CASE WHEN p.status = 'active'
+                          AND COALESCE(p.stale_reason, '') NOT IN ('source_updated', 'source_removed')
+                    THEN COALESCE(p.source_revision, 0) END
                FROM pages p JOIN spaces s ON s.name=p.workspace
               WHERE p.workspace = ?1 AND {shared}
              UNION ALL
              SELECT substr(m.key, {id_start}), '', 1,
                     CASE WHEN json_valid(m.value) THEN json_extract(m.value, '$.stay') END,
-                    NULL, NULL
+                    NULL, NULL, NULL, NULL
                FROM app_metadata m JOIN spaces s ON s.id =
                     CASE WHEN json_valid(m.value) THEN json_extract(m.value, '$.space')
                          ELSE m.value END
@@ -1106,6 +1110,18 @@ impl MemoryDB {
                 pages.stays.insert(id.clone(), stay.clone());
                 if let Some(receipt) = receipts.get(&id).filter(|receipt| receipt.stay == stay) {
                     pages.authorized.insert(id.clone(), receipt.hashes.clone());
+                }
+                // Forget and permanent source deletion invalidate dependent
+                // prose in the source transaction. It cannot back a migrated head.
+                if let Some(source_revision) = row.get::<Option<i64>>(7).map_err(error)? {
+                    pages.legacy_active_heads.insert(
+                        id.clone(),
+                        crate::team::LegacyHeadProof {
+                            stay,
+                            revision: row.get(6).map_err(error)?,
+                            source_revision,
+                        },
+                    );
                 }
                 pages.shared.insert(id, row.get(1).map_err(error)?);
             }

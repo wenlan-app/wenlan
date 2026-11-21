@@ -730,6 +730,7 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `GET` | `/api/team/my-tools` | main | no | not_applicable | `none` | — | status only: this person's AI tools on each team they joined, names and dates; never a key, no page text |
 | `DELETE` | `/api/team/my-tools/{id}` | main | no | not_applicable | `none` | — | receipt only: the AI tools left on that team, names and dates; never a key, no page text |
 | `POST` | `/api/team/spaces` | main | no | not_applicable | `none` | — | receipt only: counts of the first sync pass of the Space hosted for the team; page files go to the folder, not the response |
+| `POST` | `/api/team/library/terminal` | main | yes | automatic | `none` | `terminal` | The person-key-gated review echoes the caller's exact supplied draft and verifies original revisions without returning their stored content. |
 | `POST` | `/api/team/join` | main | no | not_applicable | `none` | — | status only: the team server's address, this member's id and name and the Space names they may use; no page text |
 | `POST` | `/api/team/start` | main | no | not_applicable | `none` | — | status only: the team now started on this computer, its member names and Spaces, the team listener address and the address in invite links; no key, no page text |
 | `POST` | `/api/team/stop` | main | no | not_applicable | `none` | — | status only: the team with its listener now off, its member names and Spaces; no key, no page text |
@@ -1306,7 +1307,7 @@ carrying the authority of agreement.
 | `core/db/scoped_pages.rs::list_recent_page_changes` | `private` | no | no | — | — |
 | `core/db/scoped_pages.rs::list_shared_page_history` | `pub(crate)` | no | no | — | — |
 | `core/db/scoped_pages.rs::pages_containing_text_inner` | `private` | no | no | — | — |
-| `core/db/scoped_pages.rs::shared_folder_pages` | `pub` | no | **yes** | `server/team_routes.rs::hosted_folder_pages` | — |
+| `core/db/scoped_pages.rs::shared_folder_pages` | `pub` | no | **yes** | `server/team_library_routes.rs::migrate`, `server/team_routes.rs::hosted_folder_pages` | — |
 | `core/db/scoped_pages.rs::shared_page_stay_token` | `pub(crate)` | no | no | — | — |
 | `core/db/sentence_history.rs::cited_source_state_on` | `pub(super)` | no | no | — | — |
 | `core/db/sentence_history.rs::stamp_page_citations` | `pub(super)` | no | no | — | — |
@@ -1366,7 +1367,7 @@ carrying the authority of agreement.
 | `core/db.rs::find_matching_page_scoped` | `pub` | no | no | — | `core/db.rs::find_matching_page_with_policy` |
 | `core/db.rs::find_page_to_grow_scoped` | `pub(crate)` | no | no | — | `core/db.rs::find_matching_page_with_policy` |
 | `core/db.rs::folded_title_owners_by_scope` | `pub(crate)` | no | no | — | `core/db.rs::folded_title_owners_by_scope_on_conn` |
-| `core/db.rs::get_page` | `pub` | no | **yes** | `server/knowledge_routes.rs::handle_resolve_embed`, `server/original_routes.rs::handle_keep_original`, `server/page_map_routes.rs::ensure_page_is_active`, `server/page_map_routes.rs::visible_page`, `server/page_routes.rs::archive_page_for`, `server/page_routes.rs::handle_create_page_inner`, `server/page_routes.rs::handle_delete_page`, `server/page_routes.rs::handle_get_page_sources`, `server/page_routes.rs::handle_refresh_page`, `server/page_routes.rs::handle_refresh_page_inner`, `server/page_routes.rs::handle_restore_page_version`, `server/page_routes.rs::handle_update_page`, `server/page_routes.rs::space_locked_write_error`, `server/sentence_routes.rs::require_visible_page`, `server/skill_grow.rs::handle_undo_space_rules`, `server/skill_grow.rs::load_rules_folders`, `server/skill_grow.rs::readable_rules_page`, `server/skill_grow.rs::source_line_is_eligible`, `server/skill_grow.rs::write_maintained_rules_page`, `server/skill_grow/saved_rules.rs::make_page`, `server/skill_grow/saved_rules.rs::page_of`, `server/skill_grow/saved_rules.rs::save_rule_in`, `server/skill_grow/saved_rules.rs::write_rule_change`, `server/steep_new_routes.rs::handle_steep_new_commit_inner`, `server/steep_routes.rs::handle_steep_claim`, `server/steep_routes.rs::handle_steep_commit` | `core/db.rs::get_page_inner` |
+| `core/db.rs::get_page` | `pub` | no | **yes** | `server/knowledge_routes.rs::handle_resolve_embed`, `server/original_routes.rs::handle_keep_original`, `server/page_map_routes.rs::ensure_page_is_active`, `server/page_map_routes.rs::visible_page`, `server/page_routes.rs::archive_page_for`, `server/page_routes.rs::handle_create_page_inner`, `server/page_routes.rs::handle_delete_page`, `server/page_routes.rs::handle_get_page_sources`, `server/page_routes.rs::handle_refresh_page`, `server/page_routes.rs::handle_refresh_page_inner`, `server/page_routes.rs::handle_restore_page_version`, `server/page_routes.rs::handle_update_page`, `server/page_routes.rs::space_locked_write_error`, `server/sentence_routes.rs::require_visible_page`, `server/skill_grow.rs::handle_undo_space_rules`, `server/skill_grow.rs::load_rules_folders`, `server/skill_grow.rs::readable_rules_page`, `server/skill_grow.rs::source_line_is_eligible`, `server/skill_grow.rs::write_maintained_rules_page`, `server/skill_grow/saved_rules.rs::make_page`, `server/skill_grow/saved_rules.rs::page_of`, `server/skill_grow/saved_rules.rs::save_rule_in`, `server/skill_grow/saved_rules.rs::write_rule_change`, `server/steep_new_routes.rs::handle_steep_new_commit_inner`, `server/steep_routes.rs::handle_steep_claim`, `server/steep_routes.rs::handle_steep_commit`, `server/team_library_routes.rs::check_originals` | `core/db.rs::get_page_inner` |
 | `core/db.rs::get_page_browse` | `pub` | no | no | — | `core/db.rs::get_page_inner` |
 | `core/db.rs::insert_document_source_page_at_hash` | `pub(crate)` | no | no | — | `core/db.rs::insert_page_with_kind_inner` |
 | `core/db.rs::insert_page_with_basis` | `pub(crate)` | no | no | — | `core/db.rs::insert_page_with_kind_inner` |
@@ -1518,6 +1519,7 @@ carrying the authority of agreement.
 | `server/session_routes.rs::handle_get_session` | `pub` | no | no | — | `core/db/sessions.rs::get_session_detail` |
 | `server/skill_grow.rs::accept_space` | `private` | no | no | `server/skill_grow.rs::handle_accept_space_rules`, `server/skill_grow.rs::process_space` | `core/db.rs::list_pages_by_space` |
 | `server/skill_grow.rs::pages_for_space` | `private` | no | no | `server/skill_grow.rs::refresh_unlocked` | `core/db.rs::list_pages_by_space` |
+| `server/team_library_routes.rs::migrate` | `pub(super)` | yes | no | — | `core/db/scoped_pages.rs::shared_folder_pages` |
 | `server/team_routes.rs::hosted_folder_pages` | `private` | no | no | `server/team_routes.rs::team_file`, `server/team_routes.rs::team_files` | `core/db/scoped_pages.rs::shared_folder_pages` |
 
 ### Depth 2 — consumers
@@ -1701,7 +1703,7 @@ carrying the authority of agreement.
 | `core/shared_space/mod.rs::run_pass` | `private` | no | no | — | `core/shared_space/mod.rs::pass` |
 | `core/shared_space/mod.rs::stop_page_shares_in` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/shared_space/mod.rs::sync_missing` | `private` | yes | no | — | `core/db.rs::get_page`, `core/shared_space/mod.rs::export_page` |
-| `core/shared_space/mod.rs::sync_space` | `pub` | no | **yes** | `server/spaces_routes.rs::host_sync`, `server/spaces_routes.rs::shared_sync`, `server/team_routes.rs::handle_host_space` | `core/db.rs::get_page` |
+| `core/shared_space/mod.rs::sync_space` | `pub` | no | **yes** | `server/spaces_routes.rs::host_sync`, `server/spaces_routes.rs::shared_sync` | `core/db.rs::get_page` |
 | `core/shared_space/mod.rs::write_merged` | `private` | no | no | — | `core/db.rs::set_page_citations` |
 | `core/shared_space/review.rs::accepted` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/sources/page_watcher.rs::archive_deleted_pages` | `private` | no | no | — | `core/db.rs::get_page` |
@@ -1800,6 +1802,7 @@ carrying the authority of agreement.
 | `server/steep_routes.rs::handle_steep_claim` | `pub` | no | no | — | `core/db.rs::get_page` |
 | `server/steep_routes.rs::handle_steep_commit` | `pub` | no | no | — | `core/db.rs::get_page` |
 | `server/steep_routes.rs::handle_steep_worklist` | `pub` | no | no | — | `core/steep.rs::waiting_page_ids` |
+| `server/team_library_routes.rs::check_originals` | `private` | no | no | `server/team_library_routes.rs::terminal_action` | `core/db.rs::get_page` |
 | `server/team_routes.rs::team_file` | `private` | no | no | — | `server/team_routes.rs::hosted_folder_pages` |
 | `server/team_routes.rs::team_files` | `private` | no | no | — | `server/team_routes.rs::hosted_folder_pages` |
 | `server/things_intake.rs::connect_old_night_points` | `pub` | no | **yes** | `server/things_routes.rs::handle_connect_night_points` | `core/db/night_links.rs::night_topics` |
@@ -1861,7 +1864,7 @@ carrying the authority of agreement.
 | `core/db/scoped_pages.rs::get_shared_page_scoped` | `pub` | no | **yes** | `server/page_basis_routes.rs::visible_ids_for`, `server/page_routes.rs::handle_create_page_inner`, `server/page_routes.rs::handle_get_page`, `server/page_routes.rs::handle_get_page_revisions`, `server/page_routes.rs::handle_get_page_sources`, `server/page_routes.rs::handle_move_page`, `server/page_routes.rs::handle_refresh_page_inner`, `server/skill_grow.rs::load_rules_folders` | `core/db/scoped_pages.rs::get_page_scoped_inner` |
 | `core/db/scoped_pages.rs::list_pages_scoped` | `pub` | no | **yes** | `server/knowledge_routes.rs::handle_list_knowledge_folders`, `server/page_routes.rs::handle_export_pages`, `server/repo_wiki_routes.rs::exportable_pages` | `core/db/scoped_pages.rs::list_pages_scoped_inner` |
 | `core/db/scoped_pages.rs::list_pages_scoped_browse` | `pub` | no | **yes** | `server/page_routes.rs::list_visible_browse_pages` | `core/db/scoped_pages.rs::list_pages_scoped_inner` |
-| `core/db/scoped_pages.rs::list_shared_pages_scoped` | `pub` | no | **yes** | `server/page_routes.rs::list_visible_browse_pages` | `core/db/scoped_pages.rs::list_pages_scoped_inner` |
+| `core/db/scoped_pages.rs::list_shared_pages_scoped` | `pub` | no | **yes** | `server/page_routes.rs::list_visible_browse_pages`, `server/team_library_routes.rs::migrate` | `core/db/scoped_pages.rs::list_pages_scoped_inner` |
 | `core/document_enrichment.rs::refresh_okf_linkers` | `private` | no | no | — | `core/db/okf_concepts.rs::refresh_okf_concept_linkers` |
 | `core/document_enrichment.rs::run_document_enrichment_slice` | `pub` | no | **yes** | `server/scheduler/ambient.rs::run_document_enrichment_slice_tick`, `server/scheduler/ambient.rs::run_import_document_prep_slice`, `server/source_routes.rs::prepare_queued_documents` | `core/document_enrichment.rs::run_document_enrichment_with_request_budget` |
 | `core/document_enrichment.rs::run_document_enrichment_with_profile` | `pub` | no | no | — | `core/document_enrichment.rs::run_document_enrichment_with_request_budget` |
@@ -2009,7 +2012,7 @@ carrying the authority of agreement.
 | `server/steep_new_routes.rs::handle_steep_new_commit` | `pub` | no | no | — | `server/steep_new_routes.rs::handle_steep_new_commit_inner` |
 | `server/steep_new_routes.rs::handle_steep_new_links` | `pub` | no | no | — | `core/steep_new.rs::links_new` |
 | `server/steep_new_routes.rs::handle_steep_new_organize` | `pub` | no | no | — | `core/steep_new.rs::organize_new` |
-| `server/team_routes.rs::handle_host_space` | `pub` | no | no | — | `core/shared_space/mod.rs::sync_space` |
+| `server/team_library_routes.rs::terminal_action` | `pub(super)` | no | no | `server/team_library_routes.rs::terminal` | `server/team_library_routes.rs::check_originals` |
 | `server/things_intake.rs::dream_once` | `private` | no | no | `server/things_intake.rs::look_once` | `server/things_intake.rs::dream_with` |
 | `server/things_routes.rs::handle_connect_night_points` | `pub` | no | no | — | `server/things_intake.rs::connect_old_night_points` |
 

@@ -119,6 +119,7 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
             crate::route_registry::delete(handle_revoke_member_key),
         )
         .route("/api/team/spaces", post(handle_host_space))
+        .route("/api/team/library/terminal", post(library::terminal))
         .route("/api/team/join", post(handle_join))
         .route("/api/team/start", post(handle_start_team))
         .route("/api/team/stop", post(handle_stop_team))
@@ -620,9 +621,8 @@ async fn link_address() -> Result<Option<String>, ServerError> {
     blocking(|| Ok(team::read_team(&team::team_path())?.url)).await
 }
 
-/// POST /api/team/spaces: hosts a Space of this Wenlan for the team: it is
-/// shared through a folder of this Wenlan's own, which members reach only
-/// through the team listener. Runs the first pass and returns its counts.
+/// POST /api/team/spaces: manages a legacy hosted Space's name or inherited
+/// grant. New team groups and publications use the team library.
 pub async fn handle_host_space(
     State(state): State<SharedState>,
     Json(req): Json<TeamHostSpaceRequest>,
@@ -636,13 +636,12 @@ pub async fn handle_host_space(
         }
         return Ok(Json(counts));
     }
-    let (db, page_root) = {
-        let s = state.read().await;
-        (
-            s.db.clone().ok_or(ServerError::DbNotInitialized)?,
-            s.lint_config.page_root().map(std::path::Path::to_path_buf),
-        )
-    };
+    let db = state
+        .read()
+        .await
+        .db
+        .clone()
+        .ok_or(ServerError::DbNotInitialized)?;
     let space = db
         .registered_space_or_none(Some(req.space.trim()))
         .await
@@ -673,43 +672,10 @@ pub async fn handle_host_space(
         blocking(move || team::set_everyone(&team::team_path(), &space, access)).await?;
         return Ok(Json(Default::default()));
     }
-    let folder = match shared_space::share_settings_at(&settings, &scope)? {
-        Some(existing) if existing.hosted => PathBuf::from(existing.folder),
-        Some(_) => {
-            return Err(ServerError::ValidationError(format!(
-                "{space} is shared through a folder or another team server already; stop sharing it first"
-            )));
-        }
-        // Newly hosted. Access given to it beforehand stays: whatever
-        // ended an earlier hosting of this name (stop hosting, delete) took
-        // that one's access with it, and a hosted Space cannot be renamed.
-        None => team::new_hosted_folder(&settings),
-    };
-    let name = server_name(&db).await?;
-    // Marked hosted before the first pass, so the pass lists the members.
-    shared_space::join_at(&settings, &scope, &folder, &name)?;
-    shared_space::update_share(&settings, &scope, |share| share.hosted = true)?;
-    let counts = shared_space::sync_space(
-        &db,
-        shared_space::SyncTarget {
-            scope: &scope,
-            folder: &folder,
-            member_name: &name,
-            settings_path: &settings,
-            knowledge_path: page_root.as_deref(),
-            member_id: None,
-            host: None,
-        },
-    )
-    .await?;
-    Ok(Json(counts))
-}
-
-/// The name the team sees for edits made on the server itself.
-async fn server_name(db: &wenlan_core::db::MemoryDB) -> Result<String, ServerError> {
-    Ok(shared_space::person_name(db)
-        .await?
-        .unwrap_or_else(|| "Team server".to_string()))
+    Err(ServerError::ValidationError(
+        "Publishing an entire personal Space is unavailable. Create a team Space and review each item before publishing."
+            .into(),
+    ))
 }
 
 /// POST /api/team/join: on a member's computer: reads a join code, asks
@@ -1034,6 +1000,7 @@ struct TeamState {
     /// The listener needs the host's current shared-page IDs to suppress old
     /// snapshots whose citations predate the source filter.
     db: Option<Arc<wenlan_core::db::MemoryDB>>,
+    library: Option<library::Host>,
     /// The daemon's own loopback address, which MCP reaches it at.
     daemon_url: String,
     /// Dispatch the forwarded browser request without a listening socket.
@@ -1085,6 +1052,10 @@ pub async fn serve_team_listener(shared: SharedState, shutdown: ShutdownHandle) 
         team_path: team::team_path(),
         settings_path: shared_space::settings_path(),
         db: Some(db),
+        library: Some(library::Host::new(
+            &team::team_path(),
+            wenlan_core::team_library::memories_enabled(),
+        )),
         daemon_url: format!("http://127.0.0.1:{port}"),
         #[cfg(test)]
         in_process_daemon: {
@@ -1123,6 +1094,11 @@ pub async fn serve_team_listener(shared: SharedState, shutdown: ShutdownHandle) 
             }
             continue;
         };
+        if let Some(host) = &state.library {
+            if let Err(error) = host.migrate(&state).await {
+                tracing::warn!(%error, "Hosted Space migration will be retried on access");
+            }
+        }
         let listener = match tokio::net::TcpListener::bind(&addr).await {
             Ok(listener) => listener,
             Err(error) => {
@@ -1354,6 +1330,7 @@ fn team_router(state: TeamState) -> axum::Router {
     let data = crate::member_view::any(team_mcp).install(data, "/mcp");
     let data = crate::member_view::any(team_mcp_in).install(data, "/mcp/{*space}");
     let checked = data
+        .merge(library::routes())
         .route("/team/v1/admin", any(team_admin))
         .route("/team/v1/admin/{*rest}", any(team_admin))
         .route("/team/v1/account/keys", get(device::keys))
@@ -2012,6 +1989,8 @@ async fn team_join_page(State(state): State<TeamState>, headers: HeaderMap) -> R
 
 #[path = "team_app_gate.rs"]
 mod app_gate;
+#[path = "team_library_routes.rs"]
+mod library;
 
 pub(crate) fn is_member_app_call(method: &Method, route: &str) -> bool {
     app_gate::CALLS
@@ -2079,6 +2058,15 @@ async fn require_member(State(state): State<TeamState>, mut req: Request, next: 
             "this key does not open that",
         )
         .into_response();
+    }
+    if route_class(req.uri().path()) == RouteClass::Library
+        && !matches!(*req.method(), Method::GET | Method::HEAD)
+    {
+        return (
+            StatusCode::FORBIDDEN,
+            "team publication requires a person session",
+        )
+            .into_response();
     }
     if let Some(origin) = req
         .headers()
@@ -2235,6 +2223,7 @@ async fn auth_logout_all(
 enum RouteClass {
     /// `/mcp` and `/mcp/<space>`: AI tools.
     Mcp,
+    Library,
     /// A Write member decides on proposals for the team Rules page.
     RulesReview,
     /// `/team/v1/me`.
@@ -2268,6 +2257,8 @@ fn route_class(path: &str) -> RouteClass {
     let under = |prefix: &str| path == prefix || path.starts_with(&format!("{prefix}/"));
     if under("/mcp") {
         RouteClass::Mcp
+    } else if under(library::PREFIX) {
+        RouteClass::Library
     } else if path
         .strip_prefix("/team/v1/spaces/")
         .and_then(|rest| rest.split_once('/'))
@@ -2308,6 +2299,7 @@ fn route_class(path: &str) -> RouteClass {
 /// admin by browser session is a later change.)
 const ROUTE_TABLE: &[(RouteClass, [bool; 3])] = &[
     (RouteClass::Mcp, [true, true, false]),
+    (RouteClass::Library, [true, false, true]),
     (RouteClass::RulesReview, [false, false, true]),
     (RouteClass::Me, [true, false, true]),
     (RouteClass::App, [true, false, true]),
@@ -2383,8 +2375,8 @@ async fn team_me(
     })
     .await;
     match read {
-        Ok(Ok((hosted, file))) => crate::member_view::team::me(
-            wenlan_types::team::TeamMe {
+        Ok(Ok((hosted, file))) => {
+            let mut me = wenlan_types::team::TeamMe {
                 signed_in_with: Some(match credential {
                     team::Credential::BrowserSession => {
                         wenlan_types::team::TeamSignedInWith::Browser
@@ -2392,9 +2384,14 @@ async fn team_me(
                     _ => wenlan_types::team::TeamSignedInWith::Key,
                 }),
                 ..member.me(&hosted)
-            },
-            team::people_sharing_with(&file, &member, &hosted),
-        ),
+            };
+            if state.library.is_some() {
+                // Legacy sync only follows migrated hosted Spaces. Team-only
+                // groups are discoverable from the library endpoint.
+                me.spaces.retain(|space| space.id.is_some());
+            }
+            crate::member_view::team::me(me, team::people_sharing_with(&file, &member, &hosted))
+        }
         _ => crate::member_view::MemberResponse::text(
             StatusCode::INTERNAL_SERVER_ERROR,
             "the Spaces cannot be read",
@@ -2742,6 +2739,9 @@ async fn team_files(
         Ok(found) => found,
         Err(refused) => return *refused,
     };
+    if let Some(library) = &state.library {
+        return library::legacy_inventory(library, &state, &member, &space, &folder).await;
+    }
     let shared_pages = match hosted_folder_pages(&state, &space).await {
         Ok(pages) => pages,
         Err(error) => {
@@ -2883,6 +2883,11 @@ async fn team_file(
             Err(_) => crate::member_view::MemberResponse::status(StatusCode::SERVICE_UNAVAILABLE),
         };
     }
+    if let Some(library) = &state.library {
+        if query.path != shared_space::SPACE_FILE {
+            return library::legacy_download(library, &state, &member, &space, &query.path).await;
+        }
+    }
     let shared_pages = match hosted_folder_pages(&state, &space).await {
         Ok(pages) => pages,
         Err(error) => {
@@ -2957,6 +2962,12 @@ async fn team_put_version(
             Err(_) => crate::member_view::MemberResponse::status(StatusCode::SERVICE_UNAVAILABLE),
         };
     }
+    if state.library.is_some() {
+        return crate::member_view::MemberResponse::problem(
+            StatusCode::FORBIDDEN,
+            "Legacy Space page uploads are read-only. Use a reviewed team publication.",
+        );
+    }
     if access != TeamAccess::Write {
         return crate::member_view::MemberResponse::text(
             StatusCode::FORBIDDEN,
@@ -3004,6 +3015,12 @@ async fn team_mcp(
     Extension(member): Extension<Member>,
     req: Request,
 ) -> crate::member_view::MemberResponse {
+    if state.library.is_some() {
+        return crate::member_view::MemberResponse::problem(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Use the team library to read migrated Spaces.",
+        );
+    }
     // The same list `/team/v1/me` gives, so the address the invite page
     // shows for "one Space" always opens: a Space open to everyone counts
     // exactly like one given to this member by name.
@@ -3046,6 +3063,12 @@ async fn team_mcp_in(
     Path(space): Path<String>,
     req: Request,
 ) -> crate::member_view::MemberResponse {
+    if state.library.is_some() {
+        return crate::member_view::MemberResponse::problem(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Use the team library to read migrated Spaces.",
+        );
+    }
     serve_mcp(state, member, space, req).await
 }
 
@@ -3068,24 +3091,13 @@ async fn serve_mcp(
         match services.entry(key) {
             std::collections::hash_map::Entry::Occupied(entry) => entry.get().clone(),
             std::collections::hash_map::Entry::Vacant(entry) => {
-                let client = match crate::team_actor::mcp_client() {
+                let client = match team_mcp_client(&state) {
                     Ok(client) => client,
                     Err(_) => {
                         return crate::member_view::MemberResponse::status(
                             StatusCode::INTERNAL_SERVER_ERROR,
                         )
                     }
-                };
-                let client = wenlan_mcp::client::WenlanClient::with_http_client(
-                    state.daemon_url.clone(),
-                    client,
-                );
-                #[cfg(test)]
-                let client = match state.in_process_daemon.clone() {
-                    Some(router) => client.with_in_process_transport(move |request| {
-                        dispatch_mcp_daemon(router.clone(), request)
-                    }),
-                    None => client,
                 };
                 entry
                     .insert(wenlan_mcp::serve::team_member_service(
@@ -3102,6 +3114,20 @@ async fn serve_mcp(
         }
     };
     crate::member_view::team::hosted_mcp(service, req).await
+}
+
+fn team_mcp_client(state: &TeamState) -> reqwest::Result<wenlan_mcp::client::WenlanClient> {
+    let client = wenlan_mcp::client::WenlanClient::with_http_client(
+        state.daemon_url.clone(),
+        crate::team_actor::mcp_client()?,
+    );
+    #[cfg(test)]
+    let client = match state.in_process_daemon.clone() {
+        Some(router) => client
+            .with_in_process_transport(move |request| dispatch_mcp_daemon(router.clone(), request)),
+        None => client,
+    };
+    Ok(client)
 }
 
 #[cfg(test)]

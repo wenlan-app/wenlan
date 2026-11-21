@@ -67,15 +67,22 @@ pub(crate) fn space_file(value: wenlan_core::member_view::MemberSpaceFile) -> Me
 pub(crate) fn validated_markdown_file(
     file: wenlan_core::member_view::MemberVersionFile,
 ) -> MemberResponse {
+    markdown_download(file.into_bytes())
+}
+
+pub(crate) fn markdown_download(bytes: Vec<u8>) -> MemberResponse {
     let mut response = (
         [(header::CONTENT_TYPE, "text/markdown; charset=utf-8")],
-        Body::from(file.into_bytes()),
+        Body::from(bytes),
     )
         .into_response();
     response.headers_mut().insert(
         header::X_CONTENT_TYPE_OPTIONS,
         HeaderValue::from_static("nosniff"),
     );
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     MemberResponse::new(response)
 }
 

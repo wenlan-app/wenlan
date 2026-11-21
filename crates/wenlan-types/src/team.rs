@@ -358,8 +358,8 @@ pub struct TeamMe {
 pub struct TeamFileList {
     pub access: TeamAccess,
     pub files: Vec<String>,
-    /// Page identities deleted in this Space whose archived snapshot cannot
-    /// safely be shared. Older servers omit this field.
+    /// Page identities to remove from a member's legacy Space. A server
+    /// may withhold an archived snapshot or retire a page from this feed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub deleted_pages: Vec<String>,
     /// The approved Rules page version in the team-wide Space.

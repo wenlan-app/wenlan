@@ -1552,9 +1552,17 @@ pub fn check_member_version(
     Ok(version::file_kind(&read.meta))
 }
 
+#[derive(Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct LegacyHeadProof {
+    pub stay: String,
+    pub revision: i64,
+    pub source_revision: i64,
+}
+
 #[derive(Default)]
 pub struct SharedFolderPages {
     pub(crate) shared: std::collections::HashMap<String, String>,
+    pub(crate) legacy_active_heads: std::collections::HashMap<String, LegacyHeadProof>,
     /// Current host-issued stay witness for each shared page.
     pub(crate) stays: std::collections::HashMap<String, String>,
     /// Exact hashes issued publication receipts for in the current stay.
@@ -1566,6 +1574,20 @@ pub struct SharedFolderPages {
     /// For a deleted page, the one archive verified as its final version.
     /// Members receive only it, and only it stands in for the deletion.
     pub(crate) final_archives: std::collections::HashMap<String, String>,
+}
+
+impl SharedFolderPages {
+    pub fn legacy_head(&self, id: &str) -> Option<&LegacyHeadProof> {
+        self.legacy_active_heads.get(id)
+    }
+
+    /// Identities previously tracked by this hosted Space.
+    pub fn known_page_ids(&self) -> impl Iterator<Item = &str> {
+        self.deleted
+            .iter()
+            .chain(self.receipts.keys())
+            .map(String::as_str)
+    }
 }
 
 /// Versions must belong to this Space and refer only to its shared pages.

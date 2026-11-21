@@ -1198,6 +1198,24 @@ async fn read_held(db: &MemoryDB, key: &str) -> Result<BTreeMap<String, Held>, W
     }))
 }
 
+/// Page identities the old host may have sent on this folder. The folder
+/// witness keeps receipts for a different share of the same name out.
+pub async fn held_hosted_page_ids(
+    db: &MemoryDB,
+    space: &str,
+    folder: &Path,
+) -> Result<impl Iterator<Item = String>, WenlanError> {
+    let marker = format!("{}.folder", held_key(space));
+    let matched =
+        db.get_app_metadata(&marker).await?.as_deref() == Some(folder.to_string_lossy().as_ref());
+    let held = if matched {
+        read_held(db, space).await?
+    } else {
+        BTreeMap::new()
+    };
+    Ok(held.into_keys())
+}
+
 // ===== One pass at a time, and the last result =====
 
 #[derive(Default)]

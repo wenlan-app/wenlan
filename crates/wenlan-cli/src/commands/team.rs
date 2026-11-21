@@ -13,9 +13,34 @@ use wenlan_types::team::{
 
 use crate::client::WenlanClient;
 use crate::output::ResolvedFormat;
+use wenlan_types::team_library::TeamTerminalAction;
+
+#[path = "team_library.rs"]
+mod library;
 
 #[derive(Subcommand)]
 pub enum TeamCmd {
+    /// Prepare a private team publication draft from your personal library.
+    Draft {
+        #[arg(value_enum)]
+        kind: library::OriginalKind,
+        id: String,
+    },
+    /// Review and publish a personal item from the team host's terminal.
+    Publish(library::PublishArgs),
+    /// Create a group for team pages and memories without sharing a personal Space.
+    CreateSpace {
+        name: String,
+        /// Require a grant for this Space.
+        #[arg(long)]
+        restricted: bool,
+    },
+    /// Set a member's team-wide library grant. Their Space grants are separate.
+    Grant {
+        member: String,
+        #[arg(value_enum)]
+        access: library::LibraryAccess,
+    },
     /// Start a team on this computer: others reach it with an invite link.
     Start {
         /// The team's name, such as the company's. Everyone on it sees it.
@@ -90,10 +115,10 @@ pub enum TeamCmd {
         #[arg(long)]
         url: Option<String>,
     },
-    /// Share a Space of this computer with the team.
+    /// Change access to an existing hosted Space.
     #[command(name = "share", alias = "host")]
     Host {
-        /// Space name.
+        /// Existing hosted Space name.
         #[arg(value_name = "SPACE")]
         space_name: String,
         /// Open it to everyone on the team, now and when invited later:
@@ -185,6 +210,22 @@ pub async fn run(
     cmd: TeamCmd,
 ) -> Result<()> {
     match cmd {
+        TeamCmd::Draft { kind, id } => library::draft(client, kind, &id).await,
+        TeamCmd::Publish(args) => library::publish(client, args).await,
+        TeamCmd::CreateSpace { name, restricted } => {
+            library::change(client, TeamTerminalAction::CreateSpace { name, restricted }).await
+        }
+        TeamCmd::Grant { member, access } => {
+            let member_id = member_id(client, &member).await?;
+            library::change(
+                client,
+                TeamTerminalAction::SetGrant {
+                    member_id,
+                    access: access.grant(),
+                },
+            )
+            .await
+        }
         TeamCmd::Start {
             name,
             person,
