@@ -103,12 +103,48 @@ fn toml_file(tool: &'static str, path: &str, sections: &'static [Section]) -> Lo
 }
 
 const HOOKS: &[Section] = &[Section(Hook, &["hooks"], Hooks)];
-const OPENCODE: &[Section] = &[
-    Section(Mcp, &["mcp", "servers"], Named),
+const OPENCODE_V1: &[Section] = &[
     Section(Mcp, &["mcp"], Named),
-    Section(Permission, &["permissions"], Shape::OrderedPolicy),
     Section(Permission, &["permission"], Shape::OrderedPolicy),
 ];
+const OPENCODE_V2: &[Section] = &[
+    Section(Mcp, &["mcp", "servers"], Named),
+    Section(Permission, &["permissions"], Shape::OrderedPolicy),
+];
+
+fn opencode_sections(raw: &Value) -> Result<&'static [Section]> {
+    // Both releases have used this unversioned schema URL. It is
+    // corroboration of the tool, not evidence of its config generation.
+    ensure!(
+        raw.get("$schema")
+            .is_none_or(|schema| schema == "https://opencode.ai/config.json"),
+        "unknown OpenCode schema"
+    );
+    let legacy_server = |value: &Value| {
+        matches!(
+            value.get("type").and_then(Value::as_str),
+            Some("local" | "remote")
+        ) || value.as_object().is_some_and(|fields| {
+            fields.len() == 1 && fields.get("enabled").is_some_and(Value::is_boolean)
+        })
+    };
+    let mcp = raw.get("mcp").and_then(Value::as_object);
+    let legacy = ["permission", "snapshot", "attachment"]
+        .into_iter()
+        .any(|key| raw.get(key).is_some())
+        || mcp.is_some_and(|map| map.values().any(legacy_server));
+    let current = ["permissions", "snapshots", "attachments", "policies"]
+        .into_iter()
+        .any(|key| raw.get(key).is_some())
+        || mcp
+            .and_then(|map| map.get("servers"))
+            .is_some_and(|value| value.is_object() && !legacy_server(value));
+    match (legacy, current) {
+        (true, false) => Ok(OPENCODE_V1),
+        (false, true) => Ok(OPENCODE_V2),
+        _ => anyhow::bail!("OpenCode V1 or V2 settings shape is ambiguous"),
+    }
+}
 
 fn defaults() -> Vec<Location> {
     vec![
@@ -120,6 +156,7 @@ fn defaults() -> Vec<Location> {
         ]),
         toml_file("codexcli", ".codex/config.toml", &[
             Section(Mcp, &["mcp_servers"], Named),
+            Section(Hook, &["hooks"], Hooks),
             Section(Permission, &["permissions"], Leaves),
             Section(Permission, &["default_permissions"], Field),
             Section(Permission, &["approval_policy"], Field),
@@ -160,8 +197,8 @@ fn defaults() -> Vec<Location> {
             Section(Permission, &["autoRun", "allow_instructions"], Items),
             Section(Permission, &["autoRun", "block_instructions"], Items),
         ]),
-        json_file("opencode", ".config/opencode/opencode.jsonc", OPENCODE),
-        json_file("opencode", ".config/opencode/opencode.json", OPENCODE),
+        json_file("opencode", ".config/opencode/opencode.jsonc", &[]),
+        json_file("opencode", ".config/opencode/opencode.json", &[]),
         versioned("musecode", ".config/muse/settings.json", &[Section(Mcp, &["mcp_servers"], Named)],
             "{\"schema_version\":1}\n"),
     ]
@@ -389,10 +426,19 @@ impl Entry {
 pub struct Document {
     // The full native document must never enter a preview or source.
     raw: Value,
+    sections: &'static [Section],
     entries: BTreeMap<Key, Vec<(Entry, Option<usize>)>>,
 }
 
 impl Location {
+    pub fn unsupported_shape(&self) -> &'static str {
+        if self.tool == "opencode" {
+            "the file does not identify an unambiguous OpenCode V1 or V2 settings shape"
+        } else {
+            "the settings format is invalid, duplicate, or unsupported"
+        }
+    }
+
     pub fn display(&self) -> String {
         self.path
             .iter()
@@ -408,11 +454,17 @@ impl Location {
         );
         let bytes = bytes.unwrap_or(self.initial.as_bytes());
         let raw = document::read(self.format, bytes)?;
+        let sections = if self.tool == "opencode" {
+            opencode_sections(&raw)?
+        } else {
+            self.sections
+        };
         let mut doc = Document {
             raw,
+            sections,
             entries: BTreeMap::new(),
         };
-        for &Section(feature, path, shape) in self.sections {
+        for &Section(feature, path, shape) in sections {
             if shape == Shape::OrderedPolicy {
                 if let Some(value) = lookup(&doc.raw, path.iter().copied()) {
                     let mut entry = self.entry(feature, path, value.clone());
@@ -525,12 +577,6 @@ impl Document {
             Shape::Map => {
                 if let Some(map) = value.as_object() {
                     for (name, value) in map {
-                        if location.tool == "opencode"
-                            && path == ["mcp"]
-                            && (name == "servers" || map.contains_key("servers"))
-                        {
-                            continue;
-                        }
                         if feature == Hook && !value.is_object() {
                             continue;
                         }
@@ -692,7 +738,10 @@ impl Adoption {
                 }
             };
             let Ok(doc) = location.document(Some(&bytes)) else {
-                adoption.notes.push(format!("{path}: unmanaged because its settings format is invalid, duplicate, or unsupported."));
+                let reason = location.unsupported_shape();
+                adoption
+                    .notes
+                    .push(format!("{path}: unmanaged because {reason}."));
                 continue;
             };
             let mut accepted = Vec::new();
@@ -1064,24 +1113,8 @@ pub fn project(from: &Location, to: &Location, entry: &Entry, current: &Document
     let next = match entry.key.feature {
         Mcp => {
             let portable = portable_mcp(from.tool, &entry.value)?;
-            let &Section(_, path, _) = to.sections.iter().find(|section| section.0 == Mcp)?;
+            let &Section(_, path, _) = current.sections.iter().find(|section| section.0 == Mcp)?;
             let mut path = path.to_vec();
-            if to.tool == "opencode"
-                && current.raw.get("mcp").is_some_and(|mcp| {
-                    mcp.is_object()
-                        && mcp.get("servers").is_none()
-                        && mcp.as_object().is_some_and(|map| {
-                            map.values().any(|value| {
-                                matches!(
-                                    value.get("type").and_then(Value::as_str),
-                                    Some("local" | "remote")
-                                )
-                            })
-                        })
-                })
-            {
-                path = vec!["mcp"];
-            }
             path.push(entry.key.name.last()?);
             let value = native_mcp(to.tool, &portable);
             if portable_mcp(to.tool, &value)? != portable {
@@ -1094,7 +1127,9 @@ pub fn project(from: &Location, to: &Location, entry: &Entry, current: &Document
             ("claudecode", "codexcli") | ("codexcli", "claudecode")
         ) =>
         {
-            if !to.sections.iter().any(|section| section.0 == Hook) {
+            if !current.sections.iter().any(|section| section.0 == Hook)
+                || to.format == Format::Toml && current.raw.get("hooks").is_none()
+            {
                 return None;
             }
             let event = entry.container.last()?;
@@ -1153,6 +1188,51 @@ mod tests {
             .into_iter()
             .find(|location| location.path == Path::new(path))
             .unwrap()
+    }
+
+    #[test]
+    fn rulesync_personal_settings_uses_native_opencode_and_inline_codex_shapes() {
+        let cursor = file(".cursor/mcp.json");
+        let source = cursor
+            .document(Some(br#"{"mcpServers":{"sample":{"command":"fixture"}}}"#))
+            .unwrap();
+        let entry = source.reviewable_entries(cursor.tool).next().unwrap();
+        let opencode = file(".config/opencode/opencode.jsonc");
+        for (bytes, server_path) in [
+            (
+                br#"{"$schema":"https://opencode.ai/config.json","permission":{"bash":"ask"}}"#
+                    .as_slice(),
+                "/mcp/sample",
+            ),
+            (
+                br#"{"$schema":"https://opencode.ai/config.json","permissions":[]}"#.as_slice(),
+                "/mcp/servers/sample",
+            ),
+        ] {
+            let doc = opencode.document(Some(bytes)).unwrap();
+            let projected = project(&cursor, &opencode, entry, &doc).unwrap();
+            let updated = opencode.edit(Some(bytes), &projected).unwrap();
+            let raw = document::read(Format::Json, &updated).unwrap();
+            assert_eq!(
+                raw.pointer(server_path).unwrap()["command"],
+                json!(["fixture"])
+            );
+        }
+        for unknown in [
+            br#"{"$schema":"https://opencode.ai/config.json","model":"fixture"}"#.as_slice(),
+            br#"{"$schema":"https://example.invalid/opencode-v3.json","permissions":[]}"#
+                .as_slice(),
+            br#"{"permission":"ask","permissions":[]}"#.as_slice(),
+        ] {
+            assert!(opencode.document(Some(unknown)).is_err());
+        }
+        assert!(opencode.document(None).is_err());
+
+        let codex = file(".codex/config.toml");
+        let doc = codex.document(Some(b"[[hooks.SessionStart]]\nmatcher = 'startup'\n[[hooks.SessionStart.hooks]]\ntype = 'command'\ncommand = 'fixture-hook'\n")).unwrap();
+        let hook = doc.reviewable_entries(codex.tool).next().unwrap();
+        assert_eq!(hook.key.feature, Hook);
+        assert_eq!(hook.value["hooks"][0]["command"], "fixture-hook");
     }
 
     #[test]

@@ -150,9 +150,13 @@ fn read(home: &Path, root: &FileRoot, location: &Location) -> Result<LiveFile, &
         Snapshot::Absent => None,
         _ => return Err("the settings path is not a regular file"),
     };
-    let doc = location
-        .document(bytes)
-        .map_err(|_| "the settings format is invalid, duplicate, or unsupported")?;
+    let doc = location.document(bytes).map_err(|_| {
+        if bytes.is_none() {
+            "no native settings file establishes the configuration shape"
+        } else {
+            location.unsupported_shape()
+        }
+    })?;
     let safe = bytes.is_none_or(|bytes| location.snapshot_safe(bytes, &doc));
     Ok(LiveFile {
         snapshot,
@@ -297,7 +301,15 @@ fn proposal(
             if !view.enrolled.contains(&to.path) {
                 continue;
             }
-            let Ok(file) = file else { continue };
+            let file = match file {
+                Ok(file) => file,
+                Err(reason) => {
+                    if to.tool == "opencode" && *reason == to.unsupported_shape() {
+                        blocked.push(format!("{}: {reason}.", to.display()));
+                    }
+                    continue;
+                }
+            };
             let Some(wanted) = project(location, to, observed, &file.doc) else {
                 continue;
             };
