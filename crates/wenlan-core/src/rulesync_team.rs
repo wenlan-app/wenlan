@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use std::collections::HashSet;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 
@@ -255,6 +256,7 @@ fn metadata(
         proposal: false,
         decides: None,
         device: None,
+        stay: None,
     }
 }
 
@@ -497,9 +499,21 @@ pub fn hosted_file_list(
     if let Some(rules) = rules.as_ref().filter(|rules| !files.contains(&rules.file)) {
         files.push(rules.file.clone());
     }
+    let archived: HashSet<&str> = files
+        .iter()
+        .filter_map(|file| file.split('/').nth(3))
+        .collect();
+    let mut deleted_pages: Vec<_> = pages
+        .deleted
+        .iter()
+        .filter(|id| !archived.contains(id.as_str()))
+        .cloned()
+        .collect();
+    deleted_pages.sort();
     Ok(TeamFileList {
         access,
         files,
+        deleted_pages,
         rules,
     })
 }

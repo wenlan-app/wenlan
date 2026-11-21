@@ -61,12 +61,25 @@ fn review_key(key: &str) -> String {
     format!("shared_space.review:{key}")
 }
 
+fn proposal_stay(
+    proposals: &HashMap<String, Vec<PageVersion>>,
+    page: &str,
+    sha: &str,
+) -> Option<String> {
+    proposals
+        .get(page)?
+        .iter()
+        .find(|proposal| proposal.sha == sha)
+        .and_then(|proposal| proposal.meta.stay.clone())
+}
+
 impl Pass<'_> {
     /// Shares the AI tools' cards, stages the others' proposals, and writes
     /// a decision for each card decided here. Runs after the page steps, so
     /// an accepted card's page is already written as a version.
     pub(super) async fn review<'a>(
         &self,
+        pages: &HashMap<String, Vec<PageVersion>>,
         proposals: &HashMap<String, Vec<PageVersion>>,
         decisions: &'a HashMap<String, Vec<PageVersion>>,
         heads: &HashMap<String, String>,
@@ -108,7 +121,13 @@ impl Pass<'_> {
                 }
                 PageCardState::Closed => {
                     let accepted = self.accepted(&card).await?;
-                    self.decide(&card.page, &sha, accepted).await?;
+                    self.decide(
+                        &card.page,
+                        &sha,
+                        accepted,
+                        proposal_stay(proposals, &card.page, &sha),
+                    )
+                    .await?;
                     review.staged.remove(&sha);
                 }
             }
@@ -131,12 +150,24 @@ impl Pass<'_> {
                 // The AI tool proposed again; its newer card is shared
                 // below and this proposal is closed.
                 PageCardState::Replaced => {
-                    self.decide(&card.page, sha, false).await?;
+                    self.decide(
+                        &card.page,
+                        sha,
+                        false,
+                        proposal_stay(proposals, &card.page, sha),
+                    )
+                    .await?;
                     review.shared.remove(&card_id);
                 }
                 PageCardState::Closed => {
                     let accepted = self.accepted(&card).await?;
-                    self.decide(&card.page, sha, accepted).await?;
+                    self.decide(
+                        &card.page,
+                        sha,
+                        accepted,
+                        proposal_stay(proposals, &card.page, sha),
+                    )
+                    .await?;
                     review.shared.remove(&card_id);
                 }
             }
@@ -178,7 +209,16 @@ impl Pass<'_> {
                 };
                 let author = self.card_author(card);
                 if let Some(sha) = self
-                    .propose(&page, &body, heads.get(&page.id), author)
+                    .propose(
+                        &page,
+                        &body,
+                        heads.get(&page.id),
+                        author,
+                        heads
+                            .get(&page.id)
+                            .and_then(|sha| pages.get(&page.id)?.iter().find(|v| &v.sha == sha))
+                            .and_then(|version| version.meta.stay.clone()),
+                    )
                     .await?
                 {
                     review.shared.insert(
@@ -335,6 +375,7 @@ impl Pass<'_> {
         body: &str,
         head: Option<&String>,
         author: Author,
+        stay: Option<String>,
     ) -> Result<Option<String>, WenlanError> {
         if rulesync_team::is_master_page(&page.id) {
             let Some(head) = head else { return Ok(None) };
@@ -359,6 +400,7 @@ impl Pass<'_> {
             proposal: true,
             decides: None,
             device: None,
+            stay,
         };
         let text = version::render(&file, &meta);
         let name = version::version_file_name(&version::sha256_hex(text.as_bytes()));
@@ -458,7 +500,13 @@ impl Pass<'_> {
     }
 
     /// Writes this person's decision on proposal `sha`.
-    async fn decide(&self, page_id: &str, sha: &str, accepted: bool) -> Result<(), WenlanError> {
+    async fn decide(
+        &self,
+        page_id: &str,
+        sha: &str,
+        accepted: bool,
+        stay: Option<String>,
+    ) -> Result<(), WenlanError> {
         if self.settings.read_only
             || !version::is_safe_id(page_id)
             || rulesync_team::is_master_page(page_id)
@@ -486,6 +534,7 @@ impl Pass<'_> {
                 accepted,
             }),
             device: None,
+            stay,
         };
         let text = version::render(&file, &meta);
         let member = self.settings.member_id.clone();

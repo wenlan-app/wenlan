@@ -3,6 +3,43 @@
 
 use serde::{Deserialize, Serialize};
 
+/// A search hit from a page already approved for the shared Space.
+#[derive(Serialize, Deserialize)]
+pub struct MemberSearchHit {
+    pub id: String,
+    pub source_id: String,
+    pub title: String,
+    pub content: String,
+    pub source: String,
+    pub space: Option<String>,
+    pub version: i64,
+    pub last_modified: i64,
+    pub raw_score: f32,
+    pub confirmed: Option<bool>,
+    pub chunk_index: i32,
+    pub score: f32,
+}
+
+impl MemberSearchHit {
+    /// This adapter is used after the shared-page selector and projection.
+    pub fn from_page_hit(hit: crate::SearchResult) -> Self {
+        Self {
+            id: hit.id,
+            source_id: hit.source_id,
+            title: hit.title,
+            content: hit.content,
+            source: "page".into(),
+            space: hit.space,
+            version: hit.version,
+            last_modified: hit.last_modified,
+            raw_score: hit.raw_score,
+            confirmed: hit.confirmed,
+            chunk_index: 0,
+            score: hit.score,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct MemberPage {
     pub id: String,

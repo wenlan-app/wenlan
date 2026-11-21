@@ -484,6 +484,7 @@ async fn create_adopted_page(
                 basis_marks: Vec::new(),
                 basis_space_guard: None,
                 skip_protected_title_match: true,
+                member_write: false,
                 research_write: None,
             },
         )

@@ -107,7 +107,8 @@ async fn hosted_reads_skip_private_retrieval_and_library_onboarding() {
     let recall = post_as_member(&app, "/api/memory/search", json!({"query": "design"})).await;
     let brief = post_as_member(&app, "/api/brief", json!({"topic": "design"})).await;
     assert_eq!(recall["results"], json!([]));
-    assert_eq!(brief["brief"]["active"][0]["text"], "Review the design");
+    assert_eq!(brief["state"], "brief_not_created");
+    assert!(brief.get("brief").is_none());
     let searches = db.list_agent_activity(10, Some(AGENT), None).await.unwrap();
     assert_eq!(
         (searches.len(), brief.get("getting_started").is_some()),

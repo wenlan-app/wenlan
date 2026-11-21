@@ -159,15 +159,17 @@ async fn scoped_folder_listing_returns_only_authorized_live_ancestors() {
         lint_config: LintServerConfig::new(vec![], Some(root)),
         ..Default::default()
     }));
-    let Json(response) = handle_list_knowledge_folders(
+    let crate::member_view::PageResponse::Local(response) = handle_list_knowledge_folders(
         State(state.clone()),
         SpaceHeader(Some("work".into())),
-        crate::team_actor::TeamActor(None),
+        axum::http::HeaderMap::new(),
         TruthView::automatic(),
         Query(Default::default()),
     )
     .await
-    .unwrap();
+    .unwrap() else {
+        panic!("local folder response")
+    };
     assert_eq!(
         response
             .folders
@@ -177,21 +179,23 @@ async fn scoped_folder_listing_returns_only_authorized_live_ancestors() {
         vec!["Visible", "Visible/Nested"]
     );
     assert!(!response.truncated);
-    let Json(global) = handle_list_knowledge_folders(
+    let crate::member_view::PageResponse::Local(global) = handle_list_knowledge_folders(
         State(state.clone()),
         SpaceHeader(None),
-        crate::team_actor::TeamActor(None),
+        axum::http::HeaderMap::new(),
         TruthView::automatic(),
         Query(Default::default()),
     )
     .await
-    .unwrap();
+    .unwrap() else {
+        panic!("local folder response")
+    };
     assert!(global.folders.iter().any(|f| f.path == "Empty"));
     assert!(global.folders.iter().any(|f| f.path == "Secret"));
     assert!(handle_create_knowledge_folder(
         State(state.clone()),
         SpaceHeader(Some("work".into())),
-        crate::team_actor::TeamActor(None),
+        axum::http::HeaderMap::new(),
         Json(wenlan_types::requests::CreateKnowledgeFolderRequest {
             parent_path: "".into(),
             name: "Forbidden".into()
@@ -199,17 +203,19 @@ async fn scoped_folder_listing_returns_only_authorized_live_ancestors() {
     )
     .await
     .is_err());
-    let Json(created) = handle_create_knowledge_folder(
+    let crate::member_view::PageResponse::Local(created) = handle_create_knowledge_folder(
         State(state),
         SpaceHeader(None),
-        crate::team_actor::TeamActor(None),
+        axum::http::HeaderMap::new(),
         Json(wenlan_types::requests::CreateKnowledgeFolderRequest {
             parent_path: "Visible".into(),
             name: "New".into(),
         }),
     )
     .await
-    .unwrap();
+    .unwrap() else {
+        panic!("local folder response")
+    };
     assert_eq!(created.path, "Visible/New");
 }
 
@@ -283,15 +289,17 @@ async fn scoped_folder_listing_uses_authoritative_page_fields_for_live_files() {
         lint_config: LintServerConfig::new(vec![], Some(root)),
         ..Default::default()
     }));
-    let Json(response) = handle_list_knowledge_folders(
+    let crate::member_view::PageResponse::Local(response) = handle_list_knowledge_folders(
         State(state),
         SpaceHeader(Some("work".into())),
-        crate::team_actor::TeamActor(None),
+        axum::http::HeaderMap::new(),
         TruthView::automatic(),
         Query(Default::default()),
     )
     .await
-    .unwrap();
+    .unwrap() else {
+        panic!("local folder response")
+    };
     assert_eq!(
         response
             .folders

@@ -977,6 +977,7 @@ async fn create_page_db_insert_failure_rolls_back_scratch_projection() {
             basis_marks: Vec::new(),
             basis_space_guard: None,
             skip_protected_title_match: false,
+            member_write: false,
             research_write: None,
         },
     )
@@ -1036,6 +1037,7 @@ async fn create_page_db_insert_failure_rolls_back_scratch_projection() {
             basis_marks: Vec::new(),
             basis_space_guard: None,
             skip_protected_title_match: false,
+            member_write: false,
             research_write: None,
         },
     );
@@ -1769,6 +1771,7 @@ async fn create_page_same_title_out_of_scope_creates_in_caller_space() {
             basis_marks: Vec::new(),
             basis_space_guard: Some(crate::read_scope::ReadScope::Space("Home".into())),
             skip_protected_title_match: false,
+            member_write: false,
             research_write: None,
         },
     )
@@ -1778,6 +1781,69 @@ async fn create_page_same_title_out_of_scope_creates_in_caller_space() {
     assert_eq!(result.attached_to, None);
     assert_ne!(result.id, "same-title-hidden-page");
     assert_eq!(db.list_pages("active", 10, 0).await.unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn member_same_title_match_ignores_hidden_pages_and_reuses_visible_page() {
+    let (db, _dir) = test_db().await;
+    let now = chrono::Utc::now().to_rfc3339();
+    db.insert_page_with_kind(
+        "hidden-same-title",
+        "Confidential Route",
+        None,
+        "Host-only route notes.",
+        None,
+        Some("Team"),
+        &[],
+        &now,
+        "source",
+        "confirmed",
+        Some("Team"),
+        None,
+    )
+    .await
+    .unwrap();
+    let scope = crate::read_scope::ReadScope::Space("Team".into());
+    assert!(crate::page_titles::strict_same_title_note_for(
+        &db,
+        &scope,
+        Some("Team"),
+        "Confidential Route",
+        false,
+        true,
+    )
+    .await
+    .unwrap()
+    .is_none());
+
+    db.insert_page_with_kind(
+        "visible-same-title",
+        "Confidential Route",
+        None,
+        "Shared route notes.",
+        None,
+        Some("Team"),
+        &[],
+        &now,
+        "authored",
+        "confirmed",
+        Some("Team"),
+        None,
+    )
+    .await
+    .unwrap();
+    let match_ = crate::page_titles::strict_same_title_note_for(
+        &db,
+        &scope,
+        Some("Team"),
+        "Confidential Route",
+        false,
+        true,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(match_.page_id, "visible-same-title");
 }
 
 #[tokio::test]
@@ -1876,6 +1942,7 @@ async fn automatic_same_title_create_skips_a_review_locked_page_without_a_duplic
             basis_marks: Vec::new(),
             basis_space_guard: None,
             skip_protected_title_match: true,
+            member_write: false,
             research_write: None,
         },
     )
@@ -2685,6 +2752,9 @@ async fn page_write_update_user_edited_machine_write_creates_revision_card_witho
             expected_source_revision: None,
             knowledge_path: None,
             citations: None,
+
+            member_scope: None,
+            member_projected_body: false,
         },
     )
     .await
@@ -2714,6 +2784,9 @@ async fn page_write_update_user_edited_machine_write_creates_revision_card_witho
             expected_source_revision: None,
             knowledge_path: None,
             citations: None,
+
+            member_scope: None,
+            member_projected_body: false,
         },
     )
     .await
@@ -2862,6 +2935,9 @@ async fn page_write_update_rejects_reserved_delimiter_before_revision_staging() 
             expected_source_revision: None,
             knowledge_path: None,
             citations: None,
+
+            member_scope: None,
+            member_projected_body: false,
         },
     )
     .await
@@ -3019,6 +3095,9 @@ async fn page_write_update_with_stale_expected_version_does_not_clobber() {
             knowledge_path: None,
             citations: None,
             expected_source_revision: None,
+
+            member_scope: None,
+            member_projected_body: false,
         },
     )
     .await
@@ -3047,6 +3126,9 @@ async fn page_write_update_with_stale_expected_version_does_not_clobber() {
             knowledge_path: None,
             citations: None,
             expected_source_revision: None,
+
+            member_scope: None,
+            member_projected_body: false,
         },
     )
     .await
@@ -3123,6 +3205,9 @@ async fn page_write_records_one_history_row_per_version() {
                 knowledge_path: None,
                 citations: None,
                 expected_source_revision: None,
+
+                member_scope: None,
+                member_projected_body: false,
             },
         )
         .await
@@ -3181,6 +3266,7 @@ async fn seed_source_page(db: &MemoryDB, page_id: &'static str) -> (&'static str
             basis_marks: Vec::new(),
             basis_space_guard: None,
             skip_protected_title_match: false,
+            member_write: false,
             research_write: None,
         },
     )
@@ -4176,6 +4262,9 @@ async fn page_write_refused_by_cas_appends_no_history_row() {
             knowledge_path: None,
             citations: None,
             expected_source_revision: None,
+
+            member_scope: None,
+            member_projected_body: false,
         },
     )
     .await
@@ -4251,6 +4340,9 @@ async fn page_write_update_edit_landing_mid_write_is_not_clobbered() {
             knowledge_path: None,
             citations: None,
             expected_source_revision: None,
+
+            member_scope: None,
+            member_projected_body: false,
         },
     );
 
@@ -4276,6 +4368,9 @@ async fn page_write_update_edit_landing_mid_write_is_not_clobbered() {
                 knowledge_path: None,
                 citations: None,
                 expected_source_revision: None,
+
+                member_scope: None,
+                member_projected_body: false,
             },
         )
         .await
@@ -4396,6 +4491,9 @@ async fn page_write_update_selection_loss_landing_mid_write_stages_review() {
             knowledge_path: None,
             citations: None,
             expected_source_revision: None,
+
+            member_scope: None,
+            member_projected_body: false,
         },
     );
     let lose_selection = async {
@@ -4452,6 +4550,9 @@ async fn page_write_update_selection_loss_landing_mid_write_stages_review() {
             knowledge_path: None,
             citations: None,
             expected_source_revision: None,
+
+            member_scope: None,
+            member_projected_body: false,
         },
     )
     .await
@@ -4532,6 +4633,9 @@ async fn page_write_update_stale_version_on_human_owned_page_is_refused() {
             knowledge_path: None,
             citations: None,
             expected_source_revision: None,
+
+            member_scope: None,
+            member_projected_body: false,
         },
     )
     .await
@@ -4561,6 +4665,9 @@ async fn page_write_update_stale_version_on_human_owned_page_is_refused() {
             knowledge_path: None,
             citations: None,
             expected_source_revision: None,
+
+            member_scope: None,
+            member_projected_body: false,
         },
     )
     .await
@@ -7601,6 +7708,9 @@ async fn ownership_write(
             expected_source_revision: None,
             knowledge_path: None,
             citations: None,
+
+            member_scope: None,
+            member_projected_body: false,
         },
     )
     .await
@@ -8282,6 +8392,9 @@ fn source_fenced_write<'a>(
         expected_source_revision: Some(expected_source_revision),
         knowledge_path: None,
         citations: None,
+
+        member_scope: None,
+        member_projected_body: false,
     }
 }
 
@@ -8372,6 +8485,9 @@ async fn assert_late_lock_stages_a_card(page_id: &str, mem_id: &str, source_fenc
             expected_source_revision: None,
             knowledge_path: None,
             citations: None,
+
+            member_scope: None,
+            member_projected_body: false,
         }
     };
     let machine = page_write(&db, write);
@@ -8917,6 +9033,9 @@ async fn an_update_writes_its_file_before_the_database() {
             knowledge_path: Some(knowledge.path()),
             citations: None,
             expected_source_revision: None,
+
+            member_scope: None,
+            member_projected_body: false,
         },
     );
     let observe = async {

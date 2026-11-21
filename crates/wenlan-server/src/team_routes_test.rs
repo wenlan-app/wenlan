@@ -345,6 +345,7 @@ fn render_test_version(file: &wenlan_core::store::format::page::PageFile, member
     version::render(
         file,
         &version::VersionMeta {
+            stay: None,
             parent: None,
             merged: Vec::new(),
             body_digest: version::body_digest(&file.body),
@@ -899,13 +900,7 @@ async fn hosted_files_withhold_old_snapshots_with_private_quotes() {
         version::version_file_name(&old_sha)
     );
     let safe_page = create_folder_test_page(&db, "Published note", "authored").await;
-    let safe = version_text(&safe_page.id, "server", "A published note.");
-    let (safe_sha, _) = version::write_version(&f.folder, "server", &safe_page.id, &safe).unwrap();
-    let safe_path = format!(
-        "members/server/pages/{}/{}",
-        safe_page.id,
-        version::version_file_name(&safe_sha)
-    );
+    sync_hosted_test_folder(&f, &db).await;
     let (status, files) = call(
         &f.state,
         Method::GET,
@@ -929,7 +924,11 @@ async fn hosted_files_withhold_old_snapshots_with_private_quotes() {
         (false, StatusCode::NOT_FOUND),
         "an old private-source snapshot must be absent from the inventory and downloads"
     );
-    assert!(list.files.contains(&safe_path));
+    let safe_path = list
+        .files
+        .iter()
+        .find(|path| path.contains(&safe_page.id))
+        .unwrap();
     let (status, body) = call(
         &f.state,
         Method::GET,
@@ -939,7 +938,9 @@ async fn hosted_files_withhold_old_snapshots_with_private_quotes() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body, safe.into_bytes());
+    let safe = version::parse(safe_path.rsplit('/').next().unwrap(), &body).unwrap();
+    assert_eq!(safe.page.title, "Published note");
+    assert!(safe.meta.stay.is_some());
 }
 
 #[tokio::test]
@@ -1074,24 +1075,10 @@ async fn hosted_files_withhold_ordinary_snapshots_that_name_private_imports() {
         "ordinary-ID imports stay hidden as pages"
     );
 
-    let mut safe = PageFile::new("Safe ordinary page", "A shared paragraph.");
-    safe.id = Some(safe_page.id.clone());
-    safe.citations.push(Citation {
-        marker: 1,
-        label: "[[Published target]]".into(),
-        locator: Locator::Wenlan {
-            id: visible_page.id.clone(),
-            version: 1,
-        },
-    });
-    let safe_text = render_test_version(&safe, "server");
-    let (safe_sha, _) =
-        version::write_version(&f.folder, "server", &safe_page.id, &safe_text).unwrap();
-    let safe_path = format!(
-        "members/server/pages/{}/{}",
-        safe_page.id,
-        version::version_file_name(&safe_sha)
-    );
+    db.mark_page_basis(&safe_page.id, &visible_page.id, 1, "fixture")
+        .await
+        .unwrap();
+    sync_hosted_test_folder(&f, &db).await;
     let (status, files) = call(
         &f.state,
         Method::GET,
@@ -1102,10 +1089,11 @@ async fn hosted_files_withhold_ordinary_snapshots_that_name_private_imports() {
     .await;
     assert_eq!(status, StatusCode::OK);
     let list: TeamFileList = serde_json::from_slice(&files).unwrap();
-    assert!(
-        list.files.contains(&safe_path),
-        "visible shared targets remain servable"
-    );
+    let safe_path = list
+        .files
+        .iter()
+        .find(|path| path.contains(&safe_page.id))
+        .expect("visible shared targets remain servable");
     let (status, body) = call(
         &f.state,
         Method::GET,
@@ -1338,10 +1326,9 @@ async fn a_writer_sends_only_their_own_whole_versions() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(
-        version::sha256_hex(&body),
-        version::version_sha(&name).unwrap()
-    );
+    let published = version::parse(path.rsplit('/').next().unwrap(), &body).unwrap();
+    assert_eq!(published.page.body, "We marry in May.");
+    assert!(published.meta.stay.is_some());
 }
 
 #[tokio::test]
@@ -1350,39 +1337,41 @@ async fn a_writers_proposals_and_decisions_land_in_their_own_folders() {
     let published = create_folder_test_page(&db, "Plan", "authored").await;
     assert_eq!(sync_hosted_test_folder(&f, &db).await.exported, 1);
     let page = published.id.as_str();
-    let put = |meta_change: fn(&mut version::VersionMeta), body: &'static str| {
+    let root = &version::read_folder(&f.folder).pages[page][0];
+    let render = |body: &str, proposal: bool, decides: Option<version::Decides>| {
         let mut file = wenlan_core::store::format::page::PageFile::new("Plan", body);
         file.id = Some(page.into());
-        let mut meta = version::VersionMeta {
-            parent: None,
+        let meta = version::VersionMeta {
+            stay: root.meta.stay.clone(),
+            parent: Some(root.sha.clone()),
             merged: Vec::new(),
             body_digest: version::body_digest(body),
             author: version::Author {
                 member: f.writer.0.id.clone(),
-                kind: version::AuthorKind::Ai,
+                kind: if proposal {
+                    version::AuthorKind::Ai
+                } else {
+                    version::AuthorKind::Person
+                },
                 agent: None,
             },
             ts: "2026-11-11T05:00:00Z".into(),
             archived: false,
             locked: true,
-            proposal: false,
-            decides: None,
+            proposal,
+            decides,
             device: None,
         };
-        meta_change(&mut meta);
         version::render(&file, &meta)
     };
-    let proposal = put(|meta| meta.proposal = true, "We marry in May.");
-    let decision = put(
-        |meta| {
-            meta.author.kind = version::AuthorKind::Person;
-            meta.author.agent = None;
-            meta.decides = Some(version::Decides {
-                proposal: "a".repeat(64),
-                accepted: false,
-            });
-        },
+    let proposal = render("We marry in May.", true, None);
+    let decision = render(
         "",
+        false,
+        Some(version::Decides {
+            proposal: version::sha256_hex(proposal.as_bytes()),
+            accepted: false,
+        }),
     );
     for (text, kind) in [(proposal, "proposals"), (decision, "decisions")] {
         let name = version::version_file_name(&version::sha256_hex(text.as_bytes()));
@@ -1399,6 +1388,7 @@ async fn a_writers_proposals_and_decisions_land_in_their_own_folders() {
         assert!(dir.join(kind).join(page).join(&name).is_file(), "{kind}");
         assert!(!dir.join("pages").join(page).join(&name).exists(), "{kind}");
     }
+    sync_hosted_test_folder(&f, &db).await;
     let (status, body) = call(
         &f.state,
         Method::GET,
@@ -2042,18 +2032,12 @@ async fn rulesync_team_project_review_requires_a_current_write_session() {
     rulesync_team::decide_local_space_proposal(&f.state.settings_path, "Design", &seed, true)
         .unwrap();
     let page = create_folder_test_page(&db, "Shared project page", "authored").await;
-    let text = version_text(&page.id, "server", "Shared project page.");
-    let (sha, _) = version::write_version(&f.folder, "server", &page.id, &text).unwrap();
-    let page_file = format!(
-        "members/server/pages/{}/{}",
-        page.id,
-        version::version_file_name(&sha)
-    );
+    sync_hosted_test_folder(&f, &db).await;
     let files = "/team/v1/spaces/Design/files";
     let (status, body) = call(&f.state, Method::GET, files, Some(&f.reader.1), vec![]).await;
     assert_eq!(status, StatusCode::OK);
     let list: TeamFileList = serde_json::from_slice(&body).unwrap();
-    assert!(list.files.contains(&page_file));
+    assert!(list.files.iter().any(|path| path.contains(&page.id)));
     let rules = list.rules.unwrap();
     assert_eq!(rules.project.as_ref().unwrap().space, "Design");
     assert!(list.files.contains(&rules.file));
@@ -2083,6 +2067,7 @@ async fn rulesync_team_project_review_requires_a_current_write_session() {
     let text = version::render(
         &page,
         &version::VersionMeta {
+            stay: None,
             parent: Some(revision.into()),
             merged: Vec::new(),
             body_digest: version::body_digest(&page.body),

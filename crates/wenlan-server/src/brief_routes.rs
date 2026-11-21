@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::route_registry::{get, post, TrackedRouter};
+use crate::route_registry::{get, TrackedRouter};
 use crate::{
     brief_files::project_brief_receipt, error::ServerError, space_header::SpaceHeader,
     state::SharedState, telemetry::TelemetryEvent,
@@ -24,7 +24,7 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
     router
         .route(
             "/api/brief",
-            post(handle_read_brief).patch(handle_update_brief),
+            crate::route_registry::member_post(handle_read_brief).patch(handle_update_brief),
         )
         .route("/api/brief/history", get(handle_brief_history))
         .route("/api/brief/plain", get(handle_brief_plain))
@@ -102,7 +102,11 @@ pub async fn handle_read_brief(
     SpaceHeader(header_space): SpaceHeader,
     view: crate::truth_guard::TruthView,
     Json(request): Json<BriefReadRequest>,
-) -> Result<Json<BriefReadResponse>, ServerError> {
+) -> Result<
+    crate::member_view::PageResponse<BriefReadResponse, crate::member_view::MemberBrief>,
+    ServerError,
+> {
+    use crate::member_view::{MemberBrief, MemberBriefContext, PageResponse};
     // A topic turns the Brief read into one authoritative related-context
     // search. The legacy `/api/context` adapter delegates here, so recording
     // at this shared boundary covers both APIs exactly once.
@@ -116,25 +120,56 @@ pub async fn handle_read_brief(
         let state = state.read().await;
         state.db.clone().ok_or(ServerError::DbNotInitialized)?
     };
-    let private = crate::team_actor::can_read_private_memories(&headers);
-    let getting_started = if private {
-        match wenlan_core::steep_new::getting_started(&db).await {
-            Ok(getting_started) => getting_started,
-            Err(error) => {
-                tracing::warn!("[brief] getting started: {error}");
-                None
+    if !crate::team_actor::can_read_private_memories(&headers) {
+        // The host's handoff and backlog live in its local Brief. Only the
+        // optional topic search has a published page source for members.
+        let pinned = crate::team_actor::required_space(header_space.as_deref())?;
+        let space = resolve_space(&db, Some(pinned), Some(pinned)).await?;
+        let related_context = match space.as_ref() {
+            Some(space) => {
+                let scope = ReadScope::Space(space.clone());
+                related_context_if_requested(request.topic.as_deref(), |query| async move {
+                    crate::page_routes::search_hosted_page_hits(
+                        &db,
+                        &query,
+                        RELATED_CONTEXT_LIMIT,
+                        &scope,
+                        &view.grant,
+                    )
+                    .await
+                })
+                .await?
+                .map(|context| MemberBriefContext {
+                    query: context.query,
+                    results: context
+                        .results
+                        .into_iter()
+                        .map(wenlan_types::member_view::MemberSearchHit::from_page_hit)
+                        .collect(),
+                })
             }
+            None => None,
+        };
+        return Ok(PageResponse::Member(MemberBrief {
+            state: if space.is_some() {
+                BriefReadState::BriefNotCreated
+            } else {
+                BriefReadState::SpaceNotResolved
+            },
+            space,
+            related_context,
+        }));
+    }
+    let getting_started = match wenlan_core::steep_new::getting_started(&db).await {
+        Ok(getting_started) => getting_started,
+        Err(error) => {
+            tracing::warn!("[brief] getting started: {error}");
+            None
         }
-    } else {
-        None
     };
-    let selected = if private {
-        request.space.as_deref()
-    } else {
-        Some(crate::team_actor::required_space(header_space.as_deref())?)
-    };
+    let selected = request.space.as_deref();
     let Some(space) = resolve_space(&db, selected, header_space.as_deref()).await? else {
-        return Ok(Json(BriefReadResponse {
+        return Ok(PageResponse::Local(BriefReadResponse {
             state: BriefReadState::SpaceNotResolved,
             space: None,
             brief: None,
@@ -145,12 +180,9 @@ pub async fn handle_read_brief(
         }));
     };
     let Some(brief) = db.get_brief_by_space_name(&space).await? else {
-        let (code_basis_pending, code_basis_pending_explained) = if private {
-            code_basis_pending_for(&db, &space).await
-        } else {
-            (None, false)
-        };
-        return Ok(Json(BriefReadResponse {
+        let (code_basis_pending, code_basis_pending_explained) =
+            code_basis_pending_for(&db, &space).await;
+        return Ok(PageResponse::Local(BriefReadResponse {
             state: BriefReadState::BriefNotCreated,
             space: Some(space),
             brief: None,
@@ -169,16 +201,6 @@ pub async fn handle_read_brief(
     let related_context = related_context_if_requested(request.topic.as_deref(), move |query| {
         let scope = ReadScope::Space(recall_space);
         async move {
-            if !private {
-                return crate::page_routes::search_hosted_page_hits(
-                    &recall_db,
-                    &query,
-                    legacy_context_limit,
-                    &scope,
-                    &view.grant,
-                )
-                .await;
-            }
             let results = recall_db
                 .search_memory(
                     &query,
@@ -247,11 +269,8 @@ pub async fn handle_read_brief(
         }
     };
 
-    let (code_basis_pending, code_basis_pending_explained) = if private {
-        code_basis_pending_for(&db, &space).await
-    } else {
-        (None, false)
-    };
+    let (code_basis_pending, code_basis_pending_explained) =
+        code_basis_pending_for(&db, &space).await;
 
     // A Brief that was actually read is listed on the session card when the
     // caller names its session. This is bookkeeping beside the read: it never
@@ -265,7 +284,7 @@ pub async fn handle_read_brief(
         wenlan_core::db::sessions::session_read_space_of(Some(&space)).into(),
     );
 
-    Ok(Json(BriefReadResponse {
+    Ok(PageResponse::Local(BriefReadResponse {
         state: BriefReadState::Ready,
         space: Some(space),
         brief: Some(brief),

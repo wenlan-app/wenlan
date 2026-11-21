@@ -34,7 +34,10 @@ pub(crate) fn register_core(router: TrackedRouter<SharedState>) -> TrackedRouter
             get(handle_list_unconfirmed_memories),
         )
         .route("/api/memory/store", post(handle_store_memory))
-        .route("/api/memory/search", post(handle_search_memory))
+        .route(
+            "/api/memory/search",
+            crate::route_registry::member_post(handle_search_memory),
+        )
         .route(
             "/api/memory/confirm/{source_id}",
             post(handle_confirm_memory),
@@ -1255,7 +1258,11 @@ pub async fn handle_search_memory(
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
     view: crate::truth_guard::TruthView,
     Json(req): Json<SearchMemoryRequest>,
-) -> Result<Json<SearchMemoryResponse>, ServerError> {
+) -> Result<
+    crate::page_routes::PageResponse<SearchMemoryResponse, crate::member_view::MemberRecall>,
+    ServerError,
+> {
+    use crate::page_routes::PageResponse;
     if !crate::team_actor::can_read_private_memories(&headers) {
         let start = std::time::Instant::now();
         let space = crate::team_actor::required_space(header_space.as_deref())?;
@@ -1276,11 +1283,13 @@ pub async fn handle_search_memory(
             )
             .await?
         };
-        return Ok(Json(SearchMemoryResponse {
-            results: Vec::new(),
+        return Ok(PageResponse::Member(crate::member_view::MemberRecall {
+            results: [],
             took_ms: start.elapsed().as_secs_f64() * 1000.0,
-            supplemental_pages: (!pages.is_empty()).then_some(pages),
-            linked_pages: None,
+            supplemental_pages: pages
+                .into_iter()
+                .map(wenlan_types::member_view::MemberSearchHit::from_page_hit)
+                .collect(),
         }));
     }
     let (telemetry, db) = {
@@ -1320,7 +1329,7 @@ pub async fn handle_search_memory(
         ),
         Err(_) => telemetry.record(TelemetryEvent::SearchError),
     }
-    result
+    result.map(|Json(value)| PageResponse::Local(value))
 }
 
 async fn handle_search_memory_inner(

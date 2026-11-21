@@ -42,7 +42,7 @@ pub(crate) fn register_core(router: TrackedRouter<SharedState>) -> TrackedRouter
     router
         .route(
             "/api/spaces",
-            get(handle_list_spaces).post(handle_create_space),
+            crate::route_registry::member_get(handle_list_spaces).post(handle_create_space),
         )
         .route(
             "/api/spaces/default",

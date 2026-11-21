@@ -327,6 +327,7 @@ pub(super) struct CreatePageInput<'a> {
     pub(super) basis_marks: &'a [(String, i64)],
     pub(super) basis_space_guard: Option<&'a crate::read_scope::ReadScope>,
     pub(super) skip_protected_title_match: bool,
+    pub(super) member_write: bool,
     pub(super) research_write: Option<crate::db::research_write::ResearchWriteFence>,
 }
 
@@ -346,6 +347,7 @@ pub(super) async fn create_page_impl(
         basis_marks,
         basis_space_guard,
         skip_protected_title_match,
+        member_write,
         research_write,
     } = input;
 
@@ -367,6 +369,16 @@ pub(super) async fn create_page_impl(
         page_min_cluster_size,
     )
     .to_string();
+    if member_write
+        && !matches!(
+            creation_kind.as_str(),
+            "authored" | "research" | "distilled" | "original"
+        )
+    {
+        return Err(WenlanError::Validation(
+            "this kind of page cannot be created in a shared Space".into(),
+        ));
+    }
     if creation_kind == "distilled" && req.source_memory_ids.is_empty() {
         return Err(WenlanError::Validation(
             "distilled page must cite at least one source memory".into(),
@@ -413,12 +425,13 @@ pub(super) async fn create_page_impl(
             .cloned()
             .unwrap_or(crate::read_scope::ReadScope::Global);
         let space = req.workspace.as_deref().or(req.space.named());
-        if let Some(existing) = crate::page_titles::strict_same_title_note(
+        if let Some(existing) = crate::page_titles::strict_same_title_note_for(
             db,
             &scope,
             space,
             &req.title,
             skip_protected_title_match,
+            member_write,
         )
         .await?
         {
@@ -446,7 +459,12 @@ pub(super) async fn create_page_impl(
                     edits_not_applied: Vec::new(),
                 });
             }
-            if !req.source_memory_ids.is_empty() {
+            // A same-title match is safe to reuse for a member because the
+            // query above filters it through the shared-read eligibility
+            // predicate. Keep that reuse read-only: source attachment has a
+            // separate transaction path and must not race a page becoming
+            // private after this lookup.
+            if !member_write && !req.source_memory_ids.is_empty() {
                 return attach_page_sources_checked(
                     db,
                     &existing.page_id,
@@ -489,7 +507,10 @@ pub(super) async fn create_page_impl(
         }
     }
 
-    if creation_kind == "distilled" {
+    // Semantic dedup searches pages by workspace and edit state, not the
+    // member eligibility predicate. A member create must not attach to a
+    // hidden same-Space page discovered through its embedding.
+    if creation_kind == "distilled" && !member_write {
         let embed_text =
             crate::pages::page_embedding_text(&req.title, req.summary.as_deref(), &req.content);
         let embedding = match db.generate_embeddings(&[embed_text]) {
@@ -637,10 +658,12 @@ pub(super) async fn create_page_impl(
     // person's behalf, and a keep/archive card on every birth reads as "needs
     // review" when nothing does. Thin pages are left to the maintenance lanes.
 
-    // 1. Orphan-link resolution (best-effort)
-    if let Err(e) = db.resolve_orphan_page_links().await {
-        log::warn!("[create_page] orphan link resolve failed for {id}: {e}");
-        warnings.push(format!("orphan link resolve failed: {e}"));
+    // The library-wide sweep can update links on notes a member cannot see.
+    if !member_write {
+        if let Err(e) = db.resolve_orphan_page_links().await {
+            log::warn!("[create_page] orphan link resolve failed for {id}: {e}");
+            warnings.push(format!("orphan link resolve failed: {e}"));
+        }
     }
 
     // 2. Activity log (matches synthesis/distill.rs:498 shape — source ids as the memory ids list)

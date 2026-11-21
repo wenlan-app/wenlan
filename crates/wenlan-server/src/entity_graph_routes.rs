@@ -48,7 +48,10 @@ pub(crate) fn register_reads(router: TrackedRouter<SharedState>) -> TrackedRoute
         .route("/api/memory/entities/list", post(handle_list_entities))
         .route("/api/memory/entities/query", post(handle_query_entities))
         .route("/api/memory/entities/search", post(handle_search_entities))
-        .route("/api/memory/graph", get(handle_get_knowledge_graph))
+        .route(
+            "/api/memory/graph",
+            crate::route_registry::member_get(handle_get_knowledge_graph),
+        )
         .route(
             "/api/memory/entities/{entity_id}",
             get(handle_get_entity_detail),

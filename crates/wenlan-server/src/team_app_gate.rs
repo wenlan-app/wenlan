@@ -12,19 +12,19 @@
 
 use std::collections::BTreeMap;
 
+#[cfg(test)]
 use axum::body::Body;
 use axum::extract::{Request, State};
 use axum::http::{header, StatusCode};
-use axum::response::{IntoResponse, Response};
 use axum::Extension;
 use serde_json::{Map, Value};
-use wenlan_core::member_view::{MemberGraph, MemberHealth};
+use wenlan_core::member_view::{self as view, MemberGraph};
 use wenlan_core::shared_space::remote;
 use wenlan_core::team::{self, Member};
-use wenlan_types::responses::{CreateKnowledgeFolderResponse, KnowledgeFoldersResponse};
 use wenlan_types::team::TeamAccess;
 
 use super::TeamState;
+use crate::member_view::{self, MemberBody, MemberResponse};
 
 /// Where the gate's calls start.
 pub(super) const PREFIX: &str = "/team/v1/app";
@@ -60,15 +60,64 @@ pub(crate) enum Need {
     Write,
 }
 
-/// How the gate handles the daemon response.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Strip {
-    /// The daemon supplies the typed member view.
-    Projected,
-    /// Health: only `status`, `db_initialized` and `version` stay.
+/// The only wire shapes a projected response may take.
+#[derive(Debug, Clone, Copy)]
+enum View {
     Health,
-    /// Folders as the member sees them, with paths relative to their Space.
-    MemberFolders,
+    Spaces,
+    Inventory,
+    Activity,
+    Changes,
+    Search,
+    Page,
+    Revisions,
+    Sources,
+    Graph,
+    ManualWrite,
+    Draft,
+    Removal,
+    Restore,
+    Basis,
+    BasisRemoval,
+    Folders,
+    Folder,
+    Move,
+}
+
+impl View {
+    fn project(self, value: Value) -> MemberResponse {
+        match self {
+            Self::Health => project::<view::MemberHealth>(value),
+            Self::Spaces => project::<Vec<view::MemberSpace>>(value),
+            Self::Inventory => project::<view::MemberPages<view::MemberPageEntry>>(value),
+            Self::Activity => project::<Vec<view::MemberActivity>>(value),
+            Self::Changes => project::<Vec<view::MemberChange>>(value),
+            Self::Search => project::<view::MemberPages<view::MemberPage>>(value),
+            Self::Page => project::<view::MemberPageRead>(value),
+            Self::Revisions => project::<view::MemberRevisions>(value),
+            Self::Sources => project::<member_view::MemberSources>(value),
+            Self::Graph => project::<view::MemberGraph>(value),
+            Self::ManualWrite => project::<view::MemberManualWrite>(value),
+            Self::Draft => project::<view::MemberDraft>(value),
+            Self::Removal => project::<view::MemberRemoval>(value),
+            Self::Restore => project::<view::MemberRestore>(value),
+            Self::Basis => project::<view::MemberBasis>(value),
+            Self::BasisRemoval => project::<member_view::MemberBasisRemoval>(value),
+            Self::Folders => project::<member_view::MemberFolders>(value),
+            Self::Folder => project::<member_view::MemberFolder>(value),
+            Self::Move => project::<view::MemberMove>(value),
+        }
+    }
+}
+
+fn project<T: serde::de::DeserializeOwned + MemberBody>(value: Value) -> MemberResponse {
+    match serde_json::from_value::<T>(value) {
+        Ok(view) => MemberResponse::json(StatusCode::OK, view),
+        Err(err) => {
+            tracing::warn!("member gateway received a response outside its contract: {err}");
+            MemberResponse::status(StatusCode::BAD_GATEWAY)
+        }
+    }
 }
 
 /// One call a member's browser may make.
@@ -80,7 +129,7 @@ pub(crate) struct Call {
     pub path: &'static str,
     pub space: SpaceFrom,
     pub need: Need,
-    pub strip: Strip,
+    output: View,
     /// The query parameters passed on; every other one is dropped.
     pub query: &'static [&'static str],
     /// The answer's page list, put together across Spaces, and the field of
@@ -115,7 +164,7 @@ pub(crate) const CALLS: &[Call] = &[
         path: "/api/health",
         space: SpaceFrom::NoSpace,
         need: Need::Read,
-        strip: Strip::Health,
+        output: View::Health,
         query: &[],
         rows: Rows::One,
     },
@@ -124,7 +173,7 @@ pub(crate) const CALLS: &[Call] = &[
         path: "/api/spaces",
         space: SpaceFrom::MemberSpaces,
         need: Need::Read,
-        strip: Strip::Projected,
+        output: View::Spaces,
         query: &[],
         rows: Rows::Spaces,
     },
@@ -134,7 +183,7 @@ pub(crate) const CALLS: &[Call] = &[
         path: "/api/pages",
         space: SpaceFrom::QueryOrMember,
         need: Need::Read,
-        strip: Strip::Projected,
+        output: View::Inventory,
         query: &["status", "limit", "offset"],
         rows: Rows::Pages,
     },
@@ -143,7 +192,7 @@ pub(crate) const CALLS: &[Call] = &[
         path: "/api/pages/recent",
         space: SpaceFrom::MemberSpaces,
         need: Need::Read,
-        strip: Strip::Projected,
+        output: View::Activity,
         query: &["limit", "since_ms"],
         rows: Rows::Newest("timestamp_ms"),
     },
@@ -154,7 +203,7 @@ pub(crate) const CALLS: &[Call] = &[
         // and each Space on the home page, labels them with it).
         space: SpaceFrom::QueryOrMember,
         need: Need::Read,
-        strip: Strip::Projected,
+        output: View::Changes,
         query: &["limit"],
         rows: Rows::Newest("changed_at_ms"),
     },
@@ -164,7 +213,7 @@ pub(crate) const CALLS: &[Call] = &[
         path: "/api/pages/search",
         space: SpaceFrom::BodyOrMember,
         need: Need::Read,
-        strip: Strip::Projected,
+        output: View::Search,
         query: &[],
         rows: Rows::Pages,
     },
@@ -174,7 +223,7 @@ pub(crate) const CALLS: &[Call] = &[
         path: "/api/pages/{id}",
         space: SpaceFrom::Page,
         need: Need::Read,
-        strip: Strip::Projected,
+        output: View::Page,
         query: &[],
         rows: Rows::One,
     },
@@ -183,7 +232,7 @@ pub(crate) const CALLS: &[Call] = &[
         path: "/api/pages/{id}/revisions",
         space: SpaceFrom::Page,
         need: Need::Read,
-        strip: Strip::Projected,
+        output: View::Revisions,
         query: &["include"],
         rows: Rows::One,
     },
@@ -192,7 +241,7 @@ pub(crate) const CALLS: &[Call] = &[
         path: "/api/pages/{id}/sources",
         space: SpaceFrom::Page,
         need: Need::Read,
-        strip: Strip::Projected,
+        output: View::Sources,
         query: &[],
         rows: Rows::One,
     },
@@ -203,7 +252,7 @@ pub(crate) const CALLS: &[Call] = &[
         path: "/api/memory/graph",
         space: SpaceFrom::MemberSpaces,
         need: Need::Read,
-        strip: Strip::Projected,
+        output: View::Graph,
         query: &[],
         rows: Rows::Graph,
     },
@@ -213,7 +262,7 @@ pub(crate) const CALLS: &[Call] = &[
         path: "/api/memory/{id}/update-page",
         space: SpaceFrom::Page,
         need: Need::Write,
-        strip: Strip::Projected,
+        output: View::ManualWrite,
         query: &[],
         rows: Rows::One,
     },
@@ -223,7 +272,7 @@ pub(crate) const CALLS: &[Call] = &[
         path: "/api/pages/drafts",
         space: SpaceFrom::Body,
         need: Need::Write,
-        strip: Strip::Projected,
+        output: View::Draft,
         query: &[],
         rows: Rows::One,
     },
@@ -232,7 +281,7 @@ pub(crate) const CALLS: &[Call] = &[
         path: "/api/pages/drafts/{id}",
         space: SpaceFrom::Page,
         need: Need::Write,
-        strip: Strip::Projected,
+        output: View::Draft,
         query: &[],
         rows: Rows::One,
     },
@@ -241,7 +290,7 @@ pub(crate) const CALLS: &[Call] = &[
         path: "/api/pages/drafts/{id}/publish",
         space: SpaceFrom::Page,
         need: Need::Write,
-        strip: Strip::Projected,
+        output: View::Draft,
         query: &[],
         rows: Rows::One,
     },
@@ -251,7 +300,7 @@ pub(crate) const CALLS: &[Call] = &[
         path: "/api/pages/{id}/archive",
         space: SpaceFrom::Page,
         need: Need::Write,
-        strip: Strip::Projected,
+        output: View::Removal,
         query: &[],
         rows: Rows::One,
     },
@@ -260,7 +309,7 @@ pub(crate) const CALLS: &[Call] = &[
         path: "/api/pages/{id}/restore",
         space: SpaceFrom::Page,
         need: Need::Write,
-        strip: Strip::Projected,
+        output: View::Restore,
         query: &[],
         rows: Rows::One,
     },
@@ -270,7 +319,7 @@ pub(crate) const CALLS: &[Call] = &[
         path: "/api/pages/{id}/basis/{basis_id}",
         space: SpaceFrom::PagePair,
         need: Need::Write,
-        strip: Strip::Projected,
+        output: View::Basis,
         query: &[],
         rows: Rows::One,
     },
@@ -279,7 +328,7 @@ pub(crate) const CALLS: &[Call] = &[
         path: "/api/pages/{id}/basis/{basis_id}",
         space: SpaceFrom::PagePair,
         need: Need::Write,
-        strip: Strip::Projected,
+        output: View::BasisRemoval,
         query: &[],
         rows: Rows::One,
     },
@@ -292,7 +341,7 @@ pub(crate) const CALLS: &[Call] = &[
         path: "/api/knowledge/folders",
         space: SpaceFrom::MemberSpaces,
         need: Need::Read,
-        strip: Strip::MemberFolders,
+        output: View::Folders,
         query: &[],
         rows: Rows::Folders,
     },
@@ -301,7 +350,7 @@ pub(crate) const CALLS: &[Call] = &[
         path: "/api/knowledge/folders",
         space: SpaceFrom::Body,
         need: Need::Write,
-        strip: Strip::MemberFolders,
+        output: View::Folder,
         query: &[],
         rows: Rows::One,
     },
@@ -310,28 +359,10 @@ pub(crate) const CALLS: &[Call] = &[
         path: "/api/pages/{id}/move",
         space: SpaceFrom::Page,
         need: Need::Write,
-        strip: Strip::Projected,
+        output: View::Move,
         query: &[],
         rows: Rows::One,
     },
-];
-
-/// Host-only fields excluded from forwarded error payloads.
-const PRIVATE_KEYS: &[&str] = &[
-    "path",
-    "storage_path",
-    "source_path",
-    "file_path",
-    "local_path",
-    "absolute_path",
-    "knowledge_path",
-    "data_root",
-    "data_root_identity",
-    "device_id",
-    "key",
-    "key_sha256",
-    "invite_link",
-    "repo_root",
 ];
 
 /// The row of `method` and `path` (a daemon path), with the page ids it
@@ -398,11 +429,11 @@ fn names_another_route(given: &[&str]) -> bool {
     })
 }
 
-fn refused(status: StatusCode, why: &'static str) -> Response {
-    (status, why).into_response()
+fn refused(status: StatusCode, why: &'static str) -> MemberResponse {
+    MemberResponse::text(status, why)
 }
 
-fn not_found() -> Response {
+fn not_found() -> MemberResponse {
     refused(StatusCode::NOT_FOUND, "no such team call")
 }
 
@@ -411,7 +442,7 @@ fn not_found() -> Response {
 async fn member_spaces(
     state: &TeamState,
     member: &Member,
-) -> Result<BTreeMap<String, TeamAccess>, Response> {
+) -> Result<BTreeMap<String, TeamAccess>, MemberResponse> {
     let settings = state.settings_path.clone();
     let hosted = tokio::task::spawn_blocking(move || team::hosted_spaces(&settings)).await;
     match hosted {
@@ -429,7 +460,7 @@ async fn member_spaces(
                     .map(|access| (space.space, access))
             })
             .collect()),
-        _ => Err(StatusCode::SERVICE_UNAVAILABLE.into_response()),
+        _ => Err(MemberResponse::status(StatusCode::SERVICE_UNAVAILABLE)),
     }
 }
 
@@ -458,7 +489,7 @@ fn checked(
     spaces: &BTreeMap<String, TeamAccess>,
     space: &str,
     need: Need,
-) -> Result<String, Response> {
+) -> Result<String, MemberResponse> {
     match spaces.get(space) {
         None => Err(not_found()),
         Some(access) if !allows(*access, need) => Err(refused(
@@ -496,10 +527,11 @@ async fn forward(
     space: Option<&str>,
     body: Option<&[u8]>,
     draft_lookup: bool,
-) -> Result<(StatusCode, Vec<u8>), Response> {
-    let client = client().ok_or_else(|| StatusCode::INTERNAL_SERVER_ERROR.into_response())?;
+) -> Result<(StatusCode, Vec<u8>), MemberResponse> {
+    let client =
+        client().ok_or_else(|| MemberResponse::status(StatusCode::INTERNAL_SERVER_ERROR))?;
     let method = reqwest::Method::from_bytes(method.as_bytes())
-        .map_err(|_| StatusCode::METHOD_NOT_ALLOWED.into_response())?;
+        .map_err(|_| MemberResponse::status(StatusCode::METHOD_NOT_ALLOWED))?;
     let mut call = client
         .request(method, format!("{}{path_and_query}", state.daemon_url))
         .header(
@@ -565,7 +597,7 @@ async fn page_space(
     member: &Member,
     id: &str,
     draft_lookup: bool,
-) -> Result<Option<String>, Response> {
+) -> Result<Option<String>, MemberResponse> {
     let (status, bytes) = forward(
         state,
         member,
@@ -579,51 +611,21 @@ async fn page_space(
     if !status.is_success() {
         return Ok(None);
     }
-    let read: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
-    // Only the page asked for counts: a reserved segment (`recent`, ...)
-    // reaches a list route whose answer names no single page.
-    if read.pointer("/page/id").and_then(Value::as_str) != Some(id) {
+    #[derive(serde::Deserialize)]
+    struct Lookup {
+        page: view::MemberDraftSpace,
+    }
+    let Ok(Lookup { page }) = serde_json::from_slice(&bytes) else {
         return Ok(None);
-    }
-    let space = read
-        .pointer("/page/space")
-        .or_else(|| read.pointer("/page/domain"))
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    Ok(space)
-}
-
-/// Takes every private key out of `value`, at any depth.
-fn strip_private(value: &mut Value) {
-    match value {
-        Value::Object(map) => {
-            map.retain(|key, _| !PRIVATE_KEYS.contains(&key.as_str()));
-            map.values_mut().for_each(strip_private);
-        }
-        Value::Array(list) => list.iter_mut().for_each(strip_private),
-        _ => {}
-    }
-}
-
-fn project_answer<T: serde::de::DeserializeOwned + serde::Serialize>(value: Value) -> Value {
-    serde_json::from_value::<T>(value)
-        .and_then(serde_json::to_value)
-        .unwrap_or(Value::Null)
+    };
+    // Only the page asked for counts: reserved segments can reach list routes.
+    Ok((page.id == id).then_some(page.space).flatten())
 }
 
 fn row_space(row: &Value) -> Option<&str> {
     row.get("space")
         .or_else(|| row.get("domain"))
         .and_then(Value::as_str)
-}
-
-fn json(status: StatusCode, value: &Value) -> Response {
-    (
-        status,
-        [(header::CONTENT_TYPE, "application/json")],
-        Body::from(serde_json::to_vec(value).unwrap_or_default()),
-    )
-        .into_response()
 }
 
 fn query_pairs(query: Option<&str>) -> Vec<(String, String)> {
@@ -648,7 +650,7 @@ pub(super) async fn handle(
     State(state): State<TeamState>,
     Extension(member): Extension<Member>,
     req: Request,
-) -> Response {
+) -> MemberResponse {
     let method = req.method().as_str().to_string();
     let path = req
         .uri()
@@ -851,10 +853,7 @@ pub(super) async fn handle(
         .find(|(status, _)| !status.is_success())
         .cloned();
     let mut value = match failed {
-        Some((status, mut value)) => {
-            strip_private(&mut value);
-            return json(status, &value);
-        }
+        Some((status, value)) => return MemberResponse::project_problem(status, value),
         None => merge(call, &query, window, answers, &spaces),
     };
     // Every folder starts with its Space's name: folders of a Space not the
@@ -885,15 +884,7 @@ pub(super) async fn handle(
             });
         }
     }
-    let value = match call.strip {
-        Strip::Health => project_answer::<MemberHealth>(value),
-        Strip::Projected => value,
-        Strip::MemberFolders if call.rows == Rows::Folders => {
-            project_answer::<KnowledgeFoldersResponse>(value)
-        }
-        Strip::MemberFolders => project_answer::<CreateKnowledgeFolderResponse>(value),
-    };
-    json(StatusCode::OK, &value)
+    call.output.project(value)
 }
 
 /// The most rows one call may ask for: the app's largest page list.

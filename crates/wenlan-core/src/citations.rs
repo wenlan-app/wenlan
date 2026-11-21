@@ -131,6 +131,160 @@ pub(crate) fn marker_spans(body: &str) -> Vec<(usize, usize)> {
         .collect()
 }
 
+/// Remove numeric citation markers while preserving all unrelated formatting.
+/// Around a removed marker, consume one adjacent space when two would meet and
+/// remove a trailing space before punctuation, a line break, or end of input.
+/// Unlike `strip_markers`, this is suitable for a shared projection: it does
+/// not trim the page or normalize other whitespace.
+pub(crate) fn strip_member_citation_markers(body: &str) -> String {
+    let mut out = String::with_capacity(body.len());
+    let mut cursor = 0;
+    for (start, end) in marker_spans(body) {
+        out.push_str(&body[cursor..start]);
+        cursor = end;
+        if out.ends_with(' ') {
+            match body[end..].chars().next() {
+                Some(' ') => cursor += 1,
+                None | Some('.' | ',' | ';' | ':' | '!' | '?' | '\n' | '\r') => {
+                    out.pop();
+                }
+                _ => {}
+            }
+        }
+    }
+    out.push_str(&body[cursor..]);
+    out
+}
+
+/// Restore source markers on sentences that occur exactly once in both bodies.
+/// A malformed/stale source map or duplicate sentence makes the affected
+/// mapping ambiguous and fails closed.
+pub(crate) fn restore_unchanged_member_sentence_markers(
+    old_body: &str,
+    projected_body: &str,
+    old_citations: &[PageCitation],
+) -> Option<(String, Vec<PageCitation>)> {
+    use std::collections::HashMap;
+
+    let old_markers = marker_spans(old_body);
+    if old_citations.is_empty() {
+        return None;
+    }
+    let mut by_occurrence = vec![None; old_markers.len()];
+    for citation in old_citations {
+        let index = usize::try_from(citation.occurrence.checked_sub(1)?).ok()?;
+        let slot = by_occurrence.get_mut(index)?;
+        let (start, end) = old_markers[index];
+        let marker = old_body[start + 1..end - 1].parse::<u32>().ok()?;
+        if marker == 0
+            || marker != citation.marker
+            || slot.is_some()
+            || citation.locator.trim().is_empty()
+            || !matches!(
+                citation.source_kind.as_str(),
+                "memory" | "external_file" | "external_url" | "authored"
+            )
+        {
+            return None;
+        }
+        *slot = Some(citation);
+    }
+    let old_units = crate::authorship::sentence_units(old_body);
+    let new_units = crate::authorship::sentence_units(projected_body);
+    fn paragraph_span(body: &str, offset: usize) -> (usize, usize) {
+        let mut start = 0;
+        for boundary in RE_PARAGRAPH_BREAK.find_iter(body) {
+            if offset <= boundary.start() {
+                return (start, boundary.start());
+            }
+            start = boundary.end();
+        }
+        (start, body.len())
+    }
+    let mut old_by_text = HashMap::new();
+    let mut new_text_counts = HashMap::new();
+    let mut old_paragraph_counts = HashMap::new();
+    for paragraph in RE_PARAGRAPH_BREAK.split(old_body) {
+        let text = strip_member_citation_markers(paragraph);
+        *old_paragraph_counts.entry(text).or_insert(0usize) += 1;
+    }
+    let mut new_paragraph_counts = HashMap::new();
+    for paragraph in RE_PARAGRAPH_BREAK.split(projected_body) {
+        *new_paragraph_counts
+            .entry(paragraph.to_owned())
+            .or_insert(0usize) += 1;
+    }
+    for unit in &old_units {
+        let text = strip_member_citation_markers(&unit.text).trim().to_owned();
+        old_by_text
+            .entry(text)
+            .and_modify(|unit| *unit = None)
+            .or_insert(Some(unit));
+    }
+    for unit in &new_units {
+        let text = strip_member_citation_markers(&unit.text).trim().to_owned();
+        *new_text_counts.entry(text).or_insert(0usize) += 1;
+    }
+
+    let new_markers = marker_spans(projected_body);
+    let mut restored = String::with_capacity(projected_body.len());
+    let mut citations = Vec::new();
+    let mut cursor = 0;
+    let mut consumed_markers = 0;
+    let mut occurrence = 0;
+    for new_unit in &new_units {
+        let bare = strip_member_citation_markers(&new_unit.text);
+        let key = bare.trim();
+        let Some(Some(old_unit)) = old_by_text.get(key) else {
+            continue;
+        };
+        if new_text_counts.get(key) != Some(&1)
+            || (new_unit.text != key && new_unit.text != old_unit.text)
+        {
+            continue;
+        }
+        let first = old_markers.partition_point(|&(start, _)| start < old_unit.start);
+        let last = old_markers.partition_point(|&(_, end)| end <= old_unit.end);
+        let records = &by_occurrence[first..last];
+        if !records.iter().any(Option::is_some) {
+            continue;
+        }
+        let (old_start, old_end) = paragraph_span(old_body, old_unit.start);
+        let (new_start, new_end) = paragraph_span(projected_body, new_unit.start);
+        let old_paragraph = strip_member_citation_markers(&old_body[old_start..old_end]);
+        let new_paragraph = &projected_body[new_start..new_end];
+        let same_unique_paragraph = old_paragraph == new_paragraph
+            && old_paragraph_counts.get(&old_paragraph) == Some(&1)
+            && new_paragraph_counts.get(new_paragraph) == Some(&1);
+
+        // Count member-supplied marks in the untouched slices as occurrences,
+        // without assigning a private target to them.
+        occurrence +=
+            new_markers.partition_point(|&(start, _)| start < new_unit.start) - consumed_markers;
+        restored.push_str(&projected_body[cursor..new_unit.start]);
+        restored.push_str(&old_unit.text);
+        for record in records {
+            occurrence += 1;
+            let Some(record) = record else { continue };
+            let mut citation = (*record).clone();
+            citation.occurrence = u32::try_from(occurrence).ok()?;
+            if !same_unique_paragraph {
+                citation.pdf_target = None;
+                if citation.scope != "sentence" {
+                    citation.status = "unevaluated".into();
+                    citation.score = 0.0;
+                    citation.disproven = false;
+                }
+            }
+            citations.push(citation);
+        }
+        cursor = new_unit.end;
+        consumed_markers = new_markers.partition_point(|&(_, end)| end <= cursor);
+    }
+    restored.push_str(&projected_body[cursor..]);
+    Some((restored, citations))
+}
+
 /// Carry citation records across a body refresh only when the exact sentence
 /// unit, including its markers, occurs once in each body. Occurrence numbers
 /// are positions in the new body's marker stream; marker numbers alone never
@@ -1826,6 +1980,80 @@ mod tests {
             &citations
         )
         .is_empty());
+    }
+
+    #[test]
+    fn member_projection_strips_markers_without_reformatting_unrelated_text() {
+        assert_eq!(
+            strip_member_citation_markers("  Claim [1]  stays.\n\nNext.[2]  "),
+            "  Claim  stays.\n\nNext.  "
+        );
+        assert_eq!(
+            strip_member_citation_markers("A  wide gap."),
+            "A  wide gap."
+        );
+    }
+
+    #[test]
+    fn member_projection_write_restores_only_unique_unchanged_sentence_markers() {
+        let old = "First cited claim.[7]\n\nSecond cited claim.[8]";
+        let citations = [
+            sentence_reference(1, 7, "file::first"),
+            sentence_reference(2, 8, "file::second"),
+        ];
+        let (restored, retained) = restore_unchanged_member_sentence_markers(
+            old,
+            "A new claim.\n\nFirst cited claim.\n\nSecond cited claim.",
+            &citations,
+        )
+        .unwrap();
+        assert_eq!(
+            restored,
+            "A new claim.\n\nFirst cited claim.[7]\n\nSecond cited claim.[8]"
+        );
+        assert_eq!(
+            retained
+                .iter()
+                .map(|c| c.locator.as_str())
+                .collect::<Vec<_>>(),
+            ["file::first", "file::second"]
+        );
+        assert_eq!(
+            retained.iter().map(|c| c.occurrence).collect::<Vec<_>>(),
+            [1, 2]
+        );
+        assert!(retained
+            .iter()
+            .all(|c| c.status == "verified" && c.pdf_target.is_some()));
+
+        let (restored, retained) = restore_unchanged_member_sentence_markers(
+            "First cited claim [7].\n\nUnbound [9].\n\nSecond cited claim [8].",
+            "A member's new claim [7].\n\nFirst cited claim.\n\nSecond cited claim.",
+            &[
+                sentence_reference(1, 7, "file::first"),
+                sentence_reference(3, 8, "file::second"),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            restored,
+            "A member's new claim [7].\n\nFirst cited claim [7].\n\nSecond cited claim [8]."
+        );
+        assert_eq!(
+            retained.iter().map(|c| c.occurrence).collect::<Vec<_>>(),
+            [2, 3]
+        );
+
+        // Duplicating unchanged prose makes its sentence-to-source mapping
+        // ambiguous, so neither copy receives a marker.
+        let (restored, retained) = restore_unchanged_member_sentence_markers(
+            old,
+            "First cited claim.\n\nFirst cited claim.",
+            &citations,
+        )
+        .unwrap();
+        assert_eq!(restored, "First cited claim.\n\nFirst cited claim.");
+        assert!(retained.is_empty());
     }
 
     /// A refusal names the unreadable sources by position and the kind of

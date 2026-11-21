@@ -150,8 +150,22 @@ pub(crate) async fn update_links_to_renamed_page(
             previous_title,
             space_name,
         };
-        if let Err(error) =
-            dismiss_superseded_link_cards(db, page_id, &page, &source.labels, &titles).await
+        if member
+            && !db
+                .member_can_access_page(&page.id, scope, crate::db::MemberPageTarget::Published)
+                .await?
+        {
+            continue;
+        }
+        if let Err(error) = dismiss_superseded_link_cards(
+            db,
+            page_id,
+            &page,
+            &source.labels,
+            &titles,
+            member.then_some(scope),
+        )
+        .await
         {
             log::warn!(
                 "[page_link_rename] {} kept an earlier link card for {page_id}: {error}",
@@ -173,6 +187,7 @@ pub(crate) async fn update_links_to_renamed_page(
             source_revision,
             knowledge_path,
             Some(page_id),
+            member.then_some(scope),
             &mut counts,
         )
         .await?;
@@ -258,6 +273,7 @@ pub(crate) async fn update_links_to_renamed_headings(
     renames: &[(String, String)],
     scope: &ReadScope,
     knowledge_path: Option<&Path>,
+    member: bool,
 ) -> Result<LinkRenameCounts, WenlanError> {
     let mut counts = LinkRenameCounts::default();
     if renames.is_empty() {
@@ -265,6 +281,17 @@ pub(crate) async fn update_links_to_renamed_headings(
     }
     for source in db.rename_link_sources(page_id).await? {
         if !scope.matches(source.workspace.as_deref()) {
+            continue;
+        }
+        if member
+            && !db
+                .member_can_access_page(
+                    &source.page_id,
+                    scope,
+                    crate::db::MemberPageTarget::Published,
+                )
+                .await?
+        {
             continue;
         }
         let rewrite = |content: &str| {
@@ -288,6 +315,13 @@ pub(crate) async fn update_links_to_renamed_headings(
         let Some(page) = db.get_page(&source.page_id).await? else {
             continue;
         };
+        if member
+            && !db
+                .member_can_access_page(&page.id, scope, crate::db::MemberPageTarget::Published)
+                .await?
+        {
+            continue;
+        }
         let (content, changed) = rewrite(&page.content);
         if changed == 0 {
             continue;
@@ -303,6 +337,7 @@ pub(crate) async fn update_links_to_renamed_headings(
             source_revision,
             knowledge_path,
             None,
+            member.then_some(scope),
             &mut counts,
         )
         .await?;
@@ -314,6 +349,7 @@ pub(crate) async fn update_links_to_renamed_headings(
 /// headings, under the version and source-revision fence it was read at,
 /// and count what happened. `tag` names the renamed page on a review card,
 /// so a later rename of it can find and replace the card.
+#[allow(clippy::too_many_arguments)]
 async fn write_link_rewrite(
     db: &MemoryDB,
     page: &crate::pages::Page,
@@ -321,8 +357,17 @@ async fn write_link_rewrite(
     source_revision: i64,
     knowledge_path: Option<&Path>,
     tag: Option<&str>,
+    member_scope: Option<&ReadScope>,
     counts: &mut LinkRenameCounts,
 ) -> Result<(), WenlanError> {
+    if let Some(scope) = member_scope {
+        if !db
+            .member_can_access_page(&page.id, scope, crate::db::MemberPageTarget::Published)
+            .await?
+        {
+            return Ok(());
+        }
+    }
     // The same automatic-reader permit the rename itself needs.
     if crate::truth_adapter::page_write_permit(db, &page.id)
         .await?
@@ -348,6 +393,8 @@ async fn write_link_rewrite(
             expected_source_revision: Some(source_revision),
             knowledge_path,
             citations,
+            member_scope: member_scope.cloned(),
+            member_projected_body: false,
         },
     )
     .await;
@@ -358,7 +405,10 @@ async fn write_link_rewrite(
             // Untagged, the card is still found by its links (as a card
             // from 0.20.5 is), just less surely.
             if let (Some(card_id), Some(page_id)) = (result.revision_card_id.as_deref(), tag) {
-                if let Err(error) = db.tag_link_rename_card(card_id, page_id).await {
+                if let Err(error) = db
+                    .tag_link_rename_card_for(card_id, &page.id, page_id, member_scope)
+                    .await
+                {
                     log::warn!(
                         "[page_link_rename] link card {card_id} on {} left untagged: {error}",
                         page.id
@@ -450,6 +500,7 @@ async fn dismiss_superseded_link_cards(
     page: &crate::pages::Page,
     labels: &[String],
     titles: &CardTitles<'_>,
+    member_scope: Option<&ReadScope>,
 ) -> Result<(), WenlanError> {
     let cards = db
         .pending_page_cards_by_writer(&page.id, LINK_RENAME_WRITER)
@@ -476,7 +527,16 @@ async fn dismiss_superseded_link_cards(
             }
         };
         if let Some(digest) = expected_digest {
-            db.delete_page_card_if_unchanged(&card_id, &digest).await?;
+            if let Some(scope) = member_scope {
+                if !db
+                    .member_can_access_page(&page.id, scope, crate::db::MemberPageTarget::Published)
+                    .await?
+                {
+                    return Ok(());
+                }
+            }
+            db.delete_page_card_if_unchanged_for(&card_id, &page.id, &digest, member_scope)
+                .await?;
         }
     }
     Ok(())

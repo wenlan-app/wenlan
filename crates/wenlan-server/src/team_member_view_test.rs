@@ -5,6 +5,9 @@ use serde_json::{json, Value};
 use wenlan_core::db::{CodeBasisVerdict, MemoryDB};
 use wenlan_core::read_scope::ReadScope;
 
+#[path = "team_member_view_round5_test.rs"]
+mod round5;
+
 const REPO: &str = "ROUND4_HOST_REPO";
 const CODE_FILE: &str = "ROUND4_HOST_CODE.rs";
 const EXPLANATION: &str = "ROUND4_LOCAL_CODE_CHANGE";
@@ -588,7 +591,7 @@ async fn round4_canary_covers_member_http_and_hosted_mcp_catalogs() {
     let uploaded = version_text(&hidden, &f.writer.0.id, "Attempted update to hidden page.");
     let name = version::version_file_name(&version::sha256_hex(uploaded.as_bytes()));
     let mut data_count = 0;
-    for (template, _) in member_data_routes() {
+    for (_, template) in member_data_route_catalog() {
         let uri = template
             .replace("{space}", "Design")
             .replace("{page}", &hidden)
@@ -785,7 +788,9 @@ async fn round4_canary_covers_member_http_and_hosted_mcp_catalogs() {
         db.get_page(&draft.id).await.unwrap().unwrap().version,
         draft.version
     );
-    eprintln!("canary exercised {app_count} browser routes, {data_count} team data routes, {forward_count} additional forwarded routes, {tool_count} MCP tool/grant pairs");
+    eprintln!(
+        "canary exercised {app_count} browser routes, {data_count} team data routes, {forward_count} additional forwarded routes, {tool_count} MCP tool/grant pairs"
+    );
     assert!(
         failures.is_empty(),
         "member canary failures:\n{}",

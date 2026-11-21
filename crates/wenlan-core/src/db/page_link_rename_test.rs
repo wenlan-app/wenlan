@@ -4,7 +4,10 @@
 use super::tests::test_db;
 use crate::{
     export::knowledge::KnowledgeProjectionWrite,
-    post_write::{rename_page, restore_page, update_links_to_renamed_headings},
+    post_write::{
+        rename_page, restore_page, update_links_to_renamed_headings,
+        update_links_to_renamed_headings_for,
+    },
     read_scope::ReadScope,
 };
 use std::{path::Path, sync::Arc};
@@ -176,6 +179,67 @@ async fn rename_rewrites_every_link_form_in_same_space_pages() {
     assert!(outbound
         .iter()
         .any(|link| link.label == "New" && link.target_page_id.as_deref() == Some("page-a")));
+}
+
+#[tokio::test]
+async fn member_heading_rewrite_skips_an_ineligible_page_without_counting_it() {
+    let fixture = fixture(&[
+        (
+            "page-a",
+            "Book",
+            "work",
+            "# Book\n\n## New heading",
+            0,
+            0,
+            "authored",
+        ),
+        (
+            "page-b",
+            "Private Rules",
+            "work",
+            "See [[Book#Old heading]].",
+            0,
+            0,
+            "source",
+        ),
+    ])
+    .await;
+    fixture
+        .db
+        .conn
+        .lock()
+        .await
+        .execute(
+            "UPDATE pages SET workspace='work' WHERE id IN ('page-a','page-b')",
+            (),
+        )
+        .await
+        .unwrap();
+    assert!(!fixture
+        .db
+        .member_can_access_page(
+            "page-b",
+            &ReadScope::Space("work".into()),
+            crate::db::MemberPageTarget::Published,
+        )
+        .await
+        .unwrap());
+
+    let before = fixture.db.get_page("page-b").await.unwrap().unwrap();
+    let counts = update_links_to_renamed_headings_for(
+        &fixture.db,
+        "page-a",
+        "# Book\n\n## Old heading",
+        "# Book\n\n## New heading",
+        &ReadScope::Space("work".into()),
+        Some(fixture.page_root.path()),
+        true,
+    )
+    .await;
+    assert_eq!(counts, (0, 0, 0));
+    let after = fixture.db.get_page("page-b").await.unwrap().unwrap();
+    assert_eq!(after.content, before.content);
+    assert_eq!(after.version, before.version);
 }
 
 /// One record per `[1]` marker in `page-b`, with the fields a stored record

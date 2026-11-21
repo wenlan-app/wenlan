@@ -516,31 +516,32 @@ impl KnowledgeWriter {
         page: &Page,
         initial_folder: Option<&str>,
     ) -> Result<String, WenlanError> {
+        self.write_page_in_folder_for(guard, page, initial_folder, None)
+    }
+
+    fn write_page_in_folder_for(
+        &self,
+        guard: &crate::page_projection_tracker::PageProjectionWriteGuard,
+        page: &Page,
+        initial_folder: Option<&str>,
+        member_root: Option<&str>,
+    ) -> Result<String, WenlanError> {
         self.validate_guard(guard)?;
         if let Some(folder) = initial_folder {
             validate_knowledge_folder_path(folder)?;
         }
         create_projection_root_nofollow(&self.path)?;
         KnowledgeProjectionWrite::with_projection_capabilities(&self.path, |capabilities| {
-            self.write_page_with_lock_held_and_folder(capabilities, guard, page, initial_folder)
+            self.write_page_with_lock_held_and_hook_in_folder(
+                capabilities,
+                guard,
+                page,
+                || Ok(()),
+                true,
+                initial_folder,
+                member_root,
+            )
         })
-    }
-
-    fn write_page_with_lock_held_and_folder(
-        &self,
-        capabilities: &ProjectionCapabilities,
-        guard: &crate::page_projection_tracker::PageProjectionWriteGuard,
-        page: &Page,
-        initial_folder: Option<&str>,
-    ) -> Result<String, WenlanError> {
-        self.write_page_with_lock_held_and_hook_in_folder(
-            capabilities,
-            guard,
-            page,
-            || Ok(()),
-            true,
-            initial_folder,
-        )
     }
 
     /// [`Self::write_page`], with the `index.md` regeneration made optional.
@@ -597,6 +598,7 @@ impl KnowledgeWriter {
             after_target_write,
             regenerate_index,
             None,
+            None,
         )
     }
 
@@ -609,6 +611,7 @@ impl KnowledgeWriter {
         after_target_write: F,
         regenerate_index: bool,
         initial_folder: Option<&str>,
+        member_root: Option<&str>,
     ) -> Result<String, WenlanError>
     where
         F: FnOnce() -> Result<(), WenlanError>,
@@ -652,6 +655,11 @@ impl KnowledgeWriter {
             Some(path) => path.rsplit_once('/').map_or("", |(folder, _)| folder),
             None => restored_folder.unwrap_or(initial_folder.unwrap_or("")),
         };
+        if member_root
+            .is_some_and(|space| crate::space_folders::inside_space(space, folder).is_none())
+        {
+            return Err(WenlanError::Validation("not a folder of this Space".into()));
+        }
         // A restored page's folder was checked to exist above. It may carry a
         // name the new-folder rules reject (a colon on macOS, say), which is
         // fine for a folder the person already has.
@@ -6079,6 +6087,30 @@ impl KnowledgeProjectionWrite {
             page,
             self.writer
                 .write_page_in_folder(&self.guard, page, Some(&folder)),
+        )
+    }
+
+    /// Project a newly published draft into its checked Space destination.
+    pub async fn write_page_gated_in_folder(
+        &self,
+        database: &crate::db::MemoryDB,
+        page: &Page,
+        folder: &str,
+        member_root: &str,
+    ) -> Result<Option<String>, WenlanError> {
+        let Some(permit) = crate::truth_adapter::page_write_permit(database, &page.id).await?
+        else {
+            return Ok(None);
+        };
+        check_permit(&permit, page)?;
+        skip_if_archived_since_read(
+            page,
+            self.writer.write_page_in_folder_for(
+                &self.guard,
+                page,
+                Some(folder),
+                Some(member_root),
+            ),
         )
     }
 

@@ -34,6 +34,7 @@ pub(crate) struct TrackedRouter<S = ()> {
     /// the truth and scope manifests: those classify response behavior, while
     /// this catches a valid route being wired to the wrong function.
     handlers: BTreeMap<(ReaderMethod, &'static str, &'static str), usize>,
+    forwarded: BTreeSet<(&'static str, &'static str)>,
     check_handlers: bool,
 }
 
@@ -56,6 +57,16 @@ enum RegisteredMethod {
 }
 
 impl RegisteredMethod {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Get => "GET",
+            Self::Post => "POST",
+            Self::Put => "PUT",
+            Self::Delete => "DELETE",
+            Self::Patch => "PATCH",
+        }
+    }
+
     const fn sensitive(self) -> Option<Method> {
         match self {
             Self::Get => Some(Method::Get),
@@ -82,6 +93,7 @@ impl RegisteredMethod {
 struct RegisteredHandler {
     method: RegisteredMethod,
     handler: &'static str,
+    forwarded: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -106,6 +118,7 @@ macro_rules! top_level_method {
                 handlers: vec![RegisteredHandler {
                     method: RegisteredMethod::$method,
                     handler: handler_name,
+                    forwarded: false,
                 }],
             }
         }
@@ -118,10 +131,56 @@ top_level_method!(put, Put);
 top_level_method!(delete, Delete);
 top_level_method!(patch, Patch);
 
+macro_rules! forwarded_route {
+    ($name:ident, $method:ident, $axum:ident) => {
+        pub(crate) fn $name<H, T, S>(handler: H) -> TrackedMethodRouter<S>
+        where
+            crate::member_view::Forwarded<H>: Handler<T, S>,
+            T: 'static,
+            S: Clone + Send + Sync + 'static,
+        {
+            TrackedMethodRouter {
+                inner: axum::routing::$axum(crate::member_view::Forwarded(handler)),
+                handlers: vec![RegisteredHandler {
+                    method: RegisteredMethod::$method,
+                    handler: type_name::<H>(),
+                    forwarded: true,
+                }],
+            }
+        }
+    };
+}
+
+forwarded_route!(member_get, Get, get);
+forwarded_route!(member_post, Post, post);
+forwarded_route!(member_put, Put, put);
+
+macro_rules! add_forwarded_route {
+    ($name:ident, $method:ident, $axum:ident) => {
+        pub(crate) fn $name<H, T>(mut self, handler: H) -> Self
+        where
+            crate::member_view::Forwarded<H>: Handler<T, S>,
+            T: 'static,
+        {
+            self.inner = self.inner.$axum(crate::member_view::Forwarded(handler));
+            self.handlers.push(RegisteredHandler {
+                method: RegisteredMethod::$method,
+                handler: type_name::<H>(),
+                forwarded: true,
+            });
+            self
+        }
+    };
+}
+
 impl<S> TrackedMethodRouter<S>
 where
     S: Clone + Send + Sync + 'static,
 {
+    add_forwarded_route!(member_post, Post, post);
+    add_forwarded_route!(member_put, Put, put);
+    add_forwarded_route!(member_delete, Delete, delete);
+
     pub(crate) fn post<H, T>(mut self, handler: H) -> Self
     where
         H: Handler<T, S>,
@@ -132,6 +191,7 @@ where
         self.handlers.push(RegisteredHandler {
             method: RegisteredMethod::Post,
             handler: handler_name,
+            forwarded: false,
         });
         self
     }
@@ -146,6 +206,7 @@ where
         self.handlers.push(RegisteredHandler {
             method: RegisteredMethod::Put,
             handler: handler_name,
+            forwarded: false,
         });
         self
     }
@@ -160,6 +221,7 @@ where
         self.handlers.push(RegisteredHandler {
             method: RegisteredMethod::Delete,
             handler: handler_name,
+            forwarded: false,
         });
         self
     }
@@ -174,6 +236,7 @@ where
         self.handlers.push(RegisteredHandler {
             method: RegisteredMethod::Patch,
             handler: handler_name,
+            forwarded: false,
         });
         self
     }
@@ -190,6 +253,7 @@ where
             builder,
             truth: BTreeSet::new(),
             handlers: BTreeMap::new(),
+            forwarded: BTreeSet::new(),
             check_handlers: true,
         }
     }
@@ -248,6 +312,9 @@ where
                 self.builder
             );
             self.truth.insert((method, path));
+            if registered.forwarded {
+                self.forwarded.insert((registered.method.name(), path));
+            }
             *self
                 .handlers
                 .entry((method, path, registered.handler))
@@ -307,6 +374,13 @@ where
         assert_eq!(self.reads, expected, "sensitive route registration drift");
         self.assert_truth_coverage();
         self.assert_handler_coverage();
+        if self.check_handlers && self.builder == Builder::Main {
+            assert_eq!(
+                self.forwarded,
+                crate::team_actor::member_routes().collect(),
+                "member routes must use the typed member registration",
+            );
+        }
         FinalizedRouter { inner: self.inner }
     }
 

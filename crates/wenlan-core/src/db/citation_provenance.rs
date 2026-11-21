@@ -351,6 +351,52 @@ pub(super) async fn retain_refresh_citations_on(
     }
 }
 
+/// Restore references hidden by the member projection when a member writes the
+/// projected prose back. Only exact, unique sentence matches carry markers;
+/// a source map saved across invalidation is accepted only through
+/// `preserved_on`'s exact page-state fence.
+pub(super) async fn restore_member_projection_on(
+    conn: &libsql::Connection,
+    id: &str,
+    projected_content: &str,
+) -> Result<Option<(String, String)>, WenlanError> {
+    let Some(page) = page_on(conn, id).await? else {
+        return Ok(None);
+    };
+    if crate::citations::marker_spans(&page.content).is_empty() {
+        return Ok(None);
+    }
+    let citations: Vec<PageCitation> = match page.citations.as_deref() {
+        Some(json) => match serde_json::from_str(json) {
+            Ok(citations) => citations,
+            Err(_) => return Ok(None),
+        },
+        None => match preserved_on(conn, id).await? {
+            Some((stored, saved))
+                if stored.version == page.version
+                    && stored.space == page.space
+                    && stored.content == page.content =>
+            {
+                effective_map(
+                    &stored.content,
+                    &saved.citations,
+                    &saved.affected_locators,
+                    &saved.historical_locators,
+                )
+            }
+            _ => return Ok(None),
+        },
+    };
+    let Some((restored, citations)) = crate::citations::restore_unchanged_member_sentence_markers(
+        &page.content,
+        projected_content,
+        &citations,
+    ) else {
+        return Ok(None);
+    };
+    Ok(Some((restored, serde_json::to_string(&citations)?)))
+}
+
 /// Shared by scoped/unscoped by-id readers and sentence evidence. Reads only
 /// the already authorized page identity and cannot expose another Space's map.
 pub(super) async fn apply_on(

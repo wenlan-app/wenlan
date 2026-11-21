@@ -194,16 +194,30 @@ impl MemoryDB {
     /// write path's redaction, so it is what an accept would write). A later
     /// rename uses both to tell its own untouched card from a card the person
     /// changed. Merged into the card's existing structured fields.
-    pub(crate) async fn tag_link_rename_card(
+    pub(crate) async fn tag_link_rename_card_for(
         &self,
         card_id: &str,
+        source_page_id: &str,
         renamed_page_id: &str,
+        member_scope: Option<&ReadScope>,
     ) -> Result<(), WenlanError> {
         let conn = self.conn.lock().await;
         conn.execute("BEGIN IMMEDIATE", ())
             .await
             .map_err(|error| WenlanError::VectorDb(format!("tag link card begin: {error}")))?;
         let result = async {
+            if let Some(scope) = member_scope {
+                if !Self::member_page_access_on(
+                    &conn,
+                    source_page_id,
+                    scope,
+                    super::MemberPageTarget::Published,
+                )
+                .await?
+                {
+                    return Err(WenlanError::NotFound("page not found".into()));
+                }
+            }
             let Some(body) = staged_card_body_on(&conn, card_id).await? else {
                 return Ok(());
             };
@@ -240,16 +254,40 @@ impl MemoryDB {
     /// Delete a pending page card only if the body it would write still has
     /// `expected_digest`, checked and deleted in one write transaction, so an
     /// edit that lands first keeps the card. Returns whether it was deleted.
+    #[cfg(test)]
     pub(crate) async fn delete_page_card_if_unchanged(
         &self,
         card_id: &str,
         expected_digest: &str,
+    ) -> Result<bool, WenlanError> {
+        self.delete_page_card_if_unchanged_for(card_id, "", expected_digest, None)
+            .await
+    }
+
+    pub(crate) async fn delete_page_card_if_unchanged_for(
+        &self,
+        card_id: &str,
+        source_page_id: &str,
+        expected_digest: &str,
+        member_scope: Option<&ReadScope>,
     ) -> Result<bool, WenlanError> {
         let conn = self.conn.lock().await;
         conn.execute("BEGIN IMMEDIATE", ())
             .await
             .map_err(|error| WenlanError::VectorDb(format!("delete link card begin: {error}")))?;
         let result = async {
+            if let Some(scope) = member_scope {
+                if !Self::member_page_access_on(
+                    &conn,
+                    source_page_id,
+                    scope,
+                    super::MemberPageTarget::Published,
+                )
+                .await?
+                {
+                    return Err(WenlanError::NotFound("page not found".into()));
+                }
+            }
             let unchanged = staged_card_body_on(&conn, card_id)
                 .await?
                 .is_some_and(|body| {

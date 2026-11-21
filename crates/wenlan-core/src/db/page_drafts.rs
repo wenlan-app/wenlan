@@ -1058,8 +1058,10 @@ impl MemoryDB {
                     page.id
                 );
             }
-            if let Err(e) = self.resolve_orphan_page_links().await {
-                log::warn!("[publish_page_draft] orphan link resolve failed: {e}");
+            if member_id.is_none() {
+                if let Err(e) = self.resolve_orphan_page_links().await {
+                    log::warn!("[publish_page_draft] orphan link resolve failed: {e}");
+                }
             }
         }
         Ok(outcome)

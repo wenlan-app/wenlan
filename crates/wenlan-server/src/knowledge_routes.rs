@@ -17,7 +17,8 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
         .route("/api/knowledge/count", get(handle_get_knowledge_count))
         .route(
             "/api/knowledge/folders",
-            get(handle_list_knowledge_folders).post(handle_create_knowledge_folder),
+            crate::route_registry::member_get(handle_list_knowledge_folders)
+                .member_post(handle_create_knowledge_folder),
         )
         .route(
             "/api/linked-vaults",
@@ -500,10 +501,17 @@ mod tests {
 pub async fn handle_list_knowledge_folders(
     axum::extract::State(state): axum::extract::State<SharedState>,
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
-    crate::team_actor::TeamActor(actor): crate::team_actor::TeamActor,
+    headers: axum::http::HeaderMap,
     view: crate::truth_guard::TruthView,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
-) -> Result<Json<wenlan_types::responses::KnowledgeFoldersResponse>, ServerError> {
+) -> Result<
+    crate::member_view::PageResponse<
+        wenlan_types::responses::KnowledgeFoldersResponse,
+        crate::member_view::MemberFolders,
+    >,
+    ServerError,
+> {
+    use crate::member_view::{MemberFolderEntry, MemberFolders, PageResponse};
     use wenlan_types::responses::{KnowledgeFolderEntry, KnowledgeFoldersResponse};
     let (db, root) = {
         let s = state.read().await;
@@ -515,7 +523,7 @@ pub async fn handle_list_knowledge_folders(
     // A team member: their Space's folders as they see them, empty ones
     // too (a folder a member made is the whole Space's); none while the
     // owner does not keep each Space in a folder of its own.
-    if actor.is_some() {
+    if !crate::team_actor::can_read_private_memories(&headers) {
         let member_view = match root.as_deref() {
             Some(root) => {
                 crate::member_folders::view(&db, root, true, header_space.as_deref()).await
@@ -523,7 +531,7 @@ pub async fn handle_list_knowledge_folders(
             None => None,
         };
         let (Some(member_view), Some(root)) = (member_view, root) else {
-            return Ok(Json(KnowledgeFoldersResponse {
+            return Ok(PageResponse::Member(MemberFolders {
                 folders: vec![],
                 truncated: false,
             }));
@@ -533,7 +541,7 @@ pub async fn handle_list_knowledge_folders(
         })
         .await
         .map_err(|e| ServerError::Internal(e.to_string()))??;
-        let mut folders = vec![KnowledgeFolderEntry {
+        let mut folders = vec![MemberFolderEntry {
             path: member_view.space.clone(),
             parent_path: String::new(),
             name: member_view.space.clone(),
@@ -548,13 +556,13 @@ pub async fn handle_list_knowledge_folders(
             let parent_path = member_view
                 .shown(&folder.parent_path)
                 .unwrap_or_else(|| member_view.space.clone());
-            folders.push(KnowledgeFolderEntry {
+            folders.push(MemberFolderEntry {
                 path,
                 parent_path,
                 name: folder.name,
             });
         }
-        return Ok(Json(KnowledgeFoldersResponse {
+        return Ok(PageResponse::Member(MemberFolders {
             folders,
             truncated: false,
         }));
@@ -566,7 +574,7 @@ pub async fn handle_list_knowledge_folders(
     )
     .await?;
     let Some(root) = root else {
-        return Ok(Json(KnowledgeFoldersResponse {
+        return Ok(PageResponse::Local(KnowledgeFoldersResponse {
             folders: vec![],
             truncated: false,
         }));
@@ -616,7 +624,7 @@ pub async fn handle_list_knowledge_folders(
         }
         folders.into_values().collect()
     };
-    Ok(Json(KnowledgeFoldersResponse {
+    Ok(PageResponse::Local(KnowledgeFoldersResponse {
         folders,
         truncated: false,
     }))
@@ -625,9 +633,15 @@ pub async fn handle_list_knowledge_folders(
 pub async fn handle_create_knowledge_folder(
     axum::extract::State(state): axum::extract::State<SharedState>,
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
-    crate::team_actor::TeamActor(actor): crate::team_actor::TeamActor,
+    headers: axum::http::HeaderMap,
     Json(req): Json<wenlan_types::requests::CreateKnowledgeFolderRequest>,
-) -> Result<Json<wenlan_types::responses::CreateKnowledgeFolderResponse>, ServerError> {
+) -> Result<
+    crate::member_view::PageResponse<
+        wenlan_types::responses::CreateKnowledgeFolderResponse,
+        crate::member_view::MemberFolder,
+    >,
+    ServerError,
+> {
     let (db, root) = {
         let s = state.read().await;
         (
@@ -637,21 +651,18 @@ pub async fn handle_create_knowledge_folder(
     };
     // A team member makes a folder inside their Space's own folder only:
     // it belongs to that Space, so everyone in it sees it.
-    if actor.is_some() {
+    if !crate::team_actor::can_read_private_memories(&headers) {
         let root = root.ok_or_else(|| {
             ServerError::ValidationError("Wiki projection is not configured".into())
         })?;
-        let member_view = crate::member_folders::view(&db, &root, true, header_space.as_deref())
-            .await
-            .ok_or_else(|| {
-                ServerError::ValidationError(
-                    "Folders need each Space kept in a folder of its own".into(),
-                )
-            })?;
+        let member_write = db.lock_space_writes_owned().await;
+        let member_view =
+            crate::member_folders::required_view(&db, &root, header_space.as_deref()).await?;
         let parent = member_view.folder_path(&req.parent_path)?;
         let projection_write = db.begin_page_projection_write();
         let path = tokio::task::spawn_blocking(move || {
             let _projection_write = projection_write;
+            let _member_write = member_write;
             wenlan_core::export::knowledge::create_knowledge_folder(&root, &parent, &req.name)
         })
         .await
@@ -659,8 +670,8 @@ pub async fn handle_create_knowledge_folder(
         let path = member_view
             .shown(&path)
             .ok_or_else(|| ServerError::Internal("folder made outside the Space".into()))?;
-        return Ok(Json(
-            wenlan_types::responses::CreateKnowledgeFolderResponse { path },
+        return Ok(crate::member_view::PageResponse::Member(
+            crate::member_view::MemberFolder { path },
         ));
     }
     let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
@@ -678,7 +689,7 @@ pub async fn handle_create_knowledge_folder(
     })
     .await
     .map_err(|e| ServerError::Internal(e.to_string()))??;
-    Ok(Json(
+    Ok(crate::member_view::PageResponse::Local(
         wenlan_types::responses::CreateKnowledgeFolderResponse { path },
     ))
 }

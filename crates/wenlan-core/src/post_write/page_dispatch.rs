@@ -39,6 +39,8 @@ pub enum PageWrite<'a> {
         /// Automatic lanes must not attach new sources to a page a person
         /// edited or locked for review.
         skip_protected_title_match: bool,
+        /// A member create may only reuse a title match the member can read.
+        member_write: bool,
         research_write: Option<crate::db::research_write::ResearchWriteFence>,
     },
     Update {
@@ -49,6 +51,13 @@ pub enum PageWrite<'a> {
         expected_source_revision: Option<i64>,
         knowledge_path: Option<&'a Path>,
         citations: Option<(String, String)>,
+        /// Space scope for a member-caused secondary rewrite. The transaction
+        /// checks the same page eligibility predicate as shared reads.
+        member_scope: Option<crate::read_scope::ReadScope>,
+        /// True only when `req.content` is the member's projected page body.
+        /// Secondary rewrites operate on the full stored body and leave this
+        /// false while still using the member authorization fence.
+        member_projected_body: bool,
     },
     /// An agent's `agent_refresh` of a Page it names (`agent`, from the
     /// `x-agent-name` header), under a source-revision fence. Identical to
@@ -172,6 +181,7 @@ pub async fn page_write_with_citation_snapshot(
             basis_marks,
             basis_space_guard,
             skip_protected_title_match,
+            member_write,
             research_write,
         } => {
             create_page_impl(
@@ -188,6 +198,7 @@ pub async fn page_write_with_citation_snapshot(
                     basis_marks: &basis_marks,
                     basis_space_guard: basis_space_guard.as_ref(),
                     skip_protected_title_match,
+                    member_write,
                     research_write,
                 },
             )
@@ -201,7 +212,15 @@ pub async fn page_write_with_citation_snapshot(
             expected_source_revision,
             knowledge_path,
             citations,
+            member_scope,
+            member_projected_body,
         } => {
+            let basis = BasisWrite {
+                member_write: member_scope.is_some(),
+                member_projected_body,
+                space_guard: member_scope,
+                ..BasisWrite::default()
+            };
             update_page_impl(
                 db,
                 page_id,
@@ -216,7 +235,7 @@ pub async fn page_write_with_citation_snapshot(
                 false,
                 None,
                 None,
-                &BasisWrite::default(),
+                &basis,
             )
             .await
         }
@@ -454,6 +473,7 @@ pub async fn create_page_with_tuning(
             basis_marks: Vec::new(),
             basis_space_guard: None,
             skip_protected_title_match: false,
+            member_write: false,
             research_write: None,
         },
     )
@@ -503,6 +523,8 @@ pub async fn update_page(
             expected_source_revision: None,
             knowledge_path,
             citations,
+            member_scope: None,
+            member_projected_body: false,
         },
     )
     .await
@@ -558,6 +580,8 @@ pub async fn update_page_at_source_revision(
             expected_source_revision: Some(expected_source_revision),
             knowledge_path,
             citations,
+            member_scope: None,
+            member_projected_body: false,
         },
     )
     .await

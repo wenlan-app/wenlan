@@ -12,7 +12,9 @@
 //! Rewriting a rewritten block changes nothing, so a version applied on
 //! another computer and read back does not come back as a new version.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+#[cfg(test)]
+use std::collections::HashSet;
 
 use crate::store::format::page::{Basis, Citation, Locator, SOURCES_END, SOURCES_START};
 
@@ -79,27 +81,23 @@ fn shared_marker_map(citations: &[Citation], ctx: &RewriteContext<'_>) -> HashMa
 /// Removes references that would otherwise disclose the number of omitted
 /// private citations and renumbers the remaining shared-page markers.
 pub(crate) fn rewrite_body(body: &str, citations: &[Citation], ctx: &RewriteContext<'_>) -> String {
-    if ctx.keep_all || citations.is_empty() {
+    if ctx.keep_all {
         return body.to_string();
+    }
+    if citations.is_empty() {
+        // A missing map proves no marker is safe to publish. In particular,
+        // citation invalidation can leave old [N] markers in the body.
+        return crate::citations::strip_member_citation_markers(body);
     }
     let visible = shared_marker_map(citations, ctx);
-    let known: HashSet<u32> = citations.iter().map(|citation| citation.marker).collect();
-    if visible.len() == known.len() && visible.iter().all(|(old, new)| old == new) {
-        return body.to_string();
-    }
 
     let mut out = String::with_capacity(body.len());
     let mut cursor = 0;
     for (start, end) in crate::citations::marker_spans(body) {
-        let Some(marker) = body[start + 1..end - 1].parse::<u32>().ok() else {
-            continue;
-        };
-        if !known.contains(&marker) {
-            continue;
-        }
+        let marker = body[start + 1..end - 1].parse::<u32>().ok();
         out.push_str(&body[cursor..start]);
         cursor = end;
-        if let Some(new_marker) = visible.get(&marker) {
+        if let Some(new_marker) = marker.and_then(|marker| visible.get(&marker)) {
             out.push('[');
             out.push_str(&new_marker.to_string());
             out.push(']');
@@ -171,7 +169,13 @@ pub fn rewrite_sources(
             let title = ctx.space_pages.get(id)?;
             Some(Basis {
                 label: page_label(title),
-                locator: line.locator.clone(),
+                // A version observed before the target entered this Space is
+                // not evidence available to its members. Keep the shared page
+                // identity but omit the host-local version number.
+                locator: match &line.locator {
+                    Locator::Wenlan { id, .. } => Locator::Other(format!("wenlan:{id}")),
+                    locator => locator.clone(),
+                },
             })
         })
         .collect();

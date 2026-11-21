@@ -1112,6 +1112,19 @@ struct Held {
     space: Option<String>,
 }
 
+/// Exact version hashes the host has published in the current page stay.
+/// A member-supplied stay token alone cannot authorize a file: this receipt is
+/// minted only by the hosted sync pass after validating its lineage.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub(crate) struct MemberViewReceipt {
+    pub stay: String,
+    pub hashes: HashSet<String>,
+}
+
+fn member_view_receipts_key(space: &str) -> String {
+    format!("shared_space.member_view_receipts:{space}")
+}
+
 fn held_key(key: &str) -> String {
     format!("shared_space.held:{key}")
 }
@@ -1729,6 +1742,10 @@ async fn run_pass(
         }
     }
     let edit_settle = if automatic { EDIT_SETTLE_SECS } else { 0 };
+    let deleted_pages = listed
+        .as_ref()
+        .map(|(_, listed)| listed.deleted_pages.as_slice())
+        .unwrap_or_default();
     let counts = pass(
         db,
         scope,
@@ -1736,6 +1753,7 @@ async fn run_pass(
         settings_path,
         knowledge_path,
         edit_settle,
+        deleted_pages,
     )
     .await?;
     if matches!(scope, Scope::Library) {
@@ -1995,6 +2013,9 @@ struct Pass<'a> {
     knowledge_path: Option<&'a Path>,
     /// The Space's pages here, active and archived: id to title.
     space_pages: HashMap<String, String>,
+    /// Page identities the hosted Space has deleted without a safe archive
+    /// body. These are applied locally by identity and never re-exported.
+    deleted_pages: HashSet<String>,
     /// Member id to name, from `space.json`.
     names: HashMap<String, String>,
     team_owner: Option<String>,
@@ -2007,6 +2028,118 @@ struct Pass<'a> {
     /// Seconds the person's typing must have stopped before an edit is
     /// written as a version; 0 writes at once.
     edit_settle: i64,
+}
+
+fn anchored_member_hashes(
+    versions: &[PageVersion],
+    root: &str,
+    stay: &str,
+    space_pages: &HashMap<String, String>,
+) -> HashSet<String> {
+    let eligible: Vec<&PageVersion> = versions
+        .iter()
+        .filter(|version| {
+            crate::member_view::MemberSnapshot::matches_in_stay(version, space_pages, stay)
+        })
+        .collect();
+    if !eligible.iter().any(|version| version.sha == root) {
+        return HashSet::new();
+    }
+    let mut hashes = HashSet::from([root.to_string()]);
+    loop {
+        let before = hashes.len();
+        for version in &eligible {
+            let references = version.meta.parent.iter().chain(version.meta.merged.iter());
+            if hashes.contains(&version.sha) {
+                hashes.extend(references.cloned());
+            } else if references.into_iter().any(|sha| hashes.contains(sha)) {
+                hashes.insert(version.sha.clone());
+            }
+        }
+        if hashes.len() == before {
+            break;
+        }
+    }
+    hashes
+        .into_iter()
+        .filter(|sha| eligible.iter().any(|version| &version.sha == sha))
+        .collect()
+}
+
+fn member_view_receipts(
+    pages: &HashMap<String, String>,
+    current_stays: &HashMap<String, String>,
+    held: &BTreeMap<String, Held>,
+    read: &version::FolderRead,
+) -> HashMap<String, MemberViewReceipt> {
+    let mut receipts = HashMap::new();
+    for page_id in pages.keys() {
+        let Some(stay) = current_stays.get(page_id) else {
+            continue;
+        };
+        let Some(root) = held
+            .get(page_id)
+            .filter(|held| held.version.is_some())
+            .map(|held| held.sha.as_str())
+        else {
+            continue;
+        };
+        let hashes = anchored_member_hashes(
+            read.pages
+                .get(page_id)
+                .map(Vec::as_slice)
+                .unwrap_or_default(),
+            root,
+            stay,
+            pages,
+        );
+        if hashes.is_empty() {
+            continue;
+        }
+        let mut all = hashes.clone();
+        if let Some(proposals) = read.proposals.get(page_id) {
+            let proposal_hashes: HashSet<String> = proposals
+                .iter()
+                .filter(|proposal| {
+                    proposal.meta.stay.as_deref() == Some(stay.as_str())
+                        && proposal
+                            .meta
+                            .parent
+                            .as_ref()
+                            .is_some_and(|parent| hashes.contains(parent))
+                        && crate::member_view::MemberSnapshot::matches_in_stay(
+                            proposal, pages, stay,
+                        )
+                })
+                .map(|proposal| proposal.sha.clone())
+                .collect();
+            all.extend(proposal_hashes.iter().cloned());
+            if let Some(decisions) = read.decisions.get(page_id) {
+                all.extend(
+                    decisions
+                        .iter()
+                        .filter(|decision| {
+                            decision.meta.stay.as_deref() == Some(stay.as_str())
+                                && decision.meta.decides.as_ref().is_some_and(|decides| {
+                                    proposal_hashes.contains(&decides.proposal)
+                                })
+                                && crate::member_view::MemberSnapshot::matches_in_stay(
+                                    decision, pages, stay,
+                                )
+                        })
+                        .map(|decision| decision.sha.clone()),
+                );
+            }
+        }
+        receipts.insert(
+            page_id.clone(),
+            MemberViewReceipt {
+                stay: stay.clone(),
+                hashes: all,
+            },
+        );
+    }
+    receipts
 }
 
 /// How long an automatic pass waits after the person's last save of a page
@@ -2045,6 +2178,7 @@ async fn pass(
     settings_path: &Path,
     knowledge_path: Option<&Path>,
     edit_settle: i64,
+    deleted_pages: &[String],
 ) -> Result<SharedSyncCounts, WenlanError> {
     let folder = folder_for(scope, &settings.folder);
     let me = SpaceMember {
@@ -2218,6 +2352,7 @@ async fn pass(
             .filter(|page| !rulesync_team::is_master_page(&page.id))
             .map(|page| (page.id.clone(), page.title.clone()))
             .collect(),
+        deleted_pages: deleted_pages.iter().cloned().collect(),
         names: space_file
             .members
             .into_iter()
@@ -2240,6 +2375,7 @@ async fn pass(
         .keys()
         .map(String::as_str)
         .chain(read.pages.keys().map(String::as_str))
+        .chain(deleted_pages.iter().map(String::as_str))
         .collect();
     let empty = Vec::new();
     let mut unsaved = false;
@@ -2290,6 +2426,14 @@ async fn pass(
     let progress = Progress::start(settings_path, &key, total);
     for (done, id) in ids.into_iter().enumerate() {
         progress.set(done, total);
+        if ctx.deleted_pages.contains(id) && !rulesync_team::is_master_page(id) {
+            if let Some(page) = local.get(id).filter(|page| page.status != "archived") {
+                if apply_server_deletion(db, page, ctx.knowledge_path).await? {
+                    counts.applied += 1;
+                }
+            }
+            continue;
+        }
         if hold.contains(id) {
             counts.held_back += 1;
             continue;
@@ -2344,12 +2488,97 @@ async fn pass(
         .filter(|(page, _)| rulesync_team::is_master_page(page))
         .flat_map(|(_, versions)| versions)
         .filter_map(rulesync_team::approved_proposal);
-    ctx.review(&read.proposals, &read.decisions, &heads, team_approvals)
+    ctx.review(
+        &read.pages,
+        &read.proposals,
+        &read.decisions,
+        &heads,
+        team_approvals,
+    )
+    .await?;
+    if team_host {
+        // Only hashes connected to the host's persisted current head are
+        // downloadable. Re-read after page sync/review so newly written roots
+        // and decisions can receive receipts in this pass.
+        let folder = ctx.folder.clone();
+        let published = tokio::task::spawn_blocking(move || version::read_folder(&folder))
+            .await
+            .map_err(|error| WenlanError::Generic(format!("shared folder task: {error}")))?;
+        let current = db.shared_folder_pages(&ctx.space).await?;
+        let mut receipts = member_view_receipts(&current.shared, &current.stays, &held, &published);
+        for id in &current.deleted {
+            let Some(stay) = current.stays.get(id) else {
+                continue;
+            };
+            let Some(mut receipt) = current
+                .receipts
+                .get(id)
+                .filter(|receipt| &receipt.stay == stay)
+                .cloned()
+            else {
+                continue;
+            };
+            if let Some(archive) = held
+                .get(id)
+                .filter(|held| held.version.is_none())
+                .and_then(|held| {
+                    published
+                        .pages
+                        .get(id)?
+                        .iter()
+                        .find(|version| version.sha == held.sha && version.meta.archived)
+                })
+                .filter(|archive| {
+                    archive
+                        .meta
+                        .parent
+                        .as_ref()
+                        .is_some_and(|parent| receipt.hashes.contains(parent))
+                        && crate::member_view::MemberSnapshot::matches_in_stay(
+                            archive,
+                            &current.shared,
+                            stay,
+                        )
+                })
+            {
+                receipt.hashes.insert(archive.sha.clone());
+            }
+            receipts.insert(id.clone(), receipt);
+        }
+        db.set_app_metadata(
+            &member_view_receipts_key(&ctx.space),
+            &serde_json::to_string(&receipts)?,
+        )
         .await?;
+    }
     match failed {
         Some(error) => Err(error),
         None => Ok(counts),
     }
+}
+
+async fn apply_server_deletion(
+    db: &MemoryDB,
+    page: &Page,
+    knowledge_path: Option<&Path>,
+) -> Result<bool, WenlanError> {
+    let Some(version) = db.archive_page_at_version(&page.id, page.version).await? else {
+        return Ok(false);
+    };
+    if let Some(root) = knowledge_path {
+        let projection =
+            crate::export::knowledge::KnowledgeProjectionWrite::new(root.to_path_buf(), db);
+        if let Err(error) = projection
+            .archive_page_if_still_archived(db, &page.id, version)
+            .await
+        {
+            log::warn!(
+                "[shared_space] archived deleted {} but its file stays: {error}",
+                page.id
+            );
+        }
+    }
+    Ok(true)
 }
 
 async fn save_held(
@@ -2454,6 +2683,39 @@ impl Pass<'_> {
             // ones too.)
             return Ok(None);
         }
+        let hosted_versions;
+        let versions = if self.settings.hosted && !rulesync_team::is_master_page(&page.id) {
+            let Some(stay) = self.db.shared_page_stay_token(page, &self.space).await? else {
+                counts.skipped += 1;
+                return Ok(None);
+            };
+            let anchored = held
+                .filter(|held| held.version.is_some())
+                .map(|held| anchored_member_hashes(versions, &held.sha, &stay, &self.space_pages))
+                .unwrap_or_default();
+            hosted_versions = versions
+                .iter()
+                .filter(|version| anchored.contains(&version.sha))
+                .cloned()
+                .collect::<Vec<_>>();
+            if hosted_versions.is_empty() && !versions.is_empty() {
+                // Legacy files and files from a prior stay have no edge to
+                // this stay. Share the live page as a new root.
+                let Some(sha) = self.export_page(page, &[], None, None, None).await? else {
+                    counts.skipped += 1;
+                    return Ok(None);
+                };
+                counts.exported += 1;
+                return Ok(Some(Held {
+                    sha,
+                    version: Some(page.version),
+                    space: self.held_space_of(&page.id).await?,
+                }));
+            }
+            &hosted_versions
+        } else {
+            versions
+        };
         let head = version::head(versions);
         let state = self.local_state(page);
         let here_space = self.library.then(|| held_space(page));
@@ -2544,29 +2806,6 @@ impl Pass<'_> {
             }
             seen == state
         }) {
-            if self.settings.hosted
-                && !rulesync_team::is_master_page(&page.id)
-                && !crate::member_view::MemberSnapshot::matches(head.winner, &self.space_pages)
-            {
-                // The body can be unchanged while the version stops being
-                // safe to share (for example, a basis was permanently
-                // deleted). Follow the old head with a shareable snapshot.
-                let sha = self
-                    .export_page(
-                        page,
-                        versions,
-                        Some(head),
-                        Some(head.winner),
-                        Some(&head.winner.sha),
-                    )
-                    .await?;
-                if let Some(sha) = sha {
-                    counts.exported += 1;
-                    return Ok(Some(at(&sha)));
-                }
-                counts.skipped += 1;
-                return Ok(None);
-            }
             // Already the head (an edit made here and elsewhere alike, or a
             // version taken earlier).
             return Ok(Some(at(&head.winner.sha)));
@@ -2781,6 +3020,28 @@ impl Pass<'_> {
                             }
                         }
                     }
+                    if self.settings.hosted && !rulesync_team::is_master_page(id) {
+                        let current = self.reload(id).await?;
+                        let Some(sha) = self
+                            .export_page(
+                                &current,
+                                versions,
+                                Some(&head),
+                                Some(winner),
+                                Some(&winner.sha),
+                            )
+                            .await?
+                        else {
+                            counts.skipped += 1;
+                            return Ok(None);
+                        };
+                        counts.exported += 1;
+                        return Ok(Some(Held {
+                            sha,
+                            version: Some(current.version),
+                            space: self.held_space_of(id).await?,
+                        }));
+                    }
                     Ok(Some(Held {
                         sha: winner.sha.clone(),
                         version: Some(at),
@@ -2962,6 +3223,7 @@ impl Pass<'_> {
             basis_marks: Vec::new(),
             basis_space_guard: None,
             skip_protected_title_match: false,
+            member_write: false,
             research_write: None,
         };
         match crate::post_write::page_write(self.db, write).await {
@@ -3261,6 +3523,7 @@ impl Pass<'_> {
             basis_marks: Vec::new(),
             basis_space_guard: None,
             skip_protected_title_match: false,
+            member_write: false,
             research_write: None,
         };
         match crate::post_write::page_write(self.db, write).await {
@@ -3364,10 +3627,36 @@ impl Pass<'_> {
             .collect();
         // An edit of a version that is not in the folder names that version
         // as its parent, whatever else the folder holds.
-        let (parent, merged) = match parent_sha {
+        let (mut parent, mut merged) = match parent_sha {
             Some(_) => (None, Vec::new()),
             None => base_of(&history, versions, head, base),
         };
+        let hosted_page = self.settings.hosted && !rulesync_team::is_master_page(&page.id);
+        let stay = if hosted_page {
+            let Some(stay) = db.shared_page_stay_token(page, &self.space).await? else {
+                return Ok(None);
+            };
+            Some(stay)
+        } else {
+            base.or_else(|| head.map(|head| head.winner))
+                .and_then(|parent| parent.meta.stay.clone())
+        };
+        if hosted_page
+            && stay.as_ref().is_some_and(|stay| {
+                parent
+                    .as_ref()
+                    .is_some_and(|parent| parent.meta.stay.as_ref() != Some(stay))
+            })
+        {
+            // A new continuous stay starts a new history root. In particular,
+            // do not make a re-entered page's snapshot a descendant of a
+            // version from its previous stay.
+            parent = None;
+            merged.clear();
+        }
+        let parent_sha = parent_sha.filter(|sha| {
+            !hosted_page || base.is_some_and(|base| base.sha == *sha && base.meta.stay == stay)
+        });
         let (mut citations, mut basis) = local_sources(db, page).await?;
         // A source another member gave a sentence that is still on the page
         // stays: this Wenlan has no record of it, the version it came in does.
@@ -3426,6 +3715,7 @@ impl Pass<'_> {
             proposal: false,
             decides: None,
             device: self.own_device(),
+            stay,
         };
         let member = meta.author.member.clone();
         let text = if self.settings.hosted || self.settings.host.is_some() {
@@ -3499,6 +3789,20 @@ impl Pass<'_> {
         let Some(id) = winner.page.id.clone().filter(|id| version::is_safe_id(id)) else {
             return Ok(None);
         };
+        let stay = if self.settings.hosted {
+            let pages = self.db.shared_folder_pages(&self.space).await?;
+            let Some(stay) = pages.stays.get(&id).filter(|_| {
+                pages
+                    .authorized
+                    .get(&id)
+                    .is_some_and(|hashes| hashes.contains(&winner.sha))
+            }) else {
+                return Ok(None);
+            };
+            Some(stay.clone())
+        } else {
+            winner.meta.stay.clone()
+        };
         let mut page = winner.page.clone();
         page.body = self.shared_body(&winner.page.body, &winner.page.citations);
         (page.citations, page.basis) = self.shared_sources(&page.citations, &page.basis);
@@ -3522,6 +3826,7 @@ impl Pass<'_> {
             proposal: false,
             decides: None,
             device: self.own_device(),
+            stay,
         };
         let text = if self.settings.hosted || self.settings.host.is_some() {
             crate::member_view::MemberSnapshot::new(&page, &meta, &self.space_pages).render()

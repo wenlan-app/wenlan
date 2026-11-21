@@ -110,6 +110,20 @@ pub async fn strict_same_title_note(
     title: &str,
     skip_protected: bool,
 ) -> Result<Option<SameTitlePage>, WenlanError> {
+    strict_same_title_note_for(db, scope, space, title, skip_protected, false).await
+}
+
+/// Member-scoped variant of [`strict_same_title_note`]. Hidden same-title
+/// pages are omitted before they can become a conflict or an attachment
+/// target. An eligible same-title page remains reusable.
+pub async fn strict_same_title_note_for(
+    db: &MemoryDB,
+    scope: &ReadScope,
+    space: Option<&str>,
+    title: &str,
+    skip_protected: bool,
+    member: bool,
+) -> Result<Option<SameTitlePage>, WenlanError> {
     let key = strict_title_key(title);
     if key.is_empty() {
         return Ok(None);
@@ -125,6 +139,13 @@ pub async fn strict_same_title_note(
             || !scope.matches(page_space.as_deref())
             || space.is_some_and(|wanted| page_space.as_deref() != Some(wanted))
             || strict_title_key(&note_title) != key
+        {
+            continue;
+        }
+        if member
+            && !db
+                .member_can_access_page(&page_id, scope, crate::db::MemberPageTarget::Published)
+                .await?
         {
             continue;
         }
