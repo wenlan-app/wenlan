@@ -93,7 +93,8 @@ export function createRulesSetupFixture() {
       : state === "conflict" ? [conflict] : []).filter((card) => !resolved.has(card.id));
     const reviewTools = Object.fromEntries(cards.map((card) => [card.files[0], cursor]));
     const items: RulesReviewItem[] = cards.map((card) => ({
-      id: card.id, kind: "tool_edit", card, answers: ["tool_only", "all_tools", card.kind === "scope" ? "dismiss" : "revert"],
+      id: card.id, kind: "tool_edit", card,
+      answers: card.kind === "scope" ? ["tool_only", "all_tools"] : ["tool_only", "all_tools", "revert"],
     }));
     if (state === "merged") {
       reviewTools["preview-proposal"] = codex;
@@ -147,8 +148,7 @@ export function createRulesSetupFixture() {
         const proposal = cards.find((card) => card.id === decision.id);
         if (!proposal) throw new Error("Fixture proposal is gone");
         const code = decision.action === "revert" ? "restore_review"
-          : decision.action === "dismiss" ? "dismiss_review"
-          : proposal.kind === "scope" ? (decision.action === "tool_only" ? "keep_rule" : "share_rule")
+          : proposal.kind === "scope" ? (decision.action === "all_tools" ? "share_rule" : "keep_rule")
           : (decision.action === "tool_only" ? "personal_only" : "personal_share");
         return { diff: proposal.diff, plan: proposal.reason, plan_codes: [{ code }] };
       }

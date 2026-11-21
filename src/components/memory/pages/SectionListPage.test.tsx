@@ -87,7 +87,7 @@ describe("personal rules setup in the section lists", () => {
     vi.mocked(invoke).mockImplementation(async (command) => {
       if (command === "rules_setup_status") return pending;
       if (command === "rules_setup_review_list") return {
-        items: [{ id: "1", kind: "tool_edit", card: pending.proposals[0], answers: ["tool_only", "all_tools", "dismiss"] }],
+        items: [{ id: "1", kind: "tool_edit", card: pending.proposals[0], answers: ["tool_only", "all_tools"] }],
         review_tools: pending.review_tools,
       };
       if (command === "rules_setup_skill_updates") return [];

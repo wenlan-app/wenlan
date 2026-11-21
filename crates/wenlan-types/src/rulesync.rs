@@ -22,7 +22,6 @@ pub enum RulesSetupCode {
     PersonalFileEdit,
     CompetingPersonalFiles,
     RestoreReview,
-    DismissReview,
     ShareRule,
     KeepRule,
     PersonalOnly,

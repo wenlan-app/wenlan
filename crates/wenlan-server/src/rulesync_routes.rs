@@ -3250,7 +3250,7 @@ impl Setup {
             .load_if_present()?
             .context("run wenlan rules adopt first")?;
         if let Some(scope) = manifest.scope_reviews.get(&request.id) {
-            validate_rule_answer(PullbackKind::Scope, request.action)?;
+            let action = rule_answer(PullbackKind::Scope, request.action)?;
             ensure!(
                 manifest.is_current_scope_review(scope),
                 "the proposal is no longer current"
@@ -3258,7 +3258,7 @@ impl Setup {
             return Ok(PullbackPreview {
                 diff: scope.card.diff.clone(),
                 plan: scope.card.reason.clone(),
-                plan_codes: vec![rule_review_code(request.action).into()],
+                plan_codes: vec![rule_review_code(action).into()],
                 diff_codes: scope.card.diff_codes.clone(),
             });
         }
@@ -3267,16 +3267,16 @@ impl Setup {
             .iter()
             .find(|card| card.wire.id == request.id)
             .with_context(|| format!("the proposal is no longer current. Run `{SYNC_COMMAND}`"))?;
-        validate_rule_answer(card.wire.kind, request.action)?;
+        let action = rule_answer(card.wire.kind, request.action)?;
         let path = card.review_path(request)?;
         let (diff, plan, plan_codes, diff_codes) = if !card.share_plans.is_empty() {
             let worktrees = DeliveryWorktrees::new(&self.home)?;
-            card.describe_personal_review(&drafts, path, request.action, &worktrees)?
+            card.describe_personal_review(&drafts, path, action, &worktrees)?
         } else {
             (
                 card.wire.diff.clone(),
                 card.wire.reason.clone(),
-                vec![rule_review_code(request.action).into()],
+                vec![rule_review_code(action).into()],
                 card.wire.diff_codes.clone(),
             )
         };
@@ -3297,30 +3297,22 @@ impl Setup {
         let root = FileRoot::open_home(&self.home)?;
         let mut manifest = self.load()?.context("run wenlan rules adopt first")?;
         rulesync_registry::check_skill_format(&self.data)?;
-        if matches!(
-            request.action,
-            PullbackAction::Dismiss | PullbackAction::Revert
-        ) {
+        let action = if manifest.scope_reviews.contains_key(&request.id) {
+            rule_answer(PullbackKind::Scope, request.action)?
+        } else {
+            request.action
+        };
+        if matches!(action, PullbackAction::Dismiss | PullbackAction::Revert) {
             self.preview_review(request)?;
         }
-        if request.action != PullbackAction::Dismiss {
-            self.recover(&root, &mut manifest)?;
-        }
+        self.recover(&root, &mut manifest)?;
         if let Some(scope) = manifest.scope_reviews.get(&request.id) {
             ensure!(
                 manifest.is_current_scope_review(scope),
                 "the proposal is no longer current"
             );
             let scope = scope.clone();
-            if request.action == PullbackAction::Dismiss {
-                let delivery = manifest
-                    .delivered
-                    .get(&scope.path)
-                    .context("file is no longer managed")?;
-                ensure!(root.read(&scope.path, false)? == *delivery.observed.as_ref().unwrap_or(&delivery.delivered),
-                    "The tool edited this file again. Open `{TO_REVIEW_COMMAND}` for the current review.");
-            }
-            if matches!(request.action, PullbackAction::AllTools) {
+            if action == PullbackAction::AllTools {
                 let delivery = manifest
                     .delivered
                     .get_mut(&scope.path)
@@ -3366,9 +3358,6 @@ impl Setup {
                 .retain(|_, review| review.path != scope.path);
             manifest.scope_review_heads.remove(&scope.path);
             self.save(&manifest)?;
-            if request.action == PullbackAction::Dismiss {
-                return Ok(report("Dismissed the rule-line review"));
-            }
             return sync(&root, &mut manifest);
         }
         let Pullback { drafts, cards, .. } = inspect(&self.home, &root, &manifest)?;
@@ -3376,7 +3365,7 @@ impl Setup {
             .iter()
             .find(|card| card.wire.id == request.id)
             .with_context(|| format!("the proposal is no longer current. Run `{SYNC_COMMAND}`"))?;
-        validate_rule_answer(card.wire.kind, request.action)?;
+        let action = rule_answer(card.wire.kind, action)?;
         let path = card.review_path(request)?;
         let reviewed = || {
             drafts
@@ -3390,10 +3379,10 @@ impl Setup {
                 card,
                 reviewed(),
                 path,
-                &request.action,
+                &action,
             );
         }
-        let all_tools = request.action == PullbackAction::AllTools;
+        let all_tools = action == PullbackAction::AllTools;
         if all_tools {
             for draft in reviewed() {
                 ensure!(
@@ -3405,7 +3394,7 @@ impl Setup {
         }
         for draft in reviewed() {
             let selected = path == Some(draft.path.as_path());
-            match request.action {
+            match action {
                 PullbackAction::ToolOnly => {
                     if selected {
                         accept_tool_edit(&mut manifest, draft)?;
@@ -4708,23 +4697,23 @@ fn needs_conflict_card(drafts: &[Draft], group: &[usize]) -> bool {
     group.len() > 1 || drafts[group[0]].needs_review
 }
 
-fn validate_rule_answer(kind: PullbackKind, action: PullbackAction) -> Result<()> {
+fn rule_answer(kind: PullbackKind, action: PullbackAction) -> Result<PullbackAction> {
     match (kind, action) {
+        (PullbackKind::Scope, PullbackAction::Dismiss) => Ok(PullbackAction::ToolOnly),
         (PullbackKind::Scope, PullbackAction::Revert) => {
-            bail!("This rule-line review has nothing to put back. Use `dismiss`.")
+            bail!("This rule-line review has nothing to put back. Use `tool-only`.")
         }
         (PullbackKind::Conflict, PullbackAction::Dismiss) => {
             bail!("This review puts the tool back to the earlier version. Use `revert`.")
         }
-        _ => Ok(()),
+        _ => Ok(action),
     }
 }
 
 fn rule_review_code(action: PullbackAction) -> Code {
     match action {
         PullbackAction::AllTools => Code::ShareRule,
-        PullbackAction::ToolOnly => Code::KeepRule,
-        PullbackAction::Dismiss => Code::DismissReview,
+        PullbackAction::ToolOnly | PullbackAction::Dismiss => Code::KeepRule,
         PullbackAction::Revert => Code::RestoreReview,
     }
 }
@@ -5349,7 +5338,7 @@ mod tests {
     }
 
     #[test]
-    fn rulesync_review_refuses_dismiss_when_a_tool_would_be_reverted() {
+    fn rulesync_conflict_review_refuses_dismiss_and_suggests_revert() {
         let f = Fixture::new();
         let command = ".claude/commands/private.md";
         fs::create_dir_all(f.setup.home.join(command).parent().unwrap()).unwrap();
@@ -5357,6 +5346,7 @@ mod tests {
         f.adopt_from_plan();
         f.write(command, "After.\n");
         let card = pullback_file(&f.sync_with(""), command);
+        assert_eq!(card.kind, PullbackKind::Conflict);
         let decision = PullbackDecision {
             id: card.id,
             action: PullbackAction::Dismiss,
@@ -5383,14 +5373,14 @@ mod tests {
     }
 
     #[test]
-    fn rulesync_review_refuses_revert_when_a_rule_line_has_nothing_to_put_back() {
+    fn rulesync_scope_review_refuses_revert_and_suggests_tool_only() {
         let f = Fixture::new();
         f.adopt_from_plan();
         let changed = f.text(CODEX).replace("Codex only.", "Edited in Codex.");
         f.write(CODEX, &changed);
         let card = pullback_file(&f.sync_with(""), CODEX);
         assert_eq!(card.kind, PullbackKind::Scope);
-        let mut decision = PullbackDecision {
+        let decision = PullbackDecision {
             id: card.id,
             action: PullbackAction::Revert,
             file: None,
@@ -5401,23 +5391,19 @@ mod tests {
             .preview_review(&decision)
             .unwrap_err()
             .to_string()
-            .contains("`dismiss`"));
+            .contains("`tool-only`"));
         assert!(f
             .setup
             .review_using(&decision, |_, _| panic!("revert called Sync"))
             .unwrap_err()
             .to_string()
-            .contains("`dismiss`"));
+            .contains("`tool-only`"));
+        assert_eq!(f.text(CODEX), changed);
         assert_eq!(
             fs::read(f.setup.data.join(storage::MANIFEST)).unwrap(),
             manifest
         );
-        decision.action = PullbackAction::Dismiss;
-        f.setup
-            .review_using(&decision, |_, _| panic!("dismiss called Sync"))
-            .unwrap();
-        assert_eq!(f.text(CODEX), changed);
-        assert!(f.setup.status().unwrap().proposals.is_empty());
+        assert_eq!(f.setup.status().unwrap().proposals.len(), 1);
     }
 
     #[test]

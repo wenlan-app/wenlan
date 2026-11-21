@@ -555,6 +555,8 @@ Options:
 
 To review: list changes, or answer one item.
 
+Skill proposals and updates also accept `dismiss`.
+
 ```text
 wenlan rules review [OPTIONS] [ID] [ANSWER]
 ```
@@ -562,7 +564,7 @@ wenlan rules review [OPTIONS] [ID] [ANSWER]
 Arguments:
 
 - `[ID]`: The ID shown by `wenlan rules review`.
-- `[ANSWER]` Possible values: `tool-only` (Keep the change in that tool only), `all-tools` (Use the change in all tools), `dismiss` (Clear the review without changing a tool), `revert` (Put the tool back to the earlier version).
+- `[ANSWER]` Possible values: `tool-only` (Keep the change in that tool only), `all-tools` (Use the change in all tools), `revert` (Put the tool back to the earlier version).
 
 Options:
 

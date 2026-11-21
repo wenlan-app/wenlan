@@ -58,7 +58,8 @@ const plan: RulesAdoptionPlan = {
 };
 function queue(setup: Pick<RulesSetupStatus, "proposals" | "review_tools">): RulesReviewList {
   return { review_tools: setup.review_tools, items: setup.proposals.map((card) => ({
-    id: card.id, card, kind: "tool_edit", answers: ["tool_only", "all_tools", card.kind === "scope" ? "dismiss" : "revert"],
+    id: card.id, card, kind: "tool_edit",
+    answers: card.kind === "scope" ? ["tool_only", "all_tools"] : ["tool_only", "all_tools", "revert"],
   })) };
 }
 
@@ -107,11 +108,26 @@ it("UX-SKILL-24: shows a new scope card while Rules stays open without Sync", as
 
 describe("setup review", () => {
   it.each([
+    ["en", "Use in all tools", "Keep in Cursor only", "No"],
+    ["zh-Hant", "全部工具都用", "只留在 Cursor", "不要"],
+    ["zh-Hans", "全部工具都用", "只留在 Cursor", "不要"],
+  ])("UX-SKILL-20: shows the exact scope and conflict choices in order in %s", async (locale, all, only, no) => {
+    await i18n.changeLanguage(locale);
+    const review = queue({ ...status, proposals: [scope, { ...conflict, id: "r2" }] });
+    // An older daemon can still advertise the hidden scope alias.
+    review.items[0].answers.push("dismiss");
+    mount(<RulesSetupReviews review={review} />);
+    const [scopeCard, conflictCard] = screen.getAllByRole("article");
+    const labels = (card: HTMLElement) => within(card).getAllByRole("button").map((button) => button.textContent);
+    expect(labels(scopeCard)).toEqual([all, only]);
+    expect(labels(conflictCard)).toEqual([all, only, no]);
+  });
+
+  it.each([
     [scope, "Use in all tools", "all_tools"],
     [scope, "Keep in Cursor only", "tool_only"],
-    [scope, "Dismiss", "dismiss"],
-    [conflict, "Keep in Cursor only", "tool_only"],
     [conflict, "Use in all tools", "all_tools"],
+    [conflict, "Keep in Cursor only", "tool_only"],
     [conflict, "No", "revert"],
   ] as [PullbackCard, string, PullbackAction][])(
     "UX-SKILL-20: previews %s choice %s and writes after confirmation",
@@ -124,14 +140,11 @@ describe("setup review", () => {
       const review = within(screen.getByRole("article"));
       expect(review.getByText("− Before")).toHaveAttribute("data-change", "removed");
       expect(review.getByText("+ After")).toHaveAttribute("data-change", "added");
-      const buttons = review.getAllByRole("button").map((button) => button.textContent);
       if (card.kind === "scope") {
-        expect(buttons).toEqual(["Use in all tools", "Keep in Cursor only", "Dismiss"]);
         expect(review.getByText("This edit already applies in Cursor.")).toBeInTheDocument();
         expect(review.queryByText("This edit is already kept in its tool.")).not.toBeInTheDocument();
         expect(review.queryByText("Cursor")).not.toBeInTheDocument();
       } else {
-        expect(buttons).toEqual(["Keep in Cursor only", "Use in all tools", "No"]);
         expect(review.getByText("A command or agent changed.")).toBeInTheDocument();
         expect(review.getByText("Cursor · release")).toBeInTheDocument();
         expect(review.getByText("No puts Cursor back to the earlier version")).toBeInTheDocument();

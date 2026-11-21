@@ -474,6 +474,60 @@ mod tests {
     }
 
     #[test]
+    fn rulesync_scope_dismiss_matches_tool_only_through_watch_delivery() {
+        let resolve = |action| {
+            let f = Fixture::new();
+            f.adopt_from_plan();
+            let mut watch = RulesWatch::default();
+            edit(&f);
+            round(&mut watch, &f).unwrap();
+            let [card] = f.setup.status().unwrap().proposals.try_into().unwrap();
+            assert_eq!(card.kind, PullbackKind::Scope);
+            let decision = PullbackDecision {
+                id: card.id,
+                action,
+                file: None,
+            };
+            let preview = f.setup.preview_review(&decision).unwrap();
+            let report = f
+                .setup
+                .review_using(&decision, |root, manifest| f.sync_review(root, manifest))
+                .unwrap();
+            let manifest = f.setup.load().unwrap().unwrap();
+            let overrides = serde_json::to_value(&manifest.master.overrides).unwrap();
+            let delivery = &manifest.delivered[Path::new(CODEX)];
+            let receipt = (
+                serde_json::to_value(&delivery.kind).unwrap(),
+                delivery.delivered.clone(),
+                delivery.observed.clone(),
+                delivery.reviewed,
+            );
+            assert!(manifest.scope_reviews.is_empty());
+            assert!(manifest.scope_review_heads.is_empty());
+
+            let expected = f.text(CODEX).replace("One rule.", "Accepted in Wenlan.");
+            let mut manifest = manifest;
+            manifest.master.shared = manifest
+                .master
+                .shared
+                .replace("One rule.", "Accepted in Wenlan.");
+            f.setup.save(&manifest).unwrap();
+            round(&mut watch, &f).unwrap();
+            assert_delivered(&f);
+            assert_eq!(f.text(CODEX), expected);
+            assert!(f.text(CODEX).contains("Edited in Codex."));
+            assert!(!f.text(CLAUDE).contains("Edited in Codex."));
+            assert!(f.setup.status().unwrap().proposals.is_empty());
+            (report, preview, overrides, receipt)
+        };
+
+        assert_eq!(
+            resolve(PullbackAction::Dismiss),
+            resolve(PullbackAction::ToolOnly)
+        );
+    }
+
+    #[test]
     fn rulesync_watch_unchanged_round_does_not_save_or_duplicate() {
         let f = Fixture::new();
         f.adopt_from_plan();

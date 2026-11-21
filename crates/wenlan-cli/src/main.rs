@@ -910,7 +910,10 @@ mod catalog_tests {
 
     #[test]
     fn ux_skill_25_rulesync_action_hints_parse_with_the_real_cli() {
-        use super::commands::{rulesync::RulesSetupCmd, skills::RulesCmd};
+        use super::commands::{
+            rulesync::{ReviewAction, RulesSetupCmd},
+            skills::RulesCmd,
+        };
         use clap::Parser;
         use wenlan_types::rulesync::{
             BRING_IN_COMMAND, RESTORE_COMMAND, STATUS_COMMAND, SYNC_COMMAND, TO_REVIEW_COMMAND,
@@ -950,7 +953,7 @@ mod catalog_tests {
                 RulesSetupCmd::Review { id: None, .. }
             ));
         }
-        for answer in ["tool-only", "all-tools", "dismiss", "revert"] {
+        for answer in ["tool-only", "all-tools", "revert"] {
             assert!(matches!(
                 parse(&format!("{TO_REVIEW_COMMAND} card {answer} --file example")),
                 RulesSetupCmd::Review {
@@ -960,6 +963,13 @@ mod catalog_tests {
                 },
             ));
         }
+        assert!(matches!(
+            parse("wenlan rules review card dismiss"),
+            RulesSetupCmd::Review {
+                answer: Some(ReviewAction::Dismiss),
+                ..
+            }
+        ));
         assert!(matches!(parse("wenlan rules sync"), RulesSetupCmd::Sync));
         assert!(matches!(
             parse("wenlan rules skill-updates"),

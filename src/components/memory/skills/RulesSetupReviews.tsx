@@ -197,13 +197,9 @@ function ReviewCard({ card, answers, tools, busy, onChoice }: {
       ) : fileLabel && fileLabel !== names[0] && <p className="rules-setup-files">{fileLabel}</p>}
       <RulesSetupDiff diff={card.diff} codes={card.diff_codes} />
       <div className="rules-setup-actions">
-        {scope && answers.includes("all_tools") && <Button type="button" variant="primary" disabled={busy} onClick={() => choice("all_tools", all)}>{all}</Button>}
+        {answers.includes("all_tools") && <Button type="button" variant="primary" disabled={busy} onClick={() => choice("all_tools", all)}>{all}</Button>}
         {answers.includes("tool_only") && <Button type="button" disabled={busy} onClick={() => choice("tool_only", only)}>{only}</Button>}
-        {answers.includes("dismiss") && <Button type="button" variant="ghost" disabled={busy} onClick={() => choice("dismiss", t("rulesSetup.dismiss"))}>{t("rulesSetup.dismiss")}</Button>}
-        {!scope && <>
-          {answers.includes("all_tools") && <Button type="button" variant="primary" disabled={busy} onClick={() => choice("all_tools", all)}>{all}</Button>}
-          {answers.includes("revert") && <Button type="button" variant="ghost" disabled={busy} onClick={() => choice("revert", no)}>{no}</Button>}
-        </>}
+        {!scope && answers.includes("revert") && <Button type="button" variant="ghost" disabled={busy} onClick={() => choice("revert", no)}>{no}</Button>}
       </div>
       {!scope && <p className="rules-setup-note">{names.length > 1
         ? t("rulesSetup.noEffectMany", { tools: new Intl.ListFormat(i18n.resolvedLanguage).format(names) })

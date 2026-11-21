@@ -11,8 +11,9 @@ use serde::Serialize;
 use wenlan_core::{rulesync_personal, skill_registry::printable};
 use wenlan_types::rulesync::{
     AdoptPreviewRequest, AdoptRequest, AdoptionPlan, AdoptionSkillOutcome, PullbackAction,
-    PullbackDecision, RulesReviewContent, RulesReviewItem, RulesReviewList, RulesSetupStatus,
-    RulesSyncReport, RulesToolState, SkillUpdateStatus, SkillUpstream, TO_REVIEW_COMMAND,
+    PullbackDecision, PullbackKind, RulesReviewContent, RulesReviewItem, RulesReviewList,
+    RulesSetupStatus, RulesSyncReport, RulesToolState, SkillUpdateStatus, SkillUpstream,
+    TO_REVIEW_COMMAND,
 };
 use wenlan_types::rulesync_settings::{SettingsApplyRequest, SettingsPlan, SettingsPreviewRequest};
 
@@ -38,6 +39,8 @@ pub enum RulesSetupCmd {
         sync: bool,
     },
     /// To review: list changes, or answer one item.
+    ///
+    /// Skill proposals and updates also accept `dismiss`.
     Review {
         /// The ID shown by `wenlan rules review`.
         #[arg(requires = "answer")]
@@ -70,7 +73,7 @@ pub enum ReviewAction {
     ToolOnly,
     /// Use the change in all tools.
     AllTools,
-    /// Clear the review without changing a tool.
+    #[value(hide = true)]
     Dismiss,
     /// Put the tool back to the earlier version.
     Revert,
@@ -238,17 +241,27 @@ async fn answer_item(
     action: PullbackAction,
     file: Option<String>,
 ) -> Result<()> {
+    let action = match (&item.content, action) {
+        (RulesReviewContent::ToolEdit { card }, PullbackAction::Dismiss) => match card.kind {
+            PullbackKind::Scope => PullbackAction::ToolOnly,
+            PullbackKind::Conflict => {
+                bail!("This review puts the tool back to the earlier version. Use `revert`.");
+            }
+        },
+        (RulesReviewContent::ToolEdit { card }, PullbackAction::Revert)
+            if card.kind == PullbackKind::Scope =>
+        {
+            bail!("This rule-line review has nothing to put back. Use `tool-only`.");
+        }
+        (_, action) => action,
+    };
     if !item.answers.contains(&action) {
-        if action == PullbackAction::Dismiss && item.answers.contains(&PullbackAction::Revert) {
-            bail!("This review puts the tool back to the earlier version. Use `revert`.");
-        }
-        if action == PullbackAction::Revert && item.answers.contains(&PullbackAction::Dismiss) {
-            bail!("This review has nothing to put back. Use `dismiss`.");
-        }
+        let tool_edit = matches!(item.content, RulesReviewContent::ToolEdit { .. });
         bail!(
             "Available answers: {}",
             item.answers
                 .iter()
+                .filter(|&&answer| !tool_edit || answer != PullbackAction::Dismiss)
                 .map(|&answer| answer_word(answer))
                 .collect::<Vec<_>>()
                 .join(", ")
@@ -342,9 +355,10 @@ fn review_confirmation(
         proposal.push_str(&format!(" from {}", file_label(file)));
     }
     let question = match decision.action {
-        PullbackAction::ToolOnly => format!("Keep proposal {proposal} for this tool only?"),
+        PullbackAction::ToolOnly | PullbackAction::Dismiss => {
+            format!("Keep proposal {proposal} for this tool only?")
+        }
         PullbackAction::AllTools => format!("Use proposal {proposal} in all compatible tools?"),
-        PullbackAction::Dismiss => format!("Dismiss proposal {proposal}?"),
         PullbackAction::Revert => {
             format!("Put the tool back to the earlier version for proposal {proposal}?")
         }

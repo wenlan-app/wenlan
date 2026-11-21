@@ -111,13 +111,13 @@ fn local_queue(setup: &Setup) -> Result<RulesReviewList> {
         .proposals
         .into_iter()
         .map(|card| {
-            let answer = match card.kind {
-                PullbackKind::Scope => PullbackAction::Dismiss,
-                PullbackKind::Conflict => PullbackAction::Revert,
-            };
+            let mut answers = vec![PullbackAction::ToolOnly, PullbackAction::AllTools];
+            if card.kind == PullbackKind::Conflict {
+                answers.push(PullbackAction::Revert);
+            }
             RulesReviewItem {
                 id: card.id.clone(),
-                answers: vec![PullbackAction::ToolOnly, PullbackAction::AllTools, answer],
+                answers,
                 content: RulesReviewContent::ToolEdit { card },
             }
         })
@@ -264,7 +264,47 @@ async fn on_disk<T: Send + 'static>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rulesync_routes::tests::{Fixture, CODEX};
     use wenlan_types::rulesync::SkillUpstream;
+
+    #[test]
+    fn rulesync_review_lists_only_applicable_rule_answers() {
+        let f = Fixture::new();
+        let command = ".claude/commands/private.md";
+        std::fs::create_dir_all(f.setup.home.join(command).parent().unwrap()).unwrap();
+        f.write(command, "Before.\n");
+        f.adopt_from_plan();
+        f.write(command, "After.\n");
+        f.write(
+            CODEX,
+            &f.text(CODEX).replace("Codex only.", "Edited in Codex."),
+        );
+        {
+            let _lock = f.setup.lock().unwrap();
+            let root = FileRoot::open_home(&f.setup.home).unwrap();
+            let mut manifest = f.setup.load().unwrap().unwrap();
+            f.sync_review(&root, &mut manifest).unwrap();
+        }
+
+        let queue = local_queue(&f.setup).unwrap();
+        let [scope, conflict] = [PullbackKind::Scope, PullbackKind::Conflict].map(|kind| {
+            queue.items.iter().find(|item| {
+                matches!(&item.content, RulesReviewContent::ToolEdit { card } if card.kind == kind)
+            }).unwrap()
+        });
+        assert_eq!(
+            scope.answers,
+            [PullbackAction::ToolOnly, PullbackAction::AllTools]
+        );
+        assert_eq!(
+            conflict.answers,
+            [
+                PullbackAction::ToolOnly,
+                PullbackAction::AllTools,
+                PullbackAction::Revert
+            ]
+        );
+    }
 
     #[test]
     fn rulesync_review_updates_are_unique_and_dismiss_one_source_revision() {

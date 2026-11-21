@@ -1144,14 +1144,17 @@ and wait for evidence that people need them.
   amber exclamation mark on a tool that needs review opens To review on Rules. Turning setup
   off hides the setup controls and cards.
 - **UX-SKILL-20** `shipped` A rule-line scope card says once that the edit already
-  applies in its tool. Use in all tools and Keep in that tool only choose the
-  scope. Dismiss clears the card without changing the tool. A conflict card
-  offers the two scope choices and No. It says “No puts <tool> back to the
+  applies in its tool. It offers exactly two choices, Use in all tools first
+  and Keep in that tool only second. A conflict card offers the same choices
+  in the same order, followed by No. It says “No puts <tool> back to the
   earlier version” (“選「不要」，<tool> 改回原本的版本”), naming every affected
-  tool when edits compete. The terminal calls that answer `revert`. The
-  app previews the selected choice and asks for confirmation.
-  Tests `rulesync_review_refuses_dismiss_when_a_tool_would_be_reverted` and
-  `rulesync_review_refuses_revert_when_a_rule_line_has_nothing_to_put_back`.
+  tool when edits compete. The terminal calls that answer `revert` and points
+  people who try `revert` on a scope card to `tool-only`. The app previews
+  the selected choice and asks for confirmation.
+  Tests `rulesync_conflict_review_refuses_dismiss_and_suggests_revert`,
+  `rulesync_scope_review_refuses_revert_and_suggests_tool_only`,
+  `rulesync_review_lists_only_applicable_rule_answers`, and
+  `rulesync_scope_dismiss_matches_tool_only_through_watch_delivery`.
 - **UX-SKILL-21** `shipped` An available adopted skill update appears in
   To review and adds a New version badge to the skill row. Finding a release
   keeps the adopted version in place. Dismiss applies to that release.
