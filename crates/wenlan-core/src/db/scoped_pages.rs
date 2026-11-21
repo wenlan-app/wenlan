@@ -192,7 +192,7 @@ impl MemoryDB {
 
     /// Run the same predicate as shared reads, inside the write transaction
     /// when authorizing a mutation. Unscoped use is only for Space discovery.
-    pub(crate) async fn member_page_access_on(
+    pub(super) async fn member_page_access_on(
         conn: &libsql::Connection,
         id: &str,
         scope: &ReadScope,
