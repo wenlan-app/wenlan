@@ -287,17 +287,19 @@ jobs:
               # organization id and the API token are both good".
               #
               # The body must now BE a list envelope: a top-level array, or an
-              # object whose `values` or `items` IS an array. Everything else
-              # yields `empty`, `jq -e` exits 4, and the credential is
-              # UNMEASURED. SignPath's real envelope is unknown here -- no
-              # token has ever existed -- so if the real reply is some third
-              # shape this says COULD NOT MEASURE, which is loud and wrong in
-              # the safe direction, rather than green.
+              # object whose `values`, `items` or `signingRequests` IS an array.
+              # Everything else yields `empty`, `jq -e` exits 4, and the
+              # credential is UNMEASURED. Measured 2026-11-19 (run #12): the
+              # real reply is {"signingRequests": [...], "pagination": {...}},
+              # which is why `signingRequests` is accepted below -- before that
+              # measurement this shape said COULD NOT MEASURE, loud and wrong
+              # in the safe direction, rather than green.
               if count="$(jq -e '
                     if type == "array" then length
                     elif type == "object" then
                       if (.values | type) == "array" then (.values | length)
                       elif (.items | type) == "array" then (.items | length)
+                      elif (.signingRequests | type) == "array" then (.signingRequests | length)
                       else empty end
                     else empty end
                   ' < "$body_file" 2>/dev/null)"; then
@@ -438,8 +440,9 @@ jobs:
             # that the credential arm rejects BY NAME three screens above all
             # read as "this slug resolved" down here. The same POSITIVE shape
             # assertion is now made on the slug replies -- a top-level array, or
-            # an object whose `values` or `items` IS an array -- and anything
-            # else is 2, could-not-measure, not 1.
+            # an object whose `values`, `items` or `signingRequests` IS an array
+            # -- and anything else is 2, could-not-measure, not 1.
+            # `signingRequests` is SignPath's real envelope, measured 2026-11-19.
             #
             # Then the items themselves, which nothing here has ever looked at.
             # `$k` is the query parameter this very request filtered on, so an
@@ -458,6 +461,7 @@ jobs:
                 elif type == "object" then
                   if (.values | type) == "array" then .values
                   elif (.items | type) == "array" then .items
+                  elif (.signingRequests | type) == "array" then .signingRequests
                   else empty end
                 else empty end;
               envelope
