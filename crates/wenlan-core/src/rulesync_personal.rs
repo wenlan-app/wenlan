@@ -770,16 +770,14 @@ mod windows_acl {
         let has_security_policy =
             unsafe { policy.as_ref() }.is_some_and(|list| list.ace_count != 0);
         let parent = SecurityDescriptor::read(parent, DACL_SECURITY_INFORMATION)?;
-        let grants = |sd: &SecurityDescriptor| -> io::Result<Vec<(u8, u32, Vec<u8>)>> {
+        fn grants(sd: &SecurityDescriptor) -> io::Result<Vec<(u8, u32, Vec<u8>)>> {
             Ok(sd
                 .allow_aces()?
                 .into_iter()
                 .map(|ace| (ace.flags, ace.mask, ace.sid.to_vec()))
                 .collect())
-        };
-        let entry_grants = grants(&sd)?;
-        let parent_grants = grants(&parent)?;
-        let view = |grants: &[(u8, u32, Vec<u8>)]| -> Vec<WindowsAce<'_>> {
+        }
+        fn view<'a>(grants: &'a [(u8, u32, Vec<u8>)]) -> Vec<WindowsAce<'a>> {
             grants
                 .iter()
                 .map(|(flags, mask, sid)| WindowsAce {
@@ -788,7 +786,9 @@ mod windows_acl {
                     sid,
                 })
                 .collect()
-        };
+        }
+        let entry_grants = grants(&sd)?;
+        let parent_grants = grants(&parent)?;
         let aces = view(&entry_grants);
         let parent_aces = view(&parent_grants);
         let acl = WindowsAcl {
