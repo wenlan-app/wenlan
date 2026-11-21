@@ -198,6 +198,10 @@ const WEB_WRITE_TOOL_NAMES: &[&str] = &[
 /// `write_page` is not listed: only its refresh branch is blocked, inline.
 const WEB_WRITE_LIFTED_TOOL_NAMES: &[&str] =
     &["forget", "rename_page", "delete_page", "update_brief"];
+/// Web-write tools a hosted team member never sees or calls. The daemon's
+/// `PATCH /api/brief` takes its Space from the request body and is not in the
+/// team actor's `MCP_CALLS`, so member write grants are not enforced there yet.
+const TEAM_MEMBER_WITHHELD_TOOL_NAMES: &[&str] = &["update_brief"];
 /// Ceiling for the summed length of every visible stdio tool description:
 /// the total measured by `scripts/measure-mcp-surface.py` when the 30-tool
 /// surface was cut, plus ten percent, raised by 450 for `page_code_basis` and
@@ -8274,9 +8278,17 @@ impl WenlanMcpServer {
         self.agent_identity.team_member().is_some() && matches!(name, "capture" | "forget")
     }
 
+    fn is_team_member_withheld_tool(&self, name: &str) -> bool {
+        self.agent_identity.team_member().is_some()
+            && TEAM_MEMBER_WITHHELD_TOOL_NAMES.contains(&name)
+    }
+
     fn visible_tools(&self) -> Vec<Tool> {
         let mut tools = Self::tool_router().list_all();
-        tools.retain(|tool| !self.is_hosted_memory_tool(tool.name.as_ref()));
+        tools.retain(|tool| {
+            let name = tool.name.as_ref();
+            !self.is_hosted_memory_tool(name) && !self.is_team_member_withheld_tool(name)
+        });
         if self.transport == TransportMode::Http {
             let lifted = self.tool_profile == ToolProfile::WebWrite;
             tools.retain(|tool| {
@@ -8354,16 +8366,16 @@ impl WenlanMcpServer {
     /// Refuse every tool outside the explicit web-write allowlist before the
     /// router can deserialize arguments or invoke a daemon request.
     fn web_write_refusal(&self, name: &str) -> Option<CallToolResult> {
-        (self.tool_profile == ToolProfile::WebWrite && !WEB_WRITE_TOOL_NAMES.contains(&name)).then(
-            || {
-                let message = if self.agent_identity.team_member().is_some() {
-                    "This tool is unavailable in this shared Space."
-                } else {
-                    WEB_WRITE_REFUSAL_MESSAGE
-                };
-                CallToolResult::error(vec![ContentBlock::text(message)])
-            },
-        )
+        (self.tool_profile == ToolProfile::WebWrite
+            && (!WEB_WRITE_TOOL_NAMES.contains(&name) || self.is_team_member_withheld_tool(name)))
+        .then(|| {
+            let message = if self.agent_identity.team_member().is_some() {
+                "This tool is unavailable in this shared Space."
+            } else {
+                WEB_WRITE_REFUSAL_MESSAGE
+            };
+            CallToolResult::error(vec![ContentBlock::text(message)])
+        })
     }
 }
 
@@ -10342,6 +10354,36 @@ mod tests {
         assert_eq!(result.is_error, Some(true));
         assert_eq!(text_of(&result), TEAM_REFRESH_NEEDS_VERSION);
         assert!(received(&mock).await.is_empty());
+    }
+
+    #[test]
+    fn a_team_member_neither_sees_nor_calls_update_brief() {
+        let member = WenlanMcpServer::new_with_identity(
+            WenlanClient::new("http://127.0.0.1:19999".into()),
+            TransportMode::Http,
+            AgentIdentity::new("remote-mcp".into(), false).for_team_member("member".into()),
+            None,
+        )
+        .with_tool_profile(ToolProfile::WebWrite);
+        assert!(!member
+            .visible_tools()
+            .iter()
+            .any(|tool| tool.name == "update_brief"));
+        let refusal = member
+            .web_write_refusal("update_brief")
+            .expect("a team member must not reach update_brief");
+        assert_eq!(
+            refusal_text(&refusal),
+            "This tool is unavailable in this shared Space."
+        );
+        assert!(member.web_write_refusal("write_page").is_none());
+
+        let personal =
+            make_server_with_profile(TransportMode::Http, "web-ai", None, ToolProfile::WebWrite);
+        assert!(personal
+            .visible_tools()
+            .iter()
+            .any(|tool| tool.name == "update_brief"));
     }
 
     #[test]
