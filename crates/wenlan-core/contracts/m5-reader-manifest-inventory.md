@@ -1571,6 +1571,7 @@ carrying the authority of agreement.
 | `core/db/okf_concepts.rs::refresh_okf_concept_linkers` | `pub` | no | **yes** | `server/source_routes/okf_sync.rs::sync_okf_source_in_batches` | `core/db.rs::get_page` |
 | `core/db/page_basis.rs::apply_basis_write_on_conn` | `pub(super)` | no | no | — | `core/db/page_basis.rs::apply_card_mark`, `core/db/page_basis.rs::confirm_page_basis_on_conn`, `core/db/page_basis.rs::confirm_snapshot_entry_on_conn`, `core/db/page_basis.rs::mark_page_basis_on_conn` |
 | `core/db/page_basis.rs::basis_diff` | `pub` | no | no | — | `core/db/page_basis.rs::basis_diff_in_scope` |
+| `core/db/page_basis.rs::confirm_basis_snapshot` | `pub(crate)` | no | no | — | `core/db/page_basis.rs::confirm_snapshot_entry_on_conn` |
 | `core/db/page_basis.rs::confirm_page_basis` | `pub` | no | **yes** | `server/page_basis_routes.rs::handle_confirm_basis` | `core/db/page_basis.rs::confirm_page_basis_on_conn` |
 | `core/db/page_basis.rs::mark_page_bases` | `pub` | no | no | — | `core/db/page_basis.rs::mark_page_basis_on_conn` |
 | `core/db/page_basis.rs::mark_page_basis_for` | `pub` | no | **yes** | `server/page_basis_routes.rs::handle_mark_basis` | `core/db/page_basis.rs::mark_page_basis_on_conn` |
