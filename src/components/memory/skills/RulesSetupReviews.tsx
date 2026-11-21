@@ -170,6 +170,8 @@ function ReviewCard({ card, answers, tools, busy, onChoice }: {
   const [source, setSource] = useState(card.files[0]);
   const tool = rulesSetupName(tools[source]?.name) || t("rulesSetup.thisTool");
   const names = [...new Set(card.files.map((file) => rulesSetupName(tools[file]?.name)).filter(Boolean))];
+  const [file] = card.files;
+  const fileLabel = card.files.length === 1 ? rulesSetupFileLabel(t, tools[file], file) : undefined;
   const scope = card.kind === "scope";
   const all = t("rulesSetup.allTools");
   const only = t("rulesSetup.toolOnly", { tool });
@@ -183,7 +185,8 @@ function ReviewCard({ card, answers, tools, busy, onChoice }: {
         ? t(scope ? "rulesSetup.ruleChanged" : "rulesSetup.toolChanged", { tool: names[0] })
         : t("rulesSetup.reviewTitle")}</h2>
       {scope && <p>{t("rulesSetup.alreadyApplies", { tool })}</p>}
-      <p className="rules-setup-reason">{rulesSetupMessage(t, card.reason_code)}</p>
+      {(!scope || card.reason_code !== "scope_edit") &&
+        <p className="rules-setup-reason">{rulesSetupMessage(t, card.reason_code)}</p>}
       {card.files.length > 1 ? (
         <label className="rules-setup-source">
           {t("rulesSetup.chooseSource")}
@@ -191,9 +194,7 @@ function ReviewCard({ card, answers, tools, busy, onChoice }: {
             {card.files.map((file) => <option key={file} value={file}>{rulesSetupFileLabel(t, tools[file], file)}</option>)}
           </select>
         </label>
-      ) : (
-        <ul className="rules-setup-files">{card.files.map((file) => <li key={file}>{rulesSetupFileLabel(t, tools[file], file)}</li>)}</ul>
-      )}
+      ) : fileLabel && fileLabel !== names[0] && <p className="rules-setup-files">{fileLabel}</p>}
       <RulesSetupDiff diff={card.diff} codes={card.diff_codes} />
       <div className="rules-setup-actions">
         {scope && answers.includes("all_tools") && <Button type="button" variant="primary" disabled={busy} onClick={() => choice("all_tools", all)}>{all}</Button>}

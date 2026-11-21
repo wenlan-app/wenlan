@@ -330,6 +330,37 @@ mod tests {
         assert_delivered(&f);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn rulesync_adopt_and_watch_allow_a_symlink_above_the_data_root() {
+        use std::os::unix::fs::symlink;
+
+        let mut f = Fixture::new();
+        let scratch = f.setup.data.parent().unwrap();
+        let real = scratch.join("real");
+        let link = scratch.join("link");
+        fs::create_dir(&real).unwrap();
+        symlink(&real, &link).unwrap();
+        let data_root = link.join("data");
+        fs::rename(&f.setup.data, &data_root).unwrap();
+        f.setup.data = data_root.join("rulesync");
+        fs::create_dir_all(f.setup.data.join(".rulesync")).unwrap();
+
+        let plan = f
+            .setup
+            .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
+            .expect("adopt preview through a symlinked data parent");
+        assert!(!plan.files.is_empty());
+        let adopted = f
+            .setup
+            .adopt_using(&plan.token, fixture_rule_renderer, fixture_skill_renderer)
+            .expect("adopt through a symlinked data parent");
+        assert!(adopted.blocked.is_empty(), "{adopted:?}");
+        accept_rule(&f);
+        round(&mut RulesWatch::default(), &f).unwrap();
+        assert_delivered(&f);
+    }
+
     #[test]
     fn rulesync_watch_delivery_open_card() {
         let f = Fixture::new();

@@ -142,10 +142,6 @@
   margin: 0 0 0.75rem;
 }
 
-.rules-setup-actions button[aria-pressed="true"] {
-  background: var(--mem-hover);
-}
-
 .rules-setup-count {
   margin-inline-start: 0.45em;
   font-variant-numeric: tabular-nums;
@@ -153,4 +149,8 @@
 
 .rules-setup-status-panel {
   padding: 0.75rem;
+}
+
+.rules-setup-status-panel > .rules-setup-actions {
+  margin-top: 8px;
 }

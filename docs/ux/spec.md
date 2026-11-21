@@ -1139,10 +1139,11 @@ and wait for evidence that people need them.
 
 - **UX-SKILL-19** `shipped` When local rules setup is enabled, Status opens
   by default and shows each tool’s state and counts, the last background check,
-  and Sync now. Reading Status makes no tool changes. An amber exclamation
-  mark on a tool that needs review opens To review on Rules. Turning setup
+  and a separate Sync now action below the tool rows. The active panel’s
+  button shows its selected state. Reading Status makes no tool changes. An
+  amber exclamation mark on a tool that needs review opens To review on Rules. Turning setup
   off hides the setup controls and cards.
-- **UX-SKILL-20** `shipped` A rule-line scope card says the edit already
+- **UX-SKILL-20** `shipped` A rule-line scope card says once that the edit already
   applies in its tool. Use in all tools and Keep in that tool only choose the
   scope. Dismiss clears the card without changing the tool. A conflict card
   offers the two scope choices and No. It says “No puts <tool> back to the
@@ -1161,8 +1162,9 @@ and wait for evidence that people need them.
 - **UX-SKILL-23** `shipped` Rules setup renders daemon messages from
   localized codes. A missing or unknown code shows a generic message.
   Cards, previews, adoption details and feedback hide paths and file names
-  in labels. Rules use the tool name alone. Skills, commands and subagents
-  add the item name to the tool or shared setup label. Previews show removed
+  in labels. Rules use the tool name alone and omit the label when the card title
+  already names the tool. Skills, commands and subagents add the item name to
+  the tool or shared setup label. Previews show removed
   and added lines with a minus or plus and a red or green tint, and mask
   paths in the changed text. Localized notes explain other changes. The
   final newline note appears only for a newline-only change.
@@ -1180,7 +1182,8 @@ and wait for evidence that people need them.
   搬进来、状态、待确认、还原 in Simplified Chinese). The CLI verbs are
   `wenlan rules adopt`, `wenlan rules status`, `wenlan rules review` and
   `wenlan rules restore`. To review lists tool edits, skill proposals, skill
-  updates and settings changes with the answers each supports.
+  updates and settings changes with the answers each supports. The To review
+  button and the line below the tool chips show the same merged queue count.
   Tests `UX-SKILL-25: names and orders the setup actions` and
   `ux_skill_25_rulesync_action_hints_parse_with_the_real_cli`.
 

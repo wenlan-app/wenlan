@@ -24,7 +24,7 @@ import { TOOL_LOGOS } from "./toolLogos";
 import { formatTimeAgo } from "../../../lib/dateFormat";
 import { useSavedRulesPageIds } from "./useSavedRulesPages";
 import { SpaceRulesAsk } from "./SpaceRulesAsk";
-import { RULES_DELIVERY_QUERY_KEY, useRulesSetup } from "./useRulesSetup";
+import { RULES_DELIVERY_QUERY_KEY, useRulesSetup, useRulesSetupReview } from "./useRulesSetup";
 import "./howIWork.css";
 import { rulesSetupName } from "./rulesSetupText";
 import "./rulesSetup.css";
@@ -211,15 +211,17 @@ function ToolChip({ shown, review, onReview }: { readonly shown: ShownTool; read
  *  whether this page gives any; without one, each connected tool reads
  *  "connected" and nothing more. Nothing shows until the daemon answers; an
  *  older daemon that cannot answer shows nothing. */
-export function RulesToolsHeader({ delivers, setupOnly = false, skillUpdates, onReview }: {
+export function RulesToolsHeader({ delivers, setupOnly = false, reviewCount, skillUpdates, onReview }: {
   readonly delivers: boolean;
   readonly setupOnly?: boolean;
+  readonly reviewCount?: number | null;
   readonly skillUpdates?: number;
   readonly onReview?: () => void;
 }) {
   const { t } = useTranslation();
   const exampleWiki = useExampleWikiActive();
   const setup = useRulesSetup();
+  const review = useRulesSetupReview(!!setup && reviewCount === undefined && !skillUpdates);
   const delivery = useQuery({
     queryKey: RULES_DELIVERY_QUERY_KEY,
     queryFn: getRulesDelivery,
@@ -243,17 +245,13 @@ export function RulesToolsHeader({ delivers, setupOnly = false, skillUpdates, on
     ...Object.values(setup?.review_tools ?? {}).map((tool) => tool.id),
     ...(setup?.tools ?? []).filter((tool) => tool.state === "needs_review").map((tool) => tool.id),
   ]);
-  const toolNames = new Set(Object.values(setup?.review_tools ?? {}).map((tool) => rulesSetupName(tool.name)).filter(Boolean));
-  const [tool] = toolNames;
-  const pendingCount = setup?.proposals.length ?? 0;
+  const pendingCount = reviewCount === undefined ? review.data?.items.length : reviewCount;
   let line: string | undefined;
   if (skillUpdates) {
     line = t("rulesSetup.skillUpdateCount", { count: skillUpdates });
   } else if (pendingCount) {
-    line = pendingCount === 1 && toolNames.size === 1
-      ? t("rulesSetup.changedOne", { tool })
-      : t("rulesSetup.reviewCount", { count: pendingCount });
-  } else if (setup?.adopted) {
+    line = t("rulesSetup.reviewCount", { count: pendingCount });
+  } else if (pendingCount === 0 && setup?.adopted) {
     line = t(setup.in_sync ? "rulesSetup.inSync" : "rulesSetup.syncNeeded");
   }
   return (

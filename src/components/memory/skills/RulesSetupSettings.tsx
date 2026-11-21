@@ -65,7 +65,7 @@ function EnabledRulesSetupSettings({ status }: { readonly status: RulesSetupStat
     dialog.files.some((file) => !dialog.skipped_files?.includes(file.path)) ||
     !!dialog.settings?.files.length || !!dialog.settings?.notice
   );
-  const count = review.data?.items.length ?? status.proposals.length;
+  const count = review.data?.items.length ?? null;
   const tools = status.tools ?? [];
   const lastCheck = status.last_checked_at ? new Date(status.last_checked_at * 1000) : null;
   const list = new Intl.ListFormat(i18n.resolvedLanguage, { type: "unit" });
@@ -73,13 +73,15 @@ function EnabledRulesSetupSettings({ status }: { readonly status: RulesSetupStat
     <section className="rules-setup-settings" aria-label={t("rulesSetup.settingsTitle")}>
       <header className="rules-setup-actions">
         {!status.adopted && status.can_adopt && <Button type="button" disabled={busy} onClick={() => void preview()}>{t("rulesSetup.adoptOpen")}</Button>}
-        <Button type="button" aria-pressed={panel === "status"} onClick={() => setPanel("status")}>{t("rulesSetup.statusTitle")}</Button>
-        <Button type="button" aria-pressed={panel === "review"} onClick={() => setPanel("review")}>
-          {t("rulesSetup.reviewAction")}{count > 0 && <span className="rules-setup-count">{count}</span>}
+        <Button type="button" variant={panel === "status" ? "primary" : "secondary"}
+          aria-pressed={panel === "status"} onClick={() => setPanel("status")}>{t("rulesSetup.statusTitle")}</Button>
+        <Button type="button" variant={panel === "review" ? "primary" : "secondary"}
+          aria-pressed={panel === "review"} onClick={() => setPanel("review")}>
+          {t("rulesSetup.reviewAction")}{!!count && <> <span className="rules-setup-count">{count}</span></>}
         </Button>
         {status.can_restore && <Button type="button" disabled={busy} onClick={() => setDialog("restore")}>{t("rulesSetup.restoreOpen")}</Button>}
       </header>
-      <RulesToolsHeader delivers setupOnly onReview={() => setPanel("review")} />
+      <RulesToolsHeader delivers setupOnly reviewCount={count} onReview={() => setPanel("review")} />
       {panel === "status" ? <Card>
         <div className="rules-setup-status-panel">
           {lastCheck && <p>{t("rulesSetup.lastCheck", { date: new Intl.DateTimeFormat(i18n.resolvedLanguage, {
@@ -98,8 +100,10 @@ function EnabledRulesSetupSettings({ status }: { readonly status: RulesSetupStat
               ])}</span>}
             </li>
           ))}</ul>}
-          {status.adopted && <Button type="button" disabled={busy}
-            onClick={() => void run(syncRulesSetup, t("rulesSetup.syncDone"))}>{t("rulesSetup.sync")}</Button>}
+          {status.adopted && <div className="rules-setup-actions">
+            <Button type="button" disabled={busy}
+              onClick={() => void run(syncRulesSetup, t("rulesSetup.syncDone"))}>{t("rulesSetup.sync")}</Button>
+          </div>}
         </div>
       </Card> : <>
         {review.isError && <p role="alert">{t("rulesSetup.reviewLoadFailed")}</p>}

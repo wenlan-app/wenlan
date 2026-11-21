@@ -1065,16 +1065,10 @@ impl Setup {
     fn preview_adoption(&self, expected_home: &Path) -> Result<AdoptionPlan> {
         self.check_adoption_home(expected_home)?;
         let session = RenderSession::new(&self.binary);
-        let mut plan = self.preview_adoption_using(
+        self.preview_adoption_using(
             |target, source| self.render_rule(&session, target, source),
             |renderer, skills| self.render_skills(&session, renderer, skills),
-        )?;
-        let root = FileRoot::open_home(&self.home)?;
-        if let Some(settings) = crate::rulesync_settings_routes::plan_local(self, &root)? {
-            plan.token = adoption_with_settings_token(&plan.token, &settings.response.token)?;
-            plan.settings = Some(settings.response);
-        }
-        Ok(plan)
+        )
     }
 
     fn discover_for_adoption(&self, manifest: Option<&Manifest>) -> Result<Adoption> {
@@ -1104,6 +1098,11 @@ impl Setup {
         {
             plan.notes
                 .push("No additional tools, commands or subagents found.".into());
+        }
+        let root = FileRoot::open_home(&self.home)?;
+        if let Some(settings) = crate::rulesync_settings_routes::plan_local(self, &root)? {
+            plan.token = adoption_with_settings_token(&plan.token, &settings.response.token)?;
+            plan.settings = Some(settings.response);
         }
         Ok(plan)
     }

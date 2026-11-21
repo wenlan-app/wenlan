@@ -28,7 +28,7 @@ export function useRulesSetup(enabled = true): RulesSetupStatus | undefined {
 export function useRulesSetupReview(enabled: boolean) {
   return useQuery({
     queryKey: REVIEW,
-    queryFn: getRulesSetupReview,
+    queryFn: () => getRulesSetupReview(),
     enabled,
     staleTime: 15_000,
     refetchInterval: enabled ? 15_000 : false,

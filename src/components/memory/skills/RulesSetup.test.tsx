@@ -11,8 +11,9 @@ import { RulesSetupDiff } from "./RulesSetupDiff";
 import { RulesSetupReviews } from "./RulesSetupReviews";
 import { RulesSetupSettings } from "./RulesSetupSettings";
 import { useRulesSetupReview } from "./useRulesSetup";
+import { createRulesSetupFixture } from "../../../../preview/rulesSetupFixture";
 
-const file = ".cursor/commands/check.md";
+const file = ".cursor/commands/release.md";
 const other = ".codex/prompts/check.md";
 const ruleFile = ".cursor/AGENTS.md";
 const cursor = { id: "cursor", name: "Cursor" };
@@ -121,16 +122,18 @@ describe("setup review", () => {
         : receipt);
       mount(<ToolReviews status={{ ...status, proposals: [card] }} />);
       const review = within(screen.getByRole("article"));
-      expect(review.getByText(card.kind === "scope" ? "This edit is already kept in its tool." : "A command or agent changed.")).toBeInTheDocument();
-      expect(review.getByText(card.kind === "scope" ? "Cursor" : "Cursor · check")).toBeInTheDocument();
       expect(review.getByText("− Before")).toHaveAttribute("data-change", "removed");
       expect(review.getByText("+ After")).toHaveAttribute("data-change", "added");
       const buttons = review.getAllByRole("button").map((button) => button.textContent);
       if (card.kind === "scope") {
         expect(buttons).toEqual(["Use in all tools", "Keep in Cursor only", "Dismiss"]);
         expect(review.getByText("This edit already applies in Cursor.")).toBeInTheDocument();
+        expect(review.queryByText("This edit is already kept in its tool.")).not.toBeInTheDocument();
+        expect(review.queryByText("Cursor")).not.toBeInTheDocument();
       } else {
         expect(buttons).toEqual(["Keep in Cursor only", "Use in all tools", "No"]);
+        expect(review.getByText("A command or agent changed.")).toBeInTheDocument();
+        expect(review.getByText("Cursor · release")).toBeInTheDocument();
         expect(review.getByText("No puts Cursor back to the earlier version")).toBeInTheDocument();
       }
       await user.click(review.getByRole("button", { name: label }));
@@ -138,7 +141,7 @@ describe("setup review", () => {
       const decision = { id: card.id, action };
       expect(invoke).toHaveBeenCalledWith("rules_setup_review_preview", { decision });
       expect(dialog.getByText("Restore the last approved version.")).toBeInTheDocument();
-      expect(dialog.getByText(card.kind === "scope" ? "Cursor" : "Cursor · check")).toBeInTheDocument();
+      expect(dialog.getByText(card.kind === "scope" ? "Cursor" : "Cursor · release")).toBeInTheDocument();
       expect(dialog.getByText("+ Preview after")).toBeInTheDocument();
       expect(invoke).not.toHaveBeenCalledWith("rules_setup_review", expect.anything());
       await user.click(dialog.getByRole("button", { name: action === "revert" ? "Restore" : label }));
@@ -206,6 +209,24 @@ describe("setup settings", () => {
     expect(adopted.getAllByRole("button").slice(0, 3).map((button) => button.textContent)).toEqual([standing, review, restore]);
   });
 
+  it.each([
+    ["en", "To review", "5 changes to review", ["12 rules", "5 skills", "3 commands", "2 subagents", "1 MCP server"]],
+    ["zh-Hant", "待確認", "5 處改動待確認", ["12 條規則", "5 個技能", "3 個指令", "2 個子代理", "1 個 MCP 伺服器"]],
+    ["zh-Hans", "待确认", "5 处改动待确认", ["12 条规则", "5 个技能", "3 条命令", "2 个子代理", "1 个 MCP 服务器"]],
+  ] as const)("UX-SKILL-25: uses the merged 5-item count and localized tool totals in %s", async (locale, review, count, totals) => {
+    await i18n.changeLanguage(locale);
+    const fixture = createRulesSetupFixture();
+    mock.mockImplementation(async (command) => fixture(command, undefined, "merged"));
+    const user = userEvent.setup();
+    mount(<RulesSetupSettings />);
+    const button = await screen.findByRole("button", { name: `${review} 5` });
+    expect(within(screen.getByTestId("rules-tools")).getByRole("status")).toHaveTextContent(count);
+    const cursorRow = screen.getAllByRole("listitem").find((row) => row.querySelector("strong")?.textContent === "Cursor");
+    for (const total of totals) expect(cursorRow).toHaveTextContent(total);
+    await user.click(button);
+    expect(screen.getAllByRole("article")).toHaveLength(5);
+  });
+
   it("UX-SKILL-22: includes settings and skips before sending one approved adoption token", async () => {
     answers({ ...status, adopted: false, can_restore: false }, {
       ...plan,
@@ -268,6 +289,25 @@ describe("setup settings", () => {
     await user.click(sync);
     expect(mock.mock.calls.filter(([command]) => command === "rules_setup_sync")).toEqual([["rules_setup_sync"]]);
     await waitFor(() => expect(screen.getByRole("status", { name: "Tools checked for changes." })).toBeInTheDocument());
+  });
+
+  it("UX-SKILL-19: uses the action spacing and moves the selected styling between panels", async () => {
+    const fixture = createRulesSetupFixture();
+    mock.mockImplementation(async (command) => fixture(command, undefined, "synced"));
+    const user = userEvent.setup();
+    mount(<RulesSetupSettings />);
+    const sync = await screen.findByRole("button", { name: "Sync now" });
+    expect(sync.closest(".rules-setup-actions")?.previousElementSibling).toHaveClass("rules-setup-plan-list");
+    const standing = screen.getByRole("button", { name: "Status", pressed: true });
+    const review = screen.getByRole("button", { name: "To review", pressed: false });
+    const accent = "bg-[var(--mem-accent-indigo)]";
+    expect(standing).toHaveClass(accent, "text-[var(--mem-text-on-accent)]");
+    expect(review).not.toHaveClass(accent);
+    await user.click(review);
+    expect(review).toHaveAttribute("aria-pressed", "true");
+    expect(review).toHaveClass(accent, "text-[var(--mem-text-on-accent)]");
+    expect(standing).not.toHaveClass(accent);
+    expect(screen.queryByRole("button", { name: "Sync now" })).not.toBeInTheDocument();
   });
 
   it("UX-SKILL-19: the off result hides Settings controls", async () => {
@@ -346,7 +386,7 @@ describe("UX-SKILL-23: localized setup messages and labels without paths or file
     const user = userEvent.setup();
     mount(<ToolReviews status={{ ...status, proposals: [competing], review_tools: reviewTools }} />);
     expect(screen.getByText(messages.competing_personal_files)).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "Cursor · check" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Cursor · release" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "Codex · reviewer" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: i18n.t("rulesSetup.no") }));
     const dialog = await screen.findByRole("alertdialog");
@@ -359,7 +399,7 @@ describe("UX-SKILL-23: localized setup messages and labels without paths or file
       expect(within(preview).queryByText(messages.no_final_newline)).not.toBeInTheDocument();
       assertSafe(panel.textContent ?? "");
     }
-    expect(within(dialog).getByText("Cursor · check")).toBeInTheDocument();
+    expect(within(dialog).getByText("Cursor · release")).toBeInTheDocument();
     expect(within(dialog).getByText("Codex · reviewer")).toBeInTheDocument();
   });
 

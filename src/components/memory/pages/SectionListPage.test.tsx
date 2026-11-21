@@ -104,11 +104,12 @@ describe("personal rules setup in the section lists", () => {
     expect(screen.queryByRole("article")).not.toBeInTheDocument();
     await user.click(chip);
     expect(await screen.findByRole("article", { name: "Cursor changed a rule" })).toBeInTheDocument();
-    expect(screen.getByText("Cursor changed one thing. Your call.")).toBeInTheDocument();
+    expect(screen.getByText("1 change to review")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "To review 1" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Codex" }).querySelector('[data-dot="delivered"]')).toBeVisible();
     cleanup();
     setup({ section: "skills" });
-    expect(await screen.findByText("Cursor changed one thing. Your call.")).toBeInTheDocument();
+    expect(await screen.findByText("1 change to review")).toBeInTheDocument();
     expect(screen.queryByRole("article")).not.toBeInTheDocument();
   });
 
