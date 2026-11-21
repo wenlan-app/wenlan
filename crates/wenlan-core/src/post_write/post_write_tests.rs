@@ -2709,7 +2709,7 @@ async fn page_write_update_user_edited_machine_write_creates_revision_card_witho
                 caller_id: None,
                 operation_id: None,
             },
-            edited_by: "re_distill",
+            edited_by: "distill",
             require_stale: false,
             expected_source_revision: None,
             knowledge_path: None,
@@ -2811,7 +2811,7 @@ async fn page_write_update_user_edited_machine_write_creates_revision_card_witho
     assert_eq!(structured["target_kind"], "page");
     assert_eq!(structured["revises_page"], page_id);
     assert_eq!(structured["page_version"], before.version);
-    assert_eq!(structured["edited_by"], "re_distill");
+    assert_eq!(structured["edited_by"], "distill");
     assert_eq!(structured["source_memory_ids"], serde_json::json!([mem_id]));
 }
 
@@ -2938,7 +2938,7 @@ async fn gated_refresh_does_not_clear_a_newer_source_revision() {
             caller_id: None,
             operation_id: None,
         },
-        "re_distill",
+        "distill",
         true,
         expected_revision,
         None,
@@ -3795,12 +3795,14 @@ async fn page_write_gated_receipt_deduplicates_revision_card_retry() {
             "op-gated",
         )
     };
-    let first = update_page(&db, page_id, gated_req(), "re_distill", false, None, None)
+    // An explicit rebuild ("distill") still waits as one card on a page the
+    // person edited; the automatic refresh goes sentence by sentence instead.
+    let first = update_page(&db, page_id, gated_req(), "distill", false, None, None)
         .await
         .unwrap();
     assert_eq!(first.outcome, WriteOutcome::Gated);
 
-    let replay = update_page(&db, page_id, gated_req(), "re_distill", false, None, None)
+    let replay = update_page(&db, page_id, gated_req(), "distill", false, None, None)
         .await
         .unwrap();
     assert_eq!(
@@ -4246,7 +4248,7 @@ async fn page_write_update_edit_landing_mid_write_is_not_clobbered() {
                 caller_id: None,
                 operation_id: None,
             },
-            edited_by: "re_distill",
+            edited_by: "distill",
             require_stale: false,
             knowledge_path: None,
             citations: None,

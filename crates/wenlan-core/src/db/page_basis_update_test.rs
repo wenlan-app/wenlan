@@ -491,11 +491,11 @@ async fn the_automatic_refresh_rewrites_an_unowned_note_with_a_basis() {
     assert_eq!(basis.confirmed_version, a.version);
 }
 
-/// A note with a basis that holds the person's edits is never written over:
-/// the automatic refresh stages the same preview card "Update from sources"
-/// would, and the page stays as it was until the person accepts it.
+/// A note with a basis that the person edited is never written over: the
+/// automatic refresh goes sentence by sentence, so the person's sentence stays
+/// as they wrote it, and no whole-page card waits for them (UX-WHO-2).
 #[tokio::test]
-async fn the_automatic_refresh_stages_a_preview_for_an_edited_note_with_a_basis() {
+async fn the_automatic_refresh_keeps_the_persons_sentence_in_a_note_with_a_basis() {
     let (db, _dir) = pair().await;
     db.update_page_content(
         "b",
@@ -506,18 +506,33 @@ async fn the_automatic_refresh_stages_a_preview_for_an_edited_note_with_a_basis(
     .await
     .unwrap();
     db.set_page_stale("b", "source_updated").await.unwrap();
+    let llm = provider(BODY);
+
+    let outcome = refresh_after_a_source_change(&db, &llm, "b").await;
+
+    assert!(!outcome.gated, "{outcome:?}");
+    assert!(cards(&db, "b").await.is_empty());
+    let after = db.get_page("b").await.unwrap().unwrap();
+    assert_eq!(after.content, "Beta, as the person wrote it.");
+}
+
+/// A locked note with a basis waits as the preview card "Update from sources"
+/// would stage; the page stays as it was until the person accepts it.
+#[tokio::test]
+async fn the_automatic_refresh_stages_a_preview_for_a_locked_note_with_a_basis() {
+    let (db, _dir) = pair().await;
+    db.set_page_review_required("b", true).await.unwrap();
+    db.set_page_stale("b", "source_updated").await.unwrap();
     let before = db.get_page("b").await.unwrap().unwrap();
     let llm = provider(BODY);
 
     let outcome = refresh_after_a_source_change(&db, &llm, "b").await;
 
     assert!(outcome.gated && !outcome.wrote, "{outcome:?}");
-    assert!(outcome.revision_card_id.is_some());
     assert_eq!(cards(&db, "b").await.len(), 1);
     let after = db.get_page("b").await.unwrap().unwrap();
-    assert_eq!(after.content, "Beta, as the person wrote it.");
+    assert_eq!(after.content, before.content);
     assert_eq!(after.version, before.version, "no version was written");
-    assert_eq!(after.stale_reason, None, "out of the stale queue");
 }
 
 /// The skip marker belongs to the basis rows: when the last one goes, the

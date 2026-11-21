@@ -4577,9 +4577,11 @@ async fn maintenance_slices_detect_page_merge_cards_and_route_stale_pages() {
         first_stale.stale_machine_refreshed + second_stale.stale_machine_refreshed,
         1
     );
+    // The person's page goes sentence by sentence (UX-WHO-2): their sentence
+    // stays, and no whole-page card is staged for it.
     assert_eq!(
         first_stale.stale_human_cards + second_stale.stale_human_cards,
-        1
+        0
     );
 
     let overview = run_stage(wenlan_core::maintenance::MaintenanceStage::Overview).await;
@@ -4617,10 +4619,10 @@ async fn maintenance_slices_detect_page_merge_cards_and_route_stale_pages() {
 
     let revisions = db.list_pending_revisions(10).await.unwrap();
     assert!(
-        revisions
+        !revisions
             .iter()
             .any(|r| r.target_source_id == page_human_stale),
-        "human-owned stale page should stage a revision card"
+        "an edited stale page is not held back as one whole-page card"
     );
 
     assert!(

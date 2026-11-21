@@ -2014,10 +2014,10 @@ pub(crate) async fn refresh_page_with_candidate_sources(
 
     // A note that relies on other notes follows its sources like any other
     // note: when one changes, the automatic refresh rewrites it in place (the
-    // old version stays in its history) and confirms the bases it read. Only
-    // a note the person locked, wrote or edited gets the preview card an
-    // explicit "Update from sources" stages (below), so the person's text is
-    // never written over.
+    // old version stays in its history; the sentence gate keeps the person's
+    // sentences) and confirms the bases it read. Only a note the person
+    // locked gets the preview card an explicit "Update from sources" stages
+    // (below).
     let has_basis = db.page_has_basis(page_id).await?;
     let bases = if has_basis {
         db.list_basis_context(page_id).await?
@@ -2116,7 +2116,7 @@ pub(crate) async fn refresh_page_with_candidate_sources(
                     ),
                     &page,
                     false,
-                    crate::sentences::holds_person_sentences(db, &page).await?,
+                    false,
                 )));
     if basis_preview {
         let old_sources: std::collections::HashSet<&str> =
@@ -4286,16 +4286,12 @@ The app process is the only writer [3].\n\n## Backup\n\nNightly copy to iCloud D
         let prompts = PromptRegistry::default();
 
         let before = db.get_page("page_h").await.unwrap().unwrap();
-        let outcome = refresh_page(
-            &db,
-            &llm,
-            &prompts,
-            "page_h",
-            RefreshReason::SourceChanged,
-            None,
-        )
-        .await
-        .unwrap();
+        // An explicit rebuild waits as one card on a page the person edited.
+        // The automatic refresh after a source change goes sentence by
+        // sentence instead (UX-WHO-2; see the refinery sweep test).
+        let outcome = refresh_page(&db, &llm, &prompts, "page_h", RefreshReason::Explicit, None)
+            .await
+            .unwrap();
         assert!(
             !outcome.wrote,
             "human-owned page must not be overwritten in place"
