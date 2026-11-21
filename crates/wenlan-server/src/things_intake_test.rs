@@ -497,9 +497,17 @@ async fn ux_chat_5_a_nights_reading_keeps_what_the_work_settled() {
         .iter()
         .map(|c| (found_session_id(c).unwrap(), c.clone()))
         .collect();
-    let done = dream_with(&db, &due, &by_session, group.as_ref(), "English", &keep)
-        .await
-        .unwrap();
+    let done = dream_with(
+        &db,
+        &due,
+        &by_session,
+        group.as_ref(),
+        "English",
+        &keep,
+        None,
+    )
+    .await
+    .unwrap();
     assert_eq!(done, (1, 2));
     // The model read what the person typed and the end of the last reply.
     let asked = group.prompts.lock().unwrap()[1].clone();
@@ -578,9 +586,17 @@ async fn ux_chat_5_a_nights_reading_keeps_what_the_work_settled() {
     assert_eq!(due[0].conversations.len(), 1);
     let by_session: HashMap<String, FoundConversation> =
         [(found_session_id(&a2).unwrap(), a2.clone())].into();
-    let done = dream_with(&db, &due, &by_session, group.as_ref(), "English", &keep)
-        .await
-        .unwrap();
+    let done = dream_with(
+        &db,
+        &due,
+        &by_session,
+        group.as_ref(),
+        "English",
+        &keep,
+        None,
+    )
+    .await
+    .unwrap();
     assert_eq!(done, (1, 1));
     let asked = group.prompts.lock().unwrap()[3].clone();
     assert!(asked.contains("P1 (open): Whether the site gets a pricing page is still open."));
@@ -688,7 +704,7 @@ async fn ux_chat_5_a_night_connects_its_points_in_the_one_call() {
         .things_to_dream(chrono::Utc::now().timestamp(), 10)
         .await
         .unwrap();
-    let done = dream_with(&db, &due, &found, group.as_ref(), "English", &keep)
+    let done = dream_with(&db, &due, &found, group.as_ref(), "English", &keep, None)
         .await
         .unwrap();
     assert_eq!(done, (1, 3));
@@ -741,7 +757,7 @@ async fn ux_graph_7_a_night_merges_what_says_the_same_and_undo_takes_it_back() {
         .things_to_dream(chrono::Utc::now().timestamp(), 10)
         .await
         .unwrap();
-    dream_with(&db, &due, &found, group.as_ref(), "English", &keep)
+    dream_with(&db, &due, &found, group.as_ref(), "English", &keep, None)
         .await
         .unwrap();
     let tidy = group.tidy_prompts.lock().unwrap()[0].clone();
@@ -879,7 +895,7 @@ async fn ux_chat_5_old_points_are_connected_once_and_can_be_taken_back() {
         .things_to_dream(chrono::Utc::now().timestamp(), 10)
         .await
         .unwrap();
-    dream_with(&db, &due, &found, night.as_ref(), "English", &keep)
+    dream_with(&db, &due, &found, night.as_ref(), "English", &keep, None)
         .await
         .unwrap();
     assert!(!night.prompts.lock().unwrap()[0].contains("big map"));
@@ -981,9 +997,17 @@ async fn ux_chat_5_a_night_keeps_its_lines_and_says_what_it_could_not_read() {
     let by_session: HashMap<String, FoundConversation> =
         [(found_session_id(&a).unwrap(), a.clone())].into();
     let keep = Keep(&db, Default::default());
-    let done = dream_with(&db, &due, &by_session, group.as_ref(), "English", &keep)
-        .await
-        .unwrap();
+    let done = dream_with(
+        &db,
+        &due,
+        &by_session,
+        group.as_ref(),
+        "English",
+        &keep,
+        None,
+    )
+    .await
+    .unwrap();
     assert_eq!(done, (1, 1), "the point with a number in it is dropped");
     let asked = group.prompts.lock().unwrap()[1].clone();
     assert!(asked.contains("L1: keep the resume to one page"), "{asked}");
@@ -1272,7 +1296,7 @@ async fn a_night_reads_each_spaces_conversations_apart() {
         r#"{"conclusion": []}"#,
     ]);
     let keep = Keep(&db, Default::default());
-    dream_with(&db, &due, &found, night.as_ref(), "English", &keep)
+    dream_with(&db, &due, &found, night.as_ref(), "English", &keep, None)
         .await
         .unwrap();
 
@@ -1324,7 +1348,7 @@ async fn a_point_not_kept_leaves_its_conversation_for_the_next_night() {
         r#"{"conclusion": []}"#,
     ]);
     let keep = FailFirst(Keep(&db, Default::default()), Default::default());
-    dream_with(&db, &due, &found, night.as_ref(), "English", &keep)
+    dream_with(&db, &due, &found, night.as_ref(), "English", &keep, None)
         .await
         .unwrap();
 
@@ -1365,7 +1389,8 @@ async fn ai_note(db: &MemoryDB, space: &str, title: &str, body: &str) -> String 
     }])
     .await
     .unwrap();
-    let made = wenlan_core::post_write::create_page_with_floor(
+    // A match threshold nothing reaches: each note is its own page.
+    let made = wenlan_core::post_write::create_page_with_tuning(
         db,
         wenlan_types::requests::CreateConceptRequest {
             title: title.to_string(),
@@ -1380,9 +1405,14 @@ async fn ai_note(db: &MemoryDB, space: &str, title: &str, body: &str) -> String 
         "test",
         None,
         1,
+        2.0,
     )
     .await
     .unwrap();
+    assert!(
+        made.attached_to.is_none(),
+        "the note was merged into another"
+    );
     db.set_page_review_status(&made.id, "confirmed")
         .await
         .unwrap();
@@ -1441,6 +1471,19 @@ async fn night_over_read_notes(
     due: &[DreamDue],
     read_answers: &[&str],
 ) -> Arc<Scripted> {
+    let keep = Keep(db, Default::default());
+    night_over_read_notes_in(db, found, due, read_answers, None, &keep).await
+}
+
+/// [`night_over_read_notes`] projecting pages into `pages_folder`.
+async fn night_over_read_notes_in(
+    db: &MemoryDB,
+    found: &HashMap<String, FoundConversation>,
+    due: &[DreamDue],
+    read_answers: &[&str],
+    pages_folder: Option<&std::path::Path>,
+    writer: &dyn PointWriter,
+) -> Arc<Scripted> {
     let night = Scripted::with_read_page_answers(
         &[
             r#"{"points": [{"text": "The release ships on Wednesday.", "settled": true, "from": "C0"}]}"#,
@@ -1448,10 +1491,17 @@ async fn night_over_read_notes(
         ],
         read_answers,
     );
-    let keep = Keep(db, Default::default());
-    dream_with(db, due, found, night.as_ref(), "English", &keep)
-        .await
-        .unwrap();
+    dream_with(
+        db,
+        due,
+        found,
+        night.as_ref(),
+        "English",
+        writer,
+        pages_folder,
+    )
+    .await
+    .unwrap();
     night
 }
 
@@ -1482,7 +1532,18 @@ async fn a_night_changes_the_ai_sentence_a_new_point_contradicts_on_a_note_a_rec
     .await;
     let before = db.get_page(&note).await.unwrap().unwrap();
 
-    let night = night_over_read_notes(&db, &found, &due, &[SHIPS_ON_TUESDAY]).await;
+    // The pages folder is a scratch one, never the person's own.
+    let pages = tempfile::tempdir().unwrap();
+    let keep = Keep(&db, Default::default());
+    let night = night_over_read_notes_in(
+        &db,
+        &found,
+        &due,
+        &[SHIPS_ON_TUESDAY],
+        Some(pages.path()),
+        &keep,
+    )
+    .await;
 
     let asked = night.read_page_prompts.lock().unwrap().clone();
     assert_eq!(asked.len(), 1, "{asked:?}");
@@ -1499,6 +1560,16 @@ async fn a_night_changes_the_ai_sentence_a_new_point_contradicts_on_a_note_a_rec
     );
     assert_eq!(after.version, before.version + 1);
     assert!(after.source_memory_ids.contains(&"mem_0".to_string()));
+    // The page's file in the pages folder carries the new sentence.
+    let projected = std::fs::read_dir(pages.path())
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "md"))
+        .any(|entry| {
+            std::fs::read_to_string(entry.path())
+                .is_ok_and(|text| text.contains("The release ships on Wednesday."))
+        });
+    assert!(projected, "no .md in the pages folder has the new sentence");
     let sentences = wenlan_core::sentences::page_sentences(&db, &note)
         .await
         .unwrap();
@@ -1888,4 +1959,140 @@ async fn a_sentence_too_long_to_show_whole_is_left_out_and_cannot_be_replaced() 
         (after.content, after.version),
         (before.content, before.version)
     );
+}
+
+/// Keeps points as `Keep` does, then forgets each one, as a night's tidy
+/// does to a memory it takes the place of.
+struct KeepThenEvict<'a>(Keep<'a>);
+
+impl PointWriter for KeepThenEvict<'_> {
+    fn write(&self, request: StoreMemoryRequest) -> Written<'_> {
+        Box::pin(async move {
+            let id = self.0.write(request).await?;
+            self.0
+                 .0
+                .forget_memory(&id, "night-tidy", "evicted by tonight's tidy")
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(id)
+        })
+    }
+}
+
+#[tokio::test]
+async fn a_point_tonights_tidy_evicted_changes_nothing_on_a_read_note() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = MemoryDB::new(dir.path(), Arc::new(NoopEmitter))
+        .await
+        .unwrap();
+    let (found, due) = one_thing_two_conversations(&db, "team", "team").await;
+    let ai = ai_note(&db, "team", "Release", "The release ships on Tuesday.").await;
+    let mine = ai_note(
+        &db,
+        "team",
+        "Cafeteria",
+        "The cafeteria menu rotates weekly.",
+    )
+    .await;
+    person_edits(
+        &db,
+        &mine,
+        "Quarterly tax filings are due in April. I file mine on the first day.",
+    )
+    .await;
+    for note in [&ai, &mine] {
+        conversation_read(&db, &due, 0, wenlan_types::SessionReadKind::ReadPage, note).await;
+    }
+    let before_ai = db.get_page(&ai).await.unwrap().unwrap();
+    let before_mine = db.get_page(&mine).await.unwrap().unwrap();
+    let keep = KeepThenEvict(Keep(&db, Default::default()));
+
+    let night = night_over_read_notes_in(
+        &db,
+        &found,
+        &due,
+        &[
+            // The newest-read note is asked first.
+            r#"{"contradicted": [{"sentence": 1, "point": 0, "text": "I file mine on the last day."}]}"#,
+            SHIPS_ON_TUESDAY,
+        ],
+        None,
+        &keep,
+    )
+    .await;
+
+    // The model was asked, and both the in-place write and the proposal were
+    // held back because the point no longer stands.
+    let asked = night.read_page_prompts.lock().unwrap().clone();
+    assert_eq!(asked.len(), 2, "{asked:?}");
+    let after_ai = db.get_page(&ai).await.unwrap().unwrap();
+    assert_eq!(
+        (after_ai.content, after_ai.version),
+        (before_ai.content, before_ai.version)
+    );
+    let after_mine = db.get_page(&mine).await.unwrap().unwrap();
+    assert_eq!(after_mine.version, before_mine.version);
+    let view = wenlan_core::sentences::page_sentences(&db, &mine)
+        .await
+        .unwrap();
+    assert!(view.proposals.is_empty());
+}
+
+#[tokio::test]
+async fn a_rejected_suggestion_does_not_come_back_under_another_memory() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = MemoryDB::new(dir.path(), Arc::new(NoopEmitter))
+        .await
+        .unwrap();
+    let (found, due) = one_thing_two_conversations(&db, "team", "team").await;
+    let note = ai_note(&db, "team", "Release", "The release ships on Tuesday.").await;
+    person_edits(
+        &db,
+        &note,
+        "The release ships on Tuesday. I check the release on Tuesday morning.",
+    )
+    .await;
+    conversation_read(&db, &due, 0, wenlan_types::SessionReadKind::ReadPage, &note).await;
+    let answer = r#"{"contradicted": [{"sentence": 1, "point": 0, "text": "I check the release on Wednesday morning."}]}"#;
+    let reworded =
+        r#"{"contradicted": [{"sentence": 1, "point": 0, "text": "I check it on Wednesday."}]}"#;
+
+    // mem_0 makes the claim; the suggestion waits.
+    let first = Keep(&db, Default::default());
+    night_over_read_notes_in(&db, &found, &due, &[answer], None, &first).await;
+    // A different memory (mem_1) makes the same claim, worded another way:
+    // still one suggestion on that sentence.
+    let second = Keep(&db, std::sync::atomic::AtomicUsize::new(1));
+    night_over_read_notes_in(&db, &found, &due, &[reworded], None, &second).await;
+    let view = wenlan_core::sentences::page_sentences(&db, &note)
+        .await
+        .unwrap();
+    assert_eq!(view.proposals.len(), 1, "{:?}", view.proposals);
+
+    // The person says no; a third memory (mem_2) does not bring it back.
+    wenlan_core::sentences::reject_sentence_proposal(&db, &note, &view.proposals[0].id, None)
+        .await
+        .unwrap();
+    let third = Keep(&db, std::sync::atomic::AtomicUsize::new(2));
+    night_over_read_notes_in(&db, &found, &due, &[answer], None, &third).await;
+    let view = wenlan_core::sentences::page_sentences(&db, &note)
+        .await
+        .unwrap();
+    assert!(view.proposals.is_empty(), "{:?}", view.proposals);
+}
+
+#[tokio::test]
+async fn one_space_comparison_resolves_names_and_ids() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = MemoryDB::new(dir.path(), Arc::new(NoopEmitter))
+        .await
+        .unwrap();
+    db.create_space("team", None, false).await.unwrap();
+    db.create_space("home", None, false).await.unwrap();
+    let team = db.get_space("team").await.unwrap().unwrap().id;
+    use wenlan_core::sentences::same_space;
+    assert!(same_space(&db, Some("team"), Some(&team)).await);
+    assert!(same_space(&db, Some(&team), Some("team")).await);
+    assert!(!same_space(&db, Some("home"), Some(&team)).await);
+    assert!(!same_space(&db, None, Some("team")).await);
 }

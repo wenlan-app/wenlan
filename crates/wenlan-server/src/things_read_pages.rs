@@ -112,14 +112,19 @@ pub(crate) async fn check_read_pages(
                 continue;
             }
         };
-        let own: Vec<&NewPoint> = points
-            .iter()
-            .filter(|p| {
-                sessions.contains(p.session_id.as_str())
-                    && p.space.is_some()
-                    && p.space == page.space
-            })
-            .collect();
+        let mut own: Vec<&NewPoint> = Vec::new();
+        for point in points {
+            if sessions.contains(point.session_id.as_str())
+                && wenlan_core::sentences::same_space(
+                    db,
+                    point.space.as_deref(),
+                    page.space.as_deref(),
+                )
+                .await
+            {
+                own.push(point);
+            }
+        }
         if own.is_empty() {
             continue;
         }
@@ -220,10 +225,7 @@ async fn check_page(
         let stands = match standing.get(point.memory_id.as_str()) {
             Some(stands) => *stands,
             None => {
-                let stands = matches!(
-                    db.get_memory_detail(&point.memory_id).await,
-                    Ok(Some(memory)) if !memory.is_archived
-                );
+                let stands = db.memory_stands(&point.memory_id).await.unwrap_or(false);
                 standing.insert(point.memory_id.as_str(), stands);
                 stands
             }

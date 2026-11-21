@@ -318,6 +318,7 @@ pub async fn look_once(
         local_hour,
         backoff,
         &DaemonWriter(shared.clone()),
+        &wenlan_core::config::load_config().knowledge_path_or_default(),
     )
     .await?;
     report.dreamed = dreamed;
@@ -413,6 +414,7 @@ pub fn dream_quiet_since(now: i64, local_hour: u32) -> i64 {
 
 /// Read the things that went on for points, if any are due. Returns the
 /// things read and the points written.
+#[allow(clippy::too_many_arguments)]
 async fn dream_once(
     db: &MemoryDB,
     models: &IntakeModels,
@@ -421,6 +423,7 @@ async fn dream_once(
     local_hour: u32,
     backoff: &mut Backoff,
     writer: &dyn PointWriter,
+    pages_folder: &std::path::Path,
 ) -> Result<(usize, usize), String> {
     if now < backoff.dream.1 {
         return Ok((0, 0));
@@ -440,7 +443,17 @@ async fn dream_once(
         .into_iter()
         .filter_map(|c| found_session_id(&c).map(|id| (id, c)))
         .collect();
-    match dream_with(db, &due, &found, models.group.as_ref(), language, writer).await {
+    match dream_with(
+        db,
+        &due,
+        &found,
+        models.group.as_ref(),
+        language,
+        writer,
+        Some(pages_folder),
+    )
+    .await
+    {
         Ok(done) => {
             backoff.dream = (0, 0);
             Ok(done)
@@ -462,6 +475,7 @@ pub async fn dream_with(
     model: &dyn LlmProvider,
     language: &str,
     writer: &dyn PointWriter,
+    pages_folder: Option<&std::path::Path>,
 ) -> Result<(usize, usize), String> {
     let mut points_written = 0;
     // One reading per Space a thing's conversations are in: what was said in
@@ -772,14 +786,13 @@ pub async fn dream_with(
         // Page text, proposals included, is written only by the main computer
         // of a shared library (the same gate as the tidy above).
         let read_pages = if tidy_here {
-            let pages_folder = wenlan_core::config::load_config().knowledge_path_or_default();
             crate::things_read_pages::check_read_pages(
                 db,
                 &session_ids,
                 &kept_points,
                 &following,
                 model,
-                Some(&pages_folder),
+                pages_folder,
             )
             .await
         } else {
@@ -817,13 +830,13 @@ tokio::task_local! {
 /// Whether AI may write page text on this computer: always, unless it shares
 /// the library and another computer is the main one.
 async fn page_writing_here() -> bool {
+    // A test never reads the real data root's shared-library settings: it is
+    // the main computer unless it says otherwise.
     #[cfg(test)]
-    if NOT_THE_MAIN_COMPUTER
+    return !NOT_THE_MAIN_COMPUTER
         .try_with(|not_main| *not_main)
-        .unwrap_or(false)
-    {
-        return false;
-    }
+        .unwrap_or(false);
+    #[cfg(not(test))]
     tokio::task::spawn_blocking(|| {
         wenlan_core::shared_space::library::page_writing_allowed_at(
             &wenlan_core::shared_space::settings_path(),

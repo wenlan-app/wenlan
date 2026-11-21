@@ -37243,6 +37243,37 @@ impl MemoryDB {
         }
     }
 
+    /// Whether the memory `source_id` stands as current content: a stored
+    /// memory (not a staged revision), not evicted or folded away by its own
+    /// mode, not hidden by a memory that replaced it, and not muted by an
+    /// archiving superseder. This is what recall hands an AI tool
+    /// (`not_self_archived`, `not_hidden_by_superseder`, `superseder_archives`),
+    /// so a night that grounds a change on a memory asks the same question.
+    pub async fn memory_stands(&self, source_id: &str) -> Result<bool, WenlanError> {
+        let conn = self.conn.lock().await;
+        let sql = format!(
+            "SELECT 1 FROM memories m
+              WHERE m.source = 'memory' AND m.source_id = ?1
+                AND m.pending_revision = 0
+                AND {self_ok}
+                AND {not_hidden}
+                AND NOT {archived}
+              LIMIT 1",
+            self_ok = not_self_archived("m"),
+            not_hidden = not_hidden_by_superseder(&ReadScope::Global, "m"),
+            archived = superseder_archives(&ReadScope::Global, "m"),
+        );
+        let mut rows = conn
+            .query(&sql, libsql::params![source_id])
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("memory_stands: {e}")))?;
+        Ok(rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("memory_stands row: {e}")))?
+            .is_some())
+    }
+
     /// Fetch multiple memories by source_id in a single query.
     /// Returns only the source_ids that exist; missing ids are silently omitted.
     /// Preserves input order.

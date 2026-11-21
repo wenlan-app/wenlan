@@ -597,8 +597,8 @@ enum ProposalGrant {
 /// Space, and the proposal says which one it came from so the person can judge
 /// it. The page is not touched; the person decides.
 ///
-/// `None` when nothing was filed because the same proposal already waits, or
-/// the person already rejected one for this sentence from this memory.
+/// `None` when nothing was filed because a proposal already waits on this
+/// sentence, or the person already rejected a night's proposal for it.
 ///
 /// Only the night (`wenlan-server`'s `things_read_pages`) may call this. It is
 /// `pub` because that caller lives in another crate; no route reaches it, and
@@ -616,24 +616,29 @@ pub async fn propose_contradicted_sentence(
         agent: Some(agent.to_string()),
         session: None,
     };
-    let memory = db
-        .get_memory_detail(memory_id)
-        .await?
-        .filter(|memory| !memory.is_archived)
-        .ok_or_else(|| {
-            WenlanError::Validation(format!(
+    let memory = match db.get_memory_detail(memory_id).await? {
+        Some(memory) if db.memory_stands(memory_id).await? => memory,
+        _ => {
+            return Err(WenlanError::Validation(format!(
                 "contradicting_memory_not_current: memory {memory_id} does not stand now"
-            ))
-        })?;
+            )))
+        }
+    };
     let page = load_page(db, page_id).await?;
     if !same_space(db, memory.space.as_deref(), page.space.as_deref()).await {
         return Err(WenlanError::Validation(format!(
             "contradicting_memory_other_space: memory {memory_id} is not in the page's Space"
         )));
     }
+    // One suggestion per sentence at a time, whatever memory or wording it
+    // comes from; and once the person has said no to a night's suggestion on
+    // a sentence, none comes back for it. A changed sentence has a new hash,
+    // so it starts afresh.
     let entries = db.list_sentence_history("page", page_id).await?;
     let existing = proposals_from(&entries, page_id);
-    if pending_same(&existing, &req.sentence_hash, req.text.trim()).is_some() {
+    if existing.iter().any(|p| {
+        p.sentence_hash == req.sentence_hash && p.status == SentenceProposalStatus::Pending
+    }) {
         return Ok(None);
     }
     let rejected: HashSet<&str> = existing
@@ -644,7 +649,7 @@ pub async fn propose_contradicted_sentence(
     let refused_before = entries.iter().any(|entry| {
         entry.op == OP_SENTENCE_PROPOSE
             && str_field(entry, "sentence_hash") == Some(req.sentence_hash.as_str())
-            && str_field(entry, "contradicted_by") == Some(memory_id)
+            && str_field(entry, "contradicted_by").is_some()
             && str_field(entry, "proposal_id").is_some_and(|id| rejected.contains(id))
     });
     if refused_before {
@@ -674,7 +679,7 @@ pub async fn propose_contradicted_sentence(
 
 /// Whether two Space references (a name or an id, either may be absent) name
 /// the same Space. Absent on either side is never the same.
-async fn same_space(db: &MemoryDB, a: Option<&str>, b: Option<&str>) -> bool {
+pub async fn same_space(db: &MemoryDB, a: Option<&str>, b: Option<&str>) -> bool {
     let (Some(a), Some(b)) = (a, b) else {
         return false;
     };
@@ -682,7 +687,7 @@ async fn same_space(db: &MemoryDB, a: Option<&str>, b: Option<&str>) -> bool {
         return true;
     }
     async fn id_of(db: &MemoryDB, space: &str) -> String {
-        match db.get_space(space).await {
+        match db.get_space_without_private_counts(space).await {
             Ok(Some(found)) => found.id,
             _ => space.to_string(),
         }
