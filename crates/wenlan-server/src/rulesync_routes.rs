@@ -1247,7 +1247,14 @@ impl Setup {
                     let link = links.and_then(|links| links.get(&path));
                     let removal = operation.desired == Snapshot::Absent;
                     let verify = || {
-                        if removal && skill_case_alias(root, &path)?.is_some() {
+                        let alias = if restoring {
+                            root.case_alias(&path, Path::new(""))?
+                        } else if removal {
+                            skill_case_alias(root, &path)?
+                        } else {
+                            None
+                        };
+                        if alias.is_some() {
                             return Ok(false);
                         }
                         link.map_or(Ok(true), |expected| expected.matches(&self.home, &path))
@@ -1260,7 +1267,7 @@ impl Setup {
                         stage.options(
                             &data,
                             operation.allow_link,
-                            (link.is_some() || removal).then_some(&verify as _),
+                            (link.is_some() || removal || restoring).then_some(&verify as _),
                         ),
                     )?
                 } else if operation.seen == Snapshot::Absent
@@ -1386,21 +1393,28 @@ impl Setup {
                 continue;
             }
             let original = manifest.backup[&path].clone();
-            let seen =
-                match read_planned_path(root, &path, true, delivered.delivered == Snapshot::Absent)
-                {
-                    Ok(current) if extension_only && original == current => {
-                        manifest.delivered.remove(&path);
-                        continue;
+            let expected = &delivered.delivered;
+            let seen = match read_planned_path(root, &path, true, *expected == Snapshot::Absent)
+                .and_then(|current| {
+                    if current != Snapshot::Absent
+                        && root.case_alias(&path, Path::new(""))?.is_some()
+                    {
+                        return Err(std::io::Error::other("the destination spelling changed"));
                     }
-                    Ok(current) if delivered.delivered == current => current,
-                    _ => {
-                        result
-                            .blocked
-                            .push(format!("{} changed since delivery", path.display()));
-                        continue;
-                    }
-                };
+                    Ok(current)
+                }) {
+                Ok(current) if extension_only && original == current => {
+                    manifest.delivered.remove(&path);
+                    continue;
+                }
+                Ok(current) if *expected == current => current,
+                _ => {
+                    result
+                        .blocked
+                        .push(format!("{} changed since delivery", path.display()));
+                    continue;
+                }
+            };
             operations.push(Pending {
                 path,
                 seen,
@@ -1440,9 +1454,19 @@ impl Setup {
         }
         // The alternate spelling must be out of the way before a path
         // can be restored under its original spelling.
-        let moves = plan_case_moves(root, operations.iter())?;
-        let move_out = take_case_sources(&moves, &mut operations);
         let mut blocked = BTreeSet::new();
+        let mut moves = plan_case_moves(root, operations.iter(), |path, alias| {
+            result.blocked.push(format!(
+                "{} changed since delivery. The current spelling is {}.",
+                path.display(),
+                alias.display()
+            ));
+            blocked.insert(path.to_owned());
+            Ok(())
+        })?;
+        operations.retain(|op| !path_blocked(&blocked, &op.path));
+        moves.retain(|path, _| !path_blocked(&blocked, path));
+        let move_out = take_case_sources(&moves, &mut operations);
         for (path, status) in self.apply_batch(root, manifest, move_out, BatchMode::Restore)? {
             if status == ApplyOutcome::Applied {
                 result.written.push(path.display().to_string());
@@ -2290,7 +2314,13 @@ impl Setup {
         manifest
             .registry_skipped
             .retain(|_, paths| !paths.is_empty());
-        let moves = plan_case_moves(root, writes.iter().chain(&removals))?;
+        let moves = plan_case_moves(root, writes.iter().chain(&removals), |path, alias| {
+            bail!(
+                "{} already refers to {}. Review the existing path before changing its spelling.",
+                path.display(),
+                alias.display()
+            )
+        })?;
         let move_out = take_case_sources(&moves, &mut removals);
         Ok(RegistryPlan {
             moves,
@@ -2805,6 +2835,7 @@ fn package_entry(
 fn plan_case_moves<'a>(
     root: &FileRoot,
     operations: impl Iterator<Item = &'a Pending> + Clone,
+    mut conflict: impl FnMut(&Path, &Path) -> Result<()>,
 ) -> Result<BTreeMap<PathBuf, PathBuf>> {
     let mut removals = operations
         .clone()
@@ -2815,13 +2846,11 @@ fn plan_case_moves<'a>(
     for op in operations.filter(|op| op.seen == Snapshot::Absent && op.desired != Snapshot::Absent)
     {
         if let Some(alias) = skill_case_alias(root, &op.path)? {
-            ensure!(
-                removals.remove(alias.as_path()),
-                "{} already refers to {}. Review the existing path before changing its spelling.",
-                op.path.display(),
-                alias.display()
-            );
-            moves.insert(op.path.clone(), alias);
+            if removals.remove(alias.as_path()) {
+                moves.insert(op.path.clone(), alias);
+            } else {
+                conflict(&op.path, &alias)?;
+            }
         }
     }
     Ok(moves)
@@ -5306,6 +5335,43 @@ mod tests {
         accept_step1e_skill(&f, &preview);
         assert!(fs::read_to_string(peer).unwrap().contains("Saved skill."));
         assert!(f.sync_with("").blocked.is_empty());
+    }
+
+    #[test]
+    fn rulesync_step1g_restore_keeps_an_unreviewed_case_only_rename() {
+        let f = Fixture::new();
+        fs::remove_dir_all(f.setup.home.join(".codex")).unwrap();
+        let skill = write_step1d_skill(&f, ".claude", "Original body.", "# Helper\n");
+        let old = skill.join("guide.md");
+        let renamed = skill.join("Guide.md");
+        fs::write(&old, b"Original guide\n").unwrap();
+        f.adopt_from_plan();
+        allow_fixture_tool_folders(&f);
+        fs::write(&old, b"Reviewed guide\n").unwrap();
+        share_step1e_skill(&f);
+        fs::rename(&old, &renamed).unwrap();
+        eprintln!(
+            "The old spelling resolves to the renamed entry: {}",
+            old.is_file()
+        );
+
+        let restored = f.setup.restore().unwrap();
+
+        assert_eq!(fs::read(&renamed).unwrap(), b"Reviewed guide\n");
+        let entries = fs::read_dir(skill)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<BTreeSet<_>>();
+        assert!(entries.contains(std::ffi::OsStr::new("Guide.md")));
+        assert!(!entries.contains(std::ffi::OsStr::new("guide.md")));
+        assert!(
+            restored
+                .blocked
+                .iter()
+                .any(|reason| reason.contains("guide.md")),
+            "{restored:?}"
+        );
+        assert!(f.setup.load().unwrap().is_some());
     }
 
     #[test]
