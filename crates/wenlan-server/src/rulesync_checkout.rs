@@ -275,21 +275,31 @@ pub(crate) fn refresh(
     master: Option<&PersonalMaster>,
     generated: &[String],
 ) {
-    fn refresh_inner(
-        setup: &Setup,
-        session: &rulesync_renderer::RenderSession<'_>,
-        settings: &Path,
-        master: Option<&PersonalMaster>,
-        generated: &[String],
-    ) -> Result<()> {
+    let result = (|| {
         let entries = match std::fs::read_dir(setup.data.join("checkouts")) {
             Ok(entries) => entries,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
             Err(error) => return Err(error.into()),
         };
-        let root = setup.data_files()?;
-        for entry in entries {
-            let refresh_entry = || -> Result<()> {
+        refresh_entries(setup, session, settings, master, generated, entries)
+    })();
+    if let Err(error) = result {
+        tracing::warn!(%error, "[rules setup] checkout receipts could not be read");
+    }
+}
+
+fn refresh_entries(
+    setup: &Setup,
+    session: &rulesync_renderer::RenderSession<'_>,
+    settings: &Path,
+    master: Option<&PersonalMaster>,
+    generated: &[String],
+    entries: impl IntoIterator<Item = std::io::Result<std::fs::DirEntry>>,
+) -> Result<()> {
+    let root = setup.data_files()?;
+    for entry in entries {
+        let refresh_entry =
+            || -> Result<()> {
                 let entry = entry?;
                 if !entry.file_type()?.is_file() {
                     return Ok(());
@@ -327,15 +337,11 @@ pub(crate) fn refresh(
                 }
                 Ok(())
             };
-            if let Err(error) = refresh_entry() {
-                tracing::warn!(error = %format_args!("{error:#}"), "[rules setup] checkout rules refresh failed");
-            }
+        if let Err(error) = refresh_entry() {
+            tracing::warn!(error = %format_args!("{error:#}"), "[rules setup] checkout rules refresh failed");
         }
-        Ok(())
     }
-    if let Err(error) = refresh_inner(setup, session, settings, master, generated) {
-        tracing::warn!(%error, "[rules setup] checkout receipts could not be read");
-    }
+    Ok(())
 }
 
 struct Job<'a> {
@@ -826,19 +832,10 @@ mod tests {
         let checkouts = setup.data.join("checkouts");
         fs::create_dir(&setup.home).unwrap();
         fs::create_dir_all(&checkouts).unwrap();
-        for key in ["a".repeat(64), "b".repeat(64)] {
-            fs::write(checkouts.join(format!("{key}.json")), b"{}").unwrap();
-        }
-        let entries: Vec<_> = fs::read_dir(&checkouts)
-            .unwrap()
-            .map(|entry| entry.unwrap().path())
-            .collect();
-        // Populate the valid receipt in place so it sorts after the legacy one
-        // in the filesystem's existing enumeration order.
-        let [legacy, valid] = entries.as_slice() else {
-            panic!("expected two checkout receipts");
-        };
-        let key = valid.file_stem().unwrap().to_str().unwrap();
+        let legacy = checkouts.join(format!("{}.json", "a".repeat(64)));
+        let key = "b".repeat(64);
+        let valid = checkouts.join(format!("{key}.json"));
+        fs::write(&legacy, b"{}").unwrap();
         let directory = PathBuf::from(format!("checkouts/{key}/rules"));
         let session = rulesync_renderer::RenderSession::new(&setup.binary);
         let settings = scratch.path().join("settings.toml");
@@ -862,7 +859,7 @@ mod tests {
         );
         assert!(job.replace(&rule, &Snapshot::Absent, &delivered).unwrap());
         fs::write(
-            valid,
+            &valid,
             serde_json::to_vec(&CheckoutRecord {
                 format: CHECKOUT_FORMAT,
                 checkout: Checkout {
@@ -874,7 +871,23 @@ mod tests {
         )
         .unwrap();
 
-        refresh(&setup, &session, &settings, None, &[]);
+        let mut entries = fs::read_dir(&checkouts)
+            .unwrap()
+            .collect::<std::io::Result<Vec<_>>>()
+            .unwrap();
+        entries.retain(|entry| entry.path() == legacy || entry.path() == valid);
+        entries.sort_by_key(|entry| entry.file_name());
+        assert_eq!(entries[0].path(), legacy, "the bad receipt must be first");
+        assert_eq!(entries[1].path(), valid);
+        refresh_entries(
+            &setup,
+            &session,
+            &settings,
+            None,
+            &[],
+            entries.into_iter().map(Ok),
+        )
+        .unwrap();
 
         assert_eq!(fs::read(legacy).unwrap(), b"{}");
         let actual = fs::read_to_string(setup.data.join(directory).join(rule)).unwrap();
