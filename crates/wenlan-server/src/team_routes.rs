@@ -2024,7 +2024,7 @@ pub(crate) fn member_app_calls() -> impl Iterator<Item = (&'static str, &'static
 }
 
 #[path = "team_auth.rs"]
-mod auth;
+pub(crate) mod auth;
 
 #[path = "team_device.rs"]
 mod device;

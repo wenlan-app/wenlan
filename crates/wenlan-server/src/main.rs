@@ -755,6 +755,37 @@ enum Command {
         #[arg(long)]
         work: std::path::PathBuf,
     },
+    /// Run the personal cloud's entrance: people sign in here and reach
+    /// their own Wenlan, which this starts for each of them in their own
+    /// folder under `--root` and stops when idle. Sign-in uses the team
+    /// server's Google and GitHub settings.
+    #[command(hide = true)]
+    Gateway {
+        /// The `https://` address people reach the personal cloud at.
+        url: String,
+        /// Where the entrance listens.
+        #[arg(long, default_value = "0.0.0.0:8443")]
+        listen: std::net::SocketAddr,
+        /// The folder that holds the account table, the key and everyone's
+        /// folders.
+        #[arg(long)]
+        root: std::path::PathBuf,
+        /// At most this many people's Wenlan running at once.
+        #[arg(long, default_value_t = 20)]
+        max_running: usize,
+        /// Minutes without a request before a person's Wenlan is stopped.
+        #[arg(long, default_value_t = 15)]
+        idle_minutes: u64,
+    },
+    /// Make a personal cloud account for the person with this email. Their
+    /// first sign-in whose provider vouches for the email attaches to it.
+    #[command(name = "cloud-add-account", hide = true)]
+    CloudAddAccount {
+        /// The entrance's `--root`.
+        #[arg(long)]
+        root: std::path::PathBuf,
+        email: String,
+    },
 }
 
 async fn run_daemon(startup_repair_claim: Option<StartupRepairClaim>) -> anyhow::Result<()> {
@@ -1150,6 +1181,28 @@ async fn main() -> anyhow::Result<()> {
                 refresh,
             }) => cmd_export::run(out, pages, refresh).await,
             Some(Command::RebuildCheck { export, work }) => cmd_export::check(export, work).await,
+            Some(Command::Gateway {
+                url,
+                listen,
+                root,
+                max_running,
+                idle_minutes,
+            }) => {
+                let _ = tracing_subscriber::fmt().try_init();
+                wenlan_server::cloud_gateway::run(
+                    url,
+                    listen,
+                    root,
+                    max_running,
+                    std::time::Duration::from_secs(idle_minutes * 60),
+                )
+                .await
+            }
+            Some(Command::CloudAddAccount { root, email }) => {
+                let id = wenlan_server::cloud_gateway::add_account(&root, &email)?;
+                println!("{id}");
+                Ok(())
+            }
             None | Some(Command::Team { .. }) => run_daemon(startup_repair_claim).await,
         }
     }

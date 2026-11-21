@@ -126,6 +126,9 @@ pub struct ProcessLauncher {
     pub program: PathBuf,
     /// The address people reach the personal cloud at.
     pub public_url: String,
+    /// The entrance's key: each person's Wenlan gets only the key derived
+    /// for their account, in their folder.
+    pub pass_key: crate::cloud_pass::PassKey,
 }
 
 pub struct ProcessInstance(tokio::process::Child);
@@ -135,11 +138,14 @@ impl Launcher for ProcessLauncher {
 
     fn start(
         &self,
-        _account: &AccountId,
+        account: &AccountId,
         dir: &Path,
         listen: SocketAddr,
         daemon_port: u16,
     ) -> std::io::Result<ProcessInstance> {
+        self.pass_key
+            .for_account(account)
+            .write(&dir.join(crate::cloud_pass::ACCOUNT_KEY_FILE))?;
         let log = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -155,6 +161,7 @@ impl Launcher for ProcessLauncher {
             .env("WENLAN_DATA_DIR", dir)
             .env("WENLAN_PORT", daemon_port.to_string())
             .env("WENLAN_NO_AUTOSTART", "1")
+            .env(crate::cloud_pass::ACCOUNT_ENV, account.as_str())
             .stdin(std::process::Stdio::null())
             .stdout(log.try_clone()?)
             .stderr(log)
