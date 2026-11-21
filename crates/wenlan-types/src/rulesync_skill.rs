@@ -124,6 +124,9 @@ pub struct SkillDeliveryPreview {
 pub struct SkillDeliveryChange {
     /// Home-relative destination, including the tool's folder.
     pub path: String,
+    /// The previous spelling of a path on a case-insensitive volume.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub renamed_from: Option<String>,
     pub before: Option<SkillDeliveryFile>,
     pub after: Option<SkillDeliveryFile>,
 }

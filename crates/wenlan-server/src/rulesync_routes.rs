@@ -587,6 +587,8 @@ enum RegistryInputs<'a> {
 }
 
 struct RegistryPlan {
+    moves: BTreeMap<PathBuf, PathBuf>,
+    move_out: Vec<Pending>,
     writes: Vec<Pending>,
     removals: Vec<Pending>,
     packages: BTreeSet<PathBuf>,
@@ -595,7 +597,10 @@ struct RegistryPlan {
 
 impl RegistryPlan {
     fn operations(&self) -> impl Iterator<Item = &Pending> {
-        self.writes.iter().chain(&self.removals)
+        self.move_out
+            .iter()
+            .chain(&self.writes)
+            .chain(&self.removals)
     }
 }
 
@@ -613,12 +618,12 @@ pub(crate) struct SkillReviewDelivery {
 
 impl SkillReviewDelivery {
     pub(crate) fn digest(&self) -> Result<String> {
-        fingerprint(
-            &self
-                .delivery
-                .as_ref()
-                .map(|delivery| delivery.plan.operations().collect::<Vec<_>>()),
-        )
+        fingerprint(&self.delivery.as_ref().map(|delivery| {
+            (
+                &delivery.plan.moves,
+                delivery.plan.operations().collect::<Vec<_>>(),
+            )
+        }))
     }
 
     pub(crate) fn changes(&self) -> Vec<SkillDeliveryChange> {
@@ -629,6 +634,7 @@ impl SkillReviewDelivery {
             .plan
             .operations()
             .filter(|op| op.seen != op.desired)
+            .filter(|op| !delivery.plan.moves.values().any(|path| *path == op.path))
             .map(|op| {
                 let entry = |snapshot: &Snapshot| match snapshot {
                     Snapshot::File { bytes, mode } => Some(SkillDeliveryFile {
@@ -650,14 +656,14 @@ impl SkillReviewDelivery {
                     Snapshot::Absent => None,
                     Snapshot::Symlink { .. } => unreachable!("skill approval cannot change links"),
                 };
+                let previous = delivery.plan.moves.get(&op.path);
+                let before = previous
+                    .and_then(|path| delivery.plan.move_out.iter().find(|op| op.path == *path))
+                    .map_or(&op.seen, |op| &op.seen);
                 SkillDeliveryChange {
-                    path: op
-                        .path
-                        .iter()
-                        .map(|part| part.to_string_lossy())
-                        .collect::<Vec<_>>()
-                        .join("/"),
-                    before: entry(&op.seen),
+                    path: preview_path(&op.path),
+                    renamed_from: previous.map(|path| preview_path(path)),
+                    before: entry(before),
                     after: entry(&op.desired),
                 }
             })
@@ -665,6 +671,13 @@ impl SkillReviewDelivery {
         changes.sort_by(|left, right| left.path.cmp(&right.path));
         changes
     }
+}
+
+fn preview_path(path: &Path) -> String {
+    path.iter()
+        .map(|part| part.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 pub(crate) struct Setup {
@@ -1098,7 +1111,12 @@ impl Setup {
             );
             return Ok(restored);
         }
-        let actual = root.read(&op.path, op.allow_link)?;
+        let actual = read_planned_path(
+            root,
+            &op.path,
+            op.allow_link,
+            op.seen == Snapshot::Absent || op.desired == Snapshot::Absent,
+        )?;
         if let Some(stage) = manifest.stages.get(&op.path) {
             root.recover_stage(
                 &op.path,
@@ -1157,9 +1175,13 @@ impl Setup {
         let mut ready = Vec::with_capacity(operations.len());
         for op in operations {
             if (reviewing
-                && !root
-                    .read(&op.path, op.allow_link)
-                    .is_ok_and(|actual| op.seen == actual))
+                && !read_planned_path(
+                    root,
+                    &op.path,
+                    op.allow_link,
+                    op.seen == Snapshot::Absent || op.desired == Snapshot::Absent,
+                )
+                .is_ok_and(|actual| op.seen == actual))
                 || manifest.pending.iter().any(|pending| {
                     op.path.starts_with(&pending.path) || pending.path.starts_with(&op.path)
                 })
@@ -1222,7 +1244,11 @@ impl Setup {
             } else {
                 if let Some(stage) = manifest.stages.get(&path) {
                     let link = links.and_then(|links| links.get(&path));
+                    let removal = operation.desired == Snapshot::Absent;
                     let verify = || {
+                        if removal && skill_case_alias(root, &path)?.is_some() {
+                            return Ok(false);
+                        }
                         link.map_or(Ok(true), |expected| expected.matches(&self.home, &path))
                             .map_err(std::io::Error::other)
                     };
@@ -1230,8 +1256,22 @@ impl Setup {
                         &path,
                         &operation.seen,
                         &operation.desired,
-                        stage.options(&data, operation.allow_link, link.map(|_| &verify as _)),
+                        stage.options(
+                            &data,
+                            operation.allow_link,
+                            (link.is_some() || removal).then_some(&verify as _),
+                        ),
                     )?
+                } else if operation.seen == Snapshot::Absent
+                    && operation.desired == Snapshot::Absent
+                {
+                    if read_planned_path(root, &path, operation.allow_link, true)?
+                        == Snapshot::Absent
+                    {
+                        ApplyOutcome::Applied
+                    } else {
+                        ApplyOutcome::ChangedSincePlan
+                    }
                 } else {
                     root.apply(
                         &path,
@@ -1345,19 +1385,21 @@ impl Setup {
                 continue;
             }
             let original = manifest.backup[&path].clone();
-            let seen = match root.read(&path, true) {
-                Ok(current) if extension_only && original == current => {
-                    manifest.delivered.remove(&path);
-                    continue;
-                }
-                Ok(current) if delivered.delivered == current => current,
-                _ => {
-                    result
-                        .blocked
-                        .push(format!("{} changed since delivery", path.display()));
-                    continue;
-                }
-            };
+            let seen =
+                match read_planned_path(root, &path, true, delivered.delivered == Snapshot::Absent)
+                {
+                    Ok(current) if extension_only && original == current => {
+                        manifest.delivered.remove(&path);
+                        continue;
+                    }
+                    Ok(current) if delivered.delivered == current => current,
+                    _ => {
+                        result
+                            .blocked
+                            .push(format!("{} changed since delivery", path.display()));
+                        continue;
+                    }
+                };
             operations.push(Pending {
                 path,
                 seen,
@@ -1366,7 +1408,6 @@ impl Setup {
                 allow_link: true,
             });
         }
-        self.prepare_restore_directories(root, manifest, result, &mut operations)?;
         // Descendants are restored before their parent's final mode or link.
         operations.sort_by_key(|op| std::cmp::Reverse(op.path.components().count()));
         let mut removing = BTreeSet::new();
@@ -1396,6 +1437,29 @@ impl Setup {
             }
             removing.insert(op.path.clone());
         }
+        // The alternate spelling must be out of the way before a path
+        // can be restored under its original spelling.
+        let moves = plan_case_moves(root, operations.iter())?;
+        let move_out = take_case_sources(&moves, &mut operations);
+        let mut blocked = BTreeSet::new();
+        for (path, status) in self.apply_batch(root, manifest, move_out, BatchMode::Continue)? {
+            if status == ApplyOutcome::Applied {
+                result.written.push(path.display().to_string());
+            } else {
+                result
+                    .blocked
+                    .push(format!("{} changed during restore", path.display()));
+                blocked.insert(path);
+            }
+        }
+        operations.retain(|op| {
+            !moves.get(&op.path).is_some_and(|from| {
+                blocked
+                    .iter()
+                    .any(|path| from.starts_with(path) || path.starts_with(from))
+            })
+        });
+        self.prepare_restore_directories(root, manifest, result, &mut operations)?;
         if !extension_only
             && operations.is_empty()
             && (!manifest.delivered.is_empty() || !manifest.pending.is_empty())
@@ -1455,7 +1519,7 @@ impl Setup {
         }
         // Keep an active receipt for each temporary mode. If restore is
         // interrupted, the original and this writable state are journaled.
-        let prepare = operations
+        let mut prepare: Vec<_> = operations
             .iter()
             .filter_map(|op| {
                 Some(Pending {
@@ -1467,6 +1531,7 @@ impl Setup {
                 })
             })
             .collect();
+        prepare.sort_by_key(|op| op.path.components().count());
         let mut blocked = BTreeSet::new();
         for (path, status) in self.apply_batch(root, manifest, prepare, BatchMode::Continue)? {
             if status != ApplyOutcome::Applied {
@@ -1963,7 +2028,12 @@ impl Setup {
                 .filter(|op| op.seen != op.desired)
                 .map(|op| op.path.clone())
                 .collect();
-            let operations = plan.writes.into_iter().chain(plan.removals).collect();
+            let operations = plan
+                .move_out
+                .into_iter()
+                .chain(plan.writes)
+                .chain(plan.removals)
+                .collect();
             for (path, status) in
                 self.apply_batch(&root, &mut manifest, operations, BatchMode::Review)?
             {
@@ -2195,7 +2265,7 @@ impl Setup {
                 }
             }
         }
-        let removals = registry_removals(
+        let mut removals = registry_removals(
             root, manifest, &expected, &active, blocked, result, reviewing,
         )?;
         if reviewing {
@@ -2219,7 +2289,11 @@ impl Setup {
         manifest
             .registry_skipped
             .retain(|_, paths| !paths.is_empty());
+        let moves = plan_case_moves(root, writes.iter().chain(&removals))?;
+        let move_out = take_case_sources(&moves, &mut removals);
         Ok(RegistryPlan {
+            moves,
+            move_out,
             writes,
             removals,
             packages: expected.into_keys().collect(),
@@ -2242,6 +2316,15 @@ impl Setup {
             .collect();
         let blocked_before = result.blocked.len();
         let mut failed = BTreeSet::new();
+        for (path, status) in self.sync_batch(root, manifest, plan.move_out, result)? {
+            if status == ApplyOutcome::Applied {
+                result.written.push(path.display().to_string());
+            } else {
+                result
+                    .blocked
+                    .push(format!("{} changed during sync", path.display()));
+            }
+        }
         let outcomes = self.sync_batch(root, manifest, plan.writes, result)?;
         if blocked_before != result.blocked.len() {
             failed.extend(plan.packages.iter().cloned());
@@ -2660,34 +2743,107 @@ struct RegistryPackage<'a> {
     snapshot: Option<&'a ManagedSkill>,
 }
 
+fn skill_case_alias(root: &FileRoot, path: &Path) -> std::io::Result<Option<PathBuf>> {
+    let scope = PERSONAL_TARGETS
+        .iter()
+        .map(|tool| Path::new(tool.skills.destination))
+        .find(|scope| path != *scope && path.starts_with(scope));
+    match scope {
+        Some(scope) => root.case_alias(path, scope),
+        None => Ok(None),
+    }
+}
+
+fn read_planned_path(
+    root: &FileRoot,
+    path: &Path,
+    allow_link: bool,
+    expects_absence: bool,
+) -> std::io::Result<Snapshot> {
+    let actual = root.read(path, allow_link)?;
+    if expects_absence && actual != Snapshot::Absent && skill_case_alias(root, path)?.is_some() {
+        Ok(Snapshot::Absent)
+    } else {
+        Ok(actual)
+    }
+}
+
 fn package_entry(
     root: &FileRoot,
     folder: &Path,
     path: &Path,
     package: Option<&ManagedSkill>,
 ) -> Result<Snapshot> {
-    let actual = root.read(path, false)?;
-    if let Some(package) = package {
-        let relative = path.strip_prefix(folder)?;
-        let expected = package
-            .files
-            .get(relative)
-            .cloned()
-            .or_else(|| {
-                package
-                    .directories
-                    .get(relative)
-                    .copied()
-                    .map(Snapshot::directory_with_permissions)
-            })
-            .unwrap_or(Snapshot::Absent);
-        ensure!(
-            actual == expected,
-            "{} changed during planning",
-            path.display()
-        );
-    }
+    let Some(package) = package else {
+        return Ok(root.read(path, false)?);
+    };
+    let relative = path.strip_prefix(folder)?;
+    let expected = package
+        .files
+        .get(relative)
+        .cloned()
+        .or_else(|| {
+            package
+                .directories
+                .get(relative)
+                .copied()
+                .map(Snapshot::directory_with_permissions)
+        })
+        .unwrap_or(Snapshot::Absent);
+    let actual = read_planned_path(root, path, false, expected == Snapshot::Absent)?;
+    ensure!(
+        actual == expected,
+        "{} changed during planning",
+        path.display()
+    );
     Ok(actual)
+}
+
+/// Match each new spelling against the entry the destination filesystem
+/// opens. Move only entries that are already part of the reviewed plan.
+fn plan_case_moves<'a>(
+    root: &FileRoot,
+    operations: impl Iterator<Item = &'a Pending> + Clone,
+) -> Result<BTreeMap<PathBuf, PathBuf>> {
+    let mut removals = operations
+        .clone()
+        .filter(|op| op.seen != Snapshot::Absent && op.desired == Snapshot::Absent)
+        .map(|op| op.path.as_path())
+        .collect::<BTreeSet<_>>();
+    let mut moves = BTreeMap::new();
+    for op in operations.filter(|op| op.seen == Snapshot::Absent && op.desired != Snapshot::Absent)
+    {
+        if let Some(alias) = skill_case_alias(root, &op.path)? {
+            ensure!(
+                removals.remove(alias.as_path()),
+                "{} already refers to {}. Review the existing path before changing its spelling.",
+                op.path.display(),
+                alias.display()
+            );
+            moves.insert(op.path.clone(), alias);
+        }
+    }
+    Ok(moves)
+}
+
+fn take_case_sources(
+    moves: &BTreeMap<PathBuf, PathBuf>,
+    operations: &mut Vec<Pending>,
+) -> Vec<Pending> {
+    if moves.is_empty() {
+        return Vec::new();
+    }
+    let sources = moves
+        .values()
+        .map(PathBuf::as_path)
+        .collect::<BTreeSet<_>>();
+    let (early, rest) = std::mem::take(operations).into_iter().partition(|op| {
+        op.seen != Snapshot::Absent
+            && op.desired == Snapshot::Absent
+            && op.path.ancestors().any(|path| sources.contains(path))
+    });
+    *operations = rest;
+    early
 }
 
 fn plan_registry_entries(
@@ -2855,7 +3011,7 @@ fn registry_removals(
                 .get(path)
                 .cloned()
                 .context("the backup is incomplete")?;
-            let seen = root.read(path, true)?;
+            let seen = read_planned_path(root, path, true, record.delivered == Snapshot::Absent)?;
             if record.delivered != seen {
                 result
                     .blocked
@@ -4905,7 +5061,8 @@ mod tests {
         let planned: BTreeSet<_> = preview
             .files
             .iter()
-            .map(|change| PathBuf::from(&change.path))
+            .flat_map(|change| std::iter::once(&change.path).chain(&change.renamed_from))
+            .map(PathBuf::from)
             .collect();
         assert_eq!(changed, planned);
         preview
@@ -5089,23 +5246,92 @@ mod tests {
         allow_fixture_tool_folders(&f);
         let sync = f.sync_with("");
         assert!(
-            peer.exists()
-                || sync.blocked.iter().any(|message| {
-                    message.contains(".cursor") && message.contains("wenlan skills pending")
-                }),
+            !peer.exists(),
+            "the saved skill needs a new delivery review"
+        );
+        assert!(
+            sync.blocked.iter().any(|message| {
+                message.contains(".cursor") && message.contains("wenlan skills pending")
+            }),
             "The saved skill must be offered to Cursor again: {sync:?}"
         );
-        if !peer.exists() {
-            let preview = preview_step1e_skill(&f);
-            assert!(!preview.files.is_empty(), "{preview:?}");
-            assert!(preview
-                .files
-                .iter()
-                .all(|change| change.path.starts_with(".cursor/")));
-            accept_step1e_skill(&f, &preview);
-        }
+        let preview = preview_step1e_skill(&f);
+        assert!(!preview.files.is_empty(), "{preview:?}");
+        assert!(preview
+            .files
+            .iter()
+            .all(|change| change.path.starts_with(".cursor/")));
+        accept_step1e_skill(&f, &preview);
         assert!(fs::read_to_string(peer).unwrap().contains("Saved skill."));
         assert!(f.sync_with("").blocked.is_empty());
+    }
+
+    #[test]
+    fn rulesync_step1f_approves_case_only_asset_renames_and_restores_the_spelling() {
+        let f = Fixture::new();
+        fs::remove_dir_all(f.setup.home.join(".codex")).unwrap();
+        let claude = write_step1d_skill(&f, ".claude", "Original body.", "# Helper\n");
+        let cursor = write_step1d_skill(&f, ".cursor", "Original body.", "# Helper\n");
+        // APFS also aliases the two lowercase Greek sigmas, which stay
+        // distinct when Rust merely lowercases their spellings.
+        let renames = [("guide.md", "Guide.md"), ("σ.md", "ς.md")];
+        let mut aliases = BTreeMap::new();
+        for (old, new) in renames {
+            for folder in [&claude, &cursor] {
+                fs::write(folder.join(old), b"Original guide\n").unwrap();
+            }
+            aliases.insert(old, claude.join(new).is_file());
+            eprintln!("Fixture sees {old} and {new} as aliases: {}", aliases[old]);
+        }
+        let before = step1e_tree(&f.setup.home);
+        f.adopt_from_plan();
+        allow_fixture_tool_folders(&f);
+        for (old, new) in renames {
+            fs::rename(cursor.join(old), cursor.join(new)).unwrap();
+            fs::write(cursor.join(new), b"Revised guide\n").unwrap();
+        }
+        f.sync_with("");
+        let preview = preview_step1e_skill(&f);
+        assert!(preview.blocked.is_empty(), "{preview:?}");
+        let peer = Path::new(".claude/skills/example");
+        for (old, new) in renames {
+            let old_path = peer.join(old);
+            let new_path = peer.join(new);
+            let change = preview
+                .files
+                .iter()
+                .find(|change| Path::new(&change.path) == new_path)
+                .unwrap();
+            assert_eq!(
+                change.renamed_from.as_deref().map(Path::new),
+                aliases[old].then_some(old_path.as_path())
+            );
+            assert_eq!(
+                preview
+                    .files
+                    .iter()
+                    .any(|change| Path::new(&change.path) == old_path),
+                !aliases[old],
+                "{preview:?}"
+            );
+        }
+        let accepted = accept_step1e_skill(&f, &preview);
+        assert!(accepted.blocked.is_empty(), "{accepted:?}");
+        let after = step1e_tree(&f.setup.home);
+        for (old, new) in renames {
+            assert!(after.contains_key(&peer.join(new)), "{preview:?}");
+            assert!(!after.contains_key(&peer.join(old)), "{preview:?}");
+            assert_eq!(fs::read(claude.join(new)).unwrap(), b"Revised guide\n");
+        }
+        let synced = f.sync_with("");
+        assert!(
+            synced.blocked.is_empty() && synced.written.is_empty(),
+            "{synced:?}"
+        );
+
+        let restored = f.setup.restore().unwrap();
+        assert!(restored.blocked.is_empty(), "{restored:?}");
+        assert_eq!(step1e_tree(&f.setup.home), before);
     }
 
     #[test]
@@ -5514,8 +5740,43 @@ mod tests {
                         folder
                     })
                     .collect();
+                let picked = &folders[(seed as usize) % folders.len()];
+                let locked = picked.join("locked");
+                let inner = locked.join("manual");
+                fs::create_dir_all(&inner).unwrap();
+                fs::write(inner.join("guide.md"), b"Read-only original guide\n").unwrap();
+                fs::set_permissions(&inner, fs::Permissions::from_mode(0o551)).unwrap();
+                fs::set_permissions(&locked, fs::Permissions::from_mode(0o555)).unwrap();
+
                 let before = step1e_tree(home);
                 f.adopt_from_plan();
+                allow_fixture_tool_folders(&f);
+                for path in [&locked, &inner] {
+                    fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+                }
+                fs::remove_dir_all(&locked).unwrap();
+                fs::rename(picked.join("extra.txt"), picked.join("Extra.txt")).unwrap();
+                share_step1e_skill(&f);
+
+                let created = picked.with_file_name("created-after-adoption");
+                fs::create_dir(&created).unwrap();
+                fs::write(created.join("SKILL.md"),
+                    "---\nname: created-after-adoption\ndescription: Fixture\nversion: 1\n---\n\nNew skill.\n",
+                ).unwrap();
+                fs::write(created.join("helper.py"), b"# New helper\n").unwrap();
+                for rename in [false, true] {
+                    if rename {
+                        fs::rename(created.join("helper.py"), created.join("renamed.py")).unwrap();
+                    }
+                    f.sync_with("");
+                    rulesync_registry::accept_only_tool_proposal(
+                        &f.setup,
+                        None,
+                        fixture_skill_renderer,
+                    )
+                    .unwrap();
+                }
+
                 let mut state = seed;
                 // Two shuffled rounds guarantee edits, additions, deletions,
                 // renames and file-mode changes for every seed.
@@ -5578,6 +5839,9 @@ mod tests {
                 let restored = f.setup.restore().unwrap();
                 assert!(restored.blocked.is_empty(), "{restored:?}");
                 let after = step1e_tree(home);
+                for path in [&locked, &inner] {
+                    fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+                }
                 assert_eq!(
                     after.keys().collect::<Vec<_>>(),
                     before.keys().collect::<Vec<_>>()

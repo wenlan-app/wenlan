@@ -2,8 +2,9 @@
 //! The personal master and the read-only side of adopting an existing setup.
 
 use std::collections::BTreeMap;
+use std::ffi::{OsStr, OsString};
 use std::fs;
-use std::io::{BufWriter, Write};
+use std::io::{self, BufWriter, Write};
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{bail, ensure, Context, Result};
@@ -23,6 +24,48 @@ mod delivery_worktrees;
 #[path = "rulesync_skill_preview.rs"]
 mod skill_preview;
 pub use delivery_worktrees::DeliveryWorktrees;
+
+/// Identify a single directory entry. Hard links share a file identity but
+/// represent distinct entries.
+pub fn directory_entry_identity(metadata: &Metadata) -> Option<(u64, u64)> {
+    let inode = metadata.ino();
+    (inode != 0 && (metadata.is_dir() || metadata.nlink() == 1)).then(|| (metadata.dev(), inode))
+}
+
+/// Return the listed spelling when a lookup opens a differently spelled
+/// entry. The volume determines which spellings resolve together.
+pub fn case_alias_in(directory: &Dir, name: &OsStr) -> io::Result<Option<OsString>> {
+    let path = Path::new(name);
+    if path.file_name() != Some(name) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "expected a directory entry name",
+        ));
+    }
+    let requested = match directory.symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    for entry in directory.entries()? {
+        if entry?.file_name() == name {
+            return Ok(None);
+        }
+    }
+    // No literal name was listed. Match the entry only when its identity
+    // distinguishes it from every hard link, including links in this folder.
+    let identity = directory_entry_identity(&requested)
+        .ok_or_else(|| io::Error::other("cannot identify an alternate directory spelling"))?;
+    for entry in directory.entries()? {
+        let other = entry?.file_name();
+        if directory_entry_identity(&directory.symlink_metadata(&other)?) == Some(identity) {
+            return Ok((other != name).then_some(other));
+        }
+    }
+    Err(io::Error::other(
+        "directory entry changed while checking its spelling",
+    ))
+}
 
 pub const RULE_PRECEDENCE: &str =
     "When instructions disagree, project rules come first, followed by team rules and personal rules.";

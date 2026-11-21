@@ -960,7 +960,8 @@ and wait for evidence that people need them.
   shared version will replace. If a destination is blocked or the delivery
   plan changes before confirmation, Wenlan asks for a fresh review. A tool
   enrolled later gets its own delivery proposal for a previously reviewed
-  shared skill.
+  shared skill. On a case-insensitive volume, a case-only rename is shown
+  with both spellings. Restoring the setup brings back the original spelling.
   Tests `rulesync_skill_agent_proposal_survives_reopen_and_requires_review` and `ux_skill_16_review_needs_one_scope_and_has_no_confirmation_flag`.
 
 - **UX-SKILL-17** `shipped` `wenlan rules settings` asks the person to

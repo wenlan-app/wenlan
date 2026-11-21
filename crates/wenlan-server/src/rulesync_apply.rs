@@ -11,7 +11,7 @@ use std::collections::BTreeSet;
 use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use wenlan_core::rulesync_adopt::MAX_ADOPTED_SKILL_BYTES;
-use wenlan_core::rulesync_personal::{is_harness_path, HarnessGuard};
+use wenlan_core::rulesync_personal::{case_alias_in, is_harness_path, HarnessGuard};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct FileMode(u32);
@@ -322,6 +322,32 @@ impl FileRoot {
             Some(parent) => read_leaf(&parent, name, allow_symlink),
             None => Ok(Snapshot::Absent),
         }
+    }
+
+    /// Resolve only the components below the configured tool path. Tool
+    /// roots use their configured spelling even if listed differently.
+    pub(crate) fn case_alias(&self, path: &Path, scope: &Path) -> io::Result<Option<PathBuf>> {
+        let (parent, leaf) = entry_path(path)?;
+        let Some(directory) = self.open_parent(parent, false)? else {
+            return Ok(None);
+        };
+        match directory.symlink_metadata(leaf) {
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error),
+        }
+        let mut resolved = scope.to_owned();
+        let components = path
+            .ancestors()
+            .take_while(|part| *part != scope)
+            .collect::<Vec<_>>();
+        for component in components.into_iter().rev() {
+            let (parent, name) = entry_path(component)?;
+            let directory = self.open_parent(parent, false)?.ok_or_else(invalid_path)?;
+            let name = name.as_os_str();
+            resolved.push(case_alias_in(&directory, name)?.as_deref().unwrap_or(name));
+        }
+        Ok((resolved != path).then_some(resolved))
     }
 
     pub(crate) fn children(&self, path: &Path) -> io::Result<BTreeSet<PathBuf>> {

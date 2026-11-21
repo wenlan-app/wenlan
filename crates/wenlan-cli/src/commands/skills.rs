@@ -455,18 +455,35 @@ fn skill_review_for_a_person(
                 {
                     path.push_str(" (directory)");
                 }
-                let change = match (&file.before, &file.after) {
-                    (None, Some(_)) => format!("Create {path}"),
-                    (Some(_), None) => format!("Remove {path}"),
-                    (Some(before), Some(after)) if before.digest == after.digest => {
+                let change = match (&file.renamed_from, &file.before, &file.after) {
+                    (Some(from), before, after) => {
+                        let mut label = format!("Rename {} to {path}", file_label(from));
+                        if let (Some(before), Some(after)) = (before, after) {
+                            if before.digest != after.digest {
+                                label.push_str(" and update its contents");
+                            }
+                            if before.permissions != after.permissions {
+                                label.push_str(&format!(
+                                    " and change permissions from {} to {}",
+                                    one_line(&before.permissions),
+                                    one_line(&after.permissions)
+                                ));
+                            }
+                        }
+                        label
+                    }
+
+                    (None, None, Some(_)) => format!("Create {path}"),
+                    (None, Some(_), None) => format!("Remove {path}"),
+                    (None, Some(before), Some(after)) if before.digest == after.digest => {
                         format!(
                             "Change permissions for {path} from {} to {}",
                             one_line(&before.permissions),
                             one_line(&after.permissions)
                         )
                     }
-                    (Some(_), Some(_)) => format!("Overwrite {path}"),
-                    (None, None) => continue,
+                    (None, Some(_), Some(_)) => format!("Overwrite {path}"),
+                    (None, None, None) => continue,
                 };
                 out.push_str(&format!("- {change}\n"));
             }
@@ -1460,16 +1477,19 @@ mod tests {
             token: "token".into(),
             files: vec![
                 SkillDeliveryChange {
+                    renamed_from: None,
                     path: ".claude/skills/meeting-notes/helper.py".into(),
                     before: Some(file("Old variant")),
                     after: Some(file("Shared version")),
                 },
                 SkillDeliveryChange {
+                    renamed_from: None,
                     path: ".codex/skills/meeting-notes/examples/old.md".into(),
                     before: Some(file("Old asset")),
                     after: None,
                 },
                 SkillDeliveryChange {
+                    renamed_from: None,
                     path: ".codex/skills/meeting-notes/examples".into(),
                     before: Some(SkillDeliveryFile {
                         directory: true,
@@ -1477,6 +1497,12 @@ mod tests {
                         ..file("directory")
                     }),
                     after: None,
+                },
+                SkillDeliveryChange {
+                    renamed_from: Some(".claude/skills/meeting-notes/guide.md".into()),
+                    path: ".claude/skills/meeting-notes/Guide.md".into(),
+                    before: Some(file("Before")),
+                    after: Some(file("After")),
                 },
             ],
             blocked: Vec::new(),
@@ -1487,6 +1513,7 @@ mod tests {
         assert!(rendered.contains("- Remove .codex/skills/meeting-notes/examples/old.md\n"));
         assert!(rendered.contains("- Remove .codex/skills/meeting-notes/examples (directory)\n"));
         assert!(rendered.contains("Replace the saved Claude Code version with the shared version."));
+        assert!(rendered.contains("- Rename .claude/skills/meeting-notes/guide.md to .claude/skills/meeting-notes/Guide.md and update its contents"));
     }
 
     fn line(text: &str, title: &str, general: bool) -> SkillLine {
