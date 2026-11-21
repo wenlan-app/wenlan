@@ -265,7 +265,7 @@ async fn on_disk<T: Send + 'static>(
 mod tests {
     use super::*;
     use crate::rulesync_routes::tests::{Fixture, CODEX};
-    use wenlan_types::rulesync::SkillUpstream;
+    use wenlan_types::rulesync::{PullbackDecision, SkillUpstream};
 
     #[test]
     fn rulesync_review_lists_only_applicable_rule_answers() {
@@ -304,6 +304,53 @@ mod tests {
                 PullbackAction::Revert
             ]
         );
+    }
+
+    #[test]
+    fn rulesync_settings_changes_wait_in_to_review_without_sync() {
+        let f = Fixture::new();
+        let before = r#"{"mcpServers":{"shared":{"command":"before"}}}"#;
+        f.write(".claude.json", before);
+        f.adopt_from_plan();
+        f.write(".claude.json", &before.replace("\"before\"", "\"after\""));
+
+        let queue = local_queue(&f.setup).unwrap();
+        let item = queue
+            .items
+            .iter()
+            .find(|item| item.id.starts_with("setting-"))
+            .unwrap_or_else(|| panic!("settings change missing from To review: {queue:?}"));
+        assert_eq!(
+            item.answers,
+            [
+                PullbackAction::ToolOnly,
+                PullbackAction::AllTools,
+                PullbackAction::Revert
+            ]
+        );
+        let RulesReviewContent::ToolEdit { card } = &item.content else {
+            panic!("{item:?}");
+        };
+        assert!(card.diff.contains("after"), "{card:?}");
+        assert_eq!(queue.review_tools[".claude.json"].id, "claude-code");
+        assert!(!f.setup.status().unwrap().in_sync);
+
+        let decision = PullbackDecision {
+            id: item.id.clone(),
+            action: PullbackAction::Revert,
+            file: None,
+        };
+        let preview = f.setup.preview_review(&decision).unwrap();
+        assert!(preview.diff.contains("after"), "{preview:?}");
+        f.setup
+            .review_using(&decision, |root, manifest| f.sync_review(root, manifest))
+            .unwrap();
+        assert!(f.text(".claude.json").contains("\"before\""));
+        assert!(!local_queue(&f.setup)
+            .unwrap()
+            .items
+            .iter()
+            .any(|item| item.id.starts_with("setting-")));
     }
 
     #[test]

@@ -367,6 +367,9 @@ impl Setup {
                 })
                 .map(ScopeReview::wire),
         );
+        let settings = self.personal_setting_proposals(&root, &manifest)?;
+        status.in_sync &= settings.is_empty();
+        status.proposals.extend(settings);
         let skill_reviews = rulesync_registry::pending_skill_reviews(&self.data)?;
         let mut affected = BTreeSet::new();
         for proposal in &skill_reviews {
@@ -3328,6 +3331,26 @@ impl Setup {
         let manifest = self
             .load_if_present()?
             .context("run wenlan rules adopt first")?;
+        if personal_settings::is_proposal(&request.id) {
+            // Dismiss is a hidden alias of revert on a settings card.
+            let action = match request.action {
+                PullbackAction::Dismiss => PullbackAction::Revert,
+                action => action,
+            };
+            let card = self
+                .personal_setting_proposals(&root, &manifest)?
+                .into_iter()
+                .find(|card| card.id == request.id)
+                .with_context(|| {
+                    format!("the proposal is no longer current. Run `{SYNC_COMMAND}`")
+                })?;
+            return Ok(PullbackPreview {
+                diff: card.diff,
+                plan: card.reason,
+                plan_codes: vec![rule_review_code(action).into()],
+                diff_codes: card.diff_codes,
+            });
+        }
         if let Some(scope) = manifest.scope_reviews.get(&request.id) {
             let action = rule_answer(PullbackKind::Scope, request.action)?;
             ensure!(
@@ -3381,9 +3404,7 @@ impl Setup {
         } else {
             request.action
         };
-        if matches!(action, PullbackAction::Dismiss | PullbackAction::Revert)
-            && !personal_settings::is_proposal(&request.id)
-        {
+        if matches!(action, PullbackAction::Dismiss | PullbackAction::Revert) {
             self.preview_review(request)?;
         }
         self.recover(&root, &mut manifest)?;

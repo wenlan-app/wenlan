@@ -1210,12 +1210,13 @@ and wait for evidence that people need them.
   file permissions when adding or updating approved entries. A same-name
   conflict blocks that entry and gives a reason. New entries wait for adoption.
   An interrupted addition leaves the earlier tools enrolled.
-  A hand edit to a managed entry appears in `wenlan rules sync` for review.
-  The person types `yes` to keep it in the originating tool or share it
-  with the enrolled tools listed in the proposal. Plain MCP definitions and
+  A hand edit to a managed entry waits in To review and `wenlan rules review`
+  without a sync. The person keeps it in the originating tool, shares it
+  with the enrolled tools listed in the proposal, or answers No to put the
+  managed entry back. Plain MCP definitions and
   compatible session-start command hooks can travel. Permission entries and
   hooks that decide approvals stay local. Changes to an ordered permission
-  policy appear for review. Dismiss leaves permission entries and their order
+  policy appear for review. No leaves permission entries and their order
   in place. An accepted deletion settles that entry's receipt. Restore uses
   the shared writer and the recorded fragments to undo managed changes while
   keeping independent edits. If a recorded fragment overlaps a newer edit,
@@ -1240,7 +1241,8 @@ and wait for evidence that people need them.
   `rulesync_personal_settings_journal_keeps_the_prior_setup_recoverable`,
   `rulesync_personal_settings_uses_native_opencode_and_inline_codex_shapes`,
   `rulesync_personal_settings_blocks_only_the_conflicting_entry_and_retries`,
-  `rulesync_personal_settings_stays_home_scoped_and_offers_new_entries` and
+  `rulesync_personal_settings_stays_home_scoped_and_offers_new_entries`,
+  `rulesync_settings_changes_wait_in_to_review_without_sync` and
   `ux_skill_17_rulesync_settings_merges_servers_and_only_previews_staged_additions`
   and `UX-SKILL-22`.
 
