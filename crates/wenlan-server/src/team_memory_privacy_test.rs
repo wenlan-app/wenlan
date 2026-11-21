@@ -330,7 +330,7 @@ async fn hosted_draft_publish_requires_a_real_publication_to_replay() {
 }
 
 #[tokio::test]
-async fn hosted_draft_publish_conflict_only_identifies_shared_pages() {
+async fn hosted_draft_publish_conflict_only_names_shared_pages() {
     let (app, db, _scratch) = fixture().await;
     for (title, hidden) in [("How I work", true), ("Team conventions", false)] {
         let page = post_as_member(
@@ -374,15 +374,17 @@ async fn hosted_draft_publish_conflict_only_identifies_shared_pages() {
             true,
         )
         .await;
-        assert_eq!(status, StatusCode::CONFLICT);
-        assert_eq!(conflict["code"], "page_title_conflict");
         if hidden {
+            // A member's title is compared only with pages they may see, so
+            // a hidden page's title is never reported as taken.
+            assert_eq!(status, StatusCode::OK, "{conflict}");
             assert!(
-                conflict.get("existing_page_id").is_none()
-                    && conflict.get("existing_page_title").is_none(),
-                "a hidden page's identity appeared in a title conflict: {conflict}"
+                !conflict.to_string().contains(id),
+                "a hidden page's identity appeared in a publish: {conflict}"
             );
         } else {
+            assert_eq!(status, StatusCode::CONFLICT);
+            assert_eq!(conflict["code"], "page_title_conflict");
             assert_eq!(conflict["existing_page_id"], id);
             assert_eq!(conflict["existing_page_title"], title);
         }

@@ -2647,6 +2647,14 @@ impl Pass<'_> {
 
     /// The Space a version's page is kept in here: the library's own Space
     /// for it (`None` is Unfiled), else this pass's Space.
+    /// What a member of this share may see, for a team share.
+    fn member_scope(&self) -> ReadScope {
+        match self.scope {
+            Scope::Page(_) => ReadScope::Uncategorized,
+            _ => ReadScope::Space(self.space.clone()),
+        }
+    }
+
     fn target_space(&self, version: &PageVersion) -> String {
         if self.library {
             named_space(version.space())
@@ -3087,21 +3095,36 @@ impl Pass<'_> {
     ) -> Result<HashSet<String>, WenlanError> {
         // The library keeps titles apart within the Space the page goes to.
         let space = self.target_space(writer);
-        let taken: HashSet<String> = self
+        // A team share compares only titles its members may see: a rename
+        // around any other title would tell them that title exists here. A
+        // page shared alone shows its members no other page.
+        if !self.library && matches!(self.scope, Scope::Page(_)) {
+            return Ok(HashSet::new());
+        }
+        let member_scope = self.member_scope();
+        let mut taken = HashSet::new();
+        for page in self
             .db
             .list_pages_by_space("active", Some(&space), 1_000_000, 0)
             .await?
-            .into_iter()
-            .filter(|page| {
-                page.id != id
-                    && if self.library {
-                        page.space.as_deref() == named_space(Some(&space))
-                    } else {
-                        page.space.as_deref() == Some(self.space.as_str())
-                    }
-            })
-            .map(|page| MemoryDB::page_title_key(&page.title))
-            .collect();
+        {
+            let in_space = if self.library {
+                page.space.as_deref() == named_space(Some(&space))
+            } else {
+                page.space.as_deref() == Some(self.space.as_str())
+                    && self
+                        .db
+                        .member_can_access_page(
+                            &page.id,
+                            &member_scope,
+                            crate::db::MemberPageTarget::Published,
+                        )
+                        .await?
+            };
+            if page.id != id && in_space {
+                taken.insert(MemoryDB::page_title_key(&page.title));
+            }
+        }
         Ok(taken)
     }
 
@@ -3523,7 +3546,9 @@ impl Pass<'_> {
             basis_marks: Vec::new(),
             basis_space_guard: None,
             skip_protected_title_match: false,
-            member_write: false,
+            // A team share imports a member's page: it gets the member-write
+            // gate, including no library-wide link sweep.
+            member_write: !self.library,
             research_write: None,
         };
         match crate::post_write::page_write(self.db, write).await {
@@ -3575,7 +3600,14 @@ impl Pass<'_> {
                 return Ok(None);
             }
         };
-        let page = match self.db.publish_page_draft(id, draft.version).await {
+        let published = if self.library {
+            self.db.publish_page_draft(id, draft.version).await
+        } else {
+            self.db
+                .publish_shared_page_draft(id, draft.version, &self.member_scope())
+                .await
+        };
+        let page = match published {
             Ok(crate::pages::PageDraftPublishOutcome::Published(page)) => page,
             Ok(_) => {
                 log::info!("[shared_space] {id}: the empty page could not be published this pass");

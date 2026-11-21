@@ -116,3 +116,59 @@ async fn round6_member_save_that_repeats_or_moves_cited_text_is_refused() {
         assert_eq!(json!(after.citations), json!(before.citations), "{case}");
     }
 }
+
+/// Uploads a whole version of `page` as the team writer.
+async fn writer_uploads(f: &Fixture, page: &str, title: &str, body: &str) {
+    let mut file = wenlan_core::store::format::page::PageFile::new(title, body);
+    file.id = Some(page.into());
+    let bytes = render_test_version(&file, &f.writer.0.id);
+    let name = version::version_file_name(&version::sha256_hex(bytes.as_bytes()));
+    let (status, _) = call(
+        &f.state,
+        Method::PUT,
+        &format!("/team/v1/spaces/Design/versions/{page}/{name}"),
+        Some(&f.writer.1),
+        bytes.into(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+}
+
+#[tokio::test]
+async fn round6_synced_member_create_sees_only_member_titles_and_skips_the_link_sweep() {
+    let (f, db) = fixture_with_daemon().await;
+    let (hidden, _) = seed_saved_rules(&db).await;
+    let hidden_body = format!("{SAVED_RULE} See [[Round6 linked page]].");
+    db.update_page_content(&hidden, &hidden_body, &[], "manual_edit")
+        .await
+        .unwrap();
+    let orphans = |labels: Vec<(String, i64)>| {
+        labels
+            .iter()
+            .any(|(label, _)| label.eq_ignore_ascii_case("Round6 linked page"))
+    };
+    assert!(orphans(db.list_orphan_link_labels(1).await.unwrap()));
+    sync_hosted_test_folder(&f, &db).await;
+    let same_title = "page_00000000-0000-4000-8000-000000006001";
+    let linked = "page_00000000-0000-4000-8000-000000006002";
+    writer_uploads(
+        &f,
+        same_title,
+        "Rules I saved",
+        "A member's team conventions.",
+    )
+    .await;
+    writer_uploads(&f, linked, "Round6 linked page", "A member's linked page.").await;
+    sync_hosted_test_folder(&f, &db).await;
+    let created = db.get_page(same_title).await.unwrap().unwrap();
+    assert_eq!(created.title, "Rules I saved", "a hidden title was taken");
+    assert!(db.get_page(linked).await.unwrap().is_some());
+    assert!(
+        orphans(db.list_orphan_link_labels(1).await.unwrap()),
+        "a member import resolved a hidden page's link"
+    );
+    assert_eq!(
+        db.get_page(&hidden).await.unwrap().unwrap().content,
+        hidden_body
+    );
+}
