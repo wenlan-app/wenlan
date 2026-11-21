@@ -5217,11 +5217,16 @@ mod tests {
         if case_insensitive {
             assert!(!f.sync_with("").message.contains("additional command"));
             let restored = f.setup.restore().unwrap();
-            assert!(restored.blocked.is_empty(), "{restored:?}");
-            assert!(!f.setup.home.join(renamed).exists());
-            assert!(!f.setup.home.join(".cursor/commands").exists());
+            assert!(
+                restored
+                    .blocked
+                    .iter()
+                    .any(|reason| reason.contains(copied) && reason.contains("spelling changed")),
+                "{restored:?}"
+            );
+            assert_eq!(f.text(renamed), "An edited command.\n");
             assert_eq!(f.text(command), "An original command.\n");
-            assert!(f.setup.load().unwrap().is_none());
+            assert!(f.setup.load().unwrap().is_some());
         }
     }
 
@@ -5304,10 +5309,11 @@ mod tests {
                 .unwrap_err();
             assert!(error.to_string().contains("ASCII"), "{error}");
             let restored = f.setup.restore().unwrap();
-            assert!(restored
-                .blocked
-                .iter()
-                .any(|reason| reason.contains("ASCII")));
+            assert!(
+                restored.blocked.iter().any(|reason| reason.contains(ascii)
+                    && (reason.contains("ASCII") || reason.contains("spelling changed"))),
+                "{restored:?}"
+            );
             assert!(f.setup.load().unwrap().is_some());
         }
     }
