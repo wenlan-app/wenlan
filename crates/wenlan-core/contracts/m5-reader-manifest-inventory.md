@@ -1655,6 +1655,7 @@ carrying the authority of agreement.
 | `core/post_write/page_create.rs::create_page_impl` | `pub(super)` | no | no | — | `core/db.rs::find_matching_page_scoped`, `core/db.rs::insert_page_with_basis`, `core/db.rs::resolve_orphan_page_links`, `core/page_titles.rs::strict_same_title_note` |
 | `core/post_write/page_create.rs::replace_source_page_impl` | `pub(super)` | no | no | — | `core/db.rs::get_page` |
 | `core/post_write/page_create.rs::write_document_source_page_impl` | `pub(super)` | no | no | — | `core/db.rs::insert_document_source_page_at_hash` |
+| `core/post_write/page_dispatch.rs::steep_update_page_with_bases` | `pub` | no | no | — | `core/db.rs::get_page` |
 | `core/post_write/page_link_rename.rs::update_links_to_renamed_headings` | `pub(crate)` | yes | no | — | `core/db.rs::get_page` |
 | `core/post_write/page_link_rename.rs::update_links_to_renamed_page` | `pub(crate)` | no | no | — | `core/db.rs::get_page` |
 | `core/post_write/page_removal.rs::page_in_scope` | `private` | no | no | — | `core/db.rs::get_page` |
@@ -1885,6 +1886,7 @@ carrying the authority of agreement.
 | `core/post_write.rs::restore_page` | `pub` | yes | no | — | `core/post_write.rs::restore_page_for` |
 | `core/post_write/page_create.rs::attach_page_sources_checked` | `private` | no | no | — | `core/db.rs::link_page_sources_with_citation_snapshot` |
 | `core/post_write/page_dispatch.rs::page_write_with_citation_snapshot` | `pub` | no | **yes** | `server/page_routes.rs::handle_create_page_inner`, `server/page_routes.rs::handle_refresh_page_inner` | `core/post_write/page_create.rs::create_page_impl`, `core/post_write/page_create.rs::replace_source_page_impl`, `core/post_write/page_create.rs::write_document_source_page_impl` |
+| `core/post_write/page_dispatch.rs::steep_update_page` | `pub` | no | **yes** | `server/repo_wiki_routes.rs::take_back_edits` | `core/post_write/page_dispatch.rs::steep_update_page_with_bases` |
 | `core/post_write/page_removal.rs::archive_page_as` | `pub` | no | **yes** | `server/page_routes.rs::archive_page_for` | `core/post_write/page_removal.rs::page_in_scope` |
 | `core/post_write/page_removal.rs::delete_page_permanently` | `pub` | no | **yes** | `server/page_routes.rs::handle_delete_page` | `core/db.rs::delete_page_recorded`, `core/post_write/page_removal.rs::page_in_scope` |
 | `core/post_write/page_revision.rs::accept_page_revision_card` | `pub(super)` | no | no | — | `core/post_write/page_revision.rs::accept_page_revision_card_with_edit` |

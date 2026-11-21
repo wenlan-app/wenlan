@@ -622,9 +622,23 @@ pub async fn steep_update_page_with_bases(
     citations: Option<(String, String)>,
     marks: Vec<(String, i64)>,
 ) -> Result<WriteResult, WenlanError> {
+    // Steep still sends its rewrite of a page a person wrote or edited to
+    // them as a card, so that rewrite uses the explicit rebuild's writer,
+    // which a person's ownership gates. The background refresh's writer
+    // (`re_distill`) now changes such a page sentence by sentence (design v5
+    // D5); steep moves to that rule in its own change.
+    let human_owned = match code_rewrite {
+        None => db
+            .get_page(page_id)
+            .await?
+            .is_some_and(|page| super::page_is_human_owned(&page)),
+        Some(_) => false,
+    };
     let edited_by = match code_rewrite {
         Some(false) => "agent_refresh",
-        _ => "re_distill",
+        Some(true) => "distill",
+        None if human_owned => "distill",
+        None => "re_distill",
     };
     update_page_impl(
         db,
