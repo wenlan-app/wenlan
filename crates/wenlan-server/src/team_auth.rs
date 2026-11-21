@@ -744,7 +744,7 @@ pub(super) async fn guard(State(state): State<TeamState>, req: Request, next: Ne
         return crate::member_view::team::rate_limited().into_response();
     }
     if site(&state).await.is_none() {
-        return StatusCode::NOT_FOUND.into_response();
+        return crate::member_view::team::empty(StatusCode::NOT_FOUND).into_response();
     }
     next.run(req).await
 }

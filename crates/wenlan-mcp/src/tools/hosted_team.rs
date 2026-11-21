@@ -6,6 +6,7 @@ use rmcp::model::Tool;
 use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::sync::Arc;
+use wenlan_types::responses::MemberRenamePageResponse;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum MemberGrant {
@@ -317,17 +318,6 @@ struct MemberBasisReceipt {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct MemberRenameReceipt {
-    id: String,
-    title: String,
-    version: i64,
-    links_updated: u32,
-    links_pending_review: u32,
-    links_not_updated: u32,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct MemberRemovalReceipt {
     status: wenlan_types::responses::PageRemovalStatus,
     restorable: bool,
@@ -359,7 +349,7 @@ enum MemberOutput {
         expected_version: i64,
         current_version: Option<i64>,
     },
-    Rename(MemberRenameReceipt),
+    Rename(MemberRenamePageResponse),
     Archive(MemberRemovalReceipt),
     Error(&'static str),
 }
@@ -528,7 +518,7 @@ fn append_member_bases(text: &mut String, bases: &[MemberBasisReceipt]) {
     text.push_str(&format!(" Bases: {details}."));
 }
 
-fn render_rename(receipt: &MemberRenameReceipt) -> String {
+fn render_rename(receipt: &MemberRenamePageResponse) -> String {
     let mut text = format!(
         "Renamed page {} to \"{}\" (version {}).",
         receipt.id, receipt.title, receipt.version
@@ -868,7 +858,7 @@ async fn member_rename_page(
         expected_version: params.expected_version,
     };
     let path = format!("/api/pages/{}/rename", url_encode_simple(&params.page_id));
-    let receipt: MemberRenameReceipt = match server.client.post(&path, &request).await {
+    let receipt: MemberRenamePageResponse = match server.client.post(&path, &request).await {
         Ok(receipt) => receipt,
         Err(error) => return Ok(MemberOutput::Error(closed_error(&error))),
     };

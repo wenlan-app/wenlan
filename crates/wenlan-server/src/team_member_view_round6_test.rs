@@ -622,3 +622,97 @@ async fn round6_a_decision_closes_a_card_only_for_its_page_and_current_stay() {
         "a stale decision closed a card"
     );
 }
+
+#[tokio::test]
+async fn round6_member_rename_reply_is_the_shared_wire_type() {
+    let (f, db) = fixture_with_daemon().await;
+    let page = create_folder_test_page(&db, "Round6 rename wire", "authored").await;
+    let page = db.get_page(&page.id).await.unwrap().unwrap();
+    let (status, reply) = forwarded(
+        &f,
+        Method::POST,
+        &format!("/api/pages/{}/rename", page.id),
+        json!({"expected_version": page.version, "title": "Round6 rename wire, renamed"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{reply}");
+    // The MCP side reads this same type with unknown fields refused.
+    let receipt: wenlan_types::responses::MemberRenamePageResponse =
+        serde_json::from_str(&reply).unwrap();
+    assert_eq!(receipt.id, page.id);
+    assert_eq!(receipt.title, "Round6 rename wire, renamed");
+    assert!(
+        serde_json::from_value::<wenlan_types::responses::MemberRenamePageResponse>(
+            json!({"id": "p", "title": "t", "version": 1, "links_updated": 0,
+               "links_pending_review": 0, "links_not_updated": 0, "content": "private"})
+        )
+        .is_err()
+    );
+}
+
+#[tokio::test]
+async fn round6_hosted_mcp_routes_return_the_typed_member_response() {
+    let f = fixture();
+    let (_, nobody) = team::add_member(&f.state.team_path, "Nil", &[]).unwrap();
+    let router = team_router(f.state.clone());
+    let initialize = json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-06-18", "capabilities": {},
+            "clientInfo": {"name": "round6", "version": "1"}
+        }
+    });
+    let send = |path: &'static str, key: String| {
+        let router = router.clone();
+        let body = initialize.to_string();
+        async move {
+            let response = router
+                .oneshot(
+                    Request::post(path)
+                        .header(header::HOST, "team.example.com")
+                        .header(header::AUTHORIZATION, format!("Bearer {key}"))
+                        .header(header::ACCEPT, "application/json, text/event-stream")
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let typed = crate::member_view::is_typed(&response);
+            let status = response.status();
+            (status, typed, response_text(response).await)
+        }
+    };
+    let mut untyped = Vec::new();
+    for (path, key, status, text) in [
+        ("/mcp", f.writer.1.clone(), StatusCode::OK, ""),
+        ("/mcp/Design", f.writer.1.clone(), StatusCode::OK, ""),
+        ("/mcp", nobody, StatusCode::FORBIDDEN, "has no Space"),
+        (
+            "/mcp",
+            f.outsider.1.clone(),
+            StatusCode::NOT_FOUND,
+            "does not host that Space",
+        ),
+        (
+            "/mcp/Design",
+            f.outsider.1.clone(),
+            StatusCode::FORBIDDEN,
+            "not a Space of this member",
+        ),
+        (
+            "/mcp/Other",
+            f.outsider.1.clone(),
+            StatusCode::NOT_FOUND,
+            "does not host that Space",
+        ),
+    ] {
+        let (got, typed, reply) = send(path, key).await;
+        assert_eq!(got, status, "{path}: {reply}");
+        assert!(reply.contains(text), "{path}: {reply}");
+        if !typed {
+            untyped.push(format!("{path} {status}"));
+        }
+    }
+    assert_eq!(untyped, Vec::<String>::new(), "untyped /mcp responses");
+}

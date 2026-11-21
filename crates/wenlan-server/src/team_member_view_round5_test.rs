@@ -2,15 +2,18 @@
 
 use super::*;
 
-/// Exercise the shared write-authorizer directly using each registered
-/// path's parameter shape. The fixture covers one replacement per page-ID
-/// slot so a two-page mutation has to authorize both sides.
+/// Send each registered member write through its real route, with an
+/// ineligible page in one page-ID slot at a time, and each auth route
+/// without a credential. Browser calls go through `/team/v1/app`, hosted
+/// MCP calls through the daemon as the MCP client sends them, and version
+/// uploads through the team data route. Every denial must be refused and
+/// leave the hidden page as it was.
 #[tokio::test]
 async fn round5_catalog_generates_member_authorization_cases() {
     use crate::team_actor::{may_write_pages, member_routes, page_parameters, write_target};
-    use wenlan_core::db::MemberPageTarget;
 
     let (f, db) = fixture_with_daemon().await;
+    team::set_url(&f.state.team_path, Some(ORIGIN)).unwrap();
     let visible = create_folder_test_page(&db, "Visible catalog fixture", "authored").await;
     let (hidden, _) = seed_saved_rules(&db).await;
     let hidden_before = db.get_page(&hidden).await.unwrap().unwrap();
@@ -26,12 +29,19 @@ async fn round5_catalog_generates_member_authorization_cases() {
         .await
         .unwrap();
     let scope = ReadScope::Space("Design".into());
-    let forwarded = member_routes().collect::<std::collections::BTreeSet<_>>();
+    let forwarded_calls = member_routes().collect::<std::collections::BTreeSet<_>>();
     let data = member_data_route_catalog().collect::<std::collections::BTreeSet<_>>();
     let auth = auth_route_catalog().collect::<std::collections::BTreeSet<_>>();
+    // One body for every write: each route reads the fields it knows.
+    let body = json!({
+        "expected_version": hidden_before.version, "version": hidden_before.version,
+        "content": "Round5 canary text.", "title": "Round5 canary title",
+        "space": "Design", "folder": "", "basis_version": hidden_before.version,
+    });
     let mut page_write_routes = 0;
     let mut denied_cases = 0;
-    for &(method, template) in forwarded.iter().chain(&data).chain(&auth) {
+    let mut not_refused = Vec::new();
+    for &(method, template) in forwarded_calls.iter().chain(&data) {
         let method = Method::from_bytes(method.as_bytes()).unwrap();
         let slots: Vec<_> = template
             .split('/')
@@ -53,7 +63,6 @@ async fn round5_catalog_generates_member_authorization_cases() {
                     "{space}" => "Design",
                     "{name}" => "fixture.md",
                     "{proposal}" => "fixture",
-                    "{provider}" => "google",
                     part => part,
                 })
                 .collect::<Vec<_>>()
@@ -68,42 +77,122 @@ async fn round5_catalog_generates_member_authorization_cases() {
             continue;
         }
         page_write_routes += 1;
+        if !template.contains("/{page}/") {
+            // The fixture page itself is eligible, so a refusal below is the
+            // hidden page's.
+            let target = write_target(&method, template, Some(&f.writer.0.id)).unwrap();
+            assert!(
+                may_write_pages(
+                    &db,
+                    &scope,
+                    target,
+                    page_parameters(template, &allowed_path)
+                )
+                .await
+                .unwrap(),
+                "{method} {template} should allow the eligible fixture",
+            );
+        }
         for slot in slots.iter().copied() {
             let denied_path = concrete(Some(slot));
+            let mut replies = Vec::new();
             if template.contains("/{page}/") {
-                assert!(db
-                    .member_may_upload_page_version(&visible.id, &scope)
-                    .await
-                    .unwrap());
-                assert!(!db
-                    .member_may_upload_page_version(&hidden, &scope)
-                    .await
-                    .unwrap());
+                let mut file = wenlan_core::store::format::page::PageFile::new(
+                    &hidden_before.title,
+                    "Round5 canary text.",
+                );
+                file.id = Some(hidden.clone());
+                let bytes = version::render(
+                    &file,
+                    &version::VersionMeta {
+                        stay: None,
+                        parent: None,
+                        merged: Vec::new(),
+                        body_digest: version::body_digest(&file.body),
+                        author: version::Author {
+                            member: f.writer.0.id.clone(),
+                            kind: version::AuthorKind::Person,
+                            agent: None,
+                        },
+                        ts: "2099-01-01T00:00:00Z".into(),
+                        archived: false,
+                        locked: false,
+                        proposal: false,
+                        decides: None,
+                        device: None,
+                    },
+                );
+                let name = version::version_file_name(&version::sha256_hex(bytes.as_bytes()));
+                let path = denied_path.replace("fixture.md", &name);
+                let (status, reply) = call(
+                    &f.state,
+                    method.clone(),
+                    &path,
+                    Some(&f.writer.1),
+                    bytes.into(),
+                )
+                .await;
+                replies.push(("team data", status, String::from_utf8_lossy(&reply).into()));
             } else {
-                let target = write_target(&method, template, Some(&f.writer.0.id)).unwrap();
-                assert!(
-                    may_write_pages(
-                        &db,
-                        &scope,
-                        target,
-                        page_parameters(template, &allowed_path)
-                    )
-                    .await
-                    .unwrap(),
-                    "{method} {template} should allow the eligible fixture",
-                );
-                assert!(
-                    !may_write_pages(&db, &scope, target, page_parameters(template, &denied_path))
-                        .await
-                        .unwrap(),
-                    "{method} {template} must deny the ineligible slot",
-                );
+                let key = (method.as_str(), template);
+                if crate::team_routes::is_member_app_call(&method, template) {
+                    let (status, reply) =
+                        browser_write(&f, method.clone(), &denied_path, body.clone()).await;
+                    replies.push(("browser", status, reply));
+                }
+                if crate::team_actor::MCP_CALLS.contains(&key) {
+                    let (status, reply) =
+                        forwarded(&f, method.clone(), &denied_path, body.clone()).await;
+                    replies.push(("hosted MCP", status, reply));
+                }
             }
-            denied_cases += 1;
+            assert!(!replies.is_empty(), "{method} {template} has no route");
+            for (via, status, reply) in replies {
+                if !matches!(
+                    status,
+                    StatusCode::FORBIDDEN | StatusCode::NOT_FOUND | StatusCode::CONFLICT
+                ) {
+                    not_refused.push(format!("{via} {method} {denied_path}: {status} {reply}"));
+                }
+                denied_cases += 1;
+            }
         }
     }
+    assert_eq!(
+        not_refused,
+        Vec::<String>::new(),
+        "denials that were not refused"
+    );
+    // Auth routes take no page, so each is called once without a credential:
+    // it must answer with a member response and change nothing.
+    let router = team_router(f.state.clone());
+    let mut untyped_auth = Vec::new();
+    for &(method, template) in &auth {
+        let path = template.replace("{provider}", "google");
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::from_bytes(method.as_bytes()).unwrap())
+                    .uri(&path)
+                    .header(header::ORIGIN, ORIGIN)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        if !crate::member_view::is_typed(&response) || status.is_server_error() {
+            untyped_auth.push(format!("{method} {path}: {status}"));
+        }
+    }
+    assert_eq!(untyped_auth, Vec::<String>::new(), "auth routes");
     assert!(!db
-        .member_can_access_page(&hidden, &scope, MemberPageTarget::Published)
+        .member_can_access_page(
+            &hidden,
+            &scope,
+            wenlan_core::db::MemberPageTarget::Published
+        )
         .await
         .unwrap());
     let hidden_after = db.get_page(&hidden).await.unwrap().unwrap();
@@ -111,11 +200,12 @@ async fn round5_catalog_generates_member_authorization_cases() {
     assert_eq!(hidden_after.title, hidden_before.title);
     assert_eq!(hidden_after.content, hidden_before.content);
     assert_eq!(hidden_after.status, hidden_before.status);
+    assert!(!version::read_folder(&f.folder).pages.contains_key(&hidden));
     assert!(!auth.is_empty());
     assert!(page_write_routes >= 12 && denied_cases > page_write_routes);
     eprintln!(
-        "catalog inputs: {} forwarded, {} team data, {} auth; {page_write_routes} page writes, {denied_cases} denials",
-        forwarded.len(), data.len(), auth.len(),
+        "catalog inputs: {} forwarded, {} team data, {} auth; {page_write_routes} page writes, {denied_cases} route denials",
+        forwarded_calls.len(), data.len(), auth.len(),
     );
 }
 

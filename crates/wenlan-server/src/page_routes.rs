@@ -2386,7 +2386,10 @@ pub async fn handle_rename_page(
     Path(id): Path<String>,
     Json(req): Json<wenlan_types::requests::RenamePageRequest>,
 ) -> Result<
-    PageResponse<wenlan_types::responses::RenamePageResponse, crate::member_view::MemberRename>,
+    PageResponse<
+        wenlan_types::responses::RenamePageResponse,
+        wenlan_types::responses::MemberRenamePageResponse,
+    >,
     ServerError,
 > {
     let private = crate::team_actor::can_read_private_memories(&headers);

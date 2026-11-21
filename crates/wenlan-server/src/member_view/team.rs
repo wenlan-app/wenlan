@@ -79,6 +79,19 @@ pub(crate) fn validated_markdown_file(
     MemberResponse::new(response)
 }
 
+/// A hosted MCP exchange. Only the member's MCP service can answer it: its
+/// tools read the daemon through the member response types above.
+pub(crate) async fn hosted_mcp(
+    service: crate::team_routes::McpService,
+    request: axum::extract::Request,
+) -> MemberResponse {
+    use tower::ServiceExt as _;
+    match service.oneshot(request).await {
+        Ok(response) => MemberResponse::new(response.into_response()),
+        Err(never) => match never {},
+    }
+}
+
 pub(crate) fn empty(status: StatusCode) -> MemberResponse {
     MemberResponse::status(status)
 }

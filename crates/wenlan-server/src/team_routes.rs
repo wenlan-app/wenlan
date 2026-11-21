@@ -28,6 +28,7 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
 use serde::{Deserialize, Serialize};
+#[cfg(test)]
 use tower::ServiceExt;
 use wenlan_core::rulesync_team;
 use wenlan_core::shared_space::{self, remote, Scope};
@@ -868,7 +869,7 @@ pub(crate) fn join_parts(code: &str, key: Option<&str>) -> Result<(String, Strin
 
 // ===== The team listener =====
 
-type McpService = rmcp::transport::streamable_http_server::StreamableHttpService<
+pub(crate) type McpService = rmcp::transport::streamable_http_server::StreamableHttpService<
     wenlan_mcp::tools::WenlanMcpServer,
     rmcp::transport::streamable_http_server::session::local::LocalSessionManager,
 >;
@@ -1186,11 +1187,11 @@ fn team_router(state: TeamState) -> axum::Router {
             binding.route.install(router, binding.template)
         });
     let data = crate::member_view::any(app_gate::handle).install(data, "/team/v1/app/{*call}");
+    let data = crate::member_view::any(team_mcp).install(data, "/mcp");
+    let data = crate::member_view::any(team_mcp_in).install(data, "/mcp/{*space}");
     let checked = data
         .route("/team/v1/admin", any(team_admin))
         .route("/team/v1/admin/{*rest}", any(team_admin))
-        .route("/mcp", any(team_mcp))
-        .route("/mcp/{*space}", any(team_mcp_in))
         .layer(middleware::from_fn(wenlan_mcp::serve::guard_initialization))
         .layer(middleware::from_fn(capped_body))
         .layer(middleware::from_fn_with_state(
@@ -1257,7 +1258,11 @@ async fn capped_body(req: Request, next: Next) -> Response {
             next.run(Request::from_parts(parts, Body::from(bytes)))
                 .await
         }
-        Err(_) => (StatusCode::PAYLOAD_TOO_LARGE, "the request is too large").into_response(),
+        Err(_) => crate::member_view::MemberResponse::text(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "the request is too large",
+        )
+        .into_response(),
     }
 }
 
@@ -1848,15 +1853,29 @@ async fn require_member(State(state): State<TeamState>, mut req: Request, next: 
     let member = tokio::task::spawn_blocking(move || team::authenticate(&path, &key)).await;
     let (member, credential) = match member {
         Ok(Ok(Some(found))) => (found.member, found.credential),
-        Ok(Ok(None)) => return (StatusCode::UNAUTHORIZED, "member key required").into_response(),
+        Ok(Ok(None)) => {
+            return crate::member_view::MemberResponse::text(
+                StatusCode::UNAUTHORIZED,
+                "member key required",
+            )
+            .into_response()
+        }
         Ok(Err(error)) => {
             tracing::warn!("[team] member list cannot be read: {error}");
-            return StatusCode::SERVICE_UNAVAILABLE.into_response();
+            return crate::member_view::MemberResponse::status(StatusCode::SERVICE_UNAVAILABLE)
+                .into_response();
         }
-        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+        Err(_) => {
+            return crate::member_view::MemberResponse::status(StatusCode::SERVICE_UNAVAILABLE)
+                .into_response()
+        }
     };
     if !credential_may_reach(credential.kind(), req.uri().path()) {
-        return (StatusCode::FORBIDDEN, "this key does not open that").into_response();
+        return crate::member_view::MemberResponse::text(
+            StatusCode::FORBIDDEN,
+            "this key does not open that",
+        )
+        .into_response();
     }
     if let Some(origin) = req
         .headers()
@@ -1881,7 +1900,11 @@ async fn require_member(State(state): State<TeamState>, mut req: Request, next: 
             ALLOWED_ORIGINS.contains(&origin)
         };
         if !allowed {
-            return (StatusCode::FORBIDDEN, "origin not allowed").into_response();
+            return crate::member_view::MemberResponse::text(
+                StatusCode::FORBIDDEN,
+                "origin not allowed",
+            )
+            .into_response();
         }
     }
     req.extensions_mut().insert(member);
@@ -1899,10 +1922,16 @@ async fn require_session(state: TeamState, mut req: Request, next: Next) -> Resp
         response
     };
     let Some(token) = crate::team_session::cookie_token(req.headers()) else {
-        return no_store((StatusCode::UNAUTHORIZED, "sign in again").into_response());
+        return no_store(
+            crate::member_view::MemberResponse::text(StatusCode::UNAUTHORIZED, "sign in again")
+                .into_response(),
+        );
     };
     let Some(member_id) = state.sessions.lookup(&token) else {
-        return no_store((StatusCode::UNAUTHORIZED, "sign in again").into_response());
+        return no_store(
+            crate::member_view::MemberResponse::text(StatusCode::UNAUTHORIZED, "sign in again")
+                .into_response(),
+        );
     };
     // Every request rereads the team's file, so a removed member's session
     // stops at once even where nothing told this process.
@@ -1915,18 +1944,33 @@ async fn require_session(state: TeamState, mut req: Request, next: Next) -> Resp
         Ok(Ok(Some(member))) if member.is_active() => member,
         Ok(Ok(_)) => {
             state.sessions.delete_member(&member_id);
-            return no_store((StatusCode::UNAUTHORIZED, "sign in again").into_response());
+            return no_store(
+                crate::member_view::MemberResponse::text(StatusCode::UNAUTHORIZED, "sign in again")
+                    .into_response(),
+            );
         }
         Ok(Err(error)) => {
             tracing::warn!("[team] member list cannot be read: {error}");
-            return no_store(StatusCode::SERVICE_UNAVAILABLE.into_response());
+            return no_store(
+                crate::member_view::MemberResponse::status(StatusCode::SERVICE_UNAVAILABLE)
+                    .into_response(),
+            );
         }
-        Err(_) => return no_store(StatusCode::SERVICE_UNAVAILABLE.into_response()),
+        Err(_) => {
+            return no_store(
+                crate::member_view::MemberResponse::status(StatusCode::SERVICE_UNAVAILABLE)
+                    .into_response(),
+            )
+        }
     };
     let credential = team::Credential::BrowserSession;
     if !credential_may_reach(credential.kind(), req.uri().path()) {
         return no_store(
-            (StatusCode::FORBIDDEN, "this sign-in does not open that").into_response(),
+            crate::member_view::MemberResponse::text(
+                StatusCode::FORBIDDEN,
+                "this sign-in does not open that",
+            )
+            .into_response(),
         );
     }
     // A cookie goes with whatever page asks, so a change must come from
@@ -1947,7 +1991,10 @@ async fn require_session(state: TeamState, mut req: Request, next: Next) -> Resp
         Some(None) => false,
     };
     if !origin_ok {
-        return no_store((StatusCode::FORBIDDEN, "origin not allowed").into_response());
+        return no_store(
+            crate::member_view::MemberResponse::text(StatusCode::FORBIDDEN, "origin not allowed")
+                .into_response(),
+        );
     }
     req.extensions_mut().insert(member);
     req.extensions_mut().insert(credential);
@@ -2385,34 +2432,8 @@ async fn approve_pending(state: &TeamState, id: &str) -> Response {
     }
 }
 
-/// The hosted Space's folder, when `member` may use it.
-#[allow(clippy::result_large_err)] // the refusal is the handler's response
-fn space_folder(
-    state: &TeamState,
-    member: &Member,
-    space: &str,
-) -> Result<(PathBuf, TeamAccess), Response> {
-    // The rules' answer for the Space as if hosted: a Space that is not
-    // theirs is refused before saying whether this server hosts it.
-    let Some(access) = crate::team_policy::access(member, space, true) else {
-        return Err((StatusCode::FORBIDDEN, "not a Space of this member").into_response());
-    };
-    match team::hosted_folder(&state.settings_path, space) {
-        Ok(Some(folder)) => Ok((folder, access)),
-        Ok(None) => Err((
-            StatusCode::NOT_FOUND,
-            "this server does not host that Space",
-        )
-            .into_response()),
-        Err(error) => {
-            tracing::warn!("[team] shared Spaces cannot be read: {error}");
-            Err(StatusCode::SERVICE_UNAVAILABLE.into_response())
-        }
-    }
-}
-
-/// The member-facing form uses a closed set of response shapes. Keep the
-/// owner/MCP helper above unchanged; only member data routes use this one.
+/// The hosted Space's folder, when `member` may use it, refused with one of
+/// the member response shapes. The data routes and hosted MCP share it.
 fn member_space_folder(
     state: &TeamState,
     member: &Member,
@@ -2709,7 +2730,7 @@ async fn team_mcp(
     State(state): State<TeamState>,
     Extension(member): Extension<Member>,
     req: Request,
-) -> Response {
+) -> crate::member_view::MemberResponse {
     // The same list `/team/v1/me` gives, so the address the invite page
     // shows for "one Space" always opens: a Space open to everyone counts
     // exactly like one given to this member by name.
@@ -2717,11 +2738,10 @@ async fn team_mcp(
     let hosted = match tokio::task::spawn_blocking(move || team::hosted_spaces(&settings)).await {
         Ok(Ok(hosted)) => hosted,
         _ => {
-            return (
+            return crate::member_view::MemberResponse::text(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "the Spaces cannot be read",
-            )
-                .into_response();
+            );
         }
     };
     let mut spaces: Vec<String> = member
@@ -2736,12 +2756,14 @@ async fn team_mcp(
             let space = spaces.remove(0);
             serve_mcp(state, member, space, req).await
         }
-        0 => (StatusCode::FORBIDDEN, "this member has no Space").into_response(),
-        _ => (
+        0 => crate::member_view::MemberResponse::text(
+            StatusCode::FORBIDDEN,
+            "this member has no Space",
+        ),
+        _ => crate::member_view::MemberResponse::text(
             StatusCode::NOT_FOUND,
             "this member has more than one Space: connect to /mcp/<Space name>",
-        )
-            .into_response(),
+        ),
     }
 }
 
@@ -2750,14 +2772,19 @@ async fn team_mcp_in(
     Extension(member): Extension<Member>,
     Path(space): Path<String>,
     req: Request,
-) -> Response {
+) -> crate::member_view::MemberResponse {
     serve_mcp(state, member, space, req).await
 }
 
-async fn serve_mcp(state: TeamState, member: Member, space: String, req: Request) -> Response {
-    let access = match space_folder(&state, &member, &space) {
+async fn serve_mcp(
+    state: TeamState,
+    member: Member,
+    space: String,
+    req: Request,
+) -> crate::member_view::MemberResponse {
+    let access = match member_space_folder(&state, &member, &space) {
         Ok((_, access)) => access,
-        Err(refused) => return refused,
+        Err(refused) => return *refused,
     };
     let service = {
         let mut services = state
@@ -2770,7 +2797,11 @@ async fn serve_mcp(state: TeamState, member: Member, space: String, req: Request
             std::collections::hash_map::Entry::Vacant(entry) => {
                 let client = match crate::team_actor::mcp_client() {
                     Ok(client) => client,
-                    Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                    Err(_) => {
+                        return crate::member_view::MemberResponse::status(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                        )
+                    }
                 };
                 let client = wenlan_mcp::client::WenlanClient::with_http_client(
                     state.daemon_url.clone(),
@@ -2797,10 +2828,7 @@ async fn serve_mcp(state: TeamState, member: Member, space: String, req: Request
             }
         }
     };
-    match service.oneshot(req).await {
-        Ok(response) => response.into_response(),
-        Err(never) => match never {},
-    }
+    crate::member_view::team::hosted_mcp(service, req).await
 }
 
 #[cfg(test)]

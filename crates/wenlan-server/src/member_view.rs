@@ -127,6 +127,11 @@ impl IntoResponse for MemberResponse {
     }
 }
 
+#[cfg(test)]
+pub(crate) fn is_typed(response: &Response) -> bool {
+    response.extensions().get::<Typed>().is_some()
+}
+
 pub(crate) fn verified_forwarded_response(response: Response) -> Response {
     if response.extensions().get::<Typed>().is_some() {
         return response;
@@ -303,7 +308,7 @@ member_bodies!(
     core_view::MemberMove,
     core_view::MemberRules,
     core_view::MemberBasis,
-    MemberRename,
+    wire::MemberRenamePageResponse,
     MemberSources,
     MemberFolders,
     MemberFolder,
@@ -438,29 +443,6 @@ direct_member_route!(get, "GET");
 direct_member_route!(post, "POST");
 direct_member_route!(put, "PUT");
 direct_member_route!(any, "ANY");
-
-#[derive(Serialize, Deserialize)]
-pub struct MemberRename {
-    id: String,
-    title: String,
-    version: i64,
-    links_updated: u32,
-    links_pending_review: u32,
-    links_not_updated: u32,
-}
-
-impl From<wire::RenamePageResponse> for MemberRename {
-    fn from(result: wire::RenamePageResponse) -> Self {
-        Self {
-            id: result.id,
-            title: result.title,
-            version: result.version,
-            links_updated: result.links_updated,
-            links_pending_review: result.links_pending_review,
-            links_not_updated: result.links_not_updated,
-        }
-    }
-}
 
 pub type MemberSources = [(); 0];
 
