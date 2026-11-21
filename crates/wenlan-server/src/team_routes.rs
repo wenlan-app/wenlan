@@ -2749,6 +2749,16 @@ async fn team_files(
             return crate::member_view::MemberResponse::status(StatusCode::SERVICE_UNAVAILABLE);
         }
     };
+    let refused_changes = match &state.db {
+        Some(db) => match db.member_sync_refusals(&space, &member.id).await {
+            Ok(refusals) => refusals,
+            Err(error) => {
+                tracing::warn!("[team] cannot read member sync refusals: {error}");
+                return crate::member_view::MemberResponse::status(StatusCode::SERVICE_UNAVAILABLE);
+            }
+        },
+        None => Vec::new(),
+    };
     let listed = tokio::task::spawn_blocking(move || {
         rulesync_team::hosted_file_list(
             &state.team_path,
@@ -2761,7 +2771,10 @@ async fn team_files(
     })
     .await;
     match listed {
-        Ok(Ok(list)) => crate::member_view::team::files(list),
+        Ok(Ok(mut list)) => {
+            list.refused_changes = refused_changes;
+            crate::member_view::team::files(list)
+        }
         Ok(Err(error)) => {
             tracing::warn!("[team] shared Rules manifest cannot be read: {error}");
             crate::member_view::MemberResponse::status(StatusCode::SERVICE_UNAVAILABLE)

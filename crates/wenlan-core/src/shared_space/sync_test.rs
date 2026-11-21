@@ -48,7 +48,7 @@ impl Member {
     }
 
     async fn sync(&self, folder: &Path) -> SharedSyncCounts {
-        sync_space(
+        Box::pin(sync_space(
             &self.db,
             SyncTarget {
                 scope: &space(),
@@ -59,13 +59,13 @@ impl Member {
                 member_id: None,
                 host: None,
             },
-        )
+        ))
         .await
         .unwrap()
     }
 
     async fn share(&self, scope: &Scope, folder: &Path) -> Result<SharedSyncCounts, WenlanError> {
-        sync_space(
+        Box::pin(sync_space(
             &self.db,
             SyncTarget {
                 scope,
@@ -76,7 +76,7 @@ impl Member {
                 member_id: None,
                 host: None,
             },
-        )
+        ))
         .await
     }
 
@@ -86,7 +86,7 @@ impl Member {
         folder: &Path,
         member_id: &str,
     ) -> Result<SharedSyncCounts, WenlanError> {
-        sync_space(
+        Box::pin(sync_space(
             &self.db,
             SyncTarget {
                 scope: &space(),
@@ -97,7 +97,7 @@ impl Member {
                 member_id: Some(member_id),
                 host: None,
             },
-        )
+        ))
         .await
     }
 
@@ -1513,7 +1513,7 @@ impl Member {
         folder: &Path,
         member_id: Option<&str>,
     ) -> Result<SharedSyncCounts, WenlanError> {
-        sync_space(
+        Box::pin(sync_space(
             &self.db,
             SyncTarget {
                 scope: &library(),
@@ -1524,7 +1524,7 @@ impl Member {
                 member_id,
                 host: None,
             },
-        )
+        ))
         .await
     }
 

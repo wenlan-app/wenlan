@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Durable consent, checkpoint, undo, and suggestion state for Space rules.
 
-use super::MemoryDB;
+use super::{not_hidden_by_superseder, not_self_archived, MemoryDB, UNFILED_SPACE_ID};
 use crate::error::WenlanError;
+use crate::read_scope::ReadScope;
 use wenlan_types::{SkillBorrowRecord, SkillLine, SkillReportKind, SkillSuggestion};
 
 const LEDGER: &str = "skills";
@@ -420,6 +421,47 @@ impl MemoryDB {
         Ok(out)
     }
 
+    /// The preferences the person said once, kept outside every Space: what
+    /// their own AI tools are given in every Space (UX-CHAT-5). Only a
+    /// memory the person has confirmed, still current, with no Space at all;
+    /// one in a Space (a tool put it there itself) is that Space's, not this.
+    /// Newest first, as `(id, text)`.
+    pub async fn person_preferences(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<(String, String)>, WenlanError> {
+        let sql = format!(
+            "SELECT m.source_id, m.content FROM memories m
+              WHERE m.source = 'memory' AND m.chunk_index = 0
+                AND m.memory_type = 'preference'
+                AND COALESCE(m.confirmed, 0) = 1
+                AND (m.space IS NULL OR m.space = '' OR m.space = '{UNFILED_SPACE_ID}')
+                AND COALESCE(m.pending_revision, 0) = 0
+                AND COALESCE(m.is_recap, 0) = 0
+                AND {archived} AND {hidden}
+              ORDER BY m.created_at DESC, m.source_id LIMIT ?1",
+            archived = not_self_archived("m"),
+            hidden = not_hidden_by_superseder(&ReadScope::Global, "m"),
+        );
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(&sql, libsql::params![limit as i64])
+            .await
+            .map_err(|e| WenlanError::Generic(format!("person preferences: {e}")))?;
+        let mut out = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::Generic(format!("person preferences row: {e}")))?
+        {
+            let text: String = row.get(1).unwrap_or_default();
+            if !text.trim().is_empty() {
+                out.push((row.get(0).unwrap_or_default(), text));
+            }
+        }
+        Ok(out)
+    }
+
     pub async fn record_skill_rules_read(
         &self,
         tool: &str,
@@ -430,7 +472,9 @@ impl MemoryDB {
         if tool.is_empty() || tool.eq_ignore_ascii_case("unknown") {
             return Ok(());
         }
-        for line in lines {
+        // A line with no page behind it (a preference the person said once)
+        // has nothing to count a borrow against.
+        for line in lines.iter().filter(|line| !line.source_page_id.is_empty()) {
             let detail = serde_json::to_string(&BorrowDetail {
                 space_id: space_id.to_string(),
                 rule_id: line.id.clone(),
@@ -457,6 +501,9 @@ impl MemoryDB {
         line: &SkillLine,
         report: SkillReportKind,
     ) -> Result<(), WenlanError> {
+        if line.source_page_id.is_empty() {
+            return Ok(());
+        }
         let detail = serde_json::to_string(&BorrowDetail {
             space_id: space_id.to_string(),
             rule_id: line.id.clone(),
