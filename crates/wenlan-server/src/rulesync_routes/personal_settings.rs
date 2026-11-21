@@ -467,6 +467,9 @@ impl Setup {
                     let Some(wanted) = &state.wanted else {
                         continue;
                     };
+                    if !wanted.can_reapply() {
+                        continue;
+                    }
                     if !file.safe {
                         result.blocked.push(format!("{display}: {label} stayed in place because this file cannot be backed up without copying possible credentials."));
                         continue;
@@ -591,7 +594,9 @@ impl Setup {
                     "the tool edited this settings file again. Run rules sync."
                 );
                 let key = state.key.clone();
-                let wanted = if request.action == PullbackAction::Dismiss {
+                let dismiss_write = request.action == PullbackAction::Dismiss
+                    && state.wanted.as_ref().is_some_and(Entry::can_reapply);
+                let wanted = if dismiss_write {
                     state.wanted.clone()
                 } else {
                     proposed.observed.clone()

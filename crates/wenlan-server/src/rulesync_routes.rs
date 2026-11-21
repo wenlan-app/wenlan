@@ -4954,6 +4954,130 @@ mod tests {
             .contains("additional personal setting"));
     }
 
+    #[test]
+    fn rulesync_personal_settings_review_preserves_native_approval_and_mode() {
+        let f = Fixture::new();
+        let home = &f.setup.home;
+        let opencode = home.join(".config/opencode/opencode.jsonc");
+        let legacy = home.join(".config/opencode/opencode.json");
+        let claude = home.join(".claude/settings.json");
+        let codex = home.join(".codex/hooks.json");
+        fs::create_dir_all(opencode.parent().unwrap()).unwrap();
+        let broad = r#"{"action":"shell","resource":"*","effect":"allow"}"#;
+        let deny = r#"{"action":"shell","resource":"private *","effect":"deny"}"#;
+        let policy = |rules| format!(r#"{{"permissions":[{rules}]}}"#);
+        fs::write(&opencode, policy(format!("{broad},{deny}"))).unwrap();
+        fs::write(&legacy, r#"{"permission":{"bash":"allow"}}"#).unwrap();
+        let hooks = r#"{"hooks":{
+            "PreToolUse":[{"hooks":[{"type":"command","command":"before-approval"}]}],
+            "SessionStart":[{"hooks":[{"type":"command","command":"before-start"}]}]}}"#;
+        fs::write(&claude, hooks).unwrap();
+        fs::write(&codex, "{}").unwrap();
+        let preview = f
+            .setup
+            .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        f.setup
+            .adopt_using(
+                &preview.token,
+                fixture_rule_renderer,
+                fixture_skill_renderer,
+            )
+            .unwrap();
+        let review = |path: &str, name: &str, action| {
+            let result = f.sync_with("");
+            let proposal = result
+                .proposals
+                .iter()
+                .find(|card| card.files == [path] && card.diff.contains(name))
+                .unwrap_or_else(|| panic!("missing {path} {name}: {result:?}"));
+            assert!(
+                !proposal.diff.contains("All-tools delivery"),
+                "{proposal:?}"
+            );
+            f.setup
+                .review_using(
+                    &PullbackDecision {
+                        id: proposal.id.clone(),
+                        action,
+                        file: None,
+                    },
+                    |root, manifest| f.sync_review(root, manifest),
+                )
+                .unwrap()
+        };
+
+        let reordered = policy(format!("{deny},{broad}"));
+        fs::write(&opencode, &reordered).unwrap();
+        review(
+            ".config/opencode/opencode.jsonc",
+            "permissions",
+            PullbackAction::Dismiss,
+        );
+        assert_eq!(fs::read_to_string(&opencode).unwrap(), reordered);
+        let narrowed = policy(deny.to_owned());
+        fs::write(&opencode, &narrowed).unwrap();
+        review(
+            ".config/opencode/opencode.jsonc",
+            "permissions",
+            PullbackAction::Dismiss,
+        );
+        assert_eq!(fs::read_to_string(&opencode).unwrap(), narrowed);
+
+        let restricted = r#"{"permission":{"bash":{"*":"deny","git status":"ask"}}}"#;
+        fs::write(&legacy, restricted).unwrap();
+        review(
+            ".config/opencode/opencode.json",
+            "permission",
+            PullbackAction::Dismiss,
+        );
+        assert_eq!(fs::read_to_string(&legacy).unwrap(), restricted);
+
+        let after = hooks.replace("before-approval", "after-approval");
+        fs::write(&claude, &after).unwrap();
+        review(
+            ".claude/settings.json",
+            "after-approval",
+            PullbackAction::AllTools,
+        );
+        assert_eq!(fs::read_to_string(&codex).unwrap(), "{}");
+
+        let after = after.replace("before-start", "after-start");
+        fs::write(&claude, &after).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            fs::set_permissions(&claude, fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        let sync = f.sync_with("");
+        let proposal = sync
+            .proposals
+            .iter()
+            .find(|card| card.diff.contains("after-start"))
+            .unwrap();
+        f.setup
+            .review_using(
+                &PullbackDecision {
+                    id: proposal.id.clone(),
+                    action: PullbackAction::Dismiss,
+                    file: None,
+                },
+                |root, manifest| f.sync_review(root, manifest),
+            )
+            .unwrap();
+        assert!(fs::read_to_string(&claude)
+            .unwrap()
+            .contains("before-start"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            assert_eq!(
+                fs::metadata(&claude).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+    }
+
     fn personal_targets_round_trip(binary: Option<&Path>) {
         const DESCRIPTION: &str = "Use a headless CLI for agent-to-agent communication, including prompt and session workflows, session scoping, queueing, permissions, output formats, system-prompt overrides, and multi-agent flows with branching decisions and explicit boundaries.";
         const METADATA: &str = "---\r\nname: metadata-rich\r\ndescription: Native skill metadata\r\nversion: '1.2.3'\r\nargument-hint: '<topic>'\r\nallowed-tools:\r\n  - Read\r\n---\r\n\r\nOriginal body.\r\n";

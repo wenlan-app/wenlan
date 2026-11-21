@@ -49,6 +49,7 @@ enum Shape {
     Hooks,
     Decisions,
     PolicyRules,
+    OrderedPolicy,
     Items,
     Field,
 }
@@ -105,8 +106,8 @@ const HOOKS: &[Section] = &[Section(Hook, &["hooks"], Hooks)];
 const OPENCODE: &[Section] = &[
     Section(Mcp, &["mcp", "servers"], Named),
     Section(Mcp, &["mcp"], Named),
-    Section(Permission, &["permissions"], PolicyRules),
-    Section(Permission, &["permission"], Leaves),
+    Section(Permission, &["permissions"], Shape::OrderedPolicy),
+    Section(Permission, &["permission"], Shape::OrderedPolicy),
 ];
 
 fn defaults() -> Vec<Location> {
@@ -339,6 +340,8 @@ pub struct Entry {
     pub key: Key,
     pub value: Value,
     container: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    order: Vec<Vec<String>>,
 }
 
 impl Entry {
@@ -358,11 +361,28 @@ impl Entry {
     }
 
     pub fn preview(&self) -> Result<String> {
-        Ok(format!(
+        let mut preview = format!(
             "{} = {}",
             self.label(),
             printable(&serde_json::to_string(&self.value)?)
-        ))
+        );
+        if !self.order.is_empty() {
+            preview.push_str(" (key order ");
+            preview.push_str(&printable(&serde_json::to_string(&self.order)?));
+            preview.push(')');
+        }
+        Ok(preview)
+    }
+
+    pub fn can_reapply(&self) -> bool {
+        match self.key.feature {
+            Mcp => true,
+            Permission => false,
+            Hook => self
+                .container
+                .last()
+                .is_some_and(|event| matches!(event.as_str(), "SessionStart" | "sessionStart")),
+        }
     }
 }
 
@@ -386,13 +406,24 @@ impl Location {
             bytes.is_none_or(|bytes| bytes.len() as u64 <= MAX_SETTINGS_BYTES),
             "settings file exceeds 10 MiB"
         );
-        let raw = document::read(self.format, bytes.unwrap_or(self.initial.as_bytes()))?;
+        let bytes = bytes.unwrap_or(self.initial.as_bytes());
+        let raw = document::read(self.format, bytes)?;
         let mut doc = Document {
             raw,
             entries: BTreeMap::new(),
         };
         for &Section(feature, path, shape) in self.sections {
-            doc.extract(self, feature, path, shape);
+            if shape == Shape::OrderedPolicy {
+                if let Some(value) = lookup(&doc.raw, path.iter().copied()) {
+                    let mut entry = self.entry(feature, path, value.clone());
+                    if value.is_object() {
+                        entry.order = document::object_order(bytes, path)?;
+                    }
+                    doc.entries.insert(entry.key.clone(), vec![(entry, None)]);
+                }
+            } else {
+                doc.extract(self, feature, path, shape);
+            }
         }
         Ok(doc)
     }
@@ -459,6 +490,7 @@ impl Location {
             },
             container: path.iter().map(|name| (*name).into()).collect(),
             value,
+            order: Vec::new(),
         }
     }
 }
@@ -564,7 +596,7 @@ impl Document {
                     }
                 }
             }
-            Field => {}
+            Field | Shape::OrderedPolicy => {}
         }
         for (entry, index) in found {
             self.entries
@@ -1066,10 +1098,9 @@ pub fn project(from: &Location, to: &Location, entry: &Entry, current: &Document
                 return None;
             }
             let event = entry.container.last()?;
-            if !matches!(
-                event.as_str(),
-                "SessionStart" | "PreToolUse" | "PostToolUse" | "Stop"
-            ) {
+            // The two tools can interpret a blocking hook's output
+            // differently, including Claude's PreToolUse ask decision.
+            if event != "SessionStart" {
                 return None;
             }
             let group = entry.value.as_object()?;

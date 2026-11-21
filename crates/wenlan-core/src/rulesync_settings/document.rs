@@ -55,13 +55,7 @@ pub(super) fn edit(
 ) -> Result<Vec<u8>> {
     match format {
         Format::Json => {
-            let start = if bytes.starts_with(&[0xef, 0xbb, 0xbf]) {
-                3
-            } else {
-                0
-            };
-            let mut scanner = Scanner { bytes, at: start };
-            let tree = scanner.node()?;
+            let tree = json_tree(bytes)?;
             let mut next = bytes.to_vec();
             tree.edit(&mut next, path, value, 0)?;
             Ok(next)
@@ -103,6 +97,32 @@ pub(super) fn edit(
             Ok(next)
         }
     }
+}
+
+fn json_tree(bytes: &[u8]) -> Result<Node> {
+    let at = if bytes.starts_with(&[0xef, 0xbb, 0xbf]) {
+        3
+    } else {
+        0
+    };
+    Scanner { bytes, at }.node()
+}
+
+pub(super) fn object_order(bytes: &[u8], path: &[&str]) -> Result<Vec<Vec<String>>> {
+    let tree = json_tree(bytes)?;
+    let node = path.iter().try_fold(&tree, |parent, key| {
+        let Items::Object(items) = &parent.items else {
+            bail!("expected an ordered settings object");
+        };
+        items
+            .iter()
+            .find(|(name, _)| name == key)
+            .map(|(_, child)| child)
+            .context("missing ordered settings object")
+    })?;
+    let mut order = Vec::new();
+    node.object_order(&mut Vec::new(), &mut order);
+    Ok(order)
 }
 
 fn native_value(value: toml::Value) -> toml_edit::Value {
@@ -207,6 +227,17 @@ enum Items {
 }
 
 impl Node {
+    fn object_order(&self, path: &mut Vec<String>, order: &mut Vec<Vec<String>>) {
+        if let Items::Object(items) = &self.items {
+            for (key, value) in items {
+                path.push(key.clone());
+                order.push(path.clone());
+                value.object_order(path, order);
+                path.pop();
+            }
+        }
+    }
+
     fn edit(
         &self,
         bytes: &mut Vec<u8>,
