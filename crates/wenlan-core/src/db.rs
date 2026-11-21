@@ -57061,6 +57061,21 @@ impl MemoryDB {
                 return Err(error.into());
             }
         };
+        // A summary sent with the body lands with it, under the same check.
+        if let Some(summary) = &basis.summary {
+            if let Err(e) = conn
+                .execute(
+                    "UPDATE pages SET summary = ?1 WHERE id = ?2",
+                    libsql::params![summary.as_deref(), id],
+                )
+                .await
+            {
+                let _ = conn.execute("ROLLBACK", ()).await;
+                return Err(WenlanError::VectorDb(format!(
+                    "update_page_content summary: {e}"
+                )));
+            }
+        }
         // Lines of code the writer relied on land in the same transaction, so a
         // rolled-back write leaves no code basis behind.
         if let Err(error) = code_basis::upsert_code_basis_on_conn(
@@ -62407,6 +62422,54 @@ impl MemoryDB {
         .await
         .map_err(|e| WenlanError::VectorDb(format!("update_page_summary: {e}")))?;
         Ok(())
+    }
+
+    /// A member refresh whose body did not change: the summary is set only
+    /// while the page is still shared in `scope` and still at `version`,
+    /// checked in the transaction that writes it. Returns whether it landed.
+    pub async fn update_shared_page_summary(
+        &self,
+        page_id: &str,
+        summary: Option<&str>,
+        scope: &crate::read_scope::ReadScope,
+        version: i64,
+    ) -> Result<bool, WenlanError> {
+        let error = |e| WenlanError::VectorDb(format!("update_shared_page_summary: {e}"));
+        let conn = self.conn.lock().await;
+        Self::reject_page_draft_on_conn(&conn, page_id).await?;
+        conn.execute("BEGIN", ()).await.map_err(error)?;
+        let written = async {
+            if !matches!(scope, crate::read_scope::ReadScope::Space(_))
+                || !Self::member_page_access_on(&conn, page_id, scope, MemberPageTarget::Published)
+                    .await?
+            {
+                return Ok(false);
+            }
+            let now = chrono::Utc::now().to_rfc3339();
+            let affected = conn
+                .execute(
+                    "UPDATE pages SET summary = ?1, last_modified = ?2
+                      WHERE id = ?3 AND version = ?4",
+                    libsql::params![summary, now, page_id, version],
+                )
+                .await
+                .map_err(error)?;
+            Ok::<bool, WenlanError>(affected > 0)
+        }
+        .await;
+        match written {
+            Ok(true) => {
+                if let Err(e) = conn.execute("COMMIT", ()).await {
+                    let _ = conn.execute("ROLLBACK", ()).await;
+                    return Err(error(e));
+                }
+                Ok(true)
+            }
+            other => {
+                let _ = conn.execute("ROLLBACK", ()).await;
+                other
+            }
+        }
     }
 
     /// [`Self::update_page_summary`] for the row generation a fenced refresh

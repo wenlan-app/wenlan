@@ -2666,6 +2666,7 @@ pub async fn handle_update_page(
                 person_asked: None,
                 restored_from: None,
                 follows: false,
+                summary: None,
             },
         },
     )
@@ -3242,6 +3243,12 @@ async fn handle_refresh_page_inner(
                 person_asked: person_asked.clone(),
                 restored_from,
                 follows: false,
+                // A member's summary lands with the body, under its check.
+                summary: if private {
+                    None
+                } else {
+                    summary_update.clone()
+                },
             },
             page_id: &id,
             req: wenlan_types::requests::UpdatePageRequest {
@@ -3274,6 +3281,8 @@ async fn handle_refresh_page_inner(
             .unwrap_or(existing.version);
         return Err(page_moved_conflict(&id, current_version));
     }
+    #[cfg(test)]
+    refresh_seam::reached(&id).await;
     if result.outcome == WriteOutcome::Unchanged {
         if let Some(fence) = &research_write {
             db.bind_research_unchanged(fence, &id, &req.source_memory_ids, existing.version)
@@ -3285,8 +3294,23 @@ async fn handle_refresh_page_inner(
         result.outcome,
         WriteOutcome::Wrote | WriteOutcome::Unchanged
     ) {
-        if let Some(opt) = &summary_update {
-            db.update_page_summary(&id, opt.as_deref()).await?;
+        match &summary_update {
+            Some(opt) if private => db.update_page_summary(&id, opt.as_deref()).await?,
+            // A member's written body already carried it.
+            Some(_) if result.outcome == WriteOutcome::Wrote => {}
+            Some(opt) => {
+                let landed = match space_guard.as_ref() {
+                    Some(scope) => {
+                        db.update_shared_page_summary(&id, opt.as_deref(), scope, existing.version)
+                            .await?
+                    }
+                    None => false,
+                };
+                if !landed {
+                    return Err(ServerError::NotFound("page not found".into()));
+                }
+            }
+            None => {}
         }
         // A hosted refresh edits the prose without consuming local source updates.
         if private {
@@ -3801,6 +3825,37 @@ fn refusal_response(refusal: wenlan_core::presence::PresenceRefusal) -> axum::re
         PresenceRefusal::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
     };
     (status, Json(serde_json::json!({ "error": refusal.code() }))).into_response()
+}
+
+/// Test seam: a refresh pauses here, after its body write returned and before
+/// anything else it writes, while a test changes the page underneath it.
+#[cfg(test)]
+pub(crate) mod refresh_seam {
+    use tokio::sync::oneshot;
+
+    type Seam = (String, oneshot::Sender<()>, oneshot::Receiver<()>);
+    static SEAMS: std::sync::Mutex<Vec<Seam>> = std::sync::Mutex::new(Vec::new());
+
+    /// Pauses the next refresh of `id`: `reached` resolves when it gets
+    /// here, and it goes on once `resume` is sent.
+    pub(crate) fn pause(id: &str) -> (oneshot::Receiver<()>, oneshot::Sender<()>) {
+        let (reached, at_seam) = oneshot::channel();
+        let (resume, resumed) = oneshot::channel();
+        SEAMS.lock().unwrap().push((id.into(), reached, resumed));
+        (at_seam, resume)
+    }
+
+    pub(super) async fn reached(id: &str) {
+        let seam = {
+            let mut seams = SEAMS.lock().unwrap();
+            let at = seams.iter().position(|seam| seam.0 == id);
+            at.map(|at| seams.remove(at))
+        };
+        if let Some((_, reached, resumed)) = seam {
+            let _ = reached.send(());
+            let _ = resumed.await;
+        }
+    }
 }
 
 #[cfg(test)]

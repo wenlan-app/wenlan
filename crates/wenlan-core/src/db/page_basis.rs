@@ -937,6 +937,10 @@ pub struct BasisWrite {
     /// included; the old version stays in history. A locked note still waits
     /// as a whole-page card.
     pub follows: bool,
+    /// A page summary to set with the body, in the write's own transaction
+    /// and under its eligibility check (`Some(None)` clears it). Nothing is
+    /// set when the body does not land.
+    pub summary: Option<Option<String>>,
 }
 
 /// One basis note as an "update from sources" run read it, recorded on the

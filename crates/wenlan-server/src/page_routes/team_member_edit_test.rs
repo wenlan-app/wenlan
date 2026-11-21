@@ -365,6 +365,7 @@ async fn a_member_save_guarded_to_a_space_the_page_left_writes_nothing() {
                 person_asked: None,
                 restored_from: None,
                 follows: false,
+                summary: None,
             },
         },
     )

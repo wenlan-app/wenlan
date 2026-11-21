@@ -290,3 +290,59 @@ async fn round6_only_the_verified_final_archive_suppresses_a_deletion() {
         "{files:?}"
     );
 }
+
+/// A member refresh carrying a summary; the host moves the page to a
+/// private Space and writes its own summary right after the body write.
+async fn refresh_raced_by_a_move(f: &Fixture, db: &Arc<MemoryDB>, edit: bool) -> StatusCode {
+    let title = format!("Round6 summary {edit}");
+    let id = create_folder_test_page(db, &title, "authored").await.id;
+    let _ = db.create_space("Personal", None, false).await;
+    let path = format!("/api/pages/{id}");
+    let (status, reply) = forwarded(f, Method::GET, &path, Value::Null).await;
+    assert_eq!(status, StatusCode::OK, "{reply}");
+    let reply: Value = serde_json::from_str(&reply).unwrap();
+    let mut content = reply["page"]["content"].as_str().unwrap().to_owned();
+    if edit {
+        content.push_str(" A member sentence.");
+    }
+    let version = reply["page"]["version"].as_i64().unwrap();
+    let (at_seam, resume) = crate::page_routes::refresh_seam::pause(&id);
+    let host = async {
+        at_seam.await.unwrap();
+        let page = db.get_page(&id).await.unwrap().unwrap();
+        db.set_page_space(&id, Some("Personal"), page.version, &ReadScope::Global)
+            .await
+            .unwrap();
+        db.update_page_summary(&id, Some("Host private summary"))
+            .await
+            .unwrap();
+        resume.send(()).unwrap();
+    };
+    let member = forwarded(
+        f,
+        Method::PUT,
+        &path,
+        json!({"expected_version": version, "content": content, "summary": "Member summary"}),
+    );
+    let ((status, reply), ()) = tokio::join!(member, host);
+    let after = db.get_page(&id).await.unwrap().unwrap();
+    assert_eq!(after.space.as_deref(), Some("Personal"));
+    assert_eq!(
+        after.summary.as_deref(),
+        Some("Host private summary"),
+        "edit={edit}: a member summary landed after the page left the Space ({status} {reply})"
+    );
+    status
+}
+
+#[tokio::test]
+async fn round6_member_refresh_writes_summary_with_the_body_under_one_check() {
+    let (f, db) = fixture_with_daemon().await;
+    // The body and summary landed together while the page was shared.
+    assert_eq!(refresh_raced_by_a_move(&f, &db, true).await, StatusCode::OK);
+    // An unchanged body: the summary alone is checked where it is written.
+    assert_ne!(
+        refresh_raced_by_a_move(&f, &db, false).await,
+        StatusCode::OK
+    );
+}
