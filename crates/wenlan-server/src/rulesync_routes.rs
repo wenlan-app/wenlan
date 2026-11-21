@@ -4683,7 +4683,11 @@ mod tests {
                 if path.is_dir() {
                     contains_sentinel(&path)
                 } else {
-                    String::from_utf8_lossy(&fs::read(path).unwrap()).contains("synthetic-sentinel")
+                    let bytes = fs::read(path).unwrap();
+                    let content = String::from_utf8_lossy(&bytes);
+                    ["synthetic-sentinel", "u:q4", "SYNTHETIC_TOKEN"]
+                        .iter()
+                        .any(|value| content.contains(value))
                 }
             })
         }
@@ -4692,8 +4696,24 @@ mod tests {
         let codex = home.join(".codex/config.toml");
         let cursor = home.join(".cursor/mcp.json");
         fs::create_dir_all(cursor.parent().unwrap()).unwrap();
-        let original = r#"{ "mcpServers": {"held":{"command":"example","env":{"UNLABELED":"synthetic-sentinel-env"}}, "good":{"command":"before"}}, "sessionToken":"synthetic-sentinel-unrelated" }"#;
+        let original = r#"{ "mcpServers": {
+            "held":{"command":"example","env":{"UNLABELED":"synthetic-sentinel-env"}},
+            "arg":{"command":"curl","args":["--user","u:q4"]},
+            "password":{"command":"example","args":["--password=synthetic-sentinel-pass"]},
+            "bare":{"command":"example","args":["synthetic-sentinel-bare"]},
+            "header":{"url":"https://example.invalid/mcp","headers":{"X-Custom":"synthetic-sentinel-header"}},
+            "auth-reference":{"url":"https://example.invalid/mcp","headers":{"Authorization":"Bearer ${SYNTHETIC_TOKEN}"}},
+            "userinfo":{"url":"https://u:q4@example.invalid/mcp"},
+            "key-field":{"command":"example","key":"synthetic-sentinel-key"},
+            "good":{"command":"before"}
+        }, "sessionToken":"synthetic-sentinel-unrelated" }"#;
         let claude = home.join(".claude.json");
+        let hooks = home.join(".claude/settings.json");
+        fs::write(&hooks, r#"{"hooks":{"SessionStart":[
+            {"matcher":"one","hooks":[{"type":"command","command":"curl --user u:q4"}]},
+            {"matcher":"two","hooks":[{"type":"command","command":"curl -uu:q4"}]},
+            {"matcher":"three","hooks":[{"type":"command","command":"curl --password=synthetic-sentinel-hook"}]}
+        ]}}"#).unwrap();
         fs::write(&claude, original).unwrap();
         fs::write(&codex, b"# safe fixture\n").unwrap();
         let cursor_original = r#"{ "mcpServers": {"other":{"command":"local"}}, "account":{"password":"synthetic-sentinel-other"} }"#;
@@ -4705,8 +4725,25 @@ mod tests {
             .unwrap();
         let shown = serde_json::to_string(&preview).unwrap();
         assert!(shown.contains("skipped MCP server held"));
+        assert_eq!(
+            preview
+                .notes
+                .iter()
+                .filter(|note| note.contains("skipped MCP server"))
+                .count(),
+            8
+        );
+        assert_eq!(
+            preview
+                .notes
+                .iter()
+                .filter(|note| note.contains("skipped hook"))
+                .count(),
+            3
+        );
         assert!(shown.contains("cannot write or back up"));
         assert!(!shown.contains("synthetic-sentinel"));
+        assert!(!shown.contains("u:q4") && !shown.contains("SYNTHETIC_TOKEN"));
         assert!(!f.setup.data.join("personal.json").exists());
 
         let changed = original.replace("\"before\"", "\"stale\"");

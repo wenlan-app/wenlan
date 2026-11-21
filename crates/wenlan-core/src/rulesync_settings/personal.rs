@@ -665,23 +665,24 @@ impl Adoption {
             };
             let mut accepted = Vec::new();
             let snapshot_safe = location.snapshot_safe(&bytes, &doc);
-            for entries in doc.entries.into_values() {
-                let entry = &entries[0].0;
-                if !reviewable(location.tool, entry) {
-                    let label = entry
-                        .key
-                        .name
-                        .last()
-                        .filter(|name| safe_identifier(name) && !credential_key(name));
-                    let entry_label = label.map_or_else(String::new, |name| format!(" {name}"));
-                    adoption.notes.push(format!("{path}: skipped {}{entry_label} because it contains possible credentials or unsafe text.", entry.key.feature.label()));
-                } else if entries.len() > 1 {
-                    adoption.notes.push(format!(
-                        "{path}: skipped {} because its native identity is ambiguous.",
-                        entry.label()
-                    ));
-                } else {
-                    accepted.push(entry.clone());
+            for (number, entries) in doc.entries.into_values().enumerate() {
+                for (entry, _) in &entries {
+                    if !reviewable(location.tool, entry) {
+                        let label = entry
+                            .key
+                            .name
+                            .last()
+                            .filter(|name| safe_identifier(name) && !credential_key(name));
+                        let entry_label = label.map_or_else(String::new, |name| format!(" {name}"));
+                        adoption.notes.push(format!("{path}: skipped {}{entry_label} (entry {}) because it contains possible credentials or unsafe text.", entry.key.feature.label(), number + 1));
+                    } else if entries.len() > 1 {
+                        adoption.notes.push(format!(
+                            "{path}: skipped {} because its native identity is ambiguous.",
+                            entry.label()
+                        ));
+                    } else {
+                        accepted.push(entry.clone());
+                    }
                 }
             }
             if !accepted.is_empty() {
@@ -692,7 +693,6 @@ impl Adoption {
             }
         }
         adoption.notes.sort();
-        adoption.notes.dedup();
         Ok(adoption)
     }
 
@@ -719,23 +719,24 @@ fn safe_identifier(value: &str) -> bool {
 
 fn credential_key(key: &str) -> bool {
     let key = key.to_ascii_lowercase().replace(['-', '_', '.', ' '], "");
-    [
-        "apikey",
-        "password",
-        "passwd",
-        "passphrase",
-        "secret",
-        "privatekey",
-        "accesskey",
-        "token",
-        "authorization",
-        "cookie",
-        "credential",
-        "clientsecret",
-        "sessionid",
-    ]
-    .iter()
-    .any(|word| key.contains(word))
+    matches!(key.as_str(), "key" | "auth" | "signature" | "session")
+        || [
+            "apikey",
+            "password",
+            "passwd",
+            "passphrase",
+            "secret",
+            "privatekey",
+            "accesskey",
+            "token",
+            "authorization",
+            "cookie",
+            "credential",
+            "clientsecret",
+            "sessionid",
+        ]
+        .iter()
+        .any(|word| key.contains(word))
 }
 
 fn exact_reference(tool: &str, value: &str) -> bool {
@@ -780,72 +781,127 @@ fn text_risky(tool: &str, value: &str) -> bool {
             })
 }
 
+// Free-form argv and shell text can contain even very short credentials.
+// Admit only a simple executable, unassigned flags and exact references.
+fn executable(tool: &str, value: &str) -> bool {
+    let windows_drive = value.as_bytes().get(1) == Some(&b':')
+        && value
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphabetic)
+        && value[2..].starts_with(['/', '\\']);
+    let path = if windows_drive { &value[2..] } else { value };
+    !path.is_empty()
+        && !value.starts_with('-')
+        && path
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"/\\._-~".contains(&byte))
+        && !text_risky(tool, value)
+}
+
+fn safe_argument(tool: &str, arg: &str) -> bool {
+    if exact_reference(tool, arg) {
+        return true;
+    }
+    let Some(option) = arg.strip_prefix("--") else {
+        return matches!(arg, "-q" | "-v" | "-y");
+    };
+    !option.is_empty()
+        && option
+            .bytes()
+            .all(|byte| byte.is_ascii_alphabetic() || byte == b'-')
+        && !credential_key(option)
+        && !option.to_ascii_lowercase().split('-').any(|word| {
+            matches!(
+                word,
+                "auth"
+                    | "authorization"
+                    | "user"
+                    | "username"
+                    | "login"
+                    | "pass"
+                    | "key"
+                    | "token"
+                    | "secret"
+                    | "header"
+                    | "headers"
+                    | "env"
+                    | "cookie"
+                    | "netrc"
+                    | "credential"
+                    | "credentials"
+                    | "data"
+            )
+        })
+}
+
+fn command_safe(tool: &str, command: &Value) -> bool {
+    match command {
+        Value::String(command) => {
+            // Refuse shell operators, assignments, quoting we cannot
+            // interpret losslessly, and inline scripts.
+            let mut parts = command.split_ascii_whitespace();
+            !command.contains(['\r', '\n'])
+                && parts.next().is_some_and(|name| executable(tool, name))
+                && parts.all(|arg| safe_argument(tool, arg))
+        }
+        Value::Array(parts) => parts.split_first().is_some_and(|(name, args)| {
+            name.as_str().is_some_and(|name| executable(tool, name))
+                && args
+                    .iter()
+                    .all(|arg| arg.as_str().is_some_and(|arg| safe_argument(tool, arg)))
+        }),
+        _ => false,
+    }
+}
+
 fn material_safe(tool: &str, value: &Value) -> bool {
     match value {
-        Value::Object(map) => map.iter().all(|(name, value)| {
-            if text_risky(tool, name) {
-                return false;
-            }
-            let native_name = name.to_ascii_lowercase();
-            if matches!(native_name.as_str(), "bearer_token_env_var" | "env_vars")
-                && tool == "codexcli"
-            {
-                return value.as_str().is_some_and(is_env_name)
-                    || value.as_array().is_some_and(|names| {
-                        names
-                            .iter()
-                            .all(|name| name.as_str().is_some_and(is_env_name))
-                    });
-            }
-            if native_name == "env_http_headers" && tool == "codexcli" {
-                return value.as_object().is_some_and(|map| {
-                    map.iter().all(|(key, name)| {
-                        !text_risky(tool, key) && name.as_str().is_some_and(is_env_name)
-                    })
-                });
-            }
-            if matches!(
-                native_name.as_str(),
-                "env" | "environment" | "headers" | "http_headers" | "httpheaders"
-            ) {
-                return value.as_object().is_some_and(|map| {
-                    map.iter().all(|(key, value)| {
-                        !text_risky(tool, key)
-                            && value
-                                .as_str()
-                                .is_some_and(|value| exact_reference(tool, value))
-                    })
-                });
-            }
-            if credential_key(name) || native_name == "auth" && !value.is_object() {
-                return value
-                    .as_str()
-                    .is_some_and(|value| exact_reference(tool, value));
-            }
-            material_safe(tool, value)
-        }),
-        Value::Array(items) => {
-            items.windows(2).all(|pair| {
-                !pair[0].as_str().is_some_and(|name| {
-                    name.starts_with('-')
-                        && (credential_key(name)
-                            || matches!(
-                                name,
-                                "-u" | "-H"
-                                    | "-p"
-                                    | "-e"
-                                    | "--auth"
-                                    | "--key"
-                                    | "--header"
-                                    | "--env"
-                            ))
-                }) || pair[1]
-                    .as_str()
-                    .is_some_and(|value| exact_reference(tool, value))
-            }) && items.iter().all(|item| material_safe(tool, item))
-        }
+        Value::Object(map) => map
+            .iter()
+            .all(|(name, value)| !text_risky(tool, name) && safe_field(tool, name, value)),
+        Value::Array(items) => items.iter().all(|item| material_safe(tool, item)),
         Value::String(value) => !text_risky(tool, value),
         _ => true,
+    }
+}
+
+fn safe_field(tool: &str, name: &str, value: &Value) -> bool {
+    let normalized = name.to_ascii_lowercase().replace(['-', '_'], "");
+    match normalized.as_str() {
+        "command" | "commandwindows" | "commandlinux" | "commandmacos" | "bash" | "powershell"
+        | "script"
+            if value.is_string() || value.is_array() =>
+        {
+            command_safe(tool, value)
+        }
+        "args" | "arguments" | "commandargs" => value.as_array().is_some_and(|args| {
+            args.iter()
+                .all(|arg| arg.as_str().is_some_and(|arg| safe_argument(tool, arg)))
+        }),
+        "bearertokenenvvar" if tool == "codexcli" => value.as_str().is_some_and(is_env_name),
+        "envvars" if tool == "codexcli" => value.as_array().is_some_and(|names| {
+            names
+                .iter()
+                .all(|name| name.as_str().is_some_and(is_env_name))
+        }),
+        "env" | "environment" | "headers" | "httpheaders" | "envhttpheaders" => {
+            let env = matches!(normalized.as_str(), "env" | "environment");
+            value.as_object().is_some_and(|map| {
+                map.iter().all(|(key, value)| {
+                    !text_risky(tool, key)
+                        && (env || !credential_key(key))
+                        && value.as_str().is_some_and(|value| {
+                            if normalized == "envhttpheaders" && tool == "codexcli" {
+                                is_env_name(value)
+                            } else {
+                                exact_reference(tool, value)
+                            }
+                        })
+                })
+            })
+        }
+        _ => !credential_key(name) && material_safe(tool, value),
     }
 }
 
@@ -859,19 +915,10 @@ pub fn reviewable(tool: &str, entry: &Entry) -> bool {
             .member
             .as_deref()
             .is_none_or(|name| !text_risky(tool, name))
-        && (!entry.container.iter().any(|name| is_literal_carrier(name))
-            || entry
-                .value
-                .as_str()
-                .is_some_and(|value| exact_reference(tool, value)))
-        && material_safe(tool, &entry.value)
-}
-
-fn is_literal_carrier(name: &str) -> bool {
-    matches!(
-        name.to_ascii_lowercase().as_str(),
-        "env" | "environment" | "headers" | "http_headers" | "httpheaders"
-    )
+        && entry.container.last().map_or_else(
+            || material_safe(tool, &entry.value),
+            |name| safe_field(tool, name, &entry.value),
+        )
 }
 
 fn reference_free(text: &str) -> bool {
@@ -979,7 +1026,7 @@ fn native_mcp(tool: &str, portable: &PortableMcp) -> Value {
 /// Translate only the common server fields, or a hook with the same event and
 /// native schema. Tool-specific keys, substitutions and policies remain local.
 pub fn project(from: &Location, to: &Location, entry: &Entry, current: &Document) -> Option<Entry> {
-    if from.tool == to.tool {
+    if from.tool == to.tool || !reviewable(from.tool, entry) {
         return None;
     }
     let next = match entry.key.feature {
@@ -1190,7 +1237,7 @@ mod tests {
     #[test]
     fn rulesync_personal_settings_native_references_are_backup_safe_but_comments_are_checked() {
         let cursor = file(".cursor/mcp.json");
-        let cfg = br#"{"mcpServers":{"reference":{"type":"http","url":"https://example.invalid/mcp","headers":{"Authorization":"Bearer ${env:EXAMPLE_TOKEN}"}}}}"#;
+        let cfg = br#"{"mcpServers":{"reference":{"type":"http","url":"https://example.invalid/mcp","headers":{"X-Custom":"${env:EXAMPLE_TOKEN}"}}}}"#;
         let doc = cursor.document(Some(cfg)).unwrap();
         assert!(cursor.snapshot_safe(cfg, &doc));
 
@@ -1208,7 +1255,7 @@ mod tests {
         fs::create_dir_all(root.join(".config/opencode")).unwrap();
         fs::write(root.join(".cursor/mcp.json"), serde_json::to_vec(&json!({"mcpServers": {
             "preserved": {"type":"http", "url":"https://example.invalid/mcp",
-                "headers":{"Authorization":"Bearer ${env:EXAMPLE_TOKEN}"}},
+                "headers":{"X-Custom":"${env:EXAMPLE_TOKEN}"}},
             "bad-arg": {"command":"server","args":["--api-key","fixture-argument-marker"]},
             "bad-url": {"type":"http","url":"https://example.invalid/mcp?other=fixture-query-marker"},
             "bad-key": {"command":"server","nested":{"clientSecret":{"value":"fixture-nested-marker"}}},
