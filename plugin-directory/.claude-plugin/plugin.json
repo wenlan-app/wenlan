@@ -1,0 +1,22 @@
+{
+  "name": "wenlan",
+  "displayName": "Wenlan",
+  "description": "A living wiki your AI tools write, keep current, and cite. Pages link to their sources and update when those change. Needs the free Wenlan app on this computer.",
+  "author": {
+    "name": "Qi-Xuan Lu",
+    "url": "https://github.com/7xuanlu"
+  },
+  "homepage": "https://github.com/wenlan-app/wenlan",
+  "repository": "https://github.com/wenlan-app/wenlan",
+  "license": "Apache-2.0",
+  "keywords": [
+    "claude-code",
+    "wiki",
+    "knowledge-base",
+    "notes",
+    "memory",
+    "recall",
+    "mcp",
+    "local-first"
+  ]
+}
