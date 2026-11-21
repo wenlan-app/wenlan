@@ -5469,6 +5469,57 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn rulesync_round6_recovery_keeps_a_person_deleted_replacement_absent() {
+        let f = Fixture::new();
+        let source = ".claude/commands/check.md";
+        let peer = Path::new(".codex/prompts/check.md");
+        for path in [source, peer.to_str().unwrap()] {
+            fs::create_dir_all(f.setup.home.join(path).parent().unwrap()).unwrap();
+            f.write(path, "Original command.\n");
+        }
+        f.adopt_from_plan();
+        f.write(source, "Updated command.\n");
+        let card = pullback_file(&f.sync_with(""), source);
+        // Crash after the staged entry exists, before its bytes and the
+        // incoming link are written.
+        crash_during_personal_review(&f, &card, "before-incoming:check.md");
+
+        let live = f.setup.home.join(peer);
+        let root = FileRoot::open_home(&f.setup.home).unwrap();
+        let _lock = f.setup.lock().unwrap();
+        let mut manifest = f.setup.load().unwrap().unwrap();
+        let stage = live
+            .parent()
+            .unwrap()
+            .join(format!(".wenlan-rules-stage-{}", manifest.stages[peer].id));
+        assert_eq!(fs::read(stage.join("entry")).unwrap(), b"");
+        assert!(!stage.join("incoming").exists());
+        assert_eq!(fs::read(&live).unwrap(), b"Original command.\n");
+        fs::remove_file(&live).unwrap();
+
+        // A retry must not bring the partial copy back either.
+        for attempt in 1..=2 {
+            f.setup.recover_pending(&root, &mut manifest).unwrap();
+            let live_after_recovery = fs::read(&live);
+            assert!(
+                matches!(&live_after_recovery, Err(error) if error.kind() == std::io::ErrorKind::NotFound),
+                "recovery {attempt} should preserve the deletion, got {live_after_recovery:?}"
+            );
+            assert!(
+                manifest.pending.iter().any(|op| op.path == peer),
+                "{:?}",
+                manifest.pending
+            );
+            assert!(
+                manifest.recovery_issues[peer].contains("changed during an interrupted write"),
+                "{:?}",
+                manifest.recovery_issues
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn rulesync_round4_recovery_restores_a_newer_displaced_file() {
         use std::io::Write as _;
 

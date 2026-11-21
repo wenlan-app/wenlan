@@ -867,25 +867,41 @@ impl FileRoot {
         if *desired == Snapshot::Absent {
             check_displaced_entry(dir, staged, &parent, leaf, seen, read)?;
         }
-        let incoming = match dir.symlink_metadata(INCOMING) {
-            Ok(metadata) if metadata.is_file() => dir
-                .symlink_metadata(STAGED)
-                .is_ok_and(|staged| staged.is_file() && same_identity(&staged, &metadata)),
+        // Only an incoming link to a different file proves that the
+        // original was exchanged into the stage.
+        let (incoming, exchanged) = match dir.symlink_metadata(INCOMING) {
+            Ok(metadata) if metadata.is_file() => {
+                let staged = dir.symlink_metadata(STAGED);
+                (
+                    staged
+                        .as_ref()
+                        .is_ok_and(|staged| staged.is_file() && same_identity(staged, &metadata)),
+                    staged
+                        .is_ok_and(|staged| staged.is_file() && !same_identity(&staged, &metadata)),
+                )
+            }
             Ok(_) => return Err(io::Error::other("invalid rulesync staging entry")),
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 // The incoming hardlink is created before replacement. If
                 // the original is still in place, a partial incoming write
-                // may be the only entry.
-                *desired == entry || (seen == actual && matches!(desired, Snapshot::File { .. }))
+                // may be the only entry. A personal replacement links it
+                // before any exchange, so without the link the entry is
+                // never the person's original. Drop it rather than retain
+                // partial bytes where a later recovery could put them back.
+                let file = matches!(desired, Snapshot::File { .. });
+                (
+                    *desired == entry || (file && (personal || seen == actual)),
+                    false,
+                )
             }
             Err(error) => return Err(error),
         };
-        if personal && !incoming && *desired != Snapshot::Absent && *seen != Snapshot::Absent {
+        if personal && exchanged && *desired != Snapshot::Absent && *seen != Snapshot::Absent {
             check_displaced_entry(dir, staged, &parent, leaf, seen, read)?;
         }
         #[cfg(windows)]
         let restored = personal
-            && !incoming
+            && exchanged
             && matches!(entry, Snapshot::File { .. })
             && *actual == Snapshot::Absent
             && matches!(seen, Snapshot::File { .. })
@@ -900,8 +916,10 @@ impl FileRoot {
             if matches!(entry, Snapshot::File { .. }) {
                 let displaced = recovery_location(&parent, options.displaced)?
                     .ok_or_else(|| io::Error::other("a displaced file requires manual recovery"))?;
+                // Put back only an original the exchange moved into the stage.
                 #[cfg(windows)]
-                let put_back = *actual == Snapshot::Absent
+                let put_back = exchanged
+                    && *actual == Snapshot::Absent
                     && matches!(seen, Snapshot::File { .. })
                     && matches!(desired, Snapshot::File { .. });
                 #[cfg(windows)]
@@ -1441,6 +1459,10 @@ impl<'a> Stage<'a> {
                 #[cfg(unix)]
                 if personal.is_some() {
                     wenlan_core::rulesync_personal_files::require_plain_unix_acl(&file)?;
+                }
+                #[cfg(test)]
+                if let Some(name) = personal {
+                    crash_at("before-incoming", name);
                 }
                 file.write_all(bytes)?;
                 mode.set(&file)?;
