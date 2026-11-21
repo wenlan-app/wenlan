@@ -287,42 +287,46 @@ pub(crate) fn refresh(
         };
         let root = setup.data_files()?;
         for entry in entries {
-            let entry = entry?;
-            if !entry.file_type()?.is_file() {
-                continue;
-            }
-            let leaf = PathBuf::from(entry.file_name());
-            let Some(key) = leaf
-                .file_stem()
-                .and_then(|key| key.to_str())
-                .filter(|key| key.len() == 64 && key.bytes().all(|byte| byte.is_ascii_hexdigit()))
-            else {
-                continue;
+            let refresh_entry = || -> Result<()> {
+                let entry = entry?;
+                if !entry.file_type()?.is_file() {
+                    return Ok(());
+                }
+                let leaf = PathBuf::from(entry.file_name());
+                let Some(key) = leaf.file_stem().and_then(|key| key.to_str()).filter(|key| {
+                    key.len() == 64 && key.bytes().all(|byte| byte.is_ascii_hexdigit())
+                }) else {
+                    return Ok(());
+                };
+                if leaf.extension().and_then(|ext| ext.to_str()) != Some("json") {
+                    return Ok(());
+                }
+                let state_path = Path::new("checkouts").join(&leaf);
+                let read_context = || format!("read checkout receipt {}", state_path.display());
+                let state = root.read(&state_path, false).with_context(read_context)?;
+                let Snapshot::File { bytes, .. } = &state else {
+                    return Ok(());
+                };
+                let checkout = read_checkout(bytes).with_context(read_context)?;
+                let directory = PathBuf::from(format!("checkouts/{key}/rules"));
+                let job = Job {
+                    setup,
+                    session,
+                    settings: settings.to_path_buf(),
+                    root: &root,
+                    directory: &directory,
+                };
+                let report = job.run(&state_path, state, checkout, master, generated)?;
+                if !report.blocked.is_empty() {
+                    tracing::warn!(
+                        files = report.blocked.len(),
+                        "[rules setup] some checkout deliveries need attention"
+                    );
+                }
+                Ok(())
             };
-            if leaf.extension().and_then(|ext| ext.to_str()) != Some("json") {
-                continue;
-            }
-            let state_path = Path::new("checkouts").join(&leaf);
-            let state = root.read(&state_path, false)?;
-            let Snapshot::File { bytes, .. } = &state else {
-                continue;
-            };
-            let checkout = read_checkout(bytes)?;
-            let directory = PathBuf::from(format!("checkouts/{key}/rules"));
-            let job = Job {
-                setup,
-                session,
-                settings: settings.to_path_buf(),
-                root: &root,
-                directory: &directory,
-            };
-            match job.run(&state_path, state, checkout, master, generated) {
-                Err(error) => tracing::warn!(%error, "[rules setup] checkout rules refresh failed"),
-                Ok(report) if !report.blocked.is_empty() => tracing::warn!(
-                    files = report.blocked.len(),
-                    "[rules setup] some checkout deliveries need attention"
-                ),
-                Ok(_) => {}
+            if let Err(error) = refresh_entry() {
+                tracing::warn!(error = %format_args!("{error:#}"), "[rules setup] checkout rules refresh failed");
             }
         }
         Ok(())
@@ -806,6 +810,75 @@ impl Job<'_> {
 mod tests {
     use super::*;
     use wenlan_types::team::{TeamProjectSkill, TeamProjectSkillFile};
+
+    #[test]
+    fn rulesync_step1g_refresh_continues_after_an_incompatible_checkout_receipt() {
+        use std::fs;
+
+        let scratch = tempfile::tempdir().unwrap();
+        let setup = Setup {
+            home: scratch.path().join("home"),
+            data: scratch.path().join("data"),
+            binary: scratch.path().join("unavailable-renderer"),
+        };
+        let checkouts = setup.data.join("checkouts");
+        fs::create_dir(&setup.home).unwrap();
+        fs::create_dir_all(&checkouts).unwrap();
+        for key in ["a".repeat(64), "b".repeat(64)] {
+            fs::write(checkouts.join(format!("{key}.json")), b"{}").unwrap();
+        }
+        let entries: Vec<_> = fs::read_dir(&checkouts)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        // Populate the valid receipt in place so it sorts after the legacy one
+        // in the filesystem's existing enumeration order.
+        let [legacy, valid] = entries.as_slice() else {
+            panic!("expected two checkout receipts");
+        };
+        let key = valid.file_stem().unwrap().to_str().unwrap();
+        let directory = PathBuf::from(format!("checkouts/{key}/rules"));
+        let session = rulesync_renderer::RenderSession::new(&setup.binary);
+        let settings = scratch.path().join("settings.toml");
+        let root = setup.data_files().unwrap();
+        let job = Job {
+            setup: &setup,
+            session: &session,
+            settings: settings.clone(),
+            root: &root,
+            directory: &directory,
+        };
+        let rule = PathBuf::from("AGENTS.md");
+        let original = "Personal advice.\n";
+        let delivered = Snapshot::file(
+            format!(
+                "<!-- WENLAN SHARED RULES {} {} -->\n## Project rules\n\nLast synced date.\n\nRevoked advice.\n<!-- END WENLAN SHARED RULES -->\n{original}",
+                "a".repeat(64),
+                "b".repeat(64),
+            )
+            .into_bytes(),
+        );
+        assert!(job.replace(&rule, &Snapshot::Absent, &delivered).unwrap());
+        fs::write(
+            valid,
+            serde_json::to_vec(&CheckoutRecord {
+                format: CHECKOUT_FORMAT,
+                checkout: Checkout {
+                    files: BTreeMap::from([(rule.clone(), delivered)]),
+                    ..Checkout::default()
+                },
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+        refresh(&setup, &session, &settings, None, &[]);
+
+        assert_eq!(fs::read(legacy).unwrap(), b"{}");
+        let actual = fs::read_to_string(setup.data.join(directory).join(rule)).unwrap();
+        assert!(!actual.contains("Revoked advice"), "{actual}");
+        assert!(actual.contains(original), "{actual}");
+    }
 
     #[test]
     fn rulesync_checkout_splits_skill_output_and_blocks_colliding_sources() {
