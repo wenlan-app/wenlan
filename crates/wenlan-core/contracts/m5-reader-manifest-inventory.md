@@ -1797,6 +1797,7 @@ carrying the authority of agreement.
 | `core/db.rs::upsert_documents_in_page_space` | `pub(crate)` | no | no | — | `core/db.rs::upsert_documents_at_optional_page_fence` |
 | `core/db.rs::upsert_documents_with_derived_channels` | `private` | no | no | — | `core/db.rs::upsert_documents_at_optional_page_fence` |
 | `core/db.rs::upsert_documents_without_embeddings` | `pub` | no | **yes** | `server/source_routes/obsidian_sync.rs::sync_obsidian_source_locked` | `core/db.rs::upsert_documents_at_optional_page_fence` |
+| `core/db/member_sync.rs::apply_page` | `private` | no | no | — | `core/db.rs::append_page_history` |
 | `core/db/okf_concepts.rs::refresh_okf_concept_linkers` | `pub` | no | **yes** | `server/source_routes/okf_sync.rs::sync_okf_source_in_batches` | `core/db.rs::get_page`, `core/db.rs::refresh_page_wikilinks` |
 | `core/db/page_basis.rs::carry_bases_into_survivor` | `pub(super)` | no | no | — | `core/db/page_basis.rs::refresh_basis_state` |
 | `core/db/page_basis.rs::mark_page_bases` | `pub` | no | no | — | `core/db/page_basis.rs::mark_page_bases_for` |

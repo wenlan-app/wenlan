@@ -182,6 +182,65 @@ async fn checked_member_edit_preserves_host_citations_summary_and_private_links(
 }
 
 #[tokio::test]
+async fn checked_member_edit_leaves_notes_that_rely_on_the_page_waiting() {
+    let (db, dir) = test_db().await;
+    let settings = dir.path().join("settings.json");
+    let editor = add_editor(&settings);
+    db.create_space(SPACE, None, false).await.unwrap();
+    let body = "The meeting is in May.";
+    let page = seed(&db, ID, SPACE, "Planning note", body).await;
+    seed(
+        &db,
+        "page-plan",
+        SPACE,
+        "Plan",
+        "Built on the planning note.",
+    )
+    .await;
+    db.mark_page_basis("page-plan", ID, page.version, "human")
+        .await
+        .unwrap();
+    let root = anchor(&db, &page, body).await;
+    let edit = snapshot(
+        ID,
+        "Planning note",
+        "The meeting moved to June.",
+        &editor,
+        root.meta.stay.as_deref(),
+        Some(&root.sha),
+    );
+    let history = [root.clone(), edit.clone()];
+    let result = writer(&db, &settings)
+        .write(MemberSyncInput {
+            change: &edit,
+            page: Some(&page),
+            history: &history,
+            operation: MemberSyncOperation::Edit {
+                preceding: &[],
+                conflict: None,
+            },
+        })
+        .await
+        .unwrap();
+    assert!(matches!(
+        result,
+        MemberSyncOutcome::Applied { wrote: true, .. }
+    ));
+    let basis = db
+        .list_page_basis("page-plan")
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|entry| entry.basis_page_id == ID)
+        .unwrap();
+    assert_eq!(
+        basis.state,
+        crate::db::page_basis::BASIS_STATE_PENDING,
+        "a member's edit must leave the note that relies on it waiting"
+    );
+}
+
+#[tokio::test]
 async fn checked_member_history_rolls_back_when_final_body_cannot_preserve_citations() {
     let (db, dir) = test_db().await;
     let settings = dir.path().join("settings.json");

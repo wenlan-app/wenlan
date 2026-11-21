@@ -1105,7 +1105,8 @@ async fn apply_page(
           WHERE id=?1",
         params![page.id.as_str(),title,body,status,kind,i64::from(locked),now.to_rfc3339(),changelog,i64::from(prose_changed)],
     ).await?;
-    append_history(conn, &page.id, changed_by, now.timestamp()).await?;
+    // Same transaction: re-check every note that relies on this page.
+    MemoryDB::append_page_history(conn, &page.id, changed_by, now.timestamp()).await?;
     read_page(conn, &page.id).await
 }
 
