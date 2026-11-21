@@ -58624,6 +58624,9 @@ impl MemoryDB {
             )
             .await
             .map_err(|e| WenlanError::VectorDb(format!("delete_page orphan links: {e}")))?;
+            // The deletion record's stay reads the move history, so it is
+            // taken before that history is purged below.
+            Self::record_shared_page_deletion_on(&conn, id).await?;
             // Page ids can be deterministic and later reused. History belongs
             // to this Page generation, so retaining it would make a recreated
             // version 1 expose the deleted Page's snapshots.
@@ -58673,7 +58676,6 @@ impl MemoryDB {
             )
             .await
             .map_err(|e| WenlanError::VectorDb(format!("delete_page looks: {e}")))?;
-            Self::record_shared_page_deletion_on(&conn, id).await?;
             conn.execute("DELETE FROM pages WHERE id = ?1", libsql::params![id])
                 .await
                 .map_err(|e| WenlanError::VectorDb(format!("delete_page row: {e}")))?;

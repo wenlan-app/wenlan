@@ -172,3 +172,121 @@ async fn round6_synced_member_create_sees_only_member_titles_and_skips_the_link_
         hidden_body
     );
 }
+
+/// Archives and restores a Design page, syncing after each step, so the
+/// folder holds a valid archive from this stay. Returns the archive's path.
+async fn archive_and_restore(f: &Fixture, db: &Arc<MemoryDB>, id: &str) -> String {
+    sync_hosted_test_folder(f, db).await;
+    db.archive_page(id).await.unwrap();
+    sync_hosted_test_folder(f, db).await;
+    let page = db.get_page(id).await.unwrap().unwrap();
+    db.restore_page(id, None, page.version, &ReadScope::Global)
+        .await
+        .unwrap();
+    sync_hosted_test_folder(f, db).await;
+    let archives = archive_paths(f, id);
+    assert_eq!(archives.len(), 1, "{archives:?}");
+    archives.into_iter().next().unwrap()
+}
+
+fn archive_paths(f: &Fixture, id: &str) -> Vec<String> {
+    version::read_folder(&f.folder)
+        .pages
+        .get(id)
+        .into_iter()
+        .flatten()
+        .filter(|version| version.meta.archived)
+        .map(|version| {
+            let name = version::version_file_name(&version.sha);
+            std::fs::read_dir(f.folder.join("members"))
+                .unwrap()
+                .flatten()
+                .map(|member| member.file_name().into_string().unwrap())
+                .map(|member| format!("members/{member}/pages/{id}/{name}"))
+                .find(|path| f.folder.join(path).is_file())
+                .unwrap()
+        })
+        .collect()
+}
+
+async fn deleted_pages(f: &Fixture) -> Vec<String> {
+    let (status, body) = call(
+        &f.state,
+        Method::GET,
+        "/team/v1/spaces/Design/files",
+        Some(&f.reader.1),
+        vec![],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    serde_json::from_slice::<TeamFileList>(&body)
+        .unwrap()
+        .deleted_pages
+}
+
+#[tokio::test]
+async fn round6_deleting_a_reentered_page_withholds_its_first_stay_archive() {
+    let (f, db) = fixture_with_daemon().await;
+    let id = create_folder_test_page(&db, "Round6 reentered", "authored")
+        .await
+        .id;
+    let first_stay_archive = archive_and_restore(&f, &db, &id).await;
+    db.create_space("Personal", None, false).await.unwrap();
+    for space in ["Personal", "Design"] {
+        let page = db.get_page(&id).await.unwrap().unwrap();
+        db.set_page_space(&id, Some(space), page.version, &ReadScope::Global)
+            .await
+            .unwrap();
+    }
+    db.delete_page(&id).await.unwrap();
+    assert!(
+        !listed_files(&f).await.contains(&first_stay_archive),
+        "a first-stay archive was reauthorized by the deletion"
+    );
+    assert_eq!(
+        download(&f, &first_stay_archive).await.0,
+        StatusCode::NOT_FOUND
+    );
+    assert!(deleted_pages(&f).await.contains(&id));
+}
+
+#[tokio::test]
+async fn round6_only_the_verified_final_archive_suppresses_a_deletion() {
+    let (f, db) = fixture_with_daemon().await;
+    let id = create_folder_test_page(&db, "Round6 archived twice", "authored")
+        .await
+        .id;
+    let older_archive = archive_and_restore(&f, &db, &id).await;
+    db.delete_page(&id).await.unwrap();
+    sync_hosted_test_folder(&f, &db).await;
+    let final_archive = archive_paths(&f, &id)
+        .into_iter()
+        .find(|path| path != &older_archive)
+        .expect("the deletion wrote a final archive");
+    let files = listed_files(&f).await;
+    assert!(files.contains(&final_archive), "{files:?}");
+    assert!(
+        !files.contains(&older_archive),
+        "an older archive is served"
+    );
+    assert!(!deleted_pages(&f).await.contains(&id));
+
+    // Without that file the older archive still must not stand in for it:
+    // either a newly verified final archive is served, or the deletion is.
+    std::fs::remove_file(f.folder.join(&final_archive)).unwrap();
+    sync_hosted_test_folder(&f, &db).await;
+    let files = listed_files(&f).await;
+    assert!(
+        !files.contains(&older_archive),
+        "an older archive is served"
+    );
+    assert!(!files.contains(&final_archive));
+    assert_eq!(download(&f, &older_archive).await.0, StatusCode::NOT_FOUND);
+    let served = files.iter().filter(|path| path.contains(&id)).count();
+    assert!(served <= 1, "{files:?}");
+    assert_eq!(
+        served == 0,
+        deleted_pages(&f).await.contains(&id),
+        "{files:?}"
+    );
+}

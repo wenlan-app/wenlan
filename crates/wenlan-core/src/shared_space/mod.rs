@@ -1119,6 +1119,11 @@ struct Held {
 pub(crate) struct MemberViewReceipt {
     pub stay: String,
     pub hashes: HashSet<String>,
+    /// For a page deleted here: the one archive verified as its final
+    /// version in this stay. Only it is served, and only it stands in for
+    /// the deletion ID; an older archive from the same stay never does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub final_archive: Option<String>,
 }
 
 fn member_view_receipts_key(space: &str) -> String {
@@ -2136,6 +2141,7 @@ fn member_view_receipts(
             MemberViewReceipt {
                 stay: stay.clone(),
                 hashes: all,
+                final_archive: None,
             },
         );
     }
@@ -2518,6 +2524,9 @@ async fn pass(
             else {
                 continue;
             };
+            // Verified again each pass: a final archive that no longer
+            // checks out stops standing in for the deletion.
+            receipt.final_archive = None;
             if let Some(archive) = held
                 .get(id)
                 .filter(|held| held.version.is_none())
@@ -2542,6 +2551,7 @@ async fn pass(
                 })
             {
                 receipt.hashes.insert(archive.sha.clone());
+                receipt.final_archive = Some(archive.sha.clone());
             }
             receipts.insert(id.clone(), receipt);
         }

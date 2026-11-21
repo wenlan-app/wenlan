@@ -1091,6 +1091,9 @@ impl MemoryDB {
                     if let Some(receipt) = receipts.get(&id).filter(|receipt| receipt.stay == stay)
                     {
                         pages.authorized.insert(id.clone(), receipt.hashes.clone());
+                        if let Some(archive) = &receipt.final_archive {
+                            pages.final_archives.insert(id.clone(), archive.clone());
+                        }
                     }
                     pages.stays.insert(id, stay);
                 }
