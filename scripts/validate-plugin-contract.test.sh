@@ -88,8 +88,12 @@ assert_rejects "handoff invents a non-repository Space" \
     perl -0pi -e 's/Outside a Git repository, do not derive a new Space from the directory\s+basename\./Outside a Git repository, use the directory basename as a new Space./g' \
     "$TMPDIR_TEST/root/plugin-codex/skills/handoff/SKILL.md"
 
-assert_rejects_for "handoff writes pages before first Space creation" "Apply the Brief update before any Space-scoped page update" \
-    perl -0pi -e 's/Apply the Brief update before any Space-scoped page update when this fallback is new./Update pages before the Brief update./g' \
+assert_rejects_for "handoff updates pages again" "retired handoff state 'Update the pages this session used'" \
+    perl -0pi -e 's/## 3\. Gather evidence/## 3. Gather evidence\n\n## 5. Update the pages this session used/' \
+    "$TMPDIR_TEST/root/plugin/skills/handoff/SKILL.md" "$TMPDIR_TEST/root/plugin-codex/skills/handoff/SKILL.md"
+
+assert_rejects_for "handoff calls write_page again" "retired handoff state 'write_page'" \
+    perl -0pi -e 's/## 3\. Gather evidence/## 3. Gather evidence\n\nCall `write_page` for each page./' \
     "$TMPDIR_TEST/root/plugin/skills/handoff/SKILL.md" "$TMPDIR_TEST/root/plugin-codex/skills/handoff/SKILL.md"
 
 assert_rejects_for "handoff drops the Brief-only rule" "A handoff changes the Brief only." \
@@ -107,14 +111,6 @@ assert_rejects_for "handoff writes a session log again" "retired handoff state '
 assert_rejects "handoff same-item snapshot version drift" \
     perl -0pi -e 's/Every delta for one existing item uses the same version from the pre-handoff Brief snapshot./Chain item versions inside the request./g' \
     "$TMPDIR_TEST/root/plugin-codex/skills/handoff/SKILL.md"
-
-assert_rejects "claude handoff dropped page_basis permission" \
-    perl -0pi -e 's/, "mcp__plugin_wenlan_wenlan__page_basis"//' \
-    "$TMPDIR_TEST/root/plugin/skills/handoff/SKILL.md"
-
-assert_rejects "claude handoff forgot the pending-basis diff" \
-    perl -0pi -e 's/`action: "diff"`/`action: "look"`/g' \
-    "$TMPDIR_TEST/root/plugin/skills/handoff/SKILL.md"
 
 assert_rejects "steep reshape dropped stable source memory IDs" \
     bash -c 'perl -0pi -e "s/source_memory_id/source_reference/g" "$1/plugin/skills/steep/references/reshape-knowledge.md"; node "$PWD/scripts/gen-codex-plugin.mjs" --root "$1" >/dev/null' _ \
