@@ -406,6 +406,12 @@ pub(super) async fn apply_tidies(
             .await
             .map_err(db_err("tidy hide"))?;
         }
+        // Pages citing a hidden memory now cite the one that stands for it
+        // and are marked to be rewritten.
+        for id in &old {
+            super::MemoryDB::replace_memory_page_dependency_in_transaction(tx, id, &tidy.new)
+                .await?;
+        }
         applied.changes.push(NightChange::Tidy {
             how: tidy.how,
             old,
@@ -465,6 +471,13 @@ pub(super) async fn undo_tidies(
             .map_err(db_err("tidy put back"))?;
         }
         if *written {
+            // The written memory is forgotten after this: its pages go back
+            // to the first memory it stood for. A merge's olds said the same,
+            // so one of them carries what the page relied on.
+            if let Some(first) = old.first() {
+                super::MemoryDB::replace_memory_page_dependency_in_transaction(tx, new, first)
+                    .await?;
+            }
             wrote.push(new.clone());
         }
     }
