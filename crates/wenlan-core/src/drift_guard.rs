@@ -2849,6 +2849,7 @@ fn ci_routing_contract_violations(
     for (filter, paths) in [("macos", &macos_paths), ("windows", &windows_paths)] {
         for path in [
             "crates/wenlan-core/src/rulesync_settings/**",
+            "crates/wenlan-server/src/rulesync_routes/displaced.rs",
             "crates/wenlan-server/src/rulesync_routes/personal_settings.rs",
         ] {
             if !paths.contains(path) {
