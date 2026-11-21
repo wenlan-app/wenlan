@@ -423,16 +423,19 @@ and wait for evidence that people need them.
   instead. Each night keeps one record of what it changed, and Undo takes its
   connections back too.
   A conversation a night did not read is told apart on the thing's page, one
-  quiet line each and only when there is one: "Didn't get this conversation"
+  quiet line each and only when there is one: "Didn't get one conversation"
   for one with no transcript to read (its tool keeps none Wenlan can read, or
-  it was deleted), naming the tool when it is one; "waits for a model" for one
-  that was due on a night with no AI model, until a later night reads it.
+  it was deleted; counted only since the thing was last read, in the Space you
+  can see), naming the tool when it is one; "will be read once AI is
+  available" for one due on a night when this computer had no AI model for
+  the night (or background AI is off), until a later night reads it. That wait
+  is kept in memory, per computer, and cleared whenever the model is there.
   Read ones stay in the steeped line. Tests:
   `ux_chat_5_a_conversation_from_a_tool_with_no_transcript_reader_is_not_got`,
-  `ux_chat_5_a_due_conversation_waits_for_a_model_until_a_night_reads_it`,
-  `ux_chat_5_a_night_with_no_model_leaves_conversations_waiting_for_a_later_one`,
-  and in `ThingDetail.test.tsx` the three "didn't get", "waiting for a model"
-  and "Traditional Chinese" lines.
+  `ux_chat_5_a_due_conversation_is_waiting_until_a_night_reads_it`,
+  `ux_chat_5_conversations_wait_only_while_the_night_has_no_model`, and in
+  `ThingDetail.test.tsx` the "didn't get", "once AI is available" and
+  "Traditional Chinese" lines.
   原文：「收尾？」一件事只問一次，你點頭的點才接進大圖。（2026-10-30 17:19 PT 定了：安靜幾天後問一次「收尾？」，算在一天 5 條裡，不猜。）選擇卡「对不上时才问」（2026-10-31 23:50）：AI 自己把整理好的點搬進大圖，可還原；只有跟你寫過、定過的東西對不上時才問你。「我觉得不一定只有我点头」。「如果是 AI 要自己收，我觉得要自己收」（2026-11-01 00:06）「就有点像 working memory 嘛…过一段时间没做，没有动作，它就自己收到图里面去，大图里面去，就更新了。然后呢，下一次你又有什么新的？跟就算跟这件事情是有关的话，它可能就有点像是在一个新的 working memory…然后它过一段时间，它又会回去更，就会自己回去更新的」（2026-11-01 00:08）「做到一半…他想要回去找到他的话，他要重开一个新的，这是不合理的」「他界面上面看到的样子，跟你实际上背后做的样子…不一定要全部都一致的」（2026-11-01 00:10）選擇卡「可以，讀一次再收」（2026-11-03 17:24）。「在睡觉的时候…会把东西给存进到长期记忆里面去…你视觉上它可以留在那里待一周，但是实际上呢，它背后的东西在晚上就已经处理好了」（2026-11-03 17:25）「能在界面上什么地方可以显示说，哦，他晚上的时候经过整理的，所以让用户感觉到价值，而不是哦默默做完就默默做完」（2026-11-03 17:48）「应该要更优雅的说法…我们之前一直在强调那个 steeping」（2026-11-03 17:59）「一个线板在那里长长的，要是离得很远，那不就拉了超长的一个线？」選「點去各自主題旁」並要動畫（2026-11-05 11:57 PT）「還是有線喔？」「你能不能找 Fable 設計一切好」，看了 Fable 的整套設計（不畫線、遠的主題在畫面邊上）說「可以」（2026-11-05 14:50 PT）「讀不到對話的工具顯示「沒拿到這段對話」；分清「無逐字稿／模型沒跑／已存好」」（design v5 F7，2026-11-21）
 - **UX-CHAT-6** `shipped` The check's rules live in Wenlan itself, not in each
   tool's plugin, so every AI tool gets the same result.

@@ -172,7 +172,9 @@ pub fn strip_url_credentials(url: &str) -> String {
 
 /// The AI tools whose transcripts Wenlan can read (`find_transcript`, and the
 /// nightly conversation scan). A conversation from any other tool has none.
-pub const TRANSCRIPT_TOOLS: [&str; 2] = ["claude-code", "codex"];
+const CLAUDE_CODE_TOOL: &str = "claude-code";
+const CODEX_TOOL: &str = "codex";
+pub const TRANSCRIPT_TOOLS: [&str; 2] = [CLAUDE_CODE_TOOL, CODEX_TOOL];
 
 /// Directories the transcript lookup reads from.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -214,8 +216,8 @@ pub fn find_transcript(
     roots: &TranscriptRoots,
 ) -> Option<String> {
     let path = match session.tool.as_str() {
-        "claude-code" => find_claude_transcript(&session.external_id, context, roots)?,
-        "codex" => find_codex_transcript(&session.external_id, roots)?,
+        CLAUDE_CODE_TOOL => find_claude_transcript(&session.external_id, context, roots)?,
+        CODEX_TOOL => find_codex_transcript(&session.external_id, roots)?,
         _ => return None,
     };
     Some(path.to_string_lossy().into_owned())

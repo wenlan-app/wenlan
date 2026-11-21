@@ -236,13 +236,29 @@ fn group_from(
         })
 }
 
-/// A night had no model: record that what is due waits for a later one.
-async fn note_waiting_for_model(db: &MemoryDB, now: i64, local_hour: u32) {
-    if let Err(error) = db
-        .note_dreams_waiting(dream_quiet_since(now, local_hour))
-        .await
-    {
-        tracing::warn!("[things] noting conversations that wait for a model: {error}");
+/// The cutoff of the newest look at which the model a night reads with was
+/// not there (0: none). In memory and per computer: whether this computer can
+/// read right now is not a fact to share through the library.
+static DREAMS_WAITING_SINCE: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
+/// What a look knows of the model the night needs: with it, nothing waits for
+/// one; without it, whatever was quiet by now waits. The cutoff only moves
+/// forward, so the daytime cutoff never undoes a night's.
+fn track_waiting_for_model(group_model_available: bool, now: i64, local_hour: u32) {
+    use std::sync::atomic::Ordering::Relaxed;
+    if group_model_available {
+        DREAMS_WAITING_SINCE.store(0, Relaxed);
+    } else {
+        DREAMS_WAITING_SINCE.fetch_max(dream_quiet_since(now, local_hour), Relaxed);
+    }
+}
+
+/// The cutoff before which due conversations are waiting for a model, if the
+/// latest look had none.
+pub fn dreams_waiting_since() -> Option<i64> {
+    match DREAMS_WAITING_SINCE.load(std::sync::atomic::Ordering::Relaxed) {
+        0 => None,
+        since => Some(since),
     }
 }
 
@@ -301,9 +317,15 @@ pub async fn look_once(
     };
 
     let Some(models) = models else {
-        // No model to read with: what is due waits for a later night, and
-        // the thing's page says so (UX-CHAT-5).
-        note_waiting_for_model(&db, now, chrono::Local::now().hour()).await;
+        // The night reads with the grouping model alone. Without the
+        // everyday (labelling) model it does not run, but that is not a
+        // wait for AI to be set up: only a missing grouping model, or
+        // background AI turned off, is (UX-CHAT-5).
+        track_waiting_for_model(
+            group_model(shared).await.is_some(),
+            now,
+            chrono::Local::now().hour(),
+        );
         // No everyday model yet (an on-device one waits for an idle
         // computer): the skills night pass only needs the grouping model.
         if NIGHT_HOURS.contains(&chrono::Local::now().hour()) && still_quiet() {
@@ -317,6 +339,8 @@ pub async fn look_once(
             ..LookReport::default()
         }));
     };
+    // The grouping model is here, whether or not this look then reads.
+    track_waiting_for_model(true, 0, 0);
     let mut report = look_with_until(&db, found, &models, language, backoff, &still_quiet).await?;
     report.handoffs_filled = handoffs_filled;
     if !still_quiet() {
@@ -441,8 +465,6 @@ async fn dream_once(
     if now < backoff.dream.1 {
         return Ok((0, 0));
     }
-    // A model is here: nothing waits for one any more.
-    db.clear_dreams_waiting().await.map_err(|e| e.to_string())?;
     let due = db
         .things_to_dream(dream_quiet_since(now, local_hour), DREAM_BATCH)
         .await

@@ -237,6 +237,11 @@ pub async fn handle_get_thing(
         .get_thing_detail(&id, &scope)
         .await?
         .ok_or_else(|| ServerError::NotFound("thing not found".to_string()))?;
+    // Conversations due for reading that wait because this computer had no
+    // AI for the night (kept in memory, per computer).
+    if let Some(since) = crate::things_intake::dreams_waiting_since() {
+        detail.waiting = db.thing_waiting_conversations(&id, since, &scope).await?;
+    }
     // Page titles are page-bearing: list only pages this caller may see.
     detail.pages = wenlan_core::truth_adapter::filter_page_refs(
         &db,

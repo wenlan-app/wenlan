@@ -347,8 +347,8 @@ describe("ThingDetail", () => {
   it("UX-CHAT-5: a conversation a night didn't get is said once, quietly, naming the tool", async () => {
     vi.mocked(getThing).mockResolvedValue({ ...tagline, unread: 1 });
     renderThing();
-    expect(await screen.findByText("Didn't get this conversation.")).toBeTruthy();
-    expect(screen.queryByText(/wait for a model|waits for a model/)).toBeNull();
+    expect(await screen.findByText("Didn't get one conversation.")).toBeTruthy();
+    expect(screen.queryByText(/once AI is available/)).toBeNull();
     cleanup();
     vi.mocked(getThing).mockResolvedValue({ ...tagline, unread: 2, unread_tools: ["cursor"] });
     renderThing();
@@ -367,18 +367,18 @@ describe("ThingDetail", () => {
   it("UX-CHAT-5: conversations waiting for a model are said apart from ones it didn't get", async () => {
     vi.mocked(getThing).mockResolvedValue({ ...tagline, waiting: 1 });
     renderThing();
-    expect(await screen.findByText("One conversation waits for a model.")).toBeTruthy();
+    expect(await screen.findByText("One conversation will be read once AI is available.")).toBeTruthy();
     expect(screen.queryByText(/Didn't get/)).toBeNull();
     cleanup();
     vi.mocked(getThing).mockResolvedValue({ ...tagline, waiting: 3, unread: 1 });
     renderThing();
-    expect(await screen.findByText("3 conversations wait for a model.")).toBeTruthy();
-    expect(screen.getByText("Didn't get this conversation.")).toBeTruthy();
+    expect(await screen.findByText("3 conversations will be read once AI is available.")).toBeTruthy();
+    expect(screen.getByText("Didn't get one conversation.")).toBeTruthy();
     cleanup();
     vi.mocked(getThing).mockResolvedValue(tagline);
     renderThing();
     await screen.findByRole("heading", { level: 1, name: "New tagline" });
-    expect(screen.queryByText(/wait for a model|waits for a model/)).toBeNull();
+    expect(screen.queryByText(/once AI is available/)).toBeNull();
   });
 
   it("UX-CHAT-5: the unread and waiting lines read naturally in Traditional Chinese", async () => {
@@ -387,17 +387,17 @@ describe("ThingDetail", () => {
       vi.mocked(getThing).mockResolvedValue({ ...tagline, unread: 1, unread_tools: ["cursor"], waiting: 2 });
       renderThing();
       expect(await screen.findByText("沒拿到 Cursor 的 1 段對話。")).toBeTruthy();
-      expect(screen.getByText("有 2 個對話在等模型來讀。")).toBeTruthy();
+      expect(screen.getByText("有 2 段對話等 AI 可以用了再讀。")).toBeTruthy();
       cleanup();
       vi.mocked(getThing).mockResolvedValue({ ...tagline, unread: 3 });
       renderThing();
       expect(await screen.findByText("沒拿到 3 段對話。")).toBeTruthy();
-      expect(screen.queryByText(/在等模型/)).toBeNull();
+      expect(screen.queryByText(/等 AI 可以用了/)).toBeNull();
       cleanup();
       vi.mocked(getThing).mockResolvedValue(tagline);
       renderThing();
       await screen.findByRole("heading", { level: 1, name: "New tagline" });
-      expect(screen.queryByText(/沒拿到|在等模型/)).toBeNull();
+      expect(screen.queryByText(/沒拿到|等 AI 可以用了/)).toBeNull();
     } finally {
       await i18n.changeLanguage("en");
     }
