@@ -17,6 +17,8 @@ use wenlan_types::rulesync_skill::{
     SaveSkillRequest, SaveSkillResult, SavedSkillFile, SavedSkillScope, SavedSkillTool,
 };
 
+mod hosted_team;
+
 /// Deserialize an `Option<usize>` that also accepts stringified numbers (e.g. `"10"`).
 /// MCP clients like Claude Desktop sometimes send numeric params as strings.
 fn deserialize_optional_usize_lenient<'de, D>(deserializer: D) -> Result<Option<usize>, D::Error>
@@ -8355,6 +8357,9 @@ impl WenlanMcpServer {
 
     fn visible_tools(&self) -> Vec<Tool> {
         let mut tools = Self::tool_router().list_all();
+        if self.agent_identity.team_member().is_some() {
+            tools.retain(|tool| hosted_team::allowed(tool.name.as_ref(), self.tool_profile));
+        }
         tools.retain(|tool| {
             let name = tool.name.as_ref();
             !self.is_hosted_memory_tool(name) && !self.is_team_member_withheld_tool(name)
@@ -8404,6 +8409,9 @@ impl WenlanMcpServer {
                     _ => continue,
                 };
                 tool.description = Some(description.into());
+            }
+            for tool in &mut tools {
+                hosted_team::apply_output_schema(tool);
             }
         }
         tools
@@ -8464,6 +8472,16 @@ impl ServerHandler for WenlanMcpServer {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
+        if self.agent_identity.team_member().is_some() {
+            if let Some(folder_space) = &self.folder_space {
+                folder_space.refresh(&self.client).await;
+            }
+            return crate::lock_state::with_session_pin(
+                self.space_pin.clone(),
+                hosted_team::dispatch(self, request.name.as_ref(), request.arguments),
+            )
+            .await;
+        }
         if let Some(refusal) = self.query_only_refusal(request.name.as_ref()) {
             return Ok(refusal);
         }

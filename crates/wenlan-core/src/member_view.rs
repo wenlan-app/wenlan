@@ -18,7 +18,7 @@ use wenlan_types::{
 };
 
 use crate::shared_space::{rewrite, version};
-use crate::store::format::page::{Citation, Locator, PageFile};
+use crate::store::format::page::PageFile;
 
 #[derive(Deserialize, Serialize)]
 pub struct MemberHealth {
@@ -27,7 +27,7 @@ pub struct MemberHealth {
     pub version: String,
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 pub struct MemberSpace {
     id: String,
     name: String,
@@ -242,12 +242,12 @@ pub fn draft(page: Page) -> MemberDraft {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 pub struct MemberMove {
     pub space_path: String,
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 pub struct MemberCreate {
     id: String,
     attached_to: Option<String>,
@@ -272,7 +272,7 @@ impl From<CreatePageResponse> for MemberCreate {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 pub struct MemberWrite {
     ok: bool,
     write_outcome: Option<PageWriteOutcome>,
@@ -303,7 +303,7 @@ impl From<PageWriteResponse> for MemberWrite {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 pub struct MemberManualWrite {
     ok: bool,
     projection_status: PageProjectionStatus,
@@ -320,7 +320,7 @@ impl From<ManualPageWriteResponse> for MemberManualWrite {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 pub struct MemberRemoval {
     status: PageRemovalStatus,
     restorable: bool,
@@ -339,7 +339,7 @@ impl From<PageRemovalResponse> for MemberRemoval {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 pub struct MemberRestore {
     id: String,
     title: String,
@@ -366,7 +366,7 @@ impl From<RestorePageResponse> for MemberRestore {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum MemberPageDetail {
     Page(Box<MemberPageRead>),
@@ -384,7 +384,7 @@ impl MemberPageDetail {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 pub struct MemberDraft {
     page: MemberPage,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -393,13 +393,13 @@ pub struct MemberDraft {
     pub projection_status: Option<PageProjectionStatus>,
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 pub struct MemberDraftSpace {
-    id: String,
-    space: Option<String>,
+    pub id: String,
+    pub space: Option<String>,
 }
 
-fn member_basis(basis: BasisRef) -> MemberBasis {
+pub fn member_basis(basis: BasisRef) -> MemberBasis {
     MemberBasis {
         page_id: basis.page_id,
         title: basis.title,
@@ -423,24 +423,9 @@ fn member_linked_page(link: LinkedChanged) -> MemberLinkedPage {
 /// page citations and use the same rewrite with their published target set.
 pub(crate) fn published_body(
     body: &str,
-    citations: &[wenlan_types::pages::PageCitation],
+    _citations: &[wenlan_types::pages::PageCitation],
 ) -> String {
-    let citations = citations
-        .iter()
-        .map(|citation| Citation {
-            marker: citation.marker,
-            label: String::new(),
-            locator: Locator::Other(String::new()),
-        })
-        .collect::<Vec<_>>();
-    rewrite::rewrite_body(
-        body,
-        &citations,
-        &rewrite::RewriteContext {
-            space_pages: &HashMap::new(),
-            keep_all: false,
-        },
-    )
+    crate::citations::strip_member_citation_markers(body)
 }
 
 pub fn search_hit(page: Page) -> wenlan_types::SearchResult {
@@ -497,17 +482,17 @@ pub(crate) fn writer(label: &str) -> Option<String> {
     None
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 pub struct MemberRevisions {
     page_id: String,
     current_version: i64,
     user_edited: bool,
     entries: Vec<MemberRevision>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     history: Vec<MemberHistory>,
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 struct MemberRevision {
     version: i64,
     at: i64,
@@ -520,7 +505,7 @@ struct MemberRevision {
     restored_from: Option<i64>,
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 struct MemberHistory {
     kind: PageHistoryKind,
     at: i64,
@@ -539,7 +524,7 @@ struct MemberHistory {
     first_version: Option<i64>,
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 struct MemberHistorySource {
     page_id: String,
     title: String,
@@ -602,7 +587,7 @@ impl MemberRevisions {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 pub struct MemberChange {
     pub page_id: String,
     title: String,
@@ -627,7 +612,7 @@ impl MemberChange {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 pub struct MemberActivity {
     kind: ActivityKind,
     pub id: String,
@@ -693,6 +678,7 @@ impl MemberSnapshot {
                     .clone()
                     .filter(|decision| is_digest(&decision.proposal)),
                 device: None,
+                stay: meta.stay.clone(),
             },
             page,
         }
@@ -715,6 +701,14 @@ impl MemberSnapshot {
             ) == read.sha
     }
 
+    pub(crate) fn matches_in_stay(
+        read: &version::PageVersion,
+        space_pages: &HashMap<String, String>,
+        stay: &str,
+    ) -> bool {
+        read.meta.stay.as_deref() == Some(stay) && Self::matches(read, space_pages)
+    }
+
     pub(crate) fn approved_rules_match(read: &version::PageVersion) -> bool {
         let mut view = Self::new(&read.page, &read.meta, &HashMap::new());
         if let Some(approval) = crate::rulesync_team::approved_proposal(read) {
@@ -730,6 +724,36 @@ impl MemberSnapshot {
 
 fn is_digest(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// Content-addressed bytes validated for a hosted member download.
+pub struct MemberVersionFile(Vec<u8>);
+
+impl MemberVersionFile {
+    pub fn shared(
+        page: &str,
+        name: &str,
+        bytes: Vec<u8>,
+        pages: &crate::team::SharedFolderPages,
+    ) -> Option<Self> {
+        crate::team::can_serve_version(page, name, &bytes, pages).then_some(Self(bytes))
+    }
+
+    pub fn approved_rules(
+        team_path: &std::path::Path,
+        settings_path: &std::path::Path,
+        space: &str,
+        path: &str,
+    ) -> Result<Option<Self>, crate::WenlanError> {
+        Ok(
+            crate::rulesync_team::read_hosted_rule_file(team_path, settings_path, space, path)?
+                .map(Self),
+        )
+    }
+
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.0
+    }
 }
 
 #[derive(Serialize)]

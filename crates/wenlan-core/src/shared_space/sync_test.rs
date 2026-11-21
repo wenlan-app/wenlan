@@ -2998,6 +2998,27 @@ async fn a_lock_set_on_one_side_reaches_the_other_and_so_does_the_unlock() {
     assert!(a.page(&id).await.unwrap().review_required);
 }
 
+#[tokio::test]
+async fn a_verified_deletion_identity_archives_the_matching_local_page() {
+    let member = Member::new("Mina").await;
+    let id = member
+        .write(
+            "Shared note",
+            "Still present locally.",
+            SPACE.to_string().into(),
+        )
+        .await;
+    let page = member.page(&id).await.unwrap();
+
+    assert!(apply_server_deletion(&member.db, &page, None)
+        .await
+        .unwrap());
+    assert_eq!(member.page(&id).await.unwrap().status, "archived");
+    assert!(!apply_server_deletion(&member.db, &page, None)
+        .await
+        .unwrap());
+}
+
 /// The open page cards here, as (card id, writer, AI tool).
 async fn open_cards(member: &Member) -> Vec<(String, String, Option<String>)> {
     member

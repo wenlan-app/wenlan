@@ -110,6 +110,7 @@ pub async fn seed(db: &MemoryDB, pages: &Path) {
                 basis_marks: Vec::new(),
                 basis_space_guard: None,
                 skip_protected_title_match: false,
+                member_write: false,
                 research_write: None,
             },
         )

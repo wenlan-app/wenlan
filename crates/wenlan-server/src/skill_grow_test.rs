@@ -1880,7 +1880,14 @@ async fn hosted_rules_exclude_personal_rules_pages() {
         (unknown_parts.status, unknown_body, false),
         "a hosted report must neither confirm nor record a private rule"
     );
-    assert!(report(hosted.lines[0].id.clone()).await.unwrap().0.recorded);
+    assert!(
+        report(hosted.lines[0].id.clone())
+            .await
+            .unwrap()
+            .into_test_json()
+            .0
+            .recorded
+    );
 }
 
 #[tokio::test]

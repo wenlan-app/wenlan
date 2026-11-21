@@ -80,6 +80,17 @@ impl MemberView {
         space_folders::in_space(&self.folder, inside)
     }
 
+    /// An older draft's stored path is physical. Apply the same boundary as
+    /// on a newly requested destination before an eligible draft can publish.
+    pub fn check_stored_folder(&self, path: &str) -> Result<(), WenlanError> {
+        let shown = self.shown(path).ok_or_else(outside)?;
+        let resolved = self.folder_path(&shown)?;
+        if resolved != path {
+            return Err(outside());
+        }
+        Ok(())
+    }
+
     /// A member location contains the page's opaque ID and its shared folder.
     pub fn page_location(&self, id: &str, path: &str) -> Option<String> {
         let shown = self.shown(path)?;
@@ -98,6 +109,20 @@ impl MemberView {
         let (_, basename) = live.rsplit_once('/').ok_or_else(outside)?;
         Ok(format!("{}/{basename}", self.folder_path(folder)?))
     }
+}
+
+pub(crate) async fn required_view(
+    db: &MemoryDB,
+    root: &Path,
+    pinned: Option<&str>,
+) -> Result<MemberView, crate::error::ServerError> {
+    view(db, root, true, pinned).await.ok_or_else(unavailable)
+}
+
+pub(crate) fn unavailable() -> crate::error::ServerError {
+    crate::error::ServerError::ValidationError(
+        "Folders need each Space kept in a folder of its own".into(),
+    )
 }
 
 fn outside() -> WenlanError {

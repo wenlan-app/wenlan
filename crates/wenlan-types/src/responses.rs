@@ -617,6 +617,33 @@ pub struct RenamePageResponse {
     pub links_not_updated: u32,
 }
 
+/// The member's view of [`RenamePageResponse`]: the same fields, read back
+/// with unknown fields refused, so the team server and the hosted MCP tool
+/// share one closed shape.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct MemberRenamePageResponse {
+    pub id: String,
+    pub title: String,
+    pub version: i64,
+    pub links_updated: u32,
+    pub links_pending_review: u32,
+    pub links_not_updated: u32,
+}
+
+impl From<RenamePageResponse> for MemberRenamePageResponse {
+    fn from(result: RenamePageResponse) -> Self {
+        Self {
+            id: result.id,
+            title: result.title,
+            version: result.version,
+            links_updated: result.links_updated,
+            links_pending_review: result.links_pending_review,
+            links_not_updated: result.links_not_updated,
+        }
+    }
+}
+
 /// Result of restoring the original archived page, without returning prose.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RestorePageResponse {

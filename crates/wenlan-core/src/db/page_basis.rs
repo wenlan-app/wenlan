@@ -920,6 +920,10 @@ pub struct BasisWrite {
     pub space_guard: Option<crate::read_scope::ReadScope>,
     /// A team write also requires its page and named bases to be shared.
     pub member_write: bool,
+    /// The incoming body is a member-facing projection with host citation
+    /// markers removed. Direct member page edits may restore references on
+    /// exact unchanged sentences; secondary page rewrites must leave this off.
+    pub member_projected_body: bool,
     /// UX-WHO-2: the person's own words, quoted verbatim, when they
     /// explicitly asked the AI tool for this change. Rides only a
     /// version-checked `person_asked` write; the sentence gate then lets it
@@ -933,6 +937,10 @@ pub struct BasisWrite {
     /// included; the old version stays in history. A locked note still waits
     /// as a whole-page card.
     pub follows: bool,
+    /// A page summary to set with the body, in the write's own transaction
+    /// and under its eligibility check (`Some(None)` clears it). Nothing is
+    /// set when the body does not land.
+    pub summary: Option<Option<String>>,
 }
 
 /// One basis note as an "update from sources" run read it, recorded on the
@@ -984,7 +992,20 @@ pub(super) async fn apply_basis_write_on_conn(
     page_id: &str,
     basis: &BasisWrite,
 ) -> Result<BasisWriteOutcome, BasisError> {
+    let member_scope = if basis.member_write {
+        Some(
+            basis
+                .space_guard
+                .as_ref()
+                .ok_or(BasisError::CiterNotFound)?,
+        )
+    } else {
+        None
+    };
     for (basis_page_id, version) in &basis.marks {
+        if let Some(scope) = member_scope {
+            MemoryDB::authorize_shared_basis_pair(conn, page_id, basis_page_id, scope).await?;
+        }
         mark_page_basis_on_conn(
             conn,
             page_id,
@@ -1014,9 +1035,25 @@ pub(super) async fn apply_basis_write_on_conn(
     }
     let mut outcome = BasisWriteOutcome::default();
     if let Some((basis_page_id, version)) = &basis.confirm {
-        outcome.confirm = Some(
-            match confirm_page_basis_on_conn(conn, page_id, basis_page_id, *version, &basis.actor)
-                .await
+        let allowed = match member_scope {
+            Some(scope) => {
+                MemoryDB::authorize_shared_basis_pair(conn, page_id, basis_page_id, scope).await
+            }
+            None => Ok(()),
+        };
+        outcome.confirm = Some(match allowed {
+            Err(BasisError::BasisNotFound | BasisError::CiterNotFound) => {
+                wenlan_types::BasisConfirmOutcome::MovedOn
+            }
+            Err(error) => return Err(error),
+            Ok(()) => match confirm_page_basis_on_conn(
+                conn,
+                page_id,
+                basis_page_id,
+                *version,
+                &basis.actor,
+            )
+            .await
             {
                 Ok(_) => wenlan_types::BasisConfirmOutcome::Confirmed,
                 Err(BasisError::MovedOn { .. } | BasisError::BasisUnavailable(_)) => {
@@ -1024,7 +1061,7 @@ pub(super) async fn apply_basis_write_on_conn(
                 }
                 Err(other) => return Err(other),
             },
-        );
+        });
     }
     for entry in &basis.confirm_snapshot {
         confirm_snapshot_entry_on_conn(conn, page_id, entry, &basis.actor).await?;
@@ -1642,6 +1679,29 @@ impl MemoryDB {
         added_by: &str,
         space_guard: Option<&crate::read_scope::ReadScope>,
     ) -> Result<(), BasisError> {
+        self.mark_page_bases_for(
+            page_id,
+            at_version,
+            marks,
+            code_basis,
+            added_by,
+            space_guard,
+            false,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn mark_page_bases_for(
+        &self,
+        page_id: &str,
+        at_version: i64,
+        marks: &[(String, i64)],
+        code_basis: &[crate::code_basis::PreparedCodeBasis],
+        added_by: &str,
+        space_guard: Option<&crate::read_scope::ReadScope>,
+        member: bool,
+    ) -> Result<(), BasisError> {
         if marks.is_empty() && code_basis.is_empty() {
             return Ok(());
         }
@@ -1667,6 +1727,10 @@ impl MemoryDB {
             return Err(BasisError::CiterMovedOn { current });
         }
         for (basis_page_id, version) in marks {
+            if member {
+                let scope = space_guard.ok_or(BasisError::CiterNotFound)?;
+                Self::authorize_shared_basis_pair(&tx, page_id, basis_page_id, scope).await?;
+            }
             mark_page_basis_on_conn(&tx, page_id, basis_page_id, *version, added_by, space_guard)
                 .await?;
         }

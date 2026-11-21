@@ -22,7 +22,49 @@ fn meta(parent: Option<&str>, body: &str, member: &str, ts: &str) -> VersionMeta
         proposal: false,
         decides: None,
         device: None,
+        stay: None,
     }
+}
+
+#[test]
+fn hosted_snapshot_receipts_follow_only_the_current_stays_anchored_dag() {
+    fn parsed(body: &str, parent: Option<&str>, stay: &str, ts: &str) -> PageVersion {
+        let mut page = PageFile::new("Shared", body);
+        page.id = Some("shared-page".into());
+        let mut meta = meta(parent, body, "member-a", ts);
+        meta.stay = Some(stay.into());
+        let text = version::render(&page, &meta);
+        let name = version::version_file_name(&version::sha256_hex(text.as_bytes()));
+        version::parse(&name, text.as_bytes()).unwrap()
+    }
+
+    let shared = HashMap::from([("shared-page".to_string(), "Shared".to_string())]);
+    let root = parsed("Root", None, "stay-current", "2026-11-20T00:00:00Z");
+    let child = parsed(
+        "Child",
+        Some(&root.sha),
+        "stay-current",
+        "2026-11-20T00:00:01Z",
+    );
+    let old_stay = parsed(
+        "Old stay",
+        None,
+        "stay-before-reentry",
+        "2026-11-19T00:00:00Z",
+    );
+    let unanchored = parsed("Unanchored", None, "stay-current", "2026-11-20T00:00:02Z");
+    let versions = vec![
+        root.clone(),
+        child.clone(),
+        old_stay.clone(),
+        unanchored.clone(),
+    ];
+
+    let authorized = super::anchored_member_hashes(&versions, &root.sha, "stay-current", &shared);
+    assert!(authorized.contains(&root.sha));
+    assert!(authorized.contains(&child.sha));
+    assert!(!authorized.contains(&old_stay.sha));
+    assert!(!authorized.contains(&unanchored.sha));
 }
 
 fn page(id: &str, body: &str) -> PageFile {
@@ -320,8 +362,22 @@ fn rewrite_keeps_space_pages_and_hides_other_sources() {
     ];
     let (out, out_basis) = rewrite_sources(&citations, &basis, &ctx(&space_pages));
     assert_eq!(out.len(), 1);
-    assert_eq!(out[0], citations[0]);
-    assert_eq!(out_basis, vec![basis[0].clone()]);
+    // A cited version may predate the target's stay in this Space.
+    assert_eq!(
+        out[0],
+        Citation {
+            marker: 1,
+            label: citations[0].label.clone(),
+            locator: Locator::Other("wenlan:page_in".into()),
+        }
+    );
+    assert_eq!(
+        out_basis,
+        vec![Basis {
+            label: basis[0].label.clone(),
+            locator: Locator::Other("wenlan:page_in".into()),
+        }]
+    );
     let rendered = format!("{out:?}{out_basis:?}");
     for private in [
         "mem_private",
@@ -410,6 +466,29 @@ fn visible_markers_are_compacted_after_private_markers_are_removed() {
     assert_eq!(body, "Private and. Guests arrive [1].");
     assert_eq!(sources.len(), 1);
     assert_eq!(sources[0].marker, 1);
+}
+
+#[test]
+fn shared_snapshot_redacts_markers_without_a_valid_citation_mapping() {
+    let space_pages = HashMap::from([("page_in".to_string(), "Guests".to_string())]);
+    let context = ctx(&space_pages);
+    assert_eq!(
+        rewrite::rewrite_body("Unmapped [7] claim.\n\nNext [8].", &[], &context),
+        "Unmapped claim.\n\nNext."
+    );
+
+    let stale = vec![Citation {
+        marker: 1,
+        label: "Old source".into(),
+        locator: Locator::Wenlan {
+            id: "page_gone".into(),
+            version: 1,
+        },
+    }];
+    assert_eq!(
+        rewrite::rewrite_body("Claim [1] plus orphan [2].", &stale, &context),
+        "Claim plus orphan."
+    );
 }
 
 #[test]

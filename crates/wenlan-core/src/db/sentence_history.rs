@@ -129,9 +129,29 @@ impl MemoryDB {
         &self,
         entry: NewHistoryEntry<'_>,
     ) -> Result<i64, WenlanError> {
+        self.append_sentence_history_for(entry, None).await
+    }
+
+    pub(crate) async fn append_sentence_history_for(
+        &self,
+        entry: NewHistoryEntry<'_>,
+        member_scope: Option<&crate::read_scope::ReadScope>,
+    ) -> Result<i64, WenlanError> {
         let actor = serde_json::to_string(entry.actor)?;
         let data = serde_json::to_string(entry.data)?;
         let conn = self.conn.lock().await;
+        if let Some(scope) = member_scope {
+            if !Self::member_page_access_on(
+                &conn,
+                &entry.target.id,
+                scope,
+                super::MemberPageTarget::Published,
+            )
+            .await?
+            {
+                return Err(WenlanError::NotFound("page not found".into()));
+            }
+        }
         let mut rows = conn
             .query(
                 "INSERT INTO sentence_history

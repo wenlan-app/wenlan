@@ -112,16 +112,17 @@ mod scoped_pages;
 pub mod sentence_history;
 pub use citation_sources::{CitationSource, CitationSourceSnapshot};
 
-type PageSpaceWriteContext<'a> = (
-    &'a str,
-    &'a crate::read_scope::ReadScope,
-    &'a [CitationSourceSnapshot],
-    Option<(
+pub(crate) struct PageSpaceWriteContext<'a> {
+    pub page_id: &'a str,
+    pub scope: &'a crate::read_scope::ReadScope,
+    pub citation_snapshots: &'a [CitationSourceSnapshot],
+    pub research_stage: Option<(
         &'a research_write::ResearchWriteFence,
         &'a [String],
         &'a str,
     )>,
-);
+    pub member_version: Option<i64>,
+}
 pub mod ai_memory_import;
 pub mod citation_provenance;
 pub mod night_backlog;
@@ -5355,7 +5356,7 @@ pub struct MemoryDB {
     _db: libsql::Database,
     conn: Arc<tokio::sync::Mutex<libsql::Connection>>,
     entity_resolution_lock: tokio::sync::Mutex<()>,
-    space_write_lock: tokio::sync::Mutex<()>,
+    space_write_lock: Arc<tokio::sync::Mutex<()>>,
     pub(crate) lint_freshness: Arc<crate::lint::snapshot::LintFreshnessClock>,
     page_projection_tracker: Arc<crate::page_projection_tracker::PageProjectionTracker>,
     pub(crate) derived_artifact_state: Arc<crate::derived_artifact_state::DerivedArtifactState>,
@@ -5425,6 +5426,12 @@ impl MemoryDB {
     /// carry stable IDs into their own DB transaction.
     pub async fn lock_space_writes(&self) -> tokio::sync::MutexGuard<'_, ()> {
         self.space_write_lock.lock().await
+    }
+
+    /// Keep a resolved Space destination stable through a blocking file move,
+    /// including when the request waiting for that move is cancelled.
+    pub async fn lock_space_writes_owned(&self) -> tokio::sync::OwnedMutexGuard<()> {
+        Arc::clone(&self.space_write_lock).lock_owned().await
     }
 
     pub fn page_projection_tracker(
@@ -5532,7 +5539,7 @@ impl MemoryDB {
             _db: db,
             conn: Arc::new(tokio::sync::Mutex::new(conn)),
             entity_resolution_lock: tokio::sync::Mutex::new(()),
-            space_write_lock: tokio::sync::Mutex::new(()),
+            space_write_lock: Arc::new(tokio::sync::Mutex::new(())),
             lint_freshness,
             page_projection_tracker: crate::page_projection_tracker::PageProjectionTracker::new(),
             derived_artifact_state: crate::derived_artifact_state::DerivedArtifactState::new(),
@@ -5754,7 +5761,7 @@ impl MemoryDB {
             _db: db,
             conn: Arc::new(tokio::sync::Mutex::new(conn)),
             entity_resolution_lock: tokio::sync::Mutex::new(()),
-            space_write_lock: tokio::sync::Mutex::new(()),
+            space_write_lock: Arc::new(tokio::sync::Mutex::new(())),
             lint_freshness,
             page_projection_tracker: crate::page_projection_tracker::PageProjectionTracker::new(),
             derived_artifact_state: crate::derived_artifact_state::DerivedArtifactState::new(),
@@ -5879,7 +5886,7 @@ impl MemoryDB {
             _db: db,
             conn: Arc::new(tokio::sync::Mutex::new(conn)),
             entity_resolution_lock: tokio::sync::Mutex::new(()),
-            space_write_lock: tokio::sync::Mutex::new(()),
+            space_write_lock: Arc::new(tokio::sync::Mutex::new(())),
             lint_freshness,
             page_projection_tracker: crate::page_projection_tracker::PageProjectionTracker::new(),
             derived_artifact_state: crate::derived_artifact_state::DerivedArtifactState::new(),
@@ -28112,10 +28119,7 @@ impl MemoryDB {
         &self,
         docs: Vec<RawDocument>,
         operation_receipt: Option<OperationReceipt<'_>>,
-        page_id: &str,
-        scope: &crate::read_scope::ReadScope,
-        citation_snapshots: &[CitationSourceSnapshot],
-        research_stage: Option<(&research_write::ResearchWriteFence, &[String], &str)>,
+        page_space: PageSpaceWriteContext<'_>,
     ) -> Result<bool, WenlanError> {
         self.upsert_documents_at_optional_page_fence(
             docs,
@@ -28125,7 +28129,7 @@ impl MemoryDB {
             operation_receipt,
             None,
             None,
-            Some((page_id, scope, citation_snapshots, research_stage)),
+            Some(page_space),
             false,
             false,
         )
@@ -28560,13 +28564,21 @@ impl MemoryDB {
                     return Ok(false);
                 }
             }
-            if let Some((page_id, scope, citation_snapshots,research_stage)) = page_space {
+            if let Some(PageSpaceWriteContext {
+                page_id, scope, citation_snapshots, research_stage, member_version,
+            }) = page_space {
+                if member_version.is_some()
+                    && !Self::member_page_access_on(&conn, page_id, scope, MemberPageTarget::Published).await?
+                {
+                    return Ok(false);
+                }
                 if let Some((fence,sources,pending))=research_stage { research_write::bind(&conn,fence,page_id,sources,Some(pending),None).await?; }
                 citation_sources::guard_on(&conn, citation_snapshots).await?;
                 let mut rows = conn
                     .query(
-                        "SELECT space FROM pages WHERE id = ?1 AND status = 'active'",
-                        libsql::params![page_id],
+                        "SELECT space FROM pages WHERE id = ?1 AND status = 'active'
+                            AND (?2 IS NULL OR version = ?2)",
+                        libsql::params![page_id, member_version],
                     )
                     .await
                     .map_err(|e| WenlanError::VectorDb(format!("upsert page space: {e}")))?;
@@ -56073,6 +56085,7 @@ impl MemoryDB {
         // projection before this boundary; all other callers must supply
         // delimiter-free source, which is stored without transformation.
         let content = crate::export::provenance::validate_canonical_page_content(content)?;
+        let mut landing_content = content.to_owned();
         let source_ids_json =
             if basis.preserve_source_links {
                 None
@@ -56365,8 +56378,28 @@ impl MemoryDB {
         // rolled back together with the UPDATE if a CAS guard fails below.
         // Each citation records the source version it was checked against,
         // in the transaction of the body it was computed for.
+        let projection_citations = if basis.member_projected_body {
+            match citation_provenance::restore_member_projection_on(&conn, id, &landing_content)
+                .await
+            {
+                Ok(Some((restored, citations))) => {
+                    landing_content = restored;
+                    Some(citations)
+                }
+                Ok(None) => None,
+                Err(error) => {
+                    let _ = conn.execute("ROLLBACK", ()).await;
+                    return Err(error);
+                }
+            }
+        } else {
+            None
+        };
+        let content = landing_content.as_str();
         let stamped_citations = match async {
-            let retained = if basis.preserve_source_links {
+            let retained = if let Some(citations) = projection_citations.as_deref() {
+                Some(citations.to_owned())
+            } else if basis.preserve_source_links {
                 citation_provenance::retain_refresh_citations_on(&conn, id, content)
                     .await
                     .map_err(|error| libsql::Error::Misuse(error.to_string()))?
@@ -57044,6 +57077,21 @@ impl MemoryDB {
                 return Err(error.into());
             }
         };
+        // A summary sent with the body lands with it, under the same check.
+        if let Some(summary) = &basis.summary {
+            if let Err(e) = conn
+                .execute(
+                    "UPDATE pages SET summary = ?1 WHERE id = ?2",
+                    libsql::params![summary.as_deref(), id],
+                )
+                .await
+            {
+                let _ = conn.execute("ROLLBACK", ()).await;
+                return Err(WenlanError::VectorDb(format!(
+                    "update_page_content summary: {e}"
+                )));
+            }
+        }
         // Lines of code the writer relied on land in the same transaction, so a
         // rolled-back write leaves no code basis behind.
         if let Err(error) = code_basis::upsert_code_basis_on_conn(
@@ -58607,6 +58655,9 @@ impl MemoryDB {
             )
             .await
             .map_err(|e| WenlanError::VectorDb(format!("delete_page orphan links: {e}")))?;
+            // The deletion record's stay reads the move history, so it is
+            // taken before that history is purged below.
+            Self::record_shared_page_deletion_on(&conn, id).await?;
             // Page ids can be deterministic and later reused. History belongs
             // to this Page generation, so retaining it would make a recreated
             // version 1 expose the deleted Page's snapshots.
@@ -58656,7 +58707,6 @@ impl MemoryDB {
             )
             .await
             .map_err(|e| WenlanError::VectorDb(format!("delete_page looks: {e}")))?;
-            Self::record_shared_page_deletion_on(&conn, id).await?;
             conn.execute("DELETE FROM pages WHERE id = ?1", libsql::params![id])
                 .await
                 .map_err(|e| WenlanError::VectorDb(format!("delete_page row: {e}")))?;
@@ -62388,6 +62438,54 @@ impl MemoryDB {
         .await
         .map_err(|e| WenlanError::VectorDb(format!("update_page_summary: {e}")))?;
         Ok(())
+    }
+
+    /// A member refresh whose body did not change: the summary is set only
+    /// while the page is still shared in `scope` and still at `version`,
+    /// checked in the transaction that writes it. Returns whether it landed.
+    pub async fn update_shared_page_summary(
+        &self,
+        page_id: &str,
+        summary: Option<&str>,
+        scope: &crate::read_scope::ReadScope,
+        version: i64,
+    ) -> Result<bool, WenlanError> {
+        let error = |e| WenlanError::VectorDb(format!("update_shared_page_summary: {e}"));
+        let conn = self.conn.lock().await;
+        Self::reject_page_draft_on_conn(&conn, page_id).await?;
+        conn.execute("BEGIN", ()).await.map_err(error)?;
+        let written = async {
+            if !matches!(scope, crate::read_scope::ReadScope::Space(_))
+                || !Self::member_page_access_on(&conn, page_id, scope, MemberPageTarget::Published)
+                    .await?
+            {
+                return Ok(false);
+            }
+            let now = chrono::Utc::now().to_rfc3339();
+            let affected = conn
+                .execute(
+                    "UPDATE pages SET summary = ?1, last_modified = ?2
+                      WHERE id = ?3 AND version = ?4",
+                    libsql::params![summary, now, page_id, version],
+                )
+                .await
+                .map_err(error)?;
+            Ok::<bool, WenlanError>(affected > 0)
+        }
+        .await;
+        match written {
+            Ok(true) => {
+                if let Err(e) = conn.execute("COMMIT", ()).await {
+                    let _ = conn.execute("ROLLBACK", ()).await;
+                    return Err(error(e));
+                }
+                Ok(true)
+            }
+            other => {
+                let _ = conn.execute("ROLLBACK", ()).await;
+                other
+            }
+        }
     }
 
     /// [`Self::update_page_summary`] for the row generation a fenced refresh

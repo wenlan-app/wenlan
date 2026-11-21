@@ -57,7 +57,8 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
         .route("/api/skills/refresh", post(handle_refresh))
         .route(
             "/api/skills/rules",
-            get(handle_read_rules).post(saved_rules::handle_save_rule),
+            crate::route_registry::member_get(handle_read_rules)
+                .post(saved_rules::handle_save_rule),
         )
         .route(
             "/api/skills/rules/{id}/remove",
@@ -95,7 +96,7 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
         )
         .route(
             "/api/skills/record",
-            get(handle_record).post(handle_self_report),
+            get(handle_record).member_post(handle_self_report),
         )
 }
 
@@ -3899,13 +3900,20 @@ pub async fn handle_self_report(
     State(state): State<SharedState>,
     headers: HeaderMap,
     Json(request): Json<SkillReportRequest>,
-) -> Result<Json<SkillReportResponse>, ServerError> {
+) -> Result<
+    crate::page_routes::PageResponse<SkillReportResponse, crate::member_view::MemberRuleReport>,
+    ServerError,
+> {
+    use crate::page_routes::PageResponse;
     let private = crate::team_actor::can_read_private_memories(&headers);
     if !feature_enabled() {
-        return Ok(Json(SkillReportResponse {
-            recorded: false,
-            rule_id: None,
-        }));
+        return Ok(PageResponse::for_caller(
+            SkillReportResponse {
+                recorded: false,
+                rule_id: None,
+            },
+            private,
+        ));
     }
     let (db, page_root) = db_and_page_root(&state).await?;
     let missing = || ServerError::NotFound("approved rule not found".into());
@@ -3946,10 +3954,13 @@ pub async fn handle_self_report(
     }
     db.record_skill_self_report(&tool, &owner, &line, request.report)
         .await?;
-    Ok(Json(SkillReportResponse {
-        recorded: true,
-        rule_id: Some(request.rule_id),
-    }))
+    Ok(PageResponse::for_caller(
+        SkillReportResponse {
+            recorded: true,
+            rule_id: Some(request.rule_id),
+        },
+        private,
+    ))
 }
 
 mod saved_rules;

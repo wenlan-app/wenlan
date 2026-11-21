@@ -402,6 +402,7 @@ pub async fn stage_page_revision_card_with_citations(
         citation_snapshots,
         citations_json,
         research_write,
+        None,
     )
     .await?
     .ok_or_else(|| match space_guard {
@@ -457,6 +458,7 @@ pub(crate) async fn stage_page_revision_card_at_fence(
         &[],
         None,
         None,
+        None,
     )
     .await
 }
@@ -490,6 +492,7 @@ pub(crate) async fn stage_basis_preview_card(
         &[],
         None,
         None,
+        None,
     )
     .await
 }
@@ -511,6 +514,7 @@ async fn stage_page_revision_card_inner(
     citation_snapshots: &[crate::db::CitationSourceSnapshot],
     citations_json: Option<&str>,
     research_write: Option<&crate::db::research_write::ResearchWriteFence>,
+    member_basis: Option<&BasisWrite>,
 ) -> Result<Option<WriteResult>, WenlanError> {
     let checked_scope = page
         .space
@@ -524,6 +528,20 @@ async fn stage_page_revision_card_inner(
         Some(&checked_scope)
     };
     crate::export::provenance::validate_canonical_page_content(content)?;
+    let restored = match member_basis.filter(|basis| basis.member_projected_body) {
+        Some(_) => crate::citations::restore_unchanged_member_sentence_markers(
+            &page.content,
+            content,
+            &page.citations,
+        )?,
+        None => None,
+    };
+    let restored_citations = restored
+        .as_ref()
+        .map(|(_, citations)| serde_json::to_string(citations))
+        .transpose()?;
+    let content = restored.as_ref().map_or(content, |(body, _)| body.as_str());
+    let citations_json = restored_citations.as_deref().or(citations_json);
     // Who the human sees on the card. Never the internal `page_write` kind:
     // the named agent when the caller knows it, Wenlan for its own pipeline
     // lanes, otherwise nothing.
@@ -723,18 +741,24 @@ async fn stage_page_revision_card_inner(
             db.upsert_documents_in_page_space(
                 vec![row],
                 receipt,
-                &page.id,
-                scope,
-                citation_snapshots,
-                research_write.map(|fence| {
-                    (
-                        fence,
-                        source_memory_ids.unwrap_or_default(),
-                        revision_card_id.as_str(),
-                    )
-                }),
+                crate::db::PageSpaceWriteContext {
+                    page_id: &page.id,
+                    scope,
+                    citation_snapshots,
+                    research_stage: research_write.map(|fence| {
+                        (
+                            fence,
+                            source_memory_ids.unwrap_or_default(),
+                            revision_card_id.as_str(),
+                        )
+                    }),
+                    member_version: member_basis.map(|_| page.version),
+                },
             )
             .await
+        }
+        (None, None, _) if member_basis.is_some() => {
+            return Err(page_not_in_space(&page.id));
         }
         (None, None, Some(receipt)) => db
             .upsert_documents_with_operation_receipt(vec![row], receipt)
@@ -1440,6 +1464,8 @@ async fn update_page_db_impl(
 
             let current_version = current.version;
             let new_version = current_version + 1;
+            let projected_unchanged = basis.member_projected_body
+                && crate::citations::strip_member_citation_markers(&current.content) == req.content;
 
             // A caller-supplied `expected_version` is a precondition, not a retry
             // hint: once it stops matching, the write is refused outright rather
@@ -1585,7 +1611,7 @@ async fn update_page_db_impl(
                 // acknowledged like any no-op. A card that changes only the
                 // sources, or carries notes, citations or a research write to
                 // record on accept, is still a change, and is staged.
-                let proposes_nothing = card_content == current.content
+                let proposes_nothing = (card_content == current.content || projected_unchanged)
                     && staged_marks.is_empty()
                     && basis.citation_snapshots.is_empty()
                     && basis.research_write.is_none()
@@ -1664,24 +1690,31 @@ async fn update_page_db_impl(
                             .await;
                         }
                     },
-                    None => {
-                        stage_page_revision_card_with_citations(
-                            db,
-                            &current,
-                            &card_content,
-                            (!basis.preserve_source_links).then_some(effective_sources),
-                            staged_source_revision,
-                            card_edited_by,
-                            agent,
-                            retry.as_ref(),
-                            &staged_marks,
-                            basis.space_guard.as_ref(),
-                            &basis.citation_snapshots,
-                            citations.as_ref().map(|(json, _)| json.as_str()),
-                            basis.research_write.as_ref(),
-                        )
-                        .await?
-                    }
+                    None => stage_page_revision_card_inner(
+                        db,
+                        &current,
+                        &card_content,
+                        (!basis.preserve_source_links).then_some(effective_sources),
+                        staged_source_revision,
+                        None,
+                        basis.space_guard.as_ref(),
+                        card_edited_by,
+                        agent,
+                        retry.as_ref(),
+                        None,
+                        &staged_marks,
+                        &basis.citation_snapshots,
+                        citations.as_ref().map(|(json, _)| json.as_str()),
+                        basis.research_write.as_ref(),
+                        basis.member_write.then_some(basis),
+                    )
+                    .await?
+                    .ok_or_else(|| match basis.space_guard {
+                        Some(_) => page_not_in_space(page_id),
+                        None => WenlanError::VectorDb(
+                            "unfenced revision card staging reported a lost page fence".into(),
+                        ),
+                    })?,
                 };
                 // A gated compile still consumed the staleness it was dispatched
                 // for: the work landed as a revision card awaiting review, so the
@@ -1729,6 +1762,7 @@ async fn update_page_db_impl(
             // asked for (`BasisWrite::follows`).
             let follows_unlocked = basis.follows && !current.review_required;
             let (gate, keeps_person_text) = if writer.is_machine()
+                && !projected_unchanged
                 && !person_asked_write
                 && !follows_unlocked
                 && !rule_save_write
@@ -1766,9 +1800,16 @@ async fn update_page_db_impl(
                 )
                 .await;
             }
-            let landing_content: &str = gate
-                .as_ref()
-                .map_or(req.content.as_str(), |plan| plan.content.as_str());
+            let landing_content: &str = gate.as_ref().map_or_else(
+                || {
+                    if projected_unchanged {
+                        current.content.as_str()
+                    } else {
+                        req.content.as_str()
+                    }
+                },
+                |plan| plan.content.as_str(),
+            );
             // The landing body keeps the person's sentences with their
             // markers, so their citation records come along from the current
             // page and every record is renumbered to its marker's place.
@@ -1882,6 +1923,7 @@ async fn update_page_db_impl(
                             plan,
                             edited_by,
                             agent,
+                            basis.space_guard.as_ref().filter(|_| basis.member_write),
                         )
                         .await?;
                         (staged.ids, staged.not_applied)
@@ -1906,13 +1948,14 @@ async fn update_page_db_impl(
                 }
                 if !lock_proposes && (!basis.marks.is_empty() || !basis.code_basis.is_empty()) {
                     match db
-                        .mark_page_bases(
+                        .mark_page_bases_for(
                             page_id,
                             current_version,
                             &basis.marks,
                             &basis.code_basis,
                             &basis.actor,
                             basis.space_guard.as_ref(),
+                            basis.member_write,
                         )
                         .await
                     {
@@ -2326,6 +2369,7 @@ async fn update_page_db_impl(
             plan,
             edited_by,
             agent,
+            basis.space_guard.as_ref().filter(|_| basis.member_write),
         )
         .await
         {

@@ -350,6 +350,7 @@ async fn a_member_save_guarded_to_a_space_the_page_left_writes_nothing() {
             knowledge_path: None,
             basis: wenlan_core::db::BasisWrite {
                 member_write: true,
+                member_projected_body: false,
                 preserve_source_links: false,
                 research_write: None,
                 citation_snapshots: Vec::new(),
@@ -364,6 +365,7 @@ async fn a_member_save_guarded_to_a_space_the_page_left_writes_nothing() {
                 person_asked: None,
                 restored_from: None,
                 follows: false,
+                summary: None,
             },
         },
     )
@@ -390,6 +392,8 @@ async fn ai_change(db: &wenlan_core::db::MemoryDB, id: &str, content: &str, vers
             edited_by: "agent_refresh",
             require_stale: false,
             expected_source_revision: None,
+            member_scope: None,
+            member_projected_body: false,
             knowledge_path: None,
             citations: None,
         },

@@ -7,6 +7,7 @@ use std::sync::Mutex;
 
 use axum::body::to_bytes;
 use axum::http::{HeaderMap, Method};
+use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::json;
 use tower::ServiceExt;
@@ -45,6 +46,16 @@ fn space_of(id: &str) -> Option<&'static str> {
     }
 }
 
+fn fixture_page(id: &str, space: Option<&str>, title: &str) -> Value {
+    json!({
+        "id": id, "space": space, "title": title, "content": "Shared page.",
+        "version": 1, "status": "active", "last_modified": "", "review_required": false,
+        "review_status": "human_confirmed", "creation_kind": "authored",
+        "relevance_score": 0.0, "source_memory_ids": [], "sources_updated_count": 0,
+        "created_at": "", "last_compiled": "", "user_edited": false,
+    })
+}
+
 async fn stand_in(log: Log, req: Request) -> Response {
     let method = req.method().to_string();
     let uri = req.uri().to_string();
@@ -69,17 +80,19 @@ async fn stand_in(log: Log, req: Request) -> Response {
         }),
         ("GET", "/api/spaces") => {
             let spaces = [("1", "Alpha"), ("2", "Beta"), ("3", "Private")];
-            json!(spaces
-                .into_iter()
-                .filter(|(_, name)| pinned.as_deref() == Some(*name))
-                .map(|(id, name)| json!({"id": id, "name": name}))
-                .collect::<Vec<_>>())
+            json!(
+                spaces
+                    .into_iter()
+                    .filter(|(_, name)| pinned.as_deref() == Some(*name))
+                    .map(|(id, name)| json!({"id": id, "name": name, "sort_order": 0, "memory_count": 0, "entity_count": 0}))
+                    .collect::<Vec<_>>()
+            )
         }
         ("GET", "/api/pages") | ("POST", "/api/pages/search") => json!({
             "pages": [
-                {"id": "a1", "space": pinned, "title": "Alpha one"},
+                fixture_page("a1", pinned.as_deref(), "Alpha one"),
                 // A row of another Space, as a daemon bug could return.
-                {"id": "b9", "space": "Beta", "title": "Beta secret"},
+                fixture_page("b9", Some("Beta"), "Beta secret"),
             ],
         }),
         ("GET", "/api/memory/graph") => {
@@ -111,10 +124,16 @@ async fn stand_in(log: Log, req: Request) -> Response {
             ], "truncated": false})
         }
         ("GET", "/api/pages/recent") => json!([
-            {"id": format!("r-{}", pinned.clone().unwrap_or_default()), "timestamp_ms": 5},
+            {
+                "id": format!("r-{}", pinned.clone().unwrap_or_default()), "timestamp_ms": 5,
+                "title": "Recent", "kind": "page", "badge": {"kind": "none"},
+            },
         ]),
         ("GET", "/api/pages/recent-changes") => json!([
-            {"page_id": format!("c-{}", pinned.clone().unwrap_or_default()), "changed_at_ms": 5},
+            {
+                "page_id": format!("c-{}", pinned.clone().unwrap_or_default()), "changed_at_ms": 5,
+                "title": "A changed page", "change_kind": "revised",
+            },
         ]),
         // A route that answers for some other page than the one named, as a
         // list route under `/api/pages/` would.
@@ -123,12 +142,41 @@ async fn stand_in(log: Log, req: Request) -> Response {
             let id = path.trim_start_matches("/api/pages/");
             match space_of(id) {
                 Some(space) if pinned.is_none() || pinned.as_deref() == Some(space) => {
-                    json!({"page": {"id": id, "space": space}})
+                    if pinned.is_none() {
+                        json!({"page": {"id": id, "space": space}})
+                    } else {
+                        json!({
+                            "page": fixture_page(id, Some(space), "Shared page"),
+                            "body": wenlan_core::page_body::body_parts("Shared page."),
+                        })
+                    }
                 }
                 _ => return StatusCode::NOT_FOUND.into_response(),
             }
         }
-        _ => json!({"ok": true, "space": pinned}),
+        ("GET", _) if path.ends_with("/sources") => json!([]),
+        ("GET", _) if path.ends_with("/revisions") => {
+            json!({"page_id": "a1", "current_version": 1, "user_edited": false, "entries": []})
+        }
+        ("POST", "/api/knowledge/folders") => json!({"path": "Alpha/Q3"}),
+        ("POST", _) if path.ends_with("/move") => json!({"space_path": "Alpha/Q3/a1.md"}),
+        ("POST", _) if path.ends_with("/archive") => {
+            json!({"status": "archived", "restorable": true})
+        }
+        ("POST", _) if path.ends_with("/restore") => json!({
+            "id": "a1", "title": "Shared page", "version": 2, "status": "active",
+            "links_updated": 0, "links_pending_review": 0, "links_not_updated": 0,
+            "projection_status": "not_configured",
+        }),
+        ("PUT", _) if path.contains("/basis/") => json!({
+            "page_id": "a2", "title": "Shared basis", "state": "ok",
+            "from_version": 1, "minor_only": false,
+        }),
+        ("DELETE", _) if path.contains("/basis/") => json!({"removed": true}),
+        (_, _) if path.starts_with("/api/pages/drafts") => {
+            json!({"page": fixture_page("a1", pinned.as_deref(), "Shared draft")})
+        }
+        _ => json!({"ok": true, "space": pinned, "projection_status": "not_configured"}),
     };
     Json(answer).into_response()
 }
@@ -1226,7 +1274,10 @@ async fn answers_keep_only_the_members_spaces() {
         &[],
     )
     .await;
-    assert_eq!(spaces, json!([{"id": "1", "name": "Alpha"}]));
+    assert_eq!(
+        spaces,
+        json!([{"id": "1", "name": "Alpha", "sort_order": 0, "memory_count": 0, "entity_count": 0}])
+    );
     let (_, health) = call(
         &f.state,
         "GET",
@@ -1249,10 +1300,11 @@ async fn answers_keep_only_the_members_spaces() {
         &[],
     )
     .await;
-    assert_eq!(
-        pages,
-        json!({"pages": [{"id": "a1", "space": "Alpha", "title": "Alpha one"}]})
-    );
+    let rows = pages["pages"].as_array().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["id"], "a1");
+    assert_eq!(rows[0]["space"], "Alpha");
+    assert_eq!(rows[0]["title"], "Alpha one");
 }
 
 /// The identity the daemon is told is the member the key belongs to, set by
@@ -1605,18 +1657,24 @@ async fn every_bound_daemon_route_without_a_row_is_not_found() {
 
 /// A folder answer keeps the folder's `path` (already the member's) and
 /// still loses every other private key.
-#[test]
-fn a_folder_answer_keeps_only_the_folder_path() {
+#[tokio::test]
+async fn a_folder_answer_keeps_only_the_folder_path() {
+    async fn projected(view: View, value: Value) -> Value {
+        let response = view.project(value).into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = to_bytes(response.into_body(), 1024).await.unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
     let list = json!({"folders": [
         {"path": "Alpha/Q3", "parent_path": "Alpha", "name": "Q3", "absolute_path": "/srv/pages/a/Q3"},
     ], "knowledge_path": "/srv/pages", "truncated": false});
     assert_eq!(
-        project_answer::<KnowledgeFoldersResponse>(list),
+        projected(View::Folders, list).await,
         json!({"folders": [{"path": "Alpha/Q3", "parent_path": "Alpha", "name": "Q3"}], "truncated": false})
     );
     let made = json!({"path": "Alpha/Q3", "nested": {"path": "/srv/pages/a/Q3"}});
     assert_eq!(
-        project_answer::<CreateKnowledgeFolderResponse>(made),
+        projected(View::Folder, made).await,
         json!({"path": "Alpha/Q3"})
     );
 }

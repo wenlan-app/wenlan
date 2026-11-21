@@ -834,6 +834,40 @@ impl MemoryDB {
         scope: &ReadScope,
         member_id: Option<&str>,
     ) -> Result<PageDraftPublishOutcome, WenlanError> {
+        self.publish_page_draft_in(
+            id,
+            expected_version,
+            edited_by,
+            scope,
+            member_id,
+            member_id.is_some(),
+        )
+        .await
+    }
+
+    /// Publish a draft imported from a team share. Like a member's publish,
+    /// its title is compared only with pages the share's members may see,
+    /// and the library-wide link sweep is skipped.
+    pub(crate) async fn publish_shared_page_draft(
+        &self,
+        id: &str,
+        expected_version: i64,
+        scope: &ReadScope,
+    ) -> Result<PageDraftPublishOutcome, WenlanError> {
+        self.publish_page_draft_in(id, expected_version, "publish", scope, None, true)
+            .await
+    }
+
+    async fn publish_page_draft_in(
+        &self,
+        id: &str,
+        expected_version: i64,
+        edited_by: &str,
+        scope: &ReadScope,
+        member_id: Option<&str>,
+        member_view: bool,
+    ) -> Result<PageDraftPublishOutcome, WenlanError> {
+        let member_scope = scope;
         // Snapshot outside the write transaction so the embedding compute
         // (slow on first call while the model loads) never holds it. Any
         // concurrent draft write bumps the version, so if the in-transaction
@@ -926,8 +960,7 @@ impl MemoryDB {
             .map_err(|error| {
                 WenlanError::VectorDb(format!("publish Page draft title check: {error}"))
             })?;
-        let mut conflict: Option<(String, String)> = None;
-        let mut occupied_titles = std::collections::HashSet::new();
+        let mut active = Vec::new();
         while let Some(row) = rows.next().await.map_err(|error| {
             WenlanError::VectorDb(format!("publish Page draft title row: {error}"))
         })? {
@@ -937,6 +970,24 @@ impl MemoryDB {
             let existing_page_title: String = row
                 .get(1)
                 .map_err(|error| WenlanError::VectorDb(format!("title conflict title: {error}")))?;
+            active.push((existing_page_id, existing_page_title));
+        }
+        drop(rows);
+        let mut conflict: Option<(String, String)> = None;
+        let mut occupied_titles = std::collections::HashSet::new();
+        for (existing_page_id, existing_page_title) in active {
+            if member_view
+                && !Self::member_page_access_on(
+                    &tx,
+                    &existing_page_id,
+                    member_scope,
+                    MemberPageTarget::Published,
+                )
+                .await?
+            {
+                // A member is never told this title is in use.
+                continue;
+            }
             let key = Self::page_title_key(&existing_page_title);
             occupied_titles.insert(key.clone());
             if key == wanted && !generated_title {
@@ -944,7 +995,6 @@ impl MemoryDB {
                 break;
             }
         }
-        drop(rows);
         if generated_title {
             let base = title.clone();
             let mut suffix = 2;
@@ -1058,8 +1108,10 @@ impl MemoryDB {
                     page.id
                 );
             }
-            if let Err(e) = self.resolve_orphan_page_links().await {
-                log::warn!("[publish_page_draft] orphan link resolve failed: {e}");
+            if !member_view {
+                if let Err(e) = self.resolve_orphan_page_links().await {
+                    log::warn!("[publish_page_draft] orphan link resolve failed: {e}");
+                }
             }
         }
         Ok(outcome)

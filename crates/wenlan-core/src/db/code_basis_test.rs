@@ -43,7 +43,7 @@ async fn build_db(ceiling: Option<i64>) -> (MemoryDB, tempfile::TempDir) {
         _db: db,
         conn: Arc::new(tokio::sync::Mutex::new(conn)),
         entity_resolution_lock: tokio::sync::Mutex::new(()),
-        space_write_lock: tokio::sync::Mutex::new(()),
+        space_write_lock: tokio::sync::Mutex::new(()).into(),
         lint_freshness,
         page_projection_tracker: crate::page_projection_tracker::PageProjectionTracker::new(),
         derived_artifact_state: crate::derived_artifact_state::DerivedArtifactState::new(),

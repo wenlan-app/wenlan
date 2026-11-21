@@ -27,7 +27,7 @@ use wenlan_types::{
 };
 
 use crate::error::ServerError;
-use crate::route_registry::{get, post, put, TrackedRouter};
+use crate::route_registry::{get, post, TrackedRouter};
 use crate::state::{ServerState, SharedState};
 
 pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<SharedState> {
@@ -35,7 +35,7 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
         .route("/api/pages/basis-pending", get(handle_basis_pending))
         .route(
             "/api/pages/{id}/basis/{basis_id}",
-            put(handle_mark_basis).delete(handle_unmark_basis),
+            crate::route_registry::member_put(handle_mark_basis).member_delete(handle_unmark_basis),
         )
         .route(
             "/api/pages/{id}/basis/{basis_id}/confirm",
@@ -330,7 +330,10 @@ pub async fn handle_mark_basis(
     headers: HeaderMap,
     Path((id, basis_id)): Path<(String, String)>,
     Json(req): Json<BasisVersionRequest>,
-) -> Result<Json<BasisRef>, ServerError> {
+) -> Result<
+    crate::page_routes::PageResponse<BasisRef, wenlan_core::member_view::MemberBasis>,
+    ServerError,
+> {
     let db = open_db(&state).await?;
     let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
     let private = crate::team_actor::can_read_private_memories(&headers);
@@ -361,9 +364,14 @@ pub async fn handle_mark_basis(
         )
         .await
         .map_err(basis_error)?;
-    Ok(Json(
-        pair_ref(&db, &MUTATION_GRANT, &scope, entry, private).await?,
-    ))
+    let entry = pair_ref(&db, &MUTATION_GRANT, &scope, entry, private).await?;
+    if private {
+        Ok(crate::page_routes::PageResponse::Local(entry))
+    } else {
+        Ok(crate::page_routes::PageResponse::Member(
+            wenlan_core::member_view::member_basis(entry),
+        ))
+    }
 }
 
 /// DELETE /api/pages/{id}/basis/{basis_id}
@@ -372,7 +380,10 @@ pub async fn handle_unmark_basis(
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
     headers: HeaderMap,
     Path((id, basis_id)): Path<(String, String)>,
-) -> Result<Json<BasisRemoveResponse>, ServerError> {
+) -> Result<
+    crate::page_routes::PageResponse<BasisRemoveResponse, crate::member_view::MemberBasisRemoval>,
+    ServerError,
+> {
     let db = open_db(&state).await?;
     let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
     let private = crate::team_actor::can_read_private_memories(&headers);
@@ -386,7 +397,10 @@ pub async fn handle_unmark_basis(
         .unmark_page_basis_for(&id, &basis_id, (!private).then_some(&scope))
         .await
         .map_err(basis_error)?;
-    Ok(Json(BasisRemoveResponse { removed }))
+    Ok(crate::page_routes::PageResponse::for_caller(
+        BasisRemoveResponse { removed },
+        private,
+    ))
 }
 
 /// POST /api/pages/{id}/basis/{basis_id}/confirm
