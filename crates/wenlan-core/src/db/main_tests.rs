@@ -13121,6 +13121,57 @@ async fn test_accept_pending_revision() {
 }
 
 #[tokio::test]
+async fn direct_supersede_rebinds_and_invalidates_citing_pages() {
+    // A memory that replaces another without review (a night's points, a
+    // trusted AI tool) must move the pages that cited the old one onto it and
+    // mark them to be rewritten, the same as accepting a revision.
+    let (db, _dir) = test_db().await;
+    let mut old = RawDocument {
+        source: "memory".to_string(),
+        source_id: "direct_sup_old".to_string(),
+        title: "Old decision".to_string(),
+        content: "Releases ship on Fridays".to_string(),
+        confirmed: Some(true),
+        ..Default::default()
+    };
+    old.memory_type = Some("decision".to_string());
+    db.upsert_documents(vec![old]).await.unwrap();
+    let now = chrono::Utc::now().to_rfc3339();
+    db.insert_page_with_kind(
+        "page_direct_sup",
+        "Release page",
+        None,
+        "Releases ship on Fridays [1]",
+        None,
+        None,
+        &["direct_sup_old"],
+        &now,
+        "distilled",
+        "confirmed",
+        None,
+        Some("[]"),
+    )
+    .await
+    .unwrap();
+
+    let mut new = RawDocument {
+        source: "memory".to_string(),
+        source_id: "direct_sup_new".to_string(),
+        title: "New decision".to_string(),
+        content: "Releases ship on Tuesdays".to_string(),
+        confirmed: Some(true),
+        supersedes: Some("direct_sup_old".to_string()),
+        ..Default::default()
+    };
+    new.memory_type = Some("decision".to_string());
+    db.upsert_documents(vec![new]).await.unwrap();
+
+    let page = db.get_page("page_direct_sup").await.unwrap().unwrap();
+    assert_eq!(page.source_memory_ids, vec!["direct_sup_new"]);
+    assert_eq!(page.stale_reason.as_deref(), Some("source_updated"));
+}
+
+#[tokio::test]
 async fn accept_pending_revision_rebinds_and_invalidates_dependents_atomically() {
     let (db, _dir) = test_db().await;
     let entity_id = db

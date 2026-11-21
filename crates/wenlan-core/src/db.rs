@@ -28965,13 +28965,29 @@ impl MemoryDB {
                             .cloned()
                             .or_else(|| doc.space.clone())
                             .unwrap_or_else(|| UNFILED_SPACE_ID.to_string());
-                        conn.execute(
-                            "UPDATE memories SET confirmed = 0
-                              WHERE source_id = ?1 AND source = 'memory' AND space = ?2",
-                            libsql::params![superseded_id.to_string(), superseder_space],
-                        )
-                        .await
-                        .ok(); // Best effort
+                        let hidden = conn
+                            .execute(
+                                "UPDATE memories SET confirmed = 0
+                                  WHERE source_id = ?1 AND source = 'memory' AND space = ?2",
+                                libsql::params![superseded_id.to_string(), superseder_space],
+                            )
+                            .await
+                            .unwrap_or(0); // Best effort
+                        // A page that cited the replaced memory now cites the
+                        // one that replaces it and is marked to be rewritten,
+                        // the same as when a person accepts a revision. Without
+                        // this a direct replacement (a night's points, a trusted
+                        // AI tool) left those pages on the old text with
+                        // nothing marking them out of date.
+                        if hidden > 0 && doc.source == "memory" && superseded_id != &doc.source_id
+                        {
+                            Self::replace_memory_page_dependency_in_transaction(
+                                &conn,
+                                superseded_id,
+                                &doc.source_id,
+                            )
+                            .await?;
+                        }
                     }
                 }
             }
