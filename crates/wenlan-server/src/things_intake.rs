@@ -464,34 +464,58 @@ pub async fn dream_with(
     writer: &dyn PointWriter,
 ) -> Result<(usize, usize), String> {
     let mut points_written = 0;
-    for (done, thing) in due.iter().enumerate() {
+    // One reading per Space a thing's conversations are in: what was said in
+    // one Space never reaches the prompt that writes another Space's points,
+    // so a personal conversation cannot leak into a shared Space (design v5
+    // D14). Unlabelled conversations are read on their own.
+    let groups: Vec<(
+        &DreamDue,
+        Vec<&wenlan_core::db::thing_dream::DueConversation>,
+    )> = due
+        .iter()
+        .flat_map(|thing| {
+            let mut spaces: Vec<&str> = thing
+                .conversations
+                .iter()
+                .map(|c| c.space.as_str())
+                .collect();
+            spaces.sort();
+            spaces.dedup();
+            spaces.into_iter().map(move |space| {
+                let in_space = thing
+                    .conversations
+                    .iter()
+                    .filter(|c| c.space == space)
+                    .collect();
+                (thing, in_space)
+            })
+        })
+        .collect();
+    for (done, (thing, in_space)) in groups.iter().enumerate() {
+        let group_space = in_space.first().map(|c| c.space.as_str()).unwrap_or("");
         let conversations: Vec<(
             &wenlan_core::db::thing_dream::DueConversation,
             FoundConversation,
-        )> = thing
-            .conversations
+        )> = in_space
             .iter()
-            .filter_map(|c| found.get(&c.session_id).map(|f| (c, f.clone())))
+            .filter_map(|c| found.get(&c.session_id).map(|f| (*c, f.clone())))
             .collect();
         // A conversation whose transcript is gone is not marked read: it
         // waits until it goes on again, and the thing's page says it could
         // not be read (trust audit F6).
-        let gone: Vec<wenlan_core::db::thing_dream::DueConversation> = thing
-            .conversations
+        let gone: Vec<wenlan_core::db::thing_dream::DueConversation> = in_space
             .iter()
             .filter(|c| !found.contains_key(&c.session_id))
-            .cloned()
+            .map(|c| (*c).clone())
             .collect();
         db.mark_dream_unread(&gone)
             .await
             .map_err(|e| e.to_string())?;
-        let read_conversations: Vec<wenlan_core::db::thing_dream::DueConversation> =
-            conversations.iter().map(|(c, _)| (*c).clone()).collect();
         if conversations.is_empty() {
             continue;
         }
         let prior = db
-            .dream_points(&thing.thing_id)
+            .dream_points_in(&thing.thing_id, group_space)
             .await
             .map_err(|e| e.to_string())?;
         // The thing's map: its points no night kept yet are offered, so a
@@ -578,6 +602,9 @@ pub async fn dream_with(
         let mut open = Vec::new();
         let mut on_map = Vec::new();
         let mut links = Vec::new();
+        // A conversation one of whose points could not be kept is not marked
+        // read, so the next night reads it again instead of losing the point.
+        let mut not_kept = std::collections::HashSet::new();
         for point in points {
             let (from, found_from) = &conversations[point.from];
             // The Space its label named; else the conversation's or the
@@ -627,9 +654,10 @@ pub async fn dream_with(
                 Ok(id) => id,
                 Err(error) => {
                     tracing::warn!(
-                        "[things] a point of {} was not kept: {error}",
+                        "[things] a point of {} was not kept; its conversation is read again next night: {error}",
                         thing.thing_id
                     );
+                    not_kept.insert(point.from);
                     continue;
                 }
             };
@@ -673,6 +701,12 @@ pub async fn dream_with(
             }
         }
         points_written += decided.len() + open.len();
+        let read_conversations: Vec<wenlan_core::db::thing_dream::DueConversation> = conversations
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !not_kept.contains(i))
+            .map(|(_, (c, _))| (*c).clone())
+            .collect();
         let changed = db
             .dream_into_map(&thing.thing_id, &thing.title, &on_map)
             .await

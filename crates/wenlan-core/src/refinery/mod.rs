@@ -4911,13 +4911,13 @@ mod tests {
         );
     }
 
-    /// Spec §5.1/§5.2/§6.3: a human-owned page must always get a revision
-    /// card, never an in-place write, for EVERY machine write path -- the
-    /// daemon staleness sweep included. Pins the gate at the sweep's own
-    /// boundary so a future edit to the sweep can't silently reintroduce a
-    /// bypass around `refresh_page`'s ownership check.
+    /// A page the person edited is never overwritten by the staleness sweep:
+    /// it goes sentence by sentence (UX-WHO-2), so the person's sentence stays
+    /// and a rewording of it is neither written nor proposed. Staleness is
+    /// released through the write outcome, never escalated to a dead-end
+    /// `source_conflict` state.
     #[tokio::test]
-    async fn re_distill_stale_pages_user_edited_stages_revision_card_not_source_conflict() {
+    async fn re_distill_stale_pages_user_edited_keeps_the_persons_sentence_not_source_conflict() {
         use crate::llm_provider::MockProvider;
 
         let (db, _db_dir) = test_db().await;
@@ -4985,13 +4985,10 @@ mod tests {
         );
 
         let revisions = db.list_pending_revisions(10).await.unwrap();
-        assert_eq!(
-            revisions.len(),
-            1,
-            "the staleness sweep must stage a revision card for a human-owned page \
-             instead of silently escalating to source_conflict"
+        assert!(
+            revisions.is_empty(),
+            "an edited page is not held back as one whole-page card"
         );
-        assert_eq!(revisions[0].target_source_id, "page_owned");
     }
 
     #[tokio::test]

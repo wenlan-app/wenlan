@@ -4507,6 +4507,26 @@ async fn maintenance_slices_detect_page_merge_cards_and_route_stale_pages() {
         "research",
     )
     .await;
+    // The person writes the page's sentence themself, so it is theirs: a
+    // refresh changes the AI's sentences and keeps the person's (UX-WHO-2).
+    db.update_page_content(
+        &page_human_stale,
+        "Human-written prose must remain untouched.",
+        &["mem_human"],
+        "fs_edit",
+    )
+    .await
+    .unwrap();
+    // The person writes the page's sentence themself, so it is theirs: a
+    // refresh changes the AI's sentences and keeps the person's (UX-WHO-2).
+    db.update_page_content(
+        &page_human_stale,
+        "Human-written prose must remain untouched.",
+        &["mem_human"],
+        "fs_edit",
+    )
+    .await
+    .unwrap();
     db.set_page_stale(&page_machine_stale, "source_updated")
         .await
         .unwrap();
@@ -4573,13 +4593,16 @@ async fn maintenance_slices_detect_page_merge_cards_and_route_stale_pages() {
 
     let first_stale = run_stage(wenlan_core::maintenance::MaintenanceStage::StalePage).await;
     let second_stale = run_stage(wenlan_core::maintenance::MaintenanceStage::StalePage).await;
+    // The machine page is rewritten. The person's page goes sentence by
+    // sentence (UX-WHO-2): its only sentence is theirs, so nothing is
+    // written, no whole-page card is staged, and the change is settled.
     assert_eq!(
         first_stale.stale_machine_refreshed + second_stale.stale_machine_refreshed,
         1
     );
     assert_eq!(
         first_stale.stale_human_cards + second_stale.stale_human_cards,
-        1
+        0
     );
 
     let overview = run_stage(wenlan_core::maintenance::MaintenanceStage::Overview).await;
@@ -4617,10 +4640,10 @@ async fn maintenance_slices_detect_page_merge_cards_and_route_stale_pages() {
 
     let revisions = db.list_pending_revisions(10).await.unwrap();
     assert!(
-        revisions
+        !revisions
             .iter()
             .any(|r| r.target_source_id == page_human_stale),
-        "human-owned stale page should stage a revision card"
+        "an edited stale page is not held back as one whole-page card"
     );
 
     assert!(

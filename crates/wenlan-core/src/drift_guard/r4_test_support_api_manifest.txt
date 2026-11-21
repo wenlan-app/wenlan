@@ -920,8 +920,8 @@ crates/wenlan-core/src/refinery/mod.rs|crate::refinery::tests::re_distill_stale_
 crates/wenlan-core/src/refinery/mod.rs|crate::refinery::tests::re_distill_stale_pages_prompt_includes_same_space_existing_titles_hint|test_primary_session|1
 crates/wenlan-core/src/refinery/mod.rs|crate::refinery::tests::re_distill_stale_pages_re_projects_md_when_path_passed|TestDbSession::execute|1
 crates/wenlan-core/src/refinery/mod.rs|crate::refinery::tests::re_distill_stale_pages_re_projects_md_when_path_passed|test_primary_session|1
-crates/wenlan-core/src/refinery/mod.rs|crate::refinery::tests::re_distill_stale_pages_user_edited_stages_revision_card_not_source_conflict|TestDbSession::execute|1
-crates/wenlan-core/src/refinery/mod.rs|crate::refinery::tests::re_distill_stale_pages_user_edited_stages_revision_card_not_source_conflict|test_primary_session|1
+crates/wenlan-core/src/refinery/mod.rs|crate::refinery::tests::re_distill_stale_pages_user_edited_keeps_the_persons_sentence_not_source_conflict|TestDbSession::execute|1
+crates/wenlan-core/src/refinery/mod.rs|crate::refinery::tests::re_distill_stale_pages_user_edited_keeps_the_persons_sentence_not_source_conflict|test_primary_session|1
 crates/wenlan-core/src/retrieval/hard_filters.rs|crate::retrieval::hard_filters::tests::hard_filters_apply_supersession_and_temporal_cue|TestDbRow::get|1
 crates/wenlan-core/src/retrieval/hard_filters.rs|crate::retrieval::hard_filters::tests::hard_filters_apply_supersession_and_temporal_cue|TestDbRows::next|1
 crates/wenlan-core/src/retrieval/hard_filters.rs|crate::retrieval::hard_filters::tests::hard_filters_apply_supersession_and_temporal_cue|TestDbSession::execute_batch|1

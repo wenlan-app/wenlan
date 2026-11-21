@@ -12,7 +12,6 @@ use std::sync::Arc;
 use crate::db::{AutomaticRetroPageScan, MemoryDB, StalePageCursor};
 use crate::error::WenlanError;
 use crate::llm_provider::LlmProvider;
-use crate::post_write::page_is_human_owned;
 use crate::prompts::PromptRegistry;
 use crate::synthesis::distill::{
     automatic_refresh_exceeds_source_cap, refresh_page, RefreshReason,
@@ -357,7 +356,9 @@ pub async fn run_maintenance_stage_slice(
             };
             if let Some(page) = page {
                 selected = true;
-                let human_owned = page_is_human_owned(&page);
+                // Only a locked page waits for the person; any other page is
+                // refreshed sentence by sentence (design v5 D5).
+                let human_owned = page.review_required;
                 let Some(provider) = llm.filter(|provider| provider.is_available()) else {
                     paused = true;
                     if human_owned {
@@ -407,8 +408,8 @@ pub async fn run_maintenance_stage_slice(
                         Ok(outcome) if outcome.wrote || outcome.gated => {
                             progressed = true;
                             more = true;
-                            if human_owned || outcome.gated {
-                                result.stale_human_cards = usize::from(outcome.gated);
+                            if outcome.gated {
+                                result.stale_human_cards = 1;
                             } else {
                                 result.stale_machine_refreshed = usize::from(outcome.wrote);
                             }

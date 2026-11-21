@@ -225,6 +225,8 @@ fn selection_review_pending(page: &crate::pages::Page) -> bool {
 /// - The same holds for the link rewrite that follows a rename the person
 ///   made: it is computed from the exact version it fences on and changes
 ///   only link targets. The review lock still gates it, above.
+/// - The automatic refresh after a source changed (`ReDistill`) is not gated
+///   on ownership: the sentence gate protects the person's sentences.
 /// - Every other machine writer is gated on a human-owned page, and on a page
 ///   that holds the person's sentences (`holds_person_text`) even when no
 ///   ownership flag says so. A forced rebuild is such a writer: pressing
@@ -251,6 +253,12 @@ pub fn machine_write_requires_review(
     }
     match writer {
         Writer::Agent(_) | Writer::Pipeline(PipelineStage::LinkRename) if version_checked => false,
+        // A page following a source that changed is not held back as a whole
+        // because the person edited it: the AI's own sentences change in
+        // place and the sentence gate keeps the person's, proposing on them
+        // only when their facts changed. Only the lock, above, makes the
+        // whole page wait (design v5 D5).
+        Writer::Pipeline(PipelineStage::ReDistill) => holds_person_text,
         _ => page_is_human_owned(page) || holds_person_text,
     }
 }
