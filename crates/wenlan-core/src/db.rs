@@ -59816,22 +59816,13 @@ impl MemoryDB {
              ORDER BY rank LIMIT ?2",
             concept_select,
         );
-        // search_pages: sanitize-only when hardening enabled (no relaxed-OR for pages).
-        use crate::retrieval::fts_query::{
-            fts_length_exceeded, fts_recall_hardening_enabled, sanitize_fts_query,
-        };
-        let fts_queries: Vec<String> = if fts_recall_hardening_enabled() {
-            if fts_length_exceeded(query, 128) {
-                vec![] // skip FTS; vector-only path
+        let fts_queries: Vec<String> =
+            if crate::retrieval::fts_query::fts_recall_hardening_enabled() {
+                crate::retrieval::fts_query::hardened_page_fts_queries(query)
             } else {
-                // Sanitize-only: a relaxed-OR fallback here would re-introduce the
-                // unsanitized operator-error the hardening exists to remove.
-                vec![sanitize_fts_query(query)]
-            }
-        } else {
-            // Flag OFF: exact legacy path (byte-identical)
-            vec![query.to_string(), Self::fts_or_query(query)]
-        };
+                // Flag OFF: exact legacy path (byte-identical)
+                vec![query.to_string(), Self::fts_or_query(query)]
+            };
         // Only the first query requires every word; the legacy OR fallback
         // matches any one of them.
         let mut fts_matched_all_terms = false;

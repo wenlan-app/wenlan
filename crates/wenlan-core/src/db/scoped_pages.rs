@@ -365,14 +365,10 @@ impl MemoryDB {
         }
 
         use crate::retrieval::fts_query::{
-            fts_length_exceeded, fts_recall_hardening_enabled, sanitize_fts_query,
+            fts_recall_hardening_enabled, hardened_page_fts_queries,
         };
         let fts_queries = if fts_recall_hardening_enabled() {
-            if fts_length_exceeded(query, 128) {
-                Vec::new()
-            } else {
-                vec![sanitize_fts_query(query)]
-            }
+            hardened_page_fts_queries(query)
         } else {
             vec![query.to_string(), Self::fts_or_query(query)]
         };
