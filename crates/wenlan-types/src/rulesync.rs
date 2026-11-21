@@ -2,6 +2,7 @@
 //! Personal rules and skills setup shared by the CLI and daemon.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AdoptionPlan {
@@ -12,6 +13,20 @@ pub struct AdoptionPlan {
     pub skills: Vec<AdoptionSkill>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<AdoptionTool>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skipped_files: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skipped_tools: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdoptionTool {
+    pub name: String,
+    pub rule_files: usize,
+    pub skills: usize,
+    pub other_files: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -101,6 +116,34 @@ pub struct PullbackCard {
     pub files: Vec<String>,
     pub diff: String,
     pub reason: String,
+    #[serde(default)]
+    pub kind: PullbackKind,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PullbackKind {
+    Scope,
+    #[default]
+    Conflict,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RulesSetupStatus {
+    pub enabled: bool,
+    pub adopted: bool,
+    pub can_adopt: bool,
+    pub can_restore: bool,
+    pub in_sync: bool,
+    pub proposals: Vec<PullbackCard>,
+    /// Source files for these cards, with their actual owning tool.
+    pub review_tools: BTreeMap<String, RulesSetupTool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RulesSetupTool {
+    pub id: String,
+    pub name: String,
 }
 
 /// The selected action and source as shown to the person before approval.

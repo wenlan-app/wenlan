@@ -3,6 +3,7 @@
 // Two backends: fixture data for /preview/ (flag set inline in its index.html),
 // live daemon HTTP for the real app at /.
 import { sectionsInvoke } from "../sectionsFixture";
+import { rulesSetupInvoke } from "../rulesSetupFixture";
 import {
   PAGES,
   PRISTINE,
@@ -185,8 +186,11 @@ export async function invoke(
   if (cmd === "team_status") return { team: null, members: [], spaces: [], everyone: [], listening: null, url: null, suggested_urls: [], remote: null };
   if (cmd === "get_ai_memory_import") return { found: [], ready: false, import: null };
   const previewParams = new URLSearchParams(window.location.search);
+  const setupState = previewParams.get("mode") === "rules-setup" ? previewParams.get("state") ?? "synced" : null;
+  const setupAnswer = rulesSetupInvoke(cmd, args, setupState);
+  if (setupAnswer !== undefined) return setupAnswer;
   // `?mode=sections`: the Docs, Skills and Rules list pages and a rules page.
-  if (previewParams.get("mode") === "sections") {
+  if (previewParams.get("mode") === "sections" || setupState) {
     const answer = sectionsInvoke(cmd, args, previewParams);
     if (answer !== undefined) return answer;
   }

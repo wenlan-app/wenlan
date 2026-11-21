@@ -10,7 +10,11 @@ use std::{
 };
 
 use anyhow::{bail, ensure, Context, Result};
-use axum::{extract::State, http::HeaderMap, Json};
+use axum::{
+    extract::{Query, State},
+    http::HeaderMap,
+    Json,
+};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -28,14 +32,15 @@ use wenlan_core::rulesync_skill::SkillFiles;
 use wenlan_core::rulesync_team::{self, TeamRuleLayer};
 use wenlan_types::rulesync::{
     AdoptPreviewRequest, AdoptRequest, AdoptedSkillUpdate, AdoptionPlan, PullbackAction,
-    PullbackCard, PullbackDecision, PullbackPreview, RulesSyncReport,
+    PullbackCard, PullbackDecision, PullbackKind, PullbackPreview, RulesSetupStatus,
+    RulesSetupTool, RulesSyncReport,
 };
 use wenlan_types::rulesync_skill::{
     SavedSkillTool, SkillDeliveryChange, SkillDeliveryFile, SkillFileDigest,
 };
 
 use crate::error::ServerError;
-use crate::route_registry::{post, TrackedRouter};
+use crate::route_registry::{get, post, TrackedRouter};
 use crate::rulesync_apply::{ApplyOptions, ApplyOutcome, FileMode, FileRoot, Snapshot};
 use crate::rulesync_layers;
 use crate::rulesync_registry::{
@@ -52,6 +57,7 @@ pub(crate) use settings::SETTINGS_RESUME_NOTICE;
 
 pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<SharedState> {
     router
+        .route("/api/rules/setup/status", get(status))
         .route("/api/rules/setup/adopt", post(adopt))
         .route("/api/rules/setup/adopt/preview", post(adopt_preview))
         .route("/api/rules/setup/restore", post(restore))
@@ -62,8 +68,15 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
 }
 
 pub(crate) fn require_local_person(headers: &HeaderMap) -> Result<(), ServerError> {
+    require_local_person_at(headers, crate::security::bind_scope_from_env())
+}
+
+fn require_local_person_at(
+    headers: &HeaderMap,
+    bind: crate::security::BindScope,
+) -> Result<(), ServerError> {
     if !matches!(
-        crate::security::bind_scope_from_env(),
+        bind,
         crate::security::BindScope::Unset | crate::security::BindScope::Loopback
     ) || !crate::memory_routes::caller_is_person(headers)
     {
@@ -72,6 +85,24 @@ pub(crate) fn require_local_person(headers: &HeaderMap) -> Result<(), ServerErro
         ));
     }
     Ok(())
+}
+
+async fn status(headers: HeaderMap) -> Result<Json<RulesSetupStatus>, ServerError> {
+    require_local_person(&headers)?;
+    tokio::task::spawn_blocking(|| {
+        setup_status(wenlan_core::rulesync_personal::enabled(), Setup::system)
+    })
+    .await
+    .map_err(|error| ServerError::Internal(error.to_string()))?
+    .map(Json)
+    .map_err(|error| ServerError::Conflict(format!("{error:#}")))
+}
+
+fn setup_status(enabled: bool, setup: impl FnOnce() -> Result<Setup>) -> Result<RulesSetupStatus> {
+    if !enabled {
+        return Ok(RulesSetupStatus::default());
+    }
+    setup()?.status()
 }
 
 fn require_personal_rules_writer(headers: &HeaderMap) -> Result<(), ServerError> {
@@ -107,8 +138,15 @@ async fn adopt(
 async fn restore(
     State(state): State<SharedState>,
     headers: HeaderMap,
+    Query(options): Query<RestoreOptions>,
 ) -> Result<Json<RulesSyncReport>, ServerError> {
-    execute(state, headers, Operation::Restore).await
+    execute(state, headers, Operation::Restore(options)).await
+}
+
+#[derive(Default, Deserialize)]
+struct RestoreOptions {
+    #[serde(default)]
+    rules_and_skills_only: bool,
 }
 
 async fn sync(
@@ -161,7 +199,7 @@ async fn review_preview(
 
 enum Operation {
     Adopt(AdoptRequest),
-    Restore,
+    Restore(RestoreOptions),
     Sync,
     Review(PullbackDecision),
 }
@@ -181,7 +219,7 @@ async fn execute(
         let setup = Setup::system()?;
         match operation {
             Operation::Adopt(request) => setup.adopt(&request),
-            Operation::Restore => setup.restore(),
+            Operation::Restore(options) => setup.restore_with_options(options),
             Operation::Sync => setup.sync(&generated),
             Operation::Review(request) => setup.review(&request, &generated),
         }
@@ -264,6 +302,72 @@ impl std::fmt::Display for UnsupportedRulesyncState {
 impl std::error::Error for UnsupportedRulesyncState {}
 
 impl Setup {
+    fn status(&self) -> Result<RulesSetupStatus> {
+        let mut status = RulesSetupStatus {
+            enabled: true,
+            can_adopt: true,
+            ..Default::default()
+        };
+        let Some(manifest) = self
+            .load_if_present()?
+            .filter(|manifest| !manifest.settings_only)
+        else {
+            return Ok(status);
+        };
+        status.adopted = manifest.adopted;
+        status.can_adopt = manifest.adopted;
+        status.can_restore = !manifest.includes_tool_settings();
+        let root = FileRoot::open_home(&self.home)?;
+        let Pullback {
+            drafts,
+            cards,
+            blocked,
+        } = inspect(&self.home, &root, &manifest)?;
+        status.in_sync = manifest.adopted
+            && drafts.is_empty()
+            && blocked.is_empty()
+            && manifest.pending.is_empty()
+            && manifest.extension_paths.is_empty()
+            && manifest.delivery_issues.is_empty()
+            && manifest.scope_reviews.is_empty();
+        status
+            .proposals
+            .extend(cards.into_iter().map(|card| card.wire));
+        status.proposals.extend(
+            manifest
+                .scope_reviews
+                .values()
+                .filter(|review| {
+                    manifest.delivered.contains_key(&review.path)
+                        && !blocked.contains_key(&review.path)
+                        && !drafts.iter().any(|draft| draft.path == review.path)
+                })
+                .map(ScopeReview::wire),
+        );
+        for file in status.proposals.iter().flat_map(|card| &card.files) {
+            let path = Path::new(file);
+            let Some(delivery) = manifest.delivered.get(path) else {
+                continue;
+            };
+            let target = match &delivery.kind {
+                Kind::Rule { target, .. } => personal_target(target),
+                Kind::PersonalFile => wenlan_core::rulesync_personal_files::location_of(path)
+                    .and_then(|location| personal_target(location.tool)),
+                _ => None,
+            };
+            if let Some(target) = target {
+                status.review_tools.insert(
+                    file.clone(),
+                    RulesSetupTool {
+                        id: target.agent.into(),
+                        name: target.tool.display_name().into(),
+                    },
+                );
+            }
+        }
+        Ok(status)
+    }
+
     fn delivery_status(&self) -> BTreeMap<String, DeliveryStatus> {
         let Ok(home) = FileRoot::open_home(&self.home) else {
             return BTreeMap::new();
@@ -536,6 +640,19 @@ struct Manifest<Content = Vec<u8>> {
 }
 
 impl Manifest {
+    fn includes_tool_settings(&self) -> bool {
+        self.settings_only
+            || self.settings_batch.is_some()
+            || self
+                .delivered
+                .values()
+                .any(|delivery| matches!(delivery.kind, Kind::Settings))
+            || self
+                .pending
+                .iter()
+                .any(|pending| matches!(pending.kind, Some(Kind::Settings)))
+    }
+
     fn case_alias(&self, root: &FileRoot, path: &Path) -> Result<Option<&Path>> {
         for known in self
             .backup
@@ -609,6 +726,16 @@ struct ScopeReview {
     before: String,
     after: String,
     card: PullbackCard,
+}
+
+impl ScopeReview {
+    fn wire(&self) -> PullbackCard {
+        PullbackCard {
+            // Scope reviews written by older builds have no kind on disk.
+            kind: PullbackKind::Scope,
+            ..self.card.clone()
+        }
+    }
 }
 
 struct ExpectedRegistrySkill {
@@ -1457,10 +1584,19 @@ impl Setup {
         Ok(outcomes)
     }
 
+    #[cfg(test)]
     pub(crate) fn restore(&self) -> Result<RulesSyncReport> {
+        self.restore_with_options(RestoreOptions::default())
+    }
+
+    fn restore_with_options(&self, options: RestoreOptions) -> Result<RulesSyncReport> {
         let _lock = self.lock()?;
         let root = FileRoot::open_home(&self.home)?;
         let mut manifest = self.load()?.context("no local setup backup")?;
+        ensure!(
+            !options.rules_and_skills_only || !manifest.includes_tool_settings(),
+            "This backup includes AI tool settings. Restore it from the terminal to include those settings."
+        );
         if let Some(result) = self.recover(&root, &mut manifest)? {
             return Ok(result);
         }
@@ -2181,6 +2317,7 @@ impl Setup {
                         files: vec![draft.path.display().to_string()],
                         diff: draft.diff.clone(),
                         reason: "Kept for this tool. Share across tools?".into(),
+                        kind: PullbackKind::Scope,
                     },
                 },
             );
@@ -2199,12 +2336,9 @@ impl Setup {
             }
             result.proposals.push(card.wire);
         }
-        result.proposals.extend(
-            manifest
-                .scope_reviews
-                .values()
-                .map(|review| review.card.clone()),
-        );
+        result
+            .proposals
+            .extend(manifest.scope_reviews.values().map(ScopeReview::wire));
         result.blocked.extend(
             blocked
                 .iter()
@@ -4144,6 +4278,7 @@ fn inspect(home: &Path, root: &FileRoot, manifest: &Manifest) -> Result<Pullback
                     .collect(),
                 diff: entries.iter().map(|(_, _, diff)| diff.as_str()).collect(),
                 reason,
+                kind: PullbackKind::Conflict,
             },
             paths,
             share_plans,
@@ -10483,5 +10618,116 @@ mod tests {
     #[test]
     fn rulesync_setup_rejects_unauthenticated_callers() {
         assert!(require_local_person(&HeaderMap::new()).is_err());
+    }
+
+    #[tokio::test]
+    async fn rulesync_setup_status_requires_a_local_person() {
+        use crate::security::BindScope;
+        use wenlan_types::requests::{CALLER_HEADER, PERSON_CALLER_VALUE};
+
+        assert!(status(HeaderMap::new()).await.is_err());
+        let mut person = HeaderMap::new();
+        person.insert(CALLER_HEADER, PERSON_CALLER_VALUE.parse().unwrap());
+        assert!(require_local_person_at(&person, BindScope::Loopback).is_ok());
+        assert!(require_local_person_at(&person, BindScope::External).is_err());
+        assert!(require_local_person_at(&person, BindScope::Unparseable).is_err());
+        person.insert("x-agent-name", "cursor".parse().unwrap());
+        assert!(require_local_person_at(&person, BindScope::Loopback).is_err());
+    }
+
+    #[test]
+    fn rulesync_setup_status_is_read_only_and_reports_both_review_kinds() {
+        let off = setup_status(false, || {
+            panic!("disabled status must never locate the home")
+        })
+        .unwrap();
+        assert_eq!(off, RulesSetupStatus::default());
+        let f = Fixture::new();
+        let initial = f.setup.status().unwrap();
+        assert!(initial.enabled);
+        assert!(!initial.adopted && !initial.can_restore);
+        assert!(fs::read_dir(&f.setup.data).unwrap().next().is_none());
+
+        let command = ".claude/commands/check.md";
+        fs::create_dir(f.setup.home.join(".claude/commands")).unwrap();
+        f.write(command, "Check the result.\n");
+        f.adopt_from_plan();
+        assert!(f.setup.status().unwrap().in_sync);
+        let local_rule = f.text(CODEX).replace("Second rule.\n", "");
+        f.write(CODEX, &local_rule);
+        let unsynced = f.setup.status().unwrap();
+        assert!(!unsynced.in_sync && unsynced.proposals.is_empty());
+        let report = f.sync_with("");
+        assert_eq!(report.proposals[0].kind, PullbackKind::Scope);
+
+        // Emulate a scope card saved before the wire field existed.
+        let mut manifest = f.setup.load().unwrap().unwrap();
+        for scope in manifest.scope_reviews.values_mut() {
+            scope.card.kind = PullbackKind::default();
+        }
+        f.setup.save(&manifest).unwrap();
+        f.write(command, "Double-check the result.\n");
+        let stored = fs::read(f.setup.data.join("personal.json")).unwrap();
+        let saves = MANIFEST_SAVES.with(std::cell::Cell::get);
+        let status = f.setup.status().unwrap();
+        assert!(status.enabled && status.adopted && status.can_restore && !status.in_sync);
+        assert_eq!(status.proposals.len(), 2);
+        let scope = pullback_file(&report, CODEX);
+        assert!(status.proposals.contains(&scope));
+        let conflict = status
+            .proposals
+            .iter()
+            .find(|card| card.kind == PullbackKind::Conflict)
+            .unwrap();
+        assert_eq!(conflict.files.len(), 1);
+        assert_eq!(Path::new(&conflict.files[0]), Path::new(command));
+        assert!(conflict.diff.contains("+Double-check the result."));
+        assert_eq!(status.review_tools[&scope.files[0]].id, "codex");
+        assert_eq!(status.review_tools[&conflict.files[0]].id, "claude-code");
+        assert_eq!(MANIFEST_SAVES.with(std::cell::Cell::get), saves);
+        assert_eq!(
+            fs::read(f.setup.data.join("personal.json")).unwrap(),
+            stored
+        );
+        assert_eq!(f.text(CODEX), local_rule);
+        assert_eq!(f.text(command), "Double-check the result.\n");
+        assert_eq!(f.text(".agents/AGENTS.md"), SHARED);
+    }
+
+    #[test]
+    fn rulesync_setup_app_restore_leaves_mixed_backups_untouched() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let mut manifest = f.setup.load().unwrap().unwrap();
+        let path = PathBuf::from(".claude/settings.json");
+        let settings = r#"{"mcpServers":{}}"#;
+        f.write(path.to_str().unwrap(), settings);
+        manifest.backup.insert(path.clone(), Snapshot::Absent);
+        manifest.delivered.insert(
+            path.clone(),
+            Delivery {
+                kind: Kind::Settings,
+                delivered: Snapshot::file(settings.as_bytes().to_vec()),
+                observed: None,
+                reviewed: false,
+                at: 1,
+            },
+        );
+        f.setup.save(&manifest).unwrap();
+        let before = fs::read(f.setup.data.join("personal.json")).unwrap();
+        let status = f.setup.status().unwrap();
+        assert!(status.adopted && !status.can_restore);
+        let result = f.setup.restore_with_options(RestoreOptions {
+            rules_and_skills_only: true,
+        });
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("backup includes AI tool settings"));
+        assert_eq!(
+            fs::read(f.setup.data.join("personal.json")).unwrap(),
+            before
+        );
+        assert_eq!(f.text(path.to_str().unwrap()), settings);
     }
 }

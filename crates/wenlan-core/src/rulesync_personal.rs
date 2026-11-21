@@ -12,7 +12,9 @@ use cap_fs_ext::{DirExt as _, MetadataExt as _};
 use cap_std::fs::{Dir, Metadata};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use wenlan_types::rulesync::{AdoptionChange, AdoptionPlan, AdoptionSkill, AdoptionSkillOutcome};
+use wenlan_types::rulesync::{
+    AdoptionChange, AdoptionPlan, AdoptionSkill, AdoptionSkillOutcome, AdoptionTool,
+};
 use wenlan_types::rulesync_skill::SavedSkillTool;
 
 use crate::rulesync_adopt::{
@@ -1293,6 +1295,7 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
             diff,
         });
     }
+    let mut skipped_files = Vec::new();
     for (path, reason) in adoption
         .skipped
         .iter()
@@ -1304,6 +1307,7 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
         } else {
             format!("Skipped ({reason}). Stays where it is, not managed.\n")
         };
+        skipped_files.push(plan_path(path));
         files.push(AdoptionChange {
             path: plan_path(path),
             added: 0,
@@ -1354,6 +1358,37 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
         files,
         skills,
         notes,
+        skipped_files,
+        skipped_tools: adoption.skipped_tools.clone(),
+        tools: PERSONAL_TARGETS
+            .iter()
+            .filter_map(|target| {
+                let rules = usize::from(
+                    adoption
+                        .files
+                        .contains_key(Path::new(target.rules.destination)),
+                );
+                let skills = adoption
+                    .skill_locations
+                    .keys()
+                    .filter(|path| path.starts_with(target.skills.destination))
+                    .count();
+                let other_files = adoption
+                    .personal_files
+                    .keys()
+                    .filter(|path| {
+                        crate::rulesync_personal_files::location_of(path)
+                            .is_some_and(|location| location.tool == target.id)
+                    })
+                    .count();
+                (rules + skills + other_files > 0).then(|| AdoptionTool {
+                    name: target.tool.display_name().into(),
+                    rule_files: rules,
+                    skills,
+                    other_files,
+                })
+            })
+            .collect(),
     })
 }
 

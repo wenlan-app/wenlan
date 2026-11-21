@@ -22,6 +22,10 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use wenlan_types::requests;
 use wenlan_types::responses;
+use wenlan_types::rulesync::{
+    AdoptPreviewRequest, AdoptRequest, AdoptedSkillUpdate, AdoptionPlan, PullbackDecision,
+    PullbackPreview, RulesSetupStatus, RulesSyncReport,
+};
 use wenlan_types::*;
 
 type State = Arc<RwLock<AppState>>;
@@ -4419,6 +4423,100 @@ pub async fn get_rules_delivery(
 ) -> Result<RulesDeliveryResponse, String> {
     let client = daemon_client(&state).await;
     client.get_json_as_person("/api/skills/delivery").await
+}
+
+#[tauri::command]
+pub async fn rules_setup_status(
+    state: tauri::State<'_, State>,
+) -> Result<RulesSetupStatus, String> {
+    daemon_client(&state)
+        .await
+        .get_json_as_person("/api/rules/setup/status")
+        .await
+}
+
+fn rules_setup_home() -> Result<PathBuf, String> {
+    wenlan_core::rulesync_personal::system_home()
+        .and_then(|home| Ok(home.canonicalize()?))
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn rules_setup_adopt_preview(
+    state: tauri::State<'_, State>,
+) -> Result<AdoptionPlan, String> {
+    let request = AdoptPreviewRequest {
+        home: rules_setup_home()?,
+    };
+    daemon_client(&state)
+        .await
+        .post_json_as_person("/api/rules/setup/adopt/preview", &request)
+        .await
+}
+
+#[tauri::command]
+pub async fn rules_setup_adopt(
+    state: tauri::State<'_, State>,
+    token: String,
+) -> Result<RulesSyncReport, String> {
+    let request = AdoptRequest {
+        token,
+        home: Some(rules_setup_home()?),
+    };
+    daemon_client(&state)
+        .await
+        .post_json_as_person("/api/rules/setup/adopt", &request)
+        .await
+}
+
+#[tauri::command]
+pub async fn rules_setup_restore(
+    state: tauri::State<'_, State>,
+) -> Result<RulesSyncReport, String> {
+    daemon_client(&state)
+        .await
+        .post_empty_as_person("/api/rules/setup/restore?rules_and_skills_only=true")
+        .await
+}
+
+#[tauri::command]
+pub async fn rules_setup_sync(state: tauri::State<'_, State>) -> Result<RulesSyncReport, String> {
+    daemon_client(&state)
+        .await
+        .post_empty_as_person("/api/rules/setup/sync")
+        .await
+}
+
+#[tauri::command]
+pub async fn rules_setup_skill_updates(
+    state: tauri::State<'_, State>,
+) -> Result<Vec<AdoptedSkillUpdate>, String> {
+    daemon_client(&state)
+        .await
+        .post_empty_as_person("/api/rules/setup/skill-updates")
+        .await
+}
+
+#[tauri::command]
+pub async fn rules_setup_review_preview(
+    state: tauri::State<'_, State>,
+    decision: PullbackDecision,
+) -> Result<PullbackPreview, String> {
+    daemon_client(&state)
+        .await
+        .post_json_as_person("/api/rules/setup/review/preview", &decision)
+        .await
+}
+
+#[tauri::command]
+pub async fn rules_setup_review(
+    state: tauri::State<'_, State>,
+    decision: PullbackDecision,
+) -> Result<RulesSyncReport, String> {
+    daemon_client(&state)
+        .await
+        .post_json_as_person("/api/rules/setup/review", &decision)
+        .await
 }
 
 /// The rules AI tools are told in `space` (none: the rules for every Space),

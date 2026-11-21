@@ -1207,6 +1207,85 @@ export async function getRulesDelivery(): Promise<ToolRulesDelivery[]> {
   return response?.tools ?? [];
 }
 
+export type PullbackAction = "tool_only" | "all_tools" | "dismiss";
+
+export interface PullbackCard {
+  id: string;
+  kind: "scope" | "conflict";
+  files: string[];
+  diff: string;
+  reason: string;
+}
+
+export interface PullbackDecision {
+  id: string;
+  action: PullbackAction;
+  file?: string;
+}
+
+export interface PullbackPreview {
+  diff: string;
+  plan: string;
+}
+
+export interface RulesSetupTool {
+  id: string;
+  name: string;
+}
+
+export interface RulesSetupStatus {
+  enabled: boolean;
+  adopted: boolean;
+  can_adopt: boolean;
+  can_restore: boolean;
+  in_sync: boolean;
+  proposals: PullbackCard[];
+  review_tools: Record<string, RulesSetupTool>;
+}
+
+export interface RulesAdoptionPlan {
+  token: string;
+  files: { path: string; added: number; removed: number; diff: string }[];
+  notes?: string[];
+  tools?: { name: string; rule_files: number; skills: number; other_files: number }[];
+  skipped_files?: string[];
+  skipped_tools?: string[];
+  skills: ({
+    path: string;
+    byte_copy_reason?: string;
+  } & (
+    | { outcome: "tracked_upstream"; upstream: SkillUpstream }
+    | { outcome: "plain_copy" }
+    | { outcome: "skipped"; reason: string }
+  ))[];
+}
+
+type SkillUpstream =
+  | { kind: "github"; repository: string; directory: string; revision?: string; checkout?: string }
+  | { kind: "npm"; package: string; version: string; directory: string };
+
+export interface AdoptedSkillUpdate {
+  name: string;
+  upstream: SkillUpstream;
+  status: { state: "current" } | { state: "available"; revision: string } | { state: "unavailable"; reason: string };
+}
+
+export interface RulesSyncReport {
+  written: string[];
+  blocked: string[];
+  proposals: PullbackCard[];
+  message: string;
+}
+
+export const getRulesSetupStatus = () => invoke<RulesSetupStatus>("rules_setup_status");
+export const previewRulesAdoption = () => invoke<RulesAdoptionPlan>("rules_setup_adopt_preview");
+export const adoptRulesSetup = (token: string) => invoke<RulesSyncReport>("rules_setup_adopt", { token });
+export const restoreRulesSetup = () => invoke<RulesSyncReport>("rules_setup_restore");
+export const syncRulesSetup = () => invoke<RulesSyncReport>("rules_setup_sync");
+export const getRulesSkillUpdates = () => invoke<AdoptedSkillUpdate[]>("rules_setup_skill_updates");
+export const previewRulesReview = (decision: PullbackDecision) => invoke<PullbackPreview>("rules_setup_review_preview", { decision });
+export const applyRulesReview = (decision: PullbackDecision) => invoke<RulesSyncReport>("rules_setup_review", { decision });
+
 export async function listSkillSuggestions(): Promise<SkillSuggestion[]> {
   return invoke("list_skill_suggestions");
 }

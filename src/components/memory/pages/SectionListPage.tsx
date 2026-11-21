@@ -13,6 +13,9 @@ import { useTeamAccess } from "../../../web/teamAccess";
 import { pinPage, unpinPage, usePinnedPages } from "../navigation/pinnedPages";
 import { HOW_I_WORK_QUERY_KEYS, howIWorkPageTitle } from "../skills/howIWorkModel";
 import { SpaceRulesAsk } from "../skills/SpaceRulesAsk";
+import { RulesToolsHeader } from "../skills/RulesToolsHeader";
+import { RulesSetupReviews } from "../skills/RulesSetupReviews";
+import { useRulesSetup, useRulesSkillUpdates } from "../skills/useRulesSetup";
 import { useScope } from "../team/scope";
 import { archivePageFromList, canArchivePage } from "./archiveWikiPage";
 import { deleteWikiPage } from "./deleteWikiPage";
@@ -74,6 +77,8 @@ export function SectionListPage({
   const teamAccess = useTeamAccess();
   const member = teamAccess.member;
   const scope = useScope();
+  const rulesSetup = useRulesSetup(section !== "docs" && !member);
+  const skillUpdates = useRulesSkillUpdates(section === "skills" && !!rulesSetup?.adopted);
   const pinnedPages = usePinnedPages();
   const sections = useSectionPages(true);
   const folders = useKnowledgeFolders();
@@ -265,7 +270,11 @@ export function SectionListPage({
   const parentPath = folder === null ? null : folder.includes("/") ? folder.slice(0, folder.lastIndexOf("/")) : null;
   const parentName = parentPath === null ? sectionTitle : parentPath.split("/").pop() ?? parentPath;
   const title = folderName ?? sectionTitle;
-  const empty = sections.loaded && rows.length === 0 && folderCards.length === 0;
+  // Adopted skills live in tool folders. An update still gets a row when
+  // there is no corresponding Skills page in the library.
+  const pageBackedUpdates = new Set(rows.filter((page) => page.status === "active").map((page) => page.title));
+  const localUpdates = [...(skillUpdates ?? [])].filter((name) => !pageBackedUpdates.has(name));
+  const empty = sections.loaded && rows.length === 0 && folderCards.length === 0 && localUpdates.length === 0;
   const menuItems = !canWrite ? [] : [
     ...(section === "docs" && !member ? ["folder" as const] : []),
     // A team member's browser has no skills of its own to hold: the entry
@@ -324,6 +333,12 @@ export function SectionListPage({
         )}
       </header>
 
+      {rulesSetup && (
+        <div>
+          <RulesToolsHeader delivers setupOnly skillUpdates={skillUpdates?.size} />
+          {section === "rules" && <RulesSetupReviews status={rulesSetup} />}
+        </div>
+      )}
       {section === "docs" && folder === null && !exampleWiki && <SpaceFoldersPrompt noteCount={sections.loaded ? sections.pages.length : null} />}
       {pending.map((item) => <SpaceRulesAsk key={item.space_id} space={{ id: item.space_id, name: item.space_name }} onOpenPage={onOpenPageId} variant="pending" />)}
 
@@ -363,12 +378,13 @@ export function SectionListPage({
               </ul>
             </>
           )}
-          {rows.length > 0 && (
+          {(rows.length > 0 || localUpdates.length > 0) && (
             <>
               {section === "docs" && <h2 className="section-list-label" id={`${id}-pages`}>{t("sections.pages")}</h2>}
               <ul className="section-list-pages" aria-labelledby={section === "docs" ? `${id}-pages` : `${id}-title`}>
                 {rows.map((page) => {
                   const draft = page.status === "draft";
+                  const newVersion = page.status === "active" && skillUpdates?.has(page.title);
                   const rowTitle = draft && !page.title.trim() ? t("pages.overview.untitledDraft") : howIWorkPageTitle(page, t);
                   const at = changedAt(page);
                   return (
@@ -376,7 +392,7 @@ export function SectionListPage({
                       <button
                         type="button"
                         className="section-list-page"
-                        aria-label={t("pages.overview.openPage", { title: rowTitle })}
+                        aria-label={newVersion ? t("rulesSetup.openUpdatedSkill", { title: rowTitle }) : t("pages.overview.openPage", { title: rowTitle })}
                         title={rowTitle}
                         onClick={() => openRow(page)}
                         onContextMenu={(event) => { event.preventDefault(); openMenuAt(page, event.currentTarget, event.clientX, event.clientY); }}
@@ -388,11 +404,18 @@ export function SectionListPage({
                         }}
                       >
                         <span className="section-list-page-title">{rowTitle}</span>
+                        {newVersion && <span className="rules-setup-skill-update">{t("rulesSetup.newVersion")}</span>}
                         {at > 0 && <time className="section-list-page-time" dateTime={new Date(at * 1000).toISOString()}>{formatTimeAgo(at, locale)}</time>}
                       </button>
                     </li>
                   );
                 })}
+                {localUpdates.map((name) => (
+                  <li key={name} className="section-list-page rules-setup-skill-row">
+                    <span className="section-list-page-title">{name}</span>
+                    <span className="rules-setup-skill-update">{t("rulesSetup.newVersion")}</span>
+                  </li>
+                ))}
               </ul>
             </>
           )}

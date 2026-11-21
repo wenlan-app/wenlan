@@ -491,6 +491,9 @@ mod tests {
             }],
             skills: Vec::new(),
             notes: Vec::new(),
+            tools: Vec::new(),
+            skipped_files: Vec::new(),
+            skipped_tools: Vec::new(),
         };
         let text = plan_for_a_person(&plan);
         assert!(text.contains("tool<U+000A>settings.md (+2 / -1)"));

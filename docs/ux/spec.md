@@ -1137,6 +1137,27 @@ and wait for evidence that people need them.
   `rulesync_review_displays_the_selected_plan_before_asking_for_yes` and the
   `rulesync_round4_` and `rulesync_round5_` regression groups.
 
+- **UX-SKILL-19** `shipped` When the daemon enables local rules setup, the
+  Rules and Skills lists show one quiet status line under the tool chips.
+  A tool with a pending review has an amber exclamation mark. Only pending
+  setup reviews get cards, on Rules. Reading status does not run sync. With
+  setup off, its status, cards and Settings controls are hidden.
+- **UX-SKILL-20** `shipped` A rule-line scope card says the edit already
+  applies in its tool, and offers Use in all tools and Keep in that tool
+  only. A conflict card offers those choices and No. It says “No puts
+  <tool> back to the earlier version” (“選「不要」，<tool> 改回原本的版本”)
+  underneath, naming all affected source tools when there are competing
+  edits. The app shows the daemon’s reason, files, and diff. It previews
+  the selected choice and asks for confirmation before applying it.
+- **UX-SKILL-21** `shipped` An available adopted skill update adds a New
+  version badge to the skill row and contributes to the status line on
+  Skills. Finding an update does not apply it or open a card.
+- **UX-SKILL-22** `shipped` In Settings, Bring in opens the daemon’s
+  adoption preview, with affected tools, counts and reasons for skipped
+  items. The preview says the shared setup stays untouched and binds
+  approval to that plan. Restore asks again and says later edits stay
+  where they are for review.
+
 ## From the terminal
 
 - **UX-CLI-1** `shipped` Same things, two doors. Whatever an AI tool can do in
