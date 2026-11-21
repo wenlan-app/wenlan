@@ -91,7 +91,10 @@ pub enum QueryBriefState {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct QueryBriefItem {
+    pub id: String,
     pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<String>,
     pub gate: Option<String>,
 }
 
@@ -179,7 +182,9 @@ pub fn project_brief(response: &BriefReadResponse) -> Result<QueryBriefOutput, &
                     .active
                     .iter()
                     .map(|item| QueryBriefItem {
+                        id: item.id.clone(),
                         text: item.text.clone(),
+                        details: item.details.clone(),
                         gate: item.gate.clone(),
                     })
                     .collect(),
@@ -187,7 +192,9 @@ pub fn project_brief(response: &BriefReadResponse) -> Result<QueryBriefOutput, &
                     .backlog
                     .iter()
                     .map(|item| QueryBriefItem {
+                        id: item.id.clone(),
                         text: item.text.clone(),
+                        details: item.details.clone(),
                         gate: item.gate.clone(),
                     })
                     .collect(),

@@ -145,7 +145,7 @@ pub async fn handle_read_brief(
             getting_started,
         }));
     };
-    let Some(brief) = db.get_brief_by_space_name(&space).await? else {
+    let Some(mut brief) = db.get_brief_by_space_name(&space).await? else {
         let (code_basis_pending, code_basis_pending_explained) = if private {
             code_basis_pending_for(&db, &space).await
         } else {
@@ -161,6 +161,17 @@ pub async fn handle_read_brief(
             getting_started,
         }));
     };
+
+    let requested_item = request
+        .item
+        .as_deref()
+        .map(str::trim)
+        .filter(|item| !item.is_empty());
+    for item in brief.active.iter_mut().chain(brief.backlog.iter_mut()) {
+        if requested_item != Some(item.id.as_str()) {
+            item.details = None;
+        }
+    }
 
     let legacy_context_limit = request
         .legacy_context_limit

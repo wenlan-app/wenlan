@@ -126,6 +126,7 @@ pub async fn run(
                 .brief(&BriefReadRequest {
                     topic: args.topic,
                     space: None,
+                    item: None,
                     legacy_context_limit: None,
                 })
                 .await?;
@@ -352,6 +353,7 @@ mod tests {
                 active: vec![BriefItem {
                     id: "secret-item-id".into(),
                     text: "open PR".into(),
+                    details: None,
                     state: BriefItemState::Active,
                     added_at: 1,
                     gate: Some("CI green".into()),
@@ -430,6 +432,7 @@ mod tests {
             active: vec![BriefItem {
                 id: "secret-item-id".into(),
                 text: "old item".into(),
+                details: None,
                 state: wenlan_types::BriefItemState::Active,
                 added_at: 1,
                 gate: None,

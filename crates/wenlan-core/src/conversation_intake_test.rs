@@ -30,6 +30,7 @@ fn conv(said: &[&str]) -> FoundConversation {
         branch: None,
         said: said.iter().map(|s| s.to_string()).collect(),
         last_reply: String::new(),
+        last_content: said.last().copied().unwrap_or_default().into(),
         first_at: 0,
         last_content_at: 0,
         last_at: 0,
@@ -72,6 +73,7 @@ fn ux_thing_1_a_claude_code_conversation_keeps_what_was_typed_and_its_own_last_t
         ]
     );
     assert_eq!(found.last_reply, "Done: a card can be hidden.");
+    assert_eq!(found.last_content, "Done: a card can be hidden.");
     assert_eq!(
         found.first_at,
         unix_seconds("2026-11-01T10:00:00Z").unwrap()
@@ -139,6 +141,7 @@ fn ux_thing_1_a_codex_conversation_reads_its_meta_and_messages() {
     assert_eq!(found.branch.as_deref(), Some("seo"));
     assert_eq!(found.said, vec!["Fix the sitemap"]);
     assert_eq!(found.last_reply, "Fixed.");
+    assert_eq!(found.last_content, "Fixed.");
     assert_eq!(
         found.last_content_at,
         unix_seconds("2026-11-01T09:02:00Z").unwrap()

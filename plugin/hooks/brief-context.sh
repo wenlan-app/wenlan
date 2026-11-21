@@ -43,8 +43,22 @@ except Exception:
 ' 2>/dev/null)
 fi
 [ -n "$space" ] || exit 0
+import_note=""
+if [ -n "$cwd" ] && command -v wenlan >/dev/null 2>&1; then
+  import_note=$(WENLAN_IMPORT_CWD="$cwd" WENLAN_IMPORT_SPACE="$space" python3 -I -c '
+import os, subprocess
+try:
+    result = subprocess.run(
+        ["wenlan", "--space", os.environ["WENLAN_IMPORT_SPACE"], "handoff", "import-pending"],
+        cwd=os.environ["WENLAN_IMPORT_CWD"], capture_output=True, text=True, timeout=2, check=False)
+    notes = [line.strip() for line in (result.stdout + "\n" + result.stderr).splitlines() if line.strip()]
+    print("; ".join(notes)[:1000])
+except Exception:
+    pass
+' 2>/dev/null)
+fi
 
-WENLAN_BRIEF_HOST="$HOST" WENLAN_BRIEF_SPACE="$space" WENLAN_BRIEF_CODEX="$codex" python3 -I - <<'PY' 2>/dev/null || true
+WENLAN_BRIEF_HOST="$HOST" WENLAN_BRIEF_SPACE="$space" WENLAN_BRIEF_CODEX="$codex" WENLAN_IMPORT_NOTE="$import_note" python3 -I - <<'PY' 2>/dev/null || true
 import json, os, urllib.request
 try:
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -58,9 +72,14 @@ except Exception:
     raise SystemExit(0)
 brief = body.get("brief") or {}
 items = list(brief.get("active") or []) + list(brief.get("backlog") or [])
-if not items:
+note = os.environ.get("WENLAN_IMPORT_NOTE")
+if not items and not note:
     raise SystemExit(0)
-lines = ["Wenlan Brief (one line per thing; use its id to read details):"]
+lines = []
+if note:
+    lines.append("Wenlan handoff import: " + note)
+if items:
+    lines.append("Wenlan Brief (one line per thing; use its id to read details):")
 for item in items:
     item_id = str(item.get("id") or "").strip()
     text = " ".join(str(item.get("text") or "").split())

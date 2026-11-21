@@ -17,6 +17,7 @@ fn found(id: &str, last_at: i64) -> FoundConversation {
         branch: Some("home".into()),
         said: vec!["a".into(), "b".into()],
         last_reply: String::new(),
+        last_content: "b".into(),
         first_at: last_at - 60,
         last_content_at: last_at,
         last_at,

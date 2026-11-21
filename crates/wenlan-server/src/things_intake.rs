@@ -253,16 +253,26 @@ pub async fn look_once(
         tokio::task::spawn_blocking(move || intake::scan(&roots, now, intake::INTAKE_WINDOW_SECS))
             .await
             .map_err(|e| e.to_string())?;
-    // UX-HAND-8: without a readable team list no Space is filled, so private
-    // conversation text never reaches a team Space. A fill problem skips only
-    // the fill; intake and the night pass go on.
-    let handoffs_filled = match wenlan_core::shared_space::team_names_by_space(
-        &wenlan_core::shared_space::settings_path(),
-    ) {
-        Ok(teams) => {
-            let team_spaces = teams.into_keys().collect();
+    let models = models(shared).await;
+    // UX-HAND-8: without a readable shared-Space list no Space is filled, so
+    // private conversation text never reaches a team or folder-shared Space.
+    // A fill problem skips only the fill; intake and the night pass go on.
+    let settings_path = wenlan_core::shared_space::settings_path();
+    let handoffs_filled = match shared_space_names(&settings_path) {
+        Ok(_) => {
+            let shared_space = |space: &str| {
+                shared_space_names(&settings_path)
+                    .map(|spaces| spaces.contains(space))
+                    .map_err(|error| error.to_string())
+            };
             match db
-                .fill_idle_handoffs(&found, &team_spaces, now, HANDOFF_IDLE_SECS)
+                .fill_idle_handoffs(
+                    &found,
+                    &shared_space,
+                    models.as_ref().map(|models| models.label.as_ref()),
+                    now,
+                    HANDOFF_IDLE_SECS,
+                )
                 .await
             {
                 Ok(filled) => filled,
@@ -273,12 +283,12 @@ pub async fn look_once(
             }
         }
         Err(error) => {
-            tracing::warn!("[things] idle handoff fill skipped, team Spaces unreadable: {error}");
+            tracing::warn!("[things] idle handoff fill skipped, shared Spaces unreadable: {error}");
             0
         }
     };
 
-    let Some(models) = models(shared).await else {
+    let Some(models) = models else {
         // No everyday model yet (an on-device one waits for an idle
         // computer): the skills night pass only needs the grouping model.
         if NIGHT_HOURS.contains(&chrono::Local::now().hour()) && still_quiet() {
@@ -341,6 +351,18 @@ pub async fn look_once(
         crate::skill_grow::spawn_nightly_if_idle(shared.clone(), models.group.clone());
     }
     Ok(Some(report))
+}
+
+fn shared_space_names(
+    settings_path: &std::path::Path,
+) -> Result<std::collections::BTreeSet<String>, wenlan_core::error::WenlanError> {
+    Ok(wenlan_core::shared_space::shares_at(settings_path)?
+        .into_iter()
+        .filter_map(|(scope, _)| match scope {
+            wenlan_core::shared_space::Scope::Space(name) => Some(name),
+            _ => None,
+        })
+        .collect())
 }
 
 /// The new memory's id, or why it was not written.

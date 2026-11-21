@@ -66,6 +66,8 @@ pub struct FoundConversation {
     pub said: Vec<String>,
     /// The end of the AI's last reply.
     pub last_reply: String,
+    /// The latest person message or AI reply, paired with `last_content_at`.
+    pub last_content: String,
     pub first_at: i64,
     /// Time of the latest person message or AI reply, excluding metadata and
     /// tool-only events.
@@ -434,7 +436,7 @@ pub fn read_claude_code(path: &Path) -> Option<FoundConversation> {
     let on_behalf = entries.iter().any(|e| e.projects_user_turn.is_some());
     let mut cwds: HashMap<String, usize> = HashMap::new();
     let (mut first_at, mut last_at, mut last_content_at) = (None::<i64>, None::<i64>, None::<i64>);
-    let (mut said, mut last_reply) = (Vec::new(), String::new());
+    let (mut said, mut last_reply, mut last_content) = (Vec::new(), String::new(), String::new());
     let (mut automated, mut branch, mut id) = (false, None, None);
     let mut touch = Touched::default();
     for entry in entries {
@@ -481,6 +483,9 @@ pub fn read_claude_code(path: &Path) -> Option<FoundConversation> {
                     touch.ids_in(&text);
                     said.push(cut(&text, MAX_SAID_CHARS));
                     if let Some(at) = at {
+                        if last_content_at.is_none_or(|last| at >= last) {
+                            last_content = cut_end(&text, MAX_REPLY_CHARS);
+                        }
                         last_content_at = Some(last_content_at.map_or(at, |last| last.max(at)));
                     }
                 }
@@ -493,6 +498,9 @@ pub fn read_claude_code(path: &Path) -> Option<FoundConversation> {
                 if let Some(text) = texts.into_iter().rev().find(|t| !t.trim().is_empty()) {
                     last_reply = cut_end(text.trim(), MAX_REPLY_CHARS);
                     if let Some(at) = at {
+                        if last_content_at.is_none_or(|last| at >= last) {
+                            last_content = last_reply.clone();
+                        }
                         last_content_at = Some(last_content_at.map_or(at, |last| last.max(at)));
                     }
                 }
@@ -516,6 +524,7 @@ pub fn read_claude_code(path: &Path) -> Option<FoundConversation> {
         branch: branch.filter(|b| b != "HEAD"),
         said: keep_ends(said),
         last_reply,
+        last_content,
         first_at: first_at.unwrap_or(fallback),
         last_content_at: last_content_at.unwrap_or(0),
         last_at: last_at.unwrap_or(fallback),
@@ -538,7 +547,8 @@ struct CodexEntry {
 pub fn read_codex(path: &Path) -> Option<FoundConversation> {
     let (len, lines) = transcript_lines(path)?;
     let (mut first_at, mut last_at, mut last_content_at) = (None::<i64>, None::<i64>, None::<i64>);
-    let (mut said, mut last_reply) = (Vec::<String>::new(), String::new());
+    let (mut said, mut last_reply, mut last_content) =
+        (Vec::<String>::new(), String::new(), String::new());
     let (mut automated, mut cwd, mut branch, mut id) = (false, None, None, None);
     let mut seen_meta = false;
     let mut touch = Touched::default();
@@ -592,6 +602,9 @@ pub fn read_codex(path: &Path) -> Option<FoundConversation> {
                 }
                 if typed(text, &mut said) {
                     if let Some(at) = at {
+                        if last_content_at.is_none_or(|last| at >= last) {
+                            last_content = said.last().cloned().unwrap_or_default();
+                        }
                         last_content_at = Some(last_content_at.map_or(at, |last| last.max(at)));
                     }
                 }
@@ -629,6 +642,9 @@ pub fn read_codex(path: &Path) -> Option<FoundConversation> {
                     .find_map(|c| text_of(&c["text"]).filter(|t| !t.is_empty()));
                 if typed(first, &mut said) {
                     if let Some(at) = at {
+                        if last_content_at.is_none_or(|last| at >= last) {
+                            last_content = said.last().cloned().unwrap_or_default();
+                        }
                         last_content_at = Some(last_content_at.map_or(at, |last| last.max(at)));
                     }
                 }
@@ -644,6 +660,9 @@ pub fn read_codex(path: &Path) -> Option<FoundConversation> {
                     touch.ids_in(&reply);
                     last_reply = cut_end(&reply, MAX_REPLY_CHARS);
                     if let Some(at) = at {
+                        if last_content_at.is_none_or(|last| at >= last) {
+                            last_content = last_reply.clone();
+                        }
                         last_content_at = Some(last_content_at.map_or(at, |last| last.max(at)));
                     }
                 }
@@ -663,6 +682,7 @@ pub fn read_codex(path: &Path) -> Option<FoundConversation> {
         branch,
         said: keep_ends(said),
         last_reply,
+        last_content,
         first_at: first_at.unwrap_or(fallback),
         last_content_at: last_content_at.unwrap_or(0),
         last_at: last_at.unwrap_or(fallback),

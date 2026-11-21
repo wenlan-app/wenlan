@@ -684,6 +684,11 @@ pub struct BriefParams {
     )]
     pub topic: Option<String>,
     #[schemars(
+        description = "Optional Brief item id. When present, that item's AI-facing details are returned; other items remain one-line only."
+    )]
+    #[serde(default)]
+    pub item: Option<String>,
+    #[schemars(
         description = "Space (project) whose Brief to read. Uses the locked or configured default Space when omitted."
     )]
     #[serde(default, alias = "domain")]
@@ -2061,6 +2066,8 @@ pub enum BriefMutationParam {
     /// Add a new item to the Brief.
     Add {
         text: String,
+        #[serde(default)]
+        details: Option<String>,
         state: BriefItemStateParam,
         #[serde(default)]
         gate: Option<String>,
@@ -2070,6 +2077,8 @@ pub enum BriefMutationParam {
         item_id: String,
         expected_version: i64,
         text: String,
+        #[serde(default)]
+        details: Option<String>,
     },
     /// Move an item between active and backlog.
     Move {
@@ -2094,8 +2103,14 @@ pub enum BriefMutationParam {
 impl From<BriefMutationParam> for wenlan_types::brief::BriefMutation {
     fn from(value: BriefMutationParam) -> Self {
         match value {
-            BriefMutationParam::Add { text, state, gate } => Self::Add {
+            BriefMutationParam::Add {
                 text,
+                details,
+                state,
+                gate,
+            } => Self::Add {
+                text,
+                details,
                 state: state.into(),
                 added_at: None,
                 gate,
@@ -2104,10 +2119,12 @@ impl From<BriefMutationParam> for wenlan_types::brief::BriefMutation {
                 item_id,
                 expected_version,
                 text,
+                details,
             } => Self::Edit {
                 item_id,
                 expected_version,
                 text,
+                details,
             },
             BriefMutationParam::Move {
                 item_id,
@@ -3159,6 +3176,9 @@ fn render_brief_items(output: &mut String, label: &str, items: &[wenlan_types::B
             output.push_str(" [filled in by Wenlan / Wenlan 補的; not confirmed]");
         }
         output.push('\n');
+        if let Some(details) = item.details.as_deref() {
+            output.push_str(&format!("    Details: {details}\n"));
+        }
     }
 }
 
@@ -3949,6 +3969,7 @@ impl WenlanMcpServer {
         let request = wenlan_types::BriefReadRequest {
             topic: params.topic,
             space: effective_space(&params.space),
+            item: params.item,
             legacy_context_limit: None,
         };
         let response: wenlan_types::BriefReadResponse =
@@ -7260,7 +7281,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "Read the current Space Brief when resuming project work or when the user asks to catch up. Omit `topic` to return only the complete Brief. Provide `topic` to append separately labeled related context scoped to the same Space. Reads never create or mutate a Brief; the first handoff update can create it.",
+        description = "Read the current Space Brief when resuming project work or when the user asks to catch up. Every item returns its one-line text and id; AI-facing details are omitted unless `item` names that id. Omit `topic` to return only the Brief, or provide it to append separately labeled related context from the same Space. Reads never create or mutate a Brief; the first handoff update can create it.",
         annotations(
             title = "Brief",
             read_only_hint = true,

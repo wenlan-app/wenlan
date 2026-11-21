@@ -475,11 +475,20 @@ Hand off work through the Space Brief; keeps a project file if Wenlan is down.
 
 ```text
 wenlan handoff [OPTIONS] --file <JSON_FILE>
+       wenlan handoff [OPTIONS] <COMMAND>
 ```
 
 Options:
 
 - `--file <JSON_FILE>`: Read a HandoffRequest or wenlan.handoff.v1 file.
+
+#### `wenlan handoff import-pending`
+
+Import pending handoff files from this project's root.
+
+```text
+wenlan handoff import-pending [OPTIONS]
+```
 
 ### `wenlan rules`
 

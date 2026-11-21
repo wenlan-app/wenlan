@@ -41,6 +41,7 @@ fn add_request(space: &str, operation_id: &str, text: &str) -> BriefUpdateReques
         summary: None,
         mutations: vec![BriefMutation::Add {
             text: text.into(),
+            details: None,
             state: BriefItemState::Active,
             added_at: None,
             gate: None,

@@ -82,14 +82,17 @@ and wait for evidence that people need them.
 
 ## Handoff between AI sessions
 
-- **UX-HAND-1** `shipped` One Space has one Brief, with one versioned line per
-  Brief item. Brief items stay on the Brief and are not things (UX-HOME-6);
+- **UX-HAND-1** `shipped` One Space has one Brief, with one versioned
+  person-facing line and optional AI-facing details per Brief item. Details
+  hold the goal, decisions and why, failed attempts, unknowns, and next step.
+  Brief items stay on the Brief and are not things (UX-HOME-6);
   linking one to the conversation's thing is a follow-up. The app, terminal,
   and MCP read and write that same Brief; `handoff` is the write verb over
   HTTP, CLI, and MCP.
   Tests `ux_hand_1_handoff_route_uses_the_shared_brief_write_contract`,
   `handoff_add_makes_no_thing_and_replay_stays_single`,
   `handoff_origin_migration_marks_existing_items_confirmed`,
+  `handoff_details_round_trip_and_edit_without_details_preserves_them`,
   `handoff_command_posts_the_same_file_twice_with_one_operation_id`, and
   `handoff_tool_posts_the_shared_write_shape`.
 - **UX-HAND-2** `shipped` At 80% context use, or when the person asks to hand
@@ -98,10 +101,17 @@ and wait for evidence that people need them.
   Test `ux_hand_2_stop_reminder_is_wired_to_its_behavioral_test` and
   `plugin/hooks/test-handoff-reminder.sh`.
 - **UX-HAND-3** `shipped` If a conversation stops without a newer handoff,
-  after 50 minutes Wenlan fills its last item from the prior handoff and the
-  later local transcript. The item says "Filled in by Wenlan" (「Wenlan 補的」)
-  and is not confirmed; the next real handoff replaces that fill.
-  Tests `ux_hand_3_idle_fill_is_replaced_by_a_real_handoff` and the
+  after 50 minutes Wenlan fills its last item from the prior line and details
+  plus the later local conversation. When the everyday model is available it
+  writes a new bounded line and details. Without a model, or if generation
+  fails or repeats a normalized 40-character transcript run, the line stays
+  unchanged and only a bounded transcript excerpt goes into details; raw
+  transcript text never goes into the person-facing line.
+  The item says "Filled in by Wenlan" (「Wenlan 補的」) and is not confirmed;
+  the next real handoff replaces that fill.
+  Tests `ux_hand_3_idle_fill_is_replaced_by_a_real_handoff`,
+  `idle_fill_uses_model_for_line_and_details_without_copying_raw_transcript`,
+  `idle_fill_rejects_model_output_that_echoes_the_transcript`, and the
   `UX-HAND-3` Space Brief component test.
 - **UX-HAND-4** `shipped` A stale item version conflicts and never overwrites
   the newer line. Retrying the same operation id applies it once and does not
@@ -111,20 +121,37 @@ and wait for evidence that people need them.
 - **UX-HAND-5** `shipped` Starting a Claude Code or Codex session
   automatically brings in each Brief item's one line and id, capped at about
   2,000 tokens. If Wenlan is down, the hook prints nothing and exits
-  successfully; details are fetched only for the item being resumed.
+  successfully. A normal `brief` read omits every item's details; passing an
+  item id returns details for that item only.
   Test `ux_hand_5_session_start_brief_is_wired_to_its_behavioral_test` and
-  `plugin/hooks/test-brief-context.sh`.
+  `plugin/hooks/test-brief-context.sh`; server test
+  `brief_omits_details_by_default_and_returns_only_requested_item_details`.
 - **UX-HAND-6** `shipped` A failed save is never reported as saved. If the
   daemon is unreachable, the terminal says the handoff is in the project
-  folder and names the file; importing that file later keeps the same
-  operation id.
-  Test `ux_hand_6_offline_file_is_project_local_and_same_operation_is_stable`.
+  folder and names the file. SessionStart imports pending files from that
+  project root only after resolving the same project Space, preserving
+  operation ids. Each file is atomically claimed before posting; a replacement
+  written while the request is in flight stays pending. Successful or duplicate
+  claims move without overwrite into a real, non-symlink `imported/` directory;
+  malformed, mismatched, conflicting, or symlink files stay pending with a
+  one-line note.
+  Tests `ux_hand_6_offline_file_is_project_local_and_same_operation_is_stable`,
+  `import_pending_moves_success_replays_once_and_keeps_bad_file`,
+  `import_pending_requires_the_resolved_matching_space`,
+  `import_pending_claims_before_posting_and_leaves_a_replacement_pending`, and
+  `import_pending_refuses_symlink_files_and_archive_directories`.
 - **UX-HAND-7** `shipped` A handoff changes the Brief only. It does not write
   a memory, any AI tool's memory files, or `AGENTS.md`.
   Test `ux_hand_7_handoff_writes_no_memory_rows`; the project-file test bounds
   the offline write to the one handoff file.
 - **UX-HAND-8** `planned` In a team Space, only a writer may hand off. Private
-  conversation text never enters a shared Space.
+  conversation text never enters a shared Space. Idle fill already skips team
+  and folder-shared Spaces, rechecking after model generation, and hosted MCP
+  withholds `handoff`; the hosted member route does not yet expose
+  `/api/handoff`, so there is no write-grant path to test yet. Tests
+  `idle_fill_rechecks_when_space_becomes_shared_during_generation` and
+  `idle_fill_shared_space_list_includes_folder_shared_spaces` cover the private
+  transcript boundary.
 
 ## Home
 

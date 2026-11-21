@@ -23,6 +23,9 @@ impl BriefItemState {
 pub struct BriefItem {
     pub id: String,
     pub text: String,
+    /// AI-facing context for this line: goals, decisions, attempts, unknowns, and next steps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<String>,
     pub state: BriefItemState,
     pub added_at: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -72,6 +75,9 @@ pub struct BriefReadRequest {
     pub topic: Option<String>,
     #[serde(default, alias = "domain")]
     pub space: Option<String>,
+    /// Return AI-facing details for this item only. Details are omitted by default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub item: Option<String>,
     // Internal compatibility marker: never serialized on the Brief wire.
     #[doc(hidden)]
     #[serde(skip)]
@@ -143,6 +149,8 @@ pub struct BriefSummaryUpdate {
 pub enum BriefMutation {
     Add {
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        details: Option<String>,
         state: BriefItemState,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         added_at: Option<i64>,
@@ -153,6 +161,9 @@ pub enum BriefMutation {
         item_id: String,
         expected_version: i64,
         text: String,
+        /// When absent, preserve the current details.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        details: Option<String>,
     },
     Move {
         item_id: String,
@@ -349,6 +360,7 @@ mod tests {
                 item_id: "item-1".into(),
                 expected_version: 4,
                 text: "ship the release".into(),
+                details: None,
             },
             BriefMutation::Move {
                 item_id: "item-1".into(),

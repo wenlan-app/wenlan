@@ -171,6 +171,7 @@ async fn generated_receipt_cannot_recreate_a_renamed_space() {
         summary: None,
         mutations: vec![BriefMutation::Add {
             text: "current item".into(),
+            details: None,
             state: BriefItemState::Active,
             added_at: None,
             gate: None,
@@ -200,6 +201,7 @@ async fn projection_failure_cannot_rollback_committed_brief_state() {
         summary: None,
         mutations: vec![BriefMutation::Add {
             text: "committed item".into(),
+            details: None,
             state: BriefItemState::Active,
             added_at: None,
             gate: None,

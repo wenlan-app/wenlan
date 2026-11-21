@@ -53,6 +53,7 @@ fn ready_response(topic: Option<&str>) -> BriefReadResponse {
             active: vec![BriefItem {
                 id: "item-1".into(),
                 text: "Replace the public context tool.".into(),
+                details: None,
                 state: BriefItemState::Active,
                 added_at: 1_785_110_400,
                 gate: Some("MCP tests pass".into()),
@@ -101,6 +102,7 @@ async fn handoff_tool_posts_the_shared_write_shape() {
             summary: None,
             mutations: vec![BriefMutationParam::Add {
                 text: "Ship it".into(),
+                details: None,
                 state: BriefItemStateParam::Active,
                 gate: None,
             }],
@@ -129,6 +131,7 @@ async fn no_topic_reads_only_the_complete_brief_and_preserves_versions() {
         .brief_impl(BriefParams {
             session: None,
             topic: None,
+            item: None,
             space: Some("wenlan".into()),
         })
         .await
@@ -164,6 +167,7 @@ async fn topic_appends_separately_labeled_same_space_context() {
         .brief_impl(BriefParams {
             session: None,
             topic: Some("release readiness".into()),
+            item: None,
             space: Some("wenlan".into()),
         })
         .await
@@ -172,6 +176,35 @@ async fn topic_appends_separately_labeled_same_space_context() {
 
     assert!(text.contains("Space Brief:"));
     assert!(text.contains("Related Context (query: release readiness):"));
+}
+
+#[tokio::test]
+async fn brief_item_parameter_returns_that_items_details() {
+    let mock = MockServer::start().await;
+    let mut response = ready_response(None);
+    response.brief.as_mut().unwrap().active[0].details =
+        Some("Decision: use the shared wire shape.".into());
+    Mock::given(method("POST"))
+        .and(path("/api/brief"))
+        .and(body_json(serde_json::json!({
+            "topic": null,
+            "space": "wenlan",
+            "item": "item-1"
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(response))
+        .mount(&mock)
+        .await;
+
+    let result = make_server(&mock)
+        .brief_impl(BriefParams {
+            session: None,
+            topic: None,
+            item: Some("item-1".into()),
+            space: Some("wenlan".into()),
+        })
+        .await
+        .expect("brief item read succeeds");
+    assert!(text_of(&result).contains("Details: Decision: use the shared wire shape."));
 }
 
 #[tokio::test]
@@ -200,6 +233,7 @@ async fn brief_says_how_many_notes_rely_on_code_that_changed() {
             .brief_impl(BriefParams {
                 session: None,
                 topic: None,
+                item: None,
                 space: Some("wenlan".into()),
             })
             .await
@@ -242,6 +276,7 @@ async fn brief_says_how_many_notes_rely_on_code_that_changed() {
         let result = make_server(&mock)
             .brief_impl(BriefParams {
                 topic: None,
+                item: None,
                 space: Some("wenlan".into()),
                 session: None,
             })
@@ -275,6 +310,7 @@ async fn brief_says_when_the_model_has_already_looked_at_every_changed_note() {
             .brief_impl(BriefParams {
                 session: None,
                 topic: None,
+                item: None,
                 space: Some("wenlan".into()),
             })
             .await
@@ -302,6 +338,7 @@ async fn brief_says_when_the_model_has_already_looked_at_every_changed_note() {
         .brief_impl(BriefParams {
             session: None,
             topic: None,
+            item: None,
             space: Some("wenlan".into()),
         })
         .await
@@ -334,6 +371,7 @@ async fn missing_brief_explains_that_reads_do_not_create_it() {
         .brief_impl(BriefParams {
             session: None,
             topic: None,
+            item: None,
             space: Some("wenlan".into()),
         })
         .await
@@ -384,6 +422,7 @@ async fn brief_tells_a_new_user_the_next_step_even_without_a_project() {
             .brief_impl(BriefParams {
                 session: None,
                 topic: None,
+                item: None,
                 space: None,
             })
             .await

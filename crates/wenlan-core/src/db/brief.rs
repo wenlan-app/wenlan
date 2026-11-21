@@ -4,6 +4,9 @@ use super::MemoryDB;
 use crate::error::WenlanError;
 use std::collections::HashMap;
 
+pub const BRIEF_ITEM_TEXT_MAX_CHARS: usize = 500;
+pub const BRIEF_ITEM_DETAILS_MAX_CHARS: usize = 8_000;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LegacyBriefItem {
     pub text: String,
@@ -39,6 +42,7 @@ CREATE TABLE IF NOT EXISTS brief_items (
     id TEXT PRIMARY KEY,
     space_id TEXT NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
     text TEXT NOT NULL CHECK(length(trim(text)) > 0),
+    details TEXT,
     state TEXT NOT NULL CHECK(state IN ('active', 'backlog')),
     added_at INTEGER NOT NULL,
     gate TEXT,
@@ -145,6 +149,47 @@ impl MemoryDB {
             .map_err(|e| WenlanError::VectorDb(format!("m168 bump: {e}")))?;
         Ok(())
     }
+
+    /// Migration 169: keep the AI-facing handoff context separate from the
+    /// one-line person-facing Brief text.
+    pub(super) async fn migrate_169_brief_item_details(
+        &self,
+        prior_version: i64,
+    ) -> Result<(), WenlanError> {
+        self.backup_before_migration(169, prior_version).await?;
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT 1 FROM pragma_table_info('brief_items') WHERE name='details'",
+                (),
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("m169 brief column: {e}")))?;
+        let exists = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("m169 brief column row: {e}")))?
+            .is_some();
+        drop(rows);
+        if !exists {
+            conn.execute("ALTER TABLE brief_items ADD COLUMN details TEXT", ())
+                .await
+                .map_err(|e| WenlanError::VectorDb(format!("m169 details: {e}")))?;
+        }
+        conn.execute("PRAGMA user_version = 169", ())
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("m169 bump: {e}")))?;
+        Ok(())
+    }
+}
+
+fn validate_item_text(label: &str, value: &str, max: usize) -> Result<(), WenlanError> {
+    if value.chars().count() > max {
+        return Err(WenlanError::Validation(format!(
+            "brief item {label} exceeds the {max}-character limit"
+        )));
+    }
+    Ok(())
 }
 
 fn validate_update_request(request: &wenlan_types::BriefUpdateRequest) -> Result<(), WenlanError> {
@@ -172,11 +217,19 @@ fn validate_update_request(request: &wenlan_types::BriefUpdateRequest) -> Result
     }
     for mutation in &request.mutations {
         match mutation {
-            wenlan_types::BriefMutation::Add { text, added_at, .. } => {
+            wenlan_types::BriefMutation::Add {
+                text,
+                details,
+                added_at,
+                ..
+            } => {
                 if text.trim().is_empty() {
                     return Err(WenlanError::Validation(
                         "brief item text must not be empty".into(),
                     ));
+                }
+                if let Some(details) = details {
+                    validate_item_text("details", details, BRIEF_ITEM_DETAILS_MAX_CHARS)?;
                 }
                 if added_at.is_some_and(|value| value <= 0) {
                     return Err(WenlanError::Validation(
@@ -186,6 +239,7 @@ fn validate_update_request(request: &wenlan_types::BriefUpdateRequest) -> Result
             }
             wenlan_types::BriefMutation::Edit {
                 text,
+                details,
                 expected_version,
                 ..
             } => {
@@ -193,6 +247,9 @@ fn validate_update_request(request: &wenlan_types::BriefUpdateRequest) -> Result
                     return Err(WenlanError::Validation(
                         "brief item text must not be empty".into(),
                     ));
+                }
+                if let Some(details) = details {
+                    validate_item_text("details", details, BRIEF_ITEM_DETAILS_MAX_CHARS)?;
                 }
                 if *expected_version < 1 {
                     return Err(WenlanError::Validation(
@@ -318,7 +375,7 @@ async fn read_brief(
 
     let mut rows = conn
         .query(
-            "SELECT id, text, state, added_at, gate, version, confirmed, filled_by_wenlan
+            "SELECT id, text, details, state, added_at, gate, version, confirmed, filled_by_wenlan
                FROM brief_items
               WHERE space_id=?1
               ORDER BY CASE state WHEN 'active' THEN 0 ELSE 1 END,
@@ -334,7 +391,7 @@ async fn read_brief(
         .await
         .map_err(|error| WenlanError::VectorDb(format!("get brief item row: {error}")))?
     {
-        let state_text = row.get::<String>(2).unwrap_or_default();
+        let state_text = row.get::<String>(3).unwrap_or_default();
         let state = match state_text.as_str() {
             "active" => wenlan_types::BriefItemState::Active,
             "backlog" => wenlan_types::BriefItemState::Backlog,
@@ -347,12 +404,13 @@ async fn read_brief(
         let item = wenlan_types::BriefItem {
             id: row.get::<String>(0).unwrap_or_default(),
             text: row.get::<String>(1).unwrap_or_default(),
+            details: row.get::<Option<String>>(2).unwrap_or(None),
             state,
-            added_at: row.get::<i64>(3).unwrap_or_default(),
-            gate: row.get::<Option<String>>(4).unwrap_or(None),
-            version: row.get::<i64>(5).unwrap_or(1),
-            confirmed: row.get::<i64>(6).unwrap_or(1) != 0,
-            filled_by_wenlan: row.get::<i64>(7).unwrap_or(0) != 0,
+            added_at: row.get::<i64>(4).unwrap_or_default(),
+            gate: row.get::<Option<String>>(5).unwrap_or(None),
+            version: row.get::<i64>(6).unwrap_or(1),
+            confirmed: row.get::<i64>(7).unwrap_or(1) != 0,
+            filled_by_wenlan: row.get::<i64>(8).unwrap_or(0) != 0,
         };
         match state {
             wenlan_types::BriefItemState::Active => active.push(item),
@@ -578,6 +636,7 @@ impl MemoryDB {
             match mutation {
                 wenlan_types::BriefMutation::Add {
                     text,
+                    details,
                     state,
                     added_at,
                     gate,
@@ -589,13 +648,14 @@ impl MemoryDB {
                         .filter(|value| !value.is_empty());
                     tx.execute(
                         "INSERT INTO brief_items
-                            (id, space_id, text, state, added_at, gate, version,
+                            (id, space_id, text, details, state, added_at, gate, version,
                              confirmed, filled_by_wenlan, updated_at)
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, 1, 0, ?7)",
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, 1, 0, ?8)",
                         libsql::params![
                             item_id.as_str(),
                             space_id.as_str(),
                             text.trim(),
+                            details.as_deref().map(str::trim).filter(|v| !v.is_empty()),
                             state.as_str(),
                             added_at.unwrap_or(now),
                             gate,
@@ -616,6 +676,7 @@ impl MemoryDB {
                     item_id,
                     expected_version,
                     text,
+                    details,
                 } => {
                     if !item_matches_snapshot(
                         &item_snapshot_versions,
@@ -629,11 +690,15 @@ impl MemoryDB {
                     let updated = tx
                         .execute(
                             "UPDATE brief_items
-                                SET text=?1, version=version+1, confirmed=?2,
-                                    filled_by_wenlan=?3, updated_at=?4
-                              WHERE space_id=?5 AND id=?6",
+                                SET text=?1,
+                                    details=CASE WHEN ?2 THEN NULLIF(trim(?3), '') ELSE details END,
+                                    version=version+1, confirmed=?4,
+                                    filled_by_wenlan=?5, updated_at=?6
+                              WHERE space_id=?7 AND id=?8",
                             libsql::params![
                                 text.trim(),
+                                i64::from(details.is_some()),
+                                details.as_deref(),
                                 i64::from(!filled_by_wenlan),
                                 i64::from(filled_by_wenlan),
                                 now,
@@ -905,7 +970,8 @@ impl MemoryDB {
     pub async fn fill_idle_handoffs(
         &self,
         conversations: &[crate::conversation_intake::FoundConversation],
-        team_spaces: &std::collections::BTreeSet<String>,
+        shared_space: &(dyn Fn(&str) -> Result<bool, String> + Sync),
+        model: Option<&dyn crate::llm_provider::LlmProvider>,
         now: i64,
         idle_secs: i64,
     ) -> Result<usize, WenlanError> {
@@ -946,7 +1012,7 @@ impl MemoryDB {
             let Some((handed_at, mutations_json, snapshot_json, space)) = latest else {
                 continue;
             };
-            if team_spaces.contains(&space) {
+            if shared_space(&space).unwrap_or(true) {
                 continue;
             }
             if handed_at >= conversation.last_content_at {
@@ -986,24 +1052,55 @@ impl MemoryDB {
             if current.filled_by_wenlan || current.version != handed_version {
                 continue;
             }
-            let transcript = if conversation.last_reply.trim().is_empty() {
-                conversation.said.last().map(String::as_str).unwrap_or("")
-            } else {
-                conversation.last_reply.as_str()
-            };
-            let transcript = transcript
-                .lines()
-                .map(str::trim)
-                .find(|line| !line.is_empty())
-                .unwrap_or("");
+            // The reader has already established that at least one real
+            // person/AI message is newer than the handoff. Offer only its
+            // bounded tail fields, never tool or metadata events.
+            let transcript = conversation.last_content.trim().to_string();
             if transcript.is_empty() {
                 continue;
             }
-            let fragment: String = transcript.chars().take(240).collect();
-            let text: String = format!("{} — {}", prior.text.trim(), fragment)
-                .chars()
-                .take(500)
-                .collect();
+            let transcript: String = transcript.chars().take(4_000).collect();
+            let fallback_details: String = transcript.chars().take(1_000).collect();
+            let generated = if let Some(model) = model.filter(|model| model.is_available()) {
+                let prompt = format!(
+                    "Previous Brief line:\n{}\n\nPrevious AI-facing details:\n{}\n\nLater conversation:\n{}\n\nReturn JSON only as {{\"text\":\"one person-facing line\",\"details\":\"goal, decisions and why, tried and failed, unverified, next\"}}.",
+                    prior.text,
+                    prior.details.as_deref().unwrap_or("(none)"),
+                    transcript
+                );
+                let request = crate::llm_provider::LlmRequest {
+                    system_prompt: Some(
+                        "Update one handoff item. Do not quote raw transcript text in the person-facing line. Answer with JSON only."
+                            .into(),
+                    ),
+                    user_prompt: prompt,
+                    max_tokens: 700,
+                    temperature: 0.0,
+                    label: Some("idle_handoff_fill".into()),
+                    timeout_secs: Some(30),
+                };
+                tokio::time::timeout(std::time::Duration::from_secs(30), model.generate(request))
+                    .await
+                    .ok()
+                    .and_then(Result::ok)
+                    .and_then(|answer| serde_json::from_str::<IdleFillAnswer>(answer.trim()).ok())
+                    .and_then(|answer| answer.validated(&transcript))
+            } else {
+                None
+            };
+            let (text, details) = generated.unwrap_or_else(|| {
+                let details = if fallback_details.is_empty() {
+                    prior.details.clone()
+                } else {
+                    Some(fallback_details)
+                };
+                (prior.text.clone(), details)
+            });
+            // Sharing may have changed while the model was running. Fail
+            // closed at the last point before the version-guarded write.
+            if shared_space(&space).unwrap_or(true) {
+                continue;
+            }
             let request = wenlan_types::BriefUpdateRequest {
                 space,
                 caller_id: "wenlan-idle-fill".into(),
@@ -1016,6 +1113,7 @@ impl MemoryDB {
                     item_id,
                     expected_version: current.version,
                     text,
+                    details,
                 }],
             };
             let receipt = self
@@ -1028,6 +1126,43 @@ impl MemoryDB {
         }
         Ok(filled)
     }
+}
+
+#[derive(serde::Deserialize)]
+struct IdleFillAnswer {
+    text: String,
+    details: String,
+}
+
+impl IdleFillAnswer {
+    fn validated(self, transcript: &str) -> Option<(String, Option<String>)> {
+        let text = self.text.trim();
+        let details = self.details.trim();
+        if text.is_empty()
+            || details.is_empty()
+            || text.chars().count() > BRIEF_ITEM_TEXT_MAX_CHARS
+            || details.chars().count() > BRIEF_ITEM_DETAILS_MAX_CHARS
+            || echoes_transcript(text, transcript)
+            || echoes_transcript(details, transcript)
+        {
+            return None;
+        }
+        Some((text.to_string(), Some(details.to_string())))
+    }
+}
+
+fn echoes_transcript(value: &str, transcript: &str) -> bool {
+    const VERBATIM_RUN_CHARS: usize = 40;
+    let normalize = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let value = normalize(value);
+    let transcript: Vec<char> = normalize(transcript).chars().collect();
+    if transcript.len() < VERBATIM_RUN_CHARS {
+        return false;
+    }
+    transcript.windows(VERBATIM_RUN_CHARS).any(|window| {
+        let run: String = window.iter().collect();
+        value.contains(&run)
+    })
 }
 
 fn history_entry_from_row(

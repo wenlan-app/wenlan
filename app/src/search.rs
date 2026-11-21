@@ -9007,6 +9007,7 @@ mod working_on_tests {
         BriefItem {
             id: id.to_string(),
             text: text.to_string(),
+            details: None,
             state: BriefItemState::Active,
             added_at,
             gate: None,
