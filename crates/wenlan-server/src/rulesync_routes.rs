@@ -5777,9 +5777,10 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn rulesync_round4_windows_leaves_an_immediate_child_deny_unmanaged() {
+    fn rulesync_round4_windows_preserves_an_immediate_child_deny() {
         let f = Fixture::new();
         let command = ".claude/commands/check.md";
+        let source = ".codex/prompts/shared.md";
         let path = f.setup.home.join(command);
         let parent = path.parent().unwrap();
         fs::create_dir_all(parent).unwrap();
@@ -5811,22 +5812,32 @@ mod tests {
             "fixture deny ACE unexpectedly propagated"
         );
 
-        let preview = f
-            .setup
-            .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
-            .unwrap();
-        assert!(
-            preview
-                .files
-                .iter()
-                .any(|file| { file.path == ".claude/commands" && file.diff.contains("ACL") }),
-            "{preview:?}"
-        );
+        fs::create_dir_all(f.setup.home.join(source).parent().unwrap()).unwrap();
+        f.write(source, "Original shared command.\n");
         f.adopt_from_plan();
         let manifest = f.setup.load().unwrap().unwrap();
-        assert!(!manifest.backup.contains_key(Path::new(command)));
+        assert!(manifest.backup.contains_key(Path::new(command)));
+
+        f.write(command, "Edited command.\n");
+        let card = pullback_file(&f.sync_with(""), command);
+        review_file(&f, &card, PullbackAction::Dismiss, None).unwrap();
         assert_eq!(f.text(command), "Original command.\n");
-        assert!(has_deny(&path));
+        assert!(
+            has_deny(&path),
+            "the replacement lost its inherited deny ACE"
+        );
+
+        let shared = ".claude/commands/shared.md";
+        let shared_path = f.setup.home.join(shared);
+        assert!(!shared_path.exists());
+        f.write(source, "Updated shared command.\n");
+        let card = pullback_file(&f.sync_with(""), source);
+        review_file(&f, &card, PullbackAction::AllTools, None).unwrap();
+        assert_eq!(f.text(shared), "Updated shared command.\n");
+        assert!(
+            has_deny(&shared_path),
+            "the new file missed direct inheritance"
+        );
     }
 
     #[cfg(unix)]
